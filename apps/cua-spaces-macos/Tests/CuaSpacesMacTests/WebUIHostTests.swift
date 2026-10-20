@@ -367,7 +367,7 @@ struct WebUIHostTests {
     @Test func everyPageOperationIsRouted() {
         for m in ["spaces.add", "clouds.status", "teleport.catalog", "teleport.run", "sharing.share", "volume.overview",
                   "agents.setupDriver", "about.set", "update.get", "update.install", "loginItem.set", "devices.approve", "storage.run",
-                  "notifications.list", "telemetry.track", "spaces.windows", "stream.pip", "spaces.thumbnail", "spaces.sendFiles", "host.setUp", "host.action",
+                  "notifications.list", "telemetry.track", "telemetry.linkNotice", "telemetry.acknowledgeLinkNotice", "spaces.windows", "stream.pip", "spaces.thumbnail", "spaces.sendFiles", "host.setUp", "host.action",
                   "host.openSettings"] {
             #expect(WebUIBridge.methods.contains(m), "\(m)")
         }
@@ -448,6 +448,27 @@ struct WebUIHostTests {
         _ = try telemetry.setEnabled(false)
         _ = try await bridge.handle("telemetry.track", ["signals": signals])
         #expect(telemetry.recorded.count == before + 1)
+    }
+
+    /// The one-time linking notice: the host's words and whether it is due,
+    /// and closing it is recorded once (CUA-1881).
+    @Test func theLinkNoticeIsTheHostsToShowAndAcknowledge() async throws {
+        let (bridge, model) = bridge()
+        let telemetry = try #require(model.telemetrySink as? FixtureTelemetry)
+        let quiet = try #require(try await bridge.handle("telemetry.linkNotice", [:]) as? [String: Any])
+        #expect(quiet["due"] as? Bool == false)
+        telemetry.linkNoticeDue = true
+        let due = try #require(try await bridge.handle("telemetry.linkNotice", [:]) as? [String: Any])
+        #expect(due["due"] as? Bool == true)
+        #expect(due["title"] as? String == "We've updated how usage data works")
+        #expect(due["okLabel"] as? String == "Got it")
+        #expect(due["turnOffLabel"] as? String == "Turn off usage data")
+        #expect(due["detailsLabel"] as? String == "What is collected")
+        #expect(due["docsUrl"] as? String == "https://cua.ai/docs/cua-sdk/concepts/telemetry")
+        _ = try await bridge.handle("telemetry.acknowledgeLinkNotice", [:])
+        #expect(telemetry.linkNoticeAcknowledged == 1)
+        let after = try #require(try await bridge.handle("telemetry.linkNotice", [:]) as? [String: Any])
+        #expect(after["due"] as? Bool == false)
     }
 
     @Test func pagesWithoutTheirServiceSayUnsupported() async {
@@ -592,10 +613,13 @@ struct WebUIHostTests {
 
     @Test func showWelcomeAgainRestartsTheFirstRun() async throws {
         let (bridge, model) = bridge()
+        var opened = 0
+        model.openOnboarding = { opened += 1 }
         model.onboarding.finish()
         #expect(model.onboarding.completed)
         _ = try await bridge.handle("settings.choose", ["row": "welcome", "option": "show"])
         #expect(!model.onboarding.completed)
+        #expect(opened == 1, "its window opens, even with only Settings up")
     }
 
     @Test func turningNewUIOffClosesItsWindow() {

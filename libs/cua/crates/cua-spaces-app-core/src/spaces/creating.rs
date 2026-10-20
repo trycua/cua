@@ -363,7 +363,7 @@ pub enum CreateFamily {
     Macos,
     /// A Windows VM (QEMU; emulated on Apple silicon).
     Windows,
-    /// A cloud Space (a Fleet claim).
+    /// A cloud Space.
     Cloud,
 }
 
@@ -691,6 +691,24 @@ fn short_duration(secs: f64) -> String {
     }
 }
 
+/// The first thing that would stop a create of `space` (`linux_container`,
+/// `linux_vm`, `macos_vm`, `windows_vm`), from the `preflight` entry of the
+/// daemon's runtime doctor report (`report_json`), to show before Create:
+/// its plain sentence and the single fix button, when there is one. `None`:
+/// nothing in the way, or the report has no verdict for it (an older
+/// daemon), so Create goes ahead.
+pub fn preflight_issue(
+    report_json: &str,
+    space: &str,
+) -> Option<cua_create_failure::preflight::Issue> {
+    let report: serde_json::Value = serde_json::from_str(report_json).ok()?;
+    let issues = report.get("preflight")?.get(space)?.clone();
+    serde_json::from_value::<Vec<cua_create_failure::preflight::Issue>>(issues)
+        .ok()?
+        .into_iter()
+        .next()
+}
+
 /// The SDK's disk refusal ("not enough disk space to pull ...: it needs
 /// about 30.0 GB and cua keeps 5.0 GB free, but only 12.0 GB is available
 /// on /Users/me/.lume (...)") in plain words, with its numbers when present.
@@ -849,15 +867,28 @@ pub fn failure_cause(raw: &str, phase: Option<&str>, gpu: bool) -> Option<Failur
     }
 }
 
-/// The error enum case name a failed create records in telemetry: what
-/// the shell sent, unless that is none or a generic case (`Runtime`,
-/// `Other`, as most are) and the text names a known cause
-/// ([`failure_cause`]).
-pub fn failure_variant<'a>(raw: &str, phase: Option<&str>, gpu: bool, shell: &'a str) -> &'a str {
-    if !matches!(shell.trim(), "" | "Runtime" | "Other") {
-        return shell;
+/// The `error_kind` word a failed create records in telemetry: the cause
+/// the SDK's text names (`image_pull_not_found`, `vm_boot_timeout`,
+/// `services_unreachable`, ...; [`cua_create_failure::create_failure_kind`]),
+/// else what the shell sent (`Runtime`, as most are), else `other`. Only
+/// the word leaves the process, never the text. `provider` is where it ran:
+/// a cloud create's "X is not available" is not this machine's runtime.
+pub fn failure_variant<'a>(
+    raw: &str,
+    phase: Option<&str>,
+    gpu: bool,
+    shell: &'a str,
+    provider: Option<SpaceProvider>,
+) -> &'a str {
+    if failure_cause(raw, phase, gpu) == Some(FailureCause::Gpu) {
+        return FailureCause::Gpu.variant();
     }
-    failure_cause(raw, phase, gpu).map_or(shell, |c| c.variant())
+    cua_create_failure::create_failure_kind(
+        &crate::errors::plain_error(raw),
+        phase.unwrap_or(""),
+        shell,
+        provider != Some(SpaceProvider::Cloud),
+    )
 }
 
 /// [`failure_text`] for a create on one of your machines named `host_name`:
@@ -1215,13 +1246,44 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
 
 /// The inline line a failed power action shows: "Could not turn it on:
 /// <why>".
+///
+/// The known causes ([`failure_cause`], as for a failed create) read in
+/// plain words: a Local Network block names the app to turn on, instead of
+/// the SDK's raw error (CUA-1807).
 pub fn power_failed_text(on: bool, error: &str) -> String {
     let what = if on { "turn it on" } else { "turn it off" };
     if error.trim().is_empty() {
-        format!("Could not {what}")
-    } else {
-        format!("Could not {what}: {}", crate::errors::plain_error(error))
+        return format!("Could not {what}");
     }
+    let plain = crate::errors::plain_error(error);
+    let why = match failure_cause(error, None, false) {
+        Some(FailureCause::LocalNetwork) => {
+            let app = local_network_app(&plain).unwrap_or("Cua Spaces (or cua-spacesd)");
+            format!(
+                "Cua can't reach the Space's VM because it doesn't have Local Network access on \
+                 the Mac running it. On that Mac, open System Settings > Privacy & Security > \
+                 Local Network, turn on {app}, then try again."
+            )
+        }
+        Some(FailureCause::Disk) => "there isn't enough disk space on the Mac running it. Free \
+             up space there (or run `cua cache prune` in Terminal), then try again."
+            .into(),
+        Some(FailureCause::VmLimit) => "the Mac running it is already running two macOS VMs, \
+             the most Apple's macOS license allows at once. Stop one, then try again."
+            .into(),
+        _ => plain,
+    };
+    format!("Could not {what}: {why}")
+}
+
+/// The app the SDK's Local Network error names ("Local Network access is
+/// not available: <App> (<path>) cannot reach ..."), when it names one.
+fn local_network_app(plain: &str) -> Option<&str> {
+    const LEAD: &str = "Local Network access is not available: ";
+    let rest = &plain[plain.find(LEAD)? + LEAD.len()..];
+    let (name, _) = rest.split_once(" (")?;
+    let name = name.trim();
+    (!name.is_empty() && name != "cua" && !name.contains("cannot reach")).then_some(name)
 }
 
 /// Drops finished creates whose Space the registry now lists, and finished
@@ -1299,7 +1361,7 @@ pub fn pending_space(p: &PendingCreate) -> Space {
         SpaceProvider::Cloud => "Cua Cloud",
         SpaceProvider::Local => "This Mac",
         // Created on another of your machines: not this Mac.
-        SpaceProvider::Relay | SpaceProvider::Direct => "Another machine",
+        SpaceProvider::Relay | SpaceProvider::Direct => "Another computer",
     };
     let label = if failed {
         "Failed".to_string()
@@ -1431,6 +1493,71 @@ pub fn compose(registry: &[Space], state: &CreatesState) -> Vec<Space> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preflight_issue_reads_the_daemons_report() {
+        let report = r#"{"preflight":{
+            "linux_container":[{"kind":"engine_missing",
+              "message":"Install Docker Desktop to run Linux computers.",
+              "fix":{"label":"Get Docker","action":{"type":"open_url","value":"https://www.docker.com/products/docker-desktop/"}}}],
+            "linux_vm":[]}}"#;
+        let issue = preflight_issue(report, "linux_container").unwrap();
+        assert_eq!(
+            issue.message,
+            "Install Docker Desktop to run Linux computers."
+        );
+        assert_eq!(issue.fix.unwrap().label, "Get Docker");
+        assert!(preflight_issue(report, "linux_vm").is_none());
+        assert!(preflight_issue(report, "windows_vm").is_none());
+        // An older daemon has no verdict; garbage never blocks a create.
+        assert!(preflight_issue("{}", "linux_vm").is_none());
+        assert!(preflight_issue("not json", "linux_vm").is_none());
+    }
+
+    #[test]
+    fn a_failed_create_with_a_preflight_sentence_keeps_its_cause() {
+        let raw = "Install Docker Desktop to run Linux computers.";
+        assert_eq!(failure_text(raw, Some("preparing"), None, false), raw);
+        assert_eq!(
+            failure_variant(raw, Some("preparing"), false, "Runtime", None),
+            "runtime_missing"
+        );
+    }
+
+    /// CUA-1807: Turn on showed the SDK's raw Local Network error.
+    #[test]
+    fn a_failed_turn_on_says_the_known_cause_in_plain_words() {
+        let raw = "local runtime: Local Network access is not available: Cua Spaces \
+                   (/Applications/Cua Spaces.app) cannot reach the VM at 192.168.64.191:3211 \
+                   (No route to host (os error 65)). macOS blocks Cua Spaces's local network \
+                   connections until they are allowed: ...";
+        let t = power_failed_text(true, raw);
+        assert!(
+            t.starts_with("Could not turn it on: Cua can't reach"),
+            "{t}"
+        );
+        assert!(t.contains("turn on Cua Spaces, then try again"), "{t}");
+        assert!(!t.contains("os error"), "{t}");
+        // An older SDK's bare EHOSTUNREACH to a vmnet address.
+        let t = power_failed_text(
+            true,
+            "connect 192.168.64.5:3211: No route to host (os error 65)",
+        );
+        assert!(t.contains("turn on Cua Spaces (or cua-spacesd)"), "{t}");
+        // A bare binary is not an app to turn on.
+        let t = power_failed_text(
+            true,
+            "Local Network access is not available: cua cannot reach the VM at 192.168.64.5:3211",
+        );
+        assert!(t.contains("turn on Cua Spaces (or cua-spacesd)"), "{t}");
+        // Unknown causes stay as they were.
+        assert_eq!(
+            power_failed_text(false, "Docker is not running"),
+            "Could not turn it off: Docker is not running"
+        );
+        assert_eq!(power_failed_text(true, " "), "Could not turn it on");
+        assert!(power_failed_text(true, "No space left on device").contains("disk space"));
+    }
 
     fn start(id: &str, name: &str, os: SpaceOs) -> CreateAction {
         CreateAction::Start {
@@ -1631,7 +1758,7 @@ mod tests {
         assert!(p.permille > 10, "past the 1% floor: {}", p.permille);
         assert_eq!(
             row.detail,
-            e("Another machine \u{b7} Downloading macOS (first time only)...")
+            e("Another computer \u{b7} Downloading macOS (first time only)...")
         );
     }
 
@@ -2475,8 +2602,8 @@ mod tests {
              Try again; it picks up where it stopped."
         );
         assert_eq!(
-            failure_variant(stopped, Some("pulling"), false, "Runtime"),
-            "ImagePull"
+            failure_variant(stopped, Some("pulling"), false, "Runtime", None),
+            "image_pull"
         );
         // QEMU missing on a Windows PC: 0.9.2's after the pull, and the
         // refusal before it. Not `other` in telemetry, and the SDK's words.
@@ -2492,8 +2619,8 @@ mod tests {
                 "{raw}"
             );
             assert_eq!(
-                failure_variant(raw, Some("pulling"), false, "Other"),
-                "RuntimeMissing"
+                failure_variant(raw, Some("pulling"), false, "Other", None),
+                "runtime_missing"
             );
         }
         // Local Network privacy on the Mac that runs the VM.
@@ -2614,7 +2741,7 @@ mod tests {
         let s = reduce(&CreatesState::default(), &relay(SpaceOs::Macos));
         assert_eq!(
             compose(&[], &s)[0].detail,
-            "Another machine \u{b7} Starting\u{2026}"
+            "Another computer \u{b7} Starting\u{2026}"
         );
         // The host pulls 22 GB without reporting: no stall at 5 min, nor
         // at the local preparing limit.

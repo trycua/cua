@@ -22,6 +22,7 @@ fn installer(dir: &Path, bundled: Option<PathBuf>, path_env: &str, symlink: bool
         path_env: path_env.to_string(),
         profile: dir.join("home/.zshrc"),
         prefer_symlink: symlink,
+        search_dirs: vec![],
     }
 }
 

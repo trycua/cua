@@ -26,7 +26,6 @@ on:
           - bench-ui
           - som
           - sandbox-apps
-          - train
           - npm-core
           - npm-playground
           - cuabot
@@ -193,14 +192,24 @@ jobs:
 
             # Release Please can update an existing branch that predates the
             # current workflow. Refresh it, then replay only this trusted bot
-            # branch onto main so validation uses the current release tooling.
+            # branch onto main when main changed this component or the release
+            # tooling, or when the branch conflicts, so validation uses the
+            # current release tooling. Otherwise keep the branch untouched.
             git fetch origin "+refs/heads/main:refs/remotes/origin/main"
             git fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
             REMOTE_HEAD=$(git rev-parse "origin/$BRANCH")
+            # Every force-push restarts the release PR's checks, so replay
+            # the branch only when it must move. Decide from main's copy of
+            # the script, before the checkout swaps in the branch's tree.
+            DECISION=$(python3 .github/scripts/release_branch_needs_rebase.py \
+              --branch "$BRANCH" --head "origin/$BRANCH")
+            echo "Release PR #$number: $DECISION"
             git checkout -B "$BRANCH" "origin/$BRANCH"
             git config user.name "trycua-release[bot]"
             git config user.email "trycua-release[bot]@users.noreply.github.com"
-            if ! git rebase origin/main; then
+            if [[ "$DECISION" == keep* ]]; then
+              echo "Leaving the release branch and its checks alone"
+            elif ! git rebase origin/main; then
               mapfile -t CONFLICTS < <(git diff --name-only --diff-filter=U)
               if [[ "${#CONFLICTS[@]}" -ne 1 || \
                     "${CONFLICTS[0]}" != ".release-please-manifest.json" ]]; then
@@ -295,7 +304,7 @@ jobs:
               python3 .github/scripts/sync_sdk_release_docs.py --from "$PREVIOUS"
               SDK_LOCKS=$(python3 .github/scripts/sync_sdk_release_locks.py)
               python3 .github/scripts/validate_release_versions.py --product sdk
-              git add docs/content/docs/cua-cli docs/content/docs/cua-sdk docs/content/docs/fleets scripts/docs-generators/cli-specs/cua.json
+              git add docs/content/docs/cua-cli docs/content/docs/cua-sdk scripts/docs-generators/cli-specs/cua.json
               if [[ -n "$SDK_LOCKS" ]]; then
                 mapfile -t SDK_LOCK_PATHS <<< "$SDK_LOCKS"
                 git add -- "${SDK_LOCK_PATHS[@]}"

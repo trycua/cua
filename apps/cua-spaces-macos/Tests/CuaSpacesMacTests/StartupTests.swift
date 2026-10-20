@@ -284,7 +284,6 @@ import Testing
         gate.resolve(LiveServices(backend: FixtureSpacesBackend(), account: FixtureAccount(identity: "dana@example.com")))
         model.attachLive(nil)
         #expect(model.identity == "dana@example.com")
-        #expect(model.onboarding.state.identity == "dana@example.com")
         // No SDK backend (fixtures): what waits for one never runs.
         #expect(seen.isEmpty)
     }

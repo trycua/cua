@@ -1892,7 +1892,7 @@
           "submit": null,
           "submitLabel": "Add Space"
         },
-        "canContinue": true,
+        "canContinue": false,
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
@@ -1950,7 +1950,7 @@
           "submit": null,
           "submitLabel": "Add Space"
         },
-        "canContinue": true,
+        "canContinue": false,
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
@@ -2008,12 +2008,16 @@
           "submit": null,
           "submitLabel": "Add Space"
         },
-        "canContinue": true,
+        "canContinue": false,
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
-          "cpus: CPU cores",
-          "memory: Memory"
+          "os: System",
+          "image: Image [ghcr.io/org/app:tag]",
+          "placement: Run on",
+          "kind: Kind (advanced)",
+          "runtime: Runtime (advanced)",
+          "connect-by-address: Connect by address…"
         ],
         "gpu": null,
         "image": "ghcr.io/trycua/windows:2022",
@@ -2050,7 +2054,7 @@
           "auto",
           "qemu"
         ],
-        "step": 1
+        "step": 0
       },
       "wizard": "next"
     },
@@ -2062,7 +2066,7 @@
           "submit": null,
           "submitLabel": "Add Space"
         },
-        "canContinue": true,
+        "canContinue": false,
         "cpusText": "4 cores",
         "disk": null,
         "fields": [

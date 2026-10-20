@@ -264,6 +264,7 @@ pub use check_permissions::{
 };
 
 pub use cua_driver_core::snapshot_store::ZoomContext;
+pub(crate) use health_report::current_bundle_identifier as main_bundle_identifier;
 pub(crate) use health_report::sw_vers_product_version as macos_product_version;
 
 /// The shared per-call delivery mode; see [`cua_driver_core::delivery`].
@@ -304,7 +305,7 @@ pub(crate) fn background_refusal_result(
 }
 
 /// Hint shown with every `windowserver_connection_invalid` refusal.
-pub(crate) const WINDOWSERVER_INVALID_HINT: &str = "This daemon runs without its own app-bundle identity (a bare `cua-driver serve`), so macOS gives it no valid WindowServer connection and every no-raise focus step fails. Run the app-bundle daemon: `open -n -g -a CuaDriver --args serve`.";
+pub(crate) const WINDOWSERVER_INVALID_HINT: &str = "This daemon runs without its own app-bundle identity (a bare `cua-driver serve`), so macOS gives it no valid WindowServer connection and every no-raise focus step fails. Run the app-bundle daemon: `cua-driver permissions grant`.";
 
 /// Structured refusal for a background action whose no-raise focus step got
 /// `SLPSPostEventRecordTo` status 1002 (invalid connection). Nothing was sent
@@ -751,23 +752,9 @@ pub fn load_driver_config() -> DriverConfig {
     cfg
 }
 
-/// Convert native pixels from `get_desktop_state` into the logical point space
-/// used by CoreGraphics input APIs. Retina scaled modes cannot rely on the
-/// nominal backing factor alone, so derive the ratio from the actual PNG.
-pub async fn desktop_screenshot_point(x: f64, y: f64) -> (f64, f64) {
-    let ratio = tokio::task::spawn_blocking(|| {
-        let logical_w = get_screen_size::main_screen_size().map(|(w, _, _)| w as f64);
-        let shot_w = crate::capture::screenshot_display_bytes()
-            .ok()
-            .and_then(|png| crate::capture::png_dimensions(&png).ok())
-            .map(|(w, _)| w as f64);
-        match (shot_w, logical_w) {
-            (Some(sw), Some(lw)) if lw > 0.0 && sw > lw => sw / lw,
-            _ => 1.0,
-        }
-    })
-    .await
-    .unwrap_or(1.0);
+/// Convert native pixels from `get_desktop_state` into logical points.
+pub fn desktop_screenshot_point(x: f64, y: f64) -> (f64, f64) {
+    let ratio = get_screen_size::main_screen_size().map_or(1.0, |(_, _, s)| s);
     (x / ratio, y / ratio)
 }
 
@@ -1420,6 +1407,6 @@ mod windowserver_refusal_tests {
         assert!(structured["hint"]
             .as_str()
             .unwrap()
-            .contains("open -n -g -a CuaDriver --args serve"));
+            .contains("cua-driver permissions grant"));
     }
 }

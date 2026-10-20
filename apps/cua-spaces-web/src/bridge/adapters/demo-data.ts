@@ -181,6 +181,8 @@ export function demoHostStatus(now = Date.now(), firstRun = false): HostStatus {
   if (firstRun) {
     return {
       configured: false,
+      // What the system calls this computer: the setup form starts with it.
+      name: "Ada’s MacBook Pro",
       sharing: false,
       service: { installed: false, running: false, kind: "launchd" },
       clients: [],
@@ -230,7 +232,7 @@ export function demoTelemetry(enabled: boolean): TelemetryView {
     source: "config ~/.cua/config.toml",
     sourceKind: "config",
     noticeShown: true,
-    noticeText: "Cua sends anonymous usage data to improve the app. No content, names or addresses.",
+    noticeText: "Cua collects usage data, like which features you use and when something goes wrong. When you're signed in, it's linked to your account through a random ID. Never your files, what you type or your screen.",
     docsUrl: "https://cua.ai/docs/cua-sdk/concepts/telemetry",
   };
 }

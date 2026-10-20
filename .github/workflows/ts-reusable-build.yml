@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       package_dir:
-        description: "Directory containing the package relative to workspace root (e.g., libs/typescript/fleet)"
+        description: "Directory containing the package relative to workspace root (e.g., libs/typescript/core)"
         required: true
         type: string
       package_manager:

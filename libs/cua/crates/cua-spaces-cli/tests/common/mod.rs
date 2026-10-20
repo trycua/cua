@@ -23,12 +23,9 @@ const SCRUB: &[&str] = &[
     "DO_NOT_TRACK",
     "CUA_TELEMETRY_ENABLED",
     "CUA_TELEMETRY_DISABLED",
-    "FLEETS_TOKEN",
     "CUA_CLIENT_ID",
     "CUA_CLIENT_SECRET",
     "CUA_TOKEN_URL",
-    "CUA_FLEET_BASE_URL",
-    "CUA_FLEET_NAMESPACE",
     "CUA_DAEMON",
     "CUA_DAEMON_TOKEN",
     "CUA_ENV_TOKEN",
@@ -94,8 +91,6 @@ impl Home {
         env.insert("CUA_CREDENTIAL_STORE".into(), "file".into());
         env.insert("CUA_NO_BROWSER".into(), "1".into());
         env.insert("CUA_LOG".into(), "error".into());
-        // Never read a real registry for the Fleet runtime/image rule.
-        env.insert("CUA_FLEET_IMAGE_INSPECT".into(), "0".into());
         // Never send telemetry, even from a child that clears its
         // environment; tests that exercise it turn it on explicitly and keep
         // the no-network guard.

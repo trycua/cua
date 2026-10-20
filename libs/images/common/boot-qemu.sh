@@ -16,12 +16,12 @@
 # usable, else TCG (slow; an amd64 guest on Apple Silicon is TCG).
 # Firmware: arm64 -> edk2-aarch64-code.fd (UEFI); amd64 -> SeaBIOS (QEMU's
 # default, = KubeVirt `bios`), or --uefi for edk2-x86_64-code.fd.
-# The guest always gets a NoCloud seed (cidata ISO), like Fleet's cloud-init:
-# without a datasource cloud-init disables itself and never generates the SSH
+# The guest always gets a NoCloud seed (cidata ISO), like a KubeVirt VM's
+# cloud-init: without a datasource cloud-init disables itself and never generates the SSH
 # host keys, so sshd stays down. --ssh adds a throwaway key to the `cua` user
 # (then logs in and lists the cua-* units); --env-token writes
 # /etc/cua/env-token and restarts cua-spacesd if it raced cloud-init.
-# --claim-secrets DIR simulates Fleet's per-claim Secret share on KubeVirt
+# --claim-secrets DIR simulates a per-claim Secret share on KubeVirt
 # (virtiofs tag cua-claim-secrets -> /run/cua). QEMU on macOS has no
 # virtiofsd, so DIR is shared over virtio-9p with the same tag, read-only,
 # and the seed's bootcmd installs a run-cua.mount drop-in switching Type= to

@@ -129,6 +129,9 @@ public final class AppModel {
     public var teamsReader: TeamsReading?
     /// Where Settings' Teams stand: not read yet, read, or failed.
     public private(set) var teamsState: AppTeamsState = .signedOut
+    /// The owner's one-line note that sharing is for teams now and some
+    /// people can no longer open a shared computer; shown once.
+    public private(set) var shareRemovalNote: AppShareRemovalNote?
     /// This app as a login item (nil: no Launch at login row).
     let loginItem: LoginItemControlling?
     /// What the system reports for it (nil until read).
@@ -203,8 +206,8 @@ public final class AppModel {
         // filled from the SDK's shared cache.
         notch.thumbnails.fetch = { [backend] id, maxAgeMs in await backend.thumbnail(id: id, maxAgeMs: maxAgeMs) }
         // The app core's usage events for each step (the Tauri app sends
-        // the same ones): the first run, Settings, Storage, enrollment.
-        onboarding.telemetry = telemetry
+        // the same ones): Settings, Storage, enrollment. The first run's
+        // are the web page's (`telemetry.track`).
         self.checklist.telemetry = telemetry
         self.storage.telemetry = telemetry
         self.devices.telemetry = telemetry
@@ -220,19 +223,8 @@ public final class AppModel {
         }
         self.host.onChange = { [weak self] in self?.recompose() }
         followChecklist()
-        // The first run's "Where should Cua Spaces show up?" is this setting.
-        onboarding.onPresentation = { [weak self] menuBar in
-            guard let self else { return }
-            self.settings.menuBar = menuBar
-            self.saveSettings()
-        }
-        onboarding.currentMenuBar = { [weak self] in self?.settings.menuBar ?? false }
         // Done's "Launch at login" checkbox is the user's choice.
         onboarding.onLaunchAtLogin = { [weak self] on in self?.setLaunchAtLogin(on) }
-        // Settings, Experiments decide the first run's pages (Cua Volume).
-        onboarding.currentExperiments = { [weak self] in
-            self?.settings.experiments ?? AppExperiments(cuaVolume: false, yourCloud: false, sharing: true, webUi: false)
-        }
         // Which experiments are on: the day's `cua_app_active` carries them.
         telemetry?.record(appTelemetryExperimentsOn(experiments: settings.experiments))
         // The notifications marker lives in the settings file, so a restart
@@ -269,10 +261,6 @@ public final class AppModel {
             let name = profile?.name.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 }
             return AppHostAccount(id: profile?.subject, email: profile?.email, display: name ?? who)
         }
-        // Onboarding's This machine step has its own HostModel: give it the
-        // same inline sign-in, or a skipped sign-in fails setup with "Not
-        // signed in" instead of opening the browser and carrying on.
-        self.onboarding.host.signIn = self.host.signIn
         // A row takes a window drop by the core's rule (the notch tiles' too).
         dropTargets.isDropTarget = { [weak self] id in
             self?.spaces.first { $0.id == id }.map { appSpaceAcceptsDrop(space: $0) } ?? false
@@ -293,9 +281,7 @@ public final class AppModel {
     func attachLive(_ live: LiveSpacesBackend?) {
         identity = account?.identity()
         host.identity = identity
-        onboarding.host.identity = identity
         devices.signedIn = identity != nil
-        onboarding.adoptIdentity(identity)
         if let live {
             self.live = live
             let queued = whenLive
@@ -731,6 +717,10 @@ public final class AppModel {
     /// Closes the New UI window and puts the native one in its place (the
     /// `web_ui` experiment was turned off).
     public var closeWebUI: (() -> Void)?
+    /// The first run is due again (Settings, Welcome, Show again): opens its
+    /// window (the web onboarding), which nothing else would while only
+    /// Settings is up.
+    public var openOnboarding: (() -> Void)?
 
     /// New Space with "Run on" set to `on` (`host:<machine>`): a machine's
     /// "New Space on <name>…".
@@ -1185,24 +1175,23 @@ public final class AppModel {
             }
             let who = try await attempt.wait()
             guard signInAttempt == current, case .waiting = signIn else { return }
+            let previous = identity
             identity = who ?? account.identity()
             host.identity = identity
-            onboarding.host.identity = identity
             devices.signedIn = identity != nil
-            // Activation funnel: the first run records `signed_in` on its
-            // sign-in page; a sign-in from the main window (first run done or
-            // not showing, so its state is on Welcome) records it here.
-            if onboarding.state.step == .welcome, let who = identity, !who.isEmpty,
-               who != onboarding.state.identity {
+            // Activation funnel: the first run's page records `signed_in` on
+            // its own (the core's flow); a sign-in once it is done (from
+            // Settings, the machines page) records it here, for a new account.
+            if onboarding.completed, let who = identity, !who.isEmpty, who != previous {
                 telemetry?.record([.step(step: "signed_in", ok: true)])
             }
-            onboarding.send(.signedIn(identity: identity ?? ""))
             signIn = .idle
             signInURL = nil
             // Relay sharing paused while signed out comes back for its
             // owner (another account is asked to set it up again).
             await host.reconcileAccount()
             await reloadTeams()
+            await reloadShareRemovals()
         } catch {
             guard signInAttempt == current, signIn != .idle else { return }
             signInFailed(LiveSpacesBackend.words(error))
@@ -1233,7 +1222,6 @@ public final class AppModel {
         try? await account?.signOut()
         identity = nil
         host.identity = nil
-        onboarding.host.identity = nil
         devices.signedIn = false
         teamsState = .signedOut
         // Signed out: relay sharing stops (the setup stays to resume).
@@ -1262,6 +1250,31 @@ public final class AppModel {
     var teamsSettingsInput: AppTeamsInput {
         AppTeamsInput(accountAppUrl: appAccountAppUrl(), state: identity == nil ? .signedOut : teamsState,
                       currentTeamId: settings.currentTeamId)
+    }
+
+    /// The account is in a team on the Teams plan, which sharing needs: nil
+    /// until Teams are read, so the server decides.
+    public var hasSharingTeam: Bool? {
+        if case .ready(let list) = teamsState { return list.contains { $0.plan == "teams" } }
+        return nil
+    }
+
+    /// Reads who lost access to a shared computer (sharing is for teams) and
+    /// words the one-line note. Nothing when signed out or when there is no one.
+    public func reloadShareRemovals() async {
+        guard identity != nil, let teamsReader else {
+            shareRemovalNote = nil
+            return
+        }
+        let removals = (try? await teamsReader.shareRemovals()) ?? []
+        shareRemovalNote = appShareRemovalNote(removals: removals)
+    }
+
+    /// Closes the note and tells the account it was seen, so it shows once.
+    public func dismissShareRemovalNote() {
+        shareRemovalNote = nil
+        guard let teamsReader else { return }
+        Task { try? await teamsReader.ackShareRemovals() }
     }
 
     /// Reads the account's Teams (Settings, Teams). A failure says so in the
@@ -1317,11 +1330,10 @@ public final class AppModel {
         if settings.experiments != before { applyExperiments(before: before, after: settings.experiments) }
     }
 
-    /// What follows a change of the switches: the first run, an open New
+    /// What follows a change of the switches: an open New
     /// Space, and the New UI's window in place of the native one (or back).
     private func applyExperiments(before: AppExperiments, after: AppExperiments) {
         guard before != after else { return }
-        onboarding.send(.experimentsLoaded(experiments: after))
         // New UI on: its window takes the native one's place; off: the reverse.
         if !before.webUi, after.webUi { openWebUI?() }
         if before.webUi, !after.webUi { closeWebUI?() }
@@ -1457,7 +1469,7 @@ public final class AppModel {
                 show(error: LiveSpacesBackend.words(error))
             }
         case "default-location":
-            settings.defaultLocation = option == "cloud" ? .cloud : .local
+            settings.defaultLocation = .local  // Cua Cloud has ended: only This Mac is a default
             saveSettings()
         case "auto-connect":
             settings.autoConnect = option == "on"
@@ -1480,6 +1492,9 @@ public final class AppModel {
         case "telemetry":
             do {
                 telemetryInput = try telemetry?.setEnabled(option == "on")
+                // The switch sits beside the usage note (the first run's
+                // Welcome, Settings): the notice was seen.
+                telemetry?.acknowledgeNotice()
             } catch {
                 show(error: LiveSpacesBackend.words(error))
             }
@@ -1493,7 +1508,9 @@ public final class AppModel {
         case "account": await signOut()
         case "sign-in": await beginSignIn()
         case "sign-in-code": cancelSignIn()
-        case "welcome": onboarding.restart()
+        case "welcome":
+            onboarding.restart()
+            openOnboarding?()
         case "launch-at-login-approve":
             loginItem?.openSystemSettings()
         case "billing", "teams-manage", "teams-billing":

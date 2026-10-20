@@ -48,11 +48,13 @@ cua-spacesd --help
 
 - A token is **required for any non-loopback bind**. Clients send it as
   `authorization: Bearer <token>` or `x-cua-env-authorization: Bearer <token>`
-  (the Fleet gateway strips `authorization`). Comparisons are constant time.
+  (a gateway in front of the daemon can strip `authorization`). Comparisons are
+  constant time.
 - `SystemService.Init` can install a token later. `--insecure-bootstrap` allows
   a tokenless non-loopback bind that answers only `GetCapabilities`, `Health`
   and `Init` until then (opt-in, for an authenticated gateway only).
-- `--await-token-file` (Fleet): take the token only from `--token-file`, bind
+- `--await-token-file` (orchestrator-managed token): take the token only from
+  `--token-file`, bind
   while it is empty, install or rotate it when the file changes, and revoke
   every session when it is emptied. `cua-spacesd token-sync` is the
   privileged helper that mirrors a root-only secret to a file the driver's user
@@ -254,5 +256,5 @@ current behavior.
 ## License
 
 Source-available under FSL-1.1-MIT ([LICENSE](LICENSE), see
-[LICENSING.md](../../LICENSING.md)). Code extracted from the MIT-licensed Cua
+[LICENSING.md](../../legal/LICENSING.md)). Code extracted from the MIT-licensed Cua
 prototype keeps its notice; see [Third-party notices](THIRD_PARTY_NOTICES.md).

@@ -40,6 +40,15 @@ class StampInstallersTest(unittest.TestCase):
         for name in ("install.sh", "install.ps1"):
             self.assertEqual((self.out / name).read_bytes(), (HERE / name).read_bytes(), name)
 
+    def test_the_uninstallers_are_copied_as_they_are_for_every_repository(self):
+        for repo in ("trycua/cua", "trycua/cua-staging"):
+            out = self.out / repo.split("/")[1]
+            result = run("--repo", repo, "--out", str(out))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            for name in ("uninstall.sh", "uninstall.ps1"):
+                self.assertEqual((out / name).read_bytes(), (HERE / name).read_bytes(), name)
+            self.assertEqual((out / "uninstall.sh").stat().st_mode, (HERE / "uninstall.sh").stat().st_mode)
+
     def test_rejects_a_bad_repository(self):
         for bad in ("", "trycua", "a/b/c", "trycua/cua; rm -rf /", "trycua/cua'"):
             self.assertNotEqual(run("--repo", bad, "--out", str(self.out)).returncode, 0, bad)
@@ -49,6 +58,8 @@ class StampInstallersTest(unittest.TestCase):
         src.mkdir()
         (src / "install.sh").write_text('REPO="${SOMETHING_ELSE:-trycua/cua}"\n')
         (src / "install.ps1").write_text((HERE / "install.ps1").read_text())
+        for name in ("uninstall.sh", "uninstall.ps1"):
+            (src / name).write_text((HERE / name).read_text())
         result = run("--repo", "trycua/cua-staging", "--out", str(self.out / "o"), "--src", str(src))
         self.assertEqual(result.returncode, 1)
         self.assertIn("install.sh", result.stderr)

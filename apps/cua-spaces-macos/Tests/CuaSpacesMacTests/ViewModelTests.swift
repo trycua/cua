@@ -280,7 +280,7 @@ struct ViewModelTests {
         let model = makeModel(host: host)
         await model.refresh()
         #expect(model.spaces.contains { $0.id == "this-mac" })
-        #expect(model.sidebar.thisMachine?.name == "This machine")
+        #expect(model.sidebar.thisMachine?.name == "This computer")
         #expect(model.sidebar.thisMachine?.detail == "Set up for access")
         #expect(!model.sidebar.sections.flatMap(\.rows).contains { $0.id == "this-mac" })
         model.select("this-mac")
@@ -298,8 +298,11 @@ struct ViewModelTests {
         await model.refresh()
         let h = model.host
         #expect(h.panel.actions.map(\.id) == [.setUp])
+        h.computerName = { "Ada’s MacBook Pro" }
         await h.run(.setUp)
-        #expect(h.formView?.title == "Set up this machine")
+        #expect(h.formView?.title == "Set up this computer")
+        // Name starts as what the system calls this computer.
+        #expect(h.formView?.fields.first?.value == "Ada’s MacBook Pro")
         h.send(.setName(name: "Studio"))
         await h.submit()
         #expect(h.form == nil)
@@ -415,7 +418,6 @@ struct ViewModelTests {
         model.chooseExperiment(row: "experiment:cua_volume", option: "on")
         #expect(model.settingsPageWithStorage.sections.map(\.id).prefix(4) == ["account", "teams", "general", "storage"])
         #expect(appSettingsLoad(path: model.settingsPath).experiments.cuaVolume, "saved")
-        #expect(model.onboarding.state.experiments.cuaVolume)
         let toggled = telemetry.recorded.compactMap { s -> String? in
             if case let .experiment(action, experiment) = s { return "\(action) \(experiment)" }
             return nil
@@ -423,19 +425,28 @@ struct ViewModelTests {
         #expect(toggled == ["experiment_on cua_volume"])
     }
 
-    /// A sign-in from the main window (the first run done or not showing)
-    /// still counts in the activation funnel, once.
-    @Test func mainWindowSignInRecordsSignedIn() async {
+    /// A sign-in after the first run (from Settings, say) still counts in
+    /// the activation funnel, once; during the first run the page's own
+    /// flow counts it.
+    @Test func signInAfterTheFirstRunRecordsSignedIn() async {
+        func steps(_ telemetry: FixtureTelemetry) -> [String] {
+            telemetry.recorded.compactMap { s -> String? in
+                if case let .step(step, ok) = s, ok { return step }
+                return nil
+            }
+        }
+        let first = FixtureTelemetry()
+        let during = makeModel(account: FixtureAccount(), telemetry: first)
+        await during.beginSignIn()
+        #expect(during.identity == "you@example.com")
+        #expect(steps(first).isEmpty, "the first run's page records it")
+
         let telemetry = FixtureTelemetry()
         let model = makeModel(account: FixtureAccount(), telemetry: telemetry)
-        #expect(model.onboarding.state.step == .welcome)
+        model.onboarding.finish()
         await model.beginSignIn()
         #expect(model.identity == "you@example.com")
-        let steps = telemetry.recorded.compactMap { s -> String? in
-            if case let .step(step, ok) = s, ok { return step }
-            return nil
-        }
-        #expect(steps == ["signed_in"])
+        #expect(steps(telemetry) == ["signed_in"])
     }
 
     /// A sign-in that never finishes: Cancel stops it, a timeout fails it,
@@ -1268,24 +1279,34 @@ struct ViewModelTests {
         #expect(model.keyvault.list.pending.count == 2)
     }
 
-    @Test func onboardingFollowsTheCoreAndPersists() throws {
+    /// The first run's pages are the web UI's; the model only keeps whether
+    /// it is done (and as what) in the state file both shells write.
+    @Test func onboardingIsDueUntilItFinishesAndPersists() throws {
         let path = FileManager.default.temporaryDirectory
             .appendingPathComponent("cua-mac-onb-\(UUID().uuidString).json").path
+        defer { try? FileManager.default.removeItem(atPath: path) }
         let o = OnboardingModel(statePath: path)
-        #expect(!o.completed)
-        #expect(o.view.showMark)
-        o.send(.start)
-        o.send(.signinDone)
-        o.send(.agentsDone(configured: []))
-        o.send(.presentationDone)
-        o.send(.driveContinue)
-        o.send(.modeChosen(mode: .client))
-        #expect(o.view.step == .done)
-        #expect(o.view.prompts.count == 3, "Done suggests what to ask a coding agent")
-        #expect(o.view.prompts.first == "Open a Linux Space and run my test suite in it")
-        o.finish()
-        #expect(OnboardingModel(statePath: path).completed)
-        try? FileManager.default.removeItem(atPath: path)
+        #expect(!o.completed && o.mode == .client)
+        var launchAtLogin: [Bool] = []
+        o.onLaunchAtLogin = { launchAtLogin.append($0) }
+        o.finish(mode: .host, launchAtLogin: false)
+        #expect(o.completed && o.mode == .host)
+        #expect(launchAtLogin == [false])
+        #expect(try String(contentsOfFile: path, encoding: .utf8) == #"{"completed":true,"mode":"host"}"#)
+        let again = OnboardingModel(statePath: path)
+        #expect(again.completed && again.mode == .host, "the next launch reads it")
+        #expect(OnboardingModel.readCompleted(path) == true)
+        // Settings, Welcome: due again until it finishes; the file stays.
+        again.restart()
+        #expect(!again.completed)
+        #expect(OnboardingModel.readCompleted(path) == true)
+        again.finish()
+        #expect(again.completed && again.mode == .client)
+        // No answer for the checkbox: the app's own rule applies at launch.
+        #expect(launchAtLogin == [false])
+        // A missing or damaged file: the first run is due.
+        #expect(OnboardingModel.readCompleted(path + ".nope") == nil)
+        #expect(!OnboardingModel(statePath: path + ".nope").completed)
     }
 
     @Test func notchOpensAfterTheCoresDwell() async {
@@ -1311,6 +1332,40 @@ struct ViewModelTests {
         notch.send(.drag(event: .drop(spaceId: nil)))
         #expect(committed == "local:aurora")
         #expect(notch.view.phase == .closed)
+    }
+
+    /// Sharing is for teams (CUA-1883): the owner sees one line, once, naming
+    /// who can no longer open a shared computer, and closing it acknowledges it.
+    @Test func ownerSeesTheRemovalNoteOnceAndItIsAcknowledged() async throws {
+        let model = makeModel(account: FixtureAccount(identity: "you@example.com"))
+        let teams = FixtureTeams(removals: [
+            AppShareRemovalInput(who: "alex@x.test", machineName: "Design"),
+            AppShareRemovalInput(who: "sam@x.test", machineName: "Design"),
+        ])
+        model.teamsReader = teams
+        await model.reloadShareRemovals()
+        let note = try #require(model.shareRemovalNote)
+        #expect(note.text == "alex@x.test and sam@x.test can no longer open \u{201c}Design\u{201d}, because they're not in your team.")
+        #expect(note.action.label == "Invite to your team")
+        model.dismissShareRemovalNote()
+        #expect(model.shareRemovalNote == nil)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(teams.removals.isEmpty, "acknowledged, so it does not come back")
+        await model.reloadShareRemovals()
+        #expect(model.shareRemovalNote == nil)
+    }
+
+    /// The Share sheet explains and links to Teams for an account in no team;
+    /// it stays open in a team, and when it cannot tell (the server decides).
+    @Test func shareSheetIsClosedOnlyWhenKnownToBeInNoTeam() {
+        let model = ShareModel(backend: FixtureSpacesBackend(), spaceId: "local:studio", spaceName: "studio",
+                               signedIn: true, shareable: true)
+        #expect(model.gate == nil, "unknown: the server decides")
+        model.hasTeam = true
+        #expect(model.gate == nil)
+        model.hasTeam = false
+        #expect(model.gate?.reason == "Sharing is for teams. Start a team to share this Space.")
+        #expect(model.gate?.action.label == "See Teams")
     }
 
     /// Settings hides Cua Cloud billing and shows the real Teams section

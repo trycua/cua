@@ -62,7 +62,9 @@ fn def() -> &'static ToolDef {
              the gesture is posted to that window, the real pointer does not move, and the \
              user's frontmost window keeps focus. It works for controls that follow the \
              drag events: sliders, canvases, and pointer-event widgets on web pages in \
-             Chrome. A drag that starts a macOS drag-and-drop session (reordering a list \
+             Chrome. In an Electron window the driver sends the gesture from the app's \
+             main process, so pointer-capture widgets and HTML5 drag and drop also drop \
+             there. Elsewhere, a drag that starts a macOS drag-and-drop session (reordering a list \
              by drag and drop, moving a file, HTML5 draggable content) cannot drop in the \
              background, because macOS tracks those with the real pointer; the driver \
              detects it, releases at once and returns background_unavailable with reason \
@@ -143,8 +145,8 @@ impl Tool for DragTool {
                 Err(result) => return result,
             };
             let (from_x, from_y, to_x, to_y) = (input.from_x, input.from_y, input.to_x, input.to_y);
-            let (from_x, from_y) = super::desktop_screenshot_point(from_x, from_y).await;
-            let (to_x, to_y) = super::desktop_screenshot_point(to_x, to_y).await;
+            let (from_x, from_y) = super::desktop_screenshot_point(from_x, from_y);
+            let (to_x, to_y) = super::desktop_screenshot_point(to_x, to_y);
             if let Some(refusal) = super::desktop_pointer_guard::check(
                 "drag",
                 &args,
@@ -311,21 +313,28 @@ impl Tool for DragTool {
             {
                 return refusal;
             }
-            // Electron/Chromium windows take the press and the moves of a
-            // background drag but lose the release (the page's pointer
-            // capture is dropped), so the drop never lands. Refuse instead
-            // of reporting a delivery that did not happen.
+            // Chromium reads a mouse event's held buttons from the hardware
+            // state, which a window-routed press does not change, so an
+            // Electron page sees the drag moves with buttons == 0, releases
+            // its pointer capture and loses the drop. Send the gesture from
+            // the app's main process instead, where the held button is part
+            // of the event; refuse when that route is unavailable.
             if crate::browser::ElectronJs::is_electron(pid) {
-                return cua_driver_core::delivery::background_unavailable_result(
-                    ELECTRON_BACKGROUND_DRAG_UNAVAILABLE,
-                    "background_unavailable",
-                    "Electron/Chromium windows lose the release of a background drag on macOS",
-                    serde_json::json!({
-                        "effect": "refused",
-                        "event_kind": "mouse_drag",
-                        "requires": ["delivery_mode:foreground", "window_id"],
-                    }),
-                );
+                return self
+                    .electron_background_drag(
+                        &cursor_key,
+                        pid,
+                        wid,
+                        (from_lx, from_ly),
+                        (to_lx, to_ly),
+                        (from_sx, from_sy),
+                        (to_sx, to_sy),
+                        duration_ms,
+                        steps,
+                        &modifiers,
+                        button,
+                    )
+                    .await;
             }
         }
 
@@ -441,7 +450,12 @@ impl Tool for DragTool {
                                     button,
                                     true,
                                     observe,
-                                )
+                                )?;
+                                // Hold the front until AppKit finishes the
+                                // drop: restoring the previous app while the
+                                // session is still open cancels it.
+                                await_drag_session_end(pid);
+                                Ok(())
                             },
                         )
                         .map(|()| false);
@@ -533,6 +547,13 @@ impl Tool for DragTool {
             )
         };
         match result {
+            Ok(Ok(true))
+                if cua_driver_core::delivery::brief_foreground_allowed()
+                    && !cua_driver_core::delivery::background_requested_explicitly(&args) =>
+            {
+                self.brief_foreground_drag(&args, pid, wid, prior_front)
+                    .await
+            }
             Ok(Ok(true)) => drag_and_drop_session_result(pid, wid, changes.result_suffix()),
             Ok(Ok(false)) => ToolResult::text(format!(
                 "✅ Posted drag{btn_suffix}{mod_suffix} to pid {pid} window {wid} \
@@ -563,15 +584,253 @@ impl Tool for DragTool {
     }
 }
 
+impl DragTool {
+    /// The operator allowed a brief foreground step (trycua/cua#5478) and the
+    /// background drag started a native drag-and-drop session, which macOS
+    /// tracks with the real pointer. Repeat only this drag in the foreground,
+    /// which fronts the window, drives the pointer, then hands the frontmost
+    /// app and the pointer back. Check both and report the step in the result.
+    async fn brief_foreground_drag(
+        &self,
+        args: &Value,
+        pid: i32,
+        wid: u32,
+        prior_front: Option<i32>,
+    ) -> ToolResult {
+        let pointer_before = tokio::task::spawn_blocking(pointer_location)
+            .await
+            .ok()
+            .flatten();
+        tracing::info!(
+            pid,
+            window_id = wid,
+            ?prior_front,
+            "drag: background drop impossible (drag-and-drop session); \
+             operator allowed a brief foreground step"
+        );
+        let mut foreground_args = args.clone();
+        foreground_args["delivery_mode"] = serde_json::json!("foreground");
+        let mut result = self.invoke(foreground_args).await;
+
+        // The foreground drag leaves the pointer on the drop point (after the
+        // drop has finished, see `await_drag_session_end`); this step promised
+        // to hand it back, so put it where the user left it.
+        if let Some((x, y)) = pointer_before {
+            let _ =
+                tokio::task::spawn_blocking(move || crate::input::mouse::move_cursor_desktop(x, y))
+                    .await;
+        }
+        let pointer_after = tokio::task::spawn_blocking(pointer_location)
+            .await
+            .ok()
+            .flatten();
+        let front_after = apps::frontmost_pid();
+        let restored_frontmost = prior_front.is_none() || front_after == prior_front;
+        let restored_pointer = match (pointer_before, pointer_after) {
+            (Some((bx, by)), Some((ax, ay))) => Some((bx - ax).hypot(by - ay) <= 1.0),
+            _ => None,
+        };
+        tracing::info!(
+            pid,
+            window_id = wid,
+            restored_frontmost,
+            ?restored_pointer,
+            failed = result.is_error == Some(true),
+            "drag: brief foreground step finished"
+        );
+
+        let step = brief_foreground_step(restored_frontmost, restored_pointer);
+        let note = brief_foreground_note(restored_frontmost, restored_pointer);
+        let mut structured = result
+            .structured_content
+            .take()
+            .unwrap_or_else(|| serde_json::json!({}));
+        if let Some(fields) = structured.as_object_mut() {
+            fields.insert("foreground_step".to_owned(), step);
+        }
+        result.structured_content = Some(structured);
+        result
+            .content
+            .insert(0, cua_driver_core::protocol::Content::text(note));
+        result
+    }
+
+    /// Background drag in an Electron window through its main process
+    /// ([`crate::input::electron_drag`]). Refuses when the app's inspector
+    /// is unavailable (for example the inspector fuse is off).
+    #[allow(clippy::too_many_arguments)]
+    async fn electron_background_drag(
+        &self,
+        cursor_key: &str,
+        pid: i32,
+        wid: u32,
+        from_local: (f64, f64),
+        to_local: (f64, f64),
+        from_screen: (f64, f64),
+        to_screen: (f64, f64),
+        duration_ms: u64,
+        steps: usize,
+        modifiers: &[String],
+        button: DragButton,
+    ) -> ToolResult {
+        use crate::input::electron_drag::{
+            electron_drag_js, parse_electron_drag_reply, ElectronDragButton, ElectronDragReply,
+            ElectronDragSpec,
+        };
+        let spec = ElectronDragSpec {
+            window_id: wid,
+            from: from_local,
+            to: to_local,
+            steps,
+            duration_ms,
+            button: match button {
+                DragButton::Left => ElectronDragButton::Left,
+                DragButton::Right => ElectronDragButton::Right,
+                DragButton::Middle => ElectronDragButton::Middle,
+            },
+            modifiers: modifiers.to_vec(),
+        };
+        let cursor_key = cursor_key.to_owned();
+        crate::cursor::overlay::send_command(
+            cursor_key.clone(),
+            cursor_overlay::OverlayCommand::PinAbove(wid as u64),
+        );
+        crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), from_screen.0, from_screen.1)
+            .await;
+        crate::cursor::overlay::send_command(
+            cursor_key.clone(),
+            cursor_overlay::OverlayCommand::SetPressed(true),
+        );
+        let reply = crate::browser::ElectronJs::execute_main(&electron_drag_js(&spec), pid).await;
+        let outcome = match &reply {
+            Ok(text) => parse_electron_drag_reply(text),
+            Err(_) => None,
+        };
+        if matches!(outcome, Some(ElectronDragReply::Delivered { .. })) {
+            crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), to_screen.0, to_screen.1)
+                .await;
+            self.state
+                .cursor_registry
+                .update_position(&cursor_key, to_screen.0, to_screen.1);
+        }
+        crate::cursor::overlay::send_command(
+            cursor_key.clone(),
+            cursor_overlay::OverlayCommand::SetPressed(false),
+        );
+        match outcome {
+            Some(ElectronDragReply::Delivered {
+                route,
+                drag_intercepted,
+                html5_drop,
+            }) => {
+                let dnd = if html5_drop {
+                    " The gesture started an HTML5 drag and drop; the driver kept it out of the \
+                     native drag session and dropped it at the end point."
+                } else {
+                    ""
+                };
+                ToolResult::text(format!(
+                    "✅ Posted drag to Electron pid {pid} window {wid} from window-point \
+                     ({:.0}, {:.0}) → ({:.0}, {:.0}) through the app's main process \
+                     ({route}); pointer not moved, window not raised, focus kept.{dnd} \
+                     Not driver-verified — confirm via screenshot.",
+                    from_local.0, from_local.1, to_local.0, to_local.1,
+                ))
+                .with_structured(serde_json::json!({
+                    // Chromium trusted input (CDP Input or sendInputEvent), the
+                    // same public route as browser_pointer.
+                    "path": "trusted",
+                    "electron_route": route,
+                    "drag_intercepted": drag_intercepted,
+                    "html5_drop": html5_drop,
+                    "delivery_mode": "background",
+                    "verified": false,
+                    "effect": "unverifiable",
+                }))
+            }
+            other => {
+                let reason = match (other, &reply) {
+                    (Some(ElectronDragReply::Refused { reason }), _) => reason,
+                    (_, Err(error)) => error.to_string(),
+                    (_, Ok(text)) => format!("unexpected inspector reply: {text}"),
+                };
+                cua_driver_core::delivery::background_unavailable_result(
+                    format!("{ELECTRON_BACKGROUND_DRAG_UNAVAILABLE} ({reason})"),
+                    "background_unavailable",
+                    "the Electron app's main process could not take the drag",
+                    serde_json::json!({
+                        "effect": "refused",
+                        "event_kind": "mouse_drag",
+                        "reason": "electron_main_process_unavailable",
+                        "requires": ["delivery_mode:foreground", "window_id"],
+                    }),
+                )
+            }
+        }
+    }
+}
+
+/// Wait (up to 2 s) until `pid` shows no drag image, so a drag-and-drop
+/// session started by a foreground drag has finished dropping, then let AppKit
+/// settle briefly. A drag that started no session returns almost at once.
+fn await_drag_session_end(pid: i32) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while !drag_image_windows(pid).is_empty() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    std::thread::sleep(std::time::Duration::from_millis(150));
+}
+
+/// Current hardware pointer location in global display points.
+fn pointer_location() -> Option<(f64, f64)> {
+    use core_graphics::event::CGEvent;
+    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState).ok()?;
+    let location = CGEvent::new(source).ok()?.location();
+    Some((location.x, location.y))
+}
+
+/// Structured record of a brief foreground step, for the agent and the log.
+fn brief_foreground_step(restored_frontmost: bool, restored_pointer: Option<bool>) -> Value {
+    serde_json::json!({
+        "used": true,
+        "reason": "drag_and_drop_session",
+        "allowed_by": cua_driver_core::delivery::BRIEF_FOREGROUND_ENV,
+        "background_attempt": "no_drop",
+        "restored_frontmost": restored_frontmost,
+        "restored_pointer": restored_pointer,
+    })
+}
+
+fn brief_foreground_note(restored_frontmost: bool, restored_pointer: Option<bool>) -> String {
+    let mut note = String::from(
+        "Brief foreground step: the background drag started a macOS drag-and-drop session, \
+         which follows the real pointer, so the driver repeated this one drag in the \
+         foreground because the operator allowed it. The window came forward and the \
+         pointer moved for the drag only.",
+    );
+    note.push_str(if restored_frontmost {
+        " The previous frontmost app is back in front."
+    } else {
+        " The previous frontmost app did NOT come back to the front; tell the user."
+    });
+    note.push_str(match restored_pointer {
+        Some(true) => " The pointer is back where it was.",
+        Some(false) => " The pointer did NOT return to where it was; tell the user.",
+        None => " The pointer position could not be checked.",
+    });
+    note
+}
+
 /// `kCGDraggingWindowLevel`: AppKit shows the image of a live (or sliding
 /// back) drag-and-drop session in a window of the source app at this level.
 const DRAGGING_WINDOW_LEVEL: i32 = 500;
 
 const ELECTRON_BACKGROUND_DRAG_UNAVAILABLE: &str = "Background drag is unavailable for this \
-     Electron/Chromium window on macOS: it takes the press and the moves but loses the release, \
-     so the drop does not land. Use the app's own controls (a button, menu item or keyboard \
-     route) or, if the user allows the window to come forward, retry with \
-     delivery_mode:\"foreground\".";
+     Electron window on macOS: a window-routed drag cannot hold the page's mouse button \
+     (Chromium reads it from the hardware), and the app's main process did not take the drag. \
+     Use the app's own controls (a button, menu item or keyboard route) or, if the user allows \
+     the window to come forward, retry with delivery_mode:\"foreground\".";
 
 fn drag_image_windows(pid: i32) -> std::collections::HashSet<u32> {
     crate::windows::pid_on_screen_windows_any_layer(pid)
@@ -640,6 +899,27 @@ mod tests {
             assert_eq!(structured["code"], "window_id_required");
             assert_eq!(structured["effect"], "refused");
         }
+    }
+
+    #[test]
+    fn brief_foreground_step_reports_what_was_restored() {
+        let step = super::brief_foreground_step(true, Some(true));
+        assert_eq!(step["used"], true);
+        assert_eq!(step["reason"], "drag_and_drop_session");
+        assert_eq!(step["allowed_by"], "CUA_DRIVER_ALLOW_BRIEF_FOREGROUND");
+        assert_eq!(step["restored_frontmost"], true);
+        assert_eq!(step["restored_pointer"], true);
+        let unknown = super::brief_foreground_step(false, None);
+        assert_eq!(unknown["restored_frontmost"], false);
+        assert!(unknown["restored_pointer"].is_null());
+
+        let note = super::brief_foreground_note(true, Some(true));
+        assert!(note.contains("Brief foreground step"));
+        assert!(note.contains("frontmost app is back"));
+        assert!(note.contains("pointer is back"));
+        let failed = super::brief_foreground_note(false, Some(false));
+        assert!(failed.contains("did NOT come back"));
+        assert!(failed.contains("did NOT return"));
     }
 
     #[test]

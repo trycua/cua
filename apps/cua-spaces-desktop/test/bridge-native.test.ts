@@ -20,7 +20,7 @@ import { OPERATIONS, type OpArgs, type OpName } from "../../cua-spaces-web/src/b
 import { createBridge, type Bridge } from "../src/bridge";
 import type { BridgeEvent } from "../src/bridge/host";
 import { createOptions } from "../src/bridge/spaces";
-import { telemetrySignal } from "../src/bridge/telemetry";
+import { hostRecorded, telemetrySignal } from "../src/bridge/telemetry";
 import { AppModel } from "../src/model/app-model";
 import { CloudModel } from "../src/model/cloud";
 import { DevicesModel } from "../src/model/devices";
@@ -149,6 +149,8 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       ["machines.list", {}],
       ["host.status", {}],
       ["telemetry.track", { signals: [{ type: "step", step: "app_launched", ok: true }] }],
+      ["telemetry.linkNotice", {}],
+      ["telemetry.acknowledgeLinkNotice", {}],
       ["window.setBackgroundColor", { color: "#16181c" }],
       ["window.setDragRegions", { rects: [{ x: 78, y: 0, width: 400, height: 38 }] }],
       ["window.setDropTargets", { targets: [{ spaceId: space, x: 20, y: 60, width: 232, height: 180 }] }],
@@ -176,8 +178,8 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     for (const [method, args] of cases) problems.push(...shapeProblems(method, await call(method, args)));
     expect(problems).toEqual([]);
     // Every ported method has its case (or is checked below).
-    // (Teleport and the Keyvault: vault-native.test.ts; This machine, Devices, Settings and the rest: host-bridge.test.ts; the relay allowance: relay-usage.test.ts; presence: presence-bridge.test.ts; the Windows runtime fix: below.)
-    const elsewhere = new Set(["session.signIn", "spaces.create", "spaces.delete", "spaces.openStream", "relay.usage", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", ...AGENT_METHODS, ...VAULT_METHODS, ...HOST_METHODS]);
+    // (Teleport and the Keyvault: vault-native.test.ts; This machine, Devices, Settings and the rest: host-bridge.test.ts; the relay allowance: relay-usage.test.ts; resource numbers: resources.test.ts; presence: presence-bridge.test.ts; the Windows runtime fix: below.)
+    const elsewhere = new Set(["session.signIn", "spaces.create", "spaces.delete", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", ...AGENT_METHODS, ...VAULT_METHODS, ...HOST_METHODS]);
     const ported = bridge.registry.methods.filter((m) => !NOT_YET.includes(m) && !elsewhere.has(m));
     expect(ported.filter((m) => !cases.some(([c]) => c === m))).toEqual([]);
   });
@@ -245,7 +247,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     const row = model.spaces.find((s) => s.id === "pending:mac")!;
     expect(row.progress).toMatchObject({ label: "Downloading macOS (first time only)…", transfer: "12.4 of 30.0 GB · 85 MB/s · about 4 min" });
     expect(row.progress!.permille).toBeGreaterThan(10);
-    expect(row.detail).toBe("Another machine · Downloading macOS (first time only)…");
+    expect(row.detail).toBe("Another computer · Downloading macOS (first time only)…");
     release();
     await create;
   });
@@ -332,11 +334,11 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       signals: [
         { type: "feature", feature: "space_open" },
         { type: "feature", feature: "Not A Word" },
-        { type: "space-create", location: "local", guestOs: "linux", kind: "container", outcome: "ready", failedPhase: "none", stalled: false, elapsedMs: 1200, gpu: false, errorVariant: "" },
+        { type: "space-wizard", action: "opened" },
       ],
     });
     const after = telemetry.recorded.slice(-2);
-    expect(after.map((s) => (s as unknown as { tag: string }).tag)).toEqual(["Feature", "SpaceCreate"]);
+    expect(after.map((s) => (s as unknown as { tag: string }).tag)).toEqual(["Feature", "SpaceWizard"]);
     telemetry.current = { ...telemetry.current, enabled: false };
     const before = telemetry.recorded.length;
     await call("telemetry.track", { signals: [{ type: "feature", feature: "space_open" }] });
@@ -345,6 +347,36 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     expect(telemetrySignal(native, { type: "experiments-on", experiments: ["cua_volume", "BAD"] })).toBeNull();
     expect(telemetrySignal(native, { type: "space-create", location: "local", guestOs: "linux", kind: "container", outcome: "ready", failedPhase: "none", stalled: false, elapsedMs: 1200, gpu: false })).toBeNull();
     expect(telemetrySignal(native, { type: "launched", onboardingEligible: null })).not.toBeNull();
+  });
+
+  it("answers the one-time linking notice from the host's telemetry, and records that it was closed", async () => {
+    telemetry.linkNoticeDue = true;
+    const notice = (await call("telemetry.linkNotice")) as Record<string, unknown>;
+    expect(notice).toMatchObject({ due: true, title: "We've updated how usage data works", okLabel: "Got it", turnOffLabel: "Turn off usage data", detailsLabel: "What is collected", docsUrl: "https://cua.ai/docs/cua-sdk/concepts/telemetry" });
+    const before = telemetry.linkNoticeAcknowledged;
+    expect(await call("telemetry.acknowledgeLinkNotice")).toBeNull();
+    expect(telemetry.linkNoticeAcknowledged).toBe(before + 1);
+    expect(((await call("telemetry.linkNotice")) as { due: boolean }).due).toBe(false);
+  });
+
+  it("leaves a create's signals to the host, which records them from the create it runs", async () => {
+    const before = telemetry.recorded.length;
+    await call("telemetry.track", {
+      signals: [
+        { type: "feature", feature: "space_create_local" },
+        { type: "space-create-started", location: "local", guestOs: "linux", kind: "container", gpu: false },
+        { type: "step", step: "first_space_created", ok: true },
+        { type: "space-create", location: "local", guestOs: "linux", kind: "container", outcome: "error", failedPhase: "preparing", stalled: false, elapsedMs: 900, gpu: false, errorVariant: "" },
+        { type: "step", step: "first_space_ready", ok: true },
+      ],
+    });
+    expect(telemetry.recorded.length).toBe(before);
+    // The page's other signals still count.
+    await call("telemetry.track", { signals: [{ type: "feature", feature: "space_open" }, { type: "step", step: "onboarding_shown", ok: true }] });
+    expect(telemetry.recorded.length).toBe(before + 2);
+    expect(hostRecorded({ type: "feature", feature: "space_create_cloud" })).toBe(true);
+    expect(hostRecorded({ type: "step", step: "checklist_create_space", ok: true })).toBe(false);
+    expect(hostRecorded(null)).toBe(false);
   });
 
   it("records that the usage notice was seen once the first run leaves Welcome", async () => {
@@ -447,7 +479,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     const wait = () => new Promise((r) => setTimeout(r, 80));
     try {
       backend.rows = async () => {
-        throw sdkError("Unauthenticated", "Relay authentication failed. Sign in again to refresh your machines.");
+        throw sdkError("Unauthenticated", "Relay authentication failed. Sign in again to refresh your computers.");
       };
       await wait();
       await model.refresh();
@@ -531,7 +563,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       "checklist.send": { action: { type: "done", step: "teleport" } },
     };
     // This machine, Devices, Settings and the rest: host-bridge.test.ts reads them with their arguments.
-    const skip = new Set<OpName>(["spaces.create", "spaces.delete", "session.signIn", "session.signOut", "session.openExternal", "spaces.openStream", "relay.usage", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", ...VAULT_OPS, ...(HOST_OPS as OpName[])]);
+    const skip = new Set<OpName>(["spaces.create", "spaces.delete", "session.signIn", "session.signOut", "session.openExternal", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", ...VAULT_OPS, ...(HOST_OPS as OpName[])]);
     const problems: string[] = [];
     const checked: string[] = [];
     for (const op of OPERATIONS) {

@@ -180,6 +180,14 @@ on:
         description: "Sparkle cutover (once, see apps/cua-spaces-desktop/docs/sparkle-cutover.md): this release's Sparkle item is the Electron app"
         type: boolean
         default: false
+      skip_staging_gate:
+        description: "BREAK-GLASS: publish without a green staging smoke for this commit (needs skip_staging_reason; logged loudly)"
+        type: boolean
+        default: false
+      skip_staging_reason:
+        description: "Why the staging gate is skipped (required with skip_staging_gate)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -1687,6 +1695,30 @@ jobs:
   # version, this repository, the files' sha512). installer-manifest publishes
   # only after it passes; a manual run from a branch runs it on the build.
   # Unsigned parts (allowed off trycua/cua) are skipped with a warning.
+  # Staging first (CUA-1907): customers get nothing unless the staging smoke
+  # (cloud scripts/spaces-staging/smoke.py) is recorded green for this exact
+  # commit as the commit status "staging-smoke/cua-spaces". Only a release
+  # tag publishes, so only a tag run is gated. Break-glass: skip_staging_gate.
+  staging-gate:
+    name: Staging smoke is green
+    if: startsWith(github.ref, 'refs/tags/cua-spaces-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: .
+    permissions:
+      contents: read
+      statuses: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require a green staging smoke for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SKIP_STAGING_GATE: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_staging_gate }}
+          SKIP_REASON: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_staging_reason || '' }}
+        run: .github/scripts/require_staging_smoke.sh cua-spaces "$GITHUB_SHA"
+
   verify-release:
     name: Verify the signed release
     needs: [build-macos, electron-plan, electron-mac, electron-windows, electron-publish]
@@ -1745,6 +1777,12 @@ jobs:
         run: |
           set -euo pipefail
           expect=()
+          # Production never skips verification: an unsigned artifact on the
+          # canonical repository's release tag is a failure, not a warning.
+          if [ "$REQUIRE_SIGNING" = true ] && [ "$SWIFT_SIGNED" != true ]; then
+            echo "::error::trycua/cua release tag with an unsigned SwiftUI build: refusing to verify-skip"
+            exit 1
+          fi
           if [ "$SWIFT_SIGNED" = true ]; then
             expect+=(swift)
           else
@@ -1766,6 +1804,10 @@ jobs:
           fi
           [ "$APPCAST" = true ] && expect+=(appcast)
           if [ ${#expect[@]} -eq 0 ]; then
+            if [ "$REQUIRE_SIGNING" = true ]; then
+              echo "::error::nothing signed on a trycua/cua release tag"
+              exit 1
+            fi
             echo "::warning::nothing in this build is signed: no release verification"
             exit 0
           fi
@@ -1776,7 +1818,7 @@ jobs:
 
   installer-manifest:
     name: release-artifacts.json, latest.json, publish
-    needs: [build-macos, build-linux-windows, electron-plan, electron-mac, electron-publish, verify-release]
+    needs: [build-macos, build-linux-windows, electron-plan, electron-mac, electron-publish, verify-release, staging-gate]
     # Only a release tag publishes: the Sigstore identity the installers and
     # the updater feed trust is cd-cua-spaces.yml at refs/tags/cua-spaces-v*.
     # A manual run from a tag re-publishes; from a branch it only builds.
@@ -1788,6 +1830,7 @@ jobs:
       !cancelled() && startsWith(github.ref, 'refs/tags/cua-spaces-v')
       && needs.build-macos.result == 'success'
       && needs.verify-release.result == 'success'
+      && needs.staging-gate.result == 'success'
       && (needs.build-linux-windows.result == 'success' || needs.build-linux-windows.result == 'skipped')
       && (needs.electron-plan.outputs.publish != 'true' || needs.electron-publish.result == 'success')
     runs-on: ubuntu-latest
@@ -1979,4 +2022,5 @@ jobs:
             }
           fi
           gh release upload cua-install-latest assets/release-artifacts.json \
-            stamped/install.sh stamped/install.ps1 --clobber --repo "$GITHUB_REPOSITORY"
+            stamped/install.sh stamped/install.ps1 stamped/uninstall.sh stamped/uninstall.ps1 \
+            --clobber --repo "$GITHUB_REPOSITORY"

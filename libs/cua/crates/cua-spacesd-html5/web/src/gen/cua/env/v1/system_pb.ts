@@ -382,8 +382,8 @@ export const LimitsSchema: GenMessage<Limits> = /*@__PURE__*/
 export type InitRequest = Message<"cua.env.v1.InitRequest"> & {
   /**
    * Access token to install. If the driver has no token yet (first claim),
-   * the call must arrive over an already-authenticated channel such as the
-   * Fleet gateway or loopback. If a token is configured, the call must be
+   * the call must arrive over an already-authenticated channel such as a
+   * gateway or loopback. If a token is configured, the call must be
    * authenticated with it, and a different value here rotates it. Empty
    * leaves the token unchanged.
    *
@@ -1105,7 +1105,7 @@ export enum Runtime {
   UNKNOWN = 1,
 
   /**
-   * A KubeVirt virtual machine (Fleet).
+   * A KubeVirt virtual machine.
    *
    * @generated from enum value: RUNTIME_KUBEVIRT = 2;
    */

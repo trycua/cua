@@ -104,6 +104,7 @@ fn to_kv_access_request(request: &AccessRequest) -> cua_keyvault::broker::Access
         reason: request.reason.clone(),
         claimed_name: None,
         agent: None,
+        paths: None,
     }
 }
 

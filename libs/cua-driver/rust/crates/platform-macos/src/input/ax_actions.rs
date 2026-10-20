@@ -283,6 +283,19 @@ pub fn is_element_focused(pid: i32, element_ptr: usize) -> bool {
     }
 }
 
+/// Report whether `element_ptr` holds keyboard focus, by either readback.
+///
+/// The application's `AXFocusedUIElement` is the stronger signal, but for
+/// web content (the Tauri fixture) in a background window it does not name
+/// the DOM control even after the control took focus, so a targeted
+/// background `press_key` was refused although the key would have landed.
+/// Accept the control's own `AXFocused = true` too. A write that AppKit
+/// clobbered reads back `false` either way.
+pub fn element_has_keyboard_focus(pid: i32, element_ptr: usize) -> bool {
+    is_element_focused(pid, element_ptr)
+        || unsafe { copy_bool_attr(element_ptr as AXUIElementRef, "AXFocused") } == Some(true)
+}
+
 /// Set the AXValue of an element (for dropdowns, text fields, etc.).
 pub fn set_ax_value(element_ptr: usize, value: &str) -> anyhow::Result<()> {
     let err = unsafe { set_string_attr(element_ptr as AXUIElementRef, "AXValue", value) };

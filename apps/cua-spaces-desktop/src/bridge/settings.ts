@@ -147,7 +147,7 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
         model.changed("settings");
         return;
       case "default-location":
-        save({ defaultLocation: option === "cloud" ? model.native.AppLocation.Cloud : model.native.AppLocation.Local });
+        save({ defaultLocation: model.native.AppLocation.Local }); // Cua Cloud has ended
         return;
       case "auto-connect":
         save({ autoConnect: option === "on" });

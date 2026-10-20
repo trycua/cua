@@ -40,6 +40,8 @@ import { HOST_SETUP_COVERAGE } from "./ops/host-setup";
 import { SPACE_DETAIL_COVERAGE } from "./ops/space-detail";
 import { STREAM_COVERAGE } from "./ops/stream";
 import { RELAY_USAGE_COVERAGE } from "./ops/relay-usage";
+import { NUDGES_COVERAGE } from "./ops/nudges";
+import { RESOURCES_COVERAGE } from "./ops/resources";
 import { CHECKLIST_COVERAGE } from "./ops/checklist";
 import { PRESENCE_COVERAGE } from "./ops/presence";
 import { RUNTIME_FIX_COVERAGE } from "./ops/runtime-fix";
@@ -95,15 +97,13 @@ export const HOST_COVERAGE = {
   "keyvault.deny": { webkit: { methods: ["keyvault.deny"] }, tauri: ["keyvault_deny"] },
   "keyvault.revokeGrant": { webkit: { methods: ["keyvault.revokeGrant"] }, tauri: ["keyvault_revoke_grant"] },
   "session.get": {
-    webkit: { methods: ["session.get"] },
-    electron: { methods: ["session.get", "onboarding.get"] },
+    webkit: { methods: ["session.get", "onboarding.get"] },
     tauri: ["fleet_status", "onboarding_state", "daemon_status"],
   },
   "session.signIn": { webkit: { methods: ["session.signIn"] }, tauri: ["begin_sign_in"] },
   "session.signOut": { webkit: { methods: ["session.signOut"] }, tauri: ["sign_out"] },
   "session.completeOnboarding": {
-    webkit: { methods: [], byDesign: "the SwiftUI app's first run is its own window; resolves without a call" },
-    electron: { methods: ["onboarding.complete"] },
+    webkit: { methods: ["onboarding.complete"] },
     tauri: ["complete_onboarding"],
   },
   "session.openExternal": {
@@ -166,6 +166,8 @@ export const HOST_COVERAGE = {
   ...STARTUP_COVERAGE,
   ...STREAM_COVERAGE,
   ...RELAY_USAGE_COVERAGE,
+  ...NUDGES_COVERAGE,
+  ...RESOURCES_COVERAGE,
   ...CHECKLIST_COVERAGE,
   ...PRESENCE_COVERAGE,
   ...RUNTIME_FIX_COVERAGE,

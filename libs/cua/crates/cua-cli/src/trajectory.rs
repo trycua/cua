@@ -306,7 +306,7 @@ pub fn cmd_ls(machine: Option<String>, json: bool, out: &mut dyn Write) -> Resul
         out,
         format!(
             "{:<20} {:<18} {:>5}  Created",
-            "Machine", "Session", "Turns"
+            "Computer", "Session", "Turns"
         ),
     );
     line(out, "-".repeat(70));

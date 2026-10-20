@@ -8,7 +8,7 @@ import ai.cua.sdk.SandboxCreateOptions
 val cua = Cua.embedded(CuaConfig())
 val sb = cua.sandboxes().create(
     SandboxCreateOptions(
-        on = "local", // or "cloud"
+        on = "local", // or "aws"
         image = Image.linux(),
         name = "dev",
         waitFor = listOf(ReadinessProbe(service = "env")), // until its spacesd answers

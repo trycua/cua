@@ -5,6 +5,7 @@ import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import Cogl from 'gi://Cogl';
 import Cairo from 'cairo';
+import * as Config from 'resource:///org/gnome/shell/misc/config.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 
@@ -685,6 +686,8 @@ function drawBadgeChip(cr, glyph, filled, fillColor) {
 export default class WinRectsExtension extends Extension {
   enable() {
     this._captureClones = new Map();
+    if (Number.parseInt(Config.PACKAGE_VERSION, 10) >= 50)
+      throw new Error('winrects@cua is unsupported on GNOME Shell 50 or newer for session safety');
     this._impl = Gio.DBusExportedObject.wrapJSObject(IFACE, this);
     this._impl.export(Gio.DBus.session, '/org/cua/WinRects');
     this._nameId = Gio.bus_own_name(

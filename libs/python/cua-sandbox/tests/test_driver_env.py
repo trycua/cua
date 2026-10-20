@@ -4,85 +4,47 @@
 Wire/ownership tests; not proof of a guest desktop or native effects.
 """
 
+import asyncio
+import sys
 from types import SimpleNamespace
 
 import pytest
-from cua_sandbox import _sdk
 from cua_sandbox.interfaces.driver import DriverConnectionError
 from cua_sandbox.sandbox import Sandbox
-from cua_sandbox.transport.env import EnvTransport
-from cua_sandbox.transport.fleet import FleetTransport
+from cua_sandbox.transport.base import Transport as BaseTransport
 
-from .test_driver_mcp import McpTransport
-from .test_driver_mcp_shared import shared as _shared_fixture
-from .test_typed_driver import native as _native_fixture
+from ._driver_env_support import EnvHttp, McpTransport, env_sandbox
+from ._driver_env_support import native as _native_fixture
+from ._driver_env_support import records as _records_fixture
+from ._driver_env_support import shared as _shared_fixture
 from .test_typed_driver_native import sdk as _sdk_fixture
 
 native = _native_fixture
+records = _records_fixture
 shared = _shared_fixture
 sdk = _sdk_fixture
 
 
-class EnvHttp:
-    """A stand-in ``cua.SpacesdClient`` whose ``http`` is served by ``McpTransport``'s
-    synthetic MCP receiver (or a canned reply)."""
+class PlainTransport(BaseTransport):
+    """A transport with no cua-spacesd (e.g. QMP/VNC)."""
 
-    def __init__(self, mcp=None, reply=None):
-        self.mcp = mcp
-        self.reply = reply
-        self.requests = []
+    async def connect(self):
+        pass
 
-    async def http(self, request):
-        self.requests.append(request)
-        if self.reply is not None:
-            return self.reply
-        response = await self.mcp.request_service(
-            "mcp",
-            method=request.method,
-            path=request.path,
-            body=bytes(request.body),
-            headers=[(h.name, h.value) for h in request.headers],
-            timeout=None if request.timeout_ms is None else request.timeout_ms / 1000,
-            max_response_bytes=request.max_response_bytes,
-        )
-        return SimpleNamespace(
-            status=response.status_code,
-            headers=[SimpleNamespace(name=k, value=v) for k, v in response.headers.multi_items()],
-            body=response.content,
-        )
+    async def disconnect(self):
+        pass
 
+    async def send(self, action, **params):
+        raise NotImplementedError
 
-@pytest.fixture
-def records(monkeypatch):
-    """The SDK's record types, without the native library."""
-    types = SimpleNamespace(SpacesdHttpRequest=SimpleNamespace, SpacesdHttpHeader=SimpleNamespace)
-    monkeypatch.setattr(_sdk, "native", lambda: types)
-    return types
+    async def screenshot(self, format="png", quality=95):
+        raise NotImplementedError
 
+    async def get_screen_size(self):
+        raise NotImplementedError
 
-async def env_sandbox(env):
-    async def factory():
-        return env
-
-    sb = Sandbox(EnvTransport(env_factory=factory), _telemetry_enabled=False)
-    await sb._connect()
-    return sb
-
-
-class FleetEnvTransport(FleetTransport):
-    """A bound Fleet claim whose image runs cua-spacesd (service ``env``)."""
-
-    def __init__(self, env, services=("env",)):
-        super().__init__(sdk=None, bound=SimpleNamespace(services=list(services), name="sb"))
-        self._env = env
-        self.named = []
-
-    async def spacesd(self):
-        return self._env
-
-    async def request_service(self, name, **request):
-        self.named.append((name, request))
-        raise AssertionError("the spacesd carrier must not use Fleet named services")
+    async def get_environment(self):
+        return "linux"
 
 
 async def test_default_carrier_is_spacesd_mcp_through_the_sdk(shared, records):
@@ -121,30 +83,12 @@ async def test_default_carrier_is_spacesd_mcp_through_the_sdk(shared, records):
     await sb.disconnect()
 
 
-async def test_fleet_env_claim_uses_the_env_carrier_not_named_services(shared, records):
-    _, channels = shared
-    env = EnvHttp(reply=SimpleNamespace(status=200, headers=[], body=b"{}"))
-    transport = FleetEnvTransport(env)
-    sb = Sandbox(transport, _telemetry_enabled=False)
-    await sb._connect()
-    async with sb.driver.connect():
-        request = SimpleNamespace(method="POST", path="/mcp", body=b"", headers=[], timeout_ms=5)
-        await channels[0].transport.send(request)
-    assert len(env.requests) == 1 and not transport.named
-    await sb.disconnect()
-
-
-async def test_fleet_claim_without_env_service_fails_before_loading_native(monkeypatch):
-    import sys
-
+async def test_a_transport_without_spacesd_does_not_load_native(monkeypatch):
     monkeypatch.setitem(sys.modules, "cua_driver", None)
-    transport = FleetEnvTransport(EnvHttp(), services=("server",))
-    sb = Sandbox(transport, _telemetry_enabled=False)
-    await sb._connect()
-    with pytest.raises(DriverConnectionError, match="expose"):
+    sb = Sandbox(PlainTransport(), _telemetry_enabled=False)
+    with pytest.raises(DriverConnectionError, match="cua-spacesd"):
         async with sb.driver.connect():
             pass
-    await sb.disconnect()
 
 
 async def test_spacesd_carries_mcp_only(native):
@@ -152,8 +96,17 @@ async def test_spacesd_carries_mcp_only(native):
     with pytest.raises(DriverConnectionError, match="MCP only"):
         async with sb.driver.connect(service="env", transport="envelope"):
             pass
-    with pytest.raises(DriverConnectionError, match="Fleet transport"):
+    with pytest.raises(DriverConnectionError, match="MCP only"):
+        async with sb.driver.connect(transport="envelope"):
+            pass
+    with pytest.raises(DriverConnectionError, match="Named Driver services"):
         async with sb.driver.connect(service="mcp", transport="mcp"):
+            pass
+    with pytest.raises(DriverConnectionError, match="Named Driver services"):
+        async with sb.driver.connect(service="driver"):
+            pass
+    with pytest.raises(DriverConnectionError, match="transport must"):
+        async with sb.driver.connect(transport="guess"):
             pass
     await sb.disconnect()
 
@@ -162,7 +115,6 @@ async def test_actual_generated_driver_over_spacesd_mcp(sdk, records):
     """The real generated binding negotiates the envelope extension and
     exchanges typed records over the env carrier."""
     mcp = McpTransport()
-    await mcp.connect()
     mcp.response_data["result"] = {
         "content": [{"type": "text", "text": "typed-env-fixture"}],
         "isError": False,
@@ -181,4 +133,46 @@ async def test_actual_generated_driver_over_spacesd_mcp(sdk, records):
         assert env.requests and all(r.path == "/mcp" for r in env.requests)
     finally:
         await sb.disconnect()
-        await mcp.disconnect()
+
+
+async def test_accessor_rejects_cleanup_from_another_event_loop(shared, records):
+    sb = await env_sandbox(EnvHttp())
+    async with sb.driver.connect():
+
+        def wrong_loop():
+            with pytest.raises(DriverConnectionError, match="different event loop"):
+                asyncio.run(sb.driver.close())
+
+        await asyncio.to_thread(wrong_loop)
+    await sb.disconnect()
+
+
+async def test_session_name_only_for_active_owned_driver(shared, records):
+    sb = await env_sandbox(EnvHttp())
+    async with sb.driver.connect() as driver:
+        assert sb.driver.session_name(driver) == "host-selected"
+        with pytest.raises(DriverConnectionError, match="another sandbox"):
+            sb.driver.session_name(object())
+    with pytest.raises(DriverConnectionError, match="inactive"):
+        sb.driver.session_name(driver)
+    await sb.disconnect()
+
+
+async def test_context_cancellation_closes_the_channel(shared, records):
+    _, channels = shared
+    sb = await env_sandbox(EnvHttp())
+    opened = asyncio.Event()
+
+    async def run():
+        async with sb.driver.connect():
+            opened.set()
+            await asyncio.Event().wait()
+
+    task = asyncio.create_task(run())
+    await opened.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert channels[0].closes >= 1
+    assert not sb.driver._connections
+    await sb.disconnect()

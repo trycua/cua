@@ -23,7 +23,6 @@ COMPONENT_PATHS = {
     "bench-ui": "libs/python/bench-ui",
     "som": "libs/python/som",
     "sandbox-apps": "libs/python/cua-sandbox-apps",
-    "train": "libs/python/cua-train",
     "npm-core": "libs/typescript/core",
     "npm-playground": "libs/typescript/playground",
     "cuabot": "libs/cuabot",

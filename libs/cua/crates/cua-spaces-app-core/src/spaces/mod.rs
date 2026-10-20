@@ -132,7 +132,7 @@ fn provider_label(p: SpaceProvider) -> &'static str {
         SpaceProvider::Cloud => "Cua Cloud",
         SpaceProvider::Local => "This Mac",
         SpaceProvider::Direct => "Direct",
-        SpaceProvider::Relay => "My machines",
+        SpaceProvider::Relay => "My computers",
     }
 }
 
@@ -173,7 +173,7 @@ fn detail_for(row: &SpaceRow, status: SpaceStatus) -> String {
                     .filter(|n| !n.is_empty())
                     .unwrap_or(host)
             ),
-            None => "My machines \u{b7} via relay".into(),
+            None => "My computers \u{b7} via relay".into(),
         },
         p => provider_label(p).into(),
     }

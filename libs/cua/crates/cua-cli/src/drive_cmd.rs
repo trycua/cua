@@ -175,7 +175,7 @@ pub enum DriveCmd {
   cua volume status
   cua volume status --json")]
     Status,
-    /// Which store the drive uses (fs, s3, cloud).
+    /// Which store the drive uses (fs, s3).
     #[command(subcommand)]
     Config(ConfigCmd),
 }
@@ -192,7 +192,7 @@ pub enum ConfigCmd {
   cua volume config set --backend fs
   cua volume config set --backend s3 --endpoint http://127.0.0.1:9000 --bucket cua-volume --path-style")]
     Set {
-        /// `fs` (default), `s3`, or `cloud` (off unless the Cua cloud enables it).
+        /// `fs` (default) or `s3`.
         #[arg(long)]
         backend: String,
         #[arg(long)]

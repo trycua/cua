@@ -121,6 +121,33 @@ public final class FixtureAgentSetup: AgentSetupRunning, @unchecked Sendable {
     }
 }
 
+/// The one-time notice that usage data is now linked to the signed-in
+/// account (CUA-1881), for machines that saw the older "anonymous" wording:
+/// the SDK's words (`telemetryLinkNotice`) and whether it is due now.
+public struct LinkNoticeCopy: Sendable, Equatable {
+    public var due: Bool
+    public var title: String
+    public var body: String
+    /// "Got it": keeps usage data on.
+    public var okLabel: String
+    /// "Turn off usage data".
+    public var turnOffLabel: String
+    /// The link to what is collected.
+    public var detailsLabel: String
+    public var docsUrl: String
+
+    public init(due: Bool, title: String, body: String, okLabel: String, turnOffLabel: String,
+                detailsLabel: String, docsUrl: String) {
+        self.due = due
+        self.title = title
+        self.body = body
+        self.okLabel = okLabel
+        self.turnOffLabel = turnOffLabel
+        self.detailsLabel = detailsLabel
+        self.docsUrl = docsUrl
+    }
+}
+
 /// The usage-telemetry switch, and where the app's usage events go.
 public protocol TelemetryRunning: AnyObject, Sendable {
     func status() -> AppTelemetryInput
@@ -128,6 +155,16 @@ public protocol TelemetryRunning: AnyObject, Sendable {
     /// Records signals the app core derived (`appTelemetry*`): the same ones
     /// the Tauri app sends for the same step.
     func record(_ signals: [AppTelemetrySignal])
+    /// The first run's usage notice was on screen and the person moved on
+    /// (left Welcome, finished the first run, or used the switch beside the
+    /// note): from here usage events may be sent. Keeps the switch as it is.
+    func acknowledgeNotice()
+
+    /// The one-time linking notice: its words and whether it is due now.
+    func linkNotice() -> LinkNoticeCopy
+    /// The person closed it (either button): linking starts at the next
+    /// launch, never in this process.
+    func acknowledgeLinkNotice()
 }
 
 /// The SDK's telemetry setting (`$CUA_HOME/config.toml`, the same switch as
@@ -148,6 +185,24 @@ public final class LiveTelemetry: TelemetryRunning, @unchecked Sendable {
         guard !signals.isEmpty else { return }
         _ = appTelemetryRecord(signals: signals)
     }
+    /// Writes the notice marker (and records the `app_launched` that waited
+    /// for it) once; the switch stays as it is.
+    public func acknowledgeNotice() {
+        let s = telemetryStatus()
+        guard !s.noticeShown else { return }
+        do { try appTelemetryWelcomeLeft(on: s.enabled) } catch {
+            NSLog("Cua Spaces: the usage notice was not recorded: %@", LiveSpacesBackend.words(error))
+        }
+    }
+
+
+    public func linkNotice() -> LinkNoticeCopy {
+        let n = telemetryLinkNotice()
+        return LinkNoticeCopy(due: telemetryLinkNoticeDue(), title: n.title, body: n.body, okLabel: n.okLabel,
+                              turnOffLabel: n.turnOffLabel, detailsLabel: n.detailsLabel, docsUrl: n.docsUrl)
+    }
+
+    public func acknowledgeLinkNotice() { telemetryAcknowledgeLinkNotice() }
 }
 
 /// An in-memory switch (fixtures, tests).
@@ -163,6 +218,27 @@ public final class FixtureTelemetry: TelemetryRunning, @unchecked Sendable {
     public private(set) var recorded: [AppTelemetrySignal] = []
     public func record(_ signals: [AppTelemetrySignal]) {
         if current.enabled { recorded += signals }
+    }
+    /// How many times the notice was acknowledged.
+    public private(set) var acknowledgements = 0
+    public func acknowledgeNotice() {
+        acknowledgements += 1
+        current.noticeShown = true
+    }
+
+    /// Whether the one-time linking notice is due (a machine that saw the older wording).
+    public var linkNoticeDue = false
+    /// How many times the notice was closed.
+    public private(set) var linkNoticeAcknowledged = 0
+    public func linkNotice() -> LinkNoticeCopy {
+        LinkNoticeCopy(due: linkNoticeDue, title: "We've updated how usage data works",
+                       body: "Cua collects usage data, like which features you use and when something goes wrong.",
+                       okLabel: "Got it", turnOffLabel: "Turn off usage data", detailsLabel: "What is collected",
+                       docsUrl: "https://cua.ai/docs/cua-sdk/concepts/telemetry")
+    }
+    public func acknowledgeLinkNotice() {
+        linkNoticeAcknowledged += 1
+        linkNoticeDue = false
     }
 }
 
@@ -234,6 +310,8 @@ public final class LiveAccount: AccountRunning, @unchecked Sendable {
     }
 
     public func beginSignIn() async throws -> SignInAttempt {
+        // The browser's sign-in page says where to go back to (the SDK reads it).
+        setenv("CUA_AUTH_RETURN_TO", "Cua Spaces", 0)
         let attempt = try await auth.beginLogin(flow: nil)
         let url = URL(string: attempt.url())
         if let url {
@@ -271,9 +349,9 @@ public protocol BillingRunning: AnyObject, Sendable {
     func status() async throws -> AppBillingStatus
 }
 
-/// Billing no longer calls the retired Fleets API (`GET /api/billing/status`
-/// on run.cua.ai). It reports "billing not enabled" with no network call, so
-/// Settings hides the row and a refused cloud Space offers no Add credit.
+/// Billing has no service behind it: Cua Cloud has ended. It reports "billing
+/// not enabled" with no network call, so Settings hides the row and a refused
+/// cloud Space offers no Add credit.
 public final class LiveBilling: BillingRunning, @unchecked Sendable {
     let cua: Cua
     public init(cua: Cua) { self.cua = cua }
@@ -305,6 +383,16 @@ public final class FixtureBilling: BillingRunning, @unchecked Sendable {
 /// roles and billing are the account app's (app.cua.ai).
 public protocol TeamsReading: AnyObject, Sendable {
     func teams() async throws -> AppTeamsInput
+    /// People removed from the account's shared computers because sharing is
+    /// for teams now, until acknowledged (none from a server that predates it).
+    func shareRemovals() async throws -> [AppShareRemovalInput]
+    /// The owner has seen the removal note.
+    func ackShareRemovals() async throws
+}
+
+public extension TeamsReading {
+    func shareRemovals() async throws -> [AppShareRemovalInput] { [] }
+    func ackShareRemovals() async throws {}
 }
 
 /// Reads Teams with the account's access token (`force`: refresh it).
@@ -318,13 +406,26 @@ public final class LiveTeams: TeamsReading, @unchecked Sendable {
         }
         return try await appTeams(accountToken: token)
     }
+
+    public func shareRemovals() async throws -> [AppShareRemovalInput] {
+        guard let token = try await token(false) else { return [] }
+        return try await appShareRemovals(accountToken: token)
+    }
+
+    public func ackShareRemovals() async throws {
+        guard let token = try await token(false) else { return }
+        try await appAckShareRemovals(accountToken: token)
+    }
 }
 
 /// A fixture account's team (captures, tests).
 public final class FixtureTeams: TeamsReading, @unchecked Sendable {
     public var current: AppTeamsInput
+    /// Who the fixture's owner has not been told was removed yet.
+    public var removals: [AppShareRemovalInput]
 
-    public init(_ teams: [AppTeamInput]? = nil) {
+    public init(_ teams: [AppTeamInput]? = nil, removals: [AppShareRemovalInput] = []) {
+        self.removals = removals
         current = AppTeamsInput(accountAppUrl: "https://app.cua.ai", state: .ready(teams: teams ?? [
             AppTeamInput(
                 id: "o1", alias: "acme", name: "Acme Inc", role: "owner", plan: "teams", seats: 3,
@@ -335,6 +436,8 @@ public final class FixtureTeams: TeamsReading, @unchecked Sendable {
     }
 
     public func teams() async throws -> AppTeamsInput { current }
+    public func shareRemovals() async throws -> [AppShareRemovalInput] { removals }
+    public func ackShareRemovals() async throws { removals = [] }
 }
 
 /// Opens the website billing page (Settings' Manage billing, a refused

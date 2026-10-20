@@ -1,7 +1,15 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { teamName, useShareSheet, useTeamChoices } from "@/bridge";
+import { useEffect } from "react";
+
+import {
+  teamName,
+  useFeatureRecorded,
+  useSession,
+  useShareSheet,
+  useTeamChoices,
+} from "@/bridge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -15,14 +23,23 @@ import { cn } from "@/lib/utils";
  * core's (`share.view`); sharing asks for presence in the daemon before it
  * reaches the relay. "Share with team" offers the account's teams that can
  * take machines (owner or admin, Teams plan), the current team first: it
- * shares with `team:<id>`, as typing it would.
+ * shares with `team:<id>`, as typing it would, as "Can view" or "Can edit".
+ * Sharing is for teams: without one the sheet says so and links to Teams.
  */
 export default function ShareSheet() {
   const { session, sharing } = useShareSheet();
+  useFeatureRecorded("share_open", Boolean(session));
   const choices = useTeamChoices(Boolean(session?.input.signedIn && session.input.shareable));
+  const { openExternal } = useSession();
+  const { hasTeam } = choices;
+  useEffect(() => {
+    sharing?.setHasTeam(hasTeam);
+  }, [sharing, hasTeam, session?.input.spaceId]);
   if (!session || !sharing) return null;
   const v = session.view;
-  const locked = v.busy || v.disabledReason !== null;
+  const gate = session.gate;
+  const closed = v.disabledReason !== null || gate !== null;
+  const locked = v.busy || closed;
   const roles = v.roles.map((r) => ({ value: r.id, label: r.label }));
   const send = sharing.send.bind(sharing);
   const shared = new Set(v.rows.map((r) => r.who));
@@ -43,10 +60,15 @@ export default function ShareSheet() {
           <DialogTitle className="text-[15px] font-semibold" data-share-title>
             {v.title}
           </DialogTitle>
-          {v.disabledReason ? (
+          {v.disabledReason || gate ? (
             <p className="mt-1.5 text-[13px] text-muted-foreground" data-share-disabled>
-              {v.disabledReason}
+              {v.disabledReason ?? gate?.reason}
             </p>
+          ) : null}
+          {!v.disabledReason && gate ? (
+            <Button size="sm" variant="outline" className="mt-2" onClick={() => void openExternal(gate.action.url).catch(() => {})} data-share-action>
+              {gate.action.label}
+            </Button>
           ) : null}
 
           <form
@@ -60,18 +82,18 @@ export default function ShareSheet() {
               aria-label={v.whoPlaceholder}
               placeholder={v.whoPlaceholder}
               value={v.who}
-              disabled={v.disabledReason !== null}
+              disabled={closed}
               onChange={(e) => void send({ type: "set-who", who: e.target.value })}
               data-share-who
             />
             <span data-share-role={v.role}>
               <Select aria-label="Role" className="h-8 min-w-28" value={v.role} options={roles} onValueChange={(role) => void send({ type: "set-role", role })} />
             </span>
-            <Button type="submit" disabled={!v.canShare} data-share-submit>
+            <Button type="submit" disabled={!v.canShare || closed} data-share-submit>
               {v.shareLabel}
             </Button>
           </form>
-          {offered.length > 0 && v.disabledReason === null ? (
+          {offered.length > 0 && !closed ? (
             <div className="mt-3 flex flex-wrap items-center gap-2" data-share-teams>
               {offered.map((t) => (
                 <Button key={t.id} size="sm" variant="outline" disabled={v.busy} onClick={() => void shareWithTeam(t.id)} data-share-team={t.id}>

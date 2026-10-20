@@ -184,10 +184,10 @@ export async function makeLiveServices(native: Native, supervisor: DaemonSupervi
  * The SDK on this app's own daemon (`Cua.auto`: the daemon when it accepts
  * connections, else embedded). When another build's daemon came up in
  * between, the SDK refuses it with `DaemonNotRunning`, and one more start
- * replaces it. Cua Cloud uses the signed-in session.
+ * replaces it. The signed-in session drives the relay account.
  */
 async function makeCua(native: Native, supervisor: DaemonSupervisor | null): Promise<CuaLike> {
-  const config = native.CuaConfig.create({ fleetFromEnv: true, fleetFromSession: true });
+  const config = native.CuaConfig.create({ accountFromSession: true });
   try {
     return native.Cua.auto(config);
   } catch (error) {

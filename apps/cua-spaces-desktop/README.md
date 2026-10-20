@@ -379,8 +379,11 @@ chose, whether the keychain prompt is still on screen). Per system:
   Sparkle's relaunch prompt for a copy replaced on disk has no Electron
   counterpart (electron-updater installs on quit or relaunch).
 - **The first run** is the page's (`routes/onboarding`, the app core's
-  flow); `onboarding.json` is the Swift app's file, and Settings' Welcome
-  "Show again" makes it due again.
+  flow), the same page the SwiftUI app now opens for its own; `onboarding.json`
+  is the Swift app's file, and Settings' Welcome "Show again" makes it due
+  again. A Space it creates (`spaces.create` with `notifyWhenReady`) posts a
+  "<Space> is ready" notification with the Cua key (`cua-key-128.png` from the
+  web build); clicking it opens the Space's page.
 
 ## Live video
 

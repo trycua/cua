@@ -165,7 +165,7 @@ def test_installer_bake_needs_post_publication_verification(cd: dict) -> None:
 
     assert needs(bake) == {"release", "verify-published-signatures", "verify-published-installers"}
     assert "if" not in bake
-    advance = step(bake, "Advance public installer version on main")
+    advance = step(bake, "Advance public installer version through a pull request")
     assert advance["env"]["VERSION"] == "${{ needs.release.outputs.version }}"
     assert "--withdrawn-path \"$UPDATE_ROOT/.github/release-state/cua-driver-rs-withdrawn-versions\"" in advance["run"]
     assert "validate_release_versions.py" in advance["run"]

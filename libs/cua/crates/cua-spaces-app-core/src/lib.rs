@@ -42,11 +42,12 @@
 //! | [`drive_page`] | the Drive page: browse the Cua Volume, access requests (with presence) and grants, sync per device, conflicts, Open in Finder |
 //! | [`drive_settings`] | Settings, Storage: this machine or an S3-compatible bucket, the Finder volume (a mount on Linux), the block cache |
 //! | [`drive_mount_preview`] | the first run's Cua Volume page (its animated miniature) |
+//! | [`resources`] | processor, memory and disk of this Mac, each extra Space and your other computers: the rows, the bars, the low-disk warning |
 //! | [`notifications`] | which daemon notifications to post as system notifications, and the list |
 //! | [`share`] | who a Space is shared with (viewer or editor) and the Share sheet |
 //! | `installer` | the "Command line" step: plan and install the bundled `cua` (feature `installer`) |
 //! | [`agents`] | coding agent runs (labels, order, filter) and the agents on this machine (Settings rows, setup summary) |
-//! | [`telemetry`] | which anonymous usage events a UI step means, and sending them (feature `telemetry`) |
+//! | [`telemetry`] | which usage events a UI step means, and sending them (feature `telemetry`) |
 //! | [`presence`] | the name and principal id the apps join a Space's presence as |
 //! | [`paths`] | home-relative paths |
 //! | [`errors`] | the words a failed action shows (a dead daemon in plain words) |
@@ -60,6 +61,7 @@ pub mod billing;
 pub mod checklist;
 pub mod cloud_connect;
 pub mod devices;
+pub mod diagnostics;
 pub mod dispatch;
 pub mod drive_mount_preview;
 pub mod drive_page;
@@ -67,6 +69,7 @@ pub mod drive_settings;
 pub mod driver_preview;
 pub mod errors;
 pub mod experiments;
+pub mod first_run;
 pub mod host;
 pub mod installer;
 pub mod keyvault;
@@ -75,6 +78,7 @@ pub mod machines;
 pub mod model;
 pub mod notch;
 pub mod notifications;
+pub mod nudges;
 pub mod onboarding;
 pub mod onboarding_preview;
 pub mod palette;
@@ -83,6 +87,7 @@ pub mod paths;
 pub mod persistent;
 pub mod presence;
 pub mod relay_usage;
+pub mod resources;
 pub mod settings;
 pub mod share;
 pub mod spaces;

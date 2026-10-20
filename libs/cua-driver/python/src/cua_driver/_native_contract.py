@@ -1212,6 +1212,45 @@ class _UniffiFfiConverterTypeActionEvidence(_UniffiConverterRustBuffer):
         _UniffiFfiConverterTypeActionEvidenceKind.write(value.kind, buf)
         _UniffiFfiConverterOptionalString.write(value.detail, buf)
 
+@dataclass
+class ActionNextCall:
+    """
+    A call an agent can make next: `{tool, arguments}`.
+"""
+    def __init__(self, *, tool:str, arguments:str):
+        self.tool = tool
+        self.arguments = arguments
+
+
+
+
+    def __str__(self):
+        return "ActionNextCall(tool={}, arguments={})".format(self.tool, self.arguments)
+    def __eq__(self, other):
+        if self.tool != other.tool:
+            return False
+        if self.arguments != other.arguments:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeActionNextCall(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return ActionNextCall(
+            tool=_UniffiFfiConverterString.read(buf),
+            arguments=_UniffiFfiConverterString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.tool)
+        _UniffiFfiConverterString.check_lower(value.arguments)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.tool, buf)
+        _UniffiFfiConverterString.write(value.arguments, buf)
+
 
 
 
@@ -1471,9 +1510,34 @@ class _UniffiFfiConverterOptionalTypeActionError(_UniffiConverterRustBuffer):
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
+class _UniffiFfiConverterOptionalTypeActionNextCall(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeActionNextCall.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeActionNextCall.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeActionNextCall.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
 @dataclass
 class ActionResult:
-    def __init__(self, *, effect:ActionEffect, route:ActionRoute, delivery:typing.Optional[ActionDelivery], evidence:typing.Optional[typing.List[ActionEvidence]], escalation:typing.Optional[ActionEscalation], summary:typing.Optional[str], error:typing.Optional[ActionError]):
+    def __init__(self, *, effect:ActionEffect, route:ActionRoute, delivery:typing.Optional[ActionDelivery], evidence:typing.Optional[typing.List[ActionEvidence]], escalation:typing.Optional[ActionEscalation], summary:typing.Optional[str], error:typing.Optional[ActionError], hint:typing.Optional[str], next_call:typing.Optional[ActionNextCall]):
         self.effect = effect
         self.route = route
         self.delivery = delivery
@@ -1481,12 +1545,14 @@ class ActionResult:
         self.escalation = escalation
         self.summary = summary
         self.error = error
+        self.hint = hint
+        self.next_call = next_call
 
 
 
 
     def __str__(self):
-        return "ActionResult(effect={}, route={}, delivery={}, evidence={}, escalation={}, summary={}, error={})".format(self.effect, self.route, self.delivery, self.evidence, self.escalation, self.summary, self.error)
+        return "ActionResult(effect={}, route={}, delivery={}, evidence={}, escalation={}, summary={}, error={}, hint={}, next_call={})".format(self.effect, self.route, self.delivery, self.evidence, self.escalation, self.summary, self.error, self.hint, self.next_call)
     def __eq__(self, other):
         if self.effect != other.effect:
             return False
@@ -1502,6 +1568,10 @@ class ActionResult:
             return False
         if self.error != other.error:
             return False
+        if self.hint != other.hint:
+            return False
+        if self.next_call != other.next_call:
+            return False
         return True
 
 class _UniffiFfiConverterTypeActionResult(_UniffiConverterRustBuffer):
@@ -1515,6 +1585,8 @@ class _UniffiFfiConverterTypeActionResult(_UniffiConverterRustBuffer):
             escalation=_UniffiFfiConverterOptionalTypeActionEscalation.read(buf),
             summary=_UniffiFfiConverterOptionalString.read(buf),
             error=_UniffiFfiConverterOptionalTypeActionError.read(buf),
+            hint=_UniffiFfiConverterOptionalString.read(buf),
+            next_call=_UniffiFfiConverterOptionalTypeActionNextCall.read(buf),
         )
 
     @staticmethod
@@ -1526,6 +1598,8 @@ class _UniffiFfiConverterTypeActionResult(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeActionEscalation.check_lower(value.escalation)
         _UniffiFfiConverterOptionalString.check_lower(value.summary)
         _UniffiFfiConverterOptionalTypeActionError.check_lower(value.error)
+        _UniffiFfiConverterOptionalString.check_lower(value.hint)
+        _UniffiFfiConverterOptionalTypeActionNextCall.check_lower(value.next_call)
 
     @staticmethod
     def write(value, buf):
@@ -1536,6 +1610,8 @@ class _UniffiFfiConverterTypeActionResult(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeActionEscalation.write(value.escalation, buf)
         _UniffiFfiConverterOptionalString.write(value.summary, buf)
         _UniffiFfiConverterOptionalTypeActionError.write(value.error, buf)
+        _UniffiFfiConverterOptionalString.write(value.hint, buf)
+        _UniffiFfiConverterOptionalTypeActionNextCall.write(value.next_call, buf)
 
 class _UniffiFfiConverterBoolean:
     @classmethod
@@ -8637,6 +8713,7 @@ __all__ = [
     "ActionError",
     "ActionEscalation",
     "ActionEvidence",
+    "ActionNextCall",
     "ActionResult",
     "AppInfo",
     "BoundsExpectation",

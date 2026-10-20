@@ -14,12 +14,11 @@
 //!
 //! A bare, `vm:` or `container:` OCI ref is resolved first by the one
 //! resolver ([`cua_image::resolve`]: the variant the backend runs, pinned by
-//! digest), so any Fleet or canonical image ref runs on the right backend:
+//! digest), so any canonical image ref runs on the right backend:
 //! a KubeVirt containerDisk boots under QEMU for the architecture the image
 //! offers (the host's when it has one), a Lume image under Lume, a rootfs as
 //! a container, and an image no local backend runs fails with
-//! [`RuntimeError::UnsupportedImage`]. `fleet:<pool-or-template>` images are
-//! resolved one layer up, in `cua_sandbox_core::fleet_local`.
+//! [`RuntimeError::UnsupportedImage`].
 //!
 //! Operations on an existing instance find its backend by asking each one
 //! (container, QEMU, Lume) for the instance's status.
@@ -649,8 +648,8 @@ impl LocalRuntime for VmmLocal {
 
     async fn build_image(
         &self,
-        spec: &cua_fleet::BuildSpec,
-        creds: Option<&cua_fleet::RegistryCredentials>,
+        spec: &cua_image::build::BuildSpec,
+        creds: Option<&cua_image::RegistryCredentials>,
     ) -> RuntimeResult<String> {
         let from = spec.from.trim();
         let (prefix, rest) = match from.split_once(':') {
@@ -672,11 +671,11 @@ impl LocalRuntime for VmmLocal {
         let files = spec
             .files
             .iter()
-            .map(cua_fleet::builds::local_build_file)
+            .map(cua_image::build::local_build_file)
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| RuntimeError::Other(e.to_string()))?;
-        let recipe = cua_fleet::builds::build_recipe(spec, &pinned, files, None);
-        let tag = cua_fleet::builds::build_name(&recipe);
+        let recipe = cua_image::build::build_recipe(spec, &pinned, files, None);
+        let tag = cua_image::build::build_name(&recipe);
         let reference = format!("{LOCAL_BUILD_REPO}:{tag}");
         let ledger = cua_vmm::container::ledger::PullLedger::default();
         if rt.docker().inspect_image(&reference).await.is_ok() {
@@ -724,7 +723,7 @@ impl LocalRuntime for VmmLocal {
         );
         let budget = spec
             .timeout
-            .unwrap_or(cua_fleet::builds::DEFAULT_BUILD_TIMEOUT);
+            .unwrap_or(cua_image::build::DEFAULT_BUILD_TIMEOUT);
         let built = tokio::time::timeout(budget, build).await;
         // The build directory is scratch either way.
         let _ = std::fs::remove_dir_all(&out);
@@ -854,6 +853,7 @@ impl LocalRuntime for VmmLocal {
             });
         }
         refuse_gpu(&spec.image, spec.gpu.is_some(), &r)?;
+        preflight_refusal(os_of(&spec.os), p.backend).await?;
         let rt = self.runtime(p.backend).await.map_err(rt_err)?;
         let mut s = StartSpec::new(&spec.name, p.image)
             .os(os_of(&spec.os))
@@ -919,8 +919,7 @@ impl LocalRuntime for VmmLocal {
             return Err(RuntimeError::Unsupported {
                 backend: "local".into(),
                 op: format!(
-                    "sidecar {:?} args/cpu/memory (cloud pool templates only; fold args into \
-                     command)",
+                    "sidecar {:?} args/cpu/memory (fold args into command)",
                     c.name
                 ),
             });
@@ -1217,11 +1216,67 @@ impl VmmLocal {
     }
 }
 
+// ------------------------------------------------------------------ preflight
+
+/// Refuses a create the machine cannot run, in plain words (the first
+/// failed check of [`cua_vmm::preflight`]), before anything is pulled. The
+/// disk is left to the guards of the create itself, which know the image's
+/// real size.
+async fn preflight_refusal(os: cua_vmm::GuestOs, backend: BackendKind) -> RuntimeResult<()> {
+    use cua_create_failure::preflight::Runs;
+    let runs = if backend == BackendKind::Container {
+        Runs::Container
+    } else {
+        Runs::Vm
+    };
+    let req = cua_vmm::preflight::request(cua_vmm::preflight::guest_of(os), runs, None);
+    let mut facts = cua_vmm::preflight::gather(&req).await;
+    facts.free_bytes = None;
+    match cua_create_failure::preflight::evaluate(&req, &facts)
+        .into_iter()
+        .next()
+    {
+        Some(issue) => Err(RuntimeError::Other(issue.message)),
+        None => Ok(()),
+    }
+}
+
 // ------------------------------------------------------------------ doctor
 
 /// `cua runtime doctor`: the `cua-vmm` report (read-only).
 pub async fn doctor_report() -> DoctorReport {
     auto::doctor().await
+}
+
+/// `RuntimeService.Doctor`'s answer: the runtime report, plus on macOS
+/// Local Network access as this process has it and which app macOS holds
+/// responsible for it (`local_network`). This process is the one that
+/// talks to the VMs (the daemon, or the SDK embedding it); a CLI's own
+/// connect would test the terminal's grant instead (CUA-1807).
+pub async fn doctor_response() -> cua_proto::daemon::v1::DoctorResponse {
+    let report = doctor_report().await;
+    let mut json = serde_json::to_value(&report).unwrap_or_default();
+    if cfg!(target_os = "macos")
+        && let Some(map) = json.as_object_mut()
+    {
+        let ln = cua_vmm::local_network::report(&cua_vmm::local_network::lume_base()).await;
+        map.insert(
+            "local_network".into(),
+            serde_json::to_value(ln).unwrap_or_default(),
+        );
+    }
+    if let Some(map) = json.as_object_mut() {
+        // What would stop a create here, per Space the host can run, in
+        // words the apps and the CLI show as they are.
+        map.insert(
+            "preflight".into(),
+            serde_json::to_value(cua_vmm::preflight::report().await).unwrap_or_default(),
+        );
+    }
+    cua_proto::daemon::v1::DoctorResponse {
+        checks: doctor_checks(&report),
+        report_json: json.to_string(),
+    }
 }
 
 /// The report as `cua.daemon.v1` checks (one per backend).
@@ -1266,8 +1321,26 @@ pub async fn setup(
     components: &[String],
     dry_run: bool,
 ) -> Result<Vec<cua_proto::daemon::v1::SetupStep>> {
+    setup_with(
+        doctor_report().await,
+        components,
+        dry_run,
+        cua_vmm::qemu::install_qemu,
+        cua_vmm::lume::install_lume,
+        kvm_step,
+    )
+    .await
+}
+
+async fn setup_with(
+    report: DoctorReport,
+    components: &[String],
+    dry_run: bool,
+    install_qemu: impl AsyncFn() -> cua_vmm::Result<()>,
+    install_lume: impl AsyncFn() -> cua_vmm::Result<()>,
+    kvm: impl AsyncFn(bool) -> Option<cua_proto::daemon::v1::SetupStep>,
+) -> Result<Vec<cua_proto::daemon::v1::SetupStep>> {
     use cua_proto::daemon::v1::{CheckStatus, SetupStep};
-    let report = doctor_report().await;
     let wanted: Vec<String> = if components.is_empty() {
         report
             .backends
@@ -1311,8 +1384,8 @@ pub async fn setup(
             continue;
         }
         let result = match kind {
-            BackendKind::Qemu => cua_vmm::qemu::install_qemu().await,
-            BackendKind::Lume => cua_vmm::lume::install_lume().await,
+            BackendKind::Qemu => install_qemu().await,
+            BackendKind::Lume => install_lume().await,
             _ => Err(VmmError::Unsupported {
                 backend: "container",
                 op: "unattended runsc install (run the plan shown by --dry-run)",
@@ -1331,7 +1404,47 @@ pub async fn setup(
             },
         });
     }
+    let qemu_installed = report.qemu.qemu_img.is_some()
+        && (report.qemu.binaries)
+            .get(report.host.arch.qemu())
+            .is_some_and(Option::is_some);
+    let qemu_present = match steps.iter().find(|s| s.name == "qemu") {
+        Some(s) => s.status != CheckStatus::Error as i32,
+        None => components.is_empty() && qemu_installed,
+    };
+    if qemu_present {
+        steps.extend(kvm(dry_run).await);
+    }
     Ok(steps)
+}
+
+async fn kvm_step(dry_run: bool) -> Option<cua_proto::daemon::v1::SetupStep> {
+    use cua_proto::daemon::v1::{CheckStatus, SetupStep};
+    if cua_vmm::host::HostOs::current() != cua_vmm::host::HostOs::Linux {
+        return None;
+    }
+    let denied = cua_vmm::host::kvm_usable()
+        .is_err_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied);
+    if denied && !dry_run && !cua_vmm::host::sudo_available() {
+        return Some(SetupStep {
+            name: "kvm".into(),
+            status: CheckStatus::Ok as i32,
+            detail: "KVM access denied; using slow TCG emulation (sudo unavailable)".into(),
+        });
+    }
+    let user = std::env::var("USER").ok();
+    let run = async |program: &str, args: &[&str]| cua_vmm::host::run(program, args).await;
+    let (status, detail) =
+        match cua_vmm::qemu::grant_kvm(cua_vmm::host::kvm_usable, user, dry_run, run).await {
+            Ok(detail) if dry_run && denied => (CheckStatus::Installable, detail),
+            Ok(detail) => (CheckStatus::Ok, detail),
+            Err(e) => (CheckStatus::Error, Some(e.to_string())),
+        };
+    detail.map(|detail| SetupStep {
+        name: "kvm".into(),
+        status: status as i32,
+        detail,
+    })
 }
 
 // ------------------------------------------------------------------ images
@@ -1860,5 +1973,116 @@ mod tests {
         let r = place("localhost:5000/img:tag", "linux").unwrap();
         assert_eq!(r.image, ImageSource::oci("localhost:5000/img:tag"));
         assert!(place(" ", "linux").is_err());
+    }
+
+    fn qemu_report(ready: bool) -> cua_vmm::auto::DoctorReport {
+        use cua_vmm::auto::{BackendStatus, DoctorReport, HostReport};
+        DoctorReport {
+            host: HostReport {
+                os: cua_vmm::host::HostOs::Linux,
+                arch: cua_vmm::Arch::X86_64,
+                kvm: false,
+                accel: Default::default(),
+            },
+            backends: vec![BackendStatus {
+                backend: super::BackendKind::Qemu,
+                ready,
+                provisionable: true,
+                detail: String::new(),
+                missing: vec![],
+                provisioning: vec!["apt-get install qemu".into()],
+            }],
+            qemu: Default::default(),
+            lume: Default::default(),
+            container: Default::default(),
+        }
+    }
+
+    fn kvm_step() -> Option<cua_proto::daemon::v1::SetupStep> {
+        Some(cua_proto::daemon::v1::SetupStep {
+            name: "kvm".into(),
+            status: cua_proto::daemon::v1::CheckStatus::Ok as i32,
+            detail: "added".into(),
+        })
+    }
+
+    async fn setup_steps(
+        report: cua_vmm::auto::DoctorReport,
+        components: &[&str],
+        dry_run: bool,
+        installs: bool,
+    ) -> Vec<(String, cua_proto::daemon::v1::CheckStatus)> {
+        let components: Vec<String> = components.iter().map(|c| c.to_string()).collect();
+        let install = async || match installs {
+            true => Ok(()),
+            false => Err(super::VmmError::PermissionDenied("sudo".into())),
+        };
+        let kvm = async |_| kvm_step();
+        super::setup_with(report, &components, dry_run, &install, &install, kvm)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|s| (s.name, s.status.try_into().unwrap()))
+            .collect()
+    }
+
+    fn steps(
+        steps: &[(&str, cua_proto::daemon::v1::CheckStatus)],
+    ) -> Vec<(String, cua_proto::daemon::v1::CheckStatus)> {
+        steps.iter().map(|(n, s)| (n.to_string(), *s)).collect()
+    }
+
+    #[tokio::test]
+    async fn the_kvm_step_follows_qemu_once_it_is_present() {
+        use cua_proto::daemon::v1::CheckStatus::{Installable, Ok};
+        assert_eq!(
+            setup_steps(qemu_report(false), &[], false, true).await,
+            steps(&[("qemu", Ok), ("kvm", Ok)])
+        );
+        assert_eq!(
+            setup_steps(qemu_report(true), &["qemu"], false, true).await,
+            steps(&[("qemu", Ok), ("kvm", Ok)])
+        );
+        assert_eq!(
+            setup_steps(qemu_report(false), &["qemu"], true, true).await,
+            steps(&[("qemu", Installable), ("kvm", Ok)])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_qemu_install_has_no_kvm_step() {
+        use cua_proto::daemon::v1::CheckStatus::Error;
+        assert_eq!(
+            setup_steps(qemu_report(false), &["qemu"], false, false).await,
+            steps(&[("qemu", Error)])
+        );
+    }
+
+    #[tokio::test]
+    async fn components_without_qemu_have_no_kvm_step() {
+        use cua_proto::daemon::v1::CheckStatus::Error;
+        assert_eq!(
+            setup_steps(qemu_report(false), &["lume"], false, false).await,
+            steps(&[("lume", Error)])
+        );
+        assert!(
+            setup_steps(qemu_report(true), &[], false, true)
+                .await
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn installed_qemu_denied_kvm_still_gets_a_kvm_step() {
+        use cua_proto::daemon::v1::CheckStatus::Ok;
+        let mut report = qemu_report(false);
+        report.backends[0].provisionable = false;
+        report.qemu.qemu_img = Some("/usr/bin/qemu-img".into());
+        let system = Some("/usr/bin/qemu-system-x86_64".into());
+        report.qemu.binaries.insert("x86_64".into(), system);
+        assert_eq!(
+            setup_steps(report, &[], false, true).await,
+            steps(&[("kvm", Ok)])
+        );
     }
 }

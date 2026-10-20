@@ -251,6 +251,7 @@ describe('app core parity flows (webview)', () => {
       'machines',
       'checklist',
       'create-stages',
+      'first-run',
     ]);
   });
 

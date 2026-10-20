@@ -5851,12 +5851,15 @@ async fn overlay_glide_to_target_for(cursor_id: &str, sx: f64, sy: f64, target: 
 /// snapshot converts the action's points, places the overlay and sizes the
 /// virtual pointer, so they cannot disagree about the monitor layout.
 async fn desktop_input_space() -> anyhow::Result<crate::wayland::DesktopInputSpace> {
-    if !crate::wayland::wayland_input_enabled() {
-        return Ok(crate::wayland::DesktopInputSpace::default());
-    }
-    tokio::task::spawn_blocking(crate::wayland::DesktopInputSpace::current)
-        .await
-        .map_err(|error| anyhow::anyhow!("task error: {error}"))?
+    tokio::task::spawn_blocking(|| {
+        crate::interaction::admit_lock(crate::interaction::policy::Scope::DesktopInput, false)?;
+        if !crate::wayland::wayland_input_enabled() {
+            return Ok(crate::wayland::DesktopInputSpace::default());
+        }
+        crate::wayland::DesktopInputSpace::current()
+    })
+    .await
+    .map_err(|error| anyhow::anyhow!("task error: {error}"))?
 }
 
 /// Keep the logical cursor position in sync with every visibly targeted

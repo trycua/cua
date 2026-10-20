@@ -1,10 +1,20 @@
-//! The decision layer every Linux compositor adapter shares. Adapters report
-//! facts; this layer owns the deadline rule, the focus read-back loop and the
-//! settle loop.
+//! The layer every Linux compositor adapter shares: the lock rule in
+//! [`policy`], the one foreground transaction entry point, the deadline
+//! rule, the focus read-back loop and the settle loop. Adapters still own
+//! their focus, restore and geometry checks.
 
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+
+pub mod facts;
+pub mod policy;
+
+/// Refuse an operation of `scope` the session lock does not admit.
+/// `focus_read_back` says the target's exact focus was read back.
+pub fn admit_lock(scope: policy::Scope, focus_read_back: bool) -> Result<()> {
+    policy::lock(scope, &facts::locked(), focus_read_back)
+}
 
 /// Whether a foreground transaction gives focus back once its body ran.
 #[derive(Clone, Copy)]
@@ -39,8 +49,13 @@ pub fn with_target_foreground<T>(
 ) -> Result<T> {
     use crate::wayland::{bind_foreground_target, kwin_helper, niri, shell_helper, sway_ipc};
     if let RestoreMode::LeaveFocused = mode {
+        admit_lock(policy::Scope::TargetBoundInput, false)?;
         return body();
     }
+    let body = || {
+        admit_lock(policy::Scope::WindowInput, true)?;
+        body()
+    };
     if std::env::var_os("WAYLAND_DISPLAY").is_none() {
         return crate::input::with_x11_foreground(window_id, 80, body);
     }

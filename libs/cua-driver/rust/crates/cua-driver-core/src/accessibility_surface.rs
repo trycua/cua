@@ -107,6 +107,17 @@ mod tests {
         }
     }
 
+    #[test]
+    fn discovery_does_not_replace_capture_backed_observations() {
+        assert_eq!(
+            crate::tool::default_capabilities_for(TOOL_NAME),
+            vec![CAPABILITY.to_owned()]
+        );
+        let window = crate::tool::default_capabilities_for("get_window_state");
+        assert!(window.iter().any(|cap| cap == "accessibility.tree.bounded"));
+        assert!(window.iter().any(|cap| cap == "screen.capture.window"));
+    }
+
     #[tokio::test]
     async fn unsupported_platform_refuses_explicitly() {
         let result = UnsupportedAccessibilitySurfaceTool::new("windows")

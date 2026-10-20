@@ -174,7 +174,7 @@ where
         GATE.get_or_init(|| Arc::new(SingleFlight::new(Duration::ZERO))),
         "focused document typing",
         FOCUSED_DOCUMENT_PROBE_TIMEOUT,
-        "native typing if busy or stopped before writing; otherwise an unknown-effect result without retry",
+        "native typing if no write started; otherwise an unknown-effect result without retry",
         f,
     )
 }

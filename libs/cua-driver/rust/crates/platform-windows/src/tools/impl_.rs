@@ -5230,7 +5230,6 @@ fn focused_document_tool_result(
                 "verify": "unverifiable",
                 "effect": "unverifiable",
                 "retryable": false,
-
             })),
         ),
     }

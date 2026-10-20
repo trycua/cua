@@ -30,6 +30,8 @@ pub(crate) enum FocusedDocumentTypeOutcome {
     Unknown(&'static str),
 }
 
+static PENDING_WRITE: AtomicBool = AtomicBool::new(false);
+
 pub(crate) fn try_type_focused_document_append(
     target_hwnd: u64,
     expected_pid: Option<u32>,
@@ -43,13 +45,15 @@ pub(crate) fn try_type_focused_document_append(
     let state = Arc::new(AtomicU8::new(0));
     let worker_state = Arc::clone(&state);
     match run_focused_document_uia(move |cancelled| {
-        try_type_focused_document_append_unbounded(
+        let outcome = try_type_focused_document_append_unbounded(
             target_hwnd,
             expected_pid,
             &text,
             &cancelled,
             &worker_state,
-        )
+        );
+        PENDING_WRITE.store(false, Ordering::Release);
+        outcome
     }) {
         Ok(outcome) => outcome,
         Err(error) => focused_document_worker_error(
@@ -57,6 +61,7 @@ pub(crate) fn try_type_focused_document_append(
             state
                 .compare_exchange(0, 2, Ordering::AcqRel, Ordering::Acquire)
                 .unwrap_or_else(|state| state),
+            PENDING_WRITE.load(Ordering::Acquire),
         ),
     }
 }
@@ -179,6 +184,7 @@ fn try_type_focused_document_append_unbounded(
         }
         // If the UIA deadline fired during pre-write checks, do not start a
         // write after the caller has already returned an unknown result.
+        PENDING_WRITE.store(true, Ordering::Release);
         if cancelled.load(Ordering::Acquire)
             || state
                 .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
@@ -353,7 +359,14 @@ fn normalized_text_matches(expected: &str, actual: &str) -> bool {
     normalize_document_line_endings(expected) == normalize_document_line_endings(actual)
 }
 
-fn focused_document_worker_error(error: UiaDeadlineError, state: u8) -> FocusedDocumentTypeOutcome {
+fn focused_document_worker_error(
+    error: UiaDeadlineError,
+    state: u8,
+    pending_write: bool,
+) -> FocusedDocumentTypeOutcome {
+    if pending_write {
+        return FocusedDocumentTypeOutcome::Unknown("focused UIA write is still in flight");
+    }
     if state == 0 {
         return FocusedDocumentTypeOutcome::NotApplicable;
     }
@@ -379,6 +392,9 @@ mod tests {
     #[test]
     fn focused_document_requires_exact_target_and_safe_value_selection() {
         assert!(focused_document_eligible(true, true, true, true, true));
+        assert!(!focused_document_eligible(false, true, true, true, true));
+        assert!(!focused_document_eligible(true, false, true, true, true));
+        assert!(!focused_document_eligible(true, true, true, false, true));
         assert!(!focused_document_eligible(true, true, true, true, false));
         assert!(!focused_document_eligible(true, true, false, true, true));
         assert!(!focused_document_eligible(true, true, false, true, false));
@@ -404,6 +420,18 @@ mod tests {
     }
 
     #[test]
+    fn busy_during_pending_write_disallows_native_fallback() {
+        assert!(matches!(
+            focused_document_worker_error(UiaDeadlineError::Busy, 0, true),
+            FocusedDocumentTypeOutcome::Unknown(_)
+        ));
+        assert_eq!(
+            focused_document_worker_error(UiaDeadlineError::Busy, 0, false),
+            FocusedDocumentTypeOutcome::NotApplicable
+        );
+    }
+
+    #[test]
     fn worker_errors_before_write_allow_native_fallback() {
         for error in [
             UiaDeadlineError::Busy,
@@ -411,7 +439,7 @@ mod tests {
             UiaDeadlineError::Unavailable,
         ] {
             assert_eq!(
-                focused_document_worker_error(error, 0),
+                focused_document_worker_error(error, 0, false),
                 FocusedDocumentTypeOutcome::NotApplicable
             );
         }
@@ -421,7 +449,7 @@ mod tests {
     fn worker_errors_after_write_never_enable_a_second_input_route() {
         for error in [UiaDeadlineError::Timeout, UiaDeadlineError::Unavailable] {
             assert!(matches!(
-                focused_document_worker_error(error, 1),
+                focused_document_worker_error(error, 1, false),
                 FocusedDocumentTypeOutcome::Unknown(_)
             ));
         }

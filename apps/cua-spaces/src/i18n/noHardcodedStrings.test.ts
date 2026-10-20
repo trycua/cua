@@ -19,6 +19,16 @@ export const MIGRATED: string[] = [
   "components/Onboarding.tsx",
   "components/InstallerFlow.tsx",
   "components/desktop/OnboardingPage.tsx",
+  "components/SpaceTile.tsx",
+  "components/Thumbnail.tsx",
+  "components/SpacesStackMark.tsx",
+  "components/Ambient.tsx",
+  "components/FactList.tsx",
+  "components/SpaceWindowList.tsx",
+  "components/SpaceAgentList.tsx",
+  "components/Switcher.tsx",
+  "components/desktop/MainWindow.tsx",
+  "components/desktop/NewSpaceWizard.tsx",
 ];
 
 /** JSX attributes whose string values the user sees or hears. */

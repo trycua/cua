@@ -4642,28 +4642,9 @@ impl Tool for TypeTextTool {
             };
             let text_len = text.chars().count();
             if focused_document_route(&args, crate::input::is_chromium_target_window(hwnd)) {
-                let uia_text = text.clone();
-                match tokio::task::spawn_blocking(move || {
-                    crate::uia::focused_document::try_type_focused_document_append(
-                        hwnd, None, &uia_text,
-                    )
-                })
-                .await
+                if let Some(result) = try_focused_document_route(hwnd, None, &text, text_len).await
                 {
-                    Ok(outcome) => {
-                        if let Some(result) = focused_document_tool_result(outcome, text_len) {
-                            return result;
-                        }
-                    }
-                    Err(_) => {
-                        return focused_document_tool_result(
-                            crate::uia::focused_document::FocusedDocumentTypeOutcome::Unknown(
-                                "focused UIA task failed",
-                            ),
-                            text_len,
-                        )
-                        .expect("an unknown focused-document outcome has a result");
-                    }
+                    return result;
                 }
             }
             return match tokio::task::spawn_blocking(move || {
@@ -4841,30 +4822,10 @@ impl Tool for TypeTextTool {
             if elem_idx.is_none()
                 && focused_document_route(&args, crate::input::is_chromium_target_window(hwnd))
             {
-                let uia_text = text.clone();
-                match tokio::task::spawn_blocking(move || {
-                    crate::uia::focused_document::try_type_focused_document_append(
-                        hwnd,
-                        Some(pid),
-                        &uia_text,
-                    )
-                })
-                .await
+                if let Some(result) =
+                    try_focused_document_route(hwnd, Some(pid), &text, text_len).await
                 {
-                    Ok(outcome) => {
-                        if let Some(result) = focused_document_tool_result(outcome, text_len) {
-                            return result;
-                        }
-                    }
-                    Err(_) => {
-                        return focused_document_tool_result(
-                            crate::uia::focused_document::FocusedDocumentTypeOutcome::Unknown(
-                                "focused UIA task failed",
-                            ),
-                            text_len,
-                        )
-                        .expect("an unknown focused-document outcome has a result");
-                    }
+                    return result;
                 }
             }
             // Resolve the optional click fallback before entering the atomic
@@ -5226,6 +5187,25 @@ fn focused_document_route_excludes_explicit_targets_and_chromium() {
     ] {
         assert!(!focused_document_route(&args, false));
     }
+}
+
+async fn try_focused_document_route(
+    hwnd: u64,
+    expected_pid: Option<u32>,
+    text: &str,
+    text_len: usize,
+) -> Option<ToolResult> {
+    let text = text.to_owned();
+    let outcome = tokio::task::spawn_blocking(move || {
+        crate::uia::focused_document::try_type_focused_document_append(hwnd, expected_pid, &text)
+    })
+    .await
+    .unwrap_or(
+        crate::uia::focused_document::FocusedDocumentTypeOutcome::Unknown(
+            "focused UIA task failed",
+        ),
+    );
+    focused_document_tool_result(outcome, text_len)
 }
 
 fn focused_document_tool_result(

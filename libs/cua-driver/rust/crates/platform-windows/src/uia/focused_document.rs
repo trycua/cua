@@ -115,9 +115,6 @@ fn try_type_focused_document_append_unbounded(
             return not_applicable("value_unavailable");
         };
         let initial_value = initial_value.to_string();
-        if !initial_value.is_empty() {
-            return not_applicable("document_not_empty");
-        }
 
         let Ok(text_pattern) = (unsafe { focused.GetCurrentPattern(UIA_TextPatternId) }) else {
             return not_applicable("text_pattern_unavailable");
@@ -127,11 +124,8 @@ fn try_type_focused_document_append_unbounded(
         };
         let single_text_selection = unsafe { text_pattern.SupportedTextSelection() }
             .is_ok_and(|selection| selection == SupportedTextSelection_Single);
-        if !single_text_selection
-            || unsafe { text_pattern.DocumentRange() }.is_err()
-            || initial_read_only.as_bool()
-        {
-            return not_applicable("initial_eligibility_not_met");
+        if unsafe { text_pattern.DocumentRange() }.is_err() {
+            return not_applicable("document_range_unavailable");
         }
 
         if !focused_document_eligible(

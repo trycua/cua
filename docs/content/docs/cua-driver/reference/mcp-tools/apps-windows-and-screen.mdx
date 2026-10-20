@@ -146,7 +146,7 @@ Use this, not list_apps, for any window-level reasoning: "does this app have a v
 
 Per-record fields: window_id (HWND), pid + app_name, title, bounds &#123;x, y, width, height&#125;, layer (always 0), z_index (integer or null; higher values are closer to the front; null means stacking order is unavailable and callers must not infer one), is_on_screen, minimized. To select a frontmost candidate, take the maximum integer z_index; if every value is null, use an explicit fallback instead of relying on array order. The macOS-specific on_current_space / space_ids fields are omitted on Windows; current_space_id is null.
 
-Inputs: pid (optional pid filter), app (app-name filter), on_screen_only (bool, default false). Filter with app or pid: an unfiltered call lists every window.
+Inputs: pid (optional pid filter), app (app-name filter), on_screen_only (bool, default false). Filter with app or pid: an unfiltered call lists every window. The driver's own overlay is omitted.
 
 **Windows parameters**
 

@@ -162,12 +162,17 @@ class InstallTelemetry(unittest.TestCase):
             'main "$@"',
             f'install_cli() {{ cua_bin="{cli}"; }}\ninstall_app_linux() {{ :; }}\nmain "$@"',
         ))
-        e = dict(os.environ, HOME=str(self.home), CUA_HOME=str(self.home / ".cua"),
-                 PATH=f'{self.home}:{os.environ["PATH"]}',
-                 CUA_INSTALL_OS="linux", CUA_INSTALL_ARCH="x86_64",
-                 CUA_INSTALL_MANIFEST_URL=self.manifest,
-                 CUA_TELEMETRY_FORBID_NETWORK="1",
-                 CUA_TELEMETRY_ENDPOINT=f"{self.base}/batch/", CUA_POSTHOG_KEY="phc_test")
+        e = {
+            "PATH": f'{self.home}:{os.environ["PATH"]}',
+            "HOME": str(self.home),
+            "CUA_HOME": str(self.home / ".cua"),
+            "CUA_INSTALL_OS": "linux",
+            "CUA_INSTALL_ARCH": "x86_64",
+            "CUA_INSTALL_MANIFEST_URL": self.manifest,
+            "CUA_TELEMETRY_FORBID_NETWORK": "1",
+            "CUA_TELEMETRY_ENDPOINT": f"{self.base}/batch/",
+            "CUA_POSTHOG_KEY": "phc_test",
+        }
         if docker:
             self.assertFalse((self.home / "qemu-img").exists())
             script.write_text(script.read_text().replace(

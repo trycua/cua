@@ -2555,8 +2555,7 @@ fn runtime_optional_with(
     };
     let linux_ready = r.backends.iter().any(|b| {
         b.ready && matches!(b.backend, B::Qemu | B::Container)
-            || b.backend == B::Managed && r.host.os == HostOs::Macos
-                && (b.ready || b.provisionable)
+            || b.backend == B::Managed && r.host.os == HostOs::Macos && (b.ready || b.provisionable)
     });
     let mut optional: Vec<String> = r
         .backends

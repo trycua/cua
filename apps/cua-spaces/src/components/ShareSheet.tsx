@@ -19,6 +19,7 @@ import type { ShareBridge } from '../native/share';
 import { featureSignals, shareSignals } from '../model/telemetry';
 import { telemetryBridge } from '../native/telemetry';
 import { SmallSheet } from './Devices';
+import { useT } from "../i18n";
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -46,6 +47,7 @@ export function ShareSheet({
   /** Opens a link (See Teams) in the browser. */
   onOpenExternal?: (url: string) => void;
 }) {
+  const t = useT("sharing");
   const [shares, setShares] = useState<ShareEntryInput[]>([]);
   // In a team that can share; null until read, or when it cannot be said.
   const [hasTeam, setHasTeam] = useState<boolean | null>(null);
@@ -152,13 +154,13 @@ export function ShareSheet({
             disabled={v.busy || closed}
             onChange={(event) => void run({ type: 'set-who', who: event.target.value })}
           />
-          {roleSelect(v.role, (role) => void run({ type: 'set-role', role }), 'Role')}
+          {roleSelect(v.role, (role) => void run({ type: 'set-role', role }), t("sharing.sheet.role_label"))}
           <button type="submit" className="dw-btn dw-btn-primary" disabled={!v.canShare || closed}>
             {v.shareLabel}
           </button>
         </div>
         {v.hint && <p className="dv-sheet-text">{v.hint}</p>}
-        <ul className="sh-rows" aria-label="Shared with">
+        <ul className="sh-rows" aria-label={t("sharing.sheet.shared_with_label")}>
           {v.rows.length === 0 && <li className="sh-empty">{v.emptyText}</li>}
           {v.rows.map((r) => (
             <li key={r.who} className="sh-row">

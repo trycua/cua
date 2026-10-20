@@ -9,7 +9,14 @@ name: "CD: cua SDK"
 #     attach-xcframework after the release is out; it never blocks the CLI),
 #   - the `cua` CLI binaries, plus standalone `cua-cli-<version>-<platform>`
 #     archives, checksums.txt and release-artifacts.json for install.sh /
-#     install.ps1 (also mirrored to the rolling `cua-install-latest` release).
+#     install.ps1 (also mirrored to the rolling `cua-install-latest` release),
+#   - `cua-proto-<version>.tar.gz`: the protobuf contract (.proto files,
+#     buf.yaml, buf.gen.yaml, README) for clients in any language,
+#   - the Rust crates on crates.io: `cua-sdk`, `cua-spacesd-client`, `cua-proto`
+#     and the other workspace crates the SDK needs
+#     (libs/cua/scripts/publish-crates.sh; every run packages and verifies
+#     them with `cargo publish --dry-run`, and the upload needs the
+#     CARGO_REGISTRY_TOKEN secret: without it the crates step is skipped).
 # Mirrors cd-rust-cua-driver.yml / cd-py-cua-driver.yml.
 #
 # Signing (required whenever the run publishes; refuses to publish unsigned):
@@ -28,7 +35,8 @@ name: "CD: cua SDK"
 # Canonical vs staging: only trycua/cua publishes to PyPI and npm and fails
 # closed on missing signing secrets. Any other repository (trycua/cua-staging)
 # runs the same pipeline end to end but PyPI gets `twine check` (and TestPyPI
-# when TEST_PYPI_TOKEN is set), npm gets `npm publish --dry-run`, a missing
+# when TEST_PYPI_TOKEN is set), npm gets `npm publish --dry-run`, crates.io
+# gets `cargo publish --dry-run`, a missing
 # Apple/Azure secret gives unsigned binaries, and the GitHub release is a
 # prerelease whose title and notes say so. The CLI's download URLs, the
 # installers' default repository and their Sigstore identity derive from
@@ -416,10 +424,46 @@ jobs:
             xcframework.log
           if-no-files-found: error
 
+  # The protobuf contract tarball (a release asset) and a crates.io dry run
+  # of the Rust crates. Runs on every build, publishing or not.
+  protos-and-crates:
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - name: Install buf
+        uses: bufbuild/buf-action@85aebf73123b5c15fd5528aaecbf9129cddf7fa7 # v1.6.0
+        with:
+          version: "1.73.0"
+          setup_only: true
+      - name: Build cua-proto-${{ needs.version.outputs.version }}.tar.gz
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          tarball="$(libs/cua/scripts/package-proto.sh "$VERSION" dist-proto)"
+          # The tarball is a self-contained buf module.
+          mkdir -p "$RUNNER_TEMP/proto-check"
+          tar -xzf "$tarball" -C "$RUNNER_TEMP/proto-check"
+          (cd "$RUNNER_TEMP/proto-check/cua-proto-$VERSION" && buf build -o /dev/null)
+      # No protoc on purpose: the published cua-proto must build without one.
+      - name: Package and verify the crates (cargo publish --dry-run)
+        run: libs/cua/scripts/publish-crates.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: proto-tarball
+          path: dist-proto/cua-proto-*.tar.gz
+          if-no-files-found: error
+
   publish:
     # Not xcframework: the Swift build is slow and must never hold back the
     # CLI or the installer feed. attach-xcframework adds it to the release.
-    needs: [version, wheels, npm, native]
+    needs: [version, wheels, npm, native, protos-and-crates]
     if: needs.version.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -490,7 +534,7 @@ jobs:
           PRERELEASE: ${{ needs.version.outputs.prerelease }}
         run: |
           mkdir -p release
-          cp dist/wheel-*/*.whl dist/npm/*.tgz release/
+          cp dist/wheel-*/*.whl dist/npm/*.tgz dist/proto-tarball/cua-proto-*.tar.gz release/
           for d in dist/native-*; do
             label="${d##*/native-}"
             tar -czf "release/cua-${{ needs.version.outputs.version }}-$label.tar.gz" -C "$d" .
@@ -586,6 +630,38 @@ jobs:
           gh release upload cua-install-latest release-artifacts.json \
             stamped/install.sh stamped/install.ps1 stamped/uninstall.sh stamped/uninstall.ps1 \
             --clobber --repo "$GITHUB_REPOSITORY"
+
+  # crates.io after the GitHub release is out, like PyPI and npm: trycua/cua
+  # only, and only when the CARGO_REGISTRY_TOKEN secret (a crates.io API
+  # token with publish-new and publish-update scopes) is set; otherwise the
+  # step says so and the release goes on without it.
+  crates:
+    needs: [version, publish]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - name: Publish cua-sdk and the crates it needs to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          crates="$(cargo metadata --manifest-path libs/cua/Cargo.toml --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "cua-sdk") | .version')"
+          if [ "$CANONICAL" != true ]; then
+            echo "::notice::$GITHUB_REPOSITORY is not trycua/cua: crates.io got the dry run only (protos-and-crates)"
+          elif [ -z "$CARGO_REGISTRY_TOKEN" ]; then
+            echo "::warning::CARGO_REGISTRY_TOKEN is not set: the cua-sdk $VERSION crates were not published to crates.io"
+          elif [ "$crates" != "$VERSION" ]; then
+            echo "::warning::the crates are $crates, not $VERSION (a hand-pushed tag?): not published to crates.io"
+          else
+            libs/cua/scripts/publish-crates.sh --publish "$VERSION"
+          fi
 
   # The Swift package's CuaSDKFFI.xcframework.zip joins the already-published
   # release when its build finishes; checksums.txt is rewritten to include it.

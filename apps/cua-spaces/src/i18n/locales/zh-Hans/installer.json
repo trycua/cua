@@ -1,0 +1,8 @@
+{
+  "installer.flow.label": "设置 Cua",
+  "installer.flow.steps_label": "设置步骤",
+  "installer.prompts.label": "试着问问你的智能体:",
+  "installer.prompts.copied": "已复制",
+  "installer.agents.results_label": "设置结果",
+  "installer.agents.detected_label": "检测到的智能体"
+}

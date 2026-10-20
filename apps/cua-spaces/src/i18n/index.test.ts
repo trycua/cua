@@ -35,6 +35,6 @@ describe("i18n", () => {
     expect(detectLocale("es", ["ja"], all)).toBe("es");
     expect(detectLocale(null, ["fr", "ja-JP"], all)).toBe("ja");
     expect(detectLocale("xx", ["fr"], all)).toBe("en");
-    expect(detectLocale(null, ["ja"])).toBe("en"); // phase 1: only en is bundled
+    expect(detectLocale(null, ["ja"])).toBe("ja"); // every launch language is bundled
   });
 });

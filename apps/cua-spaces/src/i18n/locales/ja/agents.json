@@ -1,0 +1,8 @@
+{
+  "agents.routine.title": "タイトル",
+  "agents.routine.prompt": "プロンプト",
+  "agents.routine.schedule": "スケジュール",
+  "agents.routine.minutes": "分",
+  "agents.routine.time": "時刻",
+  "agents.routine.day": "曜日"
+}

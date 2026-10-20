@@ -7,7 +7,7 @@ use include_dir::{Dir, include_dir};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-static BUNDLED: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../skills");
+static BUNDLED: Dir<'_> = include_dir!("$OUT_DIR/skills");
 
 /// One bundled skill.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]

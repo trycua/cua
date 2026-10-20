@@ -2556,27 +2556,32 @@ fn call_text<'a>(
         .collect()
 }
 
-#[test]
-fn call_page_read_preserves_text_with_structured_content() {
-    let result = serde_json::json!({
-        "content": [{"type": "text", "text": "Page body"}],
-        "structuredContent": {"source": "ax"}
-    });
-    for action in ["get_text", "query_dom"] {
-        let args = serde_json::json!({"action": action});
-        assert_eq!(
-            call_text("page", Some(&args), &result, true),
-            vec!["Page body"]
-        );
+#[cfg(test)]
+mod call_tests {
+    use super::call_text;
+
+    #[test]
+    fn call_page_read_preserves_text_with_structured_content() {
+        let result = serde_json::json!({
+            "content": [{"type": "text", "text": "Page body"}],
+            "structuredContent": {"source": "ax"}
+        });
+        for action in ["get_text", "query_dom"] {
+            let args = serde_json::json!({"action": action});
+            assert_eq!(
+                call_text("page", Some(&args), &result, true),
+                vec!["Page body"]
+            );
+        }
+        assert!(call_text("other", None, &result, true).is_empty());
+        assert!(call_text(
+            "page",
+            Some(&serde_json::json!({"action": "click"})),
+            &result,
+            true
+        )
+        .is_empty());
     }
-    assert!(call_text("other", None, &result, true).is_empty());
-    assert!(call_text(
-        "page",
-        Some(&serde_json::json!({"action": "click"})),
-        &result,
-        true
-    )
-    .is_empty());
 }
 
 pub fn run_call(

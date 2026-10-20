@@ -12704,18 +12704,6 @@ fn x11_screen_size() -> anyhow::Result<(u32, u32)> {
     Ok((w, h))
 }
 
-/// Desktop action frame for a native Wayland capture: the compositor-logical
-/// size when one is advertised (so the backing buffer is normalized into the
-/// input frame, #3061), otherwise the native buffer dims (legacy #2017
-/// pure-Wayland behavior — never query the X11 root here, it may not exist).
-fn desktop_action_frame(
-    native_width: u32,
-    native_height: u32,
-    logical: Option<(u32, u32)>,
-) -> (u32, u32) {
-    logical.unwrap_or((native_width, native_height))
-}
-
 /// Put the desktop image in the exact coordinate frame consumed by desktop
 /// actions. Native Wayland capture buffers may use backing pixels while the
 /// compositor's pointer protocol and reported screen geometry use logical
@@ -12837,17 +12825,7 @@ impl Tool for GetDesktopStateTool {
             let (screen_w, screen_h) = if let Some(frame) = &hyprland_frame {
                 (frame.width, frame.height)
             } else if crate::wayland::is_wayland() {
-                let dimensions =
-                    crate::capture_action_frame::desktop_action_dimensions((native_w, native_h))?;
-                if crate::wayland::hyprland::is_session() {
-                    dimensions
-                } else {
-                    desktop_action_frame(
-                        dimensions.0,
-                        dimensions.1,
-                        crate::wayland::logical_desktop_frame(),
-                    )
-                }
+                crate::capture_action_frame::desktop_action_dimensions((native_w, native_h))?
             } else {
                 x11_screen_size()?
             };
@@ -14979,7 +14957,7 @@ mod cursor_hook_emission_tests {
 
 #[cfg(test)]
 mod fractional_desktop_capture_frame_tests {
-    use super::{desktop_action_frame, normalize_desktop_capture_for_action_frame};
+    use super::normalize_desktop_capture_for_action_frame;
 
     fn png(width: u32, height: u32) -> Vec<u8> {
         let rgba = vec![0x7f; (width * height * 4) as usize];
@@ -15024,16 +15002,5 @@ mod fractional_desktop_capture_frame_tests {
             (scale - 1.5).abs() < 0.0001,
             "scale is truthful, got {scale}"
         );
-    }
-
-    #[test]
-    fn desktop_action_frame_prefers_logical_and_keeps_the_native_fallback() {
-        assert_eq!(
-            desktop_action_frame(3840, 2160, Some((2560, 1440))),
-            (2560, 1440)
-        );
-        // No advertised logical output (older compositor, no xdg-output):
-        // keep the legacy native frame rather than failing the tool (#2017).
-        assert_eq!(desktop_action_frame(3840, 2160, None), (3840, 2160));
     }
 }

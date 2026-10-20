@@ -1874,14 +1874,12 @@ fn approach_pixel(px: u32, extent: u32) -> u32 {
     }
 }
 
-/// Logical desktop frame published by a compositor adapter whose geometry is
-/// in logical pixels, or `None` when callers keep the protocol-native frame
-/// (for example the full-output screencopy buffer on Sway). Desktop capture
-/// and the virtual pointer both read this, so a desktop screenshot pixel and a
-/// pointer coordinate always share one frame.
 pub(crate) fn compositor_logical_frame() -> Option<anyhow::Result<(u32, u32)>> {
-    hyprland::is_session()
-        .then(|| hyprland::screen_size().map(|(width, height, _scale)| (width, height)))
+    if hyprland::is_session() {
+        Some(hyprland::screen_size().map(|(width, height, _scale)| (width, height)))
+    } else {
+        logical_desktop_frame().map(Ok)
+    }
 }
 
 /// Pointer space for `zwlr_virtual_pointer_v1::motion_absolute`, as
@@ -1898,7 +1896,9 @@ fn virtual_pointer_space(output_mode: (u32, u32)) -> anyhow::Result<(i32, i32, u
     let layout = if hyprland::is_session() {
         hyprland::pointer_space()?
     } else {
-        None
+        compositor_logical_frame()
+            .transpose()?
+            .map(|(width, height)| (0, 0, width, height))
     };
     Ok(select_virtual_pointer_space(output_mode, layout))
 }

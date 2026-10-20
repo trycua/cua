@@ -79,18 +79,27 @@ struct DomClickObservation {
     readback_available: bool,
 }
 
-async fn read_dom_click_state(conn: &CdpConnection, cdp: &str, object_id: &str) -> Option<Value> {
-    conn.call(
-        Some(cdp),
-        "Runtime.callFunctionOn",
-        json!({
-            "objectId": object_id,
-            "functionDeclaration": DOM_CLICK_READBACK,
-            "returnByValue": true,
-        }),
+async fn read_dom_click_state(
+    conn: &CdpConnection,
+    cdp: &str,
+    object_id: &str,
+    budget: Duration,
+) -> Option<Value> {
+    tokio::time::timeout(
+        budget,
+        conn.call(
+            Some(cdp),
+            "Runtime.callFunctionOn",
+            json!({
+                "objectId": object_id,
+                "functionDeclaration": DOM_CLICK_READBACK,
+                "returnByValue": true,
+            }),
+        ),
     )
     .await
     .ok()
+    .and_then(Result::ok)
     .and_then(|reply| reply.pointer("/result/value").cloned())
     .filter(Value::is_object)
 }
@@ -116,7 +125,14 @@ async fn observe_dom_click(
     };
     let started = Instant::now();
     loop {
-        if let Some(after) = read_dom_click_state(conn, cdp, object_id).await {
+        if let Some(after) = read_dom_click_state(
+            conn,
+            cdp,
+            object_id,
+            DOM_CLICK_READBACK_DEADLINE.saturating_sub(started.elapsed()),
+        )
+        .await
+        {
             if dom_click_state_changed(&before, &after) {
                 return DomClickObservation {
                     effect: effect_from_value_readback(true, true, true),
@@ -1386,7 +1402,8 @@ impl Tool for BrowserClickTool {
                         .await;
                 }
             }
-            let before = read_dom_click_state(conn, cdp, &object_id).await;
+            let before =
+                read_dom_click_state(conn, cdp, &object_id, DOM_CLICK_READBACK_DEADLINE).await;
             return match conn
                 .call(
                     Some(cdp),

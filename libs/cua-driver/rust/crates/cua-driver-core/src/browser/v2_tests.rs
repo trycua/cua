@@ -78,6 +78,7 @@ pub(super) struct FixtureState {
     primary_window_error: Option<(i64, String)>,
     dom_click_changes_readback: bool,
     dom_click_readback_available: bool,
+    dom_click_stall_after: Option<usize>,
     dom_click_generation: u64,
     dom_click_focused: bool,
     dom_click_reads_before_failure: Option<usize>,
@@ -116,6 +117,7 @@ impl Default for FixtureState {
             select_outcome: Value::Null,
             dom_click_changes_readback: true,
             dom_click_readback_available: true,
+            dom_click_stall_after: None,
             dom_click_generation: 0,
             dom_click_focused: false,
             dom_click_reads_before_failure: None,
@@ -721,6 +723,14 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     .as_str()
                     .is_some_and(|function| function.contains("ariaPressed")) =>
             {
+                if let Some(remaining) = st.dom_click_stall_after.as_mut() {
+                    if *remaining == 0 {
+                        let mut reply = MockReply::ok(json!({}));
+                        reply.suppress_response = true;
+                        return reply;
+                    }
+                    *remaining -= 1;
+                }
                 if let Some(remaining) = st.dom_click_reads_before_failure.as_mut() {
                     if *remaining == 0 {
                         return MockReply::err(-32000, "execution context destroyed");
@@ -730,19 +740,13 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 if !st.dom_click_readback_available {
                     return MockReply::err(-32000, "semantic click readback unavailable");
                 }
-                let mut value = json!({
+                assert!(!call.params["functionDeclaration"]
+                    .as_str()
+                    .unwrap()
+                    .contains("activeElement"));
+                let value = json!({
                     "innerText": format!("counter={}", st.dom_click_generation)
                 });
-                if call.params["functionDeclaration"]
-                    .as_str()
-                    .is_some_and(|function| function.contains("activeElement"))
-                {
-                    value["activeElement"] = json!(if st.dom_click_focused {
-                        "BUTTON"
-                    } else {
-                        "BODY"
-                    });
-                }
                 MockReply::ok(json!({ "result": { "value": value } }))
             }
             "Runtime.callFunctionOn" => {
@@ -3054,6 +3058,42 @@ async fn dom_event_click_remains_unverifiable_when_semantic_readback_is_unavaila
         public["escalation"]["reason"], "effect_unconfirmed",
         "{public}"
     );
+}
+
+#[tokio::test]
+async fn dom_event_click_bounds_stalled_readbacks() {
+    for reads in [0, 1, 2] {
+        let f = fixture_with(|state| {
+            state.dom_click_stall_after = Some(reads);
+            state.dom_click_changes_readback = false;
+        })
+        .await;
+        let (target, tab) = bind(&f).await;
+        let snap = snapshot(&f, &target, &tab).await;
+        let main_ref = ref_of(&snap, "main", "main-btn");
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            BrowserClickTool::new(f.engine.clone()).invoke(json!({
+                "target_id": target,
+                "tab_id": tab,
+                "ref": main_ref,
+                "input_route": "dom_event",
+                "session": SESSION,
+            })),
+        )
+        .await
+        .expect("click must not wait for CALL_TIMEOUT");
+        assert!(result.content.iter().any(|content| matches!(
+            content,
+            Content::Text { text, .. }
+                if text.contains("semantic target readback was unavailable")
+        )));
+        let public = result.action_record.unwrap().public_result().unwrap();
+        let public = serde_json::to_value(public).unwrap();
+        assert_eq!(public["effect"], "unverifiable");
+        assert!(public["evidence"].is_null());
+        assert_eq!(public["escalation"]["reason"], "effect_unconfirmed");
+    }
 }
 
 #[tokio::test]

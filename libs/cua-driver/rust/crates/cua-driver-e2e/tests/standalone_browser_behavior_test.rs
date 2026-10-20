@@ -1861,7 +1861,7 @@ fn run_roundtrip(spec: &BrowserSpec) {
         spec.name
     );
     execute_case(case(&spec.name, "browser_tool_roundtrip"), |evidence| {
-        let mut fixture = launch_browser_with_html(spec, &scenario, standalone_fixture_html());
+        let mut fixture = launch_browser(spec, &scenario);
         *evidence = recording_evidence(fixture.driver.recording_dir());
         let session = format!("standalone-roundtrip-{}", fixture.pid);
         prepare_same_space_attachment(&mut fixture, &session);

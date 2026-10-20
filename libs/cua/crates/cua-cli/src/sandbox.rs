@@ -430,7 +430,7 @@ pub enum SandboxCmd {
   cua sb exec dev uname -a
   cua sb exec dev 'ls /tmp | wc -l'
   # A long-lived stdio stream, like `docker exec -i`: argv, not a shell line
-  cua sb exec -i dev -- bash -c 'cat > /tmp/in'")]
+  cua sb exec -i dev -- bash -c 'wc -c'")]
     Exec {
         #[command(flatten)]
         flags: shell::ExecFlags,

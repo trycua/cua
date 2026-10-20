@@ -3376,7 +3376,7 @@
     },
     {
      "abstract": "Run a command (joined into one shell line, as `sh -c`). Exits with the command's own status. A local Lume sandbox without cua-spacesd runs it via SSH (`lume ssh`)",
-     "after_help": "Examples:\n  cua sb exec dev uname -a\n  cua sb exec dev 'ls /tmp | wc -l'\n  # A long-lived stdio stream, like `docker exec -i`: argv, not a shell line\n  cua sb exec -i dev -- bash -c 'cat > /tmp/in'",
+     "after_help": "Examples:\n  cua sb exec dev uname -a\n  cua sb exec dev 'ls /tmp | wc -l'\n  # A long-lived stdio stream, like `docker exec -i`: argv, not a shell line\n  cua sb exec -i dev -- bash -c 'wc -c'",
      "aliases": [],
      "arguments": [
       {

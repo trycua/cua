@@ -70,7 +70,7 @@ A plain `exec` collects the output and returns when the command ends, and
 `exec` as a long-lived pipe into the sandbox, the way `docker exec -i` is used:
 
 ```bash test="cli-shape" id="exec-stream"
-cua sb exec -i dev -- bash -c 'cat > /tmp/in; wc -c /tmp/in'
+cua sb exec -i dev -- bash -c 'wc -c'
 ```
 
 With `-i`:

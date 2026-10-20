@@ -160,9 +160,10 @@ impl IssueKind {
             Some(Self::EnginePermission)
         } else if has("find devices on your network") {
             Some(Self::LocalNetwork)
-        } else if has("hypervisor platform") || has("virtualization is turned off") {
-            Some(Self::VirtualizationUnavailable)
-        } else if has("isn't allowed to use this computer's virtualization") {
+        } else if has("hypervisor platform")
+            || has("virtualization is turned off")
+            || has("isn't allowed to use this computer's virtualization")
+        {
             Some(Self::VirtualizationUnavailable)
         } else {
             None

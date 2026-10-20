@@ -5,7 +5,7 @@
   "libs/python/cua-sandbox": "0.9.1",
   "libs/cua": "0.6.0",
   "libs/cua-spacesd": "0.6.0",
-  "apps/cua-spaces-macos": "0.12.0",
+  "apps/cua-spaces-macos": "0.12.1",
   "libs/python/agent": "0.9.1",
   "libs/python/core": "0.3.2",
   "libs/cua-bench": "0.3.1",

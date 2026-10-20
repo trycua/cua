@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.1](https://github.com/trycua/cua/compare/cua-spaces-v0.12.0...cua-spaces-v0.12.1) (2026-10-20)
+
+
+### Bug Fixes
+
+* **spaces-macos:** document the failed-payment notice and plain plan errors ([#5632](https://github.com/trycua/cua/issues/5632)) ([fe6498d](https://github.com/trycua/cua/commit/fe6498dbfa0869a1a64f45376c0bb411fa12f34c))
+
 ## [0.12.0](https://github.com/trycua/cua/compare/cua-spaces-v0.11.0...cua-spaces-v0.12.0) (2026-10-20)
 
 

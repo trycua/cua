@@ -2464,7 +2464,7 @@ uint64_t uniffi_cua_sdk_fn_method_spacesdprocess_resize(uint64_t ptr, uint32_t c
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACESDPROCESS_SIGNAL
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACESDPROCESS_SIGNAL
-uint64_t uniffi_cua_sdk_fn_method_spacesdprocess_signal(uint64_t ptr, RustBuffer signal
+uint64_t uniffi_cua_sdk_fn_method_spacesdprocess_signal(uint64_t ptr, RustBuffer signal, int8_t process_group
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACESDPROCESS_TAG

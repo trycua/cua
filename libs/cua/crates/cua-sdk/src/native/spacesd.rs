@@ -220,8 +220,11 @@ impl SpacesdProcess {
         .await
     }
 
-    /// Sends a signal by name (`term`, `kill`, `SIGINT`, ...).
-    pub async fn signal(&self, signal: String) -> Result<()> {
+    /// Sends a signal by name (`term`, `kill`, `SIGINT`, ...). With
+    /// `process_group`, to the process's whole group (everything it started),
+    /// as a terminal's Ctrl-C does; by default to the process alone.
+    #[uniffi::method(default(process_group = false))]
+    pub async fn signal(&self, signal: String, process_group: bool) -> Result<()> {
         let sig = parse_signal(&signal)?;
         let (client, process) = (self.client.clone(), Some(self.selector()));
         run(async move {
@@ -230,7 +233,7 @@ impl SpacesdProcess {
                 .signal_process(pb::SignalProcessRequest {
                     process,
                     signal: sig as i32,
-                    process_group: false,
+                    process_group,
                 })
                 .await?;
             Ok(())
@@ -240,7 +243,7 @@ impl SpacesdProcess {
 
     /// SIGKILL.
     pub async fn kill(&self) -> Result<()> {
-        self.signal("kill".into()).await
+        self.signal("kill".into(), false).await
     }
 
     /// Resizes the PTY.

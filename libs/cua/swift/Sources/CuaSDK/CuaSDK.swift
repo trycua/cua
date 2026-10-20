@@ -12776,9 +12776,11 @@ public protocol SpacesdProcessProtocol: AnyObject, Sendable {
     func resize(cols: UInt32, rows: UInt32) async throws
 
     /**
-     * Sends a signal by name (`term`, `kill`, `SIGINT`, ...).
+     * Sends a signal by name (`term`, `kill`, `SIGINT`, ...). With
+     * `process_group`, to the process's whole group (everything it started),
+     * as a terminal's Ctrl-C does; by default to the process alone.
      */
-    func signal(signal: String) async throws
+    func signal(signal: String, processGroup: Bool) async throws
 
     /**
      * Tag, when set.
@@ -12972,15 +12974,17 @@ open func resize(cols: UInt32, rows: UInt32)async throws   {
 }
 
     /**
-     * Sends a signal by name (`term`, `kill`, `SIGINT`, ...).
+     * Sends a signal by name (`term`, `kill`, `SIGINT`, ...). With
+     * `process_group`, to the process's whole group (everything it started),
+     * as a terminal's Ctrl-C does; by default to the process alone.
      */
-open func signal(signal: String)async throws   {
+open func signal(signal: String, processGroup: Bool = false)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_cua_sdk_fn_method_spacesdprocess_signal(
                     self.uniffiCloneHandle(),
-                    FfiConverterString.lower(signal)
+                    FfiConverterString.lower(signal),FfiConverterBool.lower(processGroup)
                 )
             },
             pollFunc: ffi_cua_sdk_rust_future_poll_void,
@@ -39930,7 +39934,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_spacesdprocess_resize() != 46607) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_spacesdprocess_signal() != 61925) {
+    if (uniffi_cua_sdk_checksum_method_spacesdprocess_signal() != 44588) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spacesdprocess_tag() != 24315) {

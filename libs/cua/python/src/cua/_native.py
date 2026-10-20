@@ -1301,7 +1301,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spacesdprocess_resize() != 46607:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_spacesdprocess_signal() != 61925:
+    if lib.uniffi_cua_sdk_checksum_method_spacesdprocess_signal() != 44588:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spacesdprocess_tag() != 24315:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -4129,6 +4129,7 @@ _UniffiLib.uniffi_cua_sdk_fn_method_spacesdprocess_resize.restype = ctypes.c_uin
 _UniffiLib.uniffi_cua_sdk_fn_method_spacesdprocess_signal.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
+    ctypes.c_int8,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_spacesdprocess_signal.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_spacesdprocess_tag.argtypes = (
@@ -25573,9 +25574,11 @@ class SpacesdProcessProtocol(typing.Protocol):
         Resizes the PTY.
 """
         raise NotImplementedError
-    async def signal(self, signal: str) -> None:
+    async def signal(self, signal: str,process_group: bool = False) -> None:
         """
-        Sends a signal by name (`term`, `kill`, `SIGINT`, ...).
+        Sends a signal by name (`term`, `kill`, `SIGINT`, ...). With
+        `process_group`, to the process's whole group (everything it started),
+        as a terminal's Ctrl-C does; by default to the process alone.
 """
         raise NotImplementedError
     def tag(self, ) -> typing.Optional[str]:
@@ -25741,15 +25744,20 @@ class SpacesdProcess(SpacesdProcessProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
-    async def signal(self, signal: str) -> None:
+    async def signal(self, signal: str,process_group: bool = False) -> None:
         """
-        Sends a signal by name (`term`, `kill`, `SIGINT`, ...).
+        Sends a signal by name (`term`, `kill`, `SIGINT`, ...). With
+        `process_group`, to the process's whole group (everything it started),
+        as a terminal's Ctrl-C does; by default to the process alone.
 """
 
         _UniffiFfiConverterString.check_lower(signal)
+
+        _UniffiFfiConverterBoolean.check_lower(process_group)
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
             _UniffiFfiConverterString.lower(signal),
+            _UniffiFfiConverterBoolean.lower(process_group),
         )
         _uniffi_lift_return = lambda val: None
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError

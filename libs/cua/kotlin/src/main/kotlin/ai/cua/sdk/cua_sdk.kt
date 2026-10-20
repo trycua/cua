@@ -2468,7 +2468,7 @@ external fun uniffi_cua_sdk_fn_method_spacesdprocess_pid(`ptr`: Long,uniffi_out_
 ): Int
 external fun uniffi_cua_sdk_fn_method_spacesdprocess_resize(`ptr`: Long,`cols`: Int,`rows`: Int,
 ): Long
-external fun uniffi_cua_sdk_fn_method_spacesdprocess_signal(`ptr`: Long,`signal`: RustBuffer.ByValue,
+external fun uniffi_cua_sdk_fn_method_spacesdprocess_signal(`ptr`: Long,`signal`: RustBuffer.ByValue,`processGroup`: Byte,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spacesdprocess_tag(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
@@ -3918,7 +3918,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_spacesdprocess_resize() != 46607.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_spacesdprocess_signal() != 61925.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_spacesdprocess_signal() != 44588.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spacesdprocess_tag() != 24315.toShort()) {
@@ -21863,9 +21863,11 @@ public interface SpacesdProcessInterface {
     suspend fun `resize`(`cols`: kotlin.UInt, `rows`: kotlin.UInt)
 
     /**
-     * Sends a signal by name (`term`, `kill`, `SIGINT`, ...).
+     * Sends a signal by name (`term`, `kill`, `SIGINT`, ...). With
+     * `process_group`, to the process's whole group (everything it started),
+     * as a terminal's Ctrl-C does; by default to the process alone.
      */
-    suspend fun `signal`(`signal`: kotlin.String)
+    suspend fun `signal`(`signal`: kotlin.String, `processGroup`: kotlin.Boolean = false)
 
     /**
      * Tag, when set.
@@ -22132,16 +22134,18 @@ open class SpacesdProcess: Disposable, AutoCloseable, SpacesdProcessInterface
 
 
     /**
-     * Sends a signal by name (`term`, `kill`, `SIGINT`, ...).
+     * Sends a signal by name (`term`, `kill`, `SIGINT`, ...). With
+     * `process_group`, to the process's whole group (everything it started),
+     * as a terminal's Ctrl-C does; by default to the process alone.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
-    override suspend fun `signal`(`signal`: kotlin.String) {
+    override suspend fun `signal`(`signal`: kotlin.String, `processGroup`: kotlin.Boolean) {
         return uniffiRustCallAsync(
         callWithHandle { uniffiHandle ->
             UniffiLib.uniffi_cua_sdk_fn_method_spacesdprocess_signal(
                 uniffiHandle,
-                FfiConverterString.lower(`signal`),
+                FfiConverterString.lower(`signal`),FfiConverterBoolean.lower(`processGroup`),
             )
         },
         { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_void(future, callback, continuation) },

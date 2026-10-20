@@ -161,7 +161,7 @@ impl Drop for AbortOnDrop {
 /// (EOF closes the guest's stdin), stdout and stderr are written as they
 /// arrive, and the call returns the process's exit status (128 + n when a
 /// signal ended it). There is no time limit unless `opts.timeout_ms` is set.
-/// Signals received on `signals` are forwarded to the guest process, and the
+/// Signals received on `signals` are forwarded to the guest process group, and the
 /// guest process is killed when this client's connection ends (so a host
 /// that dies, even by SIGKILL, leaves nothing running).
 pub async fn stream<R>(
@@ -201,7 +201,7 @@ where
     let forward = p.clone();
     let _sigs = AbortOnDrop(tokio::spawn(async move {
         while let Some(name) = signals.recv().await {
-            let _ = forward.signal(name.into()).await;
+            let _ = forward.signal(name.into(), true).await;
         }
     }));
     let result = async {
@@ -502,5 +502,9 @@ mod tests {
         let signals = fx.mock.state.signals();
         assert_eq!(signals.len(), 1);
         assert_eq!(signals[0].1, cua_spacesd_client::pb::Signal::Term as i32);
+        assert!(
+            signals[0].2,
+            "a client signal reaches the whole process group"
+        );
     }
 }

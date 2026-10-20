@@ -132,7 +132,7 @@ pub struct MockState {
     /// `StartProcess` requests received, in order.
     started: Mutex<Vec<pb::StartProcessRequest>>,
     /// Signals delivered through `SignalProcess` as `(pid, signal)`.
-    signalled: Mutex<Vec<(u32, i32)>>,
+    signalled: Mutex<Vec<(u32, i32, bool)>>,
     next_pid: AtomicU32,
     clipboard: Mutex<(Option<String>, u64)>,
     cursor: Mutex<(f64, f64)>,
@@ -246,8 +246,9 @@ impl MockState {
             .and_then(|p| p.end.clone())
     }
 
-    /// Signals delivered by `SignalProcess` as `(pid, signal number)`.
-    pub fn signals(&self) -> Vec<(u32, i32)> {
+    /// Signals delivered by `SignalProcess` as `(pid, signal number,
+    /// whole process group)`.
+    pub fn signals(&self) -> Vec<(u32, i32, bool)> {
         self.signalled.lock().unwrap().clone()
     }
 
@@ -1359,7 +1360,11 @@ impl ProcessService for Svc {
     ) -> Result<tonic::Response<pb::SignalProcessResponse>, Status> {
         let req = req.into_inner();
         let pid = self.find(&req.process)?;
-        self.0.signalled.lock().unwrap().push((pid, req.signal));
+        self.0
+            .signalled
+            .lock()
+            .unwrap()
+            .push((pid, req.signal, req.process_group));
         self.finish_with(pid, None, false, String::new(), req.signal);
         Ok(tonic::Response::new(pb::SignalProcessResponse {}))
     }

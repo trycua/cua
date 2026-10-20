@@ -87,5 +87,7 @@ cua-daemon = { workspace = true, features = ["server", "client", "test-fixtures"
 cua-spacesd-client = { workspace = true, features = ["testing"] }
 cua-sandbox-core = { workspace = true, features = ["testing"] }
 tempfile.workspace = true
+# The default log filter test emits events.
+tracing.workspace = true
 # Drives the interactive onboarding prompts through a real PTY.
 portable-pty = "0.9"

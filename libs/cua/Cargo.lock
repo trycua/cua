@@ -2404,6 +2404,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-tungstenite 0.29.0",
+ "tracing",
  "tracing-subscriber",
  "url",
  "windows-sys 0.61.2",

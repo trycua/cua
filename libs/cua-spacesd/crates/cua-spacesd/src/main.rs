@@ -375,11 +375,19 @@ enum Exit {
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
+/// The log filter when `CUA_ENV_LOG` is not set: info, without the WireGuard
+/// library's own timer messages (`boringtun`). It logs a warning every few
+/// seconds while a mesh peer that went away is retried and an error when it
+/// gives up: normal churn that would otherwise fill a host's log (every
+/// short-lived `cua` client leaves one). `CUA_ENV_LOG=info,boringtun=debug`
+/// brings them back.
+const DEFAULT_LOG_FILTER: &str = "info,boringtun=off";
+
 fn init_tracing() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_env("CUA_ENV_LOG")
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(DEFAULT_LOG_FILTER)),
         )
         .with_writer(std::io::stderr)
         .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
@@ -865,6 +873,45 @@ fn write_private_file(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The WireGuard library's retry/expiry messages stay out of the default log.
+    #[test]
+    fn the_default_log_filter_hides_the_wireguard_timers() {
+        use std::io::Write;
+        #[derive(Clone, Default)]
+        struct Buf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl Write for Buf {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Buf {
+            type Writer = Buf;
+            fn make_writer(&'a self) -> Buf {
+                self.clone()
+            }
+        }
+        let buf = Buf::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::new(DEFAULT_LOG_FILTER))
+            .with_writer(buf.clone())
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::warn!(target: "boringtun::noise::timers", "HANDSHAKE(REKEY_TIMEOUT)");
+            tracing::error!(target: "boringtun::noise::timers", "CONNECTION_EXPIRED(REKEY_ATTEMPT_TIME)");
+            tracing::warn!(target: "cua_mesh::node", "kept warning");
+        });
+        let out = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
+        assert!(
+            !out.contains("HANDSHAKE") && !out.contains("CONNECTION_EXPIRED"),
+            "{out}"
+        );
+        assert!(out.contains("kept warning"), "{out}");
+    }
 
     fn parse(args: &[&str]) -> Cli {
         Cli::try_parse_from(std::iter::once("cua-spacesd").chain(args.iter().copied())).unwrap()

@@ -64,6 +64,20 @@ use cua_sdk::{Cua, CuaConfig, CuaError, SpacesdClient};
 use std::{io::Write, path::PathBuf, sync::Arc, time::Duration};
 use util::line;
 
+/// The log filter when `CUA_LOG` is not set: warnings (info in the
+/// background daemon), without the WireGuard library's own timer messages
+/// (`boringtun`): it logs a warning every few seconds while a peer that went
+/// away is retried, and an error when it gives up, which is normal churn for
+/// the mesh and says nothing a user can act on. `CUA_LOG=boringtun=debug`
+/// brings them back.
+fn default_log_filter(daemon_log: bool) -> &'static str {
+    if daemon_log {
+        "info,boringtun=off"
+    } else {
+        "warn,boringtun=off"
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(
     name = "cua",
@@ -2451,13 +2465,8 @@ pub fn main() {
         })
     ) && std::env::var("CUA_DAEMON_LOG").as_deref() != Ok("off");
     let filter = || {
-        tracing_subscriber::EnvFilter::try_from_env("CUA_LOG").unwrap_or_else(|_| {
-            if daemon_log {
-                "info".into()
-            } else {
-                "warn".into()
-            }
-        })
+        tracing_subscriber::EnvFilter::try_from_env("CUA_LOG")
+            .unwrap_or_else(|_| default_log_filter(daemon_log).into())
     };
     let file = daemon_log
         .then(|| {
@@ -2632,6 +2641,49 @@ fn runtime_setup_output(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The WireGuard library's retry/expiry messages stay out of the default log.
+    #[test]
+    fn the_default_log_filter_hides_the_wireguard_timers() {
+        use std::io::Write;
+        #[derive(Clone, Default)]
+        struct Buf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl Write for Buf {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Buf {
+            type Writer = Buf;
+            fn make_writer(&'a self) -> Buf {
+                self.clone()
+            }
+        }
+        for daemon in [true, false] {
+            let buf = Buf::default();
+            let subscriber = tracing_subscriber::fmt()
+                .with_env_filter(tracing_subscriber::EnvFilter::new(default_log_filter(
+                    daemon,
+                )))
+                .with_writer(buf.clone())
+                .finish();
+            tracing::subscriber::with_default(subscriber, || {
+                tracing::warn!(target: "boringtun::noise::timers", "HANDSHAKE(REKEY_TIMEOUT)");
+                tracing::error!(target: "boringtun::noise::timers", "CONNECTION_EXPIRED(REKEY_ATTEMPT_TIME)");
+                tracing::warn!(target: "cua_mesh::node", "kept warning");
+            });
+            let out = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
+            assert!(
+                !out.contains("HANDSHAKE") && !out.contains("CONNECTION_EXPIRED"),
+                "{out}"
+            );
+            assert!(out.contains("kept warning"), "{out}");
+        }
+    }
 
     /// Self-hosting stays out of every `--help` but `cua help advanced`;
     /// the flags still parse.

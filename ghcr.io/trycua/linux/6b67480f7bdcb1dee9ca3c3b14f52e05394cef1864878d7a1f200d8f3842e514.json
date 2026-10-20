@@ -1,0 +1,28 @@
+{
+  "arch": "arm64",
+  "digest": "sha256:6b67480f7bdcb1dee9ca3c3b14f52e05394cef1864878d7a1f200d8f3842e514",
+  "lanes": {
+    "qemu": {
+      "counts": {
+        "fail": 0,
+        "pass": 119,
+        "skip": 8,
+        "warn": 0
+      },
+      "date": "2026-10-20T05:35:13Z",
+      "manifest_sha256": "1fc2f4bd0d166aaa3a4b1a0f1f52a21a22f6b584aacceed324701b5d95e9ae59",
+      "producer": "cua-spacesd",
+      "report": "ghcr.io/trycua/linux@sha256:592d32594f1cc6c59b84f4e6aee82637ad8370bd1ca2e931368005cb14486fb9",
+      "spacesd_version": "0.5.3",
+      "status": "pass",
+      "strict": true,
+      "workflow_run": "https://github.com/trycua/cua/actions/runs/39369897873"
+    }
+  },
+  "os": "linux",
+  "repo": "ghcr.io/trycua/linux",
+  "schema_version": 1,
+  "status": "pass",
+  "updated": "2026-10-20T05:35:13Z",
+  "variant": "containerdisk"
+}

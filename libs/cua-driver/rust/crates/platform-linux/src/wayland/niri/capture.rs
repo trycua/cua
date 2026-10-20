@@ -95,18 +95,23 @@ pub fn capture_window(
     capture_display: impl FnOnce() -> Result<DisplayCapture>,
 ) -> Result<(Vec<u8>, CapturePlan), String> {
     let mut ipc = ipc();
-    capture_window_in(|| ipc.scene(), id, pid, capture_display)
+    capture_window_in(
+        |deadline| ipc.scene_until(deadline),
+        id,
+        pid,
+        capture_display,
+    )
 }
 
 fn capture_window_in(
-    mut scene: impl FnMut() -> Result<Scene>,
+    mut scene: impl FnMut(Instant) -> Result<Scene>,
     id: u64,
     pid: Option<u32>,
     capture_display: impl FnOnce() -> Result<DisplayCapture>,
 ) -> Result<(Vec<u8>, CapturePlan), String> {
-    let mut plan_now = || -> Result<CapturePlan, String> {
+    let mut plan_now = |deadline| -> Result<CapturePlan, String> {
         Ok(capture_plan_in(
-            &scene().map_err(|e| format!("{e:#}"))?,
+            &scene(deadline).map_err(|e| format!("{e:#}"))?,
             id,
             pid,
         )?)
@@ -115,7 +120,7 @@ fn capture_window_in(
         "the niri window or its output is still changing".to_owned()
     })?;
     let capture = capture_display().map_err(|e| format!("{e:#}"))?;
-    if plan_now()? != plan {
+    if plan_now(interaction::operation_deadline(QUERY_TIMEOUT))? != plan {
         return Err("the niri window or its output changed during capture".into());
     }
     if capture.output != plan.output {
@@ -216,7 +221,7 @@ mod tests {
         let window = || floating(7, 1, (100.0, 60.0), (300, 200));
         let mut calls = 0;
         let error = capture_window_in(
-            || {
+            |_| {
                 calls += 1;
                 // The scale changes during the capture; the layout does not.
                 let scale = if calls <= 2 { 1.5 } else { 1.0 };
@@ -242,14 +247,14 @@ mod tests {
     fn capture_refuses_a_transform_change_that_keeps_every_size() {
         // one_output's winit output is Flipped180 (6); Normal (0) keeps the
         // name, area, scale and image size.
-        let one = || Ok(one_output(vec![floating(7, 1, (100.0, 60.0), (300, 200))]));
+        let one = |_| Ok(one_output(vec![floating(7, 1, (100.0, 60.0), (300, 200))]));
         assert_eq!(
             capture_window_in(one, 7, None, || oriented("winit", 0, (1280, 720))).unwrap_err(),
             "the capture was oriented for output transform 0, but the window's output has 6"
         );
         let mut calls = 0;
         let error = capture_window_in(
-            || {
+            |_| {
                 calls += 1;
                 let transform = if calls <= 2 { "Flipped180" } else { "Normal" };
                 Ok(scene(
@@ -275,7 +280,7 @@ mod tests {
         let at = |x: f64| Ok(one_output(vec![floating(7, 1, (x, 60.0), (300, 200))]));
         let mut calls = 0;
         let settling = capture_window_in(
-            || {
+            |_| {
                 calls += 1;
                 at(if calls == 1 { 90.0 } else { 100.0 })
             },
@@ -286,7 +291,7 @@ mod tests {
         assert_eq!(settling.unwrap().1.area.width, 853);
         let mut x = 0.0;
         let moving = capture_window_in(
-            || {
+            |_| {
                 x += 10.0;
                 at(x)
             },
@@ -302,7 +307,7 @@ mod tests {
 
     #[test]
     fn capture_refuses_another_output_or_size() {
-        let one = || Ok(one_output(vec![floating(7, 1, (100.0, 60.0), (300, 200))]));
+        let one = |_| Ok(one_output(vec![floating(7, 1, (100.0, 60.0), (300, 200))]));
         assert_eq!(
             capture_window_in(one, 7, None, || display("DP-1", (1280, 720))).unwrap_err(),
             "the display capture copied output \"DP-1\", not the window's output \"winit\""

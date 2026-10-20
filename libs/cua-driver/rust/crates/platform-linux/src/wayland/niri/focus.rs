@@ -113,9 +113,9 @@ pub(super) fn confirm_focus<C: FnMut(Instant) -> Result<UnixStream>>(
     pid: Option<i32>,
     deadline: Instant,
 ) -> Result<()> {
-    let mut focused = None;
-    if interaction::confirm(deadline, || {
-        focused = ipc.focused_window()?;
+    let mut focused: Option<IpcWindow> = None;
+    if interaction::confirm(deadline, |deadline| {
+        focused = ipc.query_until(Request::FocusedWindow, deadline)?;
         anyhow::Ok(interaction::policy::focused(
             &(pid, id),
             &interaction::facts::Fact::Known(
@@ -203,7 +203,8 @@ fn focus_transaction() -> Result<std::sync::MutexGuard<'static, ()>> {
             Err(std::sync::TryLockError::Poisoned(poisoned)) => return Ok(poisoned.into_inner()),
             Err(std::sync::TryLockError::WouldBlock) => {
                 crate::input::action::admit(|| ())?;
-                std::thread::sleep(Duration::from_millis(10));
+                let deadline = interaction::operation_deadline(Duration::from_millis(10));
+                std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
             }
         }
     }
@@ -320,7 +321,9 @@ fn restore_focus<C: FnMut(Instant) -> Result<UnixStream>>(
                 was.output.as_deref().unwrap_or("unknown")
             );
         }
-        std::thread::sleep(Duration::from_millis(10));
+        std::thread::sleep(
+            Duration::from_millis(10).min(cleanup.saturating_duration_since(Instant::now())),
+        );
     }
 }
 
@@ -334,8 +337,8 @@ fn restore_workspace<C: FnMut(Instant) -> Result<UnixStream>>(
     cleanup: Instant,
 ) -> Result<()> {
     ipc.restore_action(focus_workspace_action(workspace), cleanup)?;
-    let focused = interaction::confirm(cleanup, || {
-        let workspaces: Vec<IpcWorkspace> = ipc.query_until(Request::Workspaces, cleanup)?;
+    let focused = interaction::confirm(cleanup, |deadline| {
+        let workspaces: Vec<IpcWorkspace> = ipc.query_until(Request::Workspaces, deadline)?;
         anyhow::Ok(
             workspaces
                 .iter()

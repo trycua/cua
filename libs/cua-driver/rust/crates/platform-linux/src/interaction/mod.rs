@@ -99,41 +99,47 @@ pub fn operation_deadline(cap: Duration) -> Instant {
     crate::input::action::current().map_or(capped, |action| capped.min(action.deadline()))
 }
 
-/// Read `confirmed` back until it holds or `deadline` passes, at least once.
+/// Read `confirmed` back until it holds or `deadline` passes. The callback
+/// receives the same absolute deadline for its own round trips.
 /// A compositor that accepts a request has not applied it: only the
 /// read-back says it did.
 pub fn confirm<E>(
     deadline: Instant,
-    mut confirmed: impl FnMut() -> Result<bool, E>,
+    mut confirmed: impl FnMut(Instant) -> Result<bool, E>,
 ) -> Result<bool, E> {
-    loop {
-        if confirmed()? {
-            return Ok(true);
+    while Instant::now() < deadline {
+        if confirmed(deadline)? {
+            return Ok(Instant::now() < deadline);
         }
-        if Instant::now() >= deadline {
-            return Ok(false);
-        }
-        std::thread::sleep(POLL);
+        std::thread::sleep(POLL.min(deadline.saturating_duration_since(Instant::now())));
     }
+    Ok(false)
 }
 
 /// Read `observe` until two consecutive reads agree on `key`, a few reads a
-/// fixed interval apart and never past the action's deadline, else refuse
-/// with `unsettled`. Agreeing reads do not prove an animation finished.
+/// fixed interval apart. Callbacks receive the action-capped deadline and
+/// must bound their round trips by it; late results refuse with `unsettled`.
+/// Agreeing reads do not prove an animation finished.
 pub fn settled<T, K: PartialEq, E>(
-    mut observe: impl FnMut() -> Result<T, E>,
+    mut observe: impl FnMut(Instant) -> Result<T, E>,
     key: impl Fn(&T) -> K,
     unsettled: impl FnOnce() -> E,
 ) -> Result<T, E> {
     let deadline = operation_deadline(SETTLE_CAP);
-    let mut last = observe()?;
+    if Instant::now() >= deadline {
+        return Err(unsettled());
+    }
+    let mut last = observe(deadline)?;
     for _ in 1..SETTLE_READS {
         if Instant::now() + SETTLE_INTERVAL > deadline {
             break;
         }
         std::thread::sleep(SETTLE_INTERVAL);
-        let next = observe()?;
-        if key(&next) == key(&last) {
+        if Instant::now() >= deadline {
+            break;
+        }
+        let next = observe(deadline)?;
+        if Instant::now() < deadline && key(&next) == key(&last) {
             return Ok(next);
         }
         last = next;
@@ -162,22 +168,39 @@ mod tests {
     }
 
     #[test]
-    fn confirm_reads_back_until_it_holds_and_reads_once_past_the_deadline() {
+    fn confirm_reads_back_until_it_holds_and_never_starts_past_the_deadline() {
         let mut reads = 0;
-        let held = confirm(Instant::now() + Duration::from_secs(1), || {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let held = confirm(deadline, |received| {
+            assert_eq!(received, deadline);
             reads += 1;
             Ok::<_, ()>(reads == 3)
         });
         assert_eq!((held, reads), (Ok(true), 3));
         let mut reads = 0;
-        let expired = confirm(Instant::now(), || {
+        let expired = confirm(Instant::now(), |_| {
             reads += 1;
             Ok::<_, ()>(false)
         });
-        assert_eq!((expired, reads), (Ok(false), 1));
+        assert_eq!((expired, reads), (Ok(false), 0));
         assert_eq!(
-            confirm(Instant::now(), || Err::<bool, _>("unknown")),
+            confirm(Instant::now() + Duration::from_secs(1), |_| Err::<bool, _>(
+                "unknown"
+            )),
             Err("unknown")
+        );
+    }
+
+    #[test]
+    fn a_late_focus_read_back_does_not_confirm_delivery() {
+        let deadline = Instant::now() + Duration::from_millis(10);
+        assert_eq!(
+            confirm(deadline, |received| {
+                assert_eq!(received, deadline);
+                std::thread::sleep(Duration::from_millis(20));
+                Ok::<_, ()>(true)
+            }),
+            Ok(false)
         );
     }
 
@@ -186,21 +209,21 @@ mod tests {
         let _bound = bind(Action::new(Duration::ZERO));
         let mut reads = 0;
         let moving = settled(
-            || {
+            |_| {
                 reads += 1;
                 Ok::<_, &str>(reads)
             },
             |read| *read,
             || "unsettled",
         );
-        assert_eq!((moving, reads), (Err("unsettled"), 1));
+        assert_eq!((moving, reads), (Err("unsettled"), 0));
     }
 
     #[test]
     fn settle_returns_the_first_of_two_agreeing_reads() {
         let mut reads = 0;
         let settling = settled(
-            || {
+            |_| {
                 reads += 1;
                 Ok::<_, &str>(reads.min(2))
             },

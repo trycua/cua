@@ -107,7 +107,12 @@ impl<C: FnMut(Instant) -> Result<UnixStream>> PointerGate<C> {
                 .iter()
                 .find(|w| w.id == id)
                 .and_then(|w| w.pid);
-            confirm_focus(&mut self.ipc, id, pid, Instant::now())?;
+            confirm_focus(
+                &mut self.ipc,
+                id,
+                pid,
+                interaction::operation_deadline(FOCUS_CONFIRM_TIMEOUT),
+            )?;
         }
         let current =
             pointer_space_of(&self.ipc.query(Request::Outputs)?).map_err(input_unavailable)?;
@@ -150,7 +155,7 @@ pub fn prepare_target(
         space,
     };
     let scene = match target {
-        Target::Window(id) => settled_window(|| gate.ipc.scene(), id),
+        Target::Window(id) => settled_window(|deadline| gate.ipc.scene_until(deadline), id),
         _ => gate.ipc.scene(),
     }
     .map_err(input_unavailable)?;
@@ -168,7 +173,7 @@ pub fn prepare_target(
     Ok(Some(gate))
 }
 
-fn settled_window(scene: impl FnMut() -> Result<Scene>, id: u64) -> Result<Scene> {
+fn settled_window(scene: impl FnMut(Instant) -> Result<Scene>, id: u64) -> Result<Scene> {
     settled(
         scene,
         |scene| scene.window(id).map(|window| window.placement).ok(),
@@ -311,7 +316,7 @@ mod tests {
         let at = |x: f64| Ok(one_output(vec![floating(7, 1, (x, 60.0), (300, 200))]));
         let mut reads = 0;
         let settling = settled_window(
-            || {
+            |_| {
                 reads += 1;
                 at(if reads == 1 { 90.0 } else { 100.0 })
             },
@@ -327,7 +332,7 @@ mod tests {
         );
         let mut x = 0.0;
         let moving = settled_window(
-            || {
+            |_| {
                 x += 10.0;
                 at(x)
             },

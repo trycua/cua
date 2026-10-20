@@ -180,8 +180,8 @@ fn focus_container(id: u64) -> bool {
         .is_ok_and(|status| status.success())
 }
 
-fn wait_for_container_focus(pid: u32, id: u64, timeout: std::time::Duration) -> bool {
-    crate::interaction::confirm(std::time::Instant::now() + timeout, || {
+fn wait_for_container_focus(pid: u32, id: u64, deadline: std::time::Instant) -> bool {
+    crate::interaction::confirm(deadline, |_| {
         let observed = match list_windows() {
             Some(windows) => crate::interaction::facts::Fact::Known(
                 windows
@@ -212,17 +212,22 @@ pub fn with_focused_container<T>(
     if !focus_container(id) {
         anyhow::bail!("Sway refused to focus exact container {id}");
     }
-    if !wait_for_container_focus(pid, id, std::time::Duration::from_millis(500)) {
+    if !wait_for_container_focus(
+        pid,
+        id,
+        crate::interaction::operation_deadline(std::time::Duration::from_millis(500)),
+    ) {
         anyhow::bail!("Sway did not confirm focus on exact container {id}");
     }
     let result = body();
+    let cleanup = std::time::Instant::now() + crate::interaction::CLEANUP_CAP;
     let restore = prior
         .filter(|(_, prior)| *prior != id)
         .map(|(pid, prior)| {
             if !focus_container(prior) {
                 anyhow::bail!("Sway could not restore prior container {prior}");
             }
-            if !wait_for_container_focus(pid, prior, std::time::Duration::from_millis(500)) {
+            if !wait_for_container_focus(pid, prior, cleanup) {
                 anyhow::bail!("Sway did not confirm restored container {prior}");
             }
             Ok(())

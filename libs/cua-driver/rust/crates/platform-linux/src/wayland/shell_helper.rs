@@ -419,11 +419,16 @@ pub fn with_focused_window<T>(
     if target.focused {
         return body();
     }
-    trusted_activate_window(pid, window_id)
-        .then_some(())
-        .ok_or_else(|| anyhow::anyhow!("GNOME Shell did not confirm exact target activation"))?;
+    trusted_activate_window(
+        pid,
+        window_id,
+        crate::interaction::operation_deadline(FOCUS_CONFIRM),
+    )
+    .then_some(())
+    .ok_or_else(|| anyhow::anyhow!("GNOME Shell did not confirm exact target activation"))?;
     let body_result = body();
-    let restored = trusted_activate_window(previous.0, previous.1);
+    let cleanup = std::time::Instant::now() + crate::interaction::CLEANUP_CAP;
+    let restored = trusted_activate_window(previous.0, previous.1, cleanup);
     match (body_result, restored) {
         (Ok(value), true) => Ok(value),
         (Err(error), true) => Err(error),
@@ -456,17 +461,17 @@ pub fn activate_window(window_id: u64) -> bool {
     if !accepted {
         return false;
     }
-    focus_confirmed(|| window_is_focused(window_id))
+    focus_confirmed(
+        crate::interaction::operation_deadline(FOCUS_CONFIRM),
+        || window_is_focused(window_id),
+    )
 }
 
-fn focus_confirmed(mut focused: impl FnMut() -> bool) -> bool {
-    crate::interaction::confirm(std::time::Instant::now() + FOCUS_CONFIRM, || {
-        Ok::<_, ()>(focused())
-    })
-    .unwrap_or(false)
+fn focus_confirmed(deadline: std::time::Instant, mut focused: impl FnMut() -> bool) -> bool {
+    crate::interaction::confirm(deadline, |_| Ok::<_, ()>(focused())).unwrap_or(false)
 }
 
-fn trusted_activate_window(pid: u32, window_id: u64) -> bool {
+fn trusted_activate_window(pid: u32, window_id: u64, deadline: std::time::Instant) -> bool {
     let Ok(window_id) = u32::try_from(window_id) else {
         return false;
     };
@@ -475,7 +480,7 @@ fn trusted_activate_window(pid: u32, window_id: u64) -> bool {
     if !accepted {
         return false;
     }
-    focus_confirmed(|| {
+    focus_confirmed(deadline, || {
         let observed = match trusted_shell_windows(None) {
             Some(windows) => crate::interaction::facts::Fact::Known(
                 windows

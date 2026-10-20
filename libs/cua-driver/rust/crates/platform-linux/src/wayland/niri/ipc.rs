@@ -362,7 +362,7 @@ impl<C: FnMut(Instant) -> Result<UnixStream>> Ipc<C> {
 
     /// A read-only request; a failure is final.
     pub(super) fn query<T: DeserializeOwned>(&mut self, request: Request) -> Result<T> {
-        let deadline = Instant::now() + self.timeout;
+        let deadline = interaction::operation_deadline(self.timeout);
         self.query_until(request, deadline)
     }
 
@@ -406,7 +406,7 @@ impl<C: FnMut(Instant) -> Result<UnixStream>> Ipc<C> {
     }
 
     fn send_action(&mut self, action: serde_json::Value, cleanup: Option<Instant>) -> Result<()> {
-        let deadline = cleanup.unwrap_or_else(|| Instant::now() + self.timeout);
+        let deadline = cleanup.unwrap_or_else(|| interaction::operation_deadline(self.timeout));
         let request = serde_json::json!({ "Action": action }).to_string();
         let mut lines = self.connection(deadline)?;
         if cleanup.is_some() {
@@ -430,7 +430,10 @@ impl<C: FnMut(Instant) -> Result<UnixStream>> Ipc<C> {
 
     /// One snapshot of the layout, its four requests sharing one deadline.
     pub(super) fn scene(&mut self) -> Result<Scene> {
-        let deadline = Instant::now() + self.timeout;
+        self.scene_until(interaction::operation_deadline(self.timeout))
+    }
+
+    pub(super) fn scene_until(&mut self, deadline: Instant) -> Result<Scene> {
         let windows = self.query_until(Request::Windows, deadline)?;
         let workspaces = self.query_until(Request::Workspaces, deadline)?;
         let outputs = self.query_until(Request::Outputs, deadline)?;
@@ -752,6 +755,37 @@ mod tests {
         );
         ipc.query::<Value>(Request::Windows).unwrap();
         assert!(ipc.scene().is_err());
+    }
+
+    #[test]
+    fn ordinary_round_trips_use_the_action_deadline_but_cleanup_keeps_its_own() {
+        let action = crate::input::action::Action::new(Duration::from_secs(1));
+        let _bound = crate::input::action::bind(action.clone());
+        let mut deadlines = Vec::new();
+        let cleanup = Instant::now() + Duration::from_secs(2);
+        {
+            let mut ipc = ipc_with(
+                |deadline| {
+                    deadlines.push(deadline);
+                    bail!("no connection")
+                },
+                Duration::from_secs(5),
+            );
+            assert!(ipc.query::<Value>(Request::Windows).is_err());
+            assert!(ipc.action(focus_window_action(7)).is_err());
+            assert!(ipc.scene().is_err());
+            action.abandon();
+            assert!(ipc.restore_action(focus_window_action(5), cleanup).is_err());
+        }
+        assert_eq!(
+            deadlines,
+            vec![
+                action.deadline(),
+                action.deadline(),
+                action.deadline(),
+                cleanup
+            ]
+        );
     }
 
     #[test]

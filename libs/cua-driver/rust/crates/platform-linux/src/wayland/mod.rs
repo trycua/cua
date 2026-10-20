@@ -2131,19 +2131,17 @@ fn event_time_ms() -> u32 {
         .clamp(1, u32::MAX as u128) as u32
 }
 
-/// On niri, restore the prior focus after window-addressed pointer input,
-/// as `click` does. The pointer gate in `body` focuses the target only once
-/// the input is admitted, so a refusal changes nothing. Other compositors
-/// run `body` as before: their double clicks, scrolls and drags activate the
-/// target and leave it focused.
+/// On niri, run window-addressed pointer input inside the exact foreground
+/// transaction [`with_target_foreground`] gives `click`, so the prior focus is
+/// restored. Other compositors run `body` as before: their double clicks,
+/// scrolls and drags activate the target and leave it focused.
 pub fn restoring_niri_focus<T>(
     pid: u32,
     window_id: u64,
     body: impl FnOnce() -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
     if niri::is_session() {
-        let _target_guard = bind_foreground_target(pid, window_id);
-        return niri::with_focus_restored(pid, window_id, body);
+        return with_target_foreground(pid, window_id, body);
     }
     body()
 }

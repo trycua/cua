@@ -160,24 +160,14 @@ pub fn keyboard_layout() -> Result<u32> {
 /// Focusing a window on another workspace switches to it; the restore
 /// switches back, also after a focus niri did not confirm.
 pub fn with_focused_window<T>(pid: u32, id: u64, body: impl FnOnce() -> Result<T>) -> Result<T> {
-    focus_transaction_in(&mut ipc(), pid, id, FOCUS_CONFIRM_TIMEOUT, true, body)
+    with_focused_window_in(&mut ipc(), pid, id, FOCUS_CONFIRM_TIMEOUT, body)
 }
 
-/// Run `body`, which focuses niri window `id` of `pid` itself once its input
-/// is admitted, then undo what that focus changed, as [`with_focused_window`]
-/// does. Unlike it, nothing is focused before `body`: a body refused before it
-/// focused the window leaves focus, the view and the floating stacking order
-/// as they were.
-pub fn with_focus_restored<T>(pid: u32, id: u64, body: impl FnOnce() -> Result<T>) -> Result<T> {
-    focus_transaction_in(&mut ipc(), pid, id, FOCUS_CONFIRM_TIMEOUT, false, body)
-}
-
-fn focus_transaction_in<C: FnMut(Instant) -> Result<UnixStream>, T>(
+fn with_focused_window_in<C: FnMut(Instant) -> Result<UnixStream>, T>(
     ipc: &mut Ipc<C>,
     pid: u32,
     id: u64,
     confirm: Duration,
-    focus_first: bool,
     body: impl FnOnce() -> Result<T>,
 ) -> Result<T> {
     let _transaction = focus_transaction()?;
@@ -187,20 +177,6 @@ fn focus_transaction_in<C: FnMut(Instant) -> Result<UnixStream>, T>(
     let Some(target) = focus_target(ipc, id, Some(pid)).map_err(input_unavailable)? else {
         return body();
     };
-    if !focus_first {
-        let result = body();
-        let restore = match ipc.focused_window() {
-            Ok(now)
-                if now.as_ref().map(|window| window.id)
-                    == prior.as_ref().map(|window| window.id) =>
-            {
-                Ok(())
-            }
-            Ok(_) => restore_focus(ipc, prior.as_ref(), &workspaces, &target, confirm),
-            Err(error) => Err(error),
-        };
-        return finish(result, restore);
-    }
     // Once FocusWindow is sent, focus may have moved even when niri does not
     // confirm it, so the restore runs either way.
     let result = focus_window(ipc, id, target.pid, confirm)
@@ -375,26 +351,6 @@ mod tests {
     use serde_json::{json, Value};
     use std::sync::{Arc, Mutex};
 
-    fn with_focused_window_in<C: FnMut(Instant) -> Result<UnixStream>, T>(
-        ipc: &mut Ipc<C>,
-        pid: u32,
-        id: u64,
-        confirm: Duration,
-        body: impl FnOnce() -> Result<T>,
-    ) -> Result<T> {
-        focus_transaction_in(ipc, pid, id, confirm, true, body)
-    }
-
-    fn with_focus_restored_in<C: FnMut(Instant) -> Result<UnixStream>, T>(
-        ipc: &mut Ipc<C>,
-        pid: u32,
-        id: u64,
-        confirm: Duration,
-        body: impl FnOnce() -> Result<T>,
-    ) -> Result<T> {
-        focus_transaction_in(ipc, pid, id, confirm, false, body)
-    }
-
     #[test]
     fn a_niri_refusal_suggests_the_remedy_its_detail_names() {
         let tiled = aim_at(&tiled_scene(Some(5)).window(5).unwrap(), 10, 20).unwrap_err();
@@ -568,55 +524,6 @@ mod tests {
     }
 
     #[test]
-    fn a_pointer_action_refused_before_it_focused_leaves_niri_untouched() {
-        let fake = focus_fixture();
-        let error = with_focus_restored_in(
-            &mut fake_ipc(&fake),
-            107,
-            7,
-            Duration::from_millis(50),
-            || Err::<(), _>(foreground_unavailable("the point is outside niri window 7")),
-        )
-        .unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "foreground_unavailable: the point is outside niri window 7"
-        );
-        let fake = fake.lock().unwrap();
-        assert!(
-            !fake
-                .requests
-                .iter()
-                .any(|request| request.contains("Action")),
-            "a refused action sent {:?}",
-            fake.requests
-        );
-        assert_eq!(fake.focused(), Some(5));
-    }
-
-    #[test]
-    fn a_pointer_action_that_focused_its_target_gives_focus_back() {
-        let fake = focus_fixture();
-        let seen = with_focus_restored_in(
-            &mut fake_ipc(&fake),
-            107,
-            7,
-            Duration::from_millis(100),
-            || {
-                // The pointer gate focuses the target once it admits the input.
-                let mut fake = fake.lock().unwrap();
-                fake.reply(r#"{"Action":{"FocusWindow":{"id":7}}}"#);
-                Ok(fake.focused())
-            },
-        )
-        .unwrap();
-        assert_eq!(seen, Some(7));
-        let fake = fake.lock().unwrap();
-        assert_eq!(fake.focused(), Some(5));
-        assert!(fake.active(1));
-    }
-
-    #[test]
     fn a_call_that_ran_out_of_time_after_focusing_its_target_still_gives_focus_back() {
         let timed_out = || {
             anyhow!(
@@ -624,19 +531,15 @@ mod tests {
                 crate::input::foreground::CODE_TIMEOUT
             )
         };
-        // A pointer action whose gate focused the target.
         let fake = focus_fixture();
         let action = crate::input::action::Action::new(Duration::from_secs(60));
         let _bound = crate::input::action::bind(action.clone());
-        let error = with_focus_restored_in(
+        let error = with_focused_window_in(
             &mut fake_ipc(&fake),
             107,
             7,
             Duration::from_millis(100),
             || {
-                fake.lock()
-                    .unwrap()
-                    .reply(r#"{"Action":{"FocusWindow":{"id":7}}}"#);
                 action.abandon();
                 Err::<(), _>(timed_out())
             },
@@ -646,23 +549,6 @@ mod tests {
             crate::input::foreground::error_code(&error),
             Some(crate::input::foreground::CODE_TIMEOUT)
         );
-        assert_eq!(fake.lock().unwrap().focused(), Some(5));
-
-        // Keys and text, which focus the target before they start.
-        let fake = focus_fixture();
-        let action = crate::input::action::Action::new(Duration::from_secs(60));
-        let _bound = crate::input::action::bind(action.clone());
-        with_focused_window_in(
-            &mut fake_ipc(&fake),
-            107,
-            7,
-            Duration::from_millis(100),
-            || {
-                action.abandon();
-                Err::<(), _>(timed_out())
-            },
-        )
-        .unwrap_err();
         assert_eq!(fake.lock().unwrap().focused(), Some(5));
     }
 
@@ -679,15 +565,12 @@ mod tests {
         let call_1 = {
             let fake = fake.clone();
             std::thread::spawn(move || {
-                with_focus_restored_in(
+                with_focused_window_in(
                     &mut fake_ipc(&fake),
                     107,
                     7,
                     Duration::from_millis(100),
                     || {
-                        fake.lock()
-                            .unwrap()
-                            .reply(r#"{"Action":{"FocusWindow":{"id":7}}}"#);
                         in_body.send(()).unwrap();
                         released.recv().unwrap();
                         Ok(())

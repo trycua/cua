@@ -2304,10 +2304,10 @@ fn centres_origin_click(x: i32, y: i32, layout_addressed: bool) -> bool {
 }
 
 /// On niri, admit the action's pointer input through [`niri::prepare_target`]:
-/// window-addressed input proves each layout point lands on the target
-/// window and then activates it. Desktop-scope input names no window: its
-/// points are pixels of the single output. Input under an outer foreground
-/// target checks that window without moving focus. Recheck the gate with [`niri_gate_holds`] before each event.
+/// input addressed to a window, by id or by an outer foreground target,
+/// proves each layout point lands on that window and then activates it.
+/// Desktop-scope input names no window: its points are pixels of the single
+/// output. Recheck the gate with [`niri_gate_holds`] before each event.
 fn niri_pointer_gate(
     window_id: Option<u64>,
     desktop: Option<&DesktopInputSpace>,
@@ -2317,16 +2317,17 @@ fn niri_pointer_gate(
     if !niri::is_session() {
         return Ok(None);
     }
+    let window_id = window_id.or_else(|| {
+        desktop
+            .is_none()
+            .then(current_foreground_target)
+            .flatten()
+            .map(|(_, id)| id)
+    });
     let target = match (window_id, desktop) {
-        (Some(id), _) => niri::Target::Window { id, activate: true },
+        (Some(id), _) => niri::Target::Window(id),
         (None, Some(_)) => niri::Target::Desktop,
-        (None, None) => match current_foreground_target() {
-            Some((_, id)) => niri::Target::Window {
-                id,
-                activate: false,
-            },
-            None => niri::Target::Unaddressed,
-        },
+        (None, None) => niri::Target::Unaddressed,
     };
     let space = (sess.origin_x, sess.origin_y, sess.output_w, sess.output_h);
     niri::prepare_target(target, space, points)

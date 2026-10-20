@@ -112,8 +112,8 @@ impl PointerGate {
 
 /// What a niri pointer action addresses.
 pub enum Target {
-    /// A window by id; `activate` focuses it once the action is admitted.
-    Window { id: u64, activate: bool },
+    /// A window by id, focused once the action is admitted.
+    Window(u64),
     /// Pixels of the single output, as `get_desktop_state` shows it.
     Desktop,
     /// Nothing to check beyond the session and the pointer space.
@@ -146,12 +146,10 @@ pub fn prepare_target(
     };
     let scene = gate.ipc.scene().map_err(input_unavailable)?;
     match target {
-        Target::Window { id, activate } => {
+        Target::Window(id) => {
             let rect = gate_pointer(&scene, id, points)?;
-            if activate {
-                activate_in(&mut gate.ipc, id, None, FOCUS_CONFIRM_TIMEOUT)
-                    .map_err(input_unavailable)?;
-            }
+            activate_in(&mut gate.ipc, id, None, FOCUS_CONFIRM_TIMEOUT)
+                .map_err(input_unavailable)?;
             gate.window = Some((id, rect));
         }
         Target::Desktop => desktop_admission(&scene, points)?,

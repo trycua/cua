@@ -37,6 +37,7 @@ import type { Location } from "../model/types";
 import { settingsPage, type SettingsRow, type SettingsSection, type SignInPhase } from "../model/window";
 import { experimentsPage, settingsWithStorage } from "../model/experiments";
 import { chooseExperimentRow, useExperiments } from "../state/experiments";
+import { t } from "../i18n";
 import { MiddleText } from "./MiddleText";
 import { SfIcon } from "./SfIcon";
 
@@ -336,7 +337,7 @@ export function SettingsPanel({
     } catch (error) {
       setPhase({
         kind: "failed",
-        message: error instanceof Error ? error.message : "Could not start sign-in",
+        message: error instanceof Error ? error.message : t("errors:errors.settings.sign_in_start_failed"),
       });
     }
   }, [auth, onOpenExternal]);

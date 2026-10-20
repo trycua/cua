@@ -339,7 +339,81 @@ fn harness_wpf_query_projects_structured_elements() {
                 returned < total,
                 "query did not compact {returned}/{total} elements"
             );
+            assert_eq!(
+                response.structured()["elements_complete"].as_bool(),
+                Some(true),
+                "query projection must preserve the complete underlying UIA snapshot"
+            );
             let _ = element_token_by_id(&response, "btn-increment");
+
+            let bounded = driver.call(
+                "get_window_state",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "max_elements": 1,
+                    "include_screenshot": false
+                }),
+            );
+            assert!(
+                !bounded.is_error(),
+                "bounded snapshot failed: {}",
+                bounded.text()
+            );
+            assert_eq!(
+                bounded.structured()["elements_complete"].as_bool(),
+                Some(false),
+                "a bound that skips the WPF root's descendants must report an incomplete snapshot"
+            );
+
+            let shallow = driver.call(
+                "get_window_state",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "max_depth": 1,
+                    "include_screenshot": false
+                }),
+            );
+            assert!(
+                !shallow.is_error(),
+                "depth-bounded snapshot failed: {}",
+                shallow.text()
+            );
+            assert_eq!(
+                shallow.structured()["elements_complete"].as_bool(),
+                Some(false),
+                "a depth bound that skips WPF descendants must report an incomplete snapshot"
+            );
+
+            let verified = driver.call(
+                "verify_state",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "expect": [{"element": {
+                        "selector": {"label_contains": "__cua_missing_completeness_probe__"},
+                        "exists": true
+                    }}],
+                    "timeout_ms": 0,
+                    "stable_samples": 1,
+                    "include_screenshot": false
+                }),
+            );
+            assert!(
+                !verified.is_error(),
+                "verification failed: {}",
+                verified.text()
+            );
+            assert_eq!(
+                verified.structured()["status"],
+                "unknown",
+                "a structured projection that omits display-only nodes cannot prove absence"
+            );
+            assert_eq!(
+                verified.structured()["predicates"][0]["unknown_reason"],
+                "observation_unavailable"
+            );
             Observation::delivered(vec![OracleKind::AxState], Evidence::default())
         },
     );

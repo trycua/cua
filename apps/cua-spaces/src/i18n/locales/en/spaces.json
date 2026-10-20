@@ -43,5 +43,22 @@
   "spaces.wizard.steps_label": "Steps",
   "spaces.wizard.cost_label": "Cost",
   "spaces.wizard.resources_label": "Resources",
-  "spaces.wizard.summary_label": "Summary"
+  "spaces.wizard.summary_label": "Summary",
+  "spaces.viewer.controls_label": "Space controls",
+  "spaces.viewer.launch_agent_hint": "Launch a coding agent for this Space",
+  "spaces.viewer.launch_agent": "Launch Agent",
+  "spaces.viewer.agents_menu_label": "Coding agents",
+  "spaces.viewer.stop_hotspot_hint": "Stop sharing your network with this Space",
+  "spaces.viewer.stop_hotspot": "Stop sharing network",
+  "spaces.viewer.teleport_hint": "Teleport an app into {name}",
+  "spaces.viewer.teleport": "Teleport an app…",
+  "spaces.viewer.connecting_to": "Connecting to {name}…",
+  "spaces.viewer.stream_ended": "Stream ended.",
+  "spaces.viewer.transferring": "Transferring the session…",
+  "spaces.viewer.agent_installing": "Still installing {agent}",
+  "spaces.viewer.agent_opened": "{agent} is open in a terminal in this Space; sign in there",
+  "spaces.window_stream.waiting_for": "Waiting for {name}…",
+  "spaces.window_stream.no_windows": "No open windows in {name} yet.",
+  "spaces.window_stream.close_window": "Close window",
+  "spaces.create.creating": "Creating a Space…"
 }

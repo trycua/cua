@@ -8301,7 +8301,7 @@
    "subcommand_optional": false,
    "subcommands": [
     {
-     "abstract": "Inspect local runtimes (read-only)",
+     "abstract": "Inspect local runtimes (read-only). Exit 1 if any check is Error; warnings exit 0",
      "after_help": "Examples:\n  cua runtime doctor",
      "aliases": [],
      "arguments": [],
@@ -8315,7 +8315,7 @@
      "usage": "cua runtime doctor [OPTIONS]"
     },
     {
-     "abstract": "Provision local runtimes",
+     "abstract": "Provision local runtimes. Exit 1 if any step is Error; warnings exit 0",
      "after_help": "Examples:\n  # See what would be installed\n  cua runtime setup --dry-run\n  cua runtime setup qemu",
      "aliases": [],
      "arguments": [

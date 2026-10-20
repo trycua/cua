@@ -46,6 +46,7 @@ import { FleetContext, useFleetSync, viewerRequestFor } from "./state/cloud";
 import { useTrayMenu } from "./state/trayMenu";
 import { NEW_SPACE_DROP_ID, NEW_TILE_INDEX, initialState, reduce, type PortalState } from "./state/portal";
 import { readMenuBar, type SwitcherTheme } from "./state/settings";
+import { t as tl, useT } from "./i18n";
 
 export interface AppProps {
   bridge: NativeBridge;
@@ -87,6 +88,7 @@ function reportBridgeError(operation: string, error: unknown) {
 }
 
 export function App({ bridge, fleet, teleport, spacesList, windowDrag, teleportApps, host, tray, now = Date.now, collapseDelayMs = SWITCH_COLLAPSE_MS, initial }: AppProps) {
+  const t = useT(["settings", "teleport"]);
   const [state, dispatch] = useReducer(reduce, initial, (preset) => preset ?? initialState());
   const [env, setEnv] = useState<PortalEnvironment | null>(null);
   // Menu-bar presentation: when on, the ambient "N Spaces" tab is hidden and a
@@ -326,7 +328,7 @@ export function App({ bridge, fleet, teleport, spacesList, windowDrag, teleportA
   const createSpaceAndTeleport = useCallback(
     async (app: LocalApp | null, entry: Record<string, unknown> | null = null) => {
       try {
-        dispatch({ type: "notify", text: "Creating a Space…" });
+        dispatch({ type: "notify", text: tl("spaces:spaces.create.creating") });
         // No location: the shell creates it where the default location says,
         // from the default image.
         const id = await fleetSync.createSpace();
@@ -334,7 +336,7 @@ export function App({ bridge, fleet, teleport, spacesList, windowDrag, teleportA
         beginTeleportRef.current(id, name, app, entry);
       } catch (error) {
         reportBridgeError("create Space", error);
-        dispatch({ type: "notify", text: "Couldn’t create a Space" });
+        dispatch({ type: "notify", text: tl("errors:errors.spaces.create_failed") });
       }
     },
     [fleetSync],
@@ -1032,7 +1034,7 @@ export function App({ bridge, fleet, teleport, spacesList, windowDrag, teleportA
             footer={
               axNeeded ? (
                 <button type="button" className="ax-prompt" data-owns-enter onClick={enableWindowDrag}>
-                  Enable window dragging in System Settings → Privacy → Accessibility
+                  {t("settings.accessibility.enable_window_drag")}
                 </button>
               ) : null
             }
@@ -1045,7 +1047,7 @@ export function App({ bridge, fleet, teleport, spacesList, windowDrag, teleportA
               className="teleport-sheet"
               role="dialog"
               aria-modal="true"
-              aria-label={`Teleport an app to ${teleportState.spaceName}`}
+              aria-label={t("teleport.sheet.label", { name: teleportState.spaceName })}
               onClick={(event) => event.stopPropagation()}
             >
               <AppTeleportPicker

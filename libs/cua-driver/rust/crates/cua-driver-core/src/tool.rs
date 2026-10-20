@@ -126,25 +126,24 @@ impl DesktopLane {
         let guard = match self.lock.clone().try_lock_owned() {
             Ok(guard) => guard,
             Err(_) => {
-                let started = tokio::time::Instant::now();
                 let wait = self.lock.clone().lock_owned();
                 tokio::pin!(wait);
                 loop {
-                    tokio::select! {
-                        guard = &mut wait => break guard,
-                        _ = tokio::time::sleep(Duration::from_millis(100)) => {}
-                    }
                     // Read the holder now, after the wake: the stale worker
                     // seen before it may have stopped, and its successor be
                     // a call still running.
                     let stale_since = lock_holder(&self.holder).stale_since;
-                    if stale_since.is_some_and(|since| {
-                        tokio::time::Instant::now() >= since.max(started) + self.stale_wait
-                    }) {
+                    if stale_since
+                        .is_some_and(|since| tokio::time::Instant::now() >= since + self.stale_wait)
+                    {
                         return Err(protected_refusal(
                             "input_busy",
                             "a previous call's input is still finishing: its call ended, but its worker still holds the desktop; retry once it has stopped",
                         ));
+                    }
+                    tokio::select! {
+                        guard = &mut wait => break guard,
+                        _ = tokio::time::sleep(Duration::from_millis(100)) => {}
                     }
                 }
             }
@@ -6117,6 +6116,18 @@ resources:
             refusal.structured_content.as_ref().unwrap()["refusal"]["code"],
             "input_busy"
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn calls_after_the_stale_bound_are_refused_without_waiting_again() {
+        let lane = DesktopLane::new(Duration::from_secs(12));
+        let call = lane.acquire().await.unwrap();
+        let _worker = call.scope(async { DesktopLease::current().unwrap() }).await;
+        drop(call);
+        assert!(lane.acquire().await.is_err());
+        let started = tokio::time::Instant::now();
+        assert!(lane.acquire().await.is_err());
+        assert_eq!(started.elapsed(), Duration::ZERO);
     }
 
     #[tokio::test(start_paused = true)]

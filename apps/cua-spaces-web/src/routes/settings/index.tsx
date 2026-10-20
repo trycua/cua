@@ -66,7 +66,9 @@ const fail = toastError;
  * Keyvault, AI agents), with this UI's own rows (appearance, keyboard shortcuts);
  * without the core, the same settings drawn by hand. */
 function SettingsPage() {
-  const { data: settings } = useSettings();
+  const { data: settings, isLoading } = useSettings();
+  // Not the hand-drawn fallback while the host's answer is still on its way: it would be replaced by the core's page, and everything would move.
+  if (isLoading && !settings) return null;
   return settings?.page ? <CoreGeneralPage page={settings.page} /> : <FallbackSettingsPage />;
 }
 

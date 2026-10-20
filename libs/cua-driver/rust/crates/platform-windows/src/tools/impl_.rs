@@ -6586,7 +6586,12 @@ impl Tool for ScrollTool {
             }
             let center = if let (Some(x), Some(y)) = (px, py) {
                 let (x, y) = match super::scroll_coordinates::window_bitmap_point(
-                    &self.state.snapshots, &args, pid, hwnd, x, y,
+                    &self.state.snapshots,
+                    &args,
+                    pid,
+                    hwnd,
+                    x,
+                    y,
                 ) {
                     Ok(point) => point,
                     Err(refusal) => return refusal,

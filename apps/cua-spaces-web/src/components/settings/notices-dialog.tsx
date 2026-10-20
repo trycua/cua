@@ -19,7 +19,7 @@ export function NoticesDialog({ open, onOpenChange }: { open: boolean; onOpenCha
   const [text, setText] = useState<string | null>(null);
   useEffect(() => {
     if (!open || text !== null) return;
-    void import("../../../../../THIRD_PARTY_NOTICES.md?raw").then(
+    void import("../../../../../legal/THIRD_PARTY_NOTICES.md?raw").then(
       (m) => setText(m.default.replace(/<!--[\s\S]*?-->\n?/g, "")),
       () => setText("The third-party notices are missing from this build (THIRD_PARTY_NOTICES.md)."),
     );

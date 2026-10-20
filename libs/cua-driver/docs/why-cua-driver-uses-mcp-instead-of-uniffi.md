@@ -10,7 +10,7 @@ Decision date: 2026-07-21
 > they cite resolve only in git history.
 
 > This document preserves the rationale for the 0.11.0 daemon-client SDK.
-> [RFC 2447](../../../rfcs/2447-cua-driver-native-core-and-mcp-adapter.md)
+> [RFC 2447](../../../docs/rfcs/2447-cua-driver-native-core-and-mcp-adapter.md)
 > keeps MCP as the agent boundary but replaces the imported SDK topology with a
 > same-process runtime and makes MCP a downstream SDK consumer. Where this
 > document says the SDK is only a daemon client, RFC 2447 is authoritative.

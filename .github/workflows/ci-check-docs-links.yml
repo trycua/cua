@@ -23,9 +23,9 @@ on:
       - "tests/e2e/cua-sdk/docs/**"
       - "scripts/docs-generators/cli-specs/**"
       # Tutorial excerpts must match their #region in these sources.
-      - "samples/openkoalabot-example-ts/**"
-      - "samples/openkoalabot-example-tauri/**"
-      - "samples/openkoalabot-example-swift/**"
+      - "examples/openkoalabot-example-ts/**"
+      - "examples/openkoalabot-example-tauri/**"
+      - "examples/openkoalabot-example-swift/**"
       - "libs/cua/crates/cua-image/schema/**"
       - "**/*.md"
       - ".github/workflows/ci-check-docs-links.yml"

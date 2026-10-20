@@ -535,7 +535,9 @@ fn cached_bounds(pid: u32, xid: Option<u64>, idx: usize) -> Option<(i32, i32, u3
 pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool, bool)> {
     if let Some(observed) = cache::cached_element(pid, None, idx) {
         return TokenElement::new(idx, observed, WindowProof::NotRequired)
-            .act(native::perform_action_ref, |idx| native::perform_action(pid, idx));
+            .act(native::perform_action_ref, |idx| {
+                native::perform_action(pid, idx)
+            });
     }
     native::perform_action(pid, idx)
 }

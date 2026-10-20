@@ -1,4 +1,4 @@
-# Windows PowerShell 5.1 regression test for the install.ps1 junction fallback.
+﻿# Windows PowerShell 5.1 regression test for the install.ps1 junction fallback.
 # Run from the repository root with powershell.exe -File.
 
 Set-StrictMode -Version Latest

@@ -317,9 +317,7 @@ function Get-AssetArchLabel($targetTriple) {
 # Doing this through P/Invoke (versus shelling out to `cmd /c mklink /J`)
 # avoids the cmd dependency, dodges a console window flash, and lets the
 # installer report a structured error if the junction can't be created
-# (e.g. the path is on a non-NTFS volume). If PowerShell 5.1's Add-Type
-# temp-source path is mangled by a non-ASCII ANSI code page, we fall
-# back to mklink/Get-Item.Target instead of aborting the install.
+# (e.g. the path is on a non-NTFS volume).
 #
 # Junctions vs symlinks (why we picked junctions):
 #   - Directory symlinks (CreateSymbolicLink with SYMBOLIC_LINK_FLAG_DIRECTORY)
@@ -592,9 +590,6 @@ function Set-JunctionTarget([string]$linkPath, [string]$targetPath) {
         throw "found existing non-junction directory at $linkPath; refusing to replace"
     }
 
-    # Build the replacement first. A failed mklink leaves the stable junction
-    # untouched. Directory renames then swap the staged and prior junctions;
-    # if the second rename fails, put the prior junction back before returning.
     $suffix = [guid]::NewGuid().ToString("N")
     $stagePath = Join-Path $parent ".cua-junction-stage-$suffix"
     $backupPath = Join-Path $parent ".cua-junction-backup-$suffix"
@@ -626,14 +621,11 @@ function Get-JunctionTarget([string]$linkPath) {
         return [CuaDriverInstaller.Junction]::GetTarget($linkPath)
     }
 
-    # PowerShell 7 exposes FileSystemInfo.Target, but Windows PowerShell 5.1
-    # does not. Prefer the property when present, then parse fsutil's stable
-    # NT substitute-name prefix without depending on localized field labels.
     try {
         $item = Get-Item -LiteralPath $linkPath -Force -ErrorAction Stop
         $targetProperty = $item.PSObject.Properties["Target"]
         if ($targetProperty) {
-            $targets = @($targetProperty.Value) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+            $targets = @(@($targetProperty.Value) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
             if ($targets.Count -gt 0) { return [string]$targets[0] }
         }
 
@@ -670,8 +662,6 @@ function Get-JunctionTarget([string]$linkPath) {
 # reparse points (CreateSymbolicLink + MoveFileEx-replace-existing only
 # works for files, not directories). For the initial-create case the path
 # is the same: Directory.CreateDirectory followed by SET_REPARSE_POINT.
-# The mklink fallback (Add-Type unavailable) stages a sibling junction, then
-# swaps directory names while retaining the prior junction for rollback.
 function Ensure-Junction([string]$linkPath, [string]$targetPath) {
     if (Test-Path -LiteralPath $linkPath) {
         if (Test-IsJunction $linkPath) {

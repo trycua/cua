@@ -2980,8 +2980,9 @@ async fn trusted_click_refuses_when_standalone_background_posture_is_unavailable
 }
 
 #[tokio::test]
-async fn dom_event_click_reports_suspected_noop_for_readable_unchanged_target_state() {
+async fn dom_event_click_reports_suspected_noop_when_only_focus_changes() {
     let f = fixture_with(|state| state.dom_click_changes_readback = false).await;
+    assert!(!f.state.lock().unwrap().dom_click_focused);
     let (target, tab) = bind(&f).await;
     let snap = snapshot(&f, &target, &tab).await;
     let main_ref = ref_of(&snap, "main", "main-btn");
@@ -3008,6 +3009,7 @@ async fn dom_event_click_reports_suspected_noop_for_readable_unchanged_target_st
         .public_result()
         .expect("public browser click result");
     let public = serde_json::to_value(public).expect("serialize public result");
+    assert!(f.state.lock().unwrap().dom_click_focused);
     assert_eq!(public["effect"], "suspected_noop", "{public}");
     assert_eq!(public["evidence"][0]["kind"], "value_readback", "{public}");
     assert_eq!(public["escalation"]["target"], "page", "{public}");

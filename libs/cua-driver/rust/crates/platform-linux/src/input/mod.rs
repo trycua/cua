@@ -3143,12 +3143,14 @@ fn admitted<T, E: Into<anyhow::Error>>(send: impl FnOnce() -> Result<T, E>) -> R
 /// How long releasing an abandoned call's presses may take.
 const ABANDONED_RELEASE_WAIT: Duration = Duration::from_secs(2);
 
-/// XTest presses this call queued. Abandoning the call shuts its connection,
-/// so the releases it still owes cannot go out there: dropping this then
-/// sends them on a fresh connection, while the call still holds the desktop.
-/// The server ignores a release for a key or button that is already up.
+/// XTest presses this call queued, and whether each is still held. A route
+/// releases what is held on its own connection, even after a failure.
+/// Abandoning the call shuts that connection, so the releases it still owes
+/// cannot go out there: dropping this then sends them on a fresh connection,
+/// while the call still holds the desktop. The server ignores a release for
+/// a key or button that is already up.
 #[derive(Default)]
-struct Delivered(Vec<(u8, u8)>);
+struct Delivered(Vec<(u8, u8, bool)>);
 
 impl Delivered {
     fn press<C>(
@@ -3158,8 +3160,38 @@ impl Delivered {
         send: impl FnOnce() -> Result<C, x11rb::errors::ConnectionError>,
     ) -> Result<C> {
         let sent = admitted(send)?;
-        self.0.push((kind + 1, detail));
+        self.0.push((kind + 1, detail, true));
         Ok(sent)
+    }
+
+    /// The release of the latest held `detail` pressed by `kind + 1` went out.
+    fn released(&mut self, release: u8, detail: u8) {
+        if let Some(press) = self
+            .0
+            .iter_mut()
+            .rev()
+            .find(|press| **press == (release, detail, true))
+        {
+            press.2 = false;
+        }
+    }
+
+    /// Release on `conn` whatever is still held, latest first.
+    fn release_held(&mut self, conn: &RustConnection) -> Result<()> {
+        use x11rb::protocol::xtest::ConnectionExt as _;
+        let mut result = Ok(());
+        for (release, detail, held) in self.0.iter_mut().rev().filter(|press| press.2) {
+            *held = false;
+            if let Err(error) = conn.xtest_fake_input(*release, *detail, 0, x11rb::NONE, 0, 0, 0) {
+                result = result.and(Err(error.into()));
+            }
+        }
+        result
+    }
+
+    /// The server took every release: nothing is owed after abandon.
+    fn confirmed(&mut self) {
+        self.0.clear();
     }
 }
 
@@ -3168,7 +3200,11 @@ impl Drop for Delivered {
         if self.0.is_empty() || !action::current().is_some_and(|action| action.is_abandoned()) {
             return;
         }
-        if let Err(error) = release_abandoned(std::mem::take(&mut self.0)) {
+        let presses = self
+            .0
+            .drain(..)
+            .map(|(release, detail, _)| (release, detail));
+        if let Err(error) = release_abandoned(presses.collect()) {
             tracing::warn!("releasing the input of an abandoned call failed: {error:#}");
         }
     }
@@ -3703,7 +3739,7 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
                 conn.xtest_fake_input(KEY_RELEASE_EVENT, shift_kc, 0, x11rb::NONE, 0, 0, 0)?;
             }
             conn.flush()?;
-            delivered.0.clear();
+            delivered.confirmed();
             sleep(Duration::from_millis(KEY_DELAY_MS));
             Ok(())
         },
@@ -3805,7 +3841,7 @@ pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
         conn.xtest_fake_input(KEY_RELEASE_EVENT, kc, 0, x11rb::NONE, 0, 0, 0)?;
     }
     conn.flush()?;
-    delivered.0.clear();
+    delivered.confirmed();
 
     // Round-trip so the server actually PROCESSES (delivers) the injected XTEST
     // key events before this function returns and drops its short-lived
@@ -3864,15 +3900,12 @@ pub fn send_click_xtest_desktop_with_modifiers(
         }
         modifier_keycodes.push(keycode);
     }
-    let mut pressed = Vec::new();
-    let mut button_pressed = false;
     let mut delivered = Delivered::default();
     let gesture_result = (|| -> Result<()> {
         for &keycode in &modifier_keycodes {
             delivered.press(KEY_PRESS_EVENT, keycode, || {
                 conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)
             })?;
-            pressed.push(keycode);
         }
         // Absolute pointer warp (MotionNotify, detail=0 => absolute) so the
         // button events that follow are delivered at (x, y).
@@ -3884,11 +3917,10 @@ pub fn send_click_xtest_desktop_with_modifiers(
             })?;
             // Confirm delivery before sleeping; buffering both edges produces a zero-ms click.
             press.check()?;
-            button_pressed = true;
             sleep(Duration::from_millis(CLICK_DELAY_MS));
             conn.xtest_fake_input(BUTTON_RELEASE_EVENT, button, 0, root, x as i16, y as i16, 0)?
                 .check()?;
-            button_pressed = false;
+            delivered.released(BUTTON_RELEASE_EVENT, button);
             if click_index + 1 < count {
                 // Keep the existing gap between completed click pairs.
                 sleep(Duration::from_millis(DOUBLE_CLICK_DELAY_MS));
@@ -3898,23 +3930,7 @@ pub fn send_click_xtest_desktop_with_modifiers(
     })();
 
     // Attempt all releases after a partial failure. Do not strand buttons or modifiers.
-    let mut release_result: Result<()> = Ok(());
-    if button_pressed {
-        release_result = (|| -> Result<()> {
-            conn.xtest_fake_input(BUTTON_RELEASE_EVENT, button, 0, root, x as i16, y as i16, 0)?
-                .check()?;
-            Ok(())
-        })();
-    }
-    for &keycode in pressed.iter().rev() {
-        if let Err(error) =
-            conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)
-        {
-            if release_result.is_ok() {
-                release_result = Err(error.into());
-            }
-        }
-    }
+    let release_result = delivered.release_held(&conn);
     // Complete queued modifier releases before the short-lived connection closes,
     // while preserving the primary gesture or cleanup error when one exists.
     let completion_result = (|| -> Result<()> {
@@ -3922,7 +3938,7 @@ pub fn send_click_xtest_desktop_with_modifiers(
         Ok(())
     })();
     if completion_result.is_ok() {
-        delivered.0.clear();
+        delivered.confirmed();
     }
     drop(guards);
     gesture_result?;
@@ -3964,7 +3980,7 @@ pub fn send_scroll_xtest_desktop(x: i32, y: i32, direction: &str, amount: usize)
         conn.xtest_fake_input(BUTTON_RELEASE_EVENT, button, 0, root, x as i16, y as i16, 0)?;
     }
     conn.flush()?;
-    delivered.0.clear();
+    delivered.confirmed();
     let _ = conn.get_input_focus()?.reply();
     Ok(())
 }
@@ -4021,8 +4037,6 @@ pub fn send_drag_xtest_desktop_with_modifiers(
     }
     let steps = steps.max(1);
     let delay = duration_ms / steps as u64;
-    let mut pressed_modifiers = Vec::new();
-    let mut button_pressed = false;
     let mut delivered = Delivered::default();
 
     let gesture_result = (|| -> Result<()> {
@@ -4030,7 +4044,6 @@ pub fn send_drag_xtest_desktop_with_modifiers(
             delivered.press(KEY_PRESS_EVENT, keycode, || {
                 conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)
             })?;
-            pressed_modifiers.push(keycode);
         }
         admitted(|| {
             conn.xtest_fake_input(
@@ -4054,7 +4067,6 @@ pub fn send_drag_xtest_desktop_with_modifiers(
                 0,
             )
         })?;
-        button_pressed = true;
         conn.flush()?;
         for step in 1..=steps {
             let t = step as f64 / steps as f64;
@@ -4085,42 +4097,18 @@ pub fn send_drag_xtest_desktop_with_modifiers(
             to_y as i16,
             0,
         )?;
-        button_pressed = false;
+        delivered.released(BUTTON_RELEASE_EVENT, button);
         Ok(())
     })();
 
     // Always attempt to release the button and every modifier queued above,
     // including when a later motion request fails.
-    let mut cleanup_result: Result<()> = Ok(());
-    if button_pressed {
-        if let Err(error) = conn.xtest_fake_input(
-            BUTTON_RELEASE_EVENT,
-            button,
-            0,
-            root,
-            to_x as i16,
-            to_y as i16,
-            0,
-        ) {
-            cleanup_result = Err(error.into());
-        }
-    }
-    for &keycode in pressed_modifiers.iter().rev() {
-        if let Err(error) =
-            conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)
-        {
-            if cleanup_result.is_ok() {
-                cleanup_result = Err(error.into());
-            }
-        }
-    }
+    let mut cleanup_result = delivered.release_held(&conn);
     if let Err(error) = conn.flush() {
-        if cleanup_result.is_ok() {
-            cleanup_result = Err(error.into());
-        }
+        cleanup_result = cleanup_result.and(Err(error.into()));
     }
     if cleanup_result.is_ok() {
-        delivered.0.clear();
+        delivered.confirmed();
     }
     let _ = conn.get_input_focus()?.reply();
     drop(guards);

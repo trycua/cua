@@ -11,7 +11,18 @@
 # never satisfies the gate. Missing, pending, failed or older than MAX_AGE_HOURS
 # (default 336) evidence fails.
 #
-# Break-glass: SKIP_STAGING_GATE=true with a non-empty SKIP_REASON passes, with
+# How to satisfy it (the smoke lives in trycua/cloud and is run by hand; no
+# workflow runs it for you). After the release PR merges and the tag exists:
+#   GH_TOKEN=<statuses:write on trycua/cua> python3 scripts/spaces-staging/smoke.py \
+#     --post-status <component> --sha <tag commit> --digest sha256:<artifact set>
+# then re-run the failed "staging smoke is green" job on the tag run; the
+# release jobs continue. For Cua Driver, the same command with
+# --post-status cua-driver (its smoke is the same staging smoke).
+# Driver has no workflow_dispatch bypass (its release job is tag-push only):
+# its break-glass is an admin posting the status by hand with the reason in the
+# description (the digest check still needs a "sha256:..." token).
+#
+# Break-glass (Spaces): SKIP_STAGING_GATE=true with a non-empty SKIP_REASON passes, with
 # an error-level annotation and a summary line; without a reason it fails.
 set -euo pipefail
 

@@ -2069,6 +2069,9 @@ dependencies = [
 [[package]]
 name = "cua-create-failure"
 version = "0.1.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "cua-cursor-motion"
@@ -2086,6 +2089,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "cua-byoc",
+ "cua-create-failure",
  "cua-disk",
  "cua-home",
  "cua-host",
@@ -2833,6 +2837,7 @@ dependencies = [
  "base64 0.22.1",
  "bollard",
  "bytes",
+ "cua-create-failure",
  "filetime",
  "futures",
  "libc",

@@ -52,14 +52,12 @@ pub(crate) fn try_type_focused_document_append(
         )
     }) {
         Ok(outcome) => outcome,
-        Err(_)
-            if state
+        Err(error) => focused_document_worker_error(
+            error,
+            state
                 .compare_exchange(0, 2, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok() =>
-        {
-            FocusedDocumentTypeOutcome::NotApplicable
-        }
-        Err(error) => focused_document_worker_error(error),
+                .unwrap_or_else(|state| state),
+        ),
     }
 }
 
@@ -355,11 +353,12 @@ fn normalized_text_matches(expected: &str, actual: &str) -> bool {
     normalize_document_line_endings(expected) == normalize_document_line_endings(actual)
 }
 
-fn focused_document_worker_error(error: UiaDeadlineError) -> FocusedDocumentTypeOutcome {
+fn focused_document_worker_error(error: UiaDeadlineError, state: u8) -> FocusedDocumentTypeOutcome {
+    if state == 0 {
+        return FocusedDocumentTypeOutcome::NotApplicable;
+    }
     match error {
-        UiaDeadlineError::Busy => FocusedDocumentTypeOutcome::Unknown(
-            "focused UIA worker is busy; an earlier write may still be in flight",
-        ),
+        UiaDeadlineError::Busy => FocusedDocumentTypeOutcome::NotApplicable,
         UiaDeadlineError::Timeout => {
             FocusedDocumentTypeOutcome::Unknown("focused UIA call timed out")
         }
@@ -405,19 +404,27 @@ mod tests {
     }
 
     #[test]
-    fn busy_timed_out_or_lost_workers_never_enable_a_second_input_route() {
-        assert!(matches!(
-            focused_document_worker_error(UiaDeadlineError::Busy),
-            FocusedDocumentTypeOutcome::Unknown(_)
-        ));
-        assert!(matches!(
-            focused_document_worker_error(UiaDeadlineError::Timeout),
-            FocusedDocumentTypeOutcome::Unknown(_)
-        ));
-        assert!(matches!(
-            focused_document_worker_error(UiaDeadlineError::Unavailable),
-            FocusedDocumentTypeOutcome::Unknown(_)
-        ));
+    fn worker_errors_before_write_allow_native_fallback() {
+        for error in [
+            UiaDeadlineError::Busy,
+            UiaDeadlineError::Timeout,
+            UiaDeadlineError::Unavailable,
+        ] {
+            assert_eq!(
+                focused_document_worker_error(error, 0),
+                FocusedDocumentTypeOutcome::NotApplicable
+            );
+        }
+    }
+
+    #[test]
+    fn worker_errors_after_write_never_enable_a_second_input_route() {
+        for error in [UiaDeadlineError::Timeout, UiaDeadlineError::Unavailable] {
+            assert!(matches!(
+                focused_document_worker_error(error, 1),
+                FocusedDocumentTypeOutcome::Unknown(_)
+            ));
+        }
     }
 
     #[test]

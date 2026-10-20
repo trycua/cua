@@ -4587,7 +4587,7 @@ impl Tool for TypeTextTool {
                 **Routing on Windows.** `element_token` selects a specific UIA element \
                 and writes its ValuePattern value. For no-element foreground typing, a \
                 separate capability-gated path can use the exact focused UIA Document \
-                when it is writable and empty or has one collapsed caret at its end. \
+                only when it is writable and empty. \
                 Eligibility depends on control capabilities and live focus, not app names. \
                 Chromium/Electron windows keep their existing boundary because a UIA \
                 value echo does not prove that the renderer accepted the text. The \
@@ -4595,7 +4595,7 @@ impl Tool for TypeTextTool {
                 unverifiable result requires a fresh observation before any retry and \
                 is never replayed through native input. This replaces the full \
                 ValuePattern value, so rich-text formatting and native undo behavior \
-                are not guaranteed; single-line Edit controls and middle selections \
+                are not guaranteed; single-line Edit controls \
                 keep the existing input route. For other XAML / WinUI3 / UWP cases, \
                 use `element_token` from `get_window_state`; background WM_CHAR does \
                 not reach their CoreInput dispatcher. Native ConsoleHost on Windows ARM64 is \

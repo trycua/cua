@@ -429,12 +429,11 @@ pub(in crate::wayland) fn type_text(expected: Option<u64>, text: &str) -> Result
     if text.is_empty() {
         return Ok(());
     }
-    let mut session = Session::begin(expected, text.chars().count())?;
-    let parts = plan_text(&session.keyboard.base.text, session.group, text)?;
-    let total: usize = parts.iter().map(|part| part.keys.len()).sum();
-    let mut sent = Sent::default();
-    let typed = session.send(&parts, &mut sent);
-    outcome(sent, total, typed, session.finish())
+    let (total, sent, typed, finished) =
+        run_session(expected, text.chars().count(), |map, group| {
+            plan_text(map, group, text)
+        })?;
+    outcome(sent, total, typed, finished)
 }
 
 /// Press the key `name` (an X keysym name) with `modifiers` (`ctrl`,
@@ -446,29 +445,18 @@ pub(in crate::wayland) fn press(
     modifiers: &[String],
     name: &str,
 ) -> Result<()> {
-    let mut session = Session::begin(expected, 1)?;
-    let key = plan_key(&session.keyboard.base.text, session.group, modifiers, name)?;
-    let parts = [Part {
-        keys: vec![key],
-        extended: None,
-    }];
-    let mut sent = Sent::default();
-    let typed = session.send(&parts, &mut sent);
-    match (typed, session.finish()) {
+    let (_, sent, typed, finished) = run_session(expected, 1, |map, group| {
+        Ok(vec![Part {
+            keys: vec![plan_key(map, group, modifiers, name)?],
+            extended: None,
+        }])
+    })?;
+    match (typed, finished) {
         (Ok(()), Ok(())) => Ok(()),
         (Err(error), _) if sent.underway => Err(anyhow!("the key may have gone out: {error:#}")),
         (Err(error), _) => Err(error),
         (Ok(()), Err(error)) => Err(error.context("pressed the key, but could not finish")),
     }
-}
-
-/// One call's keyboard, bound to the window that had keyboard focus when it
-/// began and to niri's active layout then.
-struct Session {
-    keyboard: Keyboard,
-    target: u64,
-    group: u32,
-    deadline: Instant,
 }
 
 /// How long before its tool call's deadline a session stops: time for the
@@ -485,48 +473,39 @@ fn session_deadline(now: Instant, keys: usize, call: Option<Instant>) -> Instant
     })
 }
 
-impl Session {
-    fn begin(expected: Option<u64>, keys: usize) -> Result<Self> {
-        let deadline = session_deadline(
-            Instant::now(),
-            keys,
-            crate::input::action::current().map(|action| action.deadline()),
-        );
-        let focused = super::keyboard_focus().map_err(super::input_unavailable)?;
-        let target = admitted_target(expected, focused)?;
-        super::refuse_if_locked().map_err(super::input_unavailable)?;
-        let group = super::keyboard_layout().map_err(super::input_unavailable)?;
-        let keyboard = Keyboard::bind(deadline).map_err(|error| refused(format!("{error:#}")))?;
-        Ok(Self {
-            keyboard,
-            target,
-            group,
-            deadline,
-        })
-    }
-
-    fn send(&mut self, parts: &[Part], sent: &mut Sent) -> Result<()> {
-        let target = self.target;
-        type_parts(
-            &mut self.keyboard,
-            parts,
-            self.group,
-            self.deadline,
-            sent,
-            |sent| match super::keyboard_focus() {
-                Ok(Some(focused)) if focused == target => Ok(()),
-                Ok(focused) => Err(focus_moved(target, focused, sent)),
-                Err(error) => Err(super::input_unavailable(error)),
-            },
-        )
-    }
-
-    /// Finish in the layout active now: the user may have switched layouts,
-    /// or focus moved to a window with its own, during the call.
-    fn finish(self) -> Result<()> {
-        let group = closing_group(super::keyboard_layout(), self.group);
-        self.keyboard.finish(group)
-    }
+/// One call's keyboard session: bind a keyboard to the window with keyboard
+/// focus, send the keys `plan` makes from niri's keymap and active layout,
+/// then always finish in the layout active by then: the user may have
+/// switched layouts, or focus moved to a window with its own, during the
+/// call. Returns the planned key count, how far the send got, its result
+/// and the finish's.
+fn run_session(
+    expected: Option<u64>,
+    keys: usize,
+    plan: impl FnOnce(&str, u32) -> Result<Vec<Part>>,
+) -> Result<(usize, Sent, Result<()>, Result<()>)> {
+    let deadline = session_deadline(
+        Instant::now(),
+        keys,
+        crate::input::action::current().map(|action| action.deadline()),
+    );
+    let focused = super::keyboard_focus().map_err(super::input_unavailable)?;
+    let target = admitted_target(expected, focused)?;
+    super::refuse_if_locked().map_err(super::input_unavailable)?;
+    let group = super::keyboard_layout().map_err(super::input_unavailable)?;
+    let mut keyboard = Keyboard::bind(deadline).map_err(|error| refused(format!("{error:#}")))?;
+    let parts = plan(&keyboard.base.text, group)?;
+    let total = parts.iter().map(|part| part.keys.len()).sum();
+    let mut sent = Sent::default();
+    let typed = type_parts(&mut keyboard, &parts, group, deadline, &mut sent, |sent| {
+        match super::keyboard_focus() {
+            Ok(Some(focused)) if focused == target => Ok(()),
+            Ok(focused) => Err(focus_moved(target, focused, sent)),
+            Err(error) => Err(super::input_unavailable(error)),
+        }
+    });
+    let finished = keyboard.finish(closing_group(super::keyboard_layout(), group));
+    Ok((total, sent, typed, finished))
 }
 
 /// The layout group a call leaves the keyboard in: niri's active one at the

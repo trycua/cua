@@ -109,7 +109,9 @@ void i18next
     initAsync: false,
     interpolation: { escapeValue: false }, // React escapes
     returnNull: false,
-    react: { useSuspense: false },
+    // Keys are unique across namespaces (`<ns>.…`), so a hook over several
+    // namespaces looks the key up in each, not only the first.
+    react: { useSuspense: false, nsMode: "fallback" },
   });
 
 /** The locale in use right now (not the OS locale). */

@@ -25,6 +25,7 @@ import type { DevicesBridge } from "../native/devices";
 import { enrollSignals } from "../model/telemetry";
 import { telemetryBridge } from "../native/telemetry";
 import { relativeTime } from "./ThisMachinePanel";
+import { useT } from "../i18n";
 
 /** How often the page (and the approval watch) reads the relay. */
 export const DEVICES_POLL_MS = 60_000;
@@ -97,10 +98,11 @@ export function useDevices(bridge: DevicesBridge, signedIn: boolean, nowMs: () =
 
 /** The main window's slim banner (enrollment needed, re-verification soon). */
 export function DevicesBanner({ view, onEnroll }: { view: DevicesView | null; onEnroll: () => void }) {
+  const t = useT("devices");
   const banner = view?.banner;
   if (!banner) return null;
   return (
-    <div className="dw-banner dv-banner" data-tone={banner.tone} role="status" aria-label="Device enrollment">
+    <div className="dw-banner dv-banner" data-tone={banner.tone} role="status" aria-label={t("devices.banner.label")}>
       <span>{banner.text}</span>
       {banner.action === "enroll" && banner.actionLabel && (
         <button type="button" className="dw-btn" onClick={onEnroll}>
@@ -135,11 +137,12 @@ export function DevicesSection({
   onRevoke: (row: DeviceRow) => void;
   onConfirmMachine: (machine: UnconfirmedMachine) => void;
 }) {
+  const tr = useT("devices");
   if (!signedIn || !view) {
     return (
-      <section className="st-group dv" aria-label="Devices">
+      <section className="st-group dv" aria-label={tr("devices.section.label")}>
         <div className="st-head">
-          <h3 className="st-title">Devices</h3>
+          <h3 className="st-title">{tr("devices.section.title")}</h3>
         </div>
         <div className="st-rows">
           <p className="st-note">{signedIn ? (error ?? "Loading…") : "Sign in to Cua to see the devices that can reach your computers."}</p>
@@ -246,7 +249,7 @@ export function DevicesSection({
             view.recent.map((a, i) => (
               <div className="st-row" key={`${a.ts}-${i}`} data-notable={a.notable || undefined}>
                 <span className="st-label" title={a.text}>
-                  {a.notable && <span className="dv-notable" aria-label="Not one of your devices" />}
+                  {a.notable && <span className="dv-notable" aria-label={tr("devices.recent.not_yours_label")} />}
                   {a.text}
                 </span>
                 <span className="st-value">{relativeTime(a.ts * 1000, nowMs)}</span>
@@ -298,6 +301,7 @@ export function EnrollSheet({
   onEnrolled: () => void;
   pollMs?: number;
 }) {
+  const t = useT("devices");
   const [state, setState] = useState(enrollInitial);
   const stateRef = useRef(state);
   // Every step goes through here: the core's reducer, and the usage events
@@ -367,7 +371,7 @@ export function EnrollSheet({
           </div>
         )}
         {v.code && (
-          <p className="dv-code" aria-label="One-time code">
+          <p className="dv-code" aria-label={t("devices.enroll.code_label")}>
             {v.code}
           </p>
         )}
@@ -415,6 +419,7 @@ export function ApproveSheet({
   onClose: () => void;
   onDone: () => void;
 }) {
+  const t = useT("devices");
   const [state, setState] = useState(() => approveOpen(prompt));
   const send = useCallback(
     (action: ApproveSheetAction) => setState((s) => reduceApprove(s, action, devices)),
@@ -480,7 +485,7 @@ export function ApproveSheet({
         )}
         {needsPassphrase && (
           <label className="dw-field">
-            <span>Keyvault passphrase</span>
+            <span>{t("devices.approve.passphrase_label")}</span>
             <input
               className="dw-input"
               type="password"

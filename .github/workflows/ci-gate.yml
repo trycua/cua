@@ -10,10 +10,6 @@ permissions:
   contents: read
   pull-requests: read
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 jobs:
   ci-gate:
     name: ci-gate
@@ -64,7 +60,7 @@ jobs:
                 jobs="run"$'\t'"$conclusion"
               fi
               verdict=pass
-              if grep -vP '\t(success|neutral)$' <<<"$jobs"; then
+              if [[ ! "$conclusion" =~ ^(success|neutral)$ ]]; then
                 verdict=fail
                 failed=1
               fi

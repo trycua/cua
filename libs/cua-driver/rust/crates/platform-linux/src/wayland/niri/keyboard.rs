@@ -218,7 +218,7 @@ fn split<'t>(
 
 /// Put each of `syms` on a spare key of `map` and prove every other key, the
 /// layouts and the modifiers unchanged. Returns the extended keymap compiled
-/// and as libxkbcommon serializes it.
+/// and the exact text that was proven.
 fn extend(map: &str, keymap: &xkb::Keymap, syms: &[xkb::Keysym]) -> Result<(xkb::Keymap, String)> {
     let spare = spare_keys(keymap);
     if syms.len() > spare.len() {
@@ -236,7 +236,8 @@ fn extend(map: &str, keymap: &xkb::Keymap, syms: &[xkb::Keysym]) -> Result<(xkb:
         .collect();
     let end = symbols_end(map).ok_or_else(|| refused("niri's keymap has an unexpected layout"))?;
     let (head, tail) = map.split_at(end);
-    let extended = compile(&format!("{head}{entries}{tail}"))?;
+    let text = format!("{head}{entries}{tail}");
+    let extended = compile(&text)?;
     let used: Vec<xkb::Keycode> = spare
         .iter()
         .take(syms.len())
@@ -247,7 +248,6 @@ fn extend(map: &str, keymap: &xkb::Keymap, syms: &[xkb::Keysym]) -> Result<(xkb:
             "extending niri's keymap would change existing keys",
         ));
     }
-    let text = extended.get_as_string(xkb::KEYMAP_FORMAT_TEXT_V1);
     Ok((extended, text))
 }
 
@@ -584,20 +584,23 @@ struct Sent {
 /// scroll does.
 fn outcome(sent: Sent, total: usize, typed: Result<()>, finished: Result<()>) -> Result<()> {
     let done = sent.done;
-    match (typed, finished) {
-        (Ok(()), Ok(())) => Ok(()),
-        (Err(error), _) if sent.underway => Err(anyhow!(
+    let typed = typed.map_err(|error| match done {
+        _ if sent.underway => anyhow!(
             "type_text stopped after {done} of {total} characters, and character {} may have \
              gone out: {error:#}",
             done + 1
-        )),
-        (Err(error), _) if done == 0 => Err(error),
-        (Err(error), _) => Err(anyhow!(
-            "type_text stopped after {done} of {total} characters: {error:#}"
-        )),
+        ),
+        0 => error,
+        _ => anyhow!("type_text stopped after {done} of {total} characters: {error:#}"),
+    });
+    match (typed, finished) {
+        (typed, Ok(())) => typed,
         (Ok(()), Err(error)) => Err(error.context(format!(
             "typed all {total} characters, but could not put niri's keymap back"
         ))),
+        (Err(typed), Err(error)) => Err(anyhow!(
+            "{typed:#}; also could not put niri's keymap back: {error:#}"
+        )),
     }
 }
 
@@ -1127,6 +1130,26 @@ mod tests {
         assert_eq!(
             crate::input::foreground::error_code(&refused),
             Some(crate::input::foreground::CODE_UNAVAILABLE)
+        );
+    }
+
+    #[test]
+    fn a_failed_keymap_restore_is_reported_with_the_typing_error() {
+        let both = outcome(
+            Sent {
+                done: 2,
+                underway: false,
+            },
+            5,
+            Err(anyhow!("foreground_timeout: deadline passed")),
+            Err(anyhow!("keymap upload failed")),
+        )
+        .unwrap_err()
+        .to_string();
+        assert_eq!(
+            both,
+            "type_text stopped after 2 of 5 characters: foreground_timeout: deadline passed; \
+             also could not put niri's keymap back: keymap upload failed"
         );
     }
 

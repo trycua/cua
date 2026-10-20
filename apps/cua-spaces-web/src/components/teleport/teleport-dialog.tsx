@@ -4,7 +4,7 @@
 import { Radio } from "@base-ui/react/radio";
 import { RadioGroup } from "@base-ui/react/radio-group";
 import { LoaderCircleIcon, SearchIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { useFeatureRecorded, useTeleport, type PickerState, type TeleportMove, type TeleportSession, type TeleportStore } from "@/bridge";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { leavesLine } from "@/lib/host-labels";
 import { Segmented } from "@/components/ui/segmented";
 
+import { markExplained, needsExplainer, TeleportExplainer } from "./explainer";
 import { TeleportGrid } from "./grid";
 import { TeleportReview } from "./review";
 
@@ -33,7 +34,18 @@ export const MOVE_LABEL: Record<TeleportMove, string> = {
 export default function TeleportDialog() {
   const { session, images, teleport } = useTeleport();
   useFeatureRecorded("teleport_app_picker", Boolean(session));
+  const [explaining, setExplaining] = useState(false);
+  const step = session?.state.step;
+  useEffect(() => {
+    if (step !== "consent") setExplaining(false);
+  }, [step]);
   if (!session || !teleport) return null;
+  /** Teleport on the review: the first time on a Mac, the explainer comes before the run (and the prompts it brings). */
+  const confirm = () => {
+    if (!explaining && needsExplainer()) return setExplaining(true);
+    markExplained();
+    void teleport.confirm();
+  };
   return (
     <Dialog open onOpenChange={(open) => !open && teleport.close()}>
       <DialogPopup
@@ -45,9 +57,9 @@ export default function TeleportDialog() {
           {title(session)}
         </DialogTitle>
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <Body session={session} teleport={teleport} images={images} />
+          {explaining ? <TeleportExplainer /> : <Body session={session} teleport={teleport} images={images} />}
         </div>
-        <Footer session={session} teleport={teleport} />
+        <Footer session={session} teleport={teleport} explaining={explaining} onBack={() => setExplaining(false)} onConfirm={confirm} />
       </DialogPopup>
     </Dialog>
   );
@@ -205,9 +217,21 @@ function Running({ session: s }: { session: TeleportSession }) {
   );
 }
 
-function Footer({ session: s, teleport }: { session: TeleportSession; teleport: TeleportStore }) {
+function Footer({
+  session: s,
+  teleport,
+  explaining,
+  onBack,
+  onConfirm,
+}: {
+  session: TeleportSession;
+  teleport: TeleportStore;
+  explaining: boolean;
+  onBack: () => void;
+  onConfirm: () => void;
+}) {
   const step = s.state.step;
-  const leaves = step === "consent" ? leavesLine(s.frame.review?.leavesText ?? "") : null;
+  const leaves = step === "consent" && !explaining ? leavesLine(s.frame.review?.leavesText ?? "") : null;
   return (
     <div className="flex shrink-0 items-center gap-2 border-t bg-muted/60 px-5 py-3">
       {leaves ? (
@@ -236,11 +260,11 @@ function Footer({ session: s, teleport }: { session: TeleportSession; teleport: 
         </>
       ) : step === "consent" ? (
         <>
-          <Button variant="outline" onClick={() => teleport.send({ type: "back" })}>
+          <Button variant="outline" onClick={() => (explaining ? onBack() : teleport.send({ type: "back" }))}>
             Back
           </Button>
-          <Button data-teleport-confirm disabled={!s.frame.review?.canConfirm} onClick={() => void teleport.confirm()}>
-            Teleport
+          <Button data-teleport-confirm disabled={!s.frame.review?.canConfirm} onClick={onConfirm}>
+            {explaining ? "Continue" : "Teleport"}
           </Button>
         </>
       ) : step === "error" ? (

@@ -749,6 +749,25 @@ fn scroll_oracle_rejects_missing_or_invalid_geometry() {
     }
 }
 
+// Exercise text-only MCP clients even though the testkit requests full_output.
+fn text_snapshot_id(state: &ToolResponse) -> String {
+    let text = state.raw["result"]["content"]
+        .as_array()
+        .expect("MCP content blocks")
+        .iter()
+        .find_map(|block| block.get("text")?.as_str())
+        .unwrap();
+    let handle = text
+        .lines()
+        .next()
+        .unwrap()
+        .split_whitespace()
+        .find_map(|field| field.strip_prefix("snapshot_id="))
+        .expect("snapshot_id in text header");
+    assert_eq!(handle, state.snapshot_id());
+    handle.to_owned()
+}
+
 fn action_target_args(
     fixture: &Fixture,
     state: &ToolResponse,
@@ -766,7 +785,7 @@ fn action_target_args(
     if addressing == "ax" {
         object.insert(
             "element_token".to_owned(),
-            serde_json::json!(state.element_token(index)),
+            serde_json::json!(format!("{}:{index}", text_snapshot_id(state))),
         );
     } else {
         let origin = window_origin(fixture, state);

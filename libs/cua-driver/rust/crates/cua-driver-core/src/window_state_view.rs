@@ -11,8 +11,9 @@
 //! * with `since: <snapshot_id>`, only the rows that changed against that
 //!   snapshot, falling back to a full read when the snapshot is unknown.
 //!
-//! `full_output: true` restores the previous payload byte for byte (both
-//! representations, all metadata, the platform walk caps).
+//! `full_output: true` restores the full tree and structured payload (both
+//! representations, all metadata, the platform walk caps), with snapshot identity
+//! also available in the text header.
 //!
 //! The diff works on the rendered markdown rows, which every backend emits in
 //! the same `- [N] Role "label" ...` shape, so it also sees display-only rows
@@ -270,6 +271,19 @@ pub fn apply(
     content: &mut [Content],
     structured: &mut Value,
 ) {
+    // Publish identity even for full_output and empty trees. It comes from the
+    // completed structured result, never a guessed or not-yet-published id.
+    if let Some(sid) = structured.get("snapshot_id").and_then(Value::as_str) {
+        for part in content.iter_mut() {
+            if let Content::Text { text, .. } = part {
+                if text.starts_with("window_id=") {
+                    let end = text.find('\n').unwrap_or(text.len());
+                    text.insert_str(end, &format!(" snapshot_id={sid}"));
+                    break;
+                }
+            }
+        }
+    }
     if opts.full_output {
         return;
     }
@@ -308,9 +322,6 @@ pub fn apply(
 
     // Header text added to the first line of the tree block.
     let mut header_extra = String::new();
-    if let Some(sid) = &snapshot_id {
-        header_extra.push_str(&format!(" snapshot_id={sid}"));
-    }
     let truncation = truncation_line(structured, &ctx.key);
     if let Some(line) = &truncation {
         structured["truncation_hint"] = json!(line);
@@ -1383,7 +1394,88 @@ mod tests {
     }
 
     #[test]
-    fn full_output_is_untouched() {
+    fn text_snapshot_identity_resolves_and_rejects_stale_targets() {
+        use crate::element_token::{format_snapshot_id, ResolvedElement};
+        use crate::snapshot_store::{SnapshotPayload, SnapshotStore};
+        struct Rows;
+        impl SnapshotPayload for Rows {
+            type Element = usize;
+            fn len(&self) -> usize {
+                2
+            }
+            fn retain(&self, index: usize) -> Option<usize> {
+                (index < 2).then_some(index)
+            }
+        }
+        for args in [
+            json!({}),
+            json!({"full_output": true}),
+            json!({"tree_format": "elements"}),
+        ] {
+            let store = SnapshotStore::new();
+            let id = store.publish(9, 7, Rows);
+            let sid = format_snapshot_id(id);
+            let (mut content, mut structured) = payload(&sid, OLD);
+            apply(&opts(args), &ctx(7), &mut content, &mut structured);
+            let text = text_of(&content);
+            let handle = text
+                .lines()
+                .next()
+                .unwrap()
+                .split_whitespace()
+                .find_map(|field| field.strip_prefix("snapshot_id="))
+                .unwrap();
+            assert_eq!(handle, structured["snapshot_id"].as_str().unwrap());
+            assert_eq!(text.matches("snapshot_id=").count(), 1);
+            let target = json!({"element_token": format!("{handle}:1"), "window_id": 7});
+            assert!(matches!(
+                store.resolve(9, &target).unwrap(),
+                ResolvedElement::Element {
+                    window_id: 7,
+                    element_index: 1,
+                    element: 1
+                }
+            ));
+            let wrong_window = json!({"element_token": format!("{handle}:1"), "window_id": 8});
+            assert_eq!(
+                store
+                    .resolve(9, &wrong_window)
+                    .unwrap_err()
+                    .structured_content
+                    .unwrap()["refusal"]["code"],
+                "conflicting_element_target"
+            );
+            store.publish(9, 7, Rows);
+            assert_eq!(
+                store
+                    .resolve(9, &target)
+                    .unwrap_err()
+                    .structured_content
+                    .unwrap()["refusal"]["code"],
+                "stale_element_token"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_tree_identity_is_visible_only_when_published() {
+        for args in [json!({}), json!({"full_output": true})] {
+            for published in [true, false] {
+                let (mut content, mut structured) = payload("s000000a2", "");
+                if !published {
+                    structured.as_object_mut().unwrap().remove("snapshot_id");
+                }
+                apply(&opts(args.clone()), &ctx(7), &mut content, &mut structured);
+                assert_eq!(
+                    text_of(&content).contains("snapshot_id=s000000a2"),
+                    published
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn full_output_preserves_payload_and_adds_text_identity() {
         let (mut content, mut s) = payload("s000000a2", OLD);
         let before = s.clone();
         let text_before = text_of(&content);
@@ -1394,7 +1486,10 @@ mod tests {
             &mut s,
         );
         assert_eq!(s, before);
-        assert_eq!(text_of(&content), text_before);
+        assert_eq!(
+            text_of(&content),
+            text_before.replacen("elements=4", "elements=4 snapshot_id=s000000a2", 1)
+        );
         assert_eq!(s["elements"], before["elements"]);
         assert_eq!(s["_note"], before["_note"]);
         assert_eq!(s["background_input"], before["background_input"]);

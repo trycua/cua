@@ -2739,9 +2739,10 @@ async fn a_timed_out_call_holds_the_desktop_until_its_late_cleanup_is_done() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn input_that_cannot_be_cancelled_never_overlaps_the_next_desktop_action() {
     use cua_driver_core::tool::DesktopCall;
-    // wtype and XTest do not read the call's action: a worker whose call
-    // timed out, or whose caller went away, still sends all of its input.
-    // That input must not reach whatever the next desktop action targets.
+    // A wtype child does not read the call's action, and an abandoned XTest
+    // call still sends its releases: a worker whose call timed out, or whose
+    // caller went away, can still send input. That input must not reach
+    // whatever the next desktop action targets.
     for budget in [50, 60_000] {
         let events = Arc::new(std::sync::Mutex::new(Vec::new()));
         let worker_events = events.clone();

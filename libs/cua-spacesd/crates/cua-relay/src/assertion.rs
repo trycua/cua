@@ -350,7 +350,7 @@ impl TrustedKeys {
                 Ok(data) => {
                     let c = data.claims;
                     if c.mid != machine_id {
-                        return Err("assertion: machine id mismatch".into());
+                        return Err("assertion: computer id mismatch".into());
                     }
                     if c.exp < c.iat || c.exp - c.iat > MAX_ASSERTION_TTL_SECS {
                         return Err("assertion: lifetime too long".into());

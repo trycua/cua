@@ -168,7 +168,7 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
     /// instead of failing every call. The signed-in session drives the relay
     /// account.
     public static func make() throws -> LiveSpacesBackend {
-        LiveSpacesBackend(cua: try Cua.auto(config: CuaConfig(fleetFromSession: true)))
+        LiveSpacesBackend(cua: try Cua.auto(config: CuaConfig(accountFromSession: true)))
     }
 
     public func rows() async throws -> [AppSpaceRow] {
@@ -377,8 +377,6 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
 
     /// Bounded: the session read can wait on the credential vault.
     public func cloudAvailable() async -> Bool {
-        let env = ProcessInfo.processInfo.environment
-        if env["FLEETS_TOKEN"] != nil || env["CUA_CLIENT_ID"] != nil { return true }
         let status = await withTimeout(seconds: Self.probeSeconds) { [cua] in try cua.auth().status().loggedIn }
         return (try? status.get()) ?? false
     }
@@ -466,7 +464,8 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
             try await cua.spaces().space(space: id).usage()
         }
         guard let u = try? result.get() else { return nil }
-        return AppSpaceUsage(memoryUsed: u.memoryUsed, memoryTotal: u.memoryTotal, memoryLimited: u.memoryLimited,
+        return AppSpaceUsage(cpuCount: u.cpuCount, cpuPercent: u.cpuPercent, loadAverage1m: u.loadAverage1m,
+                             memoryUsed: u.memoryUsed, memoryTotal: u.memoryTotal, memoryLimited: u.memoryLimited,
                              diskUsed: u.diskUsed, diskTotal: u.diskTotal, diskLimited: u.diskLimited)
     }
 
@@ -854,6 +853,7 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
     /// The fixture Spaces' memory and storage: a 4 GB container limit on a
     /// host disk (Storage hides).
     public var fixtureUsage: AppSpaceUsage? = AppSpaceUsage(
+        cpuCount: 4, cpuPercent: 12.5, loadAverage1m: 0.5,
         memoryUsed: 2_254_857_830, memoryTotal: 4 << 30, memoryLimited: true,
         diskUsed: 150_000_000_000, diskTotal: 494_000_000_000, diskLimited: false)
     public func usage(id: String) async -> AppSpaceUsage? { await MainActor.run { fixtureUsage } }

@@ -3,13 +3,10 @@
 //! The subset that makes sense in a browser tab, with the same names as the
 //! native API:
 //!
-//! - `Cua.embedded(config)`: Fleet settings only (static bearer; OAuth client
-//!   secrets never belong in a browser);
+//! - `Cua.embedded(config)`: the browser runtime;
 //! - `Cua.spacesd(url, token)` → [`SpacesdClient`] over gRPC-Web (`fetch`):
 //!   capabilities, health, run/sh, screenshot, pointer and keyboard,
-//!   clipboard and the proto3-JSON escape hatch for every unary RPC;
-//! - `Cua.fleet()` → [`Fleet`]: pools, claims and service URLs through
-//!   cyclops-sdk over `globalThis.fetch` (pages, workers and Node).
+//!   clipboard and the proto3-JSON escape hatch for every unary RPC.
 //!
 //! Media in the browser goes through WebCodecs on the page, fed by the
 //! daemon's media bridge or the spacesd's `/media` socket directly.
@@ -23,13 +20,6 @@ use cua_proto::env::v1::{
     process_service_client::ProcessServiceClient, system_service_client::SystemServiceClient,
 };
 use std::{collections::HashMap, sync::Arc};
-
-/// `cua_sandbox_core::CLOUD_ENDED` (that crate does not build for wasm32).
-const CLOUD_ENDED: &str = "Cua Cloud has ended; use a local sandbox or your own machine. \
-     See https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended";
-
-#[cfg(target_arch = "wasm32")]
-mod fetch;
 
 /// On wasm32 futures need not be `Send` (single-threaded). On the host this
 /// module is only compiled for binding metadata (feature `web`), where
@@ -96,37 +86,16 @@ fn status(e: tonic::Status) -> CuaError {
     }
 }
 
-/// Fleet settings for the browser (static bearer only).
-#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
-pub struct FleetSettings {
-    /// Fleet API base URL.
-    #[uniffi(default = None)]
-    pub base_url: Option<String>,
-    /// Bearer token.
-    #[uniffi(default = None)]
-    pub token: Option<String>,
-}
-
-/// Configuration of the browser SDK.
-#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
-pub struct CuaConfig {
-    /// Fleet settings.
-    #[uniffi(default = None)]
-    pub fleet: Option<FleetSettings>,
-}
-
 /// The cua SDK (browser build).
 #[derive(uniffi::Object)]
-pub struct Cua {
-    config: CuaConfig,
-}
+pub struct Cua {}
 
 #[uniffi::export]
 impl Cua {
     /// The browser runtime.
     #[uniffi::constructor]
-    pub fn embedded(config: CuaConfig) -> Arc<Self> {
-        Arc::new(Self { config })
+    pub fn embedded() -> Arc<Self> {
+        Arc::new(Self {})
     }
 
     /// Connects to cua-spacesd at `url` over gRPC-Web.
@@ -153,41 +122,6 @@ impl Cua {
             Ok(Arc::new(client))
         })
         .await
-    }
-
-    /// Fleet control plane.
-    pub fn fleet(&self) -> Result<Arc<Fleet>> {
-        // Cua Cloud has ended: fails with the "Cua Cloud has ended" message
-        // and never connects.
-        Err::<(), _>(CuaError::Unsupported(CLOUD_ENDED.into()))?;
-        let f = self.config.fleet.clone().unwrap_or_default();
-        let token = f.token.filter(|t| !t.is_empty()).ok_or_else(|| {
-            CuaError::ProviderNotConfigured("the browser Fleet client needs a token".into())
-        })?;
-        let cfg = cyclops_sdk::CyclopsTokenProviderConfiguration {
-            base_url: f
-                .base_url
-                .unwrap_or_else(|| "https://run.cua.ai".into())
-                .trim_end_matches('/')
-                .to_string(),
-            pool_poll_interval_ms: 2000,
-            pool_poll_limit: 300,
-            claim_poll_interval_ms: 2000,
-            claim_poll_limit: 300,
-        };
-        // globalThis.fetch, not window.fetch: the same build runs in Node
-        // and in workers.
-        #[cfg(target_arch = "wasm32")]
-        let sdk = cyclops_sdk::CyclopsClient::connect_with_access_token(
-            cfg,
-            token,
-            Arc::new(fetch::GlobalFetch),
-        )
-        .map_err(|e| CuaError::Fleet(e.to_string()))?;
-        #[cfg(not(target_arch = "wasm32"))]
-        let sdk = cyclops_sdk::CyclopsClient::connect_browser_with_access_token(cfg, token)
-            .map_err(|e| CuaError::Fleet(e.to_string()))?;
-        Ok(Arc::new(Fleet { sdk }))
     }
 }
 
@@ -562,124 +496,5 @@ fn pbjson_types_duration(ms: u32) -> cua_proto::wkt::Duration {
     cua_proto::wkt::Duration {
         seconds: i64::from(ms / 1000),
         nanos: ((ms % 1000) * 1_000_000) as i32,
-    }
-}
-
-/// A bound Fleet sandbox.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct FleetSandbox {
-    /// Sandbox name.
-    pub name: String,
-    /// Namespace.
-    pub namespace: String,
-    /// Claim name.
-    pub claim: String,
-    /// Declared services.
-    pub services: Vec<String>,
-}
-
-/// Fleet control plane (browser transport).
-#[derive(uniffi::Object)]
-pub struct Fleet {
-    sdk: Arc<cyclops_sdk::CyclopsClient>,
-}
-
-fn fleet_err(e: cyclops_sdk::SdkError) -> CuaError {
-    // Mirrors `cua_fleet::sdk_error_is_not_found` (cua-fleet is native-only):
-    // 404, or 403 on a read in a deleted pool's namespace.
-    if let cyclops_sdk::SdkError::Status {
-        status, operation, ..
-    } = &e
-        && (*status == 404
-            || (*status == 403
-                && (operation.starts_with("get ") || operation.starts_with("list "))))
-    {
-        return CuaError::NotFound(e.to_string());
-    }
-    CuaError::Fleet(e.to_string())
-}
-
-#[uniffi::export]
-impl Fleet {
-    /// Pools in a namespace (JSON resources).
-    pub async fn list_pools(&self, namespace: String) -> Result<Vec<String>> {
-        send(async move {
-            self.sdk
-                .clone()
-                .list_pools(namespace)
-                .await
-                .map_err(fleet_err)?
-                .iter()
-                .map(|p| serde_json::to_string(p).map_err(CuaError::from))
-                .collect()
-        })
-        .await
-    }
-
-    /// Claims a sandbox from `pool` and waits for it to bind.
-    pub async fn acquire(&self, pool: String, name: Option<String>) -> Result<FleetSandbox> {
-        send(async move {
-            let p = self.sdk.clone().get_pool(pool).await.map_err(fleet_err)?;
-            let claim = self
-                .sdk
-                .clone()
-                .create_claim(cyclops_sdk::CreateClaimRequest {
-                    pool: p,
-                    spec: None,
-                    name,
-                    labels: None,
-                    secret_files: None,
-                })
-                .await
-                .map_err(fleet_err)?;
-            let b = self
-                .sdk
-                .clone()
-                .wait_claim(claim)
-                .await
-                .map_err(fleet_err)?;
-            Ok(FleetSandbox {
-                name: b.name,
-                namespace: b.namespace,
-                claim: b.claim,
-                services: b.services,
-            })
-        })
-        .await
-    }
-
-    /// Claims in a namespace (JSON resources).
-    pub async fn list_claims(&self, namespace: String) -> Result<Vec<String>> {
-        send(async move {
-            self.sdk
-                .clone()
-                .list_claims(namespace)
-                .await
-                .map_err(fleet_err)?
-                .iter()
-                .map(|c| serde_json::to_string(c).map_err(CuaError::from))
-                .collect()
-        })
-        .await
-    }
-
-    /// Releases a claim.
-    pub async fn release(&self, sandbox: FleetSandbox) -> Result<()> {
-        send(async move {
-            let claims = self
-                .sdk
-                .clone()
-                .list_claims(sandbox.namespace.clone())
-                .await
-                .map_err(fleet_err)?;
-            if let Some(c) = claims
-                .into_iter()
-                .find(|c| c.metadata.name == sandbox.claim)
-            {
-                self.sdk.clone().delete_claim(c).await.map_err(fleet_err)?;
-            }
-            Ok(())
-        })
-        .await
     }
 }

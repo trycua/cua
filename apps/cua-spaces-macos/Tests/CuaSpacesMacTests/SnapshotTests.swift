@@ -34,104 +34,11 @@ struct SnapshotTests {
                                            kv: kv ? FakeKeyvault(try overview ?? fixtureOverview()) : nil,
                                            host: FixtureHost(), account: FixtureAccount(),
                                            agents: FixtureAgentSetup(), loginItem: loginItem)
-        m.onboarding.finish()
+        // Done's "Launch at login" ticked, as the first run's default had it.
+        m.onboarding.finish(launchAtLogin: true)
         await m.refresh()
         await m.keyvault.refresh()
         return m
-    }
-
-    @Test func onboardingWelcome() throws {
-        let o = OnboardingModel(statePath: nil)
-        try assertSnapshot(OnboardingView(onboarding: o), "onboarding", size: CGSize(width: 820, height: 560))
-    }
-
-    /// Every first-run page (the Tauri app's pages, from the same core).
-    @Test func onboardingPages() async throws {
-        let o = OnboardingModel(statePath: nil, agentSetup: FixtureAgentSetup())
-        let size = CGSize(width: 820, height: 560)
-        // Every page, the Volume page included (its experiment on).
-        o.send(.experimentsLoaded(experiments: AppExperiments(cuaVolume: true, yourCloud: false, sharing: false, webUi: false)))
-        o.send(.start)
-        try assertSnapshot(OnboardingView(onboarding: o), "onboarding-signin", size: size)
-        o.send(.signinDone)
-        await o.loadAgents()
-        try assertSnapshot(OnboardingView(onboarding: o), "onboarding-agents", size: size)
-        o.finishAgents(skipped: true)
-        try assertSnapshot(OnboardingView(onboarding: o), "onboarding-presentation", size: size)
-        o.send(.presentationDone)
-        o.send(.driveChecked(os: .macos, status: try appDriveMountFromJson(
-            json: #"{"enabled":false,"state":"off","method":"fskit","volume_name":"Cua Volume"}"#)))
-        try assertSnapshot(OnboardingView(onboarding: o), "onboarding-drive", size: size)
-        o.send(.driveContinue)
-        try assertSnapshot(OnboardingView(onboarding: o), "onboarding-mode", size: size)
-        o.send(.modeChosen(mode: .client))
-        try assertSnapshot(OnboardingView(onboarding: o), "onboarding-done", size: size)
-    }
-
-    /// The AI agents page with twelve agents at the window's minimum size:
-    /// the list scrolls in two columns, so Back and Set up stay in view.
-    @Test func onboardingAgentsLongListAtMinimumSize() async throws {
-        let names = ["Claude Code", "Codex", "Cursor", "Gemini CLI", "GitHub Copilot", "Windsurf", "Cline",
-                     "Roo Code", "OpenCode", "Goose", "Amp", "Hermes"]
-        let statuses = names.map { n in
-            AppAgentSetupStatus(id: n.lowercased().replacingOccurrences(of: " ", with: "-"), name: n, installed: true,
-                                skillsDir: "~/.agents/skills", mcpConfig: nil, cuaConfigured: false,
-                                skillsInstalled: [], skillsOutdated: [], error: nil)
-        }
-        let o = OnboardingModel(statePath: nil, agentSetup: FixtureAgentSetup(statuses: statuses))
-        o.send(.start)
-        o.send(.signinDone)
-        await o.loadAgents()
-        #expect(o.installedAgents.count == 12)
-        #expect(o.view.canBack)
-        try assertSnapshot(OnboardingView(onboarding: o), "onboarding-agents-long", size: CGSize(width: 720, height: 520))
-    }
-
-    /// The AI agents page's background computer-use card at beats of its
-    /// loop (the agent gliding while the user drags a selection, the agent
-    /// clicking a box, both idle at the loop's end), ticked, and the Reduce
-    /// Motion still.
-    @Test func driverCard() throws {
-        let copy = appOnboardingCopy()
-        func card(_ ms: UInt32?, on: Bool = false, still: Bool? = nil) -> some View {
-            DriverCardView(title: copy.agentsDriver, imageLabel: copy.agentsDriverImage, isOn: .constant(on),
-                           fixedMs: ms, still: still)
-                .padding(12)
-        }
-        let size = CGSize(width: 380, height: 180)
-        for (ms, name) in [(UInt32(1500), "working"), (1750, "click"), (4799, "idle")] {
-            try assertSnapshot(card(ms), "onboarding-driver-\(name)", size: size)
-        }
-        try assertSnapshot(card(nil, on: true, still: true), "onboarding-driver-still-on", size: size)
-        let still = appDriverPreviewStill()
-        #expect(still.ripple > 0 && still.checked[0] == 1 && !still.agentPressed)
-    }
-
-    /// The presentation cards' miniatures (both cards) at beats of the loop:
-    /// the pointer gliding up, the notch's hover cue, the notch springing
-    /// open while the menu drops down, both expanded; then the Reduce Motion
-    /// still (the expanded state, no loop).
-    @Test func presentationPreviews() async throws {
-        let o = OnboardingModel(statePath: nil, agentSetup: FixtureAgentSetup())
-        o.send(.start)
-        o.send(.signinDone)
-        o.finishAgents(skipped: true)
-        let cards = o.view.presentations
-        #expect(cards.count == 2)
-        func pair(_ ms: UInt32?, still: Bool? = nil) -> some View {
-            VStack(spacing: 10) {
-                ForEach(cards, id: \.id) { PresentationCardView(card: $0, fixedMs: ms, still: still) {} }
-            }
-            .padding(12)
-        }
-        let size = CGSize(width: 320, height: 300)
-        for (ms, name) in [(UInt32(900), "glide"), (1550, "dwell"), (1760, "opening"), (2400, "open")] {
-            try assertSnapshot(pair(ms), "onboarding-preview-\(name)", size: size)
-        }
-        try assertSnapshot(pair(nil, still: true), "onboarding-preview-still", size: size)
-        let still = [false, true].map { appPresentationPreviewStill(menuBar: $0) }
-        #expect(still[0].open == 1 && still[0].content == 1, "the notch open")
-        #expect(still[1].open == 1 && still[1].highlighted != nil, "the menu down")
     }
 
     @Test func newSpaceWizard() async throws {
@@ -738,30 +645,11 @@ struct SnapshotTests {
         try await assertNotch("notch-tab-pressed") { $0.highlight = NotchHighlight(.tab, pressed: true) }
     }
 
-    /// The host form inside onboarding: its Back and Set up take the
-    /// bottom corners like every other page.
-    @Test func onboardingHostForm() async throws {
-        let o = OnboardingModel(statePath: nil, host: FixtureHost(), agentSetup: FixtureAgentSetup())
-        // The page dots as recorded (the Cua Volume experiment on).
-        o.send(.experimentsLoaded(experiments: AppExperiments(cuaVolume: true, yourCloud: false, sharing: false, webUi: false)))
-        o.send(.start)
-        o.send(.signinDone)
-        o.finishAgents(skipped: true)
-        o.send(.presentationDone)
-        o.send(.driveContinue)
-        o.host.computerName = { "Ada’s MacBook Pro" }
-        o.host.openForm()
-        try assertSnapshot(OnboardingView(onboarding: o), "onboarding-host-form", size: CGSize(width: 820, height: 560))
-    }
-
     // MARK: - Harness
 
     func render<V: View>(_ view: V, size: CGSize) -> NSBitmapImageRep {
-        // Looping miniatures on their still: a playing loop's frame would
-        // depend on the clock (tests that want a beat pass `fixedMs`).
         let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height)
-            .environment(\.colorScheme, .light)
-            .environment(\.onboardingMotionStill, true))
+            .environment(\.colorScheme, .light))
         host.frame = CGRect(origin: .zero, size: size)
         let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView = host

@@ -6,9 +6,13 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   reduceShare,
   shareInitial,
+  shareErrorWords,
+  shareGate,
+  shareRemovalNote,
   shareView,
   type ShareEntryInput,
   type ShareInput,
+  type ShareRemovalNote,
   type ShareSheetAction,
 } from '../model/share';
 import type { ShareBridge } from '../native/share';
@@ -31,6 +35,7 @@ export function ShareSheet({
   signedIn,
   shareable,
   onClose,
+  onOpenExternal,
 }: {
   bridge: ShareBridge;
   spaceId: string;
@@ -38,13 +43,19 @@ export function ShareSheet({
   signedIn: boolean;
   shareable: boolean;
   onClose: () => void;
+  /** Opens a link (See Teams) in the browser. */
+  onOpenExternal?: (url: string) => void;
 }) {
   const [shares, setShares] = useState<ShareEntryInput[]>([]);
+  // In a team that can share; null until read, or when it cannot be said.
+  const [hasTeam, setHasTeam] = useState<boolean | null>(null);
   // Sharing adoption: the sheet was opened.
   useEffect(() => telemetryBridge().recordSignals(featureSignals('share_open')), []);
   const [state, setState] = useState(shareInitial);
   const input: ShareInput = { spaceId, spaceName, shares, signedIn, shareable };
   const v = shareView(input, state);
+  const gate = signedIn && shareable ? shareGate(hasTeam) : null;
+  const closed = Boolean(v.disabledReason) || gate !== null;
 
   useEffect(() => {
     if (!signedIn) return;
@@ -53,6 +64,11 @@ export function ShareSheet({
       () => {}
     );
   }, [bridge, spaceId, signedIn]);
+
+  useEffect(() => {
+    if (!signedIn) return;
+    void bridge.hasTeam().then(setHasTeam, () => {});
+  }, [bridge, signedIn]);
 
   const run = useCallback(
     async (action: ShareSheetAction) => {
@@ -72,7 +88,12 @@ export function ShareSheet({
         telemetryBridge().recordSignals(shareSignals(input, next, { type: 'done' }));
         setState((s) => reduceShare({ ...input, shares: r.shares }, s, { type: 'done' }));
       } catch (e) {
-        const failed: ShareSheetAction = { type: 'failed', error: message(e) };
+        // A refusal for who is not in the team (or no team) reads in plain words.
+        const raw = message(e);
+        const failed: ShareSheetAction = {
+          type: 'failed',
+          error: shareErrorWords(raw, request.kind === 'share' ? request.who : '') ?? raw,
+        };
         telemetryBridge().recordSignals(shareSignals(input, next, failed));
         setState((s) => reduceShare(input, s, failed));
       }
@@ -86,7 +107,7 @@ export function ShareSheet({
       className="dw-input"
       aria-label={label}
       value={value}
-      disabled={v.busy || Boolean(v.disabledReason)}
+      disabled={v.busy || closed}
       onChange={(e) => onChange(e.target.value)}
     >
       {v.roles.map((r) => (
@@ -107,7 +128,18 @@ export function ShareSheet({
         }}
       >
         <h2 className="dv-sheet-title">{v.title}</h2>
-        {v.disabledReason && <p className="dv-sheet-text">{v.disabledReason}</p>}
+        {(v.disabledReason || gate) && (
+          <p className="dv-sheet-text">{v.disabledReason ?? gate?.reason}</p>
+        )}
+        {!v.disabledReason && gate && (
+          <button
+            type="button"
+            className="dw-btn"
+            onClick={() => onOpenExternal?.(gate.action.url)}
+          >
+            {gate.action.label}
+          </button>
+        )}
         <div className="sh-add">
           <input
             className="dw-input"
@@ -117,11 +149,11 @@ export function ShareSheet({
             autoFocus
             spellCheck={false}
             autoComplete="off"
-            disabled={v.busy || Boolean(v.disabledReason)}
+            disabled={v.busy || closed}
             onChange={(event) => void run({ type: 'set-who', who: event.target.value })}
           />
           {roleSelect(v.role, (role) => void run({ type: 'set-role', role }), 'Role')}
-          <button type="submit" className="dw-btn dw-btn-primary" disabled={!v.canShare}>
+          <button type="submit" className="dw-btn dw-btn-primary" disabled={!v.canShare || closed}>
             {v.shareLabel}
           </button>
         </div>
@@ -163,5 +195,50 @@ export function ShareSheet({
         </div>
       </form>
     </SmallSheet>
+  );
+}
+
+/**
+ * Sharing is for teams (CUA-1883): the owner sees once, in one line, who can
+ * no longer open a shared computer, with "Invite to your team". The words are
+ * the app core's (`share.removalNote`); closing it tells the account it was
+ * seen, so it does not come back.
+ */
+export function ShareRemovalBanner({
+  bridge,
+  signedIn,
+  onOpenExternal,
+}: {
+  bridge: ShareBridge;
+  signedIn: boolean;
+  onOpenExternal: (url: string) => void;
+}) {
+  const [note, setNote] = useState<ShareRemovalNote | null>(null);
+  useEffect(() => {
+    if (!signedIn) return;
+    let live = true;
+    void bridge.removals().then(
+      (removals) => live && setNote(shareRemovalNote(removals)),
+      () => {}
+    );
+    return () => {
+      live = false;
+    };
+  }, [bridge, signedIn]);
+  if (!note) return null;
+  const dismiss = () => {
+    setNote(null);
+    void bridge.ackRemovals().catch(() => {});
+  };
+  return (
+    <div className="dw-banner" data-tone="info" role="status" data-share-removal="">
+      <span>{note.text}</span>
+      <button type="button" className="dw-btn" onClick={() => onOpenExternal(note.action.url)}>
+        {note.action.label}
+      </button>
+      <button type="button" className="dw-btn" onClick={dismiss}>
+        {note.dismiss}
+      </button>
+    </div>
   );
 }

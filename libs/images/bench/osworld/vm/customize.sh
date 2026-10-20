@@ -11,11 +11,12 @@
 #   - /usr/local/bin/cua-spacesd (+ cua-env-driver and cua-guestd links), the shared token
 #     scripts from libs/images/linux/files, and
 #     cua-spacesd.service running as `user` in the GDM Xorg session on :0;
-#   - Fleet claim secrets: run-cua.mount (virtiofs cua-claim-secrets),
-#     cua-env-token-sync.service and its udev rule;
+#   - claim secrets (a token Secret written by an orchestrator): run-cua.mount
+#     (virtiofs cua-claim-secrets), cua-env-token-sync.service and its udev
+#     rule;
 #   - cua-seed-token.service: the image has no cloud-init, so the spacesd
 #     token of a local SDK boot is read from its NoCloud seed (token and
-#     spacesd.env only; ignored when a Fleet claim share is present);
+#     spacesd.env only; ignored when a claim share is present);
 #   - netplan DHCP on any en*/eth* NIC (KubeVirt), cloud-init network off;
 #   - /dev/uinput for the `input` group, `user` in `input`;
 #   - /etc/X11/xorg.conf.d/10-cua-noblank.conf: no X screen saver or DPMS;

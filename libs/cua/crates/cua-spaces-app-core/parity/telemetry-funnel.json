@@ -601,6 +601,24 @@
         }
       },
       {
+        "step": "confirmation dismissed",
+        "state": {
+          "who": "",
+          "role": "viewer",
+          "busy": true,
+          "request": {
+            "kind": "share",
+            "space": "local:maya-secret-project",
+            "who": "eve@example.com",
+            "role": "viewer"
+          }
+        },
+        "action": {
+          "type": "failed",
+          "error": "not shared: user presence was not confirmed: biometric authorization was cancelled"
+        }
+      },
+      {
         "step": "typing is not sharing",
         "state": {
           "who": "",

@@ -75,8 +75,8 @@ async fn auth_is_required_and_either_header_works() {
             Code::Unauthenticated
         );
 
-        // The Fleet gateway strips `authorization`; the env token rides in
-        // x-cua-env-authorization instead.
+        // A gateway in front of the daemon can strip `authorization`; the env
+        // token rides in x-cua-env-authorization instead.
         let mut request = tonic::Request::new(GetCapabilitiesRequest {});
         request.metadata_mut().insert(
             cua_proto::metadata::ENV_AUTHORIZATION,

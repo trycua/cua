@@ -13,11 +13,10 @@
 //!
 //! | Object | Module |
 //! |---|---|
-//! | [`Sandboxes`] / [`Sandbox`] / [`Service`] / [`PortForward`] | daemon-agnostic sandboxes (Fleet, local, direct) |
+//! | [`Sandboxes`] / [`Sandbox`] / [`Service`] / [`PortForward`] | daemon-agnostic sandboxes (local, direct, your own cloud) |
 //! | [`SpacesdClient`] / [`SpacesdProcess`] / [`MediaSession`] | cua-spacesd (`cua.env.v1`), including a JSON escape hatch |
-//! | [`Fleet`] | pools, templates, claims, images (cyclops-sdk) |
 //! | [`Local`] | local runtimes and images (cua-vmm, cua-image) |
-//! | [`Spaces`] / [`Space`] / [`SpaceStreamSession`] / [`SpacePresence`] | Spaces: registry, Fleet/local/direct Spaces, exec, files, services, streams, presence, teleport, hotspot, agents |
+//! | [`Spaces`] / [`Space`] / [`SpaceStreamSession`] / [`SpacePresence`] | Spaces: registry, local/direct/relay Spaces, exec, files, services, streams, presence, teleport, hotspot, agents |
 //! | `Teleport` (feature `teleport`) | move a desktop app session from this machine into a sandbox (cua-teleport) |
 //! | [`Auth`] / [`LoginAttempt`] | sign in to Cua (browser PKCE or device code) and the shared credential store (cua-auth) |
 //! | [`AgentSetup`] | AI coding agents on this machine: cua skills and the cua MCP server (cua-agent-setup) |
@@ -111,10 +110,10 @@ pub enum CuaError {
     /// sandboxes this client can see.
     #[error("not found: {0}")]
     NotFound(String),
-    /// The provider is not configured (for example no Fleet credentials).
+    /// The provider is not configured (for example no credentials for it).
     ///
-    /// Fix: Set `FLEETS_TOKEN`, or `CUA_CLIENT_ID` and `CUA_CLIENT_SECRET`, or
-    /// run `cua auth login` and create the client with `fleet_from_session`.
+    /// Fix: Set the credentials the message names (for a contrib provider, its
+    /// environment variable or `cua auth provider set <name>`).
     #[error("provider not configured: {0}")]
     ProviderNotConfigured(String),
     /// Not supported by this provider, guest or build.
@@ -135,30 +134,6 @@ pub enum CuaError {
     /// the sandbox or service actually starts.
     #[error("timed out: {0}")]
     Timeout(String),
-    /// Fleet API failure.
-    ///
-    /// Fix: Read the status in the message. Retry a transient failure; check
-    /// the credentials and the account's capacity otherwise.
-    #[error("fleet: {0}")]
-    Fleet(String),
-    /// Fleet's admission refused the request: a sandbox or pool size over
-    /// this account's limits, or a template its policy does not admit. The
-    /// message is Fleet's own and names the limit.
-    ///
-    /// Fix: Pick a size within the limit the message names (most accounts
-    /// run 1-8 vCPUs and 1-32 GiB per sandbox), or contact Cua support to
-    /// raise the account's limits.
-    #[error("fleet admission denied: {0}")]
-    FleetAdmissionDenied(String),
-    /// The account is out of Cua Cloud credit: no credit left, and no card
-    /// or plan. New cloud sandboxes and Spaces are refused; running ones
-    /// keep running, and local ones are never affected. The message ends
-    /// with the website billing page's URL.
-    ///
-    /// Fix: Add credit on that page (a plan, or a card for pay as you go),
-    /// or run the sandbox locally.
-    #[error("{0}")]
-    CloudCreditExhausted(String),
     /// Local runtime failure.
     ///
     /// Fix: Run `cua runtime doctor` (`Local.doctor`) and follow the steps it
@@ -179,8 +154,7 @@ pub enum CuaError {
     Http(String),
     /// Missing or wrong token or ticket.
     ///
-    /// Fix: Pass the sandbox's env token, refresh the Fleet credentials, or run
-    /// `cua auth login` again.
+    /// Fix: Pass the sandbox's env token, or run `cua auth login` again.
     #[error("unauthenticated: {0}")]
     Unauthenticated(String),
     /// The guest OS denied permission.
@@ -220,7 +194,7 @@ pub enum CuaError {
     /// display, a local runtime) is not available.
     ///
     /// Fix: Install or start the prerequisite the message names on this
-    /// machine.
+    /// computer.
     #[error("host capability missing: {0}")]
     HostCapabilityMissing(String),
     /// The teleport consent gate refused (or the approver declined).
@@ -229,19 +203,6 @@ pub enum CuaError {
     /// scope.
     #[error("teleport refused: {0}")]
     TeleportRefused(String),
-    /// A named cloud pool's template differs from the requested sandbox
-    /// fields; the message holds the diff (pass `apply` to update it).
-    ///
-    /// Fix: Pass the pool's own fields, or pass `apply` to update its template.
-    #[error("pool spec mismatch: {0}")]
-    PoolSpecMismatch(String),
-    /// A claim bound but its per-claim secrets (the env token) never
-    /// reached the sandbox within the bounded wait; the claim was released.
-    ///
-    /// Fix: Retry. If it keeps failing, check the pool's claim-secrets setup
-    /// and the Fleet status.
-    #[error("claim secrets not delivered: {0}")]
-    ClaimSecretsNotDelivered(String),
     /// Bug or I/O failure.
     ///
     /// Fix: Report it with the message at https://github.com/trycua/cua/issues.
@@ -309,9 +270,6 @@ impl CuaError {
             CuaError::Unsupported(_) => "Unsupported",
             CuaError::SpacesdNotAvailable(_) => "SpacesdNotAvailable",
             CuaError::Timeout(_) => "Timeout",
-            CuaError::Fleet(_) => "Fleet",
-            CuaError::FleetAdmissionDenied(_) => "FleetAdmissionDenied",
-            CuaError::CloudCreditExhausted(_) => "CloudCreditExhausted",
             CuaError::Runtime(_) => "Runtime",
             CuaError::Env(_) => "Env",
             CuaError::Http(_) => "Http",
@@ -323,8 +281,6 @@ impl CuaError {
             CuaError::CapabilityMissing(_) => "CapabilityMissing",
             CuaError::HostCapabilityMissing(_) => "HostCapabilityMissing",
             CuaError::TeleportRefused(_) => "TeleportRefused",
-            CuaError::PoolSpecMismatch(_) => "PoolSpecMismatch",
-            CuaError::ClaimSecretsNotDelivered(_) => "ClaimSecretsNotDelivered",
             CuaError::Internal(_) => "Internal",
             CuaError::AmbiguousSandbox(_) => "AmbiguousSandbox",
             CuaError::InsufficientDisk(_) => "InsufficientDisk",

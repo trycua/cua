@@ -1,30 +1,69 @@
 ---
 title: Share a Space
-description: 'Let another cua.ai account watch or use one of your Spaces through the relay, and reach a Space from your other devices.'
+description: 'Let someone in your team watch or use one of your Spaces through the relay, and reach a Space from your other devices.'
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Share a Space with another cua.ai account by email or account ID. A **viewer**
-joins with their own named cursor and watches. An **editor** can also use the
+Sharing is for teams. You can share a Space with the people in your own team,
+one at a time or the whole team. A **viewer** ("Can view") joins with their
+own named cursor and watches. An **editor** ("Can edit") can also use the
 Space. They open it from their own app or terminal as `relay:<machine>`.
 
-To share from the app, press **Share** in the Space's toolbar, enter an email
-address or account ID, and choose **Viewer** or **Editor**. The same list shows
-who has access and who is connected. Cua Spaces asks you to confirm with Touch
-ID or your login password first.
+<Callout title="Sharing needs a team">
+  On Free and Pro without a team, the **Share** button explains this and links
+  to [Teams](/spaces/guides/teams), which starts at 1 seat. Start a team, invite
+  the people you want to share with, then share.
+</Callout>
 
-To share a whole machine with your team, see [Teams](/spaces/guides/teams).
+To share from the app, press **Share** in the Space's toolbar, enter the email
+address or account ID of someone in your team, and choose **Can view** or
+**Can edit**. The same list shows
+who has access and who is connected. Cua Spaces asks you to confirm first:
+Touch ID or your login password on a Mac, Windows Hello or your account password
+on Windows, and your password through polkit on Linux.
+
+<Callout title="Sharing on Linux">
+  Sharing on Linux needs Cua Spaces installed from the **.deb**, and a desktop
+  session with a polkit authentication agent running (XFCE, GNOME and KDE start
+  one). The .deb installs the password prompt; the AppImage cannot, so it cannot
+  share. A remote desktop (xrdp, VNC) works too: you get the same password
+  prompt. If sharing fails at once with no prompt, update to the latest .deb.
+  See [Linux packages](/spaces/guides/install#linux-packages).
+</Callout>
+
+You can share with one teammate at a time, or with the whole team at once. See
+[People and teams](#people-and-teams).
 
 From a terminal:
 
 ```bash test="cli-shape" id="cua-spaces-share"
 cua spaces share local:studio bob@example.com                 # viewer
 cua spaces share local:studio bob@example.com --role editor   # change the role
+cua spaces share local:studio team:acme --role viewer         # the whole team, to watch
 cua spaces shares local:studio                                # who, and who is connected
 cua spaces unshare local:studio bob@example.com               # at once
 cua spaces unshare local:studio --all                         # nobody; leaves the relay
 ```
+
+## People and teams
+
+- **One person.** Type their email or account ID. They must be a member of
+  your team: if they are not, you see "Alex isn't in your team. Invite them
+  to your team first." You choose **Can view** or **Can edit** for each person.
+- **A whole team.** Every member of the team, and their agents, can open the
+  Space, as **Can view** (watch only) or **Can edit**. Only an owner or admin
+  of a team on the [Teams plan](/spaces/guides/teams) can do this, and only for
+  a Space they own. See
+  [Share a Space with the team](/spaces/guides/teams#share-a-space-with-the-team).
+- **No team.** Free and Pro accounts without a team cannot share. The
+  command fails with "Sharing is for teams. Start a team to share this Space."
+
+<Callout title="If you shared with people outside your team before">
+  Those shares stopped when sharing became team-only. The Space owner sees one
+  line in the app listing who was removed, with an **Invite to your team**
+  button. Once they join your team, share again.
+</Callout>
 
 ## What each role can do
 
@@ -38,18 +77,30 @@ cua spaces unshare local:studio --all                         # nobody; leaves t
 The Space's own cua-spacesd enforces the role, not the caller. A refused call
 fails with `PermissionDenied` (`view-only share: <who> cannot call <method>`).
 
+A whole-team share has the same two roles, **Can view** and **Can edit**. To
+change it, share with the team again with the other role.
+
 ## How it works
 
-Sharing uses the relay and allowlist that [unattended access](/spaces/guides/unattended-access)
-uses:
+Sharing uses the same relay and allowlist as an
+[added computer](/spaces/guides/add-a-computer#add-a-computer-from-a-terminal):
 
 - A host (`relay:<id>` from `cua host setup`) is shared directly.
 - Any other Space is published on the relay on its first share. The owner's
-  account registers a machine for it, and the Space's own driver dials out
+  account registers a computer for it, and the Space's own driver dials out
   over WSS, so no inbound port opens.
-- The relay keeps two lists per machine: `allow` (editors) and `viewers`.
-- Invitees need a verified email or account ID and an [enrolled device](/spaces/guides/unattended-access#reach-it-from-your-devices).
+- The relay keeps two lists per computer: `allow` (editors) and `viewers`.
+- Invitees need a verified email or account ID and an [enrolled device](/spaces/guides/add-a-computer#reach-it-from-your-other-devices).
 - Removing someone, or changing their role, cuts their open streams at once.
+- Team membership comes from your team in your Cua account, not from the
+  relay. The Cua account service checks it when you share and again each time
+  someone opens the Space, and the relay enforces the answer. If someone
+  leaves your team, they lose access to what you shared with them. If a team
+  is deleted, its shares stop.
+- A team share works differently. The Space goes on the team's list of
+  computers, and each time someone opens it, the relay checks with the Cua
+  account service that they are still in the team and that their device is
+  approved.
 
 ```rust test="excerpt" id="rs-share-space" source="libs/cua/crates/cua-spaces/tests/share_space_e2e.rs#rs-share-space"
 let shares = ada
@@ -105,12 +156,13 @@ tools are `relay_register_space` and `relay_unregister_space`.
 | Space | Shareable | Why |
 |---|---|---|
 | Host (`relay:<id>`) | yes | Already on the relay. |
-| Local container or VM | yes, while this machine runs it | Its driver dials the relay. Suspending it disconnects everyone. |
+| Local container or VM | yes, while this computer runs it | Its driver dials the relay. Suspending it disconnects everyone. |
 | In your own cloud (AWS, Google Cloud, Modal) | yes | Its driver dials the relay from the cloud. |
 | Added by address (`direct:`) | yes, if its driver supports `relay_attach` | Older drivers report `capability_missing`. |
 | A Space shared with you | no | Only the owner can share (`permission_denied`). |
 
-- The relay shares with accounts, not teams: share with each member.
+- You can share with a person in your team or with the whole team, as
+  **Can view** or **Can edit**.
 - Presence cursors travel on the relay stream, not QUIC datagrams, so remote
   cursors update a little less often than on your own network.
 - A Space that is released (for example a paused persistent agent in your

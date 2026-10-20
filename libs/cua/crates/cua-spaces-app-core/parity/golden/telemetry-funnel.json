@@ -961,6 +961,8 @@
       "signals": [
         {
           "action": "share",
+          "errorKind": "none",
+          "failedStage": "none",
           "outcome": "ok",
           "role": "viewer",
           "type": "share"
@@ -973,6 +975,8 @@
       "signals": [
         {
           "action": "change_role",
+          "errorKind": "none",
+          "failedStage": "none",
           "outcome": "ok",
           "role": "editor",
           "type": "share"
@@ -985,6 +989,8 @@
       "signals": [
         {
           "action": "unshare",
+          "errorKind": "none",
+          "failedStage": "none",
           "outcome": "ok",
           "role": "none",
           "type": "share"
@@ -997,12 +1003,28 @@
       "signals": [
         {
           "action": "share",
+          "errorKind": "other",
+          "failedStage": "other",
           "outcome": "error",
           "role": "editor",
           "type": "share"
         }
       ],
       "step": "share failed"
+    },
+    {
+      "at": "share",
+      "signals": [
+        {
+          "action": "share",
+          "errorKind": "presence_cancelled",
+          "failedStage": "presence",
+          "outcome": "cancelled",
+          "role": "viewer",
+          "type": "share"
+        }
+      ],
+      "step": "confirmation dismissed"
     },
     {
       "at": "share",

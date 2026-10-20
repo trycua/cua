@@ -399,7 +399,7 @@ describe.skipIf(!built)("agents", () => {
     expect(model.agents.keys.view.notice).toContain("keeps credentials in a file");
     const none = makeBridge({ tools: null }).model.agents.keys;
     expect(none.view.notice).toContain("need the cua daemon");
-    expect(agentKeysInput({ keys: [{ provider: "x", env: "", last4: "1234", added_ms: 1 }], available: false }, null)).toMatchObject({ keys: [], unavailable: "this machine can't keep keys" });
+    expect(agentKeysInput({ keys: [{ provider: "x", env: "", last4: "1234", added_ms: 1 }], available: false }, null)).toMatchObject({ keys: [], unavailable: "this computer can't keep keys" });
   });
 
   it("routes agentKeys.* to the daemon, with answers that never carry a key", async () => {

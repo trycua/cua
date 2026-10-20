@@ -40,7 +40,7 @@ import { createDevicesBridge, type DevicesBridge } from '../../native/devices';
 import { createShareBridge, type ShareBridge } from '../../native/share';
 import { connectedClouds, createCloudBridge, isCloudWord, type CloudBridge, type CloudStatusWire } from '../../native/cloud';
 import { ConnectCloudSheet } from '../ConnectCloudSheet';
-import { ShareSheet } from '../ShareSheet';
+import { ShareRemovalBanner, ShareSheet } from '../ShareSheet';
 import { hasFeature } from '../../model/spaces';
 import { canRunContainer, canRunMacos, type LocalStatus } from '../../native/local';
 import { createWindowDragBridge, type WindowDragBridge } from '../../native/windowDrag';
@@ -780,8 +780,15 @@ export function MainWindow({
                 signedIn={Boolean(sync.identity)}
                 shareable={sharing.id.startsWith('relay:') || hasFeature(sharing, 'relay_attach')}
                 onClose={() => setSharing(null)}
+                onOpenExternal={(url) => void fleet.openExternal(url).catch(() => {})}
               />
             )}
+
+            <ShareRemovalBanner
+              bridge={shareBridge}
+              signedIn={Boolean(sync.identity)}
+              onOpenExternal={(url) => void fleet.openExternal(url).catch(() => {})}
+            />
 
             {sync.rosterError && (
               <div className="dw-banner" data-tone="error" role="alert">

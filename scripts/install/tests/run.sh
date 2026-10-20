@@ -158,7 +158,8 @@ inst() {
     done
     [ "${1:-}" = -- ] && shift
     # shellcheck disable=SC2086
-    env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_HOME="$home/.cua" \
+    # Install telemetry may only reach a loopback endpoint here (none is set).
+    env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_HOME="$home/.cua" CUA_TELEMETRY_FORBID_NETWORK=1 \
         CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux CUA_INSTALL_ARCH=x86_64 \
         CUA_FAKE_LOG="$home/cua.log" $envs \
         "$sh_bin" "$installer" "$@" </dev/null >"$work/out" 2>&1
@@ -248,6 +249,10 @@ if command -v bash >/dev/null 2>&1; then
     check "--select cua-driver: the driver lands in --prefix/bin" exists "$work/d1/bin/cua-driver"
     check "--select cua-driver: registers the skill and MCP server" sh -c "grep -qx -- 'agents setup --cua-driver --agents all --yes --mcp-command $work/d1/bin/cua-driver' '$home/cua.log'"
     check "--select cua-driver: no host setup" sh -c "! grep -q 'host setup' '$home/cua.log'"
+    check "--select cua-driver: adds the skill by default (no --no-skills)" sh -c "! grep -q -- '--no-skills' '$home/cua.log'"
+
+    inst CUA_INSTALL_DRIVER_URL="$driver_url" -- --no-onboarding --select cua-driver --no-skills --prefix "$work/d1s"
+    check "--no-skills: still registers the MCP server, without the skill" sh -c "[ $status = 0 ] && grep -qx -- 'agents setup --cua-driver --agents all --yes --no-skills --mcp-command $work/d1s/bin/cua-driver' '$home/cua.log'"
 
     if [ "$(id -u)" != 0 ]; then
         inst CUA_INSTALL_DRIVER_URL="$driver_url" -- --yes --no-onboarding --modify-path --select cua-driver
@@ -291,6 +296,8 @@ check "--pair: no sign-in next steps" sh -c "! grep -q 'cua auth login' '$work/o
 
 inst CUA_INSTALL_DRIVER_URL="$driver_url" -- --dry-run --select cua-driver,host --prefix "$work/dr"
 check "--dry-run prints the driver, agents and host steps" sh -c "grep -q 'dry-run. download $driver_url' '$work/out' && grep -q 'dry-run. bash cua-driver-install.sh --bin-dir' '$work/out' && grep -q 'dry-run. .* agents setup --cua-driver --agents all --yes' '$work/out' && grep -q 'dry-run. .* host setup' '$work/out'"
+inst CUA_INSTALL_DRIVER_URL="$driver_url" -- --dry-run --select cua-driver --no-skills --prefix "$work/drs"
+check "--dry-run --no-skills: the planned agent setup leaves the skill out" sh -c "grep -q 'dry-run. .* agents setup --cua-driver --agents all --yes --no-skills' '$work/out'"
 check "--dry-run runs nothing" sh -c "[ ! -e '$home/cua.log' ] && [ ! -e '$home/driver.log' ] && [ ! -e '$work/dr' ]"
 
 inst -- --yes --select bogus

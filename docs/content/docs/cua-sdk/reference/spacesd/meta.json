@@ -1,9 +1,7 @@
 {
-  "title": "Spacesd client",
+  "title": "Spacesd client and processes",
   "pages": [
-    "shell",
     "files",
-    "computer",
-    "media"
+    "computer"
   ]
 }

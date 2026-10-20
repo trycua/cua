@@ -15,7 +15,9 @@ import type {
   OnboardingView,
   PermissionRow,
   SandboxImage,
+  OnboardingTodoId,
 } from "./contracts/onboarding";
+import { NO_EXPERIMENTS, type Experiments } from "./contracts/volume";
 import type { KvGrant, KvListView, KvSelection, VaultAction } from "./contracts/keyvault";
 import type { KvAccessCommand } from "./ops/keyvault-manage";
 import type { Space } from "./contracts/spaces";
@@ -77,6 +79,21 @@ function useResource<T>(name: ResourceName): Resource<T> & { refresh: () => Prom
 function useAction(): <R>(f: (s: BridgeStore) => Promise<R> | R) => Promise<R> {
   const { ready } = useBridgeContext();
   return (f) => ready.then(f);
+}
+
+/**
+ * Records a Spaces app feature (a fixed name such as `agents_page_open`) once
+ * each time `when` turns true, as the SwiftUI and Tauri apps do when the page
+ * or sheet opens. The host and the machine's telemetry switch decide whether
+ * anything is sent.
+ */
+export function useFeatureRecorded(feature: string, when = true): void {
+  // Not an error without a provider: a screen drawn on its own records nothing.
+  const ready = useContext(BridgeContext)?.ready;
+  useEffect(() => {
+    if (!when || !ready) return;
+    void ready.then((s) => s.telemetry.track([{ type: "feature", feature }]));
+  }, [ready, feature, when]);
 }
 
 /** The host, the app core and the raw adapter. */
@@ -383,6 +400,9 @@ export interface OnboardingHook {
   /** Sends an action through the core. The usage-data switch and the Menu
    * bar choice also write the machine's setting (telemetry, `menuBar`). */
   send(action: OnboardingAction): void;
+  /** A fix on Done's to-do list: opens its page (Cua Volume turns its
+   * experiment on first); leaving the page comes back to Done. */
+  fixTodo(id: OnboardingTodoId): Promise<void>;
   /** Leaves the flow for now; it resumes on the same page. */
   skip(): void;
   /** Done: records the choice with the host and forgets the saved progress. */
@@ -469,6 +489,28 @@ export function useOnboarding(): OnboardingHook {
     if (missing.some((p) => !(p.id in shown))) setShown((cur) => ({ ...cur, ...Object.fromEntries(missing.map((p) => [p.id, p.label])) }));
   }, [hints, shown]);
 
+  // Done counts the coding agents set up before (from the CLI or
+  // Settings), not only the ones this run set up.
+  const onDone = state?.step === "done";
+  useEffect(() => {
+    if (!onDone || !adapter) return;
+    let live = true;
+    adapter.call("agents.setup", {}).then(
+      (rows) => {
+        const names = rows.filter((r) => r.installed && r.configured).map((r) => r.name);
+        const cur = readSavedOnboarding().state;
+        const known = Array.isArray(cur?.agents) ? (cur.agents as string[]) : [];
+        if (!live || !cur || names.every((n) => known.includes(n))) return;
+        writeSavedOnboarding({ ...readSavedOnboarding(), state: onboardingReduce(core, cur, { type: "agents-detected", configured: names }, ctx) });
+      },
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onDone, adapter, core]);
+
   const drawn = state ? onboardingView(core, state) : null;
   // No switch until the host has said what the setting is: an "on" it
   // could not write would not be true.
@@ -515,6 +557,17 @@ export function useOnboarding(): OnboardingHook {
     images: firstSpaceImages(core),
     launchAtLogin: mode === "electron" ? (view?.launchAtLogin ?? null) : null,
     send,
+    fixTodo: async (id) => {
+      const current = readSavedOnboarding().state;
+      const experiments = (current?.experiments ?? null) as Experiments | null;
+      // Cua Volume is an experiment today: "Turn on" turns it on first.
+      if (id === "volume" && adapter && !experiments?.cuaVolume) {
+        const now = { ...NO_EXPERIMENTS, ...(await adapter.call("experiments.get", {}).catch(() => ({}))), cuaVolume: true };
+        await adapter.call("experiments.set", { experiments: now });
+        send({ type: "experiments-loaded", experiments: now });
+      }
+      send({ type: "todo-chosen", id });
+    },
     skip: () => {
       const current = readSavedOnboarding().state;
       if (current) store?.trackOnboardingSkipped(current);

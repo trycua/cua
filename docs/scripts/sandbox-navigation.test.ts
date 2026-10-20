@@ -29,27 +29,23 @@ test('the Cua SDK has its task guides and one concept page', async () => {
   assert.deepEqual(guides.pages, [
     'images',
     'services',
-    'secrets',
-    'sidecars',
     'lifecycle',
     'desktop',
-    'thumbnails',
     'spacesd',
     'local-runtimes',
-    'disk-usage',
-    'cua-cloud-ended',
-    'your-cloud',
-    'your-cloud-resources',
-    'contrib-providers',
     'test-in-ci',
     'run-a-coding-agent',
-    'coding-agent-options',
-    'browse-the-web',
     'agent-frameworks',
     'omarchy',
-    'migrate-from-deprecated-packages',
+    'cua-cloud-ended',
   ]);
-  assert.deepEqual((await metadata('cua-sdk/concepts')).pages, ['how-sandboxes-work', 'telemetry', 'telemetry-events']);
+  assert.deepEqual((await metadata('cua-sdk/concepts')).pages, [
+    'how-sandboxes-work',
+    'telemetry',
+    'telemetry-events',
+    'telemetry-counting',
+    'telemetry-error-kinds',
+  ]);
   for (const slug of guides.pages) {
     assert.equal(await routeExists(`/cua-sdk/guides/${slug}`), true, slug);
   }
@@ -104,8 +100,8 @@ test('removed Sandbox and Fleet pages redirect to the page that replaced them', 
     'fleets/concepts/pools-claims-and-guest-services': 'cua-sdk/guides/cua-cloud-ended',
     'fleets/guides/claim-a-sandbox': 'cua-sdk/guides/cua-cloud-ended',
     'fleets/guides/images': 'cua-sdk/guides/images',
-    'fleets/guides/sidecars': 'cua-sdk/guides/sidecars',
-    'fleets/guides/claim-secrets': 'cua-sdk/guides/secrets',
+    'fleets/guides/sidecars': 'cua-sdk/guides/services',
+    'fleets/guides/claim-secrets': 'cua-sdk/guides/services',
   };
   for (const [from, to] of Object.entries(expected)) {
     assert.equal(redirects[from], to, from);

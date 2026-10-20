@@ -48,13 +48,6 @@ pub enum Made {
         /// Nothing had that name before.
         fresh: bool,
     },
-    /// A Cua Cloud claim the create made.
-    FleetClaim {
-        /// Its namespace.
-        namespace: String,
-        /// Its name.
-        name: String,
-    },
     /// A relay machine the create registered.
     RelayMachine {
         /// Machine id.
@@ -576,13 +569,6 @@ impl Spaces {
                         .registry
                         .remove(&crate::SpaceId::Local { name: name.clone() }.to_string());
                 }
-                Made::FleetClaim { namespace, name } => match self.inner.fleet.as_ref() {
-                    Some(f) => match f.release(namespace, name).await {
-                        Ok(()) => done.push("released its cloud sandbox".into()),
-                        Err(e) => failed.push(format!("cloud:{name}: {e}")),
-                    },
-                    None => failed.push(format!("cloud:{name}: Fleet is not configured here")),
-                },
                 Made::HostSpace { host, machine } => {
                     match crate::host_spaces::cancel_on_host(self, host, machine).await {
                         Ok(m) => done.push(m),
@@ -598,12 +584,12 @@ impl Spaces {
                         .await;
                         match r {
                             Ok(()) | Err(cua_host::Error::NotFound(_)) => {
-                                done.push("removed its relay machine".into())
+                                done.push("removed its relay computer".into())
                             }
-                            Err(e) => failed.push(format!("relay machine {id}: {e}")),
+                            Err(e) => failed.push(format!("relay computer {id}: {e}")),
                         }
                     }
-                    Err(e) => failed.push(format!("relay machine {id}: {e}")),
+                    Err(e) => failed.push(format!("relay computer {id}: {e}")),
                 },
             }
         }

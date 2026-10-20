@@ -1,21 +1,20 @@
-//! User defaults: where sandboxes run when nothing says, what kind and
-//! runtime `auto` starts from, and the cloud defaults.
+//! User defaults: where sandboxes run when nothing says, and what kind and
+//! runtime `auto` starts from.
 //!
 //! One precedence everywhere:
 //!
 //! 1. explicit: `--on` / `--kind` / `--runtime`, `on=` / `local=` / `kind=` / `runtime=`
-//! 2. environment: `CUA_DEFAULT_ON`, `CUA_DEFAULT_KIND`, `CUA_DEFAULT_RUNTIME`,
-//!    `CUA_FLEET_WARM`, `CUA_FLEET_MAX_POOL_SIZE`, `CUA_FLEET_CLAIM_TTL`
+//! 2. environment: `CUA_DEFAULT_ON`, `CUA_DEFAULT_KIND`, `CUA_DEFAULT_RUNTIME`
 //! 3. the config file, `$CUA_HOME/config.toml` (default `~/.cua/config.toml`),
 //!    written by `cua config set`
 //! 4. the built-in default: `local`, `auto`, `auto`
 //!
 //! ```toml
 //! [default]
-//! on = "cloud"
+//! on = "aws"
 //!
-//! [cloud]
-//! warm = true
+//! [runtime]
+//! linux = "builtin"
 //! ```
 
 use crate::placement::{Kind, On, PlacementError, Runtime};
@@ -36,7 +35,7 @@ pub struct Key {
 }
 
 /// Every setting, in display order.
-pub const KEYS: [Key; 9] = [
+pub const KEYS: [Key; 7] = [
     Key {
         name: "default.on",
         env: "CUA_DEFAULT_ON",
@@ -56,24 +55,6 @@ pub const KEYS: [Key; 9] = [
         description: "the runtime when --runtime is not given (auto, or an engine such as gvisor, runc, qemu)",
     },
     Key {
-        name: "cloud.warm",
-        env: "CUA_FLEET_WARM",
-        default: "auto",
-        description: "keep a warm cloud sandbox per image (auto: only the canonical images)",
-    },
-    Key {
-        name: "cloud.max_pool_size",
-        env: "CUA_FLEET_MAX_POOL_SIZE",
-        default: "10",
-        description: "most cloud sandboxes of one image at once",
-    },
-    Key {
-        name: "cloud.claim_ttl",
-        env: "CUA_FLEET_CLAIM_TTL",
-        default: "15m",
-        description: "how long a cloud sandbox outlives its process without a keep-alive",
-    },
-    Key {
         name: "telemetry.enabled",
         env: "CUA_TELEMETRY",
         default: "on",
@@ -90,6 +71,12 @@ pub const KEYS: [Key; 9] = [
         env: "CUA_RUNTIME_LINUX",
         default: "auto",
         description: "the engine local Linux Spaces run on, on a Mac: auto (a working Docker engine on this Mac, else built-in; built-in once it exists), builtin (cua's own VM with Docker and gVisor, set up on first use) or system (only this Mac's own engine; nothing is downloaded)",
+    },
+    Key {
+        name: "nudges.risky_actions",
+        env: "CUA_NUDGE_RISKY_ACTIONS",
+        default: "off",
+        description: "before an agent does something risky on this Mac's own desktop through `cua mcp` (deleting files outside a project, emptying the Trash, uninstalling apps, system settings, passwords), the Cua app offers to run it in a separate Space (on, off). No answer in 30 s runs it here",
     },
 ];
 
@@ -279,20 +266,6 @@ impl Settings {
         self.config_value(&key)
     }
 
-    /// A lookup for [`cua_fleet::AutoPoolConfig::from_lookup`]: the
-    /// environment variable, else the config file's value for the setting
-    /// it overrides.
-    pub fn lookup(&self, env_var: &str) -> Option<String> {
-        let Some(key) = KEYS.iter().find(|k| k.env == env_var) else {
-            return std::env::var(env_var).ok();
-        };
-        if let Some((_, v)) = self.env.iter().find(|(e, _)| *e == env_var) {
-            return Some(v.clone());
-        }
-        self.config_value(key)
-            .filter(|v| !(key.name == "cloud.warm" && v == "auto"))
-    }
-
     /// Checks `value` for `key` and writes it to the config file.
     pub fn set(&mut self, key: Key, value: &str) -> Result<String, SettingsError> {
         let value = normalize(key, value)?;
@@ -300,16 +273,7 @@ impl Settings {
         if !self.doc.contains_table(section) {
             self.doc[section] = toml_edit::table();
         }
-        let item = match key.name {
-            "cloud.warm" if value != "auto" => toml_edit::value(value == "true"),
-            "cloud.max_pool_size" => toml_edit::value(
-                value
-                    .parse::<i64>()
-                    .map_err(|e| SettingsError(e.to_string()))?,
-            ),
-            _ => toml_edit::value(value.clone()),
-        };
-        self.doc[section][name] = item;
+        self.doc[section][name] = toml_edit::value(value.clone());
         self.save()?;
         Ok(value)
     }
@@ -363,7 +327,7 @@ impl Settings {
         let (on, src) = self.parsed(KEYS[0], On::parse)?;
         if on.is_existing_machine() {
             return Err(SettingsError(format!(
-                "default.on ({src}): {on} names one machine; the default location is local, cloud or a provider"
+                "default.on ({src}): {on} names one computer; the default location is local, cloud or a provider"
             )));
         }
         Ok((on, src))
@@ -392,43 +356,13 @@ pub fn normalize(key: Key, value: &str) -> Result<String, SettingsError> {
             }
             if on.is_existing_machine() {
                 return Err(SettingsError(format!(
-                    "default.on: {on} names one machine; use local, cloud or a provider"
+                    "default.on: {on} names one computer; use local, cloud or a provider"
                 )));
             }
             on.to_string()
         }
         "default.kind" => Kind::parse(v).map_err(bad)?.to_string(),
         "default.runtime" => Runtime::parse(v).map_err(bad)?.to_string(),
-        "cloud.warm" => match v.to_ascii_lowercase().as_str() {
-            "auto" => "auto".into(),
-            "1" | "true" | "yes" | "on" => "true".into(),
-            "0" | "false" | "no" | "off" => "false".into(),
-            _ => {
-                return Err(SettingsError(format!(
-                    "cloud.warm: expected true, false or auto, got {v:?}"
-                )));
-            }
-        },
-        "cloud.max_pool_size" => {
-            let n: u32 = v.parse().map_err(|_| {
-                SettingsError(format!("cloud.max_pool_size: expected a number, got {v:?}"))
-            })?;
-            if n == 0 {
-                return Err(SettingsError(
-                    "cloud.max_pool_size: must be at least 1".into(),
-                ));
-            }
-            n.to_string()
-        }
-        "cloud.claim_ttl" => {
-            let ok = v.parse::<u64>().is_ok() || humantime::parse_duration(v).is_ok();
-            if !ok {
-                return Err(SettingsError(format!(
-                    "cloud.claim_ttl: expected seconds or a duration such as 15m, got {v:?}"
-                )));
-            }
-            v.to_string()
-        }
         "runtime.lume" => cua_vmm::lume::builtin::LumeSource::parse(v)
             .ok_or_else(|| {
                 SettingsError(format!(
@@ -445,6 +379,15 @@ pub fn normalize(key: Key, value: &str) -> Result<String, SettingsError> {
             })?
             .as_str()
             .to_string(),
+        "nudges.risky_actions" => match v.to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => "on".into(),
+            "0" | "false" | "no" | "off" => "off".into(),
+            _ => {
+                return Err(SettingsError(format!(
+                    "nudges.risky_actions: expected on or off, got {v:?}"
+                )));
+            }
+        },
         "telemetry.enabled" => match v.to_ascii_lowercase().as_str() {
             "1" | "true" | "yes" | "on" => "on".into(),
             "0" | "false" | "no" | "off" => "off".into(),
@@ -540,33 +483,6 @@ impl Settings {
     }
 }
 
-/// The cloud pool settings with the user's config applied:
-/// [`cua_fleet::AutoPoolConfig::from_lookup`] over the environment, then
-/// `config.toml` (`cloud.warm`, `cloud.max_pool_size`, `cloud.claim_ttl`).
-/// A config file that does not parse is ignored here (`cua doctor` reports
-/// it).
-pub fn auto_pool_config() -> cua_fleet::AutoPoolConfig {
-    match Settings::load() {
-        Ok(s) => cua_fleet::AutoPoolConfig::from_lookup(|k| s.lookup(k)),
-        Err(_) => cua_fleet::AutoPoolConfig::from_env(),
-    }
-}
-
-/// The hint appended to "no cloud credentials" when the cloud came from
-/// a default rather than the call.
-pub fn cloud_default_hint(source: &Source) -> Option<String> {
-    match source {
-        Source::Env(v) => Some(format!(
-            "the default location is cloud ({v}); run `cua auth login`, or unset {v} to run locally"
-        )),
-        Source::Config(p) => Some(format!(
-            "the default location is cloud ({}); run `cua auth login`, or switch back with `cua config set default.on local`",
-            p.display()
-        )),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -602,7 +518,7 @@ mod tests {
         let mut s = settings(d.path(), &[]);
         s.set(key("default.on").unwrap(), "aws").unwrap();
         s.set(key("default.kind").unwrap(), "vm").unwrap();
-        s.set(key("cloud.warm").unwrap(), "yes").unwrap();
+        s.set(key("runtime.linux").unwrap(), "builtin").unwrap();
 
         // config
         let s = settings(d.path(), &[]);
@@ -611,13 +527,13 @@ mod tests {
             s.default_on().unwrap(),
             (On::Provider("aws".into()), Source::Config(path.clone()))
         );
-        assert_eq!(s.entry(key("cloud.warm").unwrap()).value, "true");
+        assert_eq!(s.entry(key("runtime.linux").unwrap()).value, "builtin");
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(
             text.contains("[default]") && text.contains("on = \"aws\""),
             "{text}"
         );
-        assert!(text.contains("warm = true"), "{text}");
+        assert!(text.contains("linux = \"builtin\""), "{text}");
 
         // env beats config
         let s = settings(
@@ -637,8 +553,8 @@ mod tests {
         );
 
         // explicit beats env
-        let r = s.resolve(Some(On::Cloud), Some(Kind::Vm), None).unwrap();
-        assert_eq!((r.on, r.on_source), (On::Cloud, Source::Explicit));
+        let r = s.resolve(Some(On::Local), Some(Kind::Vm), None).unwrap();
+        assert_eq!((r.on, r.on_source), (On::Local, Source::Explicit));
         assert_eq!((r.kind, r.kind_source), (Kind::Vm, Source::Explicit));
         assert_eq!(
             (r.runtime, r.runtime_source),
@@ -671,14 +587,11 @@ mod tests {
         let e = s
             .set(key("default.on").unwrap(), "direct:1.2.3.4:3211")
             .unwrap_err();
-        assert!(e.0.contains("names one machine"), "{e}");
+        assert!(e.0.contains("names one computer"), "{e}");
         assert!(s.set(key("default.kind").unwrap(), "docker").is_err());
-        assert!(s.set(key("cloud.warm").unwrap(), "maybe").is_err());
-        assert!(s.set(key("cloud.max_pool_size").unwrap(), "0").is_err());
-        assert!(s.set(key("cloud.claim_ttl").unwrap(), "soon").is_err());
         assert_eq!(
-            s.set(key("cloud.claim_ttl").unwrap(), "30m").unwrap(),
-            "30m"
+            s.set(key("runtime.linux").unwrap(), "builtin").unwrap(),
+            "builtin"
         );
         assert!(key("default.where").unwrap_err().0.contains("default.on"));
     }
@@ -693,7 +606,7 @@ mod tests {
             e.0.contains("config") && e.0.contains("--runtime lume"),
             "{e}"
         );
-        let s = settings(d.path(), &[("CUA_DEFAULT_ON", "fleet")]);
+        let s = settings(d.path(), &[("CUA_DEFAULT_ON", "kubevirt")]);
         let e = s.default_on().unwrap_err();
         assert!(e.0.contains("env CUA_DEFAULT_ON"), "{e}");
     }
@@ -715,10 +628,7 @@ mod tests {
         let r = s.resolve(None, Some(Kind::Vm), None).unwrap();
         assert_eq!((r.kind, r.runtime.clone()), (Kind::Vm, Runtime::Auto));
         assert_eq!(r.runtime_source, Source::Default);
-        // A runtime the location lacks (runc in the cloud) is skipped.
         let s = settings(d.path(), &[("CUA_DEFAULT_RUNTIME", "runc")]);
-        let r = s.resolve(Some(On::Cloud), None, None).unwrap();
-        assert_eq!(r.runtime, Runtime::Auto);
         // An existing machine takes no kind or runtime.
         let r = s
             .resolve(Some(On::Direct("h:1".into())), None, None)
@@ -730,42 +640,6 @@ mod tests {
             (r.runtime, r.runtime_source),
             (Runtime::Runc, Source::Env("CUA_DEFAULT_RUNTIME"))
         );
-    }
-
-    #[test]
-    fn fleet_lookup_reads_the_config() {
-        let d = tempfile::tempdir().unwrap();
-        let mut s = settings(d.path(), &[]);
-        s.set(key("cloud.max_pool_size").unwrap(), "3").unwrap();
-        s.set(key("cloud.warm").unwrap(), "auto").unwrap();
-        let s = settings(d.path(), &[]);
-        assert_eq!(s.lookup("CUA_FLEET_MAX_POOL_SIZE").as_deref(), Some("3"));
-        assert_eq!(s.lookup("CUA_FLEET_WARM"), None, "auto is not an override");
-        let s = settings(d.path(), &[("CUA_FLEET_MAX_POOL_SIZE", "7")]);
-        assert_eq!(s.lookup("CUA_FLEET_MAX_POOL_SIZE").as_deref(), Some("7"));
-    }
-
-    #[test]
-    fn cloud_settings_reach_the_pool_manager() {
-        let d = tempfile::tempdir().unwrap();
-        let mut s = settings(d.path(), &[]);
-        s.set(key("cloud.warm").unwrap(), "true").unwrap();
-        s.set(key("cloud.max_pool_size").unwrap(), "4").unwrap();
-        s.set(key("cloud.claim_ttl").unwrap(), "20m").unwrap();
-        let s = settings(d.path(), &[]);
-        let c = cua_fleet::AutoPoolConfig::from_lookup(|k| s.lookup(k));
-        assert!(c.warm);
-        assert_eq!(c.max_pool_size, 4);
-        assert_eq!(c.claim_ttl, std::time::Duration::from_secs(1200));
-    }
-
-    #[test]
-    fn hints_name_the_way_back() {
-        let h = cloud_default_hint(&Source::Config(PathBuf::from("/h/.cua/config.toml"))).unwrap();
-        assert!(h.contains("cua config set default.on local") && h.contains("cua auth login"));
-        let h = cloud_default_hint(&Source::Env("CUA_DEFAULT_ON")).unwrap();
-        assert!(h.contains("unset CUA_DEFAULT_ON"));
-        assert!(cloud_default_hint(&Source::Explicit).is_none());
     }
 
     /// `cua config set telemetry off` writes the `[telemetry] enabled` key

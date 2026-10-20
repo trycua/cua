@@ -43,12 +43,13 @@ final class CuaSpacesMacUITests: XCTestCase {
         XCTAssertTrue(app.otherElements["wizard-summary"].exists || app.staticTexts["Runs on"].exists)
     }
 
-    func testOnboardingStartsWithWelcome() {
+    /// The first run is the shared web onboarding in the New UI window, not
+    /// a view of the native app: no native Welcome, no native main window.
+    func testFirstRunOpensTheNewUIWindow() {
         let app = launch(onboarded: false)
-        XCTAssertTrue(app.staticTexts["Welcome to Cua Spaces"].waitForExistence(timeout: 10))
-        app.buttons["Get started"].click()
-        // First run no longer has a Command line page: Sign in follows Welcome.
-        XCTAssertTrue(app.staticTexts["Sign in to reach your computers and Spaces from any of your devices. You can skip this and sign in later."].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.windows["cua-new-ui"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.staticTexts["Welcome to Cua Spaces"].exists, "no native onboarding")
+        XCTAssertFalse(app.staticTexts["aurora"].exists, "the native main window stays closed")
     }
 
     func testSpaceDetailShowsFactsAndTheDropWell() {

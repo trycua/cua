@@ -1,6 +1,6 @@
 [package]
 name = "cua-create-failure"
-description = "Why a sandbox or Space create failed, as a fixed telemetry word (`image_pull_not_found`, `vm_boot_timeout`, ...) read from the error text inside the process; the text never leaves. No dependencies, so the Spaces app core's wasm build uses it too."
+description = "Why a sandbox or Space create failed, as a fixed telemetry word (`image_pull_not_found`, `vm_boot_timeout`, ...) read from the error text inside the process; the text never leaves. Also the preflight checks before a create and their plain-language results. Only serde, so the Spaces app core's wasm build uses it too."
 version.workspace = true
 edition.workspace = true
 rust-version = "1.95"
@@ -9,5 +9,9 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[dependencies]
+serde.workspace = true
+
 [dev-dependencies]
+serde_json.workspace = true
 cua-telemetry.workspace = true

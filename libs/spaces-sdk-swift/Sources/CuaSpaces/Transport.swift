@@ -126,7 +126,7 @@ extension SpacesError {
 /// This lived in the app's own MCP client until the SDK absorbed the
 /// transport. It belongs here: a counter that only saw the app's calls could
 /// not see the SDK's, and after the extraction nearly every call is the SDK's.
-/// `samples/openkoalabots/FRICTION.md` §51.
+/// `examples/openkoalabots/FRICTION.md` §51.
 public enum SpacesCallCounter {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var counts: [String: Int] = [:]

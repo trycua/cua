@@ -80,6 +80,12 @@ export function volumeMethods(ctx: BridgeContext): Handlers {
       const full = homePath(ctx, string(args, "path"));
       if (!system) throw Failure.unsupported("Showing files is not available in this build");
       system.reveal(full);
+      // The `volume_open_finder` usage event the SwiftUI and Tauri apps record; this host recorded none.
+      try {
+        ctx.model.recordFeature("volume_open_finder");
+      } catch {
+        // Telemetry never fails a reveal.
+      }
       return null;
     },
   };

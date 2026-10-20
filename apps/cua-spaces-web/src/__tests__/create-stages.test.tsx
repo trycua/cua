@@ -55,7 +55,7 @@ describe.skipIf(!wasmBuilt)("a create's stages (wasm core)", () => {
 
     progress("pulling", [Math.round(12.4 * GB), 30 * GB, 85 * 2 ** 20]);
     await waitFor(() => expect(tile()?.textContent).toContain("Downloading macOS (first time only)…"));
-    expect(tile()!.textContent).toContain("Another machine");
+    expect(tile()!.textContent).toContain("Another computer");
     expect(tile()!.querySelector("[data-create-transfer]")?.textContent).toBe("12.4 of 30.0 GB · 85 MB/s · about 4 min");
     const row = hooks.spaces.data!.find((s) => s.id === pendingId)!;
     expect(row.progress!.permille).toBeGreaterThan(10);

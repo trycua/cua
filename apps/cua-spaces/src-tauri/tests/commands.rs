@@ -419,7 +419,7 @@ async fn default_location_is_stored_in_the_cua_home_config() {
     let e = app
         .set_default_location("direct:127.0.0.1:3211")
         .unwrap_err();
-    assert!(e.contains("one machine"), "{e}");
+    assert!(e.contains("one computer"), "{e}");
     let e = app.set_default_location("fleet").unwrap_err();
     assert!(e.contains("cloud"), "{e}");
     assert_eq!(app.set_default_location("local").unwrap().value, "local");

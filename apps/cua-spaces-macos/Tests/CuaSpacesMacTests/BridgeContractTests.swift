@@ -201,6 +201,9 @@ struct BridgeContractTests {
         [
             // The relay allowance before the sign-out below (signed out, it is null).
             ("app.info", [:]), ("session.get", [:]), ("relay.usage", [:]), ("session.signOut", [:]),
+            // No request is waiting on the fixtures: an answer to none is left alone.
+            ("nudges.pending", [:]), ("nudges.answer", ["id": "risky-1-1", "choice": "here"]),
+            ("app.info", [:]), ("session.get", [:]), ("relay.usage", [:]), ("resources.get", ["visible": true]), ("session.signOut", [:]),
             ("checklist.get", [:]), ("checklist.send", ["action": ["type": "done", "step": "teleport"]]),
             ("spaces.list", [:]),
             ("spaces.createOptions", [:]), ("spaces.cancelCreate", ["pendingId": "pending:none"]),
@@ -222,6 +225,7 @@ struct BridgeContractTests {
             ("clouds.connect", ["target": ["provider": "aws", "region": "us-west-2"], "makeDefault": false]),
             ("sharing.list", ["spaceId": space]), ("sharing.share", ["spaceId": space, "who": "bob@example.com", "role": "viewer"]),
             ("sharing.unshare", ["spaceId": space, "who": "bob@example.com"]),
+            ("sharing.removals", [:]), ("sharing.ackRemovals", [:]),
             ("volume.overview", [:]), ("volume.storage", [:]), ("volume.mount", [:]), ("volume.unmount", [:]),
             ("volume.storageSet", ["update": ["backend": "fs", "dry_run": true]]),
             ("about.get", [:]), ("about.set", ["channel": "beta"]), ("about.checkNow", [:]),
@@ -234,6 +238,7 @@ struct BridgeContractTests {
             ("storage.get", [:]), ("storage.run", ["request": ["kind": "clear-cache"]]),
             ("notifications.list", [:]), ("notifications.markRead", ["ids": ["n1"]]), ("notifications.markAllRead", [:]),
             ("telemetry.track", ["signals": [["type": "step", "step": "app_launched", "ok": true]]]),
+            ("telemetry.linkNotice", [:]), ("telemetry.acknowledgeLinkNotice", [:]),
             ("spaces.usage", ["spaceId": space]), ("spaces.windows", ["spaceId": space]),
             ("spaces.thumbnail", ["spaceId": space]),
             ("spaces.droppedFiles", ["names": ["notes.txt"]]), ("spaces.chooseFiles", [:]),
@@ -257,6 +262,8 @@ struct BridgeContractTests {
     /// must be in `cases`).
     static let skipped: [String: String] = [
         "session.signIn": "starts a device sign-in that waits for the browser",
+        "onboarding.get": "FirstRunTests covers it (answers depend on the state file)",
+        "onboarding.complete": "FirstRunTests covers it (writes the state file, hands the window over)",
         "spaces.create": "runs a create to the end; CreateOptionsTests and ViewModelTests cover it",
         "spaces.delete": "removes the fixture Space the later cases use",
         "spaces.add": "needs a running cua-spacesd at the address",

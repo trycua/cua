@@ -116,9 +116,8 @@ pub(super) async fn call_on(space: &Space, tool: &str, mut arguments: Value) -> 
 }
 
 /// One `phase` vocabulary for every provider (the client's `SpaceState`):
-/// `ready` once the Space answered its handshake (direct, relay), its claim
-/// bound (Fleet) or its instance runs (local); `starting` while a claim is
-/// pending or an instance is provisioning.
+/// `ready` once the Space answered its handshake (direct, relay) or its
+/// instance runs (local); `starting` while an instance is provisioning.
 pub const PHASE_READY: &str = "ready";
 /// See [`PHASE_READY`].
 pub const PHASE_STARTING: &str = "starting";

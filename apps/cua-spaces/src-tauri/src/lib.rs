@@ -552,6 +552,8 @@ pub fn run() {
             commands::share_space,
             commands::cloud_tool,
             commands::unshare_space,
+            commands::share_removals,
+            commands::ack_share_removals,
             commands::agents_tool,
             commands::drive_reveal,
             tray::tray_set_menu,
@@ -569,6 +571,8 @@ pub fn run() {
             keyvault::keyvault_approve,
             keyvault::keyvault_deny,
             telemetry::telemetry_status,
+            telemetry::telemetry_link_notice,
+            telemetry::telemetry_acknowledge_link_notice,
             telemetry::telemetry_set_enabled,
             telemetry::telemetry_acknowledge_notice,
             telemetry::telemetry_record_feature,
@@ -585,6 +589,13 @@ pub fn run() {
         ])
         .setup(move |app| {
             let accessory_activation = false;
+
+            // Links usage data to the signed-in account when the Spaces API
+            // offers it (CUA-1881). Best effort, off the startup path.
+            {
+                let core = core.clone();
+                tauri::async_runtime::spawn(async move { core.sync_usage_link().await });
+            }
 
             // Webview data stays in the app's data directory (webview_data):
             // the page's settings file, then the tauri.conf.json windows

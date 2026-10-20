@@ -187,7 +187,7 @@ export async function makeLiveServices(native: Native, supervisor: DaemonSupervi
  * replaces it. The signed-in session drives the relay account.
  */
 async function makeCua(native: Native, supervisor: DaemonSupervisor | null): Promise<CuaLike> {
-  const config = native.CuaConfig.create({ fleetFromEnv: true, fleetFromSession: true });
+  const config = native.CuaConfig.create({ accountFromSession: true });
   try {
     return native.Cua.auto(config);
   } catch (error) {

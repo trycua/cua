@@ -192,5 +192,5 @@ Store the preference as a validated one-line `release-channel` file in the
 component's existing product home. A missing file means stable; invalid or
 unreadable state fails closed with a repair command. Product-home overrides must
 relocate the file so installer and updater tests remain isolated. Cua Driver and
-Lume are the reference implementations; [RFC 3101](../../rfcs/3101-persistent-release-channel-selection.md)
+Lume are the reference implementations; [RFC 3101](../../docs/rfcs/3101-persistent-release-channel-selection.md)
 records the full rationale and acceptance matrix.

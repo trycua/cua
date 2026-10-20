@@ -93,9 +93,9 @@ fn word(s: &str) -> &str {
         "linux" => "Linux",
         "windows" => "Windows",
         "macos" => "macOS",
-        "local" => "this machine",
+        "local" => "this computer",
         "cloud" => "Cua Cloud",
-        "relay" => "another of my machines",
+        "relay" => "another of my computers",
         "container" => "container",
         "vm" => "VM",
         _ => s,
@@ -475,7 +475,7 @@ fn hide_names(s: &str, names: &[String]) -> String {
     let mut i = 0;
     for (at, end) in spans {
         out.push_str(&s[i..at]);
-        out.push_str("<machine>");
+        out.push_str("<computer>");
         i = end;
     }
     out.push_str(&s[i..]);
@@ -941,7 +941,7 @@ mod tests {
         let names = vec!["Francescos-MacBook-Pro".to_string(), "x".to_string()];
         assert_eq!(
             redact_with("host francescos-macbook-pro said no; x stays", &names),
-            "host <machine> said no; x stays"
+            "host <computer> said no; x stays"
         );
     }
 
@@ -953,7 +953,7 @@ mod tests {
             let names = vec![phrase.to_string(), "Studio".to_string()];
             assert_eq!(
                 redact_with(&format!("{phrase} can't reach Studio."), &names),
-                format!("{phrase} can't reach <machine>."),
+                format!("{phrase} can't reach <computer>."),
             );
             assert_eq!(
                 redact_with(&format!("{} can't reach it", phrase.to_uppercase()), &names),
@@ -965,23 +965,23 @@ mod tests {
         let names = vec!["Mac".to_string()];
         assert_eq!(
             redact_with("This Mac lost Mac and my mac", &names),
-            "This Mac lost <machine> and my <machine>"
+            "This Mac lost <computer> and my <computer>"
         );
         // A name that contains the phrase and more is hidden whole.
         let names = vec!["This Mac (Maya)".to_string()];
         assert_eq!(
             redact_with("on This Mac (Maya) and This Mac", &names),
-            "on <machine> and This Mac"
+            "on <computer> and This Mac"
         );
         // Longer words that start like the phrase are not the phrase.
         let names = vec!["This MacBook-Pro".to_string()];
         assert_eq!(
             redact_with("This MacBook-Pro is offline", &names),
-            "<machine> is offline"
+            "<computer> is offline"
         );
         // Overlapping names become one marker.
         let names = vec!["Studio".to_string(), "Studio Mini".to_string()];
-        assert_eq!(redact_with("Studio Mini slept", &names), "<machine> slept");
+        assert_eq!(redact_with("Studio Mini slept", &names), "<computer> slept");
     }
 
     #[test]
@@ -997,12 +997,12 @@ mod tests {
         let r = create_report(&i);
         assert_eq!(
             r.parts[1].text,
-            "This Mac can't reach <machine>: connection refused\n\n\
-             The app showed: This Mac can't reach <machine>."
+            "This Mac can't reach <computer>: connection refused\n\n\
+             The app showed: This Mac can't reach <computer>."
         );
         // The second pass, on what the person sends, agrees.
         let mail = report_mailto(&send_of(&r), &i.names);
-        assert!(mail_field(&mail, "body").contains("This Mac can't reach <machine>"));
+        assert!(mail_field(&mail, "body").contains("This Mac can't reach <computer>"));
     }
 
     fn input() -> CreateReportInput {

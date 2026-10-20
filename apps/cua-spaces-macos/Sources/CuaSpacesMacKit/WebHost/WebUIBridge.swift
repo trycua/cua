@@ -66,6 +66,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     static let methods = [
         "app.info",
         "session.get", "session.signIn", "session.signOut",
+        // The first run: the shared web onboarding asks whether it is due and
+        // finishes it here, as the Electron shell's handlers do.
+        "onboarding.get", "onboarding.complete",
         "spaces.list", "spaces.open",
         "spaces.createOptions", "spaces.create",
         "spaces.setPower", "spaces.delete", "spaces.cancelCreate",
@@ -82,7 +85,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "spaces.add", "clouds.status", "clouds.test", "clouds.connect",
         "teleport.catalog", "teleport.entryForPath", "teleport.windows", "teleport.remoteWindows",
         "teleport.icon", "teleport.thumbnail", "teleport.plan", "teleport.run", "teleport.sites",
-        "teleport.remembered", "teleport.streamWindow", "sharing.list", "sharing.share", "sharing.unshare",
+        "teleport.remembered", "teleport.streamWindow", "sharing.list", "sharing.share", "sharing.unshare", "sharing.removals", "sharing.ackRemovals",
         "volume.overview", "volume.storage", "volume.storageSet", "volume.mount", "volume.unmount",
         "volume.approve", "volume.deny", "volume.revoke", "volume.resolve", "volume.reveal",
         "agents.setupDriver",
@@ -91,7 +94,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "devices.revoke", "devices.confirmMachine", "devices.createPairingCode", "devices.pairingCodes",
         "devices.revokePairingCode", "teams.list", "storage.get", "storage.run",
         "notifications.list", "notifications.markAllRead", "notifications.markRead",
-        "telemetry.track", "spaces.usage", "spaces.windows", "stream.pip",
+        "telemetry.track", "telemetry.linkNotice", "telemetry.acknowledgeLinkNotice", "spaces.usage", "spaces.windows", "stream.pip",
         // A Space's thumbnail (WebUIBridge+Thumbnails.swift).
         "spaces.thumbnail",
         // A Space's drop well: Send file… and dropped files (WebUIBridge+Files.swift).
@@ -109,6 +112,10 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "startup.get", "startup.act",
         // The relay allowance this month (WebUIBridge+Pages.swift).
         "relay.usage",
+        // The risky-action question's request files (WebUIBridge+Nudges.swift).
+        "nudges.pending", "nudges.answer",
+        // Processor, memory and disk (WebUIBridge+Pages.swift).
+        "resources.get",
         // The getting-started checklist: the app's one copy (`ChecklistModel`).
         "checklist.get", "checklist.send",
     ]
@@ -147,6 +154,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     var offeredPaths: Set<String> = []
     /// "Send file…"'s picker (a test sets its own).
     var pickFiles: @MainActor () -> [URL]? = WebUIBridge.openPanel
+    /// The "<Space> is ready" notification of a create the onboarding
+    /// started (a test sets its own).
+    var notifySpaceReady: @MainActor (SpaceReadyNote) -> Void = { SpaceReadyNotifier.shared.post($0) }
     /// The pasteboard of the last drag onto the window (a test sets its own).
     var dragPasteboard: @MainActor () -> NSPasteboard = { NSPasteboard(name: .drag) }
     /// Origins allowed to call (the bundled UI, and the dev server in a
@@ -245,6 +255,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         case "session.signOut":
             await model.signOut()
             return session()
+
+        case "onboarding.get": return onboarding()
+        case "onboarding.complete": return try completeOnboarding(args)
 
         case "spaces.list": return spaces()
         case "spaces.open":
@@ -380,6 +393,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             if let result = try await routeThumbnail(method, args) { return result }
             if let result = try await routeFiles(method, args) { return result }
             if let result = try await routePage(method, args) { return result }
+            if let result = try routeNudges(method, args) { return result }
             throw Failure.unimplemented(method)
         }
     }
@@ -406,7 +420,27 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             // The page a waiting sign-in finishes on, to show and copy.
             "signInUrl": model.signInURL?.absoluteString ?? NSNull(),
             "chrome": BridgeValue.encode(model.chrome),
+            "onboarding": onboarding(),
         ]
+    }
+
+    /// The first run's state (`onboarding.get`): due until it finishes.
+    func onboarding() -> [String: Any] {
+        ["completed": model.onboarding.completed, "mode": model.onboarding.mode == .host ? "host" : "client"]
+    }
+
+    /// `onboarding.complete {mode, launchAtLogin?}`: "Start using Cua Spaces".
+    /// Saved to `onboarding.json`, Done's "Launch at login" applied, the usage
+    /// notice counted as shown. With New UI off the page was only the first
+    /// run's stand-in: its window gives way to the native main window.
+    func completeOnboarding(_ args: [String: Any]) throws -> [String: Any] {
+        guard let word = args["mode"] as? String, word == "client" || word == "host" else {
+            throw Failure.badArgs("mode: client | host")
+        }
+        model.onboarding.finish(mode: word == "host" ? .host : .client, launchAtLogin: args["launchAtLogin"] as? Bool)
+        model.telemetrySink?.acknowledgeNotice()
+        if !model.settings.experiments.webUi { model.closeWebUI?() }
+        return onboarding()
     }
 
     func spaces() -> [String: Any] {
@@ -546,12 +580,16 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         return out
     }
 
-    /// `spaces.create {config, pendingId, os?}`: the core's create
-    /// arguments (`wizard.createArgs`), run as the native sheet's Create
-    /// runs them (`AppModel.runCreate`: the pending row in the list and the
-    /// notch, the SDK's progress, Cancel through `spaces.cancelCreate`).
-    /// Progress goes to the page as `spaces.createProgress`; the answer is
-    /// the new Space, or `cancelled`.
+    /// `spaces.create {config, pendingId, os?, notifyWhenReady?}`: the core's
+    /// create arguments (`wizard.createArgs`), run as the native sheet's
+    /// Create runs them (`AppModel.runCreate`: the pending row in the list
+    /// and the notch, the SDK's progress, Cancel through
+    /// `spaces.cancelCreate`). Progress goes to the page as
+    /// `spaces.createProgress`; the answer is the new Space, or `cancelled`.
+    /// The create belongs to the app, not to the window: it runs on when the
+    /// window is closed, and `notifyWhenReady` (a create the onboarding
+    /// started) posts "<Space> is ready" as a system notification when it
+    /// succeeds, window or not.
     func create(_ args: [String: Any]) async throws -> Any {
         let pendingId = try string(args, "pendingId")
         guard appCreatesIsPending(id: pendingId) else { throw Failure.badArgs("pendingId: pending:<id>") }
@@ -567,7 +605,12 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         } catch where isCancelled(error) {
             throw Failure(code: "cancelled", message: "cancelled")
         }
-        if let space = model.spaces.first(where: { $0.id == id }) { return BridgeValue.encode(space) }
+        let made = model.spaces.first(where: { $0.id == id })
+        if args["notifyWhenReady"] as? Bool == true {
+            let known = made.map(\.os).flatMap { $0 == .unknown ? nil : $0 } ?? os
+            notifySpaceReady(SpaceReadyNote(spaceId: id, name: made?.name ?? createArgs.name ?? id, os: known))
+        }
+        if let space = made { return BridgeValue.encode(space) }
         return ["id": id, "name": createArgs.name ?? id, "os": BridgeValue.encode(os), "status": "running",
                 "detail": "", "lastUsedAt": Double(AppModel.nowMs())] as [String: Any]
     }
@@ -952,7 +995,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             self?.pruneStreams()
         }
         follow("keyvault.changed") { [model] in _ = (model.keyvault.overview, model.keyvault.busy, model.keyvault.dismissed) }
-        follow("session.changed") { [model] in _ = (model.identity, model.signIn, model.cloudConfigured) }
+        follow("session.changed") { [model] in
+            _ = (model.identity, model.signIn, model.cloudConfigured, model.onboarding.completed)
+        }
         follow("settings.changed") { [model] in _ = model.settings }
         // These views are rewritten on every read, so the event goes out
         // only when what the page shows differs.

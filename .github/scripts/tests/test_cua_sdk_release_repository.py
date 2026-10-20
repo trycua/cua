@@ -247,10 +247,6 @@ def test_images_never_push_off_trycua_cua(name: str) -> None:
     assert 'if [ "$publish" = true ] && [ "$GITHUB_REPOSITORY" != trycua/cua ]; then' in text(name)
 
 
-def test_image_api_pushes_a_staging_package_off_trycua_cua() -> None:
-    assert "PACKAGE=cua-image-api-staging" in text("cd-image-api.yml")
-
-
 def test_docker_hub_pushes_only_from_trycua_cua() -> None:
     wf = workflow("docker-reusable-publish.yml")
     build = wf["jobs"]["build-and-push"]["steps"]

@@ -45,7 +45,7 @@ TYPES = [
     ("keyvault/client.rs", "keyvault::client", ["KvOutcome"]),
     ("billing.rs", "billing", ["BillingCard", "BillingCredit", "BillingStatus", "CreditNotice"]),
     ("drive_settings.rs", "drive_settings", ["DriveMountInput", "DriveS3Input", "DriveStorageInput", "DriveCheckInput", "DriveCacheInput", "StorageInput", "DriveStorageUpdate", "StorageForm", "StorageField", "StorageRequest", "StorageState", "StorageAction"]),
-    ("onboarding.rs", "onboarding", ["OnboardingStep", "DriveStepRequest", "StorageChoice", "OnboardingMode", "OnboardingState", "OnboardingAction", "StepDot", "UsageToggle", "ModeChoice", "OnboardingView", "DriveCard", "PresentationCard", "OnboardingCopy", "OnboardingCheckbox"]),
+    ("onboarding.rs", "onboarding", ["OnboardingStep", "DriveStepRequest", "StorageChoice", "OnboardingMode", "OnboardingState", "OnboardingAction", "OnboardingTodoId", "OnboardingTodo", "StepDot", "UsageToggle", "ModeChoice", "OnboardingView", "DriveCard", "PresentationCard", "OnboardingCopy", "OnboardingCheckbox"]),
     ("onboarding_preview.rs", "onboarding_preview", ["PreviewPoint", "NotchPreview", "MenuPreviewRow", "MenuPreview", "PresentationPreview", "PreviewFrame"]),
     ("driver_preview.rs", "driver_preview", ["PreviewSegment", "PreviewWindow", "DriverPreview", "DriverFrame"]),
     ("drive_mount_preview.rs", "drive_mount_preview", ["DriveMountPreview", "DriveMountFrame"]),
@@ -60,7 +60,7 @@ TYPES = [
     ("agents.rs", "agents", ["AgentStatus", "SpaceAgentRun", "AgentSetupStatus", "AgentSettingsRow", "AgentSetupOutcomeInput", "AgentSetupSummary"]),
     ("devices.rs", "devices", ["DeviceInput", "MachineInput", "AuditInput", "DevicesInput", "BannerTone", "DeviceAction", "DeviceBanner", "DeviceConfirm", "UnconfirmedMachine", "DeviceRow", "ApprovalPrompt", "ActivityRow", "EnrollmentKind", "MachineAccessNotice", "ThisDevice", "DevicesLabels", "DevicesView", "EnrollMethod", "EnrollPhase", "EnrollState", "EnrollAction", "EnrollOption", "EnrollView", "ApproveSheetState", "ApproveSheetAction", "ApproveRequest", "ApproveSheetView"]),
     ("cloud_connect.rs", "cloud_connect", ["CloudProviderInput", "CloudConnectInput", "CloudCheckInput", "CloudConnectPhase", "CloudConnectState", "CloudConnectAction", "CloudTargetArgs", "CloudConnectRequest", "CloudProviderRow", "CloudField", "CloudCheckRow", "CloudConnectView"]),
-    ("share.rs", "share", ["ShareEntryInput", "ShareInput", "ShareRequest", "ShareSheetState", "ShareSheetAction", "RoleOption", "ShareRowView", "ShareSheetView"]),
+    ("share.rs", "share", ["ShareEntryInput", "ShareInput", "ShareRequest", "ShareSheetState", "ShareSheetAction", "RoleOption", "ShareRowView", "ShareActionView", "ShareSheetView", "ShareGate", "ShareRemovalInput", "ShareRemovalNote"]),
     ("persistent.rs", "persistent", ["PersistentAgentInput", "DriveEntryInput", "FileVersionInput", "OpenFileInput", "RoutineInput", "ComputerGrantInput", "AccessAuditInput", "AgentsInput", "AgentTab", "RoutineScheduleKind", "RoutineForm", "AgentsRequest", "AgentsState", "AgentsAction", "AgentRowView", "LineView", "TabView", "FileView", "AgentDetailView", "AgentsView"]),
     ("drive_page.rs", "drive_page", ["DriveRequestInput", "DriveGrantInput", "DriveDeviceInput", "DriveConflictInput", "DriveSyncInput", "DriveInput", "DriveRequest", "DriveState", "DriveAction", "ConflictView", "DriveView"]),
     ("notifications.rs", "notifications", ["NotificationInput", "SystemNote", "NotificationsPlan", "NotificationsView"]),
@@ -70,6 +70,7 @@ TYPES = [
     ("palette.rs", "palette", ["Keybinding", "PaletteEntry"]),
     ("teams.rs", "teams", ["TeamPersonInput", "TeamInput", "TeamsState", "TeamsInput"]),
     ("relay_usage.rs", "relay_usage", ["RelayUsageTeam", "RelayUsage", "RelayAllowanceNotice", "PlanLink", "PlanCard", "RelayUsageView"]),
+    ("resources.rs", "resources", ["DiskLevel", "DiskWarning", "ComputerResources", "GuestUsage", "DiskOnHost", "SpaceResources", "ResourcesSnapshot", "ResourceTone", "ResourceRow", "WarningView", "ThisMacView", "SpaceResourcesView", "ComputerView", "ResourcesView"]),
 ]
 
 # FFI names that read better than the plain prefix.
@@ -158,7 +159,7 @@ def block(src, name):
 
 
 out = [
-    # cua-spaces-ffi is FSL-1.1-MIT (see LICENSING.md and scripts/spdx-headers.py).
+    # cua-spaces-ffi is FSL-1.1-MIT (see legal/LICENSING.md and scripts/spdx-headers.py).
     "// SPDX-License-Identifier: FSL-1.1-MIT",
     "// Copyright (c) 2026 Cua AI, Inc.",
     "",

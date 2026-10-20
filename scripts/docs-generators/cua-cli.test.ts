@@ -21,7 +21,7 @@ const mcp: McpDocumentation = {
       permission: 'spaces:add_space',
       description: 'Register a Space.',
       instructions: 'Stored in ~/.cua.',
-      providers: ['fleet', 'local'],
+      providers: ['cloud', 'local'],
       metering: 'free',
       annotations: { read_only: false, destructive: false, idempotent: true, open_world: true },
       sdk_symbol: 'SpacesConnection.addSpace(url:token:)',
@@ -40,8 +40,10 @@ const mcp: McpDocumentation = {
 test('every cua command is on exactly one group page', () => {
   // Throws when a visible top-level command is ungrouped or grouped twice.
   const files = renderCliReference(cliReference(spec));
-  assert.ok(files.has('cli/sandbox.mdx'));
-  assert.ok(files.get('cli/sandbox.mdx')!.includes('## `cua sandbox create`'));
+  assert.ok(files.has('cli/sandboxes.mdx'));
+  // Several commands share a page: each is a section, its subcommands one level below.
+  assert.ok(files.get('cli/sandboxes.mdx')!.includes('## `cua sandbox`'));
+  assert.ok(files.get('cli/sandboxes.mdx')!.includes('### `cua sandbox create`'));
   assert.ok(files.get('cli/index.mdx')!.includes('## Exit codes'));
 });
 
@@ -62,24 +64,22 @@ test('Spaces tools link to their one entry in the Spaces reference instead of re
   const ref = mcpReference(mcp, spaces);
   const add = ref.tools.find((t) => t.name === 'add_space')!;
   assert.deepEqual(add.facts, [
-    ['Providers', 'fleet, local'],
+    ['Providers', 'cloud, local'],
     ['Metering', 'free'],
     ['SDK', '`SpacesConnection.addSpace(url:token:)`'],
   ]);
   const files = renderAll({ cli: spec, mcp }, spaces);
   const page = (rel: string) => [...files].find(([p]) => p.endsWith(join('reference', ...rel.split('/'))))?.[1];
-  const spacesPage = page('mcp-tools/spaces.mdx')!;
-  assert.ok(spacesPage.includes('| <span id="add_space"></span>[`add_space`](/spaces/reference/lifecycle#add_space) | Register a Space. |'));
-  assert.ok(spacesPage.includes('[`space_bash`](/spaces/reference/commands-and-files#space_bash)'));
-  assert.ok(!spacesPage.includes('| Parameter |'), 'no repeated parameter tables');
-  assert.ok(spacesPage.includes('## Space lifecycle\n\nFull entries: [Space lifecycle](/spaces/reference/lifecycle).'));
-  assert.equal(page('mcp-tools/space-io.mdx'), undefined);
-  assert.equal(page('mcp-tools/space-agents.mdx'), undefined);
-  const index = page('mcp-tools/index.mdx')!;
-  assert.ok(index.includes('[`agent_start`](/spaces/reference/agents#agent_start)'));
-  assert.ok(index.includes('## Permissions') && index.includes('`sandbox:all`'));
-  const sandbox = page('mcp-tools/sandbox.mdx')!;
-  assert.ok(sandbox.includes('## `sandbox_list`'));
+  // Every tool is on one page; the Spaces tools are tables linking to their entries.
+  const tools = page('mcp-tools.mdx')!;
+  assert.ok(tools.includes('| <span id="add_space"></span>[`add_space`](/spaces/reference/spaces#add_space) | Register a Space. |'));
+  assert.ok(tools.includes('[`space_bash`](/spaces/reference/spaces#space_bash)'));
+  assert.ok(tools.includes('[`agent_start`](/spaces/reference/agents#agent_start)'));
+  assert.ok(tools.includes('### Space lifecycle\n\nFull entries: [Space lifecycle](/spaces/reference/spaces#space-lifecycle).'));
+  assert.ok(!tools.includes('### `add_space`'), 'no repeated Spaces entries');
+  assert.ok(tools.includes('## Permissions') && tools.includes('`sandbox:all`'));
+  assert.ok(tools.includes('### `sandbox_list`'));
+  assert.equal(page('mcp-tools/index.mdx'), undefined);
   assert.throws(() => renderAll({ cli: spec, mcp }, { anchors: new Map(), sections: new Map() }), /Spaces contract manifest lacks/);
 });
 

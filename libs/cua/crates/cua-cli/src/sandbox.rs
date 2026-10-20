@@ -102,12 +102,12 @@ pub struct CreateArgs {
     /// Image: a registry reference (`ghcr.io/org/image:tag`), an alias
     /// (`linux`, `ubuntu`, `windows`, `macos[:tahoe|sequoia]`, `omarchy`).
     image: Option<String>,
-    /// Where it runs: local, direct:<addr> (an existing machine
+    /// Where it runs: local, direct:<addr> (an existing computer
     /// running cua-spacesd), or a registered provider. Default: `cua config
     /// get default.on` (`CUA_DEFAULT_ON`), else local.
     #[arg(long, value_parser = parse_on, value_name = "WHERE")]
     on: Option<On>,
-    /// What kind of machine: auto (from the image: a container when it has
+    /// What kind of computer: auto (from the image: a container when it has
     /// a container rootfs; macOS, Windows and disk-only images are VMs),
     /// container or vm.
     #[arg(long, value_parser = parse_kind)]
@@ -237,7 +237,7 @@ pub struct LaunchArgs {
     /// Deprecated: use `--kind vm`.
     #[arg(long, hide = true, conflicts_with = "kind")]
     vm: bool,
-    /// What kind of machine: auto, container or vm.
+    /// What kind of computer: auto, container or vm.
     #[arg(long, value_parser = parse_kind)]
     kind: Option<Kind>,
     /// Which engine (see `sb create --runtime`).
@@ -309,7 +309,7 @@ pub enum SandboxCmd {
     /// Create a sandbox: `cua sb create IMAGE [--on local|direct:<addr>]
     /// [--kind auto|container|vm] [--runtime auto|gvisor|runc|qemu|lume]`.
     #[command(after_help = "Examples:
-  # A Linux desktop on this machine (a gVisor container)
+  # A Linux desktop on this computer (a gVisor container)
   cua sb create linux --name dev
   # A web server container, ready when its HTTP service answers
   cua sb create python:3.12-slim --service web=8000 --wait http:web/ -- python -m http.server 8000
@@ -524,7 +524,7 @@ pub enum SandboxCmd {
         #[arg(long)]
         no_wait: bool,
     },
-    /// Print a URL for a named service: usable from this machine (default),
+    /// Print a URL for a named service: usable from this computer (default),
     /// or `--public` for a shareable URL that expires (`--ttl`, default 1h;
     /// a token URL served by the cua daemon).
     #[command(after_help = "Examples:
@@ -1298,9 +1298,6 @@ pub fn on_backend(e: CuaError, backend: &str) -> CuaError {
         E::Unsupported(m) => E::Unsupported(f(m)),
         E::SpacesdNotAvailable(m) => E::SpacesdNotAvailable(f(m)),
         E::Timeout(m) => E::Timeout(f(m)),
-        E::Fleet(m) => E::Fleet(f(m)),
-        E::FleetAdmissionDenied(m) => E::FleetAdmissionDenied(f(m)),
-        E::CloudCreditExhausted(m) => E::CloudCreditExhausted(f(m)),
         E::Runtime(m) => E::Runtime(f(m)),
         E::Env(m) => E::Env(f(m)),
         E::Http(m) => E::Http(f(m)),
@@ -1312,8 +1309,6 @@ pub fn on_backend(e: CuaError, backend: &str) -> CuaError {
         E::CapabilityMissing(m) => E::CapabilityMissing(f(m)),
         E::HostCapabilityMissing(m) => E::HostCapabilityMissing(f(m)),
         E::TeleportRefused(m) => E::TeleportRefused(f(m)),
-        E::PoolSpecMismatch(m) => E::PoolSpecMismatch(f(m)),
-        E::ClaimSecretsNotDelivered(m) => E::ClaimSecretsNotDelivered(f(m)),
         E::Internal(m) => E::Internal(f(m)),
         E::AmbiguousSandbox(m) => E::AmbiguousSandbox(f(m)),
         E::InsufficientDisk(m) => E::InsufficientDisk(f(m)),
@@ -1370,7 +1365,7 @@ async fn create(
     if let On::Direct(_) = &on {
         if a.image.is_some() || a.image_flag.is_some() {
             return Err(CuaError::InvalidArgument(format!(
-                "--on {label} connects to an existing machine: IMAGE does not apply"
+                "--on {label} connects to an existing computer: IMAGE does not apply"
             )));
         }
         o.token = a.token.clone();
@@ -1489,22 +1484,7 @@ async fn create(
     {
         eprintln!("{}", kept_message(&info));
     }
-    let sb = created
-        .map_err(|e| match e {
-            // A default placement that is not configured: say how to go back
-            // (once: some SDK paths have said it already).
-            CuaError::ProviderNotConfigured(mut m) => {
-                if let Some(hint) =
-                    cua_sandbox_core::settings::cloud_default_hint(&placement.on_source)
-                    && !m.contains(&hint)
-                {
-                    m = format!("{m}; {hint}");
-                }
-                CuaError::ProviderNotConfigured(m)
-            }
-            other => other,
-        })
-        .map_err(|e| on_backend(e, &label))?;
+    let sb = created.map_err(|e| on_backend(e, &label))?;
     let i = sb.info();
     if i.location == "direct" {
         save_env_token(&i.name, token.as_deref())?;
@@ -1681,7 +1661,7 @@ pub async fn run(
             let _ = all; // deprecated no-op: everything is the default
             return ls(cua, local, !no_size, json_global, out).await;
         }
-        // Extended a Fleet claim's lease: Cua Cloud has ended.
+        // Extended a Cua Cloud sandbox's lease: Cua Cloud has ended.
         SandboxCmd::KeepAlive(_) => return Err(util::cloud_ended()),
         SandboxCmd::Cp { src, dst, at } => return cp(cua, &src, &dst, at, json_global, out).await,
         SandboxCmd::Url {

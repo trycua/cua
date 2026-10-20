@@ -276,12 +276,10 @@ describe("LiveSpacesBackend's runtime settings", () => {
   });
 });
 
-describe("LiveSpacesBackend and the retired Fleets API", () => {
-  it("New Space asks no Fleet for pricing, even with Fleet credentials set", async () => {
-    let fleetCalls = 0;
-    const cua = { fleet: () => (fleetCalls++, { usagePricing: async () => ({ vcpuHourUsd: 1, memoryGibHourUsd: 1 }) }) };
-    const backend = new LiveSpacesBackend({} as Native, cua as never, { FLEETS_TOKEN: "t" }, fetch, "darwin");
+describe("LiveSpacesBackend and Cua Cloud, which has ended", () => {
+  it("New Space asks no cloud API for pricing", async () => {
+    const backend = new LiveSpacesBackend({} as Native, {} as never, {}, fetch, "darwin");
     expect(await backend.cloudPricing()).toBeNull();
-    expect(fleetCalls).toBe(0);
   });
 });
+

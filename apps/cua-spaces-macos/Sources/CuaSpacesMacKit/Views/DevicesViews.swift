@@ -438,6 +438,43 @@ struct RelayAllowanceBanner: View {
     }
 }
 
+/// Sharing is for teams (CUA-1883): one line, once, saying who can no longer
+/// open a shared computer, with "Invite to your team". The words are the
+/// app core's; closing it tells the account it was seen.
+struct ShareRemovalBanner: View {
+    @Bindable var model: AppModel
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        if let note = model.shareRemovalNote {
+            HStack(spacing: 8) {
+                Text(note.text).lineLimit(2).foregroundStyle(.secondary).help(note.text)
+                Spacer(minLength: 8)
+                if let url = URL(string: note.action.url) {
+                    Button(note.action.label) { openURL(url) }
+                        .controlSize(.small)
+                        .accessibilityIdentifier("share-removal-invite")
+                }
+                Button {
+                    model.dismissShareRemovalNote()
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .accessibilityLabel(note.dismiss)
+                .accessibilityIdentifier("share-removal-dismiss")
+            }
+            .font(.callout)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(.bar)
+            .overlay(alignment: .bottom) { Divider() }
+            .accessibilityIdentifier("share-removal")
+        }
+    }
+}
+
 /// Settings → Account: the plan and the relay allowance this month, where
 /// it applies. The plan card is always there, never a prompt: Free offers
 /// Pro and a team; each button opens its checkout on the account app.

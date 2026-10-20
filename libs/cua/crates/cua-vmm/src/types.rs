@@ -72,8 +72,8 @@ pub enum GuestOs {
     Windows,
 }
 
-/// Boot firmware preference for VM guests (a Fleet template's
-/// `vmTemplate.firmware`). `None` in a [`StartSpec`] lets the backend decide
+/// Boot firmware preference for VM guests (an image's
+/// `firmware`). `None` in a [`StartSpec`] lets the backend decide
 /// (QEMU: UEFI on aarch64, for Windows and for GPT disks without a BIOS boot
 /// partition; SeaBIOS otherwise, as KubeVirt does).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -398,7 +398,7 @@ pub fn registry_of(reference: &str) -> &str {
 
 /// An extra container that shares a sandbox's network namespace. The
 /// sandbox reaches it at its name (or `localhost`) and it reaches the
-/// sandbox at `main`, as on Fleet.
+/// sandbox at `main`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SidecarSpec {
     /// Name, unique within the sandbox (a DNS label other than `main`);

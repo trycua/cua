@@ -65,7 +65,10 @@ export function telemetrySignal(native: Native, raw: unknown): AppTelemetrySigna
     }
     case "share": {
       const [action, role, outcome] = [word("action"), word("role"), word("outcome")];
-      return action && role && outcome ? new S.Share({ action, role, outcome }) : null;
+      // Why and where a share failed (CUA-1855); a page from before them sends neither.
+      const errorKind = s.errorKind === undefined ? "none" : word("errorKind");
+      const failedStage = s.failedStage === undefined ? "none" : word("failedStage");
+      return action && role && outcome && errorKind && failedStage ? new S.Share({ action, role, outcome, errorKind, failedStage }) : null;
     }
     case "app-update": {
       const [action, channel, trigger] = [word("action"), word("channel"), word("trigger")];
@@ -140,6 +143,13 @@ export function telemetryMethods({ model }: BridgeContext): Handlers {
       // Held until the notice was shown; leaving Welcome sends them in order.
       if (kept.length) telemetry.record(kept.map((k) => k.signal));
       if (kept.some((k) => leftWelcome(k.raw))) telemetry.acknowledgeNotice();
+      return null;
+    },
+    // The one-time linking notice (CUA-1881): the SDK's words and whether
+    // it is due. No telemetry (a test host) has none.
+    "telemetry.linkNotice": () => model.telemetry?.linkNotice() ?? null,
+    "telemetry.acknowledgeLinkNotice": () => {
+      model.telemetry?.acknowledgeLinkNotice();
       return null;
     },
   };

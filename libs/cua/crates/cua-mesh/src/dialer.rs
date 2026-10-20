@@ -116,12 +116,12 @@ impl Dialer {
         }
         let peer = peer.ok_or_else(|| {
             Error::NotFound(format!(
-                "machine {machine_id} is not on the mesh (an older cua-spacesd, offline, or not shared)"
+                "computer {machine_id} is not on the mesh (an older cua-spacesd, offline, or not shared)"
             ))
         })?;
         if peer.version != crate::VERSION {
             return Err(Error::Unsupported(format!(
-                "machine {machine_id} speaks mesh v{}, this node v{}",
+                "computer {machine_id} speaks mesh v{}, this node v{}",
                 peer.version,
                 crate::VERSION
             )));

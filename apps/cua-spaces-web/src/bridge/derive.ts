@@ -530,20 +530,20 @@ export function hostPanelFromState(core: CoreClient, state: object | null, statu
 }
 
 function fallbackPanel(s: HostStatus | null): HostPanelView {
-  const base: HostPanelView = { title: "This machine", summary: "Checking…", configured: false, facts: [], clients: [], permissions: [], openSettingsLabel: "Open Settings", actions: [] };
+  const base: HostPanelView = { title: "This computer", summary: "Checking…", configured: false, facts: [], clients: [], permissions: [], openSettingsLabel: "Open Settings", actions: [] };
   if (!s) return base;
   if (!s.configured) {
     return { ...base, summary: "Your other devices can’t reach this computer yet.", intro: FALLBACK_INTRO, setupChoices: FALLBACK_CHOICES };
   }
   const via = s.mode === "direct" ? "Direct" : "Relay";
   const summary = !s.service.running ? "Host service stopped" : !s.sharing ? "Not sharing" : `Sharing · ${via}`;
-  const access = s.mode === "direct" ? `Direct at ${s.directUrl || "this machine’s address"}` : s.relayUrl ? `Relay ${s.relayUrl}` : "Relay";
+  const access = s.mode === "direct" ? `Direct at ${s.directUrl || "this computer’s address"}` : s.relayUrl ? `Relay ${s.relayUrl}` : "Relay";
   return {
     ...base,
     summary,
     configured: true,
     facts: [
-      { label: "Name", value: s.name || "This machine" },
+      { label: "Name", value: s.name || "This computer" },
       { label: "Access", value: access },
       { label: "Service", value: `${s.service.kind} · ${s.service.running ? "running" : s.service.installed ? "stopped" : "not installed"}` },
     ],
@@ -567,15 +567,15 @@ export interface HostSetupGuide {
   intro: string;
   /** The ways to set it up (`host::setup_choices`). */
   choices: HostSetupChoice[];
-  /** The setup form with Advanced open (`host.formView`), when the core is loaded. */
+  /** The setup form (`host.formView`), when the core is loaded. */
   form: HostFormView | null;
 }
 
 export function hostSetupGuide(core: CoreClient): HostSetupGuide {
   const panel = hostPanel(core, { configured: false, sharing: false, service: { installed: false, running: false, kind: "process" }, clients: [], permissions: [] });
   const initial = core.tryCall<unknown>("host.formInitial");
-  const state = initial === undefined ? undefined : core.tryCall<unknown>("host.formReduce", { state: initial, action: { type: "toggle-advanced" } });
-  const form = state === undefined ? null : (core.tryCall<HostFormView>("host.formView", { state, identity: null }) ?? null);
+  // As setup shows it: Cua's relay. Self-hosting is under Settings → Advanced.
+  const form = initial === undefined ? null : (core.tryCall<HostFormView>("host.formView", { state: initial, identity: null }) ?? null);
   return { intro: panel.intro ?? FALLBACK_INTRO, choices: panel.setupChoices?.length ? panel.setupChoices : FALLBACK_CHOICES, form };
 }
 

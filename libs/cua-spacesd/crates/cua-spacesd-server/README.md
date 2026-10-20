@@ -5,7 +5,7 @@ The gRPC, gRPC-Web and HTTP server core of `cua-spacesd`. One TCP port
 
 | Surface | Auth | Notes |
 |---|---|---|
-| `cua.env.v1.*` over native gRPC (h2c) and gRPC-Web (HTTP/1.1) | root token | `authorization: Bearer <token>` **or** `x-cua-env-authorization: Bearer <token>` (the Fleet gateway strips `authorization`) |
+| `cua.env.v1.*` over native gRPC (h2c) and gRPC-Web (HTTP/1.1) | root token | `authorization: Bearer <token>` **or** `x-cua-env-authorization: Bearer <token>` (a gateway in front of the daemon can strip `authorization`) |
 | gRPC reflection (`grpc.reflection.v1`, `v1alpha`) | root token | from `cua_proto::FILE_DESCRIPTOR_SET` |
 | `GET /health` | none | 204 while serving, 503 while shutting down |
 | `GET/HEAD/PUT /files?path&method&exp&sig` | HMAC signed URL | from `FilesystemService.CreateSignedUrl`; mandatory expiry; `Range`; 507 on a full disk |
@@ -32,12 +32,12 @@ extension provider; until one is registered they answer
 - Tickets and signed URLs are keyed by an HMAC key derived from the token,
   so rotating the token (via `Init`) revokes them all.
 
-## Await-token-file mode (Fleet)
+## Await-token-file mode
 
 `--await-token-file` (or `CUA_ENV_AWAIT_TOKEN_FILE=1`) takes the token only
-from `--token-file`, which the orchestrator writes (Fleet: the claim Secret at
-`/run/cua/env-token`, empty until a claim binds). Tokens are never accepted
-over the network in this mode.
+from `--token-file`, which the orchestrator writes (for example a Secret
+mounted at `/run/cua/env-token`, empty until a claim binds). Tokens are never
+accepted over the network in this mode.
 
 - Binds `0.0.0.0:3211` with no token. While the file is empty or missing,
   only `GetCapabilities` (`initialized=false`) and `Health` (component

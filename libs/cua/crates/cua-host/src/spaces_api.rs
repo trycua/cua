@@ -97,8 +97,54 @@ pub struct ApiOrgMachine {
     pub label: String,
     #[serde(default)]
     pub added_by: String,
+    /// What the team may do with it: `editor` ("Can edit") or `viewer`
+    /// ("Can view"). Empty from a server that predates view-only team
+    /// shares: read it as `editor`.
+    #[serde(default)]
+    pub role: String,
     #[serde(default)]
     pub added_at: String,
+}
+
+/// A team the account may share with as a whole (`GET /v1/me/sharing`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ApiSharingTeam {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub alias: String,
+    #[serde(default)]
+    pub name: String,
+    /// The caller is an owner or admin, so can share a whole team.
+    #[serde(default)]
+    pub can_add: bool,
+}
+
+/// `GET /v1/me/sharing`: whether this account can share Spaces. Sharing is
+/// for teams (CUA-1883): only a member of a team on a plan with sharing can.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ApiSharing {
+    #[serde(default)]
+    pub can_share: bool,
+    /// `no_team` when `can_share` is false.
+    #[serde(default)]
+    pub reason: String,
+    #[serde(default)]
+    pub teams: Vec<ApiSharingTeam>,
+}
+
+/// Someone who lost access to a computer because sharing became team-only
+/// (`GET /v1/me/share-removals`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ApiShareRemoval {
+    #[serde(default)]
+    pub machine_id: String,
+    #[serde(default)]
+    pub machine_name: String,
+    #[serde(default)]
+    pub who: String,
+    #[serde(default)]
+    pub removed_at: String,
 }
 
 /// A member device's approval in an org (`GET /v1/orgs/{org}/devices`).
@@ -177,6 +223,11 @@ pub struct ApiMe {
     pub orgs: Vec<ApiOrg>,
     #[serde(default)]
     pub entitlements: ApiEntitlements,
+    /// The opaque account id usage data is linked to (`acct_` and 32 hex,
+    /// never the email or the subject). Absent while linking is off on the
+    /// server (`SPACES_CP_LINK_USAGE`), so no client links anything then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub analytics_id: Option<String>,
 }
 
 /// The parts of the entitlements the apps read. Unknown plans mean free
@@ -294,7 +345,7 @@ fn org_error(status: u16, body: &str) -> Error {
         return Error::Internal(format!("{TEAMS_NOT_AVAILABLE} (HTTP {status})"));
     }
     if status == 403 && code.as_deref() == Some("not_owner") {
-        return Error::PermissionDenied("Only the machine's owner can add it to a team.".into());
+        return Error::PermissionDenied("Only the computer's owner can add it to a team.".into());
     }
     http_error(status, body)
 }
@@ -652,6 +703,91 @@ impl SpacesApiClient {
         }
     }
 
+    /// [`Self::add_org_machine`] with what the team may do: `viewer`
+    /// ("Can view") or `editor` ("Can edit"). A computer already on the team
+    /// gets the role changed instead.
+    pub async fn add_org_machine_as(
+        &self,
+        token: &str,
+        org: &str,
+        machine_id: &str,
+        platform: &str,
+        label: &str,
+        role: &str,
+    ) -> Result<()> {
+        let label: String = label.chars().take(120).collect();
+        match self
+            .org_post::<serde_json::Value>(
+                &format!("/v1/orgs/{}/machines", seg(org)),
+                token,
+                serde_json::json!({ "machine_id": machine_id, "platform": platform, "label": label, "role": role }),
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(Error::Conflict(m)) if m.contains("already_added") => {
+                self.set_org_machine_role(token, org, machine_id, role).await
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// `PATCH /v1/orgs/{org}/machines/{id}` (owner or admin): "Can view"
+    /// (`viewer`) or "Can edit" (`editor`) for the whole team.
+    pub async fn set_org_machine_role(
+        &self,
+        token: &str,
+        org: &str,
+        machine_id: &str,
+        role: &str,
+    ) -> Result<()> {
+        self.send_org::<serde_json::Value>(
+            self.http
+                .patch(self.url(&format!(
+                    "/v1/orgs/{}/machines/{}",
+                    seg(org),
+                    seg(machine_id)
+                )))
+                .json(&serde_json::json!({ "role": role })),
+            token,
+        )
+        .await
+        .map(|_| ())
+    }
+
+    /// `GET /v1/me/sharing`: can this account share, and with which teams as
+    /// a whole. A server that predates team-only sharing answers "Teams are
+    /// not available" ([`is_teams_unavailable`]): callers let the server
+    /// decide.
+    pub async fn sharing(&self, token: &str) -> Result<ApiSharing> {
+        self.org_get("/v1/me/sharing", token).await
+    }
+
+    /// `GET /v1/me/share-removals`: people removed from the account's
+    /// shared computers since it last asked, until
+    /// [`Self::ack_share_removals`].
+    pub async fn share_removals(&self, token: &str) -> Result<Vec<ApiShareRemoval>> {
+        #[derive(Deserialize)]
+        struct R {
+            #[serde(default)]
+            removals: Vec<ApiShareRemoval>,
+        }
+        Ok(self
+            .org_get::<R>("/v1/me/share-removals", token)
+            .await?
+            .removals)
+    }
+
+    /// `POST /v1/me/share-removals/ack`: the owner has seen them.
+    pub async fn ack_share_removals(&self, token: &str) -> Result<()> {
+        self.send_org::<serde_json::Value>(
+            self.http.post(self.url("/v1/me/share-removals/ack")),
+            token,
+        )
+        .await
+        .map(|_| ())
+    }
+
     /// `DELETE /v1/orgs/{org}/machines/{id}` (owner or admin).
     pub async fn remove_org_machine(&self, token: &str, org: &str, machine_id: &str) -> Result<()> {
         self.org_delete(
@@ -991,6 +1127,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sharing_is_for_teams_and_a_team_share_has_a_role() {
+        let api = crate::testing::FakeSpacesApi::start().await;
+        api.add_account("ada", "sub-ada", "ada@example.com");
+        api.add_account("dan", "sub-dan", "dan@example.com");
+        let org = api.add_org(
+            "acme",
+            "Acme",
+            "sub-ada",
+            &["team_machines", "space_sharing"],
+        );
+        let c = SpacesApiClient::new(&api.url).unwrap();
+
+        // In a team that can share: yes, and the team is offered.
+        let s = c.sharing("ada").await.unwrap();
+        assert!(s.can_share && s.reason.is_empty());
+        assert_eq!(s.teams.len(), 1);
+        assert!(s.teams[0].can_add && s.teams[0].alias == "acme");
+        // In no team: no, and why.
+        let s = c.sharing("dan").await.unwrap();
+        assert!(!s.can_share && s.reason == "no_team" && s.teams.is_empty());
+
+        // A whole-team share is "Can view" or "Can edit", and can change.
+        c.add_org_machine_as("ada", &org, "m1", "linux", "box", "viewer")
+            .await
+            .unwrap();
+        assert_eq!(api.machine_role(&org, "m1").as_deref(), Some("viewer"));
+        c.add_org_machine_as("ada", &org, "m1", "linux", "box", "editor")
+            .await
+            .unwrap();
+        assert_eq!(api.machine_role(&org, "m1").as_deref(), Some("editor"));
+        let listed = c.org_machines("ada", &org).await.unwrap();
+        assert_eq!(listed[0].role, "editor");
+        let e = c
+            .set_org_machine_role("ada", &org, "m1", "owner")
+            .await
+            .unwrap_err();
+        assert!(e.to_string().contains("bad_role"), "{e}");
+
+        // The owner's one-line note: read, then acknowledged once.
+        api.add_share_removal("sub-ada", "Design", "eve@outside.test");
+        let r = c.share_removals("ada").await.unwrap();
+        assert_eq!(r.len(), 1);
+        assert_eq!(
+            (r[0].who.as_str(), r[0].machine_name.as_str()),
+            ("eve@outside.test", "Design")
+        );
+        assert!(c.share_removals("dan").await.unwrap().is_empty());
+        c.ack_share_removals("ada").await.unwrap();
+        assert!(c.share_removals("ada").await.unwrap().is_empty());
+
+        // A server without these routes: Teams are not available (the caller
+        // lets the server decide).
+        api.without_teams();
+        let e = c.sharing("ada").await.unwrap_err();
+        assert!(is_teams_unavailable(&e), "{e}");
+    }
+
+    #[tokio::test]
     async fn a_just_paid_plan_is_retried_until_it_arrives() {
         let api = crate::testing::FakeSpacesApi::start().await;
         api.add_account("ada", "sub-ada", "ada@example.com");
@@ -1049,7 +1243,7 @@ mod tests {
         let e = org_error(403, r#"{"error":"not_owner"}"#);
         assert_eq!(
             e.to_string(),
-            "Only the machine's owner can add it to a team."
+            "Only the computer's owner can add it to a team."
         );
         assert!(is_teams_unavailable(&org_error(404, "404 page not found")));
         assert!(!is_teams_unavailable(&org_error(

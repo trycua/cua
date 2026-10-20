@@ -276,8 +276,6 @@ describe.skipIf(!wasmBuilt)("with the wasm core", () => {
       ["name", false],
       ["profile", false],
       ["allow", false],
-      ["direct", true],
-      ["relay", true],
     ]);
     expect(hostSetupGuide(noCore)).toMatchObject({ form: null, choices: guide.choices, intro: guide.intro });
   });

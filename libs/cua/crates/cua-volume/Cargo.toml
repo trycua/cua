@@ -12,8 +12,8 @@ publish = false
 [features]
 default = []
 # The S3-compatible backend (AWS S3, Cloudflare R2, MinIO) through the
-# official AWS SDK for Rust, and the Cua cloud credential vendor.
-s3 = ["dep:aws-sdk-s3", "dep:aws-credential-types", "dep:aws-smithy-types", "dep:reqwest"]
+# official AWS SDK for Rust.
+s3 = ["dep:aws-sdk-s3", "dep:aws-credential-types", "dep:aws-smithy-types"]
 # The localhost NFSv3 server macOS mounts natively (no kernel or system
 # extension), through nfsserve (BSD-3-Clause).
 nfs = ["dep:nfsserve"]
@@ -35,7 +35,6 @@ regex = "1"
 aws-sdk-s3 = { version = "1.150", default-features = false, features = ["rt-tokio", "default-https-client", "behavior-version-latest"], optional = true }
 aws-credential-types = { version = "1.3", optional = true }
 aws-smithy-types = { version = "1.8", optional = true }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json"], optional = true }
 nfsserve = { version = "0.11", optional = true }
 
 [target.'cfg(unix)'.dependencies]

@@ -15,30 +15,7 @@ declare const process: { cwd(): string };
  * Paths relative to `src/` (files, or directories scanned recursively) whose
  * strings are all extracted. Add yours when you finish an area.
  */
-export const MIGRATED: string[] = [
-  "components/Onboarding.tsx",
-  "components/InstallerFlow.tsx",
-  "components/desktop/OnboardingPage.tsx",
-  "components/SpaceTile.tsx",
-  "components/Thumbnail.tsx",
-  "components/SpacesStackMark.tsx",
-  "components/Ambient.tsx",
-  "components/FactList.tsx",
-  "components/SpaceWindowList.tsx",
-  "components/SpaceAgentList.tsx",
-  "components/Switcher.tsx",
-  "components/desktop/MainWindow.tsx",
-  "components/desktop/NewSpaceWizard.tsx",
-  "components/ShareSheet.tsx",
-  "components/Devices.tsx",
-  "components/ThisMachinePanel.tsx",
-  "components/ConnectCloudSheet.tsx",
-  "components/SettingsPanel.tsx",
-  "viewer/SpaceViewer.tsx",
-  "viewer/WindowStream.tsx",
-  "App.tsx",
-  "state/cloud.tsx",
-];
+export const MIGRATED: string[] = ["."]; // every shared component; new UI strings go through t()
 
 /** JSX attributes whose string values the user sees or hears. */
 const VISIBLE_ATTRS = new Set(["title", "aria-label", "placeholder", "alt", "label"]);

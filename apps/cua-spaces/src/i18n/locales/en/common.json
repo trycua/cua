@@ -7,5 +7,7 @@
   "common.action.cancel": "Cancel",
   "common.action.close": "Close",
   "common.action.reconnect": "Reconnect",
-  "common.status.connecting": "Connecting…"
+  "common.status.connecting": "Connecting…",
+  "common.action.back": "Back",
+  "common.action.done": "Done"
 }

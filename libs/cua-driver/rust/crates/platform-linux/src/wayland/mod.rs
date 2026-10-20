@@ -2232,21 +2232,6 @@ pub fn click_desktop(
     )
 }
 
-/// Recheck an admitted niri pointer action right before an event that acts
-/// on the target: the first motion, the first press, and each wheel tick. niri
-/// sends no event when outputs change, so the pointer space is reread too.
-fn niri_gate_holds(gate: &mut Option<niri::PointerGate>, sess: &VptrSession) -> anyhow::Result<()> {
-    let Some(gate) = gate else {
-        return Ok(());
-    };
-    // niri answers the query only after it has handled what it received
-    // before, so a window that closed by then is in the history read next.
-    let space = (sess.origin_x, sess.origin_y, sess.output_w, sess.output_h);
-    let current = gate.pointer_space().map_err(niri::input_unavailable)?;
-    gate.confirm()?;
-    pointer_space_holds(space, current)
-}
-
 /// The niri pointer space now, read on an attested connection, or `None`
 /// off niri.
 fn niri_pointer_space_now() -> anyhow::Result<Option<(i32, i32, u32, u32)>> {
@@ -2340,12 +2325,13 @@ fn centres_origin_click(x: i32, y: i32, layout_addressed: bool) -> bool {
     x == 0 && y == 0 && !layout_addressed
 }
 
-/// On niri, window-addressed pointer input waits for the layout to settle,
-/// proves each layout point lands on the target window and then activates it
-/// (see [`niri::gate_pointer`]). Desktop-scope input names no window: its
-/// points are pixels of the latest `get_desktop_state` screenshot, admitted
-/// while that screenshot's frame holds (see [`niri::desktop_gate`]). Confirm
-/// the returned gate right before sending the first event.
+/// On niri, admit the action's pointer input through [`niri::prepare_target`]:
+/// window-addressed input waits for the layout to settle, proves each layout
+/// point lands on the target window and then activates it. Desktop-scope
+/// input names no window: its points are pixels of the latest
+/// `get_desktop_state` screenshot, admitted while that screenshot's frame
+/// holds. Input under an outer foreground target checks that window without
+/// moving focus. Recheck the gate with [`niri_gate_holds`] before each event.
 fn niri_pointer_gate(
     window_id: Option<u64>,
     desktop: Option<&DesktopInputSpace>,
@@ -2355,32 +2341,23 @@ fn niri_pointer_gate(
     if !(is_wayland() && niri::is_session()) {
         return Ok(None);
     }
-    niri::refuse_if_locked().map_err(niri::input_unavailable)?;
-    // `motion_absolute` clamps into the pointer space: a point it would move
-    // lands somewhere other than where it was aimed.
-    for &(x, y) in points {
-        if !pointer_reaches(
-            sess.origin_x,
-            sess.origin_y,
-            sess.output_w,
-            sess.output_h,
-            x,
-            y,
-        ) {
-            anyhow::bail!(
-                "foreground_unavailable: point ({x}, {y}) is outside the niri pointer space"
-            );
-        }
-    }
-    let gate = match (window_id, desktop) {
-        (Some(id), _) => niri::gate_pointer(id, points, true)?,
-        (None, Some(desktop)) => niri::desktop_gate(points, desktop.capture.as_deref())?,
+    let target = match (window_id, desktop) {
+        (Some(id), _) => niri::Target::Window { id, activate: true },
+        (None, Some(desktop)) => niri::Target::Desktop(desktop.capture.as_deref()),
         (None, None) => match current_foreground_target() {
-            Some((_, id)) => niri::gate_pointer(id, points, false)?,
-            None => return Ok(None),
+            Some((_, id)) => niri::Target::Window {
+                id,
+                activate: false,
+            },
+            None => niri::Target::Unaddressed,
         },
     };
-    Ok(Some(gate))
+    let space = (sess.origin_x, sess.origin_y, sess.output_w, sess.output_h);
+    niri::prepare_target(target, space, points)
+}
+
+fn niri_gate_holds(gate: &mut Option<niri::PointerGate>) -> anyhow::Result<()> {
+    gate.as_mut().map_or(Ok(()), niri::PointerGate::holds)
 }
 
 /// wlroots virtual-pointer implementation of [`click`]. Falls back to libei via
@@ -2409,7 +2386,6 @@ fn click_vptr(
     };
     let mut gate = niri_pointer_gate(window_id, desktop, &sess, &[aimed])?;
     let btn = evdev_pointer_button(button);
-    niri_gate_holds(&mut gate, &sess)?;
     sess.point_at(px, py)?;
     std::thread::sleep(std::time::Duration::from_millis(15));
     gated_events(
@@ -2422,7 +2398,7 @@ fn click_vptr(
             std::thread::sleep(std::time::Duration::from_millis(15));
             Ok(())
         },
-        |sess| niri_gate_holds(&mut gate, sess),
+        |_| niri_gate_holds(&mut gate),
         |sess, _| {
             sess.press(btn)?;
             std::thread::sleep(std::time::Duration::from_millis(20));
@@ -2596,7 +2572,14 @@ fn scroll_vptr(
     // the wheel provably reaches the window rather than whatever is under the
     // pointer.
     let point = match (point, window_id) {
-        (None, Some(id)) if is_wayland() && niri::is_session() => Some(niri_window_centre(id)?),
+        (None, Some(id)) if is_wayland() && niri::is_session() => {
+            let (_, _, width, height) = window_geometry(id).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "foreground_unavailable: niri reports no on-screen place for window {id}; pass a point inside a floating window"
+                )
+            })?;
+            Some(niri::aim(id, (width / 2) as i32, (height / 2) as i32)?)
+        }
         (point, _) => point,
     };
     let mut sess = open_vptr_session_in(window_id, desktop.and_then(|d| d.snapshot.as_ref()))?;
@@ -2604,7 +2587,6 @@ fn scroll_vptr(
     if let Some((x, y)) = point {
         let (px, py) = sess.abs(x, y);
         gate = niri_pointer_gate(window_id, desktop, &sess, &[(x, y)])?;
-        niri_gate_holds(&mut gate, &sess)?;
         sess.point_at(px, py)?;
         record_synth_cursor(sess.origin_x + px as i32, sess.origin_y + py as i32);
         std::thread::sleep(std::time::Duration::from_millis(15));
@@ -2627,7 +2609,7 @@ fn scroll_vptr(
             std::thread::sleep(std::time::Duration::from_millis(25));
             Ok(())
         },
-        |sess| niri_gate_holds(&mut gate, sess),
+        |_| niri_gate_holds(&mut gate),
         |sess, _| {
             sess.send(|vptr| {
                 vptr.axis_source(AxisSource::Wheel);
@@ -2636,16 +2618,6 @@ fn scroll_vptr(
         },
     )?;
     sess.finish()
-}
-
-fn niri_window_centre(window_id: u64) -> anyhow::Result<(i32, i32)> {
-    let (_, _, width, height) = window_geometry(window_id).ok_or_else(|| {
-        anyhow::anyhow!(
-            "foreground_unavailable: niri reports no on-screen place for window {window_id}; \
-             pass a point inside a floating window"
-        )
-    })?;
-    niri::aim(window_id, (width / 2) as i32, (height / 2) as i32)
 }
 
 /// Last cursor position the agent warped to via `move_cursor_absolute`.
@@ -2707,8 +2679,7 @@ fn move_cursor_absolute_vptr(
 ) -> anyhow::Result<()> {
     let mut sess = open_vptr_session_in(window_id, desktop.and_then(|d| d.snapshot.as_ref()))?;
     let (px, py) = sess.abs(x, y);
-    let mut gate = niri_pointer_gate(window_id, desktop, &sess, &[(x, y)])?;
-    niri_gate_holds(&mut gate, &sess)?;
+    niri_pointer_gate(window_id, desktop, &sess, &[(x, y)])?;
     sess.motion(px, py)?;
     record_synth_cursor(sess.origin_x + px as i32, sess.origin_y + py as i32);
     sess.finish()
@@ -2822,16 +2793,15 @@ fn drag_vptr(
     if let Some(gate) = &gate {
         gate.drag_start(from_x, from_y)?;
     }
-    niri_gate_holds(&mut gate, &sess)?;
     sess.motion(fx, fy)?;
     std::thread::sleep(std::time::Duration::from_millis(15));
-    niri_gate_holds(&mut gate, &sess)?;
+    niri_gate_holds(&mut gate)?;
     sess.press(btn)?;
     let path = drag_path((from_x, from_y), (to_x, to_y), steps, (tx, ty), clamp_xy);
     held_motions(
         &mut sess,
         path,
-        |sess| niri_gate_holds(&mut gate, sess),
+        |_| niri_gate_holds(&mut gate),
         |sess, (x, y)| {
             sess.motion(x, y)?;
             std::thread::sleep(std::time::Duration::from_millis(8));

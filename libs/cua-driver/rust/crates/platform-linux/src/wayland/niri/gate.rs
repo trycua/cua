@@ -104,6 +104,8 @@ pub struct PointerGate {
     ipc: AttestedIpc,
     /// The `get_desktop_state` frame a desktop-scope gate admitted against.
     desktop: Option<DesktopFrame>,
+    /// The pointer space the action's session scales motions by.
+    space: (i32, i32, u32, u32),
 }
 
 impl PointerGate {
@@ -132,11 +134,57 @@ impl PointerGate {
         Ok(())
     }
 
-    /// The pointer space now, read on the action's connection: niri sends
-    /// no event when outputs change.
-    pub fn pointer_space(&mut self) -> Result<(i32, i32, u32, u32)> {
-        pointer_space_of(&self.ipc.query(Request::Outputs)?)
+    /// Recheck the admitted action right before an event that acts on the
+    /// target: the first motion, the first press, and each wheel tick. niri
+    /// sends no event when outputs change, so the pointer space the session
+    /// scales motions by is reread too, before the layout history: niri
+    /// answers only after handling what it received before, so a window
+    /// that closed by then is in the history read next.
+    pub fn holds(&mut self) -> Result<()> {
+        let current =
+            pointer_space_of(&self.ipc.query(Request::Outputs)?).map_err(input_unavailable)?;
+        self.confirm()?;
+        super::super::pointer_space_holds(self.space, current)
     }
+}
+
+/// What a niri pointer action addresses.
+pub enum Target<'a> {
+    /// A window by id; `activate` focuses it once the action is admitted.
+    Window { id: u64, activate: bool },
+    /// Pixels of the `get_desktop_state` screenshot named by the capture id,
+    /// or of the latest one.
+    Desktop(Option<&'a str>),
+    /// Nothing to check beyond the session and the pointer space.
+    Unaddressed,
+}
+
+/// The one entry point for niri pointer input: refuse a locked session and
+/// points the virtual pointer in `space` cannot reach (`motion_absolute`
+/// clamps into it, so a moved point lands elsewhere), admit `target` (see
+/// [`gate_pointer`] and [`desktop_gate`]), and recheck it right before the
+/// first event. Call [`PointerGate::holds`] before every later one.
+pub fn prepare_target(
+    target: Target,
+    space: (i32, i32, u32, u32),
+    points: &[(i32, i32)],
+) -> Result<Option<PointerGate>> {
+    refuse_if_locked().map_err(input_unavailable)?;
+    let (origin_x, origin_y, width, height) = space;
+    if let Some((x, y)) = points
+        .iter()
+        .copied()
+        .find(|&(x, y)| !super::super::pointer_reaches(origin_x, origin_y, width, height, x, y))
+    {
+        bail!("foreground_unavailable: point ({x}, {y}) is outside the niri pointer space");
+    }
+    let mut gate = match target {
+        Target::Window { id, activate } => gate_pointer(id, points, activate, space)?,
+        Target::Desktop(capture_id) => desktop_gate(points, capture_id, space)?,
+        Target::Unaddressed => return Ok(None),
+    };
+    gate.holds()?;
+    Ok(Some(gate))
 }
 
 /// Gate window-addressed pointer input on a floating window: wait until the
@@ -145,7 +193,12 @@ impl PointerGate {
 /// another floating window. A window without a place (a tiled one) refuses.
 /// With `activate`, focus the window only once all of that holds, so a
 /// refused action leaves focus alone.
-pub fn gate_pointer(window_id: u64, points: &[(i32, i32)], activate: bool) -> Result<PointerGate> {
+fn gate_pointer(
+    window_id: u64,
+    points: &[(i32, i32)],
+    activate: bool,
+    space: (i32, i32, u32, u32),
+) -> Result<PointerGate> {
     let mut ipc = ipc();
     let scene = ipc.scene().map_err(input_unavailable)?;
     single_output_pointer(&scene)?;
@@ -167,6 +220,7 @@ pub fn gate_pointer(window_id: u64, points: &[(i32, i32)], activate: bool) -> Re
         expected: Expected::default(),
         ipc,
         desktop: None,
+        space,
     };
     gate.confirm()?;
     if activate {
@@ -492,7 +546,11 @@ pub fn adopt_desktop(
 /// Gate desktop-scope pointer input at layout `points`: they are pixels of
 /// the latest `get_desktop_state` screenshot, which `capture_id`, when
 /// given, must name, and its frame must still hold (see [`DesktopFrame`]).
-pub fn desktop_gate(points: &[(i32, i32)], capture_id: Option<&str>) -> Result<PointerGate> {
+fn desktop_gate(
+    points: &[(i32, i32)],
+    capture_id: Option<&str>,
+    space: (i32, i32, u32, u32),
+) -> Result<PointerGate> {
     let latest = latest_desktop()
         .as_ref()
         .map(|latest| (latest.frame.clone(), latest.capture.clone()));
@@ -505,6 +563,7 @@ pub fn desktop_gate(points: &[(i32, i32)], capture_id: Option<&str>) -> Result<P
         expected,
         ipc,
         desktop: Some(frame),
+        space,
     })
 }
 
@@ -566,6 +625,7 @@ mod tests {
             expected: Expected::default(),
             ipc: offline_ipc(),
             desktop: None,
+            space: (0, 0, 0, 0),
         };
         // Still quiet before the first motion; a window moves over the point
         // while the pointer is positioned, so the press must refuse.

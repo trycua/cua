@@ -3376,7 +3376,7 @@
     },
     {
      "abstract": "Run a command (joined into one shell line, as `sh -c`). Exits with the command's own status. A local Lume sandbox without cua-spacesd runs it via SSH (`lume ssh`)",
-     "after_help": "Examples:\n  cua sb exec dev uname -a\n  cua sb exec dev 'ls /tmp | wc -l'",
+     "after_help": "Examples:\n  cua sb exec dev uname -a\n  cua sb exec dev 'ls /tmp | wc -l'\n  # A long-lived stdio stream, like `docker exec -i`: argv, not a shell line\n  cua sb exec -i dev -- bash -c 'cat > /tmp/in'",
      "aliases": [],
      "arguments": [
       {
@@ -3405,6 +3405,17 @@
        "aliases": [],
        "default_value": false,
        "env": null,
+       "help": "Stream: run the command as argv (no shell), forward this command's stdin, write stdout and stderr as they arrive, set no time limit, pass SIGINT/SIGTERM/SIGHUP on, and kill the command when this process ends. Exits with the command's status (128 + n for signal n)",
+       "hidden": false,
+       "name": "stdin",
+       "repeatable": false,
+       "short_name": "i",
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
        "help": "Look NAME up among local sandboxes only (same as `local:NAME`)",
        "hidden": false,
        "name": "local",
@@ -3427,7 +3438,56 @@
      "hidden": false,
      "hidden_aliases": [],
      "name": "exec",
-     "options": [],
+     "options": [
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Run as this guest user",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "user",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "USER"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Start in this guest directory",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "cwd",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "CWD"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Stop the command after this many seconds (0: no limit)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "timeout",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "SECONDS"
+      }
+     ],
      "subcommand_optional": false,
      "subcommands": [],
      "usage": "cua sandbox exec [OPTIONS] <NAME> <COMMAND>..."
@@ -7879,7 +7939,7 @@
     },
     {
      "abstract": "Run a command (argv, no shell)",
-     "after_help": "Examples:\n  cua spacesd exec http://127.0.0.1:3211 uname -a",
+     "after_help": "Examples:\n  cua spacesd exec http://127.0.0.1:3211 uname -a\n  # A long-lived stdio stream (stdin forwarded, no time limit, killed with this command)\n  cua spacesd exec -i http://127.0.0.1:3211 cat",
      "aliases": [],
      "arguments": [
       {
@@ -7903,11 +7963,71 @@
        "type": "string"
       }
      ],
-     "flags": [],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Stream: run the command as argv (no shell), forward this command's stdin, write stdout and stderr as they arrive, set no time limit, pass SIGINT/SIGTERM/SIGHUP on, and kill the command when this process ends. Exits with the command's status (128 + n for signal n)",
+       "hidden": false,
+       "name": "stdin",
+       "repeatable": false,
+       "short_name": "i",
+       "takes_value": false
+      }
+     ],
      "hidden": false,
      "hidden_aliases": [],
      "name": "exec",
      "options": [
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Run as this guest user",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "user",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "USER"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Start in this guest directory",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "cwd",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "CWD"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Stop the command after this many seconds (0: no limit)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "timeout",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "SECONDS"
+      },
       {
        "aliases": [],
        "default_value": null,

@@ -9004,7 +9004,7 @@
    "subcommands": [
     {
      "abstract": "Set this computer up for unattended access: install cua-spacesd as a service that joins the cua.ai relay as your account",
-     "after_help": "Examples:\n  # Join the cua.ai relay as your account (shares this desktop)\n  cua host setup\n  # A spare computer: do not share its desktop, run Spaces for your devices\n  cua host setup --profile spare --name \"Mac mini (spare)\"\n  cua host setup --no-desktop --provide-spaces\n  # Add this computer with a one-time code from the Cua Spaces app\n  # (Add a computer) or `cua host pair`: no sign-in needed here\n  cua host setup --pair K7QM-4XPB-2RHD\n  # Self-hosting teams: cua help advanced",
+     "after_help": "Examples:\n  # Join the cua.ai relay as your account (shares this desktop)\n  cua host setup\n  # A spare computer: do not share its desktop, run Spaces for your devices\n  cua host setup --profile spare --name \"Mac mini (spare)\"\n  cua host setup --no-desktop --provide-spaces\n  # Add this computer with a one-time code from the Cua Spaces app\n  # (Add a computer) or `cua host pair`: no sign-in needed here\n  cua host setup --pair K7QM-4XPB-2RHD\n  # Keep this computer off the end-to-end encrypted mesh (relay HTTPS only)\n  CUA_MESH=off cua host setup\n  # Self-hosting teams: cua help advanced",
      "aliases": [],
      "arguments": [],
      "flags": [

@@ -125,6 +125,12 @@ async fn observe_dom_click(
     };
     let started = Instant::now();
     loop {
+        if started.elapsed() >= DOM_CLICK_READBACK_DEADLINE {
+            return DomClickObservation {
+                effect: ActionEffect::Unverifiable,
+                readback_available: true,
+            };
+        }
         if let Some(after) = read_dom_click_state(
             conn,
             cdp,
@@ -143,12 +149,6 @@ async fn observe_dom_click(
             return DomClickObservation {
                 effect: effect_from_value_readback(false, false, false),
                 readback_available: false,
-            };
-        }
-        if started.elapsed() >= DOM_CLICK_READBACK_DEADLINE {
-            return DomClickObservation {
-                effect: ActionEffect::Unverifiable,
-                readback_available: true,
             };
         }
         tokio::time::sleep(DOM_CLICK_READBACK_INTERVAL).await;

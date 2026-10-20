@@ -1,4 +1,5 @@
-//! X11 foreground transaction (`delivery_mode:"foreground"`).
+//! X11 foreground steps (`delivery_mode:"foreground"`) that
+//! [`crate::interaction::with_x11_foreground`] runs.
 //!
 //! A foreground action behaves like a user at the keyboard: activate + raise the
 //! target toplevel, wait until the window manager confirms that it is the
@@ -67,13 +68,6 @@ impl ForegroundOptions {
             keyboard: true,
             target_pid: None,
         }
-    }
-
-    /// Legacy `settle_ms` hint: folded into the pointer budget (never shorter).
-    pub fn from_settle_hint(settle_ms: u64) -> Self {
-        let mut opts = Self::pointer();
-        opts.settle = opts.settle.max(Duration::from_millis(settle_ms));
-        opts
     }
 
     /// Name the process the target window belongs to (see `target_pid`).
@@ -735,15 +729,20 @@ fn post_check(target: Window, target_pid: Option<u32>, pid_windows: &[WindowEntr
     }
 }
 
-/// Activate `xid`, confirm it holds the active window + input focus within
-/// `opts.settle`, run `body`, then (for keyboard actions) report where focus
-/// ended up. Returns `foreground_unavailable` (no input sent) when the WM never
-/// confirms, and `foreground_timeout` when the X server stops answering.
-pub fn with_x11_foreground_opts<T>(
-    xid: u64,
-    opts: ForegroundOptions,
-    body: impl FnOnce() -> Result<T>,
-) -> Result<(T, ForegroundReport)> {
+/// The target window confirmed active and focused, with the target
+/// process's window set read before the body for [`Activated::report`].
+pub struct Activated {
+    target: Window,
+    target_pid: Option<u32>,
+    outcome: ConfirmOutcome,
+    windows_before: Vec<WindowEntry>,
+}
+
+/// Activate `xid` and read back that it holds the active window + input
+/// focus within `opts.settle`. Returns `foreground_unavailable` (no input
+/// sent) when the WM never confirms, and `foreground_timeout` when the X
+/// server stops answering.
+pub fn activate(xid: u64, opts: ForegroundOptions) -> Result<Activated> {
     let target = xid as Window;
     let phase_budget = opts.settle + Duration::from_millis(1500);
     let outcome = run_with_deadline(phase_budget, move || confirm_phase(target, opts.settle))
@@ -773,25 +772,39 @@ pub fn with_x11_foreground_opts<T>(
         ));
     }
     let target_pid = crate::x11::window_pid(xid).or(opts.target_pid);
-    let windows_before = pid_window_set(target_pid);
-    let value = body()?;
-    // The post-check is what the tool reports as evidence for both keyboard
-    // and pointer bodies: a real click that opened a menu or a dialog moves
-    // the window set / focus within the target's process, and one that
-    // landed elsewhere moves focus out of it. The window set is polled
-    // rather than read after a fixed settle: it returns on the first change.
-    let bounds = window_change_bounds();
-    let (windows_after, window_change) = run_with_deadline(
-        bounds.timeout + bounds.poll + WINDOW_CHANGE_TITLE_GRACE + Duration::from_millis(1500),
-        move || wait_for_window_change(target_pid, &windows_before, bounds),
-    )
-    .unwrap_or((Vec::new(), None));
-    let focus_after = run_with_deadline(Duration::from_millis(1500), move || {
-        post_check(target, target_pid, &windows_after)
+    Ok(Activated {
+        target,
+        target_pid,
+        outcome,
+        windows_before: pid_window_set(target_pid),
     })
-    .unwrap_or(FocusAfter::Unknown);
-    Ok((
-        value,
+}
+
+impl Activated {
+    /// Where focus and the target process's window set ended up once the
+    /// body ran.
+    pub fn report(self) -> ForegroundReport {
+        let Activated {
+            target,
+            target_pid,
+            outcome,
+            windows_before,
+        } = self;
+        // The post-check is what the tool reports as evidence for both keyboard
+        // and pointer bodies: a real click that opened a menu or a dialog moves
+        // the window set / focus within the target's process, and one that
+        // landed elsewhere moves focus out of it. The window set is polled
+        // rather than read after a fixed settle: it returns on the first change.
+        let bounds = window_change_bounds();
+        let (windows_after, window_change) = run_with_deadline(
+            bounds.timeout + bounds.poll + WINDOW_CHANGE_TITLE_GRACE + Duration::from_millis(1500),
+            move || wait_for_window_change(target_pid, &windows_before, bounds),
+        )
+        .unwrap_or((Vec::new(), None));
+        let focus_after = run_with_deadline(Duration::from_millis(1500), move || {
+            post_check(target, target_pid, &windows_after)
+        })
+        .unwrap_or(FocusAfter::Unknown);
         ForegroundReport {
             already_active: outcome.already_active,
             retried_activation: outcome.retried,
@@ -799,8 +812,8 @@ pub fn with_x11_foreground_opts<T>(
             focus_after,
             window_change_owned: window_change.as_ref().is_some_and(|c| c.owned),
             window_change: window_change.map(|c| c.summary),
-        },
-    ))
+        }
+    }
 }
 
 /// `0x…` plus what owns it: the class and process of a client window, or a
@@ -976,11 +989,6 @@ mod tests {
     #[test]
     fn keyboard_budget_exceeds_pointer_budget() {
         assert!(ForegroundOptions::keyboard().settle > ForegroundOptions::pointer().settle);
-        assert!(ForegroundOptions::from_settle_hint(80).settle >= Duration::from_millis(400));
-        assert_eq!(
-            ForegroundOptions::from_settle_hint(5000).settle,
-            Duration::from_millis(5000)
-        );
     }
 
     #[test]
@@ -990,7 +998,7 @@ mod tests {
             ForegroundOptions::keyboard().for_pid(42).target_pid,
             Some(42)
         );
-        assert!(!ForegroundOptions::from_settle_hint(80).for_pid(1).keyboard);
+        assert!(!ForegroundOptions::pointer().for_pid(1).keyboard);
     }
 
     #[test]
@@ -1058,9 +1066,11 @@ mod tests {
     #[test]
     fn unavailable_display_is_structured() {
         let display = crate::test_env::unreachable_x11_display();
-        let result = with_x11_foreground_opts(0x1234, ForegroundOptions::pointer(), || Ok(()));
+        let result = activate(0x1234, ForegroundOptions::pointer());
         drop(display);
-        let error = result.expect_err("connect must fail");
+        let Err(error) = result else {
+            panic!("connect must fail")
+        };
         assert!(error_code(&error).is_some(), "{error}");
     }
 }

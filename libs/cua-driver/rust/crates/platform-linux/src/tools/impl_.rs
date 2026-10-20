@@ -6470,7 +6470,7 @@ impl ClickTool {
                     move || {
                         let modifier_refs: Vec<&str> =
                             modifier_owned.iter().map(String::as_str).collect();
-                        crate::input::with_x11_foreground_opts(
+                        crate::interaction::with_x11_foreground(
                             xid,
                             crate::input::ForegroundOptions::pointer(),
                             || {
@@ -6564,7 +6564,7 @@ impl ClickTool {
                     "foreground element action",
                     foreground_budget(0),
                     move || {
-                        crate::input::with_x11_foreground_opts(
+                        crate::interaction::with_x11_foreground(
                             xid,
                             crate::input::ForegroundOptions::pointer(),
                             || crate::atspi::perform_action_observed(&observed_for_ax),
@@ -7267,15 +7267,20 @@ impl Tool for ClickTool {
                     if delivery.is_foreground() && !crate::wayland::wayland_input_enabled() {
                         let (_, sx, sy) = placement
                             .ok_or_else(|| anyhow::anyhow!("element screen bounds unavailable"))?;
-                        crate::input::with_x11_foreground(xid2, 80, || {
-                            crate::input::send_click_xtest_desktop_with_modifiers(
-                                sx.round() as i32,
-                                sy.round() as i32,
-                                button,
-                                count,
-                                &modifier_refs,
-                            )
-                        })
+                        crate::interaction::with_x11_foreground(
+                            xid2,
+                            crate::input::ForegroundOptions::pointer(),
+                            || {
+                                crate::input::send_click_xtest_desktop_with_modifiers(
+                                    sx.round() as i32,
+                                    sy.round() as i32,
+                                    button,
+                                    count,
+                                    &modifier_refs,
+                                )
+                            },
+                        )
+                        .map(|(value, _report)| value)
                         .map(|()| PointerRoute::Foreground)
                     } else if modifier_refs.is_empty() && !crate::wayland::wayland_input_enabled() {
                         x11_pixel_click_no_focus_steal(
@@ -7627,7 +7632,7 @@ impl Tool for ClickTool {
                 Ok((if fg { "x11_pixel_fg" } else { "x11_pixel" }, None, None))
             };
             if delivery.is_foreground() {
-                crate::input::with_x11_foreground_opts(
+                crate::interaction::with_x11_foreground(
                     xid,
                     crate::input::ForegroundOptions::pointer(),
                     || inject(true),
@@ -8341,9 +8346,9 @@ impl Tool for TypeTextTool {
                     return Ok(("pty", None));
                 }
                 if foreground {
-                    crate::input::with_x11_foreground(xid, 80, || {
+                    crate::interaction::with_x11_foreground(xid, crate::input::ForegroundOptions::pointer(), || {
                         crate::input::send_type_text_xtest(&text_t)
-                    })?;
+                    }).map(|(value, _report)| value)?;
                     return Ok(("key_events_fg", None));
                 }
                 // Background: real key events through the XI2 virtual master
@@ -8380,7 +8385,7 @@ impl Tool for TypeTextTool {
                 "foreground type_text",
                 typing_budget(text_len, crate::wayland::niri::is_session()),
                 move || {
-                    crate::input::with_x11_foreground_opts(
+                    crate::interaction::with_x11_foreground(
                         xid,
                         crate::input::ForegroundOptions::keyboard(),
                         || {
@@ -8502,9 +8507,12 @@ impl Tool for TypeTextTool {
                     // drop synthetic key events, so a spreadsheet cell / canvas would
                     // stay empty. The click that gave this widget focus already put it
                     // under the X input focus, so XTest-to-focus lands correctly.
-                    crate::input::with_x11_foreground(xid, 80, || {
-                        crate::input::send_type_text_xtest(&text_f)
-                    })
+                    crate::interaction::with_x11_foreground(
+                        xid,
+                        crate::input::ForegroundOptions::pointer(),
+                        || crate::input::send_type_text_xtest(&text_f),
+                    )
+                    .map(|(value, _report)| value)
                 },
             )
             .await;
@@ -8606,9 +8614,9 @@ impl Tool for TypeTextTool {
                 return Ok(("key_events", None));
             }
             if delivery.is_foreground() {
-                crate::input::with_x11_foreground(xid, 80, || {
+                crate::interaction::with_x11_foreground(xid, crate::input::ForegroundOptions::pointer(), || {
                     crate::input::send_type_text_xtest(&text)
-                })?;
+                }).map(|(value, _report)| value)?;
                 return Ok(("key_events_fg", None));
             }
             // No a11y editable, no pty: real key events through the XI2 virtual
@@ -9135,7 +9143,7 @@ impl Tool for PressKeyTool {
             // events through the XI2 virtual master keyboard (no focus steal),
             // else direct XSendEvent for apps that accept it.
             if deliver_fg {
-                return crate::input::with_x11_foreground_opts(
+                return crate::interaction::with_x11_foreground(
                     xid,
                     crate::input::ForegroundOptions::keyboard(),
                     || {
@@ -9605,7 +9613,7 @@ impl Tool for HotkeyTool {
                 // (`send_key`) are dropped by GTK/Qt/Chromium/Firefox, so the
                 // foreground rung must use XTest, which reaches the focused window.
                 if deliver_fg {
-                    return crate::input::with_x11_foreground_opts(
+                    return crate::interaction::with_x11_foreground(
                         xid,
                         crate::input::ForegroundOptions::keyboard(),
                         || crate::input::send_key_xtest(&key, &m),
@@ -9782,7 +9790,7 @@ impl Tool for SetValueTool {
                 }
                 if foreground_route {
                     let (sx, sy) = window_local_to_screen(win, lx, ly)?;
-                    crate::input::with_x11_foreground_opts(
+                    crate::interaction::with_x11_foreground(
                         win,
                         crate::input::ForegroundOptions::pointer(),
                         || {
@@ -9882,7 +9890,7 @@ fn pick_from_popup(
             return Ok(());
         }
         if foreground {
-            crate::input::with_x11_foreground_opts(
+            crate::interaction::with_x11_foreground(
                 win,
                 crate::input::ForegroundOptions::keyboard(),
                 || crate::input::send_key_xtest("Escape", &[]),
@@ -9915,7 +9923,7 @@ fn pick_from_popup(
     };
     if foreground {
         let (sx, sy) = window_local_to_screen(win, lx, ly)?;
-        crate::input::with_x11_foreground_opts(
+        crate::interaction::with_x11_foreground(
             win,
             crate::input::ForegroundOptions::pointer(),
             || crate::input::send_click_xtest_desktop(sx.round() as i32, sy.round() as i32, 1, 1),
@@ -10654,14 +10662,19 @@ impl Tool for ScrollTool {
                         .ok_or_else(|| {
                             anyhow::anyhow!("could not resolve foreground scroll point")
                         })?;
-                    crate::input::with_x11_foreground(xid, 80, || {
-                        crate::input::send_click_xtest_desktop(
-                            point.0 as i32,
-                            point.1 as i32,
-                            button,
-                            amount,
-                        )
-                    })
+                    crate::interaction::with_x11_foreground(
+                        xid,
+                        crate::input::ForegroundOptions::pointer(),
+                        || {
+                            crate::input::send_click_xtest_desktop(
+                                point.0 as i32,
+                                point.1 as i32,
+                                button,
+                                amount,
+                            )
+                        },
+                    )
+                    .map(|(value, _report)| value)
                 } else {
                     x11_scroll()
                 }
@@ -10825,16 +10838,21 @@ impl Tool for DoubleClickTool {
                                 .map(|()| PointerRoute::Wayland);
                             }
                             if delivery.is_foreground() {
-                                return crate::input::with_x11_foreground(xid, 80, || {
-                                    let (sx, sy) =
-                                        window_local_to_screen(xid, lxi as f64, lyi as f64)?;
-                                    crate::input::send_click_xtest_desktop(
-                                        sx.round() as i32,
-                                        sy.round() as i32,
-                                        1,
-                                        2,
-                                    )
-                                })
+                                return crate::interaction::with_x11_foreground(
+                                    xid,
+                                    crate::input::ForegroundOptions::pointer(),
+                                    || {
+                                        let (sx, sy) =
+                                            window_local_to_screen(xid, lxi as f64, lyi as f64)?;
+                                        crate::input::send_click_xtest_desktop(
+                                            sx.round() as i32,
+                                            sy.round() as i32,
+                                            1,
+                                            2,
+                                        )
+                                    },
+                                )
+                                .map(|(value, _report)| value)
                                 .map(|()| PointerRoute::Foreground);
                             }
                             x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, lxi, lyi, 1, 2)
@@ -10944,23 +10962,29 @@ impl Tool for DoubleClickTool {
                     .map(|()| PointerRoute::Wayland);
                 }
                 if delivery.is_foreground() {
-                    return crate::input::with_x11_foreground(xid, 80, || {
-                        // Real XTest double-click at the screen point — synthetic
-                        // XSendEvent button events are dropped by GTK/Qt and the MPX
-                        // uinput path needs /dev/uinput (absent on Xvfb/Xtigervnc), so
-                        // neither lands. Mirrors the single-click foreground path.
-                        if let Ok((sx, sy)) = window_local_to_screen(xid, xi as f64, yi as f64) {
-                            crate::input::send_click_xtest_desktop(
-                                sx.round() as i32,
-                                sy.round() as i32,
-                                1,
-                                2,
-                            )?;
-                            return Ok(());
-                        }
-                        x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 1, 2)
-                            .map(|_| ())
-                    })
+                    return crate::interaction::with_x11_foreground(
+                        xid,
+                        crate::input::ForegroundOptions::pointer(),
+                        || {
+                            // Real XTest double-click at the screen point — synthetic
+                            // XSendEvent button events are dropped by GTK/Qt and the MPX
+                            // uinput path needs /dev/uinput (absent on Xvfb/Xtigervnc), so
+                            // neither lands. Mirrors the single-click foreground path.
+                            if let Ok((sx, sy)) = window_local_to_screen(xid, xi as f64, yi as f64)
+                            {
+                                crate::input::send_click_xtest_desktop(
+                                    sx.round() as i32,
+                                    sy.round() as i32,
+                                    1,
+                                    2,
+                                )?;
+                                return Ok(());
+                            }
+                            x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 1, 2)
+                                .map(|_| ())
+                        },
+                    )
+                    .map(|(value, _report)| value)
                     .map(|()| PointerRoute::Foreground);
                 }
                 x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 1, 2)
@@ -11124,16 +11148,21 @@ impl Tool for RightClickTool {
                                     .map(|()| PointerRoute::Wayland);
                             }
                             if delivery.is_foreground() {
-                                return crate::input::with_x11_foreground(xid, 80, || {
-                                    let (sx, sy) =
-                                        window_local_to_screen(xid, lxi as f64, lyi as f64)?;
-                                    crate::input::send_click_xtest_desktop(
-                                        sx.round() as i32,
-                                        sy.round() as i32,
-                                        3,
-                                        1,
-                                    )
-                                })
+                                return crate::interaction::with_x11_foreground(
+                                    xid,
+                                    crate::input::ForegroundOptions::pointer(),
+                                    || {
+                                        let (sx, sy) =
+                                            window_local_to_screen(xid, lxi as f64, lyi as f64)?;
+                                        crate::input::send_click_xtest_desktop(
+                                            sx.round() as i32,
+                                            sy.round() as i32,
+                                            3,
+                                            1,
+                                        )
+                                    },
+                                )
+                                .map(|(value, _report)| value)
                                 .map(|()| PointerRoute::Foreground);
                             }
                             x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, lxi, lyi, 3, 1)
@@ -11238,22 +11267,28 @@ impl Tool for RightClickTool {
                         .map(|()| PointerRoute::Wayland);
                 }
                 if delivery.is_foreground() {
-                    return crate::input::with_x11_foreground(xid, 80, || {
-                        // Real XTest right-click at the screen point (synthetic
-                        // XSendEvent is dropped by GTK/Qt; MPX needs /dev/uinput).
-                        // Mirrors the single-click foreground path.
-                        if let Ok((sx, sy)) = window_local_to_screen(xid, xi as f64, yi as f64) {
-                            crate::input::send_click_xtest_desktop(
-                                sx.round() as i32,
-                                sy.round() as i32,
-                                3,
-                                1,
-                            )?;
-                            return Ok(());
-                        }
-                        x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 3, 1)
-                            .map(|_| ())
-                    })
+                    return crate::interaction::with_x11_foreground(
+                        xid,
+                        crate::input::ForegroundOptions::pointer(),
+                        || {
+                            // Real XTest right-click at the screen point (synthetic
+                            // XSendEvent is dropped by GTK/Qt; MPX needs /dev/uinput).
+                            // Mirrors the single-click foreground path.
+                            if let Ok((sx, sy)) = window_local_to_screen(xid, xi as f64, yi as f64)
+                            {
+                                crate::input::send_click_xtest_desktop(
+                                    sx.round() as i32,
+                                    sy.round() as i32,
+                                    3,
+                                    1,
+                                )?;
+                                return Ok(());
+                            }
+                            x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 3, 1)
+                                .map(|_| ())
+                        },
+                    )
+                    .map(|(value, _report)| value)
                     .map(|()| PointerRoute::Foreground);
                 }
                 x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 3, 1)
@@ -11828,18 +11863,23 @@ impl Tool for DragTool {
                 foreground_budget(steps) + std::time::Duration::from_millis(duration_ms),
                 move || {
                     let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-                    crate::input::with_x11_foreground(xid, 80, || {
-                        crate::input::send_drag_xtest_desktop_with_modifiers(
-                            screen_from_x.round() as i32,
-                            screen_from_y.round() as i32,
-                            screen_to_x.round() as i32,
-                            screen_to_y.round() as i32,
-                            button,
-                            duration_ms,
-                            steps,
-                            &modifier_refs,
-                        )
-                    })
+                    crate::interaction::with_x11_foreground(
+                        xid,
+                        crate::input::ForegroundOptions::pointer(),
+                        || {
+                            crate::input::send_drag_xtest_desktop_with_modifiers(
+                                screen_from_x.round() as i32,
+                                screen_from_y.round() as i32,
+                                screen_to_x.round() as i32,
+                                screen_to_y.round() as i32,
+                                button,
+                                duration_ms,
+                                steps,
+                                &modifier_refs,
+                            )
+                        },
+                    )
+                    .map(|(value, _report)| value)
                 },
             );
             let visual_drag = track_overlay_drag_for(

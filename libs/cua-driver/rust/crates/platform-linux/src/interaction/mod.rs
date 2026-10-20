@@ -2,12 +2,14 @@
 //! delivery, freshness, motion and restore rules in [`policy`], the one
 //! foreground transaction entry point, the deadline rule, the focus
 //! read-back loop and the settle loop. Wayland adapters supply mechanical
-//! save, focus and restore steps to the one transaction; X11 still runs its
-//! own foreground rung. Adapters still own their geometry checks.
+//! save, focus and restore steps to the one transaction; X11 supplies
+//! activate and report steps. Adapters still own their geometry checks.
 
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+
+use crate::input::{ForegroundOptions, ForegroundReport};
 
 pub mod facts;
 pub mod policy;
@@ -44,7 +46,7 @@ pub fn pointer_gesture_restore() -> RestoreMode {
 /// Run `body` with the exact `pid`/`window_id` pair focused. On Wayland a
 /// compositor adapter confirms the pair and restores the prior focus
 /// afterwards; global input is refused when no adapter can confirm it. On
-/// X11 the foreground rung activates the window and leaves it active.
+/// X11 [`with_x11_foreground`] activates the window and leaves it active.
 /// [`RestoreMode::LeaveFocused`] runs `body` as it is: it activates the
 /// target itself and leaves it focused.
 pub fn with_target_foreground<T>(
@@ -61,6 +63,10 @@ pub fn with_target_foreground<T>(
         )?;
         return body();
     }
+    if std::env::var_os("WAYLAND_DISPLAY").is_none() {
+        return with_x11_foreground(window_id, ForegroundOptions::pointer(), body)
+            .map(|(value, _report)| value);
+    }
     let body = || {
         let focused = if niri::is_session() {
             match niri::keyboard_focus() {
@@ -73,9 +79,6 @@ pub fn with_target_foreground<T>(
         admit_lock(policy::Scope::WindowInput, focused)?;
         body()
     };
-    if std::env::var_os("WAYLAND_DISPLAY").is_none() {
-        return crate::input::with_x11_foreground(window_id, 80, body);
-    }
     let _target_guard = bind_foreground_target(pid, window_id);
     let confirm = || operation_deadline(FOCUS_CONFIRM_CAP);
     if niri::is_session() {
@@ -129,6 +132,21 @@ pub fn with_target_foreground<T>(
     anyhow::bail!(
         "foreground_unavailable: no trusted Wayland compositor adapter can confirm exact target window {window_id} for pid {pid}; no global keyboard input was sent"
     )
+}
+
+/// The X11 foreground transaction (`delivery_mode:"foreground"`): activate
+/// `xid` and read back that it holds the active window and input focus,
+/// admit the lock for window input, run `body`, then report where focus and
+/// the target process's windows ended up. The target is left active.
+pub fn with_x11_foreground<T>(
+    xid: u64,
+    opts: ForegroundOptions,
+    body: impl FnOnce() -> Result<T>,
+) -> Result<(T, ForegroundReport)> {
+    let activated = crate::input::foreground::activate(xid, opts)?;
+    admit_lock(policy::Scope::WindowInput, facts::Fact::Known(true))?;
+    let value = body()?;
+    Ok((value, activated.report()))
 }
 
 /// How long a compositor may take to apply and report a focus change.

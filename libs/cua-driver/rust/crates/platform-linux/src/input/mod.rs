@@ -26,7 +26,7 @@ mod mpx_owner;
 pub mod targeted;
 
 pub use focus_guard::{FocusGuardReport, FocusSnapshot, SameAppWindow};
-pub use foreground::{with_x11_foreground_opts, FocusAfter, ForegroundOptions, ForegroundReport};
+pub use foreground::{FocusAfter, ForegroundOptions, ForegroundReport};
 pub use mpx_keyboard::{
     real_keyboard_input_available, send_virtual_keyboard_key, send_virtual_keyboard_text,
     KeyboardDeliveryReport, MPX_UINPUT_PATH,
@@ -1304,21 +1304,6 @@ fn ewmh_activate_window(
         );
         x11::xlib::XSync(display, 0);
     }
-}
-
-/// Foreground rung for X11 (`delivery_mode:"foreground"`): activate `xid`
-/// (EWMH `_NET_ACTIVE_WINDOW` + core input focus), confirm the transition
-/// against both the WM's active window and the X input-focus tree, then run
-/// `body` (which injects the input while the window holds focus). The target
-/// is left active afterwards; see [`foreground`] for the rationale and the
-/// deadline/watchdog behaviour. `settle_ms` is a minimum confirmation budget.
-pub fn with_x11_foreground<T>(
-    xid: u64,
-    settle_ms: u64,
-    body: impl FnOnce() -> Result<T>,
-) -> Result<T> {
-    with_x11_foreground_opts(xid, ForegroundOptions::from_settle_hint(settle_ms), body)
-        .map(|(value, _report)| value)
 }
 
 /// Activate `xid` and LEAVE it active (no restore) — the persistent foreground

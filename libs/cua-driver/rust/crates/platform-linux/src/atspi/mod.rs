@@ -532,6 +532,34 @@ fn cached_bounds(pid: u32, xid: Option<u64>, idx: usize) -> Option<(i32, i32, u3
     }
 }
 
+pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool, bool)> {
+    if let Some(observed) = cache::cached_element(pid, None, idx) {
+        return TokenElement::new(idx, observed, WindowProof::NotRequired)
+            .act(native::perform_action_ref, |idx| native::perform_action(pid, idx));
+    }
+    native::perform_action(pid, idx)
+}
+
+pub fn focus_element(pid: u32, idx: usize) -> Result<bool> {
+    if let Some(observed) = cache::cached_element(pid, None, idx) {
+        return focus_token(
+            pid,
+            &TokenElement::new(idx, observed, WindowProof::NotRequired),
+        );
+    }
+    native::focus_element(pid, idx)
+}
+
+pub fn scroll_element(
+    pid: u32,
+    idx: usize,
+    direction: &str,
+    amount: usize,
+    by: cua_driver_contract::ScrollBy,
+) -> Result<ScrollProgress> {
+    native::scroll_element(pid, &WindowElement::Index(idx), direction, amount, by)
+}
+
 pub use native::{is_window_membership_unproven, WindowElement, WindowProof};
 
 /// Whether `get_window_state` may bind this snapshot's elements to window

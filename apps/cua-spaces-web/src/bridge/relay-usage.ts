@@ -12,9 +12,9 @@
 import { useContext, useMemo, useSyncExternalStore } from "react";
 import { isUnsupported, type DataAdapter } from "./adapter";
 import { BridgeContext } from "./BridgeProvider";
-import { relayUsageView } from "./derive";
+import { planLimitNotice, relayUsageView } from "./derive";
 import { useSettings } from "./hooks";
-import type { RelayUsage, RelayUsageView } from "./ops/relay-usage";
+import type { RelayAllowanceNotice, RelayUsage, RelayUsageView } from "./ops/relay-usage";
 
 export type { PlanCard, PlanLink, RelayAllowanceNotice, RelayUsage, RelayUsageView } from "./ops/relay-usage";
 
@@ -134,4 +134,12 @@ export function useRelayUsageView(): RelayUsageView | null {
   const core = useContext(BridgeContext)?.core;
   const accountApp = useSettings().data?.accountUrl ?? null;
   return useMemo(() => (usage && core ? relayUsageView(core, usage, accountApp) : null), [usage, core, accountApp]);
+}
+
+/** The plan-limit refusal in an error's text, as the core's sentence with
+ * its Upgrade link; null for any other error (or without the core). */
+export function usePlanLimitNotice(): (error: string) => RelayAllowanceNotice | null {
+  const core = useContext(BridgeContext)?.core;
+  const accountApp = useSettings().data?.accountUrl ?? null;
+  return useMemo(() => (error: string) => (core ? planLimitNotice(core, error, accountApp) : null), [core, accountApp]);
 }

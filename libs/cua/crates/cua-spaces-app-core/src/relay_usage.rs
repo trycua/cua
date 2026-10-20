@@ -259,6 +259,62 @@ pub fn with_warnings(
     (reached, reasons)
 }
 
+/// What the relay says when it refuses a new session over the cap
+/// ([`cua_home::plan_limit`]), for each cap this account is at: "You're
+/// using 5 of 5 live sessions on Pro. Close one or upgrade to Teams." Empty
+/// when no cap with a known limit is reached.
+fn plan_limit_sentences(u: &RelayUsage) -> String {
+    use cua_home::plan_limit::{Kind, PlanLimit};
+    let plan = plan_kind(&u.plan).to_owned();
+    let mut said = Vec::new();
+    if let Some(l) = u.live_sessions_limit.filter(|l| u.live_sessions >= *l) {
+        said.push(PlanLimit {
+            kind: Kind::Sessions,
+            plan: plan.clone(),
+            used: f64::from(u.live_sessions),
+            limit: f64::from(l),
+        });
+    }
+    if let Some(l) = u.hours_limit.filter(|l| u.hours_used >= *l) {
+        said.push(PlanLimit {
+            kind: Kind::Hours,
+            plan,
+            used: u.hours_used,
+            limit: l,
+        });
+    }
+    said.iter()
+        .map(PlanLimit::sentence)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The usage with the caps it is at counted as reached: a plan at 5 of 5
+/// live sessions has its next session refused, so the apps say so before
+/// that happens, on every plan (Free's relay warning does the same).
+fn at_cap(u: &RelayUsage) -> RelayUsage {
+    let mut u = u.clone();
+    for (hit, reason) in [
+        (
+            u.live_sessions_limit
+                .is_some_and(|l| l > 0 && u.live_sessions >= l),
+            "sessions",
+        ),
+        (
+            u.hours_limit.is_some_and(|l| l > 0.0 && u.hours_used >= l),
+            "hours",
+        ),
+    ] {
+        if hit {
+            u.soft_limit_reached = true;
+            if !u.reasons.iter().any(|r| r == reason) {
+                u.reasons.push(reason.to_owned());
+            }
+        }
+    }
+    u
+}
+
 /// The notice's sentence. On Free it says what is used and what Pro gives
 /// (the numbers on cua.ai/pricing); nothing is blocked.
 pub fn notice_text(u: &RelayUsage) -> String {
@@ -290,6 +346,12 @@ pub fn notice_text(u: &RelayUsage) -> String {
                 "You're using {} on the free plan. Your Spaces keep working. Pro gives you {PRO_SESSIONS} live sessions and {PRO_HOURS} remote hours.",
                 parts.join(" and ")
             );
+        }
+    }
+    if kind != "free" {
+        let said = plan_limit_sentences(u);
+        if !said.is_empty() {
+            return said;
         }
     }
     match kind {
@@ -384,6 +446,27 @@ pub fn plan_card(u: &RelayUsage, account_app: &str) -> PlanCard {
     }
 }
 
+/// A refused new session as the shells show it: the plain sentence with an
+/// Upgrade button, from the text of the error ([`cua_home::plan_limit`]).
+/// None for any other error. Never dismissed for good: the refusal is an
+/// answer to something the person just did.
+pub fn plan_limit_notice(error: &str, account_app: &str) -> Option<RelayAllowanceNotice> {
+    let limit = cua_home::plan_limit::PlanLimit::parse(error)?;
+    let account_app = if account_app.starts_with("https://") {
+        account_app.to_owned()
+    } else {
+        cua_home::env::account_app_url()
+    };
+    Some(RelayAllowanceNotice {
+        text: limit.sentence(),
+        upgrade: UPGRADE.into(),
+        upgrade_url: Some(limit.upgrade_url(&account_app)),
+        dismiss: DISMISS.into(),
+        dismiss_key: format!("refused:{:?}", limit.kind),
+        level: "limit".into(),
+    })
+}
+
 /// The row, the notice and the plan card; none when the relay meters
 /// nothing (the apps show nothing about it). Upgrade opens the plan's page
 /// on the account app ([`upgrade_target`]).
@@ -396,6 +479,7 @@ pub fn view_for(u: &RelayUsage, account_app: &str) -> Option<RelayUsageView> {
     if !u.metered {
         return None;
     }
+    let u = &at_cap(u);
     let team = u
         .team
         .as_ref()
@@ -500,7 +584,10 @@ mod tests {
             .unwrap()
             .notice
             .unwrap();
-        assert!(n.text.starts_with("You've reached your"), "{}", n.text);
+        assert_eq!(
+            n.text,
+            "You've used 20.2 of 20 remote hours this month on Pro. Upgrade to Teams for more."
+        );
         assert_eq!(
             n.upgrade_url.as_deref(),
             Some("https://app.cua.ai/buy/teams?from=app_meter")
@@ -655,6 +742,68 @@ mod tests {
             ),
             (true, vec!["hours".to_owned()])
         );
+    }
+
+    #[test]
+    fn pro_at_five_of_five_says_so_and_offers_teams() {
+        let u = RelayUsage {
+            plan: "pro".into(),
+            live_sessions: PRO_SESSIONS,
+            live_sessions_limit: Some(PRO_SESSIONS),
+            hours_used: 12.0,
+            hours_limit: Some(f64::from(PRO_HOURS)),
+            ..free()
+        };
+        let v = view_for(&u, "https://app.cua.ai").unwrap();
+        assert_eq!(
+            v.line,
+            "Live sessions 5 of 5 \u{b7} Remote hours 12 of 200 this month"
+        );
+        let n = v.notice.unwrap();
+        assert_eq!(
+            n.text,
+            "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams."
+        );
+        assert_eq!((n.upgrade.as_str(), n.level.as_str()), ("Upgrade", "limit"));
+        assert_eq!(
+            n.upgrade_url.as_deref(),
+            Some("https://app.cua.ai/buy/teams?from=app_meter")
+        );
+        // Room left: no notice.
+        let room = RelayUsage {
+            live_sessions: 4,
+            ..u
+        };
+        assert!(
+            view_for(&room, "https://app.cua.ai")
+                .unwrap()
+                .notice
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_refused_session_becomes_the_sentence_with_upgrade() {
+        let raw = "relay: You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams.";
+        let n = plan_limit_notice(raw, "https://app.cua.ai").unwrap();
+        assert_eq!(
+            n.text,
+            "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams."
+        );
+        assert_eq!(n.upgrade, "Upgrade");
+        assert_eq!(
+            n.upgrade_url.as_deref(),
+            Some("https://app.cua.ai/buy/teams?from=plan_limit")
+        );
+        let hours = "You've used 20 of 20 remote hours this month on the free plan. Upgrade to Pro for more.";
+        assert_eq!(
+            plan_limit_notice(hours, "https://app.cua.ai")
+                .unwrap()
+                .upgrade_url
+                .as_deref(),
+            Some("https://app.cua.ai/buy/pro?from=plan_limit")
+        );
+        assert_eq!(plan_limit_notice("timed out", "https://app.cua.ai"), None);
     }
 
     #[test]

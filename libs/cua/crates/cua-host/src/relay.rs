@@ -558,11 +558,17 @@ impl RelayClient {
             .await
             .map_err(|e| (Error::Relay(format!("{}: {e}", self.base)), e.is_connect()))?;
         let status = resp.status();
+        let limit = plan_limit(resp.headers());
         let body = resp
             .text()
             .await
             .map_err(|e| (Error::Relay(e.to_string()), false))?;
         if !status.is_success() {
+            // A plan limit is a decision, not a hiccup: sending it again
+            // gets the same answer.
+            if let (429, Some(l)) = (status.as_u16(), limit) {
+                return Err((Error::PlanLimit(l.sentence()), false));
+            }
             let retry = matches!(status.as_u16(), 429 | 502 | 503);
             return Err((http_error(status.as_u16(), &body), retry));
         }
@@ -883,6 +889,18 @@ impl RelayClient {
     }
 }
 
+/// The plan-limit refusal the relay's headers describe, if it is one.
+fn plan_limit(h: &reqwest::header::HeaderMap) -> Option<cua_home::plan_limit::PlanLimit> {
+    use cua_home::plan_limit as pl;
+    let get = |k: &str| h.get(k).and_then(|v| v.to_str().ok());
+    pl::PlanLimit::from_headers(
+        get(pl::ERROR_HEADER),
+        get(pl::PLAN_HEADER),
+        get(pl::USED_HEADER),
+        get(pl::LIMIT_HEADER),
+    )
+}
+
 fn http_error(status: u16, body: &str) -> Error {
     let message = serde_json::from_str::<serde_json::Value>(body)
         .ok()
@@ -1016,5 +1034,44 @@ mod tests {
         assert_eq!(u.reasons, ["hours"]);
         let bare: RelayUsage = serde_json::from_str("{}").unwrap();
         assert!(!bare.metered && bare.live_sessions_limit.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_plan_limit_refusal_is_one_plain_sentence_and_is_not_retried() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counter = hits.clone();
+        let app = axum::Router::new().route(
+            "/v1/machines",
+            axum::routing::get(move || {
+                counter.fetch_add(1, Ordering::SeqCst);
+                async {
+                    (
+                        axum::http::StatusCode::TOO_MANY_REQUESTS,
+                        [
+                            ("x-cua-relay-error", "plan_limit_sessions"),
+                            ("x-cua-relay-plan", "pro"),
+                            ("x-cua-relay-used", "5"),
+                            ("x-cua-relay-limit", "5"),
+                        ],
+                        "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams: https://x",
+                    )
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = RelayClient::new(&format!("http://{addr}")).unwrap();
+        let e = client.machines("tok").await.unwrap_err();
+        assert!(matches!(e, Error::PlanLimit(_)), "{e:?}");
+        assert_eq!(
+            e.to_string(),
+            "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams."
+        );
+        assert_eq!(e.http_status(), Some(429));
+        assert!(!e.is_transient());
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
     }
 }

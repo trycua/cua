@@ -136,6 +136,7 @@ export {
 export {
   useRelayUsage,
   useRelayUsageView,
+  usePlanLimitNotice,
   RELAY_USAGE_FOCUS_MS,
   RELAY_USAGE_POLL_MS,
   type PlanCard,

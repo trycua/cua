@@ -11,6 +11,7 @@ import { NewSpace } from "@/components/new-space";
 import { CommandPalette } from "@/components/shell/command-palette";
 import { DevicesBanner } from "@/components/shell/devices-banner";
 import { Sidebar } from "@/components/shell/sidebar";
+import { PlanLimitToastAction } from "@/components/shell/plan-limit-toast-action";
 import { RelayAllowanceNotice } from "@/components/shell/relay-allowance-notice";
 import { SpacesNotice } from "@/components/shell/spaces-notice";
 import { SpaceSheets } from "@/components/space-sheets";
@@ -75,6 +76,7 @@ function RootLayout() {
           <Outlet />
         </main>
       </div>
+      <PlanLimitToastAction />
       <CommandPalette />
       <ChecklistTracker />
       <NewSpace />

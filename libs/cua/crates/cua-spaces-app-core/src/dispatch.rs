@@ -290,6 +290,7 @@ pub const METHODS: &[&str] = &[
     "experiments.choose",
     "wizard.placementOptions",
     "relayUsage.view",
+    "relayUsage.planLimit",
     "resources.view",
     "resources.thisMac",
     "resources.space",
@@ -491,6 +492,13 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
                 Some(app) if app.starts_with("https://") => relay_usage::view_for(&usage, &app),
                 _ => relay_usage::view(&usage),
             })
+        }
+        // An error's text that is the relay refusing a new session over the
+        // plan's cap: the sentence and Upgrade (null for any other error).
+        "relayUsage.planLimit" => {
+            let error: String = a.get("error")?;
+            let app = a.get::<Option<String>>("accountApp")?.unwrap_or_default();
+            out(relay_usage::plan_limit_notice(&error, &app))
         }
         // Processor, memory and disk: the rows, bars and warning the apps
         // draw from the runtime's snapshot (`Spaces.resources`).

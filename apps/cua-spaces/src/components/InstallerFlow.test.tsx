@@ -62,6 +62,7 @@ function fakeTelemetry() {
       view.enabled = on;
       return view;
     },
+    setUiLocale: () => {},
     recordFeature: () => {},
     recordStep: () => {},
     recordStream: () => {},

@@ -140,7 +140,7 @@ fn all_builders(s: &str) -> Vec<Event> {
         events::stream_summary(s, s, Some(true), 900, 1080, Some(40.0), d).unwrap(),
         events::app_active(),
         // Unknown experiment ids are dropped (`none`); known ones kept.
-        events::app_active_with(&[s, "sharing", s]),
+        events::app_active_with(&[s, "sharing", s], s),
         events::space_create(
             &events::SpaceCreate {
                 on: s,
@@ -1277,6 +1277,61 @@ fn the_active_day_carries_the_experiments_that_are_on() {
     let (off, _) = ready(h2.path(), &[("DO_NOT_TRACK", "1")]);
     off.set_experiments_on(&["sharing"]);
     assert!(!h2.path().join("telemetry/experiments_on").exists());
+}
+
+/// `ui_locale`: the Spaces app's interface language, one of a fixed set
+/// (anything else is `other`), kept for the day's `cua_app_active`; `en`
+/// before the app says; nothing written while telemetry is off.
+#[test]
+fn the_active_day_carries_the_ui_locale() {
+    let k = Kind::Enum(schema::UI_LOCALES);
+    for ok in ["en", "zh-Hans", "ko", "pt-BR", "ja", "es", "other"] {
+        assert!(schema::value_ok(k, &Value::from(ok)), "{ok}");
+    }
+    for bad in [
+        "",
+        "fr",
+        "en-US",
+        "zh-Hant",
+        "EN",
+        "/Users/alice",
+        "Paris, France",
+    ] {
+        assert!(!schema::value_ok(k, &Value::from(bad)), "{bad}");
+    }
+    assert_eq!(events::ui_locale("ja"), "ja");
+    assert_eq!(events::ui_locale(" pt-BR\n"), "pt-BR");
+    for other in ["", "fr", "en-US", "ja-JP", "alice@example.com", "other"] {
+        assert_eq!(events::ui_locale(other), "other", "{other}");
+    }
+
+    let h = tempfile::tempdir().unwrap();
+    let (t, sink) = ready(h.path(), &[]);
+    assert_eq!(t.capture_active_on(20_000), Captured::Queued);
+    t.set_ui_locale("ko");
+    // The next day, another process of the same install.
+    let (t2, sink2) = ready(h.path(), &[]);
+    assert_eq!(t2.capture_active_on(20_001), Captured::Queued);
+    t.set_ui_locale("fr-CA");
+    let (t3, sink3) = ready(h.path(), &[]);
+    assert_eq!(t3.capture_active_on(20_002), Captured::Queued);
+    for x in [&t, &t2, &t3] {
+        x.flush(Duration::from_secs(1));
+    }
+    let locales = |s: &MemorySink| -> Vec<String> {
+        s.events()
+            .iter()
+            .filter(|e| e["event"] == "cua_app_active")
+            .map(|e| e["properties"]["ui_locale"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(locales(&sink), ["en"], "en before the app says");
+    assert_eq!(locales(&sink2), ["ko"]);
+    assert_eq!(locales(&sink3), ["other"]);
+    let h2 = tempfile::tempdir().unwrap();
+    let (off, _) = ready(h2.path(), &[("DO_NOT_TRACK", "1")]);
+    off.set_ui_locale("ja");
+    assert!(!h2.path().join("telemetry/ui_locale").exists());
 }
 
 #[test]

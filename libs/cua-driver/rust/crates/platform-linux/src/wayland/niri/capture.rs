@@ -111,7 +111,9 @@ fn capture_window_in(
             pid,
         )?)
     };
-    let plan = plan_now()?;
+    let plan = settled(&mut plan_now, CapturePlan::clone, || {
+        "the niri window or its output is still changing".to_owned()
+    })?;
     let capture = capture_display().map_err(|e| format!("{e:#}"))?;
     if plan_now()? != plan {
         return Err("the niri window or its output changed during capture".into());
@@ -217,7 +219,7 @@ mod tests {
             || {
                 calls += 1;
                 // The scale changes during the capture; the layout does not.
-                let scale = if calls <= 1 { 1.5 } else { 1.0 };
+                let scale = if calls <= 2 { 1.5 } else { 1.0 };
                 Ok(scene(
                     vec![window()],
                     vec![workspace(1, "winit", true, None)],
@@ -249,7 +251,7 @@ mod tests {
         let error = capture_window_in(
             || {
                 calls += 1;
-                let transform = if calls <= 1 { "Flipped180" } else { "Normal" };
+                let transform = if calls <= 2 { "Flipped180" } else { "Normal" };
                 Ok(scene(
                     vec![floating(7, 1, (100.0, 60.0), (300, 200))],
                     vec![workspace(1, "winit", true, None)],
@@ -265,6 +267,36 @@ mod tests {
         assert_eq!(
             error,
             "the niri window or its output changed during capture"
+        );
+    }
+
+    #[test]
+    fn capture_waits_for_a_settled_window_and_refuses_one_that_keeps_moving() {
+        let at = |x: f64| Ok(one_output(vec![floating(7, 1, (x, 60.0), (300, 200))]));
+        let mut calls = 0;
+        let settling = capture_window_in(
+            || {
+                calls += 1;
+                at(if calls == 1 { 90.0 } else { 100.0 })
+            },
+            7,
+            None,
+            || display("winit", (1280, 720)),
+        );
+        assert_eq!(settling.unwrap().1.area.width, 853);
+        let mut x = 0.0;
+        let moving = capture_window_in(
+            || {
+                x += 10.0;
+                at(x)
+            },
+            7,
+            None,
+            || display("winit", (1280, 720)),
+        );
+        assert_eq!(
+            moving.unwrap_err(),
+            "the niri window or its output is still changing"
         );
     }
 

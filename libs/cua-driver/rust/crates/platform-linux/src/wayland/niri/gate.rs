@@ -149,7 +149,11 @@ pub fn prepare_target(
         points: points.to_vec(),
         space,
     };
-    let scene = gate.ipc.scene().map_err(input_unavailable)?;
+    let scene = match target {
+        Target::Window(id) => settled_window(|| gate.ipc.scene(), id),
+        _ => gate.ipc.scene(),
+    }
+    .map_err(input_unavailable)?;
     match target {
         Target::Window(id) => {
             let rect = gate_pointer(&scene, id, points)?;
@@ -162,6 +166,18 @@ pub fn prepare_target(
     }
     gate.holds()?;
     Ok(Some(gate))
+}
+
+fn settled_window(scene: impl FnMut() -> Result<Scene>, id: u64) -> Result<Scene> {
+    settled(
+        scene,
+        |scene| scene.window(id).map(|window| window.placement).ok(),
+        || {
+            foreground_unavailable(format!(
+                "niri window {id} is still moving; take a new screenshot"
+            ))
+        },
+    )
 }
 
 /// Admit window-addressed pointer input on a floating window: the target
@@ -287,6 +303,39 @@ mod tests {
         assert_eq!(
             gate.holds().unwrap_err().to_string(),
             "foreground_unavailable: niri did not confirm focus on window 7 (focused: none)"
+        );
+    }
+
+    #[test]
+    fn window_pointer_input_waits_for_a_settled_window_and_refuses_one_that_keeps_moving() {
+        let at = |x: f64| Ok(one_output(vec![floating(7, 1, (x, 60.0), (300, 200))]));
+        let mut reads = 0;
+        let settling = settled_window(
+            || {
+                reads += 1;
+                at(if reads == 1 { 90.0 } else { 100.0 })
+            },
+            7,
+        );
+        assert_eq!(
+            placed_window(&settling.unwrap(), 7)
+                .placement
+                .unwrap()
+                .rect
+                .x,
+            100
+        );
+        let mut x = 0.0;
+        let moving = settled_window(
+            || {
+                x += 10.0;
+                at(x)
+            },
+            7,
+        );
+        assert_eq!(
+            moving.err().unwrap().to_string(),
+            "foreground_unavailable: niri window 7 is still moving; take a new screenshot"
         );
     }
 

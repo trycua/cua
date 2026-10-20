@@ -12,8 +12,9 @@
 //! window-coordinate pointer input therefore refuse a tiled window; the
 //! desktop scope reaches it with pixels of the single output.
 //!
-//! Pointer input and window capture check the layout as niri reports it now,
-//! before and again during the action ([`PointerGate`]). Nothing keeps a
+//! Pointer input and window capture first wait, a few short reads at most,
+//! for two consecutive reads that agree on the target, then check the layout
+//! as niri reports it again during the action ([`PointerGate`]). Nothing keeps a
 //! history of layout changes: a `get_desktop_state` screenshot is not proven
 //! fresh when desktop-scope input uses its pixels, a move away and back
 //! between two reads is not seen, and IPC positions omit niri's animation

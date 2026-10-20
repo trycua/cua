@@ -6585,7 +6585,13 @@ impl Tool for ScrollTool {
                 return ToolResult::error("scroll requires x and y together.");
             }
             let center = if let (Some(x), Some(y)) = (px, py) {
-                Some(bitmap_to_screen(hwnd, x as i32, y as i32))
+                let (x, y) = match super::scroll_coordinates::window_bitmap_point(
+                    &self.state.snapshots, &args, pid, hwnd, x, y,
+                ) {
+                    Ok(point) => point,
+                    Err(refusal) => return refusal,
+                };
+                Some(bitmap_to_screen(hwnd, x, y))
             } else {
                 tokio::task::spawn_blocking({
                     let admitted = admitted.clone();

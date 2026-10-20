@@ -471,6 +471,22 @@
       "created_at": "2026-10-19T21:37:43Z",
       "repoId": 925270205,
       "pullRequestNo": 5521
+    },
+    {
+      "name": "omoi0kane",
+      "id": 176797234,
+      "comment_id": 6281804781,
+      "created_at": "2026-10-20T02:19:05Z",
+      "repoId": 925270205,
+      "pullRequestNo": 5552
+    },
+    {
+      "name": "omoi0kane",
+      "id": 176797234,
+      "comment_id": 6281818494,
+      "created_at": "2026-10-20T02:20:13Z",
+      "repoId": 925270205,
+      "pullRequestNo": 5552
     }
   ]
 }

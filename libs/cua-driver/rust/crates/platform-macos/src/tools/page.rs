@@ -356,19 +356,36 @@ where
         }
         None => None,
     };
+    let fallback = if content.is_none() {
+        ax_fallback().await
+    } else {
+        Ok((String::new(), false))
+    };
+    finish_page_read(source, content, error, fallback)
+}
+
+fn finish_page_read(
+    mut source: &str,
+    content: Option<String>,
+    error: Option<String>,
+    fallback: anyhow::Result<(String, bool)>,
+) -> anyhow::Result<PageReadResult> {
     let (content, truncated) = match content {
         Some(content) => (content, None),
         None => {
-            let (content, truncated) = ax_fallback()
-                .await
-                .map_err(|ax| anyhow::anyhow!("{ax} (JavaScript read failed first: {error:?})"))?;
+            let (content, truncated) = fallback.map_err(|ax| match error.as_ref() {
+                Some(error) => anyhow::anyhow!("{ax} (JavaScript read failed first: {error})"),
+                None => ax,
+            })?;
             source = "ax_fallback";
             (content, Some(truncated))
         }
     };
     let mut metadata = serde_json::json!({"source": source});
     if let Some(truncated) = truncated {
-        metadata["fallback_error"] = serde_json::json!(error);
+        if let Some(error) = error {
+            metadata["fallback_error"] = serde_json::json!(error);
+        }
         metadata["truncated"] = serde_json::json!(truncated);
     }
     Ok(PageReadResult::text(content).with_structured(metadata))
@@ -382,22 +399,13 @@ async fn ax_text_fallback(
 ) -> anyhow::Result<(String, bool)> {
     let window_id = u32::try_from(window_id)
         .map_err(|_| anyhow::anyhow!("macOS window_id {window_id} is out of u32 range"))?;
-    let result = tokio::task::spawn_blocking(move || {
-        crate::ax::tree::walk_tree_bounded(
-            pid,
-            Some(window_id),
-            None,
-            crate::ax::tree::DEFAULT_MAX_ELEMENTS,
-            crate::ax::tree::DEFAULT_MAX_DEPTH,
-        )
-    })
-    .await
-    .map_err(|e| anyhow::anyhow!("AX walk task failed: {e}"))?;
-    require_ax_window_scope(result.window_scope.as_ref(), pid, window_id)?;
-    Ok(ax_page_read(
+    let result =
+        tokio::task::spawn_blocking(move || crate::ax::tree::walk_tree(pid, Some(window_id), None))
+            .await
+            .map_err(|e| anyhow::anyhow!("AX walk task failed: {e}"))?;
+    Ok((
         AXPageReader::extract_text(&page_rows(result.tree_markdown, require_web_area)?),
-        result.truncated,
-        result.depth_truncated,
+        result.truncated || result.depth_truncated,
     ))
 }
 
@@ -411,53 +419,17 @@ async fn ax_query_fallback(
     let window_id = u32::try_from(window_id)
         .map_err(|_| anyhow::anyhow!("macOS window_id {window_id} is out of u32 range"))?;
     let sel = selector.to_owned();
-    let result = tokio::task::spawn_blocking(move || {
-        crate::ax::tree::walk_tree_bounded(
-            pid,
-            Some(window_id),
-            None,
-            crate::ax::tree::DEFAULT_MAX_ELEMENTS,
-            crate::ax::tree::DEFAULT_MAX_DEPTH,
-        )
-    })
-    .await
-    .map_err(|e| anyhow::anyhow!("AX walk task failed: {e}"))?;
-    require_ax_window_scope(result.window_scope.as_ref(), pid, window_id)?;
-    Ok(ax_page_read(
+    let result =
+        tokio::task::spawn_blocking(move || crate::ax::tree::walk_tree(pid, Some(window_id), None))
+            .await
+            .map_err(|e| anyhow::anyhow!("AX walk task failed: {e}"))?;
+    Ok((
         format_ax_elements(&AXPageReader::query(
             &sel,
             &page_rows(result.tree_markdown, require_web_area)?,
         )),
-        result.truncated,
-        result.depth_truncated,
+        result.truncated || result.depth_truncated,
     ))
-}
-
-fn ax_page_read(content: String, truncated: bool, depth_truncated: bool) -> (String, bool) {
-    (content, truncated || depth_truncated)
-}
-
-fn require_ax_window_scope(
-    scope: Option<&crate::ax::WindowScope>,
-    pid: i32,
-    window_id: u32,
-) -> anyhow::Result<()> {
-    match scope {
-        Some(crate::ax::WindowScope::Matched) => Ok(()),
-        Some(crate::ax::WindowScope::NotFound) => {
-            anyhow::bail!("macOS window_id {window_id} no longer exists")
-        }
-        Some(crate::ax::WindowScope::OwnerPidMismatch {
-            owner_pid,
-            owner_app_name,
-        }) => anyhow::bail!(
-            "macOS window_id {window_id} belongs to pid {owner_pid} ({owner_app_name}), not pid {pid}"
-        ),
-        Some(crate::ax::WindowScope::AxUnresolved { ax_window_count }) => anyhow::bail!(
-            "macOS window_id {window_id} belongs to pid {pid}, but its AX surface could not be resolved among {ax_window_count} window(s)"
-        ),
-        None => anyhow::bail!("macOS AX walk did not report scope for window_id {window_id}"),
-    }
 }
 
 fn format_ax_elements(elements: &[crate::browser::ax_page_reader::AXElement]) -> String {
@@ -576,37 +548,43 @@ mod tests {
     }
 
     #[test]
-    fn depth_bounded_ax_read_reports_truncation() {
-        let result = crate::ax::tree::TreeWalkResult {
-            tree_markdown: String::new(),
-            nodes: Vec::new(),
-            truncated: false,
-            depth_truncated: true,
-            walk: cua_driver_core::walk_budget::WalkBudget::nodes_only(10).outcome(),
-            window_scope: None,
-        };
-        let page = ax_page_read(
-            result.tree_markdown,
-            result.truncated,
-            result.depth_truncated,
-        );
-        assert!(page.1);
-    }
-
-    #[test]
-    fn ax_page_read_refuses_foreign_window_scope() {
-        let error = require_ax_window_scope(
-            Some(&crate::ax::WindowScope::OwnerPidMismatch {
-                owner_pid: 900,
-                owner_app_name: "Open and Save Panel Service".to_owned(),
-            }),
-            800,
-            41,
-        )
-        .unwrap_err()
-        .to_string();
-
-        assert!(error.contains("belongs to pid 900"));
-        assert!(error.contains("not pid 800"));
+    fn page_read_decisions_preserve_provenance() {
+        for source in ["javascript", "cdp"] {
+            let page = finish_page_read(
+                source,
+                Some("page".into()),
+                Some("JS failed".into()),
+                Ok(("ax".into(), true)),
+            )
+            .unwrap();
+            assert_eq!(
+                page.structured_content.unwrap(),
+                serde_json::json!({"source": source})
+            );
+        }
+        for error in [None, Some("JS failed".to_owned())] {
+            let page =
+                finish_page_read("cdp", None, error.clone(), Ok(("ax".into(), true))).unwrap();
+            let mut expected = serde_json::json!({"source": "ax_fallback", "truncated": true});
+            if let Some(error) = error.as_ref() {
+                expected["fallback_error"] = serde_json::json!(error);
+            }
+            assert_eq!(page.structured_content.unwrap(), expected);
+            let failure = finish_page_read(
+                "cdp",
+                None,
+                error.clone(),
+                Err(anyhow::anyhow!("AX failed")),
+            )
+            .unwrap_err()
+            .to_string();
+            assert_eq!(
+                failure,
+                match error {
+                    Some(error) => format!("AX failed (JavaScript read failed first: {error})"),
+                    None => "AX failed".to_owned(),
+                }
+            );
+        }
     }
 }

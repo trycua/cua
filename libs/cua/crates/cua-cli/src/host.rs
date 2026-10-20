@@ -380,7 +380,7 @@ Examples:
     /// Let someone in your team watch (viewer) or use (editor) a Space,
     /// through the relay. They open it as `relay:<computer>`. Sharing is for
     /// teams: you need a team, and they must be in it (or share with the
-    /// whole team as team:<id>).
+    /// whole team as `team:<id>`).
     #[command(after_help = "Examples:
   cua spaces share local:studio bob@example.com
   cua spaces share local:studio bob@example.com --role editor
@@ -393,7 +393,7 @@ Examples:
         /// Space id, address or display name.
         space: String,
         /// Their email (verified by cua.ai) or account id, in your team; or
-        /// team:<id> for the whole team.
+        /// `team:<id>` for the whole team.
         who: String,
         /// `viewer`: presence and a view-only stream. `editor`: full use.
         #[arg(long, default_value = "viewer", value_parser = ["viewer", "editor"])]

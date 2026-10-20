@@ -8582,6 +8582,16 @@ pub struct AppShareRowView {
     pub connected: bool,
 }
 
+/// A button with somewhere to go.
+pub type AppShareActionView = core::share::ShareActionView;
+#[uniffi::remote(Record)]
+pub struct AppShareActionView {
+    /// The button's words.
+    pub label: String,
+    /// Where it opens.
+    pub url: String,
+}
+
 /// The sheet as drawn.
 pub type AppShareSheetView = core::share::ShareSheetView;
 #[uniffi::remote(Record)]
@@ -8618,6 +8628,39 @@ pub struct AppShareSheetView {
     pub error: Option<String>,
     /// The command waiting for the shell.
     pub request: Option<AppShareRequest>,
+}
+
+/// Why the sheet cannot share, and what to do about it: sharing is for
+/// teams (CUA-1883).
+pub type AppShareGate = core::share::ShareGate;
+#[uniffi::remote(Record)]
+pub struct AppShareGate {
+    /// "Sharing is for teams. Start a team to share this Space."
+    pub reason: String,
+    /// "See Teams": where Teams starts, at one seat.
+    pub action: AppShareActionView,
+}
+
+/// Someone who lost access to a computer when sharing became team-only.
+pub type AppShareRemovalInput = core::share::ShareRemovalInput;
+#[uniffi::remote(Record)]
+pub struct AppShareRemovalInput {
+    /// The person (an email or account id).
+    pub who: String,
+    /// The computer's name.
+    pub machine_name: String,
+}
+
+/// The one-line note for an owner whose shares were removed.
+pub type AppShareRemovalNote = core::share::ShareRemovalNote;
+#[uniffi::remote(Record)]
+pub struct AppShareRemovalNote {
+    /// One line: who can no longer open what, and why.
+    pub text: String,
+    /// "Invite to your team".
+    pub action: AppShareActionView,
+    /// Dismiss.
+    pub dismiss: String,
 }
 
 /// A persistent agent, as `persistent_agent_list` reports it.

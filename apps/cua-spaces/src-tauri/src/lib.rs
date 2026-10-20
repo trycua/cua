@@ -552,6 +552,8 @@ pub fn run() {
             commands::share_space,
             commands::cloud_tool,
             commands::unshare_space,
+            commands::share_removals,
+            commands::ack_share_removals,
             commands::agents_tool,
             commands::drive_reveal,
             tray::tray_set_menu,

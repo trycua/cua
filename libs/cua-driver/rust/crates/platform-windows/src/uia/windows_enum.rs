@@ -163,17 +163,17 @@ where
     run_uia_single_flight(uia_single_flight(), stage, timeout, fallback, f)
 }
 
-/// Run a focused-document input probe through the same bounded UIA worker as
-/// window enumeration and hit testing. A timeout is reported to the caller as
-/// an unknown effect; the caller must not fall through to another input path.
 pub(crate) fn run_focused_document_uia<T, F>(f: F) -> Result<T, UiaDeadlineError>
 where
     T: Send + 'static,
     F: FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
 {
-    run_uia_with_deadline_cancelable(
+    static GATE: OnceLock<Arc<SingleFlight>> = OnceLock::new();
+    const FOCUSED_DOCUMENT_PROBE_TIMEOUT: Duration = Duration::from_millis(200);
+    run_uia_single_flight(
+        GATE.get_or_init(|| Arc::new(SingleFlight::new(Duration::ZERO))),
         "focused document typing",
-        SUBTREE_OP_TIMEOUT,
+        FOCUSED_DOCUMENT_PROBE_TIMEOUT,
         "an unknown-effect result without another input attempt",
         f,
     )

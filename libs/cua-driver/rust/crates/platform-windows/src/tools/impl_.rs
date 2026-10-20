@@ -4648,28 +4648,9 @@ impl Tool for TypeTextTool {
                 && args.get("x").is_none()
                 && args.get("y").is_none()
             {
-                let uia_text = text.clone();
-                match tokio::task::spawn_blocking(move || {
-                    crate::uia::focused_document::try_type_focused_document_append(
-                        hwnd, None, &uia_text,
-                    )
-                })
-                .await
+                if let Some(result) = try_focused_document_route(hwnd, None, &text, text_len).await
                 {
-                    Ok(outcome) => {
-                        if let Some(result) = focused_document_tool_result(outcome, text_len) {
-                            return result;
-                        }
-                    }
-                    Err(_) => {
-                        return focused_document_tool_result(
-                            crate::uia::focused_document::FocusedDocumentTypeOutcome::Unknown(
-                                "focused UIA task failed",
-                            ),
-                            text_len,
-                        )
-                        .expect("an unknown focused-document outcome has a result");
-                    }
+                    return result;
                 }
             }
             return match tokio::task::spawn_blocking(move || {
@@ -4849,30 +4830,10 @@ impl Tool for TypeTextTool {
                 && args.get("x").is_none()
                 && args.get("y").is_none()
             {
-                let uia_text = text.clone();
-                match tokio::task::spawn_blocking(move || {
-                    crate::uia::focused_document::try_type_focused_document_append(
-                        hwnd,
-                        Some(pid),
-                        &uia_text,
-                    )
-                })
-                .await
+                if let Some(result) =
+                    try_focused_document_route(hwnd, Some(pid), &text, text_len).await
                 {
-                    Ok(outcome) => {
-                        if let Some(result) = focused_document_tool_result(outcome, text_len) {
-                            return result;
-                        }
-                    }
-                    Err(_) => {
-                        return focused_document_tool_result(
-                            crate::uia::focused_document::FocusedDocumentTypeOutcome::Unknown(
-                                "focused UIA task failed",
-                            ),
-                            text_len,
-                        )
-                        .expect("an unknown focused-document outcome has a result");
-                    }
+                    return result;
                 }
             }
             // Resolve the optional click fallback before entering the atomic
@@ -5216,6 +5177,28 @@ impl Tool for TypeTextTool {
     }
 }
 
+async fn try_focused_document_route(
+    hwnd: u64,
+    expected_pid: Option<u32>,
+    text: &str,
+    text_len: usize,
+) -> Option<ToolResult> {
+    if crate::input::is_chromium_target_window(hwnd) {
+        return None;
+    }
+    let text = text.to_owned();
+    let outcome = tokio::task::spawn_blocking(move || {
+        crate::uia::focused_document::try_type_focused_document_append(hwnd, expected_pid, &text)
+    })
+    .await
+    .unwrap_or(
+        crate::uia::focused_document::FocusedDocumentTypeOutcome::Unknown(
+            "focused UIA task failed",
+        ),
+    );
+    focused_document_tool_result(outcome, text_len)
+}
+
 fn focused_document_tool_result(
     outcome: crate::uia::focused_document::FocusedDocumentTypeOutcome,
     text_len: usize,
@@ -5247,10 +5230,7 @@ fn focused_document_tool_result(
                 "verify": "unverifiable",
                 "effect": "unverifiable",
                 "retryable": false,
-                "escalation": {
-                    "recommended": "verify_state",
-                    "reason": "A focused Document write may have started. Read a fresh observation and do not replay the text blindly."
-                },
+
             })),
         ),
     }

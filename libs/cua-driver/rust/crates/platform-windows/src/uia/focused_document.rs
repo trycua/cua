@@ -5,7 +5,10 @@
 //! predicate leaves the existing input route available. Once SetValue starts,
 //! failures are unverifiable and must not be retried through another route.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{
+    atomic::{AtomicBool, AtomicU8, Ordering},
+    Arc,
+};
 
 use windows::core::Interface;
 use windows::Win32::Foundation::HWND;
@@ -27,9 +30,6 @@ pub(crate) enum FocusedDocumentTypeOutcome {
     Unknown(&'static str),
 }
 
-/// Try the focused Document route on the bounded, single-flight UIA worker.
-/// A busy worker may still be finishing a timed-out input attempt, so it is
-/// unknown too. Only a completed pre-write probe preserves the prior route.
 pub(crate) fn try_type_focused_document_append(
     target_hwnd: u64,
     expected_pid: Option<u32>,
@@ -40,10 +40,25 @@ pub(crate) fn try_type_focused_document_append(
     }
 
     let text = text.to_owned();
+    let state = Arc::new(AtomicU8::new(0));
+    let worker_state = Arc::clone(&state);
     match run_focused_document_uia(move |cancelled| {
-        try_type_focused_document_append_unbounded(target_hwnd, expected_pid, &text, &cancelled)
+        try_type_focused_document_append_unbounded(
+            target_hwnd,
+            expected_pid,
+            &text,
+            &cancelled,
+            &worker_state,
+        )
     }) {
         Ok(outcome) => outcome,
+        Err(_)
+            if state
+                .compare_exchange(0, 2, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok() =>
+        {
+            FocusedDocumentTypeOutcome::NotApplicable
+        }
         Err(error) => focused_document_worker_error(error),
     }
 }
@@ -53,6 +68,7 @@ fn try_type_focused_document_append_unbounded(
     expected_pid: Option<u32>,
     text: &str,
     cancelled: &AtomicBool,
+    state: &AtomicU8,
 ) -> FocusedDocumentTypeOutcome {
     use windows::core::BSTR;
     use windows::Win32::System::Com::{
@@ -90,11 +106,6 @@ fn try_type_focused_document_append_unbounded(
         if expected_pid.is_some_and(|pid| pid != target_pid) {
             return not_applicable("target_pid_mismatch");
         }
-        // The existing type_text ValuePattern route distrusts Chromium UIA
-        // echoes because they do not prove that the renderer observed a write.
-        if crate::input::is_chromium_target_window(target_hwnd) {
-            return not_applicable("chromium_valuepattern_echo_untrusted");
-        }
 
         let Ok(uia) = (unsafe {
             CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
@@ -130,27 +141,15 @@ fn try_type_focused_document_append_unbounded(
         };
         let single_text_selection = unsafe { text_pattern.SupportedTextSelection() }
             .is_ok_and(|selection| selection == SupportedTextSelection_Single);
-        if !single_text_selection
-            || unsafe { text_pattern.DocumentRange() }.is_err()
-            || initial_read_only.as_bool()
-        {
-            return not_applicable("initial_eligibility_not_met");
-        }
-
-        let caret_at_end = if initial_value.is_empty() {
-            false
-        } else {
-            match text_pattern_caret_at_document_end(&text_pattern) {
-                Ok(at_end) => at_end,
-                Err(stage) => return not_applicable(stage),
-            }
-        };
+        let document_matches = unsafe { text_pattern.DocumentRange() }
+            .and_then(|range| unsafe { range.GetText(-1) })
+            .is_ok_and(|value| value.to_string() == initial_value);
         if !focused_document_eligible(
             exact_foreground_target(target, Some(target_pid)),
             !initial_read_only.as_bool(),
             initial_value.is_empty(),
             single_text_selection,
-            caret_at_end,
+            document_matches,
         ) {
             return not_applicable("initial_eligibility_not_met");
         }
@@ -174,20 +173,23 @@ fn try_type_focused_document_append_unbounded(
         if read_only_before_write.as_bool() || value_before_write.to_string() != initial_value {
             return not_applicable("value_changed_or_read_only_before_write");
         }
-        if !initial_value.is_empty() {
-            match text_pattern_caret_at_document_end(&text_pattern) {
-                Ok(true) => {}
-                Ok(false) => return not_applicable("caret_not_at_document_end_before_write"),
-                Err(stage) => return not_applicable(stage),
-            }
+        if !unsafe { text_pattern.DocumentRange() }
+            .and_then(|range| unsafe { range.GetText(-1) })
+            .is_ok_and(|value| value.to_string() == initial_value)
+        {
+            return not_applicable("document_changed_before_write");
         }
         // If the UIA deadline fired during pre-write checks, do not start a
         // write after the caller has already returned an unknown result.
-        if cancelled.load(Ordering::Acquire) {
+        if cancelled.load(Ordering::Acquire)
+            || state
+                .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
+        {
             return not_applicable("cancelled_before_write");
         }
 
-        let expected_value = focused_document_appended_value(&initial_value, text);
+        let expected_value = text.to_owned();
         let write_result = (|| -> Result<(), &'static str> {
             let value = BSTR::from(expected_value.as_str());
             unsafe { value_pattern.SetValue(&value) }
@@ -322,47 +324,14 @@ fn exact_foreground_target(target: HWND, expected_pid: Option<u32>) -> bool {
             .is_some_and(|pid| expected_pid.is_none_or(|expected| expected == pid))
 }
 
-fn text_pattern_caret_at_document_end(
-    text_pattern: &IUIAutomationTextPattern,
-) -> Result<bool, &'static str> {
-    let document_range =
-        unsafe { text_pattern.DocumentRange() }.map_err(|_| "document_range_unavailable")?;
-    let selections = unsafe { text_pattern.GetSelection() }.map_err(|_| "selection_unavailable")?;
-    if unsafe { selections.Length() }.map_err(|_| "selection_count_unavailable")? != 1 {
-        return Ok(false);
-    }
-    let selection =
-        unsafe { selections.GetElement(0) }.map_err(|_| "selection_range_unavailable")?;
-    let start_at_end = unsafe {
-        selection.CompareEndpoints(
-            TextPatternRangeEndpoint_Start,
-            &document_range,
-            TextPatternRangeEndpoint_End,
-        )
-    }
-    .map_err(|_| "selection_start_comparison_unavailable")?;
-    let end_at_end = unsafe {
-        selection.CompareEndpoints(
-            TextPatternRangeEndpoint_End,
-            &document_range,
-            TextPatternRangeEndpoint_End,
-        )
-    }
-    .map_err(|_| "selection_end_comparison_unavailable")?;
-    Ok(start_at_end == 0 && end_at_end == 0)
-}
-
 fn focused_document_eligible(
     exact_target: bool,
     writable_value: bool,
     value_is_empty: bool,
     single_text_selection: bool,
-    collapsed_caret_at_end: bool,
+    document_matches: bool,
 ) -> bool {
-    exact_target
-        && writable_value
-        && single_text_selection
-        && (value_is_empty || collapsed_caret_at_end)
+    exact_target && writable_value && single_text_selection && value_is_empty && document_matches
 }
 
 fn classify_focused_document_write(
@@ -386,15 +355,6 @@ fn normalized_text_matches(expected: &str, actual: &str) -> bool {
     normalize_document_line_endings(expected) == normalize_document_line_endings(actual)
 }
 
-fn focused_document_appended_value(current_value: &str, input: &str) -> String {
-    if current_value.is_empty() {
-        return input.to_owned();
-    }
-    let mut value = normalize_document_line_endings(current_value);
-    value.push_str(&normalize_document_line_endings(input));
-    value
-}
-
 fn focused_document_worker_error(error: UiaDeadlineError) -> FocusedDocumentTypeOutcome {
     match error {
         UiaDeadlineError::Busy => FocusedDocumentTypeOutcome::Unknown(
@@ -412,36 +372,20 @@ fn focused_document_worker_error(error: UiaDeadlineError) -> FocusedDocumentType
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_focused_document_write, focused_document_appended_value,
-        focused_document_eligible, focused_document_worker_error, normalize_document_line_endings,
-        normalized_text_matches, FocusedDocumentTypeOutcome,
+        classify_focused_document_write, focused_document_eligible, focused_document_worker_error,
+        normalize_document_line_endings, normalized_text_matches, FocusedDocumentTypeOutcome,
     };
     use crate::uia::windows_enum::UiaDeadlineError;
 
     #[test]
     fn focused_document_requires_exact_target_and_safe_value_selection() {
-        assert!(focused_document_eligible(true, true, true, true, false));
-        assert!(focused_document_eligible(true, true, false, true, true));
+        assert!(focused_document_eligible(true, true, true, true, true));
+        assert!(!focused_document_eligible(true, true, true, true, false));
+        assert!(!focused_document_eligible(true, true, false, true, true));
         assert!(!focused_document_eligible(true, true, false, true, false));
         assert!(!focused_document_eligible(true, true, false, false, true));
         assert!(!focused_document_eligible(false, true, false, true, true));
         assert!(!focused_document_eligible(true, false, false, true, true));
-    }
-
-    #[test]
-    fn append_preserves_content_and_normalizes_each_line_ending_source() {
-        assert_eq!(
-            focused_document_appended_value("marker\r", "\n\u{676d}\u{5dde}\u{4e1c}\r\n"),
-            "marker\n\n\u{676d}\u{5dde}\u{4e1c}\n"
-        );
-        assert_eq!(
-            focused_document_appended_value("", "new\r\nline"),
-            "new\r\nline"
-        );
-        assert_eq!(
-            focused_document_appended_value("prefix \u{1f642}", " suffix"),
-            "prefix \u{1f642} suffix"
-        );
     }
 
     #[test]

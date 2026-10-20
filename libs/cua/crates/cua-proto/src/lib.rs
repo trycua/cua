@@ -3,9 +3,10 @@
 //! clients and servers.
 //!
 //! The `.proto` files in `libs/cua/proto` are the source of truth; this
-//! crate only generates code from them. Applications should not use the
-//! generated client directly: the ergonomic client lives in `cua-spacesd-client` and is
-//! exposed to other languages only through the cua SDK.
+//! crate only generates code from them (the published crate carries a copy
+//! under `proto/`). Most programs want the typed client in
+//! [`cua-spacesd-client`](https://docs.rs/cua-spacesd-client); the raw
+//! generated clients here are for everything it does not wrap.
 //!
 //! Features:
 //! - `client` (default): `*_service_client` modules.

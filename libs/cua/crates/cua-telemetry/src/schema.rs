@@ -1506,8 +1506,9 @@ pub fn spec(name: &str) -> Option<&'static EventSpec> {
 // Catalogs
 // ---------------------------------------------------------------------------
 
-const IMAGE_CATALOG_JSON: &str = include_str!("../../../../images/sandbox-images.json");
-const TELEPORT_TARGETS_JSON: &str = include_str!("../../cua-teleport/src/ux/targets.json");
+const IMAGE_CATALOG_JSON: &str = include_str!(concat!(env!("OUT_DIR"), "/sandbox-images.json"));
+const TELEPORT_TARGETS_JSON: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/teleport-targets.json"));
 /// Teleport provider ids (`cua_teleport` providers); a cua-teleport test
 /// checks the list against the registry.
 pub const TELEPORT_PROVIDERS: &[&str] = &[

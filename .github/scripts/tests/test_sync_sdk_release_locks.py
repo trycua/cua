@@ -74,3 +74,39 @@ def test_release_please_runs_the_lock_sync_for_sdk_releases() -> None:
     sdk_branch = workflow.split('elif [[ "$SDK" == "true" ]]; then', 1)[1].split("else\n", 1)[0]
     assert "python3 .github/scripts/sync_sdk_release_locks.py" in sdk_branch
     assert 'git add -- "${SDK_LOCK_PATHS[@]}"' in sdk_branch
+
+
+def test_cargo_locks_follow_the_published_sdk_crates(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    def crate(name: str, version: str, source: str | None = None) -> str:
+        entry = f'[[package]]\nname = "{name}"\nversion = "{version}"\n'
+        if source:
+            entry += f'source = "{source}"\n'
+        return entry + 'dependencies = [\n "prost",\n]\n'
+
+    registry = "registry+https://github.com/rust-lang/crates.io-index"
+    files = {
+        "libs/cua/VERSION": "0.6.0\n",
+        "libs/cua/crates/cua-proto/Cargo.toml": '[package]\nname = "cua-proto"\nversion.workspace = true\n',
+        "libs/cua/crates/cua-spacesd-client/Cargo.toml": '[package]\nname = "cua-spacesd-client"\nversion.workspace = true\n',
+        # Locked by path (the checkout): follow the release.
+        "libs/cua-spacesd/Cargo.lock": "version = 4\n\n"
+        + crate("cua-proto", "0.5.0")
+        + "\n"
+        + crate("cua-spacesd-client", "0.5.0"),
+        # From crates.io, and another workspace crate: left alone.
+        "samples/x/Cargo.lock": "version = 4\n\n" + crate("cua-proto", "0.5.0", registry) + "\n" + crate("cua-sdk", "0.1.0"),
+    }
+    for rel, content in files.items():
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    before = (tmp_path / "samples/x/Cargo.lock").read_text()
+
+    assert main(["--repo-root", str(tmp_path)]) == 0
+
+    assert capsys.readouterr().out.split() == ["libs/cua-spacesd/Cargo.lock"]
+    spacesd = (tmp_path / "libs/cua-spacesd/Cargo.lock").read_text()
+    assert spacesd.count('version = "0.6.0"') == 2 and '"0.5.0"' not in spacesd
+    assert (tmp_path / "samples/x/Cargo.lock").read_text() == before

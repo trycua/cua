@@ -639,6 +639,7 @@ mod tests {
                     nodes: vec![button],
                     tree_markdown: String::new(),
                     truncated: false,
+                    depth_truncated: false,
                     walk: budget.outcome(),
                     window_scope: None,
                 })?;

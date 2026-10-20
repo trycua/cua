@@ -333,6 +333,7 @@ fn page_rows(tree_markdown: String, require_web_area: bool) -> anyhow::Result<St
 enum PageReadRoute {
     Javascript,
     Cdp,
+    AttachedCdp,
     Ax,
 }
 
@@ -343,7 +344,13 @@ async fn resolve_page_read_route(bundle_id: &str, pid: i32) -> anyhow::Result<Pa
     } else {
         tokio::task::spawn_blocking(move || ElectronJs::is_electron(pid)).await?
     };
-    Ok(classify_page_read_route(javascript_supported, is_electron))
+    let route = classify_page_read_route(javascript_supported, is_electron);
+    if route == PageReadRoute::Ax
+        && !tokio::task::spawn_blocking(move || is_wk_web_view_app(pid)).await?
+    {
+        return Ok(PageReadRoute::AttachedCdp);
+    }
+    Ok(route)
 }
 
 fn classify_page_read_route(javascript_supported: bool, is_electron: bool) -> PageReadRoute {
@@ -371,6 +378,18 @@ where
 {
     let (source, primary) = match route {
         PageReadRoute::Ax => return ax_fallback().await,
+        PageReadRoute::AttachedCdp => {
+            return read_attached_before_ax(
+                async {
+                    match backend {
+                        Some(backend) => backend.attached_cdp_evaluate(pid, javascript).await,
+                        None => None,
+                    }
+                },
+                ax_fallback,
+            )
+            .await;
+        }
         PageReadRoute::Javascript => {
             let window_id = u32::try_from(window_id)
                 .map_err(|_| anyhow::anyhow!("macOS window_id {window_id} is out of u32 range"))?;
@@ -397,6 +416,26 @@ where
         }
     }
     read_with_ax_fallback(source, async { primary }, ax_fallback).await
+}
+
+async fn read_attached_before_ax<P, F, A>(
+    attached: P,
+    ax_fallback: F,
+) -> anyhow::Result<PageReadResult>
+where
+    P: Future<Output = Option<String>>,
+    F: FnOnce() -> A,
+    A: Future<Output = anyhow::Result<PageReadResult>>,
+{
+    match attached.await {
+        Some(content) => Ok(PageReadResult::sourced(
+            content,
+            PageReadSource::Cdp,
+            None,
+            None,
+        )),
+        None => ax_fallback().await,
+    }
 }
 
 async fn read_with_ax_fallback<P, F, A>(
@@ -449,7 +488,7 @@ async fn ax_text_fallback(
     require_ax_window_scope(result.window_scope.as_ref(), pid, window_id)?;
     Ok(ax_page_read(
         AXPageReader::extract_text(&page_rows(result.tree_markdown, require_web_area)?),
-        result.truncated,
+        result.truncated || result.depth_truncated,
     ))
 }
 
@@ -480,7 +519,7 @@ async fn ax_query_fallback(
             &sel,
             &page_rows(result.tree_markdown, require_web_area)?,
         )),
-        result.truncated,
+        result.truncated || result.depth_truncated,
     ))
 }
 
@@ -701,6 +740,35 @@ mod tests {
         assert_eq!(result.source, Some(PageReadSource::AxFallback));
         assert_eq!(result.fallback_error, None);
         assert_eq!(result.truncated, Some(false));
+    }
+
+    #[tokio::test]
+    async fn attached_cdp_is_tried_before_ax() {
+        let result =
+            read_attached_before_ax(async { Some("attached page".to_owned()) }, || async {
+                panic!("AX must not run after attached CDP succeeds")
+            })
+            .await
+            .unwrap();
+        assert_eq!(result.source, Some(PageReadSource::Cdp));
+        assert_eq!(result.content, "attached page");
+    }
+
+    #[test]
+    fn depth_bounded_ax_read_reports_truncation() {
+        let result = crate::ax::tree::TreeWalkResult {
+            tree_markdown: String::new(),
+            nodes: Vec::new(),
+            truncated: false,
+            depth_truncated: true,
+            walk: cua_driver_core::walk_budget::WalkBudget::nodes_only(10).outcome(),
+            window_scope: None,
+        };
+        let page = ax_page_read(
+            result.tree_markdown,
+            result.truncated || result.depth_truncated,
+        );
+        assert_eq!(page.truncated, Some(true));
     }
 
     #[test]

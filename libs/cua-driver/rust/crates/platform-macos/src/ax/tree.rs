@@ -140,6 +140,7 @@ pub struct TreeWalkResult {
     pub nodes: Vec<AXNode>,
     /// True when the walk was cut short by its node or time budget.
     pub truncated: bool,
+    pub depth_truncated: bool,
     /// Why and where the walk stopped (see [`cua_driver_core::walk_budget`]).
     pub walk: WalkOutcome,
     /// Whether the requested `window_id` actually resolved to an AX surface,
@@ -251,6 +252,7 @@ fn walk_tree_with_web_content(
                 tree_markdown: String::new(),
                 nodes,
                 truncated: false,
+                depth_truncated: false,
                 walk: budget.outcome(),
                 // No application AX element at all, so a requested window
                 // certainly did not resolve.
@@ -349,14 +351,11 @@ fn walk_tree_with_web_content(
         tree_markdown.push_str(&note);
     }
 
-    if depth_truncated {
-        tree_markdown.push_str(&format!("\n⚠️  AX tree truncated beyond depth {max_depth}. Element indices above are still valid. Use pixel clicks for elements not visible in this partial tree."));
-    }
-
     TreeWalkResult {
         tree_markdown,
         nodes,
-        truncated: walk.truncated() || depth_truncated,
+        truncated: walk.truncated(),
+        depth_truncated,
         walk,
         window_scope,
     }

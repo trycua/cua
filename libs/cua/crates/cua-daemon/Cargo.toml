@@ -40,6 +40,7 @@ cua-spacesd-client.workspace = true
 cua-sandbox-core.workspace = true
 cua-contrib = { workspace = true, optional = true }
 cua-vmm = { path = "../cua-vmm" }
+cua-create-failure.workspace = true
 cua-image = { path = "../cua-image" }
 # Disk accounting, cache GC and orphan reaping.
 cua-disk.workspace = true

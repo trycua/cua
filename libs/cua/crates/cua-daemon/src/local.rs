@@ -853,6 +853,7 @@ impl LocalRuntime for VmmLocal {
             });
         }
         refuse_gpu(&spec.image, spec.gpu.is_some(), &r)?;
+        preflight_refusal(os_of(&spec.os), p.backend).await?;
         let rt = self.runtime(p.backend).await.map_err(rt_err)?;
         let mut s = StartSpec::new(&spec.name, p.image)
             .os(os_of(&spec.os))
@@ -1215,6 +1216,31 @@ impl VmmLocal {
     }
 }
 
+// ------------------------------------------------------------------ preflight
+
+/// Refuses a create the machine cannot run, in plain words (the first
+/// failed check of [`cua_vmm::preflight`]), before anything is pulled. The
+/// disk is left to the guards of the create itself, which know the image's
+/// real size.
+async fn preflight_refusal(os: cua_vmm::GuestOs, backend: BackendKind) -> RuntimeResult<()> {
+    use cua_create_failure::preflight::Runs;
+    let runs = if backend == BackendKind::Container {
+        Runs::Container
+    } else {
+        Runs::Vm
+    };
+    let req = cua_vmm::preflight::request(cua_vmm::preflight::guest_of(os), runs, None);
+    let mut facts = cua_vmm::preflight::gather(&req).await;
+    facts.free_bytes = None;
+    match cua_create_failure::preflight::evaluate(&req, &facts)
+        .into_iter()
+        .next()
+    {
+        Some(issue) => Err(RuntimeError::Other(issue.message)),
+        None => Ok(()),
+    }
+}
+
 // ------------------------------------------------------------------ doctor
 
 /// `cua runtime doctor`: the `cua-vmm` report (read-only).
@@ -1237,6 +1263,14 @@ pub async fn doctor_response() -> cua_proto::daemon::v1::DoctorResponse {
         map.insert(
             "local_network".into(),
             serde_json::to_value(ln).unwrap_or_default(),
+        );
+    }
+    if let Some(map) = json.as_object_mut() {
+        // What would stop a create here, per Space the host can run, in
+        // words the apps and the CLI show as they are.
+        map.insert(
+            "preflight".into(),
+            serde_json::to_value(cua_vmm::preflight::report().await).unwrap_or_default(),
         );
     }
     cua_proto::daemon::v1::DoctorResponse {
@@ -1391,6 +1425,13 @@ async fn kvm_step(dry_run: bool) -> Option<cua_proto::daemon::v1::SetupStep> {
     }
     let denied = cua_vmm::host::kvm_usable()
         .is_err_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied);
+    if denied && !dry_run && !cua_vmm::host::sudo_available() {
+        return Some(SetupStep {
+            name: "kvm".into(),
+            status: CheckStatus::Ok as i32,
+            detail: "KVM access denied; using slow TCG emulation (sudo unavailable)".into(),
+        });
+    }
     let user = std::env::var("USER").ok();
     let run = async |program: &str, args: &[&str]| cua_vmm::host::run(program, args).await;
     let (status, detail) =

@@ -259,6 +259,12 @@ pub async fn doctor() -> DoctorReport {
             .push(format!("qemu-system-{native} / qemu-img"));
         let step = match host_os {
             HostOs::Macos if host::which("brew").is_some() => Some("brew install qemu".into()),
+            HostOs::Linux if host::which("apt-get").is_some() && !host::sudo_available() => {
+                Some(format!(
+                    "user-local QEMU at {}",
+                    host::cua_home().join("qemu").display()
+                ))
+            }
             HostOs::Linux => QemuPackageManager::detect().map(|(manager, _)| manager.render()),
             _ => None,
         };
@@ -266,6 +272,12 @@ pub async fn doctor() -> DoctorReport {
             qemu_status.provisionable = true;
             qemu_status.provisioning.push(s);
         }
+    }
+    if host::cua_home().join("qemu").is_dir() {
+        qemu_status.detail.push_str(&format!(
+            "; user-local wrappers at {}",
+            host::cua_home().join("bin").display()
+        ));
     }
     note_kvm(&mut qemu_status, host_os, &kvm);
 
@@ -416,14 +428,32 @@ pub async fn doctor() -> DoctorReport {
 }
 
 fn note_kvm(status: &mut BackendStatus, host_os: HostOs, kvm: &std::io::Result<()>) {
+    note_kvm_with(status, host_os, kvm, host::sudo_available);
+}
+
+fn note_kvm_with(
+    status: &mut BackendStatus,
+    host_os: HostOs,
+    kvm: &std::io::Result<()>,
+    sudo: impl Fn() -> bool,
+) {
     if let Err(e) = kvm
         && host_os == HostOs::Linux
     {
-        if host::qemu_accel(host_os, Arch::host(), kvm).is_err() {
+        if host::qemu_accel_with(host_os, Arch::host(), kvm, sudo, |_| {}).is_err() {
             status.ready = false;
             status.missing.push(host::kvm_hint(e));
         } else {
-            status.detail = format!("{}; {}", status.detail, host::kvm_hint(e));
+            status.detail = format!(
+                "{}; {}{}",
+                status.detail,
+                if e.kind() == std::io::ErrorKind::PermissionDenied {
+                    "TCG ready; "
+                } else {
+                    ""
+                },
+                host::kvm_hint(e)
+            );
         }
     }
 }
@@ -696,27 +726,30 @@ mod tests {
 
     #[test]
     fn doctor_reports_why_native_qemu_has_no_kvm() {
-        let noted = |kvm: std::io::Result<()>| {
+        let noted = |kvm: std::io::Result<()>, sudo| {
             let mut q = report(true, false, false, false, HostOs::Linux).backends[1].clone();
             q.detail = "QEMU 10".into();
             q.missing.clear();
-            note_kvm(&mut q, HostOs::Linux, &kvm);
+            note_kvm_with(&mut q, HostOs::Linux, &kvm, || sudo);
             q
         };
-        let missing = noted(Err(std::io::ErrorKind::NotFound.into()));
+        let missing = noted(Err(std::io::ErrorKind::NotFound.into()), true);
         assert!(missing.ready && missing.missing.is_empty(), "{missing:?}");
         assert!(missing.detail.starts_with("QEMU 10; "), "{missing:?}");
         assert!(
             missing.detail.contains("nested virtualization"),
             "{missing:?}"
         );
-        let denied = noted(Err(std::io::ErrorKind::PermissionDenied.into()));
+        let denied = noted(Err(std::io::ErrorKind::PermissionDenied.into()), true);
         assert!(!denied.ready && !denied.provisionable, "{denied:?}");
         assert!(
             denied.missing[0].contains("sudo usermod -aG kvm"),
             "{denied:?}"
         );
-        let ok = noted(Ok(()));
+        let denied = noted(Err(std::io::ErrorKind::PermissionDenied.into()), false);
+        assert!(denied.ready && denied.missing.is_empty(), "{denied:?}");
+        assert!(denied.detail.contains("TCG ready"), "{denied:?}");
+        let ok = noted(Ok(()), true);
         assert!(
             ok.ready && ok.missing.is_empty() && ok.detail == "QEMU 10",
             "{ok:?}"

@@ -179,6 +179,14 @@ pub const ERROR_KINDS: &[&str] = &[
     "local_network",
     "vm_limit",
     "requires_cua_app",
+    // A failed create's text, read into a cause: the guest asked for more
+    // memory than the machine has, a port the Space needs is taken, a file
+    // or folder could not be written, the machine could not reach the
+    // network.
+    "out_of_memory",
+    "port_in_use",
+    "file_access",
+    "network",
     "cancelled",
     // An agent run: cua_spaces `Error::Agent`, a run that recorded a
     // failure, a run whose process went away mid-turn.

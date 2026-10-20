@@ -1349,8 +1349,14 @@ fn fit_error_text(content: &mut Vec<Content>, budget: usize) {
 
 /// Whether a refusal names foreground delivery as the route that works:
 /// the target ignores background input (Electron, LibreOffice VCL, ...).
+/// Only a result that shows nothing was delivered is one, whatever it
+/// recommends: sending input that may have landed again could type or click
+/// twice.
 fn wants_foreground(result: &ToolResult) -> bool {
     let structured = result.structured_content.as_ref();
+    if structured.is_some_and(|structured| !nothing_was_delivered(structured)) {
+        return false;
+    }
     let recommended = structured
         .and_then(|value| {
             value
@@ -1371,6 +1377,18 @@ fn wants_foreground(result: &ToolResult) -> bool {
         .unwrap_or("");
     text.contains("Retry this action with delivery_mode:\"foreground\"")
         || text.contains("Retry with delivery_mode:\"foreground\"")
+}
+
+/// Whether a failed step shows that no input reached the app: no `effect`
+/// or a refusal effect (`refused`, `none`, macOS `no_drop`), and no
+/// `delivery` record. Every other effect, `suspected_noop` and values this
+/// rule does not know included, may have landed.
+fn nothing_was_delivered(structured: &Value) -> bool {
+    let refused = match structured.get("effect") {
+        None => true,
+        Some(effect) => matches!(effect.as_str(), Some("refused" | "none" | "no_drop")),
+    };
+    refused && structured.get("delivery").is_none()
 }
 
 /// Whether an action failed because its element target died: the element

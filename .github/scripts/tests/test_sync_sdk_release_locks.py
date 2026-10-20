@@ -93,6 +93,8 @@ def test_cargo_locks_follow_the_published_sdk_crates(tmp_path: Path, capsys: pyt
         + crate("cua-proto", "0.5.0")
         + "\n"
         + crate("cua-spacesd-client", "0.5.0"),
+        # The workspace's own lock: Release Please does not bump it.
+        "libs/cua/Cargo.lock": "version = 4\n\n" + crate("cua-proto", "0.5.0"),
         # From crates.io, and another workspace crate: left alone.
         "samples/x/Cargo.lock": "version = 4\n\n" + crate("cua-proto", "0.5.0", registry) + "\n" + crate("cua-sdk", "0.1.0"),
     }
@@ -106,7 +108,8 @@ def test_cargo_locks_follow_the_published_sdk_crates(tmp_path: Path, capsys: pyt
 
     assert main(["--repo-root", str(tmp_path)]) == 0
 
-    assert capsys.readouterr().out.split() == ["libs/cua-spacesd/Cargo.lock"]
+    assert capsys.readouterr().out.split() == ["libs/cua-spacesd/Cargo.lock", "libs/cua/Cargo.lock"]
+    assert '"0.5.0"' not in (tmp_path / "libs/cua/Cargo.lock").read_text()
     spacesd = (tmp_path / "libs/cua-spacesd/Cargo.lock").read_text()
     assert spacesd.count('version = "0.6.0"') == 2 and '"0.5.0"' not in spacesd
     assert (tmp_path / "samples/x/Cargo.lock").read_text() == before

@@ -63,7 +63,7 @@ that are easy to miss:
 - Sandboxes are daemon-agnostic: lifecycle and readiness must not assume
   cua-spacesd or any other in-guest service.
 - `libs/fleet` is a read-only mirror. Never edit it.
-- Tests that start VMs, containers, Fleet claims, or host input are opt-in
+- Tests that start VMs, containers, or host input are opt-in
   (off by default) and clean up what they create.
 
 ## Cross-platform Cua Driver behavior

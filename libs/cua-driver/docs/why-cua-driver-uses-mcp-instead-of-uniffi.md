@@ -148,47 +148,45 @@ while UniFFI bindings can let application developers host or compose the Rust
 server/client implementation. Removing MCP is neither required nor desirable
 for adopting UniFFI.
 
-## Why Fleet is useful precedent
+## Why a shared Rust client is useful precedent
 
-Fleet places substantial portable client behavior in a Rust library loaded by
-the host application:
+An earlier Cua SDK for a hosted service (since retired) placed substantial
+portable client behavior in a Rust library loaded by the host application:
 
 ```text
 application
   -> generated UniFFI binding
-  -> libcyclops_sdk
+  -> shared Rust client library
        - authentication and token refresh
        - resource lifecycle and polling
        - route construction and validation
        - concurrency control
   -> host-provided HttpClient
-  -> remote Fleet API
+  -> remote service API
 ```
 
-Fleet's Rust SDK contains behavior that would otherwise be repeated in every
-language. For example, `client.rs` owns client
-configuration and namespace lifecycle locks. `transport.rs`
-owns OAuth token caching and refresh. The pool, claim, and service modules own
-polling, request construction, validation, and lifecycle rules.
+That Rust SDK contained behavior that would otherwise be repeated in every
+language: client configuration and lifecycle locks, OAuth token caching and
+refresh, and the polling, request construction, validation, and lifecycle rules
+of each resource.
 
-The host language supplies an `HttpClient`
-callback. This lets Python, Swift, Kotlin, Ruby, or TypeScript use a suitable
-HTTP implementation while Rust keeps the product behavior. UniFFI therefore
-replaces substantial duplicated implementations, and the shared library is the
-component the language API is meant to call.
+The host language supplied an `HttpClient` callback. This let Python, Swift,
+Kotlin, Ruby, or TypeScript use a suitable HTTP implementation while Rust kept
+the product behavior. UniFFI therefore replaced substantial duplicated
+implementations, and the shared library was the component the language API was
+meant to call.
 
-Fleet also has a mature checked-in generation path for Python, Kotlin, Swift,
-and Ruby. Its `generate-sdk-bindings.sh`
-script pins UniFFI through the Rust workspace, generates into temporary roots,
-tracks owned files, and checks drift.
+It also had a mature checked-in generation path for Python, Kotlin, Swift, and
+Ruby. A single script pinned UniFFI through the Rust workspace, generated into
+temporary roots, tracked owned files, and checked drift.
 
-Fleet's Node and browser artifacts also establish an important fact: TypeScript
-UniFFI is not limited to WASM. The checked-in Node path uses
+Its Node and browser artifacts also established an important fact: TypeScript
+UniFFI is not limited to WASM. The checked-in Node path used
 `uniffi-bindgen-react-native`, `@ubjs/core`, `@ubjs/node`, and native platform
 packages. That path proved feasibility and informed Cua's generated loader and
 optional npm platform-package matrix.
 
-Fleet therefore demonstrates the relevant architecture: bindings are for
+That SDK therefore demonstrated the relevant architecture: bindings are for
 consumers that want the shared implementation, including consumers that may
 create a server. MCP clients do not need those bindings merely to call an
 already-running MCP server.
@@ -384,13 +382,9 @@ agents regardless of either SDK decision.
 
 This decision used:
 
-- Fleet commit `c2ba0b5e94d0f2c06d0c7efb0913803ca0a616af`, which added the checked-in
-  Go and TypeScript UniFFI artifacts;
+- the retired hosted-service SDK's checked-in Go and TypeScript UniFFI
+  artifacts, as a precedent for the binding pipeline;
 - Cua Driver SDK commit `896172754074f8c7ac26745685989df661714da6` before this
   explanatory document;
 - the implementation measurements and adoption gates in the
   [Rust source-of-truth and UniFFI evaluation](sdk-rust-source-of-truth-and-uniffi-evaluation-plan.md).
-
-The Fleet source had not changed between its cited commit and the latest
-`main` inspected on 2026-07-21. Recheck the generation and packaging claims if
-Fleet's binding pipeline changes.

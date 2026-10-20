@@ -12,14 +12,14 @@ truth.
 | cua SDK and CLI (`libs/cua`) | Cargo tests, proto lint/breaking, binding drift, per-language smoke tests | `tests/e2e/cua-sdk` (**E2E: cua SDK**)                               |
 | cua-spacesd               | Cargo tests and the in-process conformance suite           | Linux core tests and relay E2E in Docker                                          |
 | Python SDKs                  | Package `tests/` directories with pytest                   | Package-specific integration tests and `tests/integration`                        |
-| cua-sandbox                  | Hermetic pytest suite on the cua SDK                       | **Periodic: Cua Sandbox Live Fleet E2E**                                          |
+| cua-sandbox                  | Hermetic pytest suite on the cua SDK                       | **E2E: cua SDK** (`cua-sandbox` lane)                                             |
 | TypeScript SDKs              | Package Vitest/typecheck scripts                           | Package-owned integration tests                                                   |
 | cua-driver                   | Rust unit, schema, protocol, and compile tests             | Canonical Rust desktop harnesses on Windows, macOS, Linux X11, and Linux Wayland  |
 | Lume                         | Swift package tests                                        | VM and unattended-setup checks documented by Lume                                 |
 | Cua Spaces app               | Vitest, Tauri Rust tests                                   | **CI: Cua Spaces**                                                                |
 | Installers                   | `scripts/install/tests`                                    | **CI: Installers** smoke jobs on Linux, macOS, and Windows                        |
 | Public docs                  | Generator drift, hygiene, links, and production build      | Rendered Fumadocs site                                                            |
-| Images and sandboxes         | Component build and schema tests; **CI: Check Image Refs** (`python3 scripts/images/check-image-refs.py`: every image ref comes from `libs/images/sandbox-images.json`, a bench lock or the allowlist; frozen legacy names only in their listed paths) | **CD: Image linux**, **E2E: Fleet images, local**, image smoke tests  |
+| Images and sandboxes         | Component build and schema tests; **CI: Check Image Refs** (`python3 scripts/images/check-image-refs.py`: every image ref comes from `libs/images/sandbox-images.json`, a bench lock or the allowlist; frozen legacy names only in their listed paths) | **CD: Image linux**, image smoke tests  |
 
 Path-filtered CI avoids running unrelated operating systems, so a green job for
 one component does not validate another component.
@@ -74,9 +74,9 @@ package README under `libs/cua/{python,typescript,swift,kotlin}` and in
 [`.github/workflows/ci-cua-sdk.yml`](../../.github/workflows/ci-cua-sdk.yml).
 
 The cross-language E2E suite runs each guide scenario in Python, TypeScript,
-Rust, and Go, per lane (`hermetic`, `container`, `qemu`, `lume`, `fleet`,
-`fleet-env`, `cua-sandbox`, `conformance`). Lanes other than `hermetic` start
-containers, VMs, or Fleet claims and are opt-in:
+and Rust, per lane (`hermetic`, `container`, `qemu`, `lume`, `cua-sandbox`,
+`conformance`). Lanes other than `hermetic` start containers or VMs and are
+opt-in:
 
 ```bash
 tests/e2e/cua-sdk/ci-setup.sh --images

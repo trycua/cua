@@ -27,14 +27,8 @@ fn aims() -> &'static Mutex<Vec<Aim>> {
 }
 
 fn placed_or_refuse(window: &Window) -> Result<&Placed> {
-    window.placement.as_ref().map_err(|unplaced| match unplaced {
-        Unplaced::Tiled => foreground_unavailable(format!(
-            "niri does not report where tiled window {} is; use get_desktop_state and a desktop-scope action (needs the display grant), or float the window",
-            window.id
-        )),
-        unplaced => {
-            foreground_unavailable(format!("niri window {}: {}", window.id, unplaced.reason()))
-        }
+    window.placement.as_ref().map_err(|unplaced| {
+        foreground_unavailable(format!("niri window {}: {}", window.id, unplaced.reason()))
     })
 }
 
@@ -720,7 +714,7 @@ mod tests {
             pointer_admission(&tiled, rect, &[(150, 100)], |_| None)
                 .unwrap_err()
                 .to_string(),
-            "foreground_unavailable: niri does not report where tiled window 5 is; use get_desktop_state and a desktop-scope action (needs the display grant), or float the window"
+            "foreground_unavailable: niri window 5: niri does not report where a tiled window is; use get_desktop_state and a desktop-scope action (needs the display grant), or float the window"
         );
     }
 
@@ -736,7 +730,7 @@ mod tests {
         let window = scene.window(5).unwrap();
         assert_eq!(
             aim_at(&window, 10, 20).unwrap_err().to_string(),
-            "foreground_unavailable: niri does not report where tiled window 5 is; use get_desktop_state and a desktop-scope action (needs the display grant), or float the window"
+            "foreground_unavailable: niri window 5: niri does not report where a tiled window is; use get_desktop_state and a desktop-scope action (needs the display grant), or float the window"
         );
     }
 
@@ -823,9 +817,8 @@ mod tests {
         // the drag would stop after the press.
         let refused = drag(&frame, &scene, on_7, tiled).unwrap_err();
         assert_eq!(refused, refusal);
-        assert!(refusal_suggestion(&refused)
-            .unwrap()
-            .starts_with("Click the drag's start point first"));
+        assert!(refused.contains("click there first"));
+        assert!(refusal_suggestion(&refused).is_some());
         // Floating window 7 has focus: a start on a tiled window would move
         // focus there and may scroll the view; one on window 7 moves none.
         let scene = tiled_scene(Some(7));

@@ -26,58 +26,16 @@ pub fn desktop_frame_window_refusal(id: u64) -> anyhow::Error {
     ))
 }
 
-/// The next step for a niri input refusal, from the remedy its detail names.
-/// `None` for refusals this module does not word, which keep the generic
+/// The next step for a niri input refusal: its detail names the remedy.
+/// `None` for refusals that do not come from niri, which keep the generic
 /// suggestion.
 pub fn refusal_suggestion(detail: &str) -> Option<&'static str> {
-    let remedies: [(&[&str], &str); 9] = [
-        (
-            &["click there first"],
-            "Click the drag's start point first, take a new get_desktop_state screenshot, then drag from that point.",
-        ),
-        (
-            &["without pid and window_id"],
-            "Drop pid and window_id to act at desktop scope on the latest get_desktop_state screenshot, or pass window-local coordinates from get_window_state.",
-        ),
-        (
-            &["float the window"],
-            "niri does not report where tiled windows are: call get_desktop_state and act at desktop scope (needs the display grant), or float the window.",
-        ),
-        (
-            &[
-                "take a new screenshot",
-                "take one first",
-                "use the latest screenshot",
-                "call get_desktop_state again",
-                "during get_desktop_state; call it again",
-            ],
-            "Take a new screenshot (get_desktop_state for desktop-scope points, get_window_state for a floating window) and retry with its coordinates.",
-        ),
-        (
-            &["lies under another floating window"],
-            "Move the floating windows apart so the point is on one of them, or call get_desktop_state and act at desktop scope.",
-        ),
-        (
-            &["is outside niri window", "where window"],
-            "Pass a point inside the window, from its latest get_window_state screenshot.",
-        ),
-        (
-            &["which the get_desktop_state screenshot shows"],
-            "Pass a point on the niri output, from the latest get_desktop_state screenshot.",
-        ),
-        (
-            &["overview is open"],
-            "Close the niri overview, then retry.",
-        ),
-        (
-            &["did not stay unchanged"],
-            "Wait for niri's animations to finish, then retry.",
-        ),
-    ];
-    remedies
-        .iter()
-        .find(|(phrases, _)| phrases.iter().any(|phrase| detail.contains(phrase)))
-        .map(|(_, suggestion)| *suggestion)
+    if detail.contains("without pid and window_id") {
+        return Some("Drop pid and window_id to act at desktop scope on the latest get_desktop_state screenshot, or pass window-local coordinates from get_window_state.");
+    }
+    detail.contains("niri").then_some(
+        "Take a new screenshot (get_desktop_state for desktop-scope points, get_window_state for a floating window) after the remedy the detail names, and retry with its coordinates.",
+    )
 }
 
 /// An IPC failure on an input route, with its whole cause chain. A refusal
@@ -431,32 +389,17 @@ mod tests {
 
     #[test]
     fn a_niri_refusal_suggests_the_remedy_its_detail_names() {
-        let screenshot = refusal_suggestion(
-            &desktop_frame(history())
-                .holds(
-                    &{
-                        let mut scene = tiled_scene(Some(5));
-                        scene.overview_open = true;
-                        scene
-                    },
-                    history(),
-                )
-                .unwrap_err()
-                .to_string(),
-        );
-        assert!(screenshot.unwrap().starts_with("Take a new screenshot"));
         let tiled = aim_at(&tiled_scene(Some(5)).window(5).unwrap(), 10, 20).unwrap_err();
+        assert!(tiled.to_string().contains("float the window"));
         assert!(refusal_suggestion(&tiled.to_string())
             .unwrap()
-            .contains("act at desktop scope"));
+            .starts_with("Take a new screenshot"));
         let history = history();
         let edge = desktop_frame(history)
             .admit(&tiled_scene(Some(5)), &[(10, 100)], history)
             .unwrap_err();
-        assert!(refusal_suggestion(&edge.to_string())
-            .unwrap()
-            .starts_with("Pass a point on the niri output"));
-        // A refusal this module does not word keeps the generic suggestion.
+        assert!(refusal_suggestion(&edge.to_string()).is_some());
+        // A refusal that is not niri's keeps the generic suggestion.
         assert_eq!(
             refusal_suggestion("foreground_unavailable: no window"),
             None

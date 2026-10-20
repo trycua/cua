@@ -1240,8 +1240,30 @@ jobs:
   # the GitHub release (and therefore the PyPI/npm SDK packages) never becomes
   # public before that evidence exists. Nightly and manual build-only runs skip
   # it.
+  # Staging first (CUA-1907): a release publishes only when the staging smoke
+  # is recorded green for this exact commit as the commit status
+  # "staging-smoke/cua-driver" (description carries the artifact digest).
+  # Break-glass: an admin posts the status by hand with the reason in its
+  # description (see .github/scripts/require_staging_smoke.sh); the Driver
+  # release job runs on a tag push only, so there is no manual-run bypass.
+  staging-gate:
+    name: staging smoke is green
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      statuses: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require a green staging smoke for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/require_staging_smoke.sh cua-driver "$GITHUB_SHA"
+
   release:
     needs:
+      - staging-gate
       - build-linux
       - build-windows
       - build-macos-universal

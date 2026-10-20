@@ -1040,6 +1040,7 @@ fi
         self.assertIn("ref: ${{ github.workflow_sha }}", workflow)
         self.assertIn(
             "    needs:\n"
+            "      - staging-gate\n"
             "      - build-linux\n"
             "      - build-windows\n"
             "      - build-macos-universal\n"

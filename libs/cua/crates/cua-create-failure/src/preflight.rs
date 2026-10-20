@@ -329,7 +329,8 @@ pub fn evaluate(req: &Request, facts: &Facts) -> Vec<Issue> {
                  computers. Turn it on in the computer's BIOS settings.",
                 None,
             )),
-            (VirtGap::KvmPermission, Host::Linux, _) => out.push(Issue::new(
+            // Like a missing KVM, a Linux guest still starts without it.
+            (VirtGap::KvmPermission, Host::Linux, Guest::Windows) => out.push(Issue::new(
                 IssueKind::VirtualizationUnavailable,
                 "Cua isn't allowed to use this computer's virtualization. Add your account to \
                  the kvm group, then log out and back in.",
@@ -473,8 +474,9 @@ mod tests {
         // A Linux guest without KVM still runs (slowly).
         let linux_linux = req(Host::Linux, Guest::Linux, Runs::Vm);
         assert!(evaluate(&linux_linux, &gap(VirtGap::KvmMissing)).is_empty());
+        assert!(evaluate(&linux_linux, &gap(VirtGap::KvmPermission)).is_empty());
         assert_eq!(
-            first(&linux_linux, &gap(VirtGap::KvmPermission)).kind,
+            first(&linux_win, &gap(VirtGap::KvmPermission)).kind,
             IssueKind::VirtualizationUnavailable
         );
         // Containers do not need it.
@@ -544,7 +546,7 @@ mod tests {
             ),
             (
                 Host::Linux,
-                Guest::Linux,
+                Guest::Windows,
                 Runs::Vm,
                 Engine::Ready,
                 Some(VirtGap::KvmPermission),

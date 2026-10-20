@@ -8,7 +8,7 @@ use anyhow::{anyhow, bail, Result};
 use std::thread::sleep;
 use std::time::Duration;
 use windows::core::{Error, Owned};
-use windows::Win32::Foundation::{ERROR_INVALID_THREAD_ID, HANDLE, HWND, LPARAM, POINT, WPARAM};
+use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, POINT, WPARAM};
 use windows::Win32::Graphics::Gdi::{ClientToScreen, ScreenToClient};
 use windows::Win32::System::Diagnostics::Debug::{self, GetThreadContext, CONTEXT};
 use windows::Win32::System::Threading;
@@ -40,14 +40,18 @@ struct AlignedContext(CONTEXT);
 struct SuspendedThread(Owned<HANDLE>);
 
 impl SuspendedThread {
-    fn suspend(hwnd: HWND) -> windows::core::Result<Self> {
-        let thread_id = Some(unsafe { crate::input::GetWindowThreadProcessId(hwnd, None) })
-            .filter(|&id| id != 0 && id != unsafe { Threading::GetCurrentThreadId() })
-            .ok_or(ERROR_INVALID_THREAD_ID)?;
+    fn suspend(hwnd: HWND) -> windows::core::Result<Option<Self>> {
+        let thread_id = unsafe { crate::input::GetWindowThreadProcessId(hwnd, None) };
+        if thread_id == 0 || thread_id == unsafe { Threading::GetCurrentThreadId() } {
+            return Ok(None);
+        }
         let access = Threading::THREAD_SUSPEND_RESUME | Threading::THREAD_GET_CONTEXT;
-        let handle = unsafe { Owned::new(Threading::OpenThread(access, false, thread_id)?) };
+        let Ok(handle) = (unsafe { Threading::OpenThread(access, false, thread_id) }) else {
+            return Ok(None);
+        };
+        let handle = unsafe { Owned::new(handle) };
         if unsafe { Threading::SuspendThread(*handle) } == u32::MAX {
-            return Err(Error::from_win32());
+            return Ok(None);
         }
         let suspended = Self(handle);
         let mut context = AlignedContext(CONTEXT::default());
@@ -59,7 +63,11 @@ impl SuspendedThread {
         {
             context.0.ContextFlags = Debug::CONTEXT_CONTROL_ARM64;
         }
-        unsafe { GetThreadContext(*suspended.0, &mut context.0) }.map(|()| suspended)
+        if unsafe { GetThreadContext(*suspended.0, &mut context.0) }.is_err() {
+            suspended.resume()?;
+            return Ok(None);
+        }
+        Ok(Some(suspended))
     }
 
     fn resume(self) -> windows::core::Result<()> {
@@ -183,7 +191,7 @@ fn post_click_on(hwnd: HWND, x: i32, y: i32, count: usize, button: &str) -> Resu
     // call SetForegroundWindow from their event handlers. Keep the top-level
     // categorically non-activatable until the complete burst has settled.
     let _noact = crate::input::NoActivateGuard::arm(hwnd);
-    let unavailable = |error: Error| anyhow!("background_unavailable: target thread: {error}");
+    let unavailable = |error: Error| anyhow!("target thread: {error}");
     for i in 0..count {
         let press_msg = posted_press_message(down_msg, double_msg, i, wants_double);
         let suspended = SuspendedThread::suspend(hwnd).map_err(unavailable)?;
@@ -195,7 +203,9 @@ fn post_click_on(hwnd: HWND, x: i32, y: i32, count: usize, button: &str) -> Resu
                 .and_then(|()| PostMessageW(hwnd, press_msg, wdown, lparam))
                 .and_then(|()| PostMessageW(hwnd, up_msg, wup, lparam))
         };
-        suspended.resume().map_err(unavailable)?;
+        if let Some(suspended) = suspended {
+            suspended.resume().map_err(unavailable)?;
+        }
         posted?;
         if i + 1 < count {
             sleep(Duration::from_millis(80));
@@ -1295,6 +1305,49 @@ mod wheel_tests {
                     let _ = pump.join();
                 }
             }
+        }
+    }
+
+    #[test]
+    fn posted_click_is_delivered_when_calling_thread_cannot_be_paused() {
+        unsafe {
+            let instance = GetModuleHandleW(None).expect("module handle");
+            let class = WNDCLASSW {
+                lpfnWndProc: Some(leave_on_move_window_proc),
+                hInstance: instance.into(),
+                lpszClassName: w!("CuaPostedClickCallingThread"),
+                ..Default::default()
+            };
+            assert_ne!(RegisterClassW(&class), 0);
+            let hwnd = CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                class.lpszClassName,
+                w!(""),
+                WS_POPUP,
+                0,
+                0,
+                100,
+                100,
+                None,
+                None,
+                instance,
+                None,
+            )
+            .expect("create window");
+            let trace = MouseTrace::new();
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, Arc::as_ptr(&trace) as isize);
+            assert!(super::SuspendedThread::suspend(hwnd).unwrap().is_none());
+            post_click_on(hwnd, 5, 5, 1, "left").expect("post without pause");
+            let mut msg = MSG::default();
+            while PeekMessageW(&mut msg, Some(hwnd), 0, 0, PM_REMOVE).as_bool() {
+                DispatchMessageW(&msg);
+            }
+            assert_eq!(
+                trace.snapshot(),
+                [WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSELEAVE]
+            );
+            DestroyWindow(hwnd).expect("destroy window");
+            UnregisterClassW(class.lpszClassName, instance).expect("unregister class");
         }
     }
 

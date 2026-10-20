@@ -28,6 +28,10 @@ ADDR=127.0.0.1:3211  # host:port of .spacesd.url
 grpcurl -plaintext -H "authorization: Bearer $TOKEN" "$ADDR" list
 grpcurl -plaintext -H "authorization: Bearer $TOKEN" "$ADDR" describe cua.env.v1.ProcessService
 grpcurl -plaintext -H "authorization: Bearer $TOKEN" "$ADDR" cua.env.v1.SystemService/Health
+# Run a command (stdout comes back base64-encoded in the stream):
+grpcurl -plaintext -H "authorization: Bearer $TOKEN" \
+  -d '{"config": {"command": "uname", "args": ["-sr"]}}' \
+  "$ADDR" cua.env.v1.ProcessService/StartProcess
 ```
 
 Or point grpcurl at these files instead of reflection:

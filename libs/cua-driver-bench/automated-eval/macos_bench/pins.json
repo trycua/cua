@@ -22,9 +22,9 @@
     "source": "Copied from Cua's private benchmark repository at revision 16a1937a79ff2ee2e48f5b5d9bb5e6f944119b5a; see taskpack/README.md. shared/cdb-s02 also carries the Amendment 19 checker fix (one Schedule row per session). The licence metadata (package.json/package-lock.json `license`, PROVENANCE.md) was changed from MIT to FSL-1.1-MIT on 11 Oct 2026; `mit_release_tree_sha256` holds the digests of the MIT copy published in #4973/#4978.",
     "revision": "16a1937a79ff2ee2e48f5b5d9bb5e6f944119b5a",
     "tree_sha256": {
-      "shared/cdb-s02": "86857b975b6d3e2a671ab0d577fc7aef0679ffcb488b09ee8e77f647d1630d94",
-      "shared/cdb-s03": "0c38419567b079ce3bb139e6105fe023ae7d1a8e60aef44278e93e6763099fff",
-      "shared/cdb-s04": "d93b31598682daa0f64e180f4e4950cf8530b792e61aed9d740d53df0783c53a"
+      "shared/cdb-s02": "07018de7f2c8fec2b604f11749800477e56981f4b1c19312e2350851de9a280b",
+      "shared/cdb-s03": "095f8be9ee022ca0005dd428d2872d1347e6a1e766c767dff9592841018bb719",
+      "shared/cdb-s04": "0c5f559573b0a3e0b1726bd44d4d6f1c75231ab4cbdcc1d0d229c4c6d223fbc6"
     },
     "mit_release_tree_sha256": {
       "shared/cdb-s02": "844dbbd2b247395303b901cbd328dee092adfa0e592b511ce6900c69e92073c9",

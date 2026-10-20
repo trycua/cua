@@ -52,7 +52,7 @@ with `capturePage`, so the native traffic lights are not in the images.
 ## Measurements
 
 Measured on 2026-10-03 on an Apple silicon Mac (macOS 26.6) with Electron
-44.5.1, an unsigned build, and the placeholder page.
+44.9.1, an unsigned build, and the placeholder page.
 
 | | |
 |---|---|

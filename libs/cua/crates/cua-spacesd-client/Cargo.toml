@@ -55,3 +55,8 @@ rcgen = { version = "0.14", default-features = false, features = ["crypto", "rin
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 cua-spacesd-client = { path = ".", features = ["testing"] }
 tempfile.workspace = true
+# tests/emudhra_distrust.rs: prove the verifier refuses the compromised eMudhra
+# intermediates (rustls-webpki >= 0.103.16) for both webpki-roots lines in use.
+rustls-webpki = { version = "0.103.16", default-features = false, features = ["std", "ring"] }
+rustls-pki-types = { version = "1", features = ["std"] }
+webpki-roots-026 = { package = "webpki-roots", version = "0.26.11" }

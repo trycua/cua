@@ -1,0 +1,38 @@
+name: "CI: Check eMudhra Distrust"
+
+# Eight eMudhra intermediate CA keys were compromised (2026-10-17, CUA-1948).
+# Every lockfile and manifest must stay at or above the versions that distrust
+# them: rustls-webpki 0.103.16, webpki-roots 1.0.10, certifi 2026.10.19,
+# Electron 42.11.16 / 43.8.1 / 44.9.1, Go 1.26.10 / 1.27.3, and Dockerfiles that
+# install ca-certificates must carry the distrust block. The Rust regression
+# test (cua-spacesd-client, tests/emudhra_distrust.rs) runs in ci-cua-sdk.
+# Offline and fast; also runs weekly so a stale lockfile cannot linger.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  emudhra-distrust:
+    name: Lockfiles and manifests distrust the compromised eMudhra intermediates
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Guard unit tests
+        run: python3 -m unittest discover -s scripts/security/tests
+      - name: Versions are at or above the fixed ones
+        run: python3 scripts/security/check-emudhra-distrust.py

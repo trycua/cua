@@ -210,12 +210,16 @@ Alias: `cua sandbox get`.
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="cua-sandbox-info--local"></span>`--local` | boolean | `false` | Look NAME up among local sandboxes only (same as `local:NAME`). |
+| <span id="cua-sandbox-info--connection"></span>`--connection` | boolean | `false` | Also print how to call the sandbox's cua-spacesd from your own code: its gRPC URL and bearer token (`authorization: Bearer <token>`). The token is a secret: anyone with it controls the sandbox. |
 
 **Examples**
 
 ```bash test="cli-shape" id="ref-cua-sandbox-info"
 cua sb info dev
 cua sb info local:dev --json
+
+# The gRPC URL and token of its cua-spacesd, for your own client
+cua sb info dev --connection --json
 ```
 
 ### `cua sandbox suspend`

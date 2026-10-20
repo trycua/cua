@@ -359,13 +359,21 @@ pub enum SandboxCmd {
         visible_alias = "get",
         after_help = "Examples:
   cua sb info dev
-  cua sb info local:dev --json"
+  cua sb info local:dev --json
+  # The gRPC URL and token of its cua-spacesd, for your own client
+  cua sb info dev --connection --json"
     )]
     Info {
         /// Sandbox name or ref (`local:NAME`).
         name: String,
         #[command(flatten)]
         at: Narrow,
+        /// Also print how to call the sandbox's cua-spacesd from your own
+        /// code: its gRPC URL and bearer token (`authorization: Bearer
+        /// <token>`). The token is a secret: anyone with it controls the
+        /// sandbox.
+        #[arg(long)]
+        connection: bool,
     },
     /// Suspend (pause/snapshot).
     #[command(after_help = "Examples:
@@ -1714,13 +1722,28 @@ pub async fn run(
             let name = at.apply(&name)?;
             return port_forward(cua, &name, &spec, no_wait, json_global, out).await;
         }
-        SandboxCmd::Info { name, at } => {
+        SandboxCmd::Info {
+            name,
+            at,
+            connection,
+        } => {
             let name = at.apply(&name)?;
             let json = json_global;
             match sbx.get(name.clone()).await {
                 Ok(i) => {
+                    // The sandbox's own spacesd: URL and bearer token.
+                    let spacesd = if connection {
+                        let env = env_of(cua, &name).await?;
+                        Some((env.endpoint(), env.inner().token().map(str::to_owned)))
+                    } else {
+                        None
+                    };
                     if json {
-                        line(out, info_json(&i).to_string());
+                        let mut v = info_json(&i);
+                        if let Some((url, token)) = &spacesd {
+                            v["spacesd"] = serde_json::json!({ "url": url, "token": token });
+                        }
+                        line(out, v.to_string());
                     } else {
                         line(out, format!("Name:     {}", i.name));
                         line(out, format!("Id:       {}", i.id));
@@ -1734,6 +1757,13 @@ pub async fn run(
                         s.sort();
                         for (k, p) in s {
                             line(out, format!("Service:  {k} ({p})"));
+                        }
+                        if let Some((url, token)) = &spacesd {
+                            line(out, format!("Spacesd:  {url}"));
+                            line(
+                                out,
+                                format!("Token:    {}", token.as_deref().unwrap_or("(none)")),
+                            );
                         }
                     }
                 }

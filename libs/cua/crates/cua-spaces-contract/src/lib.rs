@@ -608,7 +608,7 @@ const DRIVE_INSTRUCTIONS: &str = "Cua Volume is one versioned drive per account,
 
 const SHARES_RESULT: &str = "JSON: `space`, `machine` (the relay computer it is shared as; empty when not shared), `invitee_space` (what the people it is shared with open: `relay:<computer>`), `url`, `online` and `shares` (each `who`, `role`: viewer or editor, and `connected`).";
 
-const SHARE_INSTRUCTIONS: &str = "Shares the Space through the cua.ai relay with one account, by verified email or account id, or with a whole team as `team:<id>` (always as an editor; Teams plan); the same allowlist and device enrollment `cua host share` uses. A viewer joins presence with their own named cursor and watches a view-only stream: the Space's driver refuses their input, shell, files and MCP. An editor gets full use, and their input is a human session. Sharing again changes the role. A host (`relay:<id>`) is shared directly; any other Space (local, cloud, or added by address) is attached to the relay on its first share: its own driver dials out, so it needs no inbound port. Invitees open `invitee_space`.";
+const SHARE_INSTRUCTIONS: &str = "Shares the Space through the cua.ai relay with one person in your own team, by verified email or account id, or with the whole team as `team:<id>` (as a viewer or an editor). Sharing is for teams: an account in no team gets `sharing_needs_team` (\"Sharing is for teams. Start a team to share this Space.\"), and someone outside your team gets `share_outside_team`. The same allowlist and device enrollment `cua host share` uses. A viewer joins presence with their own named cursor and watches a view-only stream: the Space's driver refuses their input, shell, files and MCP. An editor gets full use, and their input is a human session. Sharing again changes the role. A host (`relay:<id>`) is shared directly; any other Space (local, cloud, or added by address) is attached to the relay on its first share: its own driver dials out, so it needs no inbound port. Invitees open `invitee_space`.";
 
 /// The Spaces tools, in manifest order.
 pub fn tools() -> Vec<Tool> {
@@ -1551,7 +1551,7 @@ pub fn tools() -> Vec<Tool> {
             sdk_symbol: "space.sharing.share(with:role:)",
             rust_symbol: "Spaces::share_space",
             notes: &["Viewers and editors are enforced by the Space's own cua-spacesd, not by the caller; a Space whose driver predates relay_attach reports capability_missing."],
-            ..Spec::new("share_space", "Let another cua.ai account watch or edit a Space.")
+            ..Spec::new("share_space", "Let someone in your team watch or edit a Space.")
         }
         .with::<i::ShareSpace>(),
         Spec {

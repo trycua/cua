@@ -54,6 +54,7 @@ export type {
 export type { TranscriptItem, TranscriptStep } from "./transcript";
 export { GRID_COLUMNS, iconKey, thumbnailKey, useTeleport, type TeleportHook, type TeleportSession, type TeleportStore } from "./teleport";
 export { useShareSheet, type ShareHook, type ShareSession } from "./share";
+export { useShareRemovalNote, type ShareRemovalNoteHook } from "./removal-note";
 export {
   agentKeyForm,
   agentKeysView,

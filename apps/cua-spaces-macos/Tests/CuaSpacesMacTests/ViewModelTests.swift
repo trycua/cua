@@ -575,8 +575,8 @@ struct ViewModelTests {
     @Test func refreshBuildsTheSidebarFromTheCore() async {
         let model = makeModel()
         await model.refresh()
-        let titles = model.sidebar.sections.map(\.title)
-        #expect(titles == ["Cua Cloud", "This Mac", "Connected"])
+        let titles = model.sidebar.sections.map(\.title.code)
+        #expect(titles == ["spaces.sidebar.section.cloud", "spaces.sidebar.section.this_mac", "spaces.sidebar.section.connected"])
         // The container hostname defers to the name in the id.
         #expect(model.spaces.contains { $0.name == "aurora" })
         // An unreachable Space is dimmed and cannot stream.

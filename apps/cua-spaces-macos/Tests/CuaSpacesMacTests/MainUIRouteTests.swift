@@ -286,7 +286,7 @@ struct MainUIRouteTests {
         m.openWebUI = { calls.append("open") }
         m.closeWebUI = { calls.append("close") }
         let classic = m.experimentsPage.sections.flatMap(\.rows).first { $0.id == "experiment:classic_ui" }
-        #expect(classic?.label == "Use classic UI")
+        #expect(classic?.label.code == "settings.experiments.classic_ui.title")
         #expect(classic?.options.first { $0.active }?.id == "off")
         m.chooseExperiment(row: "experiment:classic_ui", option: "on")
         #expect(calls == ["close"])

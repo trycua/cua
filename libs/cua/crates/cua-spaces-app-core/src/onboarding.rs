@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::drive_settings::{
     DriveCheckInput, DriveMountInput, DriveStorageInput, DriveStorageUpdate, StorageAction,
-    StorageInput, StorageRequest, StorageState, form_ready, mount_label, not_available,
-    storage_reduce, storage_section,
+    StorageInput, StorageRequest, StorageState, form_ready, not_available, storage_reduce,
+    storage_section,
 };
 use crate::experiments::Experiments;
 use crate::installer::{CliInstallPlan, InstallMethod};
@@ -908,7 +908,7 @@ pub fn drive_card(s: &OnboardingState) -> DriveCard {
                 .collect();
             for r in &mut rows {
                 if r.id == "s3-endpoint" {
-                    r.placeholder = Some("AWS, R2 or MinIO URL".into());
+                    r.placeholder = Some(crate::message::Msg::literal("AWS, R2 or MinIO URL"));
                 }
             }
             rows
@@ -920,18 +920,14 @@ pub fn drive_card(s: &OnboardingState) -> DriveCard {
         storage_title: storage.map(|_| "Where your files live".into()),
         storage_options: if storage.is_some() {
             [
-                (
-                    StorageChoice::Local,
-                    "local",
-                    crate::drive_settings::this_machine(os),
-                ),
+                (StorageChoice::Local, "local", os.this_machine()),
                 (StorageChoice::S3, "s3", "Your S3 bucket"),
                 (StorageChoice::Later, "later", "Set up later"),
             ]
             .into_iter()
             .map(|(c, id, label)| SettingsOption {
                 id: id.into(),
-                label: label.into(),
+                label: crate::message::Msg::literal(label),
                 active: s.storage_choice == c,
             })
             .collect()
@@ -968,7 +964,12 @@ pub fn drive_card(s: &OnboardingState) -> DriveCard {
         }),
         mounted_path: status.and_then(|m| m.mounted_path().map(str::to_string)),
         can_continue: !busy && storage_ready(s),
-        label: mount_label(os).into(),
+        label: if os == SpaceOs::Linux {
+            "Mount Cua Volume"
+        } else {
+            "Add Cua Volume to Finder"
+        }
+        .into(),
         image_label: if os == SpaceOs::Linux {
             "Files from a Space arriving in the mounted Cua Volume"
         } else {
@@ -2313,14 +2314,14 @@ mod tests {
         let active: Vec<_> = card
             .storage_options
             .iter()
-            .map(|o| (o.label.as_str(), o.active))
+            .map(|o| (o.label.english(), o.active))
             .collect();
         assert_eq!(
             active,
             [
-                ("This Mac", true),
-                ("Your S3 bucket", false),
-                ("Set up later", false)
+                ("This Mac".to_string(), true),
+                ("Your S3 bucket".to_string(), false),
+                ("Set up later".to_string(), false)
             ]
         );
         assert!(card.storage_rows.is_empty() && card.can_continue);

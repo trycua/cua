@@ -74,7 +74,7 @@ struct AboutSettingsView: View {
                     Picker(u.channelLabel, selection: Binding(
                         get: { u.channels.first(where: \.active)?.id ?? "stable" },
                         set: { updates.choose(channel: $0) })) {
-                        ForEach(u.channels, id: \.id) { Text($0.label).tag($0.id) }
+                        ForEach(u.channels, id: \.id) { Text(CoreMessages.text($0.label)).tag($0.id) }
                     }
                     .labelsHidden()
                     .pickerStyle(.menu)

@@ -17,7 +17,7 @@ import { string } from "./args";
 import type { BridgeContext } from "./context";
 import { Failure, type Handlers } from "./host";
 import { hostParts, type HostParts } from "./host-parts";
-import { encode } from "./value";
+import { encodeText } from "./value";
 
 function telemetryInput(model: AppModel): AppTelemetryInput | undefined {
   try {
@@ -84,8 +84,8 @@ export function experimentsPage(model: AppModel) {
  * no updater), the global shortcut (null: none here) and the account app. */
 export function settingsState(model: AppModel, parts: HostParts) {
   return {
-    page: encode(settingsPage(model, parts)),
-    experiments: encode(experimentsPage(model)),
+    page: encodeText(settingsPage(model, parts)),
+    experiments: encodeText(experimentsPage(model)),
     updateChannel: parts.updates.updater === null ? null : parts.updates.channelWord,
     globalShortcut: parts.system?.globalShortcut?.() ?? null,
     // The account app (CUA_ENV, CUA_ACCOUNT_APP_URL): the page's core has no

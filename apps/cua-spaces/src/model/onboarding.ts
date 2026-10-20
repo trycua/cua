@@ -10,6 +10,7 @@ import { core } from "../core";
 import type { DriveCheckInput, DriveStorageInput, StorageAction, StorageState } from "./driveSettings";
 import type { DriveMountInput } from "./persistent";
 import type { SpaceOs } from "./types";
+import type { Msg } from "../i18n";
 import type { SettingsRow } from "./window";
 
 /** Where the volume's files live, as picked on its page. */
@@ -136,7 +137,7 @@ export interface DriveCard {
   /** "Where your files live" (null until `volume_storage` answered). */
   storageTitle: string | null;
   /** This Mac, Your S3 bucket, Set up later. */
-  storageOptions: { id: StorageChoice; label: string; active: boolean }[];
+  storageOptions: { id: StorageChoice; label: Msg; active: boolean }[];
   /** The bucket's rows (Settings rows) when a bucket is picked. */
   storageRows: SettingsRow[];
   /** One muted line (Set up later). */

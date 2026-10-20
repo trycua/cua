@@ -9,5 +9,6 @@
   "common.action.reconnect": "다시 연결",
   "common.status.connecting": "연결 중…",
   "common.action.back": "뒤로",
-  "common.action.done": "완료"
+  "common.action.done": "완료",
+  "common.literal": "{text}"
 }

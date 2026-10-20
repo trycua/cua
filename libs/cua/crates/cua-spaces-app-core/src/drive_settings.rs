@@ -15,9 +15,12 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::message::Msg;
 use crate::model::SpaceOs;
 use crate::paths::display_path;
-use crate::settings::{SettingsOption, SettingsRow, SettingsRowKind, SettingsSection, row};
+use crate::settings::{
+    SettingsOption, SettingsRow, SettingsRowKind, SettingsSection, m, on_off, row,
+};
 
 /// `volume_mount_status`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -586,25 +589,31 @@ pub fn storage_reduce(state: &StorageState, action: &StorageAction) -> StorageSt
     s
 }
 
-fn opt(id: &str, label: &str, active: bool) -> SettingsOption {
+fn opt(id: &str, label: Msg, active: bool) -> SettingsOption {
     SettingsOption {
         id: id.into(),
-        label: label.into(),
+        label,
         active,
     }
 }
 
-pub(crate) fn this_machine(os: SpaceOs) -> &'static str {
-    os.this_machine()
+/// "This Mac", "This PC" or "This computer" as a message.
+pub(crate) fn this_machine(os: SpaceOs) -> Msg {
+    m(match os {
+        SpaceOs::Macos => "settings.storage.this_mac",
+        SpaceOs::Windows => "settings.storage.this_pc",
+        SpaceOs::Linux | SpaceOs::Unknown => "settings.storage.this_computer",
+    })
 }
 
-/// The mount switch's words: a Finder volume on macOS, a mount on Linux.
-pub fn mount_label(os: SpaceOs) -> &'static str {
-    if os == SpaceOs::Linux {
-        "Mount Cua Volume"
+/// The mount switch's words: a Finder volume on macOS, a mount on Linux
+/// (`settings.storage.mount_linux`, `settings.storage.mount_finder`).
+pub fn mount_label(os: SpaceOs) -> Msg {
+    m(if os == SpaceOs::Linux {
+        "settings.storage.mount_linux"
     } else {
-        "Add Cua Volume to Finder"
-    }
+        "settings.storage.mount_finder"
+    })
 }
 
 /// When the mount cannot be used here and the daemon gave no reason.
@@ -631,6 +640,25 @@ pub fn check_text(c: &DriveCheckInput) -> String {
     }
 }
 
+/// [`check_text`] as a message.
+pub fn check_msg(c: &DriveCheckInput) -> Msg {
+    if c.ok {
+        return m("settings.storage.check_ok");
+    }
+    if let Some(d) = c.detail.as_deref().filter(|d| !d.is_empty()) {
+        return Msg::literal(d);
+    }
+    m(if !c.reachable {
+        "settings.storage.check_unreachable"
+    } else if !c.authorized {
+        "settings.storage.check_unauthorized"
+    } else if !c.versioning {
+        "settings.storage.check_unversioned"
+    } else {
+        "settings.storage.check_unusable"
+    })
+}
+
 pub(crate) fn form_ready(form: &StorageForm, has_keys: bool) -> bool {
     if form.backend != "s3" {
         return true;
@@ -651,97 +679,104 @@ pub fn storage_section(input: &StorageInput, state: &StorageState) -> SettingsSe
 
     if let Some(storage) = &input.storage {
         let f = &state.form;
-        let mut backend = row("backend", Choice, "Store files on");
+        let mut backend = row("backend", Choice, m("settings.storage.backend"));
         backend.options = vec![
             opt("fs", this_machine(os), f.backend == "fs"),
-            opt("s3", "S3-compatible", f.backend == "s3"),
+            opt("s3", m("settings.storage.s3"), f.backend == "s3"),
         ];
         backend.enabled = !busy;
         rows.push(backend);
         if f.backend == "fs" {
-            let mut r = row("fs-path", Text, "Stored in");
+            let mut r = row("fs-path", Text, m("settings.storage.stored_in"));
             r.value = Some(display_path(&storage.fs_path, input.home.as_deref()));
-            r.help = Some(storage.fs_path.clone());
+            r.help = Some(Msg::literal(&storage.fs_path));
             rows.push(r);
         } else {
-            let field = |id: &str, kind: SettingsRowKind, label: &str, value: &str, ph: &str| {
-                let mut r = row(id, kind, label);
-                r.value = Some(value.into());
-                r.placeholder = Some(ph.into()).filter(|p: &String| !p.is_empty());
-                r.enabled = !busy;
-                r
-            };
-            let saved = if has_keys && saved_s3 { "Saved" } else { "" };
+            let field =
+                |id: &str, kind: SettingsRowKind, label: &str, value: &str, ph: Option<Msg>| {
+                    let mut r = row(id, kind, m(label));
+                    r.value = Some(value.into());
+                    r.placeholder = ph;
+                    r.enabled = !busy;
+                    r
+                };
+            let saved = (has_keys && saved_s3).then(|| m("settings.storage.saved"));
             if !state.manual {
-                let mut p = row("s3-prompt", Prompt, "Ask your agent to set it up:");
+                let mut p = row("s3-prompt", Prompt, m("settings.storage.ask_agent"));
                 p.value = Some(S3_AGENT_PROMPT.into());
-                p.button = Some("Copy".into());
+                p.button = Some(m("settings.storage.copy"));
                 rows.push(p);
-                let mut m = row("s3-manual", Link, "Enter details manually");
-                m.enabled = !busy;
-                rows.push(m);
+                let mut manual = row("s3-manual", Link, m("settings.storage.manual"));
+                manual.enabled = !busy;
+                rows.push(manual);
                 if let Some(c) = &state.check {
                     if c.ok {
-                        let mut t = row("s3-test", Text, "Connection");
+                        let mut t = row("s3-test", Text, m("settings.storage.connection"));
                         t.value = Some(check_text(c));
                         rows.push(t);
                     } else {
-                        rows.push(row("s3-check", Error, &check_text(c)));
+                        rows.push(row("s3-check", Error, check_msg(c)));
                     }
                 } else if matches!(state.request, Some(StorageRequest::Adopt { .. })) {
-                    let mut t = row("s3-test", Text, "Connection");
+                    let mut t = row("s3-test", Text, m("settings.storage.connection"));
                     t.value = Some("Connecting\u{2026}".into());
                     rows.push(t);
                 }
             } else {
-                rows.push(field("s3-endpoint", Field, "Endpoint", &f.endpoint, "AWS"));
-                rows.push(field("s3-bucket", Field, "Bucket", &f.bucket, ""));
+                rows.push(field(
+                    "s3-endpoint",
+                    Field,
+                    "settings.storage.endpoint",
+                    &f.endpoint,
+                    Some(Msg::literal("AWS")),
+                ));
+                rows.push(field(
+                    "s3-bucket",
+                    Field,
+                    "settings.storage.bucket",
+                    &f.bucket,
+                    None,
+                ));
                 rows.push(field(
                     "s3-region",
                     Field,
-                    "Region",
+                    "settings.storage.region",
                     &f.region,
-                    DEFAULT_REGION,
+                    Some(Msg::literal(DEFAULT_REGION)),
                 ));
-                let mut ps = row("s3-path-style", Choice, "Path-style URLs");
-                ps.options = vec![
-                    opt("on", "On", f.path_style),
-                    opt("off", "Off", !f.path_style),
-                ];
+                let mut ps = row("s3-path-style", Choice, m("settings.storage.path_style"));
+                ps.options = on_off(f.path_style);
                 ps.enabled = !busy;
                 rows.push(ps);
                 rows.push(field(
                     "s3-access-key",
                     Field,
-                    "Access key ID",
+                    "settings.storage.access_key",
                     &f.access_key_id,
-                    saved,
+                    saved.clone(),
                 ));
                 rows.push(field(
                     "s3-secret",
                     Secret,
-                    "Secret access key",
+                    "settings.storage.secret_key",
                     &f.secret_access_key,
                     saved,
                 ));
                 let testing = matches!(state.request, Some(StorageRequest::Test { .. }));
-                let mut t = row("s3-test", Text, "Connection");
+                let mut t = row("s3-test", Text, m("settings.storage.connection"));
                 t.value = state.check.as_ref().filter(|c| c.ok).map(check_text);
-                t.button = Some(
-                    if testing {
-                        "Testing\u{2026}"
-                    } else {
-                        "Test connection"
-                    }
-                    .into(),
-                );
+                t.button = Some(m(if testing {
+                    "settings.storage.testing"
+                } else {
+                    "settings.storage.test"
+                }));
                 t.enabled = !busy && form_ready(f, has_keys);
                 rows.push(t);
                 if let Some(c) = state.check.as_ref().filter(|c| !c.ok) {
-                    rows.push(row("s3-check", Error, &check_text(c)));
+                    rows.push(row("s3-check", Error, check_msg(c)));
                 }
                 if !saved_s3 {
-                    let mut l = row("s3-use-prompt", Link, "Use a prompt instead");
+                    let mut l = row("s3-use-prompt", Link, m("settings.storage.use_prompt"));
                     l.enabled = !busy;
                     rows.push(l);
                 }
@@ -750,49 +785,48 @@ pub fn storage_section(input: &StorageInput, state: &StorageState) -> SettingsSe
     }
 
     match &input.mount {
-        Some(m) if m.supported() => {
+        Some(mount) if mount.supported() => {
             let mut r = row("mount", Choice, mount_label(os));
-            r.options = vec![opt("on", "On", m.enabled), opt("off", "Off", !m.enabled)];
+            r.options = on_off(mount.enabled);
             r.enabled = !busy;
             rows.push(r);
-            match m.state.as_str() {
+            match mount.state.as_str() {
                 "mounted" => {
-                    if let Some(path) = m.mounted_path() {
+                    if let Some(path) = mount.mounted_path() {
                         let mut r = row(
                             "mount-path",
                             Text,
-                            if m.in_finder() {
-                                "In Finder at"
+                            m(if mount.in_finder() {
+                                "settings.storage.in_finder"
                             } else {
-                                "Mounted at"
-                            },
+                                "settings.storage.mounted_at"
+                            }),
                         );
                         r.value = Some(display_path(path, input.home.as_deref()));
-                        r.help = Some(path.into());
-                        r.button = Some(
-                            if m.in_finder() {
-                                "Show in Finder"
-                            } else {
-                                "Open"
-                            }
-                            .into(),
-                        );
+                        r.help = Some(Msg::literal(path));
+                        r.button = Some(m(if mount.in_finder() {
+                            "settings.storage.show_in_finder"
+                        } else {
+                            "settings.storage.open"
+                        }));
                         r.link_url = Some(path.into());
                         r.enabled = !busy;
                         rows.push(r);
                     }
                 }
-                "mounting" => rows.push(row("mount-path", Text, "Mounting\u{2026}")),
+                "mounting" => rows.push(row("mount-path", Text, m("settings.storage.mounting"))),
                 "needs_approval" => {
                     let mut r = row(
                         "mount-approval",
                         Text,
-                        m.detail
+                        mount
+                            .detail
                             .as_deref()
-                            .unwrap_or("Allow the Cua Volume extension in System Settings"),
+                            .map(Msg::literal)
+                            .unwrap_or_else(|| m("settings.storage.approve_extension")),
                     );
-                    if let Some(url) = &m.settings_url {
-                        r.button = Some("Open System Settings".into());
+                    if let Some(url) = &mount.settings_url {
+                        r.button = Some(m("settings.storage.open_system_settings"));
                         r.link_url = Some(url.clone());
                     }
                     r.enabled = !busy;
@@ -801,19 +835,22 @@ pub fn storage_section(input: &StorageInput, state: &StorageState) -> SettingsSe
                 "error" => rows.push(row(
                     "mount-error",
                     Error,
-                    m.detail
+                    mount
+                        .detail
                         .as_deref()
-                        .unwrap_or("The volume could not be mounted"),
+                        .map(Msg::literal)
+                        .unwrap_or_else(|| m("settings.storage.mount_failed")),
                 )),
                 _ => {}
             }
         }
         // Windows has no mount: nothing to show.
         _ if os == SpaceOs::Windows => {}
-        m => {
+        mount => {
             let mut r = row("mount", Text, mount_label(os));
             r.value = Some(
-                m.as_ref()
+                mount
+                    .as_ref()
                     .and_then(|m| m.detail.clone())
                     .filter(|d| !d.is_empty())
                     .unwrap_or_else(|| not_available(os)),
@@ -824,13 +861,13 @@ pub fn storage_section(input: &StorageInput, state: &StorageState) -> SettingsSe
     }
 
     if let Some(c) = &input.cache {
-        let mut r = row("cache", Text, "Cache");
+        let mut r = row("cache", Text, m("settings.storage.cache"));
         r.value = Some(format!(
             "{} of {}",
             bytes_text(c.size_bytes),
             bytes_text(c.capacity_bytes)
         ));
-        r.button = Some("Clear cache".into());
+        r.button = Some(m("settings.storage.clear_cache"));
         r.enabled = !busy && c.size_bytes > 0;
         rows.push(r);
         let mut limits: Vec<u64> = CACHE_LIMITS.to_vec();
@@ -838,10 +875,16 @@ pub fn storage_section(input: &StorageInput, state: &StorageState) -> SettingsSe
             limits.push(c.capacity_bytes);
             limits.sort_unstable();
         }
-        let mut l = row("cache-limit", Choice, "Cache size limit");
+        let mut l = row("cache-limit", Choice, m("settings.storage.cache_limit"));
         l.options = limits
             .into_iter()
-            .map(|b| opt(&b.to_string(), &bytes_text(b), b == c.capacity_bytes))
+            .map(|b| {
+                opt(
+                    &b.to_string(),
+                    Msg::literal(bytes_text(b)),
+                    b == c.capacity_bytes,
+                )
+            })
             .collect();
         l.enabled = !busy;
         rows.push(l);
@@ -854,25 +897,30 @@ pub fn storage_section(input: &StorageInput, state: &StorageState) -> SettingsSe
     {
         // The daemon did not answer: nothing to change here yet.
         rows.clear();
-        let mut r = row("storage", Text, "Cua Volume");
+        let mut r = row("storage", Text, m("settings.storage.volume"));
         r.value = Some(not_available(os));
         r.enabled = false;
         rows.push(r);
     }
 
     if let Some(e) = &state.error {
-        rows.push(row("storage-error", Error, e));
+        rows.push(row("storage-error", Error, Msg::literal(e)));
     }
 
     let saving = matches!(state.request, Some(StorageRequest::Save { .. }));
     SettingsSection {
         id: "storage".into(),
-        title: "Storage".into(),
+        title: m("settings.storage.title"),
         // Save shows once something changed.
-        button: (input.storage.is_some() && (state.dirty || saving))
-            .then(|| if saving { "Saving\u{2026}" } else { "Save" }.into()),
+        button: (input.storage.is_some() && (state.dirty || saving)).then(|| {
+            m(if saving {
+                "settings.storage.saving"
+            } else {
+                "settings.storage.save"
+            })
+        }),
         button_enabled: !busy && state.dirty && form_ready(&state.form, has_keys),
-        button_help: Some("Keys go to the credential store, never the config file".into()),
+        button_help: Some(m("settings.storage.save_help")),
         rows,
     }
 }
@@ -930,6 +978,8 @@ pub fn storage_edit(id: &str, value: &str) -> Option<StorageAction> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
+    use crate::message::OptionMsgEnglish;
 
     fn s3_storage() -> DriveStorageInput {
         DriveStorageInput {
@@ -968,7 +1018,7 @@ mod tests {
             },
         );
         let v = storage_section(&input, &s);
-        assert_eq!(v.rows[0].options[0].label, "This Mac");
+        assert_eq!(v.rows[0].options[0].label.english(), "This Mac");
         assert!(v.rows[0].options[0].active);
         assert_eq!(v.rows[1].value.as_deref(), Some("~/.cua/volume/data"));
         assert!(!v.button_enabled, "nothing to save");
@@ -1044,7 +1094,7 @@ mod tests {
         );
         let v = storage_section(&input, &s);
         let key = v.rows.iter().find(|r| r.id == "s3-access-key").unwrap();
-        assert_eq!(key.placeholder.as_deref(), Some("Saved"));
+        assert_eq!(key.placeholder.english().as_deref(), Some("Saved"));
         let s = storage_reduce(&s, &StorageAction::Test);
         let Some(StorageRequest::Test { update }) = &s.request else {
             panic!()
@@ -1063,7 +1113,12 @@ mod tests {
         let v = storage_section(&input, &s);
         assert!(ids(&v).contains(&"s3-check"));
         assert_eq!(
-            v.rows.iter().find(|r| r.id == "s3-check").unwrap().label,
+            v.rows
+                .iter()
+                .find(|r| r.id == "s3-check")
+                .unwrap()
+                .label
+                .english(),
             "Bucket versioning is off"
         );
     }
@@ -1089,7 +1144,10 @@ mod tests {
         });
         let v = storage_section(&input, &storage_initial());
         assert_eq!(ids(&v), ["mount", "mount-path"]);
-        assert_eq!(v.rows[1].button.as_deref(), Some("Show in Finder"));
+        assert_eq!(
+            v.rows[1].button.english().as_deref(),
+            Some("Show in Finder")
+        );
         assert_eq!(
             storage_press(&input, "mount-path"),
             Some(StorageAction::Reveal {
@@ -1099,8 +1157,8 @@ mod tests {
         input.os = SpaceOs::Linux;
         input.mount.as_mut().unwrap().method = "fuse".into();
         let v = storage_section(&input, &storage_initial());
-        assert_eq!(v.rows[0].label, "Mount Cua Volume");
-        assert_eq!(v.rows[1].button.as_deref(), Some("Open"));
+        assert_eq!(v.rows[0].label.english(), "Mount Cua Volume");
+        assert_eq!(v.rows[1].button.english().as_deref(), Some("Open"));
         input.os = SpaceOs::Windows;
         input.mount = Some(DriveMountInput {
             state: "unsupported".into(),
@@ -1121,10 +1179,10 @@ mod tests {
             s.rows
                 .iter()
                 .flat_map(|r| {
-                    [Some(r.label.clone()), r.value.clone(), r.button.clone()]
+                    [Some(r.label.english()), r.value.clone(), r.button.english()]
                         .into_iter()
                         .flatten()
-                        .chain(r.options.iter().map(|o| o.label.clone()))
+                        .chain(r.options.iter().map(|o| o.label.english()))
                 })
                 .collect::<Vec<_>>()
         };
@@ -1143,7 +1201,7 @@ mod tests {
             cache: None,
         };
         let v = storage_section(&linux, &storage_initial());
-        assert_eq!(v.rows[0].options[0].label, "This computer");
+        assert_eq!(v.rows[0].options[0].label.english(), "This computer");
         let t = texts(&v);
         assert!(t.contains(&"Mounted at".to_string()), "{t:?}");
         assert!(t.contains(&"~/Cua Volume".to_string()), "{t:?}");
@@ -1163,7 +1221,7 @@ mod tests {
             ..linux
         };
         let v = storage_section(&windows, &storage_initial());
-        assert_eq!(v.rows[0].options[0].label, "This PC");
+        assert_eq!(v.rows[0].options[0].label.english(), "This PC");
         let t = texts(&v);
         assert!(
             t.iter()
@@ -1193,7 +1251,7 @@ mod tests {
         assert!(!row("cache").enabled, "nothing to clear");
         assert_eq!(row("cache").value.as_deref(), Some("0 KB of 2 GB"));
         let limit = row("cache-limit");
-        let labels: Vec<_> = limit.options.iter().map(|o| o.label.as_str()).collect();
+        let labels: Vec<_> = limit.options.iter().map(|o| o.label.english()).collect();
         assert_eq!(labels, ["1 GB", "2 GB", "5 GB", "10 GB", "50 GB"]);
         assert_eq!(
             storage_choose("cache-limit", &(5 * GIB).to_string()),

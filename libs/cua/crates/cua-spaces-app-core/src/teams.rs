@@ -9,10 +9,11 @@
 //! live in the account app (`app.cua.ai`), one link away. The data is read
 //! by the host (`app_teams`); this module only words it.
 
+use crate::message::Msg;
 use crate::settings::{
     SettingsOption, SettingsRow,
     SettingsRowKind::{Choice, Text},
-    row,
+    m, row,
 };
 use serde::{Deserialize, Serialize};
 
@@ -20,16 +21,16 @@ use serde::{Deserialize, Serialize};
 pub const ACCOUNT_APP_URL: &str = "https://app.cua.ai";
 
 /// The Settings section.
-pub const TEAMS_TITLE: &str = "Teams";
+pub const TEAMS_TITLE: &str = "settings.teams.title";
 
 /// What a pending invite's row says instead of a role.
 pub const INVITED: &str = "(Invited)";
 
 /// The button that opens the account app's team page.
-pub const MANAGE_TEAM: &str = "Manage team";
+pub const MANAGE_TEAM: &str = "settings.teams.manage_team";
 
 /// The button that opens the account app's billing page.
-pub const MANAGE_BILLING: &str = "Billing and plans";
+pub const MANAGE_BILLING: &str = "settings.teams.manage_billing";
 
 /// The line when the account is in no team.
 pub const NO_TEAMS: &str =
@@ -159,27 +160,27 @@ pub fn rows(input: &TeamsInput) -> Vec<SettingsRow> {
     let mut out = Vec::new();
     match &input.state {
         TeamsState::SignedOut => {
-            let mut r = row("teams", Text, "Teams");
+            let mut r = row("teams", Text, m("settings.teams.label"));
             r.value = Some("Sign in to see your teams".into());
             out.push(r);
         }
         TeamsState::Unread => {
-            let mut r = row("teams", Text, "Teams");
+            let mut r = row("teams", Text, m("settings.teams.label"));
             r.value = Some("Manage your team in the account app".into());
             out.push(r);
         }
         TeamsState::Loading => {
-            let mut r = row("teams", Text, "Teams");
+            let mut r = row("teams", Text, m("settings.teams.label"));
             r.value = Some("Loading\u{2026}".into());
             out.push(r);
         }
         TeamsState::Failed { message } => {
-            let mut r = row("teams", Text, "Teams");
+            let mut r = row("teams", Text, m("settings.teams.label"));
             r.value = Some(format!("Couldn't load your teams: {message}"));
             out.push(r);
         }
         TeamsState::Ready { teams } if teams.is_empty() => {
-            let mut r = row("teams", Text, "Teams");
+            let mut r = row("teams", Text, m("settings.teams.label"));
             r.value = Some(NO_TEAMS.into());
             out.push(r);
         }
@@ -187,12 +188,12 @@ pub fn rows(input: &TeamsInput) -> Vec<SettingsRow> {
             let cur = current(teams, input.current_team_id.as_deref());
             if teams.len() > 1 {
                 // Several teams: pick the one to work in.
-                let mut pick = row(CURRENT_TEAM_ROW, Choice, "Current team");
+                let mut pick = row(CURRENT_TEAM_ROW, Choice, m("settings.teams.current"));
                 pick.options = teams
                     .iter()
                     .map(|t| SettingsOption {
                         id: t.id.clone(),
-                        label: t.display_name().to_string(),
+                        label: Msg::literal(t.display_name()),
                         active: cur.is_some_and(|c| c.id == t.id),
                     })
                     .collect();
@@ -207,7 +208,11 @@ pub fn rows(input: &TeamsInput) -> Vec<SettingsRow> {
                     1 => " \u{b7} 1 seat".into(),
                     n => format!(" \u{b7} {n} seats"),
                 };
-                let mut head = row(&format!("team:{}", t.id), Text, t.display_name());
+                let mut head = row(
+                    &format!("team:{}", t.id),
+                    Text,
+                    Msg::literal(t.display_name()),
+                );
                 head.value = Some(format!(
                     "{} \u{b7} {}{seats}",
                     role_label(&t.role),
@@ -215,12 +220,20 @@ pub fn rows(input: &TeamsInput) -> Vec<SettingsRow> {
                 ));
                 out.push(head);
                 for (i, m) in t.members.iter().enumerate() {
-                    let mut r = row(&format!("team:{}:member:{i}", t.id), Text, &m.email);
+                    let mut r = row(
+                        &format!("team:{}:member:{i}", t.id),
+                        Text,
+                        Msg::literal(&m.email),
+                    );
                     r.value = Some(role_label(&m.role));
                     out.push(r);
                 }
                 for (i, email) in t.invites.iter().enumerate() {
-                    let mut r = row(&format!("team:{}:invite:{i}", t.id), Text, email);
+                    let mut r = row(
+                        &format!("team:{}:invite:{i}", t.id),
+                        Text,
+                        Msg::literal(email),
+                    );
                     r.value = Some(INVITED.into());
                     out.push(r);
                 }
@@ -228,12 +241,12 @@ pub fn rows(input: &TeamsInput) -> Vec<SettingsRow> {
         }
     }
     // Invites, roles and billing are the account app's.
-    let mut manage = row("teams-manage", Text, "Invite people, roles and plans");
-    manage.button = Some(MANAGE_TEAM.into());
+    let mut manage = row("teams-manage", Text, m("settings.teams.manage_label"));
+    manage.button = Some(m(MANAGE_TEAM));
     manage.link_url = Some(format!("{app}/team"));
     out.push(manage);
-    let mut billing = row("teams-billing", Text, "Billing");
-    billing.button = Some(MANAGE_BILLING.into());
+    let mut billing = row("teams-billing", Text, m("settings.billing.label"));
+    billing.button = Some(m(MANAGE_BILLING));
     billing.link_url = Some(format!("{app}/billing"));
     out.push(billing);
     out
@@ -242,6 +255,8 @@ pub fn rows(input: &TeamsInput) -> Vec<SettingsRow> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
+    use crate::message::OptionMsgEnglish;
 
     fn team(name: &str, alias: &str) -> TeamInput {
         TeamInput {
@@ -278,7 +293,7 @@ mod tests {
         let rows = rows(&input(vec![team("Acme Inc", "acme")]));
         let flat: Vec<(String, Option<String>)> = rows
             .iter()
-            .map(|r| (r.label.clone(), r.value.clone()))
+            .map(|r| (r.label.english(), r.value.clone()))
             .collect();
         assert_eq!(
             flat[0],
@@ -295,7 +310,7 @@ mod tests {
     #[test]
     fn the_name_falls_back_to_the_alias() {
         let rows = rows(&input(vec![team("", "acme")]));
-        assert_eq!(rows[0].label, "acme");
+        assert_eq!(rows[0].label.english(), "acme");
         assert_eq!(team(" ", "").display_name(), "o1");
     }
 
@@ -355,7 +370,13 @@ mod tests {
     #[test]
     fn nothing_says_coming_soon() {
         for r in rows(&input(vec![team("A", "a")])) {
-            let all = format!("{} {:?} {:?}", r.label, r.value, r.button).to_lowercase();
+            let all = format!(
+                "{} {:?} {:?}",
+                r.label.english(),
+                r.value,
+                r.button.english()
+            )
+            .to_lowercase();
             assert!(
                 !all.contains("waitlist") && !all.contains("coming soon"),
                 "{all}"

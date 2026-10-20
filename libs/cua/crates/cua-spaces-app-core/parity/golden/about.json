@@ -14,7 +14,7 @@
         "updates": {
           "autoCheck": "[x] Check for and download updates automatically",
           "autoInstall": "[ ] Install a downloaded update when Cua Spaces quits",
-          "channel": "Update to: Stable* | Beta",
+          "channel": "Update to: settings.about.channel_stable* | settings.about.channel_beta",
           "check": "Check Now on",
           "help": "Stable gets tested releases. Beta also gets prereleases: new features sooner, with rough edges. Back on Stable, this version stays until a newer stable release.",
           "lastCheck": "Last check: Never",
@@ -37,7 +37,7 @@
         "updates": {
           "autoCheck": "[x] Check for and download updates automatically",
           "autoInstall": "[x] Install a downloaded update when Cua Spaces quits",
-          "channel": "Update to: Stable* | Beta",
+          "channel": "Update to: settings.about.channel_stable* | settings.about.channel_beta",
           "check": "Check Now on",
           "help": "Stable gets tested releases. Beta also gets prereleases: new features sooner, with rough edges. Back on Stable, this version stays until a newer stable release.",
           "lastCheck": "Last check: Never",
@@ -60,7 +60,7 @@
         "updates": {
           "autoCheck": "[x] Check for and download updates automatically",
           "autoInstall": "[x] Install a downloaded update when Cua Spaces quits",
-          "channel": "Update to: Stable | Beta*",
+          "channel": "Update to: settings.about.channel_stable | settings.about.channel_beta*",
           "check": "Check Now on",
           "help": "Stable gets tested releases. Beta also gets prereleases: new features sooner, with rough edges. Back on Stable, this version stays until a newer stable release.",
           "lastCheck": "Last check: 9/30/26, 3:04 PM",
@@ -85,7 +85,7 @@
         "updates": {
           "autoCheck": "[x] Check for and download updates automatically",
           "autoInstall": "[x] Install a downloaded update when Cua Spaces quits",
-          "channel": "Update to: Stable | Beta*",
+          "channel": "Update to: settings.about.channel_stable | settings.about.channel_beta*",
           "check": "Checking… off",
           "help": "Stable gets tested releases. Beta also gets prereleases: new features sooner, with rough edges. Back on Stable, this version stays until a newer stable release.",
           "lastCheck": "Last check: 9/30/26, 3:04 PM",
@@ -110,7 +110,7 @@
         "updates": {
           "autoCheck": "[ ] Check for and download updates automatically",
           "autoInstall": "[x] Install a downloaded update when Cua Spaces quits (disabled)",
-          "channel": "Update to: Stable | Beta*",
+          "channel": "Update to: settings.about.channel_stable | settings.about.channel_beta*",
           "check": "Check Now on",
           "help": "Stable gets tested releases. Beta also gets prereleases: new features sooner, with rough edges. Back on Stable, this version stays until a newer stable release.",
           "lastCheck": "Last check: 9/30/26, 3:04 PM",

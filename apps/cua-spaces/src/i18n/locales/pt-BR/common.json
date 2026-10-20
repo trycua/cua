@@ -9,5 +9,6 @@
   "common.action.reconnect": "Reconectar",
   "common.status.connecting": "Conectando…",
   "common.action.back": "Voltar",
-  "common.action.done": "Concluir"
+  "common.action.done": "Concluir",
+  "common.literal": "{text}"
 }

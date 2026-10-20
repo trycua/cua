@@ -69,7 +69,7 @@ struct LoginItemTests {
         await m.choose(row: "launch-at-login", option: "on")
         #expect(m.loginItemStatus == .requiresApproval)
         let approve = general(m).first { $0.id == "launch-at-login-approve" }
-        #expect(approve?.label == "Approve in System Settings \u{203a} Login Items")
+        #expect(approve?.label.code == "settings.login.approve")
         await m.press(row: "launch-at-login-approve")
         #expect(item.calls == ["register", "open-settings"])
     }
@@ -81,7 +81,7 @@ struct LoginItemTests {
         await m.loadSettings()
         await m.choose(row: "launch-at-login", option: "on")
         #expect(toggleOn(m) == false, "never shows a state the system does not hold")
-        #expect(general(m).contains { $0.id == "launch-at-login-error" && $0.label == "Operation not permitted" })
+        #expect(general(m).contains { $0.id == "launch-at-login-error" && CoreMessages.text($0.label) == "Operation not permitted" })
     }
 
     @Test func notFoundDisablesTheToggle() async {
@@ -148,7 +148,7 @@ struct LoginItemTests {
         #expect(serving.calls == ["register", "unregister"])
         #expect(m.loginItemStatus == .notRegistered)
         let note = general(m).first { $0.id == "launch-at-login-note" }?.label
-        #expect(note == "This computer provides Spaces, which stop after a restart until you open Cua Spaces.")
+        #expect(note?.code == "settings.login.off_spaces")
 
         // Not serving and never chosen: left alone.
         let idle = FixtureLoginItem()

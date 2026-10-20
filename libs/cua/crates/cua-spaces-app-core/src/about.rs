@@ -225,13 +225,13 @@ pub fn view(input: &AboutInput) -> AboutView {
         auto_install_enabled: input.auto_check,
         channel_label: "Update to:".into(),
         channels: [
-            (UpdateChannel::Stable, "Stable"),
-            (UpdateChannel::Beta, "Beta"),
+            (UpdateChannel::Stable, "settings.about.channel_stable"),
+            (UpdateChannel::Beta, "settings.about.channel_beta"),
         ]
         .into_iter()
         .map(|(c, label)| SettingsOption {
             id: c.id().into(),
-            label: label.into(),
+            label: crate::message::Msg::new(label),
             active: c == input.channel,
         })
         .collect(),

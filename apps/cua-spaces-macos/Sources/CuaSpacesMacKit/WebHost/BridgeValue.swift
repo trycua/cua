@@ -70,6 +70,21 @@ enum BridgeValue {
         }
     }
 
+    /// [`encode`], with each core message (`AppMsg`: a code and variables)
+    /// as its text in this app's catalog: the web page reads text.
+    static func encodeText(_ value: Any?) -> Any { texts(encode(value)) }
+
+    private static func texts(_ value: Any) -> Any {
+        if let dict = value as? [String: Any] {
+            if dict.count == 2, let code = dict["code"] as? String, let vars = dict["vars"] as? [String: Any] {
+                return CoreMessages.text(code: code, vars: vars.compactMapValues { $0 as? String })
+            }
+            return dict.mapValues(texts)
+        }
+        if let array = value as? [Any] { return array.map(texts) }
+        return value
+    }
+
     /// A record's or a tuple's fields (`.0` and the like become `value`,
     /// `value1`, ...).
     private static func fields(_ mirror: Mirror) -> [String: Any] {

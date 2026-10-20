@@ -14,6 +14,8 @@
 // numbers, bytes base64, dates milliseconds, maps objects. Objects (UniFFI
 // handles) are left out as `null`: they are live handles, not data.
 
+import { messagesAsText } from "../../../cua-spaces-web/src/lib/messages";
+
 const TYPE_NAME = Symbol.for("typeName");
 const POINTER = Symbol.for("pointer");
 const DESTRUCTOR = Symbol.for("destructor");
@@ -76,4 +78,9 @@ export function encode(value: unknown): unknown {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(object)) out[k] = encode(v);
   return out;
+}
+
+/** [`encode`], with each core message (`AppMsg`: a code and variables) as its text: the web page reads text. */
+export function encodeText(value: unknown): unknown {
+  return messagesAsText(encode(value));
 }

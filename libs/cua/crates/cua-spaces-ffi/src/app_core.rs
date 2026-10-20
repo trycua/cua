@@ -2991,8 +2991,8 @@ mod teams_tests {
         };
         let input = teams_input(snapshot, "https://app.cua.ai".into());
         let rows = core::teams::rows(&input);
-        assert_eq!(rows[0].label, "acme");
-        assert_eq!(rows[2].label, "cy@example.com");
+        assert_eq!(rows[0].label.vars["text"], "acme");
+        assert_eq!(rows[2].label.vars["text"], "cy@example.com");
         assert_eq!(rows[2].value.as_deref(), Some("(Invited)"));
     }
 }

@@ -4,7 +4,7 @@
 import { type ReactElement, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 import { core } from "../core";
-import { useT } from "../i18n";
+import { tMsg, useT } from "../i18n";
 import { hostOs, permissionRows } from "../model/host";
 import {
   initialOnboarding,
@@ -681,7 +681,7 @@ function DriveStep({
                   disabled={card.busy}
                   onClick={() => onChooseStorage(o.id)}
                 >
-                  {o.label}
+                  {tMsg(o.label)}
                 </button>
               ))}
             </div>

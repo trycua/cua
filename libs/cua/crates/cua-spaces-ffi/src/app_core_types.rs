@@ -6812,8 +6812,8 @@ pub type AppSettingsOption = core::settings::SettingsOption;
 pub struct AppSettingsOption {
     /// `show`, `hide`, `local`, `cloud`, `on`, `off`.
     pub id: String,
-    /// Label.
-    pub label: String,
+    /// Label (`settings.*`; text that is data is `common.literal`).
+    pub label: AppMsg,
     /// Chosen.
     pub active: bool,
 }
@@ -6826,24 +6826,26 @@ pub struct AppSettingsRow {
     pub id: String,
     /// How it draws.
     pub kind: AppSettingsRowKind,
-    /// Label (or the note's text).
-    pub label: String,
-    /// Muted value.
+    /// Label (or the note's text): a message code; a name or an error from
+    /// elsewhere is `common.literal`.
+    pub label: AppMsg,
+    /// Muted value: data, or text composed from it (it moves to message
+    /// codes with its surface).
     pub value: Option<String>,
     /// A button's label.
-    pub button: Option<String>,
+    pub button: Option<AppMsg>,
     /// A choice's options.
     pub options: Vec<AppSettingsOption>,
     /// The button or choice can be used.
     pub enabled: bool,
     /// Tooltip.
-    pub help: Option<String>,
+    pub help: Option<AppMsg>,
     /// A note's link: label.
-    pub link_label: Option<String>,
+    pub link_label: Option<AppMsg>,
     /// A note's link: URL (or what a Text row's button opens).
     pub link_url: Option<String>,
     /// A field's placeholder.
-    pub placeholder: Option<String>,
+    pub placeholder: Option<AppMsg>,
 }
 
 /// A titled group of rows.
@@ -6852,14 +6854,14 @@ pub type AppSettingsSection = core::settings::SettingsSection;
 pub struct AppSettingsSection {
     /// `account`, `general`, `privacy`, `agents`.
     pub id: String,
-    /// "Account", "General", "Privacy", "AI agents".
-    pub title: String,
+    /// "Account", "General", "Privacy", "AI agents" (`settings.*.title`).
+    pub title: AppMsg,
     /// A button in the header.
-    pub button: Option<String>,
+    pub button: Option<AppMsg>,
     /// That button can be used.
     pub button_enabled: bool,
     /// Its tooltip.
-    pub button_help: Option<String>,
+    pub button_help: Option<AppMsg>,
     /// Rows.
     pub rows: Vec<AppSettingsRow>,
 }
@@ -6868,8 +6870,8 @@ pub struct AppSettingsSection {
 pub type AppSettingsPage = core::settings::SettingsPage;
 #[uniffi::remote(Record)]
 pub struct AppSettingsPage {
-    /// "Settings".
-    pub title: String,
+    /// "Settings" (`settings.title`).
+    pub title: AppMsg,
     /// Account, General, Privacy (once read), AI agents.
     pub sections: Vec<AppSettingsSection>,
 }

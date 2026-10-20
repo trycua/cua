@@ -15,6 +15,7 @@
     "keyvault",
     "cua-volume",
     "persistent-agents",
+    "run-hermes-agent-on-spaces",
     "create-a-space-with-the-sdk",
     "---Keep it working---",
     "troubleshoot",

@@ -759,14 +759,19 @@ impl Spaces {
         .await?;
         let machine = self.ensure_shared_machine(&canonical).await?;
         let token = relay.tokens.access_token().await?;
-        api.finishing_setup(
-            &token,
-            cua_host::spaces_api::SETUP_RETRY_WINDOW,
-            waiting,
-            || api.add_org_machine_as(&token, &org.id, &machine, &os, &label, role.as_str()),
-        )
-        .await
-        .map_err(team_err)?;
+        if let Err(e) = api
+            .finishing_setup_org(
+                &token,
+                &org.id,
+                cua_host::spaces_api::SETUP_RETRY_WINDOW,
+                waiting,
+                || api.add_org_machine_as(&token, &org.id, &machine, &os, &label, role.as_str()),
+            )
+            .await
+        {
+            let e = api.explain_plan_error(&token, &org.id, e).await;
+            return Err(team_err(e));
+        }
         self.audit_share(
             "share",
             &canonical,

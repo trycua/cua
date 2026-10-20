@@ -3140,7 +3140,9 @@ fn admitted<T, E: Into<anyhow::Error>>(send: impl FnOnce() -> Result<T, E>) -> R
     action::admit(send)?.map_err(Into::into)
 }
 
-/// How long releasing an abandoned call's presses may take.
+/// How long dropping an abandoned call's [`Delivered`] waits for its
+/// releases. It bounds the wait only: the releasing thread is not stopped,
+/// and keeps the call's desktop lease until its X11 requests return.
 const ABANDONED_RELEASE_WAIT: Duration = Duration::from_secs(2);
 
 /// XTest presses this call queued, and whether each is still held. A route
@@ -3148,8 +3150,9 @@ const ABANDONED_RELEASE_WAIT: Duration = Duration::from_secs(2);
 /// Abandoning the call shuts that connection, so the releases it still owes
 /// cannot go out there: dropping this then sends them on a fresh connection
 /// from a thread that holds the call's [`action::Action`], and with it the
-/// desktop, until the releases are done or abandoned. The server ignores a release for
-/// a key or button that is already up.
+/// desktop, until those releases are done. The drop waits for them at most
+/// [`ABANDONED_RELEASE_WAIT`]; past it the thread still holds the desktop.
+/// The server ignores a release for a key or button that is already up.
 #[derive(Default)]
 struct Delivered(Vec<(u8, u8, bool)>);
 

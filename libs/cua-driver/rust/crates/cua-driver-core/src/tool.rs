@@ -129,9 +129,9 @@ impl DesktopLane {
                 let wait = self.lock.clone().lock_owned();
                 tokio::pin!(wait);
                 loop {
-                    // Read the holder now, after the wake: the stale worker
-                    // seen before it may have stopped, and its successor be
-                    // a call still running.
+                    // Read the holder on every pass, the first one before any
+                    // wait included: a stale worker seen earlier may have
+                    // stopped, and its successor be a call still running.
                     let stale_since = lock_holder(&self.holder).stale_since;
                     if stale_since
                         .is_some_and(|since| tokio::time::Instant::now() >= since + self.stale_wait)

@@ -2,11 +2,17 @@
 //!
 //! A tool call stops waiting for its blocking worker at its deadline, but
 //! the worker cannot be cancelled: it keeps running on the blocking pool.
-//! An input route reads the [`Action`] bound to its thread and hands no
-//! further event to the compositor once the call is over. Releasing a held
-//! button or key is cleanup and still goes out. The action keeps the call's
-//! desktop lease until its last holder drops, so that cleanup ends before
-//! the next desktop action starts.
+//! Two mechanisms limit what it does afterwards.
+//!
+//! Send admission: an input route that reads the [`Action`] bound to its
+//! thread hands no further event to the compositor once the call is over.
+//! Releasing a held button or key is cleanup and still goes out. A route
+//! that does not read the action is not stopped: a `wtype` child already
+//! running keeps sending until it exits.
+//!
+//! Successor isolation: the action keeps the call's desktop lease until its
+//! last holder drops, so whatever still goes out, cleanup or such a child,
+//! ends before the next desktop action starts.
 
 use std::cell::RefCell;
 use std::os::fd::{AsFd, AsRawFd, OwnedFd};

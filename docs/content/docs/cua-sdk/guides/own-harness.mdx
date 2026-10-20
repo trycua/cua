@@ -1,0 +1,389 @@
+---
+title: Use Cua in your own harness (no agent)
+description: Drive a sandbox from your own agent loop or bot with no Cua agent layer. Create or connect, run commands, move files, take screenshots, click and type, from Python, TypeScript, Rust or any gRPC client.
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+The Cua SDK has no agent layer. It gives your code a computer, and your own
+harness decides what to do with it. Nothing here calls a model, and nothing
+needs to run inside the image besides cua-spacesd, which the Cua images ship.
+
+| Language | Install | Agent code pulled in |
+| --- | --- | --- |
+| Python | `pip install cua-sandbox` | None. `cua-agent` comes only with the `cua[agent]` extra |
+| TypeScript | `npm install @trycua/cua` | None |
+| Rust | `cua-sdk` crate, a git dependency for now ([Rust crates](/cua-sdk/reference/rust)) | None |
+| Anything else | gRPC client generated from the `.proto` files | None |
+
+## The whole loop
+
+Each program below creates a Linux desktop on this machine, runs a command,
+writes and reads a file, clicks, types into a terminal, saves a screenshot,
+lists windows through the raw protocol, and deletes the sandbox.
+
+<Tabs groupId="sdk-lang" persist items={['Python', 'TypeScript', 'Rust']}>
+  <Tab value="Python">
+
+```bash skip="host-install"
+pip install cua-sandbox      # Python 3.11 to 3.13
+python harness.py
+```
+
+```python test="container" id="harness-python"
+import asyncio
+import json
+from pathlib import Path
+
+from cua_sandbox import Image, Sandbox
+
+# Open a terminal titled "harness" and focus it, so typed keys land there.
+OPEN_TERMINAL = (
+    "export DISPLAY=:1; setsid -f xfce4-terminal -T harness >/dev/null 2>&1; "
+    "xdotool search --sync --onlyvisible --name harness windowactivate --sync"
+)
+
+
+async def main():
+    # A Linux desktop on this machine. Leaving the block deletes it.
+    async with Sandbox.ephemeral(Image.linux()) as sb:
+        # Run a command.
+        result = await sb.shell.run("uname -sm")
+        print("exec:", result.stdout.strip())
+
+        # Write a file and read it back.
+        await sb.files.write_text("/tmp/note.txt", "hello from my harness\n")
+        print("file:", (await sb.files.read_text("/tmp/note.txt")).strip())
+
+        # Click, then type into a terminal.
+        width, height = await sb.get_dimensions()
+        await sb.mouse.click(width // 2, height // 2)
+        await sb.shell.run(OPEN_TERMINAL)
+        await sb.keyboard.type("echo typed by my harness")
+        await sb.keyboard.keypress("enter")
+        await asyncio.sleep(1)  # let the terminal draw
+
+        # Screenshot (PNG bytes).
+        Path("screen.png").write_bytes(await sb.screenshot())
+        print("screenshot:", width, "x", height)
+
+        # Any cua.env.v1 RPC without a typed method: proto3 JSON in and out.
+        spacesd = await sb.spacesd()
+        reply = await spacesd.call_json(
+            "WindowsService/ListWindows",
+            json.dumps({"filter": {"titleContains": "harness"}}),
+        )
+        for window in json.loads(reply).get("windows", []):
+            print("window:", window["title"], window["bounds"])
+
+
+asyncio.run(main())
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```bash skip="host-install"
+npm install @trycua/cua tsx
+npx tsx harness.mts     # .mts: an ES module, so top-level await works
+```
+
+```ts test="container" id="harness-typescript"
+import { writeFile } from 'node:fs/promises';
+import { embedded, SandboxCreateOptions } from '@trycua/cua';
+
+// Open a terminal titled "harness" and focus it, so typed keys land there.
+const OPEN_TERMINAL =
+  'export DISPLAY=:1; setsid -f xfce4-terminal -T harness >/dev/null 2>&1; ' +
+  'xdotool search --sync --onlyvisible --name harness windowactivate --sync';
+const text = (bytes: ArrayBuffer) => new TextDecoder().decode(bytes);
+
+// A Linux desktop on this machine.
+const sb = await embedded().sandboxes().create(
+  SandboxCreateOptions.create({ image: 'ghcr.io/trycua/linux:24.04' })
+);
+try {
+  const env = await sb.spacesd(undefined);
+
+  // Run a command.
+  console.log('exec:', text((await env.sh('uname -sm', undefined)).stdout).trim());
+
+  // Write a file and read it back.
+  await env.upload('/tmp/note.txt', new TextEncoder().encode('hello from my harness\n').buffer, undefined);
+  console.log('file:', text(await env.download('/tmp/note.txt')).trim());
+
+  // Click, then type into a terminal.
+  const { width, height } = await env.screenshot(undefined);
+  await env.click(Math.floor(width / 2), Math.floor(height / 2));
+  await env.sh(OPEN_TERMINAL, undefined);
+  await env.typeText('echo typed by my harness');
+  await env.press('enter');
+  await new Promise((resolve) => setTimeout(resolve, 1000)); // let the terminal draw
+
+  // Screenshot (PNG bytes).
+  await writeFile('screen.png', Buffer.from((await env.screenshot(undefined)).image));
+  console.log('screenshot:', width, 'x', height);
+
+  // Any cua.env.v1 RPC without a typed method: proto3 JSON in and out.
+  const reply = await env.callJson(
+    'WindowsService/ListWindows',
+    JSON.stringify({ filter: { titleContains: 'harness' } })
+  );
+  for (const w of JSON.parse(reply).windows ?? []) console.log('window:', w.title, w.bounds);
+} finally {
+  // Deletes the sandbox.
+  await sb.delete_();
+}
+```
+
+  </Tab>
+  <Tab value="Rust">
+
+The crates are not on crates.io yet. Depend on a release tag:
+
+```toml test="config" id="harness-cargo"
+[package]
+name = "harness"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cua-sdk = { git = "https://github.com/trycua/cua", tag = "cua-sdk-v0.5.0" }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+```
+
+```rust test="rust" id="harness-rust"
+use cua_sdk::{Cua, CuaConfig, SandboxCreateOptions};
+use serde_json::{json, Value};
+
+// Open a terminal titled "harness" and focus it, so typed keys land there.
+const OPEN_TERMINAL: &str = "export DISPLAY=:1; setsid -f xfce4-terminal -T harness >/dev/null 2>&1; \
+     xdotool search --sync --onlyvisible --name harness windowactivate --sync";
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // A Linux desktop on this machine.
+    let cua = Cua::embedded(CuaConfig::default())?;
+    let sb = cua
+        .sandboxes()
+        .create(SandboxCreateOptions {
+            image: "ghcr.io/trycua/linux:24.04".into(),
+            ..Default::default()
+        })
+        .await?;
+    let result = drive(&sb).await;
+    // Deletes the sandbox, also when a step failed.
+    sb.delete().await?;
+    result
+}
+
+async fn drive(sb: &cua_sdk::Sandbox) -> Result<(), Box<dyn std::error::Error>> {
+    let env = sb.spacesd(None).await?;
+
+    // Run a command.
+    let out = env.sh("uname -sm".into(), None).await?;
+    println!("exec: {}", String::from_utf8_lossy(&out.stdout).trim());
+
+    // Write a file and read it back.
+    env.upload("/tmp/note.txt".into(), b"hello from my harness\n".to_vec(), None)
+        .await?;
+    let note = env.download("/tmp/note.txt".into()).await?;
+    println!("file: {}", String::from_utf8_lossy(&note).trim());
+
+    // Click, then type into a terminal.
+    let shot = env.screenshot(None).await?;
+    let (width, height) = (shot.width, shot.height);
+    env.click(f64::from(width / 2), f64::from(height / 2)).await?;
+    env.sh(OPEN_TERMINAL.into(), None).await?;
+    env.type_text("echo typed by my harness".into()).await?;
+    env.press("enter".into()).await?;
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await; // let the terminal draw
+
+    // Screenshot (PNG bytes).
+    std::fs::write("screen.png", env.screenshot(None).await?.image)?;
+    println!("screenshot: {width} x {height}");
+
+    // Any cua.env.v1 RPC without a typed method: proto3 JSON in and out.
+    let request = json!({ "filter": { "titleContains": "harness" } });
+    let reply = env
+        .call_json("WindowsService/ListWindows".into(), request.to_string())
+        .await?;
+    let reply: Value = serde_json::from_str(&reply)?;
+    for w in reply["windows"].as_array().into_iter().flatten() {
+        println!("window: {} {}", w["title"], w["bounds"]);
+    }
+    Ok(())
+}
+```
+
+Run it with `cargo run`.
+
+  </Tab>
+</Tabs>
+
+The Python program printed this on an Apple silicon Mac (the TypeScript and
+Rust programs print the same lines in their own formats):
+
+```text output
+exec: Linux aarch64
+file: hello from my harness
+screenshot: 1280 x 800
+window: harness {'x': 5.0, 'y': 29.0, 'width': 818.0, 'height': 483.0}
+```
+
+and saved this `screen.png`:
+
+![The sandbox desktop after the program ran: a terminal titled harness shows the typed command and its output](/img/cua-sdk/own-harness-screen.png)
+
+## Connect to a sandbox you already have
+
+To drive a machine you did not create in this program, connect to it instead.
+A sandbox created earlier on this machine connects by name:
+`Sandbox.connect("dev")` in Python, `embedded().sandboxes().connect('dev')` in
+TypeScript, `cua.sandboxes().connect("dev".into())` in Rust. Any other machine
+that runs cua-spacesd connects by address and env token
+([Attach to or run cua-spacesd](/cua-sdk/guides/spacesd)). Connecting never
+creates or deletes anything.
+
+<Tabs groupId="sdk-lang" persist items={['Python', 'TypeScript', 'Rust']}>
+  <Tab value="Python">
+
+```python test="docs" id="harness-connect-python" session="harness-connect-python" prelude="space-url"
+import asyncio
+
+from cua_sandbox import Sandbox
+
+
+async def main():
+    async with Sandbox.connect(url="http://10.0.0.5:3211", token="TOKEN") as sb:
+        print((await sb.shell.run("uname -a")).stdout)
+
+
+asyncio.run(main())
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```ts test="docs" id="harness-connect-typescript" prelude="space-url"
+import { embedded } from '@trycua/cua';
+
+const sb = await embedded().sandboxes().connectUrl("http://10.0.0.5:3211", "TOKEN", undefined);
+const env = await sb.spacesd(undefined);
+console.log(new TextDecoder().decode((await env.sh('uname -a', undefined)).stdout));
+```
+
+  </Tab>
+  <Tab value="Rust">
+
+```rust test="rust" id="harness-connect-rust"
+use cua_sdk::{Cua, CuaConfig};
+
+let sb = Cua::embedded(CuaConfig::default())?
+    .sandboxes()
+    .connect_url("http://10.0.0.5:3211".into(), Some("TOKEN".into()), None)
+    .await?;
+let env = sb.spacesd(None).await?;
+```
+
+  </Tab>
+</Tabs>
+
+The typed methods cover processes, files, screenshots, pointer, keyboard and
+clipboard ([`SpacesdClient`](/cua-sdk/reference/spacesd)). Python also has
+[typed Cua Driver tools](/cua-sdk/guides/desktop#typed-cua-driver) for windows
+and accessibility.
+
+## Call any RPC as JSON
+
+Windows, accessibility, Cua Driver tools, tunnels and every other `cua.env.v1`
+RPC without a typed method go through `call_json` (`callJson` in TypeScript).
+Pass the method as `Service/Method` and the request as proto3 JSON; the reply
+is proto3 JSON. `json_methods()` lists the methods it accepts, and the
+[protocol reference](/cua-sdk/reference/protocol) has every request and
+response. For example, `AccessibilityService/GetTree`, `WindowsService/LaunchApp`
+or `DriverService/CallTool`. Server-streaming RPCs, such as
+`WindowsService/WatchWindows`, use `call_json_stream`.
+
+## Other languages
+
+cua-spacesd serves native gRPC and gRPC-Web on port `3211`, with server
+reflection. Send the env token as `authorization: Bearer <token>`. The
+contract is the `.proto` files in
+[`libs/cua/proto`](https://github.com/trycua/cua/tree/main/libs/cua/proto)
+(package `cua.env.v1`), so there is nothing to map by hand: generate a client
+for your language with [buf](https://buf.build). For Go, put this
+`buf.gen.yaml` in your module:
+
+```yaml test="config" id="harness-buf-gen"
+version: v2
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: example.com/harness/gen
+plugins:
+  - remote: buf.build/protocolbuffers/go
+    out: gen
+    opt: paths=source_relative
+  - remote: buf.build/grpc/go
+    out: gen
+    opt: paths=source_relative
+```
+
+```bash skip="third-party-cli"
+buf generate "https://github.com/trycua/cua.git#ref=main,subdir=libs/cua/proto"
+```
+
+Then call it like any gRPC service. The examples below reach a spacesd at
+`127.0.0.1:3211`, such as the container in
+[Attach to any spacesd](/cua-sdk/guides/spacesd#attach-to-any-spacesd):
+
+```go skip="third-party-cli"
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"os"
+
+	envv1 "example.com/harness/gen/cua/env/v1"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
+)
+
+func main() {
+	conn, err := grpc.NewClient("127.0.0.1:3211", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer conn.Close()
+	ctx := metadata.AppendToOutgoingContext(context.Background(),
+		"authorization", "Bearer "+os.Getenv("CUA_ENV_TOKEN"))
+
+	windows, err := envv1.NewWindowsServiceClient(conn).ListWindows(ctx, &envv1.ListWindowsRequest{})
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, w := range windows.Windows {
+		fmt.Println(w.Title, w.App.GetName())
+	}
+}
+```
+
+Other languages work the same way with their own buf plugins.
+
+Or call it with no generated code at all, through reflection:
+
+```bash skip="third-party-cli"
+grpcurl -plaintext -H "authorization: Bearer $CUA_ENV_TOKEN" \
+  -d '{"filter": {"titleContains": "harness"}}' \
+  127.0.0.1:3211 cua.env.v1.WindowsService/ListWindows
+```
+
+`grpcurl -plaintext -H "authorization: Bearer $CUA_ENV_TOKEN" 127.0.0.1:3211 list`
+lists the services. Keep the token out of URLs and logs: it grants full
+control of the machine.

@@ -37,7 +37,8 @@ import type { Location } from "../model/types";
 import { settingsPage, type SettingsRow, type SettingsSection, type SignInPhase } from "../model/window";
 import { experimentsPage, settingsWithStorage } from "../model/experiments";
 import { chooseExperimentRow, useExperiments } from "../state/experiments";
-import { t } from "../i18n";
+import { AVAILABLE_LOCALES, t, useT } from "../i18n";
+import { LOCALE_ENDONYMS, savedLocaleChoice, setLocaleChoice } from "../i18n/preference";
 import { MiddleText } from "./MiddleText";
 import { SfIcon } from "./SfIcon";
 
@@ -145,6 +146,9 @@ export function SettingsPanel({
   onClose,
 }: SettingsPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null);
+  // Re-renders the panel when the language changes (the core's rows are words too).
+  const tl = useT("settings");
+  const [localeChoice, setLocaleChoiceState] = useState(savedLocaleChoice);
   const telemetry = useMemo(() => telemetryProp ?? telemetryBridge(), [telemetryProp]);
   const experiments = useExperiments();
   const drive = useMemo(() => driveProp ?? createDriveBridge(), [driveProp]);
@@ -507,6 +511,35 @@ export function SettingsPanel({
           </section>
         );
       })}
+      <section className="st-group" aria-label={tl("settings.language.label")}>
+        <div className="st-head">
+          <h3 className="st-title">{tl("settings.language.label")}</h3>
+        </div>
+        <div className="st-rows">
+          <div className="st-row">
+            <label className="st-label" htmlFor="st-ui-language">
+              {tl("settings.language.label")}
+            </label>
+            <select
+              id="st-ui-language"
+              className="dw-input st-field"
+              data-owns-enter
+              value={localeChoice}
+              onChange={(event) => {
+                setLocaleChoiceState(event.target.value);
+                void setLocaleChoice(event.target.value);
+              }}
+            >
+              <option value="system">{tl("settings.language.system_default")}</option>
+              {AVAILABLE_LOCALES.map((code) => (
+                <option key={code} value={code} lang={code}>
+                  {LOCALE_ENDONYMS[code]}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }

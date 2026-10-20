@@ -1234,8 +1234,8 @@ pub mod frame {
             "error": state["error"],
             "report": state["report"]["appId"],
             "sensitive": sensitive.as_array().map(|a| a.iter().map(|o| Value::String(format!("{}:{}:{}:{}",
-                o["group"].as_str().unwrap_or(""), o["label"].as_str().unwrap_or(""),
-                o["detail"].as_str().unwrap_or(""), if o["checked"] == true { "on" } else { "off" }))).collect::<Vec<_>>()).unwrap_or_default(),
+                o["group"].as_str().unwrap_or(""), o["label"]["code"].as_str().unwrap_or(""),
+                o["detail"]["code"].as_str().unwrap_or(""), if o["checked"] == true { "on" } else { "off" }))).collect::<Vec<_>>()).unwrap_or_default(),
             "planSensitive": plan_sensitive,
         });
         // Saved passwords, while the review offers them: the box's label

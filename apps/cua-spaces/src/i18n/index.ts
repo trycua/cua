@@ -5,17 +5,6 @@ import i18next, { type TOptions } from "i18next";
 import ICU from "i18next-icu";
 import { initReactI18next, useTranslation } from "react-i18next";
 
-import common from "./locales/en/common.json";
-import onboarding from "./locales/en/onboarding.json";
-import spaces from "./locales/en/spaces.json";
-import sharing from "./locales/en/sharing.json";
-import billing from "./locales/en/billing.json";
-import settings from "./locales/en/settings.json";
-import teleport from "./locales/en/teleport.json";
-import agents from "./locales/en/agents.json";
-import devices from "./locales/en/devices.json";
-import installer from "./locales/en/installer.json";
-import errors from "./locales/en/errors.json";
 
 /** One namespace per product area. Keys: `<area>.<screen>.<element>`. */
 export const NAMESPACES = [
@@ -33,16 +22,22 @@ export const NAMESPACES = [
 ] as const;
 export type Namespace = (typeof NAMESPACES)[number];
 
-/** Languages whose resources are bundled. Phase 1 ships English only. */
-export const AVAILABLE_LOCALES = ["en"] as const;
+/** Languages whose resources are bundled (`locales/<lng>/<ns>.json`). */
+export const AVAILABLE_LOCALES = ["en", "zh-Hans", "ko", "pt-BR", "ja", "es"] as const;
+export type UiLocale = (typeof AVAILABLE_LOCALES)[number];
 export const FALLBACK_LOCALE = "en";
 
 /** localStorage key for the Settings language choice (absent = system default). */
 export const LOCALE_SETTING_KEY = "cua.settings.locale";
 
-const resources = {
-  en: { common, onboarding, spaces, sharing, billing, settings, teleport, agents, devices, installer, errors },
-};
+// Every locale file is bundled up front (about 10 KB per language): the first
+// render is already in the right language, and a language switch needs no fetch.
+const files = import.meta.glob<Record<string, string>>("./locales/*/*.json", { eager: true, import: "default" });
+const resources: Record<string, Record<string, Record<string, string>>> = {};
+for (const [path, strings] of Object.entries(files)) {
+  const [, lng, file] = /\.\/locales\/([^/]+)\/([^/]+)\.json$/.exec(path) ?? [];
+  if (lng && file) (resources[lng] ??= {})[file] = strings;
+}
 
 /**
  * Map a BCP 47 tag to one of the app's locale codes, or null when the
@@ -122,6 +117,17 @@ export function currentUiLocale(): string {
 /** Non-React translate. Use `ns:key` or pass `{ ns }`. */
 export function t(key: string, options?: TOptions): string {
   return i18next.t(key, options) as string;
+}
+
+/** A message from the Rust core: a stable code plus variables, never English. */
+export interface Msg {
+  code: string;
+  vars: Record<string, string>;
+}
+
+/** Translate a core message by looking its code up like any other key. */
+export function tMsg(msg: Msg): string {
+  return t(msg.code, msg.vars);
 }
 
 /** React hook: `const t = useT("sharing")`. Re-renders on locale change. */

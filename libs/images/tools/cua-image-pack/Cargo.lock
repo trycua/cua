@@ -338,14 +338,14 @@ dependencies = [
 
 [[package]]
 name = "cua-create-failure"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "cua-image"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -379,7 +379,7 @@ dependencies = [
 
 [[package]]
 name = "cua-vmm"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",

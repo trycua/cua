@@ -7,7 +7,11 @@ manifests" (scripts/ci/check-lockfiles.sh). Those are:
 
 - every uv.lock whose `cua` package is the checkout (editable or directory);
 - every package-lock.json, other than the SDK's own, that links
-  libs/cua/typescript.
+  libs/cua/typescript;
+- every Cargo.lock that locks crates of the libs/cua workspace by path
+  (cua-proto, cua-spacesd-client, cua-hotspot, ...): the workspace releases
+  at the SDK version, so those entries follow it. Release Please bumps
+  libs/cua/Cargo.lock's own entries through the workspace version.
 
 Only that one recorded version changes. Rewriting the field instead of
 relocking keeps the diff independent of the uv and npm versions on the runner
@@ -29,6 +33,23 @@ UV_CUA_FROM_CHECKOUT = re.compile(
     re.M,
 )
 
+# A path dependency's lock entry has no `source` line after its version.
+def cargo_path_entries(names: list[str]) -> re.Pattern[str]:
+    return re.compile(
+        r'^(\[\[package\]\]\nname = "(?:' + "|".join(map(re.escape, names)) + r')"\nversion = ")[^"]*("\n(?!source = ))',
+        re.M,
+    )
+
+
+def workspace_crates(root: Path) -> list[str]:
+    """Package names of the libs/cua Cargo workspace."""
+    names = []
+    for manifest in sorted((root / "libs/cua/crates").glob("*/Cargo.toml")):
+        found = re.search(r'^\[package\]\nname = "([^"]+)"', manifest.read_text(), re.M)
+        if found:
+            names.append(found.group(1))
+    return names
+
 
 def tracked(root: Path, name: str) -> list[str]:
     out = subprocess.run(
@@ -41,6 +62,15 @@ def tracked(root: Path, name: str) -> list[str]:
 def sync_uv_lock(path: Path, version: str) -> bool:
     text = path.read_text()
     updated = UV_CUA_FROM_CHECKOUT.sub(rf"\g<1>{version}\g<2>", text)
+    if updated == text:
+        return False
+    path.write_text(updated)
+    return True
+
+
+def sync_cargo_lock(path: Path, entries: re.Pattern[str], version: str) -> bool:
+    text = path.read_text()
+    updated = entries.sub(rf"\g<1>{version}\g<2>", text)
     if updated == text:
         return False
     path.write_text(updated)
@@ -79,6 +109,14 @@ def main(argv: list[str] | None = None) -> int:
     for lock in tracked(root, "package-lock.json"):
         if (root / lock).parent.resolve() != sdk and sync_npm_lock(root / lock, sdk, version):
             changed.append(lock)
+    names = workspace_crates(root)
+    if names:
+        entries = cargo_path_entries(names)
+        changed += [
+            lock
+            for lock in tracked(root, "Cargo.lock")
+            if lock != "libs/cua/Cargo.lock" and sync_cargo_lock(root / lock, entries, version)
+        ]
     print("\n".join(changed))
     return 0
 

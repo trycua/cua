@@ -7,7 +7,6 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-publish = false
 
 [features]
 default = []
@@ -52,7 +51,7 @@ url.workspace = true
 # The NoCloud seed writer of the opt-in QEMU boot test (tests/boot_qemu.rs).
 cua-vmm.workspace = true
 ring = "0.17"
-cua-spaces = { path = "../cua-spaces" }
+cua-spaces.workspace = true
 cua-byoc = { path = ".", features = ["testing", "all"] }
 cua-host = { workspace = true, features = ["testing"] }
 cua-spacesd-client = { workspace = true, features = ["testing"] }

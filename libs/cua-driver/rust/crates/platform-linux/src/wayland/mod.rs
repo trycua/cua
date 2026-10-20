@@ -2423,6 +2423,8 @@ pub fn scroll(window_id: u64, direction: &str, amount: u32) -> anyhow::Result<()
 /// coordinates when the active compositor exposes the target geometry.
 /// On niri a window without a reported place (a tiled one) refuses: passing
 /// `(x, y)` through would aim window-local coordinates at the layout origin.
+/// niri remembers the rectangle used, so the pointer gate refuses if the
+/// window moved before the input is sent.
 pub fn window_local_to_output(window_id: u64, x: i32, y: i32) -> anyhow::Result<(i32, i32)> {
     if niri::is_session() {
         return niri::aim(window_id, x, y);

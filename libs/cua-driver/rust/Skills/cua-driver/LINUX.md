@@ -412,6 +412,8 @@ that names the remedy.
   filter niri windows on `is_on_screen`.
 - With more than one output, window capture, `get_desktop_state`,
   window-coordinate pointer input, and desktop-scope input refuse.
+- A floating window that moves between the coordinate translation and the
+  input refuses the input; take a new screenshot and retry.
 
 ## Quick triage
 

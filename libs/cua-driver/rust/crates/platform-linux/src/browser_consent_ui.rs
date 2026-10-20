@@ -8,7 +8,7 @@ use cua_driver_core::browser::{
 };
 
 use crate::atspi::AtspiNode;
-use crate::interaction::with_target_foreground;
+use crate::interaction::{with_target_foreground, RestoreMode};
 
 fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
     BrowserRefusal::new(code, message)
@@ -194,7 +194,7 @@ fn exact_button_center(
 }
 
 fn trusted_allow_click(pid: u32, window_id: u64) -> anyhow::Result<()> {
-    with_target_foreground(pid, window_id, || {
+    with_target_foreground(pid, window_id, RestoreMode::RestorePrevious, || {
         let tree = crate::atspi::walk_tree(pid, window_id, None);
         let index = exact_allow_button(&tree.nodes, &tree.bounds)
             .map_err(|error| anyhow::anyhow!(error.message))?

@@ -7527,7 +7527,7 @@ impl Tool for ClickTool {
                 // Native Wayland: focus+raise the target toplevel
                 // (foreign-toplevel `activate`), then drive `count` virtual-pointer
                 // button events. Wayland injection routes to the compositor focus.
-                crate::wayland::with_target_foreground(pid, xid, crate::interaction::RestoreMode::RestorePrevious, || {
+                crate::interaction::with_target_foreground(pid, xid, crate::interaction::RestoreMode::RestorePrevious, || {
                     crate::wayland::click_focused(output_x, output_y, count as u32, button)
                 })?;
                 return Ok(("wayland_activate", None, None, None));
@@ -8197,7 +8197,7 @@ impl Tool for TypeTextTool {
                     "type_text",
                     typing_budget(text_w.chars().count(), crate::wayland::niri::is_session()),
                     move || {
-                        crate::wayland::with_target_foreground(
+                        crate::interaction::with_target_foreground(
                             pid,
                             xid,
                             crate::interaction::RestoreMode::RestorePrevious,
@@ -8274,7 +8274,7 @@ impl Tool for TypeTextTool {
                 "type_text",
                 typing_budget(text_w.chars().count(), crate::wayland::niri::is_session()),
                 move || {
-                    crate::wayland::with_target_foreground(
+                    crate::interaction::with_target_foreground(
                         pid,
                         xid,
                         crate::interaction::RestoreMode::RestorePrevious,
@@ -9075,7 +9075,7 @@ impl Tool for PressKeyTool {
             let chord = press_key_chord(&mods, &key);
             let idx = resolved_element_index;
             let result = spawn_blocking_bounded("press_key", foreground_budget(1), move || {
-                crate::wayland::with_target_foreground(
+                crate::interaction::with_target_foreground(
                     pid,
                     xid,
                     crate::interaction::RestoreMode::RestorePrevious,
@@ -10505,7 +10505,7 @@ impl Tool for ScrollTool {
             let ticks = wheel_ticks(amount, by, crate::wayland::niri::is_session());
             let result =
                 spawn_blocking_bounded("scroll", foreground_budget(ticks as usize), move || {
-                    crate::wayland::with_target_foreground(
+                    crate::interaction::with_target_foreground(
                         pid,
                         xid,
                         crate::interaction::pointer_gesture_restore(),
@@ -10587,7 +10587,7 @@ impl Tool for ScrollTool {
             foreground_budget(amount_u32 as usize),
             move || -> anyhow::Result<()> {
                 if crate::wayland::wayland_input_enabled() {
-                    return crate::wayland::with_target_foreground(
+                    return crate::interaction::with_target_foreground(
                         pid,
                         xid,
                         crate::interaction::pointer_gesture_restore(),
@@ -10810,7 +10810,7 @@ impl Tool for DoubleClickTool {
                             }
                             if crate::wayland::wayland_input_enabled() {
                                 let (output_x, output_y) = wayland_point.unwrap_or((lxi, lyi));
-                                return crate::wayland::with_target_foreground(
+                                return crate::interaction::with_target_foreground(
                                     pid,
                                     xid,
                                     crate::interaction::pointer_gesture_restore(),
@@ -10929,7 +10929,7 @@ impl Tool for DoubleClickTool {
                 }
                 if crate::wayland::wayland_input_enabled() {
                     let (output_x, output_y) = wayland_output_point.unwrap_or((xi, yi));
-                    return crate::wayland::with_target_foreground(
+                    return crate::interaction::with_target_foreground(
                         pid,
                         xid,
                         crate::interaction::pointer_gesture_restore(),
@@ -11756,7 +11756,7 @@ impl Tool for DragTool {
                             button as u32,
                         );
                     }
-                    crate::wayland::with_target_foreground(
+                    crate::interaction::with_target_foreground(
                         pid,
                         xid,
                         crate::interaction::pointer_gesture_restore(),

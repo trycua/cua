@@ -72,7 +72,6 @@ use wayland_protocols_wlr::virtual_pointer::v1::client::{
 /// Linux evdev BTN_LEFT — the button code the virtual-pointer protocol expects.
 const BTN_LEFT: u32 = 0x110;
 
-use crate::interaction::RestoreMode;
 use crate::x11::WindowInfo;
 
 thread_local! {
@@ -84,7 +83,7 @@ thread_local! {
         const { std::cell::Cell::new(None) };
 }
 
-struct ForegroundTargetGuard(Option<(u32, u64)>);
+pub(crate) struct ForegroundTargetGuard(Option<(u32, u64)>);
 
 impl Drop for ForegroundTargetGuard {
     fn drop(&mut self) {
@@ -92,7 +91,7 @@ impl Drop for ForegroundTargetGuard {
     }
 }
 
-fn bind_foreground_target(pid: u32, window_id: u64) -> ForegroundTargetGuard {
+pub(crate) fn bind_foreground_target(pid: u32, window_id: u64) -> ForegroundTargetGuard {
     let previous = CURRENT_FOREGROUND_TARGET.with(|target| target.replace(Some((pid, window_id))));
     ForegroundTargetGuard(previous)
 }
@@ -2043,46 +2042,6 @@ pub fn activate_window_for_input_target(
     )
 }
 
-/// Run a focus-bound transaction only after a compositor adapter has
-/// confirmed the exact PID/window pair, and restore the previously focused
-/// toplevel afterward. Global virtual-keyboard/libei input is refused when the
-/// compositor cannot provide this read-back contract.
-/// [`RestoreMode::LeaveFocused`] runs `body` as it is: it activates the
-/// target itself and leaves it focused.
-pub fn with_target_foreground<T>(
-    pid: u32,
-    window_id: u64,
-    mode: RestoreMode,
-    body: impl FnOnce() -> anyhow::Result<T>,
-) -> anyhow::Result<T> {
-    if let RestoreMode::LeaveFocused = mode {
-        return body();
-    }
-    let _target_guard = bind_foreground_target(pid, window_id);
-    if niri::is_session() {
-        return niri::with_focused_window(pid, window_id, body);
-    }
-    if let Some(window) = sway_ipc::window_for_id(window_id) {
-        if window.pid != pid {
-            anyhow::bail!(
-                "foreground_unavailable: Sway window {window_id} belongs to pid {}, not pid {pid}",
-                window.pid
-            );
-        }
-        return sway_ipc::with_focused_container(window_id, body);
-    }
-    if kwin_helper::trusted_window_for_id(pid, window_id).is_some() {
-        return kwin_helper::with_focused_window(pid, window_id, body);
-    }
-    if shell_helper::trusted_window_for_id(pid, window_id).is_some() {
-        return shell_helper::with_focused_window(pid, window_id, body);
-    }
-    anyhow::bail!(
-        "foreground_unavailable: no trusted Wayland compositor adapter can confirm exact \
-         target window {window_id} for pid {pid}; no global keyboard input was sent"
-    )
-}
-
 /// Query the first `wl_output`'s pixel dimensions via a short Wayland
 /// roundtrip, independent of the virtual-pointer protocol. Used by the libei
 /// fallback (which never opens a `VptrSession`) to reproduce the vptr path's
@@ -2157,7 +2116,8 @@ pub fn click(window_id: u64, x: i32, y: i32, count: u32, button: u8) -> anyhow::
 }
 
 /// Click through a foreground target already guarded by
-/// [`with_target_foreground`]. wlroots keeps its native virtual-pointer path.
+/// [`crate::interaction::with_target_foreground`]. wlroots keeps its native
+/// virtual-pointer path.
 /// If that path is unavailable and libei needs a potentially blocking portal
 /// readiness wait, re-enter the exact foreground guard *after* readiness so
 /// KWin/GNOME/Sway ownership and focus are freshly verified immediately before
@@ -2169,10 +2129,10 @@ pub fn click_focused(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<(
         || {
             libei_wait_pointer_ready()?;
             if let Some((pid, window_id)) = current_foreground_target() {
-                return with_target_foreground(
+                return crate::interaction::with_target_foreground(
                     pid,
                     window_id,
-                    RestoreMode::RestorePrevious,
+                    crate::interaction::RestoreMode::RestorePrevious,
                     || libei_click(x, y, count, button),
                 );
             }
@@ -3026,8 +2986,8 @@ fn partition_modifiers(keys: &[String]) -> anyhow::Result<(Vec<String>, String)>
 }
 
 /// The niri window focused keyboard input must reach: the target an outer
-/// [`with_target_foreground`] focused, or `None` for desktop-scoped input
-/// into whatever has focus.
+/// [`crate::interaction::with_target_foreground`] focused, or `None` for
+/// desktop-scoped input into whatever has focus.
 fn niri_expected_window() -> Option<u64> {
     current_foreground_target().map(|(_, window_id)| window_id)
 }

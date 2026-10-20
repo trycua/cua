@@ -12,7 +12,7 @@ use cua_driver_core::browser::{
 };
 
 use crate::atspi::AtspiNode;
-use crate::interaction::with_target_foreground;
+use crate::interaction::{with_target_foreground, RestoreMode};
 
 fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
     BrowserRefusal::new(code, message)
@@ -106,7 +106,7 @@ fn setup_not_ready_message(descriptor: &BrowserSetupDescriptor) -> String {
 }
 
 fn close_tab(pid: u32, window_id: u64) -> anyhow::Result<()> {
-    with_target_foreground(pid, window_id, || {
+    with_target_foreground(pid, window_id, RestoreMode::RestorePrevious, || {
         if std::env::var_os("WAYLAND_DISPLAY").is_some() {
             crate::wayland::hotkey(window_id, &["ctrl".to_owned(), "w".to_owned()])
         } else {
@@ -182,7 +182,7 @@ fn trusted_setup_navigation(
     // `ctrl+l` then focuses the address field. Both are single letters, so
     // neither depends on the keyboard layout the way punctuation does.
     let focus_omnibox = || -> anyhow::Result<()> {
-        with_target_foreground(pid, window_id, || {
+        with_target_foreground(pid, window_id, RestoreMode::RestorePrevious, || {
             if wayland {
                 crate::wayland::hotkey_focused(&["ctrl".to_owned(), "l".to_owned()])
             } else {
@@ -191,7 +191,7 @@ fn trusted_setup_navigation(
         })
     };
 
-    with_target_foreground(pid, window_id, || {
+    with_target_foreground(pid, window_id, RestoreMode::RestorePrevious, || {
         if wayland {
             crate::wayland::hotkey_focused(&["ctrl".to_owned(), "t".to_owned()])
         } else {
@@ -234,7 +234,7 @@ fn trusted_setup_navigation(
     clipboard
         .write_text(descriptor.setup_url.to_owned())
         .map_err(|error| anyhow::anyhow!("could not stage the fixed setup URL: {error}"))?;
-    let paste = with_target_foreground(pid, window_id, || {
+    let paste = with_target_foreground(pid, window_id, RestoreMode::RestorePrevious, || {
         if wayland {
             crate::wayland::hotkey_focused(&["ctrl".to_owned(), "a".to_owned()])?;
             std::thread::sleep(Duration::from_millis(60));
@@ -254,7 +254,7 @@ fn trusted_setup_navigation(
 
     // Commit. Enter is the one synthesized keystroke left, and it carries no
     // layout dependency.
-    with_target_foreground(pid, window_id, || {
+    with_target_foreground(pid, window_id, RestoreMode::RestorePrevious, || {
         if wayland {
             crate::wayland::hotkey_focused(&["enter".to_owned()])
         } else {
@@ -586,10 +586,14 @@ fn set_remote_debugging(
                     handle.trusted_checkbox_fallback_attempted = true;
                     handle.foregrounded_window = true;
                     let trusted_navigation = handle.trusted_setup_navigation;
-                    let clicked = with_target_foreground(pid, window_id, || {
-                        std::thread::sleep(Duration::from_millis(60));
-                        let tree = crate::atspi::walk_tree(pid, window_id, None);
-                        let checkbox = exact_setup_checkbox(
+                    let clicked = with_target_foreground(
+                        pid,
+                        window_id,
+                        RestoreMode::RestorePrevious,
+                        || {
+                            std::thread::sleep(Duration::from_millis(60));
+                            let tree = crate::atspi::walk_tree(pid, window_id, None);
+                            let checkbox = exact_setup_checkbox(
                             &tree.nodes,
                             descriptor,
                             trusted_navigation,
@@ -600,38 +604,40 @@ fn set_remote_debugging(
                                 "the exact Microsoft Edge remote-debugging checkbox became stale before the trusted click"
                             )
                         })?;
-                        if checkbox.checked == Some(desired_enabled) {
-                            return Ok(false);
-                        }
-                        if checkbox.checked != Some(!desired_enabled) {
-                            anyhow::bail!(
+                            if checkbox.checked == Some(desired_enabled) {
+                                return Ok(false);
+                            }
+                            if checkbox.checked != Some(!desired_enabled) {
+                                anyhow::bail!(
                                 "the exact Microsoft Edge remote-debugging checkbox had an unknown state before the trusted click"
                             );
-                        }
-                        let index = checkbox.element_index.expect("actionable checkbox index");
-                        let (x, y, width, height) = crate::atspi::get_element_bounds(pid, index)?;
-                        if width <= 1 || height <= 1 {
-                            anyhow::bail!(
+                            }
+                            let index = checkbox.element_index.expect("actionable checkbox index");
+                            let (x, y, width, height) =
+                                crate::atspi::get_element_bounds(pid, index)?;
+                            if width <= 1 || height <= 1 {
+                                anyhow::bail!(
                                 "the exact Microsoft Edge remote-debugging checkbox had empty screen bounds"
                             );
-                        }
-                        let center_x = x
-                            .checked_add(i32::try_from(width / 2)?)
-                            .ok_or_else(|| anyhow::anyhow!("checkbox center x overflowed"))?;
-                        let center_y = y
-                            .checked_add(i32::try_from(height / 2)?)
-                            .ok_or_else(|| anyhow::anyhow!("checkbox center y overflowed"))?;
-                        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-                            // AT-SPI screen bounds are layout coordinates, as in
-                            // browser_consent_ui's click_focused path, not
-                            // desktop-frame points, so no frame conversion applies.
-                            let space = crate::wayland::DesktopInputSpace::default();
-                            crate::wayland::click_desktop(&space, center_x, center_y, 1, 1)?;
-                        } else {
-                            crate::input::send_click_xtest_desktop(center_x, center_y, 1, 1)?;
-                        }
-                        Ok(true)
-                    });
+                            }
+                            let center_x = x
+                                .checked_add(i32::try_from(width / 2)?)
+                                .ok_or_else(|| anyhow::anyhow!("checkbox center x overflowed"))?;
+                            let center_y = y
+                                .checked_add(i32::try_from(height / 2)?)
+                                .ok_or_else(|| anyhow::anyhow!("checkbox center y overflowed"))?;
+                            if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+                                // AT-SPI screen bounds are layout coordinates, as in
+                                // browser_consent_ui's click_focused path, not
+                                // desktop-frame points, so no frame conversion applies.
+                                let space = crate::wayland::DesktopInputSpace::default();
+                                crate::wayland::click_desktop(&space, center_x, center_y, 1, 1)?;
+                            } else {
+                                crate::input::send_click_xtest_desktop(center_x, center_y, 1, 1)?;
+                            }
+                            Ok(true)
+                        },
+                    );
                     match clicked {
                         Ok(injected) => handle.injected_global_input |= injected,
                         Err(error) => {

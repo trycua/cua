@@ -25,19 +25,47 @@ pub fn pointer_gesture_restore() -> RestoreMode {
     }
 }
 
-/// Run `body` with the exact `pid`/`window_id` pair focused: through the
-/// Wayland compositor adapter, which restores the prior focus, or the X11
-/// foreground rung, which leaves the target active.
+/// Run `body` with the exact `pid`/`window_id` pair focused. On Wayland a
+/// compositor adapter confirms the pair and restores the prior focus
+/// afterwards; global input is refused when no adapter can confirm it. On
+/// X11 the foreground rung activates the window and leaves it active.
+/// [`RestoreMode::LeaveFocused`] runs `body` as it is: it activates the
+/// target itself and leaves it focused.
 pub fn with_target_foreground<T>(
     pid: u32,
     window_id: u64,
+    mode: RestoreMode,
     body: impl FnOnce() -> Result<T>,
 ) -> Result<T> {
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        crate::wayland::with_target_foreground(pid, window_id, RestoreMode::RestorePrevious, body)
-    } else {
-        crate::input::with_x11_foreground(window_id, 80, body)
+    use crate::wayland::{bind_foreground_target, kwin_helper, niri, shell_helper, sway_ipc};
+    if let RestoreMode::LeaveFocused = mode {
+        return body();
     }
+    if std::env::var_os("WAYLAND_DISPLAY").is_none() {
+        return crate::input::with_x11_foreground(window_id, 80, body);
+    }
+    let _target_guard = bind_foreground_target(pid, window_id);
+    if niri::is_session() {
+        return niri::with_focused_window(pid, window_id, body);
+    }
+    if let Some(window) = sway_ipc::window_for_id(window_id) {
+        if window.pid != pid {
+            anyhow::bail!(
+                "foreground_unavailable: Sway window {window_id} belongs to pid {}, not pid {pid}",
+                window.pid
+            );
+        }
+        return sway_ipc::with_focused_container(window_id, body);
+    }
+    if kwin_helper::trusted_window_for_id(pid, window_id).is_some() {
+        return kwin_helper::with_focused_window(pid, window_id, body);
+    }
+    if shell_helper::trusted_window_for_id(pid, window_id).is_some() {
+        return shell_helper::with_focused_window(pid, window_id, body);
+    }
+    anyhow::bail!(
+        "foreground_unavailable: no trusted Wayland compositor adapter can confirm exact target window {window_id} for pid {pid}; no global keyboard input was sent"
+    )
 }
 
 const POLL: Duration = Duration::from_millis(10);
@@ -111,8 +139,7 @@ mod tests {
 
     #[test]
     fn leave_focused_runs_the_body_without_a_compositor_transaction() {
-        let ran =
-            crate::wayland::with_target_foreground(1, 2, RestoreMode::LeaveFocused, || Ok("sent"));
+        let ran = with_target_foreground(1, 2, RestoreMode::LeaveFocused, || Ok("sent"));
         assert_eq!(ran.unwrap(), "sent");
     }
 

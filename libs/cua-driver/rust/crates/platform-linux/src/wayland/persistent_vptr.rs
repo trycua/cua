@@ -298,19 +298,25 @@ impl HeldCursors {
 
     /// The owner handled a command for `cursor_id`, a press when `pressed`.
     fn publish(&self, cursor_id: &str, owner: &dyn Owner, pressed: bool) {
-        let mut cursors = self.lock();
         if pressed {
-            if let Some(count) = cursors.pressing.get_mut(cursor_id) {
-                *count -= 1;
-                if *count == 0 {
-                    cursors.pressing.remove(cursor_id);
-                }
-            }
+            self.press_dropped(cursor_id);
         }
+        let mut cursors = self.lock();
         if owner.holds(cursor_id) {
             cursors.held.insert(cursor_id.to_owned());
         } else {
             cursors.held.remove(cursor_id);
+        }
+    }
+
+    /// A queued press for `cursor_id` is no longer pending.
+    fn press_dropped(&self, cursor_id: &str) {
+        let mut cursors = self.lock();
+        if let Some(count) = cursors.pressing.get_mut(cursor_id) {
+            *count -= 1;
+            if *count == 0 {
+                cursors.pressing.remove(cursor_id);
+            }
         }
     }
 
@@ -353,9 +359,8 @@ fn handle_press(
     // The vptr proxy stays valid while its connection lives: keep both for
     // the cursor's later commands.
     let (origin_x, origin_y) = (sess.origin_x, sess.origin_y);
-    let niri = sess.deadline.is_some();
     let (conn, vptr) = sess.keep();
-    persist_conn(cursor_id, conn, niri);
+    persist_conn(cursor_id, conn);
 
     let mut held = HashSet::new();
     held.insert(btn);
@@ -586,20 +591,18 @@ fn answers_later(error: &anyhow::Error) -> bool {
 //
 // We use a per-thread static rather than a Mutex<HashMap> because the owner
 // thread is the only accessor (no contention possible).
-/// A held cursor's connection, its queue, and whether it is niri's, whose
-/// round trips are bounded.
-type Persisted = (Connection, wayland_client::EventQueue<super::State>, bool);
+/// A held cursor's connection and its queue.
+type Persisted = (Connection, wayland_client::EventQueue<super::State>);
 
 thread_local! {
     static CONNS: std::cell::RefCell<HashMap<String, Persisted>>
         = std::cell::RefCell::new(HashMap::new());
 }
 
-fn persist_conn(cursor_id: &str, conn: Connection, niri: bool) {
+fn persist_conn(cursor_id: &str, conn: Connection) {
     let queue = conn.new_event_queue::<super::State>();
     CONNS.with(|c| {
-        c.borrow_mut()
-            .insert(cursor_id.to_string(), (conn, queue, niri));
+        c.borrow_mut().insert(cursor_id.to_string(), (conn, queue));
     });
 }
 
@@ -612,12 +615,12 @@ fn forget_conn(cursor_id: &str) {
 fn roundtrip_on_persistent(cursor_id: &str) -> anyhow::Result<()> {
     CONNS.with(|c| {
         let mut b = c.borrow_mut();
-        let (conn, queue, niri) = b
+        let (conn, queue) = b
             .get_mut(cursor_id)
             .ok_or_else(|| anyhow::anyhow!("no persistent connection for cursor '{cursor_id}'"))?;
         let mut tmp = super::State::default();
-        let deadline = niri.then(|| std::time::Instant::now() + super::NIRI_ROUNDTRIP_TIMEOUT);
-        super::sync_by(conn, queue, &mut tmp, deadline).map_err(round_trip_failed)
+        let deadline = std::time::Instant::now() + super::NIRI_ROUNDTRIP_TIMEOUT;
+        super::sync_by(conn, queue, &mut tmp, Some(deadline)).map_err(round_trip_failed)
     })
 }
 
@@ -631,8 +634,17 @@ fn request<T>(
     let (tx_r, rx_r) = bounded(1);
     tx.send(cmd(tx_r))
         .map_err(|e| anyhow::anyhow!("cua-persistent-vptr thread is dead: {e}"))?;
-    rx_r.recv()
-        .map_err(|e| anyhow::anyhow!("reply channel closed: {e}"))?
+    let reply = match crate::input::action::current() {
+        Some(action) => rx_r.recv_deadline(action.deadline()),
+        None => rx_r.recv().map_err(Into::into),
+    };
+    reply.map_err(|e| anyhow::Error::new(e).context("cua-persistent-vptr owner did not answer"))?
+}
+
+fn never_handled(error: &anyhow::Error) -> bool {
+    !error
+        .downcast_ref::<crossbeam_channel::RecvTimeoutError>()
+        .is_some_and(crossbeam_channel::RecvTimeoutError::is_timeout)
 }
 
 /// Press and HOLD `button` (evdev code) at output coordinates `(x, y)` on the
@@ -689,6 +701,11 @@ fn press_on(
         button,
         action: crate::input::action::current(),
         reply,
+    })
+    .inspect_err(|error| {
+        if never_handled(error) {
+            held.press_dropped(cursor_id);
+        }
     })?;
     // The button is down. Until the hold is recorded, release it on every
     // way out, a panicking `record` included.
@@ -1189,6 +1206,30 @@ mod tests {
         let retried = release_within(&held, || &tx, "session", 1, wait);
         assert!(retried.is_ok(), "{retried:?}");
         assert_eq!(*sent.lock().unwrap(), ["press", "release"]);
+    }
+
+    #[test]
+    fn a_press_the_owner_never_handles_stops_counting_as_under_way() {
+        let held = HeldCursors::default();
+        let (tx, rx) = bounded::<Cmd>(1);
+        drop(rx);
+        press_on(&tx, &held, "dead", 1, 10, 10, 1, || ()).unwrap_err();
+        assert!(!held.contains("dead"));
+    }
+
+    #[test]
+    fn a_request_waits_for_the_owner_only_until_the_action_deadline() {
+        let (tx, rx) = bounded::<Cmd>(1);
+        let action = crate::input::action::Action::new(std::time::Duration::from_millis(100));
+        let _bound = crate::input::action::bind(action);
+        let started = std::time::Instant::now();
+        request::<()>(&tx, |reply| Cmd::Forget {
+            cursor_id: "stuck".into(),
+            reply,
+        })
+        .unwrap_err();
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        drop(rx);
     }
 
     #[test]

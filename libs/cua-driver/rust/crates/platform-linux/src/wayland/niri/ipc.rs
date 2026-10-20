@@ -363,6 +363,14 @@ impl<C: FnMut(Instant) -> Result<UnixStream>> Ipc<C> {
     /// A read-only request; a failure is final.
     pub(super) fn query<T: DeserializeOwned>(&mut self, request: Request) -> Result<T> {
         let deadline = Instant::now() + self.timeout;
+        self.query_until(request, deadline)
+    }
+
+    fn query_until<T: DeserializeOwned>(
+        &mut self,
+        request: Request,
+        deadline: Instant,
+    ) -> Result<T> {
         let name = format!("{request:?}");
         let name = name.as_str();
         let mut lines = self.connection(deadline)?;
@@ -415,11 +423,13 @@ impl<C: FnMut(Instant) -> Result<UnixStream>> Ipc<C> {
         self.query(Request::FocusedWindow)
     }
 
+    /// One snapshot of the layout, its four requests sharing one deadline.
     pub(super) fn scene(&mut self) -> Result<Scene> {
-        let windows = self.query(Request::Windows)?;
-        let workspaces = self.query(Request::Workspaces)?;
-        let outputs = self.query(Request::Outputs)?;
-        let overview: Overview = self.query(Request::OverviewState)?;
+        let deadline = Instant::now() + self.timeout;
+        let windows = self.query_until(Request::Windows, deadline)?;
+        let workspaces = self.query_until(Request::Workspaces, deadline)?;
+        let outputs = self.query_until(Request::Outputs, deadline)?;
+        let overview: Overview = self.query_until(Request::OverviewState, deadline)?;
         Ok(Scene {
             windows,
             workspaces,
@@ -701,6 +711,42 @@ mod tests {
         .unwrap_err();
         assert_eq!(attempts, 1);
         assert_eq!(error.to_string(), "niri action outcome is unknown");
+    }
+
+    #[test]
+    fn the_four_scene_requests_share_one_deadline() {
+        let fake = std::sync::Arc::new(Mutex::new(Fake {
+            outputs: vec![output("winit", 0, 0, (1280, 720), 1.0, "Normal")],
+            ..Fake::default()
+        }));
+        let slow = fake.clone();
+        let mut ipc = ipc_with(
+            move |_| {
+                let (client, server) = UnixStream::pair()?;
+                let fake = slow.clone();
+                std::thread::spawn(move || {
+                    let mut lines = Lines::new(server);
+                    while let Ok(Some(line)) = lines.next(Instant::now() + Duration::from_secs(2)) {
+                        std::thread::sleep(Duration::from_millis(40));
+                        let reply = fake
+                            .lock()
+                            .unwrap()
+                            .reply(std::str::from_utf8(&line).unwrap());
+                        if lines
+                            .stream
+                            .write_all(format!("{reply}\n").as_bytes())
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                });
+                Ok(client)
+            },
+            Duration::from_millis(100),
+        );
+        ipc.query::<Value>(Request::Windows).unwrap();
+        assert!(ipc.scene().is_err());
     }
 
     #[test]

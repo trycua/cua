@@ -199,10 +199,9 @@ pub fn shutdown() {
 /// Complete only after the owning cursor's arrival buffer receives a compositor
 /// frame callback. Queue loss, renderer failure and timeout refuse input.
 pub async fn animate_and_wait(key: CursorKey, x: f64, y: f64) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        CONFIG_ENABLED.load(Ordering::Acquire),
-        "Wayland cursor overlay disabled; click not sent"
-    );
+    if !CONFIG_ENABLED.load(Ordering::Acquire) {
+        return Ok(());
+    }
     anyhow::ensure!(
         available() && ensure_started(),
         "Wayland arrival renderer unavailable"
@@ -2755,14 +2754,8 @@ mod click_arrival_tests {
     }
 
     #[tokio::test]
-    async fn disabled_overlay_refuses_arrival_instead_of_authorizing_input() {
+    async fn disabled_overlay_skips_arrival_and_allows_input() {
         CONFIG_ENABLED.store(false, Ordering::Release);
-        assert_eq!(
-            animate_and_wait("agent".into(), 10.0, 20.0)
-                .await
-                .unwrap_err()
-                .to_string(),
-            "Wayland cursor overlay disabled; click not sent"
-        );
+        animate_and_wait("agent".into(), 10.0, 20.0).await.unwrap();
     }
 }

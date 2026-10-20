@@ -2554,9 +2554,9 @@ fn runtime_optional_with(
         return Vec::new();
     };
     let linux_ready = r.backends.iter().any(|b| {
-        b.ready
-            && (matches!(b.backend, B::Qemu | B::Container)
-                || b.backend == B::Managed && r.host.os == HostOs::Macos)
+        b.ready && matches!(b.backend, B::Qemu | B::Container)
+            || b.backend == B::Managed && r.host.os == HostOs::Macos
+                && (b.ready || b.provisionable)
     });
     let mut optional: Vec<String> = r
         .backends
@@ -2910,11 +2910,12 @@ mod tests {
             host::HostOs,
             managed::LinuxSource,
         };
-        for (os, ready, supported, source) in [
-            (HostOs::Linux, B::Qemu, false, LinuxSource::Auto),
-            (HostOs::Linux, B::Container, false, LinuxSource::Auto),
-            (HostOs::Macos, B::Container, true, LinuxSource::System),
-            (HostOs::Macos, B::Managed, true, LinuxSource::Builtin),
+        for (os, ready, supported, source, running) in [
+            (HostOs::Linux, B::Qemu, false, LinuxSource::Auto, true),
+            (HostOs::Linux, B::Container, false, LinuxSource::Auto, true),
+            (HostOs::Macos, B::Container, true, LinuxSource::System, true),
+            (HostOs::Macos, B::Managed, true, LinuxSource::Builtin, true),
+            (HostOs::Macos, B::Managed, true, LinuxSource::Builtin, false),
         ] {
             let mut r = DoctorReport {
                 host: HostReport {
@@ -2927,7 +2928,7 @@ mod tests {
                     .into_iter()
                     .map(|backend| BackendStatus {
                         backend,
-                        ready: backend == ready,
+                        ready: backend == ready && running,
                         provisionable: matches!(backend, B::Lume | B::Managed),
                         detail: String::new(),
                         missing: vec![],
@@ -3049,7 +3050,10 @@ mod tests {
                     0
                 );
             }
-            r.backends.iter_mut().for_each(|b| b.ready = false);
+            r.backends.iter_mut().for_each(|b| {
+                b.ready = false;
+                b.provisionable = false;
+            });
             let optional = super::runtime_optional_with(
                 &serde_json::to_string(&r).unwrap(),
                 supported,
@@ -3057,6 +3061,19 @@ mod tests {
             );
             assert!(!optional.contains(&"qemu".into()));
             assert!(!optional.contains(&"kvm".into()));
+            let report = cua_sdk::DoctorReport {
+                checks: cua_daemon::local::doctor_checks(&r)
+                    .into_iter()
+                    .map(Into::into)
+                    .collect(),
+                report_json: serde_json::to_string(&r).unwrap(),
+            };
+            let mut out = Vec::new();
+            assert_eq!(
+                super::runtime_doctor_output_with(&mut out, &report, false, &optional),
+                1
+            );
+            assert!(String::from_utf8(out).unwrap().contains("error"));
         }
     }
 

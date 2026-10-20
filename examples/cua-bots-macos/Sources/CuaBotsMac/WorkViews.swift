@@ -157,7 +157,11 @@ struct ApprovalsView: View {
                             VStack(alignment: .leading) {
                                 Text(p.callerDisplay).font(.callout.weight(.medium))
                                 Text(p.request.reason).font(.caption).foregroundStyle(.secondary)
-                                Text(p.items.map { $0.key.isEmpty ? $0.appDisplay : $0.key }.joined(separator: ", ")).font(.caption)
+                                Text(p.items.map { item in
+                                    let name = item.key.isEmpty ? item.appDisplay : item.key
+                                    guard let domain = item.domain, !domain.isEmpty else { return name }
+                                    return "\(name) (\(domain))"
+                                }.joined(separator: ", ")).font(.caption)
                             }
                             Spacer()
                             Button("Deny") { Task { try? await model.keyvault.decide(requestID: p.id, approve: false) } }

@@ -60,8 +60,9 @@ public final class KeyvaultBridge: ObservableObject, SignInBroker {
     static func host(_ s: String) -> String {
         let t = s.lowercased().trimmingCharacters(in: .whitespaces)
         let noScheme = t.components(separatedBy: "://").last ?? t
-        return String(noScheme.split(separator: "/").first ?? Substring(noScheme))
-            .replacingOccurrences(of: "www.", with: "")
+        var h = String(noScheme.split(separator: "/").first ?? Substring(noScheme))
+        if h.hasPrefix(".") { h.removeFirst() }
+        return h.replacingOccurrences(of: "www.", with: "")
     }
 
     // MARK: - SignInBroker

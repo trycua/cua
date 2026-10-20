@@ -2563,12 +2563,13 @@ fn runtime_optional_with(
         .iter()
         .filter(|b| {
             !b.ready
-                && (linux_ready
-                    || match b.backend {
-                        B::Lume => !r.lume.supported_host,
-                        B::Managed => !managed_supported || source == LinuxSource::System,
-                        _ => false,
-                    })
+                && match b.backend {
+                    B::Lume => !r.lume.supported_host,
+                    B::Managed => {
+                        linux_ready || !managed_supported || source == LinuxSource::System
+                    }
+                    _ => linux_ready,
+                }
         })
         .map(|b| b.backend.as_str().to_string())
         .collect();
@@ -2621,7 +2622,11 @@ fn runtime_setup_output(
 ) -> i32 {
     use cua_sdk::RuntimeCheckStatus as S;
     for s in &mut steps {
-        if s.status == S::Error && optional.contains(&s.name) && !components.contains(&s.name) {
+        if s.status == S::Error
+            && optional.contains(&s.name)
+            && !components.contains(&s.name)
+            && !(s.name == "kvm" && components.iter().any(|c| c == "qemu"))
+        {
             s.status = S::NotApplicable;
         }
         line(out, format!("{:<10} {:?}: {}", s.name, s.status, s.detail));
@@ -2971,7 +2976,62 @@ mod tests {
                     );
                 }
             }
+            if os == HostOs::Macos && ready == B::Container {
+                let mut mac = r.clone();
+                mac.lume.supported_host = true;
+                mac.backends
+                    .iter_mut()
+                    .find(|b| b.backend == B::Lume)
+                    .unwrap()
+                    .provisionable = false;
+                let report_json = serde_json::to_string(&mac).unwrap();
+                let optional = super::runtime_optional_with(&report_json, supported, source);
+                let report = cua_sdk::DoctorReport {
+                    checks: cua_daemon::local::doctor_checks(&mac)
+                        .into_iter()
+                        .map(Into::into)
+                        .collect(),
+                    report_json,
+                };
+                for json in [false, true] {
+                    assert_eq!(
+                        super::runtime_doctor_output_with(
+                            &mut Vec::new(),
+                            &report,
+                            json,
+                            &optional
+                        ),
+                        1
+                    );
+                }
+                assert_eq!(
+                    super::runtime_setup_output(
+                        &mut Vec::new(),
+                        vec![cua_sdk::SetupStep {
+                            name: "lume".into(),
+                            status: cua_sdk::RuntimeCheckStatus::Error,
+                            detail: "unavailable".into(),
+                        }],
+                        &optional,
+                        &[]
+                    ),
+                    1
+                );
+            }
             if ready == B::Container {
+                assert_eq!(
+                    super::runtime_setup_output(
+                        &mut Vec::new(),
+                        vec![cua_sdk::SetupStep {
+                            name: "kvm".into(),
+                            status: cua_sdk::RuntimeCheckStatus::Error,
+                            detail: "permission denied".into(),
+                        }],
+                        &optional,
+                        &["qemu".into()]
+                    ),
+                    1
+                );
                 let steps = || {
                     vec![cua_sdk::SetupStep {
                         name: "qemu".into(),

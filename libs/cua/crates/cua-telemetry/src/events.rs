@@ -725,21 +725,65 @@ pub fn agent_run_completed(
         .s("duration_bucket", duration_bucket(elapsed))
 }
 
+/// A fixed cause word for a failed agent run, chosen from its recorded
+/// error text: `no_api_key`, `provider_error`, `timeout`, `user_cancelled`,
+/// else `AgentFailed`. The text is only matched, never kept or sent.
+pub fn agent_failure_cause(error: Option<&str>) -> &'static str {
+    let t = error.unwrap_or_default().to_ascii_lowercase();
+    let has = |words: &[&str]| words.iter().any(|w| t.contains(w));
+    if has(&["cancelled", "canceled", "interrupted by user"]) {
+        "user_cancelled"
+    } else if has(&["timed out", "timeout", "deadline"]) {
+        "timeout"
+    } else if has(&[
+        "api key",
+        "api_key",
+        "apikey",
+        "credential",
+        "unauthorized",
+        "authentication",
+        "401",
+        "403",
+        "not logged in",
+        "login required",
+    ]) {
+        "no_api_key"
+    } else if has(&[
+        "rate limit",
+        "429",
+        "overloaded",
+        "quota",
+        "provider",
+        "500",
+        "502",
+        "503",
+        "504",
+        "service unavailable",
+    ]) {
+        "provider_error"
+    } else {
+        "AgentFailed"
+    }
+}
+
 /// How an agent run ended, from its published status (`cua_agents`
-/// `RunStatus::as_str`), the ACP stop reason of its last turn and whether
-/// it recorded an error. None while it still runs (or cannot be read).
+/// `RunStatus::as_str`), the ACP stop reason of its last turn and its
+/// recorded error text (only classified into a cause word). None while it
+/// still runs (or cannot be read).
 pub fn agent_run_end(
     status: &str,
     stop_reason: Option<&str>,
-    recorded_error: bool,
+    recorded_error: Option<&str>,
 ) -> Option<(Outcome, Option<&'static str>)> {
     match status.trim() {
         "idle" if stop_reason.is_some_and(|r| r.trim() == "cancelled") => {
             Some((Outcome::Cancelled, None))
         }
-        "idle" if recorded_error => Some((Outcome::Error, Some("AgentFailed"))),
+        "idle" if recorded_error.is_some() => {
+            Some((Outcome::Error, Some(agent_failure_cause(recorded_error))))
+        }
         "idle" => Some((Outcome::Ok, None)),
-        "failed" => Some((Outcome::Error, Some("AgentFailed"))),
+        "failed" => Some((Outcome::Error, Some(agent_failure_cause(recorded_error)))),
         "crashed" => Some((Outcome::Error, Some("AgentCrashed"))),
         _ => None,
     }

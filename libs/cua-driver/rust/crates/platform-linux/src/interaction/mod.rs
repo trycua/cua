@@ -64,13 +64,11 @@ pub fn with_target_foreground<T>(
         return niri::with_focused_window(pid, window_id, body);
     }
     if let Some(window) = sway_ipc::window_for_id(window_id) {
-        if window.pid != pid {
-            anyhow::bail!(
-                "foreground_unavailable: Sway window {window_id} belongs to pid {}, not pid {pid}",
-                window.pid
-            );
-        }
-        return sway_ipc::with_focused_container(window_id, body);
+        policy::identity(
+            &(pid, window_id),
+            &facts::Fact::Known(Some((window.pid, window.id))),
+        )?;
+        return sway_ipc::with_focused_container(pid, window_id, body);
     }
     if kwin_helper::trusted_window_for_id(pid, window_id).is_some() {
         return kwin_helper::with_focused_window(pid, window_id, body);

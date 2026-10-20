@@ -37,6 +37,25 @@ pub fn lock(scope: Scope, locked: &Fact<bool>, focus_read_back: bool) -> Result<
     }
 }
 
+/// Require an exact observed identity. Missing, mismatched and unknown
+/// identities refuse; focus or geometry cannot substitute for ownership.
+pub fn identity<T: PartialEq>(expected: &T, observed: &Fact<Option<T>>) -> Result<()> {
+    match observed {
+        Fact::Known(Some(actual)) if actual == expected => Ok(()),
+        Fact::Known(_) => {
+            bail!("foreground_unavailable: the exact target identity was not observed")
+        }
+        Fact::Unknown(why) => bail!("foreground_unavailable: target identity is unknown ({why})"),
+    }
+}
+
+/// An exact focus read-back permits delivery. A known different or absent
+/// focus needs activation and another read-back; unknown focus cannot
+/// confirm delivery. Command acceptance alone is not a focus fact.
+pub fn focused<T: PartialEq>(expected: &T, observed: &Fact<Option<T>>) -> bool {
+    identity(expected, observed).is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -73,5 +92,24 @@ mod tests {
         lock(Scope::TargetBoundInput, &unknown(), false).unwrap();
         lock(Scope::DesktopInput, &unknown(), false).unwrap();
         lock(Scope::Capture, &unknown(), false).unwrap();
+    }
+
+    #[test]
+    fn identity_requires_both_the_process_and_window() {
+        let target = (107, 7);
+        identity(&target, &Fact::Known(Some(target))).unwrap();
+        for observed in [
+            Fact::Known(Some((108, 7))),
+            Fact::Known(Some((107, 8))),
+            Fact::Known(None),
+            unknown(),
+        ] {
+            assert!(identity(&target, &observed)
+                .unwrap_err()
+                .to_string()
+                .starts_with("foreground_unavailable:"));
+            assert!(!focused(&target, &observed));
+        }
+        assert!(focused(&target, &Fact::Known(Some(target))));
     }
 }

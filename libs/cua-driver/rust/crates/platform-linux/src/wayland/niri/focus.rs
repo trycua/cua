@@ -67,12 +67,16 @@ fn focus_target<C: FnMut(Instant) -> Result<UnixStream>>(
         .ok_or_else(|| foreground_unavailable(format!("niri window {id} no longer exists")))?;
     let target_pid = target.pid.and_then(|pid| u32::try_from(pid).ok());
     if let Some(pid) = pid {
-        if target_pid != Some(pid) {
-            return Err(foreground_unavailable(format!(
+        interaction::policy::identity(
+            &(Some(pid), id),
+            &interaction::facts::Fact::Known(Some((target_pid, target.id))),
+        )
+        .map_err(|_| {
+            foreground_unavailable(format!(
                 "niri window {id} belongs to pid {}, not pid {pid}",
                 target_pid.map_or_else(|| "unknown".to_owned(), |pid| pid.to_string())
-            )));
-        }
+            ))
+        })?;
     }
     Ok((!target.is_focused).then_some(target))
 }
@@ -112,11 +116,12 @@ pub(super) fn confirm_focus<C: FnMut(Instant) -> Result<UnixStream>>(
     let mut focused = None;
     if interaction::confirm(deadline, || {
         focused = ipc.focused_window()?;
-        anyhow::Ok(
-            focused
-                .as_ref()
-                .is_some_and(|focused| focused.id == id && focused.pid == pid),
-        )
+        anyhow::Ok(interaction::policy::focused(
+            &(pid, id),
+            &interaction::facts::Fact::Known(
+                focused.as_ref().map(|window| (window.pid, window.id)),
+            ),
+        ))
     })? {
         return Ok(());
     }

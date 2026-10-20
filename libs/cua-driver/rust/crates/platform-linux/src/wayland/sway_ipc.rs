@@ -180,9 +180,18 @@ fn focus_container(id: u64) -> bool {
         .is_ok_and(|status| status.success())
 }
 
-fn wait_for_container_focus(id: u64, timeout: std::time::Duration) -> bool {
+fn wait_for_container_focus(pid: u32, id: u64, timeout: std::time::Duration) -> bool {
     crate::interaction::confirm(std::time::Instant::now() + timeout, || {
-        Ok::<_, ()>(window_for_id(id).is_some_and(|window| window.focused))
+        let observed = match list_windows() {
+            Some(windows) => crate::interaction::facts::Fact::Known(
+                windows
+                    .into_iter()
+                    .find(|window| window.focused)
+                    .map(|window| (window.pid, window.id)),
+            ),
+            None => crate::interaction::facts::Fact::Unknown("Sway IPC tree is unavailable".into()),
+        };
+        Ok::<_, ()>(crate::interaction::policy::focused(&(pid, id), &observed))
     })
     .unwrap_or(false)
 }
@@ -191,6 +200,7 @@ fn wait_for_container_focus(id: u64, timeout: std::time::Duration) -> bool {
 /// the previously focused container. The caller must already have verified the
 /// target container's PID and id through [`window_for_id`].
 pub fn with_focused_container<T>(
+    pid: u32,
     id: u64,
     body: impl FnOnce() -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
@@ -198,21 +208,21 @@ pub fn with_focused_container<T>(
         .ok_or_else(|| anyhow::anyhow!("Sway IPC tree is unavailable"))?
         .into_iter()
         .find(|window| window.focused)
-        .map(|window| window.id);
+        .map(|window| (window.pid, window.id));
     if !focus_container(id) {
         anyhow::bail!("Sway refused to focus exact container {id}");
     }
-    if !wait_for_container_focus(id, std::time::Duration::from_millis(500)) {
+    if !wait_for_container_focus(pid, id, std::time::Duration::from_millis(500)) {
         anyhow::bail!("Sway did not confirm focus on exact container {id}");
     }
     let result = body();
     let restore = prior
-        .filter(|prior| *prior != id)
-        .map(|prior| {
+        .filter(|(_, prior)| *prior != id)
+        .map(|(pid, prior)| {
             if !focus_container(prior) {
                 anyhow::bail!("Sway could not restore prior container {prior}");
             }
-            if !wait_for_container_focus(prior, std::time::Duration::from_millis(500)) {
+            if !wait_for_container_focus(pid, prior, std::time::Duration::from_millis(500)) {
                 anyhow::bail!("Sway did not confirm restored container {prior}");
             }
             Ok(())

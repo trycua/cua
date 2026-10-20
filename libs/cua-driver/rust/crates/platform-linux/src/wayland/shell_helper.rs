@@ -404,22 +404,26 @@ pub fn with_focused_window<T>(
         .ok_or_else(|| anyhow::anyhow!("the verified GNOME Shell helper API is unavailable"))?;
     let target = before
         .iter()
-        .find(|window| window.info.pid == Some(pid) && window.info.xid == window_id)
+        .find(|window| window.info.xid == window_id)
         .ok_or_else(|| anyhow::anyhow!("no exact GNOME Shell window owns the approved target"))?;
+    crate::interaction::policy::identity(
+        &(Some(pid), window_id),
+        &crate::interaction::facts::Fact::Known(Some((target.info.pid, target.info.xid))),
+    )?;
     let previous = before
         .iter()
         .find(|window| window.focused)
-        .map(|window| window.info.xid)
+        .and_then(|window| window.info.pid.map(|pid| (pid, window.info.xid)))
         .ok_or_else(|| anyhow::anyhow!("GNOME Shell did not expose a restorable focused window"))?;
 
     if target.focused {
         return body();
     }
-    trusted_activate_window(window_id)
+    trusted_activate_window(pid, window_id)
         .then_some(())
         .ok_or_else(|| anyhow::anyhow!("GNOME Shell did not confirm exact target activation"))?;
     let body_result = body();
-    let restored = trusted_activate_window(previous);
+    let restored = trusted_activate_window(previous.0, previous.1);
     match (body_result, restored) {
         (Ok(value), true) => Ok(value),
         (Err(error), true) => Err(error),
@@ -462,7 +466,7 @@ fn focus_confirmed(mut focused: impl FnMut() -> bool) -> bool {
     .unwrap_or(false)
 }
 
-fn trusted_activate_window(window_id: u64) -> bool {
+fn trusted_activate_window(pid: u32, window_id: u64) -> bool {
     let Ok(window_id) = u32::try_from(window_id) else {
         return false;
     };
@@ -472,11 +476,18 @@ fn trusted_activate_window(window_id: u64) -> bool {
         return false;
     }
     focus_confirmed(|| {
-        trusted_shell_windows(None).is_some_and(|windows| {
-            windows
-                .into_iter()
-                .any(|window| window.info.xid == u64::from(window_id) && window.focused)
-        })
+        let observed = match trusted_shell_windows(None) {
+            Some(windows) => crate::interaction::facts::Fact::Known(
+                windows
+                    .into_iter()
+                    .find(|window| window.focused)
+                    .map(|window| (window.info.pid, window.info.xid)),
+            ),
+            None => crate::interaction::facts::Fact::Unknown(
+                "the verified GNOME Shell helper API is unavailable".into(),
+            ),
+        };
+        crate::interaction::policy::focused(&(Some(pid), u64::from(window_id)), &observed)
     })
 }
 

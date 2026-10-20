@@ -29,6 +29,7 @@ use windows::Win32::UI::Accessibility::{
 };
 
 pub mod fg_bypass;
+pub(crate) mod focused_document;
 pub mod scroll;
 pub mod snapshot;
 pub mod windows_enum;

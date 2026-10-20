@@ -10,8 +10,8 @@ manifests" (scripts/ci/check-lockfiles.sh). Those are:
   libs/cua/typescript;
 - every Cargo.lock that locks crates of the libs/cua workspace by path
   (cua-proto, cua-spacesd-client, cua-hotspot, ...): the workspace releases
-  at the SDK version, so those entries follow it. Release Please bumps
-  libs/cua/Cargo.lock's own entries through the workspace version.
+  at the SDK version, so those entries follow it. That includes
+  libs/cua/Cargo.lock itself: Release Please bumps only Cargo.toml files.
 
 Only that one recorded version changes. Rewriting the field instead of
 relocking keeps the diff independent of the uv and npm versions on the runner
@@ -115,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
         changed += [
             lock
             for lock in tracked(root, "Cargo.lock")
-            if lock != "libs/cua/Cargo.lock" and sync_cargo_lock(root / lock, entries, version)
+            if sync_cargo_lock(root / lock, entries, version)
         ]
     print("\n".join(changed))
     return 0

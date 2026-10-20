@@ -626,9 +626,6 @@ unsafe fn walk_cached_bounded(
 
     let children = match cached_children(element) {
         Ok(Some(children)) => children,
-        // UIA returns S_OK with a null array for cached leaves. The generated
-        // interface maps that null to E_POINTER, hiding the distinction from
-        // an actual enumeration failure.
         Ok(None) => return,
         Err(_) => {
             walk_state.mark_incomplete();

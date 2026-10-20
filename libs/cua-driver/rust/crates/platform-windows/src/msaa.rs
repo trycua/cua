@@ -108,9 +108,6 @@ unsafe fn walk_unsafe(hwnd: u64, budget: &mut WalkBudget) -> UiaTreeResult {
     UiaTreeResult {
         tree_markdown,
         nodes,
-        // This compatibility path cannot prove the complete UIA search
-        // domain (and intentionally omits UIA-only state), even when its own
-        // bounded MSAA recursion reaches every exposed child.
         elements_complete: false,
     }
 }

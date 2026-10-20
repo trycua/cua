@@ -15,7 +15,42 @@ use anyhow::Result;
 pub mod native;
 pub mod snapshot;
 pub use native::ensure_listener_active;
+pub use native::InputMayHaveLanded;
 pub use snapshot::Snapshots;
+
+/// Whether `error` reports AT-SPI input that was sent and may have taken
+/// effect ([`InputMayHaveLanded`]). Such input must not be sent again by
+/// another route, and the result must not say that nothing was delivered.
+pub fn input_may_have_landed(error: &anyhow::Error) -> bool {
+    error.is::<InputMayHaveLanded>()
+}
+
+/// The outcome of an action whose effect the caller reads back from the UI
+/// before deciding anything. One that failed after it was sent may have
+/// acted, so it counts as sent and the readback decides; a refusal there
+/// would hide what it did. Other errors are returned.
+pub fn action_sent<T>(result: Result<T>) -> Result<()> {
+    match result {
+        Ok(_) => Ok(()),
+        Err(error) if input_may_have_landed(&error) => {
+            tracing::debug!("action may have acted, reading it back: {error:#}");
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn an_action_that_may_have_acted_is_read_back_not_refused() {
+    let sent = anyhow::Error::new(InputMayHaveLanded(
+        "doAction failed: raised after acting".into(),
+    ));
+    assert!(action_sent(Err::<(), _>(sent.context("the exact checkbox action"))).is_ok());
+    assert!(action_sent(Ok(("click".to_owned(), false, false))).is_ok());
+    let unsent = action_sent(Err::<(), _>(anyhow::anyhow!("no Action interface")));
+    assert_eq!(unsent.unwrap_err().to_string(), "no Action interface");
+}
 
 /// Stable address on one AT-SPI bus connection, including the owning frame.
 /// Unique bus names prevent a restarted process from reusing an observed path.
@@ -290,6 +325,7 @@ pub fn perform_action_in(pid: u32, xid: Option<u64>, idx: usize) -> Result<(Stri
     if let Some(object_ref) = cache::cached_element(pid, xid, idx).and_then(|e| e.object_ref) {
         match native::perform_action_ref(&object_ref) {
             Ok(done) => return Ok(done),
+            Err(error) if input_may_have_landed(&error) => return Err(error),
             Err(error) => tracing::debug!(
                 "cached element {idx} (pid {pid}) action failed, re-resolving: {error:#}"
             ),
@@ -425,6 +461,7 @@ pub fn perform_action_at_point_in(
                                 object_ref.path.clone(),
                             )))
                         }
+                        Err(error) if input_may_have_landed(&error) => return Err(error),
                         Err(error) => tracing::debug!(
                             "cached hit-test element {idx} (pid {pid}) failed: {error:#}"
                         ),
@@ -433,12 +470,27 @@ pub fn perform_action_at_point_in(
             }
         }
     }
-    match native::perform_action_at_point_in(pid, xid, win_x, win_y, skip_focus_roles) {
+    walk_unless_fired(
+        native::perform_action_at_point_in(pid, xid, win_x, win_y, skip_focus_roles),
+        || native::perform_action_at_point(pid, win_x, win_y, skip_focus_roles),
+    )
+}
+
+/// The `GetAccessibleAtPoint` tier's outcome decides whether the full-walk
+/// tier runs. Only a miss (or a failure before anything was sent) walks: a
+/// hit, which includes a `doAction` that did not answer, or input that may
+/// have landed ends the click, since walking would send the action again.
+fn walk_unless_fired(
+    live: Result<Option<AtPointHit>>,
+    walk: impl FnOnce() -> Result<Option<AtPointHit>>,
+) -> Result<Option<AtPointHit>> {
+    match live {
         Ok(Some(hit)) => return Ok(Some(hit)),
         Ok(None) => {}
+        Err(error) if input_may_have_landed(&error) => return Err(error),
         Err(error) => tracing::debug!("GetAccessibleAtPoint hit-test failed: {error:#}"),
     }
-    native::perform_action_at_point(pid, win_x, win_y, skip_focus_roles)
+    walk()
 }
 
 /// Resolve a *screen* pixel to the indexable element whose reconstructed screen
@@ -468,6 +520,7 @@ pub fn type_into_editable_at(pid: u32, idx: usize, text: &str) -> Result<()> {
     if let Some(object_ref) = cache::cached_element(pid, None, idx).and_then(|e| e.object_ref) {
         match native::type_into_editable_ref(&object_ref, text) {
             Ok(()) => return Ok(()),
+            Err(error) if input_may_have_landed(&error) => return Err(error),
             Err(error) => tracing::debug!(
                 "cached element {idx} (pid {pid}) editable write failed, re-resolving: {error:#}"
             ),

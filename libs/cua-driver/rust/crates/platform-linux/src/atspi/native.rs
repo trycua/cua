@@ -2806,15 +2806,24 @@ async fn write_through_editable_proxies(
         Ok(tp) => tp.caret_offset().await.unwrap_or(0),
         Err(_) => 0,
     };
-    let len = text.chars().count() as i32;
+    write_editable_text(&et, off, text).await
+}
 
-    if et.insert_text(off, text, len).await.unwrap_or(false) {
+/// Insert `text` at `offset`, or replace the contents when the toolkit declines
+/// the insert. A `false` answer is the toolkit declining the write. A failed or
+/// unanswered call may still have written, so it ends the attempt with
+/// [`InputMayHaveLanded`] instead of writing the text again through
+/// SetTextContents or after GrabFocus.
+async fn write_editable_text(
+    et: &atspi::proxy::editable_text::EditableTextProxy<'_>,
+    offset: i32,
+    text: &str,
+) -> Result<bool> {
+    let len = text.chars().count() as i32;
+    if send_input("EditableText.InsertText", et.insert_text(offset, text, len)).await? {
         return Ok(true);
     }
-    if et.set_text_contents(text).await.unwrap_or(false) {
-        return Ok(true);
-    }
-    Ok(false)
+    send_input("EditableText.SetTextContents", et.set_text_contents(text)).await
 }
 
 /// Write into the best editable exposed by the current AT-SPI tree without
@@ -2825,7 +2834,7 @@ pub fn type_into_editable(pid: u32, text: &str) -> Result<()> {
         async {
             let conn = shared_connection().await?;
             // Focused editable known from the event log: write there directly.
-            if let Some(true) = write_into_focused_editable(conn, pid, text).await {
+            if let Some(true) = write_into_focused_editable(conn, pid, text).await? {
                 return Ok(());
             }
             let Collected {
@@ -2897,7 +2906,7 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
         INPUT_QUERY_BUDGET,
         async {
             let conn = shared_connection().await?;
-            if let Some(true) = write_into_focused_editable(conn, pid, text).await {
+            if let Some(true) = write_into_focused_editable(conn, pid, text).await? {
                 return Ok(true);
             }
             let Collected {
@@ -3375,8 +3384,9 @@ fn exact_menu_path_matches(visited: &[Visited<'_>], path: &[String]) -> Vec<usiz
 
 /// Resolve and invoke an application menu one live hierarchy level at a time.
 /// Every hop re-walks AT-SPI after the preceding menu has materialized; no
-/// snapshot index is retained across mutations.
-pub fn invoke_menu_path(pid: u32, path: &[String]) -> Result<()> {
+/// snapshot index is retained across mutations. `Ok(false)`: the final
+/// action was sent and did not answer in time (see [`run_menu_command`]).
+pub fn invoke_menu_path(pid: u32, path: &[String]) -> Result<bool> {
     invoke_menu_path_in(pid, 0, path)
 }
 
@@ -3384,7 +3394,7 @@ pub fn invoke_menu_path(pid: u32, path: &[String]) -> Result<()> {
 /// menu path exists under several top-levels of the process (LibreOffice
 /// publishes every document window's menubar in one AT-SPI application),
 /// the hop under `xid`'s frame wins instead of the path being ambiguous.
-pub fn invoke_menu_path_in(pid: u32, xid: u64, path: &[String]) -> Result<()> {
+pub fn invoke_menu_path_in(pid: u32, xid: u64, path: &[String]) -> Result<bool> {
     bounded(
         async {
             let conn = shared_connection().await?;
@@ -3430,6 +3440,9 @@ pub fn invoke_menu_path_in(pid: u32, xid: u64, path: &[String]) -> Result<()> {
                     .action()
                     .await
                     .map_err(|error| anyhow!("Action unavailable: {error}"))?;
+                if depth + 1 == path.len() {
+                    return run_menu_command(&action, chosen as i32, depth).await;
+                }
                 let accepted = action
                     .do_action(chosen as i32)
                     .await
@@ -3437,14 +3450,31 @@ pub fn invoke_menu_path_in(pid: u32, xid: u64, path: &[String]) -> Result<()> {
                 if !accepted {
                     anyhow::bail!("menu path segment {depth} rejected its native action");
                 }
-                if depth + 1 != path.len() {
-                    tokio::time::sleep(Duration::from_millis(80)).await;
-                }
+                tokio::time::sleep(Duration::from_millis(80)).await;
             }
-            Ok(())
+            Ok(true)
         },
         || Err(anyhow!("invoke_menu timed out for pid {pid}")),
     )
+}
+
+/// Fire the menu item at the end of the path, the one that runs the command.
+/// `Ok(true)` when the toolkit accepted it, `Ok(false)` when it did not answer
+/// in time: an item whose command opens a dialog answers only once the dialog
+/// closes, so the command was sent and must not be refused (and invoked
+/// again). An error reply is [`InputMayHaveLanded`].
+async fn run_menu_command(
+    action: &atspi::proxy::action::ActionProxy<'_>,
+    index: i32,
+    depth: usize,
+) -> Result<bool> {
+    match do_action(action, index).await? {
+        Some(true) => Ok(true),
+        Some(false) => Err(anyhow!(
+            "menu path segment {depth} rejected its native action"
+        )),
+        None => Ok(false),
+    }
 }
 
 /// Several nodes matched one menu path segment inside the scoped frame.
@@ -3530,9 +3560,8 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool, bool)> {
             // note, and — unlike a genuine `suspected_noop` — does not by
             // itself imply the toolkit declined anything.
             let mut unacknowledged = false;
-            let rejected = match call(ap.do_action(chosen as i32)).await {
-                Some(Ok(accepted)) => !accepted,
-                Some(Err(e)) => return Err(anyhow!("doAction failed: {e}")),
+            let rejected = match do_action(&ap, chosen as i32).await? {
+                Some(accepted) => !accepted,
                 None => {
                     dlog!("doAction dispatched but not acknowledged in time");
                     unacknowledged = true;
@@ -3602,6 +3631,433 @@ impl std::fmt::Display for CachedElementGone {
 }
 impl std::error::Error for CachedElementGone {}
 
+/// An AT-SPI request that changes the application (an `EditableText` write or
+/// a `doAction`) was sent, and its call then failed or did not answer in time.
+/// The application may have acted on it, so the caller must not send the same
+/// input through another route or report it as undelivered.
+#[derive(Debug)]
+pub struct InputMayHaveLanded(pub String);
+impl std::fmt::Display for InputMayHaveLanded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for InputMayHaveLanded {}
+
+/// Send one AT-SPI request that changes the application, bounded by the
+/// operation deadline. Once the request is polled it may have reached the
+/// application, so an error reply or a missing answer is
+/// [`InputMayHaveLanded`], never a plain failure to route around.
+async fn send_input<T, E: std::fmt::Display>(
+    request: &str,
+    call: impl std::future::Future<Output = std::result::Result<T, E>>,
+) -> Result<T> {
+    match tokio::time::timeout(remaining_budget(), call).await {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(error)) => Err(InputMayHaveLanded(format!("{request} failed: {error}")).into()),
+        Err(_) => Err(InputMayHaveLanded(format!("{request} did not answer in time")).into()),
+    }
+}
+
+/// Send `doAction(index)`. `Some(accepted)` is the toolkit's answer and `None`
+/// an unanswered call (dispatched, outcome unknown). An error reply is
+/// [`InputMayHaveLanded`]: the toolkit may have run the action before failing.
+async fn do_action(ap: &atspi::proxy::action::ActionProxy<'_>, index: i32) -> Result<Option<bool>> {
+    match call(ap.do_action(index)).await {
+        Some(Ok(accepted)) => Ok(Some(accepted)),
+        Some(Err(error)) => Err(InputMayHaveLanded(format!("doAction failed: {error}")).into()),
+        None => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod input_dispatch_tests {
+    use super::{
+        bounded_for, do_action, run_menu_command, runtime, write_editable_text, InputMayHaveLanded,
+    };
+    use std::io::BufRead;
+    use std::process::{Child, Command, Stdio};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    const SERVICE: &str = "org.cua.FakeAccessible";
+    const PATH: &str = "/org/a11y/atspi/accessible/1";
+
+    struct PrivateBus(Child);
+    impl Drop for PrivateBus {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    /// A field whose toolkit answers by the text it is given. Every call that
+    /// reaches it is logged: that log is what the user would see typed.
+    struct Field(Arc<Mutex<Vec<String>>>);
+    #[zbus::interface(name = "org.a11y.atspi.EditableText")]
+    impl Field {
+        async fn insert_text(
+            &self,
+            _position: i32,
+            text: &str,
+            _length: i32,
+        ) -> zbus::fdo::Result<bool> {
+            self.0.lock().unwrap().push(format!("insert:{text}"));
+            match text {
+                "raises" => Err(zbus::fdo::Error::Failed("raised after inserting".into())),
+                "stalls" => {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    Ok(true)
+                }
+                "declined" => Ok(false),
+                _ => Ok(true),
+            }
+        }
+        fn set_text_contents(&self, new_contents: &str) -> bool {
+            self.0.lock().unwrap().push(format!("set:{new_contents}"));
+            true
+        }
+    }
+
+    /// Action 0 runs, action 1 is declined, any other runs and then raises.
+    struct Button(Arc<Mutex<Vec<String>>>);
+    #[zbus::interface(name = "org.a11y.atspi.Action")]
+    impl Button {
+        fn do_action(&self, index: i32) -> zbus::fdo::Result<bool> {
+            self.0.lock().unwrap().push(format!("action:{index}"));
+            match index {
+                0 => Ok(true),
+                1 => Ok(false),
+                _ => Err(zbus::fdo::Error::Failed("raised after acting".into())),
+            }
+        }
+    }
+
+    /// Passive labels, one per `doAction` behavior, under [`LABELS`].
+    const LABELS: &str = "/org/a11y/atspi/accessible/label";
+    const LABEL_REPLIES: [&str; 4] = ["acts", "declines", "raises", "stalls"];
+
+    /// A `label` with an Action: a passive node the at-point hit-test fires
+    /// only as its last resort.
+    struct Label;
+    #[zbus::interface(name = "org.a11y.atspi.Accessible")]
+    impl Label {
+        fn get_role_name(&self) -> String {
+            "label".into()
+        }
+        fn get_interfaces(&self) -> Vec<String> {
+            vec![
+                "org.a11y.atspi.Accessible".into(),
+                "org.a11y.atspi.Action".into(),
+            ]
+        }
+        #[zbus(property)]
+        fn name(&self) -> String {
+            "Label".into()
+        }
+    }
+
+    /// The label's one action, `click`, answers as `reply` says.
+    struct LabelAction {
+        reply: &'static str,
+        log: Arc<Mutex<Vec<String>>>,
+    }
+    #[zbus::interface(name = "org.a11y.atspi.Action")]
+    impl LabelAction {
+        #[zbus(property, name = "NActions")]
+        fn n_actions(&self) -> i32 {
+            1
+        }
+        fn get_name(&self, _index: i32) -> String {
+            "click".into()
+        }
+        async fn do_action(&self, _index: i32) -> zbus::fdo::Result<bool> {
+            self.log
+                .lock()
+                .unwrap()
+                .push(format!("label:{}", self.reply));
+            match self.reply {
+                "declines" => Ok(false),
+                "raises" => Err(zbus::fdo::Error::Failed("raised after acting".into())),
+                "stalls" => {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    Ok(true)
+                }
+                _ => Ok(true),
+            }
+        }
+    }
+
+    /// A private session bus with a fake accessible serving `Field` and
+    /// `Button`, and the [`LABELS`], plus a client connection. `None` when
+    /// dbus-daemon is missing.
+    fn fake_accessible(
+        log: Arc<Mutex<Vec<String>>>,
+    ) -> Option<(PrivateBus, zbus::Connection, zbus::Connection)> {
+        // An explicit config: a sandbox (Nix) has no session.conf.
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("bus.conf");
+        std::fs::write(
+            &config,
+            format!(
+                "<busconfig><type>session</type>\
+                 <listen>unix:dir={}</listen><auth>EXTERNAL</auth>\
+                 <policy context=\"default\"><allow send_destination=\"*\" eavesdrop=\"true\"/>\
+                 <allow eavesdrop=\"true\"/><allow own=\"*\"/></policy></busconfig>",
+                dir.path().display()
+            ),
+        )
+        .unwrap();
+        let spawned = Command::new("dbus-daemon")
+            .arg(format!("--config-file={}", config.display()))
+            .args(["--nofork", "--print-address=1"])
+            .stdout(Stdio::piped())
+            .spawn();
+        let mut bus = match spawned {
+            Ok(child) => PrivateBus(child),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                eprintln!("skipping: dbus-daemon is not installed");
+                return None;
+            }
+            Err(error) => panic!("private test bus: {error}"),
+        };
+        let mut address = String::new();
+        std::io::BufReader::new(bus.0.stdout.take().unwrap())
+            .read_line(&mut address)
+            .unwrap();
+        let address = address.trim().to_owned();
+        assert!(!address.is_empty(), "dbus-daemon printed no address");
+        // Built on the AT-SPI runtime, so its worker serves the fake while a
+        // test thread blocks on that runtime.
+        let (service, client) = runtime().block_on(async {
+            let mut service = zbus::connection::Builder::address(address.as_str())
+                .unwrap()
+                .name(SERVICE)
+                .unwrap()
+                .serve_at(PATH, Field(log.clone()))
+                .unwrap()
+                .serve_at(PATH, Button(log.clone()))
+                .unwrap();
+            for reply in LABEL_REPLIES {
+                let path = format!("{LABELS}/{reply}");
+                service = service
+                    .serve_at(path.clone(), Label)
+                    .unwrap()
+                    .serve_at(
+                        path,
+                        LabelAction {
+                            reply,
+                            log: log.clone(),
+                        },
+                    )
+                    .unwrap();
+            }
+            let service = service.build().await.unwrap();
+            let client = zbus::connection::Builder::address(address.as_str())
+                .unwrap()
+                .build()
+                .await
+                .unwrap();
+            (service, client)
+        });
+        Some((bus, service, client))
+    }
+
+    fn landed(error: &anyhow::Error) -> bool {
+        error.is::<InputMayHaveLanded>()
+    }
+
+    #[test]
+    fn a_sent_write_or_action_that_fails_is_never_sent_again() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let Some((_bus, _service, client)) = fake_accessible(log.clone()) else {
+            return;
+        };
+        let field = runtime().block_on(async {
+            atspi::proxy::editable_text::EditableTextProxy::builder(&client)
+                .destination(SERVICE)
+                .unwrap()
+                .path(PATH)
+                .unwrap()
+                .cache_properties(zbus::proxy::CacheProperties::No)
+                .build()
+                .await
+                .unwrap()
+        });
+        let button = runtime().block_on(async {
+            atspi::proxy::action::ActionProxy::builder(&client)
+                .destination(SERVICE)
+                .unwrap()
+                .path(PATH)
+                .unwrap()
+                .cache_properties(zbus::proxy::CacheProperties::No)
+                .build()
+                .await
+                .unwrap()
+        });
+        let write = |text: &str, budget: Duration| {
+            bounded_for(budget, write_editable_text(&field, 0, text), || {
+                Err(anyhow::anyhow!("operation backstop"))
+            })
+        };
+        let take = || std::mem::take(&mut *log.lock().unwrap());
+
+        // Answered writes keep their rungs: an insert, or a declined insert
+        // followed by SetTextContents.
+        assert!(write("typed", Duration::from_secs(3)).unwrap());
+        assert_eq!(take(), ["insert:typed"]);
+        assert!(write("declined", Duration::from_secs(3)).unwrap());
+        assert_eq!(take(), ["insert:declined", "set:declined"]);
+
+        // An insert that raised may have written: the field gets it once.
+        let raised = write("raises", Duration::from_secs(3)).unwrap_err();
+        assert!(landed(&raised), "{raised:#}");
+        assert_eq!(take(), ["insert:raises"]);
+
+        // Same for an insert that never answers within the budget.
+        let stalled = write("stalls", Duration::from_millis(300)).unwrap_err();
+        assert!(landed(&stalled), "{stalled:#}");
+        assert!(
+            stalled.to_string().contains("did not answer"),
+            "{stalled:#}"
+        );
+        assert_eq!(take(), ["insert:stalls"]);
+
+        // doAction: the toolkit's answer is kept; an error reply may have
+        // acted.
+        let act = |index: i32| {
+            bounded_for(Duration::from_secs(3), do_action(&button, index), || {
+                Err(anyhow::anyhow!("operation backstop"))
+            })
+        };
+        assert_eq!(act(0).unwrap(), Some(true));
+        assert_eq!(act(1).unwrap(), Some(false));
+        let raised = act(2).unwrap_err();
+        assert!(landed(&raised), "{raised:#}");
+        assert!(crate::atspi::input_may_have_landed(
+            &raised.context("context added by a caller")
+        ));
+        assert_eq!(take(), ["action:0", "action:1", "action:2"]);
+    }
+
+    #[test]
+    fn a_menu_command_that_was_sent_is_never_refused() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let Some((_bus, _service, client)) = fake_accessible(log.clone()) else {
+            return;
+        };
+        let action_at = |path: String| {
+            runtime().block_on(async {
+                atspi::proxy::action::ActionProxy::builder(&client)
+                    .destination(SERVICE)
+                    .unwrap()
+                    .path(path)
+                    .unwrap()
+                    .cache_properties(zbus::proxy::CacheProperties::No)
+                    .build()
+                    .await
+                    .unwrap()
+            })
+        };
+        let button = action_at(PATH.into());
+        let stalling = action_at(format!("{LABELS}/stalls"));
+        let run = |action: &atspi::proxy::action::ActionProxy<'_>, index: i32| {
+            bounded_for(
+                Duration::from_millis(600),
+                run_menu_command(action, index, 2),
+                || Err(anyhow::anyhow!("operation backstop")),
+            )
+        };
+
+        assert!(run(&button, 0).unwrap(), "an accepted command answered");
+        // A command that opens a dialog answers once it closes: it was sent,
+        // so it is not refused.
+        assert!(!run(&stalling, 0).unwrap());
+        // An error reply may follow the command.
+        assert!(landed(&run(&button, 2).unwrap_err()));
+        // Only a declined command is refused.
+        let declined = run(&button, 1).unwrap_err();
+        assert!(!landed(&declined));
+        assert!(declined.to_string().contains("rejected"), "{declined:#}");
+        assert_eq!(
+            std::mem::take(&mut *log.lock().unwrap()),
+            ["action:0", "label:stalls", "action:2", "action:1"]
+        );
+    }
+
+    #[test]
+    fn a_passive_hit_that_was_sent_never_reaches_the_full_walk() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let Some((_bus, _service, client)) = fake_accessible(log.clone()) else {
+            return;
+        };
+        // One at-point click on a label: the GetAccessibleAtPoint tier fires
+        // it, then the tier decision says whether the full walk runs.
+        let click = |reply: &str| {
+            let path = format!("{LABELS}/{reply}");
+            let chain = runtime().block_on(async {
+                let acc = super::AccessibleProxy::builder(&client)
+                    .destination(SERVICE)
+                    .unwrap()
+                    .path(path.clone())
+                    .unwrap()
+                    .cache_properties(zbus::proxy::CacheProperties::No)
+                    .build()
+                    .await
+                    .unwrap();
+                vec![super::HitNode {
+                    acc,
+                    oref: super::RawObjectRef {
+                        name: SERVICE.into(),
+                        path,
+                    },
+                }]
+            });
+            let live = bounded_for(
+                Duration::from_millis(600),
+                super::actuate_chain(&chain, 1, 1, false),
+                || Ok(None),
+            );
+            let mut walked = false;
+            let outcome = crate::atspi::walk_unless_fired(live, || {
+                walked = true;
+                Ok(None)
+            });
+            (outcome, walked, std::mem::take(&mut *log.lock().unwrap()))
+        };
+
+        // A doAction that does not answer was dispatched: a hit, so the
+        // full walk, which would send it again, never runs.
+        let (outcome, walked, sent) = click("stalls");
+        let hit = outcome
+            .unwrap()
+            .expect("an unanswered passive action is a hit");
+        assert_eq!((hit.action.as_str(), hit.role.as_str()), ("click", "label"));
+        assert!(!walked, "the full walk ran after a dispatched action");
+        assert_eq!(sent, ["label:stalls"]);
+
+        // Same for an accepted action, and for an error reply, which may
+        // have acted.
+        let (outcome, walked, sent) = click("acts");
+        assert!(outcome.unwrap().is_some());
+        assert!(!walked);
+        assert_eq!(sent, ["label:acts"]);
+        let (outcome, walked, sent) = click("raises");
+        assert!(landed(&outcome.unwrap_err()));
+        assert!(!walked);
+        assert_eq!(sent, ["label:raises"]);
+
+        // Only a declined action fired nothing: the full walk runs.
+        let (outcome, walked, sent) = click("declines");
+        assert!(outcome.unwrap().is_none());
+        assert!(
+            walked,
+            "a declined action must leave the point to the next tier"
+        );
+        assert_eq!(sent, ["label:declines"]);
+    }
+}
+
 /// Open a cached accessible and prove it is still alive (one role read).
 async fn live_accessible<'a>(
     conn: &'a AccessibilityConnection,
@@ -3626,7 +4082,8 @@ async fn live_accessible<'a>(
 
 /// [`perform_action`] on a snapshot-cached element identity. Same contract:
 /// `Ok((action_name, suspected_noop))`. Errors when the object no longer
-/// exists so the caller can fall back to resolving the index afresh.
+/// exists so the caller can fall back to resolving the index afresh, except
+/// for [`InputMayHaveLanded`]: the action was sent and must not be repeated.
 pub fn perform_action_ref(object_ref: &ObjectRef) -> Result<(String, bool, bool)> {
     bounded_for(
         REF_ACTION_BUDGET,
@@ -3650,9 +4107,8 @@ pub fn perform_action_ref(object_ref: &ObjectRef) -> Result<(String, bool, bool)
             // folded into `rejected`/`suspected_noop` (which would claim the
             // toolkit declined it) nor silently reported as a plain success.
             let mut unacknowledged = false;
-            let rejected = match call(ap.do_action(chosen as i32)).await {
-                Some(Ok(accepted)) => !accepted,
-                Some(Err(e)) => return Err(anyhow!("doAction failed: {e}")),
+            let rejected = match do_action(&ap, chosen as i32).await? {
+                Some(accepted) => !accepted,
                 // The request was delivered; a GTK item whose action opens a
                 // dialog (nested main loop) only replies once that dialog
                 // closes. Treat the timeout as dispatched-but-unconfirmed:
@@ -3817,23 +4273,29 @@ pub fn type_into_editable_ref(object_ref: &ObjectRef, text: &str) -> Result<()> 
 
 /// Write `text` into the focused widget known from the focus-event log, if it
 /// is editable. `Some(true)` = written, `Some(false)` = focused but not
-/// editable (or write rejected), `None` = no usable focus record.
+/// editable (or write rejected), `None` = no usable focus record. A write that
+/// may have landed is an error, so the caller does not write another field.
 async fn write_into_focused_editable(
     conn: &AccessibilityConnection,
     pid: u32,
     text: &str,
-) -> Option<bool> {
-    let (acc, oref) = focused_accessible_via_events(conn, pid).await?;
-    let ifaces = call(acc.get_interfaces()).await?.ok()?;
+) -> Result<Option<bool>> {
+    let Some((acc, oref)) = focused_accessible_via_events(conn, pid).await else {
+        return Ok(None);
+    };
+    let Some(Ok(ifaces)) = call(acc.get_interfaces()).await else {
+        return Ok(None);
+    };
     if !ifaces.contains(Interface::EditableText) {
         dlog!("focused object {} is not editable", oref.path);
-        return Some(false);
+        return Ok(Some(false));
     }
     match write_into_editable_acc(&acc, ifaces.contains(Interface::Component), text).await {
-        Ok(written) => Some(written),
+        Ok(written) => Ok(Some(written)),
+        Err(error) if error.is::<InputMayHaveLanded>() => Err(error),
         Err(error) => {
             dlog!("focused editable write failed: {error:#}");
-            Some(false)
+            Ok(Some(false))
         }
     }
 }
@@ -4215,18 +4677,17 @@ async fn actuate_chain(
             name,
             node.oref.path.clone(),
         );
-        match call(ap.do_action(chosen as i32)).await {
-            Some(Ok(true)) => {
+        match do_action(&ap, chosen as i32).await? {
+            Some(true) => {
                 tokio::time::sleep(Duration::from_millis(50)).await;
                 return Ok(Some(hit));
             }
             // Declined (a closed VCL menu answers false): nothing fired, so
             // the caller falls through to the real pointer press.
-            Some(Ok(false)) => {
+            Some(false) => {
                 dlog!("hit-test doAction declined; falling through to the pointer route");
                 return Ok(None);
             }
-            Some(Err(e)) => return Err(anyhow!("doAction failed: {e}")),
             // Dispatched; the reply waits on a nested main loop.
             None => return Ok(Some(hit)),
         }
@@ -4255,7 +4716,9 @@ async fn actuate_chain(
         let Some(Ok(ap)) = call(proxies.action()).await else {
             return Ok(None);
         };
-        if let Some(Ok(true)) = call(ap.do_action(chosen as i32)).await {
+        // As above: only a declined action fired nothing. An unanswered one
+        // was dispatched, and a later tier would send it again.
+        if do_action(&ap, chosen as i32).await? != Some(false) {
             return Ok(Some(AtPointHit::fired(
                 actions.get(chosen).cloned().unwrap_or_default(),
                 role,
@@ -5031,13 +5494,12 @@ pub fn perform_action_at_point(
                 .action()
                 .await
                 .map_err(|e| anyhow!("Action unavailable: {e}"))?;
-            match call(ap.do_action(chosen as i32)).await {
-                Some(Ok(true)) => {}
-                Some(Ok(false)) => {
+            match do_action(&ap, chosen as i32).await? {
+                Some(true) => {}
+                Some(false) => {
                     dlog!("doAction declined at point; falling through to the pointer route");
                     return Ok(None);
                 }
-                Some(Err(e)) => return Err(anyhow!("doAction failed: {e}")),
                 None => dlog!("doAction dispatched but not acknowledged in time"),
             }
             Ok(Some(AtPointHit::fired(
@@ -5073,6 +5535,8 @@ pub fn perform_action_at_point(
 /// screenshot and `get_window_state` frames are in). Returns `Ok(Some(action))`
 /// when AT-SPI accepts the action, `Ok(None)` when there is no target or the
 /// action is rejected so the caller can fall back to its native injection path.
+/// A `doAction` that fails after it was sent is [`InputMayHaveLanded`]: the
+/// caller must not click again by another route.
 pub fn perform_action_at_screen_point(
     pid: u32,
     xid: u64,
@@ -5123,15 +5587,14 @@ pub fn perform_action_at_screen_point(
                 .action()
                 .await
                 .map_err(|e| anyhow!("Action unavailable: {e}"))?;
-            match call(ap.do_action(chosen as i32)).await {
-                Some(Ok(true)) => {}
+            match do_action(&ap, chosen as i32).await? {
+                Some(true) => {}
                 // Declined by the toolkit (a closed VCL menu): no accessible
                 // hit, so the caller falls through to the real pointer press.
-                Some(Ok(false)) => {
+                Some(false) => {
                     dlog!("doAction declined at point; falling through to the pointer route");
                     return Ok(None);
                 }
-                Some(Err(e)) => return Err(anyhow!("doAction failed: {e}")),
                 None => dlog!("doAction dispatched but not acknowledged in time"),
             }
             Ok(target.actions.get(chosen).cloned())

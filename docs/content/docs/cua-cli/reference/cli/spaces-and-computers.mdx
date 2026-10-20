@@ -22,7 +22,7 @@ description: "Your Spaces and machines, unattended access on this machine, devic
 | [`cua spaces stop`](#cua-spaces-stop) | Turn a Space off: a local container or QEMU VM is suspended (its memory is kept), a Lume VM or a Space one of your computers provides is stopped (its disk is kept), and so is a Space in your own cloud (`--on aws`, `gcp`; compute billing stops). |
 | [`cua spaces start`](#cua-spaces-start) | Turn a Space back on: resume a suspended one or boot a stopped one. |
 | [`cua spaces rm`](#cua-spaces-rm) | Forget a registered Space and its stored token. |
-| [`cua spaces share`](#cua-spaces-share) | Let another cua.ai account watch (viewer) or use (editor) a Space, through the relay. |
+| [`cua spaces share`](#cua-spaces-share) | Let someone in your team watch (viewer) or use (editor) a Space, through the relay. |
 | [`cua spaces unshare`](#cua-spaces-unshare) | Stop sharing a Space with one account at once, or with everyone. |
 | [`cua spaces shares`](#cua-spaces-shares) | Who a Space is shared with, and who of them is connected now. |
 | [`cua spaces relay-register`](#cua-spaces-relay-register) | Publish a Space on the relay for your other devices (a phone off this network): its own driver dials out, as `cua host setup` does for this computer. |
@@ -293,7 +293,7 @@ cua spaces rm studio
 
 ### `cua spaces share`
 
-Let someone in your team watch (viewer) or use (editor) a Space, through the relay. They open it as `relay:<computer>`. Sharing is for teams: you need a team, and they must be in it (or share with the whole team as team:<id>).
+Let someone in your team watch (viewer) or use (editor) a Space, through the relay. They open it as `relay:<computer>`. Sharing is for teams: you need a team, and they must be in it (or share with the whole team as `team:<id>`).
 
 ```text output
 cua spaces share [OPTIONS] <SPACE> <WHO>
@@ -302,7 +302,7 @@ cua spaces share [OPTIONS] <SPACE> <WHO>
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
 | `<SPACE>` | string | required | Space id, address or display name. |
-| `<WHO>` | string | required | Their email (verified by cua.ai) or account id, in your team; or team:<id> for the whole team. |
+| `<WHO>` | string | required | Their email (verified by cua.ai) or account id, in your team; or `team:<id>` for the whole team. |
 
 | Flag | Short | Type | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -315,6 +315,9 @@ cua spaces share [OPTIONS] <SPACE> <WHO>
 cua spaces share local:studio bob@example.com
 cua spaces share local:studio bob@example.com --role editor
 cua spaces share relay:0123abcd4567ef89 acct-42 --role viewer
+
+# The whole team, to watch
+cua spaces share local:studio team:acme --role viewer
 
 # From a script or agent: confirm with Touch ID or your password here
 cua spaces share local:studio bob@example.com --yes

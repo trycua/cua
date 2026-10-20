@@ -108,16 +108,20 @@ fn desktop_snapshot_in(scene: &Scene) -> Result<super::hyprland::DesktopSnapshot
             width: logical.width,
             height: logical.height,
             scale: logical.scale,
-            outputs: vec![super::hyprland::FrameOutput {
-                name: output.name.clone(),
-                x: logical.x,
-                y: logical.y,
-                width: logical.width,
-                height: logical.height,
-            }],
+            outputs: vec![frame_output(output, logical)],
         },
         pointer: Some(scene.pointer_space()?),
     })
+}
+
+fn frame_output(output: &IpcOutput, logical: &IpcLogical) -> super::hyprland::FrameOutput {
+    super::hyprland::FrameOutput {
+        name: output.name.clone(),
+        x: logical.x,
+        y: logical.y,
+        width: logical.width,
+        height: logical.height,
+    }
 }
 
 /// Every enabled output's logical rectangle, and their bounding box with the
@@ -129,13 +133,7 @@ fn screen_frame_in(scene: &Scene) -> Result<super::hyprland::DesktopFrame> {
     for (output, logical) in scene.laid_out() {
         let logical = logical.checked()?;
         scale = scale.max(logical.scale);
-        outputs.push(super::hyprland::FrameOutput {
-            name: output.name.clone(),
-            x: logical.x,
-            y: logical.y,
-            width: logical.width,
-            height: logical.height,
-        });
+        outputs.push(frame_output(output, logical));
     }
     let rects: Vec<Rect> = outputs
         .iter()

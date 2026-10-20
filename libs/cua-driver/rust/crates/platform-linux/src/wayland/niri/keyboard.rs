@@ -48,9 +48,6 @@ const PER_KEY: Duration = Duration::from_millis(100);
 pub fn call_budget(keys: usize) -> Duration {
     CALL_BASE + PER_KEY * u32::try_from(keys).unwrap_or(u32::MAX)
 }
-/// How long releasing held keys and restoring the keymap may take once the
-/// call is over, even past its deadline.
-const CLEANUP_TIMEOUT: Duration = Duration::from_millis(500);
 const MAX_KEYMAP: u32 = 1024 * 1024;
 
 const KEY_RELEASED: u32 = 0;
@@ -689,7 +686,7 @@ impl Keyboard {
     /// keymap back for clients if the device sent another one, and destroy
     /// the device. Runs on its own short deadline, after the call's.
     fn finish(mut self, group: u32) -> Result<()> {
-        let deadline = Instant::now() + CLEANUP_TIMEOUT;
+        let deadline = Instant::now() + crate::interaction::CLEANUP_CAP;
         for code in std::mem::take(&mut self.pressed) {
             self.device
                 .key(super::super::event_time_ms(), code, KEY_RELEASED);
@@ -1189,7 +1186,7 @@ mod tests {
         // timeout replaces that with a bare foreground_timeout.
         let now = Instant::now();
         let call = now + Duration::from_secs(5);
-        assert!(session_deadline(now, 1_000, Some(call)) + CLEANUP_TIMEOUT < call);
+        assert!(session_deadline(now, 1_000, Some(call)) + crate::interaction::CLEANUP_CAP < call);
         // With time to spare, the keyboard keeps its own budget.
         let far = now + Duration::from_secs(600);
         assert_eq!(session_deadline(now, 10, Some(far)), now + call_budget(10));

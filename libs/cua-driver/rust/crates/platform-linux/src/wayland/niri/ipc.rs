@@ -366,7 +366,7 @@ impl<C: FnMut(Instant) -> Result<UnixStream>> Ipc<C> {
         self.query_until(request, deadline)
     }
 
-    fn query_until<T: DeserializeOwned>(
+    pub(super) fn query_until<T: DeserializeOwned>(
         &mut self,
         request: Request,
         deadline: Instant,
@@ -391,23 +391,28 @@ impl<C: FnMut(Instant) -> Result<UnixStream>> Ipc<C> {
     /// this thread ran out of time (see [`crate::input::action`]): focus
     /// must not move after the caller stopped waiting.
     pub(super) fn action(&mut self, action: serde_json::Value) -> Result<()> {
-        self.send_action(action, true)
+        self.send_action(action, None)
     }
 
     /// An action that gives back focus the call took. It is cleanup, like
-    /// a button release, so it goes out also once the call ran out of time.
-    pub(super) fn restore_action(&mut self, action: serde_json::Value) -> Result<()> {
-        self.send_action(action, false)
+    /// a button release, so it goes out also once the call ran out of time,
+    /// within the transaction's one `cleanup` deadline.
+    pub(super) fn restore_action(
+        &mut self,
+        action: serde_json::Value,
+        cleanup: Instant,
+    ) -> Result<()> {
+        self.send_action(action, Some(cleanup))
     }
 
-    fn send_action(&mut self, action: serde_json::Value, gated: bool) -> Result<()> {
-        let deadline = Instant::now() + self.timeout;
+    fn send_action(&mut self, action: serde_json::Value, cleanup: Option<Instant>) -> Result<()> {
+        let deadline = cleanup.unwrap_or_else(|| Instant::now() + self.timeout);
         let request = serde_json::json!({ "Action": action }).to_string();
         let mut lines = self.connection(deadline)?;
-        if gated {
-            crate::input::action::admit(|| lines.send(&request, deadline))??;
-        } else {
+        if cleanup.is_some() {
             lines.send(&request, deadline)?;
+        } else {
+            crate::input::action::admit(|| lines.send(&request, deadline))??;
         }
         let reply = lines
             .reply(deadline)

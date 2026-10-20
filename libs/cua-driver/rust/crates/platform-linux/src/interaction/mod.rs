@@ -83,6 +83,11 @@ pub fn with_target_foreground<T>(
     )
 }
 
+/// The one budget every cleanup gets once its action is over, even past
+/// the action's deadline: held inputs are released first, then focus is
+/// restored, all within this cap from the start of cleanup.
+pub const CLEANUP_CAP: Duration = Duration::from_millis(500);
+
 const POLL: Duration = Duration::from_millis(10);
 const SETTLE_READS: usize = 5;
 const SETTLE_INTERVAL: Duration = Duration::from_millis(30);

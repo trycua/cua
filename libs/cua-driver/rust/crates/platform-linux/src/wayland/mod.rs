@@ -420,9 +420,6 @@ const NIRI_ROUNDTRIP_TIMEOUT: std::time::Duration = std::time::Duration::from_se
 /// A niri pointer action's deadline when its worker serves no tool call
 /// with one (see [`crate::input::action`]).
 const NIRI_POINTER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
-/// How long releasing held buttons may take once an action is over, even
-/// past its deadline.
-const NIRI_CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// niri did not answer a bounded round trip in time; its connection may
 /// still work.
@@ -1046,7 +1043,7 @@ fn screencopy_first_output() -> anyhow::Result<(Vec<u8>, Option<String>)> {
         &conn,
         &mut queue,
         &mut state,
-        niri.then(|| std::time::Instant::now() + NIRI_CLEANUP_TIMEOUT),
+        niri.then(|| std::time::Instant::now() + crate::interaction::CLEANUP_CAP),
     );
     cleanup_mmap(mmap_ptr, mmap_len, fd);
 
@@ -1785,7 +1782,7 @@ impl Drop for VptrSession {
                 &self.conn,
                 &mut self.queue,
                 &mut self.state,
-                std::time::Instant::now() + NIRI_CLEANUP_TIMEOUT,
+                std::time::Instant::now() + crate::interaction::CLEANUP_CAP,
             ),
             None => self.conn.flush().map_err(Into::into),
         };

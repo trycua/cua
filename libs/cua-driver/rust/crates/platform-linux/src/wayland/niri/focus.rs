@@ -180,7 +180,8 @@ fn with_focused_window_in<C: FnMut(Instant) -> Result<UnixStream>, T>(
     let result = focus_window(ipc, id, target.pid, confirm)
         .map_err(input_unavailable)
         .and_then(|()| body());
-    let restore = restore_focus(ipc, prior.as_ref(), &workspaces, &target, confirm);
+    let cleanup = Instant::now() + interaction::CLEANUP_CAP;
+    let restore = restore_focus(ipc, prior.as_ref(), &workspaces, &target, cleanup);
     finish(result, restore)
 }
 
@@ -228,11 +229,13 @@ fn restore_focus<C: FnMut(Instant) -> Result<UnixStream>>(
     prior: Option<&IpcWindow>,
     before: &[IpcWorkspace],
     target: &IpcWindow,
-    confirm: Duration,
+    cleanup: Instant,
 ) -> Result<()> {
     let prior_id = prior.map(|prior| prior.id);
-    let focused = ipc.focused_window()?.map(|focused| focused.id);
-    let workspaces: Vec<IpcWorkspace> = ipc.query(Request::Workspaces)?;
+    let focused = ipc
+        .query_until::<Option<IpcWindow>>(Request::FocusedWindow, cleanup)?
+        .map(|focused| focused.id);
+    let workspaces: Vec<IpcWorkspace> = ipc.query_until(Request::Workspaces, cleanup)?;
     // Nothing moved, as when the call ran out of time before it focused the
     // target: there is nothing to give back.
     if focused == prior_id && workspaces == before {
@@ -273,32 +276,31 @@ fn restore_focus<C: FnMut(Instant) -> Result<UnixStream>>(
         .and_then(|workspace| workspace.active_window_id)
         .filter(|active| *active != target.id && Some(*active) != prior_id)
     {
-        ipc.restore_action(focus_window_action(active))
+        ipc.restore_action(focus_window_action(active), cleanup)
             .with_context(|| format!("niri could not restore active window {active}"))?;
     }
-    let now: Vec<IpcWorkspace> = ipc.query(Request::Workspaces)?;
+    let now: Vec<IpcWorkspace> = ipc.query_until(Request::Workspaces, cleanup)?;
     for was in before
         .iter()
         .filter(|was| was.is_active && !was.is_focused)
         .filter(|was| now.iter().any(|w| w.id == was.id && !w.is_active))
     {
-        ipc.restore_action(focus_workspace_action(was.id))
+        ipc.restore_action(focus_workspace_action(was.id), cleanup)
             .with_context(|| format!("niri could not restore workspace {}", was.id))?;
     }
     match (prior, before.iter().find(|workspace| workspace.is_focused)) {
         (Some(prior), _) => ipc
-            .restore_action(focus_window_action(prior.id))
-            .and_then(|()| confirm_focus(ipc, prior.id, prior.pid, Instant::now() + confirm))
+            .restore_action(focus_window_action(prior.id), cleanup)
+            .and_then(|()| confirm_focus(ipc, prior.id, prior.pid, cleanup))
             .with_context(|| format!("niri could not restore prior window {}", prior.id))?,
-        (None, Some(workspace)) => restore_workspace(ipc, workspace.id, confirm)
+        (None, Some(workspace)) => restore_workspace(ipc, workspace.id, cleanup)
             .with_context(|| format!("niri could not restore prior workspace {}", workspace.id))?,
         (None, None) => {}
     }
     // niri applies workspace switches asynchronously: poll like the
     // single-workspace restore does.
-    let deadline = Instant::now() + confirm;
     loop {
-        let now: Vec<IpcWorkspace> = ipc.query(Request::Workspaces)?;
+        let now: Vec<IpcWorkspace> = ipc.query_until(Request::Workspaces, cleanup)?;
         let Some(was) = before
             .iter()
             .filter(|was| was.is_active)
@@ -306,7 +308,7 @@ fn restore_focus<C: FnMut(Instant) -> Result<UnixStream>>(
         else {
             return Ok(());
         };
-        if Instant::now() >= deadline {
+        if Instant::now() >= cleanup {
             bail!(
                 "niri did not restore workspace {} on output {}",
                 was.id,
@@ -324,11 +326,11 @@ fn focus_workspace_action(id: u64) -> serde_json::Value {
 fn restore_workspace<C: FnMut(Instant) -> Result<UnixStream>>(
     ipc: &mut Ipc<C>,
     workspace: u64,
-    confirm: Duration,
+    cleanup: Instant,
 ) -> Result<()> {
-    ipc.restore_action(focus_workspace_action(workspace))?;
-    let focused = interaction::confirm(Instant::now() + confirm, || {
-        let workspaces: Vec<IpcWorkspace> = ipc.query(Request::Workspaces)?;
+    ipc.restore_action(focus_workspace_action(workspace), cleanup)?;
+    let focused = interaction::confirm(cleanup, || {
+        let workspaces: Vec<IpcWorkspace> = ipc.query_until(Request::Workspaces, cleanup)?;
         anyhow::Ok(
             workspaces
                 .iter()

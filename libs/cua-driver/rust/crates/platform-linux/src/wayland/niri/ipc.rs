@@ -42,28 +42,24 @@ fn attest(
     ipc_peer: Result<libc::pid_t>,
     wayland_peer: Result<libc::pid_t>,
 ) -> Attestation {
+    let refuse = |reason| match pinned {
+        None => Attestation::Unrelated(reason),
+        Some(_) => Attestation::Refused(reason),
+    };
     let (ipc_peer, wayland_peer) = match (ipc_peer, wayland_peer) {
         (Ok(ipc), Ok(wayland)) => (ipc, wayland),
         (ipc, wayland) => {
-            let reason = format!(
+            return refuse(format!(
                 "niri IPC or WAYLAND_DISPLAY peer is unavailable (IPC: {}, Wayland: {})",
                 ipc.map_or_else(|e| format!("{e:#}"), |pid| format!("pid {pid}")),
                 wayland.map_or_else(|e| format!("{e:#}"), |pid| format!("pid {pid}")),
-            );
-            return match pinned {
-                None => Attestation::Unrelated(reason),
-                Some(_) => Attestation::Refused(reason),
-            };
+            ));
         }
     };
     if ipc_peer != wayland_peer {
-        let reason = format!(
+        return refuse(format!(
             "NIRI_SOCKET is served by pid {ipc_peer} but WAYLAND_DISPLAY by pid {wayland_peer}"
-        );
-        return match pinned {
-            None => Attestation::Unrelated(reason),
-            Some(_) => Attestation::Refused(reason),
-        };
+        ));
     }
     match pinned {
         Some(pinned) if pinned != ipc_peer => Attestation::Refused(format!(
@@ -122,14 +118,12 @@ pub(super) fn probe(
 /// loss refuses instead of turning this off. Also true while a probe cannot
 /// tell (see [`Probed::Unknown`]), so niri's routes refuse.
 pub fn is_session() -> bool {
-    match session_check(
+    if let Some(known) = session_check(
         !super::super::is_inject_mode() && super::super::is_wayland(),
         RECOGNIZED.get().is_some(),
         std::env::var_os("NIRI_SOCKET").is_some_and(|socket| !socket.is_empty()),
     ) {
-        SessionCheck::NotNiri => return false,
-        SessionCheck::Recognized => return true,
-        SessionCheck::Probe => {}
+        return known;
     }
     // An unrelated socket stays unrelated for the same environment: a stale
     // NIRI_SOCKET on another desktop must not cost a probe on every call.
@@ -228,24 +222,14 @@ pub(super) fn recognised() -> Result<libc::pid_t> {
     })
 }
 
-#[derive(Debug, PartialEq)]
-enum SessionCheck {
-    NotNiri,
-    /// Recognised earlier: stay niri even if the socket is gone, so routes
-    /// refuse instead of falling through to generic Wayland discovery.
-    Recognized,
-    Probe,
-}
-
-fn session_check(adapter_on: bool, recognized: bool, socket_set: bool) -> SessionCheck {
-    if !adapter_on {
-        SessionCheck::NotNiri
-    } else if recognized {
-        SessionCheck::Recognized
-    } else if socket_set {
-        SessionCheck::Probe
-    } else {
-        SessionCheck::NotNiri
+/// Whether this is a niri session without probing, or `None` to probe. A
+/// niri recognised earlier stays niri even if the socket is gone, so routes
+/// refuse instead of falling through to generic Wayland discovery.
+fn session_check(adapter_on: bool, recognized: bool, socket_set: bool) -> Option<bool> {
+    match (adapter_on, recognized, socket_set) {
+        (false, ..) => Some(false),
+        (true, true, _) => Some(true),
+        (true, false, socket_set) => (!socket_set).then_some(false),
     }
 }
 
@@ -813,10 +797,10 @@ mod tests {
 
     #[test]
     fn a_recognised_niri_stays_niri_after_its_socket_disappears() {
-        assert_eq!(session_check(true, true, false), SessionCheck::Recognized);
-        assert_eq!(session_check(true, false, false), SessionCheck::NotNiri);
-        assert_eq!(session_check(true, false, true), SessionCheck::Probe);
-        assert_eq!(session_check(false, true, true), SessionCheck::NotNiri);
+        assert_eq!(session_check(true, true, false), Some(true));
+        assert_eq!(session_check(true, false, false), Some(false));
+        assert_eq!(session_check(true, false, true), None);
+        assert_eq!(session_check(false, true, true), Some(false));
     }
 
     #[test]

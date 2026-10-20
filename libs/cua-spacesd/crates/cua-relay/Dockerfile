@@ -26,6 +26,7 @@ RUN apt-get update \
  && sed -i -E 's#^(mozilla/(emSign_ECC_Root_CA_-_G3|Comodo_AAA_Services_root)\.crt)$#!\1#' /etc/ca-certificates.conf \
  && update-ca-certificates \
  && rm -rf /var/lib/apt/lists/*
+
 COPY --from=build /usr/local/bin/cua-relay /usr/local/bin/cua-relay
 USER 65532:65532
 EXPOSE 8080

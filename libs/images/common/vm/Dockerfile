@@ -44,6 +44,7 @@ RUN apt-get update \
  && sed -i -E 's#^(mozilla/(emSign_ECC_Root_CA_-_G3|Comodo_AAA_Services_root)\.crt)$#!\1#' /etc/ca-certificates.conf \
  && update-ca-certificates \
  && rm -rf /var/lib/apt/lists/*
+
 # /etc/cua-image/variant-packages: what the VM layer added on top of the
 # rootfs. The doctor's fidelity package hash leaves them out, so the two
 # variants of one image compare equal unless shared packages differ.

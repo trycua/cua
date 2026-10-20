@@ -16,5 +16,6 @@ RUN apt-get update \
  && sed -i -E 's#^(mozilla/(emSign_ECC_Root_CA_-_G3|Comodo_AAA_Services_root)\.crt)$#!\1#' /etc/ca-certificates.conf \
  && update-ca-certificates \
  && rm -rf /var/lib/apt/lists/*
+
 ENV LIBGUESTFS_BACKEND=direct
 WORKDIR /work

@@ -207,6 +207,23 @@ mod tests {
     use super::*;
     use crate::protocol::ResponseBody;
 
+    #[test]
+    fn windows_selected_browser_guidance() {
+        let read = call(
+            "resources/read",
+            Some(json!({"uri": "skill://cua-driver/WINDOWS.md"})),
+        );
+        let text = read["contents"][0]["text"].as_str().unwrap();
+        assert!(text.contains("\"...msedge.exe\", additional_arguments: [\"https://example.com/\"]"));
+        assert!(text.contains("Do not combine `path` or `aumid` with `urls`"));
+        assert!(text.contains("For the default browser, use `urls` only"));
+        assert!(text.contains("additional_arguments:[<file>]"));
+        assert!(!text.contains("msedge.exe\", urls:"));
+        assert!(!text.contains("args:[<file>]"));
+        assert!(!text.contains("Microsoft.MicrosoftEdge.Stable_…!App"));
+        assert!(!text.contains("URL in a new window without activating it"));
+    }
+
     fn request(method: &str, params: Option<Value>) -> Request {
         Request {
             jsonrpc: "2.0".into(),

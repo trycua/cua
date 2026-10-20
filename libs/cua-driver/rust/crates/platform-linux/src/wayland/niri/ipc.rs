@@ -207,9 +207,9 @@ pub(in crate::wayland) fn attested_wayland_socket() -> Result<UnixStream> {
 
 /// IPC to the recognised niri process. One value serves one action: its
 /// requests share one attested connection.
-pub(super) type AttestedIpc = Ipc<fn(Instant) -> Result<UnixStream>>;
+pub(crate) type AttestedIpc = Ipc<fn(Instant) -> Result<UnixStream>>;
 
-pub(super) fn ipc() -> AttestedIpc {
+pub(crate) fn ipc() -> AttestedIpc {
     Ipc {
         connect: attested_connection,
         timeout: QUERY_TIMEOUT,
@@ -341,7 +341,7 @@ pub(super) enum Request {
     KeyboardLayouts,
 }
 
-pub(super) struct Ipc<C> {
+pub(crate) struct Ipc<C> {
     pub(super) connect: C,
     /// The deadline of each request and its reply.
     pub(super) timeout: Duration,

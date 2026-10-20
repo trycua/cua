@@ -1,10 +1,10 @@
 //! Keyboard focus on niri: focusing, confirming and restoring windows, and
-//! focus transactions.
+//! the save, focus and restore steps of the shared foreground transaction.
 
 use super::*;
 
 /// How long niri may take to apply and report a focus change.
-pub(super) const FOCUS_CONFIRM_TIMEOUT: Duration = Duration::from_millis(500);
+pub(crate) const FOCUS_CONFIRM_TIMEOUT: Duration = Duration::from_millis(500);
 
 // ── Focus ────────────────────────────────────────────────────────────────────
 
@@ -157,74 +157,58 @@ pub fn keyboard_layout() -> Result<u32> {
     Ok(layouts.current_idx)
 }
 
-/// Briefly focus one niri window for `pid`, run `body`, then restore the
+/// What focusing a niri window changes and its restore gives back: the
 /// previously focused window, or the previously focused workspace when no
 /// window had focus, and each output's previously active workspace.
 /// Focusing a window on another workspace switches to it; the restore
 /// switches back, also after a focus niri did not confirm.
-pub fn with_focused_window<T>(pid: u32, id: u64, body: impl FnOnce() -> Result<T>) -> Result<T> {
-    with_focused_window_in(&mut ipc(), pid, id, FOCUS_CONFIRM_TIMEOUT, body)
+pub(crate) struct SavedFocus {
+    prior: Option<IpcWindow>,
+    workspaces: Vec<IpcWorkspace>,
+    target: IpcWindow,
 }
 
-fn with_focused_window_in<C: FnMut(Instant) -> Result<UnixStream>, T>(
+/// Save the focus `id` would take for `pid`, or `None` when it already has
+/// it.
+pub(crate) fn save_focus<C: FnMut(Instant) -> Result<UnixStream>>(
     ipc: &mut Ipc<C>,
     pid: u32,
     id: u64,
-    confirm: Duration,
-    body: impl FnOnce() -> Result<T>,
-) -> Result<T> {
-    let _transaction = focus_transaction()?;
+) -> Result<Option<SavedFocus>> {
     let prior = ipc.focused_window().map_err(input_unavailable)?;
     let workspaces: Vec<IpcWorkspace> =
         ipc.query(Request::Workspaces).map_err(input_unavailable)?;
-    let Some(target) = focus_target(ipc, id, Some(pid)).map_err(input_unavailable)? else {
-        return body();
-    };
-    // Once FocusWindow is sent, focus may have moved even when niri does not
-    // confirm it, so the restore runs either way.
-    let result = focus_window(ipc, id, target.pid, confirm)
-        .map_err(input_unavailable)
-        .and_then(|()| body());
-    let cleanup = Instant::now() + interaction::CLEANUP_CAP;
-    let restore = restore_focus(ipc, prior.as_ref(), &workspaces, &target, cleanup);
-    finish(result, restore)
+    Ok(focus_target(ipc, id, Some(pid))
+        .map_err(input_unavailable)?
+        .map(|target| SavedFocus {
+            prior,
+            workspaces,
+            target,
+        }))
 }
 
-/// Wait for any other focus transaction to give focus back, then hold this
-/// one until it does. A worker whose call timed out still gives focus back
-/// late; meanwhile a retry on the same window would read that window as the
-/// prior focus and lose it to the late restore. The holder's waits are
-/// bounded, and a caller whose own call ends stops waiting.
-fn focus_transaction() -> Result<std::sync::MutexGuard<'static, ()>> {
-    static TRANSACTION: Mutex<()> = Mutex::new(());
-    loop {
-        match TRANSACTION.try_lock() {
-            Ok(held) => return Ok(held),
-            Err(std::sync::TryLockError::Poisoned(poisoned)) => return Ok(poisoned.into_inner()),
-            Err(std::sync::TryLockError::WouldBlock) => {
-                crate::input::action::admit(|| ())?;
-                let deadline = interaction::operation_deadline(Duration::from_millis(10));
-                std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
-            }
-        }
-    }
+/// Focus the saved target and read the focus back.
+pub(crate) fn focus_saved<C: FnMut(Instant) -> Result<UnixStream>>(
+    ipc: &mut Ipc<C>,
+    saved: &SavedFocus,
+    confirm: Duration,
+) -> Result<()> {
+    focus_window(ipc, saved.target.id, saved.target.pid, confirm).map_err(input_unavailable)
 }
 
-/// The outcome of a focus transaction: `body`'s, with a failed restore.
-fn finish<T>(result: Result<T>, restore: Result<()>) -> Result<T> {
-    match (result, restore) {
-        (Ok(value), Ok(())) => Ok(value),
-        (Err(error), Ok(())) => Err(error),
-        // The body sent its input: say so, so the caller does not repeat it.
-        (Ok(_), Err(error)) => {
-            Err(error.context("the input was sent, but niri could not restore the prior focus"))
-        }
-        (Err(error), Err(restore)) => {
-            let note =
-                format!("{error}; the prior niri focus also could not be restored: {restore:#}");
-            Err(error.context(note))
-        }
-    }
+/// Give back what [`focus_saved`] changed, within the `cleanup` deadline.
+pub(crate) fn restore_saved<C: FnMut(Instant) -> Result<UnixStream>>(
+    ipc: &mut Ipc<C>,
+    saved: SavedFocus,
+    cleanup: Instant,
+) -> Result<()> {
+    restore_focus(
+        ipc,
+        saved.prior.as_ref(),
+        &saved.workspaces,
+        &saved.target,
+        cleanup,
+    )
 }
 
 /// Undo what focusing `target` changed: the active window of its workspace,
@@ -356,6 +340,22 @@ mod tests {
     use super::*;
     use serde_json::{json, Value};
     use std::sync::{Arc, Mutex};
+
+    fn with_focused_window_in<C: FnMut(Instant) -> Result<UnixStream>, T>(
+        ipc: &mut Ipc<C>,
+        pid: u32,
+        id: u64,
+        confirm: Duration,
+        body: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        interaction::transaction(
+            ipc,
+            |ipc| save_focus(ipc, pid, id),
+            |ipc, saved| focus_saved(ipc, saved, confirm),
+            body,
+            restore_saved,
+        )
+    }
 
     #[test]
     fn a_niri_refusal_suggests_the_remedy_its_detail_names() {
@@ -630,7 +630,7 @@ mod tests {
         assert!(ran);
         assert_eq!(
             format!("{error:#}"),
-            "the input was sent, but niri could not restore the prior focus: niri could not restore prior window 5: foreground_unavailable: niri did not confirm focus on window 5 (focused: 7)"
+            "the input was sent, but the prior focus could not be restored: niri could not restore prior window 5: foreground_unavailable: niri did not confirm focus on window 5 (focused: 7)"
         );
         assert_eq!(
             format!("{:#}", error.root_cause()),
@@ -651,7 +651,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().starts_with(
-            "wtype failed; the prior niri focus also could not be restored: niri could not restore prior window 5"
+            "wtype failed; the prior focus also could not be restored: niri could not restore prior window 5"
         ));
         assert_eq!(error.root_cause().to_string(), "wtype failed");
     }

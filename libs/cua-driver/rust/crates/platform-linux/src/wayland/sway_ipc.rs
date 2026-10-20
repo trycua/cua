@@ -169,78 +169,41 @@ pub fn window_for_app_id(app_id: &str) -> Option<Window> {
         .max_by_key(|window| (window.focused, window.visible))
 }
 
-fn focus_container(id: u64) -> bool {
+/// The focused container's PID and id, `None` when no window has focus.
+pub fn focused() -> anyhow::Result<Option<(u32, u64)>> {
+    Ok(list_windows()
+        .ok_or_else(|| anyhow::anyhow!("Sway IPC tree is unavailable"))?
+        .into_iter()
+        .find(|window| window.focused)
+        .map(|window| (window.pid, window.id)))
+}
+
+/// Focus exact container `id` of `pid` and read the focus back by
+/// `deadline`.
+pub fn focus(pid: u32, id: u64, deadline: std::time::Instant) -> anyhow::Result<()> {
     let selector = format!("[con_id={id}]");
-    Command::new("swaymsg")
+    let sent = Command::new("swaymsg")
         .args([selector.as_str(), "focus"])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .is_ok_and(|status| status.success())
-}
-
-fn wait_for_container_focus(pid: u32, id: u64, deadline: std::time::Instant) -> bool {
-    crate::interaction::confirm(deadline, |_| {
-        let observed = match list_windows() {
-            Some(windows) => crate::interaction::facts::Fact::Known(
-                windows
-                    .into_iter()
-                    .find(|window| window.focused)
-                    .map(|window| (window.pid, window.id)),
-            ),
-            None => crate::interaction::facts::Fact::Unknown("Sway IPC tree is unavailable".into()),
+        .is_ok_and(|status| status.success());
+    if !sent {
+        anyhow::bail!("Sway refused to focus exact container {id}");
+    }
+    let confirmed = crate::interaction::confirm(deadline, |_| {
+        let observed = match focused() {
+            Ok(focused) => crate::interaction::facts::Fact::Known(focused),
+            Err(error) => crate::interaction::facts::Fact::Unknown(error.to_string()),
         };
         Ok::<_, ()>(crate::interaction::policy::focused(&(pid, id), &observed))
     })
-    .unwrap_or(false)
-}
-
-/// Briefly focus one compositor-attested container, run `body`, then restore
-/// the previously focused container. The caller must already have verified the
-/// target container's PID and id through [`window_for_id`].
-pub fn with_focused_container<T>(
-    pid: u32,
-    id: u64,
-    body: impl FnOnce() -> anyhow::Result<T>,
-) -> anyhow::Result<T> {
-    let prior = list_windows()
-        .ok_or_else(|| anyhow::anyhow!("Sway IPC tree is unavailable"))?
-        .into_iter()
-        .find(|window| window.focused)
-        .map(|window| (window.pid, window.id));
-    if !focus_container(id) {
-        anyhow::bail!("Sway refused to focus exact container {id}");
-    }
-    if !wait_for_container_focus(
-        pid,
-        id,
-        crate::interaction::operation_deadline(std::time::Duration::from_millis(500)),
-    ) {
+    .unwrap_or(false);
+    if !confirmed {
         anyhow::bail!("Sway did not confirm focus on exact container {id}");
     }
-    let result = body();
-    let cleanup = std::time::Instant::now() + crate::interaction::CLEANUP_CAP;
-    let restore = prior
-        .filter(|(_, prior)| *prior != id)
-        .map(|(pid, prior)| {
-            if !focus_container(prior) {
-                anyhow::bail!("Sway could not restore prior container {prior}");
-            }
-            if !wait_for_container_focus(pid, prior, cleanup) {
-                anyhow::bail!("Sway did not confirm restored container {prior}");
-            }
-            Ok(())
-        })
-        .transpose();
-    match (result, restore) {
-        (Ok(value), Ok(_)) => Ok(value),
-        (Err(error), Ok(_)) => Err(error),
-        (Ok(_), Err(error)) => Err(error),
-        (Err(error), Err(restore)) => Err(error.context(format!(
-            "the prior Sway focus also could not be restored: {restore}"
-        ))),
-    }
+    Ok(())
 }
 
 pub fn window_origin_for_pid(pid: u32) -> Option<(i32, i32)> {

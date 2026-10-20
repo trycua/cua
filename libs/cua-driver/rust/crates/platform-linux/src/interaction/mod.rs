@@ -1,8 +1,9 @@
 //! The layer every Linux compositor adapter shares: the lock, identity,
 //! delivery, freshness, motion and restore rules in [`policy`], the one
 //! foreground transaction entry point, the deadline rule, the focus
-//! read-back loop and the settle loop. Adapters still own their focus,
-//! restore and geometry checks.
+//! read-back loop and the settle loop. Wayland adapters supply mechanical
+//! save, focus and restore steps to the one transaction; X11 still runs its
+//! own foreground rung. Adapters still own their geometry checks.
 
 use std::time::{Duration, Instant};
 
@@ -76,25 +77,115 @@ pub fn with_target_foreground<T>(
         return crate::input::with_x11_foreground(window_id, 80, body);
     }
     let _target_guard = bind_foreground_target(pid, window_id);
+    let confirm = || operation_deadline(FOCUS_CONFIRM_CAP);
     if niri::is_session() {
-        return niri::with_focused_window(pid, window_id, body);
+        return transaction(
+            &mut niri::ipc(),
+            |ipc| niri::save_focus(ipc, pid, window_id),
+            |ipc, saved| niri::focus_saved(ipc, saved, niri::FOCUS_CONFIRM_TIMEOUT),
+            body,
+            niri::restore_saved,
+        );
     }
     if let Some(window) = sway_ipc::window_for_id(window_id) {
         policy::identity(
             &(pid, window_id),
             &facts::Fact::Known(Some((window.pid, window.id))),
         )?;
-        return sway_ipc::with_focused_container(pid, window_id, body);
+        return transaction(
+            &mut (),
+            |()| {
+                let prior = sway_ipc::focused()?;
+                Ok(Some(prior.filter(|(_, prior)| *prior != window_id)))
+            },
+            |(), _| sway_ipc::focus(pid, window_id, confirm()),
+            body,
+            |(), prior, cleanup| {
+                prior.map_or(Ok(()), |(pid, prior)| sway_ipc::focus(pid, prior, cleanup))
+            },
+        );
     }
     if kwin_helper::trusted_window_for_id(pid, window_id).is_some() {
         policy::delivery(&facts::Fact::Known(kwin_helper::available()))?;
     }
     if shell_helper::trusted_window_for_id(pid, window_id).is_some() {
-        return shell_helper::with_focused_window(pid, window_id, body);
+        return transaction(
+            &mut (),
+            |()| {
+                let prior = shell_helper::trusted_focus()?;
+                if prior.is_some_and(|(_, id)| id == window_id) {
+                    return Ok(None);
+                }
+                policy::restore(facts::Fact::Known(
+                    prior.and_then(|(pid, id)| pid.map(|pid| (pid, id))),
+                ))
+                .map(Some)
+            },
+            |(), _| shell_helper::trusted_focus_window(pid, window_id, confirm()),
+            body,
+            |(), (pid, prior), cleanup| shell_helper::trusted_focus_window(pid, prior, cleanup),
+        );
     }
     anyhow::bail!(
         "foreground_unavailable: no trusted Wayland compositor adapter can confirm exact target window {window_id} for pid {pid}; no global keyboard input was sent"
     )
+}
+
+/// How long a compositor may take to apply and report a focus change.
+const FOCUS_CONFIRM_CAP: Duration = Duration::from_millis(500);
+
+/// The one foreground transaction every adapter runs: save the prior focus,
+/// focus the target and read it back, run `body`, then restore the saved
+/// focus within [`CLEANUP_CAP`]. `save` returns `None` when the target
+/// already has focus, which runs `body` with nothing to restore. Once
+/// `focus` was asked, focus may have moved even when the adapter could not
+/// confirm it, so the restore runs either way. One transaction runs at a
+/// time: a worker whose call timed out still gives focus back late, and a
+/// retry on the same window would read that window as the prior focus and
+/// lose it to the late restore.
+pub(crate) fn transaction<A, S, T>(
+    adapter: &mut A,
+    save: impl FnOnce(&mut A) -> Result<Option<S>>,
+    focus: impl FnOnce(&mut A, &S) -> Result<()>,
+    body: impl FnOnce() -> Result<T>,
+    restore: impl FnOnce(&mut A, S, Instant) -> Result<()>,
+) -> Result<T> {
+    let _transaction = hold_transaction()?;
+    let Some(saved) = save(adapter)? else {
+        return body();
+    };
+    let result = focus(adapter, &saved).and_then(|()| body());
+    let cleanup = Instant::now() + CLEANUP_CAP;
+    match (result, restore(adapter, saved, cleanup)) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), Ok(())) => Err(error),
+        // The body sent its input: say so, so the caller does not repeat it.
+        (Ok(_), Err(error)) => {
+            Err(error.context("the input was sent, but the prior focus could not be restored"))
+        }
+        (Err(error), Err(restore)) => {
+            let note = format!("{error}; the prior focus also could not be restored: {restore:#}");
+            Err(error.context(note))
+        }
+    }
+}
+
+/// Wait for any other foreground transaction to give focus back, then hold
+/// this one until it does. The holder's waits are bounded, and a caller
+/// whose own call ends stops waiting.
+fn hold_transaction() -> Result<std::sync::MutexGuard<'static, ()>> {
+    static TRANSACTION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    loop {
+        match TRANSACTION.try_lock() {
+            Ok(held) => return Ok(held),
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => return Ok(poisoned.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) => {
+                crate::input::action::admit(|| ())?;
+                let deadline = operation_deadline(POLL);
+                std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
+            }
+        }
+    }
 }
 
 /// The one budget every cleanup gets once its action is over, even past

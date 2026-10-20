@@ -393,53 +393,13 @@ pub fn trusted_window_ids_for_pid(pid: u32) -> Option<Vec<u64>> {
     )
 }
 
-/// Briefly activate an exact compositor-owned window, execute one bounded
-/// focus-sensitive operation, and restore the prior exact Shell focus.
-pub fn with_focused_window<T>(
-    pid: u32,
-    window_id: u64,
-    body: impl FnOnce() -> anyhow::Result<T>,
-) -> anyhow::Result<T> {
-    let before = trusted_shell_windows(None)
-        .ok_or_else(|| anyhow::anyhow!("the verified GNOME Shell helper API is unavailable"))?;
-    let target = before
-        .iter()
-        .find(|window| window.info.xid == window_id)
-        .ok_or_else(|| anyhow::anyhow!("no exact GNOME Shell window owns the approved target"))?;
-    crate::interaction::policy::identity(
-        &(Some(pid), window_id),
-        &crate::interaction::facts::Fact::Known(Some((target.info.pid, target.info.xid))),
-    )?;
-    let previous = crate::interaction::policy::restore(crate::interaction::facts::Fact::Known(
-        before
-            .iter()
-            .find(|window| window.focused)
-            .and_then(|window| window.info.pid.map(|pid| (pid, window.info.xid))),
-    ))?;
-
-    if target.focused {
-        return body();
-    }
-    trusted_activate_window(
-        pid,
-        window_id,
-        crate::interaction::operation_deadline(FOCUS_CONFIRM),
-    )
-    .then_some(())
-    .ok_or_else(|| anyhow::anyhow!("GNOME Shell did not confirm exact target activation"))?;
-    let body_result = body();
-    let cleanup = std::time::Instant::now() + crate::interaction::CLEANUP_CAP;
-    let restored = trusted_activate_window(previous.0, previous.1, cleanup);
-    match (body_result, restored) {
-        (Ok(value), true) => Ok(value),
-        (Err(error), true) => Err(error),
-        (Ok(_), false) => {
-            anyhow::bail!("GNOME Shell did not restore the previously focused window")
-        }
-        (Err(error), false) => Err(anyhow::anyhow!(
-            "{error}; GNOME Shell also failed to restore the previously focused window"
-        )),
-    }
+/// The window the verified Shell owner reports focused, `None` when none is.
+pub fn trusted_focus() -> anyhow::Result<Option<(Option<u32>, u64)>> {
+    Ok(trusted_shell_windows(None)
+        .ok_or_else(|| anyhow::anyhow!("the verified GNOME Shell helper API is unavailable"))?
+        .into_iter()
+        .find(|window| window.focused)
+        .map(|window| (window.info.pid, window.info.xid)))
 }
 
 fn trusted_shell_windows(filter_pid: Option<u32>) -> Option<Vec<ShellWindow>> {
@@ -472,29 +432,29 @@ fn focus_confirmed(deadline: std::time::Instant, mut focused: impl FnMut() -> bo
     crate::interaction::confirm(deadline, |_| Ok::<_, ()>(focused())).unwrap_or(false)
 }
 
-fn trusted_activate_window(pid: u32, window_id: u64, deadline: std::time::Instant) -> bool {
-    let Ok(window_id) = u32::try_from(window_id) else {
-        return false;
-    };
-    let accepted = trusted_gdbus_call("Activate", &[window_id.to_string()])
-        .is_some_and(|output| output.trim_start().starts_with("(true,"));
-    if !accepted {
-        return false;
+/// Activate exact window `window_id` of `pid` through the verified Shell
+/// owner and read the focus back by `deadline`.
+pub fn trusted_focus_window(
+    pid: u32,
+    window_id: u64,
+    deadline: std::time::Instant,
+) -> anyhow::Result<()> {
+    let accepted = u32::try_from(window_id).is_ok_and(|id| {
+        trusted_gdbus_call("Activate", &[id.to_string()])
+            .is_some_and(|output| output.trim_start().starts_with("(true,"))
+    });
+    let confirmed = accepted
+        && focus_confirmed(deadline, || {
+            let observed = match trusted_focus() {
+                Ok(focused) => crate::interaction::facts::Fact::Known(focused),
+                Err(error) => crate::interaction::facts::Fact::Unknown(error.to_string()),
+            };
+            crate::interaction::policy::focused(&(Some(pid), window_id), &observed)
+        });
+    if !confirmed {
+        anyhow::bail!("GNOME Shell did not confirm activation of exact window {window_id}");
     }
-    focus_confirmed(deadline, || {
-        let observed = match trusted_shell_windows(None) {
-            Some(windows) => crate::interaction::facts::Fact::Known(
-                windows
-                    .into_iter()
-                    .find(|window| window.focused)
-                    .map(|window| (window.info.pid, window.info.xid)),
-            ),
-            None => crate::interaction::facts::Fact::Unknown(
-                "the verified GNOME Shell helper API is unavailable".into(),
-            ),
-        };
-        crate::interaction::policy::focused(&(Some(pid), u64::from(window_id)), &observed)
-    })
+    Ok(())
 }
 
 fn window_is_focused(window_id: u32) -> bool {

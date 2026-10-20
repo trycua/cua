@@ -381,26 +381,18 @@ that names the remedy.
   `get_window_state` still returns their accessibility tree, and element
   actions work. For pixels, call `get_desktop_state` and act at desktop scope
   (no `pid` or `window_id`), or float the window.
-- Desktop-scope pointer input takes pixels of the latest `get_desktop_state`
-  screenshot. It refuses before there is one, when `capture_id` names an older
-  one, after 60 s, past the output edge, and once niri reports a layout or
-  focus change; take a new screenshot then. A click that focuses another
-  window is such a change for the next call, and within a double or triple
-  click on a tiled window that did not have focus: the train stops after the
-  first press. Click once, take a new `get_desktop_state`, then double-click.
-  With niri's `focus-follows-mouse`, moving the pointer onto a window that
-  does not have focus focuses it, so that click refuses before its press;
-  take a new `get_desktop_state`, where the window has focus, and click again.
-- A desktop-scope `drag` refuses before its press when the press would move
-  focus and stop it: the start is on a floating window that does not have
-  focus and the drop is off that window, or the start is off every floating
-  window while no tiled window has focus, unless nothing has focus and the
-  workspace has no tiled window (the press lands on empty space). Click the
-  start point, take a new `get_desktop_state`, then drag.
-  niri does not say where tiled windows are, so a drag that starts on one
-  tiled window while another has focus is not refused: its press focuses that
-  window, the drag stops after the press, and the app gets the press and
-  release as a click.
+- Desktop-scope pointer input takes pixels of the single output, as
+  `get_desktop_state` shows it, and refuses points past the output edge.
+  niri does not report where tiled windows are or every scroll of its view,
+  so the driver does not prove a screenshot is still current: take a new one
+  after anything that may have moved the layout.
+- Window-coordinate pointer input and window capture check the window's
+  place as niri reports it now, before the action and again before every
+  press, wheel tick or motion. A move away and back between two reads, or an
+  animation still drawing the window elsewhere, is not detected.
+- The driver does not check whether the session is locked. At a lock screen
+  niri reports no focused window, so keyboard input refuses; desktop-scope
+  pointer input and capture are not refused.
 - `coordinate_frame:"desktop"` with a window target refuses.
 - Foreground actions activate the target, act, and give focus back to the
   window that had it. `right_click` and `hotkey` leave the target focused, as

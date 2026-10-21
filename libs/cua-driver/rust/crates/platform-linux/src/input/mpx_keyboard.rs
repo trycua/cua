@@ -511,21 +511,29 @@ impl Keymap {
     }
 }
 
-/// Deliver `steps` to `target_window` through the session's virtual master
-/// keyboard. `remap_guards` keeps any spare-keycode remaps alive until the
-/// server has processed the events.
-fn deliver(
+/// Take the MPX operation lock for a call on `session`, or, with no session,
+/// for the live session whose click opened the `target_window` popup.
+fn session_guard(
     session: Option<&str>,
+    target_window: u64,
+) -> Result<(std::sync::MutexGuard<'static, ()>, String)> {
+    match session {
+        Some(cursor_id) => Ok((mpx_op_guard(cursor_id), cursor_id.to_owned())),
+        None => popup_owner_guard(target_window),
+    }
+}
+
+/// Deliver `steps` to `target_window` through the session's virtual master
+/// keyboard. The caller holds the session's MPX operation guard.
+/// `remap_guards` keeps any spare-keycode remaps alive until the server has
+/// processed the events.
+fn deliver(
+    cursor_id: &str,
     target_window: u64,
     steps: &[KeyStep],
     remap_guards: Vec<RemappedKeycode<'_>>,
     keymap_conn: &RustConnection,
 ) -> Result<KeyboardDeliveryReport> {
-    let (_op, cursor_id) = match session {
-        Some(cursor_id) => (mpx_op_guard(cursor_id), cursor_id.to_owned()),
-        None => popup_owner_guard(target_window)?,
-    };
-    let cursor_id = cursor_id.as_str();
     let display = open_display()?;
     let result = (|| -> Result<KeyboardDeliveryReport> {
         supports_parallel_pointer_injection(display)?;
@@ -668,6 +676,7 @@ fn keyboard_text(
     target_window: u64,
     text: &str,
 ) -> Result<KeyboardDeliveryReport> {
+    let (_op, cursor_id) = session_guard(session, target_window)?;
     let keymap = Keymap::load()?;
     // Characters absent from the keymap (a sparse layout, or a non-Latin
     // glyph) are hosted on spare keycodes, with a guard that
@@ -681,7 +690,7 @@ fn keyboard_text(
         plan_text_with_fallback(&keymap.mapping, keymap.shift, text, |ch, mapping| {
             keycode_for_keysym(&keymap.conn, mapping, keysym_for_char(ch), &ch.to_string())
         })?;
-    deliver(session, target_window, &steps, guards, &keymap.conn)
+    deliver(&cursor_id, target_window, &steps, guards, &keymap.conn)
 }
 
 /// Press `key` with `modifiers` held, into `target_window`, without touching
@@ -709,6 +718,7 @@ fn keyboard_key(
     key: &str,
     modifiers: &[&str],
 ) -> Result<KeyboardDeliveryReport> {
+    let (_op, cursor_id) = session_guard(session, target_window)?;
     let mut keymap = Keymap::load()?;
     let mut guards = Vec::new();
     let mut modifier_keycodes = Vec::with_capacity(modifiers.len());
@@ -730,12 +740,20 @@ fn keyboard_key(
         }
     };
     let steps = plan_chord(&modifier_keycodes, keycode, needs_shift, keymap.shift);
-    deliver(session, target_window, &steps, guards, &keymap.conn)
+    deliver(&cursor_id, target_window, &steps, guards, &keymap.conn)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keys_for_an_unowned_popup_report_the_owner_gone_before_any_keymap_work() {
+        let text = send_popup_keyboard_text(90_777, "\u{1F600}x").unwrap_err();
+        assert!(text.is::<PopupOwnerGone>());
+        let key = send_popup_keyboard_key(90_777, "NoSuchKey", &["NoSuchModifier"]).unwrap_err();
+        assert!(key.is::<PopupOwnerGone>());
+    }
 
     /// A tiny US-like keymap: keycode 38 = a/A, 10 = 1/!, 36 = Return,
     /// 50 = Shift_L, 37 = Control_L, 64 = Alt_L, 250 = spare (NoSymbol).

@@ -2545,6 +2545,7 @@ fn window_children(
     let mut parent: x11::xlib::Window = 0;
     let mut children: *mut x11::xlib::Window = ptr::null_mut();
     let mut count: std::os::raw::c_uint = 0;
+    let previous_handler = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
     let rc = unsafe {
         x11::xlib::XQueryTree(
             display,
@@ -2555,6 +2556,7 @@ fn window_children(
             &mut count,
         )
     };
+    unsafe { x11::xlib::XSetErrorHandler(previous_handler) };
     if rc == 0 || children.is_null() {
         return Vec::new();
     }

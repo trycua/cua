@@ -82,6 +82,46 @@ pub fn fresh<G: PartialEq>(admitted: &G, current: &Fact<G>) -> bool {
     matches!(current, Fact::Known(current) if current == admitted)
 }
 
+/// What an adapter observed about one point of window-coordinate input
+/// against the target window's current geometry.
+pub struct Point {
+    /// The window still has the geometry the point was computed on.
+    pub fresh: bool,
+    /// The point lies on the window.
+    pub on_window: bool,
+    /// The output shows the window at the point.
+    pub shown: bool,
+    /// No other window may be above the window at the point.
+    pub unobscured: bool,
+}
+
+/// Why a point of window-coordinate input is refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Miss {
+    Stale,
+    OffWindow,
+    Hidden,
+    Obscured,
+}
+
+/// Whether a point reaches the target window: it must have been computed on
+/// the window's current geometry, lie on the window, be shown, and not be
+/// possibly covered by another window. The first fact that fails, in that
+/// order, is the refusal.
+pub fn reach(point: &Point) -> Result<(), Miss> {
+    match point {
+        Point { fresh: false, .. } => Err(Miss::Stale),
+        Point {
+            on_window: false, ..
+        } => Err(Miss::OffWindow),
+        Point { shown: false, .. } => Err(Miss::Hidden),
+        Point {
+            unobscured: false, ..
+        } => Err(Miss::Obscured),
+        _ => Ok(()),
+    }
+}
+
 /// Whether observable geometry stopped moving: two consecutive reads agree.
 /// A read that differs, or one that could not be taken, is still moving;
 /// agreeing reads do not prove a rendered animation finished.
@@ -229,6 +269,24 @@ mod tests {
         assert!(fresh(&(100, 60), &Fact::Known((100, 60))));
         assert!(!fresh(&(100, 60), &Fact::Known((120, 60))));
         assert!(!fresh(&(100, 60), &unknown()));
+    }
+
+    #[test]
+    fn a_point_reaches_the_window_only_when_every_fact_holds_and_the_first_failure_refuses() {
+        let point = |fresh, on_window, shown, unobscured| Point {
+            fresh,
+            on_window,
+            shown,
+            unobscured,
+        };
+        assert_eq!(reach(&point(true, true, true, true)), Ok(()));
+        assert_eq!(reach(&point(false, false, false, false)), Err(Miss::Stale));
+        assert_eq!(
+            reach(&point(true, false, false, false)),
+            Err(Miss::OffWindow)
+        );
+        assert_eq!(reach(&point(true, true, false, false)), Err(Miss::Hidden));
+        assert_eq!(reach(&point(true, true, true, false)), Err(Miss::Obscured));
     }
 
     #[test]

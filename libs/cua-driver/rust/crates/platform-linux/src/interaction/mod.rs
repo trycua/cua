@@ -1,9 +1,10 @@
 //! The layer every Linux compositor adapter shares: the lock, identity,
-//! delivery, freshness, motion and restore rules in [`policy`], the one
+//! delivery, freshness, reach, motion and restore rules in [`policy`], the one
 //! foreground transaction entry point, the deadline rule, the focus
 //! read-back loop and the settle loop. Wayland adapters supply mechanical
 //! save, focus and restore steps to the one transaction; X11 supplies
-//! activate and report steps. Adapters still own their geometry checks.
+//! activate and report steps. Adapters measure geometry; niri's output and
+//! placement limits stay in its pointer gate.
 
 use std::time::{Duration, Instant};
 

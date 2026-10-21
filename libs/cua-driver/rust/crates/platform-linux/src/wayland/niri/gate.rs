@@ -3,6 +3,7 @@
 //! [`PointerGate::holds`] rechecks before every later event.
 
 use super::*;
+use crate::interaction::policy::{self, Miss, Point};
 
 /// A layout point for pointer input and, when it was translated from window
 /// coordinates on niri, the window rectangle that translation used. The
@@ -206,32 +207,36 @@ fn pointer_admission(window: &Window, points: &[AimedPoint]) -> Result<()> {
         rect,
     } in points
     {
-        if let Some(expected) = rect {
-            if !interaction::policy::fresh(&expected, &interaction::facts::Fact::Known(placed.rect))
-            {
-                return Err(foreground_unavailable(format!(
-                    "niri window {} moved from {expected:?} to {:?} after its coordinates were computed; take a new screenshot",
-                    window.id, placed.rect
-                )));
-            }
-        }
-        if !placed.covers(x, y) {
-            return Err(foreground_unavailable(format!(
+        let moved_from = rect.filter(|expected| {
+            !policy::fresh(expected, &interaction::facts::Fact::Known(placed.rect))
+        });
+        let point = Point {
+            fresh: moved_from.is_none(),
+            on_window: placed.covers(x, y),
+            shown: placed.area.contains(x, y),
+            unobscured: placed.hits(x, y),
+        };
+        let reason = match policy::reach(&point) {
+            Ok(()) => continue,
+            Err(Miss::Stale) => format!(
+                "niri window {} moved from {:?} to {:?} after its coordinates were computed; take a new screenshot",
+                window.id,
+                moved_from.unwrap_or(placed.rect),
+                placed.rect
+            ),
+            Err(Miss::OffWindow) => format!(
                 "point ({x}, {y}) is outside niri window {} at {:?}",
                 window.id, placed.rect
-            )));
-        }
-        if !placed.area.contains(x, y) {
-            return Err(foreground_unavailable(format!(
+            ),
+            Err(Miss::Hidden) => format!(
                 "point ({x}, {y}) is past the edge of niri output {}, where window {} is not shown",
                 placed.output, window.id
-            )));
-        }
-        if !placed.hits(x, y) {
-            return Err(foreground_unavailable(format!(
+            ),
+            Err(Miss::Obscured) => format!(
                 "point ({x}, {y}) lies under another floating window, and niri reports no stacking order"
-            )));
-        }
+            ),
+        };
+        return Err(foreground_unavailable(reason));
     }
     Ok(())
 }

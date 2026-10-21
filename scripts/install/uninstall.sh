@@ -595,8 +595,7 @@ EOF
         # The Cua Spaces app's own host service (the app's executable as its
         # login item, since 0.10): `cua host remove` above unregisters it when
         # it can; this covers an app whose cua could not run. What it ran
-        # (~/.cua/helper) goes too, and so do the privacy permissions macOS
-        # keeps for it and for the old cua-spacesd.
+        # (~/.cua/helper) goes too.
         while IFS= read -r app; do
             [ -n "$app" ] || continue
             [ -f "$app/Contents/Library/LaunchAgents/com.trycua.spaces.helper.plist" ] || continue
@@ -615,18 +614,8 @@ EOF
             launchctl bootout "gui/$(id -u)/com.trycua.spaces.helper" >/dev/null 2>&1 || true
         fi
         rm_path "$HOME/.cua/helper"
-        # (Both are listed under the app, "Cua Spaces"; tccutil finds them
-        # by bundle id while the app is still here. An old cua-spacesd entry is kept by its file path, which
-        # tccutil cannot name: say how to remove it.)
-        if has tccutil; then
-            for bundle_id in com.trycua.spaces.macos com.trycua.cua-env-driver; do
-                if [ "$dry_run" = 1 ]; then
-                    say "[dry-run] tccutil reset All $bundle_id"
-                else
-                    tccutil reset All "$bundle_id" >/dev/null 2>&1 || true
-                fi
-            done
-        fi
+        # The privacy permissions macOS keeps for the app stay: an uninstall
+        # never revokes them (see the driver uninstaller, 18 Oct 2026).
         if [ "$old_agent" = 1 ]; then
             info "System Settings may still list \"cua-spacesd\" under Privacy & Security (Screen Recording, Accessibility); select it and click the minus button to remove it"
         fi

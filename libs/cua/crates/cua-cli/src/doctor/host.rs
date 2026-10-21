@@ -575,7 +575,11 @@ mod host_service_tests {
         assert!(host_service_check(&cua_host::HostStatus::default()).is_none());
         let c = host_service_check(&status("app-helper", true, false)).unwrap();
         assert_eq!(c.status, Status::Pass);
-        assert!(c.message.contains("Cua Spaces app's login item"), "{}", c.message);
+        assert!(
+            c.message.contains("Cua Spaces app's login item"),
+            "{}",
+            c.message
+        );
         let c = host_service_check(&status("app-helper", true, true)).unwrap();
         assert_eq!(c.status, Status::Warn);
         assert!(c.remediation.contains("cua host migrate"));

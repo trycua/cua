@@ -1886,7 +1886,9 @@ mod tests {
         let launcher = app_helper_launcher(&app);
         assert_eq!(launcher, app.join(APP_EXECUTABLE));
         assert!(is_app_helper_launcher(&launcher));
-        assert!(!is_app_helper_launcher(Path::new("/usr/local/bin/CuaSpacesMac")));
+        assert!(!is_app_helper_launcher(Path::new(
+            "/usr/local/bin/CuaSpacesMac"
+        )));
         assert!(!is_app_helper_launcher(Path::new(
             "/Users/ada/.cua/host/bin/cua-spacesd"
         )));

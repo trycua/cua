@@ -2244,11 +2244,13 @@ mod tests {
 
     #[test]
     fn permission_hints_name_the_app_helper() {
-        let helper = Path::new(
-            "/Applications/Cua Spaces.app/Contents/MacOS/CuaSpacesMac",
-        );
+        let helper = Path::new("/Applications/Cua Spaces.app/Contents/MacOS/CuaSpacesMac");
         for h in permission_hints("macos", helper) {
-            assert!(h.instructions.contains("turn on Cua Spaces,"), "{}", h.instructions);
+            assert!(
+                h.instructions.contains("turn on Cua Spaces,"),
+                "{}",
+                h.instructions
+            );
             assert!(
                 !h.instructions.contains("cua-spacesd"),
                 "{}",
@@ -2257,8 +2259,7 @@ mod tests {
         }
         let ln = local_network_hint("macos", true, helper).unwrap();
         assert!(
-            ln.instructions
-                .contains("Allow Cua Spaces to find devices"),
+            ln.instructions.contains("Allow Cua Spaces to find devices"),
             "{}",
             ln.instructions
         );

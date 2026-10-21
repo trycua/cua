@@ -36,6 +36,7 @@ description: "Your Spaces and machines, unattended access on this machine, devic
 | [`cua host start`](#cua-host-start) | Start sharing again after `stop`. |
 | [`cua host share`](#cua-host-share) | Share a relay computer (this one, or `--machine`) with people in your team (id or verified email). |
 | [`cua host unshare`](#cua-host-unshare) | Stop sharing a relay computer with accounts; their open connections are cut. |
+| [`cua host migrate`](#cua-host-migrate) | macOS: move the host service into the Cua Spaces app, as its "Cua Spaces Helper" login item, from the LaunchAgent that older versions installed. |
 | [`cua host remove`](#cua-host-remove) | Unregister from the relay, uninstall the service and delete the host configuration (asks first). |
 | [`cua devices`](#cua-devices) | This device as a client of your cua.ai account on the relay: enroll (second factor), approve other devices, list, rename, revoke, and the audit log of who accessed what. |
 | [`cua devices status`](#cua-devices-status) | This device: enrolled, waiting for approval, or not enrolled. |
@@ -425,7 +426,7 @@ cua host setup [OPTIONS]
 | <span id="cua-host-setup--name"></span>`--name` | string |  | Display name (default: the host name). |
 | <span id="cua-host-setup--allow"></span>`--allow` | string |  | Also allow this account (id or email). Repeatable. |
 | <span id="cua-host-setup--driver-bin"></span>`--driver-bin` | path |  | cua-spacesd binary (default $CUA_SPACESD_BIN, a bundled one, or the release download). |
-| <span id="cua-host-setup--runner"></span>`--runner` | string | `auto` | auto \| systemd \| launchd \| windows-task \| process. |
+| <span id="cua-host-setup--runner"></span>`--runner` | string | `auto` | auto \| systemd \| launchd \| app-helper \| windows-task \| process. On a Mac with the Cua Spaces app, auto is app-helper: the service runs as the app's own login item ("Cua Spaces"). |
 | <span id="cua-host-setup--profile"></span>`--profile` | `desktop` \| `spare` | `desktop` | What this computer is for: `desktop` (share this desktop; the default) or `spare` (do not share the desktop; provide Spaces). |
 | <span id="cua-host-setup--max-spaces"></span>`--max-spaces` | integer |  | Provided Spaces at once (default 4; 0: no limit). |
 | <span id="cua-host-setup--remote"></span>`--remote` | boolean | `false` | When sign-in is needed, use a device code to approve it in a browser on another computer. The account session is not saved. |
@@ -588,6 +589,27 @@ cua host unshare [OPTIONS] <WHO>...
 
 ```bash test="cli-shape" id="ref-cua-host-unshare"
 cua host unshare friend@example.com
+```
+
+### `cua host migrate`
+
+macOS: move the host service into the Cua Spaces app, as its "Cua Spaces Helper" login item, from the LaunchAgent that older versions installed. This machine keeps its id, registration and Spaces; if the helper does not take over, the old service is put back. macOS then asks once for Screen Recording and Accessibility for Cua Spaces Helper.
+
+```text output
+cua host migrate [OPTIONS]
+```
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-host-migrate--force"></span>`--force` | boolean | `false` | Try again even if a move failed before with this version. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-host-migrate"
+cua host migrate
+
+# Try again after a move that was rolled back
+cua host migrate --force
 ```
 
 ### `cua host remove`

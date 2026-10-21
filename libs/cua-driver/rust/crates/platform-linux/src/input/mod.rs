@@ -225,12 +225,6 @@ fn track_click_popups(cursor_id: &str, opened: impl IntoIterator<Item = u64>) {
     windows.dedup();
 }
 
-fn live_popup_owner(window: u64) -> Option<String> {
-    let appeared = mpx_click_popups().lock().unwrap();
-    let pointers = mpx_pointers().lock().unwrap();
-    popup_owner(window, &appeared, |id| pointers.contains_key(id))
-}
-
 fn popup_owner(
     window: u64,
     appeared: &HashMap<String, ClickPopups>,
@@ -250,8 +244,11 @@ fn popup_owner_guard(popup: u64) -> Result<(std::sync::MutexGuard<'static, ()>, 
     let guard = MPX_OP_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let owner = live_popup_owner(popup).ok_or(PopupOwnerGone)?;
-    Ok((guard, owner))
+    let appeared = mpx_click_popups().lock().unwrap();
+    let pointers = mpx_pointers().lock().unwrap();
+    let owner = popup_owner(popup, &appeared, |id| pointers.contains_key(id));
+    drop((pointers, appeared));
+    Ok((guard, owner.ok_or(PopupOwnerGone)?))
 }
 
 /// Take the MPX operation lock for one call on `cursor_id`, stamp its last
@@ -2535,8 +2532,7 @@ fn window_title_for_report(display: *mut x11::xlib::Display, window: x11::xlib::
     title.unwrap_or_default()
 }
 
-/// Direct children of `window` (empty on error). Caller installs the error
-/// handler.
+/// Direct children of `window` (empty on error).
 fn window_children(
     display: *mut x11::xlib::Display,
     window: x11::xlib::Window,
@@ -5367,8 +5363,8 @@ mod path_tests {
         tracked.remove("popup-owner-next");
         drop(tracked);
         let last_use = mpx_last_use().lock().unwrap();
-        assert!(!last_use.contains_key("popup-owner-gone"));
         assert!(!last_use.contains_key("popup-owner-live"));
+        assert!(!last_use.contains_key("popup-owner-next"));
     }
 
     #[test]

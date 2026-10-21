@@ -3597,33 +3597,40 @@ fn inject_exchange(lines: &[String]) -> anyhow::Result<Vec<String>> {
     use std::os::unix::net::UnixStream;
     let path = inject_socket_path().ok_or_else(|| anyhow::anyhow!("CUA_INJECT_SOCKET not set"))?;
     // The nested compositor may still be starting; retry the connect briefly.
-    let mut stream = None;
-    for _ in 0..60 {
+    let connect_by = crate::interaction::operation_deadline(std::time::Duration::from_secs(3));
+    let stream = loop {
         match UnixStream::connect(&path) {
-            Ok(s) => {
-                stream = Some(s);
-                break;
+            Ok(s) => break s,
+            Err(_) if std::time::Instant::now() < connect_by => {
+                crate::interaction::pause(std::time::Duration::from_millis(50))
             }
-            Err(_) => std::thread::sleep(std::time::Duration::from_millis(50)),
+            Err(_) => anyhow::bail!("could not connect to inject socket {path}"),
         }
-    }
-    let stream =
-        stream.ok_or_else(|| anyhow::anyhow!("could not connect to inject socket {path}"))?;
-    stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
+    };
+    let read_by = crate::interaction::operation_deadline(std::time::Duration::from_secs(5));
     let mut writer = stream.try_clone()?;
     let mut reader = BufReader::new(stream);
+    let read_line = |reader: &mut BufReader<UnixStream>| {
+        let remaining = read_by.saturating_duration_since(std::time::Instant::now());
+        anyhow::ensure!(
+            !remaining.is_zero(),
+            "cua-compositor did not respond within the timeout"
+        );
+        reader.get_ref().set_read_timeout(Some(remaining))?;
+        read_inject_line(reader)
+    };
 
     // v1 handshake: send our banner and require the compositor to echo it.
     writeln!(writer, "{INJECT_PROTO_HELLO}")?;
     writer.flush()?;
-    parse_inject_hello(&read_inject_line(&mut reader)?)?;
+    parse_inject_hello(&read_line(&mut reader)?)?;
 
     let mut replies = Vec::with_capacity(lines.len());
     // One command per line; block on its response before the next.
     for l in lines {
         writeln!(writer, "{l}")?;
         writer.flush()?;
-        replies.push(read_inject_line(&mut reader)?);
+        replies.push(read_line(&mut reader)?);
     }
     Ok(replies)
 }

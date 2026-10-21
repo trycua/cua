@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, TryLockError};
 use std::time::{Duration, Instant};
 
+use crate::interaction::operation_deadline;
 use anyhow::{bail, ensure, Context, Result};
 use serde_json::{json, Value};
 
@@ -552,7 +553,7 @@ impl Client {
     }
 
     fn request(&self, packet: &str) -> Result<Value> {
-        let deadline = Instant::now() + TIMEOUT;
+        let deadline = operation_deadline(TIMEOUT);
         self.send_packet(packet, deadline)?;
         self.receive(deadline)
     }
@@ -709,7 +710,7 @@ impl Client {
         started: &mut Option<tokio::sync::oneshot::Sender<()>>,
         route: DeliveryRoute,
     ) -> Result<Value> {
-        let deadline = Instant::now() + TIMEOUT;
+        let deadline = operation_deadline(TIMEOUT);
         self.send_packet(packet, deadline).map_err(|error| {
             // Cancellation here precedes sending the action. Once sent, even
             // cancellation while waiting for its first reply is indeterminate.
@@ -734,7 +735,7 @@ impl Client {
                 let _ = started.send(());
             }
             reply = self
-                .receive(Instant::now() + TIMEOUT)
+                .receive(operation_deadline(TIMEOUT))
                 .map_err(|error| unknown_dispatch(error, 1))?;
         }
         if route == DeliveryRoute::Foreground
@@ -1312,7 +1313,8 @@ fn execute_text_actions(
                 // fence. Give the target event loop a bounded turn before the
                 // next character so native GTK clients do not drop a burst.
                 if index + 1 < action_count {
-                    std::thread::sleep(TEXT_ACTION_GAP);
+                    let gap = operation_deadline(TEXT_ACTION_GAP);
+                    std::thread::sleep(gap.saturating_duration_since(Instant::now()));
                 }
             }
             Err(error) => {

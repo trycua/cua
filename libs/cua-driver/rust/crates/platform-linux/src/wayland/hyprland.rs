@@ -232,7 +232,7 @@ fn ipc_path() -> Result<PathBuf> {
 }
 
 fn ipc_connection() -> Result<UnixStream> {
-    ipc_connection_with_timeout(QUERY_TIMEOUT)
+    ipc_connection_with_timeout(action_capped(QUERY_TIMEOUT)?)
 }
 
 fn ipc_connection_with_timeout(timeout: Duration) -> Result<UnixStream> {
@@ -245,7 +245,7 @@ fn ipc_connection_with_timeout(timeout: Duration) -> Result<UnixStream> {
 /// WAYLAND_SOCKET descriptors are deliberately unsupported here: this adapter
 /// opens independent, attested connections for each observation.
 pub(super) fn wayland_connection() -> Result<wayland_client::Connection> {
-    wayland_connection_with_timeout(QUERY_TIMEOUT)
+    wayland_connection_with_timeout(action_capped(QUERY_TIMEOUT)?)
 }
 
 /// Bind the Wayland connection to the IPC compositor before accepting pixels.
@@ -282,6 +282,11 @@ fn query<T: serde::de::DeserializeOwned>(command: &str) -> Result<T> {
     )
 }
 
+/// What is left of `cap` once capped by the action's deadline.
+fn action_capped(cap: Duration) -> Result<Duration> {
+    query_time_remaining(crate::interaction::operation_deadline(cap))
+}
+
 fn query_time_remaining(deadline: Instant) -> Result<Duration> {
     let remaining = deadline.saturating_duration_since(Instant::now());
     if remaining.is_zero() {
@@ -308,7 +313,7 @@ fn query_with<T: serde::de::DeserializeOwned>(
     backoff: Duration,
     mut connect: impl FnMut(Instant) -> Result<UnixStream>,
 ) -> Result<T> {
-    let deadline = Instant::now() + total;
+    let deadline = crate::interaction::operation_deadline(total);
     // Keep this a closed list: a generic "j/" prefix also admits JSON-formatted
     // dispatch commands. JSON output does not imply a read-only operation.
     let read_only = matches!(
@@ -779,7 +784,7 @@ pub fn move_cursor(x: f64, y: f64) -> Result<()> {
         x.round() as i64,
         y.round() as i64
     );
-    let reply = read_reply(&mut ipc, command.as_bytes(), QUERY_TIMEOUT)?;
+    let reply = read_reply(&mut ipc, command.as_bytes(), action_capped(QUERY_TIMEOUT)?)?;
     if reply.trim_ascii() != b"ok" {
         bail!(
             "Hyprland movecursor refused: {}",

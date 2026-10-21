@@ -424,6 +424,45 @@ acquire_install_lock() {
 
 acquire_install_lock "$@"
 
+# Warn when a release dir about to be pruned is still pinned by a
+# hand-written systemd user unit or desktop entry. The GC cannot rewrite
+# those files and the breakage is silent — the unit keeps restarting into
+# `Failed at step EXEC` after the dir disappears — so name the exact file
+# and the stable replacement before deleting anything.
+#
+# Matching is on the `packages/releases/<dir>` suffix because the same dir
+# can be written as an absolute path, `%h/...` (systemd), or `$HOME/...`.
+#
+# Args: $1 = current symlink path, remaining args = dirs about to be pruned.
+warn_referenced_release_dirs() {
+    local current_link="$1"
+    shift
+    local stable="${current_link%/}/$BINARY_NAME"
+    local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+    local dir file needle referenced
+    for dir in "$@"; do
+        needle="packages/releases/${dir##*/}"
+        referenced=0
+        for file in \
+            "$config_home"/systemd/user/*.service \
+            "$config_home"/systemd/user/*.socket \
+            "$config_home"/systemd/user/*.timer \
+            "$HOME"/.local/share/applications/*.desktop \
+            "$config_home"/autostart/*.desktop; do
+            [[ -f "$file" ]] || continue
+            grep -qF -- "$needle" "$file" 2>/dev/null || continue
+            if [[ "$referenced" == "0" ]]; then
+                printf 'warning: pruning %s, which is still referenced by:\n' "$dir" >&2
+                referenced=1
+            fi
+            printf 'warning:   %s\n' "$file" >&2
+        done
+        if [[ "$referenced" == "1" ]]; then
+            printf 'warning: point those references at %s (stable across installs) and reload them; that release dir is removed after this run\n' "$stable" >&2
+        fi
+    done
+}
+
 # Prune per-version release dirs under $RELEASES_DIR for the current
 # $TARGET, keeping the N most recent (by mtime). The dir that the
 # `current` symlink resolves to is always preserved — even if it's
@@ -522,6 +561,7 @@ prune_old_releases() {
     for p in "${to_prune[@]}"; do
         log "  - ${p##*/}"
     done
+    warn_referenced_release_dirs "$current_link" "${to_prune[@]}"
     printf '%s\0' "${to_prune[@]}" | xargs -0 rm -rf
 }
 

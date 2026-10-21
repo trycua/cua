@@ -266,7 +266,7 @@ function thisComputer(os: HostOs): string {
 
 function fallbackView(s: OnboardingFlowState, os: HostOs): OnboardingView {
   const pages: Partial<Record<OnboardingStep, [string, string, string]>> = {
-    welcome: ["Welcome to Cua Spaces", "Computers for you and your agents.", "Get started"],
+    welcome: ["Welcome to Cua Spaces", "Computers for you and your AI agents. Setup takes about a minute.", "Get started"],
     signin: ["Sign in", "Sign in to reach your computers and Spaces from any of your devices. You can skip this and sign in later.", "Continue"],
     presentation: ["Where should Cua Spaces show up?", "You can change this in Settings.", "Continue"],
     mode: [`How do you want to use ${thisComputer(os)}?`, "Use it only to open your other computers, or let your other devices reach it too. You can change this later.", "Continue"],

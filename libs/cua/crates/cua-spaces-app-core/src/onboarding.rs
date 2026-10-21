@@ -1271,7 +1271,7 @@ pub fn view_for(s: &OnboardingState, os: SpaceOs, cli_page: bool) -> OnboardingV
     let (title, lede, primary) = match s.step {
         Welcome => (
             "Welcome to Cua Spaces",
-            "Computers for you and your agents.",
+            "Computers for you and your AI agents. Setup takes about a minute.",
             "Get started",
         ),
         Cli => (

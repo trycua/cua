@@ -121,6 +121,7 @@ async fn sandbox_lifecycle_exec_and_compat_aliases() {
         ])
         .await;
     assert_eq!(o.code, 4, "{o:?}");
+    #[cfg(unix)]
     exec_stream_round_trip(&h, &env).await;
     let o = h
         .run(&["--embedded", "--json", "sb", "exec", "dev", "echo hi"])
@@ -1039,6 +1040,7 @@ async fn sandbox_info_connection_prints_the_spacesd_url_and_token() {
 
 /// `sb exec -i` against the real binary: stdin round trip, signal
 /// forwarding, and the guest process dying with a killed client.
+#[cfg(unix)]
 async fn exec_stream_round_trip(h: &Home, env: &fixtures::SpacesdFixture) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let mut child = h.spawn(&["--embedded", "sb", "exec", "-i", "dev", "--", "cat"]);

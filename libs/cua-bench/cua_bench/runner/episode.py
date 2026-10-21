@@ -226,6 +226,10 @@ async def run_episode(
         result.evaluation = evaluation
         result.reward = reward_of(evaluation)
         print(f"✓ Evaluation result: {evaluation}")
+        if result.reward is not None:
+            from ..reward import emit_result_envelope
+
+            print(emit_result_envelope(result.reward))
         _record(env, "evaluate", {"result": evaluation})
 
     trace_dir = output_dir / f"task_{task_index}_trace"

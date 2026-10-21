@@ -1,12 +1,109 @@
-//! Best-effort Sway/i3-compatible compositor metadata.
+//! Sway metadata and focus over the native i3-ipc socket.
 //!
 //! The wlroots foreign-toplevel protocol exposes titles and app ids, but not
 //! process ids or geometry. Sway's IPC tree supplies those missing fields and
-//! a compositor-stable container id. Other compositors simply return no data.
+//! a compositor-stable container id. Each request opens a connection to
+//! `SWAYSOCK`, checks that its peer is the process serving `WAYLAND_DISPLAY`,
+//! and finishes by its deadline. Other compositors, or a socket that fails
+//! that check, return no data.
 
-use std::process::{Command, Stdio};
+use std::io::{Read, Write};
+use std::os::fd::AsRawFd;
+use std::os::unix::net::UnixStream;
+use std::time::{Duration, Instant};
 
+use anyhow::{bail, Context, Result};
 use serde::Deserialize;
+
+use super::compositor_peer::{peer_pid, wayland_socket_with_timeout};
+
+const MAGIC: &[u8; 6] = b"i3-ipc";
+const RUN_COMMAND: u32 = 0;
+const GET_TREE: u32 = 4;
+const QUERY_CAP: Duration = Duration::from_secs(1);
+const MAX_REPLY_BYTES: usize = 16 * 1024 * 1024;
+
+fn remaining(deadline: Instant) -> Result<Duration> {
+    let left = deadline.saturating_duration_since(Instant::now());
+    if left.is_zero() {
+        bail!("Sway IPC timed out");
+    }
+    Ok(left)
+}
+
+fn frame(kind: u32, payload: &[u8]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(14 + payload.len());
+    bytes.extend_from_slice(MAGIC);
+    bytes.extend_from_slice(&(payload.len() as u32).to_ne_bytes());
+    bytes.extend_from_slice(&kind.to_ne_bytes());
+    bytes.extend_from_slice(payload);
+    bytes
+}
+
+fn read_reply(stream: &mut impl Read, kind: u32) -> Result<Vec<u8>> {
+    let mut header = [0u8; 14];
+    stream
+        .read_exact(&mut header)
+        .context("Sway IPC reply unavailable")?;
+    if &header[..6] != MAGIC {
+        bail!("Sway IPC reply has no i3-ipc header");
+    }
+    let length = u32::from_ne_bytes(header[6..10].try_into()?) as usize;
+    if u32::from_ne_bytes(header[10..14].try_into()?) != kind {
+        bail!("Sway IPC replied to a different request");
+    }
+    if length > MAX_REPLY_BYTES {
+        bail!("Sway IPC reply exceeds size limit");
+    }
+    let mut payload = vec![0u8; length];
+    stream
+        .read_exact(&mut payload)
+        .context("Sway IPC reply truncated")?;
+    Ok(payload)
+}
+
+/// Send one `kind` request over a newly attested `SWAYSOCK` connection and
+/// read its reply by `deadline`.
+fn request(kind: u32, payload: &[u8], deadline: Instant) -> Result<Vec<u8>> {
+    let path = std::env::var_os("SWAYSOCK").context("missing SWAYSOCK")?;
+    let socket = socket2::Socket::new(socket2::Domain::UNIX, socket2::Type::STREAM, None)?;
+    socket.connect_timeout(&socket2::SockAddr::unix(path)?, remaining(deadline)?)?;
+    let mut stream: UnixStream = socket.into();
+    let wayland = wayland_socket_with_timeout(remaining(deadline)?)?;
+    if peer_pid(stream.as_raw_fd())? != peer_pid(wayland.as_raw_fd())? {
+        bail!("SWAYSOCK and WAYLAND_DISPLAY name different compositor processes");
+    }
+    stream.set_write_timeout(Some(remaining(deadline)?))?;
+    stream.write_all(&frame(kind, payload))?;
+    stream.set_read_timeout(Some(remaining(deadline)?))?;
+    read_reply(&mut stream, kind)
+}
+
+#[derive(Deserialize)]
+struct Outcome {
+    success: bool,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+fn command_outcome(command: &str, reply: &[u8]) -> Result<()> {
+    let outcomes: Vec<Outcome> =
+        serde_json::from_slice(reply).context("invalid Sway command reply")?;
+    if outcomes.is_empty() {
+        bail!("Sway ran no command for `{command}`");
+    }
+    if let Some(failed) = outcomes.iter().find(|outcome| !outcome.success) {
+        bail!(
+            "Sway refused `{command}`: {}",
+            failed.error.as_deref().unwrap_or("no reason given")
+        );
+    }
+    Ok(())
+}
+
+fn tree(deadline: Instant) -> Result<Vec<Window>> {
+    parse_tree(&request(GET_TREE, b"", deadline)?).context("invalid Sway IPC tree")
+}
 
 #[derive(Clone, Debug, Default, Deserialize)]
 struct Rect {
@@ -117,16 +214,7 @@ fn parse_tree(bytes: &[u8]) -> Option<Vec<Window>> {
 
 pub fn list_windows() -> Option<Vec<Window>> {
     std::env::var_os("SWAYSOCK")?;
-    let output = Command::new("swaymsg")
-        .args(["-r", "-t", "get_tree"])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    parse_tree(&output.stdout)
+    tree(crate::interaction::operation_deadline(QUERY_CAP)).ok()
 }
 
 pub fn window_for_id(id: u64) -> Option<Window> {
@@ -169,10 +257,10 @@ pub fn window_for_app_id(app_id: &str) -> Option<Window> {
         .max_by_key(|window| (window.focused, window.visible))
 }
 
-/// The focused container's PID and id, `None` when no window has focus.
-pub fn focused() -> anyhow::Result<Option<(u32, u64)>> {
-    Ok(list_windows()
-        .ok_or_else(|| anyhow::anyhow!("Sway IPC tree is unavailable"))?
+/// The focused container's PID and id by `deadline`, `None` when no window
+/// has focus.
+pub fn focused(deadline: Instant) -> Result<Option<(u32, u64)>> {
+    Ok(tree(deadline)?
         .into_iter()
         .find(|window| window.focused)
         .map(|window| (window.pid, window.id)))
@@ -180,20 +268,13 @@ pub fn focused() -> anyhow::Result<Option<(u32, u64)>> {
 
 /// Focus exact container `id` of `pid` and read the focus back by
 /// `deadline`.
-pub fn focus(pid: u32, id: u64, deadline: std::time::Instant) -> anyhow::Result<()> {
-    let selector = format!("[con_id={id}]");
-    let sent = Command::new("swaymsg")
-        .args([selector.as_str(), "focus"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success());
-    if !sent {
-        anyhow::bail!("Sway refused to focus exact container {id}");
-    }
-    let confirmed = crate::interaction::confirm(deadline, |_| {
-        let observed = match focused() {
+pub fn focus(pid: u32, id: u64, deadline: Instant) -> Result<()> {
+    let command = format!("[con_id={id}] focus");
+    request(RUN_COMMAND, command.as_bytes(), deadline)
+        .and_then(|reply| command_outcome(&command, &reply))
+        .with_context(|| format!("Sway refused to focus exact container {id}"))?;
+    let confirmed = crate::interaction::confirm(deadline, |deadline| {
+        let observed = match focused(deadline) {
             Ok(focused) => crate::interaction::facts::Fact::Known(focused),
             Err(error) => crate::interaction::facts::Fact::Unknown(error.to_string()),
         };
@@ -201,7 +282,7 @@ pub fn focus(pid: u32, id: u64, deadline: std::time::Instant) -> anyhow::Result<
     })
     .unwrap_or(false);
     if !confirmed {
-        anyhow::bail!("Sway did not confirm focus on exact container {id}");
+        bail!("Sway did not confirm focus on exact container {id}");
     }
     Ok(())
 }
@@ -225,6 +306,34 @@ pub fn window_origin_for_title(title: &str) -> Option<(i32, i32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frames_round_trip_and_reject_foreign_headers() {
+        let framed = frame(GET_TREE, b"{}");
+        assert_eq!(&framed[..6], MAGIC);
+        assert_eq!(read_reply(&mut &framed[..], GET_TREE).unwrap(), b"{}");
+        assert!(read_reply(&mut &framed[..], RUN_COMMAND).is_err());
+        assert!(read_reply(&mut &framed[..framed.len() - 1], GET_TREE).is_err());
+        let mut foreign = framed.clone();
+        foreign[0] = b'x';
+        assert!(read_reply(&mut &foreign[..], GET_TREE).is_err());
+        let mut oversized = frame(GET_TREE, b"");
+        oversized[6..10].copy_from_slice(&(MAX_REPLY_BYTES as u32 + 1).to_ne_bytes());
+        assert!(read_reply(&mut &oversized[..], GET_TREE).is_err());
+    }
+
+    #[test]
+    fn a_command_succeeds_only_when_every_outcome_succeeds() {
+        assert!(command_outcome("focus", br#"[{"success":true}]"#).is_ok());
+        let refused = command_outcome(
+            "focus",
+            br#"[{"success":true},{"success":false,"error":"No matching node"}]"#,
+        )
+        .unwrap_err();
+        assert!(refused.to_string().contains("No matching node"));
+        assert!(command_outcome("focus", b"[]").is_err());
+        assert!(command_outcome("focus", b"not json").is_err());
+    }
 
     #[test]
     fn parses_nested_and_floating_windows() {

@@ -98,7 +98,7 @@ pub fn with_target_foreground<T>(
         return transaction(
             &mut (),
             |()| {
-                let prior = sway_ipc::focused()?;
+                let prior = sway_ipc::focused(confirm())?;
                 Ok(Some(prior.filter(|(_, prior)| *prior != window_id)))
             },
             |(), _| sway_ipc::focus(pid, window_id, confirm()),

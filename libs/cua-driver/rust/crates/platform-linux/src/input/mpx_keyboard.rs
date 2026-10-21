@@ -523,7 +523,7 @@ fn deliver(
     keymap_conn: &RustConnection,
 ) -> Result<KeyboardDeliveryReport> {
     let _op = if popup {
-        popup_owner_guard(cursor_id)?
+        popup_owner_guard(cursor_id, target_window)?
     } else {
         mpx_op_guard(cursor_id)
     };

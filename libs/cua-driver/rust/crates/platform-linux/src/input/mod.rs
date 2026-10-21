@@ -212,7 +212,13 @@ fn mark_mpx_use(cursor_id: &str) {
 }
 
 fn track_click_popups(cursor_id: &str, opened: impl IntoIterator<Item = u64>) {
+    let opened: Vec<u64> = opened.into_iter().collect();
     let mut tracked = mpx_click_popups().lock().unwrap();
+    for (id, popups) in tracked.iter_mut() {
+        if id != cursor_id {
+            popups.windows.retain(|window| !opened.contains(window));
+        }
+    }
     let windows = &mut tracked.entry(cursor_id.to_owned()).or_default().windows;
     windows.extend(opened);
     windows.sort_unstable();
@@ -220,8 +226,15 @@ fn track_click_popups(cursor_id: &str, opened: impl IntoIterator<Item = u64>) {
 }
 
 pub fn popup_click_session(window: u64) -> Option<String> {
-    let pointers = mpx_pointers().lock().unwrap();
+    let _op = MPX_OP_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    live_popup_owner(window)
+}
+
+fn live_popup_owner(window: u64) -> Option<String> {
     let appeared = mpx_click_popups().lock().unwrap();
+    let pointers = mpx_pointers().lock().unwrap();
     popup_owner(window, &appeared, |id| pointers.contains_key(id))
 }
 
@@ -240,11 +253,11 @@ fn popup_owner(
 #[error("the session whose click opened the popup has no master pair any more")]
 pub struct PopupOwnerGone;
 
-fn popup_owner_guard(owner: &str) -> Result<std::sync::MutexGuard<'static, ()>> {
+fn popup_owner_guard(owner: &str, popup: u64) -> Result<std::sync::MutexGuard<'static, ()>> {
     let guard = MPX_OP_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if !mpx_pointers().lock().unwrap().contains_key(owner) {
+    if live_popup_owner(popup).as_deref() != Some(owner) {
         return Err(PopupOwnerGone.into());
     }
     Ok(guard)
@@ -5304,12 +5317,29 @@ mod path_tests {
     }
 
     #[test]
+    fn a_click_that_sees_a_popup_appear_takes_it_from_other_sessions() {
+        use super::{mpx_click_popups, popup_owner, track_click_popups};
+        let _op = mpx_op_lock();
+        track_click_popups("popup-reuse-a", [77_001, 77_002]);
+        track_click_popups("popup-reuse-b", [77_001]);
+        let mut tracked = mpx_click_popups().lock().unwrap();
+        assert_eq!(tracked["popup-reuse-a"].windows, vec![77_002]);
+        assert_eq!(
+            popup_owner(77_001, &tracked, |_: &str| true).as_deref(),
+            Some("popup-reuse-b")
+        );
+        tracked.remove("popup-reuse-a");
+        tracked.remove("popup-reuse-b");
+    }
+
+    #[test]
     fn keys_for_a_popup_neither_stamp_nor_recreate_the_owner_pair() {
         use super::{
             mpx_last_use, mpx_pointers, popup_owner_guard, MasterPointerIds, PopupOwnerGone,
         };
-        let gone = popup_owner_guard("popup-owner-gone").unwrap_err();
+        let gone = popup_owner_guard("popup-owner-gone", 90_001).unwrap_err();
         assert!(gone.is::<PopupOwnerGone>());
+        super::track_click_popups("popup-owner-live", [90_001]);
         mpx_pointers().lock().unwrap().insert(
             "popup-owner-live".to_owned(),
             MasterPointerIds {
@@ -5319,8 +5349,15 @@ mod path_tests {
                 slave_keyboard_id: None,
             },
         );
-        drop(popup_owner_guard("popup-owner-live").unwrap());
+        drop(popup_owner_guard("popup-owner-live", 90_001).unwrap());
+        super::track_click_popups("popup-owner-next", [90_001]);
+        let moved = popup_owner_guard("popup-owner-live", 90_001).unwrap_err();
+        assert!(moved.is::<PopupOwnerGone>());
         mpx_pointers().lock().unwrap().remove("popup-owner-live");
+        let mut tracked = super::mpx_click_popups().lock().unwrap();
+        tracked.remove("popup-owner-live");
+        tracked.remove("popup-owner-next");
+        drop(tracked);
         let last_use = mpx_last_use().lock().unwrap();
         assert!(!last_use.contains_key("popup-owner-gone"));
         assert!(!last_use.contains_key("popup-owner-live"));

@@ -1270,6 +1270,8 @@ final class LumeController {
         nvramPath: Path? = nil,
         usbMassStoragePaths: [Path]? = nil,
         additionalDiskPaths: [Path]? = nil,
+        stackedDiskSpecs: [StackedDiskSpec]? = nil,
+        vsockForwards: [VsockForwarder.Rule]? = nil,
         networkMode: NetworkMode? = nil,
         clipboard: Bool = false,
         vncPolicy: VNCPolicy = .enabled,
@@ -1301,6 +1303,7 @@ final class LumeController {
                 "nvram_path_override": nvramPath?.path ?? "none",
                 "usb_storage_devices": "\(usbMassStoragePaths?.count ?? 0)",
                 "additional_disks": "\(additionalDiskPaths?.count ?? 0)",
+                "stacked_disks": "\(stackedDiskSpecs?.count ?? 0)",
                 "network_override": networkMode?.description ?? "vm-config",
             ])
 
@@ -1392,7 +1395,8 @@ final class LumeController {
                 sharedDirectories: sharedDirectories,
                 mount: mount,
                 usbMassStoragePaths: usbMassStoragePaths,
-                additionalDiskPaths: additionalDiskPaths
+                additionalDiskPaths: additionalDiskPaths,
+                stackedDiskSpecs: stackedDiskSpecs
             )
 
             // Load the VM directly using the located VMDirectory and storage context
@@ -1409,6 +1413,8 @@ final class LumeController {
                 recoveryMode: recoveryMode,
                 usbMassStoragePaths: usbMassStoragePaths,
                 additionalDiskPaths: additionalDiskPaths,
+                stackedDiskSpecs: stackedDiskSpecs,
+                vsockForwards: vsockForwards,
                 networkMode: networkMode,
                 clipboard: clipboard,
                 vncPolicy: vncPolicy)
@@ -1418,7 +1424,11 @@ final class LumeController {
             Logger.info("VM run ended", metadata: ["name": normalizedName])
         } catch {
             SharedVM.shared.removeVM(name: normalizedName)
-            Logger.error("Failed to run VM", metadata: ["error": error.localizedDescription])
+            Logger.error(
+                "Failed to run VM",
+                metadata: [
+                    "error": error.localizedDescription, "detail": String(describing: error),
+                ])
             throw error
         }
     }
@@ -1881,7 +1891,8 @@ final class LumeController {
         sharedDirectories: [SharedDirectory]?,
         mount: Path?,
         usbMassStoragePaths: [Path]? = nil,
-        additionalDiskPaths: [Path]? = nil
+        additionalDiskPaths: [Path]? = nil,
+        stackedDiskSpecs: [StackedDiskSpec]? = nil
     ) throws {
         // VM existence is confirmed by having vmDir, no need for validateVMExists
         if let dirs = sharedDirectories {
@@ -1909,6 +1920,26 @@ final class LumeController {
                 }
                 guard canonicalAdditionalDiskPaths.insert(canonicalPath).inserted else {
                     throw ValidationError("Duplicate additional disk image: \(path.path)")
+                }
+            }
+        }
+
+        if let stacks = stackedDiskSpecs {
+            guard #available(macOS 27, *) else {
+                throw ValidationError(
+                    "Stacked disks require macOS 27 (DiskImageKit) or newer on the host")
+            }
+
+            for stack in stacks {
+                if !FileManager.default.fileExists(atPath: stack.base.path) {
+                    throw ValidationError("Stacked disk base image not found: \(stack.base.path)")
+                }
+                for layer in stack.layers.dropLast() {
+                    if !FileManager.default.fileExists(atPath: layer.path.path) {
+                        throw ValidationError(
+                            "Stacked disk layer not found: \(layer.path.path) — only the topmost layer may be absent"
+                        )
+                    }
                 }
             }
         }

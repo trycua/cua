@@ -59,8 +59,7 @@ pub struct UiaNode {
     pub help_text: Option<String>,
     pub actions: Vec<String>,
     /// Effective enabled state: the UIA-reported state, forced false under a
-    /// disabled ancestor. `None` is reserved for fallback backends that
-    /// cannot establish it.
+    /// disabled ancestor in the same window. `None` when the state is unknown.
     pub enabled: Option<bool>,
     /// Toggle/selection state when the element exposes one of those patterns.
     pub selected: Option<bool>,
@@ -865,7 +864,8 @@ fn emit_cached_node(
     let automation_id = read_cached_bstr(element, UIA_AutomationIdPropertyId);
     let help_text = read_cached_bstr(element, UIA_HelpTextPropertyId);
     let reported_enabled = read_cached_bool(element, UIA_IsEnabledPropertyId);
-    let (enabled, is_enabled) = effective_enabled(reported_enabled, ancestors_enabled);
+    let (enabled, is_enabled) =
+        effective_enabled(&control_type, reported_enabled, ancestors_enabled);
     let selected = read_cached_selected(element);
     // A disabled control is indexed and published with `enabled: false`, as on
     // macOS: enablement is state the caller needs to read, not a reason to hide
@@ -936,10 +936,11 @@ fn emit_cached_node(
 }
 
 fn effective_enabled(
+    control_type: &str,
     reported_enabled: Option<bool>,
     ancestors_enabled: bool,
 ) -> (Option<bool>, bool) {
-    if !ancestors_enabled {
+    if !ancestors_enabled && control_type != "Window" {
         return (Some(false), false);
     }
     (reported_enabled, reported_enabled.unwrap_or(true))
@@ -1274,6 +1275,27 @@ mod tests {
             parent_element_index: None,
             in_web_content: false,
         }
+    }
+
+    #[test]
+    fn a_disabled_ancestor_disables_descendants_up_to_an_owned_window() {
+        assert_eq!(
+            effective_enabled("Button", Some(true), false),
+            (Some(false), false)
+        );
+        assert_eq!(
+            effective_enabled("Button", None, false),
+            (Some(false), false)
+        );
+        assert_eq!(effective_enabled("Button", None, true), (None, true));
+        assert_eq!(
+            effective_enabled("Button", Some(false), true),
+            (Some(false), false)
+        );
+        assert_eq!(
+            effective_enabled("Window", Some(true), false),
+            (Some(true), true)
+        );
     }
 
     #[test]

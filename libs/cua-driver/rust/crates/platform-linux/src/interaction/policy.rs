@@ -104,9 +104,75 @@ pub fn restore<R>(saved: Fact<Option<R>>) -> Result<R> {
     }
 }
 
+/// The focus a restore leaves alone: focus that moved during the operation
+/// to something that is neither the target nor the saved prior is the
+/// user's newer choice. Returns that choice; `None` means restore.
+pub fn newer_choice<T: PartialEq>(
+    current: Option<T>,
+    target: Option<T>,
+    prior: Option<T>,
+) -> Option<T> {
+    current.filter(|current| Some(current) != target.as_ref() && Some(current) != prior.as_ref())
+}
+
+/// Where focus moved while an operation ran, relative to the target
+/// application.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FocusMove {
+    /// The target app owned the focus before and still does: it opened one
+    /// of its own windows (a dialog). Not an intrusion; leave it.
+    SameAppDialog,
+    /// The focus left the user's application (or arrived in the target from
+    /// another app): restore it.
+    OtherApp,
+}
+
+/// The same-app rule: a move is the app's own dialog only when the target
+/// pid owned the focus before the action *and* owns it now. A move from a
+/// decoy (another pid) into the target's dialog is a steal, as is a move
+/// from the target to anything else. Unknown owners never qualify.
+pub fn focus_move(
+    target_pid: Option<u32>,
+    previous_owner: Option<u32>,
+    new_owner: Option<u32>,
+) -> FocusMove {
+    match (target_pid, previous_owner, new_owner) {
+        (Some(target), Some(previous), Some(new)) if previous == target && new == target => {
+            FocusMove::SameAppDialog
+        }
+        _ => FocusMove::OtherApp,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_restore_leaves_focus_only_on_a_third_choice() {
+        assert_eq!(newer_choice(Some(3), Some(1), Some(2)), Some(3));
+        assert_eq!(newer_choice(Some(1), Some(1), Some(2)), None);
+        assert_eq!(newer_choice(Some(2), Some(1), Some(2)), None);
+        assert_eq!(newer_choice(None, Some(1), Some(2)), None);
+        assert_eq!(newer_choice(Some(3), None, None), Some(3));
+    }
+
+    #[test]
+    fn same_app_rule_only_when_the_target_owned_the_focus_before_and_after() {
+        assert_eq!(
+            focus_move(Some(7), Some(7), Some(7)),
+            FocusMove::SameAppDialog
+        );
+        for (target, previous, new) in [
+            (Some(7), Some(3), Some(7)),
+            (Some(7), Some(7), Some(3)),
+            (Some(7), None, Some(7)),
+            (Some(7), Some(7), None),
+            (None, Some(7), Some(7)),
+        ] {
+            assert_eq!(focus_move(target, previous, new), FocusMove::OtherApp);
+        }
+    }
 
     fn unknown<T>() -> Fact<T> {
         Fact::Unknown("no source".into())

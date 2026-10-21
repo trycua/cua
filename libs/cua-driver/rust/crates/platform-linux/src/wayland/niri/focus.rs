@@ -232,9 +232,7 @@ fn restore_focus<C: FnMut(Instant) -> Result<UnixStream>>(
         return Ok(());
     }
     // Someone focused another window meanwhile: theirs is the newer choice.
-    if let Some(chosen) =
-        focused.filter(|focused| *focused != target.id && Some(*focused) != prior_id)
-    {
+    if let Some(chosen) = interaction::policy::newer_choice(focused, Some(target.id), prior_id) {
         tracing::info!(
             window = chosen,
             "niri focus moved to another window during input; leaving it there"
@@ -246,14 +244,14 @@ fn restore_focus<C: FnMut(Instant) -> Result<UnixStream>>(
         .iter()
         .find(|workspace| workspace.is_focused)
         .map(|workspace| workspace.id);
-    if let Some(chosen) = workspaces
-        .into_iter()
-        .find(|workspace| workspace.is_focused)
-        .map(|workspace| workspace.id)
-        .filter(|focused| {
-            Some(*focused) != target.workspace_id && Some(*focused) != prior_workspace
-        })
-    {
+    if let Some(chosen) = interaction::policy::newer_choice(
+        workspaces
+            .into_iter()
+            .find(|workspace| workspace.is_focused)
+            .map(|workspace| workspace.id),
+        target.workspace_id,
+        prior_workspace,
+    ) {
         tracing::info!(
             workspace = chosen,
             "niri focus moved to another workspace during input; leaving it there"

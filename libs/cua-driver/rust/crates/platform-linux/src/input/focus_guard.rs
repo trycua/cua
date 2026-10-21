@@ -284,34 +284,6 @@ impl X {
     }
 }
 
-/// Where a focus move went, relative to the action's target application.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FocusMove {
-    /// The target app owned the focus before and still does: it opened one
-    /// of its own windows (a dialog). Not an intrusion; leave it.
-    SameAppDialog,
-    /// The focus left the user's application (or arrived in the target from
-    /// another app): restore it.
-    OtherApp,
-}
-
-/// The same-app rule: a move is the app's own dialog only when the target
-/// pid owned the focus before the action *and* owns it now. A move from a
-/// decoy (another pid) into the target's dialog is a steal, as is a move
-/// from the target to anything else.
-pub fn classify_focus_move(
-    target_pid: Option<u32>,
-    previous_owner: Option<u32>,
-    new_owner: Option<u32>,
-) -> FocusMove {
-    match (target_pid, previous_owner, new_owner) {
-        (Some(target), Some(previous), Some(new)) if previous == target && new == target => {
-            FocusMove::SameAppDialog
-        }
-        _ => FocusMove::OtherApp,
-    }
-}
-
 /// What a background action must not change.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FocusSnapshot {
@@ -664,8 +636,8 @@ impl FocusSnapshot {
         // (it opened a dialog). Leave it and say so.
         let new_owner = focus_window.and_then(|w| x.owner_pid(w));
         if target_owns_focus
-            && classify_focus_move(target_pid, self.previous_owner, new_owner)
-                == FocusMove::SameAppDialog
+            && crate::interaction::policy::focus_move(target_pid, self.previous_owner, new_owner)
+                == crate::interaction::policy::FocusMove::SameAppDialog
         {
             let window = focus_window.unwrap_or(0);
             report.same_app_window = Some(SameAppWindow {
@@ -906,39 +878,6 @@ mod tests {
         assert!(evidence["detail"].as_str().unwrap().contains("closed"));
         assert!(report.summary().contains("window_closed"));
         assert!(!report.summary().contains("not_restored"));
-    }
-
-    #[test]
-    fn same_app_rule_only_when_the_target_owned_the_focus_before_and_after() {
-        // The target app was active and opened its own dialog: leave it.
-        assert_eq!(
-            classify_focus_move(Some(7), Some(7), Some(7)),
-            FocusMove::SameAppDialog
-        );
-        // Decoy case: another app owned the focus and the target's dialog
-        // stole it -> restore.
-        assert_eq!(
-            classify_focus_move(Some(7), Some(3), Some(7)),
-            FocusMove::OtherApp
-        );
-        // The target was active and something else took the focus -> restore.
-        assert_eq!(
-            classify_focus_move(Some(7), Some(7), Some(3)),
-            FocusMove::OtherApp
-        );
-        // Unknown owners never qualify.
-        assert_eq!(
-            classify_focus_move(Some(7), None, Some(7)),
-            FocusMove::OtherApp
-        );
-        assert_eq!(
-            classify_focus_move(Some(7), Some(7), None),
-            FocusMove::OtherApp
-        );
-        assert_eq!(
-            classify_focus_move(None, Some(7), Some(7)),
-            FocusMove::OtherApp
-        );
     }
 
     #[test]

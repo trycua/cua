@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import signal
 import subprocess
 import time
 from pathlib import Path
+from typing import Callable
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -56,6 +58,10 @@ def _stop(proc: subprocess.Popen) -> tuple[str, str]:
         return proc.communicate(timeout=_TERM_GRACE_S)
     except subprocess.TimeoutExpired:
         pass
+    except KeyboardInterrupt:
+        # A second interrupt during the grace must still finish the kill.
+        _kill_process_group(proc)
+        raise
     _kill_process_group(proc)
     try:
         return proc.communicate(timeout=_KILL_GRACE_S)
@@ -72,9 +78,57 @@ def _stop(proc: subprocess.Popen) -> tuple[str, str]:
     return stdout, stderr
 
 
-def _get_run_output_dir(run_id: str, env: dict[str, str]) -> Path:
-    xdg_data = env.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+def _get_run_output_dir(run_id: str, env: dict[str, str] | None = None) -> Path:
+    # The same lookup cb run performs, evaluated under the env cb ran with.
+    xdg_data = (env if env is not None else os.environ).get(
+        "XDG_DATA_HOME", os.path.expanduser("~/.local/share")
+    )
     return Path(xdg_data) / "cua-bench" / "runs" / run_id
+
+
+def _raise_system_exit_on_term() -> Callable[[], None]:
+    """Convert SIGTERM/SIGHUP into SystemExit while cb is awaited, so the
+    cleanup path runs: Python's default handling kills the trainer with no
+    exception, which would orphan cb (it leads its own session) and its
+    sandboxes. Schedulers stop jobs exactly this way. Returns a restore
+    callable; a no-op off the main thread or without POSIX signals."""
+
+    def _exit(signum, frame):
+        raise SystemExit(f"received signal {signum}; stopping cb run")
+
+    installed = []
+    for name in ("SIGTERM", "SIGHUP"):
+        sig = getattr(signal, name, None)
+        if sig is None:
+            continue
+        try:
+            previous = signal.signal(sig, _exit)
+        except (ValueError, OSError):
+            break
+        installed.append((sig, previous))
+
+    def restore() -> None:
+        for sig, previous in installed:
+            try:
+                signal.signal(sig, previous)
+            except (ValueError, OSError):
+                pass
+
+    return restore
+
+
+def _count_finished_variants(run_dir: Path) -> int:
+    """Variants that finished on their own. A cancelled result.json is the
+    stop's artifact, not a usable rollout."""
+    count = 0
+    for result in run_dir.glob("*/result.json"):
+        try:
+            status = json.loads(result.read_text()).get("status")
+        except (OSError, ValueError):
+            status = None
+        if status != "cancelled":
+            count += 1
+    return count
 
 
 def _parse_run_id(text: str) -> str | None:
@@ -141,21 +195,30 @@ def _run_single_rollout(
         start_new_session=True,
     )
     timed_out = False
+    restore = _raise_system_exit_on_term()
     try:
-        stdout, stderr = proc.communicate(timeout=run_timeout)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        print(
-            f"[rollout] cb run exceeded {run_timeout}s; stopping it "
-            f"(SIGTERM, SIGKILL after {_TERM_GRACE_S:.0f}s)"
-        )
-        stdout, stderr = _stop(proc)
-    except BaseException:
-        # cb leads its own process group, so nothing else will signal it:
-        # a Ctrl-C or other exit must not orphan it with sandboxes running.
-        if proc.poll() is None:
-            _stop(proc)
-        raise
+        try:
+            stdout, stderr = proc.communicate(timeout=run_timeout or None)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            print(
+                f"[rollout] cb run exceeded {run_timeout}s; stopping it "
+                f"(SIGTERM, SIGKILL after {_TERM_GRACE_S:.0f}s)"
+            )
+            stdout, stderr = _stop(proc)
+        except BaseException:
+            # cb leads its own process group, so nothing else will signal
+            # it: a Ctrl-C or other exit must not orphan it with sandboxes
+            # running.
+            if proc.poll() is None:
+                print(
+                    f"[rollout] interrupted; stopping cb run "
+                    f"(SIGTERM, SIGKILL after {_TERM_GRACE_S:.0f}s)"
+                )
+                _stop(proc)
+            raise
+    finally:
+        restore()
 
     combined_output = stdout + stderr
     run_id = _parse_run_id(combined_output)
@@ -177,11 +240,11 @@ def _run_single_rollout(
         reason = (
             "timed out and was stopped" if timed_out else f"exited with status {proc.returncode}"
         )
-        finished = list(run_dir.glob("*/result.json"))
+        finished = _count_finished_variants(run_dir)
         if finished:
             print(
                 f"[rollout] cb run {run_id} {reason}; "
-                f"keeping {len(finished)} finished variant(s)"
+                f"keeping {finished} finished variant(s)"
             )
             tail = stderr.strip()[-200:]
             if tail:

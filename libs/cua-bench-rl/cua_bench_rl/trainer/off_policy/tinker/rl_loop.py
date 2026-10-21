@@ -265,7 +265,10 @@ def run(config: TrainingConfig) -> None:
 
 
 def _bounded_seconds(value: str) -> float:
-    seconds = float(value)
+    try:
+        seconds = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid number of seconds: {value!r}")
     if not math.isfinite(seconds) or seconds < 0:
         raise argparse.ArgumentTypeError("must be a finite number of seconds, 0 or more")
     return seconds
@@ -314,7 +317,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="SECONDS",
         help="Bound on the whole cb run subprocess (SIGTERM, then SIGKILL); "
-        "finished variants are kept; unset waits on cb indefinitely",
+        "finished variants are kept; unset or 0 waits on cb indefinitely",
     )
     p.add_argument(
         "--offline-run-ids",

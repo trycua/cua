@@ -12,9 +12,12 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import signal
 import stat
+import subprocess
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -42,17 +45,21 @@ rollout = _load_rollout()
 FAKE_CB = """#!/usr/bin/env python3
 import json, os, signal, subprocess, sys, time
 
+mode = os.environ.get("FAKE_CB_MODE", "ok")
+if mode == "sleep":
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+ready_file = os.environ.get("FAKE_CB_READY_FILE")
+if ready_file:
+    open(ready_file, "w").write("1")
 print("Run ID: deadbeef1234", flush=True)
 argv_file = os.environ.get("FAKE_CB_ARGV_FILE")
 if argv_file:
     with open(argv_file, "w") as f:
         json.dump(sys.argv, f)
-mode = os.environ.get("FAKE_CB_MODE", "ok")
 if mode == "fail":
     print("cb exploded", file=sys.stderr)
     sys.exit(3)
 if mode == "sleep":
-    signal.signal(signal.SIGTERM, signal.SIG_IGN)
     pid_file = os.environ.get("FAKE_CB_CHILD_PID_FILE")
     if pid_file:
         # A grandchild that inherits cb's pipes and outlives cb's own
@@ -171,9 +178,8 @@ def test_an_interrupted_rollout_still_stops_cb(tmp_path, monkeypatch):
     """cb leads its own process group, so a Ctrl-C no longer reaches it:
     every exit path must still run the stop sequence or cb leaks, running
     its sandboxes, after the trainer died."""
-    import subprocess
-    from types import SimpleNamespace
-
+    ready_file = tmp_path / "cb-ready"
+    monkeypatch.setenv("FAKE_CB_READY_FILE", str(ready_file))
     extra_env = _fake_cb(tmp_path, monkeypatch, mode="sleep")
     monkeypatch.setattr(rollout, "_TERM_GRACE_S", 0.5)
 
@@ -183,6 +189,11 @@ def test_an_interrupted_rollout_still_stops_cb(tmp_path, monkeypatch):
         def communicate(self, *args, **kwargs):
             if not getattr(self, "_interrupted", False):
                 self._interrupted = True
+                # Interrupt only once cb is up with its SIGTERM handler
+                # installed, so the stop must escalate to the group SIGKILL.
+                deadline = time.monotonic() + 10
+                while not ready_file.exists() and time.monotonic() < deadline:
+                    time.sleep(0.05)
                 raise KeyboardInterrupt
             return super().communicate(*args, **kwargs)
 
@@ -204,7 +215,7 @@ def test_an_interrupted_rollout_still_stops_cb(tmp_path, monkeypatch):
         rollout._run_single_rollout("tasks/", "agent", "model", 5, extra_env=extra_env)
     # cb ignores SIGTERM in sleep mode, so it is dead only if the stop
     # sequence escalated to the process-group SIGKILL.
-    assert spawned[0].poll() is not None
+    assert spawned[0].returncode == -signal.SIGKILL
 
 
 def test_variant_timeout_is_forwarded_to_cb(tmp_path, monkeypatch, run_dir):

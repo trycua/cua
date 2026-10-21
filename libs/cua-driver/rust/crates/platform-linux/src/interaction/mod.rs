@@ -115,7 +115,7 @@ pub fn with_target_foreground<T>(
         return transaction(
             &mut (),
             |()| {
-                let prior = shell_helper::trusted_focus()?;
+                let prior = shell_helper::trusted_focus(confirm())?;
                 if prior.is_some_and(|(_, id)| id == window_id) {
                     return Ok(None);
                 }

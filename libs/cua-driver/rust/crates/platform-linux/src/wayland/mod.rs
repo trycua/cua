@@ -2010,20 +2010,19 @@ pub fn activate_window_for_input_target(
     ) {
         let protocol_id = handle.id().protocol_id();
         handle.activate(&seat);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
-        loop {
+        let deadline =
+            crate::interaction::operation_deadline(std::time::Duration::from_millis(500));
+        let activated = crate::interaction::confirm(deadline, |_| {
             queue.roundtrip(&mut state)?;
-            if state
-                .toplevels
-                .get(&protocol_id)
-                .is_some_and(|toplevel| toplevel.activated)
-            {
-                return Ok(());
-            }
-            if std::time::Instant::now() >= deadline {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            anyhow::Ok(
+                state
+                    .toplevels
+                    .get(&protocol_id)
+                    .is_some_and(|toplevel| toplevel.activated),
+            )
+        })?;
+        if activated {
+            return Ok(());
         }
     }
 

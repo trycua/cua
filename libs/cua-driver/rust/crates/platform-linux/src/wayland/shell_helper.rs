@@ -26,11 +26,14 @@
 
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 mod transport;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use crate::interaction::operation_deadline;
 use crate::x11::WindowInfo;
 
 const FOCUS_CONFIRM: Duration = Duration::from_millis(500);
+const CALL_CAP: Duration = Duration::from_millis(800);
+const CAPTURE_CAP: Duration = Duration::from_secs(5);
 
 const DEST: &str = "org.cua.WinRects";
 const PATH: &str = "/org/cua/WinRects";
@@ -52,48 +55,27 @@ struct ShellWindow {
 }
 
 pub fn available() -> bool {
-    shell_owner(false).is_some()
+    shell_owner(false, operation_deadline(CALL_CAP)).is_some()
 }
 
 pub fn semantic_cursor_available() -> bool {
-    shell_owner_with_min_version(Some(SEMANTIC_CURSOR_API_VERSION)).is_some()
-}
-
-fn gdbus_call(method: &str, args: &[String]) -> Option<String> {
-    let owner = shell_owner(false)?;
-    gdbus_call_to(
-        &owner,
-        PATH,
-        &format!("{IFACE}.{method}"),
-        args,
-        Duration::from_millis(800),
+    shell_owner_with_min_version(
+        Some(SEMANTIC_CURSOR_API_VERSION),
+        operation_deadline(CALL_CAP),
     )
+    .is_some()
 }
 
-fn gdbus_call_with_timeout(method: &str, args: &[String], timeout: Duration) -> Option<String> {
-    let owner = shell_owner(false)?;
-    gdbus_call_to(&owner, PATH, &format!("{IFACE}.{method}"), args, timeout)
+/// Call `method` on the verified helper; the owner checks and the call
+/// share one `deadline`.
+fn gdbus_call(method: &str, args: &[String], deadline: Instant) -> Option<String> {
+    let owner = shell_owner(false, deadline)?;
+    transport::call(&owner, PATH, &format!("{IFACE}.{method}"), args, deadline)
 }
 
-fn trusted_gdbus_call(method: &str, args: &[String]) -> Option<String> {
-    let owner = shell_owner(true)?;
-    gdbus_call_to(
-        &owner,
-        PATH,
-        &format!("{IFACE}.{method}"),
-        args,
-        Duration::from_millis(800),
-    )
-}
-
-fn gdbus_call_to(
-    destination: &str,
-    object_path: &str,
-    method: &str,
-    args: &[String],
-    timeout: Duration,
-) -> Option<String> {
-    transport::call(destination, object_path, method, args, timeout)
+fn trusted_gdbus_call(method: &str, args: &[String], deadline: Instant) -> Option<String> {
+    let owner = shell_owner(true, deadline)?;
+    transport::call(&owner, PATH, &format!("{IFACE}.{method}"), args, deadline)
 }
 
 /// Resolve the helper's immutable unique bus name and prove that it is hosted
@@ -101,36 +83,39 @@ fn gdbus_call_to(
 /// callers additionally require the current helper API. Calling the unique
 /// name closes the race where another process replaces the well-known name
 /// after ownership is checked.
-fn shell_owner(require_browser_api: bool) -> Option<String> {
-    shell_owner_with_min_version(require_browser_api.then_some(BROWSER_HELPER_API_VERSION))
+fn shell_owner(require_browser_api: bool, deadline: Instant) -> Option<String> {
+    shell_owner_with_min_version(
+        require_browser_api.then_some(BROWSER_HELPER_API_VERSION),
+        deadline,
+    )
 }
 
-fn shell_owner_with_min_version(min_version: Option<u32>) -> Option<String> {
-    let owner_raw = gdbus_call_to(
+fn shell_owner_with_min_version(min_version: Option<u32>, deadline: Instant) -> Option<String> {
+    let owner_raw = transport::call(
         DBUS_DEST,
         DBUS_PATH,
         &format!("{DBUS_IFACE}.GetNameOwner"),
         &[DEST.to_owned()],
-        Duration::from_millis(800),
+        deadline,
     )?;
     let owner = parse_quoted_string(&owner_raw)?;
     if !owner.starts_with(':') {
         return None;
     }
 
-    let pid_raw = gdbus_call_to(
+    let pid_raw = transport::call(
         DBUS_DEST,
         DBUS_PATH,
         &format!("{DBUS_IFACE}.GetConnectionUnixProcessID"),
         std::slice::from_ref(&owner),
-        Duration::from_millis(800),
+        deadline,
     )?;
-    let uid_raw = gdbus_call_to(
+    let uid_raw = transport::call(
         DBUS_DEST,
         DBUS_PATH,
         &format!("{DBUS_IFACE}.GetConnectionUnixUser"),
         std::slice::from_ref(&owner),
-        Duration::from_millis(800),
+        deadline,
     )?;
     let pid = parse_first_u32(&pid_raw)?;
     let uid = parse_first_u32(&uid_raw)?;
@@ -139,13 +124,8 @@ fn shell_owner_with_min_version(min_version: Option<u32>) -> Option<String> {
     }
 
     if let Some(min_version) = min_version {
-        let version_raw = gdbus_call_to(
-            &owner,
-            PATH,
-            &format!("{IFACE}.GetVersion"),
-            &[],
-            Duration::from_millis(800),
-        )?;
+        let version_raw =
+            transport::call(&owner, PATH, &format!("{IFACE}.GetVersion"), &[], deadline)?;
         if parse_first_u32(&version_raw)? < min_version {
             return None;
         }
@@ -206,22 +186,17 @@ pub enum WindowCapture {
 }
 
 /// The verified helper owner and its API version.
-fn attested_owner_with_version() -> Option<(String, u32)> {
-    let owner = shell_owner_with_min_version(None)?;
-    let raw = gdbus_call_to(
-        &owner,
-        PATH,
-        &format!("{IFACE}.GetVersion"),
-        &[],
-        Duration::from_millis(800),
-    )?;
+fn attested_owner_with_version(deadline: Instant) -> Option<(String, u32)> {
+    let owner = shell_owner_with_min_version(None, deadline)?;
+    let raw = transport::call(&owner, PATH, &format!("{IFACE}.GetVersion"), &[], deadline)?;
     Some((owner, parse_first_u32(&raw)?))
 }
 
 /// Capture one window's compositor actor without activating it. Covered
 /// windows keep their own content, so no stage crop is involved.
 pub fn screenshot_window(id: u64, pid: Option<u32>) -> WindowCapture {
-    let Some((owner, version)) = attested_owner_with_version() else {
+    let deadline = operation_deadline(CAPTURE_CAP);
+    let Some((owner, version)) = attested_owner_with_version(deadline) else {
         return WindowCapture::Unsupported;
     };
     if version < WINDOW_CAPTURE_API_VERSION {
@@ -230,12 +205,12 @@ pub fn screenshot_window(id: u64, pid: Option<u32>) -> WindowCapture {
     let Ok(id) = u32::try_from(id) else {
         return WindowCapture::Unavailable;
     };
-    gdbus_call_to(
+    transport::call(
         &owner,
         PATH,
         &format!("{IFACE}.CaptureWindow"),
         &[id.to_string(), pid.unwrap_or(0).to_string()],
-        Duration::from_secs(5),
+        deadline,
     )
     .and_then(|raw| decode_capture(&raw))
     .map_or(WindowCapture::Unavailable, WindowCapture::Png)
@@ -250,13 +225,14 @@ pub fn screenshot_window_preview(
     max_dimension: u32,
 ) -> Option<(Vec<u8>, u32, u32)> {
     let id = u32::try_from(id).ok()?;
-    let owner = shell_owner_with_min_version(Some(WINDOW_PREVIEW_API_VERSION))?;
-    let raw = gdbus_call_to(
+    let deadline = operation_deadline(CAPTURE_CAP);
+    let owner = shell_owner_with_min_version(Some(WINDOW_PREVIEW_API_VERSION), deadline)?;
+    let raw = transport::call(
         &owner,
         PATH,
         &format!("{IFACE}.CaptureWindowPreview"),
         &[id.to_string(), pid.to_string(), max_dimension.to_string()],
-        Duration::from_secs(5),
+        deadline,
     )?;
     let png = strip_preview_timestamp(decode_capture(&raw)?)?;
     let (width, height) = parse_preview_dimensions(&raw)?;
@@ -306,21 +282,14 @@ fn strip_preview_timestamp(mut png: Vec<u8>) -> Option<Vec<u8>> {
 /// can use Shell's screenshot API without confusing a stable Wayland window id
 /// for an X11 drawable.
 pub fn screenshot_display() -> Option<Vec<u8>> {
-    let raw = gdbus_call_with_timeout("Capture", &[], Duration::from_secs(5))?;
+    let raw = gdbus_call("Capture", &[], operation_deadline(CAPTURE_CAP))?;
     decode_capture(&raw)
 }
 
 /// Capture the GNOME stage only when the helper owner and current browser API
 /// have passed the same compositor-attestation checks used for mutation.
 pub fn trusted_screenshot_display() -> Option<Vec<u8>> {
-    let owner = shell_owner(true)?;
-    let raw = gdbus_call_to(
-        &owner,
-        PATH,
-        &format!("{IFACE}.Capture"),
-        &[],
-        Duration::from_secs(5),
-    )?;
+    let raw = trusted_gdbus_call("Capture", &[], operation_deadline(CAPTURE_CAP))?;
     decode_capture(&raw)
 }
 
@@ -344,7 +313,7 @@ fn decode_capture(raw: &str) -> Option<Vec<u8>> {
 /// is floating, so pixel actions derived from the returned screenshot miss
 /// their target.
 pub fn window_origin_for_pid(pid: u32) -> Option<(i32, i32)> {
-    let raw = gdbus_call("GetRects", &[])?;
+    let raw = gdbus_call("GetRects", &[], operation_deadline(CALL_CAP))?;
     parse_window_origin(&raw, pid)
 }
 
@@ -368,14 +337,14 @@ fn parse_window_origin(raw: &str, pid: u32) -> Option<(i32, i32)> {
 /// shell already owns the authoritative stacking list, geometry, visibility,
 /// title, and PID, so use that metadata directly for `list_windows`.
 pub fn list_windows(filter_pid: Option<u32>) -> Option<Vec<WindowInfo>> {
-    let raw = gdbus_call("GetRects", &[])?;
+    let raw = gdbus_call("GetRects", &[], operation_deadline(CALL_CAP))?;
     parse_windows(&raw, filter_pid)
 }
 
 /// Return one compositor-attested GNOME window only when the current helper
 /// API is hosted by the verified Shell owner.
 pub fn trusted_window_for_id(pid: u32, window_id: u64) -> Option<WindowInfo> {
-    trusted_shell_windows(Some(pid))?
+    trusted_shell_windows(Some(pid), operation_deadline(CALL_CAP))?
         .into_iter()
         .find(|window| window.info.xid == window_id)
         .map(|window| window.info)
@@ -386,7 +355,7 @@ pub fn trusted_window_for_id(pid: u32, window_id: u64) -> Option<WindowInfo> {
 /// vector means the trusted helper found no owned windows.
 pub fn trusted_window_ids_for_pid(pid: u32) -> Option<Vec<u64>> {
     Some(
-        trusted_shell_windows(Some(pid))?
+        trusted_shell_windows(Some(pid), operation_deadline(CALL_CAP))?
             .into_iter()
             .map(|window| window.info.xid)
             .collect(),
@@ -394,16 +363,16 @@ pub fn trusted_window_ids_for_pid(pid: u32) -> Option<Vec<u64>> {
 }
 
 /// The window the verified Shell owner reports focused, `None` when none is.
-pub fn trusted_focus() -> anyhow::Result<Option<(Option<u32>, u64)>> {
-    Ok(trusted_shell_windows(None)
+pub fn trusted_focus(deadline: Instant) -> anyhow::Result<Option<(Option<u32>, u64)>> {
+    Ok(trusted_shell_windows(None, deadline)
         .ok_or_else(|| anyhow::anyhow!("the verified GNOME Shell helper API is unavailable"))?
         .into_iter()
         .find(|window| window.focused)
         .map(|window| (window.info.pid, window.info.xid)))
 }
 
-fn trusted_shell_windows(filter_pid: Option<u32>) -> Option<Vec<ShellWindow>> {
-    let raw = trusted_gdbus_call("GetRects", &[])?;
+fn trusted_shell_windows(filter_pid: Option<u32>, deadline: Instant) -> Option<Vec<ShellWindow>> {
+    let raw = trusted_gdbus_call("GetRects", &[], deadline)?;
     parse_shell_windows(&raw, filter_pid)
 }
 
@@ -417,35 +386,27 @@ pub fn activate_window(window_id: u64) -> bool {
     let Ok(window_id) = u32::try_from(window_id) else {
         return false;
     };
-    let accepted = gdbus_call("Activate", &[window_id.to_string()])
+    let deadline = operation_deadline(FOCUS_CONFIRM);
+    let accepted = gdbus_call("Activate", &[window_id.to_string()], deadline)
         .is_some_and(|output| output.trim_start().starts_with("(true,"));
-    if !accepted {
-        return false;
-    }
-    focus_confirmed(
-        crate::interaction::operation_deadline(FOCUS_CONFIRM),
-        || window_is_focused(window_id),
-    )
+    accepted && focus_confirmed(deadline, |deadline| window_is_focused(window_id, deadline))
 }
 
-fn focus_confirmed(deadline: std::time::Instant, mut focused: impl FnMut() -> bool) -> bool {
-    crate::interaction::confirm(deadline, |_| Ok::<_, ()>(focused())).unwrap_or(false)
+fn focus_confirmed(deadline: Instant, mut focused: impl FnMut(Instant) -> bool) -> bool {
+    crate::interaction::confirm(deadline, |deadline| Ok::<_, ()>(focused(deadline)))
+        .unwrap_or(false)
 }
 
 /// Activate exact window `window_id` of `pid` through the verified Shell
 /// owner and read the focus back by `deadline`.
-pub fn trusted_focus_window(
-    pid: u32,
-    window_id: u64,
-    deadline: std::time::Instant,
-) -> anyhow::Result<()> {
+pub fn trusted_focus_window(pid: u32, window_id: u64, deadline: Instant) -> anyhow::Result<()> {
     let accepted = u32::try_from(window_id).is_ok_and(|id| {
-        trusted_gdbus_call("Activate", &[id.to_string()])
+        trusted_gdbus_call("Activate", &[id.to_string()], deadline)
             .is_some_and(|output| output.trim_start().starts_with("(true,"))
     });
     let confirmed = accepted
-        && focus_confirmed(deadline, || {
-            let observed = match trusted_focus() {
+        && focus_confirmed(deadline, |deadline| {
+            let observed = match trusted_focus(deadline) {
                 Ok(focused) => crate::interaction::facts::Fact::Known(focused),
                 Err(error) => crate::interaction::facts::Fact::Unknown(error.to_string()),
             };
@@ -457,8 +418,8 @@ pub fn trusted_focus_window(
     Ok(())
 }
 
-fn window_is_focused(window_id: u32) -> bool {
-    let Some(raw) = gdbus_call("GetRects", &[]) else {
+fn window_is_focused(window_id: u32, deadline: Instant) -> bool {
+    let Some(raw) = gdbus_call("GetRects", &[], deadline) else {
         return false;
     };
     parse_shell_windows(&raw, None).is_some_and(|windows| {
@@ -536,17 +497,29 @@ fn parse_shell_windows(raw: &str, filter_pid: Option<u32>) -> Option<Vec<ShellWi
 
 /// Glide the agent cursor to screen `(x, y)`.
 pub fn move_cursor(x: i32, y: i32) {
-    let _ = gdbus_call("MoveCursor", &[x.to_string(), y.to_string()]);
+    let _ = gdbus_call(
+        "MoveCursor",
+        &[x.to_string(), y.to_string()],
+        operation_deadline(CALL_CAP),
+    );
 }
 
 /// Snap + pulse the agent cursor at screen `(x, y)` (a click indicator).
 pub fn click_pulse(x: i32, y: i32) {
-    let _ = gdbus_call("ClickPulse", &[x.to_string(), y.to_string()]);
+    let _ = gdbus_call(
+        "ClickPulse",
+        &[x.to_string(), y.to_string()],
+        operation_deadline(CALL_CAP),
+    );
 }
 
 /// Set the stable session-specific fill color for the compositor cursor.
 pub fn set_cursor_color(fill_color: &str) {
-    let _ = gdbus_call("SetCursorColor", &[fill_color.to_owned()]);
+    let _ = gdbus_call(
+        "SetCursorColor",
+        &[fill_color.to_owned()],
+        operation_deadline(CALL_CAP),
+    );
 }
 
 /// Update the compositor-owned cursor's semantic action state.
@@ -562,17 +535,22 @@ pub fn set_cursor_state(action: &str, delivery: &str, target: &str, active: bool
             target.to_owned(),
             active.to_string(),
         ],
+        operation_deadline(CALL_CAP),
     );
 }
 
 /// Set the renderer-visible public session label for the compositor cursor.
 pub fn set_session_label(label: &str) {
-    let _ = gdbus_call("SetSessionLabel", &[label.to_owned()]);
+    let _ = gdbus_call(
+        "SetSessionLabel",
+        &[label.to_owned()],
+        operation_deadline(CALL_CAP),
+    );
 }
 
 /// Hide the agent cursor.
 pub fn hide_cursor() {
-    let _ = gdbus_call("HideCursor", &[]);
+    let _ = gdbus_call("HideCursor", &[], operation_deadline(CALL_CAP));
 }
 
 #[cfg(test)]

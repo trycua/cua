@@ -1,0 +1,114 @@
+:root {
+  color-scheme: dark;
+  font-family: system-ui, sans-serif;
+  background: #121820;
+  color: #e8eef5;
+}
+body {
+  margin: 0;
+}
+header {
+  padding: 20px 28px;
+  border-bottom: 1px solid #34465b;
+}
+h1 {
+  margin: 0;
+  font-size: 24px;
+}
+header p {
+  color: #a7bad0;
+}
+button,
+select {
+  padding: 8px 12px;
+  background: #243449;
+  color: inherit;
+  border: 1px solid #526a87;
+  border-radius: 6px;
+  margin: 4px;
+  cursor: pointer;
+}
+button:hover {
+  background: #354e6a;
+}
+button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+main {
+  display: grid;
+  grid-template-columns: minmax(280px, 42%) 1fr;
+}
+section,
+aside {
+  padding: 20px;
+  min-width: 0;
+}
+aside {
+  border-left: 1px solid #34465b;
+  position: sticky;
+  top: 0;
+  align-self: start;
+  max-height: 80vh;
+  overflow: auto;
+}
+#events {
+  padding: 0;
+  list-style: none;
+}
+#events li button {
+  width: 100%;
+  text-align: left;
+  display: block;
+}
+#events li button[aria-current='true'] {
+  outline: 2px solid #70b7ff;
+}
+small {
+  display: block;
+  color: #a7bad0;
+}
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: #0d1219;
+  padding: 12px;
+  border-radius: 6px;
+}
+#error,
+#attachmentError {
+  color: #ffb3a9;
+}
+#status {
+  margin-left: 15px;
+}
+dialog {
+  background: #172230;
+  color: inherit;
+  max-width: 85vw;
+  border: 1px solid #526a87;
+  border-radius: 8px;
+}
+dialog img {
+  display: block;
+  max-width: 80vw;
+  max-height: 75vh;
+}
+dialog::backdrop {
+  background: #000a;
+}
+.attachment {
+  border-bottom: 1px solid #34465b;
+  padding: 8px 0;
+}
+@media (max-width: 700px) {
+  main {
+    grid-template-columns: 1fr;
+  }
+  aside {
+    position: static;
+  }
+}
+[hidden] {
+  display: none !important;
+}

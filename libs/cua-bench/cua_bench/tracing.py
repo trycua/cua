@@ -21,8 +21,9 @@ class Tracing:
     Exposes a datasets.Dataset-compatible interface for saving/pushing.
     """
 
-    def __init__(self, env: Any) -> None:
+    def __init__(self, env: Any, *, bundle_writer=None) -> None:
         self.env = env
+        self.bundle_writer = bundle_writer
         self._trajectory_id: Optional[str] = None
         self._rows: List[Dict[str, Any]] = []
         self._dataset: Optional[Dataset] = None
@@ -48,6 +49,9 @@ class Tracing:
         event_name: str,
         data_dict: Dict[str, Any],
         data_images: List[Image.Image | bytes] | None = None,
+        *,
+        context: Optional[Dict[str, Any]] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         if self._trajectory_id is None:
             # If tracing hasn't been started, ignore silently to avoid surprising callers
@@ -66,6 +70,10 @@ class Tracing:
             "trajectory_id": str(self._trajectory_id),
             "timestamp": datetime.utcnow().isoformat(timespec="milliseconds") + "Z",
         }
+        if self.bundle_writer is not None:
+            self.bundle_writer.append(row, context=context, attachments=attachments)
+        elif context is not None or attachments is not None:
+            raise ValueError("context and attachments require a bundle_writer")
         self._rows.append(row)
         # Invalidate cached dataset; it can be rebuilt lazily
         self._dataset = None

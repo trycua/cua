@@ -154,6 +154,10 @@ def register_parser(subparsers):
         help='Run ID or session ID (e.g., "30c12572" or "task-30c12572-click-button-v0")',
     )
 
+    view_parser.add_argument(
+        "--follow", action="store_true", help="Follow an experimental live trace bundle"
+    )
+
     # cb trace traj <run_id>
     traj_parser = trace_subparsers.add_parser(
         "traj",
@@ -214,6 +218,14 @@ def cmd_view(args) -> int:
         print(f"{GREY}Try:{RESET}")
         print(f"  cb run list           {GREY}# List all runs{RESET}")
         print(f"  cb run info <run_id>  {GREY}# Show sessions in a run{RESET}")
+        return 1
+
+    if (trace_path / "trace.json").exists():
+        from cua_bench.trace_live_viewer import view_bundle
+
+        return view_bundle(trace_path, follow=getattr(args, "follow", False))
+    if getattr(args, "follow", False):
+        print("--follow requires a live trace bundle; saved datasets are snapshots.")
         return 1
 
     # If it's a run directory (not a specific trace), pick the first trace

@@ -2473,6 +2473,21 @@
               "options": [],
               "required": true,
               "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "follow",
+              "hidden": false,
+              "metavar": null,
+              "nargs": 0,
+              "options": [
+                "--follow"
+              ],
+              "required": false,
+              "type": null
             }
           ],
           "commands": {}

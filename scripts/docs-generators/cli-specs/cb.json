@@ -2232,7 +2232,19 @@
        "type": "string"
       }
      ],
-     "flags": [],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Follow an experimental live trace bundle",
+       "hidden": false,
+       "name": "follow",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      }
+     ],
      "hidden": false,
      "name": "view",
      "options": [],

@@ -1,0 +1,118 @@
+---
+title: Experimental live traces
+description: Try ordering, managed attachments and live updates in the HaniLabs fork.
+---
+
+This is a fork-only experiment for [RFC #5685](https://github.com/trycua/cua/issues/5685),
+not an accepted upstream API. Its format and API may change during review.
+
+## Run a live recording
+
+From this fork's checkout, start the synthetic example:
+
+```bash skip="no-runner"
+cd libs/cua-bench
+uv sync --frozen --extra dev
+uv run python examples/live_collector.py --output /tmp/live-collector --delay 10
+```
+
+Use a new output directory each time. While it runs, open another terminal in
+`libs/cua-bench` and run:
+
+```bash skip="no-runner"
+uv run cb trace view /tmp/live-collector --follow
+```
+
+The browser displays arrivals without reloading. Switch from **Arrival order**
+to **Aligned observation time** to see the deliberately late request in its
+observation-time position. Events without aligned time are labeled unaligned
+and placed after aligned events in arrival order. A declared clock domain is
+required for aligned timestamps; the viewer does not synchronize devices or
+infer causation. Selection is based on event identity and survives reordering.
+
+Select the action event to preview its image and text attachment or download
+original evidence. Text is escaped; only PNG, JPEG, GIF, WebP, plain text and JSON
+have previews. Other content is download-only. The viewer loads no external UI
+scripts. **Pause updates** freezes the displayed list while recording and polling
+continue; **Resume updates** catches up. Closing the viewer does not stop capture.
+
+After the writer closes, the viewer shows **Completed**. An unfinalized recording
+is labeled accordingly; a connection problem shows **Disconnected / unavailable**.
+Refresh retries with the last received sequence. Without `--follow`, the viewer
+shows a snapshot of the bundle. Legacy datasets still use the existing viewer;
+`--follow` refuses those datasets because they are not live journals.
+
+## Record from Python
+
+```python skip="no-runner"
+from cua_bench.trace_bundle import TraceBundleWriter
+from cua_bench.tracing import Tracing
+
+with TraceBundleWriter("new-bundle") as writer:
+    trace = Tracing(env=None, bundle_writer=writer)
+    trace.start("session-1")
+    evidence = writer.add_attachment("evidence.txt", media_type="text/plain")
+    trace.record(
+        "external.operation",
+        {"action_id": "submit-1", "operation": "submit"},
+        context={
+            "clock_domain": "collector-utc",
+            "aligned_at": "2026-10-21T20:00:00Z",
+        },
+        attachments=[evidence],
+    )
+    trace.save_to_disk("legacy-dataset")
+```
+
+Use one recorder owner. Queue concurrent collectors to that owner. The writer
+creates a new directory exclusively, copies attachments into managed storage,
+and appends complete JSON lines. It flushes each append for local readers and
+synchronizes on close; power-loss durability before close is not guaranteed.
+A context manager marks exceptional exits as failed. Never edit a live journal.
+Partial trailing lines are withheld; complete corrupt lines produce an error.
+
+Existing recorder calls and dataset exports retain their five-column schema.
+The legacy export includes images but omits bundle context and generic
+attachments. Keep the bundle to retain that evidence. Calls before `start()`
+remain ignored. Calling `start()` again resets the in-memory trajectory but
+keeps prior journal events with distinct sequences.
+
+Redact sensitive information before recording. The attachment importer accepts
+regular files, enforces a 100 MiB per-file limit and a configurable bundle quota
+(default 1 GiB), and the server verifies attachment bytes before serving them.
+The local viewer uses a temporary read capability. Open it from the CLI rather
+than reusing a browser URL whose fragment has been cleared.
+
+## Current experimental limits
+
+The three core capabilities are implemented, but this is not full RFC acceptance:
+
+- Rendering is paginated to 100 rows, but the reader and browser retain received
+  metadata in memory. Long-run disk-backed indexing and the 100,000-event load
+  target remain unverified.
+- Browser downloads use a blob bounded by the attachment limit. Large-file
+  streaming directly to browser storage is not implemented.
+- The bundle view supports image enlargement and stable event selection, but
+  legacy screenshot bounding-box overlays and image-to-image timeline navigation
+  are not yet ported. The legacy dataset viewer retains its existing behavior.
+- Writer attachment directories must be locally controlled. This prototype has
+  path and integrity checks, but does not claim protection against a hostile
+  process concurrently replacing directory components on the same account.
+- This branch was exercised on macOS. Windows/Linux file-locking and path parity,
+  live native collectors, automatic runner wiring and interactive CLI writer
+  options remain unverified or unimplemented.
+
+## Tests
+
+The ordinary Bench suite includes the writer/reader and real loopback server
+tests. Browser acceptance is opt-in and needs Node, Playwright and Chromium.
+
+```bash skip="no-runner"
+uv run pytest -q cua_bench/tests/test_trace_bundle.py
+CUA_BENCH_BROWSER_TESTS=1 uv run pytest -q cua_bench/tests/test_trace_bundle_browser.py
+```
+
+Set `CUA_BENCH_NODE`, `CUA_BENCH_PLAYWRIGHT`, and `CUA_BENCH_CHROME` to use existing
+local installations. The browser test checks ordering, stable selection, previews,
+download bytes, late events, pause/resume, reconnect and completion with external
+network requests blocked. It uses synthetic data and does not control a real desktop.

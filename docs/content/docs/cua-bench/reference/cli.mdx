@@ -526,12 +526,16 @@ cb trace traj 30c12572
 View a single trace in browser.
 
 ```text output
-cb trace view <identifier>
+cb trace view [OPTIONS] <identifier>
 ```
 
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
 | `<identifier>` | string | required | Run ID or session ID (e.g., "30c12572" or "task-30c12572-click-button-v0"). |
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cb-trace-view--follow"></span>`--follow` | boolean | `false` | Follow an experimental live trace bundle. |
 
 **Examples**
 

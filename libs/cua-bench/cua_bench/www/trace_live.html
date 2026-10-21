@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Cua Bench live trace</title>
+    <link rel="stylesheet" href="/viewer.css" />
+    <script src="/viewer.js" defer></script>
+  </head>
+  <body>
+    <header>
+      <h1>Cua Bench trace</h1>
+      <p>Experimental fork build · RFC #5685</p>
+      <label
+        >Order
+        <select id="order">
+          <option value="arrival">Arrival order</option>
+          <option value="observed">Aligned observation time</option>
+        </select></label
+      >
+      <button id="pause">Pause updates</button><button id="refresh">Reconnect / refresh</button
+      ><span id="status" role="status">Connecting</span>
+      <p id="count"></p>
+      <p id="error" role="alert"></p>
+    </header>
+    <main>
+      <section aria-label="Events">
+        <div class="paging">
+          <button id="previous">Previous page</button><span id="page"></span
+          ><button id="next">Next page</button>
+        </div>
+        <ol id="events"></ol>
+      </section>
+      <aside aria-label="Selected event">
+        <h2 id="selected">Select an event</h2>
+        <pre id="context"></pre>
+        <details id="dataDetails" open>
+          <summary>Event data</summary>
+          <pre id="data"></pre>
+        </details>
+        <h3>Images and attachments</h3>
+        <div id="attachments"></div>
+        <p id="attachmentError" role="alert"></p>
+      </aside>
+    </main>
+    <dialog id="preview">
+      <button id="closePreview">Close</button>
+      <h2 id="previewTitle"></h2>
+      <img id="imagePreview" alt="Trace attachment" />
+      <pre id="textPreview"></pre>
+    </dialog>
+  </body>
+</html>

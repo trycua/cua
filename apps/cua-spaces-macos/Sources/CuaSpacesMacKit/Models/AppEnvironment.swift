@@ -13,7 +13,12 @@ import Foundation
 public enum AppEnvironment {
     /// The bundle identity (the Keyvault's trusted-caller requirement names
     /// it; see README "Keyvault identity").
-    public static let bundleIdentifier = "com.trycua.spaces.macos"
+    /// A dev build (`com.trycua.spaces.macos.dev.<instance>`) keeps its own settings
+    /// directory; anything else (tests, the release app) is the production id.
+    public static let bundleIdentifier: String = {
+        let id = Bundle.main.bundleIdentifier ?? ""
+        return id.hasPrefix("com.trycua.spaces.macos.dev.") ? id : "com.trycua.spaces.macos"
+    }()
 
     /// `$HOME`, so a temp HOME (tests, captures) keeps every file away from
     /// the account's real Library (`FileManager` ignores `$HOME`).

@@ -143,7 +143,12 @@ jobs:
       # resolves inside the bundle and loads, and the app starts and exits.
       - name: Build the app bundle (and its launch check)
         working-directory: apps/cua-spaces-macos
-        run: scripts/build-app.sh release
+        run: |
+          # The production identity (what the Sparkle dry run below needs),
+          # then the default dev flavour, which must carry no feed and its
+          # own bundle id (scripts/check-dev-bundle.sh runs inside it).
+          CUA_APP_FLAVOR=prod scripts/build-app.sh release
+          CUA_INSTANCE=ci scripts/build-app.sh release "$RUNNER_TEMP/dev-app"
       # With the release key only (it is absent on forks): two fake releases
       # through make-appcast.sh, checked with Sparkle's sign_update and the
       # public key the app ships (catches a secret that does not match it).

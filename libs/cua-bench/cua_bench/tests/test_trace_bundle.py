@@ -322,3 +322,25 @@ def test_page_watermark_and_generation_reset_over_http(tmp_path):
                 get(url, "/status?generation=" + initial["generation"])
             assert error.value.code == 409
             assert json.load(error.value)["error"] == "trace generation changed; reopen the viewer"
+
+
+def test_live_example_with_non_utf8_parent_locale(tmp_path):
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    example = Path(__file__).resolve().parents[2] / "examples" / "live_collector.py"
+    output = tmp_path / "example"
+    subprocess.run(
+        [sys.executable, str(example), "--output", str(output), "--delay", "0"],
+        env={**os.environ, "PYTHONIOENCODING": "ascii", "PYTHONUTF8": "0"},
+        check=True,
+        capture_output=True,
+        timeout=60,
+    )
+    with TraceBundleReader(output) as reader:
+        assert reader.status()["state"] == "completed"
+        assert reader.status()["total"] == 4
+        assert reader.event(2)["data"]["payload"]["arguments"]["label"] == 'Demo <form> "✓"'
+        assert [e["sequence"] for e in reader.page(order="observed")["events"]] == [0, 3, 2, 1]

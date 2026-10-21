@@ -324,7 +324,13 @@ export function InstallerFlow({
           <h2 className="onboarding-title">{view.title}</h2>
           <p className="host-setup-lede">{view.lede}</p>
           <footer className="shelf-footer create-cloud-actions">
-            <button type="button" className="primary-button" data-owns-enter onClick={() => send({ type: "start" })}>
+            <button
+              type="button"
+              className="primary-button"
+              data-owns-enter
+              autoFocus
+              onClick={() => send({ type: "start" })}
+            >
               {view.primaryLabel}
             </button>
           </footer>

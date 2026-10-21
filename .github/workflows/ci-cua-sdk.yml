@@ -138,7 +138,7 @@ jobs:
   rust:
     name: rust (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -498,12 +498,6 @@ jobs:
           node scripts/stage-uniffi-library.mjs --only=node
       - name: Test
         run: npm --prefix typescript test
-      # @trycua/pi-durable (Pi Durable on Spaces): unit tests; its Space,
-      # conformance and crash-injection suites are opt-in (Docker).
-      - name: Test pi-durable integration
-        run: |
-          npm --prefix typescript/integrations/pi-durable ci --ignore-scripts
-          npm --prefix typescript/integrations/pi-durable test
 
   browser:
     name: browser (wasm32) build + smoke

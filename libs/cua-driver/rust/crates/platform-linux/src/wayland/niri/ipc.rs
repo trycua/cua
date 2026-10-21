@@ -723,7 +723,7 @@ mod tests {
 
     #[test]
     fn the_four_scene_requests_share_one_deadline() {
-        let fake = std::sync::Arc::new(Mutex::new(Fake {
+        let fake = std::sync::Arc::new(std::sync::Mutex::new(Fake {
             outputs: vec![output("winit", 0, 0, (1280, 720), 1.0, "Normal")],
             ..Fake::default()
         }));

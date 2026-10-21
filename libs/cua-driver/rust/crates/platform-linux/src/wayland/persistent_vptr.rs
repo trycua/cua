@@ -35,7 +35,7 @@ use crossbeam_channel::{bounded, Receiver, Sender};
 use wayland_client::{protocol::wl_pointer::ButtonState, Connection};
 use wayland_protocols_wlr::virtual_pointer::v1::client::zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1;
 
-use super::{evdev_pointer_button, open_vptr_session};
+use super::{evdev_pointer_button, open_vptr_session, AimedPoint};
 use crate::input::action::Action;
 
 /// One in-flight command from the public API to the owner thread.
@@ -43,8 +43,7 @@ enum Cmd {
     Press {
         cursor_id: String,
         window_id: u64,
-        x: i32,
-        y: i32,
+        at: AimedPoint,
         button: u8,
         /// The tool call the press serves: bound on the owner thread, so a
         /// call that has ended presses nothing.
@@ -84,8 +83,7 @@ trait Owner {
         &mut self,
         cursor_id: &str,
         window_id: u64,
-        x: i32,
-        y: i32,
+        at: AimedPoint,
         button: u8,
     ) -> anyhow::Result<()>;
     fn move_to(&mut self, cursor_id: &str, x: i32, y: i32) -> anyhow::Result<()>;
@@ -105,8 +103,7 @@ impl Owner for Pointers {
         &mut self,
         cursor_id: &str,
         window_id: u64,
-        x: i32,
-        y: i32,
+        at: AimedPoint,
         button: u8,
     ) -> anyhow::Result<()> {
         // A press that went down but was never recorded (its release failed)
@@ -123,8 +120,8 @@ impl Owner for Pointers {
         // as long as the Connection is alive).
         let mut sess = open_vptr_session(Some(window_id))?;
         let (w, h) = (sess.output_w, sess.output_h);
-        let (px, py) = sess.abs(x, y);
-        super::niri_pointer_gate(Some(window_id), None, &sess, &[(x, y)])?;
+        let (px, py) = sess.abs(at.point.0, at.point.1);
+        super::niri_pointer_gate(Some(window_id), None, &sess, &[at])?;
         let btn = evdev_pointer_button(button);
         sess.motion(px, py)?;
         // A press whose round trip fails is released when `sess` drops.
@@ -272,14 +269,13 @@ fn owner_thread(rx: Receiver<Cmd>, mut owner: impl Owner, held: Arc<HeldCursors>
             Cmd::Press {
                 cursor_id,
                 window_id,
-                x,
-                y,
+                at,
                 button,
                 action,
                 reply,
             } => {
                 let _bound = action.map(crate::input::action::bind);
-                let pressed = owner.press(&cursor_id, window_id, x, y, button);
+                let pressed = owner.press(&cursor_id, window_id, at, button);
                 held.publish(&cursor_id, &owner, true);
                 let _ = reply.send(pressed);
             }
@@ -637,8 +633,7 @@ fn request_by<T>(
 pub fn press(
     cursor_id: &str,
     window_id: u64,
-    x: i32,
-    y: i32,
+    at: AimedPoint,
     button: u8,
     record: impl FnOnce(),
 ) -> anyhow::Result<()> {
@@ -647,21 +642,18 @@ pub fn press(
         held_cursors(),
         cursor_id,
         window_id,
-        x,
-        y,
+        at,
         button,
         record,
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn press_on(
     tx: &Sender<Cmd>,
     held: &HeldCursors,
     cursor_id: &str,
     window_id: u64,
-    x: i32,
-    y: i32,
+    at: AimedPoint,
     button: u8,
     record: impl FnOnce(),
 ) -> anyhow::Result<()> {
@@ -670,8 +662,7 @@ fn press_on(
     request(tx, |reply| Cmd::Press {
         cursor_id: cursor_id.to_string(),
         window_id,
-        x,
-        y,
+        at,
         button,
         action: crate::input::action::current(),
         reply,
@@ -921,7 +912,7 @@ mod tests {
     }
 
     impl Owner for Wire {
-        fn press(&mut self, _: &str, _: u64, _: i32, _: i32, _: u8) -> anyhow::Result<()> {
+        fn press(&mut self, _: &str, _: u64, _: AimedPoint, _: u8) -> anyhow::Result<()> {
             crate::input::action::admit(|| self.sent.lock().unwrap().push("press"))?;
             self.held = true;
             if self.caller_leaves_during_press {
@@ -1016,9 +1007,15 @@ mod tests {
         action.abandon();
         let _bound = crate::input::action::bind(action);
         let mut recorded = false;
-        let pressed = press_on(&tx, &HeldCursors::default(), "drag", 1, 10, 10, 1, || {
-            recorded = true
-        })
+        let pressed = press_on(
+            &tx,
+            &HeldCursors::default(),
+            "drag",
+            1,
+            (10, 10).into(),
+            1,
+            || recorded = true,
+        )
         .unwrap_err();
         assert!(timed_out(&pressed), "{pressed:#}");
         let moved = move_on(&tx, "drag", 20, 20).unwrap_err();
@@ -1034,9 +1031,15 @@ mod tests {
         let (tx, sent) = owner(true, false);
         let _bound = crate::input::action::bind(Action::new(std::time::Duration::from_secs(60)));
         let mut recorded = false;
-        let pressed = press_on(&tx, &HeldCursors::default(), "drag", 1, 10, 10, 1, || {
-            recorded = true
-        })
+        let pressed = press_on(
+            &tx,
+            &HeldCursors::default(),
+            "drag",
+            1,
+            (10, 10).into(),
+            1,
+            || recorded = true,
+        )
         .unwrap_err();
         assert!(timed_out(&pressed), "{pressed:#}");
         assert_eq!(*sent.lock().unwrap(), ["press", "release"]);
@@ -1046,9 +1049,15 @@ mod tests {
         let (tx, sent) = owner(false, false);
         let _bound = crate::input::action::bind(Action::new(std::time::Duration::from_secs(60)));
         let mut recorded = false;
-        press_on(&tx, &HeldCursors::default(), "drag", 1, 10, 10, 1, || {
-            recorded = true
-        })
+        press_on(
+            &tx,
+            &HeldCursors::default(),
+            "drag",
+            1,
+            (10, 10).into(),
+            1,
+            || recorded = true,
+        )
         .unwrap();
         assert_eq!(*sent.lock().unwrap(), ["press"]);
         assert!(recorded);
@@ -1059,9 +1068,15 @@ mod tests {
         let (tx, sent) = owner(false, false);
         let _bound = crate::input::action::bind(Action::new(std::time::Duration::from_secs(60)));
         let pressed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            press_on(&tx, &HeldCursors::default(), "drag", 1, 10, 10, 1, || {
-                panic!("recording failed")
-            })
+            press_on(
+                &tx,
+                &HeldCursors::default(),
+                "drag",
+                1,
+                (10, 10).into(),
+                1,
+                || panic!("recording failed"),
+            )
         }));
         assert!(pressed.is_err());
         assert_eq!(*sent.lock().unwrap(), ["press", "release"]);
@@ -1073,9 +1088,15 @@ mod tests {
         let (tx, sent) = owner_with(false, release_fails.clone());
         let _bound = crate::input::action::bind(Action::new(std::time::Duration::from_secs(60)));
         let pressed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            press_on(&tx, &HeldCursors::default(), "drag", 1, 10, 10, 1, || {
-                panic!("recording failed")
-            })
+            press_on(
+                &tx,
+                &HeldCursors::default(),
+                "drag",
+                1,
+                (10, 10).into(),
+                1,
+                || panic!("recording failed"),
+            )
         }));
         assert!(pressed.is_err());
         assert_eq!(*sent.lock().unwrap(), ["press", "release"]);
@@ -1094,9 +1115,15 @@ mod tests {
         let (tx, sent) = owner(true, true);
         let _bound = crate::input::action::bind(Action::new(std::time::Duration::from_secs(60)));
         let mut recorded = false;
-        let pressed = press_on(&tx, &HeldCursors::default(), "drag", 1, 10, 10, 1, || {
-            recorded = true
-        })
+        let pressed = press_on(
+            &tx,
+            &HeldCursors::default(),
+            "drag",
+            1,
+            (10, 10).into(),
+            1,
+            || recorded = true,
+        )
         .unwrap_err();
         assert!(timed_out(&pressed), "{pressed:#}");
         assert!(
@@ -1167,7 +1194,7 @@ mod tests {
         // Session end's release of a recorded hold timed out; the release
         // ran late and lifted the button. The retry finds nothing held.
         let (tx, sent, held) = owner_publishing(false, Default::default());
-        press_on(&tx, &held, "session", 1, 10, 10, 1, || ()).unwrap();
+        press_on(&tx, &held, "session", 1, (10, 10).into(), 1, || ()).unwrap();
         release_on(&tx, "session", 1).unwrap();
         let wait = std::time::Duration::from_secs(5);
         let retried = release_within(&held, || &tx, "session", 1, wait);
@@ -1180,7 +1207,7 @@ mod tests {
         let held = HeldCursors::default();
         let (tx, rx) = bounded::<Cmd>(1);
         drop(rx);
-        press_on(&tx, &held, "dead", 1, 10, 10, 1, || ()).unwrap_err();
+        press_on(&tx, &held, "dead", 1, (10, 10).into(), 1, || ()).unwrap_err();
         assert!(!held.contains("dead"));
     }
 
@@ -1228,7 +1255,7 @@ mod tests {
             std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
         );
         impl Owner for Holding {
-            fn press(&mut self, _: &str, _: u64, _: i32, _: i32, _: u8) -> anyhow::Result<()> {
+            fn press(&mut self, _: &str, _: u64, _: AimedPoint, _: u8) -> anyhow::Result<()> {
                 unreachable!()
             }
             fn move_to(&mut self, _: &str, _: i32, _: i32) -> anyhow::Result<()> {
@@ -1279,7 +1306,7 @@ mod tests {
         let pressing = thread::spawn({
             let (tx, held) = (tx.clone(), held.clone());
             move || {
-                let _ = press_on(&tx, &held, "session", 1, 10, 10, 1, || ());
+                let _ = press_on(&tx, &held, "session", 1, (10, 10).into(), 1, || ());
             }
         });
         while tx.is_empty() {
@@ -1303,7 +1330,7 @@ mod tests {
         let release_fails = Arc::new(std::sync::atomic::AtomicBool::new(true));
         let (tx, sent, held) = owner_publishing(false, release_fails.clone());
         let pressed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            press_on(&tx, &held, "session", 1, 10, 10, 1, || {
+            press_on(&tx, &held, "session", 1, (10, 10).into(), 1, || {
                 panic!("recording failed")
             })
         }));

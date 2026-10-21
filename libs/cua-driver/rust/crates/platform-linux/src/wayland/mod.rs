@@ -19,6 +19,7 @@ pub mod hyprland_input;
 pub mod kwin_helper;
 pub mod niri;
 pub use niri::keyboard::call_budget as niri_keyboard_budget;
+pub(crate) use niri::AimedPoint;
 pub mod overlay;
 pub mod persistent_vptr;
 pub(crate) mod portal;
@@ -2100,13 +2101,13 @@ fn event_time_ms() -> u32 {
 /// the legacy focus-based behaviour is preserved when callers can't supply
 /// real coords. A short delay between iterations gives the compositor time
 /// to discriminate single vs. double clicks.
-pub fn click(window_id: u64, x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
+pub fn click(window_id: u64, at: AimedPoint, count: u32, button: u8) -> anyhow::Result<()> {
     with_libei_fallback(
-        || click_vptr(Some(window_id), x, y, count, button, None),
+        || click_vptr(Some(window_id), at, count, button, None),
         || {
             libei_wait_pointer_ready()?;
             activate_window_for_input(window_id)?;
-            libei_click(x, y, count, button)
+            libei_click(at.point.0, at.point.1, count, button)
         },
     )
 }
@@ -2119,9 +2120,10 @@ pub fn click(window_id: u64, x: i32, y: i32, count: u32, button: u8) -> anyhow::
 /// KWin/GNOME/Sway ownership and focus are freshly verified immediately before
 /// the actual libei dispatch.
 #[cfg(feature = "portal-input")]
-pub fn click_focused(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
+pub fn click_focused(at: AimedPoint, count: u32, button: u8) -> anyhow::Result<()> {
+    let (x, y) = at.point;
     with_libei_fallback(
-        || click_vptr(None, x, y, count, button, None),
+        || click_vptr(None, at, count, button, None),
         || {
             libei_wait_pointer_ready()?;
             if let Some((pid, window_id)) = current_foreground_target() {
@@ -2138,8 +2140,8 @@ pub fn click_focused(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<(
 }
 
 #[cfg(not(feature = "portal-input"))]
-pub fn click_focused(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
-    click_vptr(None, x, y, count, button, None)
+pub fn click_focused(at: AimedPoint, count: u32, button: u8) -> anyhow::Result<()> {
+    click_vptr(None, at, count, button, None)
 }
 
 /// Click a desktop-absolute point without selecting or activating a toplevel.
@@ -2158,7 +2160,7 @@ pub fn click_desktop(
     }
     let (x, y) = space.input_layout(x, y)?;
     with_libei_fallback(
-        || click_vptr(None, x, y, count, button, Some(space)),
+        || click_vptr(None, (x, y).into(), count, button, Some(space)),
         || libei_click(x, y, count, button),
     )
 }
@@ -2265,7 +2267,7 @@ fn niri_pointer_gate(
     window_id: Option<u64>,
     desktop: Option<&DesktopInputSpace>,
     sess: &VptrSession,
-    points: &[(i32, i32)],
+    points: &[AimedPoint],
 ) -> anyhow::Result<Option<niri::PointerGate>> {
     if !niri::is_session() {
         return Ok(None);
@@ -2294,8 +2296,7 @@ fn niri_gate_holds(gate: &mut Option<niri::PointerGate>) -> anyhow::Result<()> {
 /// [`with_libei_fallback`] when the compositor exposes no virtual-pointer.
 fn click_vptr(
     window_id: Option<u64>,
-    x: i32,
-    y: i32,
+    at: AimedPoint,
     count: u32,
     button: u8,
     desktop: Option<&DesktopInputSpace>,
@@ -2303,6 +2304,7 @@ fn click_vptr(
     let mut sess = open_vptr_session_in(window_id, desktop.and_then(|d| d.snapshot.as_ref()))?;
     crate::interaction::pause(std::time::Duration::from_millis(40));
     let (w, h) = (sess.output_w, sess.output_h);
+    let (x, y) = at.point;
     let centre = centres_origin_click(x, y, hyprland::is_session() || niri::is_session());
     let (px, py) = if centre {
         (w / 2, h / 2)
@@ -2310,9 +2312,9 @@ fn click_vptr(
         sess.abs(x, y)
     };
     let aimed = if centre {
-        (sess.origin_x + px as i32, sess.origin_y + py as i32)
+        (sess.origin_x + px as i32, sess.origin_y + py as i32).into()
     } else {
-        (x, y)
+        at
     };
     let mut gate = niri_pointer_gate(window_id, desktop, &sess, &[aimed])?;
     let btn = evdev_pointer_button(button);
@@ -2353,15 +2355,16 @@ pub fn scroll(window_id: u64, direction: &str, amount: u32) -> anyhow::Result<()
 /// coordinates when the active compositor exposes the target geometry.
 /// On niri a window without a reported place (a tiled one) refuses: passing
 /// `(x, y)` through would aim window-local coordinates at the layout origin.
-/// niri remembers the rectangle used, so the pointer gate refuses if the
-/// window moved before the input is sent.
-pub fn window_local_to_output(window_id: u64, x: i32, y: i32) -> anyhow::Result<(i32, i32)> {
+/// On niri the point carries the rectangle used, so the pointer gate refuses
+/// if the window moved before the input is sent.
+pub fn window_local_to_output(window_id: u64, x: i32, y: i32) -> anyhow::Result<AimedPoint> {
     if niri::is_session() {
         return niri::aim(window_id, x, y);
     }
     Ok(window_geometry(window_id)
         .map(|(window_x, window_y, _, _)| (window_x.saturating_add(x), window_y.saturating_add(y)))
-        .unwrap_or((x, y)))
+        .unwrap_or((x, y))
+        .into())
 }
 
 /// Resolve geometry through stable title/app identity when a foreign-toplevel
@@ -2451,7 +2454,7 @@ pub fn window_geometry(window_id: u64) -> Option<(i32, i32, u32, u32)> {
 /// pixel-addressed scrolls must not inherit an unrelated cursor position.
 pub fn scroll_at(
     window_id: u64,
-    point: Option<(i32, i32)>,
+    point: Option<AimedPoint>,
     direction: &str,
     amount: u32,
 ) -> anyhow::Result<()> {
@@ -2461,7 +2464,7 @@ pub fn scroll_at(
         || {
             libei_wait_scroll_ready()?;
             activate_window_for_input(window_id)?;
-            if let Some((x, y)) = point {
+            if let Some(AimedPoint { point: (x, y), .. }) = point {
                 libei_move_absolute(x, y)?;
             }
             libei_scroll(&direction, amount)
@@ -2483,7 +2486,7 @@ pub fn scroll_desktop(
     let (x, y) = space.input_layout(x, y)?;
     let direction = direction.to_string();
     with_libei_fallback(
-        || scroll_vptr(None, Some((x, y)), &direction, amount, Some(space)),
+        || scroll_vptr(None, Some((x, y).into()), &direction, amount, Some(space)),
         || {
             libei_wait_scroll_ready()?;
             libei_move_absolute(x, y)?;
@@ -2495,7 +2498,7 @@ pub fn scroll_desktop(
 /// wlroots virtual-pointer implementation of [`scroll`].
 fn scroll_vptr(
     window_id: Option<u64>,
-    point: Option<(i32, i32)>,
+    point: Option<AimedPoint>,
     direction: &str,
     amount: u32,
     desktop: Option<&DesktopInputSpace>,
@@ -2516,9 +2519,9 @@ fn scroll_vptr(
     };
     let mut sess = open_vptr_session_in(window_id, desktop.and_then(|d| d.snapshot.as_ref()))?;
     let mut gate = None;
-    if let Some((x, y)) = point {
-        let (px, py) = sess.abs(x, y);
-        gate = niri_pointer_gate(window_id, desktop, &sess, &[(x, y)])?;
+    if let Some(aimed) = point {
+        let (px, py) = sess.abs(aimed.point.0, aimed.point.1);
+        gate = niri_pointer_gate(window_id, desktop, &sess, &[aimed])?;
         sess.point_at(px, py)?;
         record_synth_cursor(sess.origin_x + px as i32, sess.origin_y + py as i32);
         crate::interaction::pause(std::time::Duration::from_millis(15));
@@ -2611,7 +2614,7 @@ fn move_cursor_absolute_vptr(
 ) -> anyhow::Result<()> {
     let mut sess = open_vptr_session_in(window_id, desktop.and_then(|d| d.snapshot.as_ref()))?;
     let (px, py) = sess.abs(x, y);
-    niri_pointer_gate(window_id, desktop, &sess, &[(x, y)])?;
+    niri_pointer_gate(window_id, desktop, &sess, &[(x, y).into()])?;
     sess.motion(px, py)?;
     record_synth_cursor(sess.origin_x + px as i32, sess.origin_y + py as i32);
     sess.finish()
@@ -2624,26 +2627,15 @@ fn move_cursor_absolute_vptr(
 /// injection socket (`CUA_INJECT_SOCKET`).
 pub fn drag(
     window_id: u64,
-    from: (i32, i32),
-    to: (i32, i32),
+    from: AimedPoint,
+    to: AimedPoint,
     steps: u32,
     duration_ms: u64,
     button: u8,
 ) -> anyhow::Result<()> {
-    let ((from_x, from_y), (to_x, to_y)) = (from, to);
+    let ((from_x, from_y), (to_x, to_y)) = (from.point, to.point);
     with_libei_fallback(
-        || {
-            drag_vptr(
-                Some(window_id),
-                from_x,
-                from_y,
-                to_x,
-                to_y,
-                steps,
-                button,
-                None,
-            )
-        },
+        || drag_vptr(Some(window_id), from, to, steps, button, None),
         || {
             libei_wait_pointer_ready()?;
             activate_window_for_input(window_id)?;
@@ -2666,7 +2658,16 @@ pub fn drag_desktop(
     let (from_x, from_y) = space.input_layout(from_x, from_y)?;
     let (to_x, to_y) = space.input_layout(to_x, to_y)?;
     with_libei_fallback(
-        || drag_vptr(None, from_x, from_y, to_x, to_y, steps, button, Some(space)),
+        || {
+            drag_vptr(
+                None,
+                (from_x, from_y).into(),
+                (to_x, to_y).into(),
+                steps,
+                button,
+                Some(space),
+            )
+        },
         || {
             libei_wait_pointer_ready()?;
             libei_drag(from_x, from_y, to_x, to_y, steps, duration_ms, button)
@@ -2702,13 +2703,10 @@ fn drag_path(
 }
 
 /// wlroots virtual-pointer implementation of [`drag`].
-#[allow(clippy::too_many_arguments)]
 fn drag_vptr(
     window_id: Option<u64>,
-    from_x: i32,
-    from_y: i32,
-    to_x: i32,
-    to_y: i32,
+    from: AimedPoint,
+    to: AimedPoint,
     steps: u32,
     button: u8,
     desktop: Option<&DesktopInputSpace>,
@@ -2719,9 +2717,10 @@ fn drag_vptr(
     let btn = evdev_pointer_button(button);
     let (origin_x, origin_y) = (sess.origin_x, sess.origin_y);
     let clamp_xy = |x: i32, y: i32| pointer_abs(origin_x, origin_y, w, h, x, y);
+    let ((from_x, from_y), (to_x, to_y)) = (from.point, to.point);
     let (fx, fy) = clamp_xy(from_x, from_y);
     let (tx, ty) = clamp_xy(to_x, to_y);
-    let mut gate = niri_pointer_gate(window_id, desktop, &sess, &[(from_x, from_y), (to_x, to_y)])?;
+    let mut gate = niri_pointer_gate(window_id, desktop, &sess, &[from, to])?;
     sess.motion(fx, fy)?;
     crate::interaction::pause(std::time::Duration::from_millis(15));
     niri_gate_holds(&mut gate)?;

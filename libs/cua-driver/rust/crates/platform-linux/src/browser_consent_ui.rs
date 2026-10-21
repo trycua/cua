@@ -203,7 +203,7 @@ fn trusted_allow_click(pid: u32, window_id: u64) -> anyhow::Result<()> {
             })?;
         let (center_x, center_y) = exact_button_center(&tree.bounds, index)?;
         if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-            crate::wayland::click_focused(center_x, center_y, 1, 1)
+            crate::wayland::click_focused((center_x, center_y).into(), 1, 1)
         } else {
             crate::input::send_click_xtest_desktop(center_x, center_y, 1, 1)
         }

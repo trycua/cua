@@ -4,22 +4,19 @@
 
 use super::*;
 
-/// Recent window-local to layout translations kept for the pointer gate,
-/// oldest evicted first. Tool bodies translate coordinates with [`aim`] and
-/// call the pointer route separately, so this cache is what carries the
-/// translated rectangle to [`gate_pointer`] until those bodies can pass it
-/// (the tool split that follows this adapter).
-const MAX_AIMS: usize = 64;
-
-struct Aim {
-    window: u64,
-    point: (i32, i32),
-    rect: Rect,
+/// A layout point for pointer input and, when it was translated from window
+/// coordinates on niri, the window rectangle that translation used. The
+/// pointer gate refuses the point if the window no longer has that rectangle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AimedPoint {
+    pub point: (i32, i32),
+    pub rect: Option<Rect>,
 }
 
-fn aims() -> &'static Mutex<Vec<Aim>> {
-    static AIMS: OnceLock<Mutex<Vec<Aim>>> = OnceLock::new();
-    AIMS.get_or_init(|| Mutex::new(Vec::new()))
+impl From<(i32, i32)> for AimedPoint {
+    fn from(point: (i32, i32)) -> Self {
+        Self { point, rect: None }
+    }
 }
 
 fn placed_or_refuse(window: &Window) -> Result<&Placed> {
@@ -40,26 +37,15 @@ pub fn tiled_refusal(window_id: u64) -> Option<anyhow::Error> {
 }
 
 /// Translate window coordinates into the global layout. A floating window's
-/// coordinates are window-local; the geometry used is remembered so the
-/// pointer gate can prove it still holds. A window without a place (a tiled
-/// one) refuses instead of passing `(x, y)` through as output coordinates.
-pub fn aim(window_id: u64, x: i32, y: i32) -> Result<(i32, i32)> {
+/// coordinates are window-local; the rectangle used travels with the point so
+/// the pointer gate can prove it still holds. A window without a place (a
+/// tiled one) refuses instead of passing `(x, y)` through as output
+/// coordinates.
+pub fn aim(window_id: u64, x: i32, y: i32) -> Result<AimedPoint> {
     let scene = ipc().scene().map_err(input_unavailable)?;
     single_output_pointer(&scene)?;
     let window = scene.window(window_id).map_err(input_unavailable)?;
-    let (point, rect) = aim_at(&window, x, y)?;
-    if let Ok(mut aims) = aims().lock() {
-        aims.retain(|aim| (aim.window, aim.point) != (window_id, point));
-        if aims.len() >= MAX_AIMS {
-            aims.remove(0);
-        }
-        aims.push(Aim {
-            window: window_id,
-            point,
-            rect,
-        });
-    }
-    Ok(point)
+    aim_at(&window, x, y)
 }
 
 /// Window-addressed pointer input needs a single output: with several, the
@@ -74,9 +60,12 @@ pub(super) fn single_output_pointer(scene: &Scene) -> Result<()> {
     }
 }
 
-pub(super) fn aim_at(window: &Window, x: i32, y: i32) -> Result<((i32, i32), Rect)> {
+pub(super) fn aim_at(window: &Window, x: i32, y: i32) -> Result<AimedPoint> {
     let rect = placed_or_refuse(window)?.rect;
-    Ok(((rect.x.saturating_add(x), rect.y.saturating_add(y)), rect))
+    Ok(AimedPoint {
+        point: (rect.x.saturating_add(x), rect.y.saturating_add(y)),
+        rect: Some(rect),
+    })
 }
 
 /// A pointer action admitted on the current layout. [`Self::holds`] reads
@@ -85,9 +74,9 @@ pub(super) fn aim_at(window: &Window, x: i32, y: i32) -> Result<((i32, i32), Rec
 /// move away and back between them, nor an animation niri does not report.
 pub struct PointerGate<C = fn(Instant) -> Result<UnixStream>> {
     ipc: Ipc<C>,
-    /// The window and the rectangle its points were admitted on.
-    window: Option<(u64, Rect)>,
-    points: Vec<(i32, i32)>,
+    window: Option<u64>,
+    /// The points, each carrying the rectangle it was admitted on.
+    points: Vec<AimedPoint>,
     /// The pointer space the action's session scales motions by.
     space: (i32, i32, u32, u32),
 }
@@ -98,10 +87,10 @@ impl<C: FnMut(Instant) -> Result<UnixStream>> PointerGate<C> {
     /// window target must also still hold keyboard focus, read back from
     /// niri: a lock or layer-shell surface can take it without moving it.
     pub fn holds(&mut self) -> Result<()> {
-        if let Some((id, rect)) = self.window {
+        if let Some(id) = self.window {
             let scene = self.ipc.scene().map_err(input_unavailable)?;
             let window = scene.window(id).map_err(input_unavailable)?;
-            pointer_admission(&window, rect, &self.points, |_| None)?;
+            pointer_admission(&window, &self.points)?;
             let pid = scene
                 .windows
                 .iter()
@@ -138,12 +127,12 @@ pub enum Target {
 pub fn prepare_target(
     target: Target,
     space: (i32, i32, u32, u32),
-    points: &[(i32, i32)],
+    points: &[AimedPoint],
 ) -> Result<Option<PointerGate>> {
     let (origin_x, origin_y, width, height) = space;
     if let Some((x, y)) = points
         .iter()
-        .copied()
+        .map(|aimed| aimed.point)
         .find(|&(x, y)| !super::super::pointer_reaches(origin_x, origin_y, width, height, x, y))
     {
         bail!("foreground_unavailable: point ({x}, {y}) is outside the niri pointer space");
@@ -164,9 +153,10 @@ pub fn prepare_target(
             let rect = gate_pointer(&scene, id, points)?;
             activate_in(&mut gate.ipc, id, None, FOCUS_CONFIRM_TIMEOUT)
                 .map_err(input_unavailable)?;
-            gate.window = Some((id, rect));
+            gate.window = Some(id);
+            gate.points = admitted_on(points, rect);
         }
-        Target::Desktop => desktop_admission(&scene, points)?,
+        Target::Desktop => desktop_admission(&scene, &gate.points)?,
         Target::Unaddressed => return Ok(None),
     }
     gate.holds()?;
@@ -186,39 +176,44 @@ fn settled_window(scene: impl FnMut(Instant) -> Result<Scene>, id: u64) -> Resul
 }
 
 /// Admit window-addressed pointer input on a floating window: the target
-/// must be placed where its coordinates were computed and every point must
-/// land on it rather than on another floating window. A window without a
-/// place (a tiled one) refuses. Returns the rectangle admitted.
-fn gate_pointer(scene: &Scene, window_id: u64, points: &[(i32, i32)]) -> Result<Rect> {
+/// must still have the rectangle each point was translated against, and
+/// every point must land on it rather than on another floating window. A
+/// point given in layout coordinates carries no rectangle to compare. A
+/// window without a place (a tiled one) refuses. Returns the rectangle
+/// admitted.
+fn gate_pointer(scene: &Scene, window_id: u64, points: &[AimedPoint]) -> Result<Rect> {
     single_output_pointer(scene)?;
     let window = scene.window(window_id).map_err(input_unavailable)?;
-    let before = placed_or_refuse(&window)?.rect;
-    pointer_admission(&window, before, points, |point| {
-        aims()
-            .lock()
-            .ok()?
-            .iter()
-            .rev()
-            .find(|aim| (aim.window, aim.point) == (window_id, point))
-            .map(|aim| aim.rect)
-    })?;
-    Ok(before)
+    pointer_admission(&window, points)?;
+    Ok(placed_or_refuse(&window)?.rect)
 }
 
-fn pointer_admission(
-    window: &Window,
-    before: Rect,
-    points: &[(i32, i32)],
-    aimed: impl Fn((i32, i32)) -> Option<Rect>,
-) -> Result<()> {
+/// `points` as admitted on `rect`: later rechecks compare every point with it.
+fn admitted_on(points: &[AimedPoint], rect: Rect) -> Vec<AimedPoint> {
+    points
+        .iter()
+        .map(|aimed| AimedPoint {
+            rect: Some(rect),
+            ..*aimed
+        })
+        .collect()
+}
+
+fn pointer_admission(window: &Window, points: &[AimedPoint]) -> Result<()> {
     let placed = placed_or_refuse(window)?;
-    for &(x, y) in points {
-        let expected = aimed((x, y)).unwrap_or(before);
-        if !interaction::policy::fresh(&expected, &interaction::facts::Fact::Known(placed.rect)) {
-            return Err(foreground_unavailable(format!(
-                "niri window {} moved from {expected:?} to {:?} after its coordinates were computed; take a new screenshot",
-                window.id, placed.rect
-            )));
+    for &AimedPoint {
+        point: (x, y),
+        rect,
+    } in points
+    {
+        if let Some(expected) = rect {
+            if !interaction::policy::fresh(&expected, &interaction::facts::Fact::Known(placed.rect))
+            {
+                return Err(foreground_unavailable(format!(
+                    "niri window {} moved from {expected:?} to {:?} after its coordinates were computed; take a new screenshot",
+                    window.id, placed.rect
+                )));
+            }
         }
         if !placed.covers(x, y) {
             return Err(foreground_unavailable(format!(
@@ -243,7 +238,7 @@ fn pointer_admission(
 
 /// Admit desktop-scope points: pixels of the single output, the frame a
 /// `get_desktop_state` screenshot shows.
-pub(super) fn desktop_admission(scene: &Scene, points: &[(i32, i32)]) -> Result<()> {
+pub(super) fn desktop_admission(scene: &Scene, points: &[AimedPoint]) -> Result<()> {
     let (output, logical) = scene.single_output().map_err(input_unavailable)?;
     let area = Rect {
         x: logical.x,
@@ -251,7 +246,11 @@ pub(super) fn desktop_admission(scene: &Scene, points: &[(i32, i32)]) -> Result<
         width: logical.width,
         height: logical.height,
     };
-    match points.iter().find(|&&(x, y)| !area.contains(x, y)) {
+    match points
+        .iter()
+        .map(|aimed| aimed.point)
+        .find(|&(x, y)| !area.contains(x, y))
+    {
         Some((x, y)) => Err(foreground_unavailable(format!(
             "point ({x}, {y}) is past the edge of niri output {}, which the get_desktop_state screenshot shows",
             output.name
@@ -264,15 +263,23 @@ pub(super) fn desktop_admission(scene: &Scene, points: &[(i32, i32)]) -> Result<
 mod tests {
     use super::*;
     use serde_json::json;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
+
+    fn aimed_on(point: (i32, i32), rect: Rect) -> AimedPoint {
+        AimedPoint {
+            point,
+            rect: Some(rect),
+        }
+    }
 
     #[test]
     fn a_window_that_moved_after_admission_refuses_the_next_event() {
         let admitted = one_output(vec![floating(7, 1, (100.0, 60.0), (300, 200))]);
-        let rect = gate_pointer(&admitted, 7, &[(150, 100)]).unwrap();
+        let rect = gate_pointer(&admitted, 7, &[(150, 100).into()]).unwrap();
+        let points = admitted_on(&[(150, 100).into()], rect);
         let moved = one_output(vec![floating(7, 1, (120.0, 60.0), (300, 200))]);
         assert_eq!(
-            pointer_admission(&placed_window(&moved, 7), rect, &[(150, 100)], |_| None)
+            pointer_admission(&placed_window(&moved, 7), &points)
                 .unwrap_err()
                 .to_string(),
             "foreground_unavailable: niri window 7 moved from Rect { x: 100, y: 60, width: 300, height: 200 } to Rect { x: 120, y: 60, width: 300, height: 200 } after its coordinates were computed; take a new screenshot"
@@ -281,9 +288,7 @@ mod tests {
             floating(7, 1, (100.0, 60.0), (300, 200)),
             floating(8, 1, (140.0, 90.0), (50, 50)),
         ]);
-        assert!(
-            pointer_admission(&placed_window(&covered, 7), rect, &[(150, 100)], |_| None).is_err()
-        );
+        assert!(pointer_admission(&placed_window(&covered, 7), &points).is_err());
     }
 
     #[test]
@@ -297,10 +302,11 @@ mod tests {
             ..Fake::default()
         }));
         let admitted = one_output(fake.lock().unwrap().windows.clone());
+        let rect = gate_pointer(&admitted, 7, &[(150, 100).into()]).unwrap();
         let mut gate = PointerGate {
             ipc: fake_ipc(&fake),
-            window: Some((7, gate_pointer(&admitted, 7, &[(150, 100)]).unwrap())),
-            points: vec![(150, 100)],
+            window: Some(7),
+            points: admitted_on(&[(150, 100).into()], rect),
             space: admitted.pointer_space().unwrap(),
         };
         gate.holds().unwrap();
@@ -371,16 +377,18 @@ mod tests {
     #[test]
     fn floating_window_coordinates_add_the_window_origin() {
         let scene = one_output(vec![floating(7, 1, (100.0, 60.0), (300, 200))]);
-        let (point, rect) = aim_at(&scene.window(7).unwrap(), 10, 20).unwrap();
-        assert_eq!(point, (110, 80));
+        let aimed = aim_at(&scene.window(7).unwrap(), 10, 20).unwrap();
         assert_eq!(
-            rect,
-            Rect {
-                x: 100,
-                y: 60,
-                width: 300,
-                height: 200
-            }
+            aimed,
+            aimed_on(
+                (110, 80),
+                Rect {
+                    x: 100,
+                    y: 60,
+                    width: 300,
+                    height: 200
+                }
+            )
         );
     }
 
@@ -396,34 +404,33 @@ mod tests {
         ]);
         let window = placed_window(&scene, 7);
         let rect = window.placement.as_ref().unwrap().rect;
-        assert!(pointer_admission(&window, rect, &[(150, 100)], |_| None).is_ok());
-        assert!(pointer_admission(&window, rect, &[(150, 100)], |_| Some(rect)).is_ok());
+        assert!(pointer_admission(&window, &[(150, 100).into()]).is_ok());
+        assert!(pointer_admission(&window, &[aimed_on((150, 100), rect)]).is_ok());
         let earlier = Rect { x: 0, ..rect };
         assert_eq!(
-            pointer_admission(&window, rect, &[(150, 100)], |_| Some(earlier)).unwrap_err().to_string(),
+            pointer_admission(&window, &[aimed_on((150, 100), earlier)]).unwrap_err().to_string(),
             "foreground_unavailable: niri window 7 moved from Rect { x: 0, y: 60, width: 300, height: 200 } to Rect { x: 100, y: 60, width: 300, height: 200 } after its coordinates were computed; take a new screenshot"
         );
         assert_eq!(
-            pointer_admission(&window, rect, &[(360, 210)], |_| None).unwrap_err().to_string(),
+            pointer_admission(&window, &[(360, 210).into()]).unwrap_err().to_string(),
             "foreground_unavailable: point (360, 210) lies under another floating window, and niri reports no stacking order"
         );
         assert_eq!(
-            pointer_admission(&window, rect, &[(150, 100), (5, 5)], |_| None).unwrap_err().to_string(),
+            pointer_admission(&window, &[(150, 100).into(), (5, 5).into()]).unwrap_err().to_string(),
             "foreground_unavailable: point (5, 5) is outside niri window 7 at Rect { x: 100, y: 60, width: 300, height: 200 }"
         );
         // Taller than the 853x480 output: its bottom is not shown.
         let scene = one_output(vec![floating(9, 1, (100.0, 60.0), (300, 500))]);
         let tall = placed_window(&scene, 9);
-        let tall_rect = tall.placement.as_ref().unwrap().rect;
         assert_eq!(
-            pointer_admission(&tall, tall_rect, &[(150, 500)], |_| None).unwrap_err().to_string(),
+            pointer_admission(&tall, &[(150, 500).into()]).unwrap_err().to_string(),
             "foreground_unavailable: point (150, 500) is past the edge of niri output winit, where window 9 is not shown"
         );
         let tiled = one_output(vec![tiled(5, 1, (402.0, 448.0))])
             .window(5)
             .unwrap();
         assert_eq!(
-            pointer_admission(&tiled, rect, &[(150, 100)], |_| None)
+            pointer_admission(&tiled, &[aimed_on((150, 100), rect)])
                 .unwrap_err()
                 .to_string(),
             "foreground_unavailable: niri window 5: niri does not report where a tiled window is; use get_desktop_state and a desktop-scope action (needs the display grant), or float the window"
@@ -449,9 +456,9 @@ mod tests {
     #[test]
     fn desktop_pixels_are_admitted_only_on_the_single_output() {
         let scene = tiled_scene(Some(5));
-        desktop_admission(&scene, &[(2500, 400), (2100, 100)]).unwrap();
+        desktop_admission(&scene, &[(2500, 400).into(), (2100, 100).into()]).unwrap();
         assert_eq!(
-            desktop_admission(&scene, &[(10, 100)])
+            desktop_admission(&scene, &[(10, 100).into()])
                 .unwrap_err()
                 .to_string(),
             "foreground_unavailable: point (10, 100) is past the edge of niri output winit, which the get_desktop_state screenshot shows"

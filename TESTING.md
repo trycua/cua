@@ -154,10 +154,9 @@ tiled windows, overlapping floating windows, an open overview and more than one
 output are refused (see `libs/cua-driver/rust/Skills/cua-driver/LINUX.md`).
 Unit tests for bounded input workers and late-send refusal live in
 `platform-linux/src/input/action.rs` and `input/mod.rs`; niri pointer admission
-goes through `wayland::niri::prepare_target`. Window-coordinate niri input still
-carries its translated rectangle through a bounded cache in `niri/gate.rs`;
-replacing it with evidence returned to the tool is a follow-up to the
-`tools/impl_.rs` per-tool split (#2886).
+goes through `wayland::niri::prepare_target`. Window-coordinate niri input
+carries the window rectangle its point was translated against
+(`wayland::AimedPoint`) from the tool body to that gate.
 GNOME, KDE, real Xorg, Windows, and macOS use an existing graphical login. The
 suites are often maintainer-triggered and retain typed case/results,
 screenshots, accessibility state, trajectories, logs, and video where the lane

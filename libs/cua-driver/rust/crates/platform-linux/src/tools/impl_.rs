@@ -17,6 +17,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 use crate::atspi::Snapshots;
+use crate::wayland::AimedPoint;
 use cursor_overlay::CursorRegistry;
 
 fn window_target_candidates_for_pid(
@@ -5349,14 +5350,14 @@ fn coordinate_less_mouse_button_up_survives_snapshot_replacement() {
 fn persistent_wayland_pointer_coordinates_include_window_origin() {
     let output = persistent_pointer_coordinates(true, 7, 10, 20, |window_id, x, y| {
         assert_eq!(window_id, 7);
-        Ok((x + 100, y + 200))
+        Ok((x + 100, y + 200).into())
     });
-    assert_eq!(output.unwrap(), (110, 220));
+    assert_eq!(output.unwrap().point, (110, 220));
 
     let x11 = persistent_pointer_coordinates(false, 7, 10, 20, |_, _, _| {
         panic!("X11 coordinates must remain window-local")
     });
-    assert_eq!(x11.unwrap(), (10, 20));
+    assert_eq!(x11.unwrap().point, (10, 20));
 }
 
 #[cfg(test)]
@@ -5754,12 +5755,12 @@ fn persistent_pointer_coordinates(
     window_id: u64,
     x: i32,
     y: i32,
-    window_local_to_output: impl FnOnce(u64, i32, i32) -> anyhow::Result<(i32, i32)>,
-) -> anyhow::Result<(i32, i32)> {
+    window_local_to_output: impl FnOnce(u64, i32, i32) -> anyhow::Result<AimedPoint>,
+) -> anyhow::Result<AimedPoint> {
     if is_wayland {
         window_local_to_output(window_id, x, y)
     } else {
-        Ok((x, y))
+        Ok((x, y).into())
     }
 }
 
@@ -7434,7 +7435,10 @@ impl Tool for ClickTool {
         } else {
             None
         };
-        let glide_target = if let Some((sx, sy)) = wayland_output_point {
+        let glide_target = if let Some(AimedPoint {
+            point: (sx, sy), ..
+        }) = wayland_output_point
+        {
             Some((sx as f64, sy as f64))
         } else {
             tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y))
@@ -7449,7 +7453,8 @@ impl Tool for ClickTool {
         let (xi, yi) = (x as i32, y as i32);
         let pixel_screen_point =
             glide_target.map(|(sx, sy)| (sx.round() as i32, sy.round() as i32));
-        let (output_x, output_y) = wayland_output_point.unwrap_or((xi, yi));
+        let aimed = wayland_output_point.unwrap_or_else(|| (xi, yi).into());
+        let (output_x, output_y) = aimed.point;
         if hyprland_foreground(delivery) {
             if !modifiers.is_empty() {
                 return foreground_hyprland_refusal("modified clicks are unsupported");
@@ -7539,7 +7544,7 @@ impl Tool for ClickTool {
                 // (foreign-toplevel `activate`), then drive `count` virtual-pointer
                 // button events. Wayland injection routes to the compositor focus.
                 crate::interaction::with_target_foreground(pid, xid, crate::interaction::RestoreMode::RestorePrevious, || {
-                    crate::wayland::click_focused(output_x, output_y, count as u32, button)
+                    crate::wayland::click_focused(aimed, count as u32, button)
                 })?;
                 return Ok(("wayland_activate", None, None, None));
             }
@@ -10828,12 +10833,12 @@ impl Tool for DoubleClickTool {
                                     .map(|()| PointerRoute::Wayland);
                             }
                             if crate::wayland::wayland_input_enabled() {
-                                let (output_x, output_y) = wayland_point.unwrap_or((lxi, lyi));
+                                let aimed = wayland_point.unwrap_or_else(|| (lxi, lyi).into());
                                 return crate::interaction::with_target_foreground(
                                     pid,
                                     xid,
                                     crate::interaction::pointer_gesture_restore(),
-                                    || crate::wayland::click(xid, output_x, output_y, 2, 1),
+                                    || crate::wayland::click(xid, aimed, 2, 1),
                                 )
                                 .map(|()| PointerRoute::Wayland);
                             }
@@ -10930,7 +10935,10 @@ impl Tool for DoubleClickTool {
         } else {
             None
         };
-        let glide_target = if let Some((sx, sy)) = wayland_output_point {
+        let glide_target = if let Some(AimedPoint {
+            point: (sx, sy), ..
+        }) = wayland_output_point
+        {
             Some((sx as f64, sy as f64))
         } else {
             tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y))
@@ -10952,12 +10960,12 @@ impl Tool for DoubleClickTool {
                         .map(|()| PointerRoute::Wayland);
                 }
                 if crate::wayland::wayland_input_enabled() {
-                    let (output_x, output_y) = wayland_output_point.unwrap_or((xi, yi));
+                    let aimed = wayland_output_point.unwrap_or_else(|| (xi, yi).into());
                     return crate::interaction::with_target_foreground(
                         pid,
                         xid,
                         crate::interaction::pointer_gesture_restore(),
-                        || crate::wayland::click(xid, output_x, output_y, 2, 1),
+                        || crate::wayland::click(xid, aimed, 2, 1),
                     )
                     .map(|()| PointerRoute::Wayland);
                 }
@@ -11143,8 +11151,8 @@ impl Tool for RightClickTool {
                                     .map(|()| PointerRoute::Wayland);
                             }
                             if crate::wayland::wayland_input_enabled() {
-                                let (output_x, output_y) = wayland_point.unwrap_or((lxi, lyi));
-                                return crate::wayland::click(xid, output_x, output_y, 1, 3)
+                                let aimed = wayland_point.unwrap_or_else(|| (lxi, lyi).into());
+                                return crate::wayland::click(xid, aimed, 1, 3)
                                     .map(|()| PointerRoute::Wayland);
                             }
                             if delivery.is_foreground() {
@@ -11240,7 +11248,10 @@ impl Tool for RightClickTool {
         } else {
             None
         };
-        let glide_target = if let Some((sx, sy)) = wayland_output_point {
+        let glide_target = if let Some(AimedPoint {
+            point: (sx, sy), ..
+        }) = wayland_output_point
+        {
             Some((sx as f64, sy as f64))
         } else {
             tokio::task::spawn_blocking(move || window_local_to_screen(xid, x, y))
@@ -11262,9 +11273,8 @@ impl Tool for RightClickTool {
                         .map(|()| PointerRoute::Wayland);
                 }
                 if crate::wayland::wayland_input_enabled() {
-                    let (output_x, output_y) = wayland_output_point.unwrap_or((xi, yi));
-                    return crate::wayland::click(xid, output_x, output_y, 1, 3)
-                        .map(|()| PointerRoute::Wayland);
+                    let aimed = wayland_output_point.unwrap_or_else(|| (xi, yi).into());
+                    return crate::wayland::click(xid, aimed, 1, 3).map(|()| PointerRoute::Wayland);
                 }
                 if delivery.is_foreground() {
                     return crate::interaction::with_x11_foreground(
@@ -11612,7 +11622,7 @@ impl Tool for DragTool {
                     to_x.round() as i32,
                     to_y.round() as i32,
                 )
-                .map(|to| (from, to))
+                .map(|to| (from.point, to.point))
             });
             let (from, to) = match points {
                 Ok(points) => points,
@@ -11682,7 +11692,7 @@ impl Tool for DragTool {
                     to_x.round() as i32,
                     to_y.round() as i32,
                 )
-                .map(|to| (from, to))
+                .map(|to| (from.point, to.point))
             });
             let (from, to) = match points {
                 Ok(points) => points,
@@ -11752,7 +11762,7 @@ impl Tool for DragTool {
             Err(error) => return input_error_result(error),
         };
         let screen_from = if let Some((from, _)) = wayland_points {
-            Some((from.0 as f64, from.1 as f64))
+            Some((from.point.0 as f64, from.point.1 as f64))
         } else {
             tokio::task::spawn_blocking(move || window_local_to_screen(xid, from_x, from_y))
                 .await
@@ -11779,10 +11789,12 @@ impl Tool for DragTool {
         if crate::wayland::wayland_input_enabled() {
             let steps_u32 = steps as u32;
             let inject = crate::wayland::is_inject_mode();
-            let ((fxi, fyi), (txi, tyi)) = wayland_points.unwrap_or((
-                (from_x.round() as i32, from_y.round() as i32),
-                (to_x.round() as i32, to_y.round() as i32),
-            ));
+            let (from_aimed, to_aimed) = wayland_points.unwrap_or_else(|| {
+                (
+                    (from_x.round() as i32, from_y.round() as i32).into(),
+                    (to_x.round() as i32, to_y.round() as i32).into(),
+                )
+            });
             let drag_result = spawn_blocking_bounded(
                 "drag",
                 foreground_budget(steps) + std::time::Duration::from_millis(duration_ms),
@@ -11804,8 +11816,8 @@ impl Tool for DragTool {
                         || {
                             crate::wayland::drag(
                                 xid,
-                                (fxi, fyi),
-                                (txi, tyi),
+                                from_aimed,
+                                to_aimed,
                                 steps_u32,
                                 duration_ms,
                                 button,
@@ -11814,11 +11826,8 @@ impl Tool for DragTool {
                     )
                 },
             );
-            let ((from_output_x, from_output_y), (to_output_x, to_output_y)) = wayland_points
-                .unwrap_or((
-                    (from_x.round() as i32, from_y.round() as i32),
-                    (to_x.round() as i32, to_y.round() as i32),
-                ));
+            let ((from_output_x, from_output_y), (to_output_x, to_output_y)) =
+                (from_aimed.point, to_aimed.point);
             let visual_drag = track_overlay_drag_for(
                 cursor_id.clone(),
                 (f64::from(from_output_x), f64::from(from_output_y)),
@@ -12237,7 +12246,7 @@ impl Tool for MouseButtonDownTool {
         // the existing input::send_button_down behaviour.
         let result = if is_wl {
             let cid = cursor_id.clone();
-            let (output_x, output_y) = match persistent_pointer_coordinates(
+            let aimed = match persistent_pointer_coordinates(
                 is_wl,
                 xid,
                 xi,
@@ -12256,16 +12265,9 @@ impl Tool for MouseButtonDownTool {
                 y,
             };
             spawn_blocking_bounded("mouse_button_down", foreground_budget(0), move || {
-                crate::wayland::persistent_vptr::press(
-                    &cid,
-                    xid,
-                    output_x,
-                    output_y,
-                    button,
-                    || {
-                        state.mouse_hold.lock().unwrap().insert(cid.clone(), hold);
-                    },
-                )
+                crate::wayland::persistent_vptr::press(&cid, xid, aimed, button, || {
+                    state.mouse_hold.lock().unwrap().insert(cid.clone(), hold);
+                })
             })
             .await
         } else {
@@ -12483,7 +12485,10 @@ impl Tool for MouseDragTool {
                     iy.round() as i32,
                     crate::wayland::window_local_to_output,
                 ) {
-                    Ok((output_x, output_y)) => {
+                    Ok(AimedPoint {
+                        point: (output_x, output_y),
+                        ..
+                    }) => {
                         spawn_blocking_bounded("mouse_drag", foreground_budget(0), move || {
                             crate::wayland::persistent_vptr::move_to(&cid_inner, output_x, output_y)
                         })

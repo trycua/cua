@@ -364,7 +364,7 @@ mod tests {
         assert!(refusal_suggestion(&tiled.to_string())
             .unwrap()
             .starts_with("Take a new screenshot"));
-        let edge = desktop_admission(&tiled_scene(Some(5)), &[(10, 100)]).unwrap_err();
+        let edge = desktop_admission(&tiled_scene(Some(5)), &[(10, 100).into()]).unwrap_err();
         assert!(refusal_suggestion(&edge.to_string()).is_some());
         // A refusal that is not niri's keeps the generic suggestion.
         assert_eq!(

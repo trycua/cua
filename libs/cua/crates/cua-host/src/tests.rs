@@ -1672,8 +1672,8 @@ async fn a_pause_keeps_the_owners_choice_and_skips_direct_mode() {
     assert!(g.manager.calls.lock().unwrap().is_empty());
 }
 
-/// The mesh stays off on a hosted machine unless asked for: a setup without
-/// `CUA_MESH` installs the same service as before, and an explicit
+/// A setup without `CUA_MESH` installs the same service as before (the
+/// service defaults to prefer), and an explicit
 /// `CUA_MESH` at setup reaches the service.
 #[test]
 fn the_service_gets_cua_mesh_only_when_setup_was_given_it() {

@@ -27,6 +27,8 @@ pub enum HostCmd {
   # Add this computer with a one-time code from the Cua Spaces app
   # (Add a computer) or `cua host pair`: no sign-in needed here
   cua host setup --pair K7QM-4XPB-2RHD
+  # Keep this computer off the end-to-end encrypted mesh (relay HTTPS only):
+  # run setup with CUA_MESH=off in the environment
   # Self-hosting teams: cua help advanced")]
     Setup {
         /// Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production).

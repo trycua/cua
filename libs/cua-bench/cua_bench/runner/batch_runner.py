@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import time
 import traceback
@@ -57,9 +58,11 @@ DEFAULT_VARIANT_TIMEOUT_S = 10_800.0
 
 def _env_float(name: str, default: float) -> float:
     try:
-        return float(os.environ.get(name, "") or default)
+        value = float(os.environ.get(name, "") or default)
     except ValueError:
         return default
+    # A non-finite budget would never fire (nan) or crash call_at (inf).
+    return value if math.isfinite(value) else default
 
 
 def _default_variant_timeout_s() -> float:
@@ -212,8 +215,8 @@ class BatchRunner:
             self.variant_timeout_s = _default_variant_timeout_s()
         else:
             self.variant_timeout_s = float(variant_timeout_s)
-            if self.variant_timeout_s < 0:
-                raise ValueError("variant_timeout_s must be 0 or more")
+            if not math.isfinite(self.variant_timeout_s) or self.variant_timeout_s < 0:
+                raise ValueError("variant_timeout_s must be a finite number, 0 or more")
         self.opts = opts
         self.reporter = reporter or NullReporter()
         self.on_status = on_status

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import textwrap
 from types import SimpleNamespace
 
@@ -196,3 +197,129 @@ def test_a_negative_or_nonfinite_variant_timeout_is_rejected(task_dir, tmp_path,
     )
     with pytest.raises(ValueError, match="variant-timeout"):
         run_cmd.build_jobs(args, "r1", tmp_path / "out", Target(on="local"), "dataset")
+
+
+@pytest.mark.parametrize("bad", [-1, float("nan"), float("inf")])
+def test_batch_runner_rejects_a_negative_or_nonfinite_variant_timeout(bad):
+    """The programmatic API gates the same values the CLI rejects."""
+    with pytest.raises(ValueError, match="variant_timeout_s"):
+        BatchRunner(
+            Target(on="local"), AgentOptions(oracle=True), variant_timeout_s=bad
+        )
+
+
+def test_a_nonfinite_harness_budget_falls_back_to_the_default(monkeypatch):
+    """``call_at(inf)`` crashes the event loop and nan never fires, so a
+    non-finite env budget cannot reach the deadline."""
+    from cua_bench.runner.batch_runner import (
+        DEFAULT_VARIANT_TIMEOUT_S,
+        _default_variant_timeout_s,
+    )
+
+    monkeypatch.setenv("CUA_BENCH_HARNESS_TIMEOUT", "inf")
+    assert _default_variant_timeout_s() == DEFAULT_VARIANT_TIMEOUT_S
+    monkeypatch.setenv("CUA_BENCH_HARNESS_TIMEOUT", "7200")
+    assert _default_variant_timeout_s() == 7200 + 5400
+
+
+# ── Bounded sandbox release ──────────────────────────────────────────────
+
+
+def _wedged_sdk(monkeypatch, aexit_seen):
+    """An SDK whose ephemeral sandbox hangs inside ``__aexit__`` forever."""
+
+    class WedgedRelease:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *exc_info):
+            aexit_seen.append(exc_info)
+            await asyncio.Event().wait()
+            return None
+
+    class Sandbox:
+        @classmethod
+        def ephemeral(cls, image=None, **kwargs):
+            return WedgedRelease()
+
+    monkeypatch.setattr(sandboxes, "_sdk", lambda: (fakes.FakeImage, Sandbox))
+
+
+async def test_a_wedged_sandbox_release_is_bounded(monkeypatch, tmp_path, caplog):
+    """A release that never returns cannot re-stall the batch a frame later:
+    the bound lets the batch proceed and warns the sandbox may leak."""
+    aexit_seen: list[tuple] = []
+    _wedged_sdk(monkeypatch, aexit_seen)
+    monkeypatch.setattr(sandboxes, "TIME_TO_RELEASE_S", 0.05)
+    progress = []
+    spec = EnvSpec(provider="native", os_type="linux", kind="container", image=IMG)
+
+    async def use():
+        async with sandboxes.open_sandbox(
+            spec, Target(on="local"), on_progress=progress.append
+        ):
+            pass
+
+    with caplog.at_level(logging.WARNING, sandboxes.logger.name):
+        await asyncio.wait_for(use(), timeout=10)
+    assert aexit_seen == [(None, None, None)]
+    assert "may leak" in caplog.text
+    assert not any("released" in getattr(p, "message", "") for p in progress)
+
+
+async def test_a_release_that_fails_on_its_own_is_not_swallowed(monkeypatch, tmp_path):
+    """Only our deadline is swallowed: a TimeoutError ``__aexit__`` raises
+    itself still propagates (the ``expired()`` discrimination)."""
+
+    class TimeoutExit:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *exc_info):
+            raise TimeoutError("sdk-internal release timeout")
+
+    class Sandbox:
+        @classmethod
+        def ephemeral(cls, image=None, **kwargs):
+            return TimeoutExit()
+
+    monkeypatch.setattr(sandboxes, "_sdk", lambda: (fakes.FakeImage, Sandbox))
+    monkeypatch.setattr(sandboxes, "TIME_TO_RELEASE_S", 30)
+    spec = EnvSpec(provider="native", os_type="linux", kind="container", image=IMG)
+    with pytest.raises(TimeoutError, match="sdk-internal"):
+        async with sandboxes.open_sandbox(spec, Target(on="local")):
+            pass
+
+
+async def test_aexit_gets_the_real_in_flight_exception(monkeypatch, tmp_path):
+    """``__aexit__`` sees the body's exception, not the caller's: a handled
+    error outside the block used to leak in through ``sys.exc_info()``."""
+    seen: list[tuple] = []
+
+    class Recorder:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *exc_info):
+            seen.append(exc_info)
+            return None
+
+    class Sandbox:
+        @classmethod
+        def ephemeral(cls, image=None, **kwargs):
+            return Recorder()
+
+    monkeypatch.setattr(sandboxes, "_sdk", lambda: (fakes.FakeImage, Sandbox))
+    spec = EnvSpec(provider="native", os_type="linux", kind="container", image=IMG)
+
+    try:
+        raise KeyError("caller-context")
+    except KeyError:
+        async with sandboxes.open_sandbox(spec, Target(on="local")):
+            pass
+    assert seen == [(None, None, None)]
+
+    with pytest.raises(ValueError, match="body"):
+        async with sandboxes.open_sandbox(spec, Target(on="local")):
+            raise ValueError("body")
+    assert seen[-1][0] is ValueError

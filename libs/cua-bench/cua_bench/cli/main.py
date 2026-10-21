@@ -187,8 +187,9 @@ def build_parser() -> argparse.ArgumentParser:
             metavar="SECONDS",
             help="Time bound on one variant's setup, agent and evaluation "
             "(not sandbox start): a variant past it is cancelled the way "
-            f"Ctrl-C cancels it and recorded failed (default: {DEFAULT_VARIANT_TIMEOUT_S:g}; "
-            "0 = no limit)",
+            "Ctrl-C cancels it and recorded failed (default: at least "
+            f"{DEFAULT_VARIANT_TIMEOUT_S:g}, higher with a larger "
+            "CUA_BENCH_HARNESS_TIMEOUT; 0 = no limit)",
         )
         parser.add_argument(
             "--dry-run",

@@ -26,7 +26,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-import sys
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Optional
@@ -186,20 +185,31 @@ async def open_sandbox(
     sb = await ephemeral.__aenter__()
     try:
         yield sb
-    finally:
-        # A wedged release must not re-stall the batch a frame later.
-        try:
-            async with asyncio.timeout(TIME_TO_RELEASE_S) as deadline:
-                await ephemeral.__aexit__(*sys.exc_info())
-        except TimeoutError:
-            if not deadline.expired():
-                raise
-            logger.warning(
-                "sandbox release did not finish within %ss; the sandbox may leak",
-                TIME_TO_RELEASE_S,
-            )
-    if on_progress is not None:
-        on_progress(Progress(stage="release", message="sandbox released"))
+    except BaseException as exc:
+        await _release(ephemeral, type(exc), exc, exc.__traceback__)
+        raise
+    else:
+        released = await _release(ephemeral, None, None, None)
+        if released and on_progress is not None:
+            on_progress(Progress(stage="release", message="sandbox released"))
+
+
+async def _release(ephemeral: Any, *exc_info: Any) -> bool:
+    """Exit ``ephemeral`` under the release bound. A wedged release logs a
+    warning and returns False so the batch proceeds (the sandbox may leak);
+    any other failure propagates."""
+    try:
+        async with asyncio.timeout(TIME_TO_RELEASE_S) as deadline:
+            await ephemeral.__aexit__(*exc_info)
+    except TimeoutError:
+        if not deadline.expired():
+            raise
+        logger.warning(
+            "sandbox release did not finish within %ss; the sandbox may leak",
+            TIME_TO_RELEASE_S,
+        )
+        return False
+    return True
 
 
 # ── Errors worth explaining ────────────────────────────────────────────────

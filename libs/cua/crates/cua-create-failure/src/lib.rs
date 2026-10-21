@@ -38,6 +38,12 @@ pub fn create_failure_kind<'v>(
     let phase = phase.trim();
     let variant = variant.trim();
     let flat = flatten(variant);
+    // Cua Cloud has ended: every cloud create is refused, whatever the error
+    // case that carries it (`Unsupported`, `CloudEnded`). Its own word keeps a
+    // known refusal out of the failures that need a fix.
+    if flat == "cloudended" || message.to_ascii_lowercase().contains("cua cloud has ended") {
+        return "cloud_ended";
+    }
     match flat.as_str() {
         "cloudcreditexhausted" | "creditexhausted" | "limitexceeded" => return "quota_exceeded",
         // A specific case from the caller stays; a timeout is refined by
@@ -404,7 +410,10 @@ mod tests {
 
     #[test]
     fn every_cause_word_is_in_the_telemetry_schema() {
-        for k in TEXT_KINDS.iter().chain(&["quota_exceeded", "other"]) {
+        for k in TEXT_KINDS
+            .iter()
+            .chain(&["quota_exceeded", "cloud_ended", "other"])
+        {
             assert!(
                 cua_telemetry::schema::ERROR_KINDS.contains(k),
                 "{k} missing from ERROR_KINDS"
@@ -536,6 +545,28 @@ mod tests {
             "quota_exceeded"
         );
         assert_eq!(kind("", "", "cloud_credit_exhausted"), "quota_exceeded");
+    }
+
+    /// Cua Cloud ended: a cloud create is refused with its own word, not the
+    /// generic `unsupported` that hid a known refusal among real failures.
+    #[test]
+    fn a_cloud_create_after_the_end_of_cua_cloud_is_cloud_ended() {
+        let msg = "unsupported: Cua Cloud has ended; use a local sandbox or your own computer. \
+                   See https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended";
+        assert_eq!(
+            create_failure_kind(msg, "", "Unsupported", false),
+            "cloud_ended"
+        );
+        assert_eq!(create_failure_kind(msg, "", "", false), "cloud_ended");
+        assert_eq!(
+            create_failure_kind("", "", "CloudEnded", false),
+            "cloud_ended"
+        );
+        // Other unsupported errors keep their case.
+        assert_eq!(
+            create_failure_kind("no such feature", "", "Unsupported", true),
+            "Unsupported"
+        );
     }
 
     #[test]

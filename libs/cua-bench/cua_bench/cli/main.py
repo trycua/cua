@@ -5,7 +5,6 @@ import atexit
 import sys
 from importlib import metadata as _metadata
 
-from .commands._help import examples
 from .commands import (
     agent,
     dataset,
@@ -19,6 +18,7 @@ from .commands import (
     task,
     trace,
 )
+from .commands._help import examples
 
 # Telemetry imports
 try:
@@ -176,6 +176,17 @@ def build_parser() -> argparse.ArgumentParser:
             default=0,
             help="Retry a variant that failed before evaluation (sandbox start, connection) "
             "up to this many times, with backoff (default: 0)",
+        )
+        parser.add_argument(
+            "--variant-timeout",
+            dest="variant_timeout",
+            type=float,
+            default=None,
+            metavar="SECONDS",
+            help="Time bound on one variant's setup, agent and evaluation "
+            "(not sandbox start): a variant past it is cancelled the way "
+            "Ctrl-C cancels it and recorded failed (default: 3600; "
+            "0 = no limit)",
         )
         parser.add_argument(
             "--dry-run",

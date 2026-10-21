@@ -1637,6 +1637,21 @@
               "type": "int"
             },
             {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "variant_timeout",
+              "hidden": false,
+              "metavar": "SECONDS",
+              "nargs": null,
+              "options": [
+                "--variant-timeout"
+              ],
+              "required": false,
+              "type": "float"
+            },
+            {
               "action": "_StoreTrueAction",
               "choices": null,
               "const": true,
@@ -2181,6 +2196,21 @@
               ],
               "required": false,
               "type": "int"
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "variant_timeout",
+              "hidden": false,
+              "metavar": "SECONDS",
+              "nargs": null,
+              "options": [
+                "--variant-timeout"
+              ],
+              "required": false,
+              "type": "float"
             },
             {
               "action": "_StoreTrueAction",

@@ -14,7 +14,7 @@ import asyncio
 import json
 import time
 import traceback
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional, Protocol
@@ -44,6 +44,11 @@ class Job:
 #: Version of the ``result.json`` / ``summary.json`` layout. New keys are
 #: additive only; a rename or removal bumps it.
 RESULT_SCHEMA_VERSION = 2
+
+#: Default bound on one variant's setup, agent and evaluation (``0`` runs
+#: unbounded). Above the 1800 s ``CUA_BENCH_HARNESS_TIMEOUT`` a harness
+#: agent gets per task, which the deadline must not cut off.
+DEFAULT_VARIANT_TIMEOUT_S = 3600.0
 
 
 @dataclass
@@ -182,10 +187,16 @@ class BatchRunner:
         attach: Callable[[Any, EnvSpec], Any] = _attach_session,
         retries: int = 0,
         retry_backoff_s: float = 2.0,
+        variant_timeout_s: Optional[float] = None,
     ) -> None:
         self.target = target
         self.retries = max(0, int(retries))
         self.retry_backoff_s = retry_backoff_s
+        self.variant_timeout_s = (
+            DEFAULT_VARIANT_TIMEOUT_S
+            if variant_timeout_s is None
+            else max(0.0, float(variant_timeout_s))
+        )
         self.opts = opts
         self.reporter = reporter or NullReporter()
         self.on_status = on_status
@@ -272,6 +283,12 @@ class BatchRunner:
         job.output_dir.mkdir(parents=True, exist_ok=True)
         self._status(job, "starting")
 
+        #: Bound on setup, agent and evaluation (not sandbox start, which
+        #: ``--retries`` covers). ``0`` runs unbounded.
+        deadline = (
+            asyncio.timeout(self.variant_timeout_s) if self.variant_timeout_s > 0 else nullcontext()
+        )
+
         opener, attach = self._opener, self._attach
         if not spec.needs_sandbox:
             opener, attach = _no_sandbox, _dataset_session
@@ -301,9 +318,10 @@ class BatchRunner:
                     )
                     session = attach(sandbox, spec)
                     try:
-                        episode = await run_episode(
-                            env, job.variant, self.opts, job.output_dir, session=session
-                        )
+                        async with deadline:
+                            episode = await run_episode(
+                                env, job.variant, self.opts, job.output_dir, session=session
+                            )
                     finally:
                         await session.close()
                 result.reward = episode.reward
@@ -322,9 +340,15 @@ class BatchRunner:
                 self._finish(job, result, started)
                 raise
             except Exception as error:  # noqa: BLE001 - one variant never stops the batch
-                result.error = explain_error(error, spec, target)
+                expired = getattr(deadline, "expired", lambda: False)
+                if isinstance(error, TimeoutError) and expired():
+                    result.error = f"variant timed out after {self.variant_timeout_s:g} s"
+                    # A hung variant is not an infrastructure failure: no retry.
+                    result._retryable = False  # type: ignore[attr-defined]
+                else:
+                    result.error = explain_error(error, spec, target)
+                    result._retryable = not isinstance(error, TargetError)  # type: ignore[attr-defined]
                 result._error_obj = error  # type: ignore[attr-defined]
-                result._retryable = not isinstance(error, TargetError)  # type: ignore[attr-defined]
                 traceback.print_exc()
                 print(f"\n✗ Task failed: {result.error}")
         self._finish(job, result, started)

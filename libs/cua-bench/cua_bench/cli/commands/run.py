@@ -298,6 +298,8 @@ def build_jobs(
         raise ValueError("--attempts must be at least 1")
     if int(getattr(args, "retries", 0) or 0) < 0:
         raise ValueError("--retries must be 0 or more")
+    if float(getattr(args, "variant_timeout", 0) or 0) < 0:
+        raise ValueError("--variant-timeout must be 0 or more")
     jobs = []
     for task_path, variant, cfg in selected:
         spec = resolve_env_spec(
@@ -446,14 +448,18 @@ def _cmd_execute(args, kind: str) -> int:
     try:
         results = asyncio.run(
             _run_batch(
-                target, opts, jobs, reporter, run_id, retries=getattr(args, "retries", 0) or 0
+                target,
+                opts,
+                jobs,
+                reporter,
+                run_id,
+                retries=getattr(args, "retries", 0) or 0,
+                variant_timeout_s=getattr(args, "variant_timeout", None),
             )
         )
     except KeyboardInterrupt:
         _track_run_completed(taskset, None, len(jobs), "cancelled")
-        print(
-            f"\n{YELLOW}Interrupted: sandboxes released.{RESET}"
-        )
+        print(f"\n{YELLOW}Interrupted: sandboxes released.{RESET}")
         return 130
     except BaseException:
         _track_run_completed(taskset, None, len(jobs), "error")
@@ -540,7 +546,9 @@ def _results_housekeeping(args, output_dir: Path) -> None:
         print(f"{YELLOW}{warning}{RESET}")
 
 
-async def _run_batch(target, opts, jobs, reporter, run_id, retries: int = 0):
+async def _run_batch(
+    target, opts, jobs, reporter, run_id, retries: int = 0, variant_timeout_s=None
+):
     from cua_bench.runner import BatchRunner
     from cua_bench.runner.output import routed_stdio
     from cua_bench.sessions import manager
@@ -560,7 +568,14 @@ async def _run_batch(target, opts, jobs, reporter, run_id, retries: int = 0):
 
     with routed_stdio() as console:
         reporter.stream = console
-        runner = BatchRunner(target, opts, reporter=reporter, on_status=on_status, retries=retries)
+        runner = BatchRunner(
+            target,
+            opts,
+            reporter=reporter,
+            on_status=on_status,
+            retries=retries,
+            variant_timeout_s=variant_timeout_s,
+        )
         try:
             return await runner.run(jobs)
         except asyncio.CancelledError:
@@ -580,8 +595,7 @@ def _summarize(results, output_dir: Path, kind: str, args) -> int:
     from cua_bench.runner.batch_runner import RESULT_SCHEMA_VERSION
 
     targets: Counter = Counter(
-        (r.on, r.kind, r.runtime, r.image_variant, r.image_digest or r.image_ref)
-        for r in results
+        (r.on, r.kind, r.runtime, r.image_variant, r.image_digest or r.image_ref) for r in results
     )
     summary = {
         "schema_version": RESULT_SCHEMA_VERSION,
@@ -624,9 +638,7 @@ def _summarize(results, output_dir: Path, kind: str, args) -> int:
                 "image": img,
                 "count": n,
             }
-            for (on, kind, rt, var, img), n in sorted(
-                targets.items(), key=lambda kv: str(kv[0])
-            )
+            for (on, kind, rt, var, img), n in sorted(targets.items(), key=lambda kv: str(kv[0]))
         ],
     }
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2))
@@ -721,7 +733,10 @@ def _rows(sessions: list[dict]) -> list[dict]:
                 "session_id": session.get("session_id", "?"),
                 "environment": Path(session.get("env_path", "?")).name,
                 "variant": str(session.get("task_index", 0)),
-                "on": session.get("location") or session.get("on") or session.get("provider") or "-",
+                "on": session.get("location")
+                or session.get("on")
+                or session.get("provider")
+                or "-",
                 "status": info["status"],
                 "reward": info["reward"],
                 "output_dir": session.get("output_dir"),

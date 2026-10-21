@@ -273,7 +273,7 @@ fn wait_timeout(mut child: std::process::Child, timeout: Duration) -> Option<Str
         stdout.read_to_end(&mut bytes).ok()?;
         String::from_utf8(bytes).ok()
     });
-    let deadline = std::time::Instant::now() + timeout;
+    let deadline = crate::interaction::operation_deadline(timeout);
     loop {
         match child.try_wait() {
             Ok(Some(status)) if status.success() => return reader.join().ok().flatten(),
@@ -284,7 +284,7 @@ fn wait_timeout(mut child: std::process::Child, timeout: Duration) -> Option<Str
                 let _ = reader.join();
                 return None;
             }
-            Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+            Ok(None) => crate::interaction::pause(Duration::from_millis(10)),
         }
     }
 }

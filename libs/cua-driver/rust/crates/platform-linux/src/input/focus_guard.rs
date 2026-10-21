@@ -45,11 +45,6 @@ const SETTLE_WATCH: Duration = Duration::from_millis(220);
 /// its own and there is nothing to wait for.
 const SETTLE_WATCH_NEW_WINDOW: Duration = Duration::from_millis(900);
 const SETTLE_POLL: Duration = Duration::from_millis(30);
-/// Bound on the restore loop: re-activation, verification, one re-send.
-// Together with the extended settle watch this bounds the guard at
-// ~1.5 s worst case (menubar clicks were spending 4-9 s here while a popup's
-// keyboard grab kept every re-activation from sticking).
-const RESTORE_BUDGET: Duration = Duration::from_millis(600);
 const RESTORE_POLL: Duration = Duration::from_millis(50);
 /// Consecutive stable polls before the restore is called done.
 const STABLE_POLLS: u32 = 3;
@@ -593,8 +588,9 @@ impl FocusSnapshot {
         // another application, since the WM focuses it only once mapped and
         // that steal must be undone; when the target app already owns the
         // focus the new window is its own and the watch ends at once.
+        let action_deadline = crate::interaction::operation_deadline(SETTLE_WATCH_NEW_WINDOW);
         let mut watch_until = if settle_watch {
-            started + SETTLE_WATCH
+            (started + SETTLE_WATCH).min(action_deadline)
         } else {
             started
         };
@@ -604,16 +600,18 @@ impl FocusSnapshot {
         let mut own_window = self.own_new_window(&x, target_pid, &new_clients);
         if !settle_watch && !new_clients.is_empty() && own_window.is_none() {
             extended = true;
-            watch_until = started + SETTLE_WATCH_NEW_WINDOW;
+            watch_until = (started + SETTLE_WATCH_NEW_WINDOW).min(action_deadline);
         }
         while changes.is_empty() && own_window.is_none() && Instant::now() < watch_until {
-            std::thread::sleep(SETTLE_POLL);
+            std::thread::sleep(
+                SETTLE_POLL.min(watch_until.saturating_duration_since(Instant::now())),
+            );
             changes = self.diff(&x);
             new_clients = self.new_clients(&x);
             own_window = self.own_new_window(&x, target_pid, &new_clients);
             if !extended && !new_clients.is_empty() && own_window.is_none() {
                 extended = true;
-                watch_until = started + SETTLE_WATCH_NEW_WINDOW;
+                watch_until = (started + SETTLE_WATCH_NEW_WINDOW).min(action_deadline);
             }
         }
 
@@ -692,10 +690,12 @@ impl FocusSnapshot {
         // treat _NET_ACTIVE_WINDOW as raise-only and the no-WM case.
         let mut stable = 0;
         let mut resent = 0;
-        let deadline = started + RESTORE_BUDGET;
+        let deadline = Instant::now() + crate::interaction::CLEANUP_CAP;
         self.reassert(&x);
         while Instant::now() < deadline {
-            std::thread::sleep(RESTORE_POLL);
+            std::thread::sleep(
+                RESTORE_POLL.min(deadline.saturating_duration_since(Instant::now())),
+            );
             let now = self.diff(&x);
             if now.is_empty() {
                 stable += 1;
@@ -977,6 +977,9 @@ mod grab_tests {
 
     #[test]
     fn restore_and_settle_budgets_bound_the_guard_under_1500ms() {
-        assert!(SETTLE_WATCH_NEW_WINDOW + RESTORE_BUDGET <= Duration::from_millis(1500));
+        assert!(
+            SETTLE_WATCH_NEW_WINDOW + crate::interaction::CLEANUP_CAP
+                <= Duration::from_millis(1500)
+        );
     }
 }

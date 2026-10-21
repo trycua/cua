@@ -916,7 +916,10 @@ impl SessionClient {
                     }
                     return Ok(slot);
                 }
-                Err(TryLockError::WouldBlock) => std::thread::sleep(CANCELLATION_POLL),
+                Err(TryLockError::WouldBlock) => {
+                    crate::input::action::admit(|| ())?;
+                    crate::interaction::pause(CANCELLATION_POLL);
+                }
                 Err(TryLockError::Poisoned(_)) => bail!("input connection poisoned"),
             }
         }

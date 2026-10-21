@@ -859,7 +859,7 @@ fn wait_for_slave_id(
     use_: i32,
     timeout: Duration,
 ) -> Result<i32> {
-    let deadline = std::time::Instant::now() + timeout;
+    let deadline = crate::interaction::operation_deadline(timeout);
     loop {
         for (device_id, seen_use, seen_name) in xi2_query_devices(display)? {
             if seen_use == use_ && seen_name == device_name {
@@ -869,7 +869,7 @@ fn wait_for_slave_id(
         if std::time::Instant::now() >= deadline {
             bail!("timed out waiting for X input slave device '{device_name}'");
         }
-        sleep(Duration::from_millis(50));
+        crate::interaction::pause(Duration::from_millis(50));
     }
 }
 

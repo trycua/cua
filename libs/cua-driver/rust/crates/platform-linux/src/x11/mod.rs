@@ -265,6 +265,7 @@ pub fn set_window_frame(
 
     let requested = (x, y, width, height);
     let mut observed = None;
+    let deadline = crate::interaction::operation_deadline(std::time::Duration::from_millis(320));
     for _ in 0..8 {
         observed = list_windows(Some(pid))
             .into_iter()
@@ -275,7 +276,13 @@ pub fn set_window_frame(
         {
             break;
         }
-        std::thread::sleep(std::time::Duration::from_millis(40));
+        if std::time::Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(
+            std::time::Duration::from_millis(40)
+                .min(deadline.saturating_duration_since(std::time::Instant::now())),
+        );
     }
     let confirmed = observed
         .as_ref()

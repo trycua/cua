@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -17,6 +18,21 @@ _RUN_ID_RE = re.compile(r"Run ID:\s+([a-f0-9-]{8,})")
 #: ``cb run``: SIGTERM cancels the batch so running variants release their
 #: sandboxes, then the process is killed if it still has not exited.
 _TERM_GRACE_S = 60.0
+
+#: Bound on the last ``communicate`` after the process group is killed: a
+#: descendant holding cb's pipes open would otherwise wait forever.
+_KILL_GRACE_S = 10.0
+
+
+def _kill_process_group(proc: subprocess.Popen) -> None:
+    """SIGKILL cb's whole process group (POSIX); the process alone elsewhere."""
+    if hasattr(os, "killpg"):
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    else:
+        proc.kill()
 
 
 def _get_run_output_dir(run_id: str) -> Path:
@@ -77,7 +93,17 @@ def _run_single_rollout(
         cmd += ["--variant-timeout", str(variant_timeout)]
 
     print(f"[rollout] Launching: {' '.join(cmd)}")
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+    # Its own process group: a wedged cb is killed with the descendants that
+    # may hold its stdout/stderr pipes open.
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+        start_new_session=True,
+    )
+    stdout, stderr = "", ""
     timed_out = False
     try:
         stdout, stderr = proc.communicate(timeout=run_timeout)
@@ -87,12 +113,19 @@ def _run_single_rollout(
             f"[rollout] cb run exceeded {run_timeout}s; stopping it "
             f"(SIGTERM, SIGKILL after {_TERM_GRACE_S:.0f}s)"
         )
+        # SIGTERM to cb alone: its cancel handler releases the sandboxes.
         proc.terminate()
         try:
             stdout, stderr = proc.communicate(timeout=_TERM_GRACE_S)
         except subprocess.TimeoutExpired:
-            proc.kill()
-            stdout, stderr = proc.communicate()
+            _kill_process_group(proc)
+            try:
+                stdout, stderr = proc.communicate(timeout=_KILL_GRACE_S)
+            except subprocess.TimeoutExpired:
+                for stream in (proc.stdout, proc.stderr):
+                    if stream is not None:
+                        stream.close()
+                proc.wait()
 
     combined_output = stdout + stderr
     run_id = _parse_run_id(combined_output)
@@ -102,29 +135,40 @@ def _run_single_rollout(
             "Could not parse run_id from cb output.\n" f"STDOUT:\n{stdout}\n" f"STDERR:\n{stderr}"
         )
 
+    run_dir = _get_run_output_dir(run_id)
+
     if timed_out or proc.returncode != 0:
-        # A stopped or failed cb leaves sessions that can never finish:
-        # keep the run directory so the variants that finished reach the
-        # trainer instead of polling dead sessions until `timeout`.
+        # A stopped or failed cb leaves sessions that can never finish. Keep
+        # the run directory when variants already finished (cb run exits 1
+        # whenever any variant failed, so a non-zero status is routine); a
+        # missing or empty one means cb died before writing anything.
         reason = (
             "timed out and was stopped" if timed_out else f"exited with status {proc.returncode}"
         )
-        print(f"[rollout] cb run {run_id} {reason}; keeping finished variants")
-    else:
-        print(f"[rollout] Run {run_id} launched. Waiting for sessions to complete...")
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            if _all_sessions_terminal(run_id):
-                break
-            time.sleep(poll_interval)
-        else:
-            raise TimeoutError(
-                f"Run {run_id} did not complete within {timeout}s. "
-                "Consider increasing the timeout or checking for stuck containers."
-            )
-        print(f"[rollout] Run {run_id} complete.")
+        if run_dir.is_dir() and any(run_dir.iterdir()):
+            print(f"[rollout] cb run {run_id} {reason}; keeping finished variants")
+            tail = stderr.strip()[-200:]
+            if tail:
+                print(f"[rollout] cb stderr tail: {tail}")
+            return run_id, run_dir
+        raise RuntimeError(
+            f"cb run {run_id} {reason} and left no results in {run_dir}.\n"
+            f"STDERR (tail):\n{stderr.strip()[-500:]}"
+        )
 
-    run_dir = _get_run_output_dir(run_id)
+    print(f"[rollout] Run {run_id} launched. Waiting for sessions to complete...")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if _all_sessions_terminal(run_id):
+            break
+        time.sleep(poll_interval)
+    else:
+        raise TimeoutError(
+            f"Run {run_id} did not complete within {timeout}s. "
+            "Consider increasing the timeout or checking for stuck containers."
+        )
+    print(f"[rollout] Run {run_id} complete.")
+
     if not run_dir.exists():
         raise FileNotFoundError(
             f"Expected run output directory not found: {run_dir}. "

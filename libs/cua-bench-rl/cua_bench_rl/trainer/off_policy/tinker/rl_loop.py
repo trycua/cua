@@ -293,6 +293,20 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Number of rollouts per task per epoch (>= 2 for GRPO)",
     )
     p.add_argument(
+        "--variant-timeout",
+        type=float,
+        default=None,
+        help="Bound on one variant's setup, agent and evaluation; forwarded "
+        "to cb run --variant-timeout (default: cb's own default)",
+    )
+    p.add_argument(
+        "--run-timeout",
+        type=float,
+        default=None,
+        help="Bound on the whole cb run subprocess (SIGTERM, then SIGKILL); "
+        "finished variants are kept (default: wait on cb indefinitely)",
+    )
+    p.add_argument(
         "--offline-run-ids",
         nargs="*",
         default=[],
@@ -330,6 +344,8 @@ if __name__ == "__main__":
         num_rollouts=args.num_rollouts,
         offline_run_ids=args.offline_run_ids,
         resume_from=args.resume_from,
+        variant_timeout=args.variant_timeout,
+        run_timeout=args.run_timeout,
         grpo=GRPOConfig(
             gamma=args.gamma,
             learning_rate=args.lr,

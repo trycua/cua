@@ -40,7 +40,7 @@ def _load_rollout():
 rollout = _load_rollout()
 
 FAKE_CB = """#!/usr/bin/env python3
-import json, os, signal, sys, time
+import json, os, signal, subprocess, sys, time
 
 print("Run ID: deadbeef1234", flush=True)
 argv_file = os.environ.get("FAKE_CB_ARGV_FILE")
@@ -49,9 +49,16 @@ if argv_file:
         json.dump(sys.argv, f)
 mode = os.environ.get("FAKE_CB_MODE", "ok")
 if mode == "fail":
+    print("cb exploded", file=sys.stderr)
     sys.exit(3)
 if mode == "sleep":
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    pid_file = os.environ.get("FAKE_CB_CHILD_PID_FILE")
+    if pid_file:
+        # A grandchild that inherits cb's pipes and outlives cb's own
+        # termination unless the whole process group is killed.
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(300)"])
+        open(pid_file, "w").write(str(child.pid))
     time.sleep(300)
 """
 
@@ -72,7 +79,7 @@ def _fake_cb(tmp_path, monkeypatch, mode="ok"):
 def run_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     path = tmp_path / "cua-bench" / "runs" / RUN_ID
-    path.mkdir(parents=True)
+    (path / "hello_env_v0").mkdir(parents=True)  # one finished variant's results
     return path
 
 
@@ -97,11 +104,55 @@ def test_a_run_timeout_stops_cb_and_keeps_the_run_dir(tmp_path, monkeypatch, run
     )
     started = time.monotonic()
     run_id, out = rollout._run_single_rollout(
-        "tasks/", "agent", "model", 5, run_timeout=0.5, extra_env=extra_env
+        "tasks/", "agent", "model", 5, run_timeout=5, extra_env=extra_env
     )
     assert (run_id, out) == (RUN_ID, run_dir)
     # SIGTERM (ignored) -> SIGKILL after the grace period; no poll, no 300 s wait.
-    assert time.monotonic() - started < 10
+    assert time.monotonic() - started < 30
+
+
+@pytest.mark.skipif(not hasattr(os, "killpg"), reason="process-group kill is POSIX-only")
+def test_a_run_timeout_kills_the_process_group(tmp_path, monkeypatch, run_dir):
+    """A pipe-holding grandchild dies with cb instead of holding EOF open."""
+    pid_file = tmp_path / "child.pid"
+    monkeypatch.setenv("FAKE_CB_CHILD_PID_FILE", str(pid_file))
+    extra_env = _fake_cb(tmp_path, monkeypatch, mode="sleep")
+    monkeypatch.setattr(rollout, "_TERM_GRACE_S", 0.5)
+    monkeypatch.setattr(
+        rollout,
+        "_all_sessions_terminal",
+        lambda rid: pytest.fail("polled a stopped cb"),
+    )
+    started = time.monotonic()
+    run_id, out = rollout._run_single_rollout(
+        "tasks/", "agent", "model", 5, run_timeout=5, extra_env=extra_env
+    )
+    assert (run_id, out) == (RUN_ID, run_dir)
+    assert time.monotonic() - started < 30
+    child_pid = int(pid_file.read_text())
+    deadline = time.monotonic() + 5
+    while True:
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            break
+        if time.monotonic() > deadline:
+            pytest.fail("cb's grandchild survived the process-group kill")
+        time.sleep(0.1)
+
+
+def test_a_failed_cb_with_no_results_raises(tmp_path, monkeypatch):
+    """A hard-crashed cb (no run dir written) fails loudly with its stderr."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    extra_env = _fake_cb(tmp_path, monkeypatch, mode="fail")
+    monkeypatch.setattr(
+        rollout,
+        "_all_sessions_terminal",
+        lambda rid: pytest.fail("polled a stopped cb"),
+    )
+    with pytest.raises(RuntimeError) as excinfo:
+        rollout._run_single_rollout("tasks/", "agent", "model", 5, extra_env=extra_env)
+    assert "no results" in str(excinfo.value) and "cb exploded" in str(excinfo.value)
 
 
 def test_variant_timeout_is_forwarded_to_cb(tmp_path, monkeypatch, run_dir):

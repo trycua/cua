@@ -620,6 +620,13 @@ struct ConfirmOutcome {
     focus_holder: Option<String>,
 }
 
+fn confirmed(target: Window, active: Option<Window>, focus_within: bool) -> bool {
+    crate::interaction::policy::focused(
+        &target,
+        &crate::interaction::facts::Fact::Known(active.filter(|_| focus_within)),
+    )
+}
+
 fn confirm_phase(target: Window, deadline: Instant) -> Result<ConfirmOutcome> {
     let x = X11::open()?;
     let start = Instant::now();
@@ -627,7 +634,7 @@ fn confirm_phase(target: Window, deadline: Instant) -> Result<ConfirmOutcome> {
     let mut retried = false;
     // Already active and focused: leave the window (and any open menu / grab)
     // untouched — re-activating is what popped GTK menus back down.
-    if prior == target && x.focus_is_within(target) {
+    if confirmed(target, Some(prior), x.focus_is_within(target)) {
         return Ok(ConfirmOutcome {
             confirmed: true,
             already_active: true,
@@ -642,9 +649,8 @@ fn confirm_phase(target: Window, deadline: Instant) -> Result<ConfirmOutcome> {
     let retry_at = start + deadline.saturating_duration_since(start).mul_f32(0.4);
     let mut retry_pending = true;
     loop {
-        let active = x.active_window() == Some(target);
         let focus_within = x.focus_is_within(target);
-        if active && focus_within {
+        if confirmed(target, x.active_window(), focus_within) {
             return Ok(ConfirmOutcome {
                 confirmed: true,
                 already_active: false,

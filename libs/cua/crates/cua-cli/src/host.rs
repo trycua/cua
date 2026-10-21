@@ -6,8 +6,8 @@ use crate::auth;
 use crate::util::line;
 use clap::Subcommand;
 use cua_host::{
-    AccountTokens, DeviceAuth, Host, HostStatus, MachinePatch, RelayClient, RunnerKind,
-    ServiceManager, SetupOptions,
+    AccountTokens, DeviceAuth, DriverUpdate, Host, HostStatus, MachinePatch, RelayClient,
+    RunnerKind, ServiceManager, SetupOptions,
 };
 use cua_sdk::CuaError;
 use std::io::Write;
@@ -194,6 +194,24 @@ pub enum HostCmd {
         /// Relay URL.
         #[arg(long, hide = true)]
         relay: Option<String>,
+    },
+    /// Update cua-spacesd, the service this computer runs, in place. Keeps
+    /// the setup: relay, token, policy and what is shared are not touched.
+    #[command(after_help = "Examples:
+  cua host update
+  # Only report the installed and the available version
+  cua host update --check
+  # Install a local build instead of the release
+  cua host update --driver-bin ./cua-spacesd")]
+    Update {
+        /// Use this cua-spacesd instead of the release (default
+        /// $CUA_SPACESD_BIN, a bundled one, or the release download).
+        #[arg(long)]
+        driver_bin: Option<PathBuf>,
+        /// Compare versions and change nothing. Exits 10 when an update is
+        /// available.
+        #[arg(long)]
+        check: bool,
     },
     /// Unregister from the relay, uninstall the service and delete the host
     /// configuration (asks first).
@@ -1304,6 +1322,66 @@ fn emit(s: &HostStatus, json: bool, out: &mut dyn Write) -> Result<(), CuaError>
     Ok(())
 }
 
+/// Prints what `cua host update` found or did; the exit code is
+/// [`UPDATE_AVAILABLE_EXIT`] when `--check` found a newer version.
+fn render_driver_update(result: &DriverUpdate, json: bool, out: &mut dyn Write) -> i32 {
+    let (status, installed, latest, restarted) = match result {
+        DriverUpdate::Current { version } => ("current", Some(version), Some(version), None),
+        DriverUpdate::Available { installed, latest } => {
+            ("available", installed.as_ref(), Some(latest), None)
+        }
+        DriverUpdate::Updated {
+            from,
+            to,
+            restarted,
+        } => ("updated", from.as_ref(), Some(to), Some(*restarted)),
+    };
+    if json {
+        line(
+            out,
+            serde_json::json!({
+                "status": status,
+                "installed": installed,
+                "latest": latest,
+                "restarted": restarted,
+            })
+            .to_string(),
+        );
+    } else {
+        let from = installed.map_or("unknown", |v| v.as_str());
+        let to = latest.map_or("unknown", |v| v.as_str());
+        match result {
+            DriverUpdate::Current { version } => {
+                line(out, format!("cua-spacesd {version} is up to date."))
+            }
+            DriverUpdate::Available { .. } => line(
+                out,
+                format!(
+                    "cua-spacesd {from} is installed; {to} is available (run `cua host update`)."
+                ),
+            ),
+            DriverUpdate::Updated { restarted, .. } => line(
+                out,
+                format!(
+                    "Updated cua-spacesd {from} -> {to}{}.",
+                    if *restarted {
+                        " (service restarted)"
+                    } else {
+                        " (service was not running; not started)"
+                    }
+                ),
+            ),
+        }
+    }
+    match result {
+        DriverUpdate::Available { .. } => UPDATE_AVAILABLE_EXIT,
+        _ => 0,
+    }
+}
+
+/// Exit code of `cua host update --check` when an update is available.
+pub(crate) const UPDATE_AVAILABLE_EXIT: i32 = 10;
+
 /// Runs a host command against `home` with `tokens` (`manager` overrides the
 /// OS service runner; tests pass a fake).
 pub async fn run_host(
@@ -1542,6 +1620,13 @@ pub async fn run_host(
                 .await
                 .map_err(host_err)?;
             print_allow(&allow, json, out);
+        }
+        HostCmd::Update { driver_bin, check } => {
+            let result = host
+                .update_driver(cua_host::DriverUpdateOptions { driver_bin, check })
+                .await
+                .map_err(host_err)?;
+            return Ok(render_driver_update(&result, json, out));
         }
         HostCmd::Remove {
             force,
@@ -3170,5 +3255,129 @@ mod tests {
         assert!(text.contains("lab-box"), "{text}");
         // Already attached: left alone.
         assert!(!attach_relay_account(&cua, || unreachable!()));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn update_check_exits_10_when_behind_and_0_when_current() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join(".cua");
+        let script = |path: &Path, version: &str| {
+            std::fs::write(path, format!("#!/bin/sh\necho \"cua-spacesd {version}\"\n")).unwrap();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        let tokens = || SetupTokens::new(Arc::new(cua_host::NoAccount), || unreachable!());
+        let run = |args: Vec<String>| {
+            let home = home.clone();
+            async move {
+                let args: Vec<&str> = args.iter().map(String::as_str).collect();
+                let mut out = Vec::new();
+                let code = run_host(
+                    parse(&args),
+                    &home,
+                    &tokens(),
+                    None,
+                    Some(Arc::new(FakeServiceManager::default())),
+                    true,
+                    &mut out,
+                )
+                .await;
+                (code, String::from_utf8(out).unwrap())
+            }
+        };
+        let new = dir.path().join("new");
+        script(&new, "0.2.0");
+        let args = |check: bool| {
+            let mut a = vec!["update".to_string(), "--driver-bin".into()];
+            a.push(new.to_str().unwrap().into());
+            if check {
+                a.push("--check".into());
+            }
+            a
+        };
+
+        let (code, _) = run(args(true)).await;
+        assert_eq!(crate::exit_code(&code.unwrap_err()), 3);
+
+        let installed = home.join("host").join("cua-spacesd");
+        std::fs::create_dir_all(installed.parent().unwrap()).unwrap();
+        script(&installed, "0.1.0");
+        let config = cua_host::HostConfig {
+            mode: "direct".into(),
+            listen: Some("127.0.0.1:3211".into()),
+            name: "mini".into(),
+            runner: "process".into(),
+            driver_bin: installed.clone(),
+            share_desktop: false,
+            sharing: false,
+            ..Default::default()
+        };
+        std::fs::write(
+            Host::new(&home).paths().config(),
+            serde_json::to_vec(&config).unwrap(),
+        )
+        .unwrap();
+
+        let (code, out) = run(args(true)).await;
+        assert_eq!(code.unwrap(), UPDATE_AVAILABLE_EXIT);
+        let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+        assert_eq!(v["status"], "available");
+        assert_eq!(v["installed"], "0.1.0");
+        assert_eq!(v["latest"], "0.2.0");
+        assert!(
+            std::fs::read_to_string(&installed)
+                .unwrap()
+                .contains("0.1.0")
+        );
+
+        let (code, out) = run(args(false)).await;
+        assert_eq!(code.unwrap(), 0);
+        assert!(out.contains("\"status\":\"updated\""), "{out}");
+
+        let (code, out) = run(args(true)).await;
+        assert_eq!(code.unwrap(), 0);
+        assert!(out.contains("\"status\":\"current\""), "{out}");
+    }
+
+    #[test]
+    fn update_results_read_as_plain_sentences() {
+        let render = |r: DriverUpdate| {
+            let mut out = Vec::new();
+            let code = render_driver_update(&r, false, &mut out);
+            (code, String::from_utf8(out).unwrap())
+        };
+        let (code, text) = render(DriverUpdate::Current {
+            version: "0.2.0".into(),
+        });
+        assert_eq!(
+            (code, text.as_str()),
+            (0, "cua-spacesd 0.2.0 is up to date.\n")
+        );
+        let (code, text) = render(DriverUpdate::Available {
+            installed: Some("0.1.0".into()),
+            latest: "0.2.0".into(),
+        });
+        assert_eq!(code, UPDATE_AVAILABLE_EXIT);
+        assert!(
+            text.contains("0.1.0 is installed; 0.2.0 is available"),
+            "{text}"
+        );
+        let updated = |restarted| DriverUpdate::Updated {
+            from: Some("0.1.0".into()),
+            to: "0.2.0".into(),
+            restarted,
+        };
+        let (code, text) = render(updated(true));
+        assert_eq!(code, 0);
+        assert!(
+            text.contains("0.1.0 -> 0.2.0 (service restarted)"),
+            "{text}"
+        );
+        let (_, text) = render(updated(false));
+        assert!(
+            text.contains("(service was not running; not started)"),
+            "{text}"
+        );
     }
 }

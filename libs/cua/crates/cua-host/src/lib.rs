@@ -49,13 +49,16 @@ pub mod spaces_api;
 pub mod testing;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod update_tests;
 
 pub use device::{DeviceAuth, DeviceKey, FileKeySlot, KeySlot, MemoryKeySlot, PendingCode};
 pub use host::SetupStage;
 pub use host::{
-    DirectHosting, Host, HostConfig, HostMode, HostPaths, HostPolicy, HostSettingsChange,
-    HostStatus, META_ARCH, META_OS, META_PROVIDES_SPACES, PermissionHint, RELAY_HICCUP_GRACE,
-    SetupOptions, SpacesDaemon, local_network_hint, permission_hints,
+    DirectHosting, DriverUpdate, DriverUpdateOptions, Host, HostConfig, HostMode, HostPaths,
+    HostPolicy, HostSettingsChange, HostStatus, META_ARCH, META_OS, META_PROVIDES_SPACES,
+    PermissionHint, RELAY_HICCUP_GRACE, SetupOptions, SpacesDaemon, local_network_hint,
+    permission_hints,
 };
 pub use machine::machine_id;
 pub use pairing::{

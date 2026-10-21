@@ -78,16 +78,17 @@ fn connect(timeout: Duration) -> Result<UnixStream> {
 /// a socket nobody serves, or two different live peers. A timeout is not.
 pub(super) fn probe(
     pinned: Option<libc::pid_t>,
-    timeout: Duration,
+    deadline: Instant,
 ) -> (Attestation, Option<UnixStream>, bool) {
-    let ipc = connect(timeout);
+    let ipc = time_remaining(deadline).and_then(connect);
     let ipc_peer = ipc
         .as_ref()
         .map_err(|e| anyhow!("{e:#}"))
         .and_then(|ipc| peer_pid(ipc.as_raw_fd()));
     // Without an IPC peer there is nothing to compare the Wayland peer with.
     let wayland_peer = match &ipc_peer {
-        Ok(_) => wayland_connection_with_timeout(timeout)
+        Ok(_) => time_remaining(deadline)
+            .and_then(wayland_connection_with_timeout)
             .and_then(|wayland| peer_pid(wayland.backend().poll_fd().as_raw_fd())),
         Err(_) => Err(anyhow!("not checked")),
     };
@@ -119,7 +120,8 @@ pub fn is_session() -> bool {
     if UNRELATED.get().is_some() {
         return false;
     }
-    let (attestation, _, lasting) = probe(None, QUERY_TIMEOUT);
+    let (attestation, _, lasting) =
+        probe(None, crate::interaction::operation_deadline(QUERY_TIMEOUT));
     match probed(attestation, lasting) {
         Probed::Niri(pid) => {
             let pinned = *RECOGNIZED.get_or_init(|| pid);
@@ -182,11 +184,7 @@ fn session_check(adapter_on: bool, recognized: bool, socket_set: bool) -> Option
 
 /// A connection to the recognised niri process, re-attested each time.
 pub(super) fn attested_connection(deadline: Instant) -> Result<UnixStream> {
-    attest_to(recognised()?, time_remaining(deadline)?)
-}
-
-fn attest_to(pinned: libc::pid_t, timeout: Duration) -> Result<UnixStream> {
-    match probe(Some(pinned), timeout) {
+    match probe(Some(recognised()?), deadline) {
         (Attestation::Attested(_), Some(ipc), _) => Ok(ipc),
         (Attestation::Unrelated(reason) | Attestation::Refused(reason), ..) => bail!("{reason}"),
         (Attestation::Attested(_), None, _) => bail!("niri IPC connection unavailable"),
@@ -197,7 +195,9 @@ fn attest_to(pinned: libc::pid_t, timeout: Duration) -> Result<UnixStream> {
 /// a keyboard helper that must not rediscover the display on its own.
 pub(in crate::wayland) fn attested_wayland_socket() -> Result<UnixStream> {
     let pinned = recognised()?;
-    let socket = super::super::compositor_peer::wayland_socket_with_timeout(QUERY_TIMEOUT)?;
+    let socket = super::super::compositor_peer::wayland_socket_with_timeout(time_remaining(
+        crate::interaction::operation_deadline(QUERY_TIMEOUT),
+    )?)?;
     let peer = peer_pid(socket.as_raw_fd())?;
     if peer != pinned {
         bail!("WAYLAND_DISPLAY is served by pid {peer}, not the recognised niri pid {pinned}");

@@ -201,7 +201,11 @@ pub fn health_note() -> Option<String> {
     }
     if !is_session() {
         return Some(inactive_health(
-            probe(RECOGNIZED.get().copied(), QUERY_TIMEOUT).0,
+            probe(
+                RECOGNIZED.get().copied(),
+                crate::interaction::operation_deadline(QUERY_TIMEOUT),
+            )
+            .0,
         ));
     }
     if let Err(reason) = recognised() {

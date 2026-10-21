@@ -78,7 +78,11 @@ fn focus_target<C: FnMut(Instant) -> Result<UnixStream>>(
             ))
         })?;
     }
-    Ok((!target.is_focused).then_some(target))
+    let focused = target.is_focused.then_some(target.id);
+    Ok(
+        (!interaction::policy::focused(&id, &interaction::facts::Fact::Known(focused)))
+            .then_some(target),
+    )
 }
 
 /// Focus exactly `id` and read the focus back. niri answers `Handled` even

@@ -47,7 +47,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 3.3 GB–7.2 GB initially; grows with use (download 1.1 GB); includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
+          "Disk: 3.3 GB–7.3 GB initially; grows with use (download 1.1 GB); includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
           "Available: 3.0 GB on Colima"
         ],
         "resourcesError": "Not enough space on Colima: needs 9.4 GB, 3.0 GB available.",
@@ -103,7 +103,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 3.3 GB–7.2 GB initially; grows with use (download 1.1 GB); includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
+          "Disk: 3.3 GB–7.3 GB initially; grows with use (download 1.1 GB); includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
           "Available: 3.0 GB on Colima"
         ],
         "resourcesError": "Not enough space on Colima: needs 9.4 GB, 3.0 GB available.",
@@ -163,7 +163,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 3.3 GB–7.2 GB initially; grows with use (download 1.1 GB); includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
+          "Disk: 3.3 GB–7.3 GB initially; grows with use (download 1.1 GB); includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
           "Available: 3.0 GB on Colima"
         ],
         "resourcesError": "Not enough space on Colima: needs 9.4 GB, 3.0 GB available.",
@@ -223,7 +223,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 1.6 GB–3.2 GB initially; grows with use; includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
+          "Disk: 1.6 GB–3.3 GB initially; grows with use; includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
           "Available: 3.0 GB on Colima"
         ],
         "resourcesError": "Not enough space on Colima: needs 5.4 GB, 3.0 GB available.",
@@ -279,7 +279,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 1.6 GB–3.2 GB initially; grows with use; includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
+          "Disk: 1.6 GB–3.3 GB initially; grows with use; includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
           "Available: 3.0 GB on Colima"
         ],
         "resourcesError": "Not enough space on Colima: needs 5.4 GB, 3.0 GB available.",
@@ -339,7 +339,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 1.6 GB–3.2 GB initially; grows with use; includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
+          "Disk: 1.6 GB–3.3 GB initially; grows with use; includes 456 MB one-time Linux runtime download, shared by Linux Spaces",
           "Available: 3.0 GB on Colima"
         ],
         "resourcesError": "Not enough space on Colima: needs 5.4 GB, 3.0 GB available.",
@@ -399,7 +399,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: ARM",
-          "Download: 1.1 GB",
+          "Download: 1.2 GB",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -455,7 +455,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: ARM",
-          "Download: 1.1 GB",
+          "Download: 1.2 GB",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -511,7 +511,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: ARM",
-          "Download: 1.1 GB",
+          "Download: 1.2 GB",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -567,7 +567,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: ARM",
-          "Download: 1.1 GB",
+          "Download: 1.2 GB",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -624,7 +624,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: ARM",
-          "Download: 1.1 GB",
+          "Download: 1.2 GB",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -681,7 +681,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: ARM",
-          "Download: 1.1 GB",
+          "Download: 1.2 GB",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -738,7 +738,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: ARM",
-          "Download: 1.1 GB",
+          "Download: 1.2 GB",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -795,7 +795,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: ARM",
-          "Download: 1.1 GB",
+          "Download: 1.2 GB",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -851,7 +851,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: ARM",
-          "Download: 1.1 GB",
+          "Download: 1.2 GB",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -908,7 +908,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: ARM",
-          "Download: 1.1 GB",
+          "Download: 1.2 GB",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -965,7 +965,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: ARM",
-          "Download: 1.1 GB",
+          "Download: 1.2 GB",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1022,7 +1022,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: ARM",
-          "Download: 1.1 GB",
+          "Download: 1.2 GB",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1078,7 +1078,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: ARM",
-          "Download: 1.1 GB",
+          "Download: 1.2 GB",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1135,7 +1135,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: ARM",
-          "Download: 1.1 GB",
+          "Download: 1.2 GB",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1192,7 +1192,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: ARM",
-          "Download: 1.1 GB",
+          "Download: 1.2 GB",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1249,7 +1249,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: ARM",
-          "Download: 1.1 GB",
+          "Download: 1.2 GB",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1305,7 +1305,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: ARM",
-          "Download: 1.1 GB",
+          "Download: 1.2 GB",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1364,7 +1364,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: ARM",
-          "Download: 1.1 GB",
+          "Download: 1.2 GB",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1387,7 +1387,7 @@
         },
         "canContinue": true,
         "cpusText": "2 cores",
-        "disk": "20 GB (20-500) ~Uses about 1.5 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "disk": "20 GB (20-500) ~Uses about 1.7 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
         "fields": [
           "os: System",
           "image: Image [ghcr.io/org/app:tag]",
@@ -1422,7 +1422,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Download: 1.5 GB",
+          "Download: 1.7 GB",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1445,7 +1445,7 @@
         },
         "canContinue": true,
         "cpusText": "2 cores",
-        "disk": "20 GB (20-500) ~Uses about 1.5 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "disk": "20 GB (20-500) ~Uses about 1.7 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
         "fields": [
           "cpus: CPU cores",
           "memory: Memory",
@@ -1477,7 +1477,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Download: 1.5 GB",
+          "Download: 1.7 GB",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1500,7 +1500,7 @@
         },
         "canContinue": true,
         "cpusText": "2 cores",
-        "disk": "20 GB (20-500) ~Uses about 1.5 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "disk": "20 GB (20-500) ~Uses about 1.7 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
         "fields": [
           "os: System",
           "image: Image [ghcr.io/org/app:tag]",
@@ -1535,7 +1535,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Download: 1.5 GB",
+          "Download: 1.7 GB",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1558,7 +1558,7 @@
         },
         "canContinue": true,
         "cpusText": "2 cores",
-        "disk": "20 GB (20-500) ~Uses about 1.5 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "disk": "20 GB (20-500) ~Uses about 1.7 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
         "fields": [
           "os: System",
           "image: Image [ghcr.io/org/app:tag]",
@@ -1593,7 +1593,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Download: 1.5 GB",
+          "Download: 1.7 GB",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1616,7 +1616,7 @@
         },
         "canContinue": true,
         "cpusText": "2 cores",
-        "disk": "20 GB (20-500) ~Uses about 1.5 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "disk": "20 GB (20-500) ~Uses about 1.7 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
         "fields": [
           "cpus: CPU cores",
           "memory: Memory",
@@ -1648,7 +1648,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Download: 1.5 GB",
+          "Download: 1.7 GB",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1671,7 +1671,7 @@
         },
         "canContinue": true,
         "cpusText": "4 cores",
-        "disk": "20 GB (20-500) ~Uses about 1.5 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "disk": "20 GB (20-500) ~Uses about 1.7 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
         "fields": [
           "cpus: CPU cores",
           "memory: Memory",
@@ -1703,7 +1703,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Download: 1.5 GB",
+          "Download: 1.7 GB",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1726,7 +1726,7 @@
         },
         "canContinue": true,
         "cpusText": "4 cores",
-        "disk": "20 GB (20-500) ~Uses about 1.5 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "disk": "20 GB (20-500) ~Uses about 1.7 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
         "fields": [
           "cpus: CPU cores",
           "memory: Memory",
@@ -1758,7 +1758,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Download: 1.5 GB",
+          "Download: 1.7 GB",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1781,7 +1781,7 @@
         },
         "canContinue": true,
         "cpusText": "8 cores",
-        "disk": "20 GB (20-500) ~Uses about 1.5 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "disk": "20 GB (20-500) ~Uses about 1.7 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
         "fields": [
           "cpus: CPU cores",
           "memory: Memory",
@@ -1813,7 +1813,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Download: 1.5 GB",
+          "Download: 1.7 GB",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1836,7 +1836,7 @@
         },
         "canContinue": true,
         "cpusText": "8 cores",
-        "disk": "20 GB (20-500) ~Uses about 1.5 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "disk": "20 GB (20-500) ~Uses about 1.7 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
         "fields": [
           "os: System",
           "image: Image [ghcr.io/org/app:tag]",
@@ -1871,7 +1871,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Download: 1.5 GB",
+          "Download: 1.7 GB",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1929,7 +1929,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 5.7 GB)",
+          "Disk: 64 GB (download 6.8 GB)",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1987,7 +1987,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 5.7 GB)",
+          "Disk: 64 GB (download 6.8 GB)",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -2045,7 +2045,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 5.7 GB)",
+          "Disk: 64 GB (download 6.8 GB)",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -2103,7 +2103,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 5.7 GB)",
+          "Disk: 64 GB (download 6.8 GB)",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,

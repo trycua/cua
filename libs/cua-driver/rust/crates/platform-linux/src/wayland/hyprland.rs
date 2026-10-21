@@ -849,10 +849,14 @@ pub fn target_is_active(address: u64, pid: Option<u32>) -> Result<bool> {
         bail!("Hyprland target belongs to a different process");
     }
     let active: serde_json::Value = query("j/activewindow")?;
-    Ok(
-        active.get("address").and_then(|v| v.as_str()) == Some(format!("0x{address:x}").as_str())
-            && active.get("pid").and_then(|v| v.as_u64()) == Some(u64::from(target.pid)),
-    )
+    let observed = active
+        .get("address")
+        .and_then(|v| v.as_str())
+        .zip(active.get("pid").and_then(|v| v.as_u64()));
+    Ok(crate::interaction::policy::focused(
+        &(format!("0x{address:x}").as_str(), u64::from(target.pid)),
+        &crate::interaction::facts::Fact::Known(observed),
+    ))
 }
 
 fn capture_target(windows: &[Window], address: u64, pid: Option<u32>) -> Result<Window> {

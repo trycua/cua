@@ -33,6 +33,17 @@
        "aliases": [],
        "default_value": false,
        "env": null,
+       "help": "Also write a live trace bundle for each episode",
+       "hidden": false,
+       "name": "live-trace",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
        "help": "Run the oracle solution (the default when no agent is given)",
        "hidden": false,
        "name": "oracle",
@@ -490,6 +501,17 @@
       }
      ],
      "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Also write a live trace bundle for each episode",
+       "hidden": false,
+       "name": "live-trace",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
       {
        "aliases": [],
        "default_value": false,
@@ -1229,6 +1251,22 @@
      "is_optional": true,
      "multiple_values": false,
      "name": "trace-out",
+     "possible_values": [],
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": true,
+     "type": "string",
+     "value_name": null
+    },
+    {
+     "aliases": [],
+     "default_value": null,
+     "env": null,
+     "help": "Write a live trace bundle to a new directory (view with cb trace view --follow)",
+     "hidden": false,
+     "is_optional": true,
+     "multiple_values": false,
+     "name": "trace-bundle",
      "possible_values": [],
      "repeatable": false,
      "short_name": null,

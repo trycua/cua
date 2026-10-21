@@ -46,7 +46,16 @@
     <dialog id="preview">
       <button id="closePreview">Close</button>
       <h2 id="previewTitle"></h2>
-      <img id="imagePreview" alt="Trace attachment" />
+      <div id="imageNavigation" hidden>
+        <button id="previousImage">Previous image</button><button id="nextImage">Next image</button>
+        <label><input id="showOverlays" type="checkbox" checked /> Show ARIA bounds</label>
+      </div>
+      <div id="imageFrame">
+        <img id="imagePreview" alt="Trace attachment" /><svg
+          id="overlays"
+          aria-label="ARIA bounding boxes"
+        ></svg>
+      </div>
       <pre id="textPreview"></pre>
     </dialog>
   </body>

@@ -5,6 +5,7 @@ import os
 import shutil
 import time
 import webbrowser
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, Optional
 
@@ -66,7 +67,9 @@ async def _show_display(sandbox: Any, *, open_browser: bool) -> Optional[str]:
         print(f"{YELLOW}Display: not available ({error}){RESET}")
         return None
     except Exception as error:  # noqa: BLE001 - reported, the task still runs
-        print(f"{RED}Display: could not get the display URL: {type(error).__name__}: {error}{RESET}")
+        print(
+            f"{RED}Display: could not get the display URL: {type(error).__name__}: {error}{RESET}"
+        )
         return None
     if not display:
         print(f"{YELLOW}Display: not available (the sandbox reports no display){RESET}")
@@ -140,8 +143,7 @@ async def _execute_native_interactive(
 ) -> int:
     """Open the task's sandbox, run setup and hand it to the user."""
     from cua_bench import make
-    from cua_bench.computers.remote import RemoteDesktopSession
-    from cua_bench.sandboxes import explain_error, open_sandbox
+    from cua_bench.sandboxes import explain_error
     from cua_bench.targets import TargetError, resolve_env_spec
 
     from .run import target_from_args
@@ -181,10 +183,11 @@ async def _execute_native_interactive(
             print(f"{GREY}  {event.message}{RESET}")
 
     trace_out = getattr(args, "trace_out", None)
+    bundle_out = getattr(args, "trace_bundle", None)
     # A --view trace without --trace-out goes to a bounded directory (the
     # newest few are kept), and is removed again when the run fails.
     managed_trace = None
-    if getattr(args, "view", False) and not trace_out:
+    if getattr(args, "view", False) and not trace_out and not bundle_out:
         from cua_bench import retention
 
         managed_trace = retention.new_interact_trace_dir()
@@ -198,50 +201,63 @@ async def _execute_native_interactive(
         env.max_steps = int(args.max_steps)
 
     try:
-        async with open_sandbox(spec, target, on_progress=on_progress) as sandbox:
-            session = RemoteDesktopSession.attach(
-                sandbox, os_type=spec.os_type, width=spec.width, height=spec.height
+        with ExitStack() as stack:
+            if bundle_out:
+                stack.enter_context(env.tracing.bundle(bundle_out, retain_rows=bool(trace_out)))
+                env.tracing.start()
+            return await _run_interaction(
+                args, env, task_cfg, spec, target, on_progress, trace_out, bundle_out
             )
-            session.env = env
-            env.session = session
-            env.current_task = task_cfg
-            print(f"\n{BOLD}Task: {task_cfg.description}{RESET}")
-            from cua_bench.runner.desktop import wait_for_desktop
-
-            await wait_for_desktop(session)
-            t0 = time.perf_counter()
-            if env.setup_task_fn:
-                await env.setup_task_fn(task_cfg, session)
-            print(f"{GREEN}✓ Setup complete in {time.perf_counter() - t0:.2f}s{RESET}")
-            if trace_out:
-                shot = await _screenshot_or_none(session)
-                env.tracing.record("reset", {"task": repr(task_cfg)}, [shot] if shot else [])
-            if getattr(args, "oracle", False) and env.solve_task_fn:
-                await env.solve_task_fn(task_cfg, session)
-                print(f"{GREEN}✓ Oracle solution ran{RESET}")
-
-            await _show_display(sandbox, open_browser=_wants_browser(args))
-
-            if getattr(args, "screenshot", None):
-                Path(args.screenshot).write_bytes(await session.screenshot())
-                print(f"{GREEN}✓ Screenshot saved to {args.screenshot}{RESET}")
-
-            if not getattr(args, "no_wait", False):
-                print(f"\n{GREY}Sandbox is open. Press Enter to evaluate and release it...{RESET}")
-                await asyncio.get_running_loop().run_in_executor(None, input)
-
-            if env.evaluate_task_fn:
-                result = await env.evaluate_task_fn(task_cfg, session)
-                print(f"{YELLOW}✓ Evaluation result: {BOLD}{result}{RESET}")
-                if trace_out:
-                    env.tracing.record("evaluate", {"result": result})
-        print(f"{GREEN}✓ Sandbox released{RESET}")
-        if trace_out:
-            env.tracing.save_to_disk(str(trace_out))
-            print(f"{GREEN}✓ Trace saved to: {trace_out}{RESET}")
-        return 0
     except Exception as error:  # noqa: BLE001
         print(f"{RED}Error: {explain_error(error, spec, target)}{RESET}")
         if managed_trace is not None:
             shutil.rmtree(managed_trace, ignore_errors=True)
         return 1
+
+
+async def _run_interaction(args, env, task_cfg, spec, target, on_progress, trace_out, bundle_out):
+    from cua_bench.computers.remote import RemoteDesktopSession
+    from cua_bench.sandboxes import open_sandbox
+
+    async with open_sandbox(spec, target, on_progress=on_progress) as sandbox:
+        session = RemoteDesktopSession.attach(
+            sandbox, os_type=spec.os_type, width=spec.width, height=spec.height
+        )
+        session.env = env
+        env.session = session
+        env.current_task = task_cfg
+        print(f"\n{BOLD}Task: {task_cfg.description}{RESET}")
+        from cua_bench.runner.desktop import wait_for_desktop
+
+        await wait_for_desktop(session)
+        t0 = time.perf_counter()
+        if env.setup_task_fn:
+            await env.setup_task_fn(task_cfg, session)
+        print(f"{GREEN}✓ Setup complete in {time.perf_counter() - t0:.2f}s{RESET}")
+        if trace_out or bundle_out:
+            shot = await _screenshot_or_none(session)
+            env.tracing.record("reset", {"task": repr(task_cfg)}, [shot] if shot else [])
+        if getattr(args, "oracle", False) and env.solve_task_fn:
+            await env.solve_task_fn(task_cfg, session)
+            print(f"{GREEN}✓ Oracle solution ran{RESET}")
+
+        await _show_display(sandbox, open_browser=_wants_browser(args))
+
+        if getattr(args, "screenshot", None):
+            Path(args.screenshot).write_bytes(await session.screenshot())
+            print(f"{GREEN}✓ Screenshot saved to {args.screenshot}{RESET}")
+
+        if not getattr(args, "no_wait", False):
+            print(f"\n{GREY}Sandbox is open. Press Enter to evaluate and release it...{RESET}")
+            await asyncio.get_running_loop().run_in_executor(None, input)
+
+        if env.evaluate_task_fn:
+            result = await env.evaluate_task_fn(task_cfg, session)
+            print(f"{YELLOW}✓ Evaluation result: {BOLD}{result}{RESET}")
+            if trace_out or bundle_out:
+                env.tracing.record("evaluate", {"result": result})
+    print(f"{GREEN}✓ Sandbox released{RESET}")
+    if trace_out:
+        env.tracing.save_to_disk(str(trace_out))
+        print(f"{GREEN}✓ Trace saved to: {trace_out}{RESET}")
+    return 0

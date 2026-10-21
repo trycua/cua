@@ -352,10 +352,16 @@ def agent_options(args):
     if getattr(args, "noop", False):
         if agent_name or import_path or getattr(args, "oracle", False):
             raise ValueError("--noop runs no solver: drop --agent/--agent-import-path/--oracle")
-        return AgentOptions(oracle=False, dump=True, max_steps=getattr(args, "max_steps", None))
+        return AgentOptions(
+            oracle=False,
+            dump=True,
+            max_steps=getattr(args, "max_steps", None),
+            live_trace=getattr(args, "live_trace", False),
+        )
     oracle = bool(getattr(args, "oracle", False)) or not (agent_name or import_path)
     return AgentOptions(
         oracle=oracle,
+        live_trace=getattr(args, "live_trace", False),
         agent=None if oracle else agent_name,
         agent_import_path=None if oracle else import_path,
         model=getattr(args, "model", None),

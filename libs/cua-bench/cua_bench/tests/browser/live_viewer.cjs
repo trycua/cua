@@ -18,9 +18,42 @@ const nextLine = () => new Promise((resolve) => input.once('line', resolve));
       new URL(route.request().url()).hostname === '127.0.0.1' ? route.continue() : route.abort()
     );
     await page.goto(process.argv[2]);
+    if (process.argv[3] === 'large') {
+      await page.waitForFunction(() =>
+        document.getElementById('count').textContent.includes('100000 events')
+      );
+      assert.equal(await page.locator('#events li').count(), 100);
+      await page.getByRole('button', { name: 'Next page', exact: true }).click();
+      await page.waitForFunction(
+        () => document.getElementById('page').textContent === 'Page 2 of 1000'
+      );
+      await page.locator('[data-sequence="150"]').click();
+      await page.waitForFunction(
+        () => document.getElementById('selected').textContent === '150 · sample'
+      );
+      await page.selectOption('#order', 'observed');
+      await page.waitForFunction(
+        () => document.querySelector('[aria-current="true"]')?.dataset.sequence === '150'
+      );
+      const session = await page.context().newCDPSession(page);
+      await session.send('Performance.enable');
+      const { metrics } = await session.send('Performance.getMetrics');
+      const heap = metrics.find((entry) => entry.name === 'JSHeapUsedSize').value;
+      assert.ok(heap < 32 * 1024 * 1024, `Browser heap ${heap} exceeds budget`);
+      assert.equal(await page.locator('#events li').count(), 100);
+      assert.deepEqual(errors, []);
+      console.log(
+        `100000 events: browser heap ${(heap / 1024 ** 2).toFixed(2)} MiB; 100 rows rendered`
+      );
+      console.log('passed');
+      return;
+    }
     await page.waitForFunction(() => document.querySelectorAll('#events li').length === 2);
     await page.locator('[data-sequence="0"]').click();
     await page.selectOption('#order', 'observed');
+    await page.waitForFunction(
+      () => document.querySelector('#events button').dataset.sequence === '1'
+    );
     assert.deepEqual(
       await page
         .locator('#events button')
@@ -30,6 +63,20 @@ const nextLine = () => new Promise((resolve) => input.once('line', resolve));
     assert.equal(await page.locator('#selected').innerText(), '0 · response');
     await page.getByRole('button', { name: 'Preview', exact: true }).first().click();
     await page.waitForFunction(() => document.getElementById('imagePreview').naturalWidth === 32);
+    assert.equal(await page.locator('#overlays rect').count(), 1);
+    assert.equal(await page.locator('#overlays rect').getAttribute('x'), '3');
+    await page.locator('#showOverlays').uncheck();
+    assert.equal(await page.locator('#overlays rect').count(), 0);
+    await page.locator('#showOverlays').check();
+    await page.getByRole('button', { name: 'Previous image', exact: true }).click();
+    await page.waitForFunction(
+      () => document.getElementById('selected').textContent === '1 · request'
+    );
+    await page.getByRole('button', { name: 'Next image', exact: true }).click();
+    await page.waitForFunction(
+      () => document.getElementById('selected').textContent === '0 · response'
+    );
+    await page.waitForFunction(() => document.querySelectorAll('#overlays rect').length === 1);
     await page.getByRole('button', { name: 'Close', exact: true }).click();
     await page.getByRole('button', { name: 'Preview', exact: true }).last().click();
     await page.waitForFunction(() =>
@@ -46,11 +93,13 @@ const nextLine = () => new Promise((resolve) => input.once('line', resolve));
       '<script>window.capturedScriptRan=true</script>\n✓'
     );
     await page.getByRole('button', { name: 'Pause updates' }).click();
+    const appendedAt = Date.now();
     console.log('append');
     await nextLine();
     await page.waitForFunction(() =>
       document.getElementById('count').textContent.includes('1 pending')
     );
+    assert.ok(Date.now() - appendedAt < 2000, 'Append-to-poll exceeded two seconds');
     assert.equal(await page.locator('#events li').count(), 2);
     await page.getByRole('button', { name: 'Resume updates' }).click();
     await page.waitForFunction(() => document.querySelectorAll('#events li').length === 3);
@@ -71,10 +120,21 @@ const nextLine = () => new Promise((resolve) => input.once('line', resolve));
       document.getElementById('status').textContent.includes('Following')
     );
     assert.equal(await page.locator('#events li').count(), 3);
+    await page.locator('#dataDetails').evaluate((node) => {
+      node.open = false;
+    });
     console.log('finish');
     await nextLine();
     await page.waitForFunction(() => document.getElementById('status').textContent === 'Completed');
-    assert.equal(await page.locator('#events li').count(), 3);
+    assert.equal(await page.locator('#events li').count(), 6);
+    assert.deepEqual(
+      await page
+        .locator('#events button')
+        .evaluateAll((nodes) => nodes.map((node) => node.dataset.sequence)),
+      ['2', '1', '0', '3', '5', '4']
+    );
+    assert.equal(await page.locator('#selected').innerText(), '0 · response');
+    assert.equal(await page.locator('#dataDetails').evaluate((node) => node.open), false);
     assert.deepEqual(errors, []);
     if (process.env.CUA_BENCH_SCREENSHOT)
       await page.screenshot({ path: process.env.CUA_BENCH_SCREENSHOT, fullPage: true });

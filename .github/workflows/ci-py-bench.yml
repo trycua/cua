@@ -79,3 +79,40 @@ jobs:
 
       - name: Tests
         run: uv run --frozen pytest -q
+
+  trace-viewer:
+    name: Trace journal and browser (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      CUA_TELEMETRY_ENABLED: "false"
+      HF_DATASETS_OFFLINE: "1"
+      HF_HUB_OFFLINE: "1"
+      CUA_BENCH_NO_BANNER: "1"
+      CUA_BENCH_BROWSER_TESTS: "1"
+    defaults:
+      run:
+        working-directory: libs/cua-bench
+        shell: bash
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: libs/cua-bench/uv.lock
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Install Python and browser dependencies
+        run: |
+          uv sync --frozen --extra dev
+          npm install --prefix "$RUNNER_TEMP/trace-browser" --no-package-lock --ignore-scripts playwright@1.56.1
+          echo "CUA_BENCH_PLAYWRIGHT=$RUNNER_TEMP/trace-browser/node_modules/playwright" >> "$GITHUB_ENV"
+          node "$RUNNER_TEMP/trace-browser/node_modules/playwright/cli.js" install --with-deps chromium
+      - name: Journal, loopback, scale and browser contracts
+        run: uv run --frozen pytest -q -s cua_bench/tests/test_trace_bundle.py cua_bench/tests/test_trace_bundle_scale.py cua_bench/tests/test_trace_bundle_browser.py

@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import time
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -26,6 +27,7 @@ class AgentOptions:
     model: Optional[str] = None
     max_steps: Optional[int] = None
     dump: bool = False  # setup + evaluate only
+    live_trace: bool = False
     save_pngs: bool = False
     filter_events: Optional[list[str]] = None
 
@@ -118,6 +120,9 @@ def _record(env: Any, name: str, data: dict, shots: Optional[list] = None) -> No
     try:
         env.tracing.record(name, data, [s for s in (shots or []) if s])
     except Exception as error:  # noqa: BLE001 - tracing never fails a task
+        writer = getattr(env.tracing, "bundle_writer", None)
+        if writer is not None:
+            writer.failed = True
         print(f"Warning: failed to record {name} event: {error}")
 
 
@@ -134,6 +139,16 @@ async def run_episode(
     ``session`` is a connected desktop session; ``None`` opens the task's
     sandbox through ``env.reset`` (and ``env.close`` releases it).
     """
+    scope = (
+        env.tracing.bundle(output_dir / f"task_{task_index}_bundle")
+        if opts.live_trace
+        else nullcontext()
+    )
+    with scope:
+        return await _run_episode(env, task_index, opts, output_dir, session=session)
+
+
+async def _run_episode(env, task_index, opts, output_dir, *, session=None):
     output_dir.mkdir(parents=True, exist_ok=True)
     env.headless = True
     try:

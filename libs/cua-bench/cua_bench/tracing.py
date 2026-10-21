@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from io import BytesIO
@@ -21,9 +22,12 @@ class Tracing:
     Exposes a datasets.Dataset-compatible interface for saving/pushing.
     """
 
-    def __init__(self, env: Any, *, bundle_writer=None) -> None:
+    def __init__(self, env: Any, *, bundle_writer=None, retain_rows=True) -> None:
         self.env = env
         self.bundle_writer = bundle_writer
+        self.retain_rows = retain_rows
+        if not retain_rows and bundle_writer is None:
+            raise ValueError("retain_rows=False requires a bundle_writer")
         self._trajectory_id: Optional[str] = None
         self._rows: List[Dict[str, Any]] = []
         self._dataset: Optional[Dataset] = None
@@ -38,6 +42,27 @@ class Tracing:
         self._rows = []
         self._dataset = None
         return self._trajectory_id
+
+    @contextmanager
+    def bundle(self, directory, *, retain_rows=True):
+        """Attach a live journal for a runner scope; finalize on success or failure.
+
+        The default also retains rows for existing dataset/ATIF exports. Opt out
+        for long-running captures that only need the disk bundle.
+        """
+        from .trace_bundle import TraceBundleWriter
+
+        if self.bundle_writer is not None:
+            raise RuntimeError("a trace bundle is already active")
+        previous = self.retain_rows
+        with TraceBundleWriter(directory) as writer:
+            self.bundle_writer = writer
+            self.retain_rows = retain_rows
+            try:
+                yield writer
+            finally:
+                self.bundle_writer = None
+                self.retain_rows = previous
 
     @property
     def trajectory_id(self) -> Optional[str]:
@@ -74,7 +99,8 @@ class Tracing:
             self.bundle_writer.append(row, context=context, attachments=attachments)
         elif context is not None or attachments is not None:
             raise ValueError("context and attachments require a bundle_writer")
-        self._rows.append(row)
+        if self.retain_rows:
+            self._rows.append(row)
         # Invalidate cached dataset; it can be rebuilt lazily
         self._dataset = None
 
@@ -90,6 +116,8 @@ class Tracing:
           - trajectory_id: str
           - timestamp: str
         """
+        if not self.retain_rows:
+            raise RuntimeError("dataset export requires retain_rows=True")
         if self._dataset is None:
             feats = Features(
                 {

@@ -17,7 +17,7 @@ from .trace_bundle import TraceBundleReader
 @contextmanager
 def serve_bundle(directory, *, follow=False):
     reader = TraceBundleReader(directory)
-    cutoff = None if follow else len(reader.events) - 1
+    cutoff = None if follow else reader.count - 1
     token = secrets.token_urlsafe(32)
     lock = threading.Lock()
     assets = Path(__file__).parent / "www"
@@ -63,7 +63,41 @@ def serve_bundle(directory, *, follow=False):
                 self.reply(403, b'{"error":"viewer authorization required"}')
                 return
             try:
-                if url.path == "/events":
+                if url.path in ("/status", "/page", "/event", "/image-neighbor"):
+                    query = parse_qs(url.query)
+                    with lock:
+                        status = reader.status(cutoff=cutoff)
+                        generation = query.get("generation", [reader.generation])[0]
+                        if generation != reader.generation:
+                            raise ValueError("trace generation changed; reopen the viewer")
+                        through = int(query.get("through", [str(status["cursor"])])[0])
+                        if through < -1 or through > status["cursor"]:
+                            raise ValueError("invalid trace cursor")
+                        if url.path == "/status":
+                            result = {**status, "follow": follow}
+                        elif url.path == "/page":
+                            result = reader.page(
+                                order=query.get("order", ["arrival"])[0],
+                                page=int(query.get("page", ["0"])[0]),
+                                through=through,
+                                selected=int(query["selected"][0]) if "selected" in query else None,
+                            )
+                        else:
+                            sequence = int(query.get("sequence", ["-1"])[0])
+                            if sequence < 0 or sequence > through:
+                                raise ValueError("unknown event")
+                            result = (
+                                reader.event(sequence)
+                                if url.path == "/event"
+                                else reader.image_neighbor(
+                                    sequence,
+                                    direction=int(query.get("direction", ["1"])[0]),
+                                    order=query.get("order", ["arrival"])[0],
+                                    through=through,
+                                )
+                            )
+                    self.reply(200, json.dumps(result).encode())
+                elif url.path == "/events":
                     query = parse_qs(url.query)
                     after = int(query.get("after", ["-1"])[0])
                     with lock:
@@ -111,6 +145,7 @@ def serve_bundle(directory, *, follow=False):
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+        reader.close()
 
 
 def view_bundle(directory, *, follow=False):

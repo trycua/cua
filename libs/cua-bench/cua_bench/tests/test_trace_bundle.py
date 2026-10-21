@@ -197,3 +197,128 @@ def test_legacy_follow_refuses_without_starting_server(tmp_path, capsys):
 
     assert cmd_view(Namespace(identifier=str(tmp_path), follow=True)) == 1
     assert "requires a live trace bundle" in capsys.readouterr().out
+
+
+def test_stable_pages_clock_groups_and_image_navigation(tmp_path):
+    with TraceBundleWriter(tmp_path / "bundle") as writer:
+        trace = Tracing(None, bundle_writer=writer, retain_rows=False)
+        trace.start()
+        for i in range(205):
+            trace.record(
+                str(i),
+                {"large": "x" * 2048},
+                data_images=[Image.new("RGB", (8, 8))] if i in (0, 102, 204) else [],
+                context={"clock_domain": "a" if i % 2 else "b"},
+            )
+        with TraceBundleReader(writer.path) as reader:
+            first = reader.page(order="observed", through=204, selected=102)
+            assert 102 in [event["sequence"] for event in first["events"]]
+            assert all("data" not in event for event in first["events"])
+            trace.record(
+                "late", {}, context={"clock_domain": "utc", "aligned_at": "2026-01-01T00:00:00Z"}
+            )
+            reader.refresh()
+            assert reader.page(order="observed", through=204, selected=102) == first
+            assert reader.page(order="observed")["events"][0]["event_name"] == "late"
+            assert reader.image_neighbor(0, direction=1)["sequence"] == 102
+            assert reader.image_neighbor(102, direction=-1)["sequence"] == 0
+            assert reader.image_neighbor(204, direction=1) is None
+            assert reader.page(page=2)["events"][-1]["sequence"] == 205
+        assert trace._rows == []
+        with pytest.raises(RuntimeError, match="dataset export requires"):
+            _ = trace.dataset
+
+
+def test_bundle_scope_finalizes_and_restores_recorder(tmp_path):
+    trace = Tracing(None)
+    with pytest.raises(RuntimeError, match="task failed"):
+        with trace.bundle(tmp_path / "failed", retain_rows=False):
+            trace.start()
+            trace.record("before failure", {})
+            raise RuntimeError("task failed")
+    assert trace.bundle_writer is None and trace.retain_rows
+    with TraceBundleReader(tmp_path / "failed") as reader:
+        assert reader.status()["state"] == "failed"
+    with trace.bundle(tmp_path / "next"):
+        trace.start()
+        trace.record("success", {})
+    with TraceBundleReader(tmp_path / "next") as reader:
+        assert reader.status()["state"] == "completed"
+
+
+def test_snapshot_bounds_are_inert_and_follow_event_identity(tmp_path):
+    with TraceBundleWriter(tmp_path / "bundle") as writer:
+        trace = Tracing(None, bundle_writer=writer)
+        trace.start()
+        trace.record(
+            "snapshot",
+            {
+                "snapshot": {
+                    "windows": [
+                        {
+                            "html": '<html data-window-screen-x="10" data-window-screen-y="20"><body><button aria-label="Save &amp; submit" data-bbox-x="1" data-bbox-y="2" data-bbox-width="30" data-bbox-height="40">Save</button><img src="https://example.invalid/captured" onload="alert(1)"></body></html>'
+                        }
+                    ]
+                }
+            },
+            [Image.new("RGB", (100, 100))],
+        )
+        with TraceBundleReader(writer.path) as reader:
+            assert reader.event(0)["snapshot_boxes"] == [
+                {"x": 11, "y": 22, "width": 30, "height": 40, "label": "Save & submit"}
+            ]
+
+
+def test_failed_journal_write_refuses_future_records(tmp_path, monkeypatch):
+    with TraceBundleWriter(tmp_path / "bundle") as writer:
+
+        def fail(*args):
+            raise OSError("synthetic disk full")
+
+        with monkeypatch.context() as scoped:
+            scoped.setattr(writer.journal, "write", fail)
+            with pytest.raises(OSError, match="synthetic disk full"):
+                record(writer)
+        with pytest.raises(RuntimeError, match="closed or failed"):
+            record(writer)
+    with TraceBundleReader(writer.path) as reader:
+        assert reader.status()["state"] == "failed"
+
+
+def test_completed_partial_journal_and_unknown_version_refuse(tmp_path):
+    with TraceBundleWriter(tmp_path / "bundle") as writer:
+        record(writer)
+    with (writer.path / "events.jsonl").open("ab") as journal:
+        journal.write(b"{")
+    with pytest.raises(ValueError, match="completed trace is incomplete"):
+        TraceBundleReader(writer.path)
+    manifest_path = writer.path / "trace.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["version"] = 999
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="unsupported trace bundle version"):
+        TraceBundleReader(writer.path)
+
+
+def test_page_watermark_and_generation_reset_over_http(tmp_path):
+    with TraceBundleWriter(tmp_path / "bundle") as writer:
+        record(writer)
+        with serve_bundle(writer.path, follow=True) as url:
+            with get(url, "/status") as response:
+                initial = json.load(response)
+            record(writer, "late")
+            with get(url, "/page?through=0&order=observed") as response:
+                assert [e["event_name"] for e in json.load(response)["events"]] == ["action"]
+            with get(url, "/event?through=0&sequence=0") as response:
+                assert json.load(response)["event_name"] == "action"
+            with pytest.raises(HTTPError) as error:
+                get(url, "/event?through=0&sequence=1")
+            assert error.value.code == 409
+            manifest_path = writer.path / "trace.json"
+            manifest = json.loads(manifest_path.read_text())
+            manifest["generation"] = "replaced-generation"
+            manifest_path.write_text(json.dumps(manifest))
+            with pytest.raises(HTTPError) as error:
+                get(url, "/status?generation=" + initial["generation"])
+            assert error.value.code == 409
+            assert json.load(error.value)["error"] == "trace generation changed; reopen the viewer"

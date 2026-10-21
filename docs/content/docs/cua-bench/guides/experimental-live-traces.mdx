@@ -26,21 +26,48 @@ uv run cb trace view /tmp/live-collector --follow
 The browser displays arrivals without reloading. Switch from **Arrival order**
 to **Aligned observation time** to see the deliberately late request in its
 observation-time position. Events without aligned time are labeled unaligned
-and placed after aligned events in arrival order. A declared clock domain is
+and grouped by declared clock domain after aligned events, in arrival order within each group. A declared clock domain is
 required for aligned timestamps; the viewer does not synchronize devices or
 infer causation. Selection is based on event identity and survives reordering.
 
 Select the action event to preview its image and text attachment or download
-original evidence. Text is escaped; only PNG, JPEG, GIF, WebP, plain text and JSON
+original evidence. Image previews show ARIA bounds from `snapshot.windows[].html`;
+hover over a bound for its label. **Previous image** and **Next image** (or the
+arrow keys) navigate screenshots in the selected ordering, including multiple
+images on one event. Event selection and an open image stay anchored to their
+identities when a late event arrives. Captured HTML is parsed as data on the
+server and never inserted into the browser DOM. Text is escaped; only PNG, JPEG, GIF, WebP, plain text and JSON
 have previews. Other content is download-only. The viewer loads no external UI
 scripts. **Pause updates** freezes the displayed list while recording and polling
-continue; **Resume updates** catches up. Closing the viewer does not stop capture.
+continue; **Resume updates** catches up. Paused pages and image navigation use
+the same sequence cutoff, so late records cannot enter a paused view. Closing the viewer does not stop capture.
 
 After the writer closes, the viewer shows **Completed**. An unfinalized recording
 is labeled accordingly; a connection problem shows **Disconnected / unavailable**.
 Refresh retries with the last received sequence. Without `--follow`, the viewer
 shows a snapshot of the bundle. Legacy datasets still use the existing viewer;
 `--follow` refuses those datasets because they are not live journals.
+
+## Record existing task runs
+
+Interactive recording is opt-in and uses a new output directory:
+
+```bash skip="no-runner"
+cb interact ./tasks/example --trace-bundle ./capture
+cb trace view ./capture --follow
+```
+
+Run the viewer command in a second terminal while the task is running. Add
+`--trace-out ./dataset` to retain a legacy dataset alongside the bundle. Without
+that option, interactive bundle capture does not retain event payloads in memory.
+Task setup, evaluation and actions that call the existing recorder are included;
+this option does not capture arbitrary human input or install a native collector.
+
+For task and dataset runners, `cb run ./tasks/example --live-trace` writes
+`task_<variant>_bundle` inside each episode output directory. Existing dataset and
+ATIF exports remain enabled, so these runs still retain legacy rows in memory.
+The bundle closes on scope exit, including failure and cancellation. Closing the
+viewer never stops the task or finalizes its bundle.
 
 ## Record from Python
 
@@ -71,6 +98,11 @@ synchronizes on close; power-loss durability before close is not guaranteed.
 A context manager marks exceptional exits as failed. Never edit a live journal.
 Partial trailing lines are withheld; complete corrupt lines produce an error.
 
+For long captures, construct `Tracing` with `retain_rows=False` and a bundle
+writer to avoid the legacy in-memory dataset. Dataset export is unavailable in
+that mode. Existing environments can use `with env.tracing.bundle(path)` around
+the runner lifecycle; the context manager restores the recorder on exit.
+
 Existing recorder calls and dataset exports retain their five-column schema.
 The legacy export includes images but omits bundle context and generic
 attachments. Keep the bundle to retain that evidence. Calls before `start()`
@@ -83,24 +115,28 @@ regular files, enforces a 100 MiB per-file limit and a configurable bundle quota
 The local viewer uses a temporary read capability. Open it from the CLI rather
 than reusing a browser URL whose fragment has been cleared.
 
-## Current experimental limits
+## Storage and review status
 
-The three core capabilities are implemented, but this is not full RFC acceptance:
+The journal remains the source of truth. Each viewer builds a disposable SQLite
+index in its own temporary directory, removed when it closes. The index never
+modifies the recording. It indexes event order and attachment descriptors on disk;
+the browser receives at most 100 bounded summaries and loads event details on
+selection. Polling reads status instead of downloading the entire journal. Large
+captures need temporary disk space for the index as well as the original bundle.
 
-- Rendering is paginated to 100 rows, but the reader and browser retain received
-  metadata in memory. Long-run disk-backed indexing and the 100,000-event load
-  target remain unverified.
-- Browser downloads use a blob bounded by the attachment limit. Large-file
-  streaming directly to browser storage is not implemented.
-- The bundle view supports image enlargement and stable event selection, but
-  legacy screenshot bounding-box overlays and image-to-image timeline navigation
-  are not yet ported. The legacy dataset viewer retains its existing behavior.
-- Writer attachment directories must be locally controlled. This prototype has
-  path and integrity checks, but does not claim protection against a hostile
-  process concurrently replacing directory components on the same account.
-- This branch was exercised on macOS. Windows/Linux file-locking and path parity,
-  live native collectors, automatic runner wiring and interactive CLI writer
-  options remain unverified or unimplemented.
+The 100,000-event tests enforce a 16 MiB Python allocation budget for reading and
+a 32 MiB JavaScript heap budget in Chromium, with only 100 rendered rows. These
+budgets exclude interpreter/browser baseline memory and the SQLite native cache
+(configured at 2 MiB). Initial indexing is proportional to journal size; the
+append-to-display target applies after the initial index is ready.
+
+This remains a proposal pending the RFC decision. Windows, macOS and Linux have
+journal, loopback and browser CI lanes; a configured lane is not a passing result.
+Native OS/device collectors remain outside this contribution. Attachment directories
+must be locally controlled: the viewer validates managed IDs, regular files and
+content hashes, but does not isolate a hostile process with the same account's
+filesystem privileges. Browser downloads use a blob bounded by the 100 MiB
+attachment limit. Previews show at most 256 KiB of text and 1,000 ARIA bounds.
 
 ## Tests
 
@@ -108,7 +144,7 @@ The ordinary Bench suite includes the writer/reader and real loopback server
 tests. Browser acceptance is opt-in and needs Node, Playwright and Chromium.
 
 ```bash skip="no-runner"
-uv run pytest -q cua_bench/tests/test_trace_bundle.py
+uv run pytest -q cua_bench/tests/test_trace_bundle.py cua_bench/tests/test_trace_bundle_scale.py
 CUA_BENCH_BROWSER_TESTS=1 uv run pytest -q cua_bench/tests/test_trace_bundle_browser.py
 ```
 

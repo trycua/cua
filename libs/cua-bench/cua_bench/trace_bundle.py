@@ -5,9 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sqlite3
 import stat
 import tempfile
 import uuid
+import weakref
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -22,6 +24,8 @@ def utc_now():
 
 
 def validate_context(context):
+    if context is not None and not isinstance(context, dict):
+        raise ValueError("trace context must be an object")
     context = dict(context or {})
     aligned = context.get("aligned_at")
     if aligned is not None:
@@ -48,6 +52,8 @@ class TraceBundleWriter:
     """
 
     def __init__(self, directory, *, max_attachment=MAX_ATTACHMENT, quota=1024**3):
+        if not 0 < max_attachment <= MAX_ATTACHMENT or quota <= 0:
+            raise ValueError("invalid attachment limit or bundle quota")
         self.path = Path(directory).expanduser().resolve()
         self.path.mkdir(parents=True, exist_ok=False)
         (self.path / "artifacts").mkdir()
@@ -197,15 +203,52 @@ class TraceBundleReader:
         self.path = Path(directory).resolve()
         self.generation = None
         self.offset = 0
-        self.events = []
-        self.attachments = {}
+        self.count = 0
         self.identity = None
-        self.refresh()
+        # A disposable disk index: never mutate the recording being inspected.
+        self._cache = tempfile.TemporaryDirectory(prefix="cua-trace-index-")
+        self.db = sqlite3.connect(Path(self._cache.name) / "index.sqlite", check_same_thread=False)
+        self._finalizer = weakref.finalize(self, self._cleanup, self.db, self._cache)
+        self.db.execute("PRAGMA cache_size=-2048")
+        self.db.execute("PRAGMA temp_store=FILE")
+        self.db.executescript(
+            """
+            CREATE TABLE events (sequence INTEGER PRIMARY KEY, aligned TEXT,
+                unaligned INTEGER, domain TEXT, has_images INTEGER, body TEXT);
+            CREATE INDEX observation_order ON events(unaligned, aligned, domain, sequence);
+            CREATE TABLE attachments (id TEXT PRIMARY KEY, body TEXT);
+        """
+        )
+        try:
+            self.refresh()
+        except BaseException:
+            self.close()
+            raise
+
+    @staticmethod
+    def _cleanup(db, cache):
+        db.close()
+        cache.cleanup()
+
+    def close(self):
+        self._finalizer()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
 
     def refresh(self):
         manifest = json.loads((self.path / "trace.json").read_text(encoding="utf-8"))
         if manifest.get("format") != FORMAT or manifest.get("version") != VERSION:
             raise ValueError("unsupported trace bundle version")
+        if (
+            manifest.get("state") not in ("recording", "completed", "failed")
+            or not isinstance(manifest.get("generation"), str)
+            or not manifest["generation"]
+        ):
+            raise ValueError("invalid trace manifest")
         if self.generation and manifest["generation"] != self.generation:
             raise ValueError("trace generation changed; reopen the viewer")
         self.generation = manifest["generation"]
@@ -223,12 +266,32 @@ class TraceBundleReader:
                 if not line or not line.endswith(b"\n"):
                     break
                 event = json.loads(line)
-                if event.get("sequence") != len(self.events):
+                if event.get("sequence") != self.count:
                     raise ValueError("trace sequence is corrupt")
+                if not isinstance(event.get("event_name"), str) or not isinstance(
+                    event.get("recorded_at"), str
+                ):
+                    raise ValueError("invalid trace event metadata")
                 if not isinstance(event.get("data"), dict):
                     raise ValueError("trace event data must be an object")
                 event["context"] = validate_context(event.get("context"))
-                for ref in event.get("images", []) + event.get("attachments", []):
+                if not isinstance(event.get("images"), list) or not isinstance(
+                    event.get("attachments"), list
+                ):
+                    raise ValueError("invalid trace attachment list")
+                for ref in event["images"] + event["attachments"]:
+                    if not isinstance(ref, dict) or not isinstance(ref.get("id"), str):
+                        raise ValueError("invalid attachment identity")
+                    if (
+                        not isinstance(ref.get("size"), int)
+                        or not 0 <= ref["size"] <= MAX_ATTACHMENT
+                        or not isinstance(ref.get("name"), str)
+                        or not isinstance(ref.get("media_type"), str)
+                        or not isinstance(ref.get("sha256"), str)
+                        or len(ref["sha256"]) != 64
+                        or any(c not in "0123456789abcdef" for c in ref["sha256"])
+                    ):
+                        raise ValueError("invalid attachment descriptor")
                     artifact_id = ref["id"]
                     if (
                         len(artifact_id) != 32
@@ -236,13 +299,33 @@ class TraceBundleReader:
                         or ref.get("generation") != self.generation
                     ):
                         raise ValueError("invalid attachment identity")
-                    if artifact_id in self.attachments and self.attachments[artifact_id] != ref:
+                    existing = self.db.execute(
+                        "SELECT body FROM attachments WHERE id=?", (artifact_id,)
+                    ).fetchone()
+                    if existing and json.loads(existing[0]) != ref:
                         raise ValueError("conflicting attachment descriptor")
-                    self.attachments[artifact_id] = ref
-                self.events.append(event)
+                    self.db.execute(
+                        "INSERT OR IGNORE INTO attachments VALUES (?, ?)",
+                        (artifact_id, json.dumps(ref)),
+                    )
+                context = event["context"]
+                aligned = context.get("aligned_at")
+                self.db.execute(
+                    "INSERT INTO events VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        self.count,
+                        aligned or "",
+                        int(aligned is None),
+                        str(context.get("clock_domain", "unknown")) if aligned is None else "",
+                        int(bool(event.get("images"))),
+                        json.dumps(event),
+                    ),
+                )
+                self.count += 1
                 self.offset = handle.tell()
+        self.db.commit()
         if manifest["state"] == "completed":
-            if manifest["final_sequence"] != len(self.events) - 1 or info.st_size != self.offset:
+            if manifest["final_sequence"] != self.count - 1 or info.st_size != self.offset:
                 raise ValueError("completed trace is incomplete")
         return manifest
 
@@ -250,11 +333,14 @@ class TraceBundleReader:
         manifest = self.refresh()
         if generation is not None and generation != self.generation:
             raise ValueError("trace generation changed; reopen the viewer")
-        if after < -1 or after >= len(self.events):
+        if after < -1 or after >= self.count:
             raise ValueError("invalid trace cursor")
         records = []
         size = 0
-        for event in self.events[after + 1 : after + 501]:
+        for (body,) in self.db.execute(
+            "SELECT body FROM events WHERE sequence>? ORDER BY sequence LIMIT 500", (after,)
+        ):
+            event = json.loads(body)
             size += len(json.dumps(event).encode())
             if records and size > 2 * 1024 * 1024:
                 break
@@ -264,16 +350,94 @@ class TraceBundleReader:
             "generation": self.generation,
             "events": records,
             "cursor": cursor,
-            "more": cursor < len(self.events) - 1,
+            "more": cursor < self.count - 1,
             "state": manifest["state"],
             "final_sequence": manifest.get("final_sequence"),
         }
 
+    def status(self, *, cutoff=None):
+        manifest = self.refresh()
+        last = self.count - 1 if cutoff is None else min(cutoff, self.count - 1)
+        return {
+            "generation": self.generation,
+            "cursor": last,
+            "total": last + 1,
+            "state": manifest["state"] if cutoff is None else "snapshot",
+            "final_sequence": manifest.get("final_sequence"),
+        }
+
+    def page(self, *, order="arrival", page=0, through=None, selected=None):
+        """Bounded summaries at a stable journal watermark, even during late insertion."""
+        if order not in ("arrival", "observed") or page < 0:
+            raise ValueError("invalid trace page")
+        through = self.count - 1 if through is None else through
+        if through < -1 or through >= self.count:
+            raise ValueError("invalid trace cursor")
+        ordering = "sequence" if order == "arrival" else "unaligned, aligned, domain, sequence"
+        # Ranking lives on disk; event bodies are only loaded for one page.
+        if selected is not None:
+            row = self.db.execute(
+                f"SELECT position FROM (SELECT sequence, row_number() OVER (ORDER BY {ordering}) - 1 AS position FROM events WHERE sequence<=?) WHERE sequence=?",
+                (through, selected),
+            ).fetchone()
+            if row:
+                page = row[0] // 100
+        page = min(page, max(0, through // 100))
+        rows = self.db.execute(
+            f"SELECT body FROM events WHERE sequence<=? ORDER BY {ordering} LIMIT 100 OFFSET ?",
+            (through, page * 100),
+        )
+        summaries = []
+        for (body,) in rows:
+            event = json.loads(body)
+            summaries.append(
+                {
+                    "sequence": event["sequence"],
+                    "event_name": event["event_name"][:512],
+                    "recorded_at": event["recorded_at"][:512],
+                    "context": {
+                        key: str(event["context"][key])[:512]
+                        for key in ("aligned_at", "clock_domain")
+                        if key in event["context"]
+                    },
+                }
+            )
+        return {
+            "events": summaries,
+            "page": page,
+            "total": through + 1,
+            "cursor": through,
+            "generation": self.generation,
+        }
+
+    def event(self, sequence):
+        row = self.db.execute("SELECT body FROM events WHERE sequence=?", (sequence,)).fetchone()
+        if row is None:
+            raise ValueError("unknown event")
+        from .trace_snapshot import snapshot_boxes
+
+        event = json.loads(row[0])
+        event["snapshot_boxes"] = snapshot_boxes(event["data"])
+        return event
+
+    def image_neighbor(self, sequence, *, direction, order="arrival", through=None):
+        if direction not in (-1, 1) or order not in ("arrival", "observed"):
+            raise ValueError("invalid image navigation")
+        through = self.count - 1 if through is None else through
+        ordering = "sequence" if order == "arrival" else "unaligned, aligned, domain, sequence"
+        # Include the selected event even when it has no image.
+        rows = self.db.execute(
+            f"WITH ranked AS (SELECT sequence, row_number() OVER (ORDER BY {ordering}) AS pos FROM events WHERE sequence<=? AND (has_images=1 OR sequence=?)) SELECT sequence FROM ranked WHERE pos=(SELECT pos+? FROM ranked WHERE sequence=?)",
+            (through, sequence, direction, sequence),
+        ).fetchone()
+        return self.event(rows[0]) if rows else None
+
     def attachment(self, artifact_id):
         """Return validated bytes in a temporary file; callers must close it."""
-        ref = self.attachments.get(artifact_id)
-        if ref is None:
+        row = self.db.execute("SELECT body FROM attachments WHERE id=?", (artifact_id,)).fetchone()
+        if row is None:
             raise ValueError("unknown attachment")
+        ref = json.loads(row[0])
         root = self.path / "artifacts"
         source = root / artifact_id
         if root.is_symlink() or source.is_symlink() or not source.is_file():

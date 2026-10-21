@@ -12,7 +12,10 @@ from cua_bench import sandboxes
 from cua_bench.cli.commands import interact
 from cua_bench.targets import EnvSpec, Target
 
-from .test_cli_golden import HELLO, cli_env, run_cb  # noqa: F401 - fixture
+from .test_cli_golden import HELLO, run_cb
+from .test_cli_golden import cli_env as _cli_env
+
+cli_env = _cli_env
 
 VIEWER = "http://127.0.0.1:40123/viewer/#ticket=abc"
 
@@ -118,3 +121,42 @@ def test_no_display_service_is_published():
         kwargs = sandboxes.ephemeral_kwargs(env_spec, Target(on=on))
         assert "services" not in kwargs
 
+
+def test_interact_live_bundle_and_legacy_export(cli_env, browser, tmp_path):
+    from cua_bench.trace_bundle import TraceBundleReader
+    from datasets import load_from_disk
+
+    bundle = tmp_path / "live"
+    legacy = tmp_path / "legacy"
+    assert (
+        run_cb(
+            [
+                "interact",
+                str(HELLO),
+                "--no-wait",
+                "--trace-bundle",
+                str(bundle),
+                "--trace-out",
+                str(legacy),
+            ]
+        )
+        == 0
+    )
+    with TraceBundleReader(bundle) as reader:
+        assert reader.status()["state"] == "completed"
+        assert [event["event_name"] for event in reader.batch()["events"]] == ["reset", "evaluate"]
+    assert list(load_from_disk(str(legacy))["event_name"]) == ["reset", "evaluate"]
+
+
+def test_run_live_bundle_keeps_existing_exports(cli_env, tmp_path):
+    from cua_bench.trace_bundle import TraceBundleReader
+
+    output = tmp_path / "run"
+    assert run_cb(["run", str(HELLO), "--live-trace", "--output-dir", str(output)]) == 0
+    bundles = list(output.rglob("trace.json"))
+    assert len(bundles) == 1
+    with TraceBundleReader(bundles[0].parent) as reader:
+        assert reader.status()["state"] == "completed"
+        assert "evaluate" in [event["event_name"] for event in reader.batch()["events"]]
+    assert list(output.rglob("dataset_info.json"))
+    assert list(output.rglob("trajectory.json"))

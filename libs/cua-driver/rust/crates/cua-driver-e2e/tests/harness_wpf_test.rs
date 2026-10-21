@@ -1739,6 +1739,93 @@ fn harness_wpf_slider_drag() {
 
 #[test]
 #[ignore]
+fn harness_wpf_slider_drag_holds_modifier() {
+    // A foreground drag holds `modifier` keys through SendInput from press to
+    // release. The fixture records WPF's Keyboard.Modifiers (live GetKeyState)
+    // on each thumb move, and a plain F5 afterwards still matches its
+    // unmodified binding, so Ctrl was released rather than latched. The drag
+    // grabs the thumb itself, which at value 0 spans from the slider's left
+    // edge to the IncreaseLarge track button; a press on the track would only
+    // step the value.
+    run_foreground_case(
+        "slider_drag_modifier",
+        Targeting::Px,
+        DriverRoute::WindowsSendInput,
+        Vec::new(),
+        |pid, wid, driver| {
+            focus_harness(driver, pid, wid);
+            let pre = snapshot(driver, pid, wid);
+            assert!(
+                pre.text().contains("slider_value=0") && pre.text().contains("accel_fired=0"),
+                "fixture did not start at slider_value=0 and accel_fired=0"
+            );
+            let bounds = window_bounds(driver, pid, wid);
+            let (x, y, width, height) = pixel_frame(&pre, "sld-value", bounds);
+            let (track_x, ..) = pixel_frame(&pre, "IncreaseLarge", bounds);
+
+            let drag = driver.call(
+                "drag",
+                serde_json::json!({
+                    "pid": pid as i64, "window_id": wid,
+                    "from_x": (x + track_x) / 2.0, "from_y": y + height / 2.0,
+                    "to_x": x + width * 0.75, "to_y": y + height / 2.0,
+                    "duration_ms": 700, "steps": 40,
+                    "modifier": ["ctrl"],
+                    "delivery_mode": "foreground"
+                }),
+            );
+            assert!(
+                !drag.is_error(),
+                "modified foreground drag failed: {}",
+                drag.text()
+            );
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                let post = snapshot(driver, pid, wid);
+                let line = fixture_state_line(post.text(), "slider_value=");
+                // The suffix appears only once the thumb moves; a value past
+                // the first steps shows the thumb followed the pointer.
+                let value = line
+                    .split("slider_value=")
+                    .nth(1)
+                    .and_then(|rest| rest.split(' ').next())
+                    .and_then(|value| value.parse::<u32>().ok())
+                    .unwrap_or(0);
+                if value >= 50 && line.contains("modifiers=Control") {
+                    println!("drag with ctrl observed: {}", line.trim());
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "WPF did not observe a thumb drag with Ctrl: {line}; tool said: {}",
+                    drag.text()
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
+
+            let key = driver.call(
+                "press_key",
+                serde_json::json!({
+                    "pid": pid as i64, "window_id": wid, "key": "f5",
+                    "delivery_mode": "foreground"
+                }),
+            );
+            assert!(!key.is_error(), "post-drag plain F5 failed: {}", key.text());
+            std::thread::sleep(Duration::from_millis(300));
+            let post = snapshot(driver, pid, wid);
+            assert!(
+                post.text().contains("accel_fired=1"),
+                "plain F5 did not match after the modified drag; Ctrl may be latched: {}",
+                snapshot_lines_containing(post.text(), &["accel_fired"])
+            );
+            println!("✅ harness_wpf_slider_drag_holds_modifier: Ctrl held, then released");
+            Vec::new()
+        },
+    );
+}
+
+#[test]
+#[ignore]
 fn harness_wpf_slider_drag_background_refusal() {
     let case = native_background_case(
         "wpf",

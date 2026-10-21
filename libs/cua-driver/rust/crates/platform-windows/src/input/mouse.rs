@@ -787,10 +787,16 @@ fn send_click_synthesized_mods_impl(
 /// input queue and DOES update GetKeyState, so a WPF Slider thumb actually
 /// tracks the drag.
 ///
+/// `modifiers` (ctrl/shift/alt/win) are held through the system input queue
+/// from before the press until after the release, so targets that read live
+/// key state (WPF `Keyboard.Modifiers`, Excel's Ctrl-drag copy) see a
+/// modified drag.
+///
 /// Same UIAccess constraints as [`send_click_synthesized`] — the
 /// `SetForegroundWindow` swap is rejected from non-UIAccess processes
 /// when foreground-lock is active; route through `cua-driver-uia.exe`
 /// for reliable operation.
+#[allow(clippy::too_many_arguments)]
 pub fn send_drag_synthesized(
     target: u64,
     sx_from: i32,
@@ -800,6 +806,7 @@ pub fn send_drag_synthesized(
     duration_ms: u64,
     steps: usize,
     button: &str,
+    modifiers: &[&str],
 ) -> Result<()> {
     send_drag_synthesized_impl(
         target,
@@ -810,6 +817,7 @@ pub fn send_drag_synthesized(
         duration_ms,
         steps,
         button,
+        modifiers,
         false,
     )
 }
@@ -824,6 +832,8 @@ pub fn send_drag_synthesized(
 /// button goes down. When Windows refuses the activation, or another window
 /// still owns the start point, it returns `foreground_unavailable` without
 /// sending any mouse input. The caller owns any later foreground restore.
+/// `modifiers` are held as in [`send_drag_synthesized`].
+#[allow(clippy::too_many_arguments)]
 pub fn send_drag_synthesized_active(
     target: u64,
     sx_from: i32,
@@ -833,6 +843,7 @@ pub fn send_drag_synthesized_active(
     duration_ms: u64,
     steps: usize,
     button: &str,
+    modifiers: &[&str],
 ) -> Result<()> {
     send_drag_synthesized_impl(
         target,
@@ -843,6 +854,7 @@ pub fn send_drag_synthesized_active(
         duration_ms,
         steps,
         button,
+        modifiers,
         true,
     )
 }
@@ -862,6 +874,7 @@ fn send_drag_synthesized_impl(
     duration_ms: u64,
     steps: usize,
     button: &str,
+    modifiers: &[&str],
     activate: bool,
 ) -> Result<()> {
     let target = HWND(target as *mut _);
@@ -877,6 +890,7 @@ fn send_drag_synthesized_impl(
         "middle" => (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
         _ => (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
     };
+    let (mod_downs, mod_ups) = crate::input::keyboard::modifier_hold_inputs(modifiers);
 
     let (vd_x, vd_y, vd_w, vd_h) = unsafe {
         (
@@ -1004,6 +1018,30 @@ fn send_drag_synthesized_impl(
             }
         }
 
+        // Release the held modifiers, retrying once like the click path so a
+        // partially inserted release does not leave system key state held.
+        let release_modifiers = || {
+            let size = std::mem::size_of::<INPUT>() as i32;
+            mod_ups.is_empty()
+                || SendInput(&mod_ups, size) as usize == mod_ups.len()
+                || SendInput(&mod_ups, size) as usize == mod_ups.len()
+        };
+
+        // 0. Hold the modifiers before the press.
+        if !mod_downs.is_empty() {
+            let sent = SendInput(&mod_downs, std::mem::size_of::<INPUT>() as i32);
+            if sent as usize != mod_downs.len() {
+                let _ = release_modifiers();
+                restore(true);
+                drop(noactivate);
+                bail!(
+                    "SendInput inserted {sent}/{} modifier key presses; no mouse input was sent",
+                    mod_downs.len()
+                );
+            }
+            sleep(Duration::from_millis(5));
+        }
+
         // 1. Move + press at the start of the drag.
         let (nfx, nfy) = norm(sx_from, sy_from);
         let _ = SetCursorPos(sx_from, sy_from);
@@ -1014,6 +1052,7 @@ fn send_drag_synthesized_impl(
         let sent = SendInput(&prelude, std::mem::size_of::<INPUT>() as i32);
         if sent as usize != prelude.len() {
             // Records insert in order, so a short prelude never pressed the button.
+            let _ = release_modifiers();
             restore(true);
             drop(noactivate);
             bail!(
@@ -1053,9 +1092,12 @@ fn send_drag_synthesized_impl(
         let released = SendInput(&release, std::mem::size_of::<INPUT>() as i32) == 1
             || SendInput(&release, std::mem::size_of::<INPUT>() as i32) == 1;
 
-        // Brief settle, then restore z-order (demote target, restack user's
-        // window — no activation) and the cursor.
+        // Brief settle, so a target that samples live key state while handling
+        // the button release still sees the modifiers held. Then release them
+        // and restore z-order (demote target, restack user's window — no
+        // activation) and the cursor.
         sleep(Duration::from_millis(40));
+        let modifiers_released = release_modifiers();
         restore(released);
         drop(noactivate);
 
@@ -1064,6 +1106,12 @@ fn send_drag_synthesized_impl(
             bail!(
                 "SendInput did not insert the drag's button release after a retry; the \
                  button may still be held at screen ({cx},{cy}), so the cursor was left there."
+            );
+        }
+        if !modifiers_released {
+            bail!(
+                "SendInput did not insert the drag's modifier key releases after a retry; \
+                 modifier keys may still be held."
             );
         }
         if !moves_ok {

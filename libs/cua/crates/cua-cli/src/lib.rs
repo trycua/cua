@@ -1024,6 +1024,10 @@ pub(crate) const EXIT_CODES: &[(i32, &str)] = &[
     ),
     (7, "Not enough free disk space (see `cua cache`)"),
     (
+        10,
+        "An update is available (`cua host update --check`); nothing was changed",
+    ),
+    (
         130,
         "Cancelled (Ctrl-C during a create): what it made was removed",
     ),

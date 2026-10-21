@@ -97,6 +97,7 @@
     "host.status",
     "host.stop",
     "host.unshare",
+    "host.update",
     "image.build",
     "image.create",
     "image.info",

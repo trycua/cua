@@ -61,11 +61,13 @@ jobs:
   rust-lint:
     name: rust lint (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    # Windows clippy runs on every pull request: Windows-only compile errors
+    # used to surface only on release PRs.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON((github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-please--') || contains(github.event.pull_request.labels.*.name, 'ci:full')) && '["ubuntu-latest","macos-26","windows-latest"]' || '["ubuntu-latest"]') }}
+        os: ${{ fromJSON((github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-please--') || contains(github.event.pull_request.labels.*.name, 'ci:full')) && '["ubuntu-latest","macos-26","windows-latest"]' || '["ubuntu-latest","windows-latest"]') }}
     defaults:
       run:
         working-directory: libs/cua

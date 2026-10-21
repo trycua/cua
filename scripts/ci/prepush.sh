@@ -5,7 +5,7 @@
 # Local pre-push checks: the cheap CI gates that fail pull requests for
 # reasons you can find in seconds on your own machine (headers, lockfiles,
 # generated files, formatting, clippy on the crates you changed, Windows
-# cfg errors). Run it before every push; it only looks at files that differ
+# cfg errors, python and web UI contract checks). Run it before every push; it only looks at files that differ
 # from the merge base, so an untouched area costs nothing.
 #
 #   scripts/ci/prepush.sh              # fast checks, then clippy for changed crates
@@ -104,12 +104,27 @@ for ws in "${workspaces[@]}"; do
   if [ $fast -eq 0 ]; then
     step "clippy ($ws: ${pkgs[*]})" bash -c "cd $ws && $wrap cargo clippy --locked ${pflags[*]} --all-targets -- -D warnings"
     if cargo xwin --version >/dev/null 2>&1; then
-      step "Windows cfg check ($ws)" bash -c "cd $ws && $wrap cargo xwin check --locked --target x86_64-pc-windows-msvc ${pflags[*]} --all-targets"
+      step "Windows clippy ($ws)" bash -c "cd $ws && $wrap cargo xwin clippy --locked --target x86_64-pc-windows-msvc ${pflags[*]} --all-targets -- -D warnings"
     else
-      skip "Windows cfg check ($ws)" "install cargo-xwin: cargo install cargo-xwin && rustup target add x86_64-pc-windows-msvc"
+      skip "Windows clippy ($ws)" "install cargo-xwin: cargo install cargo-xwin && rustup target add x86_64-pc-windows-msvc"
     fi
   fi
 done
+
+# Python: the same three tools as CI: Lint Python (black, not ruff format).
+if touches '^(libs/python/|tests/|pyproject\.toml$)'; then
+  if command -v uv >/dev/null; then
+    step "python isort, black, ruff" bash -c 'uv run isort --check-only libs/python tests && uv run black --check libs/python tests && uv run ruff check libs/python tests'
+  else skip "python isort, black, ruff" "install uv"; fi
+fi
+
+# Cua Spaces web UI, bridge contract (Electron/browser binding drift) and Electron shell.
+if touches '^(apps/cua-spaces-web/|apps/cua-spaces-desktop/|apps/cua-spaces/core-wasm/|libs/cua/crates/cua-spaces-app-core/)'; then
+  if [ -d apps/cua-spaces-web/node_modules ] && [ -d apps/cua-spaces-desktop/node_modules ]; then
+    step "web UI typecheck, tests and bridge contract" bash -c 'cd apps/cua-spaces-web && pnpm check'
+    step "Electron shell typecheck and router contract" bash -c 'cd apps/cua-spaces-desktop && pnpm test'
+  else skip "web UI and Electron contract" "run pnpm install in apps/cua-spaces-web (--ignore-workspace) and apps/cua-spaces-desktop"; fi
+fi
 
 if [ $bindings -eq 1 ]; then
   step "UniFFI bindings are current" bash -c "$wrap node libs/cua/scripts/generate-uniffi-bindings.mjs --check"

@@ -80,9 +80,9 @@ export interface PlanCard {
 
 /** `relay_usage::RelayUsageView`: Settings' row and the notice. */
 export interface RelayUsageView {
-  /** "Relay usage". */
+  /** "Remote use". */
   label: string;
-  /** "Live sessions 1 of 2 · Relay hours 6.5 of 20 this month". */
+  /** "Live sessions 1 of 2 · Remote hours 6.5 of 20 this month". */
   line: string;
   /** "Free plan". */
   plan: string;

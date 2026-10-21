@@ -49,7 +49,7 @@ pub enum DoAction {
     #[command(after_help = "Examples:
   cua do switch dev
   cua do switch relay:0123abcd4567ef89
-  # This machine (after `cua do-host-consent`)
+  # This computer (after `cua do-host-consent`)
   cua do switch host")]
     Switch {
         /// Sandbox name or ref, `relay:<id>`, `host`, `url`, or a legacy provider word.

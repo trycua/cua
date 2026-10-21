@@ -30,7 +30,7 @@
  */
 
 import type { MachineAccessNotice } from "./contracts/devices";
-import type { MachinePageRow } from "./contracts/host";
+import type { MachinePageRow, MachinesView } from "./contracts/host";
 import { AGENT_DETAIL_WEBKIT_METHODS } from "./ops/agent-detail";
 import { AGENT_KEYS_WEBKIT_METHODS } from "./ops/agent-keys";
 import { KEYVAULT_MANAGE_WEBKIT_METHODS } from "./ops/keyvault-manage";
@@ -50,6 +50,8 @@ export const WEBKIT_METHODS = [
   "session.get",
   "session.signIn",
   "session.signOut",
+  "onboarding.get",
+  "onboarding.complete",
   "spaces.list",
   "spaces.open",
   "spaces.createOptions",
@@ -89,6 +91,8 @@ export const WEBKIT_METHODS = [
   "sharing.list",
   "sharing.share",
   "sharing.unshare",
+  "sharing.removals",
+  "sharing.ackRemovals",
   "volume.overview",
   "volume.storage",
   "volume.storageSet",
@@ -125,6 +129,8 @@ export const WEBKIT_METHODS = [
   "notifications.markAllRead",
   "notifications.markRead",
   "telemetry.track",
+  "telemetry.linkNotice",
+  "telemetry.acknowledgeLinkNotice",
   "spaces.usage",
   "spaces.windows",
   "stream.pip",
@@ -152,6 +158,12 @@ export const WEBKIT_METHODS = [
   "startup.get",
   "startup.act",
   "relay.usage",
+  "nudges.pending",
+  "nudges.answer",
+  "resources.get",
+  "machines.rename",
+  "machines.remove",
+  "machines.checkHealth",
   "checklist.get",
   "checklist.send",
 ] as const;
@@ -160,11 +172,10 @@ export type WebkitMethod = (typeof WEBKIT_METHODS)[number];
 
 /** What only the Electron host answers: it draws a Space's video in the
  * page (WebCodecs), so the page asks it for a media ticket
- * (`ops/stream.ts`), and its first run is this page's (`onboarding.get`,
- * `onboarding.complete`); the Mac app draws video and its first run
- * natively. It also joins presence for the video the page draws
+ * (`ops/stream.ts`); the Mac app draws video natively. (Both hosts run
+ * this page's first run: `onboarding.get`, `onboarding.complete`.) It also joins presence for the video the page draws
  * (`presence.*`, `ops/presence.ts`). */
-export const ELECTRON_HOST_METHODS = ["onboarding.get", "onboarding.complete", "spaces.openStream", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime"] as const;
+export const ELECTRON_HOST_METHODS = ["spaces.openStream", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime"] as const;
 
 /** `onboarding.get` and `onboarding.complete`'s answer: whether the first run finished, and as what. */
 export interface WkOnboarding {
@@ -285,6 +296,9 @@ export interface WkMachines {
   /** The page's rows as the core lists them (`machines::page_rows`, what
    * the SwiftUI Machines page shows); absent from an older host. */
   rows?: MachinePageRow[] | null;
+  /** The Machines page as the core draws it (`machines_view::view`, what
+   * the SwiftUI Machines page shows); absent from an older host. */
+  view?: MachinesView | null;
 }
 
 /** `session.get`, `session.signIn`, `session.signOut`. */

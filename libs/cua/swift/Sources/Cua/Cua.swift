@@ -1,6 +1,6 @@
 // The public `Cua` module: the generated binding (`CuaSDK`) plus a few
 // conveniences. Everything else — Sandboxes, SpacesdClient, MediaSession with
-// FrameSink/AudioSink, Fleet, Local, Spaces (Spaces/Space/SpaceStreamSession/
+// FrameSink/AudioSink, Local, Spaces (Spaces/Space/SpaceStreamSession/
 // SpacePresence/TeleportApprover) — comes from `CuaSDK` unchanged.
 @_exported import CuaSDK
 
@@ -8,21 +8,17 @@ public extension Cua {
     /// An SDK runtime in this process (no I/O until the first call).
     static func embedded(
         stateDir: String? = nil,
-        fleet: FleetSettings? = nil,
-        fleetFromEnv: Bool = true,
         envProbeTimeoutMs: UInt32? = nil,
         spacesHome: String? = nil,
         teleportHome: String? = nil,
-        fleetFromSession: Bool = false
+        accountFromSession: Bool = false
     ) throws -> Cua {
         try Cua.embedded(config: CuaConfig(
             stateDir: stateDir,
-            fleet: fleet,
-            fleetFromEnv: fleetFromEnv,
             envProbeTimeoutMs: envProbeTimeoutMs,
             spacesHome: spacesHome,
             teleportHome: teleportHome,
-            fleetFromSession: fleetFromSession
+            accountFromSession: accountFromSession
         ))
     }
 }
@@ -32,7 +28,7 @@ public extension SpacesdCommand {
     init(_ program: String, _ args: [String] = [], stdin: Bool = false) {
         self.init(
             program: program, args: args, env: [:], cwd: nil, user: nil,
-            timeoutMs: nil, tag: nil, stdin: stdin, pty: nil
+            timeoutMs: nil, tag: nil, stdin: stdin, pty: nil, killOnDisconnect: false
         )
     }
 }
@@ -72,21 +68,6 @@ public enum Image {
         _ reference: String, backend: String = "local", arch: String? = nil
     ) throws -> ResolvedImage {
         try resolveImage(reference: reference, backend: backend, arch: arch)
-    }
-}
-
-/// `Pool.apply(fleet, name:, spec:, options:)`: the one pool writer, the
-/// same call as `fleet.apply`. A `SandboxSpec` is what the sandbox runs and
-/// `PoolOptions` how the pool keeps capacity for it; `fleet.checkPoolSpec`
-/// raises `CuaError.PoolSpecMismatch` (with a diff) for a named pool whose
-/// template differs, `fleet.applyPoolTemplate` updates it, and
-/// `fleet.exportPool(name:).terraform` prints the `fleets_pool` block.
-public enum Pool {
-    @discardableResult
-    public static func apply(
-        _ fleet: FleetProtocol, name: String, spec: SandboxSpec, options: PoolOptions = PoolOptions()
-    ) async throws -> FleetPool {
-        try await fleet.apply(name: name, spec: spec, options: options)
     }
 }
 

@@ -4,6 +4,8 @@
 import type { CoreClient, Machine, Space } from "@/bridge";
 import { OS_NAME } from "@/components/os-icon";
 import { thisComputerLabel } from "@/lib/host-labels";
+import { messageText } from "@/lib/messages";
+import type { Msg } from "../bridge/contracts/teleport";
 
 /** The states the Spaces screens draw. The bridge's `SpaceStatus` maps onto these. */
 export type SpaceState = "running" | "stopped" | "creating" | "deleting" | "failed";
@@ -96,8 +98,8 @@ export function machineName(machines: readonly Machine[], space: Pick<Space, "id
   const machine = machines.find((m) => m.spaceIds.includes(space.id));
   if (machine) return machine.name;
   if (space.hostName) return space.hostName;
-  if (space.provider === "direct") return "a machine added by address";
-  return space.provider === "cloud" || space.provider === undefined ? "Cua Cloud" : "Unknown machine";
+  if (space.provider === "direct") return "a computer added by address";
+  return space.provider === "cloud" || space.provider === undefined ? "Cua Cloud" : "Unknown computer";
 }
 
 /** What a Space's ⌘K entries also match: its OS, state, detail and the machine it runs on. */
@@ -153,8 +155,8 @@ export function canPower(space: Pick<Space, "status" | "power">): boolean {
  * where the Space suspends. Without the core, the same words.
  */
 export function powerLabel(core: { tryCall<T>(op: string, args?: Record<string, unknown>): T | undefined }, space: Space, on: boolean): string {
-  const button = core.tryCall<{ help: string; turnOn: boolean; busy: boolean }>("sidebar.powerButton", { space });
-  if (button && !button.busy && button.turnOn === on) return button.help;
+  const button = core.tryCall<{ help: Msg; turnOn: boolean; busy: boolean }>("sidebar.powerButton", { space });
+  if (button && !button.busy && button.turnOn === on) return messageText(button.help);
   const suspends = space.power?.control === "suspend";
   return on ? (suspends ? "Resume" : "Turn on") : suspends ? "Suspend" : "Turn off";
 }
@@ -182,8 +184,8 @@ export interface PowerButton {
  * core, the same rule and words.
  */
 export function powerButton(core: { tryCall<T>(op: string, args?: Record<string, unknown>): T | undefined }, space: Space): PowerButton | null {
-  const fromCore = core.tryCall<PowerButton | null>("sidebar.powerButton", { space });
-  if (fromCore !== undefined) return fromCore ? { help: fromCore.help, turnOn: fromCore.turnOn, busy: fromCore.busy } : null;
+  const fromCore = core.tryCall<(Omit<PowerButton, "help"> & { help: Msg }) | null>("sidebar.powerButton", { space });
+  if (fromCore !== undefined) return fromCore ? { help: messageText(fromCore.help), turnOn: fromCore.turnOn, busy: fromCore.busy } : null;
   const power = space.power;
   if (!power || space.id === "this-mac" || space.progress || space.status === "deleting") return null;
   const busy = power.turningOn !== undefined && power.turningOn !== null;
@@ -207,8 +209,8 @@ export function canDelete(space: Pick<Space, "id" | "status" | "cloudDelete">): 
 }
 
 const PROVIDER: Record<Exclude<NonNullable<Space["provider"]>, "local">, string> = {
-  relay: "Your machine, through the Cua relay",
-  direct: "A machine added by address",
+  relay: "Your computer, through the Cua relay",
+  direct: "A computer added by address",
   cloud: "Cua Cloud",
 };
 

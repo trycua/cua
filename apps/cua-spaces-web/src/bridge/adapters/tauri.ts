@@ -57,6 +57,9 @@ import { tauriHostSetupOps } from "../ops/host-setup";
 import { TAURI_SPACE_DETAIL_UNSUPPORTED, tauriSpaceDetailOps } from "../ops/space-detail";
 import { STREAM_OPERATIONS } from "../ops/stream";
 import { RELAY_USAGE_OPERATIONS } from "../ops/relay-usage";
+import { NUDGES_OPERATIONS } from "../ops/nudges";
+import { RESOURCES_OPERATIONS } from "../ops/resources";
+import { MACHINES_OPERATIONS } from "../ops/machines";
 import { CHECKLIST_OPERATIONS } from "../ops/checklist";
 import { PRESENCE_OPERATIONS } from "../ops/presence";
 import { RUNTIME_FIX_OPERATIONS } from "../ops/runtime-fix";
@@ -92,6 +95,9 @@ export const TAURI_UNSUPPORTED: readonly OpName[] = [
   ...TAURI_SPACE_DETAIL_UNSUPPORTED,
   ...STREAM_OPERATIONS,
   ...RELAY_USAGE_OPERATIONS,
+  ...NUDGES_OPERATIONS,
+  ...RESOURCES_OPERATIONS,
+  ...MACHINES_OPERATIONS,
   ...CHECKLIST_OPERATIONS,
   ...PRESENCE_OPERATIONS,
   ...RUNTIME_FIX_OPERATIONS,
@@ -183,7 +189,7 @@ export function createTauriAdapter(win: HostWindow = globalThis.window as HostWi
       const selfId = status?.machineId ?? "local";
       const self: MachineRow = {
         id: selfId,
-        name: status?.name ?? "This machine",
+        name: status?.name ?? "This computer",
         via: "local",
         online: true,
         os: env?.platform ?? "macos",

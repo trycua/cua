@@ -20,7 +20,7 @@ with the official MCP Python SDK:
 Element tokens are not used: over /mcp each call runs in its own driver
 runtime scope, so a token from one call is refused by the next.
 
-  uv run --with 'mcp>=1.12,<1.14' python ax_probe.py URL TOKEN_FILE [OUT.json]
+  uv run --with 'mcp>=1.12,<1.14' --with 'pydantic<2.13' python ax_probe.py URL TOKEN_FILE [OUT.json]
 
 Exit 0 on success. Writes a JSON record of every step to OUT.json.
 """
@@ -93,8 +93,8 @@ def display_text(state: dict[str, Any]) -> str:
 
 async def run(url: str, token: str, log: list[dict[str, Any]]) -> bool:
     headers = {"Authorization": f"Bearer {token}"}
-    async with streamablehttp_client(url, headers=headers) as (read, write, _):
-        async with ClientSession(read, write) as session:
+    async with streamablehttp_client(url, headers=headers) as (read_stream, write_stream, _):
+        async with ClientSession(read_stream, write_stream) as session:
             await session.initialize()
 
             async def call(name: str, args: dict[str, Any]) -> dict[str, Any]:

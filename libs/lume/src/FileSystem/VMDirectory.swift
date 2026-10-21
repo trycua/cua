@@ -28,6 +28,7 @@ struct VMDirectory: Sendable {
     let dir: Path
     let nvramPath: Path
     let diskPath: Path
+    var runOwnerURL: URL { configPath.url.deletingLastPathComponent().appendingPathComponent(".run-owner.json") }
     let configPath: Path
     let sessionsPath: Path
     let provisioningPath: Path

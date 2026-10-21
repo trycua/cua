@@ -157,7 +157,7 @@ struct MachineAccessTests {
             let notice = try #require(m.devices.accessNotice)
             #expect(notice.kind == kind)
             // Every machine is still listed under My machines.
-            let mine = try #require(m.sidebar.sections.first { $0.title == "My machines" })
+            let mine = try #require(m.sidebar.sections.first { $0.title.code == "spaces.sidebar.section.my_computers" })
             #expect(mine.rows.map(\.id).contains("relay:m-studio"))
             #expect(mine.rows.map(\.id).contains("relay:m-mini"))
             let d = m.detail(try space(m, "relay:m-studio"))
@@ -209,7 +209,7 @@ struct MachineAccessTests {
     /// The probe's live features: the desktop's are unsupported for a
     /// machine that does not share it.
     @Test func probeReadsSupportedFeatures() {
-        let json = #"{"version":"0.5.0","features":[{"name":"desktop_stream","supported":false,"limitation":"this machine does not share its desktop (it only provides Spaces)"},{"name":"host_spaces","supported":true},{"name":"files","supported":true}]}"#
+        let json = #"{"version":"0.5.0","features":[{"name":"desktop_stream","supported":false,"limitation":"this computer does not share its desktop (it only provides Spaces)"},{"name":"host_spaces","supported":true},{"name":"files","supported":true}]}"#
         #expect(LiveSpacesBackend.supportedFeatures(capabilitiesJson: json) == ["host_spaces", "files"])
         #expect(LiveSpacesBackend.supportedFeatures(capabilitiesJson: nil) == nil)
         #expect(LiveSpacesBackend.supportedFeatures(capabilitiesJson: "nope") == nil)
@@ -222,7 +222,7 @@ struct MachineAccessTests {
         let m = await MachinesFixture.model(rows: MachinesFixture.rows(includeSelf: true), enrollment: .enrolled,
                                             hostSetUp: true)
         #expect(m.sidebar.thisMachine != nil)
-        let mine = try #require(m.sidebar.sections.first { $0.title == "My machines" })
+        let mine = try #require(m.sidebar.sections.first { $0.title.code == "spaces.sidebar.section.my_computers" })
         let ids = mine.rows.map(\.id)
         #expect(!ids.contains("relay:\(MachinesFixture.thisMacId)"))
         #expect(ids.contains("relay:m-dana-2"))
@@ -241,7 +241,7 @@ struct MachineAccessTests {
         let probes: [([String], Bool, String?)] = [
             (["host_spaces", "files"], true, nil),
             (["desktop_stream", "window_stream", "host_spaces", "files"], true, nil),
-            ([], false, "permission denied: this machine does not share its desktop"),
+            ([], false, "permission denied: this computer does not share its desktop"),
         ]
         for (features, reachable, error) in probes {
             var mac = MachinesFixture.row(other, "Mac.localdomain", os: .macos, features: features,
@@ -259,8 +259,8 @@ struct MachineAccessTests {
             let m = await MachinesFixture.model(rows: [FixtureSpacesBackend.sample[0], mac, me],
                                                 enrollment: .enrolled, hostSetUp: true, hostStatus: status)
             #expect(m.sidebar.thisMachine != nil)
-            let mine = try #require(m.sidebar.sections.first { $0.title == "My machines" },
-                                    "no My machines for \(features) \(String(describing: error))")
+            let mine = try #require(m.sidebar.sections.first { $0.title.code == "spaces.sidebar.section.my_computers" },
+                                    "no My computers for \(features) \(String(describing: error))")
             #expect(mine.rows.map(\.id) == [other])
         }
     }

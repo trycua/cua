@@ -10,6 +10,7 @@
 export const METHODS = [
   "app.info",
   "session.get", "session.signIn", "session.signOut",
+  "onboarding.get", "onboarding.complete",
   "spaces.list", "spaces.open",
   "spaces.createOptions", "spaces.create",
   "spaces.setPower", "spaces.delete", "spaces.cancelCreate",
@@ -23,6 +24,7 @@ export const METHODS = [
   "teleport.catalog", "teleport.entryForPath", "teleport.windows", "teleport.remoteWindows",
   "teleport.icon", "teleport.thumbnail", "teleport.plan", "teleport.run", "teleport.sites",
   "teleport.remembered", "teleport.streamWindow", "sharing.list", "sharing.share", "sharing.unshare",
+  "sharing.removals", "sharing.ackRemovals",
   "volume.overview", "volume.storage", "volume.storageSet", "volume.mount", "volume.unmount",
   "volume.approve", "volume.deny", "volume.revoke", "volume.resolve", "volume.reveal",
   "agents.setupDriver",
@@ -31,7 +33,7 @@ export const METHODS = [
   "devices.revoke", "devices.confirmMachine", "devices.createPairingCode", "devices.pairingCodes",
   "devices.revokePairingCode", "teams.list", "storage.get", "storage.run",
   "notifications.list", "notifications.markAllRead", "notifications.markRead",
-  "telemetry.track", "spaces.usage", "spaces.windows", "stream.pip",
+  "telemetry.track", "telemetry.linkNotice", "telemetry.acknowledgeLinkNotice", "spaces.usage", "spaces.windows", "stream.pip",
   "spaces.thumbnail",
   "spaces.chooseFiles", "spaces.droppedFiles", "spaces.sendFiles",
   "host.setUp", "host.joinWithCode", "host.action", "host.openSettings",
@@ -43,13 +45,15 @@ export const METHODS = [
   "window.setBackgroundColor", "window.setDragRegions", "window.setDropTargets",
   "startup.get", "startup.act",
   "relay.usage",
+  "nudges.pending", "nudges.answer",
+  "resources.get",
+  "machines.rename", "machines.remove", "machines.checkHealth",
   "checklist.get", "checklist.send",
 ] as const;
 
-/** A live desktop's media ticket for the page's WebCodecs player, the
- * first run's state (the SwiftUI app draws its first run natively),
+/** A live desktop's media ticket for the page's WebCodecs player,
  * presence over the page's video (the SwiftUI app draws it natively), and
  * New Space's runtime fix on Windows ("Install Docker Desktop"). */
-export const ELECTRON_METHODS = ["onboarding.get", "onboarding.complete", "spaces.openStream", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime"] as const;
+export const ELECTRON_METHODS = ["spaces.openStream", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime"] as const;
 
 export type Method = (typeof METHODS)[number] | (typeof ELECTRON_METHODS)[number];

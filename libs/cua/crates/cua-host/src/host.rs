@@ -298,8 +298,7 @@ pub struct HostConfig {
     pub paused_signed_out: bool,
     /// `CUA_MESH` as it was set where `cua host setup` ran (an explicit
     /// opt-in to the WireGuard®-based mesh, or out of it): passed on to the
-    /// service. Unset, the service follows its own default (off unless the
-    /// Cua Spaces app's channel turns it on).
+    /// service. Unset, the service follows its own default (prefer).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mesh: Option<String>,
 }
@@ -718,7 +717,7 @@ pub(crate) fn hostname() -> String {
         .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "this machine".into())
+        .unwrap_or_else(|| "this computer".into())
 }
 
 /// The name a person knows this machine by, for display and as the default
@@ -1531,9 +1530,25 @@ impl Host {
         RelayClient::new(url)?.machine(&token, id).await
     }
 
+    /// Takes `name` as this machine's display name when `machine_id` is
+    /// this machine's relay registration (after the owner renamed it on
+    /// the relay from an enrolled device). Returns whether it did: another
+    /// machine, or a machine not set up, is left alone.
+    pub fn adopt_name(&self, machine_id: &str, name: &str) -> Result<bool> {
+        let Some(mut config) = self.config()? else {
+            return Ok(false);
+        };
+        if config.machine_id.as_deref() != Some(machine_id) || name.trim().is_empty() {
+            return Ok(false);
+        }
+        config.name = name.trim().to_string();
+        write_json(&self.paths.config(), &config)?;
+        Ok(true)
+    }
+
     fn require_config(&self) -> Result<HostConfig> {
         self.config()?.ok_or_else(|| {
-            Error::NotFound("this machine is not set up for access (run `cua host setup`)".into())
+            Error::NotFound("this computer is not set up for access (run `cua host setup`)".into())
         })
     }
 
@@ -1651,7 +1666,7 @@ impl Host {
             && !owned_by(p, account)
         {
             return Err(Error::InvalidArgument(
-                "this machine is shared with another Cua account; remove the host setup \
+                "this computer is shared with another Cua account; remove the host setup \
                  and set it up again to share it with this one"
                     .into(),
             ));
@@ -1686,7 +1701,7 @@ impl Host {
         let mut config = self.require_config()?;
         let (Some(url), Some(id)) = (config.relay_url.clone(), config.machine_id.clone()) else {
             return Err(Error::InvalidArgument(
-                "name and allowlist live on the relay; this machine is in direct mode".into(),
+                "name and allowlist live on the relay; this computer is in direct mode".into(),
             ));
         };
         let token = tokens.access_token().await?;
@@ -1699,6 +1714,7 @@ impl Host {
                     allow: allow.clone(),
                     viewers: None,
                     sharing: None,
+                    meta: None,
                 },
             )
             .await?;
@@ -2017,7 +2033,7 @@ impl Host {
         let provided = crate::provided::load_provided(&self.paths.dir)?;
         if !provided.is_empty() && !uninstalling {
             return Err(Error::InvalidArgument(format!(
-                "this machine still provides {} Space{} ({}); delete {} first (`cua spaces delete <local:name>`)",
+                "this computer still provides {} Space{} ({}); delete {} first (`cua spaces delete <local:name>`)",
                 provided.len(),
                 if provided.len() == 1 { "" } else { "s" },
                 provided

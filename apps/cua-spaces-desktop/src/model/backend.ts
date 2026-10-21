@@ -54,6 +54,10 @@ export interface SpacesBackend {
   reportedHostname(id: string): string | null;
   add(url: string, token: string | null, name: string | null): Promise<void>;
   remove(id: string, removeOnly: boolean): Promise<void>;
+  /** Takes one of your machines off the relay directory (`relay:<machine>`), refused while it is online. */
+  relayUnregister(machineId: string): Promise<void>;
+  /** A machine's health as its own cua daemon checks it (the SDK's `Spaces.machine_health`): null for this one, else another of yours by id. */
+  machineHealth(machine: string | null): Promise<MachineHealthReport>;
   setPower(id: string, on: boolean): Promise<void>;
   localRuntimes(): Promise<LocalRuntimes | null>;
   lumeSource(): Promise<string | null>;
@@ -91,6 +95,12 @@ export interface SpacesBackend {
   joinPresence(id: string, identity: PresenceIdentity, timeoutMs: number): Promise<SpacePresenceLike>;
   /** A Space's app icons in one call (`Space.appIcons`, through its one icon cache): 64 px PNG or SVG bytes, null where it has none. */
   appIcons(id: string, requests: SpaceAppIconRequest[]): Promise<(Uint8Array | null)[]>;
+}
+
+/** A machine's health as its daemon reported it (the SDK's `MachineHealth`, the parts the Machines page reads). */
+export interface MachineHealthReport {
+  cuaVersion: string;
+  checks: { id: string; status: string; message: string; remediation: string; facts: Map<string, string> }[];
 }
 
 /** A Space's thumbnail as the SDK returns it: the encoded image (PNG or JPEG), its size and when it was captured. */
@@ -331,6 +341,18 @@ export class LiveSpacesBackend implements SpacesBackend {
     else await this.cua.spaces().delete_(id);
   }
 
+  async relayUnregister(machineId: string): Promise<void> {
+    await this.cua.spaces().relayUnregister(`relay:${machineId}`);
+  }
+
+  async machineHealth(machine: string | null): Promise<MachineHealthReport> {
+    const h = await this.cua.spaces().machineHealth(machine ?? undefined);
+    return {
+      cuaVersion: h.cuaVersion,
+      checks: h.checks.map((c) => ({ id: c.id, status: c.status, message: c.message, remediation: c.remediation, facts: new Map(c.facts) })),
+    };
+  }
+
   async setPower(id: string, on: boolean): Promise<void> {
     if (on) await this.cua.spaces().start(id);
     else await this.cua.spaces().stop(id);
@@ -382,7 +404,6 @@ export class LiveSpacesBackend implements SpacesBackend {
   }
 
   async cloudAvailable(): Promise<boolean> {
-    if (this.env.FLEETS_TOKEN !== undefined || this.env.CUA_CLIENT_ID !== undefined) return true;
     return (await bounded(PROBE_SECONDS, () => this.cua.auth().status().loggedIn)) ?? false;
   }
 
@@ -407,7 +428,7 @@ export class LiveSpacesBackend implements SpacesBackend {
 
   async usage(id: string): Promise<AppSpaceUsage | null> {
     const u = await bounded(5, async () => (await this.cua.spaces().space(id)).usage());
-    return u ? { memoryUsed: u.memoryUsed, memoryTotal: u.memoryTotal, memoryLimited: u.memoryLimited, diskUsed: u.diskUsed, diskTotal: u.diskTotal, diskLimited: u.diskLimited } : null;
+    return u ? { cpuCount: u.cpuCount, cpuPercent: u.cpuPercent, loadAverage1m: u.loadAverage1m, memoryUsed: u.memoryUsed, memoryTotal: u.memoryTotal, memoryLimited: u.memoryLimited, diskUsed: u.diskUsed, diskTotal: u.diskTotal, diskLimited: u.diskLimited } : null;
   }
 
   async agentRuns(id: string): Promise<AppSpaceAgentRun[]> {

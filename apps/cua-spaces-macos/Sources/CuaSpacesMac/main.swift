@@ -44,4 +44,6 @@ TargetEnvironment.pin()
 // Teleport, the Cua Volume, persistent agents and the Keyvault for every
 // runtime the SDK builds in this process (the Cua Spaces extensions).
 cuaSpacesRegister()
+// `CUA_SPACES_OFFSCREEN=1` (debug): an accessory app, for captures nobody sees.
+OffscreenRun.prepare()
 CuaSpacesMacApp.main()

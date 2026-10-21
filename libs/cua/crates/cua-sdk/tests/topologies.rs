@@ -1,7 +1,7 @@
 #![allow(deprecated)] // also exercises the deprecated `apply_pool` wrapper
 //! One suite, three topologies: embedded, daemon over the Unix socket, and
 //! daemon over loopback + token. Everything runs against in-process fakes
-//! (`MockServer` spacesd with a scripted `/media` socket, `FakeFleet`);
+//! (`MockServer` spacesd with a scripted `/media` socket);
 //! nothing touches host apps. Every wait loop is bounded.
 
 use cua_daemon::{
@@ -9,7 +9,6 @@ use cua_daemon::{
     fixtures::{self, SpacesdFixture},
     server::{self, DaemonHandle, ServerConfig},
 };
-use cua_fleet::testing::FakeFleet;
 use cua_sdk::{
     AudioPacket, AudioSink, Cua, CuaError, CuaMode, FrameSink, MediaEvent, MediaOpenOptions,
     MediaSession, ProcessEventKind, ReadinessProbe, SandboxCreateOptions, SpacesdCommand,
@@ -26,11 +25,6 @@ const POOL: &str = "cua-e2e-gw";
 
 struct World {
     env: SpacesdFixture,
-    // Held for the test's lifetime; unused since Cua Cloud ended.
-    #[allow(dead_code)]
-    gw: SpacesdFixture,
-    #[allow(dead_code)]
-    fake: FakeFleet,
     _dirs: tempfile::TempDir,
     daemon: Option<DaemonHandle>,
 }
@@ -57,14 +51,11 @@ async fn world_with_relay(
     env.mock
         .state
         .advertise(&[cua_spacesd_client::TUNNEL_FORWARD_FEATURE]);
-    let gw = fixtures::start_env(None, Some(fixtures::fake_gateway(POOL, POOL))).await;
-    let fake = FakeFleet::new();
     let dirs = tempfile::tempdir().unwrap();
     let runtime = Runtime::new(RuntimeConfig {
         state_dir: Some(dirs.path().join("sandboxes")),
         // Never the real ~/.cua registry.
         spaces_home: Some(dirs.path().join("cua")),
-        fleet_client: Some(fake.client_with_base(&gw.url)),
         env_probe_timeout: Some(Duration::from_secs(5)),
         ..Default::default()
     })
@@ -100,8 +91,6 @@ async fn world_with_relay(
     (
         World {
             env,
-            gw,
-            fake,
             _dirs: dirs,
             daemon,
         },
@@ -117,7 +106,6 @@ fn direct(url: &str, name: &str, token: Option<&str>) -> SandboxCreateOptions {
         image: String::new(),
         name: Some(name.into()),
         token: token.map(str::to_string),
-        pool: None,
         os: None,
         cpus: None,
         memory_mb: None,
@@ -126,12 +114,7 @@ fn direct(url: &str, name: &str, token: Option<&str>) -> SandboxCreateOptions {
         wait_for: vec![],
         ready_timeout_ms: None,
         env: HashMap::new(),
-        fleet_replicas: None,
-        fleet_ttl_seconds: None,
-        warm: None,
-        max_pool_size: None,
         command: None,
-        cloud: None,
         sidecars: vec![],
         registry_secret: None,
         build: None,
@@ -153,6 +136,7 @@ fn cmd(program: &str, args: &[&str]) -> SpacesdCommand {
         tag: None,
         stdin: false,
         pty: None,
+        kill_on_disconnect: false,
     }
 }
 
@@ -470,12 +454,11 @@ async fn suite(t: Topology) {
         "{t:?}"
     );
 
-    // ----------------------------------------------------------- fleet
-    // Cua Cloud has ended: a cloud create fails before reaching Fleet, in
+    // ----------------------------------------------------------- cloud
+    // Cua Cloud has ended: a cloud create fails with the one message, in
     // every topology.
     let mut o = direct("", POOL, None);
     o.on = Some("cloud".into());
-    o.pool = Some(POOL.into());
     o.image = "ghcr.io/trycua/cua-desktop-linux:test".into();
     let e = sbx.create(o).await.err().expect("cloud create fails");
     assert!(e.to_string().contains("Cua Cloud has ended"), "{t:?}: {e}");
@@ -640,7 +623,7 @@ async fn discovery_refusal(t: Topology) {
     match error {
         CuaError::Unauthenticated(message) => assert_eq!(
             message,
-            "Relay authentication failed. Sign in again to refresh your machines."
+            "Relay authentication failed. Sign in again to refresh your computers."
         ),
         other => panic!("unexpected discovery refusal: {other:?}"),
     }

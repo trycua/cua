@@ -1,16 +1,14 @@
-#![allow(deprecated)] // also exercises the deprecated `apply_pool` wrapper
 //! MCP and the service pipe through the exported API, embedded and through
 //! `cua daemon` (loopback): `Sandbox.mcp_config` / `Sandbox.mcp` (rmcp),
 //! `Service.endpoint` streaming through the daemon passthrough (SSE that
-//! never ends, headers, a large binary body), a Fleet sandbox behind an
-//! emulated gateway, and a Space added by its MCP URL. Servers are
+//! never ends, headers, a large binary body), and a Space added by its MCP
+//! URL. Servers are
 //! in-process (`cua_sandbox_core::testing`); waits are bounded.
 
 use cua_daemon::{
     Runtime, RuntimeConfig,
     server::{self, ServerConfig},
 };
-use cua_fleet::testing::FakeFleet;
 use cua_sandbox_core::testing::{McpTestServer, PipeTestServer, expected_result, png_bytes};
 use cua_sdk::{Cua, CuaError, SandboxCreateOptions};
 use http_body_util::BodyExt;
@@ -28,7 +26,6 @@ fn opts(on: &str, name: &str) -> SandboxCreateOptions {
         image: String::new(),
         name: Some(name.into()),
         token: None,
-        pool: None,
         os: None,
         cpus: None,
         memory_mb: None,
@@ -37,12 +34,7 @@ fn opts(on: &str, name: &str) -> SandboxCreateOptions {
         wait_for: vec![],
         ready_timeout_ms: None,
         env: HashMap::new(),
-        fleet_replicas: None,
-        fleet_ttl_seconds: None,
-        warm: None,
-        max_pool_size: None,
         command: None,
-        cloud: None,
         sidecars: vec![],
         registry_secret: None,
         build: None,
@@ -184,26 +176,9 @@ async fn suite(daemon: bool) {
     let dirs = tempfile::tempdir().unwrap();
     let mcp_server = McpTestServer::start("").await.unwrap();
     let pipe_server = PipeTestServer::start("").await.unwrap();
-    // Fleet: the gateway base is a loopback MCP server under the claim's
-    // service path (the fake binds claim X to sandbox `sbx-X`).
-    let gw = McpTestServer::start(&format!("/api/svc/{CLAIM}/sbx-{CLAIM}-mcp"))
-        .await
-        .unwrap();
-    let fleet = FakeFleet::new();
-    cua_fleet::testing::set_image_variant(IMAGE, cua_fleet::ImageVariant::Rootfs);
-    fleet
-        .client_with_base(&gw.url)
-        .apply_pool(
-            &cua_fleet::PoolSpec::new(CLAIM, IMAGE)
-                .runtime(cua_fleet::RuntimeKind::Gvisor)
-                .services([("mcp", 8765u16)]),
-        )
-        .await
-        .unwrap();
     let runtime = Runtime::new(RuntimeConfig {
         state_dir: Some(dirs.path().join("sandboxes")),
         spaces_home: Some(dirs.path().join("cua")),
-        fleet_client: Some(fleet.client_with_base(&gw.url)),
         env_probe_timeout: Some(Duration::from_secs(2)),
         ..Default::default()
     })
@@ -259,9 +234,8 @@ async fn suite(daemon: bool) {
     assert_pipe(sb.service("env".into()).unwrap().endpoint().await.unwrap()).await;
     sb.delete().await.unwrap();
 
-    // Cua Cloud has ended: a cloud create fails before reaching Fleet.
+    // Cua Cloud has ended: a cloud create fails with the one message.
     let mut o = opts("cloud", CLAIM);
-    o.pool = Some(CLAIM.into());
     o.image = IMAGE.into();
     let e = sbx.create(o).await.err().expect("cloud create fails");
     assert!(e.to_string().contains("Cua Cloud has ended"), "{e}");

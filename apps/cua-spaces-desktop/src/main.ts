@@ -26,7 +26,7 @@ import { connectNotch, type NotchCore } from "./notch";
 import { dropOnSpace, feedNotch, followDragReadiness, notchTeleport, notchThumbnail, openSpaceFromNotch, teleportFromNotch, type NotchFeedUi } from "./notch-feed";
 import { createPipWindows } from "./pip";
 import { electronKeyvaultPrompts } from "./prompts";
-import { APP_ORIGIN, handleAppProtocol, registerSchemePrivileges } from "./protocol";
+import { APP_ORIGIN, handleAppProtocol, registerSchemePrivileges, resolveWebRoot } from "./protocol";
 import { readSettings, writeSettings } from "./settings";
 import { DEEP_LINK_SCHEME, deepLinkInArgv, routeForDeepLink } from "./deep-link";
 import { makeSystem } from "./system";
@@ -127,6 +127,8 @@ async function startNativeHost(showRoute: (route: string) => void, globalShortcu
   // start (Edge's first run) must not find the port closed while the app
   // still offers its link.
   process.env.CUA_OIDC_LOGIN_TIMEOUT_SECS ??= "600";
+  // The browser's sign-in page says where to go back to.
+  process.env.CUA_AUTH_RETURN_TO ??= "Cua Spaces";
   const native = await loadNative(dir);
   // False without a browser here: the sign-in then uses the device flow.
   const openUrl = async (url: string) => {
@@ -172,7 +174,7 @@ async function startNativeHost(showRoute: (route: string) => void, globalShortcu
     build,
     platform: process.platform,
     env: process.env,
-    system: makeSystem({ native, showRoute, globalShortcut }),
+    system: makeSystem({ native, showRoute, webRoot: resolveWebRoot(), globalShortcut }),
     ui: {
       openSpace: (spaceId, name, os) => void viewers.open(spaceId, name, os),
       setBackground: (win, color, appearance) => {

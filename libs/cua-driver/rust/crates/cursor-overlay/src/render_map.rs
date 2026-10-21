@@ -309,7 +309,7 @@ impl<S: RenderEntry, P> RenderMap<S, P> {
     /// following `MoveTo` glides in instead of snapping. Creates the cursor
     /// when absent. Returns whether a seed was applied; a no-op for an ended
     /// session, a disabled cursor, or one already on screen.
-    pub fn seed_start_if_sentinel(
+    pub fn seed_start_if_unplaced(
         &mut self,
         key: &str,
         target_x: f64,
@@ -320,10 +320,11 @@ impl<S: RenderEntry, P> RenderMap<S, P> {
             return false;
         };
         let core = cursor.core_mut();
-        if !(core.cfg.enabled && !crate::render_state::is_placed(core.pos)) {
+        if !(core.cfg.enabled && !core.placed) {
             return false;
         }
         core.pos = seed_position(target_x, target_y, frame);
+        core.placed = true;
         true
     }
 
@@ -405,6 +406,7 @@ mod tests {
     fn placed<'a>(map: &'a mut Map, key: &str) -> &'a mut RenderStateCore {
         let core = map.cursor_mut(key).unwrap();
         core.pos = (100.0, 100.0);
+        core.placed = true;
         core
     }
 
@@ -486,7 +488,7 @@ mod tests {
             map.apply_msg(move_msg("sessA", 99.0, 99.0)),
             MsgOutcome::Dropped("sessA".to_owned())
         );
-        assert!(!map.seed_start_if_sentinel("sessA", 60.0, 60.0, None));
+        assert!(!map.seed_start_if_unplaced("sessA", 60.0, 60.0, None));
         assert!(!map.cursors.contains_key("sessA"));
 
         // Removing a session that never drew is a harmless tombstone.
@@ -561,10 +563,10 @@ mod tests {
     }
 
     #[test]
-    fn seed_places_a_sentinel_cursor_on_screen_once() {
+    fn seed_places_an_unplaced_cursor_on_screen_once() {
         let mut map = map();
         let frame = Some(ScreenFrame::new(0.0, 0.0, 100.0, 100.0));
-        assert!(map.seed_start_if_sentinel("sessA", 60.0, 60.0, frame));
+        assert!(map.seed_start_if_unplaced("sessA", 60.0, 60.0, frame));
         let pos = map.cursors["sessA"].pos;
         assert!(
             pos.0 > -50.0 && pos.1 > -50.0,
@@ -576,15 +578,29 @@ mod tests {
         );
 
         map.cursors["sessA"].pos = (30.0, 30.0);
-        assert!(!map.seed_start_if_sentinel("sessA", 80.0, 80.0, frame));
+        map.cursors["sessA"].placed = true;
+        assert!(!map.seed_start_if_unplaced("sessA", 80.0, 80.0, frame));
         assert_eq!(map.cursors["sessA"].pos, (30.0, 30.0));
         // A cursor placed on a monitor left of the layout origin is no sentinel.
         map.cursors["sessA"].pos = (-2220.0, 980.0);
-        assert!(!map.seed_start_if_sentinel("sessA", 80.0, 80.0, frame));
+        map.cursors["sessA"].placed = true;
+        assert!(!map.seed_start_if_unplaced("sessA", 80.0, 80.0, frame));
         assert_eq!(map.cursors["sessA"].pos, (-2220.0, 980.0));
 
         map.cursor_mut("disabled").unwrap().cfg.enabled = false;
-        assert!(!map.seed_start_if_sentinel("disabled", 80.0, 80.0, frame));
+        assert!(!map.seed_start_if_unplaced("disabled", 80.0, 80.0, frame));
+    }
+
+    #[test]
+    fn negative_frame_seed_establishes_placement_once() {
+        let mut map = map();
+        let frame = Some(ScreenFrame::new(-2000.0, -2000.0, 1000.0, 1000.0));
+        assert!(map.seed_start_if_unplaced("sessA", -1500.0, -1500.0, frame));
+        assert!(map.cursors["sessA"].placed);
+        let pos = map.cursors["sessA"].pos;
+        assert!(pos.0 < 0.0 && pos.1 < 0.0);
+        assert!(!map.seed_start_if_unplaced("sessA", -1400.0, -1400.0, frame));
+        assert_eq!(map.cursors["sessA"].pos, pos);
     }
 
     #[test]

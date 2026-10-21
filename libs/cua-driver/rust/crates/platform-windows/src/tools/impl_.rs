@@ -311,7 +311,7 @@ async fn overlay_glide_to_target(key: &str, sx: f64, sy: f64, target: Option<[f6
         return;
     }
     let pos = crate::overlay::current_position(key);
-    if pos.0 < 0.0 && pos.1 < 0.0 {
+    if pos.is_none() {
         // Snap to target on first use; no animation to wait for.
         crate::overlay::send_command(
             key.to_owned(),
@@ -947,7 +947,8 @@ impl Tool for ListWindowsTool {
                 on_current_space / space_ids fields are \
                 omitted on Windows; current_space_id is null.\n\n\
                 Inputs: pid (optional pid filter), app (app-name filter), on_screen_only (bool, \
-                default false). Filter with app or pid: an unfiltered call lists every window.".into(),
+                default false). Filter with app or pid: an unfiltered call lists every window. \
+                The driver's own overlay is omitted.".into(),
             input_schema: json!({"type":"object","properties":{
                 "pid":{"type":"integer","description":"Optional pid filter. When set, only this pid's windows are returned."},
                 "app":{"type":"string","description":cua_driver_core::tool_args::LIST_WINDOWS_APP_FILTER_DESCRIPTION},
@@ -973,6 +974,7 @@ impl Tool for ListWindowsTool {
         if on_screen_only {
             windows.retain(|w| w.is_on_screen);
         }
+        drop_own_windows(&mut windows, std::process::id());
         if let Some(filter) = args.opt_str("app") {
             windows.retain(|w| {
                 let app_name = pid_to_name.get(&w.pid).map(String::as_str).unwrap_or("");
@@ -1095,6 +1097,10 @@ impl Tool for ListWindowsTool {
 }
 
 use cua_driver_core::window_target::z_index_from_front_to_back;
+
+fn drop_own_windows(windows: &mut Vec<crate::win32::WindowInfo>, own_pid: u32) {
+    windows.retain(|w| w.pid != own_pid);
+}
 
 #[cfg(test)]
 mod list_windows_z_index_tests;
@@ -1219,7 +1225,9 @@ impl Tool for GetWindowStateTool {
                 Set `query` to a case-insensitive substring to project the tree to matching \
                 rows plus their ancestor chain. \
                 Original element indices are preserved. `total_element_count` reports the \
-                complete snapshot; `returned_element_count` reports the projection.\n\n\
+                unprojected walked snapshot; `returned_element_count` reports the projection. \
+                `elements_complete` describes the underlying walk and is unaffected by query \
+                projection.\n\n\
                 Always returns BOTH the element tree AND a screenshot — ground on both \
                 and cross-check (the tree lies on some surfaces). Choose the modality at \
                 ACTION time: an element ax action (element_token → \
@@ -1238,7 +1246,9 @@ impl Tool for GetWindowStateTool {
                 timing out at 4s with per-property RPCs).\n\n\
                 Optional `max_elements` / `max_depth` bound the UIA walk (Electron / large web \
                 apps produce 10k+ element trees). Markdown and structured elements are \
-                truncated identically. Default: `max_elements` 250, depth ≤25.\n\n\
+                truncated identically. `elements_complete` is false when a bound skips a node \
+                or subtree; ending exactly at a bound remains complete. Default: \
+                `max_elements` 250, depth ≤25.\n\n\
                 CHROMIUM COVERAGE: a browser-owned permission bubble can be \
                 composited outside the requested native window. Chromium-family \
                 snapshots therefore describe this limit in structuredContent.capture_coverage. \
@@ -1256,7 +1266,7 @@ impl Tool for GetWindowStateTool {
                 "include_accessibility_tree":{"type":"boolean","description":"Default true — walk the UIA tree and return it (per `tree_format`) alongside the screenshot. Set false to SKIP the UIA walk entirely and return just the screenshot plus window metadata (window_bounds, app_name, window_title) — the capture-only path for a live window preview / picture-in-picture. Mirrors include_screenshot. Setting BOTH include_accessibility_tree:false AND include_screenshot:false is an error (nothing to return)."},
                 "include_screenshot":{"type":"boolean","description":"Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return tree only (the cheap path for re-indexing before an element ax action)."},
                 "screenshot_out_file":{"type":"string","description":"When set, write the PNG to this file path instead of embedding base64 in the response. The structured output will contain `screenshot_file_path` instead."},
-                "query":{"type":"string","description":"Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count."},
+                "query":{"type":"string","description":"Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count; elements_complete continues to describe the underlying unprojected walk."},
                 "max_elements":{"type":"integer","minimum":1,"description":"Cap on the total number of UIA nodes walked. Truncates depth-first; markdown and structured elements truncate together. Default 250 (5 000 with full_output:true); the response states when the tree was cut. Raise it to read further into a large window."},
                 "max_depth":{"type":"integer","minimum":1,"description":"Cap on the UIA-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower for deep menu / Electron trees."},
                 "timeout_ms": cua_driver_core::tool_schema::timeout_ms_schema(),
@@ -1458,6 +1468,7 @@ impl Tool for GetWindowStateTool {
                              delivery_mode:\"foreground\" for a dialog's default accelerator.)"
                         ),
                         nodes: Vec::new(),
+                        elements_complete: false,
                     };
                     let payload = crate::uia::snapshot::UiaSnapshot::from_nodes(
                         &[],
@@ -1550,10 +1561,11 @@ impl Tool for GetWindowStateTool {
                         header + &tr.tree_markdown,
                     ));
                     structured["element_count"] = json!(count);
-                    // UIA currently does not expose whether a bounded walk
-                    // exhausted every subtree. Keep negative existence
-                    // conservative until that proof is available.
-                    structured["elements_complete"] = json!(false);
+                    // Verification consumes only structured rows, which still
+                    // omit non-actionable UIA nodes on Windows. A complete
+                    // native walk cannot prove absence in that projection.
+                    structured["elements_complete"] =
+                        json!(tr.elements_complete && !observation_only);
                     structured["tree_markdown"] = json!(tr.tree_markdown);
                     walk.apply(&mut structured);
 
@@ -4584,16 +4596,22 @@ impl Tool for TypeTextTool {
                 PostMessage(WM_CHAR) to the focused window. No focus steal.\n\n\
                 Special keys (Return, Escape, arrows, Tab) go through `press_key` / \
                 `hotkey` — they are not text.\n\n\
-                **Routing on Windows.** When the target's owning EXE or top-level window \
-                class identifies it as a XAML / WinUI3 / UWP host (modern Notepad, \
-                Calculator, Photos, Settings, etc.), the tool requires `element_token` \
-                and routes through UI Automation's `ValuePattern.SetValue` \
-                — same backend as the `set_value` tool. PostMessage WM_CHAR doesn't \
-                reach those hosts (their CoreInput dispatcher only consumes events from \
-                the system input queue), so the fallback path silently dropped chars. \
-                If you call `type_text(pid, text)` on a XAML host without `element_token`, \
-                the tool returns an actionable error pointing you at `get_window_state` \
-                first. Native ConsoleHost on Windows ARM64 is hard-refused because it can \
+                **Routing on Windows.** `element_token` selects a specific UIA element \
+                and writes its ValuePattern value. For no-element foreground typing, a \
+                separate capability-gated path can use the exact focused UIA Document \
+                only when it is writable and empty. \
+                Eligibility depends on control capabilities and live focus, not app names. \
+                Chromium/Electron windows keep their existing boundary because a UIA \
+                value echo does not prove that the renderer accepted the text. The \
+                path reads the value and caret back; after SetValue starts, an \
+                unverifiable result requires a fresh observation before any retry and \
+                is never replayed through native input. This replaces the full \
+                ValuePattern value, so rich-text formatting and native undo behavior \
+                are not guaranteed; single-line Edit controls \
+                keep the existing input route. For other XAML / WinUI3 / UWP cases, \
+                use `element_token` from `get_window_state`; background WM_CHAR does \
+                not reach their CoreInput dispatcher. Native ConsoleHost on Windows ARM64 is \
+                hard-refused because it can \
                 accept synthesized Unicode events without delivering them; use a process \
                 or PTY setup channel instead. Legacy Win32 apps still use the PostMessage \
                 path, preserving the no-focus-steal property.\n\n\
@@ -4638,6 +4656,15 @@ impl Tool for TypeTextTool {
                 Err(error) => return ToolResult::error(error.to_string()),
             };
             let text_len = text.chars().count();
+            if args.get("element_token").is_none()
+                && args.get("x").is_none()
+                && args.get("y").is_none()
+            {
+                if let Some(result) = try_focused_document_route(hwnd, None, &text, text_len).await
+                {
+                    return result;
+                }
+            }
             return match tokio::task::spawn_blocking(move || {
                 crate::input::send_text_synthesized(hwnd, &text)
             })
@@ -4810,6 +4837,17 @@ impl Tool for TypeTextTool {
         // rejected (daemon not at UIAccess integrity), it returns an error
         // rather than a false success.
         if delivery == DeliveryMode::Foreground {
+            if elem_idx.is_none()
+                && args.get("element_token").is_none()
+                && args.get("x").is_none()
+                && args.get("y").is_none()
+            {
+                if let Some(result) =
+                    try_focused_document_route(hwnd, Some(pid), &text, text_len).await
+                {
+                    return result;
+                }
+            }
             // Resolve the optional click fallback before entering the atomic
             // activation/focus/input transaction. The focus itself happens
             // only after exact top-level foreground is confirmed.
@@ -5148,6 +5186,112 @@ impl Tool for TypeTextTool {
             Ok((Err(e), _, _, _)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
+    }
+}
+
+async fn try_focused_document_route(
+    hwnd: u64,
+    expected_pid: Option<u32>,
+    text: &str,
+    text_len: usize,
+) -> Option<ToolResult> {
+    if crate::input::is_chromium_target_window(hwnd) {
+        return None;
+    }
+    let text = text.to_owned();
+    let outcome = tokio::task::spawn_blocking(move || {
+        crate::uia::focused_document::try_type_focused_document_append(hwnd, expected_pid, &text)
+    })
+    .await
+    .unwrap_or(
+        crate::uia::focused_document::FocusedDocumentTypeOutcome::Unknown(
+            "focused UIA task failed",
+        ),
+    );
+    focused_document_tool_result(outcome, text_len)
+}
+
+fn focused_document_tool_result(
+    outcome: crate::uia::focused_document::FocusedDocumentTypeOutcome,
+    text_len: usize,
+) -> Option<ToolResult> {
+    use crate::uia::focused_document::FocusedDocumentTypeOutcome;
+
+    match outcome {
+        FocusedDocumentTypeOutcome::NotApplicable => None,
+        FocusedDocumentTypeOutcome::Confirmed => Some(
+            ToolResult::text(format!(
+                "Wrote and verified {text_len} character(s) in the focused Document; caret is at the document end."
+            ))
+            .with_structured(json!({
+                "path": "ax",
+                "characters": text_len,
+                "verified": true,
+                "verify": "confirmed",
+                "effect": "confirmed",
+            })),
+        ),
+        FocusedDocumentTypeOutcome::Unknown(stage) => Some(
+            ToolResult::text(format!(
+                "Focused Document text may have been written but could not be verified ({stage}). Inspect the current document before retrying."
+            ))
+            .with_structured(json!({
+                "path": "ax",
+                "characters": text_len,
+                "verified": false,
+                "verify": "unverifiable",
+                "effect": "unverifiable",
+                "retryable": false,
+            })),
+        ),
+    }
+}
+
+#[cfg(test)]
+mod focused_document_result_tests {
+    use super::focused_document_tool_result;
+    use crate::uia::focused_document::FocusedDocumentTypeOutcome;
+    use cua_driver_contract::{ActionEffect, ActionRoute};
+    use cua_driver_core::action_record::{ActionExecutionRecord, ActionTransport};
+    use cua_driver_core::protocol::ToolResult;
+    use serde_json::json;
+
+    fn normalize(result: ToolResult) -> cua_driver_contract::ActionResult {
+        let structured = result
+            .structured_content
+            .expect("focused-document result includes structured evidence");
+        let record = ActionExecutionRecord::from_legacy(
+            "type_text",
+            &json!({"scope": "desktop"}),
+            &structured,
+        )
+        .expect("the action dispatcher recognizes the UIA value transport");
+        assert_eq!(record.transport, ActionTransport::WindowsUiaValue);
+        record
+            .public_result()
+            .expect("focused-document action result normalizes")
+    }
+
+    #[test]
+    fn focused_document_results_normalize_to_accessibility_with_truthful_effects() {
+        let confirmed = focused_document_tool_result(FocusedDocumentTypeOutcome::Confirmed, 12)
+            .expect("confirmed focused-document output");
+        let confirmed = normalize(confirmed);
+        assert_eq!(confirmed.route, ActionRoute::Accessibility);
+        assert_eq!(confirmed.effect, ActionEffect::Confirmed);
+
+        let unknown = focused_document_tool_result(
+            FocusedDocumentTypeOutcome::Unknown("value read-back failed"),
+            12,
+        )
+        .expect("unknown focused-document output");
+        assert_eq!(
+            unknown.structured_content.as_ref().unwrap()["retryable"],
+            false
+        );
+        let unknown = normalize(unknown);
+        assert_eq!(unknown.route, ActionRoute::Accessibility);
+        assert_eq!(unknown.effect, ActionEffect::Unverifiable);
     }
 }
 
@@ -6585,7 +6729,18 @@ impl Tool for ScrollTool {
                 return ToolResult::error("scroll requires x and y together.");
             }
             let center = if let (Some(x), Some(y)) = (px, py) {
-                Some(bitmap_to_screen(hwnd, x as i32, y as i32))
+                let (x, y) = match super::scroll_coordinates::window_bitmap_point(
+                    &self.state.snapshots,
+                    &args,
+                    pid,
+                    hwnd,
+                    x,
+                    y,
+                ) {
+                    Ok(point) => point,
+                    Err(refusal) => return refusal,
+                };
+                Some(bitmap_to_screen(hwnd, x, y))
             } else {
                 tokio::task::spawn_blocking({
                     let admitted = admitted.clone();
@@ -7608,7 +7763,9 @@ impl Tool for DragTool {
             name: "drag".into(),
             description: "Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local screenshot pixels. \
                           duration_ms (default 500) is the wall-clock budget; steps (default 20) interpolates intermediate \
-                          WM_MOUSEMOVE events along the path. No focus steal. After a zoom call, pass from_zoom=true. \
+                          WM_MOUSEMOVE events along the path. Background delivery does not steal focus; delivery_mode:\"foreground\" \
+                          activates the target and refuses with foreground_unavailable, sending nothing, when another window still \
+                          covers the start point. After a zoom call, pass from_zoom=true. \
                           Drags that start on a window caption / title bar or resize border (i.e. moving or resizing the \
                           window itself) cannot be delivered in the background — the OS move/resize loop needs real pointer \
                           input — so they return background_unavailable; re-issue those with delivery_mode:\"foreground\".".into(),
@@ -7838,8 +7995,8 @@ impl Tool for DragTool {
         // Slider thumbs (and any framework that polls GetKeyState during
         // its drag handler — PostMessage doesn't update per-thread input
         // state, so those targets see a button-up world during the drag
-        // and never start tracking). Subject to the same UIAccess
-        // foreground-lock constraint as send_click_synthesized.
+        // and never start tracking). Like the foreground click, it activates
+        // the target and refuses rather than drag in a window that covers it.
         if delivery == DeliveryMode::Foreground {
             let btn_fg = button.clone();
             pin_overlay_above(&cursor_key, hwnd);
@@ -7847,7 +8004,7 @@ impl Tool for DragTool {
                 windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
             };
             let send_result = tokio::task::spawn_blocking(move || {
-                crate::input::mouse::send_drag_synthesized(
+                crate::input::mouse::send_drag_synthesized_active(
                     hwnd,
                     sx_from,
                     sy_from,
@@ -7878,7 +8035,21 @@ impl Tool for DragTool {
                      from screen ({sx_from},{sy_from}) → ({sx_to},{sy_to}) \
                      in {duration_ms}ms / {steps} steps (delivery_mode:foreground)."
                 )),
-                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Ok(Err(e)) => {
+                    let message = e.to_string();
+                    if message.starts_with("foreground_unavailable:") {
+                        // Nothing was sent; give callers the structured code
+                        // and its recovery hint rather than bare text.
+                        ToolResult::error(message).with_structured(json!({
+                            "code": "foreground_unavailable",
+                            "effect": "refused",
+                            "pid": raw_pid,
+                            "window_id": hwnd,
+                        }))
+                    } else {
+                        ToolResult::error(message)
+                    }
+                }
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }

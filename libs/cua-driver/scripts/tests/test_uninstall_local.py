@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 
 
@@ -196,3 +197,64 @@ def test_unix_release_uninstaller_declares_local_detection_inputs() -> None:
         "/Applications/CuaDriverLocal.app",
     ):
         assert token in unix
+
+
+def _darwin_local_sandbox(tmp_path: Path) -> tuple[Path, dict[str, str]]:
+    """A fake macOS where nothing outside the sandbox HOME can be removed.
+
+    uninstall-local.sh deletes /Applications/CuaDriverLocal.app on Darwin, so
+    the `rm` and `sudo` shims make that a recorded no-op on a developer Mac.
+    """
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "fake-bin"
+    calls = tmp_path / "calls.log"
+    home.mkdir()
+    for command in ("dirname", "readlink", "realpath", "rmdir"):
+        executable = shutil.which(command, path=os.defpath)
+        assert executable is not None, f"missing fixture utility: {command}"
+        (fake_bin / command).parent.mkdir(parents=True, exist_ok=True)
+        (fake_bin / command).symlink_to(executable)
+    _executable(fake_bin / "uname", "printf 'Darwin\\n'")
+    for command in ("pkill", "launchctl", "tccutil", "sudo", "rm"):
+        _executable(fake_bin / command, f"printf '%s:%s\\n' '{command}' \"$*\" >> '{calls}'\n")
+    env = {
+        "HOME": str(home),
+        "PATH": str(fake_bin),
+        "CUA_DRIVER_LOCAL_HOME": str(home / ".cua-driver-local"),
+        "CUA_DRIVER_LOCAL_INSTALL_DIR": str(home / ".local/bin"),
+    }
+    return calls, env
+
+
+def _run_local_uninstall(env: dict[str, str], *flags: str) -> None:
+    result = subprocess.run(
+        ["/bin/bash", str(UNINSTALL_LOCAL), "--force", *flags],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_local_uninstall_keeps_macos_permissions_by_default(tmp_path: Path) -> None:
+    calls, env = _darwin_local_sandbox(tmp_path)
+
+    _run_local_uninstall(env)
+
+    recorded = calls.read_text(encoding="utf-8") if calls.exists() else ""
+    assert "tccutil:" not in recorded
+
+
+def test_local_uninstall_resets_macos_permissions_only_when_asked(tmp_path: Path) -> None:
+    calls, env = _darwin_local_sandbox(tmp_path)
+
+    _run_local_uninstall(env, "--reset-permissions")
+
+    lines = [line for line in calls.read_text(encoding="utf-8").splitlines() if line.startswith("tccutil:")]
+    assert lines == [
+        "tccutil:reset Accessibility com.trycua.driver.local",
+        "tccutil:reset ScreenCapture com.trycua.driver.local",
+        "tccutil:reset AppleEvents com.trycua.driver.local",
+    ]

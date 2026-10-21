@@ -1,5 +1,70 @@
 # Changelog
 
+## [0.12.1](https://github.com/trycua/cua/compare/cua-spaces-v0.12.0...cua-spaces-v0.12.1) (2026-10-20)
+
+
+### Bug Fixes
+
+* **spaces-macos:** document the failed-payment notice and plain plan errors ([#5632](https://github.com/trycua/cua/issues/5632)) ([fe6498d](https://github.com/trycua/cua/commit/fe6498dbfa0869a1a64f45376c0bb411fa12f34c))
+
+## [0.12.0](https://github.com/trycua/cua/compare/cua-spaces-v0.11.0...cua-spaces-v0.12.0) (2026-10-20)
+
+
+### Features
+
+* **spaces:** core returns message codes for teleport opt-ins (CUA-1928) ([#5599](https://github.com/trycua/cua/issues/5599)) ([12720d6](https://github.com/trycua/cua/commit/12720d6ab44e99550728d3b54500004b85183046))
+* **spaces:** core returns message codes for the sidebar (CUA-1928) ([#5608](https://github.com/trycua/cua/issues/5608)) ([4cddeec](https://github.com/trycua/cua/commit/4cddeec8308871eedb0f26e57f76f3fff065505c))
+* **spaces:** each computer's issues on the Machines page from its own health checks, cua doctor --machine (CUA-1820) ([#5379](https://github.com/trycua/cua/issues/5379)) ([904436a](https://github.com/trycua/cua/commit/904436adc45435959566f911290d9e56dd79c516))
+
+## [0.11.0](https://github.com/trycua/cua/compare/cua-spaces-v0.10.0...cua-spaces-v0.11.0) (2026-10-20)
+
+
+### Features
+
+* **spaces:** "remote hours" everywhere users see it; self-hosting under Settings → Advanced ([#5461](https://github.com/trycua/cua/issues/5461)) ([b9f1874](https://github.com/trycua/cua/commit/b9f1874ba871a13b9e8efc772cb39472a9b0dd58))
+* **spaces:** one first run everywhere: connect your agent, then This Mac is your first Space (0.10.0) ([#5462](https://github.com/trycua/cua/issues/5462)) ([c4b4b09](https://github.com/trycua/cua/commit/c4b4b0922f7f0c4d87982a972eea0a0c073e5883))
+* **spaces:** processor, memory and disk on Home, a Space's page and the menu bar (CUA-1880) ([#5458](https://github.com/trycua/cua/issues/5458)) ([4690709](https://github.com/trycua/cua/commit/46907096b3511b13db00150f197647800871a72d))
+* **spaces:** resources view, daemon resource sampler, relay summaries, CLI columns and SDK resources API (CUA-1880) ([#5469](https://github.com/trycua/cua/issues/5469)) ([5380f80](https://github.com/trycua/cua/commit/5380f800502440243ec6db76e99f731b0e853b29))
+* **spaces:** second-agent and risky-action prompts for This Mac ([#5459](https://github.com/trycua/cua/issues/5459)) ([41648bc](https://github.com/trycua/cua/commit/41648bc84e65d21223db86e01075740e74480f06))
+* **telemetry:** link signed-in usage data to an opaque account id, off until the policy is published (CUA-1881) ([#5472](https://github.com/trycua/cua/issues/5472)) ([911fc16](https://github.com/trycua/cua/commit/911fc16042b2f7327947f47dd935095e174e6b1c))
+
+
+### Bug Fixes
+
+* **sdk:** delete the Fleet SDK, pools and claims from the Rust SDK, cua-sandbox, Cua Bench and the apps (CUA-1836) ([#5488](https://github.com/trycua/cua/issues/5488)) ([348c47c](https://github.com/trycua/cua/commit/348c47cc30b1d222844480838ccc4acf53f7a511))
+* **spaces:** honest Done screen that sees the CLI and sign-in you already have (CUA-1862) ([#5447](https://github.com/trycua/cua/issues/5447)) ([bea1cfd](https://github.com/trycua/cua/commit/bea1cfd3f55b36af6f1d3d290e67d316dfecf5ff))
+* **spaces:** Linux Share in remote desktops asks for the password, says what to do when it cannot, and cua_share says why it failed (CUA-1725, CUA-1855) ([#5273](https://github.com/trycua/cua/issues/5273)) ([522e032](https://github.com/trycua/cua/commit/522e032fb3ac340aca1f0e1301413d7f08839e31))
+* **spaces:** say computer instead of machine (CUA-1863) ([#5508](https://github.com/trycua/cua/issues/5508)) ([5cbe31c](https://github.com/trycua/cua/commit/5cbe31c7109fa70eb596b6bde3b5964449e8676e))
+
+## [0.10.0](https://github.com/trycua/cua/compare/cua-spaces-v0.9.2...cua-spaces-v0.10.0) (2026-10-19)
+
+
+### Features
+
+* **spaces:** join with a code and a cua://add deep link (CUA-1772) ([#5316](https://github.com/trycua/cua/issues/5316)) ([c195318](https://github.com/trycua/cua/commit/c195318010ab05638076ad22d8bd53d0e2dd7ac1))
+* **spaces:** T3-style in-app updates on macOS, Windows and Linux (CUA-1780) ([#5326](https://github.com/trycua/cua/issues/5326)) ([a6de100](https://github.com/trycua/cua/commit/a6de100971b217395cad6445f5ec547cdef5c3e8))
+
+
+### Bug Fixes
+
+* **cua-agent-setup:** set up Claude Code on Windows from the app (CUA-1703) ([#5261](https://github.com/trycua/cua/issues/5261)) ([d6cb68a](https://github.com/trycua/cua/commit/d6cb68a27d2226ca5e412e04aded97fbc5f31812))
+* **cua-auth:** never wait on a macOS keychain prompt without a terminal ([#5427](https://github.com/trycua/cua/issues/5427)) ([04f75fa](https://github.com/trycua/cua/commit/04f75fa0d34c842e6e204ff69670ae49a397640e))
+* **cua-cli:** open the sign-in URL on Windows without cmd.exe (CUA-1701) ([#5260](https://github.com/trycua/cua/issues/5260)) ([d6cb68a](https://github.com/trycua/cua/commit/d6cb68a27d2226ca5e412e04aded97fbc5f31812))
+* **cua-driver, spacesd:** say why a Windows desktop can't be captured when locked or RDP is disconnected (CUA-1727) ([#5266](https://github.com/trycua/cua/issues/5266)) ([d6cb68a](https://github.com/trycua/cua/commit/d6cb68a27d2226ca5e412e04aded97fbc5f31812))
+* **cua-host:** Windows unattended access without admin rights (CUA-1702) ([#5262](https://github.com/trycua/cua/issues/5262)) ([d6cb68a](https://github.com/trycua/cua/commit/d6cb68a27d2226ca5e412e04aded97fbc5f31812))
+* **cua-spaces:** install or start Docker Desktop from New Space on Windows (CUA-1723) ([#5265](https://github.com/trycua/cua/issues/5265)) ([d6cb68a](https://github.com/trycua/cua/commit/d6cb68a27d2226ca5e412e04aded97fbc5f31812))
+* **cua-spaces:** keep a create on another machine alive while it downloads (CUA-1760) ([#5295](https://github.com/trycua/cua/issues/5295)) ([d6cb68a](https://github.com/trycua/cua/commit/d6cb68a27d2226ca5e412e04aded97fbc5f31812))
+* **cua-spaces:** onboarding This machine Continue button, launch at login default, static prompts ([#5317](https://github.com/trycua/cua/issues/5317)) ([861c4b0](https://github.com/trycua/cua/commit/861c4b0f9e74fc51935333692374b8bb4d8618da))
+* **cua-spaces:** sign-in completes after a retried browser sign-in (CUA-1728) ([#5268](https://github.com/trycua/cua/issues/5268)) ([d6cb68a](https://github.com/trycua/cua/commit/d6cb68a27d2226ca5e412e04aded97fbc5f31812))
+* **install.ps1:** put cua on PATH and install the app by default on Windows (CUA-1704) ([#5263](https://github.com/trycua/cua/issues/5263)) ([d6cb68a](https://github.com/trycua/cua/commit/d6cb68a27d2226ca5e412e04aded97fbc5f31812))
+* **spaces-desktop:** send first-run, sign-in and Space events on Windows and Linux (CUA-1739) ([#5277](https://github.com/trycua/cua/issues/5277)) ([d6cb68a](https://github.com/trycua/cua/commit/d6cb68a27d2226ca5e412e04aded97fbc5f31812))
+* **spaces-desktop:** uninstall stops and removes the Windows host service (CUA-1740) ([#5276](https://github.com/trycua/cua/issues/5276)) ([d6cb68a](https://github.com/trycua/cua/commit/d6cb68a27d2226ca5e412e04aded97fbc5f31812))
+* **spaces:** prefill the computer name and explain host setup in plain words (CUA-1862) ([#5440](https://github.com/trycua/cua/issues/5440)) ([9215d41](https://github.com/trycua/cua/commit/9215d41ae20f92e80fdd867f5ca07ca2d36e6137))
+* **spaces:** rc.2 smoke fixes: Continue on This machine, example prompts, update defaults, plain errors (CUA-1816) ([#5367](https://github.com/trycua/cua/issues/5367)) ([9fd19f3](https://github.com/trycua/cua/commit/9fd19f31db4d05196e7ea2775063bb2b1322b607))
+* **spaces:** refuse a Windows VM create without QEMU before the 6 GB pull (CUA-1761) ([#5294](https://github.com/trycua/cua/issues/5294)) ([d6cb68a](https://github.com/trycua/cua/commit/d6cb68a27d2226ca5e412e04aded97fbc5f31812))
+* **spaces:** say why a Space stopped on its own (out of memory) (CUA-1759) ([#5303](https://github.com/trycua/cua/issues/5303)) ([9737d6f](https://github.com/trycua/cua/commit/9737d6f22bad592038335fd156d1e02766fe768b))
+* stop Cua Cloud (on="cloud") with a clear "Cua Cloud has ended" error (CUA-1854) ([#5415](https://github.com/trycua/cua/issues/5415)) ([5d78ec8](https://github.com/trycua/cua/commit/5d78ec8b7705d942a3d260b276bcce76614a634c))
+
 ## [0.9.2](https://github.com/trycua/cua/compare/cua-spaces-v0.9.1...cua-spaces-v0.9.2) (2026-10-15)
 
 

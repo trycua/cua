@@ -594,20 +594,17 @@ pub fn is_visible_for_session(key: &str) -> bool {
         .unwrap_or(false)
 }
 
-pub fn current_position() -> (f64, f64) {
+pub fn current_position() -> Option<(f64, f64)> {
     current_position_for("default")
 }
 
-pub fn current_position_for(key: &str) -> (f64, f64) {
-    RENDER
-        .lock()
-        .ok()
-        .and_then(|g| {
-            g.as_ref()
-                .and_then(|m| m.cursors.get(key))
-                .map(|rs| rs.core.pos)
-        })
-        .unwrap_or(cursor_overlay::render_state::UNPLACED_POS)
+pub fn current_position_for(key: &str) -> Option<(f64, f64)> {
+    RENDER.lock().ok().and_then(|g| {
+        g.as_ref()
+            .and_then(|m| m.cursors.get(key))
+            .filter(|rs| rs.core.placed)
+            .map(|rs| rs.core.pos)
+    })
 }
 
 pub fn current_motion_for(key: &str) -> cursor_overlay::MotionConfig {
@@ -639,7 +636,7 @@ pub fn current_theme_state_for(
     Some((id, version, profile, fallback, state.core.visual.clone()))
 }
 
-fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool {
+fn seed_start_if_unplaced(key: &CursorKey, target_x: f64, target_y: f64) -> bool {
     let mut guard = RENDER.lock().unwrap();
     let Some(map) = guard.as_mut() else {
         return false;
@@ -650,7 +647,7 @@ fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool
         f64::from(map.platform.scr_w),
         f64::from(map.platform.scr_h),
     );
-    map.seed_start_if_sentinel(key, target_x, target_y, Some(frame))
+    map.seed_start_if_unplaced(key, target_x, target_y, Some(frame))
 }
 
 pub async fn animate_cursor_to(x: f64, y: f64) {
@@ -673,14 +670,14 @@ pub async fn animate_cursor_to_target_for(
     if !draws_cursor(&key) {
         return;
     }
-    seed_start_if_sentinel(&key, x, y);
+    seed_start_if_unplaced(&key, x, y);
     let should_animate = {
         let guard = RENDER.lock().unwrap();
         matches!(
             guard.as_ref().and_then(|m| m.cursors.get(&key)),
             Some(rs) if rs.core.cfg.enabled
                 && rs.core.visible
-                && cursor_overlay::render_state::is_placed(rs.core.pos)
+                && rs.core.placed
         )
     };
     if !should_animate {
@@ -3248,7 +3245,7 @@ mod tests {
         fn wait_for_cursor_move_from(x: f64, y: f64, phase: &str) -> anyhow::Result<()> {
             let deadline = Instant::now() + Duration::from_secs(3);
             while Instant::now() < deadline {
-                let position = current_position();
+                let position = current_position().expect("placed cursor");
                 if (position.0 - x).hypot(position.1 - y) > 32.0 {
                     eprintln!(
                         "{phase}: cursor moved from ({x}, {y}) to ({}, {})",
@@ -3258,7 +3255,7 @@ mod tests {
                 }
                 std::thread::sleep(Duration::from_millis(10));
             }
-            let position = current_position();
+            let position = current_position().expect("placed cursor");
             anyhow::bail!(
                 "cursor position remained ({}, {}) near ({x}, {y}) during {phase}",
                 position.0,
@@ -3858,6 +3855,7 @@ mod tests {
             rs.core.cfg.enabled = true;
             rs.core.visible = true;
             rs.core.pos = (10.0, 10.0);
+            rs.core.placed = true;
         }
         ARRIVAL_DEGRADED.store(false, std::sync::atomic::Ordering::Relaxed);
         let started = tokio::time::Instant::now();
@@ -3948,6 +3946,7 @@ mod tests {
         let mut map = default_render_map();
         let cursor = map.cursors.get_mut("default").unwrap();
         cursor.core.pos = (10.0, 10.0);
+        cursor.core.placed = true;
         cursor.core.motion.idle_hide_ms = 500.0;
         let (_tx, rx) = std::sync::mpsc::channel();
 
@@ -4120,6 +4119,7 @@ mod tests {
         map.platform.scr_w = 1920;
         map.platform.scr_h = 2160;
         map.cursors.get_mut("default").unwrap().core.pos = (100.0, 2000.0);
+        map.cursors.get_mut("default").unwrap().core.placed = true;
         assert_eq!(render_x11_tiles(&map).len(), 1);
 
         update_render_map_geometry(&mut map, 1920, 1080);
@@ -4135,10 +4135,22 @@ mod tests {
     }
 
     #[test]
+    fn placement_controls_frames_independently_of_coordinates() {
+        let mut map = default_render_map();
+        let core = &mut map.cursors.get_mut("default").unwrap().core;
+        core.pos = (-1.0e9, -1.0e9);
+        core.placed = true;
+        assert!(map.needs_frame_tick());
+        map.cursors.get_mut("default").unwrap().core.placed = false;
+        assert!(!map.needs_frame_tick());
+    }
+
+    #[test]
     fn disabling_settled_cursor_clears_once_then_parks() {
         let mut map = default_render_map();
         let cursor = map.cursors.get_mut("default").unwrap();
         cursor.core.pos = (100.0, 100.0);
+        cursor.core.placed = true;
         cursor.core.motion.idle_hide_ms = 0.0;
         cursor.core.visual.reduced_motion = cursor_overlay::ReducedMotion::On;
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -4174,6 +4186,7 @@ mod tests {
         // The public animate path seeds a newly created cursor near its target
         // before sending MoveTo; mirror that valid on-screen starting state.
         cursor.core.pos = (100.0, 100.0);
+        cursor.core.placed = true;
         // Longer than the move plus its 1.6 s navigate cue, so the opaque
         // delay is still running once every animation has finished.
         cursor.core.motion.idle_hide_ms = 2500.0;
@@ -4212,6 +4225,7 @@ mod tests {
         {
             let cursor = map.cursors.get_mut("default").unwrap();
             cursor.core.pos = (10.0, 10.0);
+            cursor.core.placed = true;
             cursor.core.motion.idle_hide_ms = 500.0;
         }
         let other = map.state_for_key("other");
@@ -4252,10 +4266,12 @@ mod tests {
         {
             let cursor = map.cursors.get_mut("default").unwrap();
             cursor.core.pos = (10.0, 10.0);
+            cursor.core.placed = true;
             cursor.core.motion.idle_hide_ms = 500.0;
         }
         let mut other = map.state_for_key("other");
         other.core.pos = (20.0, 20.0);
+        other.core.placed = true;
         map.cursors.insert("other".to_owned(), other);
 
         // Model a command arriving after recv_timeout returned Timeout but
@@ -4288,6 +4304,7 @@ mod tests {
         let mut map = default_render_map();
         let cursor = map.cursors.get_mut("default").unwrap();
         cursor.core.pos = (20.0, 20.0);
+        cursor.core.placed = true;
 
         let (tx, rx) = std::sync::mpsc::channel();
         tx.send(OverlayMsg::Cmd(KeyedOverlayCommand {
@@ -4314,6 +4331,7 @@ mod tests {
         {
             let cursor = map.cursors.get_mut("default").unwrap();
             cursor.core.pos = (20.0, 20.0);
+            cursor.core.placed = true;
             cursor.apply_command(OverlayCommand::MoveTo {
                 x: 80.0,
                 y: 80.0,
@@ -4354,6 +4372,7 @@ mod tests {
         {
             let cursor = map.cursors.get_mut("default").unwrap();
             cursor.core.pos = (100.0, 100.0);
+            cursor.core.placed = true;
             cursor.core.motion.idle_hide_ms = 500.0;
             cursor.core.visual.reduced_motion = cursor_overlay::ReducedMotion::On;
 
@@ -4400,6 +4419,7 @@ mod tests {
         map.platform.scr_h = 2160;
         let cursor = map.cursors.get_mut("default").unwrap();
         cursor.core.pos = (4000.0, 1000.0);
+        cursor.core.placed = true;
 
         let tiles = render_x11_tiles(&map);
 
@@ -4418,6 +4438,7 @@ mod tests {
         map.platform.scr_h = 2160;
         let cursor = map.cursors.get_mut("default").unwrap();
         cursor.core.pos = (4000.0, 1000.0);
+        cursor.core.placed = true;
         cursor.core.badge_mode_override = Some(cursor_overlay::BadgeMode::Verbose);
         cursor.apply_command(OverlayCommand::SetSessionLabel("research-run".to_owned()));
 
@@ -4438,6 +4459,7 @@ mod tests {
         map.platform.scr_h = 2160;
         let cursor = map.cursors.get_mut("default").unwrap();
         cursor.core.pos = (4000.0, 1000.0);
+        cursor.core.placed = true;
         cursor.core.badge_mode_override = Some(cursor_overlay::BadgeMode::Verbose);
         cursor.apply_command(OverlayCommand::BeginAction {
             action: CursorAction::Click,
@@ -4459,6 +4481,7 @@ mod tests {
         map.platform.scr_h = 2160;
         let cursor = map.cursors.get_mut("default").unwrap();
         cursor.core.pos = (4000.0, 1000.0);
+        cursor.core.placed = true;
         cursor.core.badge_mode_override = Some(cursor_overlay::BadgeMode::Minimal);
         cursor.apply_command(OverlayCommand::SetSessionLabel("research-run".to_owned()));
         cursor.apply_command(OverlayCommand::BeginAction {
@@ -4480,6 +4503,7 @@ mod tests {
         map.platform.scr_h = 1080;
         let cursor = map.cursors.get_mut("default").unwrap();
         cursor.core.pos = (10.0, 12.0);
+        cursor.core.placed = true;
 
         let tiles = render_x11_tiles(&map);
         assert_eq!(tiles.len(), 1);
@@ -4504,6 +4528,7 @@ mod tests {
         map.platform.scr_h = 1080;
         let cursor = map.cursors.get_mut("default").unwrap();
         cursor.core.pos = (1000.0, 500.0);
+        cursor.core.placed = true;
 
         // A comet trail stretching back up-left of the cursor.
         let trail = cursor_tile_bounds_with_effects(
@@ -4578,8 +4603,10 @@ mod tests {
         map.platform.scr_w = 7680;
         map.platform.scr_h = 2160;
         map.cursors.get_mut("default").unwrap().core.pos = (100.0, 100.0);
+        map.cursors.get_mut("default").unwrap().core.placed = true;
         let mut other = map.state_for_key("other");
         other.core.pos = (7400.0, 1800.0);
+        other.core.placed = true;
         map.cursors.insert("other".to_owned(), other);
 
         let tiles = render_x11_tiles(&map);

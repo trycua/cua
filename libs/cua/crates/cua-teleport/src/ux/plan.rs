@@ -275,7 +275,7 @@ pub struct TeleportPlan {
     pub save_to_keyvault: bool,
     /// This Space is reached through `cua-relay` and reported no sealed-
     /// delivery key: a secret this plan sends would cross the relay in the
-    /// clear (S1). `false` for a direct connection, a Fleet Gateway, or a
+    /// clear (S1). `false` for a direct connection, a gateway, or a
     /// relay-routed Space whose image already seals. The caller computing
     /// the plan sets this (`plan::build` leaves it `false`; it has no
     /// network access to check). Defaults to `false` on deserializing an

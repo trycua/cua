@@ -132,7 +132,7 @@ fn provider_label(p: SpaceProvider) -> &'static str {
         SpaceProvider::Cloud => "Cua Cloud",
         SpaceProvider::Local => "This Mac",
         SpaceProvider::Direct => "Direct",
-        SpaceProvider::Relay => "My machines",
+        SpaceProvider::Relay => "My computers",
     }
 }
 
@@ -173,7 +173,7 @@ fn detail_for(row: &SpaceRow, status: SpaceStatus) -> String {
                     .filter(|n| !n.is_empty())
                     .unwrap_or(host)
             ),
-            None => "My machines \u{b7} via relay".into(),
+            None => "My computers \u{b7} via relay".into(),
         },
         p => provider_label(p).into(),
     }
@@ -308,6 +308,20 @@ pub fn off_text(power: &SpacePower) -> String {
     {
         Some(why) => format!("{}: {why}", off_label(power.control)),
         None => off_label(power.control).into(),
+    }
+}
+
+/// [`off_text`] as a message: `spaces.status.stopped`, or
+/// `spaces.status.stopped_reason` with the `reason`.
+pub fn off_msg(power: &SpacePower) -> crate::message::Msg {
+    use crate::message::Msg;
+    match power
+        .stop_reason
+        .as_deref()
+        .filter(|r| !r.trim().is_empty())
+    {
+        Some(why) => Msg::new("spaces.status.stopped_reason").with("reason", why),
+        None => Msg::new("spaces.status.stopped"),
     }
 }
 

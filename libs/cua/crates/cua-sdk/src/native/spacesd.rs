@@ -35,6 +35,7 @@ impl SpacesdCommand {
         if let Some(p) = self.pty {
             c = c.pty(p.cols, p.rows);
         }
+        c.kill_on_disconnect = self.kill_on_disconnect;
         c
     }
 }
@@ -219,8 +220,11 @@ impl SpacesdProcess {
         .await
     }
 
-    /// Sends a signal by name (`term`, `kill`, `SIGINT`, ...).
-    pub async fn signal(&self, signal: String) -> Result<()> {
+    /// Sends a signal by name (`term`, `kill`, `SIGINT`, ...). With
+    /// `process_group`, to the process's whole group (everything it started),
+    /// as a terminal's Ctrl-C does; by default to the process alone.
+    #[uniffi::method(default(process_group = false))]
+    pub async fn signal(&self, signal: String, process_group: bool) -> Result<()> {
         let sig = parse_signal(&signal)?;
         let (client, process) = (self.client.clone(), Some(self.selector()));
         run(async move {
@@ -229,7 +233,7 @@ impl SpacesdProcess {
                 .signal_process(pb::SignalProcessRequest {
                     process,
                     signal: sig as i32,
-                    process_group: false,
+                    process_group,
                 })
                 .await?;
             Ok(())
@@ -239,7 +243,7 @@ impl SpacesdProcess {
 
     /// SIGKILL.
     pub async fn kill(&self) -> Result<()> {
-        self.signal("kill".into()).await
+        self.signal("kill".into(), false).await
     }
 
     /// Resizes the PTY.
@@ -337,8 +341,8 @@ pub struct SpacesdHttpRequest {
     pub method: String,
     /// Absolute path under the endpoint, for example `/mcp`. Never a URL.
     pub path: String,
-    /// Extra headers. Credentials (`authorization`, the env and Fleet claim
-    /// headers) are the client's and cannot be set here.
+    /// Extra headers. Credentials (`authorization` and the env headers) are
+    /// the client's and cannot be set here.
     #[uniffi(default = [])]
     pub headers: Vec<SpacesdHttpHeader>,
     /// Request body (empty for none).
@@ -362,10 +366,10 @@ pub struct SpacesdHttpResponse {
     pub body: Vec<u8>,
 }
 
-/// Re-mints the WebSocket upgrade headers when a socket is opened. Fleet
-/// access tokens are short-lived (about five minutes), so a bearer taken when
-/// the client was created makes the gateway refuse (302) every media socket
-/// opened later on a long-lived client.
+/// Re-mints the WebSocket upgrade headers when a socket is opened. A gateway's
+/// access tokens are short-lived, so a bearer taken when the client was
+/// created makes the gateway refuse every media socket opened later on a
+/// long-lived client.
 pub(crate) type WsHeaderRefresh = Arc<
     dyn Fn() -> futures_util::future::BoxFuture<'static, Result<Vec<(String, String)>>>
         + Send
@@ -380,10 +384,11 @@ pub struct SpacesdClient {
     /// creation.
     #[cfg_attr(not(feature = "media"), allow(dead_code))]
     pub(crate) ws_headers: Vec<(String, String)>,
-    /// Fresh headers at use (cloud Spaces); `None` when they never expire.
+    /// Fresh headers at use (a Space behind a gateway); `None` when they never
+    /// expire.
     #[cfg_attr(not(feature = "media"), allow(dead_code))]
     pub(crate) ws_refresh: Option<WsHeaderRefresh>,
-    /// Where the spacesd runs (`local`, `cloud`, `direct`, `relay`), for
+    /// Where the spacesd runs (`local`, `direct`, `relay`, your cloud), for
     /// agent-run telemetry. `direct` (reached by address) unless set.
     pub(crate) location: String,
 }
@@ -408,7 +413,7 @@ impl SpacesdClient {
     }
 
     /// A client whose WebSocket headers are re-minted by `refresh` each time
-    /// a socket is opened (a cloud Space's Fleet bearer).
+    /// a socket is opened (a Space behind a gateway).
     pub(crate) fn with_ws_refresh(mut self, refresh: WsHeaderRefresh) -> Self {
         self.ws_refresh = Some(refresh);
         self
@@ -416,16 +421,16 @@ impl SpacesdClient {
 
     /// Rust hosts: headers WebSocket upgrades on this route need, as of
     /// creation. Prefer [`SpacesdClient::current_ws_headers`] for a socket
-    /// opened later: a cloud Space's bearer expires within minutes.
+    /// opened later: a gateway's bearer expires within minutes.
     pub fn ws_headers(&self) -> Vec<(String, String)> {
         self.ws_headers.clone()
     }
 
     /// Rust hosts: headers a WebSocket upgrade opened now needs, with a
-    /// fresh Fleet bearer for a cloud Space.
+    /// fresh bearer for a Space behind a gateway.
     pub async fn current_ws_headers(&self) -> Result<Vec<(String, String)>> {
         match &self.ws_refresh {
-            // On the SDK runtime: the refresh may do Fleet I/O.
+            // On the SDK runtime: the refresh may do I/O.
             Some(refresh) => run(refresh()).await,
             None => Ok(self.ws_headers.clone()),
         }
@@ -758,8 +763,8 @@ impl SpacesdClient {
     // --------------------------------------------------------------- http
 
     /// Sends one plain-HTTP request to the spacesd port with this
-    /// client's endpoint and credentials (through the Fleet gateway when the
-    /// endpoint is a Fleet service). Used for streamable-HTTP MCP at `/mcp`,
+    /// client's endpoint and credentials (through a gateway when the
+    /// endpoint is behind one). Used for streamable-HTTP MCP at `/mcp`,
     /// for example by typed cua-driver clients. Not retried.
     pub async fn http(&self, request: SpacesdHttpRequest) -> Result<SpacesdHttpResponse> {
         let call = cua_spacesd_client::HttpCall {
@@ -935,8 +940,8 @@ mod tests {
         }
     }
 
-    /// A long-lived client to a cloud Space: its Fleet bearer expires while
-    /// the client is held, so every media socket must carry the bearer
+    /// A long-lived client to a Space behind a gateway: its bearer expires
+    /// while the client is held, so every media socket must carry the bearer
     /// current when the socket opens, never the one from creation.
     #[tokio::test]
     async fn media_sockets_carry_the_bearer_current_at_open() {
@@ -954,12 +959,7 @@ mod tests {
         let counter = minted.clone();
         let refresh: WsHeaderRefresh = Arc::new(move || {
             let n = counter.fetch_add(1, Ordering::SeqCst) + 1;
-            Box::pin(async move {
-                Ok(vec![
-                    ("authorization".into(), format!("Bearer fresh-{n}")),
-                    ("x-cua-fleet-claim".into(), "claim-1".into()),
-                ])
-            })
+            Box::pin(async move { Ok(vec![("authorization".into(), format!("Bearer fresh-{n}"))]) })
         });
         let stale = vec![("authorization".to_string(), "Bearer stale".to_string())];
         let client = SpacesdClient::new(inner, stale.clone()).with_ws_refresh(refresh);
@@ -980,17 +980,15 @@ mod tests {
             }
             let log = env.media.lock().unwrap();
             assert!(log.attaches > before, "media socket never attached");
-            seen.lock()
-                .unwrap()
-                .push((log.last_authorization.clone(), log.last_claim.clone()));
+            seen.lock().unwrap().push(log.last_authorization.clone());
             drop(log);
             drop(session);
         }
         assert_eq!(
             *seen.lock().unwrap(),
             vec![
-                (Some("Bearer fresh-1".into()), Some("claim-1".into())),
-                (Some("Bearer fresh-2".into()), Some("claim-1".into())),
+                Some("Bearer fresh-1".to_string()),
+                Some("Bearer fresh-2".to_string()),
             ]
         );
         assert_eq!(minted.load(Ordering::SeqCst), 2, "one refresh per socket");

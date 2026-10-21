@@ -38,7 +38,7 @@ struct Cli {
 enum Command {
     /// Serve on the local port (the default).
     Serve(ServeArgs),
-    /// Serve locally and publish through a cua-relay (for machines behind NAT).
+    /// Serve locally and publish through a cua-relay (for computers behind NAT).
     Join(JoinArgs),
     /// Privileged helper for --await-token-file: mirror a root-only token
     /// file (the Fleet claim Secret) to a file the driver's user can read.
@@ -163,7 +163,7 @@ struct ServeArgs {
     scrollback_bytes: u64,
     /// Serve `HostSpacesService` on this listener from this host policy
     /// (written by `cua host setup --direct ... --provide-spaces`, reloaded
-    /// on every call): the token holder creates Spaces on this machine,
+    /// on every call): the token holder creates Spaces on this computer,
     /// from loopback, Tailscale and private LAN addresses unless the
     /// policy allows any address.
     #[arg(long, env = "CUA_ENV_DIRECT_HOST_POLICY")]
@@ -202,8 +202,8 @@ struct JoinArgs {
     /// Relay URL, e.g. wss://relay.example.
     #[arg(long, env = "CUA_ENV_RELAY_URL")]
     relay: String,
-    /// Machine credential for the relay (not the env token): a static relay
-    /// token, or the machine token from `cua host setup` (account mode).
+    /// Computer credential for the relay (not the env token): a static relay
+    /// token, or the computer token from `cua host setup` (account mode).
     #[arg(
         long,
         env = "CUA_RELAY_TOKEN",
@@ -222,12 +222,12 @@ struct JoinArgs {
     /// keys the relay sends on join.
     #[arg(long, env = "CUA_RELAY_JWKS")]
     relay_jwks: Option<PathBuf>,
-    /// Where the persistent machine id lives.
+    /// Where the persistent computer id lives.
     #[arg(long, env = "CUA_ENV_MACHINE_ID_FILE")]
     machine_id_file: Option<PathBuf>,
-    /// Join as this machine id (a machine another device registered, for
-    /// example a Space in your cloud): written to the machine id file, so
-    /// a restart joins as the same machine.
+    /// Join as this computer id (a computer another device registered, for
+    /// example a Space in your cloud): written to the computer id file, so
+    /// a restart joins as the same computer.
     #[arg(long, env = "CUA_ENV_MACHINE_ID")]
     machine_id: Option<String>,
     /// The relay's assertion keys as JSON (`--relay-jwks` from the
@@ -375,12 +375,34 @@ enum Exit {
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
+/// The log filter spec for `CUA_ENV_LOG` (`None`: not set): the spec, or
+/// `info`, without the WireGuard library's own timer messages (`boringtun`)
+/// unless the spec names it. It logs a warning every few seconds while a mesh
+/// peer that went away is retried and an error when it gives up: normal churn
+/// that would otherwise fill a host's log (every short-lived `cua` client
+/// leaves one), including for hosts whose service was installed with
+/// `CUA_ENV_LOG=info`. `CUA_ENV_LOG=info,boringtun=debug` brings them back.
+fn log_filter_spec(env: Option<&str>) -> String {
+    let base = env
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("info");
+    if base.contains("boringtun") {
+        base.to_owned()
+    } else {
+        format!("{base},boringtun=off")
+    }
+}
+
+fn log_filter() -> tracing_subscriber::EnvFilter {
+    let spec = log_filter_spec(std::env::var("CUA_ENV_LOG").ok().as_deref());
+    tracing_subscriber::EnvFilter::try_new(&spec)
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(log_filter_spec(None)))
+}
+
 fn init_tracing() {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_env("CUA_ENV_LOG")
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
+        .with_env_filter(log_filter())
         .with_writer(std::io::stderr)
         .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
         .try_init();
@@ -726,7 +748,7 @@ async fn serve(args: ServeArgs, join: Option<JoinArgs>) -> Result<Exit, BoxError
             .filter(|i| !i.is_empty())
         {
             if !cua_relay::valid_machine_id(id) {
-                return Err(format!("CUA_ENV_MACHINE_ID: invalid machine id {id:?}").into());
+                return Err(format!("CUA_ENV_MACHINE_ID: invalid computer id {id:?}").into());
             }
             write_private_file(&id_file, format!("{id}\n").as_bytes())?;
         }
@@ -865,6 +887,58 @@ fn write_private_file(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The WireGuard library's retry/expiry messages stay out of the log
+    /// (also when a service was installed with `CUA_ENV_LOG=info`), unless
+    /// the filter names them.
+    #[test]
+    fn the_log_filter_hides_the_wireguard_timers_unless_asked_for() {
+        use std::io::Write;
+        #[derive(Clone, Default)]
+        struct Buf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl Write for Buf {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Buf {
+            type Writer = Buf;
+            fn make_writer(&'a self) -> Buf {
+                self.clone()
+            }
+        }
+        let run = |spec: Option<&str>| {
+            let buf = Buf::default();
+            let subscriber = tracing_subscriber::fmt()
+                .with_env_filter(tracing_subscriber::EnvFilter::new(log_filter_spec(spec)))
+                .with_writer(buf.clone())
+                .finish();
+            tracing::subscriber::with_default(subscriber, || {
+                tracing::warn!(target: "boringtun::noise::timers", "HANDSHAKE(REKEY_TIMEOUT)");
+                tracing::error!(target: "boringtun::noise::timers", "CONNECTION_EXPIRED(REKEY_ATTEMPT_TIME)");
+                tracing::warn!(target: "cua_mesh::node", "kept warning");
+            });
+            let bytes = buf.0.lock().unwrap().clone();
+            String::from_utf8(bytes).unwrap()
+        };
+        for spec in [None, Some(""), Some("info"), Some("debug"), Some(" warn ")] {
+            let out = run(spec);
+            assert!(
+                !out.contains("HANDSHAKE") && !out.contains("CONNECTION_EXPIRED"),
+                "{spec:?}: {out}"
+            );
+            assert!(out.contains("kept warning"), "{spec:?}: {out}");
+        }
+        let out = run(Some("info,boringtun=debug"));
+        assert!(
+            out.contains("HANDSHAKE") && out.contains("CONNECTION_EXPIRED"),
+            "{out}"
+        );
+    }
 
     fn parse(args: &[&str]) -> Cli {
         Cli::try_parse_from(std::iter::once("cua-spacesd").chain(args.iter().copied())).unwrap()

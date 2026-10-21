@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package cua.daemon.v1;
 
+import "cua/daemon/v1/resources.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -17,7 +18,7 @@ import "google/protobuf/timestamp.proto";
 // without touching it.
 service SpaceService {
   // Adds an existing machine as a Space by address (`host:port`, a direct
-  // `http(s)://host:port`, or a sandbox ref such as `cloud:<name>`) after a
+  // `http(s)://host:port`, or a sandbox ref such as `local:<name>`) after a
   // `GetCapabilities` handshake.
   rpc AddSpace(AddSpaceRequest) returns (AddSpaceResponse);
   // Lists registered Spaces.
@@ -26,10 +27,6 @@ service SpaceService {
   rpc RemoveSpace(RemoveSpaceRequest) returns (RemoveSpaceResponse);
   // Resolves any accepted spelling (id, legacy id, URL, name) to a Space.
   rpc ResolveSpace(ResolveSpaceRequest) returns (ResolveSpaceResponse);
-  // Deprecated: use `CreateSpace` with location "cloud".
-  rpc ClaimFleetSpace(ClaimFleetSpaceRequest) returns (ClaimFleetSpaceResponse) {
-    option deprecated = true;
-  }
   // Deprecated: use `CreateSpace` with location "local".
   rpc ProvisionLocalSpace(ProvisionLocalSpaceRequest) returns (ProvisionLocalSpaceResponse) {
     option deprecated = true;
@@ -50,8 +47,8 @@ service SpaceService {
   // Cancels a create that is still running, found by the caller's
   // `create_id`, the id the Space will have (every progress event carries
   // it in `space`) or its name: the work in flight stops (an image
-  // download, a boot, a claim, a relay registration) and what the create
-  // made is removed (its VM or container and disks, its cloud claim, its
+  // download, a boot, a relay registration) and what the create
+  // made is removed (its VM or container and disks, its
   // relay machine, its registry entry). Nothing that existed before is
   // touched; finished image downloads stay cached so the next create
   // resumes. Returns once the clean-up is done; the create itself ends with
@@ -87,6 +84,21 @@ service SpaceService {
   // `captured_at`, when the capture fails). Asking keeps the daemon
   // refreshing running Spaces' thumbnails in the background for a while.
   rpc GetSpaceThumbnail(GetSpaceThumbnailRequest) returns (GetSpaceThumbnailResponse);
+  // What this computer, its extra Spaces and your other computers use now:
+  // processor, memory and disk, as one snapshot. The daemon's single
+  // sampler measures it; a snapshot a few seconds old is returned as it is.
+  // With `visible`, the call also says a window shows the numbers for the
+  // next 30 seconds, so the sampler runs every 10 seconds (every 5 minutes
+  // otherwise). Numbers only: no names, paths or processes.
+  rpc GetResources(GetResourcesRequest) returns (GetResourcesResponse);
+  // The same numbers as a stream: one snapshot first, then an update with
+  // only the entries that changed by more than 1 point or 256 MB, and a
+  // `low_disk` event whenever the free-disk warning level changes
+  // (including back to `ok`). A hidden watcher (`visible` false) is
+  // sampled every 5 minutes and still hears `low_disk`, for the menu bar.
+  // Cancel the stream to stop; call again with the other `visible` to
+  // switch.
+  rpc WatchResources(WatchResourcesRequest) returns (stream WatchResourcesResponse);
 }
 
 // A registered Space.
@@ -116,7 +128,7 @@ message Space {
   // `os.pretty_name`), for example "Ubuntu 24.04.3 LTS"; empty when the
   // driver does not report one.
   string os_pretty_name = 9;
-  // The image the sandbox runs, as requested (local and cloud Spaces), for
+  // The image the sandbox runs, as requested (local Spaces), for
   // example "ghcr.io/trycua/linux:24.04"; empty when unknown (a Space added
   // by address).
   string image = 10;
@@ -209,40 +221,6 @@ message ResolveSpaceRequest {
 message ResolveSpaceResponse {
   // The registered Space.
   Space space = 1;
-}
-
-// Request for `SpaceService.ClaimFleetSpace`.
-message ClaimFleetSpaceRequest {
-  // Image. Empty uses the default Spaces image for the runtime.
-  string image = 1;
-  // Fleet runtime (`kubevirt`, `gvisor`). Empty picks from the image.
-  string runtime = 2;
-  // Display name.
-  string name = 3;
-  // Wait for the claim to bind (default true when unset).
-  optional bool wait = 4;
-  // Reuse a reachable registered Fleet Space for the same image first.
-  bool reuse = 5;
-  // Entrypoint override (pod runtimes). Empty keeps the image's.
-  repeated string command = 6;
-  // Guest environment.
-  map<string, string> env = 7;
-  // Named services (name -> guest port), for example {"mcp": 8765}.
-  map<string, uint32> services = 8;
-  // Whether the image runs cua-spacesd. Unset: yes for the Spaces
-  // images, no for any other image.
-  optional bool spacesd = 9;
-}
-
-// Response for `SpaceService.ClaimFleetSpace`.
-message ClaimFleetSpaceResponse {
-  // The Space, once bound.
-  Space space = 1;
-  // With `wait = false`: the pending claim as JSON (`{namespace, claim,
-  // pool, ...}`).
-  string pending_json = 2;
-  // A registered Space was reused.
-  bool reused = 3;
 }
 
 // Request for `SpaceService.ProvisionLocalSpace`.
@@ -352,15 +330,14 @@ message CallSpaceToolResponse {
 message CreateSpaceRequest {
   // Image. Empty uses the canonical Linux image.
   string image = 1;
-  // Where it runs: "local", "cloud" or a registered provider. Empty uses
+  // Where it runs: "local" or a registered provider. Empty uses
   // the default (`default.on` in the config, `CUA_DEFAULT_ON`, else
   // "local"); clients resolve the default on their side.
   string location = 2;
   // What kind of machine: "auto" (empty), "container" or "vm".
   string kind = 3;
   // Which engine: "auto" (empty), or one the location offers for the kind
-  // ("gvisor", "runc", "qemu", "lume" locally; "gvisor", "kubevirt" in the
-  // cloud).
+  // ("gvisor", "runc", "qemu", "lume" locally).
   string runtime = 4;
   // Name. Empty generates `space-<hex>`.
   string name = 5;
@@ -467,7 +444,7 @@ message CancelCreateSpaceResponse {
 
 // Request for `SpaceService.GetGpuSupport`.
 message GetGpuSupportRequest {
-  // "local" (empty) or "cloud".
+  // "local" (empty) or a registered provider.
   string location = 1;
 }
 
@@ -485,13 +462,13 @@ message GpuOption {
   string reason = 5;
   // A page that explains it.
   string learn_more = 6;
-  // Estimated cost per hour while it runs (cloud GPU types).
+  // Estimated cost per hour while it runs (a provider's GPU types).
   optional double usd_per_hour = 7;
 }
 
 // The GPU options of one runtime.
 message GpuSupport {
-  // "lume", "qemu", "container", "gvisor", "fleet", a provider's name.
+  // "lume", "qemu", "container", "gvisor", a provider's name.
   string runtime = 1;
   // Its options; empty: none.
   repeated GpuOption options = 2;

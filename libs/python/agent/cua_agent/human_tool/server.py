@@ -5,8 +5,10 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel
+
+from ..human_auth import announce, resolve_host, server_token, token_matches
 
 
 class CompletionStatus(str, Enum):
@@ -183,25 +185,38 @@ class CompletionQueue:
 # Global queue instance
 completion_queue = CompletionQueue()
 
-# FastAPI app
+
+async def require_token(request: Request) -> None:
+    """Reject requests that do not carry the correct ``Authorization: Bearer`` token."""
+    scheme, _, supplied = request.headers.get("authorization", "").partition(" ")
+    if scheme.lower() != "bearer" or not token_matches(supplied.strip(), server_token()):
+        raise HTTPException(
+            status_code=401,
+            detail="Missing or invalid token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+# FastAPI app. Every API route sits on a router that requires the bearer token.
 app = FastAPI(title="Human Completion Server", version="1.0.0")
+router = APIRouter(dependencies=[Depends(require_token)])
 
 
-@app.post("/queue", response_model=Dict[str, str])
+@router.post("/queue", response_model=Dict[str, str])
 async def queue_completion(request: CompletionRequest):
     """Add a completion request to the queue."""
     call_id = await completion_queue.add_completion(request.messages, request.model)
     return {"id": call_id, "status": "queued"}
 
 
-@app.get("/pending")
+@router.get("/pending")
 async def list_pending():
     """List all pending completion calls."""
     pending_calls = await completion_queue.get_pending_calls()
     return {"pending_calls": pending_calls}
 
 
-@app.get("/status/{call_id}")
+@router.get("/status/{call_id}")
 async def get_status(call_id: str):
     """Get the status of a specific completion call."""
     status = await completion_queue.get_call_status(call_id)
@@ -210,7 +225,7 @@ async def get_status(call_id: str):
     return status
 
 
-@app.post("/complete/{call_id}")
+@router.post("/complete/{call_id}")
 async def complete_call(call_id: str, response: CompletionResponse):
     """Complete a call with a human response."""
     success = await completion_queue.complete_call(
@@ -222,7 +237,7 @@ async def complete_call(call_id: str, response: CompletionResponse):
         raise HTTPException(status_code=404, detail="Call not found or already completed")
 
 
-@app.post("/fail/{call_id}")
+@router.post("/fail/{call_id}")
 async def fail_call(call_id: str, error: Dict[str, str]):
     """Mark a call as failed."""
     success = await completion_queue.fail_call(call_id, error.get("error", "Unknown error"))
@@ -233,13 +248,37 @@ async def fail_call(call_id: str, error: Dict[str, str]):
     return {"status": "failed"}
 
 
+app.include_router(router)
+
+
 @app.get("/")
 async def root():
     """Root endpoint."""
     return {"message": "Human Completion Server is running"}
 
 
-if __name__ == "__main__":
+PORT = 8002
+
+
+def main(argv: Optional[List[str]] = None) -> None:
+    """Run the API server (no UI). Listens on 127.0.0.1 unless --host is given."""
+    import argparse
+
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8002)
+    parser = argparse.ArgumentParser(description="Human completion server")
+    parser.add_argument(
+        "--host",
+        default=None,
+        help="Address to listen on (default: 127.0.0.1, or $CUA_HUMAN_TOOL_HOST)",
+    )
+    args = parser.parse_args(argv)
+
+    host = resolve_host(args.host)
+    server_token()  # create the token (and its file) before accepting requests
+    announce(host, PORT)
+    uvicorn.run(app, host=host, port=PORT)
+
+
+if __name__ == "__main__":
+    main()

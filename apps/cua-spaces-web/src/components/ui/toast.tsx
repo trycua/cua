@@ -5,6 +5,8 @@ import { Toast } from "@base-ui/react/toast";
 import { CircleAlertIcon, CircleCheckIcon, InfoIcon, XIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { CuaKey } from "@/components/cua-key";
+
 export const toastManager = Toast.createToastManager();
 
 type ToastType = "info" | "success" | "error";
@@ -18,14 +20,29 @@ export const TOAST_MS = 5000;
  */
 export const ERROR_TOAST_MS = 15000;
 
+/** A button on a toast (an error's Upgrade). */
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
+let errorAction: ((text: string) => ToastAction | null) | null = null;
+
+/** Offers an action on a failed action's toast, from the error's text (the
+ * plan-limit refusal's Upgrade). Set by the shell, which has the core. */
+export function setErrorAction(fn: ((text: string) => ToastAction | null) | null) {
+  errorAction = fn;
+}
+
 /** The open toasts of each group (`toast`'s `group`). */
 const groups = new Map<string, Set<string>>();
 
 /**
  * Shows a toast. One with a `group` replaces that group's earlier ones: a
- * create that worked closes the failure of the try before it.
+ * create that worked closes the failure of the try before it. `fromCua` marks
+ * one of Cua's own notifications: it shows the Cua key instead of the info icon.
  */
-export function toast(title: string, options: { description?: string; type?: ToastType; group?: string } = {}) {
+export function toast(title: string, options: { description?: string; type?: ToastType; group?: string; fromCua?: boolean; action?: ToastAction } = {}) {
   const type = options.type ?? "info";
   const group = options.group;
   if (group) {
@@ -35,7 +52,7 @@ export function toast(title: string, options: { description?: string; type?: Toa
   // Base UI's own timer pauses while the window is unfocused and resumes on
   // focus, which a webview in a native window may never report (an
   // "Opening…" toast stayed 10+ min). A plain timer closes it either way.
-  const id = toastManager.add({ title, description: options.description, type, timeout: 0 });
+  const id = toastManager.add({ title, description: options.description, type, timeout: 0, data: { fromCua: options.fromCua === true, action: options.action } });
   if (group) groups.set(group, new Set([id]));
   setTimeout(() => {
     toastManager.close(id);
@@ -45,8 +62,10 @@ export function toast(title: string, options: { description?: string; type?: Toa
 }
 
 /** A failed action: `title` says what didn't happen, the error says why. */
-export const toastError = (title: string, group?: string) => (e: unknown) =>
-  toast(title, { description: e instanceof Error ? e.message : String(e), type: "error", group });
+export const toastError = (title: string, group?: string) => (e: unknown) => {
+  const description = e instanceof Error ? e.message : String(e);
+  toast(title, { description, type: "error", group, action: errorAction?.(description) ?? undefined });
+};
 
 const ICONS = { info: InfoIcon, success: CircleCheckIcon, error: CircleAlertIcon } as const;
 
@@ -74,10 +93,24 @@ function ToastList() {
         data-video-occluder=""
         className="glass flex items-start gap-2.5 rounded-xl border p-3 pr-2 shadow-float transition-[opacity,translate] duration-200 ease-out-soft data-ending-style:translate-y-2 data-ending-style:opacity-0 data-starting-style:translate-y-2 data-starting-style:opacity-0"
       >
-        <Icon className={t.type === "error" ? "mt-px size-4 text-destructive" : t.type === "success" ? "mt-px size-4 text-success" : "mt-px size-4 text-brand-strong"} />
+        {(t.data as { fromCua?: boolean } | undefined)?.fromCua && t.type !== "error" ? (
+          <CuaKey size={20} className="-my-0.5" />
+        ) : (
+          <Icon className={t.type === "error" ? "mt-px size-4 text-destructive" : t.type === "success" ? "mt-px size-4 text-success" : "mt-px size-4 text-brand-strong"} />
+        )}
         <Toast.Content className="min-w-0 flex-1">
           <Toast.Title className="text-[13px] font-medium" />
           <Toast.Description className="text-xs text-muted-foreground" />
+          {(t.data as { action?: ToastAction } | undefined)?.action ? (
+            <button
+              type="button"
+              data-toast-action=""
+              className="mt-2 rounded-md border px-2 py-1 text-xs font-medium hover:bg-accent"
+              onClick={() => (t.data as { action: ToastAction }).action.onClick()}
+            >
+              {(t.data as { action: ToastAction }).action.label}
+            </button>
+          ) : null}
         </Toast.Content>
         <Toast.Close aria-label="Dismiss" className="rounded-md p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground">
           <XIcon className="size-3.5" />

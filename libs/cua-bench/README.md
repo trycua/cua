@@ -1,6 +1,6 @@
 # cua-bench
 
-Run computer-use benchmark datasets on local sandboxes.
+Run computer-use benchmark datasets on sandboxes.
 
 Cua Cloud has ended; `--on cloud` now fails with a pointer to [the notice](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended).
 
@@ -40,7 +40,7 @@ dataset (every task and variant). It runs in the foreground with per-variant sta
 | --- | --- |
 | `--on local` | Where. `local`: sandboxes on this machine through the cua SDK. `cloud` is removed (Cua Cloud has ended). Default: `CUA_DEFAULT_ON`, then `cua config set default.on`, then `local`. |
 | `--kind auto\|container\|vm` | What kind. `auto` (default): Linux runs as a container unless the task or the image's variant index says VM; Windows, macOS and Android are VM-only. Default: `CUA_DEFAULT_KIND`, then `default.kind`. |
-| `--runtime auto\|gvisor\|runc\|qemu\|lume\|kubevirt` | Which engine, and it implies the kind. Local containers: `gvisor`, `runc`; local VMs: `qemu`, `lume`. `auto` (default) lets the SDK pick. A combination that does not exist is an error listing the valid values. Default: `CUA_DEFAULT_RUNTIME`, then `default.runtime` (skipped for a task it does not fit). |
+| `--runtime auto\|gvisor\|runc\|qemu\|lume` | Which engine, and it implies the kind. Local containers: `gvisor`, `runc`; local VMs: `qemu`, `lume`. `auto` (default) lets the SDK pick. A combination that does not exist is an error listing the valid values. Default: `CUA_DEFAULT_RUNTIME`, then `default.runtime` (skipped for a task it does not fit). |
 | `--image REF` | Image for every task: an OS alias (`linux`, `windows`, `macos:tahoe`), `ghcr.io/trycua/<os>`, any registry ref or a digest. Otherwise the task's `setup_config.image`, then `CUA_BENCH_IMAGE`, then the canonical image for the OS. |
 | `--cpu`, `--memory` | Resources per sandbox (`--memory 4G`). |
 | `-j`, `--max-parallel` | Variants at once. |
@@ -58,8 +58,8 @@ Results land in `~/.local/share/cua-bench/runs/<run id>/<task>_v<n>/` (`run.log`
 `cb run list | info | watch | logs | stop` inspect runs; `cb dataset build <run dir>`
 exports traces (aguvis-stage-1, gui-r1).
 
-- `result.json` records what ran (`on`, `backend` such as `local-gvisor` or
-  `cloud-kubevirt`, the `sandbox` ref such as `local:<name>` or `cloud:<name>`,
+- `result.json` records what ran (`on`, `backend` such as `local-gvisor`, the
+  `sandbox` ref such as `local:<name>`,
   `kind`, `runtime` (the engine, when one was chosen), `image_ref`,
   `image_variant`, `image_digest` as the pinned `repo@sha256`, `arch`) and carries
   Harbor's trial fields (`task_name`, `trial_name`, `verifier_result.rewards`,
@@ -67,7 +67,7 @@ exports traces (aguvis-stage-1, gui-r1).
 - `trajectory.json` is an ATIF-v1.8 trajectory (Harbor's format) with screenshots under
   `imgs/`.
 - `summary.json` adds `pass_at_k` (with `--attempts`), `stats` and a `targets` breakdown.
-  New keys are additive; `schema_version` is 1.
+  New keys are additive; `schema_version` is 2.
 
 ### Datasets
 
@@ -143,7 +143,7 @@ task's agent log directory (`harness-events.jsonl`, `harness-result.json`).
   Agents' Last Exam): `run_command` reports `return_code` 0 unless
   `strict_exit_codes=True`, there is no shell timeout unless `timeout=` is set, `api_url`
   sessions speak to computer-server (or cua-spacesd: port 3211 or a sandbox ref such as
-  `local:<name>`, `cloud:<name>`, `direct:<host:port>`), and `session.interface`
+  `local:<name>`, `direct:<host:port>`), and `session.interface`
   keeps the cua-computer method set. `scripts/ale_compat/check_ale.py` checks ALE against
   a checkout.
 
@@ -156,7 +156,7 @@ uv run pytest -q cua_bench/tests --ignore=cua_bench/tests/live
 
 The suite is hermetic: cua-sandbox is replaced by an in-memory sandbox
 (`cua_bench/tests/fakes.py`) and a loopback computer-server stand-in, so nothing starts a
-container, VM or cloud claim. It includes the CLI parser golden
+container or VM. It includes the CLI parser golden
 (`tests/golden/cli_tree.json`), export schema snapshots and the ALE compatibility tests.
 After a deliberate, additive CLI or schema change, regenerate the goldens with
 `CUA_BENCH_UPDATE_GOLDENS=1` and review the diff.

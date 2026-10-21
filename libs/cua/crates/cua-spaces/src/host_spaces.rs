@@ -185,7 +185,10 @@ pub fn guest_relay_url(relay_url: &str, kind: &str) -> String {
 fn resolve_image(image: &str) -> (String, String) {
     let word = image.trim();
     if word.is_empty() {
-        return (cua_fleet::canonical_image("linux"), "linux".into());
+        return (
+            cua_image::canonical::canonical_image_or_linux("linux"),
+            "linux".into(),
+        );
     }
     if let Some((reference, os)) =
         cua_image::canonical::alias_with(word, &|n| std::env::var(n).ok())
@@ -653,7 +656,7 @@ impl HostSpacesServer {
         self.host().policy()?.ok_or_else(|| {
             Error::host(
                 "host spaces",
-                "this machine is not set up to provide Spaces (run `cua host setup --provide-spaces` on it)",
+                "this computer is not set up to provide Spaces (run `cua host setup --provide-spaces` on it)",
             )
         })
     }
@@ -859,7 +862,7 @@ impl HostSpacesServer {
                 &label,
                 Error::host(
                     "host spaces",
-                    "this machine does not provide Spaces (on it: `cua host config --provide-spaces on`)",
+                    "this computer does not provide Spaces (on it: `cua host config --provide-spaces on`)",
                 ),
             ));
         }
@@ -868,7 +871,7 @@ impl HostSpacesServer {
                 caller,
                 &label,
                 Error::Relay(cua_host::Error::PermissionDenied(
-                    "only the owner and the accounts this machine is shared with (as editors) can create Spaces on it"
+                    "only the owner and the accounts this computer is shared with (as editors) can create Spaces on it"
                         .into(),
                 )),
             ));
@@ -881,7 +884,7 @@ impl HostSpacesServer {
                     &label,
                     Error::host(
                         "host spaces",
-                        "this machine provides Spaces through the relay, not directly (on it: \
+                        "this computer provides Spaces through the relay, not directly (on it: \
                          `cua host setup --direct <ip:port> --provide-spaces`)",
                     ),
                 ));
@@ -904,7 +907,7 @@ impl HostSpacesServer {
                 caller,
                 &label,
                 Error::invalid(
-                    "attach needs the relay URL, machine id and machine token the caller registered",
+                    "attach needs the relay URL, computer id and computer token the caller registered",
                 ),
             ));
         }
@@ -1104,7 +1107,7 @@ impl HostSpacesServer {
                 caller,
                 &machine,
                 Error::Relay(cua_host::Error::PermissionDenied(
-                    "only the owner and the accounts this machine is shared with (as editors) can cancel creates on it"
+                    "only the owner and the accounts this computer is shared with (as editors) can cancel creates on it"
                         .into(),
                 )),
             ));
@@ -1147,7 +1150,7 @@ impl HostSpacesServer {
                 caller,
                 &machine,
                 Error::NotFound(format!(
-                    "{id} is not a Space in your cloud that this machine created"
+                    "{id} is not a Space in your cloud that this computer created"
                 )),
             ));
         }
@@ -1381,7 +1384,7 @@ impl HostSpacesServer {
     async fn reattach(&self, record: &ProvidedSpace) -> Result<()> {
         if record.machine_token.is_empty() || record.relay_url.is_empty() {
             return Err(Error::invalid(format!(
-                "relay:{} has no machine token on this host, so it cannot rejoin the relay; delete it and create a new one",
+                "relay:{} has no computer token on this host, so it cannot rejoin the relay; delete it and create a new one",
                 record.relay_machine
             )));
         }
@@ -1714,7 +1717,7 @@ fn ambiguous_host(query: &str, choices: &[cua_host::Machine]) -> Error {
         query: query.to_string(),
         choices: choices.iter().map(|m| format!("host:{}", m.id)).collect(),
         message: format!(
-            "{query:?} matches several of your machines: {}; say which (on=\"host:<id>\")",
+            "{query:?} matches several of your computers: {}; say which (on=\"host:<id>\")",
             provided::describe_choices(choices)
         ),
     }
@@ -1999,7 +2002,7 @@ impl Spaces {
         }
         if machines.is_empty() && direct.is_empty() && self.relay_account().is_none() {
             return Err(Error::NotFound(format!(
-                "a machine matching {query:?}: you have no machines (sign in to cua.ai to use \
+                "a computer matching {query:?}: you have no computers (sign in to cua.ai to use \
                  the ones on the relay, or add one by its Tailscale or LAN address with `cua \
                  spaces add <addr> --host --token <token>`)"
             )));
@@ -2007,7 +2010,7 @@ impl Spaces {
         let mut all = machines;
         all.extend(as_machines);
         Err(Error::NotFound(format!(
-            "a machine matching {query:?} among your machines ({}); set one up with \
+            "a computer matching {query:?} among your computers ({}); set one up with \
              `cua host setup --provide-spaces` on it, or add one by its Tailscale or LAN address \
              with `cua spaces add <addr> --host --token <token>`",
             if all.is_empty() {
@@ -2093,6 +2096,54 @@ impl Spaces {
             .await
             .map(tonic::Response::into_inner)
             .map_err(|e| from_host(cua_spacesd_client::Error::from(e)))
+    }
+
+    /// Another of your machines' health as its own cua daemon checks it
+    /// (`HostSpacesService.DiagnoseHost`): Local Network access, disk,
+    /// virtualization, memory, permissions. `machine` is an id or a name,
+    /// as [`Spaces::resolve_host`] takes it; reached over the relay (or the
+    /// mesh), or at its direct address. Fails plainly when it is offline,
+    /// not yours, or runs a Cua that predates the check. Bounded (30 s).
+    pub async fn machine_health(&self, machine: &str) -> Result<pb::DiagnoseHostResponse> {
+        let (space, name) = match self.resolve_host(machine).await? {
+            ResolvedHost::Relay(m) => {
+                let name = if m.name.is_empty() {
+                    m.id.clone()
+                } else {
+                    m.name.clone()
+                };
+                if !m.online {
+                    return Err(Error::host(
+                        "machine health",
+                        format!("{name} is offline, so it can't be checked now"),
+                    ));
+                }
+                if m.role != "owner" {
+                    return Err(Error::Relay(cua_host::Error::PermissionDenied(format!(
+                        "{name} is not yours: only its owner can check its health"
+                    ))));
+                }
+                (self.space(&format!("relay:{}", m.id)).await?, name)
+            }
+            ResolvedHost::Direct(h) => {
+                let name = h.name.clone();
+                (self.direct_host_space(&h).await?, name)
+            }
+        };
+        let mut client = space.spacesd()?.host_spaces();
+        let call = client.diagnose_host(pb::DiagnoseHostRequest::default());
+        match tokio::time::timeout(Duration::from_secs(30), call).await {
+            Ok(Ok(r)) => Ok(r.into_inner()),
+            Ok(Err(status)) if status.code() == tonic::Code::Unimplemented => Err(Error::host(
+                "machine health",
+                format!("{name} runs an older Cua that can't be checked; update Cua on it"),
+            )),
+            Ok(Err(status)) => Err(from_host(cua_spacesd_client::Error::from(status))),
+            Err(_) => Err(Error::host(
+                "machine health",
+                format!("{name} did not answer within 30 s"),
+            )),
+        }
     }
 
     async fn host_space(&self, m: &crate::relay::RelayMachine) -> Result<crate::Space> {
@@ -2451,7 +2502,7 @@ impl Spaces {
             Err(cua_host::Error::NotFound(_)) => {
                 self.remove_relay_machine(&machine.id).await?;
                 return Ok(format!(
-                    "Removed relay:{}: a stale entry (its host, machine {host_id}, is no longer \
+                    "Removed relay:{}: a stale entry (its host, computer {host_id}, is no longer \
                      on the relay).",
                     machine.id
                 ));
@@ -2520,7 +2571,7 @@ impl Spaces {
         let client = relay.client().await?;
         let host = client.machine(&token, host_id).await.map_err(|e| match e {
             cua_host::Error::NotFound(_) => Error::NotFound(format!(
-                "the host of relay:{} (machine {host_id}) is no longer on the relay",
+                "the host of relay:{} (computer {host_id}) is no longer on the relay",
                 machine.id
             )),
             other => other.into(),
@@ -2862,15 +2913,15 @@ mod tests {
     #[test]
     fn both_wordings_of_stopped_sharing_are_recognized() {
         for reason in [
-            "the host stopped sharing this machine",
-            "relay:96fe has no cua-spacesd (gRPC: relay assertion refused: this machine \
-             stopped sharing; gRPC-Web: relay assertion refused: this machine stopped sharing)",
+            "the host stopped sharing this computer",
+            "relay:96fe has no cua-spacesd (gRPC: relay assertion refused: this computer \
+             stopped sharing; gRPC-Web: relay assertion refused: this computer stopped sharing)",
         ] {
             assert!(is_stopped_sharing(reason), "{reason}");
         }
-        assert!(!is_stopped_sharing("the machine is not connected"));
+        assert!(!is_stopped_sharing("the computer is not connected"));
         assert!(!is_stopped_sharing(
-            "relay assertion refused: not your machine"
+            "relay assertion refused: not your computer"
         ));
     }
 

@@ -100,5 +100,556 @@
         "presence": { "m-box": true}
       }
     }
+  ],
+  "views": [
+    {
+      "name": "the approved mockup: This Mac, a Mac Studio providing a Space, an offline Mac, an old Mac, a team machine, a Mac that stopped sharing and a laptop",
+      "input": {
+        "page": {
+          "hostOs": "macos",
+          "now": 1800000000,
+          "spaces": [
+            {
+              "name": "This Mac",
+              "os": "macos",
+              "status": "local",
+              "detail": "",
+              "lastUsedAt": 0,
+              "scene": "linux-terminal",
+              "id": "this-mac"
+            },
+            {
+              "name": "space-cdf71481c4",
+              "os": "macos",
+              "status": "running",
+              "detail": "",
+              "lastUsedAt": 0,
+              "scene": "linux-terminal",
+              "id": "local:space-cdf71481c4",
+              "osPrettyName": "macOS 26.5.2",
+              "provider": "local"
+            },
+            {
+              "name": "space-1cef393ac1",
+              "os": "linux",
+              "status": "suspended",
+              "detail": "",
+              "lastUsedAt": 0,
+              "scene": "linux-terminal",
+              "id": "local:space-1cef393ac1",
+              "provider": "local"
+            },
+            {
+              "name": "cua's Mac Studio",
+              "os": "macos",
+              "status": "running",
+              "detail": "",
+              "lastUsedAt": 0,
+              "scene": "linux-terminal",
+              "id": "relay:studio",
+              "osPrettyName": "macOS 26.5.2",
+              "provider": "relay"
+            },
+            {
+              "name": "xm-before-linux",
+              "os": "linux",
+              "status": "running",
+              "detail": "",
+              "lastUsedAt": 0,
+              "scene": "linux-terminal",
+              "id": "relay:studio/xm",
+              "osPrettyName": "Ubuntu 24.04.5 LTS",
+              "provider": "relay",
+              "host": "studio",
+              "hostName": "cua's Mac Studio"
+            },
+            {
+              "name": "Cua BYOC tests",
+              "os": "macos",
+              "status": "suspended",
+              "detail": "",
+              "lastUsedAt": 0,
+              "scene": "linux-terminal",
+              "id": "relay:byoc",
+              "provider": "relay"
+            },
+            {
+              "name": "mac-mini-staging",
+              "os": "macos",
+              "status": "suspended",
+              "detail": "",
+              "lastUsedAt": 0,
+              "scene": "linux-terminal",
+              "id": "relay:old1",
+              "provider": "relay"
+            },
+            {
+              "name": "build-mini-01",
+              "os": "macos",
+              "status": "running",
+              "detail": "",
+              "lastUsedAt": 0,
+              "scene": "linux-terminal",
+              "id": "relay:team",
+              "provider": "relay"
+            },
+            {
+              "name": "Adas-MacBook-Pro-2.local",
+              "os": "macos",
+              "status": "suspended",
+              "detail": "",
+              "lastUsedAt": 0,
+              "scene": "linux-terminal",
+              "id": "relay:b695",
+              "provider": "relay",
+              "sdk": {
+                "features": [],
+                "spacesdVersion": "",
+                "reachable": false,
+                "error": "unauthenticated: Adas-MacBook-Pro-2.local stopped sharing: ask its owner to Resume sharing (or run `cua host start` there)"
+              }
+            }
+          ],
+          "devices": [
+            {
+              "id": "dev_byoc",
+              "name": "Cua BYOC tests",
+              "platform": "macos",
+              "lastSeen": 1799222400,
+              "state": "enrolled"
+            },
+            {
+              "id": "dev_old1",
+              "name": "mac-mini-staging",
+              "platform": "macos",
+              "lastSeen": 1796457600,
+              "state": "enrolled"
+            },
+            {
+              "id": "dev_lap",
+              "name": "Ana's laptop",
+              "platform": "windows",
+              "lastSeen": 1799999880,
+              "state": "enrolled"
+            }
+          ],
+          "hostnames": {},
+          "presence": {}
+        },
+        "relay": [
+          {
+            "id": "studio",
+            "role": "owner",
+            "providesSpaces": true
+          },
+          {
+            "id": "byoc",
+            "role": "owner",
+            "providesSpaces": true
+          },
+          {
+            "id": "old1",
+            "role": "owner",
+            "providesSpaces": false
+          },
+          {
+            "id": "team",
+            "role": "shared",
+            "team": "team-1",
+            "providesSpaces": true
+          },
+          {
+            "id": "b695",
+            "role": "owner",
+            "providesSpaces": false
+          }
+        ],
+        "host": {
+          "configured": true,
+          "mode": "relay",
+          "name": "Ada's MacBook Pro",
+          "sharing": true,
+          "serviceInstalled": true,
+          "serviceRunning": true,
+          "serviceKind": "launchd",
+          "shareDesktop": true,
+          "provideSpaces": false
+        },
+        "about": {
+          "computerName": "Ada's MacBook Pro",
+          "appVersion": "0.9.1",
+          "osVersion": "macOS 26.5.2"
+        }
+      }
+    },
+    {
+      "name": "This Mac stopped sharing: both switches off, turning one on resumes",
+      "input": {
+        "page": {
+          "hostOs": "macos",
+          "now": 1800000000,
+          "spaces": [
+            {
+              "name": "This Mac",
+              "os": "macos",
+              "status": "local",
+              "detail": "",
+              "lastUsedAt": 0,
+              "scene": "linux-terminal",
+              "id": "this-mac"
+            },
+            {
+              "name": "space-cdf71481c4",
+              "os": "macos",
+              "status": "running",
+              "detail": "",
+              "lastUsedAt": 0,
+              "scene": "linux-terminal",
+              "id": "local:space-cdf71481c4",
+              "osPrettyName": "macOS 26.5.2",
+              "provider": "local"
+            },
+            {
+              "name": "space-1cef393ac1",
+              "os": "linux",
+              "status": "suspended",
+              "detail": "",
+              "lastUsedAt": 0,
+              "scene": "linux-terminal",
+              "id": "local:space-1cef393ac1",
+              "provider": "local"
+            }
+          ],
+          "devices": [
+            {
+              "id": "dev_byoc",
+              "name": "Cua BYOC tests",
+              "platform": "macos",
+              "lastSeen": 1799222400,
+              "state": "enrolled"
+            },
+            {
+              "id": "dev_old1",
+              "name": "mac-mini-staging",
+              "platform": "macos",
+              "lastSeen": 1796457600,
+              "state": "enrolled"
+            },
+            {
+              "id": "dev_lap",
+              "name": "Ana's laptop",
+              "platform": "windows",
+              "lastSeen": 1799999880,
+              "state": "enrolled"
+            }
+          ],
+          "hostnames": {},
+          "presence": {}
+        },
+        "relay": [],
+        "host": {
+          "configured": true,
+          "mode": "relay",
+          "name": "Ada's MacBook Pro",
+          "sharing": false,
+          "serviceInstalled": true,
+          "serviceRunning": true,
+          "serviceKind": "launchd",
+          "shareDesktop": true,
+          "provideSpaces": true
+        },
+        "about": {
+          "computerName": "Ada's MacBook Pro",
+          "appVersion": "0.9.1",
+          "osVersion": "macOS 26.5.2"
+        }
+      }
+    },
+    {
+      "name": "This Mac before setup: a switch opens the setup form",
+      "input": {
+        "page": {
+          "hostOs": "macos",
+          "now": 1800000000,
+          "spaces": [
+            {
+              "name": "This Mac",
+              "os": "macos",
+              "status": "local",
+              "detail": "",
+              "lastUsedAt": 0,
+              "scene": "linux-terminal",
+              "id": "this-mac"
+            }
+          ],
+          "devices": [],
+          "hostnames": {},
+          "presence": {}
+        },
+        "relay": [],
+        "host": {
+          "configured": false,
+          "sharing": false,
+          "serviceInstalled": false,
+          "serviceRunning": false,
+          "serviceKind": "launchd"
+        },
+        "about": {
+          "computerName": "Ada's MacBook Pro",
+          "appVersion": "0.9.1",
+          "osVersion": "macOS 26.5.2"
+        }
+      }
+    },
+    {
+      "name": "the mockup with issues: This Mac's daemon blocked from the Local Network and low on disk, the Mac Studio on an older Cua and short of memory, the offline Mac's old checks hidden",
+      "input": {
+        "page": {
+          "hostOs": "macos",
+          "now": 1800000000,
+          "spaces": [
+            {
+              "name": "This Mac",
+              "os": "macos",
+              "status": "local",
+              "detail": "",
+              "lastUsedAt": 0,
+              "scene": "linux-terminal",
+              "id": "this-mac"
+            },
+            {
+              "name": "space-cdf71481c4",
+              "os": "macos",
+              "status": "running",
+              "detail": "",
+              "lastUsedAt": 0,
+              "scene": "linux-terminal",
+              "id": "local:space-cdf71481c4",
+              "osPrettyName": "macOS 26.5.2",
+              "provider": "local"
+            },
+            {
+              "name": "space-1cef393ac1",
+              "os": "linux",
+              "status": "suspended",
+              "detail": "",
+              "lastUsedAt": 0,
+              "scene": "linux-terminal",
+              "id": "local:space-1cef393ac1",
+              "provider": "local"
+            },
+            {
+              "name": "cua's Mac Studio",
+              "os": "macos",
+              "status": "running",
+              "detail": "",
+              "lastUsedAt": 0,
+              "scene": "linux-terminal",
+              "id": "relay:studio",
+              "osPrettyName": "macOS 26.5.2",
+              "provider": "relay"
+            },
+            {
+              "name": "xm-before-linux",
+              "os": "linux",
+              "status": "running",
+              "detail": "",
+              "lastUsedAt": 0,
+              "scene": "linux-terminal",
+              "id": "relay:studio/xm",
+              "osPrettyName": "Ubuntu 24.04.5 LTS",
+              "provider": "relay",
+              "host": "studio",
+              "hostName": "cua's Mac Studio"
+            },
+            {
+              "name": "Cua BYOC tests",
+              "os": "macos",
+              "status": "suspended",
+              "detail": "",
+              "lastUsedAt": 0,
+              "scene": "linux-terminal",
+              "id": "relay:byoc",
+              "provider": "relay"
+            },
+            {
+              "name": "mac-mini-staging",
+              "os": "macos",
+              "status": "suspended",
+              "detail": "",
+              "lastUsedAt": 0,
+              "scene": "linux-terminal",
+              "id": "relay:old1",
+              "provider": "relay"
+            },
+            {
+              "name": "build-mini-01",
+              "os": "macos",
+              "status": "running",
+              "detail": "",
+              "lastUsedAt": 0,
+              "scene": "linux-terminal",
+              "id": "relay:team",
+              "provider": "relay"
+            },
+            {
+              "name": "Adas-MacBook-Pro-2.local",
+              "os": "macos",
+              "status": "suspended",
+              "detail": "",
+              "lastUsedAt": 0,
+              "scene": "linux-terminal",
+              "id": "relay:b695",
+              "provider": "relay",
+              "sdk": {
+                "features": [],
+                "spacesdVersion": "",
+                "reachable": false,
+                "error": "unauthenticated: Adas-MacBook-Pro-2.local stopped sharing: ask its owner to Resume sharing (or run `cua host start` there)"
+              }
+            }
+          ],
+          "devices": [
+            {
+              "id": "dev_byoc",
+              "name": "Cua BYOC tests",
+              "platform": "macos",
+              "lastSeen": 1799222400,
+              "state": "enrolled"
+            },
+            {
+              "id": "dev_old1",
+              "name": "mac-mini-staging",
+              "platform": "macos",
+              "lastSeen": 1796457600,
+              "state": "enrolled"
+            },
+            {
+              "id": "dev_lap",
+              "name": "Ana's laptop",
+              "platform": "windows",
+              "lastSeen": 1799999880,
+              "state": "enrolled"
+            }
+          ],
+          "hostnames": {},
+          "presence": {}
+        },
+        "relay": [
+          {
+            "id": "studio",
+            "role": "owner",
+            "providesSpaces": true
+          },
+          {
+            "id": "byoc",
+            "role": "owner",
+            "providesSpaces": true
+          },
+          {
+            "id": "old1",
+            "role": "owner",
+            "providesSpaces": false
+          },
+          {
+            "id": "team",
+            "role": "shared",
+            "team": "team-1",
+            "providesSpaces": true
+          },
+          {
+            "id": "b695",
+            "role": "owner",
+            "providesSpaces": false
+          }
+        ],
+        "host": {
+          "configured": true,
+          "mode": "relay",
+          "name": "Ada's MacBook Pro",
+          "sharing": true,
+          "serviceInstalled": true,
+          "serviceRunning": true,
+          "serviceKind": "launchd",
+          "shareDesktop": true,
+          "provideSpaces": false
+        },
+        "about": {
+          "computerName": "Ada's MacBook Pro",
+          "appVersion": "0.9.1",
+          "osVersion": "macOS 26.5.2"
+        },
+        "health": [
+          {
+            "id": "this-mac",
+            "cuaVersion": "0.4.1",
+            "checks": [
+              {
+                "id": "machine.local_network",
+                "status": "fail",
+                "message": "Cua can't reach this Mac's macOS VMs (space-cdf71481c4 at 192.168.64.4, No route to host): Local Network access is off for Cua Spaces",
+                "facts": {
+                  "app": "Cua Spaces",
+                  "app_path": "/Applications/Cua Spaces.app",
+                  "settings_url": "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork"
+                }
+              },
+              {
+                "id": "machine.disk",
+                "status": "warn",
+                "message": "only 21 GB free on Macintosh HD; a macOS Space needs about 30 GB",
+                "facts": {
+                  "free_gb": "21",
+                  "volume": "Macintosh HD",
+                  "settings_url": "x-apple.systempreferences:com.apple.settings.Storage"
+                }
+              },
+              {
+                "id": "machine.virtualization",
+                "status": "pass",
+                "message": "ready: lume, container"
+              }
+            ]
+          },
+          {
+            "id": "studio",
+            "cuaVersion": "0.3.9",
+            "checks": [
+              {
+                "id": "machine.memory",
+                "status": "warn",
+                "message": "running Spaces use 28 of 32 GB of memory; another may not start",
+                "facts": {
+                  "used_gb": "28",
+                  "total_gb": "32"
+                }
+              },
+              {
+                "id": "machine.disk",
+                "status": "pass",
+                "message": "412 GB free on Macintosh HD",
+                "facts": {
+                  "free_gb": "412"
+                }
+              }
+            ]
+          },
+          {
+            "id": "old1",
+            "cuaVersion": "0.4.1",
+            "checks": [
+              {
+                "id": "machine.disk",
+                "status": "fail",
+                "message": "only 3 GB free",
+                "facts": {
+                  "free_gb": "3"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
   ]
 }

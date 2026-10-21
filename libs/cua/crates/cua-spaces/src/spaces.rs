@@ -4,17 +4,14 @@
 //! create; [`Spaces::remove`] forgets a Space without touching it.
 
 use crate::error::{Error, Result};
-use crate::fleet_runtime;
 use crate::id::{Provider, SpaceId, authority};
 use crate::operator::{ControlServerDisplay, OperatorDisplay};
 use crate::registry::{Credential, Registry, cua_home};
-use crate::space::{Gateway, Space, SpaceInfo, SpacePower};
 use crate::space::{ServiceSource, SpaceService};
-use cua_fleet::{ClaimOptions, FleetClient, PoolSpec};
+use crate::space::{Space, SpaceInfo, SpacePower};
 use cua_proto::daemon::v1 as dpb;
 use cua_sandbox_core::placement::{Kind, On, Runtime};
 use cua_sandbox_core::{CreateOptions, LocalRuntime, PortTarget, Probe, ProviderKind, Sandboxes};
-use cua_spaces_contract::inputs::FleetRuntime;
 use cua_spacesd_client::{ConnectOptions, SpacesdClient, pb};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -40,16 +37,12 @@ pub struct SpaceCreate {
     pub runtime: Runtime,
     /// Name. Default `space-<hex>`.
     pub name: Option<String>,
-    /// vCPUs. Local default 2; Cua Cloud: 1-64
-    /// ([`cua_fleet::FLEET_ABSOLUTE_CPUS`]; most accounts run 1-8), default
-    /// the pool template's (4).
+    /// vCPUs. Local default 2.
     pub cpus: Option<u32>,
-    /// Memory in MiB. Local default 4096; Cua Cloud: 512 up to 512 GiB
-    /// ([`cua_fleet::FLEET_ABSOLUTE_MEMORY_MB`]; most accounts run 1-32
-    /// GiB), default the pool template's (4096).
+    /// Memory in MiB. Local default 4096.
     pub memory_mb: Option<u64>,
     /// Grow the VM's disk to this many GiB (local VMs; `None` keeps the
-    /// image's size). Containers and cloud Spaces refuse it.
+    /// image's size). Containers and provider Spaces refuse it.
     pub disk_gb: Option<u32>,
     /// Readiness budget (local; default 600 s).
     pub timeout: Option<Duration>,
@@ -137,77 +130,6 @@ impl SpaceCreated {
     }
 }
 
-/// Options for a cloud Space (see [`Spaces::create`]).
-#[derive(Clone, Debug, Default)]
-pub(crate) struct FleetClaim {
-    /// Image. Default: [`fleet_runtime::default_image`].
-    pub image: Option<String>,
-    /// Runtime. Default: from the image's registry manifest (a container
-    /// rootfs runs on gVisor, a containerDisk on KubeVirt); an explicit one
-    /// must match it.
-    pub runtime: Option<FleetRuntime>,
-    /// Claim name. Default `space-<hex>`.
-    pub name: Option<String>,
-    /// Wait for the claim to bind and the spacesd to answer. Default true.
-    pub wait: Option<bool>,
-    /// The spacesd token baked into the image, if any. When the driver
-    /// runs in bootstrap mode (no token), a fresh token is installed with
-    /// `SystemService.Init` and stored.
-    pub env_token: Option<String>,
-    /// Entrypoint override (Fleet: `processMode: Run` on gVisor and
-    /// KubeVirt).
-    pub command: Option<Vec<String>>,
-    /// Guest environment (Fleet: the template's `env`, not secrets).
-    pub env: BTreeMap<String, String>,
-    /// Named services (name → guest port), for example `{"mcp": 8765}`.
-    pub services: BTreeMap<String, u16>,
-    /// Whether the image runs cua-spacesd. Default: yes for the Spaces
-    /// images (and no image), no for any other image. Only decides how long
-    /// to wait for the driver after the sandbox is ready; a Space without
-    /// it is still a Space.
-    pub spacesd: Option<bool>,
-    /// vCPUs (`vmTemplate.cpuCores`). Default: the template's.
-    pub cpus: Option<u32>,
-    /// Memory in MiB (`vmTemplate.memory`). Default: the template's.
-    pub memory_mb: Option<u32>,
-}
-
-/// What [`Spaces::finish_fleet_claim`] needs from [`Spaces::claim_fleet`].
-struct FleetFinish {
-    claim: cua_fleet::Claim,
-    runtime: cua_fleet::RuntimeKind,
-    claim_token: Option<String>,
-    env_token: Option<String>,
-    expect_env: bool,
-}
-
-/// The spacesd token a cloud Space's claim delivers, or `None` when no
-/// cua-spacesd is expected (or the guest is Windows, which has no claim
-/// token channel; `guest_os` from [`fleet_runtime::guest_os`]).
-///
-/// A Spaces image in Fleet (the published `linux:24.04`, whose daemon is
-/// still the pre-rename cua-guestd, and every newer one) mints a random
-/// token of its own at boot unless Fleet mounts the claim's Secret at
-/// `/run/cua`; no client could learn that token, so every call failed with
-/// `missing or invalid bearer token`. The claim therefore carries this token
-/// in its Secret (the template opts in with `claimSecrets`): the caller's,
-/// else a fresh one.
-fn fleet_claim_token(
-    guest_os: &str,
-    expect_env: bool,
-    given: Option<&str>,
-) -> Result<Option<String>> {
-    if !expect_env || guest_os == "windows" {
-        return Ok(None);
-    }
-    let token = given
-        .filter(|t| !t.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(cua_fleet::claim_secrets::generate_claim_token);
-    cua_fleet::claim_secrets::validate_claim_token(&token)?;
-    Ok(Some(token))
-}
-
 /// Options for a local Space (see [`Spaces::create`]).
 #[derive(Clone, Debug, Default)]
 pub(crate) struct LocalProvision {
@@ -233,7 +155,10 @@ pub(crate) struct LocalProvision {
     pub env: BTreeMap<String, String>,
     /// Named services (name → guest port), for example `{"mcp": 8765}`.
     pub services: BTreeMap<String, u16>,
-    /// Whether the image runs cua-spacesd (see [`FleetClaim::spacesd`]).
+    /// Whether the image runs cua-spacesd. Default: yes for the Spaces
+    /// images (and no image), no for any other image. Only decides how long
+    /// to wait for the driver after the sandbox is ready; a Space without
+    /// it is still a Space.
     pub spacesd: Option<bool>,
     /// A GPU option ([`SpaceCreate::gpu`]).
     pub gpu: Option<String>,
@@ -252,10 +177,8 @@ pub struct PendingSpace {
 #[derive(Default)]
 pub struct SpacesBuilder {
     home: Option<PathBuf>,
-    fleet: Option<FleetClient>,
     local: Option<Arc<dyn LocalRuntime>>,
     sandboxes: Option<Sandboxes>,
-    fleet_namespace: Option<String>,
     operator_display: Option<Arc<dyn OperatorDisplay>>,
     probe_timeout: Option<Duration>,
     download_dir: Option<PathBuf>,
@@ -299,12 +222,6 @@ impl SpacesBuilder {
         self
     }
 
-    /// Enables Fleet Spaces.
-    pub fn fleet(mut self, fleet: FleetClient) -> Self {
-        self.fleet = Some(fleet);
-        self
-    }
-
     /// Enables Local Spaces on this runtime (the daemon passes its cua-vmm
     /// adapter).
     pub fn local_runtime(mut self, runtime: Arc<dyn LocalRuntime>) -> Self {
@@ -312,17 +229,10 @@ impl SpacesBuilder {
         self
     }
 
-    /// Uses an existing sandbox manager (overrides `fleet` / `local_runtime`
-    /// for sandbox lifecycle; `fleet` is still used for claims).
+    /// Uses an existing sandbox manager (overrides `local_runtime` for
+    /// sandbox lifecycle).
     pub fn sandboxes(mut self, sandboxes: Sandboxes) -> Self {
         self.sandboxes = Some(sandboxes);
-        self
-    }
-
-    /// Base name of the Fleet pools Spaces claims from. Default:
-    /// `$CUA_SPACES_NAMESPACE`, else `cua-spaces-<client id>`.
-    pub fn fleet_namespace(mut self, ns: impl Into<String>) -> Self {
-        self.fleet_namespace = Some(ns.into());
         self
     }
 
@@ -350,20 +260,10 @@ impl SpacesBuilder {
         let home = self.home.unwrap_or_else(cua_home);
         let sandboxes = self.sandboxes.unwrap_or_else(|| {
             let mut b = Sandboxes::builder();
-            if let Some(f) = &self.fleet {
-                b = b.fleet(f.clone());
-            }
             if let Some(l) = &self.local {
                 b = b.local(l.clone());
             }
             b.build()
-        });
-        let namespace = self.fleet_namespace.unwrap_or_else(|| {
-            default_namespace(
-                self.fleet
-                    .as_ref()
-                    .and_then(|f| f.config().client_id.clone()),
-            )
         });
         let operator_display = self.operator_display.unwrap_or_else(|| {
             Arc::new(ControlServerDisplay::new(home.join("spaces-control.json")))
@@ -385,10 +285,8 @@ impl SpacesBuilder {
                 #[cfg(feature = "spaces-agents")]
                 share_consent: std::sync::RwLock::new(self.share_consent),
                 registry: Registry::new(home),
-                fleet: self.fleet,
                 has_local: self.local.is_some(),
                 sandboxes,
-                namespace,
                 operator_display,
                 probe_timeout: self.probe_timeout.unwrap_or(DEFAULT_PROBE_TIMEOUT),
                 download_dir,
@@ -398,6 +296,7 @@ impl SpacesBuilder {
                 hotspots: tokio::sync::Mutex::new(BTreeMap::new()),
                 #[cfg(feature = "spaces-agents")]
                 relay: std::sync::RwLock::new(self.relay),
+                resources: crate::resources::Hub::new(),
                 relay_cache: std::sync::Mutex::new(Vec::new()),
                 relay_reported: std::sync::Mutex::new(relay_reported),
                 relay_read: tokio::sync::Mutex::new(None),
@@ -405,81 +304,6 @@ impl SpacesBuilder {
             }),
         }
     }
-}
-
-fn default_namespace(client_id: Option<String>) -> String {
-    if let Some(ns) = std::env::var("CUA_SPACES_NAMESPACE")
-        .ok()
-        .filter(|v| !v.is_empty())
-    {
-        return sanitize_label(&ns);
-    }
-    match client_id
-        .map(|c| sanitize_label(&c))
-        .filter(|c| !c.is_empty())
-    {
-        Some(cid) => sanitize_label(&format!("cua-spaces-{cid}")),
-        None => "cua-spaces".into(),
-    }
-}
-
-/// The namespace of the account's cloud sandbox (Fleet claim) `name`.
-async fn cloud_namespace(fleet: &FleetClient, name: &str) -> Result<String> {
-    let mut found = fleet.find_claims(name).await?;
-    match found.len() {
-        0 => Err(Error::NotFound(format!("cloud:{name}"))),
-        1 => Ok(found.remove(0).metadata.namespace),
-        n => Err(Error::invalid(format!(
-            "cloud:{name} names claims in {n} pools (created before names were unique); \
-             delete one of them"
-        ))),
-    }
-}
-
-/// How long reading a cloud Space's image may take before the Space is
-/// connected without one.
-const CLOUD_IMAGE_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// The image a cloud Space runs, from what the SDK already has: this
-/// machine's record of the sandbox (the requested reference and its
-/// resolved digest), else the claim's template (the reference as the
-/// template names it; the digest only when that reference is pinned). No
-/// registry read; best effort and bounded: a Space connects without it.
-async fn cloud_image(
-    sandboxes: &Sandboxes,
-    fleet: &FleetClient,
-    namespace: &str,
-    claim: &str,
-) -> Option<(String, String)> {
-    if let Some(info) = sandboxes
-        .recorded_cloud_image(claim, namespace)
-        .filter(|i| !i.reference.trim().is_empty())
-    {
-        return Some((info.reference, info.digest));
-    }
-    match tokio::time::timeout(CLOUD_IMAGE_TIMEOUT, fleet.claim_image(namespace, claim)).await {
-        Ok(Ok(Some((reference, _runtime)))) => Some(image_with_pinned_digest(reference)),
-        Ok(Ok(None)) => None,
-        Ok(Err(error)) => {
-            tracing::debug!(claim, %error, "the cloud Space's image was not read");
-            None
-        }
-        Err(_) => {
-            tracing::debug!(claim, "reading the cloud Space's image timed out");
-            None
-        }
-    }
-}
-
-/// `(reference, digest)`: the digest of a `repo@sha256:…` reference, else
-/// empty (a tag names no variant).
-pub(crate) fn image_with_pinned_digest(reference: String) -> (String, String) {
-    let digest = reference
-        .find("@sha256:")
-        .map(|at| reference[at + 1..].to_string())
-        .filter(|d| d.len() > "sha256:".len())
-        .unwrap_or_default();
-    (reference, digest)
 }
 
 /// A relay machine as a Space row (capabilities are known after connecting).
@@ -652,10 +476,8 @@ pub(crate) struct Inner {
     pub(crate) extensions: Vec<Arc<dyn crate::extension::SpacesExtension>>,
     #[cfg(feature = "spaces-agents")]
     pub(crate) share_consent: std::sync::RwLock<Option<Arc<dyn crate::share::ShareConsent>>>,
-    pub(crate) fleet: Option<FleetClient>,
     has_local: bool,
     pub(crate) sandboxes: Sandboxes,
-    namespace: String,
     pub(crate) operator_display: Arc<dyn OperatorDisplay>,
     probe_timeout: Duration,
     pub(crate) download_dir: PathBuf,
@@ -666,6 +488,8 @@ pub(crate) struct Inner {
     pub(crate) hotspots: tokio::sync::Mutex<BTreeMap<String, crate::hotspot::Hotspot>>,
     #[cfg(feature = "spaces-agents")]
     relay: std::sync::RwLock<Option<crate::relay::RelayAccount>>,
+    /// The resource sampler and its watchers ([`crate::resources`]).
+    pub(crate) resources: Arc<crate::resources::Hub>,
     /// The last directory listing (so `list` and `resolve` stay sync).
     pub(crate) relay_cache: std::sync::Mutex<Vec<crate::relay::RelayMachine>>,
     /// What each relay machine's cua-spacesd said about itself when this
@@ -691,7 +515,6 @@ impl std::fmt::Debug for Spaces {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Spaces")
             .field("home", &self.inner.registry.dir())
-            .field("fleet", &self.inner.fleet.is_some())
             .field("local", &self.inner.has_local)
             .field("relay", &self.relay_account().map(|r| r.url))
             .finish()
@@ -714,11 +537,6 @@ impl Spaces {
         &self.inner.registry
     }
 
-    /// The Fleet client, when configured.
-    pub fn fleet(&self) -> Option<&FleetClient> {
-        self.inner.fleet.as_ref()
-    }
-
     /// The sandbox manager Local Spaces are provisioned with.
     pub fn sandboxes(&self) -> &Sandboxes {
         &self.inner.sandboxes
@@ -727,17 +545,6 @@ impl Spaces {
     /// The operator display.
     pub fn operator_display(&self) -> &Arc<dyn OperatorDisplay> {
         &self.inner.operator_display
-    }
-
-    /// Base name of the Fleet pools Spaces claims from.
-    pub fn fleet_namespace(&self) -> &str {
-        &self.inner.namespace
-    }
-
-    /// Cua Cloud has ended: every cloud Space call fails with
-    /// [`cua_sandbox_core::CLOUD_ENDED`] instead of reaching Fleet.
-    fn fleet_client(&self) -> Result<&FleetClient> {
-        Err(cua_sandbox_core::Error::CloudEnded.into())
     }
 
     // ------------------------------------------------------------ registry
@@ -935,7 +742,7 @@ impl Spaces {
         self.relay_account().ok_or_else(|| {
             Error::host(
                 "cua.ai relay account",
-                "sign in to cua.ai (`cua auth login` or the app) to list your machines",
+                "sign in to cua.ai (`cua auth login` or the app) to list your computers",
             )
         })
     }
@@ -985,14 +792,14 @@ impl Spaces {
             Err(e) => {
                 return Err(Error::Relay(match e.tag() {
                     "unauthenticated" => cua_host::Error::Unauthenticated(
-                        "Relay authentication failed. Sign in again to refresh your machines."
+                        "Relay authentication failed. Sign in again to refresh your computers."
                             .into(),
                     ),
                     "permission_denied" => cua_host::Error::PermissionDenied(
-                        "This device could not list relay machines. Check its account access."
+                        "This device could not list relay computers. Check its account access."
                             .into(),
                     ),
-                    _ => cua_host::Error::Relay("Could not refresh relay machines.".into()),
+                    _ => cua_host::Error::Relay("Could not refresh relay computers.".into()),
                 }));
             }
         };
@@ -1094,7 +901,7 @@ impl Spaces {
     ) -> Result<SpaceInfo> {
         let url = url.trim();
         let is_id = url.starts_with("space://")
-            || ["local:", "cloud:", "fleet:", "direct:", "relay:"]
+            || ["local:", "cloud:", "direct:", "relay:"]
                 .iter()
                 .any(|p| url.starts_with(p));
         let (id, endpoint_url) = if is_id {
@@ -1441,7 +1248,7 @@ impl Spaces {
 
     /// Connects to a Space: its declared services, plus cua-spacesd when
     /// the image runs it. `probe` bounds the spacesd handshake. Without
-    /// a spacesd, a Local or Fleet Space (and a direct Space registered
+    /// a spacesd, a Local Space (and a direct Space registered
     /// with service URLs) is still a Space, with an empty capability set;
     /// a direct URL with neither fails with [`Error::SpacesdNotAvailable`].
     async fn connect_with(
@@ -1520,39 +1327,8 @@ impl Spaces {
                     (None, None)
                 }
             }
-            SpaceId::Cloud { name, namespace } => {
-                let fleet = self.fleet_client()?;
-                let namespace = match namespace.clone().or_else(|| credential.namespace.clone()) {
-                    Some(ns) => ns,
-                    None => cloud_namespace(fleet, name).await?,
-                };
-                let claim = name;
-                let bound = fleet.attach_claim(&namespace, claim).await?;
-                image = cloud_image(&self.inner.sandboxes, fleet, &namespace, claim).await;
-                for svc in bound.services.iter().filter(|s| s.as_str() != "env") {
-                    services.insert(
-                        svc.clone(),
-                        SpaceService {
-                            source: ServiceSource::Fleet {
-                                fleet: fleet.clone(),
-                                bound: bound.clone(),
-                                service: svc.clone(),
-                            },
-                            mcp_path: cua_sandbox_core::mcp::DEFAULT_PATH.into(),
-                        },
-                    );
-                }
-                let gateway = Some(Gateway::Fleet {
-                    fleet: fleet.clone(),
-                    claim: claim.clone(),
-                });
-                if bound.services.iter().any(|s| s == "env") {
-                    let o = fleet.env_connect_options(&bound, "env", credential.token.clone())?;
-                    (Some(o), gateway)
-                } else {
-                    (None, gateway)
-                }
-            }
+            // Cua Cloud has ended: a legacy `cloud:` Space cannot connect.
+            SpaceId::Cloud { .. } => return Err(cua_sandbox_core::Error::CloudEnded.into()),
             SpaceId::Relay { machine_id } => {
                 let relay = self.relay()?;
                 // The WireGuard®-based mesh first (end to end, direct when
@@ -1580,8 +1356,7 @@ impl Spaces {
                         // refreshed) per call; the relay checks both and
                         // swaps them for its signed identity assertion.
                         let bearer = crate::relay::RelayBearer { account: relay };
-                        let mut o =
-                            ConnectOptions::parse(&url)?.fleet_gateway(Arc::new(bearer), None);
+                        let mut o = ConnectOptions::parse(&url)?.gateway(Arc::new(bearer));
                         o.token = credential.token.clone();
                         (Some(o), None)
                     }
@@ -1609,7 +1384,7 @@ impl Spaces {
                         services.insert(
                             svc.clone(),
                             SpaceService {
-                                source: ServiceSource::Sandbox(service),
+                                source: ServiceSource::Sandbox(Box::new(service)),
                                 mcp_path: cua_sandbox_core::mcp::DEFAULT_PATH.into(),
                             },
                         );
@@ -1654,8 +1429,7 @@ impl Spaces {
             Some(options) => match SpacesdClient::connect(options.probe_timeout(probe)).await {
                 Ok(env) => Some(env),
                 Err(cua_spacesd_client::Error::SpacesdNotAvailable { endpoint, reason }) => {
-                    let generic_ok = matches!(id, SpaceId::Local { .. } | SpaceId::Cloud { .. })
-                        || !services.is_empty();
+                    let generic_ok = matches!(id, SpaceId::Local { .. }) || !services.is_empty();
                     if let SpaceId::Relay { machine_id } = &id
                         && crate::host_spaces::is_stopped_sharing(&reason)
                     {
@@ -1762,229 +1536,6 @@ impl Spaces {
 
     // ---------------------------------------------------------- provisioning
 
-    /// Claims a Fleet Space: validates the runtime/image pairing (the one
-    /// place it is validated), reconciles a warm pool for the image and its
-    /// command/env/services, claims from it, waits for the claim to bind
-    /// (Fleet readiness: the spacesd port for the Spaces images, else the
-    /// first declared service, else none), connects, and registers the
-    /// Space. An image without cua-spacesd becomes a Space of its
-    /// declared services within the handshake timeout.
-    pub(crate) async fn claim_fleet(
-        &self,
-        opts: FleetClaim,
-    ) -> Result<std::result::Result<SpaceInfo, PendingSpace>> {
-        let fleet = self.fleet_client()?.clone();
-        let expect_env = expects_spacesd(opts.image.as_deref(), opts.spacesd);
-        let (runtime, image, kind, resolved_os) = match (opts.runtime, opts.image.clone()) {
-            (Some(r), image) => {
-                let image = image.unwrap_or_else(|| fleet_runtime::default_image(r));
-                let got = fleet_runtime::resolve_image(Some(r), &image).await?;
-                let os = got.resolved.map(|i| i.os);
-                (r, image, got.runtime, os)
-            }
-            // No runtime: the image's manifest decides (a container rootfs
-            // runs on gVisor, a containerDisk on KubeVirt), so the default
-            // image (rootfs + disk) is a gVisor container.
-            (None, image) => {
-                let image =
-                    image.unwrap_or_else(|| fleet_runtime::default_image(FleetRuntime::Gvisor));
-                let got = fleet_runtime::resolve_image(None, &image).await?;
-                let os = got.resolved.map(|i| i.os);
-                let kind = got.runtime;
-                let r = match kind {
-                    cua_fleet::RuntimeKind::Kubevirt => FleetRuntime::Kubevirt,
-                    cua_fleet::RuntimeKind::Gvisor => FleetRuntime::Gvisor,
-                    other => {
-                        return Err(Error::invalid(format!(
-                            "{image} needs the Fleet runtime {other:?}, which Spaces do not claim"
-                        )));
-                    }
-                };
-                (r, image, kind, os)
-            }
-        };
-        let guest_os = fleet_runtime::guest_os(&image, resolved_os.as_deref());
-        // command and env run on both runtimes: the template carries them
-        // with `processMode: Run` (see `cua_fleet::SandboxSpec`).
-        let command = opts.command.clone().filter(|c| !c.is_empty());
-        let mut services = opts.services.clone();
-        services.remove("env");
-        // The spacesd token, delivered with the claim (see
-        // `fleet_claim_token`). The pool keeps its name: `apply` turns on
-        // the template's claimSecrets, and Fleet binds only replicas of the
-        // current template, so none started without the Secret mount.
-        let claim_token = fleet_claim_token(&guest_os, expect_env, opts.env_token.as_deref())?;
-        let key = sized_pool_key(
-            &image,
-            command.as_deref(),
-            &opts.env,
-            &services,
-            opts.cpus,
-            opts.memory_mb,
-        );
-        let pool_name = self.pool_name(runtime, &key);
-        let mut spec = PoolSpec::new(pool_name, &image).runtime(kind.clone());
-        spec.cpu = opts.cpus;
-        spec.memory_mb = opts.memory_mb;
-        spec.command = command;
-        spec.env = opts.env.clone();
-        spec.claim_secrets = claim_token.is_some();
-        spec.readiness_tcp_port = if expect_env {
-            Some(cua_proto::SPACESD_DEFAULT_PORT)
-        } else {
-            services.values().next().copied()
-        };
-        if expect_env {
-            services.insert("env".into(), cua_proto::SPACESD_DEFAULT_PORT);
-        }
-        spec.services = services;
-        let (sandbox, pool_options) = spec.parts();
-        let pool = fleet.apply(&spec.name, &sandbox, &pool_options).await?;
-        let claim_name = sanitize_label(
-            &opts
-                .name
-                .clone()
-                .unwrap_or_else(|| format!("space-{}", random_suffix())),
-        );
-        cua_sandbox_core::progress::report(cua_sandbox_core::progress::Progress::phase(
-            cua_sandbox_core::progress::Phase::Creating,
-        ));
-        let (claim, created) = fleet
-            .claim(
-                &pool.pool,
-                ClaimOptions {
-                    name: Some(claim_name.clone()),
-                    claim_token: claim_token.clone(),
-                    ..Default::default()
-                },
-            )
-            .await?;
-        if created {
-            crate::creating::record(crate::creating::Made::FleetClaim {
-                namespace: claim.metadata.namespace.clone(),
-                name: claim.metadata.name.clone(),
-            });
-        }
-        let finish = FleetFinish {
-            claim,
-            runtime: kind,
-            // An existing claim of that name keeps the token it was
-            // created with; ours never reached it.
-            claim_token: claim_token.filter(|_| created),
-            env_token: opts.env_token.clone(),
-            expect_env,
-        };
-        if !opts.wait.unwrap_or(true) {
-            // Finish (bind, token delivery, connect, register) in the
-            // background, like a local Space: the token lives only in this
-            // process until the Space is registered with it.
-            let id = SpaceId::Cloud {
-                name: finish.claim.metadata.name.clone(),
-                namespace: Some(finish.claim.metadata.namespace.clone()),
-            };
-            let spaces = self.clone();
-            let sink = cua_sandbox_core::progress::current();
-            tokio::spawn(cua_sandbox_core::progress::carry(sink, async move {
-                match spaces.finish_fleet_claim(fleet, finish).await {
-                    Ok(_) => cua_sandbox_core::progress::report(
-                        cua_sandbox_core::progress::Progress::phase(
-                            cua_sandbox_core::progress::Phase::Ready,
-                        ),
-                    ),
-                    Err(e) => tracing::warn!(error = %e, "background cloud Space create failed"),
-                }
-            }));
-            return Ok(Err(PendingSpace {
-                id: id.to_string(),
-                phase: "starting",
-            }));
-        }
-        self.finish_fleet_claim(fleet, finish).await.map(Ok)
-    }
-
-    /// The rest of [`Self::claim_fleet`] once the claim exists: waits for it
-    /// to bind and for its token to reach the driver, connects and
-    /// registers the Space. The claim is released on any failure.
-    async fn finish_fleet_claim(&self, fleet: FleetClient, f: FleetFinish) -> Result<SpaceInfo> {
-        let FleetFinish {
-            claim,
-            runtime,
-            claim_token,
-            env_token,
-            expect_env,
-        } = f;
-        cua_sandbox_core::progress::report(cua_sandbox_core::progress::Progress::phase(
-            cua_sandbox_core::progress::Phase::Booting,
-        ));
-        let bound = match fleet.wait_claim(&claim).await {
-            Ok(b) => b,
-            Err(e) => {
-                let _ = fleet
-                    .release(&claim.metadata.namespace, &claim.metadata.name)
-                    .await;
-                return Err(e.into());
-            }
-        };
-        if let Some(token) = &claim_token
-            && let Err(e) = fleet.await_claim_secrets(&bound, token, &runtime).await
-        {
-            let _ = fleet.release(&bound.namespace, &bound.claim).await;
-            return Err(e.into());
-        }
-        let id = SpaceId::Cloud {
-            name: bound.claim.clone(),
-            namespace: Some(bound.namespace.clone()),
-        };
-        let mut credential = Credential {
-            url: None,
-            token: claim_token.or(env_token),
-            ..Default::default()
-        };
-        // The pool's readiness probe already waited for the driver's port;
-        // this only covers the driver finishing its start.
-        cua_sandbox_core::progress::report(cua_sandbox_core::progress::Progress::phase(
-            cua_sandbox_core::progress::Phase::Connecting,
-        ));
-        let space = match self
-            .connect_when_ready(&id, &credential, None, Duration::from_secs(120), expect_env)
-            .await
-        {
-            Ok(s) => s,
-            Err(e) => {
-                let _ = fleet.release(&bound.namespace, &bound.claim).await;
-                return Err(e);
-            }
-        };
-        let space = if space.has_spacesd()
-            && !space.capabilities().initialized
-            && credential.token.is_none()
-        {
-            // Bootstrap mode: install our own token so the Space is never
-            // left open, then reconnect with it.
-            let token = format!("{:032x}", rand::random::<u128>());
-            space
-                .spacesd()?
-                .init(pb::InitRequest {
-                    token: token.clone(),
-                    ..Default::default()
-                })
-                .await?;
-            credential.token = Some(token);
-            self.connect(&id, &credential, None).await?
-        } else {
-            space
-        };
-        self.store(&space, credential)?;
-        self.inner
-            .connections
-            .lock()
-            .await
-            .insert(id.to_string(), space);
-        #[cfg(feature = "mcp")]
-        self.notify_connected(&id);
-        self.info(&id)
-    }
-
     /// A registered Space in `provider` that is reachable and has what was
     /// asked for (the declared `services`; a healthy cua-spacesd when one is
     /// expected).
@@ -1994,10 +1545,6 @@ impl Spaces {
         services: &BTreeMap<String, u16>,
         expect_env: bool,
     ) -> Result<Option<SpaceInfo>> {
-        let opts = FleetClaim {
-            services: services.clone(),
-            ..Default::default()
-        };
         for info in self.list()? {
             if info.provider != provider {
                 continue;
@@ -2006,8 +1553,7 @@ impl Spaces {
                 continue;
             };
             // Reuse only a Space that has what was asked for.
-            if !opts
-                .services
+            if !services
                 .keys()
                 .filter(|s| s.as_str() != "env")
                 .all(|s| space.declared_services().contains_key(s))
@@ -2020,7 +1566,7 @@ impl Spaces {
                     Err(_) => false,
                 }
             } else {
-                !opts.services.is_empty()
+                !services.is_empty()
             };
             if usable {
                 return Ok(Some(info));
@@ -2043,7 +1589,7 @@ impl Spaces {
         use cua_sandbox_core::progress::{Phase, Progress, report};
         refuse_windows_on_mac(opts.image.as_deref(), cfg!(target_os = "macos"))?;
         let sink = opts.progress.take().map(|p| p.0);
-        let (key, on) = self.create_key(&mut opts)?;
+        let key = self.create_key(&mut opts)?;
         // Every report names the Space it is about.
         let target = key.id.clone();
         let sink: Option<cua_sandbox_core::progress::Sink> = sink.map(|s| {
@@ -2058,11 +1604,9 @@ impl Spaces {
                 }
             }) as cua_sandbox_core::progress::Sink
         });
-        if opts.wait == Some(false) && on != On::Cloud {
+        if opts.wait == Some(false) {
             // The whole create runs in the background (still cancellable);
-            // the caller gets the id it will have. A cloud create returns
-            // once its claim is accepted (its errors, such as no credit,
-            // reach the caller) and finishes binding in the background.
+            // the caller gets the id it will have.
             let flight = crate::creating::register(self.home_dir(), &key)?;
             let spaces = self.clone();
             let id = key.id.clone();
@@ -2089,13 +1633,12 @@ impl Spaces {
 
     /// The GPU options each runtime of `on` offers here: on this machine,
     /// per local runtime (Lume: "GPU acceleration" for macOS VMs; QEMU:
-    /// virgl on Linux; containers: NVIDIA on Linux); none on Cua Cloud yet.
+    /// virgl on Linux; containers: NVIDIA on Linux).
     /// A runtime with no option says why ([`cua_sandbox_core::gpu`]).
     pub async fn gpu_support(&self, on: &On) -> Vec<cua_sandbox_core::gpu::GpuSupport> {
         let sbx = &self.inner.sandboxes;
         match on {
             On::Local => sbx.gpu_support(ProviderKind::Local, None).await,
-            On::Cloud => sbx.gpu_support(ProviderKind::Fleet, None).await,
             On::Provider(word) => sbx.gpu_support(ProviderKind::Contrib, Some(word)).await,
             _ => vec![],
         }
@@ -2104,7 +1647,7 @@ impl Spaces {
     /// Names the create before it starts (a generated name is chosen now,
     /// so a cancel and a crash recovery know what to look for) and says
     /// how it is found.
-    fn create_key(&self, opts: &mut SpaceCreate) -> Result<(crate::creating::CreateKey, On)> {
+    fn create_key(&self, opts: &mut SpaceCreate) -> Result<crate::creating::CreateKey> {
         let on = match opts.on.clone() {
             Some(on) => on,
             None => {
@@ -2147,20 +1690,6 @@ impl Spaces {
                     generated,
                 }
             }
-            On::Cloud => {
-                let name = named(opts);
-                crate::creating::CreateKey {
-                    id: SpaceId::Cloud {
-                        name: name.clone(),
-                        namespace: None,
-                    }
-                    .to_string(),
-                    stem: format!("cloud.{name}"),
-                    name,
-                    create_id,
-                    generated,
-                }
-            }
             _ => crate::creating::CreateKey {
                 id: String::new(),
                 name: opts.name.clone().unwrap_or_default(),
@@ -2169,7 +1698,7 @@ impl Spaces {
                 generated,
             },
         };
-        Ok((key, on))
+        Ok(key)
     }
 
     /// [`Spaces::create`] once registered: runs it with its journal, and
@@ -2181,9 +1710,7 @@ impl Spaces {
         flight: crate::creating::Flight,
     ) -> Result<SpaceCreated> {
         use crate::creating::{CancelOutcome, CancelState};
-        let kind = if key.stem.starts_with("cloud.") {
-            "cloud"
-        } else if key.stem.starts_with("other.") {
+        let kind = if key.stem.starts_with("other.") {
             "host"
         } else {
             "local"
@@ -2238,23 +1765,15 @@ impl Spaces {
 
     async fn create_inner(&self, opts: SpaceCreate) -> Result<SpaceCreated> {
         use cua_sandbox_core::placement;
-        let (on, source) = match opts.on.clone() {
-            Some(on) => (on, cua_sandbox_core::settings::Source::Explicit),
-            None => cua_sandbox_core::settings::Settings::load()
-                .and_then(|s| s.default_on())
-                .map_err(|e| Error::invalid(e.to_string()))?,
+        let on = match opts.on.clone() {
+            Some(on) => on,
+            None => {
+                cua_sandbox_core::settings::Settings::load()
+                    .and_then(|s| s.default_on())
+                    .map_err(|e| Error::invalid(e.to_string()))?
+                    .0
+            }
         };
-        if on == On::Cloud
-            && self.inner.fleet.is_none()
-            && let Some(hint) = cua_sandbox_core::settings::cloud_default_hint(&source)
-        {
-            return Err(Error::host(
-                cua_spaces_contract::host::FLEET,
-                format!(
-                    "set CUA_CLIENT_ID/CUA_CLIENT_SECRET (or CUA_TOKEN) to use cloud Spaces; {hint}"
-                ),
-            ));
-        }
         let place = |e: placement::PlacementError| {
             Error::Sandbox(cua_sandbox_core::Error::InvalidPlacement(e))
         };
@@ -2294,7 +1813,7 @@ impl Spaces {
         }
         if on.is_existing_machine() {
             return Err(Error::invalid(format!(
-                "{on} is an existing machine: add it with add_space (url {}), create_space \
+                "{on} is an existing computer: add it with add_space (url {}), create_space \
                  makes a new one (on local or cloud)",
                 on.to_string().split_once(':').map_or("", |(_, a)| a)
             )));
@@ -2303,7 +1822,8 @@ impl Spaces {
         let expect_env = expects_spacesd(opts.image.as_deref(), opts.spacesd);
         let provider = match &on {
             On::Local => Provider::Local,
-            On::Cloud => Provider::Cloud,
+            // Cua Cloud has ended ([`Spaces::create`] refuses it up front).
+            On::Cloud => return Err(cua_sandbox_core::Error::CloudEnded.into()),
             other => {
                 return Err(Error::HostCapabilityMissing {
                     what: format!("provider {}", other.location()),
@@ -2316,97 +1836,32 @@ impl Spaces {
         {
             return Ok(SpaceCreated::Ready { info, reused: true });
         }
-        match on {
-            On::Cloud => {
-                if opts.gpu.is_some() {
-                    return Err(Error::invalid(format!(
-                        "gpu: {}",
-                        cua_sandbox_core::FLEET_NO_GPU_REASON
-                    )));
-                }
-                if opts.disk_gb.is_some_and(|g| g > 0) {
-                    return Err(Error::invalid(
-                        "disk_gb sizes local VMs only: Cua Cloud boots the image's disk",
-                    ));
-                }
-                // Refused here, before any pool is written.
-                let memory_mb = opts.memory_mb.map(|m| u32::try_from(m).unwrap_or(u32::MAX));
-                cua_fleet::check_cloud_size(opts.cpus, memory_mb)
-                    .map_err(|e| Error::invalid(e.to_string()))?;
-                let runtime = match (&opts.runtime, opts.kind) {
-                    (Runtime::Gvisor, _) | (Runtime::Auto, Kind::Container) => {
-                        Some(FleetRuntime::Gvisor)
-                    }
-                    (Runtime::Kubevirt, _) | (Runtime::Auto, Kind::Vm) => {
-                        Some(FleetRuntime::Kubevirt)
-                    }
-                    _ => None,
-                };
-                let claim = FleetClaim {
-                    image: opts.image,
-                    runtime,
-                    name: opts.name,
-                    wait: opts.wait,
-                    env_token: opts.env_token,
-                    command: opts.command,
-                    env: opts.env,
-                    services: opts.services,
-                    spacesd: opts.spacesd,
-                    cpus: opts.cpus,
-                    memory_mb,
-                };
-                Ok(match self.claim_fleet(claim).await? {
-                    Ok(info) => SpaceCreated::Ready {
-                        info,
-                        reused: false,
-                    },
-                    Err(p) => SpaceCreated::Starting(p),
-                })
-            }
-            _ => {
-                let name = sanitize_label(
-                    &opts
-                        .name
-                        .unwrap_or_else(|| format!("space-{}", random_suffix())),
-                );
-                let local = LocalProvision {
-                    image: opts.image,
-                    kind: opts.kind,
-                    runtime: opts.runtime,
-                    name: Some(name.clone()),
-                    cpus: opts.cpus,
-                    memory_mb: opts.memory_mb,
-                    disk_gb: opts.disk_gb,
-                    timeout: opts.timeout,
-                    command: opts.command,
-                    env: opts.env,
-                    services: opts.services,
-                    spacesd: opts.spacesd,
-                    gpu: opts.gpu,
-                };
-                // `create` runs a `wait = false` create in the background
-                // itself, so here it always waits.
-                Ok(SpaceCreated::Ready {
-                    info: self.provision_local(local).await?,
-                    reused: false,
-                })
-            }
-        }
-    }
-
-    /// The warm pool Spaces claims `image` on `runtime` from:
-    /// `<namespace>-<runtime>-<sha256(image)[..8]>`, a DNS label.
-    pub fn fleet_pool_name(&self, runtime: FleetRuntime, image: &str) -> String {
-        self.pool_name(runtime, image)
-    }
-
-    fn pool_name(&self, runtime: FleetRuntime, image: &str) -> String {
-        use sha2::Digest;
-        let digest = hex::encode(sha2::Sha256::digest(image.as_bytes()));
-        let suffix = format!("-{}-{}", runtime.as_str(), &digest[..8]);
-        let base = &self.inner.namespace;
-        let keep = 63usize.saturating_sub(suffix.len()).min(base.len());
-        sanitize_label(&format!("{}{suffix}", base[..keep].trim_end_matches('-')))
+        let name = sanitize_label(
+            &opts
+                .name
+                .unwrap_or_else(|| format!("space-{}", random_suffix())),
+        );
+        let local = LocalProvision {
+            image: opts.image,
+            kind: opts.kind,
+            runtime: opts.runtime,
+            name: Some(name.clone()),
+            cpus: opts.cpus,
+            memory_mb: opts.memory_mb,
+            disk_gb: opts.disk_gb,
+            timeout: opts.timeout,
+            command: opts.command,
+            env: opts.env,
+            services: opts.services,
+            spacesd: opts.spacesd,
+            gpu: opts.gpu,
+        };
+        // `create` runs a `wait = false` create in the background
+        // itself, so here it always waits.
+        Ok(SpaceCreated::Ready {
+            info: self.provision_local(local).await?,
+            reused: false,
+        })
     }
 
     /// Provisions a Space on the local runtime and registers it. Readiness
@@ -2435,7 +1890,7 @@ impl Spaces {
             .image
             .as_deref()
             .map(|i| cua_image::canonical::alias(i).unwrap_or_else(|| i.to_string()))
-            .unwrap_or_else(|| cua_fleet::canonical_image("linux"));
+            .unwrap_or_else(|| cua_image::canonical::canonical_image_or_linux("linux"));
         let token = format!("{:032x}", rand::random::<u128>());
         // Until the Space is registered, the create's journal holds its
         // token and what it made: a process that dies mid-create (a daemon
@@ -2663,23 +2118,9 @@ impl Spaces {
             return Ok(format!("Deleted {id} (sandbox {sandbox} in your cloud)."));
         }
         let what = match &id {
-            SpaceId::Cloud { name, namespace } => {
-                let fleet = self.fleet_client()?;
-                let namespace = match namespace.clone() {
-                    Some(ns) => ns,
-                    None => match self
-                        .inner
-                        .registry
-                        .credential(&id.to_string())?
-                        .and_then(|c| c.namespace)
-                    {
-                        Some(ns) => ns,
-                        None => cloud_namespace(fleet, name).await?,
-                    },
-                };
-                fleet.release(&namespace, name).await?;
-                format!("Deleted {id} (cloud sandbox {name}).")
-            }
+            // Cua Cloud has ended: a legacy `cloud:` Space has nothing to
+            // delete. `remove` forgets its record.
+            SpaceId::Cloud { .. } => return Err(cua_sandbox_core::Error::CloudEnded.into()),
             SpaceId::Local { name } => {
                 // By name: a stopped or unreachable Space deletes too (a
                 // handle needs it running), with no connect round trip.
@@ -2706,7 +2147,7 @@ impl Spaces {
                 }
                 let _ = self.inner.registry.forget_direct(&id.to_string());
                 format!(
-                    "Removed {id} (added by address, so only forgotten; the machine is untouched)."
+                    "Removed {id} (added by address, so only forgotten; the computer is untouched)."
                 )
             }
             SpaceId::Relay { machine_id } => {
@@ -2740,9 +2181,9 @@ impl Spaces {
                              owner can remove it from the relay directory)."
                         ),
                         Some(_) => format!(
-                            "Removed {id} (disconnected; it is one of your machines, so it stays \
+                            "Removed {id} (disconnected; it is one of your computers, so it stays \
                              in your relay directory: run `cua host remove` on it, or if that \
-                             machine is gone, `cua spaces relay-unregister {id}`)."
+                             computer is gone, `cua spaces relay-unregister {id}`)."
                         ),
                         None => format!("Removed {id} (disconnected)."),
                     },
@@ -2955,9 +2396,10 @@ impl Spaces {
     /// suspends it, keeping its memory (a container, a QEMU VM), or stops
     /// it, keeping its disk (a Lume VM, a Space one of your machines
     /// provides, which that machine stops; a Space in your own cloud, whose
-    /// instance stops). Streams and hotspots on it end first. A Fleet cloud
-    /// Space, a Space added by address and your own computers on the relay
-    /// cannot be turned off.
+    /// instance stops). Streams and hotspots on it end first. A Space added
+    /// by address and your own computers on the relay cannot be turned off,
+    /// and a legacy `cloud:` Space fails with
+    /// [`cua_sandbox_core::CLOUD_ENDED`].
     pub async fn stop(&self, space: &str) -> Result<SpacePower> {
         self.set_power(space, false).await
     }
@@ -3029,10 +2471,13 @@ impl Spaces {
                         self.drop_connection(&id).await;
                         self.power_on_host(&m, &host, on).await
                     }
-                    None => Err(refuse("relay (only a Space one of your machines provides)")),
+                    None => Err(refuse(
+                        "relay (only a Space one of your computers provides)",
+                    )),
                 }
             }
-            SpaceId::Cloud { .. } => Err(refuse("cloud")),
+            // Cua Cloud has ended: there is no cloud Space to turn on or off.
+            SpaceId::Cloud { .. } => Err(cua_sandbox_core::Error::CloudEnded.into()),
             // A Space a direct host created: that host turns it off or on.
             SpaceId::Direct { .. } => match self.inner.registry.direct_host_of(&id.to_string())? {
                 Some((host, on_host)) => {
@@ -3151,7 +2596,7 @@ pub fn expects_spacesd(image: Option<&str>, explicit: Option<bool>) -> bool {
         // The canonical images (and their CUA_IMAGE_<OS> overrides) carry
         // cua-spacesd; anything else says so with `spacesd`. A local runtime
         // prefix (`container:`, `vm:`, ...) picks the variant, not the image.
-        Some(image) => cua_fleet::is_canonical_image(strip_runtime_prefix(image)),
+        Some(image) => cua_image::canonical::is_canonical(strip_runtime_prefix(image)),
     }
 }
 
@@ -3163,48 +2608,6 @@ fn split_mcp_url(url: &str) -> Result<(String, String)> {
         path = format!("{path}?{q}");
     }
     Ok((u.origin().ascii_serialization(), path))
-}
-
-/// The key a Fleet pool is named after (see [`Spaces::fleet_pool_name`]):
-/// the image alone for a plain Spaces claim (unchanged pool names), else the
-/// image plus what else shapes the template (`command`, `env` and the
-/// services). A sized Space's key is [`sized_pool_key`].
-pub fn pool_key(
-    image: &str,
-    command: Option<&[String]>,
-    env: &BTreeMap<String, String>,
-    services: &BTreeMap<String, u16>,
-) -> String {
-    sized_pool_key(image, command, env, services, None, None)
-}
-
-/// [`pool_key`] plus the size (`vmTemplate.cpuCores`, `vmTemplate.memory`
-/// in MiB), which shapes the template too. Unsized, it is [`pool_key`].
-pub fn sized_pool_key(
-    image: &str,
-    command: Option<&[String]>,
-    env: &BTreeMap<String, String>,
-    services: &BTreeMap<String, u16>,
-    cpus: Option<u32>,
-    memory_mb: Option<u32>,
-) -> String {
-    if command.is_none()
-        && env.is_empty()
-        && services.is_empty()
-        && cpus.is_none()
-        && memory_mb.is_none()
-    {
-        return image.to_string();
-    }
-    let mut key = serde_json::json!({"command": command, "env": env, "services": services});
-    // Only when set, so the pools of unsized Spaces keep their names.
-    if let Some(c) = cpus {
-        key["cpu"] = c.into();
-    }
-    if let Some(m) = memory_mb {
-        key["memory_mb"] = m.into();
-    }
-    format!("{image}\n{key}")
 }
 
 /// The error a thumbnail request gets while the Space's capture backs off
@@ -3278,23 +2681,6 @@ mod tests {
         if let Some(spent) = std::time::Instant::now().checked_sub(Duration::from_secs(900)) {
             assert_eq!(connect_budget(Some(t), spent), Duration::from_secs(10));
         }
-    }
-
-    #[test]
-    fn a_pinned_cloud_image_carries_its_digest_a_tag_none() {
-        let d = format!("sha256:{}", "a".repeat(64));
-        assert_eq!(
-            image_with_pinned_digest(format!("ghcr.io/trycua/linux@{d}")),
-            (format!("ghcr.io/trycua/linux@{d}"), d.clone())
-        );
-        assert_eq!(
-            image_with_pinned_digest("ghcr.io/trycua/linux:24.04".into()),
-            ("ghcr.io/trycua/linux:24.04".into(), String::new())
-        );
-        assert_eq!(
-            image_with_pinned_digest("repo@sha256:".into()).1,
-            String::new()
-        );
     }
 
     #[test]
@@ -3434,19 +2820,5 @@ mod tests {
         ] {
             assert!(!is_generated_name(other), "{other}");
         }
-    }
-
-    #[test]
-    fn pool_names_fit_and_differ_by_image_and_runtime() {
-        let spaces = Spaces::builder()
-            .home(tempfile::tempdir().unwrap().keep())
-            .fleet_namespace("cua-spaces-".to_string() + &"x".repeat(70))
-            .build();
-        let a = spaces.pool_name(FleetRuntime::Kubevirt, "img:1");
-        let b = spaces.pool_name(FleetRuntime::Kubevirt, "img:2");
-        let c = spaces.pool_name(FleetRuntime::Gvisor, "img:docker-1");
-        assert!(a.len() <= 63 && b.len() <= 63 && c.len() <= 63);
-        assert_ne!(a, b);
-        assert!(c.contains("-gvisor-"));
     }
 }

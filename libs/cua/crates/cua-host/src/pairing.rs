@@ -204,7 +204,7 @@ struct PairingCodeList {
 fn check_pairing_team(req: &PairingCodeRequest, teams: bool) -> Result<()> {
     if req.team.is_some() && !teams {
         return Err(Error::InvalidArgument(format!(
-            "{} A pairing code adds the machine to your account; leave out the team.",
+            "{} A pairing code adds the computer to your account; leave out the team.",
             cua_home::experimental::TEAMS_UNAVAILABLE
         )));
     }
@@ -298,7 +298,7 @@ impl RelayClient {
                 }
                 Some(c) if c.state == "revoked" || c.state == "expired" => {
                     return Err(Error::InvalidArgument(format!(
-                        "pairing code {code_id} was {} before a machine used it",
+                        "pairing code {code_id} was {} before a computer used it",
                         c.state
                     )));
                 }
@@ -307,19 +307,24 @@ impl RelayClient {
                 }
                 Some(_) if now() >= until => {
                     return Err(Error::InvalidArgument(format!(
-                        "no machine used pairing code {code_id} in time"
+                        "no computer used pairing code {code_id} in time"
                     )));
                 }
                 Some(_) => tokio::time::sleep(poll).await,
             }
         };
-        api.finishing_setup(
-            token,
-            crate::spaces_api::SETUP_RETRY_WINDOW,
-            waiting,
-            || api.add_org_machine(token, org, &machine, "", &name),
-        )
-        .await?;
+        if let Err(e) = api
+            .finishing_setup_org(
+                token,
+                org,
+                crate::spaces_api::SETUP_RETRY_WINDOW,
+                waiting,
+                || api.add_org_machine(token, org, &machine, "", &name),
+            )
+            .await
+        {
+            return Err(api.explain_plan_error(token, org, e).await);
+        }
         Ok(machine)
     }
 }

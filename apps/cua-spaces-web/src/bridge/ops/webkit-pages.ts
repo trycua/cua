@@ -53,6 +53,8 @@ export const WEBKIT_PAGE_OPS = [
   "sharing.list",
   "sharing.share",
   "sharing.unshare",
+  "sharing.removals",
+  "sharing.ackRemovals",
   "volume.overview",
   "volume.storage",
   "volume.storageSet",
@@ -228,6 +230,8 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
     "sharing.list": list("sharing.list"),
     "sharing.share": list("sharing.share"),
     "sharing.unshare": list("sharing.unshare"),
+    "sharing.removals": list("sharing.removals"),
+    "sharing.ackRemovals": none("sharing.ackRemovals"),
 
     "volume.overview": call("volume.overview"),
     "volume.storage": call("volume.storage"),

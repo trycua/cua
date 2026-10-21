@@ -7,7 +7,6 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-publish = false
 
 [features]
 default = [
@@ -52,7 +51,7 @@ required-features = ["mcp-client"]
 # Host Spaces use counts (fixed words only).
 cua-telemetry.workspace = true
 cua-create-failure.workspace = true
-cua-spaces-contract = { path = "../cua-spaces-contract" }
+cua-spaces-contract.workspace = true
 cua-proto = { workspace = true, features = ["client", "serde"] }
 cua-spacesd-client.workspace = true
 cua-home.workspace = true
@@ -60,8 +59,9 @@ cua-icon-cache.workspace = true
 cua-agents = { workspace = true, optional = true }
 # Agent provider keys saved in the OS credential vault (agents::keys).
 cua-auth = { workspace = true, optional = true }
-cua-fleet.workspace = true
 cua-image.workspace = true
+# Per-Space disk accounting (resources).
+cua-disk.workspace = true
 cua-sandbox-core.workspace = true
 cua-vmm.workspace = true
 # The cua-relay machine directory (`space://relay/<id>`) and AccountTokens.
@@ -86,6 +86,8 @@ tokio = { workspace = true }
 tonic = { workspace = true, default-features = false, features = ["codegen"] }
 tracing.workspace = true
 url.workspace = true
+# This computer's processor and memory (resources).
+sysinfo = { version = "0.37", default-features = false, features = ["system"] }
 # Routines: daily and weekly slots in local time.
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
@@ -93,18 +95,21 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 ignore = { version = "0.4", optional = true }
 # Agent homes move in and out of a Space as one archive.
 tar = { version = "0.4", optional = true }
-cua-hotspot = { path = "../cua-hotspot", optional = true }
+cua-hotspot = { workspace = true, optional = true }
 tokio-tungstenite = { workspace = true, optional = true }
 # The host cache of pinned install archives (spaces-agents).
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots"], optional = true }
 axum = { workspace = true, optional = true, features = ["json"] }
+
+[target.'cfg(unix)'.dependencies]
+# APFS private size (getattrlist).
+libc = "0.2"
 
 [dev-dependencies]
 cua-mesh = { workspace = true, features = ["testing"] }
 cua-sandbox-core = { workspace = true, features = ["testing"] }
 cua-host = { workspace = true, features = ["testing"] }
 cua-spacesd-client = { workspace = true, features = ["testing"] }
-cua-fleet = { workspace = true, features = ["testing"] }
 cua-proto = { workspace = true, features = ["client", "server", "serde"] }
 tonic = { workspace = true, default-features = false, features = ["codegen", "server", "router", "channel"] }
 tokio-stream = { workspace = true, features = ["net"] }

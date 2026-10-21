@@ -10,6 +10,7 @@
 //   pnpm perf --update        write new budgets: current sizes plus 15%
 //   pnpm perf --no-build      reuse dist/ (it must have .vite/manifest.json)
 //   pnpm perf --no-timing     sizes only
+//   pnpm perf --shift         only the loading checks (CI): first render time and layout shift per route
 //
 // A route's size is what opening it adds on top of the entry: its own chunk
 // plus the shared chunks it imports that the entry doesn't already load.
@@ -22,6 +23,7 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const dist = `${root}dist/`;
 const budgetFile = `${root}perf-budget.json`;
 const args = new Set(process.argv.slice(2));
+const SHIFT_ONLY = args.has("--shift");
 const HEADROOM = 1.15;
 const RUNS = 3;
 
@@ -102,10 +104,16 @@ async function measureTiming() {
       for (const route of routes.map((r) => r.name).filter((n) => !n.includes("$"))) {
         const firstRender = [];
         const fcp = [];
+        const cls = [];
         for (let i = 0; i < RUNS; i++) {
           // A fresh context each run, so nothing is cached.
           const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
           await context.addInitScript(() => {
+            // Layout shift the person didn't cause (CUA-1951): the sum of the page's layout-shift entries.
+            window.__cls = 0;
+            new PerformanceObserver((list) => {
+              for (const e of list.getEntries()) if (!e.hadRecentInput) window.__cls += e.value;
+            }).observe({ type: "layout-shift", buffered: true });
             // The first time the page's <main> has content: the route rendered.
             new MutationObserver((_, observer) => {
               if (document.querySelector("main > *")) {
@@ -118,15 +126,18 @@ async function measureTiming() {
           await page.goto(`${base}/${route}`);
           await page.waitForFunction(() => window.__firstRender !== undefined, null, { timeout: 15_000 });
           await page.waitForFunction(() => performance.getEntriesByName("first-contentful-paint").length > 0, null, { timeout: 3_000 }).catch(() => {});
+          await page.waitForTimeout(1200); // late arrivals shift too
           const t = await page.evaluate(() => ({
+            cls: window.__cls,
             render: window.__firstRender,
             fcp: performance.getEntriesByName("first-contentful-paint")[0]?.startTime ?? null,
           }));
           firstRender.push(t.render);
+          cls.push(t.cls);
           if (t.fcp !== null) fcp.push(t.fcp);
           await context.close();
         }
-        out[route] = { firstRenderMs: Math.round(median(firstRender)), fcpMs: fcp.length ? Math.round(median(fcp)) : null };
+        out[route] = { firstRenderMs: Math.round(median(firstRender)), fcpMs: fcp.length ? Math.round(median(fcp)) : null, cls: Math.round(median(cls) * 10000) / 10000 };
       }
     } finally {
       await browser.close();
@@ -159,6 +170,8 @@ if (args.has("--update")) {
     totalJs: up(sizes.totalJs.raw),
     totalCss: up(sizes.totalCss.raw),
     wasm: up(sizes.wasm.raw),
+    // Layout shift of a route's first load (the Cumulative Layout Shift sum): under 0.05 is "good".
+    cls: 0.05,
     firstRenderMs: timing ? Math.ceil((Math.max(...Object.values(timing).map((t) => t.firstRenderMs)) * 2) / 50) * 50 : 1000,
   };
   writeFileSync(budgetFile, `${JSON.stringify(budget, null, 2)}\n`);
@@ -171,6 +184,7 @@ const warnings = [];
 const rows = [];
 const row = (name, s, limit) => {
   const over = limit !== undefined && s.raw > limit;
+  if (SHIFT_ONLY) return;
   if (over) failures.push(`${name} is ${kb(s.raw)}, over its ${kb(limit)} budget`);
   if (limit === undefined) warnings.push(`${name} has no budget; run \`pnpm perf --update\` to add one`);
   rows.push([name, kb(s.raw), kb(s.gzip), limit === undefined ? "none" : kb(limit), over ? "OVER" : limit === undefined ? "" : `${Math.round((s.raw / limit) * 100)}%`]);
@@ -183,15 +197,17 @@ row("total CSS", sizes.totalCss, budget.totalCss);
 row("app core wasm", sizes.wasm, budget.wasm);
 
 const widths = [34, 11, 11, 11, 6];
-console.log(`\n${pad("Chunk", widths[0])}${lpad("Size", widths[1])}${lpad("Gzip", widths[2])}${lpad("Budget", widths[3])}${lpad("Used", widths[4] + 2)}`);
-for (const r of rows) console.log(`${pad(r[0], widths[0])}${lpad(r[1], widths[1])}${lpad(r[2], widths[2])}${lpad(r[3], widths[3])}${lpad(r[4], widths[4] + 2)}`);
+if (!SHIFT_ONLY) console.log(`\n${pad("Chunk", widths[0])}${lpad("Size", widths[1])}${lpad("Gzip", widths[2])}${lpad("Budget", widths[3])}${lpad("Used", widths[4] + 2)}`);
+for (const r of SHIFT_ONLY ? [] : rows) console.log(`${pad(r[0], widths[0])}${lpad(r[1], widths[1])}${lpad(r[2], widths[2])}${lpad(r[3], widths[3])}${lpad(r[4], widths[4] + 2)}`);
 
 if (timing) {
-  console.log(`\n${pad("Time to first render (median of " + RUNS + ")", widths[0])}${lpad("Render", widths[1])}${lpad("FCP", widths[2])}${lpad("Budget", widths[3])}`);
+  console.log(`\n${pad("Time to first render (median of " + RUNS + ")", widths[0])}${lpad("Render", widths[1])}${lpad("FCP", widths[2])}${lpad("Budget", widths[3])}${lpad("CLS", widths[4] + 4)}`);
   for (const [route, t] of Object.entries(timing)) {
     const over = budget.firstRenderMs !== undefined && t.firstRenderMs > budget.firstRenderMs;
     if (over) failures.push(`/${route} first rendered after ${t.firstRenderMs} ms, over the ${budget.firstRenderMs} ms budget`);
-    console.log(`${pad("/" + route, widths[0])}${lpad(t.firstRenderMs + " ms", widths[1])}${lpad(t.fcpMs === null ? "n/a" : t.fcpMs + " ms", widths[2])}${lpad((budget.firstRenderMs ?? "none") + " ms", widths[3])}${over ? "  OVER" : ""}`);
+    const shifted = budget.cls !== undefined && t.cls >= budget.cls;
+    if (shifted) failures.push(`/${route} shifted by ${t.cls} while loading, over the ${budget.cls} layout-shift budget`);
+    console.log(`${pad("/" + route, widths[0])}${lpad(t.firstRenderMs + " ms", widths[1])}${lpad(t.fcpMs === null ? "n/a" : t.fcpMs + " ms", widths[2])}${lpad((budget.firstRenderMs ?? "none") + " ms", widths[3])}${lpad(t.cls, widths[4] + 4)}${over || shifted ? "  OVER" : ""}`);
   }
 }
 

@@ -37,6 +37,15 @@ public protocol SpacesBackend: AnyObject, Sendable {
     func add(url: String, token: String?, name: String?) async throws
     /// Deletes a created Space, or forgets one added by address.
     func remove(id: String, removeOnly: Bool) async throws
+    /// Takes one of your machines (`relay:<machine>`) off the relay
+    /// directory (`Spaces.relay_unregister`): Remove from account on the
+    /// Machines page. The relay refuses one that is online.
+    func relayUnregister(id: String) async throws
+    /// A machine's health as its own cua daemon checks it
+    /// (`Spaces.machine_health`): `nil` for this Mac, else another of your
+    /// machines by id, asked over the relay or mesh. The Machines page
+    /// shows its warnings and failures as the machine's issues.
+    func machineHealth(machine: String?) async throws -> AppMachinesViewHealth
     /// Turns a Space off (`on` false: suspended or stopped, as its provider
     /// can) or back on (`stop_space` / `start_space`).
     func setPower(id: String, on: Bool) async throws
@@ -120,6 +129,12 @@ public extension SpacesBackend {
         throw FixtureError(message: "This Space's runs can't be read here")
     }
     func lumeSource() async -> String? { nil }
+    func relayUnregister(id: String) async throws {
+        throw FixtureError(message: "Machines can't be removed here")
+    }
+    func machineHealth(machine: String?) async throws -> AppMachinesViewHealth {
+        throw FixtureError(message: "Machines can't be checked here")
+    }
     func runningMacosVms() async -> Int? { nil }
     func setLumeSource(_ value: String) async throws {}
     func linuxSource() async -> String? { nil }
@@ -168,7 +183,7 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
     /// instead of failing every call. The signed-in session drives the relay
     /// account.
     public static func make() throws -> LiveSpacesBackend {
-        LiveSpacesBackend(cua: try Cua.auto(config: CuaConfig(fleetFromSession: true)))
+        LiveSpacesBackend(cua: try Cua.auto(config: CuaConfig(accountFromSession: true)))
     }
 
     public func rows() async throws -> [AppSpaceRow] {
@@ -303,6 +318,21 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
         _ = try await cua.spaces().add(url: url, token: token, name: name)
     }
 
+    public func relayUnregister(id: String) async throws {
+        _ = try await cua.spaces().relayUnregister(space: id)
+    }
+
+    public func machineHealth(machine: String?) async throws -> AppMachinesViewHealth {
+        let h = try await cua.spaces().machineHealth(machine: machine)
+        return AppMachinesViewHealth(
+            id: "",
+            checks: h.checks.map {
+                AppMachinesViewCheck(id: $0.id, status: $0.status, message: $0.message,
+                                     remediation: $0.remediation, facts: $0.facts)
+            },
+            cuaVersion: h.cuaVersion, error: nil)
+    }
+
     public func remove(id: String, removeOnly: Bool) async throws {
         if removeOnly {
             try await cua.spaces().remove(space: id)
@@ -377,8 +407,6 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
 
     /// Bounded: the session read can wait on the credential vault.
     public func cloudAvailable() async -> Bool {
-        let env = ProcessInfo.processInfo.environment
-        if env["FLEETS_TOKEN"] != nil || env["CUA_CLIENT_ID"] != nil { return true }
         let status = await withTimeout(seconds: Self.probeSeconds) { [cua] in try cua.auth().status().loggedIn }
         return (try? status.get()) ?? false
     }
@@ -466,7 +494,8 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
             try await cua.spaces().space(space: id).usage()
         }
         guard let u = try? result.get() else { return nil }
-        return AppSpaceUsage(memoryUsed: u.memoryUsed, memoryTotal: u.memoryTotal, memoryLimited: u.memoryLimited,
+        return AppSpaceUsage(cpuCount: u.cpuCount, cpuPercent: u.cpuPercent, loadAverage1m: u.loadAverage1m,
+                             memoryUsed: u.memoryUsed, memoryTotal: u.memoryTotal, memoryLimited: u.memoryLimited,
                              diskUsed: u.diskUsed, diskTotal: u.diskTotal, diskLimited: u.diskLimited)
     }
 
@@ -653,6 +682,29 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
     public private(set) var removed: [String] = []
     /// The ids of those that were only forgotten (Remove from List).
     public private(set) var forgotten: [String] = []
+    /// The machines taken off the relay (Remove from account).
+    public private(set) var unregistered: [String] = []
+
+    public func relayUnregister(id: String) async throws {
+        await MainActor.run {
+            unregistered.append(id)
+            fixtureRows.removeAll { $0.id == id }
+        }
+    }
+
+    /// What `machineHealth` answers, by machine (`""` for this Mac); a
+    /// machine without an entry has no issues.
+    public var fixtureHealth: [String: AppMachinesViewHealth] = [:]
+    /// The machines `machineHealth` was asked about (`""` for this Mac).
+    public private(set) var healthChecked: [String] = []
+
+    public func machineHealth(machine: String?) async throws -> AppMachinesViewHealth {
+        let key = machine ?? ""
+        return await MainActor.run {
+            healthChecked.append(key)
+            return fixtureHealth[key] ?? AppMachinesViewHealth(id: "", checks: [], cuaVersion: "", error: nil)
+        }
+    }
     /// The fixture cloud is connected (`cloud_connect` ran).
     public var fixtureCloudConnected = false
     /// The cloud tools called, in order.
@@ -854,6 +906,7 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
     /// The fixture Spaces' memory and storage: a 4 GB container limit on a
     /// host disk (Storage hides).
     public var fixtureUsage: AppSpaceUsage? = AppSpaceUsage(
+        cpuCount: 4, cpuPercent: 12.5, loadAverage1m: 0.5,
         memoryUsed: 2_254_857_830, memoryTotal: 4 << 30, memoryLimited: true,
         diskUsed: 150_000_000_000, diskTotal: 494_000_000_000, diskLimited: false)
     public func usage(id: String) async -> AppSpaceUsage? { await MainActor.run { fixtureUsage } }

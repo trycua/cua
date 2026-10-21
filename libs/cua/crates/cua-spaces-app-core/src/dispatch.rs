@@ -16,8 +16,9 @@ use crate::teleport::{drag, flow, grid, transfer, windows};
 use crate::{
     CoreError, about, agent_keys, agents, checklist, cloud_connect, devices, diagnostics,
     drive_mount_preview, drive_page, drive_settings, driver_preview, experiments, host, login_item,
-    machines, notch, notifications, onboarding, onboarding_preview, palette, paths, persistent,
-    presence, relay_usage, settings, share, telemetry, upsell, window, wizard,
+    machines, notch, notifications, nudges, onboarding, onboarding_preview, palette, paths,
+    persistent, presence, relay_usage, resources, settings, share, telemetry, upsell, window,
+    wizard,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -231,6 +232,7 @@ pub const METHODS: &[&str] = &[
     "devices.view",
     "machines.merge",
     "machines.pageRows",
+    "machines.view",
     "devices.activityText",
     "devices.labels",
     "devices.platformName",
@@ -251,6 +253,9 @@ pub const METHODS: &[&str] = &[
     "share.initial",
     "share.reduce",
     "share.view",
+    "share.gate",
+    "share.errorWords",
+    "share.removalNote",
     "agents.pageInitial",
     "agents.pageReduce",
     "agents.pageView",
@@ -289,9 +294,21 @@ pub const METHODS: &[&str] = &[
     "experiments.choose",
     "wizard.placementOptions",
     "relayUsage.view",
+    "relayUsage.planLimit",
+    "resources.view",
+    "resources.thisMac",
+    "resources.space",
+    "resources.computer",
+    "resources.warning",
     "upsell.prompt",
     "upsell.allows",
+    "firstRun.view",
+    "firstRun.todos",
+    "firstRun.agentUsed",
+    "firstRun.leadAgent",
     "telemetry.upsell",
+    "nudge.secondAgent",
+    "nudge.riskyAction",
 ];
 
 struct Args(Value);
@@ -480,6 +497,24 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
                 _ => relay_usage::view(&usage),
             })
         }
+        // An error's text that is the relay refusing a new session over the
+        // plan's cap: the sentence and Upgrade (null for any other error).
+        "relayUsage.planLimit" => {
+            let error: String = a.get("error")?;
+            let app = a.get::<Option<String>>("accountApp")?.unwrap_or_default();
+            out(relay_usage::plan_limit_notice(&error, &app))
+        }
+        // Processor, memory and disk: the rows, bars and warning the apps
+        // draw from the runtime's snapshot (`Spaces.resources`).
+        // `nowMs` is the shell's clock: the core has none (wasm).
+        "resources.view" => out(resources::view(&a.get("snapshot")?, a.get("nowMs")?)),
+        "resources.thisMac" => out(resources::this_mac_view(&a.get("computer")?)),
+        "resources.space" => out(resources::space_view(&a.get("space")?)),
+        "resources.computer" => out(resources::computer_view(
+            &a.get("computer")?,
+            a.get("nowMs")?,
+        )),
+        "resources.warning" => out(resources::warning_view(&a.get("warning")?)),
         // The Pro and Teams prompts: the rules and words are `upsell`'s.
         "upsell.prompt" => {
             let usage = a.get("usage")?;
@@ -495,6 +530,25 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             ))
         }
         "upsell.allows" => out(upsell::allows(&a.get("state")?)),
+        "firstRun.view" => out(crate::first_run::view(&a.get("input")?)),
+        "firstRun.todos" => out(crate::first_run::todos(&a.get("input")?)),
+        "firstRun.agentUsed" => out(crate::first_run::agent_used(
+            &a.get::<Vec<crate::first_run::AccessLine>>("lines")?,
+            a.get::<u64>("sinceMs")?,
+            &a.get::<String>("agentName")?,
+        )),
+        "firstRun.leadAgent" => out(crate::first_run::lead_agent(
+            &a.get::<Vec<crate::first_run::FirstRunAgent>>("agents")?,
+        )),
+        // The This Mac prompts: the moments, rules and words are `nudges`'.
+        "nudge.secondAgent" => out(nudges::second_agent(
+            &a.get::<Vec<host::HostAccess>>("recentAccess")?,
+            a.get("nowMs")?,
+            &a.get::<String>("today")?,
+            &a.get::<Option<nudges::NudgeMemory>>("memory")?
+                .unwrap_or_default(),
+        )),
+        "nudge.riskyAction" => out(nudges::risky_action(&a.get("request")?, a.get("nowMs")?)),
         "telemetry.upsell" => out(telemetry::upsell(
             &a.get::<String>("surface")?,
             &a.get::<String>("action")?,
@@ -711,10 +765,13 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         )),
         "onboarding.reduce" => out(onboarding::reduce(&a.get("state")?, &a.get("action")?)),
         // `hostOs`: the shell's system, for its words (macOS when absent).
-        "onboarding.view" => out(onboarding::view_on(
+        // `withoutCli`: a shell with no Command line page (the web UI):
+        // Done neither lists the Cua CLI nor waits for it.
+        "onboarding.view" => out(onboarding::view_for(
             &a.get("state")?,
             a.get::<Option<SpaceOs>>("hostOs")?
                 .unwrap_or(SpaceOs::Macos),
+            !a.get::<Option<bool>>("withoutCli")?.unwrap_or(false),
         )),
         "onboarding.copy" => out(onboarding::copy()),
         "onboarding.signedInText" => out(onboarding::signed_in_text(
@@ -882,6 +939,10 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<Option<machines::MachinesPageInput>>("input")?
                 .unwrap_or_default(),
         )),
+        "machines.view" => out(crate::machines_view::view(
+            &a.get::<Option<crate::machines_view::MachinesViewInput>>("input")?
+                .unwrap_or_default(),
+        )),
         "devices.view" => out(devices::devices_view(
             &a.get::<Option<devices::DevicesInput>>("input")?
                 .unwrap_or_default(),
@@ -1001,6 +1062,14 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "share.view" => out(share::share_view(
             &a.get::<share::ShareInput>("input")?,
             &a.get::<share::ShareSheetState>("state")?,
+        )),
+        "share.gate" => out(share::share_gate(a.get::<Option<bool>>("hasTeam")?)),
+        "share.errorWords" => out(share::share_error_words(
+            &a.get::<String>("error")?,
+            &a.get::<String>("who")?,
+        )),
+        "share.removalNote" => out(share::share_removal_note(
+            &a.get::<Vec<share::ShareRemovalInput>>("removals")?,
         )),
         "host.clientLabel" => out(host::client_label(
             &a.get::<String>("id")?,
@@ -1257,6 +1326,9 @@ mod tests {
         .unwrap();
         let mut done = state.clone();
         done["step"] = json!("done");
+        done["identity"] = json!("ada@example.com");
+        done["cliTarget"] = json!("/h/.local/bin/cua");
+        done["agents"] = json!(["Claude Code"]);
         let lede = |os: Value| {
             call_value("onboarding.view", json!({ "state": done, "hostOs": os })).unwrap()["lede"]
                 .as_str()

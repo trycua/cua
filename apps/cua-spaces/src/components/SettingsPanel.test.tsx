@@ -8,6 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as appCore from "../core";
 import type { TelemetryBridge, TelemetryView } from "../native/telemetry";
 import { fakeDrive, MOUNT_OFF, MOUNTED, NEEDS_APPROVAL } from "../test/fakeDrive";
+import { currentUiLocale } from "../i18n";
+import { setLocaleChoice } from "../i18n/preference";
+import * as telemetryModule from "../native/telemetry";
 import { SettingsPanel, SIGN_IN_URL } from "./SettingsPanel";
 
 beforeEach(() => {
@@ -365,6 +368,7 @@ describe("SettingsPanel Privacy", () => {
         view = { ...view, enabled, source: "config /tmp/cua/config.toml", sourceKind: "config" };
         return view;
       },
+      setUiLocale: () => {},
       recordFeature: () => {},
       recordStep: () => {},
       recordStream: () => {},
@@ -376,7 +380,7 @@ describe("SettingsPanel Privacy", () => {
   it("acknowledges the notice, turns usage telemetry off and links the docs", async () => {
     const telemetry = fakeTelemetry();
     const props = renderPanel({ telemetry });
-    await screen.findByText("Share anonymous usage data");
+    await screen.findByText("Share usage data to help improve Cua");
     expect(telemetry.calls).toEqual(["ack"]);
     await userEvent.click(screen.getByRole("radio", { name: "Off" }));
     expect(telemetry.calls).toContain("set:false");
@@ -395,9 +399,9 @@ describe("SettingsPanel Privacy", () => {
   it("lists Account, Teams, General, Privacy, AI agents and Experiments in order, with Show again", async () => {
     const onShowWelcome = vi.fn();
     renderPanel({ telemetry: fakeTelemetry(), onShowWelcome });
-    await screen.findByText("Share anonymous usage data");
+    await screen.findByText("Share usage data to help improve Cua");
     const titles = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
-    expect(titles).toEqual(["Account", "Teams", "General", "Privacy", "AI agents", "Experiments"]);
+    expect(titles).toEqual(["Account", "Teams", "General", "Privacy", "AI agents", "Experiments", "Language"]);
     await userEvent.click(screen.getByRole("button", { name: "Show again" }));
     expect(onShowWelcome).toHaveBeenCalled();
   });
@@ -420,13 +424,14 @@ describe("SettingsPanel Experiments", () => {
       acknowledgeNotice: async () => view,
       setEnabled: async () => view,
       welcomeLeft: async () => view,
+      setUiLocale: () => {},
       recordFeature: () => {},
       recordStep: () => {},
       recordStream: () => {},
       recordSignals: vi.fn(),
     };
     renderPanel({ telemetry });
-    await screen.findByText("Share anonymous usage data");
+    await screen.findByText("Share usage data to help improve Cua");
     const experiments = within(screen.getByRole("region", { name: "Experiments" }));
     for (const name of ["Cua Volume", "Your cloud"]) {
       expect(experiments.getByRole("switch", { name })).toHaveAttribute("aria-checked", "false");
@@ -716,7 +721,7 @@ describe("SettingsPanel launch at login", () => {
     const { fakeLoginItemBridge } = await import("../native/loginItem");
     renderPanel({ loginItem: fakeLoginItemBridge("notRegistered"), serves: { providesSpaces: true, runsAgents: false } });
     expect(
-      await screen.findByText("This machine provides Spaces, which stop after a restart until you open Cua Spaces."),
+      await screen.findByText("This computer provides Spaces, which stop after a restart until you open Cua Spaces."),
     ).toBeInTheDocument();
   });
 
@@ -729,5 +734,39 @@ describe("SettingsPanel launch at login", () => {
     await user.click(toggle);
     expect(await screen.findByText("Permission denied")).toBeInTheDocument();
     expect(toggle).toHaveAttribute("aria-checked", "false");
+  });
+});
+
+describe("SettingsPanel language", () => {
+  afterEach(async () => {
+    await act(async () => {
+      await setLocaleChoice("system");
+    });
+  });
+
+  it("offers System default and the six languages, saves the choice and switches live", async () => {
+    const user = userEvent.setup();
+    const report = vi.spyOn(telemetryModule, "telemetryBridge");
+    renderPanel();
+    const select = screen.getByRole("combobox", { name: "Language" });
+    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "System default",
+      "English",
+      "简体中文",
+      "한국어",
+      "Português (Brasil)",
+      "日本語",
+      "Español",
+    ]);
+    expect(select).toHaveValue("system");
+    await user.selectOptions(select, "ja");
+    await waitFor(() => expect(window.localStorage.getItem("cua.settings.locale")).toBe("ja"));
+    expect(currentUiLocale()).toBe("ja");
+    expect(report).toHaveBeenCalled(); // setUiLocale goes out through the telemetry bridge
+    expect(await screen.findByRole("combobox", { name: "言語" })).toHaveValue("ja");
+    await user.selectOptions(screen.getByRole("combobox", { name: "言語" }), "system");
+    await waitFor(() => expect(window.localStorage.getItem("cua.settings.locale")).toBeNull());
+    expect(currentUiLocale()).toBe("en");
+    report.mockRestore();
   });
 });

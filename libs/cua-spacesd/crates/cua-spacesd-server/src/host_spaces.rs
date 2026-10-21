@@ -97,7 +97,7 @@ impl ServiceProvider for HostSpacesProvider {
             if providing {
                 ""
             } else {
-                "this machine does not provide Spaces (on it: `cua host config --provide-spaces on`)"
+                "this computer does not provide Spaces (on it: `cua host config --provide-spaces on`)"
             },
         )]
     }
@@ -169,7 +169,7 @@ fn caller_json<T>(req: &Request<T>) -> Result<String, Status> {
             return Err(status(
                 Code::Unauthenticated,
                 ErrorReason::Unauthenticated,
-                "HostSpacesService needs a relay-verified account or this machine's token",
+                "HostSpacesService needs a relay-verified account or this computer's token",
             ))
         }
     };
@@ -281,7 +281,7 @@ impl HostSpacesImpl {
             return Err(status(
                 Code::FailedPrecondition,
                 ErrorReason::FeatureUnsupported,
-                "this machine does not provide Spaces (on it: `cua host config --provide-spaces on`)",
+                "this computer does not provide Spaces (on it: `cua host config --provide-spaces on`)",
             ));
         }
         let daemon = policy.spaces_daemon.ok_or_else(|| {
@@ -424,6 +424,21 @@ impl HostSpacesService for HostSpacesImpl {
                 // The daemon waits for the cloud to delete the machine.
                 Some(Duration::from_secs(10 * 60)),
             )?)
+            .await
+    }
+
+    async fn diagnose_host(
+        &self,
+        request: Request<DiagnoseHostRequest>,
+    ) -> Result<Response<DiagnoseHostResponse>, Status> {
+        // Whether or not this machine provides Spaces: its health is the
+        // owner's to see either way (the daemon checks the caller).
+        let (mut client, who) = self.forward(&request, false).await?;
+        // This machine's own health only: never a hop to another machine.
+        let mut message = request.into_inner();
+        message.machine.clear();
+        client
+            .diagnose_host(with_caller(message, &who, Some(Duration::from_secs(30)))?)
             .await
     }
 

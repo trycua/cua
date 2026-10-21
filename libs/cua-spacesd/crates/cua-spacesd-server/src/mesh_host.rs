@@ -34,11 +34,9 @@
 //! A relay without a mesh (an older one) is simply not used: the machine
 //! keeps serving over its relay connection and checks again later.
 //!
-//! The node runs only while [`cua_mesh::policy`] allows it: `CUA_MESH` in
-//! the service's environment, else the update channel the Cua Spaces app
-//! recorded in this machine's Cua home (off on every channel in this
-//! release). Until then nothing is asked of the relay, and the machine
-//! serves over its relay connection exactly as before.
+//! The node runs unless [`cua_mesh::policy`] turns it off: `CUA_MESH=off`
+//! in the service's environment keeps the machine on its relay connection
+//! alone, and nothing is asked of the relay.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;

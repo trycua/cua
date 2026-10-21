@@ -8,13 +8,17 @@
  *   exit codes) and an index of every command, grouped. Old per-command
  *   anchors of the single-page reference resolve here (hidden anchors that
  *   link on to the command's section).
- * - `reference/cli/<group>.mdx`: one page per command group. Each command has
+ * - `reference/cli/<group>.mdx`: one page per command group (a group may hold
+ *   several top-level commands, each a section). Each command has
  *   a heading anchored by its full path (`#cua-sandbox-create`), a synopsis,
  *   an arguments table and a flags table (`Flag | Short | Type | Default |
  *   Env var | Description`, one anchor per flag: `#cua-sandbox-create--name`),
  *   and examples. Examples come from the CLI source (help text) and are tagged
  *   `test="cli-shape"`, so the docs CLI-shape lane parses each one against the
  *   same JSON. Exit codes close the page.
+ *
+ * Small CLIs (`singlePage`) render everything to `reference/cli.mdx` instead:
+ * a table of every command, then one section per group.
  *
  * cua-driver and lume emit the base fields; `cua dump-docs` (clap) adds usage,
  * aliases, hidden commands, global options, env vars and repeatability; `cb`
@@ -159,6 +163,11 @@ export interface CliReference {
   intro?: string;
   /** Curated Markdown per group slug, shown under the page's command table. */
   headers?: Record<string, string>;
+  /**
+   * One page for the whole CLI (`reference/cli.mdx`) instead of a folder: the
+   * groups become sections of that page. For small CLIs.
+   */
+  singlePage?: boolean;
 }
 
 /** clap strips the final period from doc comments; put it back for prose. */
@@ -545,6 +554,22 @@ function cliUrl(ref: CliReference, page?: string): string {
   return `/${ref.product}/reference/cli${page ? `/${page}` : ''}`;
 }
 
+/**
+ * On a single-page CLI reference, a group titled by its command (`cb task`)
+ * is that command's section (with any companion commands beside it); any
+ * other group gets a section heading of its own.
+ */
+function isCommandSection(group: CliGroup, root: string): boolean {
+  return !group.subcommands && isCommandTitle(group, root);
+}
+
+/** Where a group's reference starts: its page, or its section of the single page. */
+function groupHref(ref: CliReference, group: CliGroup): string {
+  if (!ref.singlePage) return cliUrl(ref, group.slug);
+  const root = ref.cli.name;
+  return `${cliUrl(ref)}#${isCommandSection(group, root) ? commandAnchor([root, group.commands[0]]) : slug(group.title)}`;
+}
+
 function commandRows(
   entries: Array<{ cmd: CommandDoc; path: string[] }>,
   href: (anchor: string) => string,
@@ -674,7 +699,18 @@ function renderGroup(ref: CliReference, group: CliGroup, commands: PageCommand[]
     body.push(`<span id="${commandAnchor([...parents, cmd.name])}"></span>`, '');
     body.push(...renderCommand(cmd, parents, 0));
   }
-  else for (const { cmd, parents } of commands) body.push(...renderCommand(cmd, parents, 2));
+  else {
+    for (const { cmd, parents } of commands) {
+      // A command's curated notes (`headers/<product>/cli-<command>.md`) sit
+      // under its heading when the page holds several commands.
+      const [heading, blank, ...rest] = renderCommand(cmd, parents, 2);
+      if (heading === undefined) continue;
+      body.push(heading, blank);
+      const own = cmd.name !== group.slug && parents.length === 1 ? readHeader(ref.product, `cli-${cmd.name}`) : undefined;
+      if (own) body.push(own.trim(), '');
+      body.push(...rest);
+    }
+  }
   if (cli.exit_codes?.length) {
     body.push('## Exit codes', '');
     body.push(...exitCodesTable(cli.exit_codes));
@@ -690,12 +726,70 @@ function renderGroup(ref: CliReference, group: CliGroup, commands: PageCommand[]
 }
 
 /**
+ * The whole CLI on one page: synopsis, a table of every command, one section
+ * per group (a one-command group is that command's own section), global
+ * options and exit codes.
+ */
+function renderSinglePage(ref: CliReference, pages: Map<string, PageCommand[]>): string {
+  const { cli } = ref;
+  const root = cli.name;
+  const body: string[] = [];
+  const intro = ref.intro ?? readHeader(ref.product, 'cli');
+  if (intro) body.push(intro.trim(), '');
+  body.push(codeFence('text', cli.usage ?? `${root} [OPTIONS] <COMMAND>`, 'output'), '');
+  body.push(`Run \`${root} <command> --help\` for the build you have.`, '');
+  body.push('## Commands', '');
+  const all = ref.groups.flatMap((g) => (pages.get(g.slug) ?? []).flatMap((c) => flatten(c.cmd, c.parents)));
+  body.push(...commandRows(all, (a) => `#${a}`));
+  for (const group of ref.groups) {
+    const commands = pages.get(group.slug) ?? [];
+    const header = ref.headers?.[group.slug] ?? readHeader(ref.product, `cli-${group.slug}`);
+    if (isCommandSection(group, root)) {
+      commands.forEach(({ cmd, parents }, i) => {
+        const [heading, blank, ...rest] = renderCommand(cmd, parents, 2);
+        if (heading === undefined) return;
+        body.push(heading, blank);
+        if (header && i === 0) body.push(header.trim(), '');
+        body.push(...rest);
+      });
+      continue;
+    }
+    body.push(`## ${group.title}`, '', escapeMdxText(sentence(group.summary)), '');
+    if (header) body.push(header.trim(), '');
+    for (const { cmd, parents } of commands) body.push(...renderCommand(cmd, parents, 3));
+  }
+  body.push('## Global options', '');
+  const globals = (cli.global_options ?? []).filter((o) => !o.hidden);
+  if (globals.length) {
+    body.push('Accepted by every command, before or after the subcommand.', '');
+    body.push(...flagsTable(globals));
+  }
+  body.push(`\`--help\` prints help for any command; \`--version\` prints the version.`, '');
+  if (cli.exit_codes?.length) {
+    body.push('## Exit codes', '');
+    body.push(...exitCodesTable(cli.exit_codes));
+  }
+  return renderPage({
+    title: `${root} CLI`,
+    description: sentence(cli.abstract),
+    generator: ref.generator,
+    source: ref.source,
+    version: cli.version,
+    body: body.join('\n'),
+  });
+}
+
+/**
  * Renders `reference/cli/`: index, one page per group and `meta.json`, keyed
  * by path relative to the product's `reference/` folder.
  */
 export function renderCliReference(ref: CliReference): Map<string, string> {
   const pages = groupCommands(ref);
   const out = new Map<string, string>();
+  if (ref.singlePage) {
+    out.set('cli.mdx', renderSinglePage(ref, pages));
+    return out;
+  }
   out.set('cli/index.mdx', renderIndex(ref, pages));
   for (const group of ref.groups) {
     out.set(`cli/${group.slug}.mdx`, renderGroup(ref, group, pages.get(group.slug)!));
@@ -710,7 +804,7 @@ export function cliIndexRows(ref: CliReference): IndexRow[] {
     { name: `\`${ref.cli.name}\``, href: cliUrl(ref), description: 'Synopsis, global options, exit codes and every command.' },
     ...ref.groups.map((g) => ({
       name: groupTitle(g, ref.cli.name),
-      href: cliUrl(ref, g.slug),
+      href: groupHref(ref, g),
       description: sentence(g.summary),
     })),
   ];

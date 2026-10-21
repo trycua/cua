@@ -536,6 +536,21 @@ class OtherToolsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.log.read_text().splitlines(), ["driver ", "lume --force --purge"])
 
+    def test_all_never_revokes_the_driver_macos_permissions(self):
+        """The driver uninstaller keeps Accessibility and Screen Recording unless
+        asked with --reset-permissions; --all must never ask (18 Oct 2026: an
+        uninstall wiped the permissions of a Mac that was meant to keep them)."""
+        box = Sandbox(tempfile.mkdtemp(dir=self.tmp.name), "Darwin")
+        box.cli()
+        result = box.run("--yes", "--all", "--delete-spaces", env=self.env())
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.log.read_text().splitlines()[0], "driver ")
+        self.assertEqual([call for call in box.call_log() if call.startswith("tccutil")], [])
+        for name in ("uninstall.sh", "uninstall.ps1"):
+            script = (Path(__file__).resolve().parent.parent / name).read_text()
+            self.assertNotIn("tccutil", script, name)
+            self.assertNotIn("reset-permissions", script, name)
+
     def test_on_linux_lume_is_skipped_and_the_driver_runs_even_with_nothing_else_installed(self):
         box = Sandbox(tempfile.mkdtemp(dir=self.tmp.name), "Linux")
         result = box.run("--yes", "--all", env=self.env())

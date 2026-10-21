@@ -11,7 +11,7 @@ import { createStreamOpener, StreamUnavailableError, type Fetch } from "../media
 import type { BridgeContext } from "./context";
 import { Failure, type Handlers } from "./host";
 
-export function streamMethods({ supervisor, env }: BridgeContext): Handlers {
+export function streamMethods({ supervisor, env, model }: BridgeContext): Handlers {
   const open = createStreamOpener({
     cuaHome: cuaHome(env),
     fetch: globalThis.fetch as unknown as Fetch,
@@ -30,7 +30,17 @@ export function streamMethods({ supervisor, env }: BridgeContext): Handlers {
       if (windowId !== undefined && (typeof windowId !== "string" || windowId === "")) throw Failure.badArgs("windowId: string");
       if (epoch !== undefined && (typeof epoch !== "number" || !Number.isInteger(epoch) || epoch < 0)) throw Failure.badArgs("epoch: number");
       try {
-        return await open({ spaceId, tier, windowId, epoch, activate: activate === true });
+        const ticket = await open({ spaceId, tier, windowId, epoch, activate: activate === true });
+        // A viewer opening is the `space_open_viewer` usage event the SwiftUI and Tauri apps record; this host
+        // recorded none, so the daily report's viewer count fell to zero from 0.9.0. The grid's tiles are not viewers.
+        if (tier === "full" && !epoch) {
+          try {
+            model.recordFeature("space_open_viewer");
+          } catch {
+            // Telemetry never fails a stream.
+          }
+        }
+        return ticket;
       } catch (error) {
         if (error instanceof StreamUnavailableError) throw Failure.unsupported(error.message);
         throw error;

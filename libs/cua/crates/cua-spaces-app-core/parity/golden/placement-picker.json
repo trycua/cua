@@ -29,7 +29,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB–6.8 GB initially; grows with use"
+          "Disk: 2.9 GB–6.9 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -40,7 +40,7 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.8 GB–6.8 GB initially; grows with use",
+          "Disk: 2.9 GB–6.9 GB initially; grows with use",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
@@ -77,7 +77,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB–6.8 GB initially; grows with use"
+          "Disk: 2.9 GB–6.9 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -88,7 +88,7 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.8 GB–6.8 GB initially; grows with use",
+          "Disk: 2.9 GB–6.9 GB initially; grows with use",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
@@ -125,7 +125,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB–6.8 GB initially; grows with use"
+          "Disk: 2.9 GB–6.9 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -136,7 +136,7 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.8 GB–6.8 GB initially; grows with use",
+          "Disk: 2.9 GB–6.9 GB initially; grows with use",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
@@ -407,7 +407,7 @@
         "price": "About $0.04/hour",
         "resourceFacts": [
           "Kind: Container",
-          "Machine: t4g.medium",
+          "Computer: t4g.medium",
           "Deletes itself: After 2 hours"
         ],
         "step": 0,
@@ -456,7 +456,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB–6.8 GB initially; grows with use"
+          "Disk: 2.9 GB–6.9 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -467,7 +467,7 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.8 GB–6.8 GB initially; grows with use",
+          "Disk: 2.9 GB–6.9 GB initially; grows with use",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
@@ -658,7 +658,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB–6.8 GB initially; grows with use"
+          "Disk: 2.9 GB–6.9 GB initially; grows with use"
         ],
         "step": 3,
         "summary": [
@@ -669,7 +669,7 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.8 GB–6.8 GB initially; grows with use",
+          "Disk: 2.9 GB–6.9 GB initially; grows with use",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
@@ -695,7 +695,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB–6.8 GB initially; grows with use"
+          "Disk: 2.9 GB–6.9 GB initially; grows with use"
         ],
         "step": 3,
         "summary": [
@@ -706,7 +706,7 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.8 GB–6.8 GB initially; grows with use",
+          "Disk: 2.9 GB–6.9 GB initially; grows with use",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],

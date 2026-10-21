@@ -193,8 +193,8 @@ impl crate::Spaces {
                 format!("{id} ({name}) is a running Space; delete it with `cua spaces delete {id}`")
             } else {
                 format!(
-                    "{id} ({name}) is one of your machines and is connected now; take it off \
-                     the relay with `cua host remove` on that machine"
+                    "{id} ({name}) is one of your computers and is connected now; take it off \
+                     the relay with `cua host remove` on that computer"
                 )
             }));
         }

@@ -8,6 +8,7 @@
  * app renders the same views.
  */
 import { core } from "../core";
+import type { Msg } from "../i18n";
 import type { DriveSyncInput } from "./persistent";
 import type { RemoteWindow } from "./teleport";
 import type { Location, Space, SpaceOs, SpaceStatus } from "./types";
@@ -18,7 +19,7 @@ export interface SidebarRow {
   /** The Space's OS icon id (the notch tiles' mark), before the name. */
   osIcon: string;
   status: SpaceStatus;
-  statusText: string;
+  statusText: Msg;
   detail: string;
   dim: boolean;
   selected: boolean;
@@ -40,7 +41,7 @@ export interface PowerButton {
   symbol: string;
   /** Tooltip and label: "Suspend", "Resume", "Turn off", "Turn on" (while
    * it runs, "Suspending…" and the like). */
-  help: string;
+  help: Msg;
   /** A press turns it on (else off). */
   turnOn: boolean;
   enabled: boolean;
@@ -50,9 +51,9 @@ export interface PowerButton {
 
 export interface SidebarView {
   thisMachine: SidebarRow | null;
-  sections: { title: string; rows: SidebarRow[] }[];
+  sections: { title: Msg; rows: SidebarRow[] }[];
   selectedId: string | null;
-  emptyText: string | null;
+  emptyText: Msg | null;
 }
 
 export function sidebar(spaces: Space[], query: string, selectedId: string | null): SidebarView {

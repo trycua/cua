@@ -140,7 +140,7 @@ fn all_builders(s: &str) -> Vec<Event> {
         events::stream_summary(s, s, Some(true), 900, 1080, Some(40.0), d).unwrap(),
         events::app_active(),
         // Unknown experiment ids are dropped (`none`); known ones kept.
-        events::app_active_with(&[s, "sharing", s]),
+        events::app_active_with(&[s, "sharing", s], s),
         events::space_create(
             &events::SpaceCreate {
                 on: s,
@@ -194,7 +194,7 @@ fn all_builders(s: &str) -> Vec<Event> {
         events::onboarding_page("welcome", s, "none"),
         events::space_wizard(s),
         events::persistent_agent(s, Some(s), Outcome::Ok, Some(s)),
-        events::share(s, s, Outcome::Ok),
+        events::share(s, s, Outcome::Ok, "none", "none"),
         events::app_update(s, s, s),
         events::device_enroll(s, Outcome::Ok),
         events::experiment(s, "sharing"),
@@ -214,11 +214,21 @@ fn all_builders(s: &str) -> Vec<Event> {
     v.push(events::onboarding_page("volume", "completed", s).unwrap());
     v.push(events::space_wizard("cancelled").unwrap());
     v.push(events::persistent_agent("create", Some(s), Outcome::Error, Some(s)).unwrap());
-    v.push(events::share("share", s, Outcome::Ok).unwrap());
+    v.push(events::share("share", s, Outcome::Ok, s, s).unwrap());
+    v.push(events::share("share", "viewer", Outcome::Error, s, s).unwrap());
     v.push(events::app_update("installed", s, s).unwrap());
     v.push(events::app_update("downloaded", s, s).unwrap());
     v.push(events::device_enroll("rekey", Outcome::Ok).unwrap());
     v.push(events::experiment("experiment_off", "your_cloud").unwrap());
+    v.push(events::installer_step("installer_started", s, s, s, &[s]).unwrap());
+    v.push(events::installer_step("installer_failed", s, s, "ps1", &[s, "cli"]).unwrap());
+    v.push(
+        events::installer_step("installer_failed", "cli", "cancelled", "sh", &["host"]).unwrap(),
+    );
+    v.push(events::agent_used_space("space_bash").unwrap());
+    v.push(events::agent_used_space("computer_click").unwrap());
+    assert!(events::installer_step(s, "cli", "network", "sh", &[]).is_none());
+    assert!(events::agent_used_space(s).is_none());
     v
 }
 
@@ -904,6 +914,7 @@ fn docs_page_names_every_event_and_property() {
     let page = concat!(
         include_str!("../../../../../docs/content/docs/cua-sdk/concepts/telemetry.mdx"),
         include_str!("../../../../../docs/content/docs/cua-sdk/concepts/telemetry-events.mdx"),
+        include_str!("../../../../../docs/content/docs/cua-sdk/concepts/telemetry-counting.mdx"),
     );
     for spec in schema::EVENTS {
         assert!(
@@ -1127,15 +1138,44 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
     assert_eq!(failed.props["http_status"], 401);
     assert_eq!(failed.props["error_kind"], "unauthenticated");
     assert_eq!(
-        events::share("unshare", "editor", Outcome::Ok)
+        events::share("unshare", "editor", Outcome::Ok, "none", "none")
             .unwrap()
             .props["role"],
         "none"
     );
     assert_eq!(
-        events::share("share", "viewer", Outcome::Ok).unwrap().props["role"],
+        events::share("share", "viewer", Outcome::Ok, "none", "none")
+            .unwrap()
+            .props["role"],
         "viewer"
     );
+    // CUA-1855: why a share failed, in fixed words; a dismissed prompt is
+    // `cancelled`, an unknown kind `other`, and an ok never carries one.
+    let dismissed = events::share(
+        "share",
+        "viewer",
+        Outcome::Cancelled,
+        "presence_cancelled",
+        "presence",
+    )
+    .unwrap();
+    assert_eq!(dismissed.props["outcome"], "cancelled");
+    assert_eq!(dismissed.props["error_kind"], "presence_cancelled");
+    assert_eq!(dismissed.props["failed_stage"], "presence");
+    let unknown =
+        events::share("share", "editor", Outcome::Error, "grace@example.com", "x").unwrap();
+    assert_eq!(unknown.props["error_kind"], "other");
+    assert_eq!(unknown.props["failed_stage"], "other");
+    let ok = events::share(
+        "share",
+        "editor",
+        Outcome::Ok,
+        "presence_denied",
+        "presence",
+    )
+    .unwrap();
+    assert_eq!(ok.props["error_kind"], "none");
+    assert_eq!(ok.props["failed_stage"], "none");
     assert_eq!(
         events::persistent_agent("create", Some("hermes"), Outcome::Ok, None)
             .unwrap()
@@ -1237,6 +1277,61 @@ fn the_active_day_carries_the_experiments_that_are_on() {
     let (off, _) = ready(h2.path(), &[("DO_NOT_TRACK", "1")]);
     off.set_experiments_on(&["sharing"]);
     assert!(!h2.path().join("telemetry/experiments_on").exists());
+}
+
+/// `ui_locale`: the Spaces app's interface language, one of a fixed set
+/// (anything else is `other`), kept for the day's `cua_app_active`; `en`
+/// before the app says; nothing written while telemetry is off.
+#[test]
+fn the_active_day_carries_the_ui_locale() {
+    let k = Kind::Enum(schema::UI_LOCALES);
+    for ok in ["en", "zh-Hans", "ko", "pt-BR", "ja", "es", "other"] {
+        assert!(schema::value_ok(k, &Value::from(ok)), "{ok}");
+    }
+    for bad in [
+        "",
+        "fr",
+        "en-US",
+        "zh-Hant",
+        "EN",
+        "/Users/alice",
+        "Paris, France",
+    ] {
+        assert!(!schema::value_ok(k, &Value::from(bad)), "{bad}");
+    }
+    assert_eq!(events::ui_locale("ja"), "ja");
+    assert_eq!(events::ui_locale(" pt-BR\n"), "pt-BR");
+    for other in ["", "fr", "en-US", "ja-JP", "alice@example.com", "other"] {
+        assert_eq!(events::ui_locale(other), "other", "{other}");
+    }
+
+    let h = tempfile::tempdir().unwrap();
+    let (t, sink) = ready(h.path(), &[]);
+    assert_eq!(t.capture_active_on(20_000), Captured::Queued);
+    t.set_ui_locale("ko");
+    // The next day, another process of the same install.
+    let (t2, sink2) = ready(h.path(), &[]);
+    assert_eq!(t2.capture_active_on(20_001), Captured::Queued);
+    t.set_ui_locale("fr-CA");
+    let (t3, sink3) = ready(h.path(), &[]);
+    assert_eq!(t3.capture_active_on(20_002), Captured::Queued);
+    for x in [&t, &t2, &t3] {
+        x.flush(Duration::from_secs(1));
+    }
+    let locales = |s: &MemorySink| -> Vec<String> {
+        s.events()
+            .iter()
+            .filter(|e| e["event"] == "cua_app_active")
+            .map(|e| e["properties"]["ui_locale"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(locales(&sink), ["en"], "en before the app says");
+    assert_eq!(locales(&sink2), ["ko"]);
+    assert_eq!(locales(&sink3), ["other"]);
+    let h2 = tempfile::tempdir().unwrap();
+    let (off, _) = ready(h2.path(), &[("DO_NOT_TRACK", "1")]);
+    off.set_ui_locale("ja");
+    assert!(!h2.path().join("telemetry/ui_locale").exists());
 }
 
 #[test]
@@ -1419,25 +1514,37 @@ fn agent_runs_respect_every_opt_out_and_never_count_inside_a_run() {
 
 #[test]
 fn agent_run_end_follows_the_published_status() {
-    assert_eq!(events::agent_run_end("running", None, false), None);
-    assert_eq!(events::agent_run_end("unknown", None, false), None);
+    assert_eq!(events::agent_run_end("running", None, None), None);
+    assert_eq!(events::agent_run_end("unknown", None, None), None);
     assert_eq!(
-        events::agent_run_end("idle", Some("end_turn"), false),
+        events::agent_run_end("idle", Some("end_turn"), None),
         Some((Outcome::Ok, None))
     );
     assert_eq!(
-        events::agent_run_end("idle", Some("cancelled"), false),
+        events::agent_run_end("idle", Some("cancelled"), None),
         Some((Outcome::Cancelled, None))
     );
     assert_eq!(
-        events::agent_run_end("failed", None, true),
+        events::agent_run_end("failed", None, Some("boom")),
         Some((Outcome::Error, Some("AgentFailed")))
     );
     assert_eq!(
-        events::agent_run_end("crashed", None, false),
+        events::agent_run_end("crashed", None, None),
         Some((Outcome::Error, Some("AgentCrashed")))
     );
     assert_eq!(events::error_kind("AgentFailed"), "agent_failed");
+    let cause = |t| {
+        events::agent_run_end("failed", None, Some(t))
+            .unwrap()
+            .1
+            .unwrap()
+    };
+    assert_eq!(cause("ANTHROPIC_API_KEY is not set"), "no_api_key");
+    assert_eq!(cause("429 rate limit from provider"), "provider_error");
+    assert_eq!(cause("request timed out"), "timeout");
+    assert_eq!(cause("cancelled by user"), "user_cancelled");
+    assert_eq!(cause("something else"), "AgentFailed");
+    assert_eq!(events::error_kind("no_api_key"), "no_api_key");
     assert_eq!(events::error_kind("Agent"), "agent");
 }
 
@@ -1449,4 +1556,191 @@ fn a_failed_host_space_never_reports_no_error_kind() {
     assert_eq!(e.props["error_kind"], "image_pull_auth");
     let ok = events::host_space_provided("vm", "macos", Outcome::Ok, None);
     assert_eq!(ok.props["error_kind"], "none");
+}
+
+/// `cua_installer_step` is sent by install.sh and install.ps1, which build
+/// the payload themselves. The fixture they are tested against
+/// (`scripts/install/tests/test_install_telemetry.py`) must pass the same
+/// schema check as every other event.
+#[test]
+fn installer_payloads_validate_against_the_declared_schema() {
+    let text = include_str!("../../../../../scripts/install/tests/fixtures/installer-step.json");
+    let doc: Value = serde_json::from_str(text).unwrap();
+    let events = doc["events"].as_array().unwrap();
+    assert_eq!(events.len(), 3);
+    for e in events {
+        let name = e["event"].as_str().unwrap();
+        assert_eq!(name, schema::event::INSTALLER_STEP);
+        let props = e["properties"].as_object().unwrap();
+        schema::validate(name, props).unwrap_or_else(|err| panic!("{e}: {err}"));
+        let id = e["distinct_id"].as_str().unwrap();
+        assert!(id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()));
+    }
+    // The builder agrees with the fixture on the event's own properties.
+    let built =
+        events::installer_step("installer_failed", "cli", "checksum", "sh", &["cli"]).unwrap();
+    for (k, v) in &built.props {
+        assert_eq!(&events[1]["properties"][k], v, "{k}");
+    }
+    let built = events::installer_step(
+        "installer_started",
+        "cli",
+        "network",
+        "sh",
+        &["spaces", "cli"],
+    )
+    .unwrap();
+    assert_eq!(built.props["install_stage"], "none");
+    assert_eq!(built.props["error_kind"], "none");
+    assert_eq!(built.props["items"], "cli+spaces");
+}
+
+/// An agent's tool call that reached a Space: one `cua_agent_used_space`
+/// per install per UTC day, only for tools that act inside a Space, never
+/// while telemetry is off and never from inside an agent run's Space.
+#[test]
+fn agent_used_space_is_sent_once_per_day_for_space_tools_only() {
+    let h = tempfile::tempdir().unwrap();
+    let (t, sink) = ready(h.path(), &[]);
+    assert!(matches!(
+        t.capture_agent_used_space_on(20_000, "list_spaces"),
+        Captured::Invalid(_)
+    ));
+    assert!(matches!(
+        t.capture_agent_used_space_on(20_000, "computer_access_grant"),
+        Captured::Invalid(_)
+    ));
+    assert_eq!(
+        t.capture_agent_used_space_on(20_000, "space_bash"),
+        Captured::Queued
+    );
+    assert_eq!(
+        t.capture_agent_used_space_on(20_000, "call_tool"),
+        Captured::AlreadyRecorded
+    );
+    let (t2, _) = ready(h.path(), &[]);
+    assert_eq!(
+        t2.capture_agent_used_space_on(20_000, "upload"),
+        Captured::AlreadyRecorded
+    );
+    assert_eq!(
+        t.capture_agent_used_space_on(20_001, "call_tool"),
+        Captured::Queued
+    );
+    t.flush(Duration::from_secs(1));
+    let used: Vec<Value> = sink
+        .events()
+        .into_iter()
+        .filter(|e| e["event"] == "cua_agent_used_space")
+        .collect();
+    assert_eq!(used.len(), 2);
+    assert_eq!(used[0]["properties"]["tool_group"], "shell");
+    assert_eq!(used[1]["properties"]["tool_group"], "services");
+
+    for env in [
+        &[("DO_NOT_TRACK", "1")][..],
+        &[("CUA_TELEMETRY", "0")][..],
+        &[("CI", "true")][..],
+        &[("CUA_AGENT_RUN_ID", "run-1")][..],
+    ] {
+        let h = tempfile::tempdir().unwrap();
+        let (t, sink) = ready(h.path(), env);
+        assert_eq!(
+            t.capture_agent_used_space_on(20_000, "space_bash"),
+            Captured::Disabled,
+            "{env:?}"
+        );
+        t.flush(Duration::from_secs(1));
+        assert!(sink.events().is_empty(), "{env:?}");
+        assert!(
+            !h.path()
+                .join("telemetry/funnel/agent_used_space_day")
+                .exists()
+        );
+    }
+}
+
+#[test]
+fn space_tool_groups_cover_the_tools_that_act_inside_a_space() {
+    use events::space_tool_group as g;
+    assert_eq!(g("space_bash"), Some("shell"));
+    assert_eq!(g("computer_shell"), Some("shell"));
+    assert_eq!(g("send_file"), Some("files"));
+    assert_eq!(g("computer_file_write"), Some("files"));
+    assert_eq!(g("call_tool"), Some("services"));
+    assert_eq!(g("agent_start"), Some("agents"));
+    assert_eq!(g("computer_screenshot"), Some("computer"));
+    assert_eq!(g("teleport_app"), Some("other"));
+    for admin in [
+        "list_spaces",
+        "create_space",
+        "delete_space",
+        "share_space",
+        "computer_access_list",
+        "volume_ls",
+        "",
+    ] {
+        assert_eq!(g(admin), None, "{admin}");
+    }
+}
+
+#[test]
+fn a_repeating_persistent_agent_failure_is_sent_once_per_hour() {
+    let h = tempfile::tempdir().unwrap();
+    let daemon = |home: &Path| {
+        let sink = Arc::new(MemorySink::new());
+        let t = Telemetry::builder()
+            .env(env_of(&[]))
+            .home(home)
+            .sink(sink.clone())
+            .product("daemon", "1.2.3")
+            .foreground()
+            .build();
+        t.acknowledge_notice();
+        (t, sink)
+    };
+    let (t, sink) = daemon(h.path());
+    let resume =
+        || events::persistent_agent("resume", None, Outcome::Error, Some("other")).unwrap();
+    assert_eq!(t.capture(resume()), Captured::Queued);
+    assert_eq!(t.capture(resume()), Captured::AlreadyRecorded);
+    // Another process of the same install is held back too.
+    let (t2, _s2) = daemon(h.path());
+    assert_eq!(t2.capture(resume()), Captured::AlreadyRecorded);
+    // A different failure, and successes, still go through.
+    let pause = events::persistent_agent("pause", None, Outcome::Error, Some("other")).unwrap();
+    assert_eq!(t.capture(pause), Captured::Queued);
+    let ok = events::persistent_agent("resume", None, Outcome::Ok, None).unwrap();
+    assert_eq!(t.capture(ok.clone()), Captured::Queued);
+    assert_eq!(t.capture(ok), Captured::Queued);
+    t.flush(Duration::from_secs(1));
+    let sent = sink
+        .events()
+        .iter()
+        .filter(|e| e["event"] == "cua_persistent_agent")
+        .count();
+    assert_eq!(sent, 4);
+}
+
+#[test]
+fn sdk_test_runs_are_marked_synthetic() {
+    let synthetic = |product: &str, env: &[(&str, &str)]| {
+        let h = tempfile::tempdir().unwrap();
+        let t = Telemetry::builder()
+            .env(env_of(env))
+            .home(h.path())
+            .sink(Arc::new(MemorySink::new()))
+            .product(product, "1.2.3")
+            .foreground()
+            .build();
+        t.envelope_preview()["is_synthetic"].as_bool().unwrap()
+    };
+    assert!(synthetic(
+        "sdk_python",
+        &[("PYTEST_CURRENT_TEST", "t.py::x")]
+    ));
+    assert!(synthetic("sdk_typescript", &[("VITEST", "true")]));
+    assert!(!synthetic("sdk_python", &[]));
+    assert!(!synthetic("cli", &[("PYTEST_CURRENT_TEST", "t.py::x")]));
+    assert!(synthetic("cli", &[("CUA_TELEMETRY_SYNTHETIC", "1")]));
 }

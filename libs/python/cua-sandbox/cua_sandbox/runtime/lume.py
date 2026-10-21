@@ -141,7 +141,7 @@ class LumeRuntime(NativeRuntime):
 
         Idempotent — if *base_name* already exists and is stopped, returns
         immediately.  Raises if the base VM is running, because cloning a live VM
-        can produce dirty or inconsistent clones (same constraint as cloud snapshots).
+        can produce dirty or inconsistent clones.
         The base VM is never started; it only serves as a fork source.
         """
         import time
@@ -179,7 +179,7 @@ class LumeRuntime(NativeRuntime):
         """Clone a stopped VM *base_name* → *new_name* via APFS clonefile (instant).
 
         The source VM must be stopped before calling this — cloning a running VM
-        risks dirty state or clone failures (mirrors cloud snapshot behaviour).
+        risks dirty state or clone failures.
         """
         lume_url = f"http://{self.lume_host}:{self.lume_port}"
         logger.info(f"Cloning base VM '{base_name}' → '{new_name}'")
@@ -203,8 +203,8 @@ class LumeRuntime(NativeRuntime):
     async def checkpoint(self, name: str, checkpoint_name: str, **opts):  # -> CheckpointInfo
         """Stop *name*, clone it into a checkpoint, then restart *name*.
 
-        Mirrors the cloud behaviour (stop → snapshot → restart) so clones are
-        always taken from a clean stopped state.
+        Stops, clones and restarts, so clones are always taken from a clean
+        stopped state.
         """
         import time
 

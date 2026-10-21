@@ -5,6 +5,8 @@
 //! binary crate prevents language bindings from growing an independent
 //! implementation of the native transport.
 
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
 
 /// Versioned identity returned by the daemon before an imported SDK or an MCP
@@ -199,58 +201,84 @@ pub fn is_daemon_listening(socket_path: &str) -> bool {
     }
 }
 
+/// Room left for the daemon to accept the connection, parse the request, run
+/// a tool for its full budget and serialize the reply.
+const DAEMON_OVERHEAD_ALLOWANCE: Duration = Duration::from_secs(30);
+
+/// Longest a client waits for the daemon's reply to one request. The largest
+/// budget a caller can ask any tool for ([`crate::tool_schema::TIMEOUT_MS_MAX`])
+/// fits under it with [`DAEMON_OVERHEAD_ALLOWANCE`] to spare, so a tool that
+/// legitimately uses its whole budget still gets its result delivered.
+pub const REPLY_DEADLINE: Duration = Duration::from_millis(crate::tool_schema::TIMEOUT_MS_MAX)
+    .saturating_add(DAEMON_OVERHEAD_ALLOWANCE);
+
 /// Send one newline-delimited request and read one response.
 ///
-/// Unix reads and writes retry transient timeouts until a 120-second overall
-/// deadline so slow accessibility walks and large screenshots are supported.
+/// Unix reads and writes retry transient timeouts until [`REPLY_DEADLINE`] so
+/// slow accessibility walks and large screenshots are supported.
 #[cfg(unix)]
 pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Result<DaemonResponse> {
     use std::io::Read;
     use std::os::unix::net::UnixStream;
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
+
+    const READ_POLL: Duration = Duration::from_secs(10);
 
     let mut stream = UnixStream::connect(socket_path)
         .map_err(|error| anyhow::anyhow!("connect to {socket_path}: {error}"))?;
-    stream.set_write_timeout(Some(Duration::from_secs(5)))?;
-    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+    // macOS rejects setsockopt with EINVAL once the peer has closed its end,
+    // even when the peer's reply is still buffered for us to read. Treat that
+    // as "peer already gone": the read below still drains buffered data and
+    // reports a real close, instead of failing with a bare "Invalid argument".
+    set_timeout_unless_peer_closed(stream.set_write_timeout(Some(Duration::from_secs(5))))?;
 
     let mut writer = stream.try_clone()?;
     let line = serde_json::to_string(request)? + "\n";
-    let write_deadline = Instant::now() + Duration::from_secs(120);
+    let write_deadline = Instant::now() + REPLY_DEADLINE;
     crate::socket_io::write_all_with_retry(&mut writer, line.as_bytes(), write_deadline)?;
 
-    let overall_deadline = Instant::now() + Duration::from_secs(120);
+    let reply_deadline = Instant::now() + REPLY_DEADLINE;
     let mut buffer = Vec::with_capacity(64 * 1024);
     let mut chunk = [0_u8; 64 * 1024];
     let response_line = loop {
         if let Some(newline) = buffer.iter().position(|&byte| byte == b'\n') {
             break String::from_utf8_lossy(&buffer[..newline]).into_owned();
         }
+        let remaining = reply_deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            anyhow::bail!(
+                "timed out after {REPLY_DEADLINE:?} waiting for daemon response (received {} bytes so far); \
+                 the daemon may still be running the request",
+                buffer.len()
+            );
+        }
+        set_timeout_unless_peer_closed(stream.set_read_timeout(Some(remaining.min(READ_POLL))))?;
         match stream.read(&mut chunk) {
             Ok(0) if buffer.is_empty() => {
                 anyhow::bail!("daemon closed connection without response");
             }
             Ok(0) => break String::from_utf8_lossy(&buffer).into_owned(),
             Ok(read) => buffer.extend_from_slice(&chunk[..read]),
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(error)
                 if matches!(
                     error.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) =>
-            {
-                if Instant::now() >= overall_deadline {
-                    anyhow::bail!(
-                        "timed out after 120s waiting for daemon response (received {} bytes so far)",
-                        buffer.len()
-                    );
-                }
-            }
+                    std::io::ErrorKind::Interrupted
+                        | std::io::ErrorKind::WouldBlock
+                        | std::io::ErrorKind::TimedOut
+                ) => {}
             Err(error) => return Err(error.into()),
         }
     };
 
     Ok(serde_json::from_str(&response_line)?)
+}
+
+#[cfg(unix)]
+fn set_timeout_unless_peer_closed(result: std::io::Result<()>) -> std::io::Result<()> {
+    match result {
+        Err(error) if error.kind() == std::io::ErrorKind::InvalidInput => Ok(()),
+        other => other,
+    }
 }
 
 #[cfg(not(unix))]
@@ -295,8 +323,22 @@ pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Resul
 mod tests {
     use super::{
         current_daemon_metadata, socket_path_for_namespace, DaemonClientKind, DaemonRequest,
-        DaemonResponse, ToolObservationOrigin,
+        DaemonResponse, ToolObservationOrigin, DAEMON_OVERHEAD_ALLOWANCE, REPLY_DEADLINE,
     };
+    use std::time::Duration;
+
+    #[test]
+    fn the_reply_deadline_outlasts_every_tool_budget() {
+        let mut budgets_ms = vec![crate::tool_schema::TIMEOUT_MS_MAX];
+        #[cfg(feature = "script")]
+        budgets_ms.push(crate::script_tool::MAX_TIMEOUT_MS);
+        for budget_ms in budgets_ms {
+            assert!(
+                REPLY_DEADLINE >= Duration::from_millis(budget_ms) + DAEMON_OVERHEAD_ALLOWANCE,
+                "a tool may use {budget_ms} ms and the client gives up after {REPLY_DEADLINE:?}"
+            );
+        }
+    }
 
     #[test]
     fn socket_path_keeps_the_selected_namespace() {

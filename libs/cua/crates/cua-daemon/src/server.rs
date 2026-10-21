@@ -261,7 +261,7 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
     // The daemon hosts local public URLs itself.
     runtime.mark_share_host();
     let features = {
-        let mut f = vec!["env".into(), "fleet".into(), "sandboxes".into()];
+        let mut f = vec!["env".into(), "sandboxes".into()];
         if cfg!(feature = "spaces") {
             f.extend(["spaces".into(), "mcp".into()]);
         }
@@ -282,6 +282,11 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
     // (the Spaces apps' notch and previews, SDK scripts); idle otherwise.
     #[cfg(feature = "spaces")]
     let _thumbnails = runtime.spaces().spawn_thumbnail_refresh();
+    // This computer's processor, memory and disk, sampled every five
+    // minutes while nobody watches (the menu bar warning), and published
+    // into its relay machine record when it is one.
+    #[cfg(feature = "spaces")]
+    let _resources = runtime.spaces().spawn_resources_publisher();
     // A local Space that stops on its own (out of memory, a crash) is
     // recorded as stopped, and why, for every client.
     let _stop_watch = runtime.sandboxes().spawn_stop_watch();
@@ -640,9 +645,8 @@ impl Svc {
 
     /// The env connection and WebSocket headers a media bridge for `name`
     /// relays to: a registered Space (a `relay:` or legacy `space://…` id, or
-    /// a name the Spaces
-    /// registry resolves when no sandbox has it), with its gateway headers
-    /// (Fleet bearer, claim, env token), else a sandbox.
+    /// a name the Spaces registry resolves when no sandbox has it), with its
+    /// gateway headers (relay or env token), else a sandbox.
     async fn media_upstream(
         &self,
         name: &str,
@@ -692,7 +696,6 @@ fn create_request(r: pb::CreateSandboxRequest) -> std::result::Result<CreateRequ
         image: r.image,
         url: non_empty(r.url),
         token: non_empty(r.token),
-        pool: non_empty(r.pool),
         os: non_empty(r.os),
         cpus: Some(r.cpus),
         memory_mb: Some(r.memory_mb),
@@ -702,12 +705,6 @@ fn create_request(r: pb::CreateSandboxRequest) -> std::result::Result<CreateRequ
         ready_timeout: r.ready_timeout.as_ref().map(from_dur),
         env: r.env.into_iter().collect(),
         command: (!r.command.is_empty()).then_some(r.command),
-        fleet_runtime: non_empty(r.fleet_runtime),
-        fleet_replicas: Some(r.fleet_replicas),
-        fleet_ttl_seconds: Some(r.fleet_ttl_seconds),
-        fleet_warm: r.fleet_warm,
-        fleet_max_pool_size: Some(r.fleet_max_pool_size).filter(|m| *m > 0),
-        fleet_apply: r.fleet_apply,
         labels: r.labels.into_iter().collect(),
         sidecars: r
             .sidecars
@@ -758,24 +755,21 @@ impl SandboxService for Svc {
                 Some(cua_sandbox_core::Location::Local) => {
                     Some(cua_sandbox_core::ProviderKind::Local)
                 }
+                // Cua Cloud has ended: it has no sandboxes to list.
                 Some(cua_sandbox_core::Location::Cloud) => {
-                    Some(cua_sandbox_core::ProviderKind::Fleet)
+                    return ok(pb::ListSandboxesResponse::default());
                 }
                 Some(cua_sandbox_core::Location::Direct) => {
                     Some(cua_sandbox_core::ProviderKind::Direct)
                 }
                 _ => {
                     return Err(st(Error::InvalidArgument(format!(
-                        "location {l:?}: expected local, cloud or direct"
+                        "location {l:?}: expected local or direct"
                     ))));
                 }
             },
         };
-        let list = self
-            .rt()
-            .list_filtered(provider, req.include_cloud.unwrap_or(true))
-            .await
-            .map_err(st)?;
+        let list = self.rt().list_filtered(provider).await.map_err(st)?;
         ok(pb::ListSandboxesResponse {
             sandboxes: list.sandboxes.iter().map(info_to_pb).collect(),
             warnings: list.warnings,

@@ -44,7 +44,7 @@ struct NavTarget: Identifiable {
 
     @MainActor static func all(_ model: AppModel) -> [NavTarget] {
         [NavTarget(command: "nav.spaces", label: "Spaces", symbol: "square.grid.2x2"),
-         NavTarget(command: "nav.machines", label: "Machines", symbol: "server.rack"),
+         NavTarget(command: "nav.machines", label: "Computers", symbol: "server.rack"),
          NavTarget(command: "nav.agents", label: "Agents", symbol: "person.2"),
          NavTarget(command: "nav.keyvault", label: model.chrome.keyvaultTitle, symbol: "key")]
     }
@@ -211,7 +211,7 @@ struct CommandPaletteView: View {
         var out: [Command] = [
             Command(id: "space:new", entry: entry("Actions", chrome.newSpaceLabel, keywords: "create add"),
                     symbol: "plus", shortcut: "⌘N") { Task { await model.openNewSpace() } },
-            Command(id: "machine:add", entry: entry("Actions", "Add a machine", keywords: "connect computer address"),
+            Command(id: "machine:add", entry: entry("Actions", "Add a computer", keywords: "connect computer address"),
                     symbol: "plus.rectangle.on.rectangle") {
                 model.selection = .machines
                 Task { await model.openAddMachine() }
@@ -237,7 +237,7 @@ struct CommandPaletteView: View {
         let rows = appSidebar(spaces: model.spaces, query: "", selectedId: "").sections.flatMap(\.rows)
         for space in model.realSpaces {
             let row = rows.first { $0.id == space.id }
-            let hint = row?.statusText
+            let hint = row.map { CoreMessages.text($0.statusText) }
             let keywords = "\(row?.osIcon ?? "") \(hint ?? "")"
             out.append(Command(id: "space:open:\(space.id)", entry: entry("Spaces", "Open \(space.name)", hint: hint, keywords: keywords),
                                osIcon: row?.osIcon) { model.selection = .space(space.id) })

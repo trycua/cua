@@ -139,7 +139,7 @@ pub struct StreamTicket {
     /// Initial frame size `[width, height]`.
     pub frame_size: [u32; 2],
     /// Whether attaching needs extra headers ([`Space::websocket_headers`];
-    /// Fleet gateway). A browser cannot set them; use the daemon's media
+    /// a relay gateway). A browser cannot set them; use the daemon's media
     /// bridge then.
     pub needs_gateway_headers: bool,
     /// The whole `OpenMediaResponse` minus the ticket.
@@ -147,11 +147,17 @@ pub struct StreamTicket {
     pub raw: pb::OpenMediaResponse,
 }
 
-/// Memory and storage use (`SystemService.Metrics`). A size is the guest's
-/// own limit only when its `*_limited` flag says so (a VM, a container's
-/// cgroup limit); otherwise it is the host's.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+/// Processor, memory and storage use (`SystemService.Metrics`). A size is
+/// the guest's own limit only when its `*_limited` flag says so (a VM, a
+/// container's cgroup limit); otherwise it is the host's.
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize)]
 pub struct Usage {
+    /// Cores the guest sees.
+    pub cpu_count: u32,
+    /// Busy now, 0 to 100.
+    pub cpu_percent: f64,
+    /// 1-minute load average (0 on Windows).
+    pub load_average_1m: f64,
     /// Memory in use, bytes.
     pub memory_used: u64,
     /// Memory size, bytes.
@@ -169,6 +175,9 @@ pub struct Usage {
 impl From<pb::MetricsResponse> for Usage {
     fn from(m: pb::MetricsResponse) -> Self {
         Usage {
+            cpu_count: m.cpu_count,
+            cpu_percent: m.cpu_percent.clamp(0.0, 100.0),
+            load_average_1m: m.load_average_1m.max(0.0),
             memory_used: m.memory_used_bytes,
             memory_total: m.memory_total_bytes,
             memory_limited: m.memory_limited,
@@ -269,7 +278,7 @@ impl Space {
         Ok(cache.put(&key, image).map(|p| p.as_ref().clone()))
     }
 
-    /// Memory and storage use now (`SystemService.Metrics`).
+    /// Processor, memory and storage use now (`SystemService.Metrics`).
     pub async fn usage(&self) -> Result<Usage> {
         Ok(self.spacesd()?.metrics().await?.into())
     }

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { BridgeMode, DataAdapter } from "./adapter";
 import { BridgeContext, type BridgeContextValue } from "./BridgeProvider";
 import type { CoreClient } from "./core";
 import type { AgentSetupRow } from "./contracts/agents";
-import type { OnboardingMode, PermissionHint, SignInStart } from "./contracts/host";
+import type { MachinesView, OnboardingMode, PermissionHint, SignInStart } from "./contracts/host";
 import type {
   OnboardingAction,
   OnboardingCheckbox,
@@ -15,7 +15,9 @@ import type {
   OnboardingView,
   PermissionRow,
   SandboxImage,
+  OnboardingTodoId,
 } from "./contracts/onboarding";
+import { NO_EXPERIMENTS, type Experiments } from "./contracts/volume";
 import type { KvGrant, KvListView, KvSelection, VaultAction } from "./contracts/keyvault";
 import type { KvAccessCommand } from "./ops/keyvault-manage";
 import type { Space } from "./contracts/spaces";
@@ -77,6 +79,32 @@ function useResource<T>(name: ResourceName): Resource<T> & { refresh: () => Prom
 function useAction(): <R>(f: (s: BridgeStore) => Promise<R> | R) => Promise<R> {
   const { ready } = useBridgeContext();
   return (f) => ready.then(f);
+}
+
+/**
+ * Records a Spaces app feature (a fixed name such as `agents_page_open`) once
+ * each time `when` turns true, as the SwiftUI and Tauri apps do when the page
+ * or sheet opens. The host and the machine's telemetry switch decide whether
+ * anything is sent.
+ */
+export function useFeatureRecorded(feature: string, when = true): void {
+  // Not an error without a provider: a screen drawn on its own records nothing.
+  const ready = useContext(BridgeContext)?.ready;
+  useEffect(() => {
+    if (!when || !ready) return;
+    void ready.then((s) => s.telemetry.track([{ type: "feature", feature }]));
+  }, [ready, feature, when]);
+}
+
+/** Records one named feature now, for a click or a step rather than a page opening. */
+export function useFeatureRecorder(): (feature: string) => void {
+  const ready = useContext(BridgeContext)?.ready;
+  return useCallback(
+    (feature: string) => {
+      void ready?.then((s) => s.telemetry.track([{ type: "feature", feature }]));
+    },
+    [ready],
+  );
 }
 
 /** The host, the app core and the raw adapter. */
@@ -146,6 +174,16 @@ export function useSpaces(): SpacesHook {
 
 export interface MachinesHook extends Resource<Machine[]> {
   refresh(): Promise<void>;
+  /** The Machines page as every UI draws it (`machines_view::view`). */
+  view: MachinesView | null;
+  /** Renames a machine (`machines.rename`). */
+  rename(id: string, name: string): Promise<void>;
+  /** Removes a machine from the account (`machines.remove`). */
+  remove(machine: string | null, device: string | null): Promise<void>;
+  /** Asks the machines for their health (`machines.checkHealth`); their
+   * issues show in the next view. Never throws: a check that fails shows
+   * on that machine. */
+  checkHealth(): Promise<void>;
   /** How another machine is set up for access, in the core's words (the
    * "Add a machine" explainer). Setup itself runs on that machine. */
   setupGuide: HostSetupGuide;
@@ -153,9 +191,20 @@ export interface MachinesHook extends Resource<Machine[]> {
 
 /** Your machines (this one first), each with the Spaces it runs. */
 export function useMachines(): MachinesHook {
-  const { core } = useBridgeContext();
-  const setupGuide = useMemo(() => hostSetupGuide(core), [core]);
-  return { ...useResource<Machine[]>("machines"), setupGuide };
+  const ctx = useBridgeContext();
+  const setupGuide = useMemo(() => hostSetupGuide(ctx.core), [ctx.core]);
+  const run = useAction();
+  const r = useResource<Machine[]>("machines");
+  return {
+    ...r,
+    setupGuide,
+    view: ctx.store?.machinesView ?? null,
+    rename: (id, name) => run((s) => s.renameMachine(id, name)),
+    remove: (machine, device) => run((s) => s.removeMachine(machine, device)),
+    checkHealth: async () => {
+      await ctx.store?.checkMachinesHealth().catch(() => undefined);
+    },
+  };
 }
 
 export interface SettingsHook extends Resource<SettingsData> {
@@ -383,6 +432,9 @@ export interface OnboardingHook {
   /** Sends an action through the core. The usage-data switch and the Menu
    * bar choice also write the machine's setting (telemetry, `menuBar`). */
   send(action: OnboardingAction): void;
+  /** A fix on Done's to-do list: opens its page (Cua Volume turns its
+   * experiment on first); leaving the page comes back to Done. */
+  fixTodo(id: OnboardingTodoId): Promise<void>;
   /** Leaves the flow for now; it resumes on the same page. */
   skip(): void;
   /** Done: records the choice with the host and forgets the saved progress. */
@@ -469,6 +521,28 @@ export function useOnboarding(): OnboardingHook {
     if (missing.some((p) => !(p.id in shown))) setShown((cur) => ({ ...cur, ...Object.fromEntries(missing.map((p) => [p.id, p.label])) }));
   }, [hints, shown]);
 
+  // Done counts the coding agents set up before (from the CLI or
+  // Settings), not only the ones this run set up.
+  const onDone = state?.step === "done";
+  useEffect(() => {
+    if (!onDone || !adapter) return;
+    let live = true;
+    adapter.call("agents.setup", {}).then(
+      (rows) => {
+        const names = rows.filter((r) => r.installed && r.configured).map((r) => r.name);
+        const cur = readSavedOnboarding().state;
+        const known = Array.isArray(cur?.agents) ? (cur.agents as string[]) : [];
+        if (!live || !cur || names.every((n) => known.includes(n))) return;
+        writeSavedOnboarding({ ...readSavedOnboarding(), state: onboardingReduce(core, cur, { type: "agents-detected", configured: names }, ctx) });
+      },
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onDone, adapter, core]);
+
   const drawn = state ? onboardingView(core, state) : null;
   // No switch until the host has said what the setting is: an "on" it
   // could not write would not be true.
@@ -515,6 +589,17 @@ export function useOnboarding(): OnboardingHook {
     images: firstSpaceImages(core),
     launchAtLogin: mode === "electron" ? (view?.launchAtLogin ?? null) : null,
     send,
+    fixTodo: async (id) => {
+      const current = readSavedOnboarding().state;
+      const experiments = (current?.experiments ?? null) as Experiments | null;
+      // Cua Volume is an experiment today: "Turn on" turns it on first.
+      if (id === "volume" && adapter && !experiments?.cuaVolume) {
+        const now = { ...NO_EXPERIMENTS, ...(await adapter.call("experiments.get", {}).catch(() => ({}))), cuaVolume: true };
+        await adapter.call("experiments.set", { experiments: now });
+        send({ type: "experiments-loaded", experiments: now });
+      }
+      send({ type: "todo-chosen", id });
+    },
     skip: () => {
       const current = readSavedOnboarding().state;
       if (current) store?.trackOnboardingSkipped(current);

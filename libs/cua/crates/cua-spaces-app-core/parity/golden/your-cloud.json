@@ -26,7 +26,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB–6.8 GB initially; grows with use"
+          "Disk: 2.9 GB–6.9 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -37,7 +37,7 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.8 GB–6.8 GB initially; grows with use",
+          "Disk: 2.9 GB–6.9 GB initially; grows with use",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
@@ -71,7 +71,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB–6.8 GB initially; grows with use"
+          "Disk: 2.9 GB–6.9 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -82,7 +82,7 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.8 GB–6.8 GB initially; grows with use",
+          "Disk: 2.9 GB–6.9 GB initially; grows with use",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],
@@ -529,7 +529,7 @@
         "price": "About $0.04/hour",
         "resourceFacts": [
           "Kind: Container",
-          "Machine: t4g.medium",
+          "Computer: t4g.medium",
           "Deletes itself: After 2 hours"
         ],
         "step": 0,
@@ -570,7 +570,7 @@
         "price": "About $0.04/hour",
         "resourceFacts": [
           "Kind: Container",
-          "Machine: t4g.medium",
+          "Computer: t4g.medium",
           "Deletes itself: After 2 hours"
         ],
         "step": 1,
@@ -614,7 +614,7 @@
         "price": "About $0.04/hour",
         "resourceFacts": [
           "Kind: Container",
-          "Machine: t4g.medium",
+          "Computer: t4g.medium",
           "Deletes itself: After 2 hours"
         ],
         "step": 2,
@@ -655,7 +655,7 @@
         "price": "About $0.04/hour",
         "resourceFacts": [
           "Kind: Container",
-          "Machine: t4g.medium",
+          "Computer: t4g.medium",
           "Deletes itself: After 2 hours"
         ],
         "step": 3,
@@ -700,7 +700,7 @@
         "price": "About $0.04/hour",
         "resourceFacts": [
           "Kind: Container",
-          "Machine: t4g.medium",
+          "Computer: t4g.medium",
           "Deletes itself: After 2 hours"
         ],
         "step": 2,
@@ -745,7 +745,7 @@
         "price": "About $0.10/hour",
         "resourceFacts": [
           "Kind: Container",
-          "Machine: 2 CPU, 4 GiB",
+          "Computer: 2 CPU, 4 GiB",
           "Deletes itself: After 2 hours"
         ],
         "step": 2,
@@ -789,7 +789,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB–6.8 GB initially; grows with use"
+          "Disk: 2.9 GB–6.9 GB initially; grows with use"
         ],
         "step": 2,
         "summary": [
@@ -800,7 +800,7 @@
           "Architecture: ARM",
           "Runtime: Container on this Mac (gVisor when installed)",
           "Resources: 2 cores, 4 GB memory",
-          "Disk: 2.8 GB–6.8 GB initially; grows with use",
+          "Disk: 2.9 GB–6.9 GB initially; grows with use",
           "Name: space-000000002a",
           "When ready: Open the desktop"
         ],

@@ -9,6 +9,7 @@ import {
   useExperiments,
   useLoginItem,
   useMachines,
+  useRelayUsage,
   useRelayUsageView,
   useTrackPlanClick,
   useSession,
@@ -21,6 +22,7 @@ import {
 } from "@/bridge";
 import { writeSavedOnboarding } from "@/bridge/onboarding";
 import { SettingsGroup, SettingsRow } from "@/components/settings-group";
+import { AdvancedSection } from "@/components/settings/advanced-section";
 import { AgentsSettingsSection } from "@/components/settings/agents-section";
 import { CoreSettingsRow, CoreSettingsSection } from "@/components/settings/core-section";
 import { Button } from "@/components/ui/button";
@@ -44,7 +46,7 @@ const COMMAND_LABEL: Record<KeybindingCommand, string> = {
   "commandPalette.toggle": "Open command palette",
   "sidebar.toggle": "Show or hide sidebar",
   "nav.spaces": "Go to Spaces",
-  "nav.machines": "Go to Machines",
+  "nav.machines": "Go to Computers",
   "nav.agents": "Go to Agents",
   "nav.keyvault": "Go to Keyvault",
   "nav.settings": "Open Settings",
@@ -64,7 +66,9 @@ const fail = toastError;
  * Keyvault, AI agents), with this UI's own rows (appearance, keyboard shortcuts);
  * without the core, the same settings drawn by hand. */
 function SettingsPage() {
-  const { data: settings } = useSettings();
+  const { data: settings, isLoading } = useSettings();
+  // Not the hand-drawn fallback while the host's answer is still on its way: it would be replaced by the core's page, and everything would move.
+  if (isLoading && !settings) return null;
   return settings?.page ? <CoreGeneralPage page={settings.page} /> : <FallbackSettingsPage />;
 }
 
@@ -168,6 +172,8 @@ function CoreGeneralPage({ page }: { page: CorePage }) {
           <SettingsRow key={b.command} label={COMMAND_LABEL[b.command]} control={<Shortcut spec={b.key} />} />
         ))}
       </SettingsGroup>
+
+      <AdvancedSection />
     </>
   );
 }
@@ -186,9 +192,30 @@ function GlobalShortcutRow({ shortcut }: { shortcut: GlobalShortcut | null | und
   );
 }
 
-/** The plan and the relay allowance this month (the core's words), where the host reads it. */
+/** One bar of the usage meter: `used` of `limit` (no bar without a limit). */
+function UsageMeter({ label, used, limit }: { label: string; used: number; limit: number | null }) {
+  if (!limit || limit <= 0) return null;
+  const share = Math.min(1, used / limit);
+  return (
+    <div
+      role="meter"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={limit}
+      aria-valuenow={Math.min(used, limit)}
+      data-usage-meter={label}
+      data-full={used >= limit ? "" : undefined}
+      className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
+    >
+      <div className={used >= limit ? "h-full bg-destructive" : "h-full bg-brand-strong"} style={{ width: `${Math.round(share * 100)}%` }} />
+    </div>
+  );
+}
+
+/** The plan and remote use this month (the core's words), where the host reads it. */
 function RelayUsageRow() {
   const view = useRelayUsageView();
+  const usage = useRelayUsage();
   const { openExternal } = useSession();
   const trackClick = useTrackPlanClick();
   if (!view) return null;
@@ -201,6 +228,12 @@ function RelayUsageRow() {
     <>
       <div data-relay-usage="">
         <SettingsRow label={view.label} description={view.line} control={<span className="text-[13px] text-muted-foreground">{view.plan}</span>} />
+        {usage ? (
+          <div className="flex flex-col gap-2 px-4 pb-3">
+            <UsageMeter label="Live sessions" used={usage.liveSessions} limit={usage.liveSessionsLimit} />
+            <UsageMeter label="Remote hours" used={usage.hoursUsed} limit={usage.hoursLimit} />
+          </div>
+        ) : null}
       </div>
       <div data-plan-card={card.plan} className="flex items-center gap-3 px-4 py-3">
         <div className="min-w-0 flex-1">
@@ -305,8 +338,8 @@ function FallbackSettingsPage() {
 
       <SettingsGroup title="Privacy">
         <SettingsRow
-          label="Share anonymous usage data"
-          description="Features used, sandbox types, durations and error categories. Never paths, names, prompts, screen content or Keyvault items."
+          label="Share usage data to help improve Cua"
+          description="Which features you use and when something goes wrong. Linked to your account through a random ID while you're signed in. Never your files, what you type or your screen."
           htmlFor="telemetry"
           control={
             <Switch

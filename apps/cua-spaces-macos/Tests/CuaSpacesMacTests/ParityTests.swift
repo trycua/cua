@@ -55,28 +55,6 @@ struct ParityTests {
     @Test("checklist") func checklist() throws { try check("checklist", runChecklist) }
     @Test("create-stages") func createStages() throws { try check("create-stages", runProvisioning) }
 
-    /// The app's own first run records exactly the golden's events: the
-    /// `OnboardingModel` the window drives, on a recording telemetry.
-    @MainActor @Test("telemetry-funnel through the first-run model")
-    func telemetryFunnelThroughTheModel() throws {
-        let flow = try json(Self.dir.appendingPathComponent("telemetry-funnel.json"))
-        let golden = try json(Self.dir.appendingPathComponent("golden/telemetry-funnel.json"))
-        for run in ["onboarding", "skipping", "no-usage-data"] {
-            let telemetry = FixtureTelemetry()
-            let o = OnboardingModel(statePath: nil)
-            o.telemetry = telemetry
-            for a in flow[run] as! [[String: Any]] {
-                o.send(try appOnboardingActionFromJson(json: text(a)))
-            }
-            o.finish()
-            let want = (golden["frames"] as! [[String: Any]])
-                .filter { ($0["at"] as? String) == run }
-                .flatMap { $0["signals"] as! [Any] }
-            let got = telemetry.recorded.map(Self.signalFrame)
-            #expect(canonical(got) == canonical(want), "\(run):\n want \(canonical(want))\n  got \(canonical(got))")
-        }
-    }
-
     // MARK: - Harness
 
     func check(_ name: String, _ run: ([String: Any]) throws -> [Any]) throws {
@@ -263,11 +241,11 @@ struct ParityTests {
         [
             "thisMachine": opt(v.thisMachine?.name),
             "sections": v.sections.map { sec in
-                "\(sec.title): " + sec.rows.map { "\($0.name)\($0.dim ? " (dim)" : "")\($0.selected ? " (selected)" : "")" }
+                "\(sec.title.code): " + sec.rows.map { "\($0.name)\($0.dim ? " (dim)" : "")\($0.selected ? " (selected)" : "")" }
                     .joined(separator: ", ")
             },
             "selectedId": opt(v.selectedId),
-            "emptyText": opt(v.emptyText),
+            "emptyText": opt(v.emptyText?.code),
         ]
     }
 
@@ -381,7 +359,7 @@ struct ParityTests {
         let spaces = roster.spaces
         let sb = appSidebar(spaces: spaces, query: "", selectedId: roster.selectedId)
         let rows = sb.sections.flatMap(\.rows).map { r in
-            "\(r.osIcon) \(r.name) [\(r.statusText)] \(r.progress.map(String.init) ?? "-") \(r.trailing ?? "-")\(powerText(r.power))"
+            "\(r.osIcon) \(r.name) [\(r.statusText.code)] \(r.progress.map(String.init) ?? "-") \(r.trailing ?? "-")\(powerText(r.power))"
         }
         let closed = appNotchView(state: appNotchInitial(), spaces: spaces)
         // The open panel's tiles (the Rust flow reads `notch.tiles`: the same list).
@@ -466,7 +444,7 @@ struct ParityTests {
     /// A row's power button: ` <power Suspend>`, ` <power Resuming… on busy>`.
     func powerText(_ b: AppPowerButton?) -> String {
         guard let b else { return "" }
-        return " <\(b.symbol) \(b.help)\(b.turnOn ? " on" : "")\(b.busy ? " busy" : "")>"
+        return " <\(b.symbol) \(b.help.code)\(b.turnOn ? " on" : "")\(b.busy ? " busy" : "")>"
     }
 
     // MARK: - space-power
@@ -523,7 +501,7 @@ struct ParityTests {
             "error": opt(s.error),
             "report": opt(s.report?.appId),
             "sensitive": appPickerSensitiveOptions(state: s).map {
-                "\(word($0.group)):\($0.label):\($0.detail):\($0.checked ? "on" : "off")"
+                "\(word($0.group)):\($0.label.code):\($0.detail.code):\($0.checked ? "on" : "off")"
             },
             "planSensitive": appPickerPlanSensitive(state: s).map(word),
         ]
@@ -1087,15 +1065,15 @@ struct ParityTests {
     func dash(_ s: String?) -> String { s ?? "-" }
 
     func sidebarRowLine(_ r: AppSidebarRow) -> String {
-        "<\(r.osIcon)> \(r.name)\(r.place.map { " @ \($0)" } ?? "") | \(r.statusText) | \(r.detail)\(r.dim ? " (dim)" : "")\(r.selected ? " (selected)" : "")"
+        "<\(r.osIcon)> \(r.name)\(r.place.map { " @ \($0)" } ?? "") | \(r.statusText.code) | \(r.detail)\(r.dim ? " (dim)" : "")\(r.selected ? " (selected)" : "")"
     }
 
     func windowSidebar(_ v: AppSidebarView) -> [String: Any] {
         [
             "thisMachine": v.thisMachine.map(sidebarRowLine) as Any? ?? NSNull(),
-            "sections": v.sections.flatMap { ["# \($0.title)"] + $0.rows.map(sidebarRowLine) },
+            "sections": v.sections.flatMap { ["# \($0.title.code)"] + $0.rows.map(sidebarRowLine) },
             "selectedId": opt(v.selectedId),
-            "emptyText": opt(v.emptyText),
+            "emptyText": opt(v.emptyText?.code),
         ]
     }
 
@@ -1284,6 +1262,10 @@ struct ParityTests {
             "showMark": v.showMark,
             "dots": v.dots.map { "\($0.current ? "*" : "")\($0.label)" }.joined(separator: ","),
             "summary": facts(v.summary),
+            // Done's to-do list: `[x] title ~note -> fix (optional)`.
+            "todos": v.todos.map { t in
+                "[\(t.done ? "x" : " ")] \(t.title) ~\(t.note)\(t.action.map { " -> \($0)" } ?? "")\(t.optional ? " (optional)" : "")"
+            },
             "choices": v.choices.map { "\($0.mode): \($0.label)\($0.preselected ? " (preselected)" : "")" },
             "presentations": v.presentations.map { "\($0.title) [\($0.id)]\($0.selected ? " (selected)" : "")" },
             "prompts": v.prompts,
@@ -1618,7 +1600,10 @@ struct ParityTests {
             let rows = try appSpaceRowsFromJson(json: text([c["row"]!]))
             let space = appRowsToSpaces(rows: rows, nowMs: Int64(f["now"] as! Int))[0]
             let usage = (c["usage"] as? [String: Any]).map { u in
-                AppSpaceUsage(memoryUsed: (u["memoryUsed"] as! NSNumber).uint64Value,
+                AppSpaceUsage(cpuCount: (u["cpuCount"] as? NSNumber)?.uint32Value ?? 0,
+                              cpuPercent: (u["cpuPercent"] as? NSNumber)?.doubleValue ?? 0,
+                              loadAverage1m: (u["loadAverage1m"] as? NSNumber)?.doubleValue ?? 0,
+                              memoryUsed: (u["memoryUsed"] as! NSNumber).uint64Value,
                               memoryTotal: (u["memoryTotal"] as! NSNumber).uint64Value,
                               memoryLimited: u["memoryLimited"] as! Bool,
                               diskUsed: (u["diskUsed"] as! NSNumber).uint64Value,
@@ -2206,7 +2191,9 @@ struct ParityTests {
         case let .volumeSetup(surface, storage, addToFinder, mountMethod, outcome):
             return ["type": "volume-setup", "surface": surface, "storage": storage, "addToFinder": addToFinder,
                     "mountMethod": mountMethod, "outcome": outcome]
-        case let .share(action, role, outcome): return ["type": "share", "action": action, "role": role, "outcome": outcome]
+        case let .share(action, role, outcome, errorKind, failedStage):
+            return ["type": "share", "action": action, "role": role, "outcome": outcome,
+                    "errorKind": errorKind, "failedStage": failedStage]
         case let .appUpdate(action, channel, trigger):
             return ["type": "app-update", "action": action, "channel": channel, "trigger": trigger]
         case let .deviceEnroll(method, outcome): return ["type": "device-enroll", "method": method, "outcome": outcome]

@@ -271,13 +271,11 @@ describe.skipIf(!wasmBuilt)("with the wasm core", () => {
     const core = await testCore();
     const guide = hostSetupGuide(core);
     expect(guide.choices.map((c) => c.id)).toEqual(["desktop", "spare"]);
-    expect(guide.intro).toMatch(/no port forwarding/);
+    expect(guide.intro).toMatch(/no network setup/);
     expect(guide.form?.fields.map((f) => [f.id, f.advanced])).toEqual([
       ["name", false],
       ["profile", false],
       ["allow", false],
-      ["direct", true],
-      ["relay", true],
     ]);
     expect(hostSetupGuide(noCore)).toMatchObject({ form: null, choices: guide.choices, intro: guide.intro });
   });

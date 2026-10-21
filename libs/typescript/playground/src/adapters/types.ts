@@ -24,7 +24,6 @@ export interface PlaygroundAdapters {
 /**
  * Contract: Where chats are stored
  * - Local implementation: localStorage
- * - Cloud implementation: CUA API
  */
 export interface PersistenceAdapter {
   /** Load all chats for the current user/session */
@@ -69,7 +68,6 @@ export interface ComputerInfo {
 /**
  * Contract: What computers are available
  * - Local implementation: user-provided URLs, stored in localStorage
- * - Cloud implementation: CUA API for VMs
  */
 export interface ComputerAdapter {
   /** List all available computers */
@@ -113,7 +111,6 @@ export interface InferenceConfig {
 /**
  * Contract: How inference is configured
  * - Local implementation: user-provided API keys
- * - Cloud implementation: CUA-managed keys
  */
 export interface InferenceAdapter {
   /** Get inference configuration for a specific computer */
@@ -140,16 +137,4 @@ export interface LocalAdapterConfig {
     anthropic?: string;
     openai?: string;
   };
-}
-
-/**
- * Configuration for creating a cloud adapter.
- * Used when running the playground with CUA cloud infrastructure.
- */
-export interface CloudAdapterConfig {
-  /** CUA API key for authentication */
-  apiKey: string;
-
-  /** Base URL for the CUA API (defaults to https://api.cua.ai) */
-  baseUrl?: string;
 }

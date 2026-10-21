@@ -2,7 +2,7 @@
 
 _Published on June 10, 2025 by Francesco Bonacci_
 
-> Update, October 2026: Cua Cloud (Fleets) ended on 16 October 2026. This post describes it as it was. See [what changed](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended).
+> Update, October 2026: Cua Cloud (Fleets) ended on 18 October 2026. This post describes it as it was. See [what changed](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended).
 
 Yesterday, Apple announced their new [Containerization framework](https://github.com/apple/containerization) at WWDC. Since then, our Discord and X users have been asking what this means for Cua virtualization capabilities on Apple Silicon. We've been working in this space for months - from [Lume](https://github.com/trycua/cua/tree/main/libs/lume) to [Lumier](https://github.com/trycua/cua/tree/main/libs/lumier) to [Cua Cloud Sandbox](./introducing-cua-cloud-containers). Here's our take on Apple's announcement.
 

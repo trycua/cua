@@ -20,7 +20,7 @@ export const runAgentPrompt = (spaceName: string) => `Open the Cua Space "${spac
  * first (one button) and then shows the request. The agent's work shows up
  * on the Agents page.
  */
-export function RunAgentDialog({ open, space, onOpenChange, onManual }: { open: boolean; space: Space; onOpenChange: (open: boolean) => void; onManual?: () => void }) {
+export function RunAgentDialog({ open, space, onOpenChange, onManual, onConnected }: { open: boolean; space: Space; onOpenChange: (open: boolean) => void; onManual?: () => void; onConnected?: () => void }) {
   const { agentSetup, configureAgents } = useAgents();
   const navigate = useNavigate();
   const [rows, setRows] = useState<AgentSetupRow[] | null>(null);
@@ -50,11 +50,15 @@ export function RunAgentDialog({ open, space, onOpenChange, onManual }: { open: 
   const setUp = () => {
     setBusy(true);
     configureAgents()
-      .then(setRows)
+      .then((r) => {
+        setRows(r);
+        if (r.some((x) => x.installed && x.configured)) onConnected?.();
+      })
       .catch((e: unknown) => toast("Couldn't connect your agent", { description: e instanceof Error ? e.message : String(e) }))
       .finally(() => setBusy(false));
   };
   const copy = () => {
+    onConnected?.();
     void navigator.clipboard?.writeText(prompt).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);

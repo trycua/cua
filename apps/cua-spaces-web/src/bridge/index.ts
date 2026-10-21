@@ -13,6 +13,7 @@ export {
   useAgents,
   useBridge,
   useFeatureRecorded,
+  useFeatureRecorder,
   useKeyvault,
   useMachines,
   useOnboarding,

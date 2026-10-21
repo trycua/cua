@@ -69,7 +69,7 @@ runs:
       run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential cmake pkg-config libssl-dev
     # Dependencies and build products of a cold build (a source change).
     - if: steps.cache.outputs.cache-hit != 'true'
-      uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      uses: ./.github/actions/rust-cache
       with:
         workspaces: libs/cua -> target
         shared-key: spaces-native-${{ inputs.label }}

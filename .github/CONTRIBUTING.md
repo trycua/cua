@@ -136,6 +136,27 @@ longer manage this package. Sandbox Apps and the other Python and npm packages
 also release through Release Please now; see
 [`.github/releases/README.md`](releases/README.md).
 
+## Run the Fast CI Checks Before You Push
+
+Most wasted CI rounds are drift, header, lockfile, formatting and clippy
+failures that take seconds to find locally. Run this before every push:
+
+```bash
+scripts/ci/prepush.sh              # checks only what differs from origin/main
+scripts/ci/prepush.sh --fast       # seconds: skip clippy and the Windows cfg check
+scripts/ci/prepush.sh --bindings   # also regenerate and compare the UniFFI bindings
+```
+
+It runs the SPDX header check, the lockfile check, `actionlint` for workflow
+changes, the image-reference checks, generated-docs drift, `cargo fmt` and
+`cargo clippy -D warnings` for the crates you changed, and a Windows `cargo
+xwin check` when `cargo-xwin` is installed. A check whose tool is missing is
+printed as SKIPPED, never as passed. On a memory-tight machine wrap the cargo
+commands: `CUA_BUILD_WRAPPER=~/projects/.cua-work/build-slot.sh scripts/ci/prepush.sh`.
+Which workflow a change triggers is listed in
+[`.github/workflows/README.md`](workflows/README.md); known flaky
+checks are in [`.github/workflows/FLAKY.md`](workflows/FLAKY.md).
+
 ## Preserve Contributor Authorship
 
 Keep the original author when external code or design ships in Cua. Merge the

@@ -28,6 +28,20 @@ on:
       - ".github/actions/cua-sandbox/**"
       - "tests/e2e/cua-sdk/python/test_docs_blocks.py"
       - ".github/workflows/ci-cua-contrib.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua/crates/cua-contrib/**"
+      - "libs/cua/crates/cua-sandbox-core/**"
+      - "libs/cua/crates/cua-daemon/**"
+      - "libs/cua/crates/cua-sdk/**"
+      - "libs/cua/crates/cua-cli/**"
+      - "libs/python/cua-sandbox/**"
+      - "libs/cua-bench/cua_bench/**"
+      - "docs/content/docs/cua-sdk/guides/local-runtimes.mdx"
+      - ".github/actions/cua-sandbox/**"
+      - "tests/e2e/cua-sdk/python/test_docs_blocks.py"
+      - ".github/workflows/ci-cua-contrib.yml"
   workflow_dispatch:
 
 permissions:
@@ -35,7 +49,7 @@ permissions:
 
 concurrency:
   group: ci-cua-contrib-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_NET_RETRY: "10"
@@ -63,7 +77,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
           key: cua-contrib
@@ -124,7 +138,7 @@ jobs:
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
           key: cua-contrib-e2e

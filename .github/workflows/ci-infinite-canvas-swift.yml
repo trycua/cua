@@ -17,6 +17,15 @@ on:
       - "libs/spaces-app-swift/**"
       - "libs/cua-driver/rust/crates/cursor-overlay/assets/**"
       - ".github/workflows/ci-infinite-canvas-swift.yml"
+  push:
+    branches: [main]
+    paths:
+      - "examples/infinite-canvas-swift/**"
+      - "libs/cua/**"
+      - "libs/spaces-sdk-swift/**"
+      - "libs/spaces-app-swift/**"
+      - "libs/cua-driver/rust/crates/cursor-overlay/assets/**"
+      - ".github/workflows/ci-infinite-canvas-swift.yml"
   workflow_dispatch:
 
 permissions:
@@ -24,7 +33,7 @@ permissions:
 
 concurrency:
   group: ci-infinite-canvas-swift-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_NET_RETRY: "10"
@@ -46,7 +55,7 @@ jobs:
         uses: ./.github/actions/setup-protoc
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
           key: infinite-canvas-swift

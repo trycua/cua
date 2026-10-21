@@ -55,8 +55,9 @@ pub struct UiaNode {
     pub automation_id: Option<String>,
     pub help_text: Option<String>,
     pub actions: Vec<String>,
-    /// Enabled state reported by UIA. `None` is reserved for fallback
-    /// backends that cannot establish it.
+    /// Effective enabled state: the UIA-reported state, forced false under a
+    /// disabled ancestor. `None` is reserved for fallback backends that
+    /// cannot establish it.
     pub enabled: Option<bool>,
     /// Toggle/selection state when the element exposes one of those patterns.
     pub selected: Option<bool>,
@@ -179,6 +180,20 @@ fn exact_menu_path_matches(nodes: &[UiaNode], path: &[String]) -> Vec<usize> {
         .collect()
 }
 
+fn menu_target_element(target: &UiaNode) -> Result<usize, &'static str> {
+    if target.enabled == Some(false) {
+        return Err("disabled");
+    }
+    if target.msaa_role.is_some() {
+        return Err("exposed only through MSAA, not UI Automation");
+    }
+    target
+        .retained_element
+        .as_ref()
+        .map(snapshot::RetainedElement::as_ptr)
+        .ok_or("exposes no actionable UI Automation element")
+}
+
 unsafe fn invoke_menu_element(element_ptr: usize, final_segment: bool) -> Result<(), String> {
     let element =
         std::mem::ManuallyDrop::new(IUIAutomationElement::from_raw(element_ptr as *mut _));
@@ -226,14 +241,9 @@ pub fn invoke_menu_path(hwnd: u64, path: &[String]) -> Result<(), String> {
             }
         };
         let target = &result.nodes[target_index];
-        let error = if target.enabled == Some(false) {
-            Some(format!("menu path segment {depth} is disabled"))
-        } else if target.msaa_role.is_some() {
-            Some(format!(
-                "menu path segment {depth} is exposed only through MSAA, not UI Automation"
-            ))
-        } else {
-            unsafe { invoke_menu_element(target.element_ptr, depth + 1 == path.len()) }.err()
+        let error = match menu_target_element(target) {
+            Ok(element) => unsafe { invoke_menu_element(element, depth + 1 == path.len()) }.err(),
+            Err(refusal) => Some(refusal.to_owned()),
         };
         drop(result);
         if let Some(error) = error {
@@ -1190,6 +1200,45 @@ fn filter_tree(markdown: &str, query: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn menu_node(enabled: Option<bool>, msaa_role: Option<i32>) -> UiaNode {
+        UiaNode {
+            element_index: None,
+            control_type: "Menu".to_owned(),
+            name: Some("File".to_owned()),
+            value: None,
+            automation_id: None,
+            help_text: None,
+            actions: Vec::new(),
+            enabled,
+            selected: None,
+            element_ptr: 0,
+            retained_element: None,
+            center_x: 0,
+            center_y: 0,
+            rect: None,
+            msaa_role,
+            depth: 0,
+            parent_element_index: None,
+            in_web_content: false,
+        }
+    }
+
+    #[test]
+    fn a_menu_target_without_a_retained_element_is_refused() {
+        assert_eq!(
+            menu_target_element(&menu_node(Some(true), None)),
+            Err("exposes no actionable UI Automation element")
+        );
+        assert_eq!(
+            menu_target_element(&menu_node(Some(false), None)),
+            Err("disabled")
+        );
+        assert_eq!(
+            menu_target_element(&menu_node(Some(true), Some(0x0c))),
+            Err("exposed only through MSAA, not UI Automation")
+        );
+    }
 
     fn star(child_count: usize) -> Vec<Vec<usize>> {
         let mut children = vec![Vec::new(); child_count + 1];

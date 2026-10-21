@@ -14,7 +14,7 @@ use cua_driver_core::action_record::ActionTransport;
 ///
 /// No-op when the overlay is disabled or `key` is empty (a direct platform
 /// call without lifecycle metadata); the render thread drops the command.
-fn pin_overlay_above(key: &str, hwnd: u64) {
+pub(crate) fn pin_overlay_above(key: &str, hwnd: u64) {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GA_ROOT};
     let root = unsafe { GetAncestor(HWND(hwnd as *mut _), GA_ROOT) };
@@ -36,7 +36,7 @@ fn pin_overlay_above(key: &str, hwnd: u64) {
 /// to the target window's centre, so the first keyboard action of a session
 /// is visible. Anonymous calls keep their existing behavior. Geometry and
 /// overlay failures are observational and never affect the input result.
-async fn position_keyboard_cursor(
+pub(crate) async fn position_keyboard_cursor(
     state: &ToolState,
     args: &Value,
     hwnd: u64,
@@ -103,7 +103,7 @@ fn keyboard_window_center(hwnd: u64) -> Option<(f64, f64)> {
 /// (wrapped in the UWP fg-steal bypass) and does not raise or activate the
 /// window. MSAA-walked elements are skipped (no ScrollItemPattern) and keep the
 /// existing failure.
-fn resolve_onscreen_point_with_scroll(
+pub(crate) fn resolve_onscreen_point_with_scroll(
     admitted: &Option<crate::uia::snapshot::RetainedElement>,
     hwnd: u64,
     idx: usize,
@@ -185,7 +185,7 @@ fn resolve_onscreen_point_with_scroll(
     })))
 }
 
-fn minimized_element_refusal(
+pub(crate) fn minimized_element_refusal(
     hwnd: u64,
     idx: usize,
     cx: i32,
@@ -245,7 +245,7 @@ fn tool_result_text(result: ToolResult) -> String {
 /// hook) we degrade to `GetWindowRect.top-left + (px, py)` — matches
 /// the capture fallback which also keeps the full PrintWindow bitmap
 /// without crop.
-fn bitmap_to_screen(hwnd: u64, px: i32, py: i32) -> (i32, i32) {
+pub(crate) fn bitmap_to_screen(hwnd: u64, px: i32, py: i32) -> (i32, i32) {
     use windows::Win32::Foundation::{HWND, RECT};
     use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
     use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
@@ -297,13 +297,13 @@ fn screen_to_bitmap(hwnd: u64, sx: i32, sy: i32) -> (i32, i32) {
 /// `key` is the session's cursor key (see [`resolve_cursor_key`]). An empty key
 /// is possible only for a direct platform call without lifecycle metadata; in
 /// that case every overlay operation short-circuits.
-async fn overlay_glide_to(key: &str, sx: f64, sy: f64) {
+pub(crate) async fn overlay_glide_to(key: &str, sx: f64, sy: f64) {
     overlay_glide_to_target(key, sx, sy, None).await;
 }
 
 /// [`overlay_glide_to`] with the targeted element's screen rect
 /// `[x, y, width, height]` (same space as `sx`/`sy`); `None` for pixel actions.
-async fn overlay_glide_to_target(key: &str, sx: f64, sy: f64, target: Option<[f64; 4]>) {
+pub(crate) async fn overlay_glide_to_target(key: &str, sx: f64, sy: f64, target: Option<[f64; 4]>) {
     if key.is_empty() {
         return;
     }
@@ -352,7 +352,7 @@ async fn overlay_glide_to_target(key: &str, sx: f64, sy: f64, target: Option<[f6
 /// `[x, y, width, height]`, in the same screen space as its cached `center`
 /// (and so as the glide point). `(dx, dy)` shifts it when the glide point
 /// moved off the cached center (scroll-into-view re-resolution).
-fn element_target_rect(
+pub(crate) fn element_target_rect(
     element: Option<&crate::uia::snapshot::RetainedElement>,
     (dx, dy): (i32, i32),
 ) -> Option<[f64; 4]> {
@@ -440,7 +440,7 @@ struct ExactPidWindowTargetGuard {
     inner: Box<dyn Tool>,
 }
 
-fn exact_window_ownership_result(
+pub(crate) fn exact_window_ownership_result(
     pid: u32,
     window_id: u64,
     owner_pid: Option<u32>,
@@ -578,7 +578,7 @@ pub(crate) fn resolve_cursor_key(args: &Value) -> String {
 /// Pure + arg-shape agnostic (works for both click and scroll args) so it's
 /// unit-testable without Win32. When this returns `false` but `x,y` are present
 /// with no pid/window_id, the caller returns a coordinate-scope error.
-fn is_windowless_desktop_action(args: &serde_json::Value) -> bool {
+pub(crate) fn is_windowless_desktop_action(args: &serde_json::Value) -> bool {
     if args.get("scope").and_then(Value::as_str) != Some("desktop") {
         return false;
     }
@@ -637,7 +637,7 @@ pub struct ToolState {
     pub snapshots: Arc<Snapshots>,
     pub cursor_registry: Arc<CursorRegistry>,
     pub config: Arc<RwLock<DriverConfig>>,
-    capture_bridge: Option<Arc<crate::capture_admission::WindowsCaptureBridge>>,
+    pub(crate) capture_bridge: Option<Arc<crate::capture_admission::WindowsCaptureBridge>>,
 }
 
 impl ToolState {
@@ -653,7 +653,7 @@ impl ToolState {
         })
     }
 
-    fn zoom_context(
+    pub(crate) fn zoom_context(
         &self,
         args: &Value,
         pid: u32,
@@ -667,7 +667,7 @@ impl ToolState {
     }
 }
 
-fn screenshot_scale(
+pub(crate) fn screenshot_scale(
     state: &ToolState,
     args: &Value,
     pid: u32,
@@ -1170,7 +1170,7 @@ fn build_element_entry(
 }
 
 pub struct GetWindowStateTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 
 static GWS_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -1872,7 +1872,7 @@ impl Tool for GetWindowStateTool {
 ///
 /// Args are returned trimmed; their internal quoting is preserved as-is so
 /// `--profile-directory="Profile 2"` survives.
-fn split_launchable_target(s: &str) -> (String, String) {
+pub(crate) fn split_launchable_target(s: &str) -> (String, String) {
     let trimmed = s.trim();
     if trimmed.is_empty() {
         return (String::new(), String::new());
@@ -1920,7 +1920,7 @@ fn first_unopened_shell_url_index(has_app_target: bool) -> usize {
 /// full paths (`"C:\...\msedge.exe"`), and round-tripped launch paths with
 /// trailing arguments (`"\"C:\...\chrome.exe\" --foo"` — the first token is
 /// matched via `split_launchable_target`).
-fn is_chromium_browser_target(target: &str) -> bool {
+pub(crate) fn is_chromium_browser_target(target: &str) -> bool {
     let (file, _) = split_launchable_target(target);
     let candidate = if file.is_empty() {
         target
@@ -2080,7 +2080,10 @@ fn should_restore_foreground_after_launch(shape: LaunchTargetShape) -> bool {
 /// than `HWND` directly) because `HWND` wraps `*mut c_void` which is
 /// `!Send` and would prevent this future from being scheduled on the
 /// multi-threaded tokio runtime.
-async fn restore_foreground_polling_best_effort(prior_foreground_addr: usize, spawned_pid: u32) {
+pub(crate) async fn restore_foreground_polling_best_effort(
+    prior_foreground_addr: usize,
+    spawned_pid: u32,
+) {
     use windows::Win32::Foundation::{CloseHandle, HWND};
     use windows::Win32::System::Threading::{
         OpenProcess, WaitForInputIdle, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
@@ -3300,7 +3303,7 @@ fn background_element_click_result(
 }
 
 pub struct ClickTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 
 static CLICK_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -4437,7 +4440,7 @@ mod background_element_click_record_tests;
 /// on the same pixel a px-click would. `Ok(())` on success; `Err(ToolResult)`
 /// short-circuits the caller. Mirrors macOS `tools::focus_by_pixel`.
 #[allow(clippy::too_many_arguments)]
-fn focus_by_pixel_click_args(
+pub(crate) fn focus_by_pixel_click_args(
     pid: u32,
     window_id: Option<u64>,
     x: f64,
@@ -4471,7 +4474,7 @@ fn focus_by_pixel_click_args(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn focus_by_pixel(
+pub(crate) async fn focus_by_pixel(
     state: &Arc<ToolState>,
     pid: u32,
     window_id: Option<u64>,
@@ -4512,7 +4515,7 @@ async fn focus_by_pixel(
 }
 
 pub struct TypeTextTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 
 fn wait_for_cached_element_keyboard_focus(
@@ -4540,7 +4543,7 @@ fn wait_for_cached_element_keyboard_focus(
 /// in that case a real click at the accessibility-derived center is the
 /// bounded fallback. Both routes require `CurrentHasKeyboardFocus` read-back
 /// before any keyboard input is allowed to leave the driver.
-fn focus_cached_element_for_foreground(
+pub(crate) fn focus_cached_element_for_foreground(
     admitted: &Option<crate::uia::snapshot::RetainedElement>,
     hwnd: u64,
     element_index: usize,
@@ -5433,7 +5436,7 @@ fn read_focused_value_uia(expect_pid: u32) -> Option<String> {
 // ── press_key ─────────────────────────────────────────────────────────────────
 
 pub struct PressKeyTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 static PRESS_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
@@ -5767,7 +5770,7 @@ fn is_modifier(k: &str) -> bool {
 }
 
 pub struct HotkeyTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 static HOTKEY_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
@@ -6145,7 +6148,7 @@ impl Tool for HotkeyTool {
 // ── set_value ─────────────────────────────────────────────────────────────────
 
 pub struct SetValueTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 
 static SET_VALUE_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -6451,7 +6454,7 @@ fn win32_combo_set_value_result(
 // ── scroll ────────────────────────────────────────────────────────────────────
 
 pub struct ScrollTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 static SCROLL_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
@@ -6864,7 +6867,7 @@ impl Tool for ScrollTool {
 /// `(sx, sy)` via SendInput with async foreground restore and return
 /// `Some(result)`. Returns `None` for non-Chromium targets so the caller
 /// proceeds to its normal PostMessage path.
-async fn chromium_click_short_circuit(
+pub(crate) async fn chromium_click_short_circuit(
     hwnd: u64,
     sx: i32,
     sy: i32,
@@ -6978,7 +6981,7 @@ fn winui3_uia_multi_invoke(
 ///
 /// Returns `None` for non-WinUI3 targets (caller falls through to its normal
 /// routing).
-async fn winui3_background_gesture(
+pub(crate) async fn winui3_background_gesture(
     admitted: &Option<crate::uia::snapshot::RetainedElement>,
     pid: u32,
     hwnd: u64,
@@ -7027,7 +7030,7 @@ async fn winui3_background_gesture(
 // ── double_click ──────────────────────────────────────────────────────────────
 
 pub struct DoubleClickTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 
 static DCLICK_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -7393,7 +7396,7 @@ impl Tool for DoubleClickTool {
 // ── right_click ───────────────────────────────────────────────────────────────
 
 pub struct RightClickTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 
 static RCLICK_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -7751,7 +7754,7 @@ impl Tool for RightClickTool {
 // ── drag ─────────────────────────────────────────────────────────────────────
 
 pub struct DragTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 
 static DRAG_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -8154,7 +8157,7 @@ impl Tool for DragTool {
 /// `SM_CXSCREEN` / `SM_CYSCREEN` already return physical pixels — the same
 /// coordinate space screenshots and pixel clicks use on Windows. Shared by
 /// `get_screen_size` and `get_desktop_state`.
-fn physical_screen_size() -> (i32, i32) {
+pub(crate) fn physical_screen_size() -> (i32, i32) {
     use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
     unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) }
 }
@@ -8207,7 +8210,7 @@ impl Tool for GetScreenSizeTool {
 /// `image_png` content part (or a written-out file path), a text summary line,
 /// and a `structuredContent` object.
 pub struct GetDesktopStateTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 static GDS_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
@@ -8403,7 +8406,7 @@ impl Tool for GetCursorPositionTool {
 // ── move_cursor ───────────────────────────────────────────────────────────────
 
 pub struct MoveCursorTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 
 static MCURSOR_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -8476,7 +8479,7 @@ impl Tool for MoveCursorTool {
 // ── set_agent_cursor_enabled ──────────────────────────────────────────────────
 
 pub struct SetAgentCursorEnabledV2Tool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 
 static CURSOR_ENABLED_V2_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -8561,7 +8564,7 @@ impl Tool for SetAgentCursorMotionV2Tool {
 }
 
 pub struct SetAgentCursorThemeTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 
 static CURSOR_THEME_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -8632,7 +8635,7 @@ impl Tool for SetAgentCursorThemeTool {
 }
 
 pub struct GetAgentCursorStateV2Tool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 
 static CURSOR_STATE_V2_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -8876,7 +8879,7 @@ if ($null -ne $rid) {{ Write-Output ([int]$rid) }}
 // ── get_config ────────────────────────────────────────────────────────────────
 
 pub struct GetConfigTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 static GCFG_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
@@ -8944,7 +8947,7 @@ fn with_cursor_motion_config_properties(mut schema: Value) -> Value {
 }
 
 pub struct SetConfigTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 static SCFG_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
@@ -9140,7 +9143,7 @@ impl Tool for GetAccessibilityTreeTool {
 // ── zoom ──────────────────────────────────────────────────────────────────────
 
 pub struct ZoomTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 static ZOOM_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
@@ -9288,7 +9291,7 @@ impl Tool for ZoomTool {
 // ── type_text_chars ───────────────────────────────────────────────────────────
 
 pub struct TypeTextCharsTool {
-    _state: Arc<ToolState>,
+    pub(crate) _state: Arc<ToolState>,
 }
 static TYPE_CHARS_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 

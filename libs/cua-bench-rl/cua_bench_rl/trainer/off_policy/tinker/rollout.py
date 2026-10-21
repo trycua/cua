@@ -14,10 +14,12 @@ from pathlib import Path
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 _RUN_ID_RE = re.compile(r"Run ID:\s+([a-f0-9-]{8,})")
 
-#: Grace period between SIGTERM and SIGKILL when ``run_timeout`` stops
-#: ``cb run``: SIGTERM cancels the batch so running variants release their
-#: sandboxes, then the process is killed if it still has not exited.
-_TERM_GRACE_S = 60.0
+#: Grace period between SIGTERM and SIGKILL when stopping ``cb run``:
+#: SIGTERM cancels the batch so running variants release their sandboxes.
+#: Must outlast cua-bench's bounded sandbox release (``TIME_TO_RELEASE_S``,
+#: 300 s) or the SIGKILL can land mid-release and leak the sandbox the
+#: cancel was freeing.
+_TERM_GRACE_S = 360.0
 
 #: Bound on the last ``communicate`` after the process group is killed: a
 #: descendant holding cb's pipes open would otherwise wait forever.
@@ -31,12 +33,47 @@ def _kill_process_group(proc: subprocess.Popen) -> None:
             os.killpg(proc.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+        except OSError:
+            proc.kill()
     else:
         proc.kill()
 
 
-def _get_run_output_dir(run_id: str) -> Path:
-    xdg_data = os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
+def _decode_output(data: str | bytes | None) -> str:
+    # ``TimeoutExpired.output`` is bytes even when the pipes are text mode.
+    if isinstance(data, bytes):
+        return data.decode("utf-8", errors="replace")
+    return data or ""
+
+
+def _stop(proc: subprocess.Popen) -> tuple[str, str]:
+    """SIGTERM cb alone (its cancel handler releases sandboxes), then
+    SIGKILL the whole process group, draining output under bounded waits.
+    Retried ``communicate`` calls return the output earlier calls already
+    accumulated, so nothing cb printed is lost on the way out."""
+    proc.terminate()
+    try:
+        return proc.communicate(timeout=_TERM_GRACE_S)
+    except subprocess.TimeoutExpired:
+        pass
+    _kill_process_group(proc)
+    try:
+        return proc.communicate(timeout=_KILL_GRACE_S)
+    except subprocess.TimeoutExpired as exc:
+        stdout = _decode_output(exc.output)
+        stderr = _decode_output(exc.stderr)
+    for stream in (proc.stdout, proc.stderr):
+        if stream is not None:
+            stream.close()
+    try:
+        proc.wait(timeout=_KILL_GRACE_S)
+    except subprocess.TimeoutExpired:
+        pass
+    return stdout, stderr
+
+
+def _get_run_output_dir(run_id: str, env: dict[str, str]) -> Path:
+    xdg_data = env.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
     return Path(xdg_data) / "cua-bench" / "runs" / run_id
 
 
@@ -103,7 +140,6 @@ def _run_single_rollout(
         env=env,
         start_new_session=True,
     )
-    stdout, stderr = "", ""
     timed_out = False
     try:
         stdout, stderr = proc.communicate(timeout=run_timeout)
@@ -113,19 +149,13 @@ def _run_single_rollout(
             f"[rollout] cb run exceeded {run_timeout}s; stopping it "
             f"(SIGTERM, SIGKILL after {_TERM_GRACE_S:.0f}s)"
         )
-        # SIGTERM to cb alone: its cancel handler releases the sandboxes.
-        proc.terminate()
-        try:
-            stdout, stderr = proc.communicate(timeout=_TERM_GRACE_S)
-        except subprocess.TimeoutExpired:
-            _kill_process_group(proc)
-            try:
-                stdout, stderr = proc.communicate(timeout=_KILL_GRACE_S)
-            except subprocess.TimeoutExpired:
-                for stream in (proc.stdout, proc.stderr):
-                    if stream is not None:
-                        stream.close()
-                proc.wait()
+        stdout, stderr = _stop(proc)
+    except BaseException:
+        # cb leads its own process group, so nothing else will signal it:
+        # a Ctrl-C or other exit must not orphan it with sandboxes running.
+        if proc.poll() is None:
+            _stop(proc)
+        raise
 
     combined_output = stdout + stderr
     run_id = _parse_run_id(combined_output)
@@ -135,24 +165,30 @@ def _run_single_rollout(
             "Could not parse run_id from cb output.\n" f"STDOUT:\n{stdout}\n" f"STDERR:\n{stderr}"
         )
 
-    run_dir = _get_run_output_dir(run_id)
+    run_dir = _get_run_output_dir(run_id, env)
 
     if timed_out or proc.returncode != 0:
-        # A stopped or failed cb leaves sessions that can never finish. Keep
-        # the run directory when variants already finished (cb run exits 1
-        # whenever any variant failed, so a non-zero status is routine); a
-        # missing or empty one means cb died before writing anything.
+        # A stopped or failed cb leaves sessions that can never finish. cb
+        # writes run.pid, run.log and the variant dirs before any variant
+        # finishes, so a non-empty dir alone cannot tell a crashed run from
+        # one with results: count result.json, the marker _finish writes per
+        # finished variant (cb run exits 1 when any variant failed, so a
+        # non-zero status is routine).
         reason = (
             "timed out and was stopped" if timed_out else f"exited with status {proc.returncode}"
         )
-        if run_dir.is_dir() and any(run_dir.iterdir()):
-            print(f"[rollout] cb run {run_id} {reason}; keeping finished variants")
+        finished = list(run_dir.glob("*/result.json"))
+        if finished:
+            print(
+                f"[rollout] cb run {run_id} {reason}; "
+                f"keeping {len(finished)} finished variant(s)"
+            )
             tail = stderr.strip()[-200:]
             if tail:
                 print(f"[rollout] cb stderr tail: {tail}")
             return run_id, run_dir
         raise RuntimeError(
-            f"cb run {run_id} {reason} and left no results in {run_dir}.\n"
+            f"cb run {run_id} {reason} and left no finished variants in {run_dir}.\n"
             f"STDERR (tail):\n{stderr.strip()[-500:]}"
         )
 

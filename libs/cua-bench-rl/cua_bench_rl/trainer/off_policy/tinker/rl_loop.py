@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import time
 from dataclasses import dataclass, field
@@ -263,6 +264,13 @@ def run(config: TrainingConfig) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _bounded_seconds(value: str) -> float:
+    seconds = float(value)
+    if not math.isfinite(seconds) or seconds < 0:
+        raise argparse.ArgumentTypeError("must be a finite number of seconds, 0 or more")
+    return seconds
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="Off-policy RL training loop using Tinker (GRPO-style).",
@@ -294,17 +302,19 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--variant-timeout",
-        type=float,
+        type=_bounded_seconds,
         default=None,
-        help="Bound on one variant's setup, agent and evaluation; forwarded "
-        "to cb run --variant-timeout (default: cb's own default)",
+        metavar="SECONDS",
+        help="Bound on one variant's setup, agent and evaluation, forwarded "
+        "to cb run --variant-timeout; unset uses cb's own default",
     )
     p.add_argument(
         "--run-timeout",
-        type=float,
+        type=_bounded_seconds,
         default=None,
+        metavar="SECONDS",
         help="Bound on the whole cb run subprocess (SIGTERM, then SIGKILL); "
-        "finished variants are kept (default: wait on cb indefinitely)",
+        "finished variants are kept; unset waits on cb indefinitely",
     )
     p.add_argument(
         "--offline-run-ids",

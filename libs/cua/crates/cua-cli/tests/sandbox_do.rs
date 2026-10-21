@@ -6,6 +6,7 @@ use common::*;
 use cua_daemon::fixtures;
 use cua_host::testing::FakeRelay;
 use serde_json::json;
+#[cfg(unix)]
 use std::time::Duration;
 
 async fn direct(h: &Home, url: &str, name: &str) {

@@ -3,7 +3,7 @@
   "libs/cua-driver": "0.38.0",
   "libs/lume": "0.6.1",
   "libs/python/cua-sandbox": "0.9.1",
-  "libs/cua": "0.6.0",
+  "libs/cua": "0.7.0",
   "libs/cua-spacesd": "0.7.0",
   "apps/cua-spaces-macos": "0.12.1",
   "libs/python/agent": "0.9.1",

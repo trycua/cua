@@ -2821,6 +2821,10 @@ unsafe extern "C" fn ignore_x_error(
 }
 
 fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
+    let cleanup = std::time::Instant::now() + crate::interaction::CLEANUP_CAP;
+    let nap = |wait: Duration| {
+        sleep(wait.min(cleanup.saturating_duration_since(std::time::Instant::now())))
+    };
     // Let the release/focus events from the drag settle before reading the
     // post-drag state, so we don't race the WM's own focus update.
     unsafe { x11::xlib::XSync(display, 0) };
@@ -2832,7 +2836,7 @@ fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
         if ewmh_active_window(display) == Some(prev) {
             let mut stable = 0;
             for _ in 0..4 {
-                sleep(Duration::from_millis(25));
+                nap(Duration::from_millis(25));
                 if ewmh_active_window(display) == Some(prev) {
                     stable += 1;
                 } else {
@@ -2868,9 +2872,11 @@ fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
         if own_dialog(ewmh_active_window(display)) {
             return;
         }
-        sleep(Duration::from_millis(300));
+        nap(Duration::from_millis(150));
         let mut stable = 0;
-        for attempt in 0..15 {
+        let mut attempt = 0;
+        while std::time::Instant::now() < cleanup {
+            attempt += 1;
             let now = ewmh_active_window(display);
             if now == Some(prev) {
                 stable += 1;
@@ -2888,7 +2894,7 @@ fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
                 // updates. Bounce the core focus onto the window the WM
                 // believes active so the activation produces a real focus
                 // transition the WM can observe.
-                if attempt >= 2 {
+                if attempt > 2 {
                     if let Some(now_win) = now {
                         unsafe {
                             let prev_handler = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
@@ -2901,12 +2907,12 @@ fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
                             x11::xlib::XSync(display, 0);
                             x11::xlib::XSetErrorHandler(prev_handler);
                         }
-                        sleep(Duration::from_millis(100));
+                        nap(Duration::from_millis(50));
                     }
                 }
                 ewmh_activate_window(display, prev, now.unwrap_or(0));
             }
-            sleep(Duration::from_millis(200));
+            nap(Duration::from_millis(50));
         }
         if stable == 0 {
             tracing::warn!("focus restore: WM did not re-activate 0x{prev:x}");

@@ -13,6 +13,11 @@ from pathlib import Path
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 _RUN_ID_RE = re.compile(r"Run ID:\s+([a-f0-9-]{8,})")
 
+#: Grace period between SIGTERM and SIGKILL when ``run_timeout`` stops
+#: ``cb run``: SIGTERM cancels the batch so running variants release their
+#: sandboxes, then the process is killed if it still has not exited.
+_TERM_GRACE_S = 60.0
+
 
 def _get_run_output_dir(run_id: str) -> Path:
     xdg_data = os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
@@ -47,6 +52,8 @@ def _run_single_rollout(
     *,
     timeout: int = 3600,
     poll_interval: int = 10,
+    variant_timeout: float | None = None,
+    run_timeout: float | None = None,
     extra_env: dict[str, str] | None = None,
 ) -> tuple[str, Path]:
     """Run a single ``cb run task`` invocation and block until it finishes."""
@@ -66,34 +73,56 @@ def _run_single_rollout(
         "--with",
         "libs/python/agent/agent",
     ]
+    if variant_timeout is not None:
+        cmd += ["--variant-timeout", str(variant_timeout)]
 
     print(f"[rollout] Launching: {' '.join(cmd)}")
-    proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+    timed_out = False
+    try:
+        stdout, stderr = proc.communicate(timeout=run_timeout)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        print(
+            f"[rollout] cb run exceeded {run_timeout}s; stopping it "
+            f"(SIGTERM, SIGKILL after {_TERM_GRACE_S:.0f}s)"
+        )
+        proc.terminate()
+        try:
+            stdout, stderr = proc.communicate(timeout=_TERM_GRACE_S)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            stdout, stderr = proc.communicate()
 
-    combined_output = proc.stdout + proc.stderr
+    combined_output = stdout + stderr
     run_id = _parse_run_id(combined_output)
 
     if run_id is None:
         raise RuntimeError(
-            "Could not parse run_id from cb output.\n"
-            f"STDOUT:\n{proc.stdout}\n"
-            f"STDERR:\n{proc.stderr}"
+            "Could not parse run_id from cb output.\n" f"STDOUT:\n{stdout}\n" f"STDERR:\n{stderr}"
         )
 
-    print(f"[rollout] Run {run_id} launched. Waiting for sessions to complete...")
-
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if _all_sessions_terminal(run_id):
-            break
-        time.sleep(poll_interval)
+    if timed_out or proc.returncode != 0:
+        # A stopped or failed cb leaves sessions that can never finish:
+        # keep the run directory so the variants that finished reach the
+        # trainer instead of polling dead sessions until `timeout`.
+        reason = (
+            "timed out and was stopped" if timed_out else f"exited with status {proc.returncode}"
+        )
+        print(f"[rollout] cb run {run_id} {reason}; keeping finished variants")
     else:
-        raise TimeoutError(
-            f"Run {run_id} did not complete within {timeout}s. "
-            "Consider increasing the timeout or checking for stuck containers."
-        )
-
-    print(f"[rollout] Run {run_id} complete.")
+        print(f"[rollout] Run {run_id} launched. Waiting for sessions to complete...")
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if _all_sessions_terminal(run_id):
+                break
+            time.sleep(poll_interval)
+        else:
+            raise TimeoutError(
+                f"Run {run_id} did not complete within {timeout}s. "
+                "Consider increasing the timeout or checking for stuck containers."
+            )
+        print(f"[rollout] Run {run_id} complete.")
 
     run_dir = _get_run_output_dir(run_id)
     if not run_dir.exists():
@@ -119,6 +148,8 @@ def run_rollouts(
     num_rollouts: int = 1,
     timeout: int = 3600,
     poll_interval: int = 10,
+    variant_timeout: float | None = None,
+    run_timeout: float | None = None,
     extra_env: dict[str, str] | None = None,
 ) -> list[tuple[str, Path]]:
     """Run cua-bench rollouts and block until all sessions finish."""
@@ -133,6 +164,8 @@ def run_rollouts(
             max_steps=max_steps,
             timeout=timeout,
             poll_interval=poll_interval,
+            variant_timeout=variant_timeout,
+            run_timeout=run_timeout,
             extra_env=extra_env,
         )
         results.append((run_id, run_dir))

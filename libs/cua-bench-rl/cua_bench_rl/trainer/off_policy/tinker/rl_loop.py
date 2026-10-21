@@ -61,6 +61,15 @@ class TrainingConfig:
     # --- Rollout subprocess environment ---
     rollout_env: dict[str, str] = field(default_factory=dict)
 
+    # --- Rollout bounds (online mode) ---
+    # Forwarded to `cb run --variant-timeout`: a bound on one variant's
+    # setup, agent and evaluation; None leaves cb's default.
+    variant_timeout: Optional[float] = None
+    # Bound on the whole `cb run` subprocess (SIGTERM, then SIGKILL after
+    # 60 s); the run directory is still returned so finished variants are
+    # kept. None waits on cb indefinitely.
+    run_timeout: Optional[float] = None
+
 
 # ---------------------------------------------------------------------------
 # Training loop
@@ -164,6 +173,8 @@ def run(config: TrainingConfig) -> None:
                 model=config.model,
                 max_steps=config.max_steps_per_episode,
                 num_rollouts=config.num_rollouts,
+                variant_timeout=config.variant_timeout,
+                run_timeout=config.run_timeout,
                 extra_env=config.rollout_env or None,
             )
             run_ids = [r[0] for r in rollout_results]

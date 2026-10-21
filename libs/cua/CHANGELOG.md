@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.7.0](https://github.com/trycua/cua/compare/cua-sdk-v0.6.0...cua-sdk-v0.7.0) (2026-10-21)
+
+
+### Features
+
+* **mesh:** the mesh is on by default for every client (CUA-1947) ([#5630](https://github.com/trycua/cua/issues/5630)) ([e5d09e4](https://github.com/trycua/cua/commit/e5d09e40291a080124da6469b3c7023e02e229fd))
+* **sdk:** cua sb exec -i streams a command's stdio into a Space (CUA-1949) ([#5629](https://github.com/trycua/cua/issues/5629)) ([cd50985](https://github.com/trycua/cua/commit/cd509859675ec2e16ad8509eb484f846302ef0bc))
+
+
+### Bug Fixes
+
+* **sdk:** gate the Unix-only exec -i signal test, format test_compile_lane (CUA-1949) ([#5666](https://github.com/trycua/cua/issues/5666)) ([7b590f5](https://github.com/trycua/cua/commit/7b590f5bc98340432cf9d4b5ba753fc9a4dbf09d))
+* **sdk:** scope the Duration import to the Unix-only exec -i test (CUA-1949) ([#5668](https://github.com/trycua/cua/issues/5668)) ([f8f1bc2](https://github.com/trycua/cua/commit/f8f1bc2ee9d4b7471867ca95d7227085e10c37a0))
+* **sdk:** unused variable in exec -i on Windows, format the e2e (CUA-1949) ([#5662](https://github.com/trycua/cua/issues/5662)) ([d86b5a3](https://github.com/trycua/cua/commit/d86b5a309d8951f531ad5ab181a75bd29b1bd149))
+* **telemetry:** Cua Cloud-ended creates report cloud_ended, not unsupported (CUA-1957) ([#5644](https://github.com/trycua/cua/issues/5644)) ([1516be7](https://github.com/trycua/cua/commit/1516be78c69c2924e779187d0c45804cb7f64ba1))
+* **vmm:** retry a container image pull when the network drops (CUA-1957) ([#5646](https://github.com/trycua/cua/issues/5646)) ([af9a819](https://github.com/trycua/cua/commit/af9a81994ac77404fc75c8a035a936176953a161))
+
 ## [0.6.0](https://github.com/trycua/cua/compare/cua-sdk-v0.5.0...cua-sdk-v0.6.0) (2026-10-20)
 
 

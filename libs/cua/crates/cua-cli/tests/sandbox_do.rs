@@ -6,6 +6,7 @@ use common::*;
 use cua_daemon::fixtures;
 use cua_host::testing::FakeRelay;
 use serde_json::json;
+use std::time::Duration;
 
 async fn direct(h: &Home, url: &str, name: &str) {
     direct_with(h, url, name, "t").await;
@@ -89,6 +90,38 @@ async fn sandbox_lifecycle_exec_and_compat_aliases() {
         .run(&["--embedded", "sb", "exec", "dev", "--", "fail", "4"])
         .await;
     assert_eq!(o.code, 4);
+    // -i streams the argv (no shell join), with no 120 s cap, and keeps the
+    // command's own exit code.
+    let o = h
+        .run(&[
+            "--embedded",
+            "sb",
+            "exec",
+            "-i",
+            "dev",
+            "--",
+            "echo",
+            "streamed",
+        ])
+        .await;
+    o.ok();
+    assert_eq!(o.stdout, "streamed\n");
+    let o = h
+        .run(&[
+            "--embedded",
+            "sb",
+            "exec",
+            "-i",
+            "--timeout",
+            "30",
+            "dev",
+            "--",
+            "fail",
+            "4",
+        ])
+        .await;
+    assert_eq!(o.code, 4, "{o:?}");
+    exec_stream_round_trip(&h, &env).await;
     let o = h
         .run(&["--embedded", "--json", "sb", "exec", "dev", "echo hi"])
         .await;
@@ -1002,4 +1035,63 @@ async fn sandbox_info_connection_prints_the_spacesd_url_and_token() {
         o.ok();
         assert!(!o.stdout.contains("s3cret-token"), "{o:?}");
     }
+}
+
+/// `sb exec -i` against the real binary: stdin round trip, signal
+/// forwarding, and the guest process dying with a killed client.
+async fn exec_stream_round_trip(h: &Home, env: &fixtures::SpacesdFixture) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut child = h.spawn(&["--embedded", "sb", "exec", "-i", "dev", "--", "cat"]);
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+    stdin.write_all(b"ping\n").await.unwrap();
+    let mut buf = [0u8; 5];
+    tokio::time::timeout(Duration::from_secs(30), stdout.read_exact(&mut buf))
+        .await
+        .expect("echo in time")
+        .unwrap();
+    assert_eq!(&buf, b"ping\n");
+    // EOF on stdin ends cat, and the exit code comes back.
+    drop(stdin);
+    let status = tokio::time::timeout(Duration::from_secs(30), child.wait())
+        .await
+        .expect("exit in time")
+        .unwrap();
+    assert_eq!(status.code(), Some(0));
+
+    // SIGTERM to the client is forwarded: 128 + 15.
+    let mut child = h.spawn(&["--embedded", "sb", "exec", "-i", "dev", "--", "cat"]);
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+    stdin.write_all(b"x").await.unwrap();
+    stdout.read_exact(&mut [0u8; 1]).await.unwrap();
+    let n_before = env.mock.state.signals().len();
+    // SAFETY: signalling our own child.
+    unsafe { libc::kill(child.id().unwrap() as i32, libc::SIGTERM) };
+    let status = tokio::time::timeout(Duration::from_secs(30), child.wait())
+        .await
+        .expect("exit in time")
+        .unwrap();
+    assert_eq!(status.code(), Some(128 + 15));
+    assert_eq!(env.mock.state.signals().len(), n_before + 1);
+
+    // A SIGKILLed client cannot forward anything: the guest process still
+    // dies, because the stream carried kill_on_disconnect.
+    let mut child = h.spawn(&["--embedded", "sb", "exec", "-i", "dev", "--", "cat"]);
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+    stdin.write_all(b"y").await.unwrap();
+    stdout.read_exact(&mut [0u8; 1]).await.unwrap();
+    let pid = env.mock.state.last_pid().unwrap();
+    assert!(env.mock.state.process_end(pid).is_none());
+    child.kill().await.unwrap();
+    let mut ended = None;
+    for _ in 0..100 {
+        ended = env.mock.state.process_end(pid);
+        if ended.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(ended.is_some(), "guest process survived its client");
 }

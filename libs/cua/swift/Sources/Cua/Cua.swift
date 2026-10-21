@@ -28,7 +28,7 @@ public extension SpacesdCommand {
     init(_ program: String, _ args: [String] = [], stdin: Bool = false) {
         self.init(
             program: program, args: args, env: [:], cwd: nil, user: nil,
-            timeoutMs: nil, tag: nil, stdin: stdin, pty: nil
+            timeoutMs: nil, tag: nil, stdin: stdin, pty: nil, killOnDisconnect: false
         )
     }
 }

@@ -428,8 +428,12 @@ pub enum SandboxCmd {
     /// runs it via SSH (`lume ssh`).
     #[command(after_help = "Examples:
   cua sb exec dev uname -a
-  cua sb exec dev 'ls /tmp | wc -l'")]
+  cua sb exec dev 'ls /tmp | wc -l'
+  # A long-lived stdio stream, like `docker exec -i`: argv, not a shell line
+  cua sb exec -i dev -- bash -c 'wc -c'")]
     Exec {
+        #[command(flatten)]
+        flags: shell::ExecFlags,
         #[command(flatten)]
         at: Narrow,
         /// Sandbox name or ref (`local:NAME`).
@@ -1863,10 +1867,20 @@ pub async fn run(
             }
             return Ok(0);
         }
-        SandboxCmd::Exec { name, command, at } => {
+        SandboxCmd::Exec {
+            flags,
+            name,
+            command,
+            at,
+        } => {
             let name = at.apply(&name)?;
             let env = match env_of(cua, &name).await {
                 Err(CuaError::SpacesdNotAvailable(m)) => match agentless(cua, &name).await? {
+                    Some(_) if flags.any() => {
+                        return Err(CuaError::Unsupported(format!(
+                            "-i, --user, --cwd and --timeout need cua-spacesd in {name}"
+                        )));
+                    }
                     Some(sb) => {
                         return exec_agentless(&sb, &name, &command.join(" "), json_global, out)
                             .await;
@@ -1875,7 +1889,24 @@ pub async fn run(
                 },
                 other => other?,
             };
-            let o = env.sh(command.join(" "), Some(120_000)).await?;
+            if flags.stdin {
+                return shell::stream(
+                    &env,
+                    &command,
+                    flags.opts(None),
+                    tokio::io::stdin(),
+                    shell::os_signals(),
+                    out,
+                    &mut std::io::stderr(),
+                )
+                .await;
+            }
+            let o = env
+                .run(shell::with_opts(
+                    shell::command_of(&sh_argv(&command.join(" "))),
+                    flags.opts(Some(120_000)),
+                ))
+                .await?;
             let code = exit_code(&o);
             if json_global {
                 line(

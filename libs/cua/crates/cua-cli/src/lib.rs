@@ -575,8 +575,12 @@ enum SpacesdCmd {
     },
     /// Run a command (argv, no shell).
     #[command(after_help = "Examples:
-  cua spacesd exec http://127.0.0.1:3211 uname -a")]
+  cua spacesd exec http://127.0.0.1:3211 uname -a
+  # A long-lived stdio stream (stdin forwarded, no time limit, killed with this command)
+  cua spacesd exec -i http://127.0.0.1:3211 cat")]
     Exec {
+        #[command(flatten)]
+        flags: shell::ExecFlags,
         /// spacesd URL (`http://host:port`).
         url: String,
         /// spacesd token.
@@ -1795,12 +1799,25 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                 }
             }
             SpacesdCmd::Exec {
+                flags,
                 url,
                 token,
                 command,
             } => {
                 let env = env_at(&cua, &url, token).await?;
-                return shell::exec(&env, &command, out).await;
+                if flags.stdin {
+                    return shell::stream(
+                        &env,
+                        &command,
+                        flags.opts(None),
+                        tokio::io::stdin(),
+                        shell::os_signals(),
+                        out,
+                        &mut std::io::stderr(),
+                    )
+                    .await;
+                }
+                return shell::exec_with(&env, &command, flags.opts(None), out).await;
             }
             SpacesdCmd::Cp {
                 url,
@@ -2909,6 +2926,26 @@ mod tests {
         .await;
         assert_eq!(r.unwrap(), 0);
         assert_eq!(out, "hi\n");
+        // The streaming form parses with the flags that go with it (it runs
+        // against the real binary in tests/sandbox_do.rs: it reads stdin).
+        for args in [
+            &[
+                "cua", "spacesd", "exec", "-i", "--user", "u", "--cwd", "/w", "URL", "cat",
+            ][..],
+            &[
+                "cua",
+                "sandbox",
+                "exec",
+                "-i",
+                "--timeout",
+                "0",
+                "dev",
+                "--",
+                "cat",
+            ],
+        ] {
+            assert!(Cli::try_parse_from(args).is_ok(), "{args:?}");
+        }
         let (r, _) = cli(&[
             "--embedded",
             "spacesd",

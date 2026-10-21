@@ -1301,7 +1301,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spacesdprocess_resize() != 46607:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_spacesdprocess_signal() != 61925:
+    if lib.uniffi_cua_sdk_checksum_method_spacesdprocess_signal() != 44588:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spacesdprocess_tag() != 24315:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -4129,6 +4129,7 @@ _UniffiLib.uniffi_cua_sdk_fn_method_spacesdprocess_resize.restype = ctypes.c_uin
 _UniffiLib.uniffi_cua_sdk_fn_method_spacesdprocess_signal.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
+    ctypes.c_int8,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_spacesdprocess_signal.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_spacesdprocess_tag.argtypes = (
@@ -19971,7 +19972,7 @@ class SpacesdCommand:
     """
     A command to run in the guest.
 """
-    def __init__(self, *, program:str, args:typing.List[str] = _DEFAULT, env:dict[str, str] = _DEFAULT, cwd:typing.Optional[str] = _DEFAULT, user:typing.Optional[str] = _DEFAULT, timeout_ms:typing.Optional[int] = _DEFAULT, tag:typing.Optional[str] = _DEFAULT, stdin:bool = False, pty:typing.Optional[PtySize] = _DEFAULT):
+    def __init__(self, *, program:str, args:typing.List[str] = _DEFAULT, env:dict[str, str] = _DEFAULT, cwd:typing.Optional[str] = _DEFAULT, user:typing.Optional[str] = _DEFAULT, timeout_ms:typing.Optional[int] = _DEFAULT, tag:typing.Optional[str] = _DEFAULT, stdin:bool = False, pty:typing.Optional[PtySize] = _DEFAULT, kill_on_disconnect:bool = False):
         self.program = program
         if args is _DEFAULT:
             self.args = []
@@ -20002,12 +20003,13 @@ class SpacesdCommand:
             self.pty = None
         else:
             self.pty = pty
+        self.kill_on_disconnect = kill_on_disconnect
 
 
 
 
     def __str__(self):
-        return "SpacesdCommand(program={}, args={}, env={}, cwd={}, user={}, timeout_ms={}, tag={}, stdin={}, pty={})".format(self.program, self.args, self.env, self.cwd, self.user, self.timeout_ms, self.tag, self.stdin, self.pty)
+        return "SpacesdCommand(program={}, args={}, env={}, cwd={}, user={}, timeout_ms={}, tag={}, stdin={}, pty={}, kill_on_disconnect={})".format(self.program, self.args, self.env, self.cwd, self.user, self.timeout_ms, self.tag, self.stdin, self.pty, self.kill_on_disconnect)
     def __eq__(self, other):
         if self.program != other.program:
             return False
@@ -20027,6 +20029,8 @@ class SpacesdCommand:
             return False
         if self.pty != other.pty:
             return False
+        if self.kill_on_disconnect != other.kill_on_disconnect:
+            return False
         return True
 
 class _UniffiFfiConverterTypeSpacesdCommand(_UniffiConverterRustBuffer):
@@ -20042,6 +20046,7 @@ class _UniffiFfiConverterTypeSpacesdCommand(_UniffiConverterRustBuffer):
             tag=_UniffiFfiConverterOptionalString.read(buf),
             stdin=_UniffiFfiConverterBoolean.read(buf),
             pty=_UniffiFfiConverterOptionalTypePtySize.read(buf),
+            kill_on_disconnect=_UniffiFfiConverterBoolean.read(buf),
         )
 
     @staticmethod
@@ -20055,6 +20060,7 @@ class _UniffiFfiConverterTypeSpacesdCommand(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.check_lower(value.tag)
         _UniffiFfiConverterBoolean.check_lower(value.stdin)
         _UniffiFfiConverterOptionalTypePtySize.check_lower(value.pty)
+        _UniffiFfiConverterBoolean.check_lower(value.kill_on_disconnect)
 
     @staticmethod
     def write(value, buf):
@@ -20067,6 +20073,7 @@ class _UniffiFfiConverterTypeSpacesdCommand(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.write(value.tag, buf)
         _UniffiFfiConverterBoolean.write(value.stdin, buf)
         _UniffiFfiConverterOptionalTypePtySize.write(value.pty, buf)
+        _UniffiFfiConverterBoolean.write(value.kill_on_disconnect, buf)
 
 @dataclass
 class SpacesdHttpHeader:
@@ -25567,9 +25574,11 @@ class SpacesdProcessProtocol(typing.Protocol):
         Resizes the PTY.
 """
         raise NotImplementedError
-    async def signal(self, signal: str) -> None:
+    async def signal(self, signal: str,process_group: bool = False) -> None:
         """
-        Sends a signal by name (`term`, `kill`, `SIGINT`, ...).
+        Sends a signal by name (`term`, `kill`, `SIGINT`, ...). With
+        `process_group`, to the process's whole group (everything it started),
+        as a terminal's Ctrl-C does; by default to the process alone.
 """
         raise NotImplementedError
     def tag(self, ) -> typing.Optional[str]:
@@ -25735,15 +25744,20 @@ class SpacesdProcess(SpacesdProcessProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
-    async def signal(self, signal: str) -> None:
+    async def signal(self, signal: str,process_group: bool = False) -> None:
         """
-        Sends a signal by name (`term`, `kill`, `SIGINT`, ...).
+        Sends a signal by name (`term`, `kill`, `SIGINT`, ...). With
+        `process_group`, to the process's whole group (everything it started),
+        as a terminal's Ctrl-C does; by default to the process alone.
 """
 
         _UniffiFfiConverterString.check_lower(signal)
+
+        _UniffiFfiConverterBoolean.check_lower(process_group)
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
             _UniffiFfiConverterString.lower(signal),
+            _UniffiFfiConverterBoolean.lower(process_group),
         )
         _uniffi_lift_return = lambda val: None
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError

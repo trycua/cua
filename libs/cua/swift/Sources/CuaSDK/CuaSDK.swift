@@ -12776,9 +12776,11 @@ public protocol SpacesdProcessProtocol: AnyObject, Sendable {
     func resize(cols: UInt32, rows: UInt32) async throws
 
     /**
-     * Sends a signal by name (`term`, `kill`, `SIGINT`, ...).
+     * Sends a signal by name (`term`, `kill`, `SIGINT`, ...). With
+     * `process_group`, to the process's whole group (everything it started),
+     * as a terminal's Ctrl-C does; by default to the process alone.
      */
-    func signal(signal: String) async throws
+    func signal(signal: String, processGroup: Bool) async throws
 
     /**
      * Tag, when set.
@@ -12972,15 +12974,17 @@ open func resize(cols: UInt32, rows: UInt32)async throws   {
 }
 
     /**
-     * Sends a signal by name (`term`, `kill`, `SIGINT`, ...).
+     * Sends a signal by name (`term`, `kill`, `SIGINT`, ...). With
+     * `process_group`, to the process's whole group (everything it started),
+     * as a terminal's Ctrl-C does; by default to the process alone.
      */
-open func signal(signal: String)async throws   {
+open func signal(signal: String, processGroup: Bool = false)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_cua_sdk_fn_method_spacesdprocess_signal(
                     self.uniffiCloneHandle(),
-                    FfiConverterString.lower(signal)
+                    FfiConverterString.lower(signal),FfiConverterBool.lower(processGroup)
                 )
             },
             pollFunc: ffi_cua_sdk_rust_future_poll_void,
@@ -31293,6 +31297,13 @@ public struct SpacesdCommand: Equatable, Hashable {
      * Run in a PTY of this size.
      */
     public var pty: PtySize?
+    /**
+     * Kill the process (`term`, then `kill`) when this client's connection
+     * to cua-spacesd ends before the process does, including when the
+     * client process dies. Off by default: processes are detached and can be
+     * reattached by tag.
+     */
+    public var killOnDisconnect: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -31323,7 +31334,13 @@ public struct SpacesdCommand: Equatable, Hashable {
          */stdin: Bool = false,
         /**
          * Run in a PTY of this size.
-         */pty: PtySize? = nil) {
+         */pty: PtySize? = nil,
+        /**
+         * Kill the process (`term`, then `kill`) when this client's connection
+         * to cua-spacesd ends before the process does, including when the
+         * client process dies. Off by default: processes are detached and can be
+         * reattached by tag.
+         */killOnDisconnect: Bool = false) {
         self.program = program
         self.args = args
         self.env = env
@@ -31333,6 +31350,7 @@ public struct SpacesdCommand: Equatable, Hashable {
         self.tag = tag
         self.stdin = stdin
         self.pty = pty
+        self.killOnDisconnect = killOnDisconnect
     }
 
 
@@ -31359,7 +31377,8 @@ public struct FfiConverterTypeSpacesdCommand: FfiConverterRustBuffer {
                 timeoutMs: FfiConverterOptionUInt32.read(from: &buf),
                 tag: FfiConverterOptionString.read(from: &buf),
                 stdin: FfiConverterBool.read(from: &buf),
-                pty: FfiConverterOptionTypePtySize.read(from: &buf)
+                pty: FfiConverterOptionTypePtySize.read(from: &buf),
+                killOnDisconnect: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -31373,6 +31392,7 @@ public struct FfiConverterTypeSpacesdCommand: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.tag, into: &buf)
         FfiConverterBool.write(value.stdin, into: &buf)
         FfiConverterOptionTypePtySize.write(value.pty, into: &buf)
+        FfiConverterBool.write(value.killOnDisconnect, into: &buf)
     }
 }
 
@@ -39914,7 +39934,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_spacesdprocess_resize() != 46607) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_spacesdprocess_signal() != 61925) {
+    if (uniffi_cua_sdk_checksum_method_spacesdprocess_signal() != 44588) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spacesdprocess_tag() != 24315) {

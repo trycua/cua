@@ -2660,7 +2660,7 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_sdk_fn_method_spacesdprocess_signal": {
-      args: [FfiType.Handle, FfiType.RustBuffer],
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.Int8],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
@@ -5439,7 +5439,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_spacesdprocess_next_event(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_spacesdprocess_pid(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): number;
     uniffi_cua_sdk_fn_method_spacesdprocess_resize(uniffiSelf: bigint, cols: number, rows: number): bigint;
-    uniffi_cua_sdk_fn_method_spacesdprocess_signal(uniffiSelf: bigint, signal: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_spacesdprocess_signal(uniffiSelf: bigint, signal: Uint8Array, processGroup: number): bigint;
     uniffi_cua_sdk_fn_method_spacesdprocess_tag(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_method_spacesdprocess_wait(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_spacesdprocess_write_pty(uniffiSelf: bigint, data: Uint8Array): bigint;

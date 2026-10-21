@@ -15812,7 +15812,14 @@ export type SpacesdCommand = {
     /**
      * Run in a PTY of this size.
      */
-    pty?: PtySize
+    pty?: PtySize,
+    /**
+     * Kill the process (`term`, then `kill`) when this client's connection
+     * to cua-spacesd ends before the process does, including when the
+     * client process dies. Off by default: processes are detached and can be
+     * reattached by tag.
+     */
+    killOnDisconnect: boolean
 }
 
 /**
@@ -15827,7 +15834,8 @@ export const SpacesdCommand = (() => {
         timeoutMs: undefined,
         tag: undefined,
         stdin: false,
-        pty: undefined
+        pty: undefined,
+        killOnDisconnect: false
     });
     const create = (() => {
         return uniffiCreateRecord<SpacesdCommand, ReturnType<typeof defaults>>(defaults);
@@ -15852,7 +15860,8 @@ const FfiConverterTypeSpacesdCommand = (() => {
                 timeoutMs: FfiConverterOptionalUInt32.read(from),
                 tag: FfiConverterOptionalString.read(from),
                 stdin: FfiConverterBool.read(from),
-                pty: FfiConverterOptionalTypePtySize.read(from)
+                pty: FfiConverterOptionalTypePtySize.read(from),
+                killOnDisconnect: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -15865,6 +15874,7 @@ const FfiConverterTypeSpacesdCommand = (() => {
             FfiConverterOptionalString.write(value.tag, into);
             FfiConverterBool.write(value.stdin, into);
             FfiConverterOptionalTypePtySize.write(value.pty, into);
+            FfiConverterBool.write(value.killOnDisconnect, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.program) +
@@ -15875,7 +15885,8 @@ const FfiConverterTypeSpacesdCommand = (() => {
              FfiConverterOptionalUInt32.allocationSize(value.timeoutMs) +
              FfiConverterOptionalString.allocationSize(value.tag) +
              FfiConverterBool.allocationSize(value.stdin) +
-             FfiConverterOptionalTypePtySize.allocationSize(value.pty);
+             FfiConverterOptionalTypePtySize.allocationSize(value.pty) +
+             FfiConverterBool.allocationSize(value.killOnDisconnect);
 
         }
     };
@@ -22958,9 +22969,11 @@ export interface SpacesdProcessLike {
  */
     resize(cols: number, rows: number, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
 /**
- * Sends a signal by name (`term`, `kill`, `SIGINT`, ...).
+ * Sends a signal by name (`term`, `kill`, `SIGINT`, ...). With
+ * `process_group`, to the process's whole group (everything it started),
+ * as a terminal's Ctrl-C does; by default to the process alone.
  */
-    signal(signal: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
+    signal(signal: string, processGroup: boolean, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
 /**
  * Tag, when set.
  */
@@ -23174,16 +23187,18 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Sends a signal by name (`term`, `kill`, `SIGINT`, ...).
+ * Sends a signal by name (`term`, `kill`, `SIGINT`, ...). With
+ * `process_group`, to the process's whole group (everything it started),
+ * as a terminal's Ctrl-C does; by default to the process alone.
  */
-    async signal(signal: string, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
+    async signal(signal: string, processGroup: boolean = false, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
     try {
         return await uniffiRustCallAsync(
             /*rustCaller:*/ uniffiCaller,
             /*rustFutureFunc:*/ () => {
                 return nativeModule().uniffi_cua_sdk_fn_method_spacesdprocess_signal(
-                    uniffiTypeSpacesdProcessObjectFactory.clonePointer(this),FfiConverterString.lower(signal, nativeModule().rustbuffer_alloc)
+                    uniffiTypeSpacesdProcessObjectFactory.clonePointer(this),FfiConverterString.lower(signal, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(processGroup, nativeModule().rustbuffer_alloc)
                 );
             },
             /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_void,
@@ -36574,7 +36589,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_spacesdprocess_resize() !== 46607) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spacesdprocess_resize");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_spacesdprocess_signal() !== 61925) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spacesdprocess_signal() !== 44588) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spacesdprocess_signal");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spacesdprocess_tag() !== 24315) {

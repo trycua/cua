@@ -323,6 +323,17 @@ async def env_smoke(env: "cua.SpacesdClient", *, desktop: bool, mock: bool = Fal
     await proc.close_stdin()
     assert (await proc.wait()).stdout == b"xyz"
 
+    # kill_on_disconnect: letting go of the starting stream ends the process.
+    tag = f"kod-py-{RUN}"
+    proc = await env.spawn(
+        cua.SpacesdCommand(
+            program="cat", args=[], stdin=True, tag=tag, kill_on_disconnect=True
+        )
+    )
+    await proc.detach()
+    ended = await (await env.attach(None, tag, cua.ReplayMode.NONE())).wait()
+    assert not ended.exit.success, ended.exit
+
     blob = bytes(i % 251 for i in range(1 << 20))
     path = f"/tmp/cua-e2e-{RUN}/blob.bin"
     up = await env.upload(path, blob, None)

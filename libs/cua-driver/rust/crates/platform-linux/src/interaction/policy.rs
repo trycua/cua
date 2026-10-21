@@ -4,6 +4,7 @@
 use anyhow::{bail, Result};
 
 use super::facts::{Fact, Facts};
+use crate::input::FocusAfter;
 
 /// What an operation addresses.
 #[derive(Clone, Copy)]
@@ -184,9 +185,44 @@ pub fn focus_move(
     }
 }
 
+/// Where focus landed after an X11 foreground body, from where the focused
+/// window sits: inside the target, inside another window of the target
+/// process, or owned by the target's pid. The pid was read before the body,
+/// so a body that closed the target (Escape on a dialog, alt+F4, a popup
+/// item click) still compares. Unknown owners are elsewhere.
+pub fn focus_after(
+    in_target: bool,
+    in_target_process_window: bool,
+    target_pid: Option<u32>,
+    focused_pid: Option<u32>,
+) -> FocusAfter {
+    match (target_pid, focused_pid) {
+        _ if in_target => FocusAfter::Target,
+        _ if in_target_process_window => FocusAfter::SamePid,
+        (Some(target), Some(focused)) if target == focused => FocusAfter::SamePid,
+        _ => FocusAfter::Elsewhere,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn focus_after_prefers_the_target_then_its_process_and_never_guesses_an_owner() {
+        assert_eq!(focus_after(true, false, None, None), FocusAfter::Target);
+        assert_eq!(focus_after(false, true, None, None), FocusAfter::SamePid);
+        assert_eq!(
+            focus_after(false, false, Some(7), Some(7)),
+            FocusAfter::SamePid
+        );
+        for (target, focused) in [(Some(7), Some(8)), (Some(7), None), (None, Some(7))] {
+            assert_eq!(
+                focus_after(false, false, target, focused),
+                FocusAfter::Elsewhere
+            );
+        }
+    }
 
     #[test]
     fn a_restore_leaves_focus_only_on_a_third_choice() {

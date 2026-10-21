@@ -718,25 +718,14 @@ fn post_check(
     ) else {
         return FocusAfter::Unknown;
     };
-    if x.is_within(focused, target) {
-        return FocusAfter::Target;
-    }
-    if pid_windows
-        .iter()
-        .any(|entry| x.is_within(focused, entry.window as Window))
-    {
-        return FocusAfter::SamePid;
-    }
-    // The body may have closed the target itself (Escape on a dialog, alt+F4,
-    // a popup item click): its pid was read (or named by the caller) before
-    // the body, so the comparison still works once the window is gone.
-    match (
+    crate::interaction::policy::focus_after(
+        x.is_within(focused, target),
+        pid_windows
+            .iter()
+            .any(|entry| x.is_within(focused, entry.window as Window)),
         target_pid.or_else(|| x.owning_pid(target)),
         x.owning_pid(focused),
-    ) {
-        (Some(a), Some(b)) if a == b => FocusAfter::SamePid,
-        _ => FocusAfter::Elsewhere,
-    }
+    )
 }
 
 /// The target window confirmed active and focused, with the target

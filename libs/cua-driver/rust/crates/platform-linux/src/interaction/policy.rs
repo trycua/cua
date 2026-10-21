@@ -156,32 +156,39 @@ pub fn newer_choice<T: PartialEq>(
     current.filter(|current| Some(current) != target.as_ref() && Some(current) != prior.as_ref())
 }
 
-/// Where focus moved while an operation ran, relative to the target
-/// application.
+/// What a background action's focus guard does with focus that changed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FocusMove {
+pub enum GuardRestore {
+    /// The action closed the window that held the focus: nothing to restore.
+    PriorClosed,
     /// The target app owned the focus before and still does: it opened one
     /// of its own windows (a dialog). Not an intrusion; leave it.
     SameAppDialog,
-    /// The focus left the user's application (or arrived in the target from
-    /// another app): restore it.
-    OtherApp,
+    /// A popup the action opened holds a keyboard grab: restoring cannot
+    /// take effect until it closes, and closing it would undo the action.
+    GrabHeld,
+    Restore,
 }
 
-/// The same-app rule: a move is the app's own dialog only when the target
-/// pid owned the focus before the action *and* owns it now. A move from a
-/// decoy (another pid) into the target's dialog is a steal, as is a move
-/// from the target to anything else. Unknown owners never qualify.
-pub fn focus_move(
+/// Whether a background action's changed focus is restored. The same-app
+/// rule applies only when the target pid owned the focus before the action
+/// *and* owns it now: a move from a decoy (another pid) into the target's
+/// dialog is a steal, as is a move from the target to anything else.
+/// Unknown owners never qualify.
+pub fn guard_restore(
+    prior_closed: bool,
     target_pid: Option<u32>,
     previous_owner: Option<u32>,
     new_owner: Option<u32>,
-) -> FocusMove {
+    grab_held: bool,
+) -> GuardRestore {
     match (target_pid, previous_owner, new_owner) {
+        _ if prior_closed => GuardRestore::PriorClosed,
         (Some(target), Some(previous), Some(new)) if previous == target && new == target => {
-            FocusMove::SameAppDialog
+            GuardRestore::SameAppDialog
         }
-        _ => FocusMove::OtherApp,
+        _ if grab_held => GuardRestore::GrabHeld,
+        _ => GuardRestore::Restore,
     }
 }
 
@@ -236,8 +243,12 @@ mod tests {
     #[test]
     fn same_app_rule_only_when_the_target_owned_the_focus_before_and_after() {
         assert_eq!(
-            focus_move(Some(7), Some(7), Some(7)),
-            FocusMove::SameAppDialog
+            guard_restore(false, Some(7), Some(7), Some(7), true),
+            GuardRestore::SameAppDialog
+        );
+        assert_eq!(
+            guard_restore(true, Some(7), Some(7), Some(7), true),
+            GuardRestore::PriorClosed
         );
         for (target, previous, new) in [
             (Some(7), Some(3), Some(7)),
@@ -246,7 +257,14 @@ mod tests {
             (Some(7), Some(7), None),
             (None, Some(7), Some(7)),
         ] {
-            assert_eq!(focus_move(target, previous, new), FocusMove::OtherApp);
+            assert_eq!(
+                guard_restore(false, target, previous, new, false),
+                GuardRestore::Restore
+            );
+            assert_eq!(
+                guard_restore(false, target, previous, new, true),
+                GuardRestore::GrabHeld
+            );
         }
     }
 

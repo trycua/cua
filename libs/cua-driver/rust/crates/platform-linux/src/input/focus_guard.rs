@@ -23,6 +23,7 @@
 //! hidden: a toolkit keyboard grab held by an open menu cannot be undone
 //! without closing the menu, so it is surfaced as `grab_held_by`.
 
+use crate::interaction::policy::{guard_restore, GuardRestore};
 use anyhow::{anyhow, Result};
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -552,8 +553,6 @@ impl FocusSnapshot {
             return FocusGuardReport::default();
         };
         let mut report = FocusGuardReport::default();
-        // The target app owns the focus: whatever it maps next is its own.
-        let target_owns_focus = target_pid.is_some() && self.previous_owner == target_pid;
 
         // Settle watch: stop at the first observed change. A new top-level
         // (dialog being mapped) extends the watch when the focus belongs to
@@ -618,43 +617,42 @@ impl FocusSnapshot {
         // The action closed the window that held the focus (Escape / OK on
         // a dialog): nothing to restore to, the WM already moved on.
         let focus_window = self.current_focus_window(&x);
-        if let Some(previous) = self
+        let closed = self
             .previous_focus_window()
-            .filter(|w| !x.window_viewable(*w))
-        {
-            report.closed_window = Some(u64::from(previous));
-            report.same_app_window = focus_window.map(|w| SameAppWindow {
-                window: u64::from(w),
-                title: x.window_title(w),
-                focused: true,
-            });
-            report.elapsed_ms = started.elapsed().as_millis() as u64;
-            return report;
-        }
-
-        // Same-app rule: the focus stayed inside the target application
-        // (it opened a dialog). Leave it and say so.
+            .filter(|w| !x.window_viewable(*w));
         let new_owner = focus_window.and_then(|w| x.owner_pid(w));
-        if target_owns_focus
-            && crate::interaction::policy::focus_move(target_pid, self.previous_owner, new_owner)
-                == crate::interaction::policy::FocusMove::SameAppDialog
-        {
-            let window = focus_window.unwrap_or(0);
-            report.same_app_window = Some(SameAppWindow {
-                window: u64::from(window),
-                title: x.window_title(window),
-                focused: true,
-            });
-            report.elapsed_ms = started.elapsed().as_millis() as u64;
-            return report;
-        }
-
-        // A popup (menu, combo list) that the action opened holds a keyboard
-        // grab: re-activating the previous window cannot take effect until it
-        // closes, and closing it would undo the action. Report and return.
-        if report.grab_held_by.is_some() {
-            report.elapsed_ms = started.elapsed().as_millis() as u64;
-            return report;
+        match guard_restore(
+            closed.is_some(),
+            target_pid,
+            self.previous_owner,
+            new_owner,
+            report.grab_held_by.is_some(),
+        ) {
+            GuardRestore::PriorClosed => {
+                report.closed_window = closed.map(u64::from);
+                report.same_app_window = focus_window.map(|w| SameAppWindow {
+                    window: u64::from(w),
+                    title: x.window_title(w),
+                    focused: true,
+                });
+                report.elapsed_ms = started.elapsed().as_millis() as u64;
+                return report;
+            }
+            GuardRestore::SameAppDialog => {
+                let window = focus_window.unwrap_or(0);
+                report.same_app_window = Some(SameAppWindow {
+                    window: u64::from(window),
+                    title: x.window_title(window),
+                    focused: true,
+                });
+                report.elapsed_ms = started.elapsed().as_millis() as u64;
+                return report;
+            }
+            GuardRestore::GrabHeld => {
+                report.elapsed_ms = started.elapsed().as_millis() as u64;
+                return report;
+            }
+            GuardRestore::Restore => {}
         }
 
         // Restore. EWMH re-activation makes the WM restore stacking and its

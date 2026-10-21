@@ -41,6 +41,13 @@ def serve_bundle(directory, *, follow=False):
             self.wfile.write(body)
 
         def do_GET(self):
+            try:
+                self._get()
+            except (ConnectionError, TimeoutError):
+                # A tab closing or going offline is an ordinary reader disconnect.
+                pass
+
+        def _get(self):
             expected = f"127.0.0.1:{self.server.server_port}"
             if self.headers.get("Host") != expected:
                 self.reply(403, b'{"error":"invalid host"}')
@@ -127,6 +134,8 @@ def serve_bundle(directory, *, follow=False):
                             self.wfile.write(chunk)
                 else:
                     self.reply(404, b'{"error":"not found"}')
+            except ConnectionError:
+                raise
             except (ValueError, KeyError, OSError) as error:
                 # Diagnostics expose categories, not local paths or payload fragments.
                 message = (

@@ -26,7 +26,7 @@ large_bundle = _large_bundle
 )
 def test_live_browser(tmp_path):
     source = tmp_path / "evidence.txt"
-    source.write_text("<script>window.capturedScriptRan=true</script>\n✓", encoding="utf-8")
+    source.write_bytes("<script>window.capturedScriptRan=true</script>\n✓".encode("utf-8"))
     with TraceBundleWriter(tmp_path / "bundle") as writer:
         trace = Tracing(None, bundle_writer=writer)
         trace.start("browser-fixture")
@@ -61,6 +61,7 @@ def test_live_browser(tmp_path):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                encoding="utf-8",
             )
             lines = queue.Queue()
 
@@ -125,6 +126,7 @@ def test_large_browser(large_bundle):
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=60,
         )
         assert result.returncode == 0, result.stdout + result.stderr

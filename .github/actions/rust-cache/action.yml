@@ -41,7 +41,7 @@ inputs:
       "true" lets Linux pull request runs save their own cache entry. Off by
       default: with the repository's 10 GB Actions cache limit every PR entry
       evicts main's. Flip this default once the limit is raised.
-    default: "true" # TEMPORARY measuring
+    default: "false"
   size:
     description: "Cap of the sccache directory."
     default: "2G"

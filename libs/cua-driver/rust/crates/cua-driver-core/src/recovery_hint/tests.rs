@@ -144,7 +144,7 @@ fn the_table_covers_every_code_agents_hit_most() {
         "element_bounds_unavailable",
         "target_changed",
         "stale_target",
-        "stale_geometry",
+        "stale_observation",
         "desktop_changed",
         "point_outside_window",
         "px_frame_mismatch",
@@ -301,7 +301,7 @@ fn a_window_target_comes_from_the_typed_target_when_the_call_has_no_top_level_id
         "click",
         &seed(json!({"target": {"kind": "window", "pid": 9, "window_id": 4}, "x": 1, "y": 2})),
         true,
-        json!({"code": "stale_geometry"}),
+        json!({"code": "stale_observation"}),
     );
     assert_eq!(
         call_value(&hint),

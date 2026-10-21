@@ -4762,8 +4762,13 @@ fn hyprland_input_result(result: anyhow::Result<Value>, foreground: bool) -> Too
                 .as_str()
                 .unwrap_or("input refused")
                 .to_owned();
+            let refusal = if code == "stale_geometry" {
+                "stale_observation"
+            } else {
+                unavailable
+            };
             value["reason"] = json!(code);
-            value["code"] = json!(unavailable);
+            value["code"] = json!(refusal);
             value["route"] = json!(if foreground {
                 "global_input"
             } else {
@@ -4791,7 +4796,7 @@ fn hyprland_input_result(result: anyhow::Result<Value>, foreground: bool) -> Too
             .detail(&detail)
             .build()
             .expect("isolated input outcome is valid");
-            ToolResult::error(format!("{unavailable} ({code}): {detail}"))
+            ToolResult::error(format!("{refusal} ({code}): {detail}"))
                 .with_structured(value)
                 .with_action_record(outcome)
         }
@@ -5486,6 +5491,24 @@ fn isolated_hyprland_refused_partial_and_unknown_outcomes_stay_distinct() {
     let public = refused.action_record.unwrap().public_result().unwrap();
     assert!(public.delivery.is_none());
     public.validate_invariants().unwrap();
+
+    for foreground in [false, true] {
+        let stale = hyprland_input_result(
+            Ok(json!({"ok":false,"code":"stale_geometry","detail":"stale_geometry"})),
+            foreground,
+        );
+        let value = stale.structured_content.as_ref().unwrap();
+        assert_eq!(value["code"], "stale_observation");
+        assert_eq!(value["reason"], "stale_geometry");
+        assert_eq!(value["effect"], "refused");
+        assert!(stale
+            .action_record
+            .unwrap()
+            .public_result()
+            .unwrap()
+            .delivery
+            .is_none());
+    }
 
     let partial = isolated_hyprland_result(Ok(
         json!({"ok":false,"code":"cancelled","detail":"cancelled",

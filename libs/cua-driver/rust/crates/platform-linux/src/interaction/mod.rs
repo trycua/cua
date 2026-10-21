@@ -199,8 +199,7 @@ fn hold_transaction() -> Result<std::sync::MutexGuard<'static, ()>> {
             Err(std::sync::TryLockError::Poisoned(poisoned)) => return Ok(poisoned.into_inner()),
             Err(std::sync::TryLockError::WouldBlock) => {
                 crate::input::action::admit(|| ())?;
-                let deadline = operation_deadline(POLL);
-                std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
+                pause(POLL);
             }
         }
     }
@@ -222,6 +221,12 @@ const SETTLE_CAP: Duration = Duration::from_secs(1);
 pub fn operation_deadline(cap: Duration) -> Instant {
     let capped = Instant::now() + cap;
     crate::input::action::current().map_or(capped, |action| capped.min(action.deadline()))
+}
+
+/// Sleep for `cap`, never past the deadline of the action bound to this
+/// thread. Input pacing waits here, so a call out of time stops waiting.
+pub fn pause(cap: Duration) {
+    std::thread::sleep(operation_deadline(cap).saturating_duration_since(Instant::now()));
 }
 
 /// Read `confirmed` back until it holds or `deadline` passes. The callback

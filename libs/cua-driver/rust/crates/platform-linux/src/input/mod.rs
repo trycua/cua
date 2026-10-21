@@ -1492,7 +1492,7 @@ pub fn send_parallel_virtual_pointer_drags(drags: &[(String, VirtualPointerDrag)
 
         let now = std::time::Instant::now();
         if start_at > now {
-            std::thread::sleep(start_at - now);
+            crate::interaction::pause(start_at - now);
         }
 
         // Press each drag straight from its virtual master (see
@@ -1516,7 +1516,7 @@ pub fn send_parallel_virtual_pointer_drags(drags: &[(String, VirtualPointerDrag)
                 emit_button(&mut device, item.drag.button, true)?;
             }
         }
-        sleep(Duration::from_millis(40));
+        crate::interaction::pause(Duration::from_millis(40));
 
         while active.iter().any(|item| item.current_step < item.steps) {
             let now = std::time::Instant::now();
@@ -1564,7 +1564,7 @@ pub fn send_parallel_virtual_pointer_drags(drags: &[(String, VirtualPointerDrag)
                 if let Some(deadline) = next_deadline {
                     let now = std::time::Instant::now();
                     if deadline > now {
-                        std::thread::sleep(deadline - now);
+                        crate::interaction::pause(deadline - now);
                     }
                 }
             }
@@ -2518,7 +2518,7 @@ fn pointer_effect(
     y: i32,
 ) -> PointerEffect {
     unsafe { x11::xlib::XSync(display, 0) };
-    sleep(EFFECT_SETTLE);
+    crate::interaction::pause(EFFECT_SETTLE);
     let after = root_region_pixels(x, y);
     let popups = new_popups(popups_before, mapped_popups(display));
     let foreign_window = foreign_window_effect(foreign_before);
@@ -2590,14 +2590,14 @@ pub fn send_virtual_pointer_click(
                     emit_button(&mut device, click.button, true)?;
                     // A real press and release are separate evdev frames; give
                     // the toolkit a press it can see before the release lands.
-                    sleep(Duration::from_millis(press_ms));
+                    crate::interaction::pause(Duration::from_millis(press_ms));
                     emit_button(&mut device, click.button, false)?;
                 }
                 // Multi-click cadence: keep press→press well under the toolkit
                 // double-click threshold (GTK default 250 ms) so count=2 lands
                 // as a real double-click, not two singles.
                 if count > 1 && i + 1 < count {
-                    sleep(Duration::from_millis(gap_ms));
+                    crate::interaction::pause(Duration::from_millis(gap_ms));
                 }
             }
             Ok(())
@@ -2680,7 +2680,7 @@ pub fn send_virtual_pointer_drag(
             }
             // Let the toolkit register the press (and arm its drag threshold)
             // before the first motion.
-            sleep(Duration::from_millis(40));
+            crate::interaction::pause(Duration::from_millis(40));
             let (mut last_x, mut last_y) = start;
             for step in 1..=steps {
                 let t = step as f64 / steps as f64;
@@ -2700,12 +2700,12 @@ pub fn send_virtual_pointer_drag(
                 }
                 last_x = ix;
                 last_y = iy;
-                sleep(step_delay);
+                crate::interaction::pause(step_delay);
             }
             // Relative motion accumulates libinput rounding; pin the release
             // to the exact end point before letting go.
             warp_master_pointer(display, ids, end.0, end.1)?;
-            sleep(Duration::from_millis(20));
+            crate::interaction::pause(Duration::from_millis(20));
             let mut device = device.lock().unwrap();
             emit_button(&mut device, drag.button, false)?;
             Ok(())
@@ -2779,7 +2779,7 @@ pub fn send_virtual_pointer_scroll(cursor_id: &str, scroll: &VirtualPointerScrol
                 let mut device = device.lock().unwrap();
                 emit_scroll(&mut device, scroll.horizontal, unit)?;
             }
-            sleep(Duration::from_millis(CLICK_DELAY_MS));
+            crate::interaction::pause(Duration::from_millis(CLICK_DELAY_MS));
         }
         Ok(())
     })();
@@ -3331,12 +3331,12 @@ pub fn send_click_with_modifiers(
         // binding (such as Tk's <Button-1>) receives one coherent click.
         admitted(|| conn.send_event(false, target.window, EventMask::BUTTON_PRESS, press))?
             .check()?;
-        sleep(Duration::from_millis(CLICK_DELAY_MS));
+        crate::interaction::pause(Duration::from_millis(CLICK_DELAY_MS));
         admitted(|| conn.send_event(false, target.window, EventMask::BUTTON_PRESS, release))?
             .check()?;
 
         if count > 1 {
-            sleep(Duration::from_millis(80));
+            crate::interaction::pause(Duration::from_millis(80));
         }
     }
     settle_synthetic_events(&conn);
@@ -3385,7 +3385,7 @@ pub fn send_drag(
     };
     admitted(|| conn.send_event(false, press_target.window, EventMask::BUTTON_PRESS, press))?;
     conn.flush()?;
-    sleep(Duration::from_millis(CLICK_DELAY_MS));
+    crate::interaction::pause(Duration::from_millis(CLICK_DELAY_MS));
 
     // Interpolated MotionNotify steps.
     for i in 1..=steps {
@@ -3411,7 +3411,7 @@ pub fn send_drag(
         admitted(|| conn.send_event(false, target.window, EventMask::POINTER_MOTION, motion))?;
         conn.flush()?;
         if step_delay_ms > 0 {
-            sleep(Duration::from_millis(step_delay_ms));
+            crate::interaction::pause(Duration::from_millis(step_delay_ms));
         }
     }
 
@@ -3680,11 +3680,11 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
             admitted(|| conn.send_event(false, window, EventMask::KEY_PRESS, press))?;
             // Start the hold interval after sending the press, not while it is buffered.
             conn.flush()?;
-            sleep(Duration::from_millis(KEY_DELAY_MS));
+            crate::interaction::pause(Duration::from_millis(KEY_DELAY_MS));
             conn.send_event(false, window, EventMask::KEY_RELEASE, release)?;
             conn.flush()?;
             if inter_char_ms > 0 {
-                sleep(Duration::from_millis(inter_char_ms));
+                crate::interaction::pause(Duration::from_millis(inter_char_ms));
             }
             Ok(())
         },
@@ -3733,7 +3733,7 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
             }
             conn.flush()?;
             delivered.confirmed();
-            sleep(Duration::from_millis(KEY_DELAY_MS));
+            crate::interaction::pause(Duration::from_millis(KEY_DELAY_MS));
             Ok(())
         },
         || client.borrow_mut().release(),
@@ -3825,7 +3825,7 @@ pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
     }
     // Flush modifiers and key-down before measuring the delivered hold interval.
     conn.flush()?;
-    sleep(Duration::from_millis(KEY_DELAY_MS));
+    crate::interaction::pause(Duration::from_millis(KEY_DELAY_MS));
     conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
     if let Some(sk) = auto_shift_kc {
         conn.xtest_fake_input(KEY_RELEASE_EVENT, sk, 0, x11rb::NONE, 0, 0, 0)?;
@@ -3910,13 +3910,13 @@ pub fn send_click_xtest_desktop_with_modifiers(
             })?;
             // Confirm delivery before sleeping; buffering both edges produces a zero-ms click.
             press.check()?;
-            sleep(Duration::from_millis(CLICK_DELAY_MS));
+            crate::interaction::pause(Duration::from_millis(CLICK_DELAY_MS));
             conn.xtest_fake_input(BUTTON_RELEASE_EVENT, button, 0, root, x as i16, y as i16, 0)?
                 .check()?;
             delivered.released(BUTTON_RELEASE_EVENT, button);
             if click_index + 1 < count {
                 // Keep the existing gap between completed click pairs.
-                sleep(Duration::from_millis(DOUBLE_CLICK_DELAY_MS));
+                crate::interaction::pause(Duration::from_millis(DOUBLE_CLICK_DELAY_MS));
             }
         }
         Ok(())
@@ -4078,7 +4078,7 @@ pub fn send_drag_xtest_desktop_with_modifiers(
             })?;
             conn.flush()?;
             if delay > 0 {
-                sleep(Duration::from_millis(delay));
+                crate::interaction::pause(Duration::from_millis(delay));
             }
         }
         conn.xtest_fake_input(
@@ -4195,7 +4195,7 @@ fn send_key_to_target(
     send_key_event(KEY_PRESS_EVENT, keycode, state, EventMask::KEY_PRESS)?;
     // Otherwise X11 receives both transitions together after the sleep.
     conn.flush()?;
-    sleep(Duration::from_millis(KEY_DELAY_MS));
+    crate::interaction::pause(Duration::from_millis(KEY_DELAY_MS));
     send_key_event(KEY_RELEASE_EVENT, keycode, state, EventMask::KEY_RELEASE)?;
     for &(modifier_keycode, modifier_mask) in modifier_keycodes.iter().rev() {
         send_key_event(

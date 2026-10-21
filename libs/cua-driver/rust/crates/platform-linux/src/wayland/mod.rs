@@ -1989,7 +1989,7 @@ pub fn activate_window_for_input_target(
         })?;
         inject_send(&[format!("f {pid}")])?;
         remember_inject_focused_target(pid, window_id);
-        std::thread::sleep(std::time::Duration::from_millis(60));
+        crate::interaction::pause(std::time::Duration::from_millis(60));
         return Ok(());
     }
 
@@ -2027,7 +2027,7 @@ pub fn activate_window_for_input_target(
     }
 
     if shell_helper::activate_window(window_id) {
-        std::thread::sleep(std::time::Duration::from_millis(60));
+        crate::interaction::pause(std::time::Duration::from_millis(60));
         return Ok(());
     }
 
@@ -2301,7 +2301,7 @@ fn click_vptr(
     desktop: Option<&DesktopInputSpace>,
 ) -> anyhow::Result<()> {
     let mut sess = open_vptr_session_in(window_id, desktop.and_then(|d| d.snapshot.as_ref()))?;
-    std::thread::sleep(std::time::Duration::from_millis(40));
+    crate::interaction::pause(std::time::Duration::from_millis(40));
     let (w, h) = (sess.output_w, sess.output_h);
     let centre = centres_origin_click(x, y, hyprland::is_session() || niri::is_session());
     let (px, py) = if centre {
@@ -2317,21 +2317,21 @@ fn click_vptr(
     let mut gate = niri_pointer_gate(window_id, desktop, &sess, &[aimed])?;
     let btn = evdev_pointer_button(button);
     sess.point_at(px, py)?;
-    std::thread::sleep(std::time::Duration::from_millis(15));
+    crate::interaction::pause(std::time::Duration::from_millis(15));
     gated_events(
         &mut sess,
         count,
         ("click", "presses"),
         |sess| {
-            std::thread::sleep(std::time::Duration::from_millis(80));
+            crate::interaction::pause(std::time::Duration::from_millis(80));
             sess.motion(px, py)?;
-            std::thread::sleep(std::time::Duration::from_millis(15));
+            crate::interaction::pause(std::time::Duration::from_millis(15));
             Ok(())
         },
         |_| niri_gate_holds(&mut gate),
         |sess, _| {
             sess.press(btn)?;
-            std::thread::sleep(std::time::Duration::from_millis(20));
+            crate::interaction::pause(std::time::Duration::from_millis(20));
             sess.release(btn)
         },
     )?;
@@ -2521,7 +2521,7 @@ fn scroll_vptr(
         gate = niri_pointer_gate(window_id, desktop, &sess, &[(x, y)])?;
         sess.point_at(px, py)?;
         record_synth_cursor(sess.origin_x + px as i32, sess.origin_y + py as i32);
-        std::thread::sleep(std::time::Duration::from_millis(15));
+        crate::interaction::pause(std::time::Duration::from_millis(15));
     }
     let (axis, sign): (Axis, i32) = match direction.to_ascii_lowercase().as_str() {
         "up" => (Axis::VerticalScroll, -1),
@@ -2538,7 +2538,7 @@ fn scroll_vptr(
         amount,
         ("scroll", "ticks"),
         |_| {
-            std::thread::sleep(std::time::Duration::from_millis(25));
+            crate::interaction::pause(std::time::Duration::from_millis(25));
             Ok(())
         },
         |_| niri_gate_holds(&mut gate),
@@ -2714,7 +2714,7 @@ fn drag_vptr(
     desktop: Option<&DesktopInputSpace>,
 ) -> anyhow::Result<()> {
     let mut sess = open_vptr_session_in(window_id, desktop.and_then(|d| d.snapshot.as_ref()))?;
-    std::thread::sleep(std::time::Duration::from_millis(40));
+    crate::interaction::pause(std::time::Duration::from_millis(40));
     let (w, h) = (sess.output_w, sess.output_h);
     let btn = evdev_pointer_button(button);
     let (origin_x, origin_y) = (sess.origin_x, sess.origin_y);
@@ -2723,7 +2723,7 @@ fn drag_vptr(
     let (tx, ty) = clamp_xy(to_x, to_y);
     let mut gate = niri_pointer_gate(window_id, desktop, &sess, &[(from_x, from_y), (to_x, to_y)])?;
     sess.motion(fx, fy)?;
-    std::thread::sleep(std::time::Duration::from_millis(15));
+    crate::interaction::pause(std::time::Duration::from_millis(15));
     niri_gate_holds(&mut gate)?;
     sess.press(btn)?;
     let path = drag_path((from_x, from_y), (to_x, to_y), steps, (tx, ty), clamp_xy);
@@ -2733,7 +2733,7 @@ fn drag_vptr(
         |_| niri_gate_holds(&mut gate),
         |sess, (x, y)| {
             sess.motion(x, y)?;
-            std::thread::sleep(std::time::Duration::from_millis(8));
+            crate::interaction::pause(std::time::Duration::from_millis(8));
             Ok(())
         },
         |sess| sess.release(btn),
@@ -3157,7 +3157,7 @@ fn libei_click(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
     libei::move_absolute(px as f64, py as f64)?;
     for i in 0..count.max(1) {
         if i > 0 {
-            std::thread::sleep(std::time::Duration::from_millis(80));
+            crate::interaction::pause(std::time::Duration::from_millis(80));
         }
         libei::click(px as f64, py as f64, btn)?;
     }
@@ -3177,7 +3177,7 @@ fn libei_scroll(direction: &str, amount: u32) -> anyhow::Result<()> {
     };
     for i in 0..amount.max(1) {
         if i > 0 {
-            std::thread::sleep(std::time::Duration::from_millis(25));
+            crate::interaction::pause(std::time::Duration::from_millis(25));
         }
         libei::scroll(dx, dy)?;
     }

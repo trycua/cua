@@ -348,7 +348,7 @@ fn query_with<T: serde::de::DeserializeOwned>(
                     attempt,
                     "Hyprland IPC observation timed out; retrying on a fresh connection"
                 );
-                std::thread::sleep(backoff);
+                crate::interaction::pause(backoff);
             }
         }
     }

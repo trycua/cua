@@ -160,7 +160,7 @@ fn send_key(
 ) -> anyhow::Result<()> {
     keyboard.key(super::event_time_ms(), keycode, key_state);
     queue.roundtrip(state)?;
-    std::thread::sleep(std::time::Duration::from_millis(4));
+    crate::interaction::pause(std::time::Duration::from_millis(4));
     Ok(())
 }
 

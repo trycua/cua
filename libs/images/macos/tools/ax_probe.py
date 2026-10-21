@@ -20,7 +20,7 @@ with the official MCP Python SDK:
 Element tokens are not used: over /mcp each call runs in its own driver
 runtime scope, so a token from one call is refused by the next.
 
-  uv run --with 'mcp>=1.12,<1.14' python ax_probe.py URL TOKEN_FILE [OUT.json]
+  uv run --with 'mcp>=1.12,<1.14' --with 'pydantic<2.13' python ax_probe.py URL TOKEN_FILE [OUT.json]
 
 Exit 0 on success. Writes a JSON record of every step to OUT.json.
 """

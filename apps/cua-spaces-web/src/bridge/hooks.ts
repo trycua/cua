@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { BridgeMode, DataAdapter } from "./adapter";
 import { BridgeContext, type BridgeContextValue } from "./BridgeProvider";
 import type { CoreClient } from "./core";
@@ -94,6 +94,17 @@ export function useFeatureRecorded(feature: string, when = true): void {
     if (!when || !ready) return;
     void ready.then((s) => s.telemetry.track([{ type: "feature", feature }]));
   }, [ready, feature, when]);
+}
+
+/** Records one named feature now, for a click or a step rather than a page opening. */
+export function useFeatureRecorder(): (feature: string) => void {
+  const ready = useContext(BridgeContext)?.ready;
+  return useCallback(
+    (feature: string) => {
+      void ready?.then((s) => s.telemetry.track([{ type: "feature", feature }]));
+    },
+    [ready],
+  );
 }
 
 /** The host, the app core and the raw adapter. */

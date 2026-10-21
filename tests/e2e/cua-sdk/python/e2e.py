@@ -326,9 +326,7 @@ async def env_smoke(env: "cua.SpacesdClient", *, desktop: bool, mock: bool = Fal
     # kill_on_disconnect: letting go of the starting stream ends the process.
     tag = f"kod-py-{RUN}"
     proc = await env.spawn(
-        cua.SpacesdCommand(
-            program="cat", args=[], stdin=True, tag=tag, kill_on_disconnect=True
-        )
+        cua.SpacesdCommand(program="cat", args=[], stdin=True, tag=tag, kill_on_disconnect=True)
     )
     await proc.detach()
     ended = await (await env.attach(None, tag, cua.ReplayMode.NONE())).wait()

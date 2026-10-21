@@ -129,6 +129,8 @@ pub fn os_signals() -> SignalRx {
             });
         }
     }
+    #[cfg(not(unix))]
+    drop(tx);
     rx
 }
 

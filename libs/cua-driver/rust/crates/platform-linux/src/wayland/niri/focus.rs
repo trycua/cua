@@ -287,25 +287,24 @@ fn restore_focus<C: FnMut(Instant) -> Result<UnixStream>>(
     }
     // niri applies workspace switches asynchronously: poll like the
     // single-workspace restore does.
-    loop {
-        let now: Vec<IpcWorkspace> = ipc.query_until(Request::Workspaces, cleanup)?;
-        let Some(was) = before
+    let mut pending = None;
+    if interaction::confirm(cleanup, |deadline| {
+        let now: Vec<IpcWorkspace> = ipc.query_until(Request::Workspaces, deadline)?;
+        pending = before
             .iter()
             .filter(|was| was.is_active)
-            .find(|was| now.iter().any(|w| w.id == was.id && !w.is_active))
-        else {
-            return Ok(());
-        };
-        if Instant::now() >= cleanup {
-            bail!(
-                "niri did not restore workspace {} on output {}",
-                was.id,
-                was.output.as_deref().unwrap_or("unknown")
-            );
-        }
-        std::thread::sleep(
-            Duration::from_millis(10).min(cleanup.saturating_duration_since(Instant::now())),
-        );
+            .find(|was| now.iter().any(|w| w.id == was.id && !w.is_active));
+        anyhow::Ok(pending.is_none())
+    })? {
+        return Ok(());
+    }
+    match pending {
+        Some(was) => bail!(
+            "niri did not restore workspace {} on output {}",
+            was.id,
+            was.output.as_deref().unwrap_or("unknown")
+        ),
+        None => bail!("niri did not confirm the workspace restore within the cleanup budget"),
     }
 }
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import signal
@@ -58,8 +59,9 @@ def _stop(proc: subprocess.Popen) -> tuple[str, str]:
         return proc.communicate(timeout=_TERM_GRACE_S)
     except subprocess.TimeoutExpired:
         pass
-    except KeyboardInterrupt:
-        # A second interrupt during the grace must still finish the kill.
+    except BaseException:
+        # A second Ctrl-C or a scheduler signal during the grace must
+        # still finish the kill.
         _kill_process_group(proc)
         raise
     _kill_process_group(proc)
@@ -94,7 +96,7 @@ def _raise_system_exit_on_term() -> Callable[[], None]:
     callable; a no-op off the main thread or without POSIX signals."""
 
     def _exit(signum, frame):
-        raise SystemExit(f"received signal {signum}; stopping cb run")
+        raise SystemExit(128 + signum)
 
     installed = []
     for name in ("SIGTERM", "SIGHUP"):
@@ -110,8 +112,9 @@ def _raise_system_exit_on_term() -> Callable[[], None]:
     def restore() -> None:
         for sig, previous in installed:
             try:
-                signal.signal(sig, previous)
-            except (ValueError, OSError):
+                # ``signal.signal`` reports a C-installed handler as None.
+                signal.signal(sig, previous if previous is not None else signal.SIG_DFL)
+            except (ValueError, OSError, TypeError):
                 pass
 
     return restore
@@ -183,20 +186,25 @@ def _run_single_rollout(
     if variant_timeout is not None:
         cmd += ["--variant-timeout", str(variant_timeout)]
 
+    if run_timeout is not None and not (math.isfinite(run_timeout) and run_timeout >= 0):
+        raise ValueError("run_timeout must be a finite number of seconds, 0 or more")
+
     print(f"[rollout] Launching: {' '.join(cmd)}")
-    # Its own process group: a wedged cb is killed with the descendants that
-    # may hold its stdout/stderr pipes open.
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        env=env,
-        start_new_session=True,
-    )
-    timed_out = False
+    # Signals become SystemExit before the spawn, so no exit path can reach
+    # communicate without the cleanup below.
     restore = _raise_system_exit_on_term()
     try:
+        # Its own process group: a wedged cb is killed with the descendants
+        # that may hold its stdout/stderr pipes open.
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+            start_new_session=True,
+        )
+        timed_out = False
         try:
             stdout, stderr = proc.communicate(timeout=run_timeout or None)
         except subprocess.TimeoutExpired:

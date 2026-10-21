@@ -213,6 +213,7 @@ def test_an_interrupted_rollout_still_stops_cb(tmp_path, monkeypatch):
     )
     with pytest.raises(KeyboardInterrupt):
         rollout._run_single_rollout("tasks/", "agent", "model", 5, extra_env=extra_env)
+    assert ready_file.exists()  # the interrupt fired after cb was really up
     # cb ignores SIGTERM in sleep mode, so it is dead only if the stop
     # sequence escalated to the process-group SIGKILL.
     assert spawned[0].returncode == -signal.SIGKILL

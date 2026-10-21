@@ -4178,6 +4178,41 @@ mod runtime_isolation_tests {
     }
 
     #[tokio::test]
+    async fn bounded_launch_reaches_the_platform_only_for_launchable_apps() {
+        for (bundle_id, expected_allowed) in [
+            ("com.apple.TextEdit", true),
+            ("com.apple.Preview", false),
+            ("com.apple.calculator", false),
+        ] {
+            let hits = Arc::new(AtomicUsize::new(0));
+            let registry = observation_registry_for("launch_app", None, hits.clone());
+            let context = bounded_context(
+                "version: 3\nexpires_after: 1h\nidle_timeout: 30m\nresources:\n  apps:\n    - bundle_id: com.apple.TextEdit\n      launch: true\n    - bundle_id: com.apple.Preview\n      launch: false\nallow:\n  tools: [launch_app]\n",
+            );
+            let result = registry
+                .invoke_with_context(
+                    "launch_app",
+                    serde_json::json!({"bundle_id": bundle_id, "session": "review"}),
+                    context,
+                )
+                .await;
+            assert_eq!(hits.load(Ordering::SeqCst), usize::from(expected_allowed));
+            if expected_allowed {
+                assert_ne!(result.is_error, Some(true));
+            } else {
+                let structured = result.structured_content.unwrap();
+                assert_eq!(structured["refusal"]["code"], "permission_denied");
+                assert_eq!(
+                    structured["refusal"]["message"],
+                    format!(
+                        "Permission denied: launch_app bundle_id '{bundle_id}' is outside the capability manifest"
+                    )
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn bounded_observation_uses_only_the_manifest_without_a_protected_host() {
         let hits = Arc::new(AtomicUsize::new(0));
         let registry = attested_registry("get_window_state", None, hits.clone(), false);

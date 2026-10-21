@@ -3339,4 +3339,45 @@ mod tests {
         assert_eq!(code.unwrap(), 0);
         assert!(out.contains("\"status\":\"current\""), "{out}");
     }
+
+    #[test]
+    fn update_results_read_as_plain_sentences() {
+        let render = |r: DriverUpdate| {
+            let mut out = Vec::new();
+            let code = render_driver_update(&r, false, &mut out);
+            (code, String::from_utf8(out).unwrap())
+        };
+        let (code, text) = render(DriverUpdate::Current {
+            version: "0.2.0".into(),
+        });
+        assert_eq!(
+            (code, text.as_str()),
+            (0, "cua-spacesd 0.2.0 is up to date.\n")
+        );
+        let (code, text) = render(DriverUpdate::Available {
+            installed: Some("0.1.0".into()),
+            latest: "0.2.0".into(),
+        });
+        assert_eq!(code, UPDATE_AVAILABLE_EXIT);
+        assert!(
+            text.contains("0.1.0 is installed; 0.2.0 is available"),
+            "{text}"
+        );
+        let updated = |restarted| DriverUpdate::Updated {
+            from: Some("0.1.0".into()),
+            to: "0.2.0".into(),
+            restarted,
+        };
+        let (code, text) = render(updated(true));
+        assert_eq!(code, 0);
+        assert!(
+            text.contains("0.1.0 -> 0.2.0 (service restarted)"),
+            "{text}"
+        );
+        let (_, text) = render(updated(false));
+        assert!(
+            text.contains("(service was not running; not started)"),
+            "{text}"
+        );
+    }
 }

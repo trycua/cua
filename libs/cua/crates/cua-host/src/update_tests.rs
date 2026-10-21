@@ -202,56 +202,235 @@ async fn update_works_with_both_sharing_options_off_and_touches_no_settings() {
     assert_eq!(f.calls(), ["stop", "start"]);
 }
 
-struct FailsToStart(FakeServiceManager);
+type Hook = Box<dyn Fn() + Send + Sync>;
 
-impl ServiceManager for FailsToStart {
+#[derive(Default)]
+struct Odd {
+    inner: FakeServiceManager,
+    fail_stop: bool,
+    fail_first_start: bool,
+    down_after_start: bool,
+    on_start: Option<Hook>,
+}
+
+impl Odd {
+    fn running() -> Self {
+        let odd = Self::default();
+        odd.inner.start().unwrap();
+        odd.inner.calls.lock().unwrap().clear();
+        odd
+    }
+    fn calls(&self) -> Vec<String> {
+        self.inner.calls.lock().unwrap().clone()
+    }
+}
+
+impl ServiceManager for Odd {
     fn kind(&self) -> RunnerKind {
-        self.0.kind()
+        self.inner.kind()
     }
     fn install(&self, spec: &ServiceSpec) -> Result<()> {
-        self.0.install(spec)
+        self.inner.install(spec)
     }
     fn start(&self) -> Result<()> {
-        let first = !self.0.calls.lock().unwrap().iter().any(|c| c == "start");
-        self.0.start()?;
-        if first {
-            Err(Error::Service("fixture start refused".into()))
-        } else {
-            Ok(())
+        let first = !self.calls().iter().any(|c| c == "start");
+        if let Some(hook) = &self.on_start {
+            hook();
         }
+        if self.down_after_start && first {
+            self.inner.calls.lock().unwrap().push("start".into());
+            return Ok(());
+        }
+        self.inner.start()?;
+        if self.fail_first_start && first {
+            return Err(Error::Service("fixture start refused".into()));
+        }
+        Ok(())
     }
     fn stop(&self) -> Result<()> {
-        self.0.stop()
+        if self.fail_stop {
+            self.inner.calls.lock().unwrap().push("stop".into());
+            return Err(Error::Service("fixture stop refused".into()));
+        }
+        self.inner.stop()
     }
     fn uninstall(&self) -> Result<()> {
-        self.0.uninstall()
+        self.inner.uninstall()
     }
     fn state(&self) -> ServiceState {
-        ServiceState {
-            running: true,
-            ..self.0.state()
+        let mut s = self.inner.state();
+        if self.down_after_start && self.calls().iter().any(|c| c == "start") {
+            s.running = false;
         }
+        s
     }
+}
+
+fn with(f: &Fixture, odd: Odd) -> (Host, Arc<Odd>) {
+    let odd = Arc::new(odd);
+    (Host::new(&f.home).with_service_manager(odd.clone()), odd)
+}
+
+fn version_of(path: &Path) -> String {
+    std::fs::read_to_string(path).unwrap()
 }
 
 #[tokio::test]
 async fn a_failed_start_puts_the_previous_binary_back() {
     let f = fixture("0.1.0");
     f.write_config(true, false, true);
-    let manager = Arc::new(FailsToStart(FakeServiceManager::default()));
-    let host = Host::new(&f.home).with_service_manager(manager.clone());
+    let (host, odd) = with(
+        &f,
+        Odd {
+            fail_first_start: true,
+            ..Odd::running()
+        },
+    );
     let new = f.new_binary("0.2.0");
     let e = host.update_driver(opts(new, false)).await.unwrap_err();
-    assert!(matches!(e, Error::Service(_)), "{e}");
     let text = e.to_string();
     assert!(text.contains("fixture start refused"), "{text}");
-    assert!(text.contains("restored"), "{text}");
-    assert!(
-        std::fs::read_to_string(&f.installed)
-            .unwrap()
-            .contains("0.1.0")
-    );
+    assert!(text.contains("restored and restarted"), "{text}");
+    assert!(version_of(&f.installed).contains("0.1.0"));
     assert!(f.leftovers().is_empty(), "{:?}", f.leftovers());
+    assert_eq!(odd.calls(), ["stop", "start", "stop", "start"]);
+}
+
+#[tokio::test]
+async fn a_service_that_is_down_after_start_is_rolled_back() {
+    let f = fixture("0.1.0");
+    f.write_config(true, false, true);
+    let (host, _) = with(
+        &f,
+        Odd {
+            down_after_start: true,
+            ..Odd::running()
+        },
+    );
+    let new = f.new_binary("0.2.0");
+    let e = host.update_driver(opts(new, false)).await.unwrap_err();
+    let text = e.to_string();
+    assert!(text.contains("is not running"), "{text}");
+    assert!(version_of(&f.installed).contains("0.1.0"));
+    assert!(f.leftovers().is_empty(), "{:?}", f.leftovers());
+}
+
+#[tokio::test]
+async fn a_failed_stop_changes_nothing() {
+    let f = fixture("0.1.0");
+    f.write_config(true, false, true);
+    let (host, odd) = with(
+        &f,
+        Odd {
+            fail_stop: true,
+            ..Odd::running()
+        },
+    );
+    let new = f.new_binary("0.2.0");
+    let e = host.update_driver(opts(new, false)).await.unwrap_err();
+    assert!(e.to_string().contains("fixture stop refused"), "{e}");
+    assert!(version_of(&f.installed).contains("0.1.0"));
+    assert_eq!(odd.calls(), ["stop"]);
+    assert!(f.leftovers().is_empty(), "{:?}", f.leftovers());
+}
+
+#[tokio::test]
+async fn a_swap_that_cannot_start_restarts_the_old_binary() {
+    let f = fixture("0.1.0");
+    f.write_config(true, false, true);
+    let blocker = f.installed.with_file_name("cua-spacesd-previous");
+    std::fs::create_dir(&blocker).unwrap();
+    std::fs::write(blocker.join("keep"), "x").unwrap();
+    let (host, odd) = with(&f, Odd::running());
+    let new = f.new_binary("0.2.0");
+    let e = host.update_driver(opts(new, false)).await.unwrap_err();
+    let text = e.to_string();
+    assert!(text.contains("could not move"), "{text}");
+    assert!(text.contains("restored and restarted"), "{text}");
+    assert!(version_of(&f.installed).contains("0.1.0"));
+    assert_eq!(odd.calls(), ["stop", "start"]);
+    assert_eq!(f.leftovers(), ["cua-spacesd-previous"]);
+}
+
+#[tokio::test]
+async fn a_restore_that_fails_says_where_the_old_binary_is() {
+    let f = fixture("0.1.0");
+    f.write_config(true, false, true);
+    let dest = f.installed.clone();
+    let hook: Hook = Box::new(move || {
+        let _ = std::fs::remove_file(&dest);
+        std::fs::create_dir_all(dest.join("blocked")).unwrap();
+    });
+    let (host, odd) = with(
+        &f,
+        Odd {
+            fail_first_start: true,
+            on_start: Some(hook),
+            ..Odd::running()
+        },
+    );
+    let new = f.new_binary("0.2.0");
+    let e = host.update_driver(opts(new, false)).await.unwrap_err();
+    let text = e.to_string();
+    assert!(text.contains("could not be put back"), "{text}");
+    assert!(text.contains("cua-spacesd-previous"), "{text}");
+    assert!(text.contains("is stopped"), "{text}");
+    assert!(!text.contains("was restored"), "{text}");
+    let backup = f.installed.with_file_name("cua-spacesd-previous");
+    assert!(version_of(&backup).contains("0.1.0"));
+    assert_eq!(odd.calls(), ["stop", "start", "stop"]);
+}
+
+#[tokio::test]
+async fn stale_leftovers_from_a_crashed_run_do_not_matter() {
+    let f = fixture("0.1.0");
+    f.write_config(true, false, true);
+    f.running();
+    std::fs::write(f.installed.with_file_name("cua-spacesd-update"), "stale").unwrap();
+    std::fs::write(f.installed.with_file_name("cua-spacesd-previous"), "stale").unwrap();
+    let new = f.new_binary("0.2.0");
+    f.host().update_driver(opts(new, false)).await.unwrap();
+    assert!(version_of(&f.installed).contains("0.2.0"));
+    assert!(f.leftovers().is_empty(), "{:?}", f.leftovers());
+}
+
+#[tokio::test]
+async fn build_metadata_does_not_make_a_current_install_look_old() {
+    let f = fixture("0.2.0");
+    std::fs::write(
+        &f.installed,
+        "#!/bin/sh\necho \"cua-spacesd 0.2.0 (build 12)\"\n",
+    )
+    .unwrap();
+    f.write_config(true, false, true);
+    let new = f.new_binary("0.2.0+abc");
+    let got = f.host().update_driver(opts(new, true)).await.unwrap();
+    assert_eq!(
+        got,
+        DriverUpdate::Current {
+            version: "0.2.0".into()
+        }
+    );
+}
+
+#[tokio::test]
+async fn an_installed_version_that_cannot_be_read_is_not_reported_as_old() {
+    let f = fixture("0.1.0");
+    std::fs::write(&f.installed, "#!/bin/sh\necho garbage\n").unwrap();
+    f.write_config(true, false, true);
+    let new = f.new_binary("0.2.0");
+    let e = f
+        .host()
+        .update_driver(opts(new.clone(), true))
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("did not report one"), "{e}");
+    assert!(f.leftovers().is_empty(), "{:?}", f.leftovers());
+    let got = f.host().update_driver(opts(new, false)).await.unwrap();
+    assert!(
+        matches!(got, DriverUpdate::Updated { from: None, .. }),
+        "{got:?}"
+    );
 }
 
 #[tokio::test]

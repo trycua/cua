@@ -1610,11 +1610,15 @@ impl Host {
     /// settings are not read or written, and setup's preflight does not run,
     /// so this works with both sharing options off.
     ///
-    /// The new binary is staged next to the old one, then swapped in while
+    /// The new binary is staged beside the old one, then swapped in while
     /// the service is stopped. A service that was running is started again
     /// (and the old binary put back if it does not come up); one that was
-    /// not running (stopped, paused or uninstalled) stays as it was.
-    /// With `check` nothing is changed.
+    /// not running (stopped, paused or uninstalled) stays as it was. If the
+    /// old binary cannot be put back the error says where it is.
+    ///
+    /// With `check` nothing is downloaded, staged or run except the
+    /// installed binary and a local `--driver-bin`: when the version to
+    /// install is not known up front, it is an error rather than a guess.
     pub async fn update_driver(&self, opts: DriverUpdateOptions) -> Result<DriverUpdate> {
         let config = self.require_config()?;
         let dest = config.driver_bin.clone();
@@ -1626,17 +1630,27 @@ impl Host {
                 version: installed.unwrap_or_default(),
             });
         }
-        if opts.check
-            && let Some(latest) = known.clone()
-        {
-            return Ok(DriverUpdate::Available { installed, latest });
+        if opts.check {
+            return match (installed, known) {
+                (installed, Some(latest)) if installed.is_some() || !dest.is_file() => {
+                    Ok(DriverUpdate::Available { installed, latest })
+                }
+                (_, Some(_)) => Err(Error::Internal(format!(
+                    "cannot compare versions: {} did not report one (`cua host update` reinstalls it)",
+                    dest.display()
+                ))),
+                (_, None) => Err(Error::Internal(
+                    "cannot tell which cua-spacesd version would be installed without \
+                     downloading it (`cua host update` installs it)"
+                        .into(),
+                )),
+            };
         }
         let staged = sibling(&dest, "update");
-        let result = self
-            .swap_driver(&config, &source, &staged, installed, known, opts.check)
-            .await;
+        let _cleanup = Cleanup(vec![staged.clone(), staged.with_extension("partial")]);
         let _ = std::fs::remove_file(&staged);
-        result
+        self.swap_driver(&config, &source, &staged, installed, known)
+            .await
     }
 
     async fn swap_driver(
@@ -1646,7 +1660,6 @@ impl Host {
         staged: &Path,
         installed: Option<String>,
         known: Option<String>,
-        check: bool,
     ) -> Result<DriverUpdate> {
         let dest = &config.driver_bin;
         driver::install_to(source, staged).await?;
@@ -1656,66 +1669,86 @@ impl Host {
                 version: installed.unwrap_or_default(),
             });
         }
-        if check {
-            return Ok(DriverUpdate::Available {
-                installed,
-                latest: latest.unwrap_or_else(|| "unknown".into()),
-            });
-        }
         let manager = self.manager_for_config(config);
         let was_running = manager.state().running;
         if was_running {
             manager.stop()?;
         }
         let backup = sibling(dest, "previous");
-        let _ = std::fs::remove_file(&backup);
+        let _ = retrying(|| remove_file_if_present(&backup)).await;
         let had_binary = dest.exists();
-        let swapped = (|| -> std::io::Result<()> {
-            if had_binary {
-                std::fs::rename(dest, &backup)?;
-            }
-            std::fs::rename(staged, dest).inspect_err(|_| {
-                if had_binary {
-                    let _ = std::fs::rename(&backup, dest);
-                }
-            })
-        })();
-        let restore = |why: String| {
-            let _ = manager.stop();
-            if had_binary {
-                let _ = std::fs::rename(&backup, dest);
-            }
-            let back = was_running && manager.start().is_ok();
-            Error::Service(format!(
-                "{why}; the previous cua-spacesd was restored{}",
-                if back { " and restarted" } else { "" }
-            ))
+        let fail = |why: String, restored: std::io::Result<()>| {
+            self.failed_swap(&*manager, was_running, dest, &backup, why, restored)
         };
-        if let Err(e) = swapped {
-            let back = was_running && manager.start().is_ok();
-            return Err(Error::Io(std::io::Error::new(
-                e.kind(),
-                format!(
-                    "could not replace {}: {e}{}",
-                    dest.display(),
-                    if back { " (service restarted)" } else { "" }
-                ),
-            )));
+        if had_binary && let Err(e) = retrying(|| std::fs::rename(dest, &backup)).await {
+            return Err(fail(
+                format!("could not move {} aside: {e}", dest.display()),
+                Ok(()),
+            ));
+        }
+        if let Err(e) = retrying(|| std::fs::rename(staged, dest)).await {
+            let restored = restore_previous(dest, &backup, had_binary).await;
+            return Err(fail(
+                format!("could not replace {}: {e}", dest.display()),
+                restored,
+            ));
         }
         if was_running {
-            if let Err(e) = manager.start() {
-                return Err(restore(format!("the updated service did not start: {e}")));
-            }
-            if !manager.state().running {
-                return Err(restore("the updated service is not running".into()));
+            let started = match manager.start() {
+                Err(e) => Some(format!("the updated service did not start: {e}")),
+                Ok(()) if !manager.state().running => {
+                    Some("the updated service is not running".to_string())
+                }
+                Ok(()) => None,
+            };
+            if let Some(why) = started {
+                let _ = manager.stop();
+                let restored = restore_previous(dest, &backup, had_binary).await;
+                return Err(fail(why, restored));
             }
         }
-        let _ = std::fs::remove_file(&backup);
+        let _ = retrying(|| remove_file_if_present(&backup)).await;
         Ok(DriverUpdate::Updated {
             from: installed,
             to: latest.unwrap_or_else(|| "unknown".into()),
             restarted: was_running,
         })
+    }
+
+    fn failed_swap(
+        &self,
+        manager: &dyn ServiceManager,
+        was_running: bool,
+        dest: &Path,
+        backup: &Path,
+        why: String,
+        restored: std::io::Result<()>,
+    ) -> Error {
+        if let Err(e) = restored {
+            return Error::Service(format!(
+                "{why}; AND the previous cua-spacesd could not be put back ({e}): it is at {}, \
+                 {} is missing or incomplete, and the service {}. Move it back to {} to recover",
+                backup.display(),
+                dest.display(),
+                if was_running {
+                    "is stopped"
+                } else {
+                    "was not started"
+                },
+                dest.display()
+            ));
+        }
+        if !was_running {
+            return Error::Service(format!("{why}; the previous cua-spacesd was kept"));
+        }
+        match manager.start() {
+            Ok(()) => Error::Service(format!(
+                "{why}; the previous cua-spacesd was restored and restarted"
+            )),
+            Err(e) => Error::Service(format!(
+                "{why}; the previous cua-spacesd was restored but the service did not start: {e}"
+            )),
+        }
     }
 
     /// Mirrors an allowlist changed on the relay into the driver policy
@@ -1948,12 +1981,20 @@ async fn binary_version(bin: &Path) -> Option<String> {
     if !out.status.success() {
         return None;
     }
-    let text = String::from_utf8_lossy(&out.stdout);
-    let word = text.lines().next()?.split_whitespace().last()?;
-    let version = word.trim_start_matches('v');
-    version
-        .starts_with(|c: char| c.is_ascii_digit())
-        .then(|| version.to_string())
+    parse_reported_version(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// The version in a `--version` line: `cua-spacesd 0.6.0`, also
+/// `0.6.0+abc` and `0.6.0 (build 12)` (build metadata is dropped).
+fn parse_reported_version(text: &str) -> Option<String> {
+    text.lines().next()?.split_whitespace().find_map(|word| {
+        let core = word.trim_start_matches('v').split('+').next()?;
+        let mut nums = core.splitn(3, '.');
+        let numeric =
+            |s: Option<&str>| s.is_some_and(|s| s.starts_with(|c: char| c.is_ascii_digit()));
+        (numeric(nums.next()) && numeric(nums.next()) && numeric(nums.next()))
+            .then(|| core.to_string())
+    })
 }
 
 /// The version `source` will install, when it is known without downloading.
@@ -1970,19 +2011,62 @@ async fn known_version(source: &DriverSource) -> Option<String> {
     }
 }
 
-/// `remove_dir_all`, retried for up to 5 s: Windows releases a stopped
-/// driver's files (its exe, driver.log) a moment after it exits (CUA-1749).
-async fn remove_dir_retrying(dir: &Path) -> std::io::Result<()> {
+/// Tries for [`retrying`]: Windows releases a stopped driver's files (its
+/// exe, driver.log) a moment after it exits (CUA-1749).
+const IO_RETRIES: u32 = 20;
+#[cfg(not(test))]
+const IO_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(250);
+#[cfg(test)]
+const IO_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(5);
+
+/// Runs a file operation, tried again for up to 5 s. A missing file is not
+/// retried.
+async fn retrying<T>(mut op: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
     let mut tries = 0;
     loop {
-        match std::fs::remove_dir_all(dir) {
-            Ok(()) => return Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(e) if tries >= 20 => return Err(e),
+        match op() {
+            Ok(v) => return Ok(v),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound || tries >= IO_RETRIES => {
+                return Err(e);
+            }
             Err(_) => {
                 tries += 1;
-                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                tokio::time::sleep(IO_RETRY_DELAY).await;
             }
+        }
+    }
+}
+
+/// `remove_dir_all`, retried (see [`retrying`]); already gone is fine.
+async fn remove_dir_retrying(dir: &Path) -> std::io::Result<()> {
+    match retrying(|| std::fs::remove_dir_all(dir)).await {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        other => other,
+    }
+}
+
+fn remove_file_if_present(path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_file(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        other => other,
+    }
+}
+
+/// Puts the binary moved aside back at `dest`.
+async fn restore_previous(dest: &Path, backup: &Path, had_binary: bool) -> std::io::Result<()> {
+    if !had_binary {
+        return Ok(());
+    }
+    retrying(|| std::fs::rename(backup, dest)).await
+}
+
+/// Removes the staged files when an update ends, however it ends.
+struct Cleanup(Vec<PathBuf>);
+
+impl Drop for Cleanup {
+    fn drop(&mut self) {
+        for p in &self.0 {
+            let _ = std::fs::remove_file(p);
         }
     }
 }
@@ -2127,6 +2211,17 @@ mod tests {
             std::fs::metadata(&p).unwrap().permissions().mode() & 0o777,
             0o600
         );
+    }
+
+    #[test]
+    fn reported_versions_ignore_build_metadata_and_trailing_text() {
+        let p = super::parse_reported_version;
+        assert_eq!(p("cua-spacesd 0.6.0\n").as_deref(), Some("0.6.0"));
+        assert_eq!(p("cua-spacesd 0.6.0+abc").as_deref(), Some("0.6.0"));
+        assert_eq!(p("cua-spacesd v0.6.0 (build 12)").as_deref(), Some("0.6.0"));
+        assert_eq!(p("cua-spacesd 0.6.0-rc.1").as_deref(), Some("0.6.0-rc.1"));
+        assert_eq!(p("garbage"), None);
+        assert_eq!(p(""), None);
     }
 
     #[tokio::test]

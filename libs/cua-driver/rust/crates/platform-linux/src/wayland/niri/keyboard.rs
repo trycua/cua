@@ -494,11 +494,14 @@ fn run_session(
     let total = parts.iter().map(|part| part.keys.len()).sum();
     let mut sent = Sent::default();
     let typed = type_parts(&mut keyboard, &parts, group, deadline, &mut sent, |sent| {
-        match super::keyboard_focus() {
-            Ok(Some(focused)) if focused == target => Ok(()),
-            Ok(focused) => Err(focus_moved(target, focused, sent)),
-            Err(error) => Err(super::input_unavailable(error)),
+        let observed = super::keyboard_focus().map_err(super::input_unavailable)?;
+        if crate::interaction::policy::focused(
+            &target,
+            &crate::interaction::facts::Fact::Known(observed),
+        ) {
+            return Ok(());
         }
+        Err(focus_moved(target, observed, sent))
     });
     let finished = keyboard.finish(closing_group(super::keyboard_layout(), group));
     Ok((total, sent, typed, finished))
@@ -515,16 +518,24 @@ fn closing_group(current: Result<u32>, start: u32) -> u32 {
 /// have taken focus after the activation was confirmed.
 fn admitted_target(expected: Option<u64>, focused: Option<u64>) -> Result<u64> {
     match (expected, focused) {
+        (Some(expected), focused)
+            if crate::interaction::policy::focused(
+                &expected,
+                &crate::interaction::facts::Fact::Known(focused),
+            ) =>
+        {
+            Ok(expected)
+        }
         (_, None) => Err(anyhow!(
             "foreground_unavailable: no niri window has keyboard focus (the screen may be \
              locked, or the overview, a layer-shell surface or a niri dialog has it); nothing \
              was typed"
         )),
-        (Some(expected), Some(focused)) if focused != expected => Err(anyhow!(
+        (Some(expected), Some(focused)) => Err(anyhow!(
             "foreground_unavailable: niri keyboard focus is on window {focused}, not window \
              {expected}; nothing was typed"
         )),
-        (_, Some(focused)) => Ok(focused),
+        (None, Some(focused)) => Ok(focused),
     }
 }
 

@@ -99,7 +99,10 @@ pub fn with_target_foreground<T>(
             &mut (),
             |()| {
                 let prior = sway_ipc::focused(confirm())?;
-                Ok(Some(prior.filter(|(_, prior)| *prior != window_id)))
+                if policy::focused(&(pid, window_id), &facts::Fact::Known(prior)) {
+                    return Ok(None);
+                }
+                Ok(Some(prior))
             },
             |(), _| sway_ipc::focus(pid, window_id, confirm()),
             body,
@@ -116,7 +119,7 @@ pub fn with_target_foreground<T>(
             &mut (),
             |()| {
                 let prior = shell_helper::trusted_focus(confirm())?;
-                if prior.is_some_and(|(_, id)| id == window_id) {
+                if policy::focused(&(Some(pid), window_id), &facts::Fact::Known(prior)) {
                     return Ok(None);
                 }
                 policy::restore(facts::Fact::Known(

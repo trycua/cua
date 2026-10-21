@@ -515,18 +515,17 @@ impl Keymap {
 /// keyboard. `remap_guards` keeps any spare-keycode remaps alive until the
 /// server has processed the events.
 fn deliver(
-    cursor_id: &str,
-    popup: bool,
+    session: Option<&str>,
     target_window: u64,
     steps: &[KeyStep],
     remap_guards: Vec<RemappedKeycode<'_>>,
     keymap_conn: &RustConnection,
 ) -> Result<KeyboardDeliveryReport> {
-    let _op = if popup {
-        popup_owner_guard(cursor_id, target_window)?
-    } else {
-        mpx_op_guard(cursor_id)
+    let (_op, cursor_id) = match session {
+        Some(cursor_id) => (mpx_op_guard(cursor_id), cursor_id.to_owned()),
+        None => popup_owner_guard(target_window)?,
     };
+    let cursor_id = cursor_id.as_str();
     let display = open_display()?;
     let result = (|| -> Result<KeyboardDeliveryReport> {
         supports_parallel_pointer_injection(display)?;
@@ -657,20 +656,15 @@ pub fn send_virtual_keyboard_text(
     target_window: u64,
     text: &str,
 ) -> Result<KeyboardDeliveryReport> {
-    keyboard_text(cursor_id, false, target_window, text)
+    keyboard_text(Some(cursor_id), target_window, text)
 }
 
-pub fn send_popup_keyboard_text(
-    owner: &str,
-    popup: u64,
-    text: &str,
-) -> Result<KeyboardDeliveryReport> {
-    keyboard_text(owner, true, popup, text)
+pub fn send_popup_keyboard_text(popup: u64, text: &str) -> Result<KeyboardDeliveryReport> {
+    keyboard_text(None, popup, text)
 }
 
 fn keyboard_text(
-    cursor_id: &str,
-    popup: bool,
+    session: Option<&str>,
     target_window: u64,
     text: &str,
 ) -> Result<KeyboardDeliveryReport> {
@@ -687,14 +681,7 @@ fn keyboard_text(
         plan_text_with_fallback(&keymap.mapping, keymap.shift, text, |ch, mapping| {
             keycode_for_keysym(&keymap.conn, mapping, keysym_for_char(ch), &ch.to_string())
         })?;
-    deliver(
-        cursor_id,
-        popup,
-        target_window,
-        &steps,
-        guards,
-        &keymap.conn,
-    )
+    deliver(session, target_window, &steps, guards, &keymap.conn)
 }
 
 /// Press `key` with `modifiers` held, into `target_window`, without touching
@@ -705,21 +692,19 @@ pub fn send_virtual_keyboard_key(
     key: &str,
     modifiers: &[&str],
 ) -> Result<KeyboardDeliveryReport> {
-    keyboard_key(cursor_id, false, target_window, key, modifiers)
+    keyboard_key(Some(cursor_id), target_window, key, modifiers)
 }
 
 pub fn send_popup_keyboard_key(
-    owner: &str,
     popup: u64,
     key: &str,
     modifiers: &[&str],
 ) -> Result<KeyboardDeliveryReport> {
-    keyboard_key(owner, true, popup, key, modifiers)
+    keyboard_key(None, popup, key, modifiers)
 }
 
 fn keyboard_key(
-    cursor_id: &str,
-    popup: bool,
+    session: Option<&str>,
     target_window: u64,
     key: &str,
     modifiers: &[&str],
@@ -745,14 +730,7 @@ fn keyboard_key(
         }
     };
     let steps = plan_chord(&modifier_keycodes, keycode, needs_shift, keymap.shift);
-    deliver(
-        cursor_id,
-        popup,
-        target_window,
-        &steps,
-        guards,
-        &keymap.conn,
-    )
+    deliver(session, target_window, &steps, guards, &keymap.conn)
 }
 
 #[cfg(test)]

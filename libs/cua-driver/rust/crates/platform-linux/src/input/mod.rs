@@ -225,13 +225,6 @@ fn track_click_popups(cursor_id: &str, opened: impl IntoIterator<Item = u64>) {
     windows.dedup();
 }
 
-pub fn popup_click_session(window: u64) -> Option<String> {
-    let _op = MPX_OP_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    live_popup_owner(window)
-}
-
 fn live_popup_owner(window: u64) -> Option<String> {
     let appeared = mpx_click_popups().lock().unwrap();
     let pointers = mpx_pointers().lock().unwrap();
@@ -250,17 +243,15 @@ fn popup_owner(
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("the session whose click opened the popup has no master pair any more")]
+#[error("no live session's click opened the popup")]
 pub struct PopupOwnerGone;
 
-fn popup_owner_guard(owner: &str, popup: u64) -> Result<std::sync::MutexGuard<'static, ()>> {
+fn popup_owner_guard(popup: u64) -> Result<(std::sync::MutexGuard<'static, ()>, String)> {
     let guard = MPX_OP_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if live_popup_owner(popup).as_deref() != Some(owner) {
-        return Err(PopupOwnerGone.into());
-    }
-    Ok(guard)
+    let owner = live_popup_owner(popup).ok_or(PopupOwnerGone)?;
+    Ok((guard, owner))
 }
 
 /// Take the MPX operation lock for one call on `cursor_id`, stamp its last
@@ -803,7 +794,7 @@ fn forget_master_pointer_locked(cursor_id: &str) {
         Some(popups) if popups.removal_due.is_some() => {}
         Some(popups) if !popups.windows.is_empty() => {
             let remove_by = *last_use.get(cursor_id).unwrap_or(&Instant::now()) + MPX_IDLE_TTL;
-            match spawn_popup_waiter(cursor_id.to_owned(), popups.windows.clone(), remove_by) {
+            match spawn_popup_waiter(cursor_id.to_owned(), remove_by) {
                 Ok(_) => {
                     popups.removal_due = Some(remove_by);
                     last_use.remove(cursor_id);
@@ -838,7 +829,7 @@ fn popup_wait_over(mapped: Option<bool>, quiet: &mut Option<Instant>, remove_by:
     quiet.is_some_and(|since| now - since >= MPX_POPUP_QUIET) || now >= remove_by
 }
 
-fn spawn_popup_waiter(cursor_id: String, windows: Vec<u64>, remove_by: Instant) -> Result<()> {
+fn spawn_popup_waiter(cursor_id: String, remove_by: Instant) -> Result<()> {
     std::thread::Builder::new()
         .name("cua-mpx-popup-wait".into())
         .spawn(move || {
@@ -849,10 +840,13 @@ fn spawn_popup_waiter(cursor_id: String, windows: Vec<u64>, remove_by: Instant) 
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
                 let mut tracked = mpx_click_popups().lock().unwrap();
-                if tracked.get(&cursor_id).and_then(|p| p.removal_due) != Some(remove_by) {
+                let Some(popups) = tracked.get(&cursor_id) else {
+                    return;
+                };
+                if popups.removal_due != Some(remove_by) {
                     return;
                 }
-                if popup_wait_over(popups_mapped(&windows), &mut quiet, remove_by) {
+                if popup_wait_over(popups_mapped(&popups.windows), &mut quiet, remove_by) {
                     tracked.remove(&cursor_id);
                     return remove_master_pair(&cursor_id);
                 }
@@ -5337,7 +5331,7 @@ mod path_tests {
         use super::{
             mpx_last_use, mpx_pointers, popup_owner_guard, MasterPointerIds, PopupOwnerGone,
         };
-        let gone = popup_owner_guard("popup-owner-gone", 90_001).unwrap_err();
+        let gone = popup_owner_guard(90_001).unwrap_err();
         assert!(gone.is::<PopupOwnerGone>());
         super::track_click_popups("popup-owner-live", [90_001]);
         mpx_pointers().lock().unwrap().insert(
@@ -5349,10 +5343,22 @@ mod path_tests {
                 slave_keyboard_id: None,
             },
         );
-        drop(popup_owner_guard("popup-owner-live", 90_001).unwrap());
+        assert_eq!(popup_owner_guard(90_001).unwrap().1, "popup-owner-live");
         super::track_click_popups("popup-owner-next", [90_001]);
-        let moved = popup_owner_guard("popup-owner-live", 90_001).unwrap_err();
-        assert!(moved.is::<PopupOwnerGone>());
+        assert!(popup_owner_guard(90_001)
+            .unwrap_err()
+            .is::<PopupOwnerGone>());
+        mpx_pointers().lock().unwrap().insert(
+            "popup-owner-next".to_owned(),
+            MasterPointerIds {
+                pointer_id: 93,
+                keyboard_id: 94,
+                _slave_pointer_id: 95,
+                slave_keyboard_id: None,
+            },
+        );
+        assert_eq!(popup_owner_guard(90_001).unwrap().1, "popup-owner-next");
+        mpx_pointers().lock().unwrap().remove("popup-owner-next");
         mpx_pointers().lock().unwrap().remove("popup-owner-live");
         let mut tracked = super::mpx_click_popups().lock().unwrap();
         tracked.remove("popup-owner-live");

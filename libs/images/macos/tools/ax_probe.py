@@ -93,8 +93,8 @@ def display_text(state: dict[str, Any]) -> str:
 
 async def run(url: str, token: str, log: list[dict[str, Any]]) -> bool:
     headers = {"Authorization": f"Bearer {token}"}
-    async with streamablehttp_client(url, headers=headers) as (read, write, _):
-        async with ClientSession(read, write) as session:
+    async with streamablehttp_client(url, headers=headers) as (read_stream, write_stream, _):
+        async with ClientSession(read_stream, write_stream) as session:
             await session.initialize()
 
             async def call(name: str, args: dict[str, Any]) -> dict[str, Any]:

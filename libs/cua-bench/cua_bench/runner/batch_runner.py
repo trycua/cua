@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 import traceback
-from contextlib import asynccontextmanager, nullcontext
+from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional, Protocol
@@ -46,9 +47,24 @@ class Job:
 RESULT_SCHEMA_VERSION = 2
 
 #: Default bound on one variant's setup, agent and evaluation (``0`` runs
-#: unbounded). Above the 1800 s ``CUA_BENCH_HARNESS_TIMEOUT`` a harness
-#: agent gets per task, which the deadline must not cut off.
-DEFAULT_VARIANT_TIMEOUT_S = 3600.0
+#: unbounded). 10 800 s covers the worst adapter phase envelope
+#: (setup 1800 + oracle 3600 + evaluate 1800 = 7200, plus slack); a larger
+#: ``CUA_BENCH_HARNESS_TIMEOUT`` (the harness agent's turn budget, default
+#: 1800) raises the default to budget + 5400 so the deadline never cuts off
+#: a healthy run.
+DEFAULT_VARIANT_TIMEOUT_S = 10_800.0
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, "") or default)
+    except ValueError:
+        return default
+
+
+def _default_variant_timeout_s() -> float:
+    harness_budget = _env_float("CUA_BENCH_HARNESS_TIMEOUT", 1800.0)
+    return max(DEFAULT_VARIANT_TIMEOUT_S, harness_budget + 5400.0)
 
 
 @dataclass
@@ -192,11 +208,12 @@ class BatchRunner:
         self.target = target
         self.retries = max(0, int(retries))
         self.retry_backoff_s = retry_backoff_s
-        self.variant_timeout_s = (
-            DEFAULT_VARIANT_TIMEOUT_S
-            if variant_timeout_s is None
-            else max(0.0, float(variant_timeout_s))
-        )
+        if variant_timeout_s is None:
+            self.variant_timeout_s = _default_variant_timeout_s()
+        else:
+            self.variant_timeout_s = float(variant_timeout_s)
+            if self.variant_timeout_s < 0:
+                raise ValueError("variant_timeout_s must be 0 or more")
         self.opts = opts
         self.reporter = reporter or NullReporter()
         self.on_status = on_status
@@ -284,10 +301,10 @@ class BatchRunner:
         self._status(job, "starting")
 
         #: Bound on setup, agent and evaluation (not sandbox start, which
-        #: ``--retries`` covers). ``0`` runs unbounded.
-        deadline = (
-            asyncio.timeout(self.variant_timeout_s) if self.variant_timeout_s > 0 else nullcontext()
-        )
+        #: ``--retries`` covers). Created unarmed so ``expired()`` is always
+        #: safe to call below; armed on entry, so sandbox start and
+        #: ``_env_factory`` never count against it. ``0`` stays unarmed.
+        deadline = asyncio.timeout(None)
 
         opener, attach = self._opener, self._attach
         if not spec.needs_sandbox:
@@ -319,6 +336,10 @@ class BatchRunner:
                     session = attach(sandbox, spec)
                     try:
                         async with deadline:
+                            if self.variant_timeout_s > 0:
+                                deadline.reschedule(
+                                    asyncio.get_running_loop().time() + self.variant_timeout_s
+                                )
                             episode = await run_episode(
                                 env, job.variant, self.opts, job.output_dir, session=session
                             )
@@ -340,8 +361,7 @@ class BatchRunner:
                 self._finish(job, result, started)
                 raise
             except Exception as error:  # noqa: BLE001 - one variant never stops the batch
-                expired = getattr(deadline, "expired", lambda: False)
-                if isinstance(error, TimeoutError) and expired():
+                if isinstance(error, TimeoutError) and deadline.expired():
                     result.error = f"variant timed out after {self.variant_timeout_s:g} s"
                     # A hung variant is not an infrastructure failure: no retry.
                     result._retryable = False  # type: ignore[attr-defined]

@@ -35,7 +35,7 @@ TASK = textwrap.dedent(
             cb.Task(description=f"variant {i}", metadata={"i": i},
                     computer={"provider": "native", "setup_config": {"os_type": "linux",
                               "image": "%s"}})
-            for i in range(2)
+            for i in range(3)
         ]
 
     @cb.solve_task(split="train")
@@ -144,9 +144,23 @@ async def test_a_timeout_error_inside_the_variant_still_retries(sdk, task_dir, t
     results = await asyncio.wait_for(runner.run([job]), timeout=30)
 
     assert results[0].status == "failed"
+    assert "TimeoutError" in results[0].error and "operation timed out" in results[0].error
     assert "timed out after" not in results[0].error
     assert results[0].retries == 1  # the inner TimeoutError stayed retryable
     assert len(sdk.calls) == 2  # one sandbox per try
+
+
+async def test_sandbox_start_is_outside_the_variant_budget(monkeypatch, task_dir, tmp_path):
+    """Sandbox start outliving the budget still completes: ``--retries`` owns start."""
+    fake = FakeSDK(delay=6)
+    monkeypatch.setattr(sandboxes, "_sdk", lambda: (fakes.FakeImage, fake.Sandbox))
+    runner = BatchRunner(
+        Target(on="local", concurrency=1),
+        AgentOptions(oracle=True),
+        variant_timeout_s=4,
+    )
+    results = await asyncio.wait_for(runner.run(_jobs(task_dir, tmp_path / "out", n=1)), timeout=30)
+    assert results[0].status == "completed"
 
 
 async def test_zero_variant_timeout_runs_unbounded(sdk, task_dir, tmp_path):
@@ -168,7 +182,8 @@ def test_variant_timeout_flag_parses_for_task_and_dataset():
     assert args.variant_timeout is None
 
 
-def test_a_negative_variant_timeout_is_rejected(task_dir, tmp_path):
+@pytest.mark.parametrize("bad", [-1, float("nan"), float("inf")])
+def test_a_negative_or_nonfinite_variant_timeout_is_rejected(task_dir, tmp_path, bad):
     from cua_bench.cli.commands import run as run_cmd
 
     args = SimpleNamespace(
@@ -177,7 +192,7 @@ def test_a_negative_variant_timeout_is_rejected(task_dir, tmp_path):
         max_variants=None,
         attempts=1,
         retries=0,
-        variant_timeout=-1,
+        variant_timeout=bad,
     )
     with pytest.raises(ValueError, match="variant-timeout"):
         run_cmd.build_jobs(args, "r1", tmp_path / "out", Target(on="local"), "dataset")

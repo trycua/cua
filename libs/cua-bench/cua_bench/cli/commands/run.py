@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import fnmatch
 import json
+import math
 import os
 import signal
 import subprocess
@@ -298,8 +299,13 @@ def build_jobs(
         raise ValueError("--attempts must be at least 1")
     if int(getattr(args, "retries", 0) or 0) < 0:
         raise ValueError("--retries must be 0 or more")
-    if float(getattr(args, "variant_timeout", 0) or 0) < 0:
-        raise ValueError("--variant-timeout must be 0 or more")
+    variant_timeout_arg = getattr(args, "variant_timeout", None)
+    if variant_timeout_arg is not None:
+        variant_timeout = float(variant_timeout_arg)
+        if not math.isfinite(variant_timeout):
+            raise ValueError("--variant-timeout must be finite")
+        if variant_timeout < 0:
+            raise ValueError("--variant-timeout must be 0 or more")
     jobs = []
     for task_path, variant, cfg in selected:
         spec = resolve_env_spec(
@@ -459,7 +465,9 @@ def _cmd_execute(args, kind: str) -> int:
         )
     except KeyboardInterrupt:
         _track_run_completed(taskset, None, len(jobs), "cancelled")
-        print(f"\n{YELLOW}Interrupted: sandboxes released.{RESET}")
+        print(
+            f"\n{YELLOW}Interrupted: sandboxes released.{RESET}"
+        )
         return 130
     except BaseException:
         _track_run_completed(taskset, None, len(jobs), "error")
@@ -547,7 +555,13 @@ def _results_housekeeping(args, output_dir: Path) -> None:
 
 
 async def _run_batch(
-    target, opts, jobs, reporter, run_id, retries: int = 0, variant_timeout_s=None
+    target,
+    opts,
+    jobs,
+    reporter,
+    run_id,
+    retries: int = 0,
+    variant_timeout_s: Optional[float] = None,
 ):
     from cua_bench.runner import BatchRunner
     from cua_bench.runner.output import routed_stdio
@@ -595,7 +609,8 @@ def _summarize(results, output_dir: Path, kind: str, args) -> int:
     from cua_bench.runner.batch_runner import RESULT_SCHEMA_VERSION
 
     targets: Counter = Counter(
-        (r.on, r.kind, r.runtime, r.image_variant, r.image_digest or r.image_ref) for r in results
+        (r.on, r.kind, r.runtime, r.image_variant, r.image_digest or r.image_ref)
+        for r in results
     )
     summary = {
         "schema_version": RESULT_SCHEMA_VERSION,
@@ -638,7 +653,9 @@ def _summarize(results, output_dir: Path, kind: str, args) -> int:
                 "image": img,
                 "count": n,
             }
-            for (on, kind, rt, var, img), n in sorted(targets.items(), key=lambda kv: str(kv[0]))
+            for (on, kind, rt, var, img), n in sorted(
+                targets.items(), key=lambda kv: str(kv[0])
+            )
         ],
     }
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2))
@@ -733,10 +750,7 @@ def _rows(sessions: list[dict]) -> list[dict]:
                 "session_id": session.get("session_id", "?"),
                 "environment": Path(session.get("env_path", "?")).name,
                 "variant": str(session.get("task_index", 0)),
-                "on": session.get("location")
-                or session.get("on")
-                or session.get("provider")
-                or "-",
+                "on": session.get("location") or session.get("on") or session.get("provider") or "-",
                 "status": info["status"],
                 "reward": info["reward"],
                 "output_dir": session.get("output_dir"),

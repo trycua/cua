@@ -23,8 +23,10 @@ The lifecycle uses only public cua-sandbox API (``Image``, ``Sandbox.ephemeral``
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+import sys
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Optional
@@ -35,6 +37,9 @@ logger = logging.getLogger(__name__)
 
 #: Sandbox boot deadline in seconds (a first start can pull an image).
 TIME_TO_START_S = 900
+#: Sandbox release deadline in seconds: past it the batch proceeds and the
+#: sandbox may leak.
+TIME_TO_RELEASE_S = 300
 
 
 @dataclass
@@ -177,8 +182,22 @@ async def open_sandbox(
         raise CloudEnded()
     image = build_image(spec, image_cls)
     kwargs = ephemeral_kwargs(spec, target)
-    async with sandbox_cls.ephemeral(image, **kwargs) as sb:
+    ephemeral = sandbox_cls.ephemeral(image, **kwargs)
+    sb = await ephemeral.__aenter__()
+    try:
         yield sb
+    finally:
+        # A wedged release must not re-stall the batch a frame later.
+        try:
+            async with asyncio.timeout(TIME_TO_RELEASE_S) as deadline:
+                await ephemeral.__aexit__(*sys.exc_info())
+        except TimeoutError:
+            if not deadline.expired():
+                raise
+            logger.warning(
+                "sandbox release did not finish within %ss; the sandbox may leak",
+                TIME_TO_RELEASE_S,
+            )
     if on_progress is not None:
         on_progress(Progress(stage="release", message="sandbox released"))
 

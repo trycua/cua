@@ -320,17 +320,7 @@ def test_dry_run_plans_without_a_sandbox(cli_env, tmp_path, capsys):
     assert code == 1
     assert "windows is VM-only: drop --kind or use --kind vm" in capsys.readouterr().out
     code = run_cb(
-        [
-            "run",
-            str(HELLO),
-            "--dry-run",
-            "--on",
-            "local",
-            "--kind",
-            "container",
-            "--runtime",
-            "qemu",
-        ]
+        ["run", str(HELLO), "--dry-run", "--on", "local", "--kind", "container", "--runtime", "qemu"]
     )
     assert code == 1
     assert "valid runtime: auto, gvisor, runc" in capsys.readouterr().out

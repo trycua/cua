@@ -20,6 +20,7 @@ import { SpaceCanvas } from "@/components/space-canvas";
 import { StateLabel } from "@/components/state-dot";
 import { useTileVideo } from "@/components/video/tile-video";
 import { useNewSpace } from "@/hooks/use-new-space";
+import { useQuiet } from "@/hooks/use-quiet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/segmented";
@@ -74,6 +75,11 @@ function SpacesPage() {
   const runHere = readySpace && !agentRan ? readySpace : undefined;
   const [runOpen, setRunOpen] = useState(false);
   const [connectOpen, setConnectOpen] = useState(false);
+  // The cards above the list (ready, checklist, computers) and the list come from separate host reads. Draw them
+  // together once those have answered, not one by one with the page jumping at each (CUA-1951).
+  const settled = useQuiet(
+    [isLoading, all.length, machines.length, Object.keys(checklist.done).length, checklist.dismissed, agents?.runs.length, agents?.agents.length, resources ? 1 : 0].join("|"),
+  );
 
   return (
     <Page>
@@ -86,6 +92,8 @@ function SpacesPage() {
           </Button>
         }
       />
+      {settled ? (
+        <>
       <FirstRunTodosCard />
       {runHere ? <SpaceReadyCard space={runHere} onRun={() => setRunOpen(true)} /> : null}
       {firstRunTodos ? null : <GettingStarted onRunAgent={runHere ? () => setRunOpen(true) : undefined} />}
@@ -163,6 +171,8 @@ function SpacesPage() {
           ))}
         </ul>
       )}
+        </>
+      ) : null}
     </Page>
   );
 }

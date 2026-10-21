@@ -13,6 +13,7 @@ pnpm build        # app core wasm, then dist/
 pnpm typecheck
 pnpm test         # vitest; builds the core first when Rust is available
 pnpm core         # just the app core wasm (src/bridge/core/wasm/, gitignored)
+pnpm perf --shift # layout shift and first render of every route (CI); pnpm perf also checks bundle sizes
 pnpm screenshots  # every route, light and dark, demo mode, into docs/screenshots/ (gitignored)
 ```
 

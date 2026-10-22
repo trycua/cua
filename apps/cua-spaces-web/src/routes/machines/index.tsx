@@ -540,8 +540,8 @@ function MachineIssues({ machine: m, hidePermissions, onFail }: { machine: Machi
   const { data: session } = useSession();
   const host = useThisMachine(session?.identity ?? null);
   const issues = (m.issues ?? []).filter((i) => !(hidePermissions && i.id.startsWith("machine.permissions.")));
-  if (!issues.length) return null;
   const update = useUpdateIndicator();
+  if (!issues.length) return null;
   const act = (i: MachinesViewIssue) => {
     const a = i.action!;
     // Restart into the downloaded Cua Spaces update: the sidebar's own flow, which asks first while an agent is running.

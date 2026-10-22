@@ -72,6 +72,7 @@ pressed look; `CUA_SPACES_UPDATER=live` runs Sparkle in a fixtures run (the feed
 Info.plist; use a test bundle identifier and a local feed), `CUA_SPACES_UPDATE_CHECK=background`
 checks at launch, and `CUA_SPACES_REFRESH=1` runs the after-update refresh in a fixtures
 run (with a throwaway `HOME`). State lives under `$HOME/Library/Application Support/com.trycua.spaces.macos`.
+`CUA_SPACES_FIXTURE_PEER_CUA=<version>` (fixtures) signs the fixture account in with one Linux machine, `ellieln`, that shares its desktop, provides a Space and runs that Cua (This Mac reports 0.6.0), and `CUA_SPACES_FIXTURE_UPDATE=<version>` has that Cua Spaces update downloaded; `CUA_SPACES_WEBUI_CAPTURE_SELECT=<machine id>` captures the Machines page with that machine chosen;
 `CUA_SPACES_OFFSCREEN=1` runs with nothing on screen, for captures on a Mac in use (`OffscreenRun`): an accessory app (no Dock icon or menu bar), no menu bar item, notch or global shortcut, no activation, and transparent click-through windows that still paint, so `CUA_SPACES_WEBUI_CAPTURE` works (with fixtures and a throwaway `HOME`, a first run captures `/onboarding`).
 `CuaSpacesMac --check-launch-only` loads the app's libraries, prints its version and exits
 (`scripts/check-launch.sh`; release builds too).

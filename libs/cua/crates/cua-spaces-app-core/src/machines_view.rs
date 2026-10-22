@@ -1374,7 +1374,10 @@ mod tests {
         let v = view(&mockup());
         let studio = by_id(&v, "studio");
         let d = studio.desktop.as_ref().unwrap();
-        assert_eq!((d.id.as_str(), d.label.as_str()), ("relay:studio", "Desktop"));
+        assert_eq!(
+            (d.id.as_str(), d.label.as_str()),
+            ("relay:studio", "Desktop")
+        );
         assert!(!d.name.is_empty() && !d.status.is_empty());
         assert!(studio.spaces.iter().all(|s| s.id != d.id));
         assert!(studio.line.contains("1 Space"), "{}", studio.line);

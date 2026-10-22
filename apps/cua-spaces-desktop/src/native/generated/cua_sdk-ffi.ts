@@ -1234,6 +1234,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_fn_method_host_migrate_service": {
+      args: [FfiType.Handle, FfiType.Int8, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_fn_method_host_pause_signed_out": {
       args: [FfiType.Handle],
       ret: FfiType.Handle,
@@ -3324,6 +3329,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_host_migrate_service": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_host_pause_signed_out": {
       args: [],
       ret: FfiType.UInt16,
@@ -5154,6 +5164,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_guestdisplay_via(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_constructor_host_new(cuaHome: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_sdk_fn_method_host_configure(uniffiSelf: bigint, change: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_host_migrate_service(uniffiSelf: bigint, force: number, appVersion: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_host_pause_signed_out(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_host_remove(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_host_resume_signed_in(uniffiSelf: bigint, account: Uint8Array): bigint;
@@ -5572,6 +5583,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_guestdisplay_via(): number;
     uniffi_cua_sdk_checksum_constructor_host_new(): number;
     uniffi_cua_sdk_checksum_method_host_configure(): number;
+    uniffi_cua_sdk_checksum_method_host_migrate_service(): number;
     uniffi_cua_sdk_checksum_method_host_pause_signed_out(): number;
     uniffi_cua_sdk_checksum_method_host_remove(): number;
     uniffi_cua_sdk_checksum_method_host_resume_signed_in(): number;

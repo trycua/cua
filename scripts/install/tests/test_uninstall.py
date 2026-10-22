@@ -290,6 +290,31 @@ class UninstallMacTest(unittest.TestCase):
                 self.assertEqual(indexes, sorted(indexes))
                 self.assertGreaterEqual(box.index("launchctl: bootout"), 0)
 
+    def test_the_app_helper_goes_but_its_permissions_stay(self):
+        box = self.box()
+        installed_mac(box)
+        # Cua Spaces 0.10+: the host service is the app's login item.
+        box.put("Applications/Cua Spaces.app/Contents/Library/LaunchAgents/com.trycua.spaces.helper.plist", "plist\n")
+        write_executable(box.home / "Applications/Cua Spaces.app/Contents/MacOS/CuaSpacesMac",
+                         "#!/bin/sh\nprintf 'app: %s\\n' \"$*\" >>\"$FAKE_CALLS\"\n")
+        box.put(".cua/helper/service.json", "{}\n")
+        dry = box.run("--dry-run")
+        self.assertEqual(dry.returncode, 0, dry.stdout + dry.stderr)
+        self.assertIn("--service-helper unregister", dry.stdout)
+        self.assertNotIn("tccutil", dry.stdout)
+        self.assertEqual(box.index("tccutil"), -1)
+        self.assertTrue(box.exists(".cua/helper/service.json"))
+        result = box.run("--yes", "--prefix", str(box.home))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # Unregistered by the app before the app goes, then stopped.
+        self.assertGreaterEqual(box.index("app: --service-helper unregister"), 0)
+        self.assertGreaterEqual(box.index("launchctl: bootout gui/1000/com.trycua.spaces.helper"), 0)
+        self.assertEqual(box.index("tccutil"), -1)
+        self.assertIn("minus button", result.stdout)
+        for gone in (".cua/helper", "Applications/Cua Spaces.app",
+                     "Library/LaunchAgents/com.trycua.spacesd.host.plist", ".cua/host/bin/cua-spacesd"):
+            self.assertFalse(box.exists(gone), gone)
+
     def test_keep_data_keeps_the_cua_home_but_still_signs_out(self):
         box = self.box()
         installed_mac(box)

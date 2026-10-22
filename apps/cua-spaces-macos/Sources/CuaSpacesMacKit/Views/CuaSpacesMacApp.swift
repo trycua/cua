@@ -324,6 +324,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func start(_ model: AppModel) {
         guard !started else { return }
         started = true
+        // The one-time move of the host service into this app (Cua Spaces
+        // Helper): its own window, over whichever UI is up.
+        HelperMoveWindow.follow(model.host, loginLaunch: Self.launchedAtLogin)
         // New Space opens New UI's wizard while its experiment is on.
         model.openWebNewSpace = { on in WebUIWindowController.showNewSpace(model: model, on: on) }
         // New UI on and off: one window, its frame kept, never two.

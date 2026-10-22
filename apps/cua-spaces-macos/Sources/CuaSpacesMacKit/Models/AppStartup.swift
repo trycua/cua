@@ -773,4 +773,7 @@ public final class PendingHost: HostRunning, @unchecked Sendable {
     public func configure(change: HostSettingsChange) async throws -> HostStatus {
         try await h().configure(change: change)
     }
+    public func migrateService(force: Bool, appVersion: String) async throws -> HostServiceMigration {
+        try await h().migrateService(force: force, appVersion: appVersion)
+    }
 }

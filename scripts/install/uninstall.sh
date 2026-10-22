@@ -343,7 +343,7 @@ host_service_files() {
     case "$os" in
     darwin)
         printf '%s\n' "$HOME/Library/LaunchAgents/com.trycua.spacesd.host.plist" \
-            "$HOME/Library/LaunchAgents/com.trycua.env-driver.host.plist"
+            "$HOME/Library/LaunchAgents/com.trycua.env-driver.host.plist" "$HOME/.cua/helper/service.json"
         ;;
     linux)
         printf '%s\n' "$config_home/systemd/user/cua-spacesd-host.service" \
@@ -580,6 +580,8 @@ $(cua_homes)
 EOF
     case "$os" in
     darwin)
+        old_agent=0
+        [ -f "$HOME/Library/LaunchAgents/com.trycua.spacesd.host.plist" ] && old_agent=1
         for label in com.trycua.spacesd.host com.trycua.env-driver.host; do
             plist="$HOME/Library/LaunchAgents/$label.plist"
             [ -f "$plist" ] || continue
@@ -590,6 +592,33 @@ EOF
             fi
             rm_path "$plist"
         done
+        # The Cua Spaces app's own host service (the app's executable as its
+        # login item, since 0.10): `cua host remove` above unregisters it when
+        # it can; this covers an app whose cua could not run. What it ran
+        # (~/.cua/helper) goes too.
+        while IFS= read -r app; do
+            [ -n "$app" ] || continue
+            [ -f "$app/Contents/Library/LaunchAgents/com.trycua.spaces.helper.plist" ] || continue
+            [ -x "$app/Contents/MacOS/CuaSpacesMac" ] || continue
+            if [ "$dry_run" = 1 ]; then
+                say "[dry-run] $app/Contents/MacOS/CuaSpacesMac --service-helper unregister"
+            else
+                bounded 30 "$app/Contents/MacOS/CuaSpacesMac" --service-helper unregister >/dev/null 2>&1 || true
+            fi
+        done <<EOF
+$(app_candidates)
+EOF
+        if [ "$dry_run" = 1 ]; then
+            say "[dry-run] launchctl bootout gui/$(id -u)/com.trycua.spaces.helper"
+        else
+            launchctl bootout "gui/$(id -u)/com.trycua.spaces.helper" >/dev/null 2>&1 || true
+        fi
+        rm_path "$HOME/.cua/helper"
+        # The privacy permissions macOS keeps for the app stay: an uninstall
+        # never revokes them (see the driver uninstaller, 18 Oct 2026).
+        if [ "$old_agent" = 1 ]; then
+            info "System Settings may still list \"cua-spacesd\" under Privacy & Security (Screen Recording, Accessibility); select it and click the minus button to remove it"
+        fi
         ;;
     linux)
         for unit in cua-spacesd-host cua-env-driver-host; do

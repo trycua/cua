@@ -1,0 +1,206 @@
+---
+title: Experimental live traces
+description: Try ordering, managed attachments and live updates in the HaniLabs fork.
+---
+
+This is a fork-only experiment for [RFC #5685](https://github.com/trycua/cua/issues/5685),
+not an accepted upstream API. Its format and API may change during review.
+
+## Run a live recording
+
+From this fork's checkout, start the synthetic example:
+
+```bash skip="no-runner"
+cd libs/cua-bench
+uv sync --frozen --extra dev
+uv run python examples/live_collector.py --output /tmp/live-collector --delay 10
+```
+
+Use a new output directory each time. While it runs, open another terminal in
+`libs/cua-bench` and run:
+
+```bash skip="no-runner"
+uv run cb trace view /tmp/live-collector --follow
+```
+
+The browser displays arrivals without reloading. Switch from **Arrival order**
+to **Aligned observation time** to see the deliberately late request in its
+observation-time position. Events without aligned time are labeled unaligned
+and grouped by declared clock domain after aligned events, in arrival order within each group. A declared clock domain is
+required for aligned timestamps; the viewer does not synchronize devices or
+infer causation. Selection is based on event identity and survives reordering.
+
+Select the action event to preview its image and text attachment or download
+original evidence. Image previews show ARIA bounds from `snapshot.windows[].html`;
+hover over a bound for its label. **Previous image** and **Next image** (or the
+arrow keys) navigate screenshots in the selected ordering, including multiple
+images on one event. Event selection and an open image stay anchored to their
+identities when a late event arrives. Captured HTML is parsed as data on the
+server and never inserted into the browser DOM. Text is escaped; only PNG, JPEG, GIF, WebP, plain text and JSON
+have previews. Other content is download-only. The viewer loads no external UI
+scripts. **Pause updates** freezes the displayed list while recording and polling
+continue; **Resume updates** catches up. Paused pages and image navigation use
+the same sequence cutoff, so late records cannot enter a paused view. Closing the viewer does not stop capture.
+
+After the writer closes, the viewer shows **Completed**. An unfinalized recording
+is labeled accordingly; a connection problem shows **Disconnected / unavailable**.
+Refresh retries with the last received sequence. Without `--follow`, the viewer
+shows a snapshot of the bundle. Legacy datasets still use the existing viewer;
+`--follow` refuses those datasets because they are not live journals.
+
+## Record existing task runs
+
+Interactive recording is opt-in and uses a new output directory:
+
+```bash skip="no-runner"
+cb interact ./tasks/example --trace-bundle ./capture
+cb trace view ./capture --follow
+```
+
+Run the viewer command in a second terminal while the task is running. Add
+`--trace-out ./dataset` to retain a legacy dataset alongside the bundle. Without
+that option, interactive bundle capture does not retain event payloads in memory.
+Task setup, evaluation and actions that call the existing recorder are included;
+this option does not capture arbitrary human input or install a native collector.
+
+For task and dataset runners, `cb run ./tasks/example --live-trace` writes
+`task_<variant>_bundle` inside each episode output directory. Existing dataset and
+ATIF exports remain enabled, so these runs still retain legacy rows in memory.
+Use `cb run ./tasks/example --trace-only` for a disk-only bundle instead. It
+disables both legacy dataset and ATIF exports explicitly, while task results and
+agent logs continue normally. It does not bound memory held by an agent or task.
+The default bundle quota remains 1 GiB; quota or recording failures are visible
+and mark the bundle failed. `AgentOptions(trace_only=True)` provides the same
+contract to Python runners and refuses `save_pngs` or `filter_events` export options.
+The bundle closes on scope exit, including failure and cancellation. Closing the
+viewer never stops the task or finalizes its bundle.
+
+## Record from Python
+
+```python skip="no-runner"
+from cua_bench.trace_bundle import TraceBundleWriter
+from cua_bench.tracing import Tracing
+
+with TraceBundleWriter("new-bundle") as writer:
+    trace = Tracing(env=None, bundle_writer=writer)
+    trace.start("session-1")
+    evidence = writer.add_attachment("evidence.txt", media_type="text/plain")
+    trace.record(
+        "external.operation",
+        {"action_id": "submit-1", "operation": "submit"},
+        context={
+            "clock_domain": "collector-utc",
+            "aligned_at": "2026-10-21T20:00:00Z",
+        },
+        attachments=[evidence],
+    )
+    trace.save_to_disk("legacy-dataset")
+```
+
+Use one recorder owner. Queue concurrent collectors to that owner. The writer
+creates a new directory exclusively, copies attachments into managed storage,
+and appends complete JSON lines. It flushes each append for local readers and
+synchronizes on close; power-loss durability before close is not guaranteed.
+A context manager marks exceptional exits as failed. Never edit a live journal.
+Partial trailing lines are withheld; complete corrupt lines produce an error.
+
+For long captures, construct `Tracing` with `retain_rows=False` and a bundle
+writer to avoid the legacy in-memory dataset. Dataset export is unavailable in
+that mode, including after leaving a disk-only scope: it refuses until `start()`
+begins a fresh, fully retained trajectory. No partial legacy export is produced. Existing environments can use `with env.tracing.bundle(path)` around
+the runner lifecycle; the context manager restores the recorder on exit.
+
+Existing recorder calls and dataset exports retain their five-column schema.
+The legacy export includes images but omits bundle context and generic
+attachments. Keep the bundle to retain that evidence. Calls before `start()`
+remain ignored. Calling `start()` again resets the in-memory trajectory but
+keeps prior journal events with distinct sequences.
+
+Redact sensitive information before recording. The attachment importer accepts
+regular files, enforces a 100 MiB per-file limit and a configurable bundle quota
+(default 1 GiB), and the server verifies attachment bytes before serving them.
+Set `TraceBundleWriter(path, max_attachment=512 * 1024**2, quota=4 * 1024**3)`
+to import larger evidence. `Tracing.bundle()` forwards these writer options.
+Per-file imports have a hard ceiling of 4 GiB; journal and imported files count
+toward the configured quota. The writer uses a disposable disk registry for
+attachment identities rather than retaining one Python object per attachment.
+The local viewer uses a temporary read capability. Open it from the CLI rather
+than reusing a browser URL whose fragment has been cleared.
+
+## Storage and review status
+
+The journal remains the source of truth. Each viewer builds a disposable SQLite
+index in its own temporary directory, removed when it closes. The index never
+modifies the recording. It indexes event order and attachment descriptors on disk;
+the browser receives at most 100 bounded summaries and loads event details on
+selection. Polling reads status instead of downloading the entire journal. Large
+captures need temporary disk space for the index as well as the original bundle.
+
+The 100,000-event tests enforce a 16 MiB Python allocation budget for reading and
+a 32 MiB JavaScript heap budget in Chromium, with only 100 rendered rows. These
+budgets exclude interpreter/browser baseline memory and the SQLite native cache
+(configured at 2 MiB). Initial indexing is proportional to journal size; the
+append-to-display target applies after the initial index is ready.
+
+This remains a proposal pending the RFC decision. Windows, macOS and Linux have
+journal, loopback and browser CI lanes; a configured lane is not a passing result.
+Native OS/device collectors remain outside this contribution. Attachment directories
+must be locally controlled: the viewer validates managed IDs, regular files and
+content hashes, but does not isolate a hostile process with the same account's
+filesystem privileges.
+
+Downloads go directly to the browser download manager, without a whole-file
+JavaScript Blob. The viewer independently defaults to 100 MiB per download;
+`cb trace view ./capture --follow --max-download-mib 512` raises this to 512 MiB.
+The supported range is 1–4096 MiB. Raising the viewer limit does not change the
+writer quota. Every transfer first creates a verified temporary disk snapshot,
+then streams 64 KiB chunks. Budget up to two files at the configured limit in
+temporary storage per viewer; at most two transfers run at once. Hashing a large
+file delays the start of its download. Range/resume downloads are not supported.
+
+The browser exchanges its viewer capability for a single-use download URL that
+expires in 60 seconds, with at most 16 pending URLs. It authorizes only one
+managed attachment. URLs are not logged and responses use `no-store`,
+`no-referrer`, forced download and `nosniff`. Expired, busy or failed downloads
+can be retried with a fresh click. Other private routes still require the viewer
+capability header. Previews return at most 256 KiB of text; image previews are
+limited to 8 MiB compressed bytes. Larger images and active content are
+download-only. ARIA overlays remain limited to 1,000 bounds.
+
+## Navigate related evidence
+
+Supply `context.correlations` explicitly on related actions, requests and
+platform-trace artifact events. Each of at most 32 entries has four nonempty
+strings (maximum 256 characters each): `namespace`, `kind`, `id`, and `provenance`.
+For example:
+
+```python skip="no-runner"
+link = {"namespace": "checkout", "kind": "request", "id": "request-1",
+        "provenance": "my-redacted-collector"}
+trace.record("network.request", {}, context={"correlations": [link]})
+trace.record("platform.trace", {}, context={"correlations": [link]}, attachments=[evidence])
+```
+
+The **Related evidence** list matches all four values within the same trajectory
+and bundle. It pages 100 events at a time and follows the selected ordering and
+pause cutoff. Selecting a related event opens its payload and attachment list,
+including when that event lives on another main-list page. Sorting, late arrivals
+and reconnect preserve the selected event identity. Inspect the displayed context
+for the supplied provenance; it is a collector assertion, not verified causation.
+Payload keys such as `action_id`, timestamps, filenames or URLs do not create links.
+The synthetic example demonstrates the contract; real collectors stay outside Bench.
+
+## Tests
+
+The ordinary Bench suite includes the writer/reader and real loopback server
+tests. Browser acceptance is opt-in and needs Node, Playwright and Chromium.
+
+```bash skip="no-runner"
+uv run pytest -q cua_bench/tests/test_trace_bundle.py cua_bench/tests/test_trace_bundle_scale.py
+CUA_BENCH_BROWSER_TESTS=1 uv run pytest -q cua_bench/tests/test_trace_bundle_browser.py
+```
+
+Set `CUA_BENCH_NODE`, `CUA_BENCH_PLAYWRIGHT`, and `CUA_BENCH_CHROME` to use existing
+local installations. The browser test checks ordering, stable selection, previews,
+download bytes, late events, pause/resume, reconnect and completion with external
+network requests blocked. It uses synthetic data and does not control a real desktop.

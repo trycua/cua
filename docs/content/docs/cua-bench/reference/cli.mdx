@@ -112,6 +112,8 @@ cb run task [OPTIONS] <task_path>
 | <span id="cb-run-task--keep-runs"></span>`--keep-runs` |  | integer |  | After the run, delete all but the N newest runs in the runs directory (default: keep everything; env CUA_BENCH_KEEP_RUNS). |
 | <span id="cb-run-task--max-age"></span>`--max-age` |  | number |  | After the run, delete runs older than DAYS (env CUA_BENCH_MAX_AGE_DAYS). |
 | <span id="cb-run-task--max-results-size"></span>`--max-results-size` |  | string |  | After the run, delete the oldest runs until the runs directory fits in SIZE, e.g. 20G (env CUA_BENCH_MAX_RESULTS_SIZE). |
+| <span id="cb-run-task--live-trace"></span>`--live-trace` |  | boolean | `false` | Also write a live trace bundle for each episode. |
+| <span id="cb-run-task--trace-only"></span>`--trace-only` |  | boolean | `false` | Write only a disk trace bundle; disable legacy dataset and ATIF exports. |
 | <span id="cb-run-task--oracle"></span>`--oracle` |  | boolean | `false` | Run the oracle solution (the default when no agent is given). |
 | <span id="cb-run-task--noop"></span>`--noop` |  | boolean | `false` | Set up and evaluate with no actions (the null baseline for eval parity). |
 | <span id="cb-run-task--detach"></span>`--detach` | `-d` | boolean | `false` | Run in the background and return (follow with cb run watch &lt;id&gt;). |
@@ -163,6 +165,8 @@ cb run dataset [OPTIONS] <dataset_path>
 | <span id="cb-run-dataset--keep-runs"></span>`--keep-runs` |  | integer |  | After the run, delete all but the N newest runs in the runs directory (default: keep everything; env CUA_BENCH_KEEP_RUNS). |
 | <span id="cb-run-dataset--max-age"></span>`--max-age` |  | number |  | After the run, delete runs older than DAYS (env CUA_BENCH_MAX_AGE_DAYS). |
 | <span id="cb-run-dataset--max-results-size"></span>`--max-results-size` |  | string |  | After the run, delete the oldest runs until the runs directory fits in SIZE, e.g. 20G (env CUA_BENCH_MAX_RESULTS_SIZE). |
+| <span id="cb-run-dataset--live-trace"></span>`--live-trace` |  | boolean | `false` | Also write a live trace bundle for each episode. |
+| <span id="cb-run-dataset--trace-only"></span>`--trace-only` |  | boolean | `false` | Write only a disk trace bundle; disable legacy dataset and ATIF exports. |
 | <span id="cb-run-dataset--oracle"></span>`--oracle` |  | boolean | `false` | Run the oracle solution (the default when no agent is given). |
 | <span id="cb-run-dataset--noop"></span>`--noop` |  | boolean | `false` | Set up and evaluate with no actions (the null baseline for eval parity). |
 | <span id="cb-run-dataset--detach"></span>`--detach` | `-d` | boolean | `false` | Run in the background and return (follow with cb run watch &lt;id&gt;). |
@@ -306,6 +310,7 @@ cb interact [OPTIONS] <env_path>
 | <span id="cb-interact--max-steps"></span>`--max-steps` | integer |  | Maximum number of env.step() calls before stopping. |
 | <span id="cb-interact--screenshot"></span>`--screenshot` | string |  | Save a screenshot to this file. |
 | <span id="cb-interact--trace-out"></span>`--trace-out` | string |  | Record a trace and save it as a dataset to this path on exit. |
+| <span id="cb-interact--trace-bundle"></span>`--trace-bundle` | string |  | Write a live trace bundle to a new directory (view with cb trace view --follow). |
 | <span id="cb-interact--on"></span>`--on` | `local` \| `cloud` \| `e2b` \| `daytona` \| `modal` \| `cloudflare` \| `vercel` \| `morph` \| `runloop` \| `fly` \| `blaxel` \| `codesandbox` \| `northflank` \| `aws` \| `gcp` |  | Where sandboxes run: local (this machine), your own cloud account (aws, gcp, modal; connect it first with `cua cloud connect <provider>`), or a contrib provider (e2b, daytona; needs a cua SDK built with contrib and the provider's key). Default: CUA_DEFAULT_ON, else `cua config set default.on`, else local. |
 | <span id="cb-interact--kind"></span>`--kind` | `auto` \| `container` \| `vm` |  | What kind of sandbox: container or vm. Default auto: Linux as a container unless the task or image says VM; Windows, macOS and Android are VM-only. Default: CUA_DEFAULT_KIND, else `cua config set default.kind`. |
 | <span id="cb-interact--runtime"></span>`--runtime` | `auto` \| `gvisor` \| `runc` \| `qemu` \| `lume` |  | Which engine: gvisor or runc (containers), qemu or lume (VMs). Implies its kind. Default auto: the SDK picks (CUA_DEFAULT_RUNTIME, else `cua config set default.runtime`). |
@@ -526,12 +531,17 @@ cb trace traj 30c12572
 View a single trace in browser.
 
 ```text output
-cb trace view <identifier>
+cb trace view [OPTIONS] <identifier>
 ```
 
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
 | `<identifier>` | string | required | Run ID or session ID (e.g., "30c12572" or "task-30c12572-click-button-v0"). |
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cb-trace-view--max-download-mib"></span>`--max-download-mib` | integer | `100` | Per-attachment viewer download limit in MiB (1-4096; default: 100). |
+| <span id="cb-trace-view--follow"></span>`--follow` | boolean | `false` | Follow an experimental live trace bundle. |
 
 **Examples**
 

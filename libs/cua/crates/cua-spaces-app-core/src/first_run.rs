@@ -1752,6 +1752,29 @@ mod tests {
         .connect
         .unwrap();
         assert_eq!(pc.agents_label, "On this PC");
+        assert!(pc.agents_note.contains("on this PC only"));
+        // Linux (and anything else): "this computer"; never "Mac" off a Mac.
+        let mut linux_in = FirstRunInput {
+            host_os: "linux".into(),
+            agents: Some(vec![codex(true, false)]),
+            picked: Some(vec!["codex".into()]),
+            ..Default::default()
+        };
+        let linux = view(&linux_in).connect.unwrap();
+        assert_eq!(linux.agents_label, "On this computer");
+        assert_eq!(
+            linux.credentials_note,
+            "They stay on this computer. Other computers keep their own."
+        );
+        assert_eq!(
+            linux.credentials[0].note,
+            "OpenAI Codex uses it on this computer"
+        );
+        for os in ["linux", "windows"] {
+            linux_in.host_os = os.into();
+            let all = serde_json::to_string(&view(&linux_in)).unwrap();
+            assert!(!all.contains("Mac"), "{os}: {all}");
+        }
     }
 
     #[test]

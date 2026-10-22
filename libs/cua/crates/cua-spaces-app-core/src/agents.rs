@@ -264,8 +264,10 @@ pub struct AgentSettingsRow {
     /// Skills directory.
     pub skills_dir: Option<String>,
     /// The account it signs in with on its own (`ChatGPT`), when known.
+    #[serde(default)]
     pub sign_in: Option<String>,
     /// That sign-in is on this computer.
+    #[serde(default)]
     pub signed_in: bool,
 }
 
@@ -456,6 +458,16 @@ mod tests {
         let labelled = agent_run_from_json(&json!({"run_id": "r", "status": "running",
             "meta": {"harness": "pi", "prompt": "long prompt", "label": "Nightly"}}));
         assert_eq!(labelled.summary, "Nightly");
+    }
+
+    #[test]
+    fn a_settings_row_without_the_sign_in_fields_still_reads() {
+        let row: AgentSettingsRow = serde_json::from_value(json!({
+            "agent": "codex", "name": "Codex", "installed": true, "configured": false,
+            "detail": "", "skillsInstalled": 0, "skillsTotal": 2, "mcpConfig": null, "skillsDir": null
+        }))
+        .unwrap();
+        assert_eq!((row.sign_in, row.signed_in), (None, false));
     }
 
     #[test]

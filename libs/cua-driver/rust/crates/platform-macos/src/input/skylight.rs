@@ -167,9 +167,31 @@ fn app_window_order(pid: pid_t) -> Vec<u32> {
     windows.into_iter().map(|w| w.window_id).collect()
 }
 
+impl WindowKeyScope {
+    /// End the scope and leave `target` key, as a click on it would: no
+    /// records are posted to hand key back.
+    pub fn keep(mut self) {
+        self.primed = KeyPrime::AlreadyKey;
+    }
+}
+
+/// Whether the app's key window moved, during the scope, to a window that is
+/// neither the scope's target nor the one it replaced: a dialog or document
+/// the action opened. That window stays key; the caller acts on it next.
+fn key_moved_to_new_window(now: Option<u32>, target: u32, previous: Option<u32>) -> bool {
+    now.is_some_and(|window| window != target && Some(window) != previous)
+}
+
 impl Drop for WindowKeyScope {
     fn drop(&mut self) {
         if self.primed == KeyPrime::AlreadyKey {
+            return;
+        }
+        if key_moved_to_new_window(
+            key_focus_of_pid(self.pid).window,
+            self.target,
+            self.previous,
+        ) {
             return;
         }
         let Some(previous) = restore_target(
@@ -1036,6 +1058,22 @@ pub fn activate_without_raise_with(
     defocus_ok && focus_ok
 }
 
+/// Undo [`post_window_key_records`] for an app that was never frontmost: post
+/// only the defocus record (0x0d, 0x8a=2) for `wid` to `pid`, so the app
+/// stops believing it is active. The user's front app receives nothing.
+pub fn post_app_defocus_record(pid: pid_t, wid: u32) -> bool {
+    let Some(post) = post_event_record_to_fn() else {
+        return false;
+    };
+    let mut psn = [0u8; 8];
+    if !get_process_psn_for_window(wid, pid, &mut psn) {
+        return false;
+    }
+    let mut record = focus_record(wid);
+    record[0x8A] = 0x02;
+    note_post_status(unsafe { post(psn.as_ptr() as *const c_void, record.as_ptr()) })
+}
+
 /// Reverse [`activate_without_raise`] once a background click is delivered:
 /// defocus `target_wid` and hand key focus back to `previous_pid`'s key window.
 ///
@@ -1569,6 +1607,18 @@ mod tests {
             thread.join().unwrap();
         }
         assert_eq!(max_inside.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_window_the_action_opened_keeps_key_when_the_scope_ends() {
+        use super::key_moved_to_new_window;
+        // Edit Chart (726) opened from the main window (584) while the
+        // listing (810) had been key: leave the dialog key.
+        assert!(key_moved_to_new_window(Some(726), 584, Some(810)));
+        // Key still on the scope's target or back on the old window: restore.
+        assert!(!key_moved_to_new_window(Some(584), 584, Some(810)));
+        assert!(!key_moved_to_new_window(Some(810), 584, Some(810)));
+        assert!(!key_moved_to_new_window(None, 584, Some(810)));
     }
 
     #[test]

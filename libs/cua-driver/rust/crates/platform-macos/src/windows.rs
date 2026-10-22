@@ -70,24 +70,22 @@ pub fn all_windows() -> Vec<WindowInfo> {
 }
 
 pub(crate) fn all_windows_with_space_snapshot() -> WindowEnumeration {
-    enumerate_windows(
-        kCGWindowListExcludeDesktopElements,
-        LayerFilter::ZeroOnly,
-        None,
-        true,
-    )
+    all_layer0(true)
 }
 
 /// [`all_windows`] without the Space snapshot, for callers that read only
 /// window ids, owners, titles, and bounds.
 pub(crate) fn all_windows_without_spaces() -> Vec<WindowInfo> {
+    all_layer0(false).windows
+}
+
+fn all_layer0(spaces: bool) -> WindowEnumeration {
     enumerate_windows(
         kCGWindowListExcludeDesktopElements,
         LayerFilter::ZeroOnly,
         None,
-        false,
+        spaces,
     )
-    .windows
 }
 
 /// Enumerate only on-screen windows.
@@ -96,24 +94,22 @@ pub fn visible_windows() -> Vec<WindowInfo> {
 }
 
 pub(crate) fn visible_windows_with_space_snapshot() -> WindowEnumeration {
-    enumerate_windows(
-        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
-        LayerFilter::ZeroOnly,
-        None,
-        true,
-    )
+    visible_layer0(true)
 }
 
 /// [`visible_windows`] without the Space snapshot, for callers that read only
 /// window ids, owners, titles, and bounds.
 pub(crate) fn visible_windows_without_spaces() -> Vec<WindowInfo> {
+    visible_layer0(false).windows
+}
+
+fn visible_layer0(spaces: bool) -> WindowEnumeration {
     enumerate_windows(
         kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
         LayerFilter::ZeroOnly,
         None,
-        false,
+        spaces,
     )
-    .windows
 }
 
 pub(crate) fn pid_windows_with_space_snapshot(pid: i32, on_screen_only: bool) -> WindowEnumeration {

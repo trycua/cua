@@ -108,7 +108,7 @@ RUN install -d -m 0755 /etc/apt/keyrings
 
 # Chromium from the xtradeb/apps PPA (open-source build, BSD-3-Clause; not
 # Google-branded Chrome): only the chromium packages may come from it, at
-# the pinned major (CHROMIUM_MAJOR), and the key must have the pinned fingerprint.
+# the pinned major for this arch, and the key must have the pinned fingerprint.
 # The key is vendored (common/apt-keys/xtradeb-apps.asc), not fetched from
 # keyserver.ubuntu.com, so a keyserver outage cannot break the build.
 # cua-driver's browser_prepare launches /usr/lib/chromium/chromium (a
@@ -118,13 +118,20 @@ RUN install -d -m 0755 /etc/apt/keyrings
 # per runtime (common/desktop/browser-sandbox.sh), not the user.
 # The PPA keeps only its newest build per arch and prunes the rest, so an
 # exact build pin (155.0.8059.39-1xtradeb1.2404.1) breaks the build as soon as
-# the PPA moves on (it did, repeatedly). Pin the major instead: apt picks the
-# newest CHROMIUM_MAJOR.* build the PPA has for that arch, and the arches need
-# not move together. The resolved version is recorded in
-# /etc/cua-image/chromium-version. Bump the major
-# deliberately. CHROMIUM_VERSION, when set, wins (an exact build, for a repro).
+# the PPA moves on (it did, repeatedly). Pin the major per arch instead: apt
+# picks the newest <major>.* build the PPA has for that arch. The arches move
+# on separately (amd64 went to 156 while arm64 stayed on 155), so each has its
+# own major. When the PPA has dropped a pinned major for an arch, the build
+# takes the newest build it has for that arch and says so, rather than
+# failing; scripts/images/check-chromium-pin.sh (CI: Images, Chromium pin)
+# fails loudly with what the PPA has, so the bump is still made deliberately.
+# The resolved version is recorded in /etc/cua-image/chromium-version.
+# CHROMIUM_MAJOR, when set, is the major for every arch; CHROMIUM_VERSION, when
+# set, wins over both (an exact build, for a repro).
 ARG CHROMIUM_VERSION=
-ARG CHROMIUM_MAJOR=155
+ARG CHROMIUM_MAJOR=
+ARG CHROMIUM_MAJOR_AMD64=156
+ARG CHROMIUM_MAJOR_ARM64=155
 ARG CHROMIUM_PPA_KEY=5301FA4FD93244FBC6F6149982BB6851C64F6880
 RUN --mount=type=bind,source=common/apt-keys/xtradeb-apps.asc,target=/tmp/xtradeb-apps.asc \
     gpg --dearmor </tmp/xtradeb-apps.asc >/etc/apt/keyrings/xtradeb-apps.gpg \
@@ -133,8 +140,17 @@ RUN --mount=type=bind,source=common/apt-keys/xtradeb-apps.asc,target=/tmp/xtrade
       >/etc/apt/sources.list.d/xtradeb-apps.list \
  && printf 'Package: *\nPin: origin ppa.launchpadcontent.net\nPin-Priority: -1\n\nPackage: chromium chromium-common chromium-sandbox\nPin: origin ppa.launchpadcontent.net\nPin-Priority: 1001\n' \
       >/etc/apt/preferences.d/xtradeb-chromium \
- && pin="${CHROMIUM_VERSION:-${CHROMIUM_MAJOR}.*}" && test -n "$pin" \
  && apt-get update \
+ && major="${CHROMIUM_MAJOR}" \
+ && if [ -z "$major" ]; then case "$TARGETARCH" in \
+      arm64) major="$CHROMIUM_MAJOR_ARM64" ;; *) major="$CHROMIUM_MAJOR_AMD64" ;; esac; fi \
+ && have="$(apt-cache madison chromium | awk -F'|' '/ppa\.launchpadcontent\.net/ { gsub(/ /, "", $2); print $2 }' | sort -V)" \
+ && test -n "$have" \
+ && if [ -n "$CHROMIUM_VERSION" ]; then pin="$CHROMIUM_VERSION"; \
+    elif printf '%s\n' $have | grep -q "^${major}\."; then pin="${major}.*"; \
+    else pin="$(printf '%s\n' $have | tail -n 1)"; \
+      echo "warning: the PPA has no chromium ${major}.* for ${TARGETARCH} any more (it has: $(echo $have)); using ${pin}. Bump CHROMIUM_MAJOR_$(echo "$TARGETARCH" | tr a-z A-Z)." >&2; fi \
+ && echo "chromium for ${TARGETARCH}: ${pin}" \
  && for attempt in 1 2 3; do apt-get install -y --no-install-recommends \
       "chromium=${pin}" "chromium-common=${pin}" && break; \
       echo "apt attempt $attempt failed; reconfiguring" >&2; dpkg --configure -a || true; \

@@ -487,13 +487,15 @@ async def window_origin(env: "cua.SpacesdClient", title: str) -> tuple[int, int]
         'n=$(xwininfo -id "$wid" | awk "/Absolute upper-left X/{x=\\$4} /Absolute upper-left Y/{y=\\$4} END{print x, y}"); '
         '[ "$n" = "$o" ] && break; o=$n; done; echo "$n"'
     )
-    out = await poll(
-        f"window {title!r}",
-        lambda: env.sh(f"desktop-env bash -c '{script}'", 20_000),
-        attempts=30,
-        delay=1,
-    )
-    x, y = out.stdout.decode().split()
+    async def origin():
+        # The result object is always truthy, and the script prints nothing
+        # (or a blank origin) while the window is not mapped yet: only accept
+        # an actual "x y" pair so poll() retries instead of unpacking nothing.
+        out = await env.sh(f"desktop-env bash -c '{script}'", 20_000)
+        parts = out.stdout.decode().split()
+        return parts if len(parts) == 2 else None
+
+    x, y = await poll(f"window {title!r}", origin, attempts=30, delay=1)
     return int(x), int(y)
 
 

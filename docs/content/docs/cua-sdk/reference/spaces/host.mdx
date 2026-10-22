@@ -22,6 +22,7 @@ This machine as an unattended-access host.
 | --- | --- |
 | [`new`](#hostnew) | Host state under `cua_home` (default `$CUA_HOME` or `~/.cua`). |
 | [`configure`](#hostconfigure) | Changes what this machine shares: its own desktop, and whether it creates Spaces for your other devices (and their limits). |
+| [`migrate_service`](#hostmigrate_service) | macOS: moves the host service from the old LaunchAgent to the Cua Spaces app (its own login item, "Cua Spaces"), keeping this machine's registration, id and Spaces; puts the old one back if the helper does not take over (the outcome says so). |
 | [`pause_signed_out`](#hostpause_signed_out) | Pause relay sharing while nobody is signed in to the owner's account: the host leaves the relay and stays off it (also across a restart) with its setup kept. |
 | [`remove`](#hostremove) | Unregister, uninstall the service and delete the host state. |
 | [`resume_signed_in`](#hostresume_signed_in) | Resume relay sharing paused by `Host.pause_signed_out` once `account` (the signed-in account's id or email) is signed in; refused when it is not the machine's owner. |
@@ -128,6 +129,61 @@ pub async fn configure(&self, change: HostSettingsChange) -> Result<HostStatus, 
 | `change` | [`HostSettingsChange`](#hostsettingschange-record) | required |
 
 **Returns** [`HostStatus`](#hoststatus-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+
+### `Host.migrate_service`
+
+macOS: moves the host service from the old LaunchAgent to the Cua
+Spaces app (its own login item, "Cua Spaces"), keeping this machine's
+registration, id and Spaces; puts the old one back if the helper
+does not take over (the outcome says so). `app_version`: a failed
+move is not tried again by itself with the same version; `force`
+tries anyway.
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+async def migrate_service(self, force: bool, app_version: str) -> HostServiceMigration
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+migrateService(force: boolean, appVersion: string, asyncOpts_?: { signal: AbortSignal }): Promise<HostServiceMigration>
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func migrateService(force: Bool, appVersion: String) async throws -> HostServiceMigration
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+@Throws(CuaException::class)
+suspend fun migrateService(force: Boolean, appVersion: String): HostServiceMigration
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub async fn migrate_service(&self, force: bool, app_version: String) -> Result<HostServiceMigration, CuaError>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `force` | `bool` | required |
+| `app_version` | `String` | required |
+
+**Returns** [`HostServiceMigration`](#hostservicemigration-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
 
 ### `Host.pause_signed_out`
 
@@ -806,6 +862,18 @@ A Space this machine provides to one of your devices.
 | `created_by` / `createdBy` | `String` |  | Who created it. |
 | `created_at_ms` / `createdAtMs` | `i64` |  | Epoch ms. |
 
+## `HostServiceMigration` record
+
+What `Host.migrate_service` did.
+
+Returned by [`Host.migrate_service`](#hostmigrate_service).
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `outcome` | `String` |  | `migrated`, `switched`, `cleaned-up`, `rolled-back`, `kept` or `not-needed`. |
+| `detail` | `String` |  | In words. |
+| `permissions_needed` / `permissionsNeeded` | `bool` |  | macOS will ask for Screen Recording and Accessibility for Cua Spaces Helper. |
+
 ## `HostSettingsChange` record
 
 A change to this machine's Spaces settings (`None` keeps a value).
@@ -883,6 +951,8 @@ Returned by [`Host.configure`](#hostconfigure), [`Host.pause_signed_out`](#hostp
 | `paused_signed_out` / `pausedSignedOut` | `bool` | `false` | Relay sharing is paused until the owner signs in again (`Host.pause_signed_out`). |
 | `owner` | `Option<String>` | `None` | The account this machine is registered to (relay mode): its id. |
 | `owner_email` / `ownerEmail` | `Option<String>` | `None` | The owner's email, when the relay gave one. |
+| `helper_available` / `helperAvailable` | `bool` | `false` | macOS: a Cua Spaces app that can run the host service is installed, so the host service can run as it. |
+| `legacy_service` / `legacyService` | `bool` | `false` | macOS: the old hand-written LaunchAgent is still there. |
 
 ## `PairingCode` record
 

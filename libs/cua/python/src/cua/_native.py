@@ -731,6 +731,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_host_configure() != 36828:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_host_migrate_service() != 36386:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_host_pause_signed_out() != 3338:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_host_remove() != 63746:
@@ -2614,6 +2616,12 @@ _UniffiLib.uniffi_cua_sdk_fn_method_host_configure.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_host_configure.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_host_migrate_service.argtypes = (
+    ctypes.c_uint64,
+    ctypes.c_int8,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_host_migrate_service.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_host_pause_signed_out.argtypes = (
     ctypes.c_uint64,
 )
@@ -4538,6 +4546,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_constructor_host_new.restype = ctypes.c_uint1
 _UniffiLib.uniffi_cua_sdk_checksum_method_host_configure.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_host_configure.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_host_migrate_service.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_host_migrate_service.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_host_pause_signed_out.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_host_pause_signed_out.restype = ctypes.c_uint16
@@ -12333,6 +12344,51 @@ class _UniffiFfiConverterTypeHostProvidedSpace(_UniffiConverterRustBuffer):
         _UniffiFfiConverterInt64.write(value.created_at_ms, buf)
 
 @dataclass
+class HostServiceMigration:
+    """
+    What [`Host::migrate_service`] did.
+"""
+    def __init__(self, *, outcome:str, detail:str, permissions_needed:bool):
+        self.outcome = outcome
+        self.detail = detail
+        self.permissions_needed = permissions_needed
+
+
+
+
+    def __str__(self):
+        return "HostServiceMigration(outcome={}, detail={}, permissions_needed={})".format(self.outcome, self.detail, self.permissions_needed)
+    def __eq__(self, other):
+        if self.outcome != other.outcome:
+            return False
+        if self.detail != other.detail:
+            return False
+        if self.permissions_needed != other.permissions_needed:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeHostServiceMigration(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return HostServiceMigration(
+            outcome=_UniffiFfiConverterString.read(buf),
+            detail=_UniffiFfiConverterString.read(buf),
+            permissions_needed=_UniffiFfiConverterBoolean.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.outcome)
+        _UniffiFfiConverterString.check_lower(value.detail)
+        _UniffiFfiConverterBoolean.check_lower(value.permissions_needed)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.outcome, buf)
+        _UniffiFfiConverterString.write(value.detail, buf)
+        _UniffiFfiConverterBoolean.write(value.permissions_needed, buf)
+
+@dataclass
 class HostSettingsChange:
     """
     A change to this machine's Spaces settings (`None` keeps a value).
@@ -12646,7 +12702,7 @@ class HostStatus:
     """
     Host status.
 """
-    def __init__(self, *, configured:bool, mode:typing.Optional[str], relay_url:typing.Optional[str], direct_url:typing.Optional[str], env_token_path:typing.Optional[str], machine_id:typing.Optional[str], name:typing.Optional[str], sharing:bool, service_installed:bool, service_running:bool, service_kind:str, online:typing.Optional[bool], clients:typing.List[RelayClientInfo], allow:typing.List[str], permissions:typing.List[HostPermission], error:typing.Optional[str], recent_access:typing.List[HostAccessRecord] = _DEFAULT, access_log_error:typing.Optional[str] = _DEFAULT, share_desktop:bool = True, provide_spaces:bool = False, max_spaces:int = 0, max_macos_vms:int = 0, provided_spaces:typing.List[HostProvidedSpace] = _DEFAULT, spaces_audit:typing.List[HostSpacesAuditRecord] = _DEFAULT, spaces_audit_error:typing.Optional[str] = _DEFAULT, paused_signed_out:bool = False, owner:typing.Optional[str] = _DEFAULT, owner_email:typing.Optional[str] = _DEFAULT):
+    def __init__(self, *, configured:bool, mode:typing.Optional[str], relay_url:typing.Optional[str], direct_url:typing.Optional[str], env_token_path:typing.Optional[str], machine_id:typing.Optional[str], name:typing.Optional[str], sharing:bool, service_installed:bool, service_running:bool, service_kind:str, online:typing.Optional[bool], clients:typing.List[RelayClientInfo], allow:typing.List[str], permissions:typing.List[HostPermission], error:typing.Optional[str], recent_access:typing.List[HostAccessRecord] = _DEFAULT, access_log_error:typing.Optional[str] = _DEFAULT, share_desktop:bool = True, provide_spaces:bool = False, max_spaces:int = 0, max_macos_vms:int = 0, provided_spaces:typing.List[HostProvidedSpace] = _DEFAULT, spaces_audit:typing.List[HostSpacesAuditRecord] = _DEFAULT, spaces_audit_error:typing.Optional[str] = _DEFAULT, paused_signed_out:bool = False, owner:typing.Optional[str] = _DEFAULT, owner_email:typing.Optional[str] = _DEFAULT, helper_available:bool = False, legacy_service:bool = False):
         self.configured = configured
         self.mode = mode
         self.relay_url = relay_url
@@ -12696,12 +12752,14 @@ class HostStatus:
             self.owner_email = None
         else:
             self.owner_email = owner_email
+        self.helper_available = helper_available
+        self.legacy_service = legacy_service
 
 
 
 
     def __str__(self):
-        return "HostStatus(configured={}, mode={}, relay_url={}, direct_url={}, env_token_path={}, machine_id={}, name={}, sharing={}, service_installed={}, service_running={}, service_kind={}, online={}, clients={}, allow={}, permissions={}, error={}, recent_access={}, access_log_error={}, share_desktop={}, provide_spaces={}, max_spaces={}, max_macos_vms={}, provided_spaces={}, spaces_audit={}, spaces_audit_error={}, paused_signed_out={}, owner={}, owner_email={})".format(self.configured, self.mode, self.relay_url, self.direct_url, self.env_token_path, self.machine_id, self.name, self.sharing, self.service_installed, self.service_running, self.service_kind, self.online, self.clients, self.allow, self.permissions, self.error, self.recent_access, self.access_log_error, self.share_desktop, self.provide_spaces, self.max_spaces, self.max_macos_vms, self.provided_spaces, self.spaces_audit, self.spaces_audit_error, self.paused_signed_out, self.owner, self.owner_email)
+        return "HostStatus(configured={}, mode={}, relay_url={}, direct_url={}, env_token_path={}, machine_id={}, name={}, sharing={}, service_installed={}, service_running={}, service_kind={}, online={}, clients={}, allow={}, permissions={}, error={}, recent_access={}, access_log_error={}, share_desktop={}, provide_spaces={}, max_spaces={}, max_macos_vms={}, provided_spaces={}, spaces_audit={}, spaces_audit_error={}, paused_signed_out={}, owner={}, owner_email={}, helper_available={}, legacy_service={})".format(self.configured, self.mode, self.relay_url, self.direct_url, self.env_token_path, self.machine_id, self.name, self.sharing, self.service_installed, self.service_running, self.service_kind, self.online, self.clients, self.allow, self.permissions, self.error, self.recent_access, self.access_log_error, self.share_desktop, self.provide_spaces, self.max_spaces, self.max_macos_vms, self.provided_spaces, self.spaces_audit, self.spaces_audit_error, self.paused_signed_out, self.owner, self.owner_email, self.helper_available, self.legacy_service)
     def __eq__(self, other):
         if self.configured != other.configured:
             return False
@@ -12759,6 +12817,10 @@ class HostStatus:
             return False
         if self.owner_email != other.owner_email:
             return False
+        if self.helper_available != other.helper_available:
+            return False
+        if self.legacy_service != other.legacy_service:
+            return False
         return True
 
 class _UniffiFfiConverterTypeHostStatus(_UniffiConverterRustBuffer):
@@ -12793,6 +12855,8 @@ class _UniffiFfiConverterTypeHostStatus(_UniffiConverterRustBuffer):
             paused_signed_out=_UniffiFfiConverterBoolean.read(buf),
             owner=_UniffiFfiConverterOptionalString.read(buf),
             owner_email=_UniffiFfiConverterOptionalString.read(buf),
+            helper_available=_UniffiFfiConverterBoolean.read(buf),
+            legacy_service=_UniffiFfiConverterBoolean.read(buf),
         )
 
     @staticmethod
@@ -12825,6 +12889,8 @@ class _UniffiFfiConverterTypeHostStatus(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.check_lower(value.paused_signed_out)
         _UniffiFfiConverterOptionalString.check_lower(value.owner)
         _UniffiFfiConverterOptionalString.check_lower(value.owner_email)
+        _UniffiFfiConverterBoolean.check_lower(value.helper_available)
+        _UniffiFfiConverterBoolean.check_lower(value.legacy_service)
 
     @staticmethod
     def write(value, buf):
@@ -12856,6 +12922,8 @@ class _UniffiFfiConverterTypeHostStatus(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.write(value.paused_signed_out, buf)
         _UniffiFfiConverterOptionalString.write(value.owner, buf)
         _UniffiFfiConverterOptionalString.write(value.owner_email, buf)
+        _UniffiFfiConverterBoolean.write(value.helper_available, buf)
+        _UniffiFfiConverterBoolean.write(value.legacy_service, buf)
 
 @dataclass
 class HttpHeader:
@@ -34644,6 +34712,16 @@ class HostProtocol(typing.Protocol):
         the desktop on or off restarts the host service.
 """
         raise NotImplementedError
+    async def migrate_service(self, force: bool,app_version: str) -> HostServiceMigration:
+        """
+        macOS: moves the host service from the old LaunchAgent to the Cua
+        Spaces app (its own login item, "Cua Spaces"), keeping this machine's
+        registration, id and Spaces; puts the old one back if the helper
+        does not take over (the outcome says so). `app_version`: a failed
+        move is not tried again by itself with the same version; `force`
+        tries anyway.
+"""
+        raise NotImplementedError
     async def pause_signed_out(self, ) -> HostStatus:
         """
         Pause relay sharing while nobody is signed in to the owner's
@@ -34749,6 +34827,34 @@ class Host(HostProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_sdk_fn_method_host_configure(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def migrate_service(self, force: bool,app_version: str) -> HostServiceMigration:
+        """
+        macOS: moves the host service from the old LaunchAgent to the Cua
+        Spaces app (its own login item, "Cua Spaces"), keeping this machine's
+        registration, id and Spaces; puts the old one back if the helper
+        does not take over (the outcome says so). `app_version`: a failed
+        move is not tried again by itself with the same version; `force`
+        tries anyway.
+"""
+
+        _UniffiFfiConverterBoolean.check_lower(force)
+
+        _UniffiFfiConverterString.check_lower(app_version)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterBoolean.lower(force),
+            _UniffiFfiConverterString.lower(app_version),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeHostServiceMigration.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_host_migrate_service(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
@@ -36325,6 +36431,7 @@ __all__ = [
     "HostAccessRecord",
     "HostPermission",
     "HostProvidedSpace",
+    "HostServiceMigration",
     "HostSettingsChange",
     "HostSetupOptions",
     "HostSpacesAuditRecord",

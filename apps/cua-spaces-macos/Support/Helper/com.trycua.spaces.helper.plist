@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Cua Spaces.app/Contents/Library/LaunchAgents/com.trycua.spaces.helper.plist:
+  the host service as the app's login item, registered with
+  SMAppService.agent(plistName:) (`CuaSpacesMac --service-helper register`;
+  cua-host's app-helper runner). It runs the app's own executable
+  (`--service-helper run`), so screen capture and input use the app's
+  Screen Recording and Accessibility grants: one name, "Cua Spaces", in
+  System Settings. It runs in the user's GUI (Aqua) session, reads
+  ~/.cua/helper/service.json and exits 0 when there is none (nothing set
+  up), which launchd leaves stopped; any other exit is restarted.
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.trycua.spaces.helper</string>
+	<key>BundleProgram</key>
+	<string>Contents/MacOS/CuaSpacesMac</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>CuaSpacesMac</string>
+		<string>--service-helper</string>
+		<string>run</string>
+	</array>
+	<key>AssociatedBundleIdentifiers</key>
+	<array>
+		<string>com.trycua.spaces.macos</string>
+	</array>
+	<key>LimitLoadToSessionType</key>
+	<string>Aqua</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>ThrottleInterval</key>
+	<integer>5</integer>
+	<key>ProcessType</key>
+	<string>Interactive</string>
+</dict>
+</plist>

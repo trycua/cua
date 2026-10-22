@@ -7698,6 +7698,67 @@ const FfiConverterTypeHostProvidedSpace = (() => {
 })();
 
 /**
+ * What [`Host::migrate_service`] did.
+ */
+export type HostServiceMigration = {
+    /**
+     * `migrated`, `switched`, `cleaned-up`, `rolled-back`, `kept` or
+     * `not-needed`.
+     */
+    outcome: string,
+    /**
+     * In words.
+     */
+    detail: string,
+    /**
+     * macOS will ask for Screen Recording and Accessibility for Cua Spaces
+     * Helper.
+     */
+    permissionsNeeded: boolean
+}
+
+/**
+ * Generated factory for {@link HostServiceMigration} record objects.
+ */
+export const HostServiceMigration = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<HostServiceMigration, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<HostServiceMigration>,
+    });
+})();
+
+const FfiConverterTypeHostServiceMigration = (() => {
+    type TypeName = HostServiceMigration;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                outcome: FfiConverterString.read(from),
+                detail: FfiConverterString.read(from),
+                permissionsNeeded: FfiConverterBool.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.outcome, into);
+            FfiConverterString.write(value.detail, into);
+            FfiConverterBool.write(value.permissionsNeeded, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.outcome) +
+             FfiConverterString.allocationSize(value.detail) +
+             FfiConverterBool.allocationSize(value.permissionsNeeded);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
  * A change to this machine's Spaces settings (`None` keeps a value).
  */
 export type HostSettingsChange = {
@@ -8072,7 +8133,16 @@ export type HostStatus = {
     /**
      * The owner's email, when the relay gave one.
      */
-    ownerEmail?: string
+    ownerEmail?: string,
+    /**
+     * macOS: a Cua Spaces app that can run the host service is
+     * installed, so the host service can run as it.
+     */
+    helperAvailable: boolean,
+    /**
+     * macOS: the old hand-written LaunchAgent is still there.
+     */
+    legacyService: boolean
 }
 
 /**
@@ -8091,7 +8161,9 @@ export const HostStatus = (() => {
         spacesAuditError: undefined,
         pausedSignedOut: false,
         owner: undefined,
-        ownerEmail: undefined
+        ownerEmail: undefined,
+        helperAvailable: false,
+        legacyService: false
     });
     const create = (() => {
         return uniffiCreateRecord<HostStatus, ReturnType<typeof defaults>>(defaults);
@@ -8135,7 +8207,9 @@ const FfiConverterTypeHostStatus = (() => {
                 spacesAuditError: FfiConverterOptionalString.read(from),
                 pausedSignedOut: FfiConverterBool.read(from),
                 owner: FfiConverterOptionalString.read(from),
-                ownerEmail: FfiConverterOptionalString.read(from)
+                ownerEmail: FfiConverterOptionalString.read(from),
+                helperAvailable: FfiConverterBool.read(from),
+                legacyService: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -8167,6 +8241,8 @@ const FfiConverterTypeHostStatus = (() => {
             FfiConverterBool.write(value.pausedSignedOut, into);
             FfiConverterOptionalString.write(value.owner, into);
             FfiConverterOptionalString.write(value.ownerEmail, into);
+            FfiConverterBool.write(value.helperAvailable, into);
+            FfiConverterBool.write(value.legacyService, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterBool.allocationSize(value.configured) +
@@ -8196,7 +8272,9 @@ const FfiConverterTypeHostStatus = (() => {
              FfiConverterOptionalString.allocationSize(value.spacesAuditError) +
              FfiConverterBool.allocationSize(value.pausedSignedOut) +
              FfiConverterOptionalString.allocationSize(value.owner) +
-             FfiConverterOptionalString.allocationSize(value.ownerEmail);
+             FfiConverterOptionalString.allocationSize(value.ownerEmail) +
+             FfiConverterBool.allocationSize(value.helperAvailable) +
+             FfiConverterBool.allocationSize(value.legacyService);
 
         }
     };
@@ -34186,6 +34264,15 @@ export interface HostLike {
  */
     configure(change: HostSettingsChange, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<HostStatus>;
 /**
+ * macOS: moves the host service from the old LaunchAgent to the Cua
+ * Spaces app (its own login item, "Cua Spaces"), keeping this machine's
+ * registration, id and Spaces; puts the old one back if the helper
+ * does not take over (the outcome says so). `app_version`: a failed
+ * move is not tried again by itself with the same version; `force`
+ * tries anyway.
+ */
+    migrateService(force: boolean, appVersion: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<HostServiceMigration>;
+/**
  * Pause relay sharing while nobody is signed in to the owner's
  * account: the host leaves the relay and stays off it (also across a
  * restart) with its setup kept. Direct mode is left alone.
@@ -34279,6 +34366,46 @@ export class Host extends UniffiAbstractObject implements HostLike {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterTypeHostStatus.lift.bind(FfiConverterTypeHostStatus),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * macOS: moves the host service from the old LaunchAgent to the Cua
+ * Spaces app (its own login item, "Cua Spaces"), keeping this machine's
+ * registration, id and Spaces; puts the old one back if the helper
+ * does not take over (the outcome says so). `app_version`: a failed
+ * move is not tried again by itself with the same version; `force`
+ * tries anyway.
+ */
+    async migrateService(force: boolean, appVersion: string, asyncOpts_?: { signal: AbortSignal }): Promise<HostServiceMigration> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_host_migrate_service(
+                    uniffiTypeHostObjectFactory.clonePointer(this),FfiConverterBool.lower(force, nativeModule().rustbuffer_alloc),FfiConverterString.lower(appVersion, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeHostServiceMigration.lift.bind(FfiConverterTypeHostServiceMigration),
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
@@ -35734,6 +35861,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_host_configure() !== 36828) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_host_configure");
     }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_host_migrate_service() !== 36386) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_host_migrate_service");
+    }
     if (nativeModule().uniffi_cua_sdk_checksum_method_host_pause_signed_out() !== 3338) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_host_pause_signed_out");
     }
@@ -36714,6 +36844,7 @@ export default Object.freeze({
     FfiConverterTypeHostAccessRecord,
     FfiConverterTypeHostPermission,
     FfiConverterTypeHostProvidedSpace,
+    FfiConverterTypeHostServiceMigration,
     FfiConverterTypeHostSettingsChange,
     FfiConverterTypeHostSetupOptions,
     FfiConverterTypeHostSpacesAuditRecord,

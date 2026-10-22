@@ -421,6 +421,26 @@ pub struct HostStatus {
     /// The owner's email, when the relay gave one.
     #[uniffi(default = None)]
     pub owner_email: Option<String>,
+    /// macOS: a Cua Spaces app that can run the host service is
+    /// installed, so the host service can run as it.
+    #[uniffi(default = false)]
+    pub helper_available: bool,
+    /// macOS: the old hand-written LaunchAgent is still there.
+    #[uniffi(default = false)]
+    pub legacy_service: bool,
+}
+
+/// What [`Host::migrate_service`] did.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct HostServiceMigration {
+    /// `migrated`, `switched`, `cleaned-up`, `rolled-back`, `kept` or
+    /// `not-needed`.
+    pub outcome: String,
+    /// In words.
+    pub detail: String,
+    /// macOS will ask for Screen Recording and Accessibility for Cua Spaces
+    /// Helper.
+    pub permissions_needed: bool,
 }
 
 /// One access to this machine.
@@ -508,6 +528,8 @@ impl From<cua_host::HostStatus> for HostStatus {
             paused_signed_out: s.paused_signed_out,
             owner: s.owner,
             owner_email: s.owner_email,
+            helper_available: s.helper_available,
+            legacy_service: s.legacy_service,
         }
     }
 }
@@ -704,6 +726,31 @@ impl Host {
                 .resume_signed_in(&account)
                 .await?
                 .into())
+        })
+        .await
+    }
+
+    /// macOS: moves the host service from the old LaunchAgent to the Cua
+    /// Spaces app (its own login item, "Cua Spaces"), keeping this machine's
+    /// registration, id and Spaces; puts the old one back if the helper
+    /// does not take over (the outcome says so). `app_version`: a failed
+    /// move is not tried again by itself with the same version; `force`
+    /// tries anyway.
+    pub async fn migrate_service(
+        &self,
+        force: bool,
+        app_version: String,
+    ) -> Result<HostServiceMigration> {
+        let home = self.home.clone();
+        run(async move {
+            let m = cua_host::Host::new(home)
+                .migrate_service(force, &app_version)
+                .await?;
+            Ok(HostServiceMigration {
+                outcome: m.outcome,
+                detail: m.detail,
+                permissions_needed: m.permissions_needed,
+            })
         })
         .await
     }

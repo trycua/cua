@@ -490,6 +490,16 @@ jobs:
             --sign "$identity" --out "$RUNNER_TEMP/spaces-app" \
             --feed-url "https://github.com/$GITHUB_REPOSITORY/releases/download/cua-spaces-latest/cua-spaces-appcast.xml"
 
+      # The symbols build-app.sh strips out of the shipped binaries, for
+      # symbolicating crash reports. Not a release asset.
+      - name: Keep the macOS dSYMs
+        uses: actions/upload-artifact@v4
+        with:
+          name: cua-spaces-darwin-universal-dSYMs
+          path: ${{ runner.temp }}/spaces-app/cua-spaces-*-dSYMs.zip
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Notarize and staple the app
         if: steps.signing.outputs.apple == 'true'
         env:

@@ -27,6 +27,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, Weak};
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use indexmap::IndexMap;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -1401,7 +1402,7 @@ impl BrowserEngine {
         // target is only a window handle and must never be reported as active.
         let selected_cdp_target_id =
             selected_tab_target_id(&native.title, &candidates, candidate.cdp_window_id);
-        let mut tabs = HashMap::new();
+        let mut tabs = IndexMap::new();
         for c in candidates.iter().filter(|c| match candidate.cdp_window_id {
             Some(window_id) => c.cdp_window_id == Some(window_id),
             None => c.cdp_target_id == candidate.cdp_target_id,

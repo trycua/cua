@@ -123,6 +123,12 @@ RUN install -d -m 0755 /etc/apt/keyrings
 # not move together. The resolved version is recorded in
 # /etc/cua-image/chromium-version. Bump the major
 # deliberately. CHROMIUM_VERSION, when set, wins (an exact build, for a repro).
+# Launchpad answers 5xx now and then (2026-10-21: the PPA index failed to
+# download, so apt saw no "chromium" at all and every Linux image build died
+# with "Version '155.*' ... was not found"). The index download is retried with
+# backoff and the build fails loudly only if the PPA stays unavailable. The same
+# loop is in trycua/cua-staging#101; keep the two identical so the next sync is
+# a no-op here.
 ARG CHROMIUM_VERSION=
 ARG CHROMIUM_MAJOR=155
 ARG CHROMIUM_PPA_KEY=5301FA4FD93244FBC6F6149982BB6851C64F6880
@@ -134,11 +140,16 @@ RUN --mount=type=bind,source=common/apt-keys/xtradeb-apps.asc,target=/tmp/xtrade
  && printf 'Package: *\nPin: origin ppa.launchpadcontent.net\nPin-Priority: -1\n\nPackage: chromium chromium-common chromium-sandbox\nPin: origin ppa.launchpadcontent.net\nPin-Priority: 1001\n' \
       >/etc/apt/preferences.d/xtradeb-chromium \
  && pin="${CHROMIUM_VERSION:-${CHROMIUM_MAJOR}.*}" && test -n "$pin" \
- && apt-get update \
- && for attempt in 1 2 3; do apt-get install -y --no-install-recommends \
+ && for attempt in 1 2 3 4 5 6; do \
+      apt-get -o Acquire::Retries=3 update || true; \
+      apt-cache madison chromium | grep -q launchpadcontent && break; \
+      echo "the xtradeb PPA index did not download (attempt $attempt; Launchpad answered 5xx or timed out); retrying" >&2; \
+      [ "$attempt" = 6 ] && { echo "ppa.launchpadcontent.net stayed unavailable" >&2; exit 1; }; \
+      sleep $((attempt * 20)); done \
+ && for attempt in 1 2 3 4 5; do apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
       "chromium=${pin}" "chromium-common=${pin}" && break; \
-      echo "apt attempt $attempt failed; reconfiguring" >&2; dpkg --configure -a || true; \
-      [ "$attempt" = 3 ] && exit 1; done \
+      echo "apt attempt $attempt failed; reconfiguring, then retrying with backoff" >&2; dpkg --configure -a || true; \
+      [ "$attempt" = 5 ] && exit 1; sleep $((attempt * 15)); done \
  && rm -rf /var/lib/apt/lists/* \
  && mkdir -p /etc/chromium/policies/managed /etc/cua-image \
  && printf '%s\n' '{"BrowserSignin":0,"SyncDisabled":true,"PasswordManagerEnabled":false,' \

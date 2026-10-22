@@ -3,6 +3,7 @@ name: "CI: Release metadata"
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened, labeled, unlabeled]
+  merge_group:
 
 permissions:
   contents: read
@@ -11,6 +12,7 @@ permissions:
 
 jobs:
   installer-compatibility:
+    if: github.event_name != 'merge_group'
     uses: ./.github/workflows/ci-cua-driver-installer-compat.yml
     permissions:
       contents: read
@@ -18,7 +20,7 @@ jobs:
 
   validate:
     needs: installer-compatibility
-    if: always()
+    if: always() && github.event_name != 'merge_group'
     runs-on: ubuntu-latest
     steps:
       - name: Require successful installer certification

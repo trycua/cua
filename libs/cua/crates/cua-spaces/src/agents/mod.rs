@@ -112,7 +112,7 @@ pub mod telemetry {
         if let Some((outcome, variant)) = cua_telemetry::events::agent_run_end(
             info.status.as_str(),
             info.stop_reason.as_deref(),
-            info.error.is_some(),
+            info.error.as_deref(),
         ) {
             cua_telemetry::global().agent_run_finished(&info.run_id, outcome, variant);
         }

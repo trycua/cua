@@ -17,11 +17,10 @@
 //!   proving it holds the env token (the machine checks it; the relay only
 //!   passes the proof along), then sends the env token inside WireGuard.
 //!
-//! The mesh is off unless asked for ([`cua_mesh::policy`]): `CUA_MESH`
-//! picks the policy, and without it the Cua Spaces app's daemon follows the
-//! app's update channel (off on every channel in this release):
-//! - `off` (default): the relay's HTTPS path only, as before the mesh;
-//! - `prefer`: the mesh when both sides support it, the relay's HTTPS path
+//! The mesh is on unless turned off ([`cua_mesh::policy`]): `CUA_MESH`
+//! picks the policy, and without it the policy is `prefer`:
+//! - `off`: the relay's HTTPS path only, as before the mesh;
+//! - `prefer` (default): the mesh when both sides support it, the relay's HTTPS path
 //!   otherwise (an older relay or machine, or a mesh that does not answer),
 //!   with a log line saying so;
 //! - `require`: the mesh or nothing (a relay that can read sessions is
@@ -39,16 +38,10 @@ use crate::relay::RelayAccount;
 /// How relay Spaces use the mesh (`CUA_MESH`, see [`cua_mesh::policy`]).
 pub use cua_mesh::policy::Policy as MeshPolicy;
 
-/// Set on the cua daemon the Cua Spaces app starts.
-const STARTED_BY_ENV: &str = "CUA_DAEMON_STARTED_BY";
-
-/// The policy for this process now: `CUA_MESH`, else (in the daemon the
-/// Cua Spaces app started) the app's update channel, else off. Read on
-/// every connect, so a change applies to the next connection.
+/// The policy for this process now: `CUA_MESH`, else prefer. Read on every
+/// connect, so a change applies to the next connection.
 pub fn policy() -> MeshPolicy {
-    let app = std::env::var(STARTED_BY_ENV).is_ok_and(|v| v == "app");
-    let home = app.then(cua_home::cua_home);
-    MeshPolicy::current(home.as_deref())
+    MeshPolicy::current()
 }
 
 /// Which node: the account's (one per relay) or an anonymous one for a

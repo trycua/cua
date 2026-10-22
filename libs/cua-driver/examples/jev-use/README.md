@@ -75,7 +75,7 @@ fixtures, and browser tasks keep sending `cua.jev_choice_request_v1`.
 
 ### Native desktop tasks
 
-`NativeAccessibilitySource` ([RFC #4268](../../../../rfcs/4268-jev-use-native-candidates.md))
+`NativeAccessibilitySource` ([RFC #4268](../../../../docs/rfcs/4268-jev-use-native-candidates.md))
 builds candidates from the native elements of one `get_window_state` call that
 returns the tree and the screenshot together, so element tokens and the
 `capture_id` describe the same moment. `native_roles.py` / `native_roles.ts`
@@ -197,7 +197,7 @@ uv run --frozen python measure_native.py replay --provider s1 --reps 5 \
 on macOS, Windows, and Linux, with both the Python and TypeScript runners,
 TypeSafe Jev and Cua-S1 chose correctly in all 1,680 decisions at about 4,
 12, and 24 candidates. The per-harness tables are in the
-[RFC 4268 decision record](../../../../rfcs/4268-jev-use-native-candidates.md).
+[RFC 4268 decision record](../../../../docs/rfcs/4268-jev-use-native-candidates.md).
 
 #### Choose with Cua-S1
 

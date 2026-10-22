@@ -7,7 +7,6 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-publish = false
 
 [features]
 default = [
@@ -52,7 +51,7 @@ required-features = ["mcp-client"]
 # Host Spaces use counts (fixed words only).
 cua-telemetry.workspace = true
 cua-create-failure.workspace = true
-cua-spaces-contract = { path = "../cua-spaces-contract" }
+cua-spaces-contract.workspace = true
 cua-proto = { workspace = true, features = ["client", "serde"] }
 cua-spacesd-client.workspace = true
 cua-home.workspace = true
@@ -96,7 +95,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 ignore = { version = "0.4", optional = true }
 # Agent homes move in and out of a Space as one archive.
 tar = { version = "0.4", optional = true }
-cua-hotspot = { path = "../cua-hotspot", optional = true }
+cua-hotspot = { workspace = true, optional = true }
 tokio-tungstenite = { workspace = true, optional = true }
 # The host cache of pinned install archives (spaces-agents).
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots"], optional = true }

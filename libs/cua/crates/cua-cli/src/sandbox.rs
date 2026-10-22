@@ -359,13 +359,21 @@ pub enum SandboxCmd {
         visible_alias = "get",
         after_help = "Examples:
   cua sb info dev
-  cua sb info local:dev --json"
+  cua sb info local:dev --json
+  # The gRPC URL and token of its cua-spacesd, for your own client
+  cua sb info dev --connection --json"
     )]
     Info {
         /// Sandbox name or ref (`local:NAME`).
         name: String,
         #[command(flatten)]
         at: Narrow,
+        /// Also print how to call the sandbox's cua-spacesd from your own
+        /// code: its gRPC URL and bearer token (`authorization: Bearer
+        /// <token>`). The token is a secret: anyone with it controls the
+        /// sandbox.
+        #[arg(long)]
+        connection: bool,
     },
     /// Suspend (pause/snapshot).
     #[command(after_help = "Examples:
@@ -420,8 +428,12 @@ pub enum SandboxCmd {
     /// runs it via SSH (`lume ssh`).
     #[command(after_help = "Examples:
   cua sb exec dev uname -a
-  cua sb exec dev 'ls /tmp | wc -l'")]
+  cua sb exec dev 'ls /tmp | wc -l'
+  # A long-lived stdio stream, like `docker exec -i`: argv, not a shell line
+  cua sb exec -i dev -- bash -c 'wc -c'")]
     Exec {
+        #[command(flatten)]
+        flags: shell::ExecFlags,
         #[command(flatten)]
         at: Narrow,
         /// Sandbox name or ref (`local:NAME`).
@@ -1714,13 +1726,40 @@ pub async fn run(
             let name = at.apply(&name)?;
             return port_forward(cua, &name, &spec, no_wait, json_global, out).await;
         }
-        SandboxCmd::Info { name, at } => {
+        SandboxCmd::Info {
+            name,
+            at,
+            connection,
+        } => {
             let name = at.apply(&name)?;
             let json = json_global;
             match sbx.get(name.clone()).await {
                 Ok(i) => {
+                    // The sandbox's own spacesd: URL and bearer token.
+                    let spacesd = if connection {
+                        // Through `cua daemon` the client gets the daemon's
+                        // proxy route (a path under the daemon's URL) and the
+                        // daemon's token, which only cua clients can use. A
+                        // gRPC client of your own needs spacesd itself: open
+                        // the sandbox from this process instead.
+                        let env = if cua.mode() == cua_sdk::CuaMode::Daemon
+                            && relay_space_id(&name).is_none()
+                        {
+                            let direct = Cua::embedded(cua_sdk::CuaConfig::default())?;
+                            env_of(&direct, &name).await?
+                        } else {
+                            env_of(cua, &name).await?
+                        };
+                        Some((env.endpoint(), env.inner().token().map(str::to_owned)))
+                    } else {
+                        None
+                    };
                     if json {
-                        line(out, info_json(&i).to_string());
+                        let mut v = info_json(&i);
+                        if let Some((url, token)) = &spacesd {
+                            v["spacesd"] = serde_json::json!({ "url": url, "token": token });
+                        }
+                        line(out, v.to_string());
                     } else {
                         line(out, format!("Name:     {}", i.name));
                         line(out, format!("Id:       {}", i.id));
@@ -1734,6 +1773,13 @@ pub async fn run(
                         s.sort();
                         for (k, p) in s {
                             line(out, format!("Service:  {k} ({p})"));
+                        }
+                        if let Some((url, token)) = &spacesd {
+                            line(out, format!("Spacesd:  {url}"));
+                            line(
+                                out,
+                                format!("Token:    {}", token.as_deref().unwrap_or("(none)")),
+                            );
                         }
                     }
                 }
@@ -1821,10 +1867,20 @@ pub async fn run(
             }
             return Ok(0);
         }
-        SandboxCmd::Exec { name, command, at } => {
+        SandboxCmd::Exec {
+            flags,
+            name,
+            command,
+            at,
+        } => {
             let name = at.apply(&name)?;
             let env = match env_of(cua, &name).await {
                 Err(CuaError::SpacesdNotAvailable(m)) => match agentless(cua, &name).await? {
+                    Some(_) if flags.any() => {
+                        return Err(CuaError::Unsupported(format!(
+                            "-i, --user, --cwd and --timeout need cua-spacesd in {name}"
+                        )));
+                    }
                     Some(sb) => {
                         return exec_agentless(&sb, &name, &command.join(" "), json_global, out)
                             .await;
@@ -1833,7 +1889,24 @@ pub async fn run(
                 },
                 other => other?,
             };
-            let o = env.sh(command.join(" "), Some(120_000)).await?;
+            if flags.stdin {
+                return shell::stream(
+                    &env,
+                    &command,
+                    flags.opts(None),
+                    tokio::io::stdin(),
+                    shell::os_signals(),
+                    out,
+                    &mut std::io::stderr(),
+                )
+                .await;
+            }
+            let o = env
+                .run(shell::with_opts(
+                    shell::command_of(&sh_argv(&command.join(" "))),
+                    flags.opts(Some(120_000)),
+                ))
+                .await?;
             let code = exit_code(&o);
             if json_global {
                 line(

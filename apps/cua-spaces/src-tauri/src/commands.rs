@@ -1052,6 +1052,20 @@ pub async fn unshare_space(
     state.0.unshare_space(&space_id, &who).await
 }
 
+/// Who lost access to the account's shared computers (sharing is for teams).
+#[tauri::command]
+pub async fn share_removals(
+    state: State<'_, AppState>,
+) -> CmdResult<Vec<crate::share::ShareRemovalView>> {
+    state.0.share_removals().await
+}
+
+/// The owner has seen the removal note.
+#[tauri::command]
+pub async fn ack_share_removals(state: State<'_, AppState>) -> CmdResult<()> {
+    state.0.ack_share_removals().await
+}
+
 // ------------------------------------------------------------- your cloud
 
 /// Runs one cloud tool (status, a test that creates nothing, connect) in

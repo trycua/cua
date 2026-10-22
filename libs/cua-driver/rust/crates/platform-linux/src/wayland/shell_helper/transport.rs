@@ -289,7 +289,7 @@ mod tests {
             assert_eq!(windows.len(), 2);
             assert_eq!(windows[0].title, "Tomorrow's \"plan\" C:\\ 1\n2 飞书");
             assert_eq!(
-                super::super::parse_window_origin(&rects, 42),
+                super::super::parse_window_origin(&rects, 42, 7),
                 Some((14, 12))
             );
             let raw = call("Capture", vec![]).await.unwrap();

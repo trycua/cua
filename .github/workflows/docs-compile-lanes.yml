@@ -1,10 +1,12 @@
-name: "Docs: Swift and Kotlin blocks compile"
+name: "Docs: Swift, Kotlin and Rust blocks compile"
 
 # Docs code blocks tagged test="swift" or test="kotlin" compile against the
 # cua SDK's Swift package and Kotlin binding in this repository
 # (tests/e2e/cua-sdk/docs/compile_lane.py). Compile-only: the blocks are
 # wrapped in a function in a library target, so no Rust library is built or
-# linked and nothing runs.
+# linked and nothing runs. Blocks tagged test="rust" type-check (cargo check)
+# against libs/cua/crates/cua-sdk, so a public API change that breaks a Rust
+# snippet fails here.
 
 on:
   pull_request:
@@ -12,6 +14,9 @@ on:
       - "docs/content/docs/**"
       - "libs/cua/swift/**"
       - "libs/cua/kotlin/**"
+      - "libs/cua/crates/**"
+      - "libs/cua/Cargo.toml"
+      - "libs/cua/Cargo.lock"
       - "tests/e2e/cua-sdk/docs/compile_lane.py"
       - "tests/e2e/cua-sdk/docs/extract.py"
       - "tests/e2e/cua-sdk/docs/preludes/**"
@@ -56,3 +61,26 @@ jobs:
           persist-credentials: false
       - name: Compile the Kotlin blocks
         run: python3 tests/e2e/cua-sdk/docs/compile_lane.py --lane kotlin
+
+  rust:
+    name: rust blocks
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      CARGO_BUILD_JOBS: "4"
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target-docs-rust
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: ". -> target-docs-rust"
+          key: docs-rust
+      - name: Type-check the Rust blocks
+        run: python3 tests/e2e/cua-sdk/docs/compile_lane.py --lane rust

@@ -3086,7 +3086,7 @@
     },
     {
      "abstract": "Show one sandbox",
-     "after_help": "Examples:\n  cua sb info dev\n  cua sb info local:dev --json",
+     "after_help": "Examples:\n  cua sb info dev\n  cua sb info local:dev --json\n  # The gRPC URL and token of its cua-spacesd, for your own client\n  cua sb info dev --connection --json",
      "aliases": [
       "get"
      ],
@@ -3121,6 +3121,17 @@
        "help": "Removed: Cua Cloud has ended",
        "hidden": true,
        "name": "cloud",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Also print how to call the sandbox's cua-spacesd from your own code: its gRPC URL and bearer token (`authorization: Bearer <token>`). The token is a secret: anyone with it controls the sandbox",
+       "hidden": false,
+       "name": "connection",
        "repeatable": false,
        "short_name": null,
        "takes_value": false
@@ -3365,7 +3376,7 @@
     },
     {
      "abstract": "Run a command (joined into one shell line, as `sh -c`). Exits with the command's own status. A local Lume sandbox without cua-spacesd runs it via SSH (`lume ssh`)",
-     "after_help": "Examples:\n  cua sb exec dev uname -a\n  cua sb exec dev 'ls /tmp | wc -l'",
+     "after_help": "Examples:\n  cua sb exec dev uname -a\n  cua sb exec dev 'ls /tmp | wc -l'\n  # A long-lived stdio stream, like `docker exec -i`: argv, not a shell line\n  cua sb exec -i dev -- bash -c 'wc -c'",
      "aliases": [],
      "arguments": [
       {
@@ -3394,6 +3405,17 @@
        "aliases": [],
        "default_value": false,
        "env": null,
+       "help": "Stream: run the command as argv (no shell), forward this command's stdin, write stdout and stderr as they arrive, set no time limit, pass SIGINT/SIGTERM/SIGHUP on, and kill the command when this process ends. Exits with the command's status (128 + n for signal n)",
+       "hidden": false,
+       "name": "stdin",
+       "repeatable": false,
+       "short_name": "i",
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
        "help": "Look NAME up among local sandboxes only (same as `local:NAME`)",
        "hidden": false,
        "name": "local",
@@ -3416,7 +3438,56 @@
      "hidden": false,
      "hidden_aliases": [],
      "name": "exec",
-     "options": [],
+     "options": [
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Run as this guest user",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "user",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "USER"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Start in this guest directory",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "cwd",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "CWD"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Stop the command after this many seconds (0: no limit)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "timeout",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "SECONDS"
+      }
+     ],
      "subcommand_optional": false,
      "subcommands": [],
      "usage": "cua sandbox exec [OPTIONS] <NAME> <COMMAND>..."
@@ -7868,7 +7939,7 @@
     },
     {
      "abstract": "Run a command (argv, no shell)",
-     "after_help": "Examples:\n  cua spacesd exec http://127.0.0.1:3211 uname -a",
+     "after_help": "Examples:\n  cua spacesd exec http://127.0.0.1:3211 uname -a\n  # A long-lived stdio stream (stdin forwarded, no time limit, killed with this command)\n  cua spacesd exec -i http://127.0.0.1:3211 cat",
      "aliases": [],
      "arguments": [
       {
@@ -7892,11 +7963,71 @@
        "type": "string"
       }
      ],
-     "flags": [],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Stream: run the command as argv (no shell), forward this command's stdin, write stdout and stderr as they arrive, set no time limit, pass SIGINT/SIGTERM/SIGHUP on, and kill the command when this process ends. Exits with the command's status (128 + n for signal n)",
+       "hidden": false,
+       "name": "stdin",
+       "repeatable": false,
+       "short_name": "i",
+       "takes_value": false
+      }
+     ],
      "hidden": false,
      "hidden_aliases": [],
      "name": "exec",
      "options": [
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Run as this guest user",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "user",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "USER"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Start in this guest directory",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "cwd",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "CWD"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Stop the command after this many seconds (0: no limit)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "timeout",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "SECONDS"
+      },
       {
        "aliases": [],
        "default_value": null,
@@ -8301,7 +8432,7 @@
    "subcommand_optional": false,
    "subcommands": [
     {
-     "abstract": "Inspect local runtimes (read-only)",
+     "abstract": "Inspect local runtimes (read-only). Exit 1 if any check is Error; warnings exit 0",
      "after_help": "Examples:\n  cua runtime doctor",
      "aliases": [],
      "arguments": [],
@@ -8315,7 +8446,7 @@
      "usage": "cua runtime doctor [OPTIONS]"
     },
     {
-     "abstract": "Provision local runtimes",
+     "abstract": "Provision local runtimes. Exit 1 if any step is Error; warnings exit 0",
      "after_help": "Examples:\n  # See what would be installed\n  cua runtime setup --dry-run\n  cua runtime setup qemu",
      "aliases": [],
      "arguments": [
@@ -8814,6 +8945,22 @@
      "aliases": [],
      "default_value": null,
      "env": null,
+     "help": "Check a machine's health instead, as its own cua daemon sees it (the checks the Machines page shows): another of your machines by name or id, over the relay, the mesh or its direct address, or `this`",
+     "hidden": false,
+     "is_optional": true,
+     "multiple_values": false,
+     "name": "machine",
+     "possible_values": [],
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": true,
+     "type": "string",
+     "value_name": "MACHINE"
+    },
+    {
+     "aliases": [],
+     "default_value": null,
+     "env": null,
      "help": "Fail unless the build running in the guest is the expected one: COMPONENT=WANT with WANT `sha256:<hex>` (the executable), `git:<sha>` or a version (repeatable). Components: cua-spacesd, cua-driver, or an overlay name. `cua sb create --overlay` prints the sha256 to pass",
      "hidden": false,
      "is_optional": true,
@@ -8977,7 +9124,7 @@
    "subcommands": [
     {
      "abstract": "Set this computer up for unattended access: install cua-spacesd as a service that joins the cua.ai relay as your account",
-     "after_help": "Examples:\n  # Join the cua.ai relay as your account (shares this desktop)\n  cua host setup\n  # A spare computer: do not share its desktop, run Spaces for your devices\n  cua host setup --profile spare --name \"Mac mini (spare)\"\n  cua host setup --no-desktop --provide-spaces\n  # Add this computer with a one-time code from the Cua Spaces app\n  # (Add a computer) or `cua host pair`: no sign-in needed here\n  cua host setup --pair K7QM-4XPB-2RHD\n  # Self-hosting teams: cua help advanced",
+     "after_help": "Examples:\n  # Join the cua.ai relay as your account (shares this desktop)\n  cua host setup\n  # A spare computer: do not share its desktop, run Spaces for your devices\n  cua host setup --profile spare --name \"Mac mini (spare)\"\n  cua host setup --no-desktop --provide-spaces\n  # Add this computer with a one-time code from the Cua Spaces app\n  # (Add a computer) or `cua host pair`: no sign-in needed here\n  cua host setup --pair K7QM-4XPB-2RHD\n  # Keep this computer off the end-to-end encrypted mesh (relay HTTPS only):\n  # run setup with CUA_MESH=off in the environment\n  # Self-hosting teams: cua help advanced",
      "aliases": [],
      "arguments": [],
      "flags": [
@@ -9450,7 +9597,7 @@
      "usage": "cua host start [OPTIONS]"
     },
     {
-     "abstract": "Share a relay computer (this one, or `--machine`) with other cua.ai accounts (id or verified email). Run from an enrolled device; every change is in the owner's audit log (`cua devices audit`)",
+     "abstract": "Share a relay computer (this one, or `--machine`) with people in your team (id or verified email). Run from an enrolled device; every change is in the owner's audit log (`cua devices audit`)",
      "after_help": "Examples:\n  cua host share friend@example.com\n  cua host share friend@example.com --machine 0123abcd4567ef89 --yes",
      "aliases": [],
      "arguments": [
@@ -10104,8 +10251,8 @@
      "usage": "cua spaces rm [OPTIONS] <SPACE>"
     },
     {
-     "abstract": "Let another cua.ai account watch (viewer) or use (editor) a Space, through the relay. They open it as `relay:<computer>`",
-     "after_help": "Examples:\n  cua spaces share local:studio bob@example.com\n  cua spaces share local:studio bob@example.com --role editor\n  cua spaces share relay:0123abcd4567ef89 acct-42 --role viewer\n  # From a script or agent: confirm with Touch ID or your password here\n  cua spaces share local:studio bob@example.com --yes",
+     "abstract": "Let someone in your team watch (viewer) or use (editor) a Space, through the relay. They open it as `relay:<computer>`. Sharing is for teams: you need a team, and they must be in it (or share with the whole team as `team:<id>`)",
+     "after_help": "Examples:\n  cua spaces share local:studio bob@example.com\n  cua spaces share local:studio bob@example.com --role editor\n  cua spaces share relay:0123abcd4567ef89 acct-42 --role viewer\n  # The whole team, to watch\n  cua spaces share local:studio team:acme --role viewer\n  # From a script or agent: confirm with Touch ID or your password here\n  cua spaces share local:studio bob@example.com --yes",
      "aliases": [],
      "arguments": [
       {
@@ -10120,7 +10267,7 @@
       },
       {
        "default_value": null,
-       "help": "Their email (verified by cua.ai) or account id",
+       "help": "Their email (verified by cua.ai) or account id, in your team; or `team:<id>` for the whole team",
        "hidden": false,
        "is_optional": false,
        "name": "WHO",
@@ -13395,5 +13542,5 @@
  ],
  "name": "cua",
  "usage": "cua [OPTIONS] <COMMAND>",
- "version": "0.5.0"
+ "version": "0.7.0"
 }

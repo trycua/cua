@@ -17,6 +17,16 @@ impl From<cua_host::Error> for CuaError {
             E::PermissionDenied(_) => CuaError::PermissionDenied(m),
             E::NotFound(_) => CuaError::NotFound(m),
             E::Relay(_) | E::Download(_) => CuaError::Http(m),
+            // The plain sentence, then where to upgrade, as the CLI says it;
+            // the Python and TypeScript SDKs read both back as `PlanLimitError`.
+            E::PlanLimit(_) => {
+                let url = cua_home::plan_limit::PlanLimit::parse(&m)
+                    .map(|l| l.upgrade_url(&cua_home::env::account_app_url()));
+                CuaError::Http(match url {
+                    Some(url) => format!("{m} Upgrade: {url}"),
+                    None => m,
+                })
+            }
             E::Service(_) => CuaError::Runtime(m),
             E::Io(_) | E::Internal(_) => CuaError::Internal(m),
         }
@@ -82,6 +92,12 @@ pub struct RelayMachine {
     /// check existed. `false` shows the machine as "new" until an enrolled
     /// device confirms it ([`Devices::confirm_machine`]) (S5).
     pub confirmed: bool,
+    /// The team you reach it through, for a team machine not shared with
+    /// you directly.
+    pub team: Option<String>,
+    /// It creates Spaces for its owner's devices, when it said so at
+    /// registration (`None` from a host or relay that predates it).
+    pub provides_spaces: Option<bool>,
 }
 
 impl From<cua_host::Machine> for RelayMachine {
@@ -100,6 +116,11 @@ impl From<cua_host::Machine> for RelayMachine {
             allow: m.allow,
             clients: m.clients.into_iter().map(Into::into).collect(),
             confirmed: m.confirmed,
+            provides_spaces: m
+                .meta
+                .get(cua_host::META_PROVIDES_SPACES)
+                .map(|v| v == "on"),
+            team: m.team.filter(|t| !t.trim().is_empty()),
         }
     }
 }
@@ -1043,6 +1064,39 @@ impl Devices {
         .await
     }
 
+    /// Renames `machine_id`, a machine the account owns, on the relay (from
+    /// this enrolled device). When it is this machine's own registration,
+    /// its host setup takes the new name too.
+    pub async fn rename_machine(&self, machine_id: String, name: String) -> Result<RelayMachine> {
+        let auth = self.auth.clone();
+        let tokens = self.tokens.clone();
+        run(async move {
+            let name = name.trim().to_string();
+            if name.is_empty() {
+                return Err(
+                    cua_host::Error::InvalidArgument("a machine needs a name".into()).into(),
+                );
+            }
+            let session = auth.session().await?;
+            let token = cua_host::AccountTokens::access_token(tokens.as_ref()).await?;
+            let m: RelayMachine = cua_host::RelayClient::new(auth.relay_url())?
+                .with_device_session(Some(session))
+                .patch(
+                    &token,
+                    &machine_id,
+                    &cua_host::MachinePatch {
+                        name: Some(name.clone()),
+                        ..Default::default()
+                    },
+                )
+                .await?
+                .into();
+            cua_host::Host::new(cua_daemon::cua_home()).adopt_name(&machine_id, &name)?;
+            Ok(m)
+        })
+        .await
+    }
+
     /// Vouches for `machine_id`, a machine that registered without an
     /// enrolled device's signature or MFA (from this enrolled device) (S5).
     /// Clears [`RelayMachine::confirmed`]'s "new" flag for every account
@@ -1066,6 +1120,30 @@ impl Devices {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The Machines page groups team machines and says whether a machine
+    /// provides Spaces from what the relay recorded at registration.
+    #[test]
+    fn a_relay_machine_carries_its_team_and_whether_it_provides_spaces() {
+        let mut m = cua_host::Machine {
+            id: "m1".into(),
+            role: "shared".into(),
+            team: Some("team-1".into()),
+            ..Default::default()
+        };
+        m.meta
+            .insert(cua_host::META_PROVIDES_SPACES.into(), "on".into());
+        let r = RelayMachine::from(m.clone());
+        assert_eq!(r.team.as_deref(), Some("team-1"));
+        assert_eq!(r.provides_spaces, Some(true));
+        m.meta
+            .insert(cua_host::META_PROVIDES_SPACES.into(), "off".into());
+        m.team = Some(" ".into());
+        let r = RelayMachine::from(m.clone());
+        assert_eq!((r.team, r.provides_spaces), (None, Some(false)));
+        m.meta.clear();
+        assert_eq!(RelayMachine::from(m).provides_spaces, None);
+    }
 
     #[test]
     fn setup_reports_whether_it_had_a_token_never_the_token() {

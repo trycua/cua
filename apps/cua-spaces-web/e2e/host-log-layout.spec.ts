@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * This machine's logs at a real window width (1100 px, as on a Mac): a long row gives way in the middle, so what happened ("Screen and
+ * This machine's logs (under Details on the Machines page) at a real window width (1100 px, as on a Mac): a long row gives way in the middle, so what happened ("Screen and
  * input refused (desktop not shared) ×12") stays whole, on the page and in
  * Show All; the Spaces activity keeps its action and Space whole instead.
  */
@@ -50,8 +50,11 @@ for (const [name, css] of [
     await page.goto("/machines?bridge=demo&parity");
     await page.waitForFunction(() => window.__cuaParity !== undefined);
     if (css) await page.addStyleTag({ content: css });
-    await page.locator("[data-host-panel]").waitFor();
+    await page.locator('[data-machine-detail="this-mac"]').waitFor();
     await page.evaluate((s) => window.__cuaParity!.showHost(s), state);
+    // The logs are under This machine's Details (collapsed until opened).
+    await page.locator("[data-machine-details-toggle]").click();
+    await page.locator("[data-host-panel]").waitFor();
 
     const tails = page.locator("[data-host-log-row] [data-host-log-tail]");
     await expect(tails.first()).toHaveText("Screen and input refused (desktop not shared) ×12");

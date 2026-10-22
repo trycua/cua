@@ -28,7 +28,7 @@ test("empty home and New Space on the macOS host's answer, loaded before the hos
   await expect(home.getByRole("heading")).toHaveText("No Spaces yet");
   await expect(home).toContainText("Choose a system for your first Space.");
   const linux = home.getByRole("button", { name: "Linux, About 1 minute · 3.2–7.1 GB of disk" });
-  const macos = home.getByRole("button", { name: "macOS, About 22 GB download" });
+  const macos = home.getByRole("button", { name: "macOS, About 23 GB download" });
   await expect(linux).toBeVisible();
   await expect(macos).toBeVisible();
 

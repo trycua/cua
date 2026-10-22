@@ -237,7 +237,7 @@ struct CommandPaletteView: View {
         let rows = appSidebar(spaces: model.spaces, query: "", selectedId: "").sections.flatMap(\.rows)
         for space in model.realSpaces {
             let row = rows.first { $0.id == space.id }
-            let hint = row?.statusText
+            let hint = row.map { CoreMessages.text($0.statusText) }
             let keywords = "\(row?.osIcon ?? "") \(hint ?? "")"
             out.append(Command(id: "space:open:\(space.id)", entry: entry("Spaces", "Open \(space.name)", hint: hint, keywords: keywords),
                                osIcon: row?.osIcon) { model.selection = .space(space.id) })

@@ -16,7 +16,8 @@ fn def() -> &'static ToolDef {
         description:
             "Launch a macOS app in the background — the target does NOT come to the foreground.\n\n\
              Provide either `bundle_id` (preferred — unambiguous, e.g. `com.apple.calculator`) \
-             or `name` (e.g. \"Calculator\"). If both are given, bundle_id wins.\n\n\
+             or `name` (e.g. \"Calculator\", or the absolute `.app` path from `list_apps` \
+             `launch_path`). If both are given, bundle_id wins.\n\n\
              Optional `urls` are handed to the app as open targets — for Finder, pass a folder \
              path to open a backgrounded Finder window there.\n\n\
              Browser DevTools setup belongs to `browser_prepare`, which can prove that a \
@@ -49,7 +50,7 @@ fn def() -> &'static ToolDef {
                 },
                 "name": {
                     "type": "string",
-                    "description": "App display name. Used only when bundle_id is absent."
+                    "description": "App display name, or absolute path to a .app bundle (e.g. launch_path from list_apps). Used only when bundle_id is absent."
                 },
                 "urls": {
                     "type": "array",

@@ -357,7 +357,7 @@ pub struct SetupView {
 #[serde(rename_all = "camelCase")]
 pub struct FirstRunView {
     pub step: FirstRunStep,
-    /// "Set up later" (top right, both screens).
+    /// "Skip for now" (top right, both screens).
     pub later: String,
     pub connect: Option<ConnectView>,
     pub setup: Option<SetupView>,
@@ -873,7 +873,7 @@ pub fn view(input: &FirstRunInput) -> FirstRunView {
     let agent = agent_row(input);
     let computer = computer_row(input);
     let art = art(input, &computer);
-    let later = "Set up later".to_string();
+    let later = "Skip for now".to_string();
     if input.step == FirstRunStep::Connect {
         return FirstRunView {
             step: FirstRunStep::Connect,

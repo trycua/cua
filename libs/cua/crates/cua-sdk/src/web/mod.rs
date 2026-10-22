@@ -307,6 +307,7 @@ impl SpacesdClient {
                 tag: None,
                 stdin: false,
                 pty: None,
+                kill_on_disconnect: false,
             })
             .await
         })

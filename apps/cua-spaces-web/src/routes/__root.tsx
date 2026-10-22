@@ -11,7 +11,9 @@ import { NewSpace } from "@/components/new-space";
 import { CommandPalette } from "@/components/shell/command-palette";
 import { DevicesBanner } from "@/components/shell/devices-banner";
 import { Sidebar } from "@/components/shell/sidebar";
+import { PlanLimitToastAction } from "@/components/shell/plan-limit-toast-action";
 import { RelayAllowanceNotice } from "@/components/shell/relay-allowance-notice";
+import { ShareRemovalNotice } from "@/components/shell/share-removal-notice";
 import { SpacesNotice } from "@/components/shell/spaces-notice";
 import { SpaceSheets } from "@/components/space-sheets";
 import { UsageLinkNotice } from "@/components/usage-link-notice";
@@ -70,11 +72,13 @@ function RootLayout() {
         <TopBar />
         <DevicesBanner />
         <SpacesNotice />
+        <ShareRemovalNotice />
         <RelayAllowanceNotice />
         <main className="min-h-0 flex-1">
           <Outlet />
         </main>
       </div>
+      <PlanLimitToastAction />
       <CommandPalette />
       <ChecklistTracker />
       <NewSpace />

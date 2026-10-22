@@ -232,8 +232,6 @@ class VM {
             throw VMError.notInitialized(vmDirContext.name)
         }
 
-        // Refuse to boot while a disk-resize transaction is armed. The marker is
-        // authoritative because run()'s emergency lock cleanup can defeat flock.
         if vmDirContext.dir.hasResizeMarker() {
             Logger.error(
                 "Refusing to run VM: a disk resize is in progress",
@@ -248,7 +246,7 @@ class VM {
                 "path": vmDirContext.dir.configPath.path,
                 "name": vmDirContext.name,
             ])
-        var fileHandle = try FileHandle(forWritingTo: vmDirContext.dir.configPath.url)
+        let fileHandle = try FileHandle(forWritingTo: vmDirContext.dir.configPath.url)
 
         if flock(fileHandle.fileDescriptor, LOCK_EX | LOCK_NB) != 0 {
             try? fileHandle.close()
@@ -256,37 +254,16 @@ class VM {
                 "VM already running (failed to acquire lock)", metadata: ["name": vmDirContext.name]
             )
 
-            // Try to forcibly clear the lock before giving up
-            Logger.info("Attempting emergency lock cleanup", metadata: ["name": vmDirContext.name])
-            unlockConfigFile()
-
-            // Try one more time to acquire the lock
-            if let retryHandle = try? FileHandle(forWritingTo: vmDirContext.dir.configPath.url),
-                flock(retryHandle.fileDescriptor, LOCK_EX | LOCK_NB) == 0
-            {
-                Logger.info("Emergency lock cleanup worked", metadata: ["name": vmDirContext.name])
-                // Continue with a fresh file handle
-                try? retryHandle.close()
-                // Get a completely new file handle to be safe
-                guard let newHandle = try? FileHandle(forWritingTo: vmDirContext.dir.configPath.url)
-                else {
-                    throw VMError.internalError("Failed to open file handle after lock cleanup")
-                }
-                // Update our main file handle
-                fileHandle = newHandle
-            } else {
-                // If we still can't get the lock, give up
-                Logger.error(
-                    "Could not acquire lock even after emergency cleanup",
-                    metadata: ["name": vmDirContext.name])
-                throw VMError.alreadyRunning(vmDirContext.name)
-            }
+            throw VMError.alreadyRunning(vmDirContext.name)
         }
         Logger.info("Successfully acquired lock", metadata: ["name": vmDirContext.name])
         defer {
             flock(fileHandle.fileDescriptor, LOCK_UN)
             try? fileHandle.close()
         }
+        guard let owner = RunOwner.current() else { throw VMError.unsafeOwner(vmDirContext.name) }
+        try owner.save(vmDirContext.dir.runOwnerURL)
+        defer { owner.remove(vmDirContext.dir.runOwnerURL) }
         sessionCleanedUp = false
         activeVNCPolicy = vncPolicy
         activeNoVNCSession = nil
@@ -843,28 +820,21 @@ class VM {
             }
         }
 
-        // Cross-process stop: another process owns the VM and holds the
-        // config-file run lock. Resolve that owner directly from the lock probe.
-        // We intentionally do not open the config file ourselves first: doing so
-        // would make this process a second holder and pollute the lsof probe.
         Logger.info(
             "Resolving process holding the config-file run lock",
             metadata: [
                 "path": vmDirContext.dir.configPath.path,
                 "name": vmDirContext.name,
             ])
-        guard let pid = runLockProbe.lockOwnerPID(ofFileAt: vmDirContext.dir.configPath.path),
-            pid > 0, pid != getpid()
-        else {
-            Logger.info(
-                "No live process holds the run lock - VM is not running",
-                metadata: ["name": vmDirContext.name])
-
-            // Clear any stale advisory lock so a later run can reacquire it.
-            unlockConfigFile()
-
+        let owner = RunOwner.load(vmDirContext.dir.runOwnerURL)
+        if RunOwner.lockHeld(vmDirContext.dir.configPath.url) == false,
+            owner?.matches != true {
             throw VMError.notRunning(vmDirContext.name)
         }
+        guard let owner, verifiedOwner(owner) else {
+            throw VMError.unsafeOwner(vmDirContext.name)
+        }
+        let pid = owner.pid
 
         Logger.info(
             "Found process \(pid) holding lock on config file",
@@ -881,7 +851,7 @@ class VM {
             Logger.info(
                 "Force stop requested; powering off process \(pid) immediately",
                 metadata: ["name": vmDirContext.name])
-            try await forcePowerOff(pid: pid)
+            try await forcePowerOff(owner: owner, graceful: false)
             return
         }
 
@@ -889,13 +859,16 @@ class VM {
         // run process (its handler triggers a clean stop); even without a handler
         // its default disposition terminates the process, so unlike SIGINT — which
         // the AppKit run loop swallows — the VM never lingers.
+        guard LumeServeProcess.apiPort(ofProcess: pid) == nil, verifiedOwner(owner) else {
+            throw VMError.unsafeOwner(vmDirContext.name)
+        }
         if kill(pid, SIGTERM) == 0 {
             Logger.info(
                 "Sent SIGTERM to VM process \(pid) for graceful shutdown",
                 metadata: ["name": vmDirContext.name])
         }
 
-        if await waitForProcessExit(pid: pid, timeout: timeout) {
+        if await waitForProcessExit(owner: owner, timeout: timeout) {
             Logger.info(
                 "Process \(pid) exited after graceful shutdown",
                 metadata: ["name": vmDirContext.name])
@@ -909,7 +882,7 @@ class VM {
         Logger.info(
             "Graceful shutdown did not complete within \(Int(timeout))s; forcing power-off of process \(pid)",
             metadata: ["name": vmDirContext.name])
-        try await forcePowerOff(pid: pid)
+        try await forcePowerOff(owner: owner, graceful: true)
     }
 
     /// Stops this VM through the `lume serve` (process `pid`, API on `port`)
@@ -958,32 +931,31 @@ class VM {
     /// Polls until `pid` is no longer signalable or `timeout` elapses.
     /// Returns `true` if the process exited within the budget.
     @MainActor
-    private func waitForProcessExit(pid: pid_t, timeout: TimeInterval) async -> Bool {
+    private func waitForProcessExit(owner: RunOwner, timeout: TimeInterval) async -> Bool {
         let deadline = Date().addingTimeInterval(max(timeout, 0))
         repeat {
-            if kill(pid, 0) != 0 {
-                return true
-            }
+            if !owner.matches { return true }
             try? await Task.sleep(nanoseconds: 500_000_000)
         } while Date() < deadline
-        return kill(pid, 0) != 0
+        return !owner.matches
     }
 
     /// SIGKILLs `pid`, confirms it is gone, and releases this VM's local state.
     @MainActor
-    private func forcePowerOff(pid: pid_t) async throws {
-        if kill(pid, 0) != 0 {
-            // The owner already exited between resolving it and now.
+    private func forcePowerOff(owner: RunOwner, graceful: Bool) async throws {
+        if graceful && (!owner.matches || RunOwner.load(vmDirContext.dir.runOwnerURL) == nil
+            || RunOwner.lockHeld(vmDirContext.dir.configPath.url) == false) {
             finalizeCrossProcessStop()
-            Logger.info(
-                "Process \(pid) already terminated", metadata: ["name": vmDirContext.name])
             return
         }
-
+        guard LumeServeProcess.apiPort(ofProcess: owner.pid) == nil, verifiedOwner(owner) else {
+            throw VMError.unsafeOwner(vmDirContext.name)
+        }
+        let pid = owner.pid
         _ = kill(pid, SIGKILL)
         Logger.info("Sent SIGKILL to process \(pid)", metadata: ["name": vmDirContext.name])
 
-        if await waitForProcessExit(pid: pid, timeout: 5) {
+        if await waitForProcessExit(owner: owner, timeout: 5) {
             finalizeCrossProcessStop()
             Logger.info("VM forcefully stopped", metadata: ["name": vmDirContext.name])
             return
@@ -1003,106 +975,11 @@ class VM {
     private func finalizeCrossProcessStop() {
         virtualizationService = nil
         vncService.stop()
-        unlockConfigFile()
     }
 
-    // Helper method to forcibly clear any locks on the config file
-    private func unlockConfigFile() {
-        Logger.info(
-            "Forcibly clearing locks on config file",
-            metadata: [
-                "path": vmDirContext.dir.configPath.path,
-                "name": vmDirContext.name,
-            ])
-
-        // First attempt: standard unlock methods
-        if let fileHandle = try? FileHandle(forWritingTo: vmDirContext.dir.configPath.url) {
-            // Use F_GETLK and F_SETLK to check and clear locks
-            var lockInfo = flock()
-            lockInfo.l_type = Int16(F_UNLCK)
-            lockInfo.l_whence = Int16(SEEK_SET)
-            lockInfo.l_start = 0
-            lockInfo.l_len = 0
-
-            // Try to unlock the file using fcntl
-            _ = fcntl(fileHandle.fileDescriptor, F_SETLK, &lockInfo)
-
-            // Also try the regular flock method
-            flock(fileHandle.fileDescriptor, LOCK_UN)
-
-            try? fileHandle.close()
-            Logger.info("Standard unlock attempts performed", metadata: ["name": vmDirContext.name])
-        }
-
-        // Second attempt: try to acquire and immediately release a fresh lock
-        if let tempHandle = try? FileHandle(forWritingTo: vmDirContext.dir.configPath.url) {
-            if flock(tempHandle.fileDescriptor, LOCK_EX | LOCK_NB) == 0 {
-                Logger.info(
-                    "Successfully acquired and released lock to reset state",
-                    metadata: ["name": vmDirContext.name])
-                flock(tempHandle.fileDescriptor, LOCK_UN)
-            } else {
-                Logger.info(
-                    "Could not acquire lock for resetting - may still be locked",
-                    metadata: ["name": vmDirContext.name])
-            }
-            try? tempHandle.close()
-        }
-
-        // Third attempt (most aggressive): copy the config file, remove the original, and restore
-        Logger.info(
-            "Trying aggressive method: backup and restore config file",
-            metadata: ["name": vmDirContext.name])
-        // Only proceed if the config file exists
-        let fileManager = FileManager.default
-        let configPath = vmDirContext.dir.configPath.path
-        let backupPath = configPath + ".backup"
-
-        if fileManager.fileExists(atPath: configPath) {
-            // Create a backup of the config file
-            if let configData = try? Data(contentsOf: URL(fileURLWithPath: configPath)) {
-                // Make backup
-                try? configData.write(to: URL(fileURLWithPath: backupPath))
-
-                // Remove the original file to clear all locks
-                try? fileManager.removeItem(atPath: configPath)
-                Logger.info(
-                    "Removed original config file to clear locks",
-                    metadata: ["name": vmDirContext.name])
-
-                // Wait a moment for OS to fully release resources
-                Thread.sleep(forTimeInterval: 0.1)
-
-                // Restore from backup
-                try? configData.write(to: URL(fileURLWithPath: configPath))
-                Logger.info(
-                    "Restored config file from backup", metadata: ["name": vmDirContext.name])
-            } else {
-                Logger.error(
-                    "Could not read config file content for backup",
-                    metadata: ["name": vmDirContext.name])
-            }
-        } else {
-            Logger.info(
-                "Config file does not exist, cannot perform aggressive unlock",
-                metadata: ["name": vmDirContext.name])
-        }
-
-        // Final check
-        if let finalHandle = try? FileHandle(forWritingTo: vmDirContext.dir.configPath.url) {
-            let lockResult = flock(finalHandle.fileDescriptor, LOCK_EX | LOCK_NB)
-            if lockResult == 0 {
-                Logger.info(
-                    "Lock successfully cleared - verified by acquiring test lock",
-                    metadata: ["name": vmDirContext.name])
-                flock(finalHandle.fileDescriptor, LOCK_UN)
-            } else {
-                Logger.info(
-                    "Lock still present after all clearing attempts",
-                    metadata: ["name": vmDirContext.name, "severity": "warning"])
-            }
-            try? finalHandle.close()
-        }
+    private func verifiedOwner(_ owner: RunOwner) -> Bool {
+        owner.verified(record: vmDirContext.dir.runOwnerURL,
+            config: vmDirContext.dir.configPath.url, probe: runLockProbe)
     }
 
     // MARK: - Resource Management
@@ -1522,6 +1399,14 @@ class VM {
             throw VMError.alreadyRunning(vmDirContext.name)
         }
 
+        defer {
+            flock(fileHandle.fileDescriptor, LOCK_UN)
+            try? fileHandle.close()
+        }
+        guard let owner = RunOwner.current() else { throw VMError.unsafeOwner(vmDirContext.name) }
+        try owner.save(vmDirContext.dir.runOwnerURL)
+        defer { owner.remove(vmDirContext.dir.runOwnerURL) }
+
         Logger.info(
             "Running VM with USB storage devices",
             metadata: [
@@ -1607,9 +1492,6 @@ class VM {
                 ])
             virtualizationService = nil
             vncService.stop()
-            // Release lock
-            flock(fileHandle.fileDescriptor, LOCK_UN)
-            try? fileHandle.close()
             throw error
         }
     }

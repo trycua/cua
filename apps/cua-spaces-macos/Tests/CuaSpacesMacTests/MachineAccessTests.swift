@@ -157,7 +157,7 @@ struct MachineAccessTests {
             let notice = try #require(m.devices.accessNotice)
             #expect(notice.kind == kind)
             // Every machine is still listed under My machines.
-            let mine = try #require(m.sidebar.sections.first { $0.title == "My computers" })
+            let mine = try #require(m.sidebar.sections.first { $0.title.code == "spaces.sidebar.section.my_computers" })
             #expect(mine.rows.map(\.id).contains("relay:m-studio"))
             #expect(mine.rows.map(\.id).contains("relay:m-mini"))
             let d = m.detail(try space(m, "relay:m-studio"))
@@ -222,7 +222,7 @@ struct MachineAccessTests {
         let m = await MachinesFixture.model(rows: MachinesFixture.rows(includeSelf: true), enrollment: .enrolled,
                                             hostSetUp: true)
         #expect(m.sidebar.thisMachine != nil)
-        let mine = try #require(m.sidebar.sections.first { $0.title == "My computers" })
+        let mine = try #require(m.sidebar.sections.first { $0.title.code == "spaces.sidebar.section.my_computers" })
         let ids = mine.rows.map(\.id)
         #expect(!ids.contains("relay:\(MachinesFixture.thisMacId)"))
         #expect(ids.contains("relay:m-dana-2"))
@@ -259,7 +259,7 @@ struct MachineAccessTests {
             let m = await MachinesFixture.model(rows: [FixtureSpacesBackend.sample[0], mac, me],
                                                 enrollment: .enrolled, hostSetUp: true, hostStatus: status)
             #expect(m.sidebar.thisMachine != nil)
-            let mine = try #require(m.sidebar.sections.first { $0.title == "My computers" },
+            let mine = try #require(m.sidebar.sections.first { $0.title.code == "spaces.sidebar.section.my_computers" },
                                     "no My computers for \(features) \(String(describing: error))")
             #expect(mine.rows.map(\.id) == [other])
         }

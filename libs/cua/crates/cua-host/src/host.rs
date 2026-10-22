@@ -294,8 +294,7 @@ pub struct HostConfig {
     pub paused_signed_out: bool,
     /// `CUA_MESH` as it was set where `cua host setup` ran (an explicit
     /// opt-in to the WireGuard®-based mesh, or out of it): passed on to the
-    /// service. Unset, the service follows its own default (off unless the
-    /// Cua Spaces app's channel turns it on).
+    /// service. Unset, the service follows its own default (prefer).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mesh: Option<String>,
 }
@@ -1403,6 +1402,22 @@ impl Host {
     async fn relay_machine(&self, url: &str, id: &str) -> Result<crate::Machine> {
         let token = read_secret(&self.paths.machine_token())?;
         RelayClient::new(url)?.machine(&token, id).await
+    }
+
+    /// Takes `name` as this machine's display name when `machine_id` is
+    /// this machine's relay registration (after the owner renamed it on
+    /// the relay from an enrolled device). Returns whether it did: another
+    /// machine, or a machine not set up, is left alone.
+    pub fn adopt_name(&self, machine_id: &str, name: &str) -> Result<bool> {
+        let Some(mut config) = self.config()? else {
+            return Ok(false);
+        };
+        if config.machine_id.as_deref() != Some(machine_id) || name.trim().is_empty() {
+            return Ok(false);
+        }
+        config.name = name.trim().to_string();
+        write_json(&self.paths.config(), &config)?;
+        Ok(true)
     }
 
     fn require_config(&self) -> Result<HostConfig> {

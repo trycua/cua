@@ -17,6 +17,7 @@ import { STREAM_ARGS } from "../ops/stream";
 import { RELAY_USAGE_ARGS } from "../ops/relay-usage";
 import { NUDGES_ARGS } from "../ops/nudges";
 import { RESOURCES_ARGS } from "../ops/resources";
+import { MACHINES_ARGS } from "../ops/machines";
 import { CHECKLIST_ARGS } from "../ops/checklist";
 import { PRESENCE_ARGS } from "../ops/presence";
 import { RUNTIME_FIX_ARGS } from "../ops/runtime-fix";
@@ -76,6 +77,8 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "sharing.list": { spaceId: "s1" },
   "sharing.share": { spaceId: "s1", who: "bob@example.com", role: "viewer" },
   "sharing.unshare": { spaceId: "s1", who: "bob@example.com" },
+  "sharing.removals": {},
+  "sharing.ackRemovals": {},
   "volume.overview": {},
   "volume.storage": {},
   "volume.storageSet": { update: { backend: "fs", s3: null, access_key_id: null, secret_access_key: null, dry_run: true } },
@@ -133,6 +136,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   ...RELAY_USAGE_ARGS,
   ...NUDGES_ARGS,
   ...RESOURCES_ARGS,
+  ...MACHINES_ARGS,
   ...CHECKLIST_ARGS,
   ...PRESENCE_ARGS,
   ...RUNTIME_FIX_ARGS,

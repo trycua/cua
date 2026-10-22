@@ -1,8 +1,8 @@
 [package]
 name = "cua-image"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
-license = "MIT"
+license.workspace = true
 repository = "https://github.com/trycua/cua"
 description = "OCI images for the cua SDK: pull/push, containerDisk and rootfs formats, ImageSpec, local builder."
 
@@ -10,7 +10,7 @@ description = "OCI images for the cua SDK: pull/push, containerDisk and rootfs f
 async-trait = "0.1"
 base64 = "0.22"
 bytes = "1"
-cua-vmm = { path = "../cua-vmm" }
+cua-vmm = { workspace = true, default-features = true }
 flate2 = "1"
 futures = "0.3"
 hex = "0.4"

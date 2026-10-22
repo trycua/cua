@@ -108,7 +108,7 @@ describe.skipIf(!wasmBuilt)("the empty home (wasm core)", () => {
     const core = await testCore();
     expect(emptyHome(core, "arm64", "macos")!.tiles.map((t) => [t.name, t.detail])).toEqual([
       ["Linux", "About 1 minute · 3.2–7.1 GB of disk"],
-      ["macOS", "About 22 GB download"],
+      ["macOS", "About 23 GB download"],
     ]);
   });
 

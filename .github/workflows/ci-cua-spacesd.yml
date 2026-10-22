@@ -137,7 +137,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-spacesd -> target"
       - name: Install Linux build dependencies
@@ -204,7 +204,7 @@ jobs:
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-spacesd -> target"
       - name: Enable Client for NFS (as the image does)

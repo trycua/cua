@@ -81,7 +81,7 @@ jobs:
         uses: dtolnay/rust-toolchain@1.97.1
         with:
           targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: |
             libs/cua
@@ -149,7 +149,7 @@ jobs:
         uses: dtolnay/rust-toolchain@1.97.1
         with:
           targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: |
             libs/cua

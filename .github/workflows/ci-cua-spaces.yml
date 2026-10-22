@@ -7,6 +7,11 @@ name: "CI: Cua Spaces"
 # signing key) are turned off with a config override. The signed macOS
 # release stays in cd-cua-spaces.yml.
 #
+# The installer bundles take 60 to 85 minutes, so a pull request builds them
+# only when it changes something they package (see the `changes` job). Every
+# pull request still runs vitest, typecheck and the Rust command-layer tests
+# (`rust`). A manual run (workflow_dispatch) always builds the bundles.
+#
 # Installer mode (first-run onboarding preselection) is exercised by the
 # bundles themselves:
 #   Windows NSIS: setup.exe /S /MODE=host|client
@@ -45,6 +50,85 @@ env:
   DO_NOT_TRACK: "1"
 
 jobs:
+  changes:
+    name: changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      bundle: ${{ steps.scope.outputs.bundle }}
+    steps:
+      # Paths the installers consume: the Tauri crate and its config (native
+      # code is compiled by the bundle step), the bundling and sidecar
+      # scripts, package manifests and lockfiles, the CLI sidecar source and
+      # the cargo workspace it builds from (libs/cua), the shared app core
+      # the frontend wasm is built from, and the CI actions and this workflow.
+      - id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          bundle=true
+          if [[ "$EVENT" == pull_request ]]; then
+            files=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --jq '.[].filename')
+            if grep -Eq '^(apps/cua-spaces/(src-tauri/|scripts/|core-wasm/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|rust-toolchain\.toml$|vite\.config\.ts$|tsconfig\.json$|index\.html$)|libs/cua/|\.github/actions/|\.github/workflows/ci-cua-spaces\.yml$)' <<<"$files"; then
+              bundle=true
+            else
+              bundle=false
+            fi
+          fi
+          echo "bundle=$bundle" | tee -a "$GITHUB_OUTPUT" "$GITHUB_STEP_SUMMARY"
+
+  rust:
+    name: rust command-layer tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_BUILD_JOBS: 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/linux-rust-prep
+        with:
+          install-deps: "false"
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/cua-spaces/pnpm-lock.yaml
+      - name: Install Rust, the wasm32 target and wasm-bindgen
+        shell: bash
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add wasm32-unknown-unknown
+          cargo install wasm-bindgen-cli --version 0.2.126 --locked
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake pkg-config libssl-dev file \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
+            libx11-dev libxkbcommon-dev libwayland-dev libxcb1-dev libx11-xcb-dev \
+            libxkbcommon-x11-dev libxrandr-dev libxi-dev libudev-dev
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          key: rust-tests
+          workspaces: |
+            apps/cua-spaces/src-tauri -> target
+            libs/cua -> target
+      - run: pnpm install --frozen-lockfile
+      - name: Rust command-layer tests (hermetic)
+        shell: bash
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked --test host_commands --test commands --test installer_commands --test app_core_parity --lib -- --test-threads=4
+
   frontend:
     name: vitest + typecheck
     runs-on: ubuntu-24.04
@@ -73,7 +157,10 @@ jobs:
 
   bundle:
     name: bundle (${{ matrix.name }})
-    needs: frontend
+    needs: [frontend, changes]
+    # Skipped (reported as skipped, which ci-gate accepts) on pull requests
+    # that change nothing the installers package.
+    if: needs.changes.outputs.bundle == 'true'
     strategy:
       fail-fast: false
       matrix:

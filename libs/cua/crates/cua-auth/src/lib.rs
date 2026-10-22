@@ -2122,7 +2122,8 @@ impl PendingLogin {
                             }
                             Some("expired_token") => {
                                 return Err(Error::Timeout(
-                                    "the sign-in code expired before it was confirmed".into(),
+                                    "the sign-in code expired before it was confirmed (expired_token)"
+                                        .into(),
                                 ));
                             }
                             Some("access_denied") => {

@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 use crate::apps;
 use crate::ax::bindings::{
-    copy_action_names, copy_bool_attr, copy_children, copy_element_attr, copy_string_attr,
+    copy_action_names, copy_bool_attr, copy_element_attr, copy_string_attr,
     element_at_screen_position, element_screen_rect, kAXErrorSuccess, AXUIElementPerformAction,
     AXUIElementRef,
 };
@@ -320,7 +320,7 @@ fn def() -> &'static ToolDef {
             - element_token: AX action path. Tokens are scoped to (pid, window_id) and stale once the window is snapshotted again.\n\
             - x, y: window-local pixels of the get_window_state screenshot, sent as CGEvent mouse events. Needs a visible window. `modifier` takes cmd/shift/option/ctrl.\n\
             \n\
-            `button` defaults to left; on the AX path \"right\" maps to AXShowMenu and \"middle\" falls back to a pixel click at the element center. `action`: press (default), show_menu, pick, confirm, cancel, open, show_alternate_ui, show_default_ui; an element listing showalternateui reveals its hover-only controls with show_alternate_ui, in the background and without the pointer. `from_zoom:true` translates zoom-image pixels after a `zoom` call. Pressing a popup button opens its menu and leaves it open until an item is chosen or it is dismissed; in the background the user's front window keeps key focus meanwhile. To choose an option in one call use `set_value`. In the background a web `<select>` (Chrome, Electron) is not opened, because its menu would raise the browser window: the click is refused with `select_menu_would_raise_window`; use `set_value`.".into(),
+            `button` defaults to left; on the AX path \"right\" maps to AXShowMenu and \"middle\" falls back to a pixel click at the element center. `action`: press (default), show_menu, pick, confirm, cancel, open, show_alternate_ui, show_default_ui; an element listing showalternateui reveals its hover-only controls with show_alternate_ui, in the background and without the pointer. `from_zoom:true` translates zoom-image pixels after a `zoom` call. In the foreground, pressing a popup button opens its menu and leaves it open until an item is chosen or it is dismissed. In the background the menu is opened only to list its options and closed again in the same call, because it would otherwise cover the user's front app; choose an option in one call with `set_value`. In the background a web `<select>` (Chrome, Electron) is not opened, because its menu would raise the browser window: the click is refused with `select_menu_would_raise_window`; use `set_value`.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             // `pid` is conditionally required — needed for window/element clicks
@@ -886,9 +886,15 @@ impl Tool for ClickTool {
                         suspected_noop,
                         selection_verified,
                         selection_via_pixel,
+                        windows_before,
                     ),
                     fronted,
                 ))) => {
+                    // Compared after the window observation above has waited
+                    // its report window, so a dialog the press closes is seen.
+                    if let Some(before) = windows_before {
+                        msg.push_str(&press_window_note(&before, &app_windows(pid)));
+                    }
                     // For text inputs, wait 800ms for WebKit DOM focus to settle
                     // before returning — matches the Swift reference behaviour.
                     // The window watch above already used part of it.
@@ -1506,6 +1512,77 @@ fn press_needs_key_window(action: &str, front_pid: Option<i32>, pid: i32, native
     action == "AXPress" && native && front_pid != Some(pid)
 }
 
+/// What a click on a popup button left behind, and how to choose an option.
+fn popup_click_note(foreground: bool, closed: bool) -> &'static str {
+    match (foreground, closed) {
+        (true, _) => {
+            "\n\nThis is a popup/select button; its menu is open. Choose an item by clicking its \
+             AXMenuItem from a fresh get_window_state, or select in one call with:\n  \
+             set_value(pid, element_token, value)"
+        }
+        (false, true) => {
+            "\n\nThis is a popup/select button. Its menu was opened to read the options and \
+             closed again, so nothing stays over the user's window. Choose an option in one \
+             call with:\n  set_value(pid, element_token, value)"
+        }
+        (false, false) => {
+            "\n\nThis is a popup/select button and its menu is still open over the user's \
+             window: press escape on this window before other input, then choose an option in \
+             one call with:\n  set_value(pid, element_token, value)"
+        }
+    }
+}
+
+/// One on-screen window of the target app: id, layer, title.
+type AppWindow = (u32, i32, String);
+
+/// The app's on-screen windows at every layer. The window-change detector
+/// counts only layer-0 windows, so a popover or pop-up menu is invisible to it.
+fn app_windows(pid: i32) -> Vec<AppWindow> {
+    crate::windows::all_windows()
+        .into_iter()
+        .filter(|window| window.pid == pid && window.is_on_screen)
+        .map(|window| (window.window_id, window.layer, window.title))
+        .collect()
+}
+
+/// What a background button press did to its app's windows. A press that
+/// should open a picker or popover in an inactive app often shows nothing, and
+/// AX still reports success, so say so instead of leaving the caller to guess.
+fn press_window_note(before: &[AppWindow], after: &[AppWindow]) -> String {
+    let describe = |windows: Vec<&AppWindow>| {
+        windows
+            .iter()
+            .map(|(id, layer, title)| format!("{id} (layer {layer}, \"{title}\")"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let opened: Vec<&AppWindow> = after
+        .iter()
+        .filter(|(id, _, _)| !before.iter().any(|(b, _, _)| b == id))
+        .collect();
+    let closed: Vec<&AppWindow> = before
+        .iter()
+        .filter(|(id, _, _)| !after.iter().any(|(a, _, _)| a == id))
+        .collect();
+    let mut note = String::new();
+    if !opened.is_empty() {
+        note.push_str(&format!("\nOpened app window(s): {}.", describe(opened)));
+    }
+    if !closed.is_empty() {
+        note.push_str(&format!("\nClosed app window(s): {}.", describe(closed)));
+    }
+    if note.is_empty() {
+        note.push_str(
+            "\nNo window, sheet, popover or menu of the app appeared or closed within 0.3 s. \
+             If this button should open a picker or popover, the app may show it only while \
+             it is active: use another route to the same setting (a menu command or its \
+             dialog), or delivery_mode:\"foreground\".",
+        );
+    }
+    note
+}
+
 /// Make the target window AppKit-key without raising it, activating the app
 /// or taking key status from the user's window (the focus record only, as the
 /// background pixel click does), then let AppKit settle.
@@ -1573,7 +1650,7 @@ fn perform_ax_click(
     selection_pixel: Option<SelectionPixelTarget>,
     modifiers: &[String],
     foreground: bool,
-) -> anyhow::Result<(String, bool, bool, bool, bool)> {
+) -> anyhow::Result<(String, bool, bool, bool, bool, Option<Vec<AppWindow>>)> {
     let (element_ptr, idx) = element;
     let (pid, window_id) = window;
     let ax_action = crate::input::ax_actions::map_action(action_str)?;
@@ -1610,6 +1687,7 @@ fn perform_ax_click(
                     false,
                     true,
                     false,
+                    None,
                 ));
             }
         }
@@ -1684,6 +1762,7 @@ fn perform_ax_click(
                                     false,
                                     true,
                                     true,
+                                    None,
                                 ));
                             }
                         }
@@ -1715,6 +1794,10 @@ fn perform_ax_click(
     let toggle_before = is_toggle_press(ax_action, &role, &advertised)
         .then(read_value)
         .flatten();
+    let windows_before = (!foreground
+        && ax_action == "AXPress"
+        && matches!(role.as_str(), "AXButton" | "AXMenuButton"))
+    .then(|| app_windows(pid));
     if !foreground {
         prime_key_window_for_background_press(pid, window_id, ax_action);
     }
@@ -1740,6 +1823,7 @@ fn perform_ax_click(
                     false,
                     true,
                     false,
+                    None,
                 ));
             }
         }
@@ -1759,6 +1843,7 @@ fn perform_ax_click(
                     false,
                     true,
                     false,
+                    None,
                 ));
             }
         }
@@ -1767,42 +1852,25 @@ fn perform_ax_click(
 
     let mut summary = format!("✅ Performed {ax_action} on [{idx}] {role} \"{title}\".");
 
-    // AXPopUpButton: list available options, redirect to set_value.
+    // AXPopUpButton: list its options (under its AXMenu while open) and
+    // redirect to set_value. In the background, close the menu again in this
+    // call: AppKit draws a popup's menu above every app's windows, so leaving
+    // it open would cover the user's front app until a later call chose an
+    // item.
     if role == "AXPopUpButton" {
-        let children = unsafe { copy_children(element) };
-        if !children.is_empty() {
-            let options: Vec<String> = children
+        let options = super::set_value::popup_option_labels(element);
+        let closed = !foreground && {
+            super::set_value::dismiss_popup_menu(element, pid);
+            !super::set_value::popup_menu_is_open(element)
+        };
+        summary.push_str(popup_click_note(foreground, closed));
+        if !options.is_empty() {
+            let list = options
                 .iter()
-                .filter_map(|&child| {
-                    let t = unsafe { copy_string_attr(child, "AXTitle") }.unwrap_or_default();
-                    let v = unsafe { copy_string_attr(child, "AXValue") }.unwrap_or_default();
-                    if t.is_empty() && v.is_empty() {
-                        return None;
-                    }
-                    Some(if v.is_empty() || v == t {
-                        format!("\"{t}\"")
-                    } else {
-                        format!("\"{t}\" (value: {v})")
-                    })
-                })
-                .collect();
-            for &child in &children {
-                unsafe {
-                    CFRelease(child as _);
-                }
-            }
-
-            if !options.is_empty() {
-                let opt_list = options.join(", ");
-                summary.push_str(
-                    "\n\nThis is a popup/select button; its menu is open. Choose an item \
-                     by clicking its AXMenuItem from a fresh get_window_state, or select \
-                     in one call with:\n  set_value(pid, element_token, value)\n\
-                     Available options: [",
-                );
-                summary.push_str(&opt_list);
-                summary.push(']');
-            }
+                .map(|option| format!("\"{option}\""))
+                .collect::<Vec<_>>()
+                .join(", ");
+            summary.push_str(&format!("\nAvailable options: [{list}]"));
         }
     }
 
@@ -1847,7 +1915,14 @@ fn perform_ax_click(
     let _ = pid;
     let _ = window_id; // used by caller context
 
-    Ok((summary, needs_webkit_delay, suspected_noop, false, false))
+    Ok((
+        summary,
+        needs_webkit_delay,
+        suspected_noop,
+        false,
+        false,
+        windows_before,
+    ))
 }
 
 #[cfg(test)]
@@ -2033,6 +2108,30 @@ mod tests {
             "browser or Electron"
         );
         assert!(!press_needs_key_window("AXShowMenu", Some(1), 2, true));
+    }
+
+    #[test]
+    fn a_background_button_press_reports_which_app_windows_opened_or_closed() {
+        let main = (584, 0, "Main".to_owned());
+        let popover = (900, 3, String::new());
+        let dialog = (726, 0, "Edit Chart".to_owned());
+        let nothing = press_window_note(std::slice::from_ref(&main), std::slice::from_ref(&main));
+        assert!(nothing.contains("No window, sheet, popover or menu"));
+        let opened = press_window_note(std::slice::from_ref(&main), &[main.clone(), popover]);
+        assert!(opened.contains("Opened app window(s): 900 (layer 3"));
+        assert!(!opened.contains("No window"));
+        let closed = press_window_note(&[main.clone(), dialog], std::slice::from_ref(&main));
+        assert!(closed.contains("Closed app window(s): 726 (layer 0, \"Edit Chart\")"));
+    }
+
+    #[test]
+    fn a_background_popup_click_says_its_menu_was_closed() {
+        assert!(popup_click_note(false, true).contains("closed again"));
+        assert!(popup_click_note(false, false).contains("press escape"));
+        assert!(popup_click_note(true, false).contains("its menu is open"));
+        for note in [popup_click_note(false, true), popup_click_note(true, false)] {
+            assert!(note.contains("set_value(pid, element_token, value)"));
+        }
     }
 
     #[test]

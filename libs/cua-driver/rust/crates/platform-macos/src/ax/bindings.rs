@@ -748,6 +748,37 @@ pub unsafe fn set_point_attr(element: AXUIElementRef, attr_name: &str, x: f64, y
     result
 }
 
+/// Set an AX CFRange attribute such as `AXSelectedTextRange`.
+///
+/// # Safety
+///
+/// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
+pub unsafe fn set_range_attr(
+    element: AXUIElementRef,
+    attr_name: &str,
+    location: isize,
+    length: isize,
+) -> AXError {
+    #[repr(C)]
+    struct CFRangeValue {
+        location: isize,
+        length: isize,
+    }
+    let attr = CFStr::new(attr_name);
+    let range = CFRangeValue { location, length };
+    let value = AXValueCreate(
+        kAXValueCFRangeType,
+        &range as *const CFRangeValue as *const c_void,
+    );
+    if value.is_null() {
+        return kAXErrorFailure;
+    }
+    let result =
+        AXUIElementSetAttributeValue(element, attr.as_concrete_TypeRef(), value as CFTypeRef);
+    CFRelease(value as CFTypeRef);
+    result
+}
+
 /// Set an AX CGSize attribute such as `AXSize`.
 ///
 /// # Safety

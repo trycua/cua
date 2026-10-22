@@ -22,8 +22,9 @@ use std::sync::Arc;
 
 use crate::apps;
 use crate::ax::bindings::{
-    copy_bool_attr, copy_children, copy_number_attr, copy_string_attr, copy_url_attr,
-    kAXErrorSuccess, perform_action, set_number_attr, set_string_attr, AXUIElementRef,
+    copy_bool_attr, copy_children, copy_element_attr, copy_number_attr, copy_string_attr,
+    copy_url_attr, kAXErrorSuccess, perform_action, set_number_attr, set_string_attr,
+    AXUIElementRef,
 };
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
@@ -257,6 +258,9 @@ impl Tool for SetValueTool {
                 if let Some(edited) = outcome.document_edited {
                     structured["document_key_edit_sent"] = serde_json::json!(edited);
                 }
+                if let Some(committed) = outcome.committed {
+                    structured["committed"] = serde_json::json!(committed);
+                }
                 if ax_echo_surface {
                     structured["escalation"] = serde_json::json!({
                         "recommended": "px",
@@ -449,6 +453,9 @@ struct SetValueOutcome {
     /// The document's edited mark after the write; `None` outside a
     /// document or when the value did not move.
     document_edited: Option<bool>,
+    /// Whether a text field's editing session was ended after the write so
+    /// the app committed the value; `None` when no commit was attempted.
+    committed: Option<bool>,
 }
 
 fn apply_surface_trust(outcome: &mut SetValueOutcome, ax_echo_surface: bool) {
@@ -498,6 +505,7 @@ fn set_value_blocking(
             changed: None,
             not_applied: false,
             document_edited: None,
+            committed: None,
         })
     } else {
         // Default path: write AXValue directly. Numeric controls (AXSlider /
@@ -561,9 +569,30 @@ fn set_value_blocking(
             } else {
                 crate::document_edit::DocumentEdited::NotADocument
             };
+            // AppKit hands a text field's value to the app's model when an
+            // editing session ends (`controlTextDidEndEditing`, bindings), and
+            // an AXValue write never starts one, so a dialog's commit button
+            // would still see the old value. End one the way Tab does.
+            let committed =
+                (role == "AXTextField" && !secure && changed == Some(true)).then(|| unsafe {
+                    commit_text_field(pid, window_id, element, before.as_deref(), value)
+                });
+            let commit_note = match committed {
+                Some(true) => {
+                    " Re-entered the value in the field and ended editing with Tab, as typing \
+                     would; check a result that depends on it (a dialog's output) from fresh \
+                     state."
+                }
+                Some(false) => {
+                    " Could not re-enter the value and press Tab in the field; an app that takes \
+                     a field's value only when editing ends may still use the old one. Enter it \
+                     with type_text and press_key tab."
+                }
+                None => "",
+            };
             Ok(SetValueOutcome {
                 detail: format!(
-                    "✅ Set AXValue on [{element_index}] {role}.{suffix}{}",
+                    "✅ Set AXValue on [{element_index}] {role}.{suffix}{commit_note}{}",
                     document.note()
                 ),
                 verified,
@@ -572,6 +601,7 @@ fn set_value_blocking(
                 // read-back proves nothing either way.
                 not_applied: !secure && write_not_applied(verified, changed),
                 document_edited: document.structured(),
+                committed,
             })
         } else if let Some(target) = numeric_target {
             // Both direct writes failed for a numeric target — fall back to
@@ -588,6 +618,7 @@ fn set_value_blocking(
                     changed,
                     not_applied: false,
                     document_edited: None,
+                    committed: None,
                 })
             } else {
                 anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
@@ -605,6 +636,77 @@ const NOT_APPLIED_REREADS: usize = 3;
 /// the accessibility write (LibreOffice Calc cells do) but did not apply it.
 fn write_not_applied(verified: Option<bool>, changed: Option<bool>) -> bool {
     verified == Some(false) && changed == Some(false)
+}
+
+/// Settle between the steps that re-enter a text field's value.
+const COMMIT_SETTLE: std::time::Duration = std::time::Duration::from_millis(80);
+
+/// Longest value re-typed to commit a text field; longer writes stay AX-only.
+const COMMIT_MAX_CHARS: usize = 200;
+/// Pause after each re-typed character, as `type_text`'s key route uses.
+const COMMIT_CHAR_DELAY_MS: u64 = 30;
+
+/// Re-type `value` into `field` and end editing with Tab, the way a user does.
+/// An AXValue write, or even an `AXSelectedText` write through the field
+/// editor, changes the text without the key-driven edit some apps take their
+/// data from: Astro Gold's Edit Chart > Calculate kept the old date after both,
+/// and took the new one only after typed keys and Tab. Make the field's window
+/// key inside its app (no activation, no raise), put `before` back so the
+/// typed edit is a real change, make the field first responder, confirm it is
+/// the app's focused element (no key is sent otherwise), select all of its
+/// text, type the value as pid-routed key events and press Tab. Tab never submits a form. True when every step ran and the
+/// field reads back `value`.
+///
+/// # Safety
+/// `field` must be a live `AXUIElementRef`.
+unsafe fn commit_text_field(
+    pid: i32,
+    window_id: u32,
+    field: AXUIElementRef,
+    before: Option<&str>,
+    value: &str,
+) -> bool {
+    use core_foundation::base::{CFEqual, CFTypeRef};
+    if value.chars().count() > COMMIT_MAX_CHARS || value.contains(['\n', '\r', '\t']) {
+        return false;
+    }
+    let Ok(_key_scope) = crate::input::skylight::enter_exact_window_key(pid, window_id) else {
+        return false;
+    };
+    // The edit must change the text the field held when editing began, or the
+    // app sees no change when it ends: put the old text back first.
+    if let Some(before) = before {
+        let _ = set_string_attr(field, "AXValue", before);
+    }
+    if crate::ax::bindings::set_bool_attr_true(field, "AXFocused") != kAXErrorSuccess {
+        let _ = set_string_attr(field, "AXValue", value);
+        return false;
+    }
+    std::thread::sleep(COMMIT_SETTLE);
+    let app = crate::ax::bindings::AXUIElementCreateApplication(pid);
+    if app.is_null() {
+        return false;
+    }
+    let focused_is_field = copy_element_attr(app, "AXFocusedUIElement").is_some_and(|focused| {
+        let equal = CFEqual(focused as CFTypeRef, field as CFTypeRef) != 0;
+        CFRelease(focused as _);
+        equal
+    });
+    CFRelease(app as _);
+    if !focused_is_field {
+        let _ = set_string_attr(field, "AXValue", value);
+        return false;
+    }
+    let length = copy_string_attr(field, "AXValue")
+        .map(|text| text.encode_utf16().count())
+        .unwrap_or(0);
+    let _ = crate::ax::bindings::set_range_attr(field, "AXSelectedTextRange", 0, length as isize);
+    let typed =
+        crate::input::keyboard::type_text_with_delay(pid, value, COMMIT_CHAR_DELAY_MS).is_ok();
+    std::thread::sleep(COMMIT_SETTLE);
+    let tabbed = typed && crate::input::keyboard::press_key(pid, "tab", &[]).is_ok();
+    std::thread::sleep(COMMIT_SETTLE);
+    tabbed && copy_string_attr(field, "AXValue").as_deref() == Some(value)
 }
 
 /// The refusal for a write the app did not apply. Nothing changed, so a
@@ -825,10 +927,53 @@ fn describe_available(options: &[PopupOption]) -> String {
         .join(", ")
 }
 
+/// How long `click` waits for an opened popup's menu to list its options.
+const POPUP_LIST_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1000);
+/// Matching reads that mean the list is complete. The press returns once the
+/// menu is open, so one confirming read is enough; every poll keeps the menu
+/// on the user's screen a little longer.
+const POPUP_LIST_STABLE_POLLS: u32 = 1;
+
+/// Labels of the options a popup lists, read once the list stops changing
+/// (or at `POPUP_LIST_TIMEOUT`). An AppKit popup lists them only while its
+/// menu is open, under its `AXMenu` child.
+pub(super) fn popup_option_labels(popup: AXUIElementRef) -> Vec<String> {
+    let deadline = std::time::Instant::now() + POPUP_LIST_TIMEOUT;
+    let mut last: Vec<String> = Vec::new();
+    let mut stable_polls = 0;
+    loop {
+        let options = popup_options(popup);
+        let labels: Vec<String> = options
+            .iter()
+            .map(|option| {
+                if option.title.is_empty() {
+                    option.value.clone()
+                } else {
+                    option.title.clone()
+                }
+            })
+            .collect();
+        release_options(&options);
+        if !labels.is_empty() && labels == last {
+            stable_polls += 1;
+            if stable_polls >= POPUP_LIST_STABLE_POLLS {
+                return labels;
+            }
+        } else {
+            stable_polls = 0;
+        }
+        if std::time::Instant::now() >= deadline {
+            return labels;
+        }
+        last = labels;
+        std::thread::sleep(POPUP_POLL_INTERVAL);
+    }
+}
+
 /// Whether the popup's menu is open right now: an `AXMenu` child that already
 /// lists items. A closed AppKit popup has an empty `AXMenu` (or none), and a
 /// closed Chromium popup lists only its selected item directly.
-fn popup_menu_is_open(popup: AXUIElementRef) -> bool {
+pub(super) fn popup_menu_is_open(popup: AXUIElementRef) -> bool {
     let mut open = false;
     for child in unsafe { copy_children(popup) } {
         if unsafe { copy_string_attr(child, "AXRole") }.as_deref() == Some("AXMenu") {
@@ -846,7 +991,7 @@ fn popup_menu_is_open(popup: AXUIElementRef) -> bool {
 /// Close a menu this call opened, without choosing anything. `AXCancel` is
 /// enough for AppKit; Chromium's menu ignores it, so fall back to Escape sent
 /// to the app (the open menu is what receives it).
-fn dismiss_popup_menu(popup: AXUIElementRef, pid: i32) {
+pub(super) fn dismiss_popup_menu(popup: AXUIElementRef, pid: i32) {
     for child in unsafe { copy_children(popup) } {
         let role = unsafe { copy_string_attr(child, "AXRole") }.unwrap_or_default();
         if role == "AXMenu" {
@@ -1524,6 +1669,7 @@ mod tests {
             changed: Some(true),
             not_applied: false,
             document_edited: None,
+            committed: None,
         };
         apply_surface_trust(&mut outcome, true);
         assert_eq!(outcome.verified, Some(false));
@@ -1539,6 +1685,7 @@ mod tests {
             changed: Some(true),
             not_applied: false,
             document_edited: None,
+            committed: None,
         };
         apply_surface_trust(&mut outcome, false);
         assert_eq!(outcome.verified, Some(true));
@@ -1554,6 +1701,7 @@ mod tests {
             changed: Some(false),
             not_applied: false,
             document_edited: None,
+            committed: None,
         };
         apply_verification_label(&mut outcome);
         assert_eq!(

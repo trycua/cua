@@ -17,3 +17,9 @@ what you type, your screen or anything from your Keyvault. Nothing has been sent
   Turn it off:  cua telemetry off   (or DO_NOT_TRACK=1, or CUA_TELEMETRY=0)
   See what is sent:  cua telemetry show-last
   Details: https://cua.ai/docs/cua-sdk/concepts/telemetry";
+
+/// The notice as the terminal shows it: two lines, once per machine, only
+/// to a person at a terminal. The app shows [`TEXT`] in its own UI.
+pub const SHORT: &str = "\
+Cua sends anonymous usage data, never your files, names or what you type. Nothing has been sent yet.
+Turn it off: cua telemetry off (or DO_NOT_TRACK=1). Details: https://cua.ai/docs/cua-sdk/concepts/telemetry";

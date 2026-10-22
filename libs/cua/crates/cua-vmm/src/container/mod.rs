@@ -341,7 +341,9 @@ impl ContainerRuntime {
             };
             return Err(VmmError::missing("gVisor (runsc)", hint));
         }
-        tracing::warn!(
+        // A fact about this machine, true on every command: `cua doctor`
+        // reports it once and `sb ls` shows the runtime (`runc`).
+        tracing::debug!(
             "gVisor (runsc) not available on {}; using runc",
             self.endpoint.uri
         );

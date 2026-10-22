@@ -427,6 +427,54 @@ async fn sandbox_create_reports(daemon: bool) {
     );
 }
 
+/// The foreign-callback form (`on_progress` in Python, `onProgress` in
+/// TypeScript): the listener hears the same phases in order, with bytes.
+async fn sandbox_create_with_listener(daemon: bool) {
+    #[derive(Default)]
+    struct Heard(Mutex<Vec<SpaceCreateProgress>>);
+    impl SpaceCreateListener for Heard {
+        fn on_progress(&self, p: SpaceCreateProgress) {
+            self.0.lock().unwrap().push(p);
+        }
+    }
+    let w = world(daemon, false).await;
+    let heard = Arc::new(Heard::default());
+    let mut o = cua_sdk::SandboxCreateOptions::new("local", "ghcr.io/trycua/linux:24.04");
+    o.kind = Some("container".into());
+    o.name = Some("cua-e2e-sandbox-listener".into());
+    w.cua
+        .sandboxes()
+        .create_with_progress(o, heard.clone())
+        .await
+        .unwrap();
+    let heard = heard.0.lock().unwrap().clone();
+    let mut phases: Vec<&str> = heard.iter().map(|p| p.phase.as_str()).collect();
+    phases.dedup();
+    assert!(
+        phases.windows(2).any(|w| w == ["pulling", "booting"]),
+        "{phases:?}"
+    );
+    assert!(
+        heard
+            .iter()
+            .any(|p| p.bytes_done == Some(250) && p.bytes_total == Some(1000))
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn embedded_sandbox_create_calls_the_listener() {
+    tokio::time::timeout(Duration::from_secs(60), sandbox_create_with_listener(false))
+        .await
+        .expect("timed out");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn daemon_sandbox_create_calls_the_listener() {
+    tokio::time::timeout(Duration::from_secs(60), sandbox_create_with_listener(true))
+        .await
+        .expect("timed out");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn embedded_sandbox_create_reports_progress() {
     tokio::time::timeout(Duration::from_secs(60), sandbox_create_reports(false))

@@ -580,8 +580,15 @@ init_selection() {
         list="$only_list"
     else
         list="$select_list"
-        # The app is a default on macOS and Linux.
-        if spaces_supported; then sel_spaces=1; fi
+        # The app is a default on macOS and on Linux with a display; a
+        # server has no desktop to show it on.
+        if spaces_supported; then
+            if headless; then
+                step "No display found, so the Cua Spaces app is skipped (add --select spaces to install it)"
+            else
+                sel_spaces=1
+            fi
+        fi
     fi
     for item in $(items_in "$list"); do item_set "$item" 1; done
     # Legacy: --app-only and --mode mean the app, as they always did.
@@ -592,6 +599,36 @@ init_selection() {
         step "Cua Spaces is not available for $os; skipping the app"
         sel_spaces=0
     fi
+}
+
+# headless: a Linux computer with no X11 or Wayland display. CUA_INSTALL_HEADLESS
+# =0|1 overrides the check (tests, odd setups).
+headless() {
+    case "${CUA_INSTALL_HEADLESS:-}" in
+    1) return 0 ;;
+    0) return 1 ;;
+    esac
+    [ "$os" = linux ] && [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]
+}
+
+# quiet_run LABEL CMD...: runs CMD with its output kept in a log; shows the
+# log's last lines only if it fails. --verbose shows everything.
+quiet_run() {
+    label="$1"
+    shift
+    if [ "$dry_run" = 1 ] || [ "$verbose" = 1 ]; then
+        run "$@"
+        return
+    fi
+    qlog="$(mktemp "${TMPDIR:-/tmp}/cua-install-log.XXXXXX")"
+    if "$@" >"$qlog" 2>&1; then
+        rm -f "$qlog"
+        return 0
+    fi
+    printf 'cua-install: %s failed; the last lines of its output:\n' "$label" >&2
+    tail -n 8 "$qlog" >&2
+    rm -f "$qlog"
+    return 1
 }
 
 # Cua Spaces ships for macOS (the SwiftUI app) and Linux (the Electron app,
@@ -1110,7 +1147,8 @@ install_app_linux() {
             step "Installing the Cua Spaces app with apt-get"
             download app deb
             # shellcheck disable=SC2086
-            run $sudo_cmd apt-get install -y "$artifact"
+            quiet_run "apt-get" $sudo_cmd apt-get install -y -qq -o Dpkg::Progress-Fancy=0 "$artifact" ||
+                die "could not install the Cua Spaces app with apt-get (re-run with --verbose for its full output)"
             app_path="cua-spaces"
             did_app="$app_path"
             return

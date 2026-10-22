@@ -32,6 +32,7 @@ mod cloud_cmd;
 mod computer;
 mod config_cmd;
 mod devices_cmd;
+pub mod diag;
 mod do_cmd;
 mod doctor;
 pub mod drive_cmd;
@@ -64,24 +65,6 @@ use cua_sdk::{Cua, CuaConfig, CuaError, SpacesdClient};
 use std::{io::Write, path::PathBuf, sync::Arc, time::Duration};
 use util::line;
 
-/// The log filter spec for `CUA_LOG` (`None`: not set): the spec, else
-/// warnings (info in the background daemon), without the WireGuard library's
-/// own timer messages (`boringtun`) unless the spec names it. It logs a
-/// warning every few seconds while a mesh peer that went away is retried and
-/// an error when it gives up: normal churn that says nothing a user can act
-/// on. `CUA_LOG=warn,boringtun=debug` brings them back.
-fn log_filter_spec(env: Option<&str>, daemon_log: bool) -> String {
-    let base = env
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .unwrap_or(if daemon_log { "info" } else { "warn" });
-    if base.contains("boringtun") {
-        base.to_owned()
-    } else {
-        format!("{base},boringtun=off")
-    }
-}
-
 #[derive(Parser, Debug)]
 #[command(
     name = "cua",
@@ -92,8 +75,34 @@ fn log_filter_spec(env: Option<&str>, daemon_log: bool) -> String {
 )]
 struct Cli {
     /// Print the version.
-    #[arg(short = 'v', short_alias = 'V', long, action = ArgAction::Version, global = false)]
+    #[arg(short = 'V', long, action = ArgAction::Version, global = false)]
     version: Option<bool>,
+    /// Show errors only.
+    #[arg(short = 'q', long, global = true, conflicts_with = "verbose")]
+    quiet: bool,
+    /// Show more: -v what Cua chose and did, -vv debug, -vvv everything
+    /// (`CUA_LOG` takes a `tracing` filter for finer control).
+    #[arg(short = 'v', long, global = true, action = ArgAction::Count)]
+    verbose: u8,
+    /// How much to log: error, warn (the default), info, debug or trace.
+    #[arg(
+        long,
+        global = true,
+        value_enum,
+        env = "CUA_LOG_LEVEL",
+        value_name = "LEVEL"
+    )]
+    log_level: Option<diag::LogLevel>,
+    /// When to use colour: auto (a terminal, unless NO_COLOR, TERM=dumb or
+    /// CI is set), always or never.
+    #[arg(
+        long,
+        global = true,
+        value_enum,
+        default_value = "auto",
+        value_name = "WHEN"
+    )]
+    color: diag::ColorChoice,
     /// Use an embedded runtime even when a daemon runs.
     #[arg(long, global = true)]
     embedded: bool,
@@ -477,7 +486,7 @@ enum SkillsCmd {
   cua skills clean --yes")]
     Clean {
         /// Do not ask for confirmation.
-        #[arg(short, long)]
+        #[arg(long, short = 'y', visible_alias = "force", short_alias = 'f')]
         yes: bool,
     },
     /// Record a demonstration in the HTML5 viewer (it records the screen and your input).
@@ -549,7 +558,7 @@ enum TrajCmd {
         #[arg(long, visible_alias = "computer", value_name = "COMPUTER")]
         machine: Option<String>,
         /// Do not ask for confirmation.
-        #[arg(short, long)]
+        #[arg(long, short = 'y', visible_alias = "force", short_alias = 'f')]
         yes: bool,
     },
     /// (internal) Serve a directory for the viewer.
@@ -1007,7 +1016,7 @@ pub(crate) const EXIT_CODES: &[(i32, &str)] = &[
     (1, "Failure, or `cua do` reported an error"),
     (
         2,
-        "Invalid argument, or an ambiguous sandbox name (qualify it: `local:NAME`)",
+        "Invalid argument, a sandbox name that is taken, or an ambiguous sandbox name (qualify it: `local:NAME`)",
     ),
     (
         3,
@@ -1029,11 +1038,115 @@ pub(crate) const EXIT_CODES: &[(i32, &str)] = &[
     ),
 ];
 
+/// Every `code` of `--json` errors, with the exit code it comes with.
+/// Keep in step with [`exit_code`] and `cua_sdk::all_codes` (a test does).
+pub(crate) const ERROR_CODES: &[(&str, i32, &str)] = &[
+    (
+        "invalid_argument",
+        2,
+        "A flag or argument has a value Cua cannot use.",
+    ),
+    (
+        "already_exists",
+        2,
+        "A sandbox with that name exists; pick another name or delete it.",
+    ),
+    (
+        "ambiguous_sandbox",
+        2,
+        "A bare sandbox name matches more than one location; use `local:NAME`.",
+    ),
+    (
+        "invalid_placement",
+        2,
+        "An `--on`, `--kind` or `--runtime` that does not exist or does not fit the image.",
+    ),
+    (
+        "not_found",
+        3,
+        "No such sandbox, process, path, forward or session.",
+    ),
+    ("image_not_found", 3, "No image by that name or reference."),
+    (
+        "image_not_published",
+        3,
+        "A catalog image CI has not published yet.",
+    ),
+    (
+        "unsupported",
+        4,
+        "This provider, image, runtime or build cannot do that.",
+    ),
+    (
+        "provider_not_configured",
+        4,
+        "A provider is missing its credentials or helper.",
+    ),
+    (
+        "host_capability_missing",
+        1,
+        "This computer lacks something the command needs.",
+    ),
+    (
+        "capability_missing",
+        1,
+        "The Space's cua-spacesd lacks a feature the command needs.",
+    ),
+    (
+        "spacesd_not_available",
+        5,
+        "No cua-spacesd answered in the sandbox.",
+    ),
+    (
+        "transport",
+        5,
+        "Could not reach the daemon or the endpoint.",
+    ),
+    ("daemon_not_running", 5, "No `cua daemon` is running."),
+    ("network", 5, "The network refused or could not be reached."),
+    (
+        "unauthenticated",
+        6,
+        "Not signed in, or a missing or wrong token.",
+    ),
+    (
+        "permission_denied",
+        6,
+        "The guest or the service denied permission.",
+    ),
+    ("registry_auth", 6, "An image registry refused the pull."),
+    (
+        "cloud_credentials",
+        6,
+        "Your cloud account has no credentials or rejected them.",
+    ),
+    (
+        "cloud",
+        6,
+        "Your own cloud account refused or failed a call.",
+    ),
+    ("insufficient_disk", 7, "Not enough free disk space."),
+    (
+        "cancelled",
+        130,
+        "The command was cancelled (Ctrl-C); what it made was removed.",
+    ),
+    ("timeout", 1, "A deadline elapsed."),
+    ("runtime", 1, "A local runtime failed."),
+    ("env", 1, "A cua-spacesd call failed."),
+    ("http", 1, "An HTTP call to a service failed."),
+    ("closed", 1, "The object was closed."),
+    ("teleport_refused", 1, "The teleport consent gate refused."),
+    ("internal", 1, "A bug or an I/O failure."),
+];
+
 /// Exit code for an SDK error.
-fn exit_code(e: &CuaError) -> i32 {
+pub(crate) fn exit_code(e: &CuaError) -> i32 {
     match e {
-        // An ambiguous bare name is a usage error: qualify it.
+        // An ambiguous bare name is a usage error: qualify it. So is a name
+        // that is taken.
         CuaError::InvalidArgument(_)
+        | CuaError::AlreadyExists(_)
         | CuaError::InvalidPlacement(_)
         | CuaError::AmbiguousSandbox(_) => 2,
         CuaError::NotFound(_) | CuaError::ImageNotPublished(_) => 3,
@@ -2433,6 +2546,11 @@ Examples:
   cua host setup --direct 100.101.102.103:3211 --profile spare
 ";
 
+/// A lone `-v`: the old spelling of `--version`.
+fn is_legacy_version(args: &[std::ffi::OsString]) -> bool {
+    args.len() == 1 && args[0] == "-v"
+}
+
 /// `cua help advanced`, answered before clap: it is a help topic, not a
 /// command.
 fn is_advanced_help(args: &[std::ffi::OsString]) -> bool {
@@ -2444,6 +2562,16 @@ pub fn main() {
     keep_stdio_out_of_children();
     if is_advanced_help(&std::env::args_os().skip(1).collect::<Vec<_>>()) {
         print!("{ADVANCED_HELP}");
+        return;
+    }
+    // `-v` meant `--version` until `-v` became verbose (`-V` is the version
+    // flag now). A lone `-v` still prints the version, with a notice, so a
+    // script that asks for it keeps working for now.
+    if is_legacy_version(&std::env::args_os().skip(1).collect::<Vec<_>>()) {
+        println!("cua {}", cua_sdk::VERSION);
+        eprintln!(
+            "note: `cua -v` now means verbose; ask for the version with `cua -V` or `cua --version`"
+        );
         return;
     }
     promote_spacesd_env_vars();
@@ -2467,6 +2595,14 @@ pub fn main() {
     );
     let record = records_telemetry(&cli.command);
     let json_output = cli.json;
+    let term = diag::init(
+        diag::Flags {
+            quiet: cli.quiet,
+            verbose: cli.verbose,
+            log_level: cli.log_level,
+        },
+        cli.color,
+    );
     telemetry.set_notice_mode(notice_mode(
         std::env::var("CUA_DAEMON_STARTED_BY").ok().as_deref(),
     ));
@@ -2486,11 +2622,12 @@ pub fn main() {
         })
     ) && std::env::var("CUA_DAEMON_LOG").as_deref() != Ok("off");
     let filter = || {
-        tracing_subscriber::EnvFilter::try_new(log_filter_spec(
+        tracing_subscriber::EnvFilter::try_new(diag::log_filter_spec(
             std::env::var("CUA_LOG").ok().as_deref(),
+            term.level,
             daemon_log,
         ))
-        .unwrap_or_else(|_| log_filter_spec(None, daemon_log).into())
+        .unwrap_or_else(|_| diag::log_filter_spec(None, term.level, daemon_log).into())
     };
     let file = daemon_log
         .then(|| {
@@ -2508,13 +2645,14 @@ pub fn main() {
             let _ = tracing_subscriber::fmt()
                 .with_env_filter(filter())
                 .with_ansi(false)
-                .with_writer(std::io::stderr.and(std::sync::Mutex::new(f)))
+                .with_writer(diag::LogWriter.and(std::sync::Mutex::new(f)))
                 .try_init();
         }
         None => {
             let _ = tracing_subscriber::fmt()
                 .with_env_filter(filter())
-                .with_writer(std::io::stderr)
+                .with_ansi(term.color)
+                .with_writer(diag::LogWriter)
                 .try_init();
         }
     }
@@ -2551,11 +2689,7 @@ pub fn main() {
         }
         match result {
             Ok(c) => c,
-            Err(e) => {
-                let _ = out.flush();
-                eprintln!("cua: {e}");
-                exit_code(&e)
-            }
+            Err(e) => diag::show_error(&e, json_output, &mut out),
         }
     });
     let _ = std::io::stdout().flush();
@@ -2692,8 +2826,10 @@ mod tests {
         let run = |spec: Option<&str>, daemon: bool| {
             let buf = Buf::default();
             let subscriber = tracing_subscriber::fmt()
-                .with_env_filter(tracing_subscriber::EnvFilter::new(log_filter_spec(
-                    spec, daemon,
+                .with_env_filter(tracing_subscriber::EnvFilter::new(diag::log_filter_spec(
+                    spec,
+                    diag::Level::Normal,
+                    daemon,
                 )))
                 .with_writer(buf.clone())
                 .finish();
@@ -2865,10 +3001,125 @@ mod tests {
         (r, String::from_utf8(out).unwrap())
     }
 
+    /// Every flag that skips a confirmation is spelled the same everywhere:
+    /// `-y`/`--yes` and `-f`/`--force` both work.
+    #[test]
+    fn every_confirmation_flag_answers_to_yes_and_force() {
+        fn walk(cmd: &clap::Command, path: &str, found: &mut Vec<String>) {
+            for a in cmd.get_arguments() {
+                let help = a
+                    .get_help()
+                    .map(|h| h.to_string().to_lowercase())
+                    .unwrap_or_default();
+                let id = a.get_id().as_str();
+                // `--yes` of the setup commands answers every prompt; it
+                // sits next to a `--force` that replaces skill folders.
+                if (id == "yes" || id == "force")
+                    && !help.starts_with("answer yes")
+                    && (help.contains("confirm") || help.contains("prompt"))
+                {
+                    let longs: Vec<&str> = std::iter::once(a.get_long())
+                        .flatten()
+                        .chain(a.get_all_aliases().into_iter().flatten())
+                        .collect();
+                    let shorts: Vec<char> = std::iter::once(a.get_short())
+                        .flatten()
+                        .chain(a.get_all_short_aliases().into_iter().flatten())
+                        .collect();
+                    assert!(
+                        longs.contains(&"yes") && longs.contains(&"force"),
+                        "{path} {id}: {longs:?}"
+                    );
+                    assert!(
+                        shorts.contains(&'y') && shorts.contains(&'f'),
+                        "{path} {id}: {shorts:?}"
+                    );
+                    found.push(path.to_string());
+                }
+            }
+            for sub in cmd.get_subcommands() {
+                walk(sub, &format!("{path} {}", sub.get_name()), found);
+            }
+        }
+        let mut found = Vec::new();
+        walk(&cli_command(true), "cua", &mut found);
+        // sb rm, spaces delete, host remove, host share, skills clean ...
+        assert!(found.len() >= 10, "{found:?}");
+    }
+
     #[test]
     fn cli_definition_is_consistent() {
         use clap::CommandFactory;
         Cli::command().debug_assert();
+    }
+
+    /// Every code `--json` errors can carry is documented with the exit code
+    /// it comes with, and the table agrees with [`exit_code`].
+    #[test]
+    fn error_codes_are_documented_with_their_exit_codes() {
+        let s = String::new;
+        let all = [
+            CuaError::InvalidArgument(s()),
+            CuaError::InvalidPlacement(s()),
+            CuaError::NotFound(s()),
+            CuaError::ProviderNotConfigured(s()),
+            CuaError::Unsupported(s()),
+            CuaError::SpacesdNotAvailable(s()),
+            CuaError::Timeout(s()),
+            CuaError::Runtime(s()),
+            CuaError::Env(s()),
+            CuaError::Http(s()),
+            CuaError::Unauthenticated(s()),
+            CuaError::PermissionDenied(s()),
+            CuaError::Transport(s()),
+            CuaError::DaemonNotRunning(s()),
+            CuaError::Closed(s()),
+            CuaError::CapabilityMissing(s()),
+            CuaError::HostCapabilityMissing(s()),
+            CuaError::TeleportRefused(s()),
+            CuaError::Internal(s()),
+            CuaError::AmbiguousSandbox(s()),
+            CuaError::InsufficientDisk(s()),
+            CuaError::ImageNotPublished(s()),
+            CuaError::Cancelled(s()),
+            CuaError::Cloud(s()),
+            CuaError::AlreadyExists(s()),
+        ];
+        for e in &all {
+            let row = ERROR_CODES
+                .iter()
+                .find(|r| r.0 == e.code())
+                .unwrap_or_else(|| panic!("{} is undocumented", e.code()));
+            assert_eq!(row.1, exit_code(e), "{}", e.code());
+        }
+        for code in cua_sdk::all_codes() {
+            assert!(
+                ERROR_CODES.iter().any(|r| r.0 == code),
+                "{code} is undocumented"
+            );
+        }
+        assert_eq!(ERROR_CODES.len(), cua_sdk::all_codes().len());
+        // The reference page lists them all.
+        let page = include_str!("../../../../../scripts/docs-generators/headers/cua-cli/cli.md");
+        for (code, exit, meaning) in ERROR_CODES {
+            let row = format!("| `{code}` | `{exit}` | {meaning} |");
+            assert!(page.contains(&row), "docs header lacks: {row}");
+        }
+        for (_, exit, _) in ERROR_CODES {
+            assert!(EXIT_CODES.iter().any(|(c, _)| c == exit), "exit {exit}");
+        }
+        // The refined codes exit with their family.
+        let r = |code: &str| cua_sdk::ErrorReport {
+            code: code.into(),
+            message: String::new(),
+            hint: None,
+            detail: None,
+        };
+        for code in cua_sdk::REFINED_CODES {
+            let row = ERROR_CODES.iter().find(|r| r.0 == *code).unwrap();
+            let e = CuaError::Runtime(s());
+            assert_eq!(diag::exit_code_of(&e, &r(code)), row.1, "{code}");
+        }
     }
 
     #[test]
@@ -2891,6 +3142,7 @@ mod tests {
             CuaError::ImageNotPublished(s()),
             CuaError::Cancelled(s()),
             CuaError::Timeout(s()),
+            CuaError::AlreadyExists(s()),
         ] {
             assert!(
                 documented.contains(&exit_code(&e)),

@@ -199,10 +199,7 @@ async fn launch_validates_arguments() {
             .run(&[&["--embedded", "sb", "launch"][..], args].concat())
             .await;
         assert_eq!(o.code, 4, "{args:?}: {o:?}");
-        assert!(
-            o.stderr.contains(cua_sandbox_core::CLOUD_ENDED),
-            "{args:?}: {o:?}"
-        );
+        assert!(o.stderr.contains("Cua Cloud has ended"), "{args:?}: {o:?}");
     }
 }
 
@@ -868,7 +865,7 @@ async fn do_drives_a_relay_space() {
     assert_eq!(o.code, 2, "{o:?}");
     assert!(
         o.stderr.contains(
-            "invalid argument: not a sandbox ref: \"relay:short\" (relay computer ids are [a-z0-9-]{8,64})"
+            "not a sandbox ref: \"relay:short\" (relay computer ids are [a-z0-9-]{8,64})"
         ),
         "{o:?}"
     );
@@ -878,9 +875,8 @@ async fn do_drives_a_relay_space() {
     let o = h.run(&["--embedded", "do", "switch", &id]).await;
     assert_eq!(o.code, 6, "{o:?}");
     assert!(
-        o.stderr.contains(
-            "unauthenticated: Relay authentication failed. Sign in again to refresh your computers."
-        ),
+        o.stderr
+            .contains("Relay authentication failed. Sign in again to refresh your computers."),
         "{o:?}"
     );
     assert!(!o.stderr.contains("unsupported"), "{o:?}");
@@ -901,10 +897,7 @@ async fn do_drives_a_relay_space() {
         .run(&["--embedded", "do", "switch", "relay:0123abcd4567ef89"])
         .await;
     assert_eq!(o.code, 3, "{o:?}");
-    assert!(
-        o.stderr.contains("not found: Space relay:0123abcd4567ef89"),
-        "{o:?}"
-    );
+    assert!(o.stderr.contains("Space relay:0123abcd4567ef89"), "{o:?}");
 
     let o = h.run(&["--embedded", "do", "switch", &id]).await;
     o.ok();
@@ -992,7 +985,7 @@ async fn do_drives_a_relay_space() {
     assert_eq!(o.code, 1, "{o:?}");
     assert!(
         o.stderr.contains(
-            "env: Relay desk stopped sharing: ask its owner to Resume sharing (or run `cua host start` there)"
+            "Relay desk stopped sharing: ask its owner to Resume sharing (or run `cua host start` there)"
         ),
         "{o:?}"
     );

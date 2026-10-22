@@ -92,7 +92,7 @@ async fn url_sandboxes_and_uniform_ops() {
         .run(&["--embedded", "--json", "sb", "ls", "--cloud"])
         .await;
     assert_eq!(o.code, 4, "--cloud is the ended Cua Cloud: {o:?}");
-    assert!(o.stderr.contains(cua_sandbox_core::CLOUD_ENDED), "{o:?}");
+    assert_eq!(o.json()["error"]["message"], "Cua Cloud has ended", "{o:?}");
     // cp both ways.
     let f = h.dir.path().join("a.bin");
     std::fs::write(&f, [7u8; 4096]).unwrap();
@@ -130,7 +130,7 @@ async fn url_sandboxes_and_uniform_ops() {
     ];
     let o = h.run(&pf).await;
     assert_eq!(o.code, 4, "{o:?}");
-    assert!(o.stderr.contains("tunnel.forward"), "{o:?}");
+    assert!(o.stdout.contains("tunnel.forward"), "{o:?}");
     env.mock
         .state
         .advertise(&[cua_spacesd_client::tunnel::TUNNEL_FORWARD_FEATURE]);
@@ -276,10 +276,7 @@ async fn create_validates_on_and_flags() {
             .run(&[&["--embedded", "sb", "create"][..], args].concat())
             .await;
         assert_eq!(o.code, 4, "{args:?}: {o:?}");
-        assert!(
-            o.stderr.contains(cua_sandbox_core::CLOUD_ENDED),
-            "{args:?}: {o:?}"
-        );
+        assert!(o.stderr.contains("Cua Cloud has ended"), "{args:?}: {o:?}");
     }
     let o = h
         .run(&["--embedded", "sb", "create", "--on", "local"])

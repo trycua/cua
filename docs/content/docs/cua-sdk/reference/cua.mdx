@@ -900,6 +900,20 @@ pub fn check_placement(on: String, kind: String, runtime: String) -> Result<(), 
 
 **Raises** [`CuaError`](/cua-sdk/reference/errors) ([`InvalidPlacement`](/cua-sdk/reference/errors#invalidplacement))
 
+## `ErrorReport` record
+
+The shape of an error for people and scripts. Not an exception: see
+`CuaError` for that.
+
+Returned by [`error_report`](#error_report).
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `code` | `String` |  | A stable lower-snake-case id (`not_found`, `already_exists`, `image_not_found`). The `cua` CLI documents the full list with its exit codes. |
+| `message` | `String` |  | One plain sentence, without internal layers, structs or paths. |
+| `hint` | `Option<String>` |  | The next step, one sentence (`None` when there is nothing to add). |
+| `detail` | `Option<String>` |  | The raw text of the error, layers and all, when it differs from `message`. |
+
 ## `error_doc_url`
 
 A link to the errors-reference entry of a `CuaError` variant, by name
@@ -949,6 +963,57 @@ pub fn error_doc_url(variant: String) -> String
 | `variant` | `String` | required |
 
 **Returns** `String`
+
+## `error_report`
+
+`report_of` for bindings: the variant name and the error's text in,
+the report out. A hint is always one sentence; a message never carries a
+source path or a Rust debug struct.
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+def error_report(variant: str, message: str) -> ErrorReport
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+function errorReport(variant: string, message: string): ErrorReport
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func errorReport(variant: String, message: String) -> ErrorReport
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+fun errorReport(variant: String, message: String): ErrorReport
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn error_report(variant: String, message: String) -> ErrorReport
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `variant` | `String` | required |
+| `message` | `String` | required |
+
+**Returns** [`ErrorReport`](#errorreport-record)
 
 ## Local runtimes
 

@@ -771,6 +771,100 @@ impl Report {
         out
     }
 
+    /// The short form `cua doctor` prints: a plain header (a computer with
+    /// no image is "this computer", not `<no manifest> ( ) on`), the groups
+    /// with a warning or failure first and in full, groups that all passed
+    /// folded to `name: N ok` unless `verbose`, skipped checks only when
+    /// `verbose`, and a `fix:` line only under a warning or failure.
+    pub fn to_human_short(&self, verbose: bool) -> String {
+        let mut out = String::new();
+        if self.image.name.is_empty() && self.spacesd.is_none() {
+            let _ = writeln!(out, "cua doctor: this computer");
+        } else {
+            let who = match &self.spacesd {
+                Some(g) => format!("cua-spacesd {}", g.version),
+                None => self.producer.clone(),
+            };
+            let _ = writeln!(
+                out,
+                "{who}: image {} ({} {}) on {} {}",
+                if self.image.name.is_empty() {
+                    "-"
+                } else {
+                    &self.image.name
+                },
+                self.image.os,
+                self.image.variant,
+                self.environment.runtime,
+                self.environment.arch,
+            );
+        }
+        let mut groups: Vec<(&str, Vec<&Check>)> = Vec::new();
+        for check in &self.checks {
+            match groups.iter_mut().find(|(g, _)| *g == check.group) {
+                Some((_, v)) => v.push(check),
+                None => groups.push((&check.group, vec![check])),
+            }
+        }
+        let bad = |c: &&Check| matches!(c.status, Status::Warn | Status::Fail);
+        // Problems first, then the rest in report order.
+        groups.sort_by_key(|(_, v)| !v.iter().any(&bad));
+        for (group, checks) in groups {
+            let has_bad = checks.iter().any(&bad);
+            let ok = checks.iter().filter(|c| c.status == Status::Pass).count();
+            if !has_bad && !verbose {
+                let skipped = checks.iter().filter(|c| c.status == Status::Skip).count();
+                if ok > 0 {
+                    let _ = writeln!(
+                        out,
+                        "{group}: {ok} ok{}",
+                        if skipped > 0 {
+                            format!(", {skipped} skipped")
+                        } else {
+                            String::new()
+                        }
+                    );
+                }
+                continue;
+            }
+            let _ = writeln!(out, "{group}");
+            for check in checks {
+                if check.status == Status::Skip && !verbose {
+                    continue;
+                }
+                if check.status == Status::Pass && !verbose {
+                    continue;
+                }
+                let tag = match check.status {
+                    Status::Pass => "[ok]  ",
+                    Status::Warn => "[warn]",
+                    Status::Fail => "[fail]",
+                    Status::Skip => "[skip]",
+                };
+                let _ = writeln!(out, "  {tag} {}: {}", check.id, check.message);
+                if matches!(check.status, Status::Warn | Status::Fail)
+                    && !check.remediation.is_empty()
+                {
+                    let _ = writeln!(out, "         fix: {}", check.remediation);
+                }
+            }
+            if !verbose && ok > 0 {
+                let _ = writeln!(out, "  ({ok} more ok)");
+            }
+        }
+        let s = &self.summary;
+        let _ = writeln!(
+            out,
+            "{}: {} passed, {} warnings, {} failed, {} skipped",
+            s.status.as_str(),
+            s.pass,
+            s.warn,
+            s.fail,
+            s.skip,
+        );
+        out
+    }
+
     /// JUnit XML: one testsuite per group, one testcase per check.
     pub fn to_junit(&self) -> String {
         let mut groups: BTreeMap<&str, Vec<&Check>> = BTreeMap::new();
@@ -1196,6 +1290,33 @@ mod tests {
         assert!(human.contains("[warn] network.egress: no route"));
         assert!(human.ends_with("in 1234 ms\n"), "{human}");
         assert_eq!(xml_escape("<a&\"b\u{1}>"), "&lt;a&amp;&quot;b &gt;");
+    }
+
+    #[test]
+    fn the_short_report_folds_passing_groups_and_fixes_only_problems() {
+        let mut report = sample();
+        report.image.name.clear();
+        report.spacesd = None;
+        report.checks.push(Check {
+            remediation: "cua runtime setup".into(),
+            ..Check::new("host.runtime.lume", Status::Skip, "needs Apple Silicon")
+        });
+        let short = report.to_human_short(false);
+        assert!(short.starts_with("cua doctor: this computer\n"), "{short}");
+        assert!(!short.contains("<no manifest>"), "{short}");
+        // The warning's group comes first, with its fix; the all-passing
+        // group is one line; a skipped row never carries a fix.
+        assert!(short.contains("[warn] network.egress: no route"), "{short}");
+        assert!(short.contains("stream: 1 ok, 1 skipped"), "{short}");
+        assert!(!short.contains("lume"), "{short}");
+        assert!(!short.contains("cua runtime setup"), "{short}");
+        let verbose = report.to_human_short(true);
+        assert!(verbose.contains("[skip] host.runtime.lume"), "{verbose}");
+        assert!(!verbose.contains("fix: cua runtime setup"), "{verbose}");
+        assert!(
+            verbose.contains("[ok]   stream.encode.openh264: ok"),
+            "{verbose}"
+        );
     }
 
     #[test]

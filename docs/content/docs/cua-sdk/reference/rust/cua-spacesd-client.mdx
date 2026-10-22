@@ -265,6 +265,7 @@ impl Report {
   fn finalize(&mut self, strict: bool, duration: Duration);
   fn exit_code(&self) -> i32;
   fn to_human(&self) -> String;
+  fn to_human_short(&self, verbose: bool) -> String;
   fn to_junit(&self) -> String;
 }
 ```

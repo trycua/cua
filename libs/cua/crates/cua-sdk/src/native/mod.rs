@@ -119,6 +119,7 @@ impl From<cua_daemon::Error> for CuaError {
             E::TeleportRefused(_) => CuaError::TeleportRefused(m),
             E::InsufficientDisk(_) => CuaError::InsufficientDisk(m),
             E::Cancelled(_) => CuaError::Cancelled(m),
+            E::AlreadyExists(_) => CuaError::AlreadyExists(m),
             E::Internal(_) => CuaError::Internal(m),
         }
     }

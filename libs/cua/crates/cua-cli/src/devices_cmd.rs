@@ -55,7 +55,7 @@ pub enum DevicesCmd {
         #[arg(long = "device", conflicts_with = "code")]
         device: Option<String>,
         /// Do not ask for confirmation.
-        #[arg(long)]
+        #[arg(long, short = 'y', visible_alias = "force", short_alias = 'f')]
         yes: bool,
         /// Relay URL.
         #[arg(long, hide = true)]
@@ -92,7 +92,7 @@ pub enum DevicesCmd {
         /// Device id.
         id: String,
         /// Do not ask for confirmation.
-        #[arg(long)]
+        #[arg(long, short = 'y', visible_alias = "force", short_alias = 'f')]
         yes: bool,
         /// Relay URL.
         #[arg(long, hide = true)]

@@ -301,6 +301,30 @@ export function cuaSdkVersion(): string {
     }
 
 /**
+ * Silences [`enable_output`] again.
+ */
+export function disableOutput(): void {uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => { nativeModule().uniffi_cua_sdk_fn_func_disable_output(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    );
+    }
+
+/**
+ * Prints what creates are doing to stderr, one plain line per step (the
+ * lines `cua sandbox create` shows on a terminal), until
+ * [`disable_output`]. The SDK is silent by default.
+ */
+export function enableOutput(): void {uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => { nativeModule().uniffi_cua_sdk_fn_func_enable_output(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    );
+    }
+
+/**
  * A link to the errors-reference entry of a [`CuaError`] variant, by name
  * (`InvalidArgument`, case-insensitive). An unknown name links to the
  * page itself. The bindings' `doc_url` / `docUrl` on `CuaError` use it.
@@ -316,6 +340,29 @@ export function errorDocUrl(variant: string): string {
             /*caller:*/ (callStatus) => {
                 return nativeModule().uniffi_cua_sdk_fn_func_error_doc_url(
         FfiConverterString.lower(variant, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * [`report_of`] for bindings: the variant name and the error's text in,
+ * the report out. A hint is always one sentence; a message never carries a
+ * source path or a Rust debug struct.
+ */
+export function errorReport(variant: string, message: string): ErrorReport {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeErrorReport.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_sdk_fn_func_error_report(
+        FfiConverterString.lower(variant, nativeModule().rustbuffer_alloc),
+        FfiConverterString.lower(message, nativeModule().rustbuffer_alloc),
                 callStatus);
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
@@ -7057,6 +7104,76 @@ const FfiConverterTypeDriveView = (() => {
         allocationSize(value: TypeName): number {
             return FfiConverterOptionalString.allocationSize(value.asAgent) +
              FfiConverterOptionalString.allocationSize(value.inSpace);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * The shape of an error for people and scripts. Not an exception: see
+ * [`CuaError`] for that.
+ */
+export type ErrorReport = {
+    /**
+     * A stable lower-snake-case id (`not_found`, `already_exists`,
+     * `image_not_found`). The `cua` CLI documents the full list with its
+     * exit codes.
+     */
+    code: string,
+    /**
+     * One plain sentence, without internal layers, structs or paths.
+     */
+    message: string,
+    /**
+     * The next step, one sentence (`None` when there is nothing to add).
+     */
+    hint?: string,
+    /**
+     * The raw text of the error, layers and all, when it differs from
+     * `message`.
+     */
+    detail?: string
+}
+
+/**
+ * Generated factory for {@link ErrorReport} record objects.
+ */
+export const ErrorReport = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ErrorReport, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ErrorReport>,
+    });
+})();
+
+const FfiConverterTypeErrorReport = (() => {
+    type TypeName = ErrorReport;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                code: FfiConverterString.read(from),
+                message: FfiConverterString.read(from),
+                hint: FfiConverterOptionalString.read(from),
+                detail: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.code, into);
+            FfiConverterString.write(value.message, into);
+            FfiConverterOptionalString.write(value.hint, into);
+            FfiConverterOptionalString.write(value.detail, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.code) +
+             FfiConverterString.allocationSize(value.message) +
+             FfiConverterOptionalString.allocationSize(value.hint) +
+             FfiConverterOptionalString.allocationSize(value.detail);
 
         }
     };
@@ -17165,7 +17282,8 @@ export enum CuaError_Tags {
     InsufficientDisk = "InsufficientDisk",
     ImageNotPublished = "ImageNotPublished",
     Cancelled = "Cancelled",
-    Cloud = "Cloud"
+    Cloud = "Cloud",
+    AlreadyExists = "AlreadyExists"
 }
 /**
  * Every error the SDK raises. Flat across the FFI: each language sees one
@@ -17175,8 +17293,8 @@ export const CuaError = (() => {
     /**
      * Bad input.
      *
-     * Fix: Check the value against the reference; the message names the
-     * argument and what it accepts.
+     * Fix: Run the command with `--help` (or check the reference) to see what
+     * each option accepts; the message names the argument.
      */
     class InvalidArgument extends UniffiError {
         /**
@@ -17238,8 +17356,8 @@ export const CuaError = (() => {
     /**
      * No such sandbox, process, path, forward or session.
      *
-     * Fix: Check the ref, path or id. `Sandboxes.list` (`cua sb ls`) lists the
-     * sandboxes this client can see.
+     * Fix: Run `cua sb ls` to see the sandboxes you can use, and check the
+     * ref, path or id (`Sandboxes.list` in the SDKs).
      */
     class NotFound extends UniffiError {
         /**
@@ -17388,8 +17506,8 @@ export const CuaError = (() => {
     /**
      * Local runtime failure.
      *
-     * Fix: Run `cua runtime doctor` (`Local.doctor`) and follow the steps it
-     * prints.
+     * Fix: Run `cua runtime doctor` and follow the steps it prints
+     * (`Local.doctor` in the SDKs).
      */
     class Runtime extends UniffiError {
         /**
@@ -17448,8 +17566,7 @@ export const CuaError = (() => {
     /**
      * HTTP failure talking to a sandbox service.
      *
-     * Fix: Check that the service listens on its declared port and answers
-     * HTTP.
+     * Fix: Check that the service listens on its declared port and answers HTTP.
      */
     class Http extends UniffiError {
         /**
@@ -17537,7 +17654,7 @@ export const CuaError = (() => {
     /**
      * Could not reach the daemon or the endpoint.
      *
-     * Fix: Check the address. For a daemon client, start the daemon with `cua
+     * Fix: Check the address; for a daemon client, start the daemon with `cua
      * daemon start`.
      */
     class Transport extends UniffiError {
@@ -17849,7 +17966,7 @@ export const CuaError = (() => {
      * what was removed and what stays (finished image downloads stay
      * cached, so the next create resumes).
      *
-     * Fix: Nothing to clean up. Create it again when you want it.
+     * Fix: Nothing to clean up; create it again when you want it.
      */
     class Cancelled extends UniffiError {
         /**
@@ -17909,6 +18026,37 @@ export const CuaError = (() => {
             );
         }
     }
+    /**
+     * A sandbox with that name already exists, so a create did not touch
+     * it. The message names the sandbox.
+     *
+     * Fix: Pick another name, or delete the existing sandbox first with `cua
+     * sb rm <name>` (`Sandboxes.delete` in the SDKs).
+     */
+    class AlreadyExists extends UniffiError {
+        /**
+         * @private
+         * This field is private and should not be used.
+         */
+        readonly [uniffiTypeNameSymbol]: string = "CuaError";
+        /**
+         * @private
+         * This field is private and should not be used.
+         */
+        readonly [variantOrdinalSymbol] = 25;
+
+        readonly tag = CuaError_Tags.AlreadyExists;
+
+        constructor(message: string) {
+            super("CuaError", "AlreadyExists", message);
+        }
+
+        static instanceOf(e: any): e is AlreadyExists {
+            return (
+                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 25
+            );
+        }
+    }
 
     // Utility function which does not rely on instanceof.
     function instanceOf(e: any): e is CuaError {
@@ -17939,6 +18087,7 @@ export const CuaError = (() => {
         ImageNotPublished,
         Cancelled,
         Cloud,
+        AlreadyExists,
         instanceOf,
     };
 })();
@@ -17949,7 +18098,7 @@ export const CuaError = (() => {
  * exception/error type with a case per variant and the message.
  */
 export type CuaError = InstanceType<
-    typeof CuaError['InvalidArgument' | 'InvalidPlacement' | 'NotFound' | 'ProviderNotConfigured' | 'Unsupported' | 'SpacesdNotAvailable' | 'Timeout' | 'Runtime' | 'Env' | 'Http' | 'Unauthenticated' | 'PermissionDenied' | 'Transport' | 'DaemonNotRunning' | 'Closed' | 'CapabilityMissing' | 'HostCapabilityMissing' | 'TeleportRefused' | 'Internal' | 'AmbiguousSandbox' | 'InsufficientDisk' | 'ImageNotPublished' | 'Cancelled' | 'Cloud']
+    typeof CuaError['InvalidArgument' | 'InvalidPlacement' | 'NotFound' | 'ProviderNotConfigured' | 'Unsupported' | 'SpacesdNotAvailable' | 'Timeout' | 'Runtime' | 'Env' | 'Http' | 'Unauthenticated' | 'PermissionDenied' | 'Transport' | 'DaemonNotRunning' | 'Closed' | 'CapabilityMissing' | 'HostCapabilityMissing' | 'TeleportRefused' | 'Internal' | 'AmbiguousSandbox' | 'InsufficientDisk' | 'ImageNotPublished' | 'Cancelled' | 'Cloud' | 'AlreadyExists']
 >;
 
 const FfiConverterTypeCuaError = (() => {
@@ -18051,6 +18200,10 @@ const FfiConverterTypeCuaError = (() => {
                 );
 
                 case 24: return new CuaError.Cloud(
+                    FfiConverterString.read(from)
+                );
+
+                case 25: return new CuaError.AlreadyExists(
                     FfiConverterString.read(from)
                 );
 
@@ -26948,6 +27101,179 @@ const uniffiTypeSandboxObjectFactory: UniffiObjectFactory<SandboxLike> = (() => 
 const FfiConverterTypeSandbox = new FfiConverterObject(uniffiTypeSandboxObjectFactory);
 
 /**
+ * Receives [`SpaceCreateProgress`] while [`Spaces::create_with_progress`]
+ * runs, in order, ending with `ready`. Called on an SDK worker thread;
+ * return quickly.
+ */
+export interface SpaceCreateListener {
+
+/**
+ * The create moved on.
+ */
+    onProgress(progress: SpaceCreateProgress): void;
+}
+
+
+/**
+ * Receives [`SpaceCreateProgress`] while [`Spaces::create_with_progress`]
+ * runs, in order, ending with `ready`. Called on an SDK worker thread;
+ * return quickly.
+ */
+export class SpaceCreateListenerImpl extends UniffiAbstractObject implements SpaceCreateListener {
+
+    readonly [uniffiTypeNameSymbol] = "SpaceCreateListenerImpl";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    // No primary constructor declared for this class.
+private constructor(pointer: UniffiHandle) {
+    super();
+    this[pointerLiteralSymbol] = pointer;
+    this[destructorGuardSymbol] = uniffiTypeSpaceCreateListenerImplObjectFactory.bless(pointer);
+}
+
+
+
+
+/**
+ * The create moved on.
+ */
+    onProgress(progress: SpaceCreateProgress): void {uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => { nativeModule().uniffi_cua_sdk_fn_method_spacecreatelistener_on_progress(
+                uniffiTypeSpaceCreateListenerImplObjectFactory.clonePointer(this),
+        FfiConverterTypeSpaceCreateProgress.lower(progress, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    );
+    }
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypeSpaceCreateListenerImplObjectFactory.pointer(this);
+            uniffiTypeSpaceCreateListenerImplObjectFactory.freePointer(pointer);
+            uniffiTypeSpaceCreateListenerImplObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is SpaceCreateListenerImpl {
+        return uniffiTypeSpaceCreateListenerImplObjectFactory.isConcreteType(obj_);
+    }
+
+
+}
+
+const uniffiTypeSpaceCreateListenerImplObjectFactory: UniffiObjectFactory<SpaceCreateListener> = (() => {
+
+    /// <reference lib="es2021" />
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypeSpaceCreateListenerImplObjectFactory.freePointer(heldValue);
+    }) : null;
+
+    return {
+    create(pointer: UniffiHandle): SpaceCreateListener {
+        const instance = Object.create(SpaceCreateListenerImpl.prototype);
+        instance[pointerLiteralSymbol] = pointer;
+        instance[destructorGuardSymbol] = this.bless(pointer);
+        instance[uniffiTypeNameSymbol] = "SpaceCreateListenerImpl";
+        return instance;
+    },
+
+
+    bless(p: UniffiHandle): UniffiGcObject {
+        const ptr = {
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
+        };
+        if (registry) {
+            registry.register(ptr, p, ptr);
+        }
+        return ptr;
+    },
+
+    unbless(ptr_: UniffiGcObject) {
+        if (registry) {
+            registry.unregister(ptr_);
+        }
+    },
+
+    pointer(obj_: SpaceCreateListener): UniffiHandle {
+        if ((obj_ as any)[destructorGuardSymbol] === undefined) {
+            throw new UniffiInternalError.UnexpectedNullPointer();
+        }
+        return (obj_ as any)[pointerLiteralSymbol];
+    },
+
+    clonePointer(obj_: SpaceCreateListener): UniffiHandle {
+        const pointer = this.pointer(obj_);
+        return uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => nativeModule().uniffi_cua_sdk_fn_clone_spacecreatelistener(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
+        );
+    },
+
+    freePointer(pointer: UniffiHandle): void {
+        uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => nativeModule().uniffi_cua_sdk_fn_free_spacecreatelistener(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
+        );
+    },
+
+    isConcreteType(obj_: any): obj_ is SpaceCreateListener {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "SpaceCreateListenerImpl";
+    },
+}})();
+const FfiConverterTypeSpaceCreateListener = new FfiConverterObjectWithCallbacks(uniffiTypeSpaceCreateListenerImplObjectFactory);
+
+// Add a vtable for the callbacks that go in SpaceCreateListener.
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+const uniffiCallbackInterfaceSpaceCreateListener: { vtable: any; register: () => void; } = {
+    // Create the VTable using a series of closures.
+    // ts automatically converts these into C callback functions.
+    vtable: {
+        on_progress: (
+            uniffiHandle: bigint,
+            progress: Uint8Array,) => {
+            const uniffiMakeCall =
+            ()
+            : void => {
+                const jsCallback = FfiConverterTypeSpaceCreateListener.lift(uniffiHandle);
+                return jsCallback.onProgress(
+                    FfiConverterTypeSpaceCreateProgress.lift(progress)
+                )
+            };
+            const uniffiResult = UniffiResult.ready<void>();
+            const uniffiHandleSuccess = (obj: any) => {};
+            const uniffiHandleError = (code: number, errBuf: UniffiByteArray) => {
+                UniffiResult.writeError(uniffiResult, code, errBuf);
+            };
+            uniffiTraitInterfaceCall(
+                /*makeCall:*/ uniffiMakeCall,
+                /*handleSuccess:*/ uniffiHandleSuccess,
+                /*handleError:*/ uniffiHandleError,
+                /*lowerString:*/ FfiConverterString.lower.bind(FfiConverterString),
+                /*alloc:*/ nativeModule().rustbuffer_alloc,
+            )
+            return uniffiResult;
+        },
+        uniffi_free: (uniffiHandle: UniffiHandle): void => {
+            // this will throw a stale handle error if the handle isn't found.
+            FfiConverterTypeSpaceCreateListener.drop(uniffiHandle);
+        },
+        uniffi_clone: (uniffiHandle: UniffiHandle): UniffiHandle => {
+            return FfiConverterTypeSpaceCreateListener.clone(uniffiHandle);
+        }
+    },
+    register: () => {nativeModule().uniffi_cua_sdk_fn_init_callback_vtable_spacecreatelistener(
+            uniffiCallbackInterfaceSpaceCreateListener.vtable
+        );
+    },
+};
+
+/**
  * Creates, finds and manages sandboxes.
  */
 export interface SandboxesLike {
@@ -26979,6 +27305,15 @@ export interface SandboxesLike {
  * fails with the "Cua Cloud has ended" error.
  */
     create(options: SandboxCreateOptions, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SandboxLike>;
+/**
+ * [`Sandboxes::create`] that tells `listener` what the create is doing
+ * as it happens: `preparing`, `pulling` (with bytes, rate and time
+ * left), `creating`, `booting`, `waiting_for_services`, `ready`. The
+ * same steps `cua sandbox create` prints. Through a daemon that
+ * predates streaming creates, the listener hears nothing. The listener
+ * is called on an SDK worker thread; return quickly.
+ */
+    createWithProgress(options: SandboxCreateOptions, listener: SpaceCreateListener, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SandboxLike>;
 /**
  * Deletes a sandbox by ref or unique name.
  */
@@ -27154,6 +27489,46 @@ private constructor(pointer: UniffiHandle) {
             /*rustFutureFunc:*/ () => {
                 return nativeModule().uniffi_cua_sdk_fn_method_sandboxes_create(
                     uniffiTypeSandboxesObjectFactory.clonePointer(this),FfiConverterTypeSandboxCreateOptions.lower(options, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_u64,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_u64,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_u64,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_u64,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeSandbox.lift.bind(FfiConverterTypeSandbox),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * [`Sandboxes::create`] that tells `listener` what the create is doing
+ * as it happens: `preparing`, `pulling` (with bytes, rate and time
+ * left), `creating`, `booting`, `waiting_for_services`, `ready`. The
+ * same steps `cua sandbox create` prints. Through a daemon that
+ * predates streaming creates, the listener hears nothing. The listener
+ * is called on an SDK worker thread; return quickly.
+ */
+    async createWithProgress(options: SandboxCreateOptions, listener: SpaceCreateListener, asyncOpts_?: { signal: AbortSignal }): Promise<SandboxLike> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_sandboxes_create_with_progress(
+                    uniffiTypeSandboxesObjectFactory.clonePointer(this),FfiConverterTypeSandboxCreateOptions.lower(options, nativeModule().rustbuffer_alloc),FfiConverterTypeSpaceCreateListener.lower(listener, nativeModule().rustbuffer_alloc)
                 );
             },
             /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_u64,
@@ -27430,179 +27805,6 @@ const uniffiTypeSandboxesObjectFactory: UniffiObjectFactory<SandboxesLike> = (()
     },
 }})();
 const FfiConverterTypeSandboxes = new FfiConverterObject(uniffiTypeSandboxesObjectFactory);
-
-/**
- * Receives [`SpaceCreateProgress`] while [`Spaces::create_with_progress`]
- * runs, in order, ending with `ready`. Called on an SDK worker thread;
- * return quickly.
- */
-export interface SpaceCreateListener {
-
-/**
- * The create moved on.
- */
-    onProgress(progress: SpaceCreateProgress): void;
-}
-
-
-/**
- * Receives [`SpaceCreateProgress`] while [`Spaces::create_with_progress`]
- * runs, in order, ending with `ready`. Called on an SDK worker thread;
- * return quickly.
- */
-export class SpaceCreateListenerImpl extends UniffiAbstractObject implements SpaceCreateListener {
-
-    readonly [uniffiTypeNameSymbol] = "SpaceCreateListenerImpl";
-    readonly [destructorGuardSymbol]: UniffiGcObject;
-    readonly [pointerLiteralSymbol]: UniffiHandle;
-    // No primary constructor declared for this class.
-private constructor(pointer: UniffiHandle) {
-    super();
-    this[pointerLiteralSymbol] = pointer;
-    this[destructorGuardSymbol] = uniffiTypeSpaceCreateListenerImplObjectFactory.bless(pointer);
-}
-
-
-
-
-/**
- * The create moved on.
- */
-    onProgress(progress: SpaceCreateProgress): void {uniffiCaller.rustCall(
-            /*caller:*/ (callStatus) => { nativeModule().uniffi_cua_sdk_fn_method_spacecreatelistener_on_progress(
-                uniffiTypeSpaceCreateListenerImplObjectFactory.clonePointer(this),
-        FfiConverterTypeSpaceCreateProgress.lower(progress, nativeModule().rustbuffer_alloc),
-                callStatus);
-            },
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-    );
-    }
-
-
-    uniffiDestroy(): void {
-        const ptr = (this as any)[destructorGuardSymbol];
-        if (ptr !== undefined) {
-            const pointer = uniffiTypeSpaceCreateListenerImplObjectFactory.pointer(this);
-            uniffiTypeSpaceCreateListenerImplObjectFactory.freePointer(pointer);
-            uniffiTypeSpaceCreateListenerImplObjectFactory.unbless(ptr);
-            delete (this as any)[destructorGuardSymbol];
-        }
-    }
-
-    static instanceOf(obj_: any): obj_ is SpaceCreateListenerImpl {
-        return uniffiTypeSpaceCreateListenerImplObjectFactory.isConcreteType(obj_);
-    }
-
-
-}
-
-const uniffiTypeSpaceCreateListenerImplObjectFactory: UniffiObjectFactory<SpaceCreateListener> = (() => {
-
-    /// <reference lib="es2021" />
-    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
-        uniffiTypeSpaceCreateListenerImplObjectFactory.freePointer(heldValue);
-    }) : null;
-
-    return {
-    create(pointer: UniffiHandle): SpaceCreateListener {
-        const instance = Object.create(SpaceCreateListenerImpl.prototype);
-        instance[pointerLiteralSymbol] = pointer;
-        instance[destructorGuardSymbol] = this.bless(pointer);
-        instance[uniffiTypeNameSymbol] = "SpaceCreateListenerImpl";
-        return instance;
-    },
-
-
-    bless(p: UniffiHandle): UniffiGcObject {
-        const ptr = {
-            p, // make sure this object doesn't get optimized away.
-            markDestroyed: () => undefined,
-        };
-        if (registry) {
-            registry.register(ptr, p, ptr);
-        }
-        return ptr;
-    },
-
-    unbless(ptr_: UniffiGcObject) {
-        if (registry) {
-            registry.unregister(ptr_);
-        }
-    },
-
-    pointer(obj_: SpaceCreateListener): UniffiHandle {
-        if ((obj_ as any)[destructorGuardSymbol] === undefined) {
-            throw new UniffiInternalError.UnexpectedNullPointer();
-        }
-        return (obj_ as any)[pointerLiteralSymbol];
-    },
-
-    clonePointer(obj_: SpaceCreateListener): UniffiHandle {
-        const pointer = this.pointer(obj_);
-        return uniffiCaller.rustCall(
-            /*caller:*/ (callStatus) => nativeModule().uniffi_cua_sdk_fn_clone_spacecreatelistener(pointer, callStatus),
-            /*liftString:*/ FfiConverterString.lift
-        );
-    },
-
-    freePointer(pointer: UniffiHandle): void {
-        uniffiCaller.rustCall(
-            /*caller:*/ (callStatus) => nativeModule().uniffi_cua_sdk_fn_free_spacecreatelistener(pointer, callStatus),
-            /*liftString:*/ FfiConverterString.lift
-        );
-    },
-
-    isConcreteType(obj_: any): obj_ is SpaceCreateListener {
-        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "SpaceCreateListenerImpl";
-    },
-}})();
-const FfiConverterTypeSpaceCreateListener = new FfiConverterObjectWithCallbacks(uniffiTypeSpaceCreateListenerImplObjectFactory);
-
-// Add a vtable for the callbacks that go in SpaceCreateListener.
-
-// Put the implementation in a struct so we don't pollute the top-level namespace
-const uniffiCallbackInterfaceSpaceCreateListener: { vtable: any; register: () => void; } = {
-    // Create the VTable using a series of closures.
-    // ts automatically converts these into C callback functions.
-    vtable: {
-        on_progress: (
-            uniffiHandle: bigint,
-            progress: Uint8Array,) => {
-            const uniffiMakeCall =
-            ()
-            : void => {
-                const jsCallback = FfiConverterTypeSpaceCreateListener.lift(uniffiHandle);
-                return jsCallback.onProgress(
-                    FfiConverterTypeSpaceCreateProgress.lift(progress)
-                )
-            };
-            const uniffiResult = UniffiResult.ready<void>();
-            const uniffiHandleSuccess = (obj: any) => {};
-            const uniffiHandleError = (code: number, errBuf: UniffiByteArray) => {
-                UniffiResult.writeError(uniffiResult, code, errBuf);
-            };
-            uniffiTraitInterfaceCall(
-                /*makeCall:*/ uniffiMakeCall,
-                /*handleSuccess:*/ uniffiHandleSuccess,
-                /*handleError:*/ uniffiHandleError,
-                /*lowerString:*/ FfiConverterString.lower.bind(FfiConverterString),
-                /*alloc:*/ nativeModule().rustbuffer_alloc,
-            )
-            return uniffiResult;
-        },
-        uniffi_free: (uniffiHandle: UniffiHandle): void => {
-            // this will throw a stale handle error if the handle isn't found.
-            FfiConverterTypeSpaceCreateListener.drop(uniffiHandle);
-        },
-        uniffi_clone: (uniffiHandle: UniffiHandle): UniffiHandle => {
-            return FfiConverterTypeSpaceCreateListener.clone(uniffiHandle);
-        }
-    },
-    register: () => {nativeModule().uniffi_cua_sdk_fn_init_callback_vtable_spacecreatelistener(
-            uniffiCallbackInterfaceSpaceCreateListener.vtable
-        );
-    },
-};
 
 /**
  * The shared presence netcode model: who is present and what to draw,
@@ -35522,8 +35724,17 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_func_cua_sdk_version() !== 62700) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_cua_sdk_version");
     }
+    if (nativeModule().uniffi_cua_sdk_checksum_func_disable_output() !== 9783) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_disable_output");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_func_enable_output() !== 21653) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_enable_output");
+    }
     if (nativeModule().uniffi_cua_sdk_checksum_func_error_doc_url() !== 10839) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_error_doc_url");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_func_error_report() !== 42152) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_error_report");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_func_image_alias() !== 25551) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_image_alias");
@@ -36151,6 +36362,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_create() !== 52749) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandboxes_create");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_create_with_progress() !== 27962) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandboxes_create_with_progress");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_delete() !== 43939) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandboxes_delete");
@@ -36832,6 +37046,7 @@ export default Object.freeze({
     FfiConverterTypeDriveSyncStatus,
     FfiConverterTypeDriveVersion,
     FfiConverterTypeDriveView,
+    FfiConverterTypeErrorReport,
     FfiConverterTypeExitInfo,
     FfiConverterTypeFileEntry,
     FfiConverterTypeFrameSink,

@@ -418,7 +418,7 @@ pub enum SandboxCmd {
         name: String,
         /// Skip the confirmation prompt. Required when there is no terminal
         /// to ask on (scripts, agents): without it nothing is deleted.
-        #[arg(long, short)]
+        #[arg(long, short, visible_alias = "yes", short_alias = 'y')]
         force: bool,
         #[command(flatten)]
         at: Narrow,
@@ -1327,6 +1327,8 @@ pub fn on_backend(e: CuaError, backend: &str) -> CuaError {
         E::ImageNotPublished(m) => E::ImageNotPublished(f(m)),
         E::Cloud(m) => E::Cloud(f(m)),
         E::Cancelled(m) => E::Cancelled(f(m)),
+        // Already says which sandbox; the backend adds nothing.
+        E::AlreadyExists(m) => E::AlreadyExists(m),
     }
 }
 
@@ -1356,6 +1358,69 @@ async fn failed_after_create(sb: &Arc<cua_sdk::Sandbox>, keep: bool, e: CuaError
 /// A generated sandbox name (`sb-<8 hex>`).
 fn generated_name() -> String {
     format!("sb-{:08x}", rand::random::<u32>())
+}
+
+/// What this computer has, for refusing a `--cpu` or `--memory` it cannot
+/// give. `None`: unknown (not checked).
+pub struct HostLimits {
+    /// Logical CPUs.
+    pub cpus: Option<u32>,
+    /// Memory in MiB.
+    pub memory_mib: Option<u64>,
+}
+
+impl HostLimits {
+    /// This computer.
+    pub fn current() -> Self {
+        Self {
+            cpus: std::thread::available_parallelism()
+                .ok()
+                .map(|n| n.get() as u32),
+            memory_mib: host_memory_mib(),
+        }
+    }
+}
+
+/// This computer's memory in MiB.
+fn host_memory_mib() -> Option<u64> {
+    if let Some(m) = cua_vmm::managed::host_memory_mib() {
+        return Some(m);
+    }
+    let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let kib: u64 = meminfo
+        .lines()
+        .find_map(|l| l.strip_prefix("MemTotal:"))?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()?;
+    Some(kib / 1024)
+}
+
+/// Refuses a local `--cpu` or `--memory` above what this computer has: it
+/// would otherwise be accepted and fail (or hang) later.
+pub fn check_resources(
+    cpus: Option<u32>,
+    memory_mib: Option<u64>,
+    host: &HostLimits,
+) -> Result<(), CuaError> {
+    if let (Some(want), Some(have)) = (cpus, host.cpus)
+        && want > have
+    {
+        return Err(CuaError::InvalidArgument(format!(
+            "--cpu {want} is more than this computer has ({have} CPUs)"
+        )));
+    }
+    if let (Some(want), Some(have)) = (memory_mib, host.memory_mib)
+        && want > have
+    {
+        return Err(CuaError::InvalidArgument(format!(
+            "--memory {} GB is more than this computer has ({} GB)",
+            want.div_ceil(1024),
+            have / 1024
+        )));
+    }
+    Ok(())
 }
 
 /// `sb create` (and `sb launch`, `compat` keeps its output).
@@ -1403,6 +1468,9 @@ async fn create(
     }
     o.cpus = a.cpu;
     o.memory_mb = a.memory.as_deref().map(parse_memory).transpose()?;
+    if on == On::Local {
+        check_resources(o.cpus, o.memory_mb, &HostLimits::current())?;
+    }
     o.network = a.network.clone();
     if a.disk.is_some() {
         eprintln!("note: --disk is ignored (the image decides the disk size)");
@@ -1446,8 +1514,7 @@ async fn create(
     let requested_name = o.name.clone();
     // Each step of the create on a terminal (never in --json output).
     let steps = {
-        use std::io::IsTerminal as _;
-        (!json && std::io::stderr().is_terminal()).then(|| {
+        crate::diag::show_steps(json).then(|| {
             let mut words = crate::util::CreateWords::for_image(
                 &o.image,
                 o.kind.as_deref().unwrap_or_default(),
@@ -1455,7 +1522,7 @@ async fn create(
             );
             words.macos |= o.os.as_deref() == Some("macos");
             words.vm |= words.macos;
-            Arc::new(crate::util::StepLines::new(words))
+            crate::util::StepLines::new(words)
         })
     };
     let created = {
@@ -1487,7 +1554,7 @@ async fn create(
     };
     crate::util::exit_on_ctrl_c();
     if let Some(steps) = &steps {
-        steps.finish();
+        steps.finish(created.is_ok());
     }
     if created.is_err()
         && a.keep_on_failure
@@ -3411,5 +3478,38 @@ mod tests {
             confirm_delete(false, true, || false),
             DeleteConfirmation::Declined
         );
+    }
+}
+
+#[cfg(test)]
+mod resource_tests {
+    use super::*;
+
+    #[test]
+    fn impossible_resources_are_refused_with_what_the_computer_has() {
+        let host = HostLimits {
+            cpus: Some(8),
+            memory_mib: Some(16 * 1024),
+        };
+        assert!(check_resources(None, None, &host).is_ok());
+        assert!(check_resources(Some(8), Some(16 * 1024), &host).is_ok());
+        let e = check_resources(Some(512), None, &host).unwrap_err();
+        assert_eq!(
+            e,
+            CuaError::InvalidArgument("--cpu 512 is more than this computer has (8 CPUs)".into())
+        );
+        let e = check_resources(None, Some(900 * 1024), &host).unwrap_err();
+        assert_eq!(
+            e,
+            CuaError::InvalidArgument(
+                "--memory 900 GB is more than this computer has (16 GB)".into()
+            )
+        );
+        // Unknown limits are not checked.
+        let unknown = HostLimits {
+            cpus: None,
+            memory_mib: None,
+        };
+        assert!(check_resources(Some(512), Some(900 * 1024), &unknown).is_ok());
     }
 }

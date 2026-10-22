@@ -141,7 +141,7 @@ pub enum TeamCmd {
         /// Space id or name (`relay:<id>` for a computer you host).
         space: String,
         /// Confirm without a prompt.
-        #[arg(long)]
+        #[arg(long, short = 'y', visible_alias = "force", short_alias = 'f')]
         yes: bool,
     },
     /// Take a computer off the team.
@@ -173,7 +173,7 @@ pub enum TeamCmd {
         /// Team id, alias or name.
         team: String,
         /// Do not ask for confirmation.
-        #[arg(long)]
+        #[arg(long, short = 'y', visible_alias = "force", short_alias = 'f')]
         yes: bool,
     },
 }

@@ -150,6 +150,9 @@ pub enum Error {
     /// The create was cancelled; what it made is gone.
     #[error("cancelled: {0}")]
     Cancelled(String),
+    /// A sandbox with that name already exists; the create did not touch it.
+    #[error("{0}")]
+    AlreadyExists(String),
     /// Bug or I/O failure.
     #[error("internal: {0}")]
     Internal(String),
@@ -181,6 +184,7 @@ impl Error {
             Error::TeleportRefused(_) => R::TeleportRefused,
             Error::InsufficientDisk(_) => R::InsufficientDisk,
             Error::Cancelled(_) => R::Cancelled,
+            Error::AlreadyExists(_) => R::AlreadyExists,
             Error::Transport(_) | Error::DaemonNotRunning(_) | Error::Internal(_) => R::Internal,
         }
     }
@@ -206,6 +210,7 @@ impl Error {
             | Error::TeleportRefused(m)
             | Error::InsufficientDisk(m)
             | Error::Cancelled(m)
+            | Error::AlreadyExists(m)
             | Error::Internal(m)
             | Error::AmbiguousSandbox { message: m, .. }
             | Error::InvalidPlacement { message: m, .. } => m,
@@ -271,6 +276,7 @@ impl Error {
             R::TeleportRefused => Error::TeleportRefused(m),
             R::InsufficientDisk => Error::InsufficientDisk(m),
             R::Cancelled => Error::Cancelled(m),
+            R::AlreadyExists => Error::AlreadyExists(m),
             R::Internal | R::Unspecified => Error::Internal(m),
         }
     }
@@ -293,6 +299,7 @@ impl Error {
             Error::TeleportRefused(_) => Code::PermissionDenied,
             Error::InsufficientDisk(_) => Code::ResourceExhausted,
             Error::Cancelled(_) => Code::Cancelled,
+            Error::AlreadyExists(_) => Code::AlreadyExists,
             Error::Cloud(_) | Error::Runtime(_) | Error::Env(_) | Error::Http(_) => Code::Aborted,
             Error::Transport(_) | Error::DaemonNotRunning(_) | Error::Internal(_) => Code::Internal,
         };
@@ -342,6 +349,7 @@ impl Error {
             tonic::Code::DeadlineExceeded => Error::Timeout(m),
             tonic::Code::Unavailable => Error::Transport(m),
             tonic::Code::Cancelled => Error::Cancelled(m),
+            tonic::Code::AlreadyExists => Error::AlreadyExists(m),
             _ => Error::Internal(m),
         }
     }

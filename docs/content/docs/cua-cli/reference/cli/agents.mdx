@@ -802,7 +802,7 @@ cua agents remove [OPTIONS]
 | <span id="cua-agents-remove--agents"></span>`--agents` |  | string | `all` | Agents: `all` (default) or ids such as `claude,codex`. |
 | <span id="cua-agents-remove--skills-only"></span>`--skills-only` |  | boolean | `false` | Only remove skills. |
 | <span id="cua-agents-remove--mcp-only"></span>`--mcp-only` |  | boolean | `false` | Only remove the MCP entry. |
-| <span id="cua-agents-remove--yes"></span>`--yes` | `-y` | boolean | `false` | Do not ask for confirmation. |
+| <span id="cua-agents-remove--yes"></span>`--yes` | `-y` | boolean | `false` | Do not ask for confirmation. Alias: `--force`. |
 
 **Examples**
 
@@ -943,7 +943,7 @@ cua skills clean [OPTIONS]
 
 | Flag | Short | Type | Default | Description |
 | --- | --- | --- | --- | --- |
-| <span id="cua-skills-clean--yes"></span>`--yes` | `-y` | boolean | `false` | Do not ask for confirmation. |
+| <span id="cua-skills-clean--yes"></span>`--yes` | `-y` | boolean | `false` | Do not ask for confirmation. Alias: `--force`. |
 
 **Examples**
 
@@ -985,7 +985,7 @@ cua skills record --sandbox dev --name export-invoice
 | --- | --- |
 | `0` | Success. |
 | `1` | Failure, or `cua do` reported an error. |
-| `2` | Invalid argument, or an ambiguous sandbox name (qualify it: `local:NAME`). |
+| `2` | Invalid argument, a sandbox name that is taken, or an ambiguous sandbox name (qualify it: `local:NAME`). |
 | `3` | Not found: sandbox, window, skill or image (or an image not published yet). |
 | `4` | Not supported, or not configured (for example no provider credentials). |
 | `5` | No cua-spacesd answered, or a transport failure. |

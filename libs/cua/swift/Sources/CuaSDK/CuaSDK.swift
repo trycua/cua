@@ -6966,6 +6966,16 @@ public protocol SandboxesProtocol: AnyObject, Sendable {
     func create(options: SandboxCreateOptions) async throws  -> Sandbox
 
     /**
+     * [`Sandboxes::create`] that tells `listener` what the create is doing
+     * as it happens: `preparing`, `pulling` (with bytes, rate and time
+     * left), `creating`, `booting`, `waiting_for_services`, `ready`. The
+     * same steps `cua sandbox create` prints. Through a daemon that
+     * predates streaming creates, the listener hears nothing. The listener
+     * is called on an SDK worker thread; return quickly.
+     */
+    func createWithProgress(options: SandboxCreateOptions, listener: SpaceCreateListener) async throws  -> Sandbox
+
+    /**
      * Deletes a sandbox by ref or unique name.
      */
     func delete(name: String) async throws
@@ -7131,6 +7141,31 @@ open func create(options: SandboxCreateOptions)async throws  -> Sandbox  {
                 uniffi_cua_sdk_fn_method_sandboxes_create(
                     self.uniffiCloneHandle(),
                     FfiConverterTypeSandboxCreateOptions_lower(options)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_u64,
+            completeFunc: ffi_cua_sdk_rust_future_complete_u64,
+            freeFunc: ffi_cua_sdk_rust_future_free_u64,
+            liftFunc: FfiConverterTypeSandbox_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * [`Sandboxes::create`] that tells `listener` what the create is doing
+     * as it happens: `preparing`, `pulling` (with bytes, rate and time
+     * left), `creating`, `booting`, `waiting_for_services`, `ready`. The
+     * same steps `cua sandbox create` prints. Through a daemon that
+     * predates streaming creates, the listener hears nothing. The listener
+     * is called on an SDK worker thread; return quickly.
+     */
+open func createWithProgress(options: SandboxCreateOptions, listener: SpaceCreateListener)async throws  -> Sandbox  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_sandboxes_create_with_progress(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeSandboxCreateOptions_lower(options),FfiConverterTypeSpaceCreateListener_lower(listener)
                 )
             },
             pollFunc: ffi_cua_sdk_rust_future_poll_u64,
@@ -19994,6 +20029,102 @@ public func FfiConverterTypeDriveView_lift(_ buf: RustBuffer) throws -> DriveVie
 #endif
 public func FfiConverterTypeDriveView_lower(_ value: DriveView) -> RustBuffer {
     return FfiConverterTypeDriveView.lower(value)
+}
+
+
+/**
+ * The shape of an error for people and scripts. Not an exception: see
+ * [`CuaError`] for that.
+ */
+public struct ErrorReport: Equatable, Hashable {
+    /**
+     * A stable lower-snake-case id (`not_found`, `already_exists`,
+     * `image_not_found`). The `cua` CLI documents the full list with its
+     * exit codes.
+     */
+    public var code: String
+    /**
+     * One plain sentence, without internal layers, structs or paths.
+     */
+    public var message: String
+    /**
+     * The next step, one sentence (`None` when there is nothing to add).
+     */
+    public var hint: String?
+    /**
+     * The raw text of the error, layers and all, when it differs from
+     * `message`.
+     */
+    public var detail: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * A stable lower-snake-case id (`not_found`, `already_exists`,
+         * `image_not_found`). The `cua` CLI documents the full list with its
+         * exit codes.
+         */code: String,
+        /**
+         * One plain sentence, without internal layers, structs or paths.
+         */message: String,
+        /**
+         * The next step, one sentence (`None` when there is nothing to add).
+         */hint: String?,
+        /**
+         * The raw text of the error, layers and all, when it differs from
+         * `message`.
+         */detail: String?) {
+        self.code = code
+        self.message = message
+        self.hint = hint
+        self.detail = detail
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ErrorReport: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeErrorReport: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ErrorReport {
+        return
+            try ErrorReport(
+                code: FfiConverterString.read(from: &buf),
+                message: FfiConverterString.read(from: &buf),
+                hint: FfiConverterOptionString.read(from: &buf),
+                detail: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ErrorReport, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.code, into: &buf)
+        FfiConverterString.write(value.message, into: &buf)
+        FfiConverterOptionString.write(value.hint, into: &buf)
+        FfiConverterOptionString.write(value.detail, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeErrorReport_lift(_ buf: RustBuffer) throws -> ErrorReport {
+    return try FfiConverterTypeErrorReport.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeErrorReport_lower(_ value: ErrorReport) -> RustBuffer {
+    return FfiConverterTypeErrorReport.lower(value)
 }
 
 
@@ -33482,8 +33613,8 @@ public enum CuaError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
     /**
      * Bad input.
      *
-     * Fix: Check the value against the reference; the message names the
-     * argument and what it accepts.
+     * Fix: Run the command with `--help` (or check the reference) to see what
+     * each option accepts; the message names the argument.
      */
     case InvalidArgument(message: String)
 
@@ -33501,8 +33632,8 @@ public enum CuaError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
     /**
      * No such sandbox, process, path, forward or session.
      *
-     * Fix: Check the ref, path or id. `Sandboxes.list` (`cua sb ls`) lists the
-     * sandboxes this client can see.
+     * Fix: Run `cua sb ls` to see the sandboxes you can use, and check the
+     * ref, path or id (`Sandboxes.list` in the SDKs).
      */
     case NotFound(message: String)
 
@@ -33541,8 +33672,8 @@ public enum CuaError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
     /**
      * Local runtime failure.
      *
-     * Fix: Run `cua runtime doctor` (`Local.doctor`) and follow the steps it
-     * prints.
+     * Fix: Run `cua runtime doctor` and follow the steps it prints
+     * (`Local.doctor` in the SDKs).
      */
     case Runtime(message: String)
 
@@ -33557,8 +33688,7 @@ public enum CuaError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
     /**
      * HTTP failure talking to a sandbox service.
      *
-     * Fix: Check that the service listens on its declared port and answers
-     * HTTP.
+     * Fix: Check that the service listens on its declared port and answers HTTP.
      */
     case Http(message: String)
 
@@ -33580,7 +33710,7 @@ public enum CuaError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
     /**
      * Could not reach the daemon or the endpoint.
      *
-     * Fix: Check the address. For a daemon client, start the daemon with `cua
+     * Fix: Check the address; for a daemon client, start the daemon with `cua
      * daemon start`.
      */
     case Transport(message: String)
@@ -33672,7 +33802,7 @@ public enum CuaError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
      * what was removed and what stays (finished image downloads stay
      * cached, so the next create resumes).
      *
-     * Fix: Nothing to clean up. Create it again when you want it.
+     * Fix: Nothing to clean up; create it again when you want it.
      */
     case Cancelled(message: String)
 
@@ -33687,6 +33817,15 @@ public enum CuaError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
      * region or project.
      */
     case Cloud(message: String)
+
+    /**
+     * A sandbox with that name already exists, so a create did not touch
+     * it. The message names the sandbox.
+     *
+     * Fix: Pick another name, or delete the existing sandbox first with `cua
+     * sb rm <name>` (`Sandboxes.delete` in the SDKs).
+     */
+    case AlreadyExists(message: String)
 
 
 
@@ -33813,6 +33952,10 @@ public struct FfiConverterTypeCuaError: FfiConverterRustBuffer {
             message: try FfiConverterString.read(from: &buf)
         )
 
+        case 25: return .AlreadyExists(
+            message: try FfiConverterString.read(from: &buf)
+        )
+
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -33872,6 +34015,8 @@ public struct FfiConverterTypeCuaError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(23))
         case .Cloud(_ /* message is ignored*/):
             writeInt(&buf, Int32(24))
+        case .AlreadyExists(_ /* message is ignored*/):
+            writeInt(&buf, Int32(25))
 
 
         }
@@ -38516,6 +38661,24 @@ public func contribProvidersBuilt() -> [String]  {
 })
 }
 /**
+ * Silences [`enable_output`] again.
+ */
+public func disableOutput()  {try! rustCall() {
+    uniffi_cua_sdk_fn_func_disable_output($0
+    )
+}
+}
+/**
+ * Prints what creates are doing to stderr, one plain line per step (the
+ * lines `cua sandbox create` shows on a terminal), until
+ * [`disable_output`]. The SDK is silent by default.
+ */
+public func enableOutput()  {try! rustCall() {
+    uniffi_cua_sdk_fn_func_enable_output($0
+    )
+}
+}
+/**
  * Parses a sandbox ref: `local:<name>`, `cloud:<name>`,
  * `direct:<host:port>`, `relay:<machine-id>`, a legacy spelling
  * (`space://cloud/<name>`, `url:<addr>`, a URL), or a bare name.
@@ -38843,6 +39006,19 @@ public func telemetryUseAppNotice()  {try! rustCall() {
     )
 }
 }
+/**
+ * [`report_of`] for bindings: the variant name and the error's text in,
+ * the report out. A hint is always one sentence; a message never carries a
+ * source path or a Rust debug struct.
+ */
+public func errorReport(variant: String, message: String) -> ErrorReport  {
+    return try!  FfiConverterTypeErrorReport_lift(try! rustCall() {
+    uniffi_cua_sdk_fn_func_error_report(
+        FfiConverterString.lower(variant),
+        FfiConverterString.lower(message),$0
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -38926,6 +39102,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_func_contrib_providers_built() != 14866) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_func_disable_output() != 9783) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_func_enable_output() != 21653) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_func_parse_sandbox_ref() != 7299) {
@@ -39016,6 +39198,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_func_telemetry_use_app_notice() != 17365) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_func_error_report() != 42152) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp() != 62628) {
@@ -39472,6 +39657,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_sandboxes_create() != 52749) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_sandboxes_create_with_progress() != 27962) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_sandboxes_delete() != 43939) {

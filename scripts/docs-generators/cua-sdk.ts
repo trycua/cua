@@ -204,7 +204,7 @@ export const PAGES: PageSpec[] = [
     intro:
       'Every program starts from one `Cua` handle, embedded in the process or connected to a running `cua daemon`, with the same API either way. Its accessors return the other objects. The `config_*` functions read and write the user defaults in `$CUA_HOME/config.toml` (`cua config`).',
     items: ['Cua', 'CuaConfig', 'CuaInfo', 'CuaMode', 'cua_sdk_version', 'config_list', 'config_get', 'config_set', 'config_unset', 'config_path', 'ConfigEntry', 'locations', 'LocationInfo', 'check_placement'],
-    modules: ['cua', 'root'],
+    modules: ['cua', 'root', 'report'],
   },
   {
     slug: 'sandbox',
@@ -240,6 +240,21 @@ export const PAGES: PageSpec[] = [
     ],
     items: [],
     python: [['`Sandbox` lifecycle', `${PY}/sandbox#sandboxdestroy`]],
+  },
+  {
+    slug: 'sandbox-progress',
+    title: 'Progress',
+    description: 'See what a sandbox create is doing: a listener for each step, or the same lines the cua CLI prints.',
+    intro:
+      'The SDK is silent by default. `create_with_progress` tells a listener each step of a create (Python: `on_progress=` on `create`; TypeScript: `{ onProgress }`), and `enable_output` prints one plain line per step to stderr.',
+    members: [
+      {
+        object: 'Sandboxes',
+        title: 'Create with progress',
+        methods: ['create_with_progress'],
+      },
+    ],
+    items: ['enable_output', 'disable_output'],
   },
   {
     slug: 'sandbox/without-spacesd',
@@ -806,7 +821,7 @@ export const MAX_TABS = 30;
 
 /** Groups of the reference sidebar; folders other generators own are listed by name. */
 const NAV: Array<[label: string, pages: string[]]> = [
-  ['Sandboxes', ['cua', 'sandbox', 'image', 'os-image-catalog', 'image-software', 'services', 'runtime-support']],
+  ['Sandboxes', ['cua', 'sandbox', 'sandbox-progress', 'image', 'os-image-catalog', 'image-software', 'services', 'runtime-support']],
   ['Inside a sandbox', ['spacesd', 'agents']],
   ['Spaces', ['spaces']],
   ['Account', ['auth']],
@@ -2159,7 +2174,7 @@ export interface BindingSources {
   typescript?: string;
   swift: string;
   kotlin?: string;
-  /** cua-sdk's `src/lib.rs`, `src/types.rs` and `src/native/*.rs`, concatenated. */
+  /** cua-sdk's `src/lib.rs`, `src/types.rs`, `src/report.rs` and `src/native/*.rs`, concatenated. */
   rust?: string;
 }
 
@@ -2169,6 +2184,7 @@ export function loadBindingSources(root = CUA_ROOT): BindingSources {
   const rust = [
     read('crates/cua-sdk/src/lib.rs'),
     read('crates/cua-sdk/src/types.rs'),
+    read('crates/cua-sdk/src/report.rs'),
     ...fs
       .readdirSync(native)
       .filter((f) => f.endsWith('.rs'))

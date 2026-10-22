@@ -45,6 +45,7 @@ Returned by [`Cua.sandboxes`](/cua-sdk/reference/cua#cua).
 | [`list`](#sandboxeslist) | Sandboxes, each tagged with its `location`. |
 | [`list_all`](#sandboxeslist_all) | Deprecated: `Sandboxes.list` with no location lists everything. |
 | [`list_with_warnings`](#sandboxeslist_with_warnings) | `Sandboxes.list` with what the listing left out. |
+| [`create_with_progress`](/cua-sdk/reference/sandbox-progress#sandboxescreate_with_progress) | `Sandboxes.create` that tells `listener` what the create is doing as it happens: `preparing`, `pulling` (with bytes, rate and time left), `creating`, `booting`, `waiting_for_services`, `ready`. |
 
 ### `Sandboxes.cancel_create`
 
@@ -661,7 +662,7 @@ pub async fn list_with_warnings(&self, location: Option<String>) -> Result<Sandb
 
 A sandbox handle.
 
-Returned by [`Sandboxes.connect`](#sandboxesconnect), [`Sandboxes.connect_url`](#sandboxesconnect_url), [`Sandboxes.create`](#sandboxescreate).
+Returned by [`Sandboxes.connect`](#sandboxesconnect), [`Sandboxes.connect_url`](#sandboxesconnect_url), [`Sandboxes.create`](#sandboxescreate), [`Sandboxes.create_with_progress`](/cua-sdk/reference/sandbox-progress#sandboxescreate_with_progress).
 
 | Method | Description |
 | --- | --- |

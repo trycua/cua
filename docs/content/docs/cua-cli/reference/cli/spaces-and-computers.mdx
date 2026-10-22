@@ -224,7 +224,7 @@ cua spaces delete [OPTIONS] <SPACE>
 
 | Flag | Short | Type | Default | Description |
 | --- | --- | --- | --- | --- |
-| <span id="cua-spaces-delete--force"></span>`--force` | `-f` | boolean | `false` | Skip the confirmation (required without a terminal). |
+| <span id="cua-spaces-delete--force"></span>`--force` | `-f` | boolean | `false` | Skip the confirmation (required without a terminal). Alias: `--yes`. |
 
 **Examples**
 
@@ -308,7 +308,7 @@ cua spaces share [OPTIONS] <SPACE> <WHO>
 | Flag | Short | Type | Default | Description |
 | --- | --- | --- | --- | --- |
 | <span id="cua-spaces-share--role"></span>`--role` |  | `viewer` \| `editor` | `viewer` | `viewer`: presence and a view-only stream. `editor`: full use. |
-| <span id="cua-spaces-share--yes"></span>`--yes` | `-y` | boolean | `false` | Confirm without a terminal prompt. Without a daemon the share happens at once. A running daemon still asks with Touch ID or your password on this computer; without a terminal, `--yes` says someone will answer there (otherwise the command fails at once instead of waiting for a prompt nobody sees). |
+| <span id="cua-spaces-share--yes"></span>`--yes` | `-y` | boolean | `false` | Confirm without a terminal prompt. Without a daemon the share happens at once. A running daemon still asks with Touch ID or your password on this computer; without a terminal, `--yes` says someone will answer there (otherwise the command fails at once instead of waiting for a prompt nobody sees). Alias: `--force`. |
 
 **Examples**
 
@@ -557,10 +557,10 @@ cua host share [OPTIONS] <WHO>...
 | --- | --- | --- | --- |
 | `<WHO>...` | string | required | Accounts to add. Repeatable. Repeatable. |
 
-| Flag | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="cua-host-share--machine"></span>`--machine` | string |  | Computer id (default: this computer). Alias: `--computer`. |
-| <span id="cua-host-share--yes"></span>`--yes` | boolean | `false` | Do not ask for confirmation. |
+| Flag | Short | Type | Default | Description |
+| --- | --- | --- | --- | --- |
+| <span id="cua-host-share--machine"></span>`--machine` |  | string |  | Computer id (default: this computer). Alias: `--computer`. |
+| <span id="cua-host-share--yes"></span>`--yes` | `-y` | boolean | `false` | Do not ask for confirmation. Alias: `--force`. |
 
 **Examples**
 
@@ -622,7 +622,7 @@ cua host remove [OPTIONS]
 
 | Flag | Short | Type | Default | Description |
 | --- | --- | --- | --- | --- |
-| <span id="cua-host-remove--force"></span>`--force` | `-f` | boolean | `false` | Skip the confirmation prompt. Required when there is no terminal to ask on (scripts, agents): without it nothing is removed. |
+| <span id="cua-host-remove--force"></span>`--force` | `-f` | boolean | `false` | Skip the confirmation prompt. Required when there is no terminal to ask on (scripts, agents): without it nothing is removed. Alias: `--yes`. |
 | <span id="cua-host-remove--uninstalling"></span>`--uninstalling` |  | boolean | `false` | For an uninstall of Cua Spaces: turns off the Spaces this computer provides and takes them off the relay too, instead of refusing while it provides any. The Spaces and their data stay on this computer. |
 
 **Examples**
@@ -697,10 +697,10 @@ cua devices approve [OPTIONS] [CODE]
 | --- | --- | --- | --- |
 | `<CODE>` | string | optional | The one-time code the new device shows, or its device id (`dev_…`, from `cua devices ls`). |
 
-| Flag | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="cua-devices-approve--device"></span>`--device` | string |  | Or the device id (`cua devices ls`). |
-| <span id="cua-devices-approve--yes"></span>`--yes` | boolean | `false` | Do not ask for confirmation. |
+| Flag | Short | Type | Default | Description |
+| --- | --- | --- | --- | --- |
+| <span id="cua-devices-approve--device"></span>`--device` |  | string |  | Or the device id (`cua devices ls`). |
+| <span id="cua-devices-approve--yes"></span>`--yes` | `-y` | boolean | `false` | Do not ask for confirmation. Alias: `--force`. |
 
 **Examples**
 
@@ -757,9 +757,9 @@ cua devices revoke [OPTIONS] <ID>
 | --- | --- | --- | --- |
 | `<ID>` | string | required | Device id. |
 
-| Flag | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="cua-devices-revoke--yes"></span>`--yes` | boolean | `false` | Do not ask for confirmation. |
+| Flag | Short | Type | Default | Description |
+| --- | --- | --- | --- | --- |
+| <span id="cua-devices-revoke--yes"></span>`--yes` | `-y` | boolean | `false` | Do not ask for confirmation. Alias: `--force`. |
 
 **Examples**
 
@@ -1043,9 +1043,9 @@ cua team add-machine [OPTIONS] <TEAM> <SPACE>
 | `<TEAM>` | string | required | Team id, alias or name. |
 | `<SPACE>` | string | required | Space id or name (`relay:<id>` for a computer you host). |
 
-| Flag | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="cua-team-add-machine--yes"></span>`--yes` | boolean | `false` | Confirm without a prompt. |
+| Flag | Short | Type | Default | Description |
+| --- | --- | --- | --- | --- |
+| <span id="cua-team-add-machine--yes"></span>`--yes` | `-y` | boolean | `false` | Confirm without a prompt. Alias: `--force`. |
 
 **Examples**
 
@@ -1107,9 +1107,9 @@ cua team delete [OPTIONS] <TEAM>
 | --- | --- | --- | --- |
 | `<TEAM>` | string | required | Team id, alias or name. |
 
-| Flag | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="cua-team-delete--yes"></span>`--yes` | boolean | `false` | Do not ask for confirmation. |
+| Flag | Short | Type | Default | Description |
+| --- | --- | --- | --- | --- |
+| <span id="cua-team-delete--yes"></span>`--yes` | `-y` | boolean | `false` | Do not ask for confirmation. Alias: `--force`. |
 
 **Examples**
 
@@ -1295,7 +1295,7 @@ cua spacesd call http://127.0.0.1:3211 SystemService/GetCapabilities
 | --- | --- |
 | `0` | Success. |
 | `1` | Failure, or `cua do` reported an error. |
-| `2` | Invalid argument, or an ambiguous sandbox name (qualify it: `local:NAME`). |
+| `2` | Invalid argument, a sandbox name that is taken, or an ambiguous sandbox name (qualify it: `local:NAME`). |
 | `3` | Not found: sandbox, window, skill or image (or an image not published yet). |
 | `4` | Not supported, or not configured (for example no provider credentials). |
 | `5` | No cua-spacesd answered, or a transport failure. |

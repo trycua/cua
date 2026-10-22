@@ -1,0 +1,86 @@
+---
+title: Progress and errors
+description: Show what a create is doing, and read an error's code and hint, in Python and TypeScript.
+---
+
+The SDK is silent by default: it prints nothing to your terminal, and a
+`create` that downloads an image takes as long as it takes with no output. Turn
+the same step lines the `cua` CLI prints on, or hand each step to your own
+code.
+
+## See what a create is doing
+
+`enable_output()` (`enableOutput()` in TypeScript) prints one plain line to
+stderr for each step, such as `Downloading image 0.3 of 1.2 GB · 232 MB/s · less than a minute`.
+It stays on until `disable_output()`.
+
+```python skip="pseudo"
+import cua
+
+cua.enable_output()
+sb = await Sandbox.create(Image.linux(), name="dev")
+# Preparing
+# Downloading image 0.3 of 1.2 GB · 232 MB/s · less than a minute
+# Creating
+# Starting
+# Waiting for its services
+```
+
+To show it your own way (a progress bar, a log line), pass `on_progress`
+(`onProgress` in TypeScript) to `Sandboxes.create`. It is called on an SDK
+worker thread with the step: `phase` (`preparing`, `pulling`, `creating`,
+`booting`, `waiting_for_services`, `ready`), `detail`, `fraction`, and for a
+download `bytes_done`, `bytes_total` and `bytes_per_second`. An exception in
+your callback never fails the create.
+
+```python skip="pseudo"
+def show(p):
+    if p.bytes_done:
+        print(f"{p.phase}: {p.bytes_done / p.bytes_total:.0%}")
+    else:
+        print(p.phase)
+
+sb = await cua.embedded().sandboxes().create(options, on_progress=show)
+```
+
+```ts skip="pseudo"
+const sb = await cua.embedded().sandboxes().create(options, {
+  onProgress: (p) => console.log(p.phase, p.detail),
+})
+```
+
+The Rust API is `Sandboxes::create_reporting` (a closure) and
+`Sandboxes::create_with_progress` (a listener).
+
+## Read an error
+
+Every `CuaError` has a stable `code` and a one-sentence `hint`, besides the raw
+text (`str(e)`, `e.message`). `report` has both, the sentence without the
+layers inside Cua, and the raw `detail`.
+
+```python skip="pseudo"
+try:
+    await Sandbox.create(Image.linux(), name="dev")
+except cua.CuaError as e:
+    print(e.code)    # already_exists
+    print(e.hint)    # pick another name, or remove it with `cua sb rm dev`
+    print(e.report.message)  # a sandbox named 'dev' already exists
+```
+
+```ts skip="pseudo"
+try {
+  await sandboxes.create(options)
+} catch (e) {
+  console.log(cuaErrorCode(e), cuaErrorHint(e))
+}
+```
+
+An uncaught error in Python ends the traceback at your own line of code, not
+in the generated binding. In Node it prints `CuaError.AlreadyExists: ...`
+and its fix. The codes are the ones of the CLI's `--json` errors; see
+[Output, errors and verbosity](/cua-cli/reference/cli#output-errors-and-verbosity)
+for the list. A sandbox whose name is taken raises `CuaError.AlreadyExists`
+before anything is pulled or started; the existing sandbox is untouched.
+
+TypeScript sandboxes have `delete()` on `Sandboxes` and on `Sandbox`
+(`delete_()` still works).

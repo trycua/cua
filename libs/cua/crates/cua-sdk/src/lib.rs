@@ -27,8 +27,10 @@
 //! callbacks ([`FrameSink`], [`AudioSink`]) must not block.
 
 mod json;
+mod report;
 mod types;
 pub use json::{JSON_STREAM_METHODS, JSON_UNARY_METHODS, TYPED_ONLY_METHODS};
+pub use report::{ErrorReport, REFINED_CODES, all_codes, error_report, report_of};
 pub use types::*;
 
 // The browser API is `web`: always on wasm32, and on the host with the
@@ -91,8 +93,8 @@ uniffi::setup_scaffolding!("cua_sdk");
 pub enum CuaError {
     /// Bad input.
     ///
-    /// Fix: Check the value against the reference; the message names the
-    /// argument and what it accepts.
+    /// Fix: Run the command with `--help` (or check the reference) to see what
+    /// each option accepts; the message names the argument.
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
     /// A location, kind or runtime that does not exist, or a combination of
@@ -106,8 +108,8 @@ pub enum CuaError {
     InvalidPlacement(String),
     /// No such sandbox, process, path, forward or session.
     ///
-    /// Fix: Check the ref, path or id. `Sandboxes.list` (`cua sb ls`) lists the
-    /// sandboxes this client can see.
+    /// Fix: Run `cua sb ls` to see the sandboxes you can use, and check the
+    /// ref, path or id (`Sandboxes.list` in the SDKs).
     #[error("not found: {0}")]
     NotFound(String),
     /// The provider is not configured (for example no credentials for it).
@@ -136,8 +138,8 @@ pub enum CuaError {
     Timeout(String),
     /// Local runtime failure.
     ///
-    /// Fix: Run `cua runtime doctor` (`Local.doctor`) and follow the steps it
-    /// prints.
+    /// Fix: Run `cua runtime doctor` and follow the steps it prints
+    /// (`Local.doctor` in the SDKs).
     #[error("local runtime: {0}")]
     Runtime(String),
     /// spacesd call failure.
@@ -148,8 +150,7 @@ pub enum CuaError {
     Env(String),
     /// HTTP failure talking to a sandbox service.
     ///
-    /// Fix: Check that the service listens on its declared port and answers
-    /// HTTP.
+    /// Fix: Check that the service listens on its declared port and answers HTTP.
     #[error("http: {0}")]
     Http(String),
     /// Missing or wrong token or ticket.
@@ -165,7 +166,7 @@ pub enum CuaError {
     PermissionDenied(String),
     /// Could not reach the daemon or the endpoint.
     ///
-    /// Fix: Check the address. For a daemon client, start the daemon with `cua
+    /// Fix: Check the address; for a daemon client, start the daemon with `cua
     /// daemon start`.
     #[error("transport: {0}")]
     Transport(String),
@@ -237,7 +238,7 @@ pub enum CuaError {
     /// what was removed and what stays (finished image downloads stay
     /// cached, so the next create resumes).
     ///
-    /// Fix: Nothing to clean up. Create it again when you want it.
+    /// Fix: Nothing to clean up; create it again when you want it.
     #[error("cancelled: {0}")]
     Cancelled(String),
     /// Your own cloud account (AWS, Google Cloud, Modal) refused or failed
@@ -250,6 +251,13 @@ pub enum CuaError {
     /// region or project.
     #[error("your cloud: {0}")]
     Cloud(String),
+    /// A sandbox with that name already exists, so a create did not touch
+    /// it. The message names the sandbox.
+    ///
+    /// Fix: Pick another name, or delete the existing sandbox first with `cua
+    /// sb rm <name>` (`Sandboxes.delete` in the SDKs).
+    #[error("{0}")]
+    AlreadyExists(String),
 }
 
 /// Result alias.
@@ -287,6 +295,7 @@ impl CuaError {
             CuaError::ImageNotPublished(_) => "ImageNotPublished",
             CuaError::Cancelled(_) => "Cancelled",
             CuaError::Cloud(_) => "Cloud",
+            CuaError::AlreadyExists(_) => "AlreadyExists",
         }
     }
 

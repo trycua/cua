@@ -29,6 +29,12 @@ import {
   CuaError,
   CuaError_Tags,
   type CuaLike,
+  type ErrorReport,
+  Sandbox,
+  type SandboxCreateOptions,
+  type SandboxLike,
+  Sandboxes,
+  type SpaceCreateProgress,
   ReadinessProbe,
   RegistrySecret,
   type ResolvedImage,
@@ -38,6 +44,7 @@ import {
   omarchyImage,
   resolveImage,
   cuaSdkVersion,
+  errorReport,
   telemetrySetSurface,
 } from "./native/index.js"
 
@@ -85,6 +92,109 @@ for (const tag of Object.values(CuaError_Tags)) {
     })
   }
 }
+
+// `code`, `hint` and `report` on every CuaError variant, and a message Node
+// prints: an uncaught error shows `CuaError.NotFound: sandbox nope` and its
+// fix, not `NotFound [Error]`.
+const REPORTS = new WeakMap<object, ErrorReport>()
+function reportOf(error: { tag?: unknown; message?: unknown }): ErrorReport {
+  let r = REPORTS.get(error)
+  if (!r) {
+    const tag = String(error.tag ?? "")
+    const raw = String(error.message ?? "").replace(new RegExp(`^CuaError\\.${tag}: `), "")
+    r = errorReport(tag, raw)
+    REPORTS.set(error, r)
+  }
+  return r
+}
+for (const tag of Object.values(CuaError_Tags)) {
+  const variant = (CuaError as unknown as Record<string, { prototype: object } | undefined>)[tag]
+  if (!variant) continue
+  const define = (key: PropertyKey, value: PropertyDescriptor) => {
+    if (!Object.prototype.hasOwnProperty.call(variant.prototype, key)) {
+      Object.defineProperty(variant.prototype, key, { configurable: true, ...value })
+    }
+  }
+  define("report", { get(this: never) { return reportOf(this) } })
+  define("code", { get(this: never) { return reportOf(this).code } })
+  define("hint", { get(this: never) { return reportOf(this).hint } })
+  define(Symbol.for("nodejs.util.inspect.custom"), {
+    value(this: Error & { tag?: unknown }) {
+      const r = reportOf(this)
+      return `${this.message}${r.hint ? `\n  fix: ${r.hint}` : ""}\n${String(this.stack ?? "")
+        .split("\n")
+        .filter((l) => l.trim().startsWith("at "))
+        .slice(0, 6)
+        .join("\n")}`
+    },
+  })
+}
+
+/** What `Sandboxes.create` takes beside the options. */
+export interface CreateExtra {
+  /** Called with each step of the create (`phase`, `detail`, `fraction`, `bytesDone` ...). */
+  onProgress?: (progress: SpaceCreateProgress) => void
+}
+
+declare module "./native/cua_sdk.js" {
+  interface SandboxesLike {
+    /** Creates a sandbox and tells `extra.onProgress` each step. */
+    create(
+      options: SandboxCreateOptions,
+      extra: CreateExtra,
+      asyncOpts_?: { signal: AbortSignal },
+    ): Promise<SandboxLike>
+    /** Deletes a sandbox by ref or unique name (same as `delete_`). */
+    delete(name: string, asyncOpts_?: { signal: AbortSignal }): Promise<void>
+  }
+  interface SandboxLike {
+    /** Deletes this sandbox (same as `delete_`). */
+    delete(asyncOpts_?: { signal: AbortSignal }): Promise<void>
+  }
+}
+
+/** The error's stable code (`not_found`), or `undefined` for any other value. */
+export function cuaErrorCode(error: unknown): string | undefined {
+  return CuaError.instanceOf(error) ? (error as unknown as { code: string }).code : undefined
+}
+
+/** The error's next step, one sentence. */
+export function cuaErrorHint(error: unknown): string | undefined {
+  return CuaError.instanceOf(error)
+    ? (error as unknown as { hint?: string }).hint
+    : undefined
+}
+
+/**
+ * `delete` for `Sandboxes` and `Sandbox` (the generated name is `delete_`,
+ * which a reserved word forced), and `onProgress` on `Sandboxes.create`.
+ */
+function installSandboxExtras(): void {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const sandboxes = Sandboxes.prototype as any
+  const sandbox = Sandbox.prototype as any
+  sandboxes.delete ??= function (this: any, ...a: unknown[]) {
+    return this.delete_(...a)
+  }
+  sandbox.delete ??= function (this: any, ...a: unknown[]) {
+    return this.delete_(...a)
+  }
+  const plain = sandboxes.create
+  sandboxes.create = function (this: any, options: unknown, extra?: CreateExtra) {
+    if (!extra?.onProgress) return plain.call(this, options, extra)
+    const onProgress = extra.onProgress
+    return this.createWithProgress(options, {
+      onProgress(p: SpaceCreateProgress) {
+        try {
+          onProgress(p)
+        } catch {
+          // A progress callback never fails a create.
+        }
+      },
+    })
+  }
+}
+installSandboxExtras()
 
 /**
  * Points `CUA_BIN` at the CLI of the matching `@trycua/cua-<platform>`

@@ -223,7 +223,7 @@ async fn status_init_lock_unlock_with_a_passphrase() {
     let o = r.home.run(&["keyvault", "init"]).await;
     assert_ne!(o.code, 0);
     assert!(
-        o.stderr.contains("cua keyvault init --passphrase"),
+        format!("{}{}", o.stdout, o.stderr).contains("cua keyvault init --passphrase"),
         "{}",
         o.stderr
     );
@@ -237,8 +237,14 @@ async fn status_init_lock_unlock_with_a_passphrase() {
     )
     .await;
     assert_ne!(o.code, 0);
-    assert!(o.stderr.contains("at least 12"), "{}", o.stderr);
-    assert!(!o.stderr.contains("hunter2") && !o.stdout.contains("hunter2"));
+    assert!(
+        format!("{}{}", o.stdout, o.stderr).contains("at least 12"),
+        "{}",
+        o.stderr
+    );
+    assert!(
+        !format!("{}{}", o.stdout, o.stderr).contains("hunter2") && !o.stdout.contains("hunter2")
+    );
 
     let o = with_stdin(
         &r.home,
@@ -251,7 +257,9 @@ async fn status_init_lock_unlock_with_a_passphrase() {
     assert_eq!(v["protector"], "passphrase");
     assert_eq!(v["recovery_key"].as_str().unwrap().len(), 47);
     assert_eq!(r.presence.asked.lock().unwrap().len(), 1);
-    assert!(!o.stdout.contains(PASSPHRASE) && !o.stderr.contains(PASSPHRASE));
+    assert!(
+        !o.stdout.contains(PASSPHRASE) && !format!("{}{}", o.stdout, o.stderr).contains(PASSPHRASE)
+    );
 
     let st = r.home.run(&["keyvault", "status"]).await;
     assert!(
@@ -272,7 +280,11 @@ async fn status_init_lock_unlock_with_a_passphrase() {
     )
     .await;
     assert_ne!(o.code, 0);
-    assert!(o.stderr.contains("does not unlock"), "{}", o.stderr);
+    assert!(
+        format!("{}{}", o.stdout, o.stderr).contains("does not unlock"),
+        "{}",
+        o.stderr
+    );
 
     // Spaces are part of a passphrase; only the line ending is dropped.
     let o = with_stdin(
@@ -330,7 +342,11 @@ async fn no_daemon_is_not_running() {
     let home = Home::new();
     let o = home.run(&["keyvault", "status"]).await;
     assert_ne!(o.code, 0);
-    assert!(o.stderr.contains("not running"), "{}", o.stderr);
+    assert!(
+        format!("{}{}", o.stdout, o.stderr).contains("not running"),
+        "{}",
+        o.stderr
+    );
 }
 
 /// `cua keyvault import-session`: no `--site` captures the whole app

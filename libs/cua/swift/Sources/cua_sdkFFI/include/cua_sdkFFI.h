@@ -1322,6 +1322,11 @@ uint64_t uniffi_cua_sdk_fn_method_sandboxes_connect_url(uint64_t ptr, RustBuffer
 uint64_t uniffi_cua_sdk_fn_method_sandboxes_create(uint64_t ptr, RustBuffer options
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SANDBOXES_CREATE_WITH_PROGRESS
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SANDBOXES_CREATE_WITH_PROGRESS
+uint64_t uniffi_cua_sdk_fn_method_sandboxes_create_with_progress(uint64_t ptr, RustBuffer options, uint64_t listener
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SANDBOXES_DELETE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SANDBOXES_DELETE
 uint64_t uniffi_cua_sdk_fn_method_sandboxes_delete(uint64_t ptr, RustBuffer name
@@ -2614,6 +2619,18 @@ RustBuffer uniffi_cua_sdk_fn_func_contrib_providers_built(RustCallStatus *_Nonnu
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_DISABLE_OUTPUT
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_DISABLE_OUTPUT
+void uniffi_cua_sdk_fn_func_disable_output(RustCallStatus *_Nonnull out_status
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_ENABLE_OUTPUT
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_ENABLE_OUTPUT
+void uniffi_cua_sdk_fn_func_enable_output(RustCallStatus *_Nonnull out_status
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_PARSE_SANDBOX_REF
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_PARSE_SANDBOX_REF
 RustBuffer uniffi_cua_sdk_fn_func_parse_sandbox_ref(RustBuffer input, RustCallStatus *_Nonnull out_status
@@ -2778,6 +2795,11 @@ uint64_t uniffi_cua_sdk_fn_func_telemetry_sync_account(void
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_TELEMETRY_USE_APP_NOTICE
 void uniffi_cua_sdk_fn_func_telemetry_use_app_notice(RustCallStatus *_Nonnull out_status
 
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_ERROR_REPORT
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_ERROR_REPORT
+RustBuffer uniffi_cua_sdk_fn_func_error_report(RustBuffer variant, RustBuffer message, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_FFI_CUA_SDK_RUSTBUFFER_ALLOC
@@ -3178,6 +3200,18 @@ uint16_t uniffi_cua_sdk_checksum_func_contrib_providers_built(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_DISABLE_OUTPUT
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_DISABLE_OUTPUT
+uint16_t uniffi_cua_sdk_checksum_func_disable_output(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_ENABLE_OUTPUT
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_ENABLE_OUTPUT
+uint16_t uniffi_cua_sdk_checksum_func_enable_output(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_PARSE_SANDBOX_REF
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_PARSE_SANDBOX_REF
 uint16_t uniffi_cua_sdk_checksum_func_parse_sandbox_ref(void
@@ -3355,6 +3389,12 @@ uint16_t uniffi_cua_sdk_checksum_func_telemetry_sync_account(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_TELEMETRY_USE_APP_NOTICE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_TELEMETRY_USE_APP_NOTICE
 uint16_t uniffi_cua_sdk_checksum_func_telemetry_use_app_notice(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_ERROR_REPORT
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_ERROR_REPORT
+uint16_t uniffi_cua_sdk_checksum_func_error_report(void
 
 );
 #endif
@@ -4267,6 +4307,12 @@ uint16_t uniffi_cua_sdk_checksum_method_sandboxes_connect_url(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SANDBOXES_CREATE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SANDBOXES_CREATE
 uint16_t uniffi_cua_sdk_checksum_method_sandboxes_create(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SANDBOXES_CREATE_WITH_PROGRESS
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SANDBOXES_CREATE_WITH_PROGRESS
+uint16_t uniffi_cua_sdk_checksum_method_sandboxes_create_with_progress(void
 
 );
 #endif

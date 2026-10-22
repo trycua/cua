@@ -5,6 +5,7 @@
     "images",
     "services",
     "lifecycle",
+    "output-and-errors",
     "desktop",
     "spacesd",
     "local-runtimes",

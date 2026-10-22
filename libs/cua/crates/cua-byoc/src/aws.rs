@@ -532,9 +532,26 @@ where
     let detail = match (e.code(), e.message()) {
         (Some(c), Some(m)) => format!("{c}: {m}"),
         (Some(c), None) => c.to_string(),
-        _ => aws_sdk_ec2::error::DisplayErrorContext(&e).to_string(),
+        _ => plain_detail(&aws_sdk_ec2::error::DisplayErrorContext(&e).to_string()),
     };
     cloud_err("aws", what, detail)
+}
+
+/// The text of an SDK error without Rust `Debug` structs: no credentials in
+/// the chain is a sentence of its own, and anything else is cut where the
+/// struct dump starts.
+fn plain_detail(full: &str) -> String {
+    if full.contains("CredentialsNotLoaded") || full.contains("no providers in chain") {
+        return "no AWS credentials found".into();
+    }
+    match full.find(" { ").or_else(|| full.find("(DispatchFailure")) {
+        Some(i) => {
+            let head = &full[..i];
+            let head = head.rfind(": ").map_or(head, |p| &head[..p]);
+            head.trim_end_matches([':', ' ', '(']).to_string()
+        }
+        None => full.to_string(),
+    }
 }
 
 fn sts_err<E, R>(what: &str, e: aws_sdk_sts::error::SdkError<E, R>) -> Error
@@ -546,7 +563,7 @@ where
     use aws_sdk_sts::error::ProvideErrorMetadata as _;
     let detail = match (e.code(), e.message()) {
         (Some(c), Some(m)) => format!("{c}: {m}"),
-        _ => aws_sdk_sts::error::DisplayErrorContext(&e).to_string(),
+        _ => plain_detail(&aws_sdk_sts::error::DisplayErrorContext(&e).to_string()),
     };
     cloud_err("aws", what, detail)
 }

@@ -253,117 +253,197 @@ pub fn write_private(p: &std::path::Path, data: &[u8]) -> Result<(), CuaError> {
     std::fs::rename(&tmp, p).map_err(internal)
 }
 
-/// What is being created, for the words of its steps.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct CreateWords {
-    /// A macOS VM (Lume downloads its base image once).
-    pub macos: bool,
-    /// A VM (it has a disk to prepare and boots).
-    pub vm: bool,
-    /// A Space (Cua starts inside it), not a bare sandbox.
-    pub space: bool,
+pub use cua_sandbox_core::progress::CreateWords;
+
+/// The step now running.
+struct Running {
+    phase: cua_sandbox_core::progress::Phase,
+    text: String,
+    since: std::time::Instant,
 }
 
-impl CreateWords {
-    /// The words for an image reference or alias (`macos`, `ghcr.io/trycua/macos:26`).
-    pub fn for_image(image: &str, kind: &str, space: bool) -> Self {
-        let image = image.to_ascii_lowercase();
-        let macos = image.contains("macos");
-        Self {
-            macos,
-            vm: macos || image.contains("windows") || kind == "vm",
-            space,
-        }
-    }
-
-    /// The step `phase` in words; `None` for `ready` and phases this build
-    /// does not know.
-    pub fn step(&self, phase: cua_sandbox_core::progress::Phase) -> Option<&'static str> {
-        use cua_sandbox_core::progress::Phase;
-        Some(match phase {
-            Phase::Preparing => "Preparing",
-            Phase::Pulling if self.macos => "Downloading macOS (first time only)",
-            Phase::Pulling => "Downloading image",
-            Phase::Creating if self.vm => "Preparing the disk",
-            Phase::Creating => "Creating",
-            Phase::Booting if self.macos => "Booting macOS",
-            Phase::Booting if self.vm => "Booting",
-            Phase::Booting => "Starting",
-            Phase::WaitingForServices if self.space => "Starting Cua inside the Space",
-            Phase::WaitingForServices => "Waiting for its services",
-            Phase::Connecting => "Connecting",
-            Phase::Ready => return None,
-        })
-    }
-
-    /// One report as a line: the step, then the download's bytes, rate and
-    /// time left ("4.2 of 22.1 GB · 85 MB/s · about 4 min"), else its
-    /// percent.
-    pub fn line(&self, p: &cua_sandbox_core::progress::Progress) -> Option<String> {
-        let step = self.step(p.phase)?;
-        let measure = match (p.bytes, p.fraction) {
-            (Some(b), _) => b.describe(),
-            (None, Some(f)) => format!("{:.0}%", f * 100.0),
-            (None, None) => String::new(),
-        };
-        Some(format!("{step} {measure}").trim_end().to_string())
-    }
-}
-
-/// A create's steps on a terminal (stderr): each step keeps a line of its
-/// own, and the step running now updates in place with its bytes. Never
-/// used for `--json` or when stderr is not a terminal.
-#[derive(Default)]
+/// A create's steps on stderr.
+///
+/// On a terminal that may rewrite a line (not `NO_COLOR`, `TERM=dumb` or
+/// `CI`), the running step shows a spinner and the time it has taken
+/// (`⠋ Waiting for its services (12 s)`), and becomes `✓ Started (1.2 s)`
+/// when the next one begins. Anywhere else each step is one plain line,
+/// printed once, with no cursor codes. Never used for `--json` or `-q`.
 pub struct StepLines {
     words: CreateWords,
-    /// The step on the current line, and that line's text.
-    shown: std::sync::Mutex<Option<(cua_sandbox_core::progress::Phase, String)>>,
+    running: std::sync::Mutex<Option<Running>>,
+    stopped: std::sync::atomic::AtomicBool,
+}
+
+const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// "1.2 s", "12 s", "2 min 5 s".
+pub fn elapsed_text(d: Duration) -> String {
+    let secs = d.as_secs_f64();
+    if secs < 10.0 {
+        format!("{secs:.1} s")
+    } else if secs < 60.0 {
+        format!("{} s", secs.round() as u64)
+    } else {
+        let s = secs.round() as u64;
+        format!("{} min {} s", s / 60, s % 60)
+    }
 }
 
 impl StepLines {
-    /// Lines for a create of this kind.
-    pub fn new(words: CreateWords) -> Self {
+    /// Lines for a create of this kind. On a live terminal a thread
+    /// redraws the spinner until [`StepLines::finish`].
+    pub fn new(words: CreateWords) -> std::sync::Arc<Self> {
+        let lines = std::sync::Arc::new(Self::bare(words));
+        if crate::diag::settings().live {
+            let weak = std::sync::Arc::downgrade(&lines);
+            std::thread::spawn(move || {
+                while let Some(lines) = weak.upgrade() {
+                    if lines.stopped.load(std::sync::atomic::Ordering::SeqCst) {
+                        break;
+                    }
+                    if let Some(out) = lines.tick(std::time::Instant::now()) {
+                        lines.write(&out);
+                    }
+                    drop(lines);
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            });
+        }
+        lines
+    }
+
+    /// Without the redraw thread (tests drive the clock themselves).
+    pub fn bare(words: CreateWords) -> Self {
         Self {
             words,
-            shown: Default::default(),
+            running: Default::default(),
+            stopped: Default::default(),
         }
     }
 
-    /// What to write for `p`: `None` when the line would not change.
-    pub fn render(&self, p: &cua_sandbox_core::progress::Progress) -> Option<String> {
-        let text = self.words.line(p)?;
-        let mut shown = self.shown.lock().unwrap_or_else(|e| e.into_inner());
-        let out = match shown.as_ref() {
-            Some((_, last)) if *last == text => return None,
-            // Still the same step: rewrite its line.
-            Some((phase, _)) if *phase == p.phase => format!("\r\x1b[2K{text}"),
-            // A new step: the last one stays on its line.
-            Some(_) => format!("\n{text}"),
-            None => text.clone(),
+    fn frame(r: &Running, now: std::time::Instant) -> String {
+        let since = now.saturating_duration_since(r.since);
+        let spin = SPINNER[(since.as_millis() / 100) as usize % SPINNER.len()];
+        format!("{spin} {} ({})", r.text, elapsed_text(since))
+    }
+
+    fn done(r: &Running, now: std::time::Instant, ok: bool, color: bool) -> String {
+        let mark = match (ok, color) {
+            (true, true) => "\x1b[32m✓\x1b[0m",
+            (true, false) => "✓",
+            (false, true) => "\x1b[31m✗\x1b[0m",
+            (false, false) => "✗",
         };
-        *shown = Some((p.phase, text));
-        Some(out)
+        format!(
+            "{mark} {} ({})",
+            r.text,
+            elapsed_text(now.saturating_duration_since(r.since))
+        )
     }
 
-    /// Writes `p`'s line to stderr.
-    pub fn show(&self, p: &cua_sandbox_core::progress::Progress) {
-        if let Some(out) = self.render(p) {
-            let mut err = std::io::stderr();
-            let _ = write!(err, "{out}");
-            let _ = err.flush();
+    /// What to write for `p`: `None` when nothing changes. With `live` the
+    /// running step is a spinner line and a finished one a `✓` line; without
+    /// it each step is one plain line, written when it begins.
+    pub fn render(
+        &self,
+        p: &cua_sandbox_core::progress::Progress,
+        live: bool,
+        now: std::time::Instant,
+    ) -> Option<String> {
+        let text = self.words.line(p)?;
+        let color = crate::diag::settings().color;
+        let mut running = self.running.lock().unwrap_or_else(|e| e.into_inner());
+        match running.as_mut() {
+            Some(r) if r.text == text => None,
+            // The same step with new numbers.
+            Some(r) if r.phase == p.phase => {
+                r.text = text;
+                live.then(|| format!("\r\x1b[2K{}", Self::frame(r, now)))
+            }
+            // A new step: the last one is done.
+            Some(r) => {
+                let done = Self::done(r, now, true, color);
+                *running = Some(Running {
+                    phase: p.phase,
+                    text: text.clone(),
+                    since: now,
+                });
+                let r = running.as_ref().expect("just set");
+                Some(if live {
+                    format!("\r\x1b[2K{done}\n{}", Self::frame(r, now))
+                } else {
+                    format!("{text}\n")
+                })
+            }
+            None => {
+                *running = Some(Running {
+                    phase: p.phase,
+                    text: text.clone(),
+                    since: now,
+                });
+                let r = running.as_ref().expect("just set");
+                Some(if live {
+                    Self::frame(r, now)
+                } else {
+                    format!("{text}\n")
+                })
+            }
         }
     }
 
-    /// Ends the output: the steps done stay, the running step's line goes.
-    pub fn finish(&self) {
-        if self
-            .shown
+    /// The running step redrawn at `now` (the spinner turns, the time
+    /// grows).
+    pub fn tick(&self, now: std::time::Instant) -> Option<String> {
+        let running = self.running.lock().unwrap_or_else(|e| e.into_inner());
+        running
+            .as_ref()
+            .map(|r| format!("\r\x1b[2K{}", Self::frame(r, now)))
+    }
+
+    fn write(&self, out: &str) {
+        let mut err = std::io::stderr().lock();
+        let _ = write!(err, "{out}");
+        let _ = err.flush();
+        let line = self
+            .running
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .take()
-            .is_some()
-        {
-            eprint!("\r\x1b[2K");
+            .as_ref()
+            .map(|r| Self::frame(r, std::time::Instant::now()));
+        crate::diag::set_live(line);
+    }
+
+    /// Writes `p`'s line to stderr, and tells the log writer which line is
+    /// live so a log line does not tear it.
+    pub fn show(&self, p: &cua_sandbox_core::progress::Progress) {
+        let live = crate::diag::settings().live;
+        if let Some(out) = self.render(p, live, std::time::Instant::now()) {
+            self.write(&out);
+        }
+    }
+
+    /// What ends the output: the last step as done (`ok`) or failed.
+    pub fn finish_text(&self, ok: bool, live: bool, now: std::time::Instant) -> Option<String> {
+        let color = crate::diag::settings().color;
+        let r = self
+            .running
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()?;
+        live.then(|| format!("\r\x1b[2K{}\n", Self::done(&r, now, ok, color)))
+    }
+
+    /// Ends the output: every step stays as a `✓` (or `✗`) line.
+    pub fn finish(&self, ok: bool) {
+        self.stopped
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let out = self.finish_text(ok, crate::diag::settings().live, std::time::Instant::now());
+        crate::diag::set_live(None);
+        if let Some(out) = out {
+            let mut err = std::io::stderr().lock();
+            let _ = write!(err, "{out}");
+            let _ = err.flush();
         }
     }
 }
@@ -472,10 +552,13 @@ pub fn exit_on_ctrl_c() {
 #[cfg(test)]
 mod create_step_tests {
     #[test]
-    fn create_steps_read_in_words_and_keep_a_line_each() {
+    fn create_steps_read_in_words_with_a_spinner_and_a_time_on_a_terminal() {
         use cua_sandbox_core::progress::{Phase, Progress, Transfer};
+        use std::time::{Duration, Instant};
+        let t0 = Instant::now();
+        let at = |ms: u64| t0 + Duration::from_millis(ms);
         let mac = super::CreateWords::for_image("macos", "", true);
-        let lines = super::StepLines::new(mac);
+        let lines = super::StepLines::bare(mac);
         let gb = 1u64 << 30;
         let pull = |done: u64| {
             Progress::phase(Phase::Pulling).bytes(Transfer {
@@ -484,46 +567,112 @@ mod create_step_tests {
                 per_second: Some((85u64 << 20) as f64),
             })
         };
-        let out: Vec<Option<String>> = vec![
-            lines.render(&Progress::phase(Phase::Preparing)),
-            lines.render(&pull(gb * 124 / 10)),
-            lines.render(&pull(gb * 124 / 10)),
-            lines.render(&pull(30 * gb)),
-            lines.render(&Progress::phase(Phase::Creating)),
-            lines.render(&Progress::phase(Phase::Booting)),
-            lines.render(&Progress::phase(Phase::WaitingForServices)),
-            lines.render(&Progress::phase(Phase::Ready)),
-        ];
+        let r = |p: &Progress, ms| lines.render(p, true, at(ms));
+        assert_eq!(
+            r(&Progress::phase(Phase::Preparing), 0).as_deref(),
+            Some("⠋ Preparing (0.0 s)")
+        );
+        assert_eq!(
+            r(&pull(gb * 124 / 10), 1500).as_deref(),
+            Some(
+                "\r\x1b[2K✓ Preparing (1.5 s)\n⠋ Downloading macOS (first time only) 12.4 of 30.0 GB \u{b7} 85 MB/s \u{b7} about 4 min (0.0 s)"
+            )
+        );
+        // The same numbers draw nothing; new numbers rewrite the line.
+        assert_eq!(r(&pull(gb * 124 / 10), 1600), None);
+        assert_eq!(
+            r(&pull(30 * gb), 31_000).as_deref(),
+            Some(
+                "\r\x1b[2K⠴ Downloading macOS (first time only) 30.0 of 30.0 GB \u{b7} 85 MB/s \u{b7} less than a minute (30 s)"
+            )
+        );
+        assert_eq!(
+            r(&Progress::phase(Phase::Booting), 95_000).as_deref(),
+            Some(
+                "\r\x1b[2K✓ Downloading macOS (first time only) 30.0 of 30.0 GB \u{b7} 85 MB/s \u{b7} less than a minute (1 min 34 s)\n⠋ Booting macOS (0.0 s)"
+            )
+        );
+        assert_eq!(r(&Progress::phase(Phase::Ready), 96_000), None);
+        // The spinner turns and the time grows between events.
+        assert_eq!(
+            lines.tick(at(95_400)).as_deref(),
+            Some("\r\x1b[2K⠼ Booting macOS (0.4 s)")
+        );
+        // The end: done, or failed.
+        assert_eq!(
+            lines.finish_text(true, true, at(97_000)).as_deref(),
+            Some("\r\x1b[2K✓ Booting macOS (2.0 s)\n")
+        );
+        assert_eq!(lines.tick(at(98_000)), None);
+        let failed = super::StepLines::bare(super::CreateWords::default());
+        failed.render(&Progress::phase(Phase::Creating), true, at(0));
+        assert_eq!(
+            failed.finish_text(false, true, at(500)).as_deref(),
+            Some("\r\x1b[2K✗ Creating (0.5 s)\n")
+        );
+    }
+
+    /// `NO_COLOR`, `TERM=dumb`, `CI` and pipes: one plain line per step, no
+    /// cursor codes, no spinner, no times.
+    #[test]
+    fn plain_steps_are_one_line_each_without_escape_codes() {
+        use cua_sandbox_core::progress::{Phase, Progress, Transfer};
+        let now = std::time::Instant::now();
+        let c = super::CreateWords::for_image("ghcr.io/trycua/linux:24.04", "container", false);
+        let lines = super::StepLines::bare(c);
+        let pull = |done: u64| {
+            Progress::phase(Phase::Pulling).bytes(Transfer {
+                done,
+                total: 1 << 30,
+                per_second: Some(1e8),
+            })
+        };
+        let out: Vec<Option<String>> = [
+            Progress::phase(Phase::Preparing),
+            pull(1 << 20),
+            pull(5 << 20),
+            Progress::phase(Phase::Creating),
+            Progress::phase(Phase::Booting),
+            Progress::phase(Phase::WaitingForServices),
+            Progress::phase(Phase::Ready),
+        ]
+        .iter()
+        .map(|p| lines.render(p, false, now))
+        .collect();
         assert_eq!(
             out,
             [
-                Some("Preparing".to_string()),
+                Some("Preparing\n".to_string()),
                 Some(
-                    "\nDownloading macOS (first time only) 12.4 of 30.0 GB \u{b7} 85 MB/s \u{b7} about 4 min"
+                    "Downloading image 0.0 of 1.0 GB \u{b7} 95 MB/s \u{b7} less than a minute\n"
                         .into()
                 ),
                 None,
-                Some(
-                    "\r\x1b[2KDownloading macOS (first time only) 30.0 of 30.0 GB \u{b7} 85 MB/s \u{b7} less than a minute"
-                        .into()
-                ),
-                Some("\nPreparing the disk".into()),
-                Some("\nBooting macOS".into()),
-                Some("\nStarting Cua inside the Space".into()),
+                Some("Creating\n".into()),
+                Some("Starting\n".into()),
+                Some("Waiting for its services\n".into()),
                 None,
             ]
         );
-        // A Linux container sandbox.
+        assert_eq!(lines.finish_text(true, false, now), None);
+        for line in out.iter().flatten() {
+            assert!(!line.contains('\x1b') && !line.contains('\r'), "{line:?}");
+        }
+        // A Linux container sandbox's words, and a VM's.
         let c = super::CreateWords::for_image("ghcr.io/trycua/linux:24.04", "container", false);
         assert_eq!(c.step(Phase::Creating), Some("Creating"));
         assert_eq!(c.step(Phase::Booting), Some("Starting"));
-        assert_eq!(
-            c.step(Phase::WaitingForServices),
-            Some("Waiting for its services")
-        );
         let vm = super::CreateWords::for_image("linux", "vm", false);
         assert_eq!(vm.step(Phase::Creating), Some("Preparing the disk"));
         assert_eq!(vm.step(Phase::Booting), Some("Booting"));
+    }
+
+    #[test]
+    fn elapsed_time_reads_in_seconds_and_minutes() {
+        use std::time::Duration;
+        assert_eq!(super::elapsed_text(Duration::from_millis(1234)), "1.2 s");
+        assert_eq!(super::elapsed_text(Duration::from_secs(12)), "12 s");
+        assert_eq!(super::elapsed_text(Duration::from_secs(125)), "2 min 5 s");
     }
 }
 

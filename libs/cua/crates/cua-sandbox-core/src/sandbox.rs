@@ -1265,6 +1265,19 @@ impl Sandboxes {
         }
     }
 
+    /// Whether `name` is taken for certain: a recorded sandbox, or an
+    /// instance the local runtime reports. A runtime that cannot tell (an
+    /// engine error) does not count as taken.
+    pub async fn local_name_taken(&self, name: &str) -> bool {
+        if self.inner.state.load(name).is_some() {
+            return true;
+        }
+        match self.local() {
+            Ok(rt) => rt.status(name).await.is_ok(),
+            Err(_) => false,
+        }
+    }
+
     /// Deletes local instance `name` straight through the local runtime,
     /// whether or not this machine recorded it: an instance whose create
     /// was cut off (its process died between starting it and recording

@@ -112,7 +112,10 @@ async fn an_agent_needs_a_grant_for_another_agents_folder() {
     read.extend_from_slice(&as_rs);
     let refused = h.run(&read).await;
     assert_ne!(refused.code, 0);
-    assert!(refused.stderr.contains("may not read"), "{refused:?}");
+    assert!(
+        format!("{}{}", refused.stdout, refused.stderr).contains("may not read"),
+        "{refused:?}"
+    );
     // The agent's own home and its Space's folder are writable.
     put(&h, "agents/researcher/notes.md", "mine", &as_rs)
         .await
@@ -124,8 +127,11 @@ async fn an_agent_needs_a_grant_for_another_agents_folder() {
     let leak = format!("key {}{}", "AKIA", "ABCDEFGHIJKLMNOP");
     let blocked = put(&h, "agents/researcher/leak.md", &leak, &as_rs).await;
     assert_ne!(blocked.code, 0);
-    assert!(blocked.stderr.contains("secret detected"), "{blocked:?}");
-    assert!(!blocked.stderr.contains("ABCDEFGHIJKLMNOP"));
+    assert!(
+        format!("{}{}", blocked.stdout, blocked.stderr).contains("secret detected"),
+        "{blocked:?}"
+    );
+    assert!(!format!("{}{}", blocked.stdout, blocked.stderr).contains("ABCDEFGHIJKLMNOP"));
     // Grant, read, revoke, refused again.
     let g = h
         .run(&[

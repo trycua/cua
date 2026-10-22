@@ -37,6 +37,14 @@ extension WebUIWindowController {
                     webView.load(URLRequest(url: Self.url(route, in: captureBase)))
                     page = await settledPage()
                 }
+                // `CUA_SPACES_WEBUI_CAPTURE_SELECT=<machine id>`: the Machines page with that machine chosen.
+                if route == "machines", let id = DevHooks.environment["CUA_SPACES_WEBUI_CAPTURE_SELECT"] {
+                    try? await Task.sleep(for: .seconds(6))
+                    _ = try? await bridge.handle("machines.checkHealth", [:])
+                    try? await Task.sleep(for: .seconds(4))
+                    _ = try? await webView.evaluateJavaScript("document.querySelector('[data-machine-id=\"\(id)\"]')?.click()")
+                    try? await Task.sleep(for: .milliseconds(800))
+                }
                 let file = dir.appendingPathComponent("\(route.replacingOccurrences(of: "/", with: "-"))-\(theme).png")
                 if let image = try? await webView.takeSnapshot(configuration: nil),
                    let tiff = image.tiffRepresentation,

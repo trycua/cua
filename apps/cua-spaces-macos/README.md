@@ -72,6 +72,7 @@ pressed look; `CUA_SPACES_UPDATER=live` runs Sparkle in a fixtures run (the feed
 Info.plist; use a test bundle identifier and a local feed), `CUA_SPACES_UPDATE_CHECK=background`
 checks at launch, and `CUA_SPACES_REFRESH=1` runs the after-update refresh in a fixtures
 run (with a throwaway `HOME`). State lives under `$HOME/Library/Application Support/com.trycua.spaces.macos`.
+`CUA_SPACES_FIXTURE_PEER_CUA=<version>` (fixtures) signs the fixture account in with one Linux machine, `ellieln`, that shares its desktop, provides a Space and runs that Cua (This Mac reports 0.6.0), and `CUA_SPACES_FIXTURE_UPDATE=<version>` has that Cua Spaces update downloaded; `CUA_SPACES_WEBUI_CAPTURE_SELECT=<machine id>` captures the Machines page with that machine chosen;
 `CUA_SPACES_OFFSCREEN=1` runs with nothing on screen, for captures on a Mac in use (`OffscreenRun`): an accessory app (no Dock icon or menu bar), no menu bar item, notch or global shortcut, no activation, and transparent click-through windows that still paint, so `CUA_SPACES_WEBUI_CAPTURE` works (with fixtures and a throwaway `HOME`, a first run captures `/onboarding`).
 `CuaSpacesMac --check-launch-only` loads the app's libraries, prints its version and exits
 (`scripts/check-launch.sh`; release builds too).
@@ -389,6 +390,14 @@ shares the version but its commits never open a release). Release Please
 splits commits by package path and skips a path with no commits (even for a
 targeted bump), so a change only under `libs/spaces-app-swift` does not open
 one on its own: land it with the app change that uses it.
+
+The same holds for the `cua` the app bundles (built from `libs/cua`): a
+cua-sdk release is a chore commit under `libs/cua`, so it opens no app
+release. `BUNDLED_CUA_VERSION` records the cua the app bundles, and the
+`Release: Bundle the new cua in Cua Spaces` workflow opens a
+`fix(spaces-macos)` PR that updates it whenever `libs/cua/VERSION` changes
+on main. Merging that PR makes Release Please open the next `cua-spaces`
+release, so the app never lags the machines running the new cua.
 
 ### Publishing the appcast (runbook)
 

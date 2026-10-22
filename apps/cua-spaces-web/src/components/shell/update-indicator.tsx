@@ -18,7 +18,7 @@ import { restartWarning, runsInProgress, updateView, type UpdateView } from "./u
  * actions. "Restart to update" asks first while an agent is running, and the
  * host restarts only on this call: nothing here restarts on its own.
  */
-function useUpdateIndicator() {
+export function useUpdateIndicator() {
   const { data, install } = useUpdate();
   const { data: agents } = useAgents();
   const { openExternal } = useSession();
@@ -67,7 +67,7 @@ function ProgressRing({ percent }: { percent: number | null }) {
   );
 }
 
-function RestartDialog({ ui }: { ui: ReturnType<typeof useUpdateIndicator> }) {
+export function RestartDialog({ ui }: { ui: ReturnType<typeof useUpdateIndicator> }) {
   const w = restartWarning(ui.running);
   return (
     <ConfirmDialog open={ui.asking} onOpenChange={ui.setAsking} title={w.title} description={w.description} confirmLabel={w.confirm} cancelLabel={w.cancel} destructive onConfirm={ui.restartNow} />

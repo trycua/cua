@@ -165,14 +165,15 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
       host: (h) => ({ ...h, permissions: [{ id: "accessibility", label: "Accessibility", granted: false, settingsUrl: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" }] }),
     });
     await waitFor(() => expect(heading()).toBe("One step left."), { timeout: 5000 });
-    expect(document.querySelector('[data-first-run-row="computer"]')!.textContent).toMatch(/^Let Cua control this/);
+    await waitFor(() => expect(document.querySelector('[data-first-run-row="computer"]')!.textContent).toMatch(/^Let Cua control this/), { timeout: 5000 });
     fireEvent.click(document.querySelector('[data-first-run-action="open-settings"]')!);
     await waitFor(() => expect(calls.find((c) => c.op === "host.openSettings")).toBeTruthy());
     expect(primary()!.textContent).toBe("Finish later");
     fireEvent.click(primary()!);
     await waitFor(() => expect(calls.find((c) => c.op === "session.completeOnboarding")).toBeTruthy());
     await waitFor(() => expect(document.querySelector("[data-first-run-todos]")).toBeTruthy(), { timeout: 5000 });
-    expect(document.querySelector('[data-first-run-todo="computer"]')!.textContent).toMatch(/Let Cua control/);
+    // The row says "Checking…" until the host's permissions arrive: wait for the fix to be named.
+    await waitFor(() => expect(document.querySelector('[data-first-run-todo="computer"]')!.textContent).toMatch(/Let Cua control/), { timeout: 5000 });
   });
 
   it("offers the host's runtime fix when nothing can be made here", async () => {

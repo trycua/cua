@@ -3118,6 +3118,17 @@ fn view_frame(name: &Value, v: &Value) -> Value {
             if let Some(n) = m["togglesNote"].as_str() {
                 lines.push(format!("note: {n}"));
             }
+            if let Some(d) = m["desktop"].as_object() {
+                let d = |k: &str| d.get(k).and_then(Value::as_str).unwrap_or("");
+                lines.push(format!(
+                    "desktop {} \u{b7} {} \u{b7} {} [{}] -> {}",
+                    d("name"),
+                    d("os"),
+                    d("status"),
+                    d("label"),
+                    d("id")
+                ));
+            }
             for s in m["spaces"].as_array().into_iter().flatten() {
                 lines.push(format!(
                     "space {} \u{b7} {} \u{b7} {} -> {}",

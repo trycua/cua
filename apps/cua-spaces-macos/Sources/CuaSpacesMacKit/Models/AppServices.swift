@@ -264,11 +264,16 @@ public struct SignInAttempt: Sendable {
     public var userCode: String?
     /// The page the sign-in finishes on (to open it again).
     public var url: URL?
+    /// A browser opened on this Mac (false: the page is to be opened by
+    /// hand, here or on another device).
+    public var opened: Bool
     public var wait: @Sendable () async throws -> String?
 
-    public init(userCode: String?, url: URL? = nil, wait: @escaping @Sendable () async throws -> String?) {
+    public init(userCode: String?, url: URL? = nil, opened: Bool = true,
+                wait: @escaping @Sendable () async throws -> String?) {
         self.userCode = userCode
         self.url = url
+        self.opened = opened
         self.wait = wait
     }
 }
@@ -329,14 +334,24 @@ public final class LiveAccount: AccountRunning, @unchecked Sendable {
     public func beginSignIn() async throws -> SignInAttempt {
         // The browser's sign-in page says where to go back to (the SDK reads it).
         setenv("CUA_AUTH_RETURN_TO", "Cua Spaces", 0)
-        let attempt = try await auth.beginLogin(flow: nil)
-        let url = URL(string: attempt.url())
-        if let url {
-            await MainActor.run { _ = NSWorkspace.shared.open(url) }
+        var attempt = try await auth.beginLogin(flow: nil)
+        var opened = await Self.open(attempt.url())
+        // No browser opened: the loopback redirect would never come back,
+        // so use a code that can be confirmed on any device instead.
+        if !opened, attempt.method() == .browser {
+            attempt = try await auth.beginLogin(flow: "device")
+            opened = await Self.open(attempt.url())
         }
-        return SignInAttempt(userCode: attempt.userCode(), url: url) {
-            Self.display(try await attempt.wait())
+        let started = attempt
+        return SignInAttempt(userCode: started.userCode(), url: URL(string: started.url()), opened: opened) {
+            Self.display(try await started.wait())
         }
+    }
+
+    /// Opens `link` in the default browser; false when nothing opened it.
+    static func open(_ link: String) async -> Bool {
+        guard let url = URL(string: link), !link.isEmpty else { return false }
+        return await MainActor.run { NSWorkspace.shared.open(url) }
     }
 
     public func signOut() async throws { _ = try await auth.logout() }

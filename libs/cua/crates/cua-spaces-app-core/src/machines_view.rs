@@ -89,6 +89,13 @@ pub struct MachinesViewInput {
     /// ([`crate::machines_health`]).
     #[serde(default)]
     pub health: Vec<MachinesViewHealth>,
+    /// The Cua Spaces update this app found (its version); empty when this
+    /// app is the newest release.
+    #[serde(default)]
+    pub app_update: String,
+    /// That update is downloaded and ready to restart into.
+    #[serde(default)]
+    pub app_update_ready: bool,
 }
 
 /// One of the two switches on a machine's page.
@@ -130,6 +137,27 @@ pub struct MachinesViewSpace {
     pub status: String,
     /// Running (the green dot).
     pub running: bool,
+}
+
+/// A machine's own desktop, listed first under "Spaces on this machine"
+/// when it shares it, as any Space row (its name, system, status), with a
+/// quiet "Desktop" label. It is not one of the Spaces counted (the sidebar
+/// and the machine's line leave it out).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MachinesViewDesktop {
+    /// The Space's id (its page).
+    pub id: String,
+    /// Its name, as the Spaces list names it.
+    pub name: String,
+    /// Its system ("Ubuntu 24.04.5 LTS", "macOS").
+    pub os: String,
+    /// Its status word ("Running", "Stopped").
+    pub status: String,
+    /// Running (the green dot).
+    pub running: bool,
+    /// "Desktop".
+    pub label: String,
 }
 
 /// New Space here: the wizard with this machine chosen.
@@ -255,6 +283,9 @@ pub struct MachinesViewMachine {
     pub spaces_title: String,
     /// The Spaces on it.
     pub spaces: Vec<MachinesViewSpace>,
+    /// Its own desktop, when it shares it (shown above `spaces`).
+    #[serde(default)]
+    pub desktop: Option<MachinesViewDesktop>,
     /// When it has none.
     #[serde(default)]
     pub spaces_empty: Option<String>,
@@ -310,6 +341,8 @@ pub struct MachinesView {
     pub machines: Vec<MachinesViewMachine>,
 }
 
+/// The quiet label on a machine's own desktop among its Spaces.
+pub const DESKTOP_LABEL: &str = "Desktop";
 /// "Your machines".
 pub const YOURS_TITLE: &str = "Your machines";
 /// "Team machines".
@@ -598,6 +631,17 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             }
         };
         let live = row.online && !row.stopped_sharing;
+        let desktop = own_space
+            .filter(|_| live && sw.share)
+            .map(|s| MachinesViewDesktop {
+                id: s.id.clone(),
+                name: s.name.clone(),
+                os: space_os(s),
+                status: crate::spaces::sidebar::status_text(s),
+                running: running(s),
+                label: DESKTOP_LABEL.into(),
+            });
+        let has_desktop = desktop.is_some();
         let name = if row.current {
             host.and_then(|s| s.name.clone())
                 .filter(|n| s_nonempty(n))
@@ -875,6 +919,9 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
                 live: row.current || live,
                 os: &row.os,
                 local_version,
+                app_update: Some(input.app_update.as_str())
+                    .filter(|v| !v.is_empty())
+                    .map(|v| (v, input.app_update_ready)),
             },
             input.health.iter().find(|h| h.id == row.id),
             host.filter(|_| row.current),
@@ -907,8 +954,11 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             toggles,
             toggles_note,
             spaces_title: "Spaces on this machine".into(),
+            desktop,
             spaces_empty: on.is_empty().then(|| {
-                if row.online {
+                if row.online && has_desktop {
+                    "No other Spaces yet.".into()
+                } else if row.online {
                     "No Spaces yet.".into()
                 } else {
                     "No Spaces. The machine is offline.".into()
@@ -1065,6 +1115,8 @@ mod tests {
     fn mockup() -> MachinesViewInput {
         MachinesViewInput {
             health: vec![],
+            app_update: String::new(),
+            app_update_ready: false,
             page: MachinesPageInput {
                 spaces: vec![
                     space(
@@ -1127,6 +1179,8 @@ mod tests {
         let rows = machines::page_rows(&input.page);
         let given = view(&MachinesViewInput {
             health: vec![],
+            app_update: String::new(),
+            app_update_ready: false,
             rows: Some(rows),
             ..input.clone()
         });
@@ -1312,6 +1366,33 @@ mod tests {
         assert!(by_id(&v, "team").new_space.enabled);
     }
 
+    /// A machine that shares its desktop lists it first, with Open; one
+    /// that does not, or is offline, shows no row. The desktop is not one of
+    /// the Spaces counted: the machine's line and Space list leave it out.
+    #[test]
+    fn a_shared_desktop_is_the_first_row_and_is_not_counted() {
+        let v = view(&mockup());
+        let studio = by_id(&v, "studio");
+        let d = studio.desktop.as_ref().unwrap();
+        assert_eq!(
+            (d.id.as_str(), d.label.as_str()),
+            ("relay:studio", "Desktop")
+        );
+        assert!(!d.name.is_empty() && !d.status.is_empty());
+        assert!(studio.spaces.iter().all(|s| s.id != d.id));
+        assert!(studio.line.contains("1 Space"), "{}", studio.line);
+        // Offline machines show none.
+        assert!(by_id(&v, "byoc").desktop.is_none());
+        // With no provided Spaces the empty line says "other".
+        if let Some(m) = v
+            .machines
+            .iter()
+            .find(|m| m.desktop.is_some() && m.spaces.is_empty() && m.online)
+        {
+            assert_eq!(m.spaces_empty.as_deref(), Some("No other Spaces yet."));
+        }
+    }
+
     #[test]
     fn details_and_remove_from_account() {
         let v = view(&mockup());
@@ -1378,6 +1459,8 @@ mod tests {
     fn a_machine_that_stopped_sharing_reads_not_sharing_no_spaces() {
         let input = MachinesViewInput {
             health: vec![],
+            app_update: String::new(),
+            app_update_ready: false,
             page: MachinesPageInput {
                 spaces: vec![space(serde_json::json!({
                     "id": "relay:b695", "name": "Adas-MacBook-Pro-2.local", "os": "macos",

@@ -2,14 +2,14 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { Link } from "@tanstack/react-router";
-import { useRef, type PointerEvent } from "react";
+import { useEffect, useRef, useState, type PointerEvent } from "react";
 
-import { LogOutIcon } from "lucide-react";
+import { Loader2Icon, LogOutIcon, TriangleAlertIcon } from "lucide-react";
 
-import type { Space } from "@/bridge";
+import type { SignInFooter, Space } from "@/bridge";
 import { spokenName } from "@/bridge/space-names";
 
-import { signInCodeText, useBridge, useMachines, useNotifications, useRelayUsageView, useSession, useSpaces, useTrackPlanClick } from "@/bridge";
+import { signInFooter, useBridge, useMachines, useNotifications, useRelayUsageView, useSession, useSpaces, useTrackPlanClick } from "@/bridge";
 import { CuaKey } from "@/components/cua-key";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
@@ -113,35 +113,55 @@ function SidebarCreating({ spaces }: { spaces: Space[] }) {
   );
 }
 
-/** The account, or "Sign in"; and a way back into a first run left halfway. */
+/** The account and its sign-in, every state in one place (the core's
+ * `signIn.footer`): signed in as, waiting for the browser with the code,
+ * Open again and Cancel, or why it failed with Try again and a toast. And a
+ * way back into a first run left halfway. */
 export function AccountFooter() {
   const { core } = useBridge();
   const { data: session, signIn, signOut, cancelSignIn, openExternal } = useSession();
   const plan = useRelayUsageView()?.planCard;
   const trackPlanClick = useTrackPlanClick();
-  if (!session) return <div className="mt-auto h-12 border-t" />;
+  const [details, setDetails] = useState(false);
+  const footer = session
+    ? signInFooter(core, {
+        identity: session.signedIn ? (session.identity ?? "") : null,
+        cloudConfigured: session.fleet.configured,
+        canSignIn: true,
+        signIn: session.signIn,
+        hasUrl: Boolean(session.signInUrl),
+      })
+    : null;
+  useSignInFailureToast(footer);
+  if (!session || !footer) return <div className="mt-auto h-12 border-t" />;
 
-  const identity = session.signedIn ? (session.identity ?? "Signed in") : null;
-  const phase = session.signIn.kind;
-  const waiting = phase === "starting" || phase === "waiting";
   const unfinished = !session.onboarding.completed;
   const run = (f: () => Promise<unknown>, what: string) =>
     f().catch((e: unknown) => toast(what, { description: e instanceof Error ? e.message : String(e) }));
+  // A failure is shown here with its reason (and the toast): nothing to add.
+  const startSignIn = () => {
+    setDetails(false);
+    void signIn().catch(() => {});
+  };
+  const identity = footer.identity || (session.signedIn ? "Signed in" : null);
 
   return (
-    <div className="mt-auto border-t px-3 py-2.5">
+    <div className="mt-auto border-t px-3 py-2.5" data-signin={footer.state}>
       {unfinished ? (
         <Link to="/onboarding" className="mb-2 block text-xs text-muted-foreground hover:text-foreground">
           Finish setting up
         </Link>
       ) : null}
-      {identity ? (
+      {footer.state === "signedIn" && identity ? (
         <div className="flex items-center gap-2.5">
           <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-2xs font-semibold text-muted-foreground uppercase">
             {identity.slice(0, 1)}
           </div>
           <div className="min-w-0 flex-1 leading-tight">
-            <div className="truncate text-xs font-medium">{identity}</div>
+            <div className="truncate text-xs" title={footer.text} data-signin-identity="">
+              <span className="block text-2xs text-muted-foreground">Signed in as </span>
+              <span className="block truncate font-medium">{identity}</span>
+            </div>
             {plan?.primary ? (
               // The current plan, always visible; on Free it opens Pro's checkout.
               <button
@@ -156,9 +176,7 @@ export function AccountFooter() {
                 {plan.label}
                 {plan.plan === "free" ? " · Upgrade" : ""}
               </button>
-            ) : (
-              <div className="truncate text-2xs text-muted-foreground">Cua account</div>
-            )}
+            ) : null}
           </div>
           {session.fleet.authMode === "user" ? (
             <Tooltip content="Sign out" side="top">
@@ -168,47 +186,103 @@ export function AccountFooter() {
             </Tooltip>
           ) : null}
         </div>
-      ) : waiting ? (
-        // As in the first run: the code to confirm, the page to open again
-        // if the tab was closed, and a way out (it also times out).
-        <div data-signin="waiting">
-          <p className="text-xs text-muted-foreground select-text" role="status">
-            {phase === "waiting" && session.signIn.kind === "waiting"
-              ? signInCodeText(core, session.signIn.userCode)
-              : "Waiting for the browser…"}
+      ) : footer.state === "starting" || footer.state === "waiting" ? (
+        // The code to confirm, the page to open again if the tab was
+        // closed, and a way out (it also ends by itself, with a reason).
+        <div>
+          <p className="flex items-center gap-2 text-xs" role="status">
+            <Loader2Icon className="size-3.5 shrink-0 animate-spin text-muted-foreground" aria-hidden />
+            <span className="truncate">{footer.text}</span>
           </p>
-          {session.signInUrl ? <SignInLink url={session.signInUrl} compact /> : null}
-          <div className="mt-1.5 flex items-center gap-3 text-2xs">
-            {session.signInUrl ? (
-              <button
-                type="button"
-                className="text-foreground underline-offset-2 hover:underline"
-                onClick={() => void openExternal(session.signInUrl!)}
-                data-signin-reopen=""
-              >
-                Open the browser again
+          <div className="mt-1 flex flex-wrap items-center gap-x-1 pl-5.5 text-2xs text-muted-foreground">
+            {footer.code ? (
+              <>
+                <span className="select-text">
+                  {footer.codeLabel} <span className="font-mono font-semibold text-foreground">{footer.code}</span>
+                </span>
+                <span aria-hidden>·</span>
+              </>
+            ) : null}
+            {footer.reopenLabel && session.signInUrl ? (
+              <>
+                <button
+                  type="button"
+                  className="underline underline-offset-2 hover:text-foreground"
+                  onClick={() => void openExternal(session.signInUrl!).catch(() => {})}
+                  data-signin-reopen=""
+                >
+                  {footer.reopenLabel}
+                </button>
+                <span aria-hidden>·</span>
+              </>
+            ) : null}
+            {footer.cancelLabel ? (
+              <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => cancelSignIn()} data-signin-cancel="">
+                {footer.cancelLabel}
               </button>
             ) : null}
-            <button
-              type="button"
-              className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-              onClick={() => cancelSignIn()}
-              data-signin-cancel=""
-            >
-              Cancel
-            </button>
           </div>
+          {/* No browser opened: the page, to copy to any device. */}
+          {session.signIn.kind === "waiting" && session.signIn.opened === false && session.signInUrl ? (
+            <SignInLink url={session.signInUrl} compact />
+          ) : null}
+        </div>
+      ) : footer.state === "failed" ? (
+        <div role="alert">
+          <p className="flex items-start gap-2 text-xs">
+            <TriangleAlertIcon className="mt-px size-3.5 shrink-0 text-destructive" aria-hidden />
+            <span data-signin-reason={footer.reason ?? "unknown"}>{footer.text}</span>
+          </p>
+          <div className="mt-2 flex items-center gap-3 pl-5.5">
+            <Button size="sm" onClick={startSignIn} data-signin-retry="">
+              {footer.actionLabel}
+            </Button>
+            {footer.detail ? (
+              <button
+                type="button"
+                className="text-2xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                aria-expanded={details}
+                onClick={() => setDetails((d) => !d)}
+                data-signin-details=""
+              >
+                {footer.detailsLabel}
+              </button>
+            ) : null}
+          </div>
+          {details && footer.detail ? (
+            <pre className="mt-2 max-h-28 overflow-auto rounded-md bg-muted px-2 py-1.5 font-mono text-2xs break-words whitespace-pre-wrap text-muted-foreground select-text">
+              {footer.detail}
+            </pre>
+          ) : null}
         </div>
       ) : (
         <div className="flex items-center justify-between gap-2">
-          <Button variant="outline" size="sm" onClick={() => void run(signIn, "Couldn't sign in")}>
-            {phase === "failed" ? "Try again" : "Sign in"}
-          </Button>
-          {phase === "failed" ? <span className="truncate text-2xs text-destructive">{session.signIn.message}</span> : null}
+          <span className="truncate text-xs text-muted-foreground">{footer.text}</span>
+          {footer.actionLabel ? (
+            <Button variant="outline" size="sm" onClick={startSignIn}>
+              {footer.actionLabel}
+            </Button>
+          ) : null}
         </div>
       )}
     </div>
   );
+}
+
+/** A failed sign-in also toasts, once per failure, so it is seen wherever
+ * the person is looking. */
+function useSignInFailureToast(footer: SignInFooter | null) {
+  const shown = useRef<string | null>(null);
+  const key = footer?.state === "failed" ? `${footer.reason}:${footer.text}:${footer.detail ?? ""}` : null;
+  useEffect(() => {
+    if (!key || !footer?.toast) {
+      shown.current = key;
+      return;
+    }
+    if (shown.current === key) return;
+    shown.current = key;
+    toast(footer.toast.title, { description: footer.toast.body ?? undefined, type: "error", group: "sign-in" });
+  }, [key, footer]);
 }
 
 function ResizeHandle() {

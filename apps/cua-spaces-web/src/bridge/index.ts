@@ -96,6 +96,7 @@ export type * from "./contracts/devices";
 export type * from "./contracts/notifications";
 export * from "./settings-hooks";
 export { hasNotch, passedSteps, signInCodeText, type SavedOnboarding } from "./onboarding";
+export { signInFailedFromError, signInFailedPhase, signInFooter, type FailedPhase, type SignInFooterInput } from "./sign-in";
 export {
   useConnectCloud,
   useFirstSpaceOffers,

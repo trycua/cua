@@ -1447,6 +1447,21 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_spaces_ffi_fn_func_app_sign_in_failed": {
+      args: [FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_spaces_ffi_fn_func_app_sign_in_failed_from_error": {
+      args: [FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_spaces_ffi_fn_func_app_sign_in_footer": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_spaces_ffi_fn_func_app_space_accepts_drop": {
       args: [FfiType.RustBuffer],
       ret: FfiType.Int8,
@@ -1628,6 +1643,11 @@ const DEFINITIONS = {
       hasRustCallStatus: true,
     },
     "uniffi_cua_spaces_ffi_fn_func_app_telemetry_sign_in_failed": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_spaces_ffi_fn_func_app_telemetry_sign_in_failure": {
       args: [FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
@@ -3202,6 +3222,21 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_spaces_ffi_checksum_func_app_sign_in_failed": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_spaces_ffi_checksum_func_app_sign_in_failed_from_error": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_spaces_ffi_checksum_func_app_sign_in_footer": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_spaces_ffi_checksum_func_app_space_accepts_drop": {
       args: [],
       ret: FfiType.UInt16,
@@ -3383,6 +3418,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_spaces_ffi_checksum_func_app_telemetry_sign_in_failed": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_spaces_ffi_checksum_func_app_telemetry_sign_in_failure": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -4305,6 +4345,9 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_fn_func_app_share_state_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_share_view(input: Uint8Array, state: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_sidebar(spaces: Uint8Array, query: Uint8Array, selectedId: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_sign_in_failed(reason: Uint8Array, detail: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_sign_in_failed_from_error(variant: Uint8Array, message: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_sign_in_footer(input: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_space_accepts_drop(space: Uint8Array, uniffi_out_err: UniffiRustCallStatus): number;
     uniffi_cua_spaces_ffi_fn_func_app_space_detail(space: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_space_detail_copy(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -4342,6 +4385,7 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_fn_func_app_telemetry_record(signals: Uint8Array, uniffi_out_err: UniffiRustCallStatus): number;
     uniffi_cua_spaces_ffi_fn_func_app_telemetry_share(input: Uint8Array, state: Uint8Array, action: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_telemetry_sign_in_failed(message: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_telemetry_sign_in_failure(reason: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_telemetry_start(version: Uint8Array, onboardingEligible: Uint8Array, uniffi_out_err: UniffiRustCallStatus): number;
     uniffi_cua_spaces_ffi_fn_func_app_telemetry_storage(input: Uint8Array, state: Uint8Array, action: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_telemetry_welcome_left(on: number, uniffi_out_err: UniffiRustCallStatus): void;
@@ -4656,6 +4700,9 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_checksum_func_app_share_state_from_json(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_share_view(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_sidebar(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_sign_in_failed(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_sign_in_failed_from_error(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_sign_in_footer(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_space_accepts_drop(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_space_detail(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_space_detail_copy(): number;
@@ -4693,6 +4740,7 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_checksum_func_app_telemetry_record(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_telemetry_share(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_telemetry_sign_in_failed(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_telemetry_sign_in_failure(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_telemetry_start(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_telemetry_storage(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_telemetry_welcome_left(): number;

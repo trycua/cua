@@ -2596,6 +2596,31 @@ pub fn app_telemetry_sign_in_failed(message: Option<String>) -> Vec<AppTelemetry
     core::telemetry::sign_in_failed(message.as_deref())
 }
 
+/// A sign-in failed for `reason` or was cancelled (none): its kind only.
+#[uniffi::export]
+pub fn app_telemetry_sign_in_failure(reason: Option<AppSignInFailure>) -> Vec<AppTelemetrySignal> {
+    core::telemetry::sign_in_failure(reason)
+}
+
+/// The sidebar's foot: every sign-in state in one place.
+#[uniffi::export]
+pub fn app_sign_in_footer(input: AppSignInFooterInput) -> AppSignInFooter {
+    core::sign_in::footer(&input)
+}
+
+/// The failed phase for a known reason, with the error's words for Details.
+#[uniffi::export]
+pub fn app_sign_in_failed(reason: AppSignInFailure, detail: Option<String>) -> AppSignInPhase {
+    core::sign_in::failed(reason, detail.as_deref())
+}
+
+/// The failed phase for an error the shell caught: the SDK error's case
+/// (`Timeout`, `Http`, ...; empty for another error) and its words.
+#[uniffi::export]
+pub fn app_sign_in_failed_from_error(variant: String, message: String) -> AppSignInPhase {
+    core::sign_in::failed_from_error(&variant, &message)
+}
+
 /// "Start using Cua Spaces".
 #[uniffi::export]
 pub fn app_telemetry_onboarding_finished(state: AppOnboardingState) -> Vec<AppTelemetrySignal> {

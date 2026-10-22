@@ -124,6 +124,7 @@ try {
 | [`ImageNotPublished`](#imagenotpublished) | `image not published: <detail>` | A catalog image (an `Image.*` constructor, a tier or `cua sb create <word>`) that CI has not published yet. |
 | [`Cancelled`](#cancelled) | `cancelled: <detail>` | The create was cancelled (`Spaces.cancel_create`, Ctrl-C in `cua`, or its caller went away). |
 | [`Cloud`](#cloud) | `your cloud: <detail>` | Your own cloud account (AWS, Google Cloud, Modal) refused or failed a call Cua made for a Space there: a missing permission, a quota, a region without the machine type. |
+| [`AlreadyExists`](#alreadyexists) | `<detail>` | A sandbox with that name already exists, so a create did not touch it. |
 
 ## `InvalidArgument`
 
@@ -154,8 +155,8 @@ effect.
 
 **Cause** No such sandbox, process, path, forward or session.
 
-**Fix** Check the ref, path or id. `Sandboxes.list` (`cua sb ls`) lists the
-sandboxes this client can see.
+**Fix** Check the ref, path or id; `cua sb ls` (`Sandboxes.list`) lists the
+sandboxes you can use.
 
 **Message** `not found: <detail>`
 
@@ -223,8 +224,7 @@ whether this spacesd supports the call.
 
 **Cause** HTTP failure talking to a sandbox service.
 
-**Fix** Check that the service listens on its declared port and answers
-HTTP.
+**Fix** Check that the service listens on its declared port and answers HTTP.
 
 **Message** `http: <detail>`
 
@@ -251,7 +251,7 @@ permissions of the path.
 
 **Cause** Could not reach the daemon or the endpoint.
 
-**Fix** Check the address. For a daemon client, start the daemon with `cua
+**Fix** Check the address; for a daemon client, start the daemon with `cua
 daemon start`.
 
 **Message** `transport: <detail>`
@@ -365,7 +365,7 @@ or its caller went away). What it made is gone; the message says
 what was removed and what stays (finished image downloads stay
 cached, so the next create resumes).
 
-**Fix** Nothing to clean up. Create it again when you want it.
+**Fix** Nothing to clean up; create it again when you want it.
 
 **Message** `cancelled: <detail>`
 
@@ -383,3 +383,13 @@ error.
 region or project.
 
 **Message** `your cloud: <detail>`
+
+## `AlreadyExists`
+
+**Cause** A sandbox with that name already exists, so a create did not touch
+it. The message names the sandbox.
+
+**Fix** Pick another name, or delete the existing sandbox first (`cua sb
+rm &lt;name&gt;`, `Sandboxes.delete`).
+
+**Message** `<detail>`

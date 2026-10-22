@@ -663,8 +663,23 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_sdk_fn_func_disable_output": {
+      args: [],
+      ret: FfiType.Void,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_sdk_fn_func_enable_output": {
+      args: [],
+      ret: FfiType.Void,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_sdk_fn_func_error_doc_url": {
       args: [FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_sdk_fn_func_error_report": {
+      args: [FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
@@ -1705,6 +1720,11 @@ const DEFINITIONS = {
     },
     "uniffi_cua_sdk_fn_method_sandboxes_create": {
       args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_method_sandboxes_create_with_progress": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.Handle],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
@@ -2753,7 +2773,22 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_func_disable_output": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_func_enable_output": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_func_error_doc_url": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_func_error_report": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -3794,6 +3829,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_sdk_checksum_method_sandboxes_create": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_sandboxes_create_with_progress": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -5035,7 +5075,10 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_func_config_unset(key: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_func_contrib_providers_built(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_func_cua_sdk_version(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_sdk_fn_func_disable_output(uniffi_out_err: UniffiRustCallStatus): void;
+    uniffi_cua_sdk_fn_func_enable_output(uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_sdk_fn_func_error_doc_url(variant: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_sdk_fn_func_error_report(variant: Uint8Array, message: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_func_image_alias(name: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_func_locations(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_func_may_have_session(uniffi_out_err: UniffiRustCallStatus): number;
@@ -5244,6 +5287,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_sandboxes_connect(uniffiSelf: bigint, name: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_sandboxes_connect_url(uniffiSelf: bigint, url: Uint8Array, token: Uint8Array, name: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_sandboxes_create(uniffiSelf: bigint, options: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_sandboxes_create_with_progress(uniffiSelf: bigint, options: Uint8Array, listener: bigint): bigint;
     uniffi_cua_sdk_fn_method_sandboxes_delete(uniffiSelf: bigint, name: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_sandboxes_get(uniffiSelf: bigint, name: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_sandboxes_list(uniffiSelf: bigint, location: Uint8Array): bigint;
@@ -5453,7 +5497,10 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_func_config_unset(): number;
     uniffi_cua_sdk_checksum_func_contrib_providers_built(): number;
     uniffi_cua_sdk_checksum_func_cua_sdk_version(): number;
+    uniffi_cua_sdk_checksum_func_disable_output(): number;
+    uniffi_cua_sdk_checksum_func_enable_output(): number;
     uniffi_cua_sdk_checksum_func_error_doc_url(): number;
+    uniffi_cua_sdk_checksum_func_error_report(): number;
     uniffi_cua_sdk_checksum_func_image_alias(): number;
     uniffi_cua_sdk_checksum_func_locations(): number;
     uniffi_cua_sdk_checksum_func_may_have_session(): number;
@@ -5662,6 +5709,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_sandboxes_connect(): number;
     uniffi_cua_sdk_checksum_method_sandboxes_connect_url(): number;
     uniffi_cua_sdk_checksum_method_sandboxes_create(): number;
+    uniffi_cua_sdk_checksum_method_sandboxes_create_with_progress(): number;
     uniffi_cua_sdk_checksum_method_sandboxes_delete(): number;
     uniffi_cua_sdk_checksum_method_sandboxes_get(): number;
     uniffi_cua_sdk_checksum_method_sandboxes_list(): number;

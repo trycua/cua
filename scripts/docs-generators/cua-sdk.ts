@@ -204,7 +204,7 @@ export const PAGES: PageSpec[] = [
     intro:
       'Every program starts from one `Cua` handle, embedded in the process or connected to a running `cua daemon`, with the same API either way. Its accessors return the other objects. The `config_*` functions read and write the user defaults in `$CUA_HOME/config.toml` (`cua config`).',
     items: ['Cua', 'CuaConfig', 'CuaInfo', 'CuaMode', 'cua_sdk_version', 'config_list', 'config_get', 'config_set', 'config_unset', 'config_path', 'ConfigEntry', 'locations', 'LocationInfo', 'check_placement'],
-    modules: ['cua', 'root'],
+    modules: ['cua', 'root', 'report'],
   },
   {
     slug: 'sandbox',
@@ -2159,7 +2159,7 @@ export interface BindingSources {
   typescript?: string;
   swift: string;
   kotlin?: string;
-  /** cua-sdk's `src/lib.rs`, `src/types.rs` and `src/native/*.rs`, concatenated. */
+  /** cua-sdk's `src/lib.rs`, `src/types.rs`, `src/report.rs` and `src/native/*.rs`, concatenated. */
   rust?: string;
 }
 
@@ -2169,6 +2169,7 @@ export function loadBindingSources(root = CUA_ROOT): BindingSources {
   const rust = [
     read('crates/cua-sdk/src/lib.rs'),
     read('crates/cua-sdk/src/types.rs'),
+    read('crates/cua-sdk/src/report.rs'),
     ...fs
       .readdirSync(native)
       .filter((f) => f.endsWith('.rs'))

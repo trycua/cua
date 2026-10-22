@@ -505,7 +505,13 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_cua_sdk_version() != 62700:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_func_disable_output() != 9783:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_func_enable_output() != 21653:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_error_doc_url() != 10839:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_func_error_report() != 42152:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_image_alias() != 25551:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -922,6 +928,8 @@ def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cua_sdk_checksum_method_sandboxes_connect_url() != 19950:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandboxes_create() != 52749:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_sandboxes_create_with_progress() != 27962:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandboxes_delete() != 43939:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -2041,11 +2049,25 @@ _UniffiLib.uniffi_cua_sdk_fn_func_cua_sdk_version.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_sdk_fn_func_cua_sdk_version.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cua_sdk_fn_func_disable_output.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_func_disable_output.restype = None
+_UniffiLib.uniffi_cua_sdk_fn_func_enable_output.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_func_enable_output.restype = None
 _UniffiLib.uniffi_cua_sdk_fn_func_error_doc_url.argtypes = (
     _UniffiRustBuffer,
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_sdk_fn_func_error_doc_url.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cua_sdk_fn_func_error_report.argtypes = (
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_func_error_report.restype = _UniffiRustBuffer
 _UniffiLib.uniffi_cua_sdk_fn_func_image_alias.argtypes = (
     _UniffiRustBuffer,
     ctypes.POINTER(_UniffiRustCallStatus),
@@ -3101,6 +3123,12 @@ _UniffiLib.uniffi_cua_sdk_fn_method_sandboxes_create.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_sandboxes_create.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_sandboxes_create_with_progress.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.c_uint64,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_sandboxes_create_with_progress.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_sandboxes_delete.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -4199,9 +4227,18 @@ _UniffiLib.uniffi_cua_sdk_checksum_func_contrib_providers_built.restype = ctypes
 _UniffiLib.uniffi_cua_sdk_checksum_func_cua_sdk_version.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_func_cua_sdk_version.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_func_disable_output.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_func_disable_output.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_func_enable_output.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_func_enable_output.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_func_error_doc_url.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_func_error_doc_url.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_func_error_report.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_func_error_report.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_func_image_alias.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_func_image_alias.restype = ctypes.c_uint16
@@ -4826,6 +4863,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_sandboxes_connect_url.restype = ctypes
 _UniffiLib.uniffi_cua_sdk_checksum_method_sandboxes_create.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_sandboxes_create.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_sandboxes_create_with_progress.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_sandboxes_create_with_progress.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_sandboxes_delete.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_sandboxes_delete.restype = ctypes.c_uint16
@@ -11733,6 +11773,58 @@ class _UniffiFfiConverterTypeDriveView(_UniffiConverterRustBuffer):
     def write(value, buf):
         _UniffiFfiConverterOptionalString.write(value.as_agent, buf)
         _UniffiFfiConverterOptionalString.write(value.in_space, buf)
+
+@dataclass
+class ErrorReport:
+    """
+    The shape of an error for people and scripts. Not an exception: see
+    [`CuaError`] for that.
+"""
+    def __init__(self, *, code:str, message:str, hint:typing.Optional[str], detail:typing.Optional[str]):
+        self.code = code
+        self.message = message
+        self.hint = hint
+        self.detail = detail
+
+
+
+
+    def __str__(self):
+        return "ErrorReport(code={}, message={}, hint={}, detail={})".format(self.code, self.message, self.hint, self.detail)
+    def __eq__(self, other):
+        if self.code != other.code:
+            return False
+        if self.message != other.message:
+            return False
+        if self.hint != other.hint:
+            return False
+        if self.detail != other.detail:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeErrorReport(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return ErrorReport(
+            code=_UniffiFfiConverterString.read(buf),
+            message=_UniffiFfiConverterString.read(buf),
+            hint=_UniffiFfiConverterOptionalString.read(buf),
+            detail=_UniffiFfiConverterOptionalString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.code)
+        _UniffiFfiConverterString.check_lower(value.message)
+        _UniffiFfiConverterOptionalString.check_lower(value.hint)
+        _UniffiFfiConverterOptionalString.check_lower(value.detail)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.code, buf)
+        _UniffiFfiConverterString.write(value.message, buf)
+        _UniffiFfiConverterOptionalString.write(value.hint, buf)
+        _UniffiFfiConverterOptionalString.write(value.detail, buf)
 
 class _UniffiFfiConverterInt32(_UniffiConverterPrimitiveInt):
     CLASS_NAME = "i32"
@@ -21104,8 +21196,8 @@ class CuaError:  # type: ignore
         """
         No such sandbox, process, path, forward or session.
 
-        Fix: Check the ref, path or id. `Sandboxes.list` (`cua sb ls`) lists the
-        sandboxes this client can see.
+        Fix: Check the ref, path or id; `cua sb ls` (`Sandboxes.list`) lists the
+        sandboxes you can use.
 """
         def __repr__(self):
             return "CuaError.NotFound({})".format(repr(str(self)))
@@ -21174,8 +21266,7 @@ class CuaError:  # type: ignore
         """
         HTTP failure talking to a sandbox service.
 
-        Fix: Check that the service listens on its declared port and answers
-        HTTP.
+        Fix: Check that the service listens on its declared port and answers HTTP.
 """
         def __repr__(self):
             return "CuaError.Http({})".format(repr(str(self)))
@@ -21203,7 +21294,7 @@ class CuaError:  # type: ignore
         """
         Could not reach the daemon or the endpoint.
 
-        Fix: Check the address. For a daemon client, start the daemon with `cua
+        Fix: Check the address; for a daemon client, start the daemon with `cua
         daemon start`.
 """
         def __repr__(self):
@@ -21315,7 +21406,7 @@ class CuaError:  # type: ignore
         what was removed and what stays (finished image downloads stay
         cached, so the next create resumes).
 
-        Fix: Nothing to clean up. Create it again when you want it.
+        Fix: Nothing to clean up; create it again when you want it.
 """
         def __repr__(self):
             return "CuaError.Cancelled({})".format(repr(str(self)))
@@ -21334,6 +21425,17 @@ class CuaError:  # type: ignore
         def __repr__(self):
             return "CuaError.Cloud({})".format(repr(str(self)))
     _UniffiTempCuaError.Cloud = Cloud # type: ignore
+    class AlreadyExists(_UniffiTempCuaError):
+        """
+        A sandbox with that name already exists, so a create did not touch
+        it. The message names the sandbox.
+
+        Fix: Pick another name, or delete the existing sandbox first (`cua sb
+        rm <name>`, `Sandboxes.delete`).
+"""
+        def __repr__(self):
+            return "CuaError.AlreadyExists({})".format(repr(str(self)))
+    _UniffiTempCuaError.AlreadyExists = AlreadyExists # type: ignore
 
 CuaError = _UniffiTempCuaError # type: ignore
 del _UniffiTempCuaError
@@ -21439,6 +21541,10 @@ class _UniffiFfiConverterTypeCuaError(_UniffiConverterRustBuffer):
             return CuaError.Cloud(
                 _UniffiFfiConverterString.read(buf),
             )
+        if variant == 25:
+            return CuaError.AlreadyExists(
+                _UniffiFfiConverterString.read(buf),
+            )
         raise InternalError("Raw enum value doesn't match any cases")
 
     @staticmethod
@@ -21491,6 +21597,8 @@ class _UniffiFfiConverterTypeCuaError(_UniffiConverterRustBuffer):
             return
         if isinstance(value, CuaError.Cloud):
             return
+        if isinstance(value, CuaError.AlreadyExists):
+            return
 
     @staticmethod
     def write(value, buf):
@@ -21542,6 +21650,8 @@ class _UniffiFfiConverterTypeCuaError(_UniffiConverterRustBuffer):
             buf.write_i32(23)
         if isinstance(value, CuaError.Cloud):
             buf.write_i32(24)
+        if isinstance(value, CuaError.AlreadyExists):
+            buf.write_i32(25)
 
 
 
@@ -28532,6 +28642,157 @@ class _UniffiFfiConverterTypeSandbox:
         buf.write_u64(cls.lower(value))
 
 
+class SpaceCreateListener():
+    """
+    Receives [`SpaceCreateProgress`] while [`Spaces::create_with_progress`]
+    runs, in order, ending with `ready`. Called on an SDK worker thread;
+    return quickly.
+"""
+
+    def on_progress(self, progress: SpaceCreateProgress) -> None:
+        """
+        The create moved on.
+"""
+        raise NotImplementedError
+
+class SpaceCreateListenerImpl(SpaceCreateListener):
+    """
+    Receives [`SpaceCreateProgress`] while [`Spaces::create_with_progress`]
+    runs, in order, ending with `ready`. Called on an SDK worker thread;
+    return quickly.
+"""
+
+    _handle: ctypes.c_uint64
+
+    def __init__(self, *args, **kwargs):
+        raise ValueError("This class has no default constructor")
+
+    def __del__(
+            self,
+            _uniffi_free=_UniffiLib.uniffi_cua_sdk_fn_free_spacecreatelistener,
+            _uniffi_call=_uniffi_rust_call,
+            _uniffi_finalizing=sys.is_finalizing,
+    ):
+        # In case of partial initialization of instances.
+        handle = getattr(self, "_handle", None)
+        # At interpreter exit the module globals are gone: skip the free (cua
+        # post-process, libs/cua/scripts/uniffi-python-postprocess.mjs).
+        if handle is not None and not _uniffi_finalizing():
+            _uniffi_call(_uniffi_free, handle)
+
+    def _uniffi_clone_handle(self):
+        return _uniffi_rust_call(_UniffiLib.uniffi_cua_sdk_fn_clone_spacecreatelistener, self._handle)
+
+    # Used by alternative constructors or any methods which return this type.
+    @classmethod
+    def _uniffi_make_instance(cls, handle):
+        # Lightly yucky way to bypass the usual __init__ logic
+        # and just create a new instance with the required handle.
+        inst = cls.__new__(cls)
+        inst._handle = handle
+        return inst
+    def on_progress(self, progress: SpaceCreateProgress) -> None:
+        """
+        The create moved on.
+"""
+
+        _UniffiFfiConverterTypeSpaceCreateProgress.check_lower(progress)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeSpaceCreateProgress.lower(progress),
+        )
+        _uniffi_lift_return = lambda val: None
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_sdk_fn_method_spacecreatelistener_on_progress,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+
+
+
+
+# Put all the bits inside a class to keep the top-level namespace clean
+class _UniffiTraitImplSpaceCreateListenerImpl:
+    # For each method, generate a callback function to pass to Rust
+
+    @_UNIFFI_CALLBACK_INTERFACE_CUA_SDK_SPACE_CREATE_LISTENER_METHOD0
+    def on_progress(
+            uniffi_handle,
+            progress,
+            uniffi_out_return,
+            uniffi_call_status_ptr,
+        ):
+        uniffi_obj = _UniffiFfiConverterTypeSpaceCreateListener._handle_map.get(uniffi_handle)
+        def make_call():
+            uniffi_args = (_UniffiFfiConverterTypeSpaceCreateProgress.lift(progress), )
+            uniffi_method = uniffi_obj.on_progress
+            return uniffi_method(*uniffi_args)
+        write_return_value = lambda v: None
+        _uniffi_trait_interface_call(
+                uniffi_call_status_ptr.contents,
+                make_call,
+                write_return_value,
+        )
+
+    @_UNIFFI_CALLBACK_INTERFACE_FREE_CUA_SDK_SPACE_CREATE_LISTENER
+    def _uniffi_free(uniffi_handle):
+        _UniffiFfiConverterTypeSpaceCreateListener._handle_map.remove(uniffi_handle)
+
+    @_UNIFFI_CALLBACK_INTERFACE_CLONE_CUA_SDK_SPACE_CREATE_LISTENER
+    def _uniffi_clone(uniffi_handle):
+        return _UniffiFfiConverterTypeSpaceCreateListener._handle_map.clone(uniffi_handle)
+
+    # Generate the FFI VTable.  This has a field for each callback interface method.
+    _uniffi_vtable = _UniffiVTableCallbackInterfaceCuaSdkSpaceCreateListener(
+        _uniffi_free,
+        _uniffi_clone,
+        on_progress,
+    )
+    # Send Rust a pointer to the VTable.  Note: this means we need to keep the struct alive forever,
+    # or else bad things will happen when Rust tries to access it.
+    _UniffiLib.uniffi_cua_sdk_fn_init_callback_vtable_spacecreatelistener(ctypes.byref(_uniffi_vtable))
+
+class _UniffiFfiConverterTypeSpaceCreateListener:
+    _handle_map = _UniffiHandleMap()
+
+    @staticmethod
+    def lift(value: int):
+        if (value & 1) == 0:
+            # Rust-generated handle, construct a new class that uses the handle to implement the
+            # interface
+            return SpaceCreateListenerImpl._uniffi_make_instance(value)
+        else:
+            # Python-generated handle, get the object from the handle map
+            return _UniffiFfiConverterTypeSpaceCreateListener._handle_map.remove(value)
+
+    @staticmethod
+    def check_lower(value: SpaceCreateListener):
+        if not isinstance(value, SpaceCreateListener):
+            raise TypeError("Expected SpaceCreateListener subclass, {} found".format(type(value).__name__))
+
+    @staticmethod
+    def lower(value: SpaceCreateListener):
+         if isinstance(value, SpaceCreateListenerImpl):
+            # Rust-implementated object.  Clone the handle and return it
+            return value._uniffi_clone_handle()
+         else:
+            # Python-implementated object, generate a new vtable handle and return that.
+            return _UniffiFfiConverterTypeSpaceCreateListener._handle_map.insert(value)
+
+    @classmethod
+    def read(cls, buf: _UniffiRustBuffer):
+        ptr = buf.read_u64()
+        if ptr == 0:
+            raise InternalError("Raw handle value was null")
+        return cls.lift(ptr)
+
+    @classmethod
+    def write(cls, value: SpaceCreateListener, buf: _UniffiRustBuffer):
+        buf.write_u64(cls.lower(value))
+
+
 class SandboxesProtocol(typing.Protocol):
     """
     Creates, finds and manages sandboxes.
@@ -28566,6 +28827,16 @@ class SandboxesProtocol(typing.Protocol):
         Creates (local, your cloud, a provider) or connects (direct) a sandbox
         and waits for the provider and every readiness probe. `on: "cloud"`
         fails with the "Cua Cloud has ended" error.
+"""
+        raise NotImplementedError
+    async def create_with_progress(self, options: SandboxCreateOptions,listener: SpaceCreateListener) -> Sandbox:
+        """
+        [`Sandboxes::create`] that tells `listener` what the create is doing
+        as it happens: `preparing`, `pulling` (with bytes, rate and time
+        left), `creating`, `booting`, `waiting_for_services`, `ready`. The
+        same steps `cua sandbox create` prints. Through a daemon that
+        predates streaming creates, the listener hears nothing. The listener
+        is called on an SDK worker thread; return quickly.
 """
         raise NotImplementedError
     async def delete(self, name: str) -> None:
@@ -28728,6 +28999,34 @@ class Sandboxes(SandboxesProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    async def create_with_progress(self, options: SandboxCreateOptions,listener: SpaceCreateListener) -> Sandbox:
+        """
+        [`Sandboxes::create`] that tells `listener` what the create is doing
+        as it happens: `preparing`, `pulling` (with bytes, rate and time
+        left), `creating`, `booting`, `waiting_for_services`, `ready`. The
+        same steps `cua sandbox create` prints. Through a daemon that
+        predates streaming creates, the listener hears nothing. The listener
+        is called on an SDK worker thread; return quickly.
+"""
+
+        _UniffiFfiConverterTypeSandboxCreateOptions.check_lower(options)
+
+        _UniffiFfiConverterTypeSpaceCreateListener.check_lower(listener)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeSandboxCreateOptions.lower(options),
+            _UniffiFfiConverterTypeSpaceCreateListener.lower(listener),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeSandbox.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_sandboxes_create_with_progress(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_u64,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_u64,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_u64,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     async def delete(self, name: str) -> None:
         """
         Deletes a sandbox by ref or unique name.
@@ -28880,157 +29179,6 @@ class _UniffiFfiConverterSequenceTypeComputerGrant(_UniffiConverterRustBuffer):
         return [
             _UniffiFfiConverterTypeComputerGrant.read(buf) for i in range(count)
         ]
-
-
-class SpaceCreateListener():
-    """
-    Receives [`SpaceCreateProgress`] while [`Spaces::create_with_progress`]
-    runs, in order, ending with `ready`. Called on an SDK worker thread;
-    return quickly.
-"""
-
-    def on_progress(self, progress: SpaceCreateProgress) -> None:
-        """
-        The create moved on.
-"""
-        raise NotImplementedError
-
-class SpaceCreateListenerImpl(SpaceCreateListener):
-    """
-    Receives [`SpaceCreateProgress`] while [`Spaces::create_with_progress`]
-    runs, in order, ending with `ready`. Called on an SDK worker thread;
-    return quickly.
-"""
-
-    _handle: ctypes.c_uint64
-
-    def __init__(self, *args, **kwargs):
-        raise ValueError("This class has no default constructor")
-
-    def __del__(
-            self,
-            _uniffi_free=_UniffiLib.uniffi_cua_sdk_fn_free_spacecreatelistener,
-            _uniffi_call=_uniffi_rust_call,
-            _uniffi_finalizing=sys.is_finalizing,
-    ):
-        # In case of partial initialization of instances.
-        handle = getattr(self, "_handle", None)
-        # At interpreter exit the module globals are gone: skip the free (cua
-        # post-process, libs/cua/scripts/uniffi-python-postprocess.mjs).
-        if handle is not None and not _uniffi_finalizing():
-            _uniffi_call(_uniffi_free, handle)
-
-    def _uniffi_clone_handle(self):
-        return _uniffi_rust_call(_UniffiLib.uniffi_cua_sdk_fn_clone_spacecreatelistener, self._handle)
-
-    # Used by alternative constructors or any methods which return this type.
-    @classmethod
-    def _uniffi_make_instance(cls, handle):
-        # Lightly yucky way to bypass the usual __init__ logic
-        # and just create a new instance with the required handle.
-        inst = cls.__new__(cls)
-        inst._handle = handle
-        return inst
-    def on_progress(self, progress: SpaceCreateProgress) -> None:
-        """
-        The create moved on.
-"""
-
-        _UniffiFfiConverterTypeSpaceCreateProgress.check_lower(progress)
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-            _UniffiFfiConverterTypeSpaceCreateProgress.lower(progress),
-        )
-        _uniffi_lift_return = lambda val: None
-        _uniffi_error_converter = None
-        _uniffi_ffi_result = _uniffi_rust_call_with_error(
-            _uniffi_error_converter,
-            _UniffiLib.uniffi_cua_sdk_fn_method_spacecreatelistener_on_progress,
-            *_uniffi_lowered_args,
-        )
-        return _uniffi_lift_return(_uniffi_ffi_result)
-
-
-
-
-# Put all the bits inside a class to keep the top-level namespace clean
-class _UniffiTraitImplSpaceCreateListenerImpl:
-    # For each method, generate a callback function to pass to Rust
-
-    @_UNIFFI_CALLBACK_INTERFACE_CUA_SDK_SPACE_CREATE_LISTENER_METHOD0
-    def on_progress(
-            uniffi_handle,
-            progress,
-            uniffi_out_return,
-            uniffi_call_status_ptr,
-        ):
-        uniffi_obj = _UniffiFfiConverterTypeSpaceCreateListener._handle_map.get(uniffi_handle)
-        def make_call():
-            uniffi_args = (_UniffiFfiConverterTypeSpaceCreateProgress.lift(progress), )
-            uniffi_method = uniffi_obj.on_progress
-            return uniffi_method(*uniffi_args)
-        write_return_value = lambda v: None
-        _uniffi_trait_interface_call(
-                uniffi_call_status_ptr.contents,
-                make_call,
-                write_return_value,
-        )
-
-    @_UNIFFI_CALLBACK_INTERFACE_FREE_CUA_SDK_SPACE_CREATE_LISTENER
-    def _uniffi_free(uniffi_handle):
-        _UniffiFfiConverterTypeSpaceCreateListener._handle_map.remove(uniffi_handle)
-
-    @_UNIFFI_CALLBACK_INTERFACE_CLONE_CUA_SDK_SPACE_CREATE_LISTENER
-    def _uniffi_clone(uniffi_handle):
-        return _UniffiFfiConverterTypeSpaceCreateListener._handle_map.clone(uniffi_handle)
-
-    # Generate the FFI VTable.  This has a field for each callback interface method.
-    _uniffi_vtable = _UniffiVTableCallbackInterfaceCuaSdkSpaceCreateListener(
-        _uniffi_free,
-        _uniffi_clone,
-        on_progress,
-    )
-    # Send Rust a pointer to the VTable.  Note: this means we need to keep the struct alive forever,
-    # or else bad things will happen when Rust tries to access it.
-    _UniffiLib.uniffi_cua_sdk_fn_init_callback_vtable_spacecreatelistener(ctypes.byref(_uniffi_vtable))
-
-class _UniffiFfiConverterTypeSpaceCreateListener:
-    _handle_map = _UniffiHandleMap()
-
-    @staticmethod
-    def lift(value: int):
-        if (value & 1) == 0:
-            # Rust-generated handle, construct a new class that uses the handle to implement the
-            # interface
-            return SpaceCreateListenerImpl._uniffi_make_instance(value)
-        else:
-            # Python-generated handle, get the object from the handle map
-            return _UniffiFfiConverterTypeSpaceCreateListener._handle_map.remove(value)
-
-    @staticmethod
-    def check_lower(value: SpaceCreateListener):
-        if not isinstance(value, SpaceCreateListener):
-            raise TypeError("Expected SpaceCreateListener subclass, {} found".format(type(value).__name__))
-
-    @staticmethod
-    def lower(value: SpaceCreateListener):
-         if isinstance(value, SpaceCreateListenerImpl):
-            # Rust-implementated object.  Clone the handle and return it
-            return value._uniffi_clone_handle()
-         else:
-            # Python-implementated object, generate a new vtable handle and return that.
-            return _UniffiFfiConverterTypeSpaceCreateListener._handle_map.insert(value)
-
-    @classmethod
-    def read(cls, buf: _UniffiRustBuffer):
-        ptr = buf.read_u64()
-        if ptr == 0:
-            raise InternalError("Raw handle value was null")
-        return cls.lift(ptr)
-
-    @classmethod
-    def write(cls, value: SpaceCreateListener, buf: _UniffiRustBuffer):
-        buf.write_u64(cls.lower(value))
 
 class _UniffiFfiConverterSequenceTypeGpuSupport(_UniffiConverterRustBuffer):
     @classmethod
@@ -35488,6 +35636,36 @@ def cua_sdk_version() -> str:
         *_uniffi_lowered_args,
     )
     return _uniffi_lift_return(_uniffi_ffi_result)
+def disable_output() -> None:
+    """
+    Silences [`enable_output`] again.
+"""
+    _uniffi_lowered_args = (
+    )
+    _uniffi_lift_return = lambda val: None
+    _uniffi_error_converter = None
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cua_sdk_fn_func_disable_output,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
+def enable_output() -> None:
+    """
+    Prints what creates are doing to stderr, one plain line per step (the
+    lines `cua sandbox create` shows on a terminal), until
+    [`disable_output`]. The SDK is silent by default.
+"""
+    _uniffi_lowered_args = (
+    )
+    _uniffi_lift_return = lambda val: None
+    _uniffi_error_converter = None
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cua_sdk_fn_func_enable_output,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
 def error_doc_url(variant: str) -> str:
     """
     A link to the errors-reference entry of a [`CuaError`] variant, by name
@@ -35504,6 +35682,28 @@ def error_doc_url(variant: str) -> str:
     _uniffi_ffi_result = _uniffi_rust_call_with_error(
         _uniffi_error_converter,
         _UniffiLib.uniffi_cua_sdk_fn_func_error_doc_url,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
+def error_report(variant: str,message: str) -> ErrorReport:
+    """
+    [`report_of`] for bindings: the variant name and the error's text in,
+    the report out. A hint is always one sentence; a message never carries a
+    source path or a Rust debug struct.
+"""
+
+    _UniffiFfiConverterString.check_lower(variant)
+
+    _UniffiFfiConverterString.check_lower(message)
+    _uniffi_lowered_args = (
+        _UniffiFfiConverterString.lower(variant),
+        _UniffiFfiConverterString.lower(message),
+    )
+    _uniffi_lift_return = _UniffiFfiConverterTypeErrorReport.lift
+    _uniffi_error_converter = None
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cua_sdk_fn_func_error_report,
         *_uniffi_lowered_args,
     )
     return _uniffi_lift_return(_uniffi_ffi_result)
@@ -36317,6 +36517,7 @@ __all__ = [
     "DriveSyncStatus",
     "DriveVersion",
     "DriveView",
+    "ErrorReport",
     "ExitInfo",
     "FileEntry",
     "GpuOption",
@@ -36440,7 +36641,10 @@ __all__ = [
     "config_unset",
     "contrib_providers_built",
     "cua_sdk_version",
+    "disable_output",
+    "enable_output",
     "error_doc_url",
+    "error_report",
     "image_alias",
     "locations",
     "may_have_session",
@@ -36516,10 +36720,10 @@ __all__ = [
     "SpacesdClientProtocol",
     "Sandbox",
     "SandboxProtocol",
-    "Sandboxes",
-    "SandboxesProtocol",
     "SpaceCreateListenerImpl",
     "SpaceCreateListener",
+    "Sandboxes",
+    "SandboxesProtocol",
     "PresenceView",
     "PresenceViewProtocol",
     "SpacePresence",

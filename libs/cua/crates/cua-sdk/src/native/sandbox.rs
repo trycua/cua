@@ -927,6 +927,72 @@ impl Sandboxes {
     pub async fn create(&self, options: SandboxCreateOptions) -> Result<Arc<Sandbox>> {
         self.create_reported(options, None).await
     }
+
+    /// [`Sandboxes::create`] that tells `listener` what the create is doing
+    /// as it happens: `preparing`, `pulling` (with bytes, rate and time
+    /// left), `creating`, `booting`, `waiting_for_services`, `ready`. The
+    /// same steps `cua sandbox create` prints. Through a daemon that
+    /// predates streaming creates, the listener hears nothing. The listener
+    /// is called on an SDK worker thread; return quickly.
+    pub async fn create_with_progress(
+        &self,
+        options: SandboxCreateOptions,
+        listener: Arc<dyn super::spaces::SpaceCreateListener>,
+    ) -> Result<Arc<Sandbox>> {
+        let sink: cua_sandbox_core::progress::Sink = Arc::new(move |p| {
+            listener.on_progress(super::spaces::SpaceCreateProgress {
+                phase: p.phase.as_str().into(),
+                fraction: p.fraction,
+                detail: p.detail.clone(),
+                bytes_done: p.bytes.map(|b| b.done),
+                bytes_total: p.bytes.map(|b| b.total).filter(|t| *t > 0),
+                bytes_per_second: p.bytes.and_then(|b| b.per_second),
+                space: p.target.clone(),
+            })
+        });
+        self.create_reported(options, Some(sink)).await
+    }
+}
+
+static OUTPUT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Prints what creates are doing to stderr, one plain line per step (the
+/// lines `cua sandbox create` shows on a terminal), until
+/// [`disable_output`]. The SDK is silent by default.
+#[uniffi::export]
+pub fn enable_output() {
+    OUTPUT.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Silences [`enable_output`] again.
+#[uniffi::export]
+pub fn disable_output() {
+    OUTPUT.store(false, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// The sink [`enable_output`] installs for a create of `options`: each step
+/// once, on its own line of stderr.
+fn output_sink(
+    options: &SandboxCreateOptions,
+    write: impl Fn(&str) + Send + Sync + 'static,
+) -> cua_sandbox_core::progress::Sink {
+    let mut words = cua_sandbox_core::progress::CreateWords::for_image(
+        &options.image,
+        options.kind.as_deref().unwrap_or_default(),
+        false,
+    );
+    words.macos |= options.os.as_deref() == Some("macos");
+    words.vm |= words.macos;
+    let last = std::sync::Mutex::new(None::<cua_sandbox_core::progress::Phase>);
+    Arc::new(move |p| {
+        let Some(text) = words.line(p) else { return };
+        let mut last = last.lock().unwrap_or_else(|e| e.into_inner());
+        if *last == Some(p.phase) {
+            return;
+        }
+        *last = Some(p.phase);
+        write(&text);
+    })
 }
 
 impl Sandboxes {
@@ -957,6 +1023,11 @@ impl Sandboxes {
                 .entry("CUA_SPACESD_TELEMETRY".into())
                 .or_insert_with(|| "1".into());
         }
+        let progress = progress.or_else(|| {
+            OUTPUT
+                .load(std::sync::atomic::Ordering::SeqCst)
+                .then(|| output_sink(&options, |line| eprintln!("{line}")))
+        });
         let r = self.create_recorded(options, progress).await;
         facts.record(&r);
         r
@@ -2216,4 +2287,50 @@ pub fn ambiguous_sandbox_candidates(message: String) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod output_tests {
+    use super::*;
+    use cua_sandbox_core::progress::{Phase, Progress, Transfer};
+
+    /// `enable_output` prints each step once, in the CLI's words, with the
+    /// first line of a download only.
+    #[test]
+    fn output_is_one_plain_line_per_step() {
+        let lines: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+        let l = lines.clone();
+        let mut o = SandboxCreateOptions::new("local", "ghcr.io/trycua/linux:24.04");
+        o.kind = Some("container".into());
+        let sink = output_sink(&o, move |line| l.lock().unwrap().push(line.to_string()));
+        let pull = |done| {
+            Progress::phase(Phase::Pulling).bytes(Transfer {
+                done,
+                total: 1 << 30,
+                per_second: Some(1e8),
+            })
+        };
+        for p in [
+            Progress::phase(Phase::Preparing),
+            pull(1 << 20),
+            pull(2 << 20),
+            Progress::phase(Phase::Creating),
+            Progress::phase(Phase::Booting),
+            Progress::phase(Phase::WaitingForServices),
+            Progress::phase(Phase::Ready),
+        ] {
+            sink(&p);
+        }
+        let got = lines.lock().unwrap().clone();
+        assert_eq!(got.len(), 5, "{got:?}");
+        assert_eq!(got[0], "Preparing");
+        assert!(
+            got[1].starts_with("Downloading image 0.0 of 1.0 GB"),
+            "{got:?}"
+        );
+        assert_eq!(
+            &got[2..],
+            ["Creating", "Starting", "Waiting for its services"]
+        );
+    }
 }

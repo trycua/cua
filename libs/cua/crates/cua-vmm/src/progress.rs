@@ -214,6 +214,62 @@ pub fn time_left(secs: f64) -> String {
     }
 }
 
+/// What is being created, for the words of its steps.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CreateWords {
+    /// A macOS VM (Lume downloads its base image once).
+    pub macos: bool,
+    /// A VM (it has a disk to prepare and boots).
+    pub vm: bool,
+    /// A Space (Cua starts inside it), not a bare sandbox.
+    pub space: bool,
+}
+
+impl CreateWords {
+    /// The words for an image reference or alias (`macos`, `ghcr.io/trycua/macos:26`).
+    pub fn for_image(image: &str, kind: &str, space: bool) -> Self {
+        let image = image.to_ascii_lowercase();
+        let macos = image.contains("macos");
+        Self {
+            macos,
+            vm: macos || image.contains("windows") || kind == "vm",
+            space,
+        }
+    }
+
+    /// The step `phase` in words; `None` for `ready` and phases this build
+    /// does not know.
+    pub fn step(&self, phase: Phase) -> Option<&'static str> {
+        Some(match phase {
+            Phase::Preparing => "Preparing",
+            Phase::Pulling if self.macos => "Downloading macOS (first time only)",
+            Phase::Pulling => "Downloading image",
+            Phase::Creating if self.vm => "Preparing the disk",
+            Phase::Creating => "Creating",
+            Phase::Booting if self.macos => "Booting macOS",
+            Phase::Booting if self.vm => "Booting",
+            Phase::Booting => "Starting",
+            Phase::WaitingForServices if self.space => "Starting Cua inside the Space",
+            Phase::WaitingForServices => "Waiting for its services",
+            Phase::Connecting => "Connecting",
+            Phase::Ready => return None,
+        })
+    }
+
+    /// One report as a line: the step, then the download's bytes, rate and
+    /// time left ("4.2 of 22.1 GB · 85 MB/s · about 4 min"), else its
+    /// percent.
+    pub fn line(&self, p: &Progress) -> Option<String> {
+        let step = self.step(p.phase)?;
+        let measure = match (p.bytes, p.fraction) {
+            (Some(b), _) => b.describe(),
+            (None, Some(f)) => format!("{:.0}%", f * 100.0),
+            (None, None) => String::new(),
+        };
+        Some(format!("{step} {measure}").trim_end().to_string())
+    }
+}
+
 /// Where reports go.
 pub type Sink = Arc<dyn Fn(&Progress) + Send + Sync>;
 

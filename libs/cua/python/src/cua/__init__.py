@@ -94,6 +94,12 @@ _CuaError.doc_url = property(  # type: ignore[attr-defined]
     lambda self: _error_doc_url(type(self).__name__)
 )
 
+# ── Error code and hint, short tracebacks, create progress ────────────────
+from . import _errors  # noqa: E402
+
+_errors.install_error_properties()
+_errors.install_on_progress()
+
 # ── Plan limits ────────────────────────────────────────────────────────────
 # The relay refuses a new live session over the plan's cap (HTTP 429). The
 # SDK raises `CuaError.Http` with the plain sentence; `error.plan_limit`
@@ -140,6 +146,9 @@ class PlanLimitError(_CuaError.Http):  # type: ignore[name-defined,misc]
 
 
 _CuaError.Http.plan_limit = property(PlanLimitError.from_error)  # type: ignore[attr-defined]
+
+# After PlanLimitError, so its own `code` stays.
+_errors.install_short_tracebacks()
 
 # `Sandbox` is resolved lazily (see __getattr__): the cua-sandbox facade when
 # it is installed, else the native handle type.

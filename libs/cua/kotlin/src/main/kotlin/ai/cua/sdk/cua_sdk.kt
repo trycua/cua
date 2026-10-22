@@ -805,6 +805,10 @@ external fun uniffi_cua_sdk_checksum_func_ambiguous_sandbox_candidates(
 ): Short
 external fun uniffi_cua_sdk_checksum_func_contrib_providers_built(
 ): Short
+external fun uniffi_cua_sdk_checksum_func_disable_output(
+): Short
+external fun uniffi_cua_sdk_checksum_func_enable_output(
+): Short
 external fun uniffi_cua_sdk_checksum_func_parse_sandbox_ref(
 ): Short
 external fun uniffi_cua_sdk_checksum_func_qualify_sandbox_ref(
@@ -864,6 +868,8 @@ external fun uniffi_cua_sdk_checksum_func_telemetry_status(
 external fun uniffi_cua_sdk_checksum_func_telemetry_sync_account(
 ): Short
 external fun uniffi_cua_sdk_checksum_func_telemetry_use_app_notice(
+): Short
+external fun uniffi_cua_sdk_checksum_func_error_report(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp(
 ): Short
@@ -1166,6 +1172,8 @@ external fun uniffi_cua_sdk_checksum_method_sandboxes_connect(
 external fun uniffi_cua_sdk_checksum_method_sandboxes_connect_url(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_sandboxes_create(
+): Short
+external fun uniffi_cua_sdk_checksum_method_sandboxes_create_with_progress(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_sandboxes_delete(
 ): Short
@@ -2010,6 +2018,8 @@ external fun uniffi_cua_sdk_fn_method_sandboxes_connect_url(`ptr`: Long,`url`: R
 ): Long
 external fun uniffi_cua_sdk_fn_method_sandboxes_create(`ptr`: Long,`options`: RustBuffer.ByValue,
 ): Long
+external fun uniffi_cua_sdk_fn_method_sandboxes_create_with_progress(`ptr`: Long,`options`: RustBuffer.ByValue,`listener`: Long,
+): Long
 external fun uniffi_cua_sdk_fn_method_sandboxes_delete(`ptr`: Long,`name`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_sandboxes_get(`ptr`: Long,`name`: RustBuffer.ByValue,
@@ -2524,6 +2534,10 @@ external fun uniffi_cua_sdk_fn_func_ambiguous_sandbox_candidates(`message`: Rust
 ): RustBuffer.ByValue
 external fun uniffi_cua_sdk_fn_func_contrib_providers_built(uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
+external fun uniffi_cua_sdk_fn_func_disable_output(uniffi_out_err: UniffiRustCallStatus,
+): Unit
+external fun uniffi_cua_sdk_fn_func_enable_output(uniffi_out_err: UniffiRustCallStatus,
+): Unit
 external fun uniffi_cua_sdk_fn_func_parse_sandbox_ref(`input`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 external fun uniffi_cua_sdk_fn_func_qualify_sandbox_ref(`name`: RustBuffer.ByValue,`local`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
@@ -2584,6 +2598,8 @@ external fun uniffi_cua_sdk_fn_func_telemetry_sync_account(
 ): Long
 external fun uniffi_cua_sdk_fn_func_telemetry_use_app_notice(uniffi_out_err: UniffiRustCallStatus,
 ): Unit
+external fun uniffi_cua_sdk_fn_func_error_report(`variant`: RustBuffer.ByValue,`message`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
 external fun ffi_cua_sdk_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 external fun ffi_cua_sdk_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus,
@@ -2772,6 +2788,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_func_contrib_providers_built() != 14866.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cua_sdk_checksum_func_disable_output() != 9783.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_func_enable_output() != 21653.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cua_sdk_checksum_func_parse_sandbox_ref() != 7299.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -2860,6 +2882,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_func_telemetry_use_app_notice() != 17365.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_func_error_report() != 42152.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp() != 62628.toShort()) {
@@ -3313,6 +3338,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_sandboxes_create() != 52749.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_sandboxes_create_with_progress() != 27962.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_sandboxes_delete() != 43939.toShort()) {
@@ -14213,6 +14241,16 @@ public interface SandboxesInterface {
     suspend fun `create`(`options`: SandboxCreateOptions): Sandbox
 
     /**
+     * [`Sandboxes::create`] that tells `listener` what the create is doing
+     * as it happens: `preparing`, `pulling` (with bytes, rate and time
+     * left), `creating`, `booting`, `waiting_for_services`, `ready`. The
+     * same steps `cua sandbox create` prints. Through a daemon that
+     * predates streaming creates, the listener hears nothing. The listener
+     * is called on an SDK worker thread; return quickly.
+     */
+    suspend fun `createWithProgress`(`options`: SandboxCreateOptions, `listener`: SpaceCreateListener): Sandbox
+
+    /**
      * Deletes a sandbox by ref or unique name.
      */
     suspend fun `delete`(`name`: kotlin.String)
@@ -14437,6 +14475,35 @@ open class Sandboxes: Disposable, AutoCloseable, SandboxesInterface
             UniffiLib.uniffi_cua_sdk_fn_method_sandboxes_create(
                 uniffiHandle,
                 FfiConverterTypeSandboxCreateOptions.lower(`options`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_u64(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_u64(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_u64(future) },
+        // lift function
+        { FfiConverterTypeSandbox.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * [`Sandboxes::create`] that tells `listener` what the create is doing
+     * as it happens: `preparing`, `pulling` (with bytes, rate and time
+     * left), `creating`, `booting`, `waiting_for_services`, `ready`. The
+     * same steps `cua sandbox create` prints. Through a daemon that
+     * predates streaming creates, the listener hears nothing. The listener
+     * is called on an SDK worker thread; return quickly.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `createWithProgress`(`options`: SandboxCreateOptions, `listener`: SpaceCreateListener) : Sandbox {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_sandboxes_create_with_progress(
+                uniffiHandle,
+                FfiConverterTypeSandboxCreateOptions.lower(`options`),FfiConverterTypeSpaceCreateListener.lower(`listener`),
             )
         },
         { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_u64(future, callback, continuation) },
@@ -27660,6 +27727,73 @@ public object FfiConverterTypeDriveView: FfiConverterRustBuffer<DriveView> {
 
 
 /**
+ * The shape of an error for people and scripts. Not an exception: see
+ * [`CuaError`] for that.
+ */
+data class ErrorReport (
+    /**
+     * A stable lower-snake-case id (`not_found`, `already_exists`,
+     * `image_not_found`). The `cua` CLI documents the full list with its
+     * exit codes.
+     */
+    var `code`: kotlin.String
+    ,
+    /**
+     * One plain sentence, without internal layers, structs or paths.
+     */
+    var `message`: kotlin.String
+    ,
+    /**
+     * The next step, one sentence (`None` when there is nothing to add).
+     */
+    var `hint`: kotlin.String?
+    ,
+    /**
+     * The raw text of the error, layers and all, when it differs from
+     * `message`.
+     */
+    var `detail`: kotlin.String?
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeErrorReport: FfiConverterRustBuffer<ErrorReport> {
+    override fun read(buf: ByteBuffer): ErrorReport {
+        return ErrorReport(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ErrorReport) = (
+            FfiConverterString.allocationSize(value.`code`) +
+            FfiConverterString.allocationSize(value.`message`) +
+            FfiConverterOptionalString.allocationSize(value.`hint`) +
+            FfiConverterOptionalString.allocationSize(value.`detail`)
+    )
+
+    override fun write(value: ErrorReport, buf: ByteBuffer) {
+            FfiConverterString.write(value.`code`, buf)
+            FfiConverterString.write(value.`message`, buf)
+            FfiConverterOptionalString.write(value.`hint`, buf)
+            FfiConverterOptionalString.write(value.`detail`, buf)
+    }
+}
+
+
+
+/**
  * How a process ended.
  */
 data class ExitInfo (
@@ -37379,8 +37513,8 @@ sealed class CuaException(message: String): kotlin.Exception(message) {
     /**
      * No such sandbox, process, path, forward or session.
      *
-     * Fix: Check the ref, path or id. `Sandboxes.list` (`cua sb ls`) lists the
-     * sandboxes this client can see.
+     * Fix: Check the ref, path or id; `cua sb ls` (`Sandboxes.list`) lists the
+     * sandboxes you can use.
      */
         class NotFound(message: String) : CuaException(message)
 
@@ -37435,8 +37569,7 @@ sealed class CuaException(message: String): kotlin.Exception(message) {
     /**
      * HTTP failure talking to a sandbox service.
      *
-     * Fix: Check that the service listens on its declared port and answers
-     * HTTP.
+     * Fix: Check that the service listens on its declared port and answers HTTP.
      */
         class Http(message: String) : CuaException(message)
 
@@ -37458,7 +37591,7 @@ sealed class CuaException(message: String): kotlin.Exception(message) {
     /**
      * Could not reach the daemon or the endpoint.
      *
-     * Fix: Check the address. For a daemon client, start the daemon with `cua
+     * Fix: Check the address; for a daemon client, start the daemon with `cua
      * daemon start`.
      */
         class Transport(message: String) : CuaException(message)
@@ -37550,7 +37683,7 @@ sealed class CuaException(message: String): kotlin.Exception(message) {
      * what was removed and what stays (finished image downloads stay
      * cached, so the next create resumes).
      *
-     * Fix: Nothing to clean up. Create it again when you want it.
+     * Fix: Nothing to clean up; create it again when you want it.
      */
         class Cancelled(message: String) : CuaException(message)
 
@@ -37565,6 +37698,15 @@ sealed class CuaException(message: String): kotlin.Exception(message) {
      * region or project.
      */
         class Cloud(message: String) : CuaException(message)
+
+    /**
+     * A sandbox with that name already exists, so a create did not touch
+     * it. The message names the sandbox.
+     *
+     * Fix: Pick another name, or delete the existing sandbox first (`cua sb
+     * rm <name>`, `Sandboxes.delete`).
+     */
+        class AlreadyExists(message: String) : CuaException(message)
 
 
     companion object ErrorHandler : UniffiRustCallStatusErrorHandler<CuaException> {
@@ -37603,6 +37745,7 @@ public object FfiConverterTypeCuaError : FfiConverterRustBuffer<CuaException> {
             22 -> CuaException.ImageNotPublished(FfiConverterString.read(buf))
             23 -> CuaException.Cancelled(FfiConverterString.read(buf))
             24 -> CuaException.Cloud(FfiConverterString.read(buf))
+            25 -> CuaException.AlreadyExists(FfiConverterString.read(buf))
             else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
         }
 
@@ -37708,6 +37851,10 @@ public object FfiConverterTypeCuaError : FfiConverterRustBuffer<CuaException> {
             }
             is CuaException.Cloud -> {
                 buf.putInt(24)
+                Unit
+            }
+            is CuaException.AlreadyExists -> {
+                buf.putInt(25)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
@@ -42800,6 +42947,32 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
 
 
         /**
+         * Silences [`enable_output`] again.
+         */ fun `disableOutput`()
+        =
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cua_sdk_fn_func_disable_output(
+
+        _status)
+}
+
+
+
+        /**
+         * Prints what creates are doing to stderr, one plain line per step (the
+         * lines `cua sandbox create` shows on a terminal), until
+         * [`disable_output`]. The SDK is silent by default.
+         */ fun `enableOutput`()
+        =
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cua_sdk_fn_func_enable_output(
+
+        _status)
+}
+
+
+
+        /**
          * Parses a sandbox ref: `local:<name>`, `cloud:<name>`,
          * `direct:<host:port>`, `relay:<machine-id>`, a legacy spelling
          * (`space://cloud/<name>`, `url:<addr>`, a URL), or a bare name.
@@ -43222,6 +43395,21 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
         _status)
 }
 
+
+
+        /**
+         * [`report_of`] for bindings: the variant name and the error's text in,
+         * the report out. A hint is always one sentence; a message never carries a
+         * source path or a Rust debug struct.
+         */ fun `errorReport`(`variant`: kotlin.String, `message`: kotlin.String): ErrorReport {
+            return FfiConverterTypeErrorReport.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cua_sdk_fn_func_error_report(
+
+        FfiConverterString.lower(`variant`),FfiConverterString.lower(`message`),_status)
+}
+    )
+    }
 
 
 

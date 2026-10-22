@@ -48,3 +48,33 @@ def test_large_trace_disk_index(large_bundle):
             )
     finally:
         tracemalloc.stop()
+
+
+@pytest.mark.filterwarnings("ignore:datetime.datetime.utcnow:DeprecationWarning")
+def test_disk_only_producer_does_not_retain_attachment_registry(tmp_path):
+    from cua_bench.tracing import Tracing
+
+    source = tmp_path / "evidence"
+    source.write_bytes(b"synthetic")
+    with TraceBundleWriter(tmp_path / "bundle") as writer:
+        trace = Tracing(None, bundle_writer=writer, retain_rows=False)
+        trace.start("long-session")
+        # Warm imports and serializer caches before measuring retained growth.
+        ref = writer.add_attachment(source)
+        trace.record("evidence", {}, attachments=[ref])
+        tracemalloc.start()
+        try:
+            for _ in range(3000):
+                ref = writer.add_attachment(source)
+                trace.record("evidence", {}, attachments=[ref])
+            assert trace._rows == []
+            current, peak = tracemalloc.get_traced_memory()
+            assert current < 512 * 1024
+            assert peak < 1024 * 1024
+        finally:
+            tracemalloc.stop()
+    with TraceBundleReader(writer.path) as reader:
+        assert reader.status()["total"] == 3001
+        last = reader.event(3000)["attachments"][0]
+        with reader.attachment(last["id"])[0] as handle:
+            assert handle.read() == b"synthetic"

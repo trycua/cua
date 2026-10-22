@@ -66,6 +66,12 @@ this option does not capture arbitrary human input or install a native collector
 For task and dataset runners, `cb run ./tasks/example --live-trace` writes
 `task_<variant>_bundle` inside each episode output directory. Existing dataset and
 ATIF exports remain enabled, so these runs still retain legacy rows in memory.
+Use `cb run ./tasks/example --trace-only` for a disk-only bundle instead. It
+disables both legacy dataset and ATIF exports explicitly, while task results and
+agent logs continue normally. It does not bound memory held by an agent or task.
+The default bundle quota remains 1 GiB; quota or recording failures are visible
+and mark the bundle failed. `AgentOptions(trace_only=True)` provides the same
+contract to Python runners and refuses `save_pngs` or `filter_events` export options.
 The bundle closes on scope exit, including failure and cancellation. Closing the
 viewer never stops the task or finalizes its bundle.
 
@@ -100,7 +106,8 @@ Partial trailing lines are withheld; complete corrupt lines produce an error.
 
 For long captures, construct `Tracing` with `retain_rows=False` and a bundle
 writer to avoid the legacy in-memory dataset. Dataset export is unavailable in
-that mode. Existing environments can use `with env.tracing.bundle(path)` around
+that mode, including after leaving a disk-only scope: it refuses until `start()`
+begins a fresh, fully retained trajectory. No partial legacy export is produced. Existing environments can use `with env.tracing.bundle(path)` around
 the runner lifecycle; the context manager restores the recorder on exit.
 
 Existing recorder calls and dataset exports retain their five-column schema.
@@ -112,6 +119,11 @@ keeps prior journal events with distinct sequences.
 Redact sensitive information before recording. The attachment importer accepts
 regular files, enforces a 100 MiB per-file limit and a configurable bundle quota
 (default 1 GiB), and the server verifies attachment bytes before serving them.
+Set `TraceBundleWriter(path, max_attachment=512 * 1024**2, quota=4 * 1024**3)`
+to import larger evidence. `Tracing.bundle()` forwards these writer options.
+Per-file imports have a hard ceiling of 4 GiB; journal and imported files count
+toward the configured quota. The writer uses a disposable disk registry for
+attachment identities rather than retaining one Python object per attachment.
 The local viewer uses a temporary read capability. Open it from the CLI rather
 than reusing a browser URL whose fragment has been cleared.
 
@@ -135,8 +147,48 @@ journal, loopback and browser CI lanes; a configured lane is not a passing resul
 Native OS/device collectors remain outside this contribution. Attachment directories
 must be locally controlled: the viewer validates managed IDs, regular files and
 content hashes, but does not isolate a hostile process with the same account's
-filesystem privileges. Browser downloads use a blob bounded by the 100 MiB
-attachment limit. Previews show at most 256 KiB of text and 1,000 ARIA bounds.
+filesystem privileges.
+
+Downloads go directly to the browser download manager, without a whole-file
+JavaScript Blob. The viewer independently defaults to 100 MiB per download;
+`cb trace view ./capture --follow --max-download-mib 512` raises this to 512 MiB.
+The supported range is 1–4096 MiB. Raising the viewer limit does not change the
+writer quota. Every transfer first creates a verified temporary disk snapshot,
+then streams 64 KiB chunks. Budget up to two files at the configured limit in
+temporary storage per viewer; at most two transfers run at once. Hashing a large
+file delays the start of its download. Range/resume downloads are not supported.
+
+The browser exchanges its viewer capability for a single-use download URL that
+expires in 60 seconds, with at most 16 pending URLs. It authorizes only one
+managed attachment. URLs are not logged and responses use `no-store`,
+`no-referrer`, forced download and `nosniff`. Expired, busy or failed downloads
+can be retried with a fresh click. Other private routes still require the viewer
+capability header. Previews return at most 256 KiB of text; image previews are
+limited to 8 MiB compressed bytes. Larger images and active content are
+download-only. ARIA overlays remain limited to 1,000 bounds.
+
+## Navigate related evidence
+
+Supply `context.correlations` explicitly on related actions, requests and
+platform-trace artifact events. Each of at most 32 entries has four nonempty
+strings (maximum 256 characters each): `namespace`, `kind`, `id`, and `provenance`.
+For example:
+
+```python skip="no-runner"
+link = {"namespace": "checkout", "kind": "request", "id": "request-1",
+        "provenance": "my-redacted-collector"}
+trace.record("network.request", {}, context={"correlations": [link]})
+trace.record("platform.trace", {}, context={"correlations": [link]}, attachments=[evidence])
+```
+
+The **Related evidence** list matches all four values within the same trajectory
+and bundle. It pages 100 events at a time and follows the selected ordering and
+pause cutoff. Selecting a related event opens its payload and attachment list,
+including when that event lives on another main-list page. Sorting, late arrivals
+and reconnect preserve the selected event identity. Inspect the displayed context
+for the supplied provenance; it is a collector assertion, not verified causation.
+Payload keys such as `action_id`, timestamps, filenames or URLs do not create links.
+The synthetic example demonstrates the contract; real collectors stay outside Bench.
 
 ## Tests
 

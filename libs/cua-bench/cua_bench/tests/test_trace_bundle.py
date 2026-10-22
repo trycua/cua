@@ -344,3 +344,313 @@ def test_live_example_with_non_utf8_parent_locale(tmp_path):
         assert reader.status()["total"] == 4
         assert reader.event(2)["data"]["payload"]["arguments"]["label"] == 'Demo <form> "✓"'
         assert [e["sequence"] for e in reader.page(order="observed")["events"]] == [0, 3, 2, 1]
+
+
+@pytest.mark.parametrize("save_pngs", [False, True])
+def test_disk_only_export_refuses_even_after_scope(tmp_path, save_pngs):
+    trace = Tracing(None)
+    trace.start("before")
+    trace.record("before", {})
+    with trace.bundle(tmp_path / "bundle", retain_rows=False):
+        trace.record("disk only", {})
+    with pytest.raises(RuntimeError, match="entire trajectory"):
+        trace.save_to_disk(str(tmp_path / "export"), save_pngs=save_pngs)
+    assert not (tmp_path / "export").exists()
+    trace.start("fresh")
+    trace.record("new", {})
+    assert len(trace.dataset) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["success", "failure", "cancel"])
+async def test_disk_only_episode_lifecycle(tmp_path, outcome):
+    import asyncio
+    from types import SimpleNamespace
+    from cua_bench.runner.episode import AgentOptions, run_episode
+
+    trace = Tracing(None)
+
+    async def reset(**kwargs):
+        trace.record("setup", {})
+        return None, SimpleNamespace(description="fixture")
+
+    async def solve(*args):
+        trace.record("action", {})
+        assert trace._rows == []
+        if outcome == "cancel":
+            raise asyncio.CancelledError()
+        if outcome == "failure":
+            raise RuntimeError("fixture failure")
+
+    env = SimpleNamespace(
+        tracing=trace,
+        reset=reset,
+        session=SimpleNamespace(_cb_no_screen=True),
+        solve_task_fn=solve,
+        evaluate_task_fn=None,
+    )
+    call = run_episode(env, 0, AgentOptions(trace_only=True), tmp_path)
+    if outcome == "success":
+        result = await call
+        assert result.extra["trace"] == {
+            "format": "bundle",
+            "legacy_exports": False,
+            "path": "task_0_bundle",
+            "state": "completed",
+        }
+    else:
+        with pytest.raises(asyncio.CancelledError if outcome == "cancel" else RuntimeError):
+            await call
+    assert trace._rows == [] and trace.bundle_writer is None and trace.retain_rows
+    assert not (tmp_path / "task_0_trace").exists()
+    assert not (tmp_path / "trajectory.json").exists()
+    with TraceBundleReader(tmp_path / "task_0_bundle") as reader:
+        assert reader.status()["state"] == ("completed" if outcome == "success" else "failed")
+        assert reader.event(1)["event_name"] == "action"
+
+
+@pytest.mark.asyncio
+async def test_disk_only_rejects_export_options_before_start(tmp_path):
+    from types import SimpleNamespace
+    from cua_bench.runner.episode import AgentOptions, run_episode
+
+    with pytest.raises(
+        ValueError, match="trace_only cannot be combined with legacy export options"
+    ):
+        await run_episode(
+            SimpleNamespace(), 0, AgentOptions(trace_only=True, save_pngs=True), tmp_path
+        )
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_related_evidence_explicit_provenance_and_watermark(tmp_path):
+    correlation = {
+        "namespace": "fixture",
+        "kind": "request",
+        "id": "req-1",
+        "provenance": "collector-1",
+    }
+    with TraceBundleWriter(tmp_path / "bundle") as writer:
+        trace = Tracing(None, bundle_writer=writer, retain_rows=False)
+        trace.start("one")
+        trace.record("action", {}, context={"correlations": [correlation]})
+        for i in range(105):
+            trace.record(f"evidence-{i}", {}, context={"correlations": [correlation]})
+        trace.record(
+            "unrelated source",
+            {},
+            context={"correlations": [{**correlation, "provenance": "other"}]},
+        )
+        trace.record("payload only", {"request_id": "req-1"})
+        trace.start("another trajectory")
+        trace.record("unrelated trajectory", {}, context={"correlations": [correlation]})
+        with TraceBundleReader(writer.path) as reader:
+            first = reader.related(0, through=105)
+            assert first["total"] == 105 and len(first["events"]) == 100
+            assert [e["sequence"] for e in reader.related(0, page=1)["events"]] == list(
+                range(101, 106)
+            )
+            trace.start("one")
+            trace.record(
+                "late trace artifact",
+                {},
+                context={
+                    "correlations": [correlation],
+                    "clock_domain": "fixture",
+                    "aligned_at": "2026-01-01T00:00:00Z",
+                },
+            )
+            reader.refresh()
+            assert reader.related(0, through=105) == first
+            assert (
+                reader.related(0, order="observed")["events"][0]["event_name"]
+                == "late trace artifact"
+            )
+        with serve_bundle(writer.path, follow=True) as url:
+            with get(url, "/related?sequence=0&through=105&page=1") as response:
+                assert len(json.load(response)["events"]) == 5
+            with pytest.raises(HTTPError) as error:
+                get(url, "/related?sequence=106&through=105")
+            assert error.value.code == 409
+
+
+@pytest.mark.parametrize(
+    "correlations", [{}, [dict(id="x")], [dict(namespace="n", kind="k", id="x", provenance="")]]
+)
+def test_invalid_correlation_refuses_before_append(tmp_path, correlations):
+    with TraceBundleWriter(tmp_path / "bundle") as writer:
+        with pytest.raises(ValueError, match="correlation"):
+            record(writer, context={"correlations": correlations})
+        assert writer.sequence == 0
+
+
+def test_download_ticket_authorization_preview_and_integrity(tmp_path, monkeypatch):
+    from cua_bench import trace_live_viewer
+
+    source = tmp_path / "text"
+    source.write_bytes(b"<script>inert</script>" + b"x" * 300000)
+    with TraceBundleWriter(tmp_path / "bundle") as writer:
+        ref = writer.add_attachment(source, media_type="text/plain")
+        record(writer, attachments=[ref])
+        with serve_bundle(writer.path) as url:
+            with pytest.raises(HTTPError) as error:
+                get(url, "/download-ticket?id=" + ref["id"], authenticated=False)
+            assert error.value.code == 403
+            with get(url, "/preview/" + ref["id"]) as response:
+                assert len(response.read()) == 256 * 1024
+            with get(url, "/download-ticket?id=" + ref["id"]) as response:
+                path = json.load(response)["url"]
+            with get(url, path, authenticated=False) as response:
+                assert response.read() == source.read_bytes()
+                assert response.headers["Content-Type"] == "application/octet-stream"
+                assert response.headers["X-Content-Type-Options"] == "nosniff"
+            with pytest.raises(HTTPError) as error:
+                get(url, path, authenticated=False)
+            assert error.value.code == 403
+            with get(url, "/download-ticket?id=" + ref["id"]) as response:
+                path = json.load(response)["url"]
+            now = trace_live_viewer.time.monotonic()
+            with monkeypatch.context() as scoped:
+                scoped.setattr(trace_live_viewer.time, "monotonic", lambda: now + 61)
+                with pytest.raises(HTTPError) as error:
+                    get(url, path, authenticated=False)
+                assert error.value.code == 403
+            # Integrity failures never publish content, including through a ticket.
+            (writer.path / "artifacts" / ref["id"]).write_bytes(b"y" * source.stat().st_size)
+            with get(url, "/download-ticket?id=" + ref["id"]) as response:
+                path = json.load(response)["url"]
+            with pytest.raises(HTTPError) as error:
+                get(url, path, authenticated=False)
+            assert error.value.code == 409
+            assert json.load(error.value)["error"] == "attachment digest mismatch"
+
+
+def test_large_download_has_explicit_limits_and_bounded_memory(tmp_path):
+    import hashlib
+    import tracemalloc
+    from cua_bench.trace_bundle import MAX_ATTACHMENT
+
+    source = tmp_path / "large"
+    size = MAX_ATTACHMENT + 1
+    with source.open("wb") as handle:
+        handle.truncate(size)
+    tracemalloc.start()
+    try:
+        with TraceBundleWriter(tmp_path / "bundle", max_attachment=size) as writer:
+            ref = writer.add_attachment(source)
+            record(writer, attachments=[ref])
+            with serve_bundle(writer.path) as url:
+                with pytest.raises(HTTPError) as error:
+                    get(url, "/download-ticket?id=" + ref["id"])
+                assert error.value.code == 409
+                assert json.load(error.value)["error"] == "attachment exceeds viewer download limit"
+            with serve_bundle(writer.path, max_download=size) as url:
+                with get(url, "/download-ticket?id=" + ref["id"]) as response:
+                    path = json.load(response)["url"]
+                digest = hashlib.sha256()
+                count = 0
+                with get(url, path, authenticated=False) as response:
+                    while chunk := response.read(65536):
+                        count += len(chunk)
+                        digest.update(chunk)
+                assert count == size and digest.hexdigest() == ref["sha256"]
+        assert tracemalloc.get_traced_memory()[1] < 16 * 1024**2
+    finally:
+        tracemalloc.stop()
+
+
+def test_ticket_admission_and_preview_type_limits(tmp_path):
+    source = tmp_path / "image"
+    with source.open("wb") as handle:
+        handle.truncate(8 * 1024**2 + 1)
+    with TraceBundleWriter(tmp_path / "bundle") as writer:
+        image = writer.add_attachment(source, media_type="image/png")
+        html = writer.add_attachment(source, media_type="text/html")
+        record(writer, attachments=[image, html])
+        with serve_bundle(writer.path) as url:
+            for ref, message in (
+                (image, "image exceeds 8 MiB preview limit; download instead"),
+                (html, "attachment is download-only"),
+            ):
+                with pytest.raises(HTTPError) as error:
+                    get(url, "/preview/" + ref["id"])
+                assert error.value.code == 409
+                assert json.load(error.value)["error"] == message
+            for _ in range(16):
+                with get(url, "/download-ticket?id=" + image["id"]) as response:
+                    assert json.load(response)["url"].startswith("/download/")
+            with pytest.raises(HTTPError) as error:
+                get(url, "/download-ticket?id=" + image["id"])
+            assert error.value.code == 409
+            assert json.load(error.value)["error"] == "too many pending downloads"
+
+
+def test_transfer_admission_and_disconnect_cleanup(tmp_path, monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    source = tmp_path / "bytes"
+    source.write_bytes(b"evidence")
+    release = threading.Event()
+    arrived = threading.Barrier(3)
+    snapshot = TraceBundleReader.attachment_snapshot
+
+    def hold(self, ref):
+        arrived.wait(timeout=10)
+        assert release.wait(timeout=10)
+        return snapshot(self, ref)
+
+    with TraceBundleWriter(tmp_path / "bundle") as writer:
+        ref = writer.add_attachment(source)
+        record(writer, attachments=[ref])
+        with serve_bundle(writer.path) as url, ThreadPoolExecutor(max_workers=2) as pool:
+            monkeypatch.setattr(TraceBundleReader, "attachment_snapshot", hold)
+            futures = [pool.submit(get, url, "/attachment/" + ref["id"]) for _ in range(2)]
+            try:
+                arrived.wait(timeout=10)
+                with pytest.raises(HTTPError) as error:
+                    get(url, "/attachment/" + ref["id"])
+                assert error.value.code == 429
+                assert (
+                    json.load(error.value)["error"] == "two attachment transfers are already active"
+                )
+                # Polling stays responsive while transfers prepare snapshots.
+                with get(url, "/status") as response:
+                    assert json.load(response)["total"] == 1
+            finally:
+                release.set()
+                for future in futures:
+                    future.result(timeout=10).close()
+            monkeypatch.setattr(TraceBundleReader, "attachment_snapshot", snapshot)
+            with get(url, "/attachment/" + ref["id"]) as response:
+                assert response.read() == b"evidence"
+
+
+@pytest.mark.parametrize(
+    "options", [{"max_attachment": 4 * 1024**3 + 1}, {"quota": float("inf")}, {"quota": 0}]
+)
+def test_invalid_storage_limits_refuse_before_creation(tmp_path, options):
+    with pytest.raises(ValueError, match="invalid attachment limit or bundle quota"):
+        TraceBundleWriter(tmp_path / "bundle", **options)
+    assert not (tmp_path / "bundle").exists()
+
+
+def test_finalization_failure_never_claims_completion(tmp_path, monkeypatch):
+    import os
+
+    writer = TraceBundleWriter(tmp_path / "bundle")
+    trace = record(writer)
+
+    def fail(fd):
+        raise OSError("synthetic fsync failure")
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(os, "fsync", fail)
+        with pytest.raises(OSError, match="synthetic fsync failure"):
+            writer.close()
+    assert writer.closed and writer.journal.closed
+    with TraceBundleReader(writer.path) as reader:
+        assert reader.status()["state"] == "recording"
+        assert reader.status()["total"] == 1
+    with pytest.raises(RuntimeError, match="closed or failed"):
+        trace.record("later", {})

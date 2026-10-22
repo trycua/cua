@@ -148,15 +148,21 @@ def test_interact_live_bundle_and_legacy_export(cli_env, browser, tmp_path):
     assert list(load_from_disk(str(legacy))["event_name"]) == ["reset", "evaluate"]
 
 
-def test_run_live_bundle_keeps_existing_exports(cli_env, tmp_path):
+@pytest.mark.parametrize("mode", ["--live-trace", "--trace-only"])
+def test_run_bundle_export_contract(cli_env, tmp_path, mode):
     from cua_bench.trace_bundle import TraceBundleReader
 
     output = tmp_path / "run"
-    assert run_cb(["run", str(HELLO), "--live-trace", "--output-dir", str(output)]) == 0
+    assert run_cb(["run", str(HELLO), mode, "--output-dir", str(output)]) == 0
     bundles = list(output.rglob("trace.json"))
     assert len(bundles) == 1
     with TraceBundleReader(bundles[0].parent) as reader:
         assert reader.status()["state"] == "completed"
         assert "evaluate" in [event["event_name"] for event in reader.batch()["events"]]
-    assert list(output.rglob("dataset_info.json"))
-    assert list(output.rglob("trajectory.json"))
+    assert bool(list(output.rglob("dataset_info.json"))) == (mode == "--live-trace")
+    assert bool(list(output.rglob("trajectory.json"))) == (mode == "--live-trace")
+    if mode == "--trace-only":
+        import json
+        result = json.loads(next(output.rglob("result.json")).read_text())
+        assert result["extra"]["trace"]["legacy_exports"] is False
+        assert result["extra"]["trace"]["state"] == "completed"

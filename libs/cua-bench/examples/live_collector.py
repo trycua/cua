@@ -2,7 +2,6 @@
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 import time
@@ -30,7 +29,6 @@ def main():
         capture_output=True,
         text=True,
         encoding="utf-8",
-        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
         timeout=30,
     )
     with TraceBundleWriter(output) as writer, TemporaryDirectory() as scratch:
@@ -42,11 +40,21 @@ def main():
         trace = Tracing(None, bundle_writer=writer)
         trace.start("live-collector-example")
         epoch = datetime.now(timezone.utc)
+        action_link = {
+            "namespace": "example",
+            "kind": "action",
+            "id": "submit-1",
+            "provenance": "synthetic-jsonl",
+        }
         trace.record(
             "action",
             {"action_id": "submit-1", "synthetic": True},
             [Image.new("RGB", (320, 180), "navy")],
-            context={"clock_domain": "synthetic", "aligned_at": epoch.isoformat()},
+            context={
+                "clock_domain": "synthetic",
+                "aligned_at": epoch.isoformat(),
+                "correlations": [action_link],
+            },
             attachments=[ref],
         )
         print(f'In another terminal: uv run cb trace view "{output}" --follow', flush=True)
@@ -64,6 +72,7 @@ def main():
                         epoch + timedelta(milliseconds=data["source_timestamp_ms"])
                     ).isoformat(),
                     "action_id": "submit-1",
+                    "correlations": [action_link],
                 },
             )
     print("Recording completed. The bundle remains available for review.")

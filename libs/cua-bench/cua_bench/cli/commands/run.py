@@ -357,11 +357,13 @@ def agent_options(args):
             dump=True,
             max_steps=getattr(args, "max_steps", None),
             live_trace=getattr(args, "live_trace", False),
+            trace_only=getattr(args, "trace_only", False),
         )
     oracle = bool(getattr(args, "oracle", False)) or not (agent_name or import_path)
     return AgentOptions(
         oracle=oracle,
         live_trace=getattr(args, "live_trace", False),
+        trace_only=getattr(args, "trace_only", False),
         agent=None if oracle else agent_name,
         agent_import_path=None if oracle else import_path,
         model=getattr(args, "model", None),

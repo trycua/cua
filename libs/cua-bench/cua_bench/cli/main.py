@@ -132,6 +132,11 @@ def build_parser() -> argparse.ArgumentParser:
             action="store_true",
             help="Also write a live trace bundle for each episode",
         )
+        parser.add_argument(
+            "--trace-only",
+            action="store_true",
+            help="Write only a disk trace bundle; disable legacy dataset and ATIF exports",
+        )
         parser.add_argument("--agent", help="Agent to use for evaluation (e.g., cua-agent)")
         parser.add_argument(
             "--agent-import-path",

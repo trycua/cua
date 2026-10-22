@@ -17,7 +17,70 @@ const nextLine = () => new Promise((resolve) => input.once('line', resolve));
     await page.route('**/*', (route) =>
       new URL(route.request().url()).hostname === '127.0.0.1' ? route.continue() : route.abort()
     );
+    await page.addInitScript(() => {
+      const blob = Response.prototype.blob;
+      Response.prototype.blob = function () {
+        if (!this.url.includes('/preview/'))
+          throw new Error('Whole attachment buffered in browser');
+        return blob.call(this);
+      };
+    });
     await page.goto(process.argv[2]);
+    if (process.argv[3] === 'related') {
+      await page.locator('[data-sequence="0"]').click();
+      await page.waitForFunction(() => document.querySelectorAll('#related button').length === 100);
+      await page.getByRole('button', { name: 'Next related page', exact: true }).click();
+      await page.locator('[data-related-sequence="150"]').click();
+      await page.waitForFunction(
+        () => document.getElementById('selected').textContent === '150 · evidence'
+      );
+      await page.waitForFunction(
+        () => document.getElementById('page').textContent === 'Page 2 of 3'
+      );
+      await page.selectOption('#order', 'observed');
+      await page.waitForFunction(
+        () => document.getElementById('page').textContent === 'Page 1 of 3'
+      );
+      assert.equal(
+        await page.locator('[aria-current="true"]').getAttribute('data-sequence'),
+        '150'
+      );
+      await page.getByRole('button', { name: 'Next page', exact: true }).click();
+      await page.waitForFunction(
+        () => document.getElementById('page').textContent === 'Page 2 of 3'
+      );
+      assert.equal(await page.locator('#selected').innerText(), '150 · evidence');
+      await page.getByRole('button', { name: 'Reconnect / refresh' }).click();
+      await page.waitForFunction(
+        () => document.getElementById('page').textContent === 'Page 1 of 3'
+      );
+      assert.equal(
+        await page.locator('[aria-current="true"]').getAttribute('data-sequence'),
+        '150'
+      );
+      assert.deepEqual(errors, []);
+      console.log('passed');
+      return;
+    }
+    if (process.argv[3] === 'download') {
+      await page.locator('[data-sequence="0"]').click();
+      const ready = page.waitForEvent('download');
+      await page.getByRole('button', { name: 'Download', exact: true }).click();
+      const download = await ready;
+      const fs = require('node:fs'),
+        crypto = require('node:crypto');
+      const digest = crypto.createHash('sha256');
+      let size = 0;
+      for await (const chunk of fs.createReadStream(await download.path())) {
+        size += chunk.length;
+        digest.update(chunk);
+      }
+      assert.equal(size, Number(process.argv[4]));
+      assert.equal(digest.digest('hex'), process.argv[5]);
+      assert.deepEqual(errors, []);
+      console.log('passed');
+      return;
+    }
     if (process.argv[3] === 'large') {
       await page.waitForFunction(() =>
         document.getElementById('count').textContent.includes('100000 events')
@@ -50,6 +113,14 @@ const nextLine = () => new Promise((resolve) => input.once('line', resolve));
     }
     await page.waitForFunction(() => document.querySelectorAll('#events li').length === 2);
     await page.locator('[data-sequence="0"]').click();
+    await page.locator('[data-related-sequence="1"]').click();
+    await page.waitForFunction(
+      () => document.getElementById('selected').textContent === '1 · request'
+    );
+    await page.locator('[data-related-sequence="0"]').click();
+    await page.waitForFunction(
+      () => document.getElementById('selected').textContent === '0 · response'
+    );
     await page.selectOption('#order', 'observed');
     await page.waitForFunction(
       () => document.querySelector('#events button').dataset.sequence === '1'
@@ -101,6 +172,7 @@ const nextLine = () => new Promise((resolve) => input.once('line', resolve));
     );
     assert.ok(Date.now() - appendedAt < 2000, 'Append-to-poll exceeded two seconds');
     assert.equal(await page.locator('#events li').count(), 2);
+    assert.equal(await page.locator('[data-related-sequence="2"]').count(), 0);
     await page.getByRole('button', { name: 'Resume updates' }).click();
     await page.waitForFunction(() => document.querySelectorAll('#events li').length === 3);
     assert.deepEqual(
@@ -110,6 +182,7 @@ const nextLine = () => new Promise((resolve) => input.once('line', resolve));
       ['2', '1', '0']
     );
     assert.equal(await page.locator('#selected').innerText(), '0 · response');
+    await page.locator('[data-related-sequence="2"]').waitFor();
     await page.context().setOffline(true);
     await page.waitForFunction(() =>
       document.getElementById('status').textContent.includes('Disconnected')
@@ -120,6 +193,7 @@ const nextLine = () => new Promise((resolve) => input.once('line', resolve));
       document.getElementById('status').textContent.includes('Following')
     );
     assert.equal(await page.locator('#events li').count(), 3);
+    assert.equal(await page.locator('[data-related-sequence="2"]').count(), 1);
     await page.locator('#dataDetails').evaluate((node) => {
       node.open = false;
     });

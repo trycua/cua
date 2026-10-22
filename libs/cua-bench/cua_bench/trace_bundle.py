@@ -16,7 +16,10 @@ from pathlib import Path
 FORMAT = "cua-bench-trace"
 VERSION = 1
 MAX_EVENT = 1024 * 1024
-MAX_ATTACHMENT = 100 * 1024 * 1024
+MAX_ATTACHMENT = 100 * 1024 * 1024  # default import/download limit
+HARD_MAX_ATTACHMENT = 4 * 1024**3
+MAX_TEXT_PREVIEW = 256 * 1024
+MAX_IMAGE_PREVIEW = 8 * 1024**2
 
 
 def utc_now():
@@ -40,6 +43,21 @@ def validate_context(context):
         if not context.get("clock_domain"):
             raise ValueError("aligned_at requires clock_domain provenance")
         context["aligned_at"] = parsed.astimezone(timezone.utc).isoformat(timespec="milliseconds")
+    correlations = context.get("correlations", [])
+    if not isinstance(correlations, list) or len(correlations) > 32:
+        raise ValueError("correlations must be a list of at most 32 identifiers")
+    for correlation in correlations:
+        if (
+            not isinstance(correlation, dict)
+            or set(correlation) != {"namespace", "kind", "id", "provenance"}
+            or any(
+                not isinstance(value, str) or not 1 <= len(value) <= 256
+                for value in correlation.values()
+            )
+        ):
+            raise ValueError(
+                "correlation requires namespace, kind, id and provenance strings (1-256 characters)"
+            )
     json.dumps(context, allow_nan=False)
     return context
 
@@ -52,21 +70,40 @@ class TraceBundleWriter:
     """
 
     def __init__(self, directory, *, max_attachment=MAX_ATTACHMENT, quota=1024**3):
-        if not 0 < max_attachment <= MAX_ATTACHMENT or quota <= 0:
+        if (
+            type(max_attachment) is not int
+            or type(quota) is not int
+            or not 0 < max_attachment <= HARD_MAX_ATTACHMENT
+            or quota <= 0
+        ):
             raise ValueError("invalid attachment limit or bundle quota")
         self.path = Path(directory).expanduser().resolve()
         self.path.mkdir(parents=True, exist_ok=False)
         (self.path / "artifacts").mkdir()
         self.generation = str(uuid.uuid4())
+        self.created_at = utc_now()
         self.sequence = 0
         self.closed = False
         self.failed = False
         self.max_attachment = max_attachment
         self.quota = quota
         self.used = 0
-        self.attachments = {}
-        self.journal = (self.path / "events.jsonl").open("xb")
-        self._manifest("recording")
+        self._registry_dir = tempfile.TemporaryDirectory(prefix="cua-trace-writer-")
+        self.attachments = None
+        self.journal = None
+        try:
+            self.attachments = sqlite3.connect(Path(self._registry_dir.name) / "registry.sqlite")
+            self.attachments.execute("PRAGMA cache_size=-2048")
+            self.attachments.execute("CREATE TABLE attachments (id TEXT PRIMARY KEY, body TEXT)")
+            self.journal = (self.path / "events.jsonl").open("xb")
+            self._manifest("recording")
+        except BaseException:
+            if self.journal is not None:
+                self.journal.close()
+            if self.attachments is not None:
+                self.attachments.close()
+            self._registry_dir.cleanup()
+            raise
 
     def _manifest(self, state):
         manifest = {
@@ -74,6 +111,13 @@ class TraceBundleWriter:
             "version": VERSION,
             "generation": self.generation,
             "state": state,
+            "created_at": self.created_at,
+            "clock": {"recorded_at": "UTC wall clock", "aligned_at": "collector-supplied UTC"},
+            "limits": {
+                "event_bytes": MAX_EVENT,
+                "attachment_bytes": self.max_attachment,
+                "bundle_bytes": self.quota,
+            },
             "final_sequence": self.sequence - 1 if state == "completed" else None,
         }
         temporary = self.path / "trace.json.tmp"
@@ -142,7 +186,10 @@ class TraceBundleWriter:
             "sha256": digest.hexdigest(),
         }
         self.used += size
-        self.attachments[artifact_id] = descriptor
+        self.attachments.execute(
+            "INSERT INTO attachments VALUES (?, ?)", (artifact_id, json.dumps(descriptor))
+        )
+        self.attachments.commit()
         return dict(descriptor)
 
     def append(self, row, *, context=None, attachments=None):
@@ -150,7 +197,14 @@ class TraceBundleWriter:
         context = validate_context(context)
         refs = list(attachments or [])
         for ref in refs:
-            if not isinstance(ref, dict) or self.attachments.get(ref.get("id")) != ref:
+            stored = (
+                self.attachments.execute(
+                    "SELECT body FROM attachments WHERE id=?", (ref.get("id"),)
+                ).fetchone()
+                if isinstance(ref, dict)
+                else None
+            )
+            if not stored or json.loads(stored[0]) != ref:
                 raise ValueError("attachment does not belong to this writer")
         event = {
             "sequence": self.sequence,
@@ -188,6 +242,8 @@ class TraceBundleWriter:
         finally:
             self.closed = True
             self.journal.close()
+            self.attachments.close()
+            self._registry_dir.cleanup()
 
     def __enter__(self):
         return self
@@ -217,6 +273,8 @@ class TraceBundleReader:
                 unaligned INTEGER, domain TEXT, has_images INTEGER, body TEXT);
             CREATE INDEX observation_order ON events(unaligned, aligned, domain, sequence);
             CREATE TABLE attachments (id TEXT PRIMARY KEY, body TEXT);
+            CREATE TABLE correlations (sequence INTEGER, identity TEXT, PRIMARY KEY(sequence, identity));
+            CREATE INDEX correlation_identity ON correlations(identity, sequence);
         """
         )
         try:
@@ -284,7 +342,7 @@ class TraceBundleReader:
                         raise ValueError("invalid attachment identity")
                     if (
                         not isinstance(ref.get("size"), int)
-                        or not 0 <= ref["size"] <= MAX_ATTACHMENT
+                        or not 0 <= ref["size"] <= HARD_MAX_ATTACHMENT
                         or not isinstance(ref.get("name"), str)
                         or not isinstance(ref.get("media_type"), str)
                         or not isinstance(ref.get("sha256"), str)
@@ -321,6 +379,19 @@ class TraceBundleReader:
                         json.dumps(event),
                     ),
                 )
+                for correlation in context.get("correlations", []):
+                    identity = json.dumps(
+                        [
+                            event["trajectory_id"],
+                            *[
+                                correlation[key]
+                                for key in ("namespace", "kind", "id", "provenance")
+                            ],
+                        ]
+                    )
+                    self.db.execute(
+                        "INSERT OR IGNORE INTO correlations VALUES (?, ?)", (self.count, identity)
+                    )
                 self.count += 1
                 self.offset = handle.tell()
         self.db.commit()
@@ -420,6 +491,38 @@ class TraceBundleReader:
         event["snapshot_boxes"] = snapshot_boxes(event["data"])
         return event
 
+    def related(self, sequence, *, order="arrival", through=None, page=0):
+        """Exact supplied identifiers in one trajectory; never timestamp inference."""
+        through = self.count - 1 if through is None else through
+        if order not in ("arrival", "observed") or page < 0:
+            raise ValueError("invalid related evidence page")
+        if not 0 <= sequence <= through < self.count:
+            raise ValueError("unknown event")
+        ordering = (
+            "e.sequence" if order == "arrival" else "e.unaligned, e.aligned, e.domain, e.sequence"
+        )
+        match = """FROM events e WHERE e.sequence<=? AND e.sequence!=? AND e.sequence IN
+            (SELECT c.sequence FROM correlations c JOIN correlations selected
+             ON c.identity=selected.identity WHERE selected.sequence=?)"""
+        args = (through, sequence, sequence)
+        total = self.db.execute("SELECT count(*) " + match, args).fetchone()[0]
+        page = min(page, max(0, (total - 1) // 100))
+        records = self.db.execute(
+            "SELECT e.body " + match + f" ORDER BY {ordering} LIMIT 100 OFFSET ?",
+            (*args, page * 100),
+        )
+        events = []
+        for (body,) in records:
+            event = json.loads(body)
+            events.append({"sequence": event["sequence"], "event_name": event["event_name"][:512]})
+        return {
+            "events": events,
+            "total": total,
+            "page": page,
+            "cursor": through,
+            "generation": self.generation,
+        }
+
     def image_neighbor(self, sequence, *, direction, order="arrival", through=None):
         if direction not in (-1, 1) or order not in ("arrival", "observed"):
             raise ValueError("invalid image navigation")
@@ -432,12 +535,22 @@ class TraceBundleReader:
         ).fetchone()
         return self.event(rows[0]) if rows else None
 
-    def attachment(self, artifact_id):
-        """Return validated bytes in a temporary file; callers must close it."""
+    def attachment_ref(self, artifact_id):
         row = self.db.execute("SELECT body FROM attachments WHERE id=?", (artifact_id,)).fetchone()
         if row is None:
             raise ValueError("unknown attachment")
-        ref = json.loads(row[0])
+        return json.loads(row[0])
+
+    def attachment(self, artifact_id, *, max_size=MAX_ATTACHMENT):
+        """Return validated bytes in a temporary file; callers must close it."""
+        ref = self.attachment_ref(artifact_id)
+        if ref["size"] > max_size:
+            raise ValueError("attachment exceeds viewer download limit")
+        return self.attachment_snapshot(ref)
+
+    def attachment_snapshot(self, ref):
+        """Copy an indexed descriptor into verified temporary storage, without using SQLite."""
+        artifact_id = ref["id"]
         root = self.path / "artifacts"
         source = root / artifact_id
         if root.is_symlink() or source.is_symlink() or not source.is_file():

@@ -19,6 +19,7 @@ from PIL import Image
 from .test_trace_bundle_scale import large_bundle as _large_bundle
 
 large_bundle = _large_bundle
+CORRELATION = {"namespace": "fixture", "kind": "request", "id": "req-1", "provenance": "synthetic"}
 
 
 @pytest.mark.skipif(
@@ -43,14 +44,22 @@ def test_live_browser(tmp_path):
                     ]
                 },
             },
-            context={"clock_domain": "fixture", "aligned_at": "2026-01-01T00:00:03Z"},
+            context={
+                "clock_domain": "fixture",
+                "aligned_at": "2026-01-01T00:00:03Z",
+                "correlations": [CORRELATION],
+            },
             data_images=[Image.new("RGB", (32, 24), "navy")],
             attachments=[ref],
         )
         trace.record(
             "request",
             {},
-            context={"clock_domain": "fixture", "aligned_at": "2026-01-01T00:00:02Z"},
+            context={
+                "clock_domain": "fixture",
+                "aligned_at": "2026-01-01T00:00:02Z",
+                "correlations": [CORRELATION],
+            },
             data_images=[Image.new("RGB", (16, 16), "green")],
         )
         with serve_bundle(writer.path, follow=True) as url:
@@ -86,6 +95,7 @@ def test_live_browser(tmp_path):
                             context={
                                 "clock_domain": "fixture",
                                 "aligned_at": "2026-01-01T00:00:01Z",
+                                "correlations": [CORRELATION],
                             },
                         )
                         process.stdin.write("ok\n")
@@ -132,3 +142,66 @@ def test_large_browser(large_bundle):
         assert result.returncode == 0, result.stdout + result.stderr
         assert "passed" in result.stdout
         print(result.stdout)
+
+
+@pytest.mark.skipif(
+    os.environ.get("CUA_BENCH_BROWSER_TESTS") != "1", reason="opt-in browser acceptance"
+)
+def test_large_native_browser_download(tmp_path):
+    from cua_bench.trace_bundle import MAX_ATTACHMENT
+
+    size = MAX_ATTACHMENT + 1
+    source = tmp_path / "large.bin"
+    with source.open("wb") as handle:
+        handle.truncate(size)
+    with TraceBundleWriter(tmp_path / "bundle", max_attachment=size) as writer:
+        ref = writer.add_attachment(source)
+        trace = Tracing(None, bundle_writer=writer, retain_rows=False)
+        trace.start()
+        trace.record("evidence", {}, attachments=[ref])
+    with serve_bundle(writer.path, max_download=size) as url:
+        result = subprocess.run(
+            [
+                os.environ.get("CUA_BENCH_NODE", "node"),
+                str(Path(__file__).parent / "browser" / "live_viewer.cjs"),
+                url,
+                "download",
+                str(size),
+                ref["sha256"],
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "passed" in result.stdout
+
+
+@pytest.mark.skipif(
+    os.environ.get("CUA_BENCH_BROWSER_TESTS") != "1", reason="opt-in browser acceptance"
+)
+def test_related_browser_pagination(tmp_path):
+    with TraceBundleWriter(tmp_path / "bundle") as writer:
+        trace = Tracing(None, bundle_writer=writer, retain_rows=False)
+        trace.start("related")
+        for i in range(205):
+            context = {"correlations": [CORRELATION]}
+            if i == 150:
+                context.update(clock_domain="fixture", aligned_at="2026-01-01T00:00:00Z")
+            trace.record("evidence", {}, context=context)
+    with serve_bundle(writer.path) as url:
+        result = subprocess.run(
+            [
+                os.environ.get("CUA_BENCH_NODE", "node"),
+                str(Path(__file__).parent / "browser" / "live_viewer.cjs"),
+                url,
+                "related",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "passed" in result.stdout

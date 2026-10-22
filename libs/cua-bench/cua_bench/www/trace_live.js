@@ -19,6 +19,8 @@ let cursor = -1,
   previewIndex = 0,
   previewEpoch = 0;
 const pageSize = 100;
+let relatedPage = 0,
+  relatedEpoch = 0;
 let pageEpoch = 0,
   selectionEpoch = 0,
   displayedCursor = -1,
@@ -50,6 +52,7 @@ async function refreshPage(keepSelection = false) {
   total = batch.total;
   page = batch.page;
   render();
+  await refreshRelated();
 }
 function render() {
   const list = $('events');
@@ -93,7 +96,36 @@ async function run(action) {
     $('error').textContent = error.message;
   }
 }
+async function refreshRelated() {
+  if (selected === null) return;
+  const epoch = ++relatedEpoch;
+  const response = await request('/related?' + query({ sequence: selected, page: relatedPage }));
+  const batch = await response.json();
+  if (epoch !== relatedEpoch) return;
+  relatedPage = batch.page;
+  $('related').replaceChildren();
+  for (const event of batch.events) {
+    const button = document.createElement('button');
+    button.dataset.relatedSequence = event.sequence;
+    button.textContent = `${event.sequence} · ${event.event_name}`;
+    button.onclick = () =>
+      run(async () => {
+        const epoch = ++selectionEpoch;
+        const response = await request('/event?' + query({ sequence: event.sequence }));
+        const full = await response.json();
+        if (epoch !== selectionEpoch) return;
+        select(full);
+        await refreshPage(true);
+      });
+    $('related').append(button);
+  }
+  $('relatedPage').textContent = `${batch.total} related · page ${batch.page + 1}`;
+  $('relatedPrevious').disabled = batch.page === 0;
+  $('relatedNext').disabled = (batch.page + 1) * 100 >= batch.total;
+}
 function select(event) {
+  relatedEpoch++;
+  relatedPage = 0;
   selected = event.sequence;
   $('selected').textContent = `${event.sequence} · ${event.event_name}`;
   $('context').textContent = JSON.stringify(
@@ -102,6 +134,8 @@ function select(event) {
     2
   );
   $('data').textContent = JSON.stringify(event.data, null, 2);
+  $('related').replaceChildren();
+  run(refreshRelated);
   $('attachments').replaceChildren();
   $('attachmentError').textContent = '';
   for (const ref of [...event.images, ...event.attachments]) {
@@ -112,7 +146,7 @@ function select(event) {
     row.append(title);
     const isImage = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(ref.media_type);
     const isText = ref.media_type === 'application/json' || ref.media_type === 'text/plain';
-    if (isImage || isText) {
+    if ((isImage && ref.size <= 8 * 1024 ** 2) || isText) {
       const preview = document.createElement('button');
       preview.textContent = 'Preview';
       preview.onclick = () => {
@@ -134,17 +168,17 @@ async function attachment(ref, download, isImage) {
   const epoch = ++previewEpoch;
   try {
     $('attachmentError').textContent = '';
-    const response = await request(`/attachment/${encodeURIComponent(ref.id)}`);
-    const blob = await response.blob();
     if (download) {
-      const url = URL.createObjectURL(blob);
+      const response = await request('/download-ticket?' + new URLSearchParams({ id: ref.id }));
+      const { url } = await response.json();
       const link = document.createElement('a');
       link.href = url;
       link.download = ref.name;
       link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
       return;
     }
+    const response = await request(`/preview/${encodeURIComponent(ref.id)}`);
+    const blob = await response.blob();
     if (epoch !== previewEpoch) return;
     if (previewURL) URL.revokeObjectURL(previewURL);
     $('imageNavigation').hidden = !isImage || previewIndex < 0;
@@ -158,7 +192,7 @@ async function attachment(ref, download, isImage) {
       $('imagePreview').onload = drawOverlays;
     } else
       $('textPreview').textContent =
-        (await blob.slice(0, 262144).text()) + (blob.size > 262144 ? '\n[Preview truncated]' : '');
+        (await blob.slice(0, 262144).text()) + (ref.size > 262144 ? '\n[Preview truncated]' : '');
     if (!$('preview').open) $('preview').showModal();
   } catch (error) {
     $('attachmentError').textContent = error.message;
@@ -236,6 +270,16 @@ async function poll(force = false) {
     }
   }
 }
+$('relatedPrevious').onclick = () =>
+  run(async () => {
+    relatedPage--;
+    await refreshRelated();
+  });
+$('relatedNext').onclick = () =>
+  run(async () => {
+    relatedPage++;
+    await refreshRelated();
+  });
 $('order').onchange = () => run(() => refreshPage(true));
 $('previous').onclick = () =>
   run(async () => {
@@ -251,7 +295,9 @@ $('pause').onclick = () => {
   paused = !paused;
   if (paused) {
     pageEpoch++;
+    relatedEpoch++;
     cursor = displayedCursor;
+    run(refreshRelated);
   }
   $('pause').textContent = paused ? 'Resume updates' : 'Pause updates';
   if (!paused) poll(true);

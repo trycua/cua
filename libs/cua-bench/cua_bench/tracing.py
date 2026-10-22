@@ -31,6 +31,7 @@ class Tracing:
         self._trajectory_id: Optional[str] = None
         self._rows: List[Dict[str, Any]] = []
         self._dataset: Optional[Dataset] = None
+        self._rows_complete = True
 
     # --- Lifecycle ---
     def start(self, trajectory_id: Optional[str] = None) -> str:
@@ -41,10 +42,11 @@ class Tracing:
         self._trajectory_id = trajectory_id or str(uuid.uuid4())
         self._rows = []
         self._dataset = None
+        self._rows_complete = True
         return self._trajectory_id
 
     @contextmanager
-    def bundle(self, directory, *, retain_rows=True):
+    def bundle(self, directory, *, retain_rows=True, **writer_options):
         """Attach a live journal for a runner scope; finalize on success or failure.
 
         The default also retains rows for existing dataset/ATIF exports. Opt out
@@ -55,7 +57,7 @@ class Tracing:
         if self.bundle_writer is not None:
             raise RuntimeError("a trace bundle is already active")
         previous = self.retain_rows
-        with TraceBundleWriter(directory) as writer:
+        with TraceBundleWriter(directory, **writer_options) as writer:
             self.bundle_writer = writer
             self.retain_rows = retain_rows
             try:
@@ -101,6 +103,8 @@ class Tracing:
             raise ValueError("context and attachments require a bundle_writer")
         if self.retain_rows:
             self._rows.append(row)
+        else:
+            self._rows_complete = False
         # Invalidate cached dataset; it can be rebuilt lazily
         self._dataset = None
 
@@ -116,8 +120,7 @@ class Tracing:
           - trajectory_id: str
           - timestamp: str
         """
-        if not self.retain_rows:
-            raise RuntimeError("dataset export requires retain_rows=True")
+        self._require_complete_rows()
         if self._dataset is None:
             feats = Features(
                 {
@@ -149,6 +152,10 @@ class Tracing:
             self._dataset = Dataset.from_list(rows, features=feats)
         return self._dataset
 
+    def _require_complete_rows(self):
+        if not self.retain_rows or not self._rows_complete:
+            raise RuntimeError("dataset export requires retain_rows=True for the entire trajectory")
+
     # --- Persistence ---
     def save_to_disk(
         self,
@@ -157,6 +164,7 @@ class Tracing:
         image_dir: Optional[str] = None,
         filter_events: Optional[List[str]] = None,
     ) -> None:
+        self._require_complete_rows()
         if save_pngs:
             self._save_to_disk_with_separate_pngs(output_dir, image_dir, filter_events)
         else:

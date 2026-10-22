@@ -44,6 +44,17 @@
        "aliases": [],
        "default_value": false,
        "env": null,
+       "help": "Write only a disk trace bundle; disable legacy dataset and ATIF exports",
+       "hidden": false,
+       "name": "trace-only",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
        "help": "Run the oracle solution (the default when no agent is given)",
        "hidden": false,
        "name": "oracle",
@@ -508,6 +519,17 @@
        "help": "Also write a live trace bundle for each episode",
        "hidden": false,
        "name": "live-trace",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Write only a disk trace bundle; disable legacy dataset and ATIF exports",
+       "hidden": false,
+       "name": "trace-only",
        "repeatable": false,
        "short_name": null,
        "takes_value": false
@@ -2285,7 +2307,24 @@
      ],
      "hidden": false,
      "name": "view",
-     "options": [],
+     "options": [
+      {
+       "aliases": [],
+       "default_value": "100",
+       "env": null,
+       "help": "Per-attachment viewer download limit in MiB (1-4096; default: 100)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "max-download-mib",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": null
+      }
+     ],
      "subcommands": []
     },
     {

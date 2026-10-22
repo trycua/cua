@@ -116,4 +116,4 @@ jobs:
           echo "CUA_BENCH_PLAYWRIGHT=$RUNNER_TEMP/trace-browser/node_modules/playwright" >> "$GITHUB_ENV"
           node "$RUNNER_TEMP/trace-browser/node_modules/playwright/cli.js" install --with-deps chromium
       - name: Journal, loopback, scale and browser contracts
-        run: uv run --frozen pytest -q -s cua_bench/tests/test_trace_bundle.py cua_bench/tests/test_trace_bundle_scale.py cua_bench/tests/test_trace_bundle_browser.py
+        run: uv run --frozen pytest -q -s cua_bench/tests/test_trace_bundle.py cua_bench/tests/test_trace_bundle_scale.py cua_bench/tests/test_trace_bundle_browser.py cua_bench/tests/test_external_collector.py cua_bench/tests/test_interact_display.py

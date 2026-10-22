@@ -30,6 +30,7 @@ class AgentOptions:
     live_trace: bool = False
     save_pngs: bool = False
     filter_events: Optional[list[str]] = None
+    trace_only: bool = False  # disk bundle only; no legacy dataset or ATIF export
 
     @property
     def label(self) -> str:
@@ -139,13 +140,20 @@ async def run_episode(
     ``session`` is a connected desktop session; ``None`` opens the task's
     sandbox through ``env.reset`` (and ``env.close`` releases it).
     """
+    if opts.trace_only and (opts.save_pngs or opts.filter_events is not None):
+        raise ValueError("trace_only cannot be combined with legacy export options")
     scope = (
-        env.tracing.bundle(output_dir / f"task_{task_index}_bundle")
-        if opts.live_trace
+        env.tracing.bundle(
+            output_dir / f"task_{task_index}_bundle", retain_rows=not opts.trace_only
+        )
+        if opts.live_trace or opts.trace_only
         else nullcontext()
     )
-    with scope:
-        return await _run_episode(env, task_index, opts, output_dir, session=session)
+    with scope as writer:
+        result = await _run_episode(env, task_index, opts, output_dir, session=session)
+    if opts.trace_only:
+        result.extra["trace"]["state"] = "failed" if writer.failed else "completed"
+    return result
 
 
 async def _run_episode(env, task_index, opts, output_dir, *, session=None):
@@ -242,6 +250,14 @@ async def _run_episode(env, task_index, opts, output_dir, *, session=None):
         result.reward = reward_of(evaluation)
         print(f"✓ Evaluation result: {evaluation}")
         _record(env, "evaluate", {"result": evaluation})
+
+    if opts.trace_only:
+        result.extra["trace"] = {
+            "format": "bundle",
+            "legacy_exports": False,
+            "path": f"task_{task_index}_bundle",
+        }
+        return result
 
     trace_dir = output_dir / f"task_{task_index}_trace"
     try:

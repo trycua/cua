@@ -5,17 +5,28 @@ from __future__ import annotations
 import json
 import secrets
 import threading
+import time
 import webbrowser
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from .trace_bundle import TraceBundleReader
+from .trace_bundle import (
+    TraceBundleReader,
+    MAX_ATTACHMENT,
+    HARD_MAX_ATTACHMENT,
+    MAX_TEXT_PREVIEW,
+    MAX_IMAGE_PREVIEW,
+)
 
 
 @contextmanager
-def serve_bundle(directory, *, follow=False):
+def serve_bundle(directory, *, follow=False, max_download=MAX_ATTACHMENT):
+    if not isinstance(max_download, int) or not 0 < max_download <= HARD_MAX_ATTACHMENT:
+        raise ValueError("viewer download limit must be between 1 byte and 4 GiB")
+    transfers = threading.BoundedSemaphore(2)
+    tickets = {}  # single-use capabilities, bounded to 16 with 60-second expiry
     reader = TraceBundleReader(directory)
     cutoff = None if follow else reader.count - 1
     token = secrets.token_urlsafe(32)
@@ -40,7 +51,63 @@ def serve_bundle(directory, *, follow=False):
             self.end_headers()
             self.wfile.write(body)
 
+        def transfer(self, artifact_id, *, preview=False):
+            if not transfers.acquire(blocking=False):
+                self.reply(429, b'{"error":"two attachment transfers are already active"}')
+                return
+            headers_sent = False
+            try:
+                with lock:
+                    ref = reader.attachment_ref(artifact_id)
+                is_text = ref["media_type"] in ("text/plain", "application/json")
+                is_image = ref["media_type"] in (
+                    "image/png",
+                    "image/jpeg",
+                    "image/gif",
+                    "image/webp",
+                )
+                if preview and not (is_text or is_image):
+                    raise ValueError("attachment is download-only")
+                if preview and is_image and ref["size"] > MAX_IMAGE_PREVIEW:
+                    raise ValueError("image exceeds 8 MiB preview limit; download instead")
+                # Integrity verification produces a private disk snapshot. No whole-file
+                # Python or JavaScript buffer, and mutation after validation cannot alter it.
+                if ref["size"] > max_download:
+                    raise ValueError("attachment exceeds viewer download limit")
+                handle, ref = reader.attachment_snapshot(ref)
+                with handle:
+                    size = (
+                        min(ref["size"], MAX_TEXT_PREVIEW) if preview and is_text else ref["size"]
+                    )
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/octet-stream")
+                    self.send_header("Content-Disposition", 'attachment; filename="attachment"')
+                    self.send_header("Content-Length", str(size))
+                    self.send_header("X-Content-Type-Options", "nosniff")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Referrer-Policy", "no-referrer")
+                    self.send_header("Content-Security-Policy", "default-src 'none'; sandbox")
+                    self.end_headers()
+                    headers_sent = True
+                    while size:
+                        chunk = handle.read(min(64 * 1024, size))
+                        if not chunk:
+                            raise OSError("incomplete attachment snapshot")
+                        self.wfile.write(chunk)
+                        size -= len(chunk)
+            except (ValueError, KeyError, OSError) as error:
+                if isinstance(error, ConnectionError):
+                    raise
+                if headers_sent:
+                    self.close_connection = True
+                    return
+                message = str(error) if isinstance(error, ValueError) else "attachment unavailable"
+                self.reply(409, json.dumps({"error": message}).encode())
+            finally:
+                transfers.release()
+
         def do_GET(self):
+            self.connection.settimeout(30)
             try:
                 self._get()
             except (ConnectionError, TimeoutError):
@@ -66,11 +133,19 @@ def serve_bundle(directory, *, follow=False):
                 filename, media = public[url.path]
                 self.reply(200, (assets / filename).read_bytes(), media)
                 return
+            if url.path.startswith("/download/"):
+                with lock:
+                    ticket = tickets.pop(url.path.removeprefix("/download/"), None)
+                if ticket is None or ticket[1] < time.monotonic():
+                    self.reply(403, b'{"error":"download authorization expired or invalid"}')
+                    return
+                self.transfer(ticket[0])
+                return
             if not secrets.compare_digest(self.headers.get("Authorization", ""), "Bearer " + token):
                 self.reply(403, b'{"error":"viewer authorization required"}')
                 return
             try:
-                if url.path in ("/status", "/page", "/event", "/image-neighbor"):
+                if url.path in ("/status", "/page", "/event", "/image-neighbor", "/related"):
                     query = parse_qs(url.query)
                     with lock:
                         status = reader.status(cutoff=cutoff)
@@ -93,16 +168,24 @@ def serve_bundle(directory, *, follow=False):
                             sequence = int(query.get("sequence", ["-1"])[0])
                             if sequence < 0 or sequence > through:
                                 raise ValueError("unknown event")
-                            result = (
-                                reader.event(sequence)
-                                if url.path == "/event"
-                                else reader.image_neighbor(
+                            if url.path == "/related":
+                                result = reader.related(
                                     sequence,
-                                    direction=int(query.get("direction", ["1"])[0]),
-                                    order=query.get("order", ["arrival"])[0],
                                     through=through,
+                                    order=query.get("order", ["arrival"])[0],
+                                    page=int(query.get("page", ["0"])[0]),
                                 )
-                            )
+                            else:
+                                result = (
+                                    reader.event(sequence)
+                                    if url.path == "/event"
+                                    else reader.image_neighbor(
+                                        sequence,
+                                        direction=int(query.get("direction", ["1"])[0]),
+                                        order=query.get("order", ["arrival"])[0],
+                                        through=through,
+                                    )
+                                )
                     self.reply(200, json.dumps(result).encode())
                 elif url.path == "/events":
                     query = parse_qs(url.query)
@@ -118,20 +201,25 @@ def serve_bundle(directory, *, follow=False):
                         batch["state"] = "snapshot"
                     batch["follow"] = follow
                     self.reply(200, json.dumps(batch).encode())
-                elif url.path.startswith("/attachment/"):
+                elif url.path == "/download-ticket":
+                    artifact_id = parse_qs(url.query).get("id", [""])[0]
                     with lock:
-                        handle, ref = reader.attachment(url.path.removeprefix("/attachment/"))
-                    with handle:
-                        self.send_response(200)
-                        # Always a download at HTTP level; safe previews use local blobs/text.
-                        self.send_header("Content-Type", "application/octet-stream")
-                        self.send_header("Content-Disposition", 'attachment; filename="attachment"')
-                        self.send_header("Content-Length", str(ref["size"]))
-                        self.send_header("X-Content-Type-Options", "nosniff")
-                        self.send_header("Cache-Control", "no-store")
-                        self.end_headers()
-                        while chunk := handle.read(64 * 1024):
-                            self.wfile.write(chunk)
+                        ref = reader.attachment_ref(artifact_id)
+                        if ref["size"] > max_download:
+                            raise ValueError("attachment exceeds viewer download limit")
+                        now = time.monotonic()
+                        for key in list(tickets):
+                            if tickets[key][1] < now:
+                                del tickets[key]
+                        if len(tickets) >= 16:
+                            raise ValueError("too many pending downloads")
+                        capability = secrets.token_urlsafe(32)
+                        tickets[capability] = (artifact_id, now + 60)
+                    self.reply(200, json.dumps({"url": "/download/" + capability}).encode())
+                elif url.path.startswith("/attachment/"):
+                    self.transfer(url.path.removeprefix("/attachment/"))
+                elif url.path.startswith("/preview/"):
+                    self.transfer(url.path.removeprefix("/preview/"), preview=True)
                 else:
                     self.reply(404, b'{"error":"not found"}')
             except ConnectionError:
@@ -157,8 +245,8 @@ def serve_bundle(directory, *, follow=False):
         reader.close()
 
 
-def view_bundle(directory, *, follow=False):
-    with serve_bundle(directory, follow=follow) as url:
+def view_bundle(directory, *, follow=False, max_download=MAX_ATTACHMENT):
+    with serve_bundle(directory, follow=follow, max_download=max_download) as url:
         webbrowser.open(url)
         print("Trace viewer opened. Press Enter to stop viewing (recording continues).")
         try:

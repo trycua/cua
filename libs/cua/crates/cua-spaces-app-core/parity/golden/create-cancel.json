@@ -51,7 +51,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-macos Mac [Starting] 10 1%"
+          "os-macos Mac [spaces.status.starting] 10 1%"
         ],
         "tiles": [
           "os-macos Mac, macOS, This Mac, Starting 10 Starting…"
@@ -78,12 +78,12 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Downloading image… 16%",
+              "Status: Downloading macOS (first time only)…",
               "System: macOS",
               "Kind: Virtual machine"
             ],
             "id": "pending:1",
-            "previewText": "Downloading image…",
+            "previewText": "Downloading macOS (first time only)…",
             "progress": 160,
             "progressText": "3.9 of 22.3 GB · 81 MB/s · about 4 min"
           }
@@ -93,10 +93,10 @@
         ],
         "pending": true,
         "rows": [
-          "os-macos Mac [Starting] 160 16%"
+          "os-macos Mac [spaces.status.starting] 160 16%"
         ],
         "tiles": [
-          "os-macos Mac, macOS, This Mac, Starting 160 Downloading image…"
+          "os-macos Mac, macOS, This Mac, Starting 160 Downloading macOS (first time only)…"
         ]
       }
     },
@@ -120,12 +120,12 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Downloading image… 18%",
+              "Status: Downloading macOS (first time only)…",
               "System: macOS",
               "Kind: Virtual machine"
             ],
             "id": "pending:1",
-            "previewText": "Downloading image…",
+            "previewText": "Downloading macOS (first time only)…",
             "progress": 187,
             "progressText": "4.7 of 22.3 GB · 80 MB/s · about 4 min"
           }
@@ -135,10 +135,10 @@
         ],
         "pending": true,
         "rows": [
-          "os-macos Mac [Starting] 187 18%"
+          "os-macos Mac [spaces.status.starting] 187 18%"
         ],
         "tiles": [
-          "os-macos Mac, macOS, This Mac, Starting 187 Downloading image…"
+          "os-macos Mac, macOS, This Mac, Starting 187 Downloading macOS (first time only)…"
         ]
       }
     },
@@ -177,7 +177,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-macos Mac [Cancelling…] 187 18%"
+          "os-macos Mac [spaces.status.cancelling] 187 18%"
         ],
         "tiles": [
           "os-macos Mac, macOS, This Mac, Cancelling… 187 Cancelling…"
@@ -219,7 +219,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-macos Mac [Cancelling…] 187 18%"
+          "os-macos Mac [spaces.status.cancelling] 187 18%"
         ],
         "tiles": [
           "os-macos Mac, macOS, This Mac, Cancelling… 187 Cancelling…"
@@ -261,7 +261,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-macos Mac [Cancelling…] 187 18%"
+          "os-macos Mac [spaces.status.cancelling] 187 18%"
         ],
         "tiles": [
           "os-macos Mac, macOS, This Mac, Cancelling… 187 Cancelling…"
@@ -317,7 +317,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Box [Starting] 10 1%"
+          "os-linux Box [spaces.status.starting] 10 1%"
         ],
         "tiles": [
           "os-linux Box, Linux, This Mac, Starting 10 Starting…"
@@ -344,7 +344,7 @@
             "canStream": false,
             "creditNotice": null,
             "facts": [
-              "Status: Downloading image… 42%",
+              "Status: Downloading image…",
               "System: Linux"
             ],
             "id": "pending:2",
@@ -358,7 +358,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Box [Starting] 425 42%"
+          "os-linux Box [spaces.status.starting] 425 42%"
         ],
         "tiles": [
           "os-linux Box, Linux, This Mac, Starting 425 Downloading image…"
@@ -399,7 +399,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Box [Cancelling…] 425 42%"
+          "os-linux Box [spaces.status.cancelling] 425 42%"
         ],
         "tiles": [
           "os-linux Box, Linux, This Mac, Cancelling… 425 Cancelling…"
@@ -440,7 +440,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux Box [Failed] - timed out: the cua daemon did not answer"
+          "os-linux Box [spaces.status.failed] - timed out: the cua daemon did not answer"
         ],
         "tiles": [
           "os-linux Box, Linux, This Mac, Failed - Failed"

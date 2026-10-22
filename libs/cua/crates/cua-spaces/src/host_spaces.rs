@@ -185,7 +185,10 @@ pub fn guest_relay_url(relay_url: &str, kind: &str) -> String {
 fn resolve_image(image: &str) -> (String, String) {
     let word = image.trim();
     if word.is_empty() {
-        return (cua_fleet::canonical_image("linux"), "linux".into());
+        return (
+            cua_image::canonical::canonical_image_or_linux("linux"),
+            "linux".into(),
+        );
     }
     if let Some((reference, os)) =
         cua_image::canonical::alias_with(word, &|n| std::env::var(n).ok())
@@ -265,11 +268,224 @@ impl Drop for Slot<'_> {
     }
 }
 
+/// The creates a host runs now, by key ([`pb::HostSpaceCreating::key`]):
+/// the caller's account, and what the create is doing.
+#[derive(Clone, Default)]
+struct Creating(Arc<Mutex<HashMap<String, (String, pb::HostSpaceCreating)>>>);
+
+impl Creating {
+    /// Lists the create `key` of `account` until the returned guard drops
+    /// (the create ended, failed, or its call was dropped). `None` for an
+    /// empty key (a caller that predates keys).
+    fn follow(&self, key: &str, account: &str) -> Option<Following> {
+        if key.is_empty() {
+            return None;
+        }
+        let entry = pb::HostSpaceCreating {
+            key: key.to_string(),
+            phase: cua_sandbox_core::progress::Phase::Preparing.as_str().into(),
+            ..Default::default()
+        };
+        self.lock()
+            .insert(key.to_string(), (account.to_string(), entry));
+        Some(Following {
+            creating: self.clone(),
+            key: key.to_string(),
+        })
+    }
+
+    /// The creates `caller` may see: every one for the owner, its own
+    /// otherwise.
+    fn listed(&self, caller: &HostCaller) -> Vec<pb::HostSpaceCreating> {
+        let mut out: Vec<_> = self
+            .lock()
+            .values()
+            .filter(|(account, _)| caller.is_owner() || *account == caller.account)
+            .map(|(_, c)| c.clone())
+            .collect();
+        out.sort_by(|a, b| a.key.cmp(&b.key));
+        out
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, (String, pb::HostSpaceCreating)>> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// A create [`Creating`] lists while this lives.
+struct Following {
+    creating: Creating,
+    key: String,
+}
+
+impl Following {
+    /// The create's progress sink: each report replaces what is listed.
+    fn sink(&self) -> crate::ProgressSink {
+        let creating = self.creating.clone();
+        let key = self.key.clone();
+        crate::ProgressSink::new(move |p| {
+            if let Some((_, c)) = creating.lock().get_mut(&key) {
+                *c = creating_pb(&key, p);
+            }
+        })
+    }
+}
+
+impl Drop for Following {
+    fn drop(&mut self) {
+        self.creating.lock().remove(&self.key);
+    }
+}
+
+/// A progress report as [`pb::HostSpaceCreating`].
+fn creating_pb(key: &str, p: &crate::CreateProgress) -> pb::HostSpaceCreating {
+    pb::HostSpaceCreating {
+        key: key.to_string(),
+        phase: p.phase.as_str().into(),
+        fraction: p.fraction,
+        detail: p.detail.clone(),
+        bytes_done: p.bytes.map(|b| b.done),
+        bytes_total: p.bytes.map(|b| b.total).filter(|t| *t > 0),
+        bytes_per_second: p.bytes.and_then(|b| b.per_second),
+    }
+}
+
+/// [`pb::HostSpaceCreating`] as a progress report of the caller's own
+/// create. `None` for a phase it does not know, and for `ready`: the host
+/// is done, but the caller still connects to the Space and says ready
+/// itself.
+fn host_progress(c: &pb::HostSpaceCreating) -> Option<crate::CreateProgress> {
+    use cua_sandbox_core::progress::{Phase, Progress, Transfer};
+    let phase = Phase::parse(&c.phase).filter(|p| *p != Phase::Ready)?;
+    let mut p = Progress::phase(phase).detail(c.detail.clone());
+    if let Some(f) = c.fraction {
+        p = p.fraction(f);
+    }
+    if let Some(done) = c.bytes_done {
+        p = p.bytes(Transfer {
+            done,
+            total: c.bytes_total.unwrap_or(0),
+            per_second: c.bytes_per_second,
+        });
+    }
+    Some(p)
+}
+
+/// How often a client asks a host how its create is doing.
+const HOST_PROGRESS_POLL: Duration = Duration::from_secs(1);
+
+/// How long a client asks every [`HOST_PROGRESS_POLL`] before it decides
+/// the host does not list creates (it predates
+/// [`pb::GetHostSpacesResponse::creating`], or its answers do not get
+/// through) and asks only every [`HOST_PROGRESS_SLOW_POLL`].
+const HOST_PROGRESS_UNLISTED: Duration = Duration::from_secs(20);
+
+/// How often a client asks a host that has not listed the create yet, past
+/// [`HOST_PROGRESS_UNLISTED`]: a host that lists it late is still followed.
+const HOST_PROGRESS_SLOW_POLL: Duration = Duration::from_secs(10);
+
+/// How long one ask may take: a host (or relay) that does not answer must
+/// not stop the following.
+const HOST_PROGRESS_ASK: Duration = Duration::from_secs(10);
+
+/// How long a create on a host may go without a report to the caller: past
+/// it, the last report (or "preparing") is said again. The host's create
+/// is one call that can run for the whole download of a 20+ GB macOS
+/// image; the apps' create stream fails a create that reports nothing for
+/// 15 minutes, so a host that reports nothing (an older one, or one whose
+/// listing does not get through) must not read as a lost create.
+const HOST_PROGRESS_HEARTBEAT: Duration = Duration::from_secs(60);
+
+/// Runs `call` (the `CreateHostSpace` of the create `key`) and meanwhile
+/// reports what the host lists that create doing as this create's own
+/// progress, in order: the image download with its bytes, the disk, the
+/// boot. A host that does not list it gets the last report again every
+/// [`HOST_PROGRESS_HEARTBEAT`], so the create stays alive while the host
+/// works.
+async fn following_host<T>(
+    host: &cua_spacesd_client::SpacesdClient,
+    key: &str,
+    call: impl std::future::Future<Output = T>,
+) -> T {
+    let ask = || async {
+        let r = tokio::time::timeout(
+            HOST_PROGRESS_ASK,
+            host.host_spaces()
+                .get_host_spaces(pb::GetHostSpacesRequest {}),
+        )
+        .await
+        .ok()?
+        .ok()?;
+        Some(r.into_inner().creating)
+    };
+    following_host_with(ask, key, call).await
+}
+
+/// [`following_host`] with `ask` for the host's list of creates (`None`:
+/// no answer).
+async fn following_host_with<T, A, F>(
+    mut ask: A,
+    key: &str,
+    call: impl std::future::Future<Output = T>,
+) -> T
+where
+    A: FnMut() -> F,
+    F: std::future::Future<Output = Option<Vec<pb::HostSpaceCreating>>>,
+{
+    use cua_sandbox_core::progress::{Phase, Progress, report};
+    let poll = async {
+        let started = tokio::time::Instant::now();
+        let mut listed = false;
+        let mut last: Option<crate::CreateProgress> = None;
+        let mut said = tokio::time::Instant::now();
+        loop {
+            let every = if listed || started.elapsed() < HOST_PROGRESS_UNLISTED {
+                HOST_PROGRESS_POLL
+            } else {
+                HOST_PROGRESS_SLOW_POLL
+            };
+            tokio::time::sleep(every).await;
+            let fresh = ask()
+                .await
+                .and_then(|all| all.into_iter().find(|c| c.key == key))
+                .and_then(|c| {
+                    listed = true;
+                    host_progress(&c)
+                })
+                // Never back to an earlier phase, never the same report twice.
+                .filter(|p| {
+                    !last
+                        .as_ref()
+                        .is_some_and(|l| p.phase.rank() < l.phase.rank() || l == p)
+                });
+            if let Some(p) = fresh {
+                report(p.clone());
+                last = Some(p);
+                said = tokio::time::Instant::now();
+            } else if said.elapsed() >= HOST_PROGRESS_HEARTBEAT {
+                // Still working on the host: say so again.
+                report(
+                    last.clone()
+                        .unwrap_or_else(|| Progress::phase(Phase::Preparing)),
+                );
+                said = tokio::time::Instant::now();
+            }
+        }
+    };
+    tokio::pin!(call);
+    tokio::select! {
+        out = &mut call => out,
+        () = poll => unreachable!("the poll never ends"),
+    }
+}
+
 /// The host half: what this machine's cua daemon does for
 /// `HostSpacesService` calls.
 pub struct HostSpacesServer {
     spaces: Spaces,
     reserved: Mutex<Reserved>,
+    /// The creates running here, with what each is doing now.
+    creating: Creating,
     /// The ports this host forwards to the Spaces it provides directly,
     /// by the Space's `local:` id.
     forwards: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
@@ -292,6 +508,7 @@ impl HostSpacesServer {
         Arc::new(Self {
             spaces,
             reserved: Mutex::default(),
+            creating: Creating::default(),
             forwards: Mutex::default(),
         })
     }
@@ -439,7 +656,7 @@ impl HostSpacesServer {
         self.host().policy()?.ok_or_else(|| {
             Error::host(
                 "host spaces",
-                "this machine is not set up to provide Spaces (run `cua host setup --provide-spaces` on it)",
+                "this computer is not set up to provide Spaces (run `cua host setup --provide-spaces` on it)",
             )
         })
     }
@@ -586,6 +803,7 @@ impl HostSpacesServer {
                 vec![]
             },
             images,
+            creating: self.creating.listed(caller),
         })
     }
 
@@ -614,7 +832,13 @@ impl HostSpacesServer {
             } else {
                 cua_telemetry::Outcome::Error
             },
-            r.is_err().then_some("other"),
+            // The cause the error's text names (`image_pull_auth`,
+            // `insufficient_disk`, ...), else the error's tag; only the
+            // word is sent, never the text.
+            r.as_ref().err().map(|e| {
+                let message = e.to_string();
+                cua_create_failure::create_failure_kind(&message, "", e.tag(), true)
+            }),
         ));
         r
     }
@@ -638,7 +862,7 @@ impl HostSpacesServer {
                 &label,
                 Error::host(
                     "host spaces",
-                    "this machine does not provide Spaces (on it: `cua host config --provide-spaces on`)",
+                    "this computer does not provide Spaces (on it: `cua host config --provide-spaces on`)",
                 ),
             ));
         }
@@ -647,7 +871,7 @@ impl HostSpacesServer {
                 caller,
                 &label,
                 Error::Relay(cua_host::Error::PermissionDenied(
-                    "only the owner and the accounts this machine is shared with (as editors) can create Spaces on it"
+                    "only the owner and the accounts this computer is shared with (as editors) can create Spaces on it"
                         .into(),
                 )),
             ));
@@ -660,7 +884,7 @@ impl HostSpacesServer {
                     &label,
                     Error::host(
                         "host spaces",
-                        "this machine provides Spaces through the relay, not directly (on it: \
+                        "this computer provides Spaces through the relay, not directly (on it: \
                          `cua host setup --direct <ip:port> --provide-spaces`)",
                     ),
                 ));
@@ -683,7 +907,7 @@ impl HostSpacesServer {
                 caller,
                 &label,
                 Error::invalid(
-                    "attach needs the relay URL, machine id and machine token the caller registered",
+                    "attach needs the relay URL, computer id and computer token the caller registered",
                 ),
             ));
         }
@@ -712,9 +936,15 @@ impl HostSpacesServer {
         let slot = self
             .reserve(&policy, &provided_now, macos, &host_name)
             .map_err(|e| self.refuse(caller, &label, e))?;
+        // Listed in `GetHostSpaces` while it runs, for the caller to follow.
+        let key = Some(req.create_key.trim())
+            .filter(|k| !k.is_empty())
+            .unwrap_or(&attach.machine_id);
+        let following = self.creating.follow(key, &caller.account);
         let created = self
             .spaces
             .create(SpaceCreate {
+                progress: following.as_ref().map(Following::sink),
                 image: Some(image.clone()),
                 on: Some(On::Local),
                 kind,
@@ -877,7 +1107,7 @@ impl HostSpacesServer {
                 caller,
                 &machine,
                 Error::Relay(cua_host::Error::PermissionDenied(
-                    "only the owner and the accounts this machine is shared with (as editors) can cancel creates on it"
+                    "only the owner and the accounts this computer is shared with (as editors) can cancel creates on it"
                         .into(),
                 )),
             ));
@@ -920,7 +1150,7 @@ impl HostSpacesServer {
                 caller,
                 &machine,
                 Error::NotFound(format!(
-                    "{id} is not a Space in your cloud that this machine created"
+                    "{id} is not a Space in your cloud that this computer created"
                 )),
             ));
         }
@@ -1154,7 +1384,7 @@ impl HostSpacesServer {
     async fn reattach(&self, record: &ProvidedSpace) -> Result<()> {
         if record.machine_token.is_empty() || record.relay_url.is_empty() {
             return Err(Error::invalid(format!(
-                "relay:{} has no machine token on this host, so it cannot rejoin the relay; delete it and create a new one",
+                "relay:{} has no computer token on this host, so it cannot rejoin the relay; delete it and create a new one",
                 record.relay_machine
             )));
         }
@@ -1326,10 +1556,33 @@ pub(crate) fn stopped_sharing(name: &str) -> Error {
     )))
 }
 
-/// Whether a failed connection is the relay refusing a machine that
-/// stopped sharing.
+/// Whether a failed connection is a machine that stopped sharing refusing
+/// it: the relay ("the host stopped sharing this machine", its directory
+/// says so) or the machine itself ("relay assertion refused: this machine
+/// stopped sharing", its own policy says so while the relay still lists it
+/// as sharing, as after a set up again).
 pub(crate) fn is_stopped_sharing(reason: &str) -> bool {
-    reason.contains("stopped sharing this machine")
+    reason.contains("stopped sharing")
+}
+
+/// [`HostLimit::resource`] of a host the relay sees connected whose owner
+/// stopped sharing it (it refuses every call). Not a count: `used` and
+/// `limit` are 0 and `reason` is the line to show. It travels with the
+/// limits because those are the one open list [`Spaces::hosts`] hands to
+/// every shell (the daemon, the SDK's bindings, the apps' FFI) without
+/// changing their shapes; the app core's wizard reads it
+/// (`HOST_SHARING_STOPPED`).
+pub const STOPPED_SHARING: &str = "sharing";
+
+/// What a refusal by a machine that stopped sharing said, from the error
+/// a call to it failed with.
+fn stopped_sharing_reason(e: &Error) -> Option<String> {
+    match e {
+        Error::Relay(cua_host::Error::PermissionDenied(m)) if is_stopped_sharing(m) => {
+            Some(m.clone())
+        }
+        _ => None,
+    }
 }
 
 fn now_ms() -> u64 {
@@ -1464,7 +1717,7 @@ fn ambiguous_host(query: &str, choices: &[cua_host::Machine]) -> Error {
         query: query.to_string(),
         choices: choices.iter().map(|m| format!("host:{}", m.id)).collect(),
         message: format!(
-            "{query:?} matches several of your machines: {}; say which (on=\"host:<id>\")",
+            "{query:?} matches several of your computers: {}; say which (on=\"host:<id>\")",
             provided::describe_choices(choices)
         ),
     }
@@ -1476,7 +1729,8 @@ const HOST_PROBE: Duration = Duration::from_secs(4);
 /// One limit of a host and how much of it is used (`HostSpacesCapacity`).
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct HostLimit {
-    /// `spaces` (every Space it provides) or `macos_vms`.
+    /// `spaces` (every Space it provides), `macos_vms`, or
+    /// [`STOPPED_SHARING`] (not a limit: its owner stopped sharing it).
     pub resource: String,
     /// In use now.
     pub used: u32,
@@ -1497,11 +1751,13 @@ pub struct HostOffer {
     pub name: String,
     /// `relay` or `direct`.
     pub via: String,
-    /// It answered.
+    /// It answered, or the relay sees it connected (as the Machines page
+    /// says it is online).
     pub online: bool,
     /// Its operating system (`macos`, `linux`, `windows`), when it answered.
     pub os: String,
-    /// Its limits, when it answered.
+    /// Its limits, when it answered; a [`STOPPED_SHARING`] entry when it
+    /// refused because its owner stopped sharing it.
     pub limits: Vec<HostLimit>,
 }
 
@@ -1557,6 +1813,53 @@ fn host_offer(
             limits: vec![],
         }),
     }
+}
+
+/// A relay machine as [`Spaces::hosts`] lists it: [`host_offer`], except
+/// that one the relay sees connected (`present`) is listed online, as the
+/// Machines page lists it, whatever its answer:
+///
+/// - one whose answer did not come in time has its limits unknown. The
+///   relay reaches it (`cua spaces ls` lists it), so "Run on" must not call
+///   it offline; a create there says what is wrong if it really is.
+/// - one that refused because its owner stopped sharing it says so, as a
+///   [`STOPPED_SHARING`] entry among its limits: "Run on" lists it as not
+///   sharing, not offline.
+fn relay_offer(
+    id: String,
+    name: String,
+    present: bool,
+    os: &str,
+    answer: Option<Result<pb::GetHostSpacesResponse>>,
+    keep_offline: bool,
+) -> Option<HostOffer> {
+    if present
+        && let Some(Err(e)) = &answer
+        && let Some(reason) = stopped_sharing_reason(e)
+    {
+        return keep_offline.then(|| HostOffer {
+            id,
+            name,
+            via: "relay".into(),
+            online: true,
+            os: os.to_string(),
+            limits: vec![HostLimit {
+                resource: STOPPED_SHARING.into(),
+                used: 0,
+                limit: 0,
+                reason,
+            }],
+        });
+    }
+    let timed_out = present && answer.is_none();
+    let mut offer = host_offer(id, name, "relay", answer, keep_offline)?;
+    if timed_out {
+        offer.online = true;
+        if offer.os.is_empty() {
+            offer.os = os.to_string();
+        }
+    }
+    Some(offer)
 }
 
 impl Spaces {
@@ -1616,7 +1919,8 @@ impl Spaces {
                         .get(cua_host::META_PROVIDES_SPACES)
                         .is_none_or(|v| v != "off");
                     let keep = known.contains(&m.id) || (m.role == "owner" && offers_spaces);
-                    host_offer(m.id.clone(), name, "relay", answer, keep)
+                    let os = m.meta.get(cua_host::META_OS).cloned().unwrap_or_default();
+                    relay_offer(m.id.clone(), name, m.online, &os, answer, keep)
                 }),
         )
         .await;
@@ -1698,7 +2002,7 @@ impl Spaces {
         }
         if machines.is_empty() && direct.is_empty() && self.relay_account().is_none() {
             return Err(Error::NotFound(format!(
-                "a machine matching {query:?}: you have no machines (sign in to cua.ai to use \
+                "a computer matching {query:?}: you have no computers (sign in to cua.ai to use \
                  the ones on the relay, or add one by its Tailscale or LAN address with `cua \
                  spaces add <addr> --host --token <token>`)"
             )));
@@ -1706,7 +2010,7 @@ impl Spaces {
         let mut all = machines;
         all.extend(as_machines);
         Err(Error::NotFound(format!(
-            "a machine matching {query:?} among your machines ({}); set one up with \
+            "a computer matching {query:?} among your computers ({}); set one up with \
              `cua host setup --provide-spaces` on it, or add one by its Tailscale or LAN address \
              with `cua spaces add <addr> --host --token <token>`",
             if all.is_empty() {
@@ -1792,6 +2096,54 @@ impl Spaces {
             .await
             .map(tonic::Response::into_inner)
             .map_err(|e| from_host(cua_spacesd_client::Error::from(e)))
+    }
+
+    /// Another of your machines' health as its own cua daemon checks it
+    /// (`HostSpacesService.DiagnoseHost`): Local Network access, disk,
+    /// virtualization, memory, permissions. `machine` is an id or a name,
+    /// as [`Spaces::resolve_host`] takes it; reached over the relay (or the
+    /// mesh), or at its direct address. Fails plainly when it is offline,
+    /// not yours, or runs a Cua that predates the check. Bounded (30 s).
+    pub async fn machine_health(&self, machine: &str) -> Result<pb::DiagnoseHostResponse> {
+        let (space, name) = match self.resolve_host(machine).await? {
+            ResolvedHost::Relay(m) => {
+                let name = if m.name.is_empty() {
+                    m.id.clone()
+                } else {
+                    m.name.clone()
+                };
+                if !m.online {
+                    return Err(Error::host(
+                        "machine health",
+                        format!("{name} is offline, so it can't be checked now"),
+                    ));
+                }
+                if m.role != "owner" {
+                    return Err(Error::Relay(cua_host::Error::PermissionDenied(format!(
+                        "{name} is not yours: only its owner can check its health"
+                    ))));
+                }
+                (self.space(&format!("relay:{}", m.id)).await?, name)
+            }
+            ResolvedHost::Direct(h) => {
+                let name = h.name.clone();
+                (self.direct_host_space(&h).await?, name)
+            }
+        };
+        let mut client = space.spacesd()?.host_spaces();
+        let call = client.diagnose_host(pb::DiagnoseHostRequest::default());
+        match tokio::time::timeout(Duration::from_secs(30), call).await {
+            Ok(Ok(r)) => Ok(r.into_inner()),
+            Ok(Err(status)) if status.code() == tonic::Code::Unimplemented => Err(Error::host(
+                "machine health",
+                format!("{name} runs an older Cua that can't be checked; update Cua on it"),
+            )),
+            Ok(Err(status)) => Err(from_host(cua_spacesd_client::Error::from(status))),
+            Err(_) => Err(Error::host(
+                "machine health",
+                format!("{name} did not answer within 30 s"),
+            )),
+        }
     }
 
     async fn host_space(&self, m: &crate::relay::RelayMachine) -> Result<crate::Space> {
@@ -1922,14 +2274,17 @@ impl Spaces {
                 owner: reg.machine.owner.id.clone(),
                 owner_email: reg.machine.owner.email.clone().unwrap_or_default(),
             }),
+            create_key: machine.clone(),
         };
         let created = async {
-            space
-                .spacesd()?
-                .host_spaces()
-                .create_host_space(request)
-                .await
-                .map_err(|e| from_host(cua_spacesd_client::Error::from(e)))
+            let host = space.spacesd()?;
+            following_host(
+                host,
+                &machine,
+                host.host_spaces().create_host_space(request),
+            )
+            .await
+            .map_err(|e| from_host(cua_spacesd_client::Error::from(e)))
         }
         .await;
         if let Err(e) = created {
@@ -1946,6 +2301,9 @@ impl Spaces {
         }
         // Its driver dials out on its own: wait (bounded) until the relay
         // lists it online.
+        cua_sandbox_core::progress::report(cua_sandbox_core::progress::Progress::phase(
+            cua_sandbox_core::progress::Phase::Connecting,
+        ));
         let deadline = tokio::time::Instant::now() + ONLINE_WAIT;
         let mut row = None;
         while tokio::time::Instant::now() < deadline {
@@ -1979,6 +2337,7 @@ impl Spaces {
         opts: SpaceCreate,
     ) -> Result<SpaceInfo> {
         let space = self.direct_host_space(&host).await?;
+        let key = format!("create-{:016x}", rand::random::<u64>());
         let request = pb::CreateHostSpaceRequest {
             image: opts.image.clone().unwrap_or_default(),
             kind: match opts.kind {
@@ -1995,21 +2354,24 @@ impl Spaces {
             disk_gb: opts.disk_gb.unwrap_or(0),
             attach: None,
             direct: true,
+            create_key: key.clone(),
         };
-        let made = space
-            .spacesd()?
-            .host_spaces()
-            .create_host_space(request)
-            .await
-            .map(tonic::Response::into_inner)
-            .map_err(|e| from_host(cua_spacesd_client::Error::from(e)))?
-            .space
-            .ok_or_else(|| {
-                Error::host(
-                    "host spaces",
-                    format!("{} answered without the Space it created", host.name),
-                )
-            })?;
+        let host_client = space.spacesd()?;
+        let made = following_host(
+            host_client,
+            &key,
+            host_client.host_spaces().create_host_space(request),
+        )
+        .await
+        .map(tonic::Response::into_inner)
+        .map_err(|e| from_host(cua_spacesd_client::Error::from(e)))?
+        .space
+        .ok_or_else(|| {
+            Error::host(
+                "host spaces",
+                format!("{} answered without the Space it created", host.name),
+            )
+        })?;
         let SpaceId::Direct { authority } = SpaceId::parse(&host.space)? else {
             return Err(Error::invalid(format!(
                 "{} is not a direct Space",
@@ -2140,7 +2502,7 @@ impl Spaces {
             Err(cua_host::Error::NotFound(_)) => {
                 self.remove_relay_machine(&machine.id).await?;
                 return Ok(format!(
-                    "Removed relay:{}: a stale entry (its host, machine {host_id}, is no longer \
+                    "Removed relay:{}: a stale entry (its host, computer {host_id}, is no longer \
                      on the relay).",
                     machine.id
                 ));
@@ -2209,7 +2571,7 @@ impl Spaces {
         let client = relay.client().await?;
         let host = client.machine(&token, host_id).await.map_err(|e| match e {
             cua_host::Error::NotFound(_) => Error::NotFound(format!(
-                "the host of relay:{} (machine {host_id}) is no longer on the relay",
+                "the host of relay:{} (computer {host_id}) is no longer on the relay",
                 machine.id
             )),
             other => other.into(),
@@ -2240,6 +2602,79 @@ impl Spaces {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What a create on a host reports to its caller, by elapsed minute,
+    /// when the host call takes `call` and the host answers `ask`.
+    async fn reports_while_following(
+        call: Duration,
+        ask: impl Fn(Duration) -> Option<Vec<pb::HostSpaceCreating>>,
+    ) -> Vec<(u64, crate::CreateProgress)> {
+        let start = tokio::time::Instant::now();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let s = seen.clone();
+        let sink: cua_sandbox_core::progress::Sink = Arc::new(move |p: &crate::CreateProgress| {
+            s.lock()
+                .unwrap()
+                .push((start.elapsed().as_secs() / 60, p.clone()))
+        });
+        let ask = |d: Duration| std::future::ready(ask(d));
+        cua_sandbox_core::progress::scope(
+            sink,
+            following_host_with(|| ask(start.elapsed()), "space-1", tokio::time::sleep(call)),
+        )
+        .await;
+        seen.lock().unwrap().clone()
+    }
+
+    /// A host that never lists the create (an older one, or one whose
+    /// answers do not get through) still keeps the caller's create alive:
+    /// "preparing" again every minute, so the apps' 15 min silent-stream
+    /// limit never fails a 20+ GB macOS download on another machine.
+    #[tokio::test(start_paused = true)]
+    async fn a_host_that_lists_nothing_still_keeps_a_long_create_alive() {
+        let seen = reports_while_following(Duration::from_secs(40 * 60), |_| None).await;
+        let minutes: Vec<u64> = seen.iter().map(|(m, _)| *m).collect();
+        assert!(seen.len() >= 39, "{minutes:?}");
+        assert!(
+            seen.iter()
+                .all(|(_, p)| p.phase == cua_sandbox_core::progress::Phase::Preparing),
+            "{seen:?}"
+        );
+        assert!(
+            minutes.windows(2).all(|w| w[1] - w[0] <= 1),
+            "never silent for more than a minute: {minutes:?}"
+        );
+    }
+
+    /// A host that lists the create only after a while (past the first
+    /// 20 s) is still followed: its download shows, then the heartbeat
+    /// repeats the last report while nothing new comes.
+    #[tokio::test(start_paused = true)]
+    async fn a_host_that_lists_the_create_late_is_still_followed() {
+        let seen = reports_while_following(Duration::from_secs(20 * 60), |d| {
+            (d > Duration::from_secs(90)).then(|| {
+                vec![pb::HostSpaceCreating {
+                    key: "space-1".into(),
+                    phase: "pulling".into(),
+                    bytes_done: Some(5),
+                    bytes_total: Some(10),
+                    ..Default::default()
+                }]
+            })
+        })
+        .await;
+        let pulls = seen
+            .iter()
+            .filter(|(_, p)| p.phase == cua_sandbox_core::progress::Phase::Pulling)
+            .count();
+        assert!(pulls >= 15, "the download, then said again: {seen:?}");
+        assert!(
+            seen.iter()
+                .skip_while(|(_, p)| p.phase != cua_sandbox_core::progress::Phase::Pulling)
+                .all(|(_, p)| p.phase == cua_sandbox_core::progress::Phase::Pulling),
+            "never back to preparing: {seen:?}"
+        );
+    }
 
     #[test]
     fn a_loopback_relay_is_reached_at_the_host_from_a_guest() {
@@ -2381,6 +2816,113 @@ mod tests {
         let silent = offer(None, true).unwrap();
         assert!(!silent.online && silent.limits.is_empty());
         assert_eq!(offer(None, false), None, "unknown and silent");
+
+        // Connected to the relay but slow to answer: online, limits unknown.
+        let slow = relay_offer("m1".into(), "Mac mini".into(), true, "macos", None, true).unwrap();
+        assert!(slow.online && slow.os == "macos" && slow.limits.is_empty());
+        // Not connected: offline, as before.
+        let gone = relay_offer("m1".into(), "Mac mini".into(), false, "macos", None, true).unwrap();
+        assert!(!gone.online);
+        // Connected, and it said it does not provide Spaces: left out.
+        assert_eq!(
+            relay_offer(
+                "m1".into(),
+                "Mac mini".into(),
+                true,
+                "",
+                Some(Ok(answer(false))),
+                true
+            ),
+            None
+        );
+        // Connected, and the answer failed: offline (it was asked and said why).
+        let failed = relay_offer(
+            "m1".into(),
+            "Mac mini".into(),
+            true,
+            "",
+            Some(Err(Error::Timeout("hello".into()))),
+            true,
+        )
+        .unwrap();
+        assert!(!failed.online);
+    }
+
+    /// The Machines page and "Run on" read the same signal: a machine the
+    /// relay sees connected is online. One that refused because its owner
+    /// stopped sharing it (its relay record or its own policy says so) is
+    /// online and says so, not offline.
+    #[test]
+    fn a_connected_machine_that_stopped_sharing_is_online_and_says_so() {
+        let refused = |keep| {
+            relay_offer(
+                "m1".into(),
+                "gamma-4 Mac Studio".into(),
+                true,
+                "macos",
+                Some(Err(stopped_sharing("gamma-4 Mac Studio"))),
+                keep,
+            )
+        };
+        let offer = refused(true).unwrap();
+        assert!(offer.online, "the relay sees it connected");
+        assert_eq!(offer.os, "macos", "what its setup registered");
+        assert_eq!(
+            offer.limits,
+            vec![HostLimit {
+                resource: STOPPED_SHARING.into(),
+                used: 0,
+                limit: 0,
+                reason: "gamma-4 Mac Studio stopped sharing: ask its owner to Resume sharing \
+                         (or run `cua host start` there)"
+                    .into(),
+            }]
+        );
+        // Listed under the rule an offline machine is: yours, or provided.
+        assert_eq!(refused(false), None);
+        // Not connected: just offline (the relay would not have been asked).
+        let gone = relay_offer(
+            "m1".into(),
+            "gamma-4 Mac Studio".into(),
+            false,
+            "macos",
+            Some(Err(stopped_sharing("gamma-4 Mac Studio"))),
+            true,
+        )
+        .unwrap();
+        assert!(!gone.online && gone.limits.is_empty());
+        // Another refusal stays an offline machine.
+        let denied = relay_offer(
+            "m1".into(),
+            "Mac mini".into(),
+            true,
+            "",
+            Some(Err(Error::Relay(cua_host::Error::PermissionDenied(
+                "not yours".into(),
+            )))),
+            true,
+        )
+        .unwrap();
+        assert!(!denied.online && denied.limits.is_empty());
+    }
+
+    /// Both wordings of "stopped sharing" are recognized: the relay's, and
+    /// the machine's own when its policy says so while the relay still
+    /// lists it as sharing (gamma-4, whose create said
+    /// "cua-spacesd is not available").
+    #[test]
+    fn both_wordings_of_stopped_sharing_are_recognized() {
+        for reason in [
+            "the host stopped sharing this computer",
+            "relay:96fe has no cua-spacesd (gRPC: relay assertion refused: this computer \
+             stopped sharing; gRPC-Web: relay assertion refused: this computer stopped sharing)",
+        ] {
+            assert!(is_stopped_sharing(reason), "{reason}");
+        }
+        assert!(!is_stopped_sharing("the computer is not connected"));
+        assert!(!is_stopped_sharing(
+            "relay assertion refused: not your computer"
+        ));
     }
 
     /// Without a relay account only the hosts added by address are listed;

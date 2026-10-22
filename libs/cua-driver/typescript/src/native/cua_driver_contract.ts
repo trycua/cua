@@ -356,6 +356,56 @@ const FfiConverterTypeActionEvidence = (() => {
     return new FFIConverter();
 })();
 
+/**
+ * A call an agent can make next: `{tool, arguments}`.
+ */
+export type ActionNextCall = {
+    tool: string,
+    /**
+     * The call's arguments. A JSON object on the wire; the SDK records carry
+     * the same object as JSON text.
+     */
+    arguments: string
+}
+
+/**
+ * Generated factory for {@link ActionNextCall} record objects.
+ */
+export const ActionNextCall = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ActionNextCall, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ActionNextCall>,
+    });
+})();
+
+const FfiConverterTypeActionNextCall = (() => {
+    type TypeName = ActionNextCall;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                tool: FfiConverterString.read(from),
+                arguments: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.tool, into);
+            FfiConverterString.write(value.arguments, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.tool) +
+             FfiConverterString.allocationSize(value.arguments);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export enum ActionEffect {
     Confirmed,
     Partial,
@@ -451,7 +501,20 @@ export type ActionResult = {
     /**
      * Present only with `effect: refused`.
      */
-    error?: ActionError
+    error?: ActionError,
+    /**
+     * What to do next, in one short sentence. Present when the effect is
+     * `unverifiable` or `suspected_noop`, so an unconfirmed action points at
+     * the next step instead of leaving the agent to guess. Also carries a
+     * suggestion to chain steps with `run_steps` after several direct actions
+     * in a row.
+     */
+    hint?: string,
+    /**
+     * The call that moves the task forward, always safe to run as is (a read,
+     * or a call that keeps the user's window where it is).
+     */
+    nextCall?: ActionNextCall
 }
 
 /**
@@ -481,7 +544,9 @@ const FfiConverterTypeActionResult = (() => {
                 evidence: FfiConverterOptionalSequenceTypeActionEvidence.read(from),
                 escalation: FfiConverterOptionalTypeActionEscalation.read(from),
                 summary: FfiConverterOptionalString.read(from),
-                error: FfiConverterOptionalTypeActionError.read(from)
+                error: FfiConverterOptionalTypeActionError.read(from),
+                hint: FfiConverterOptionalString.read(from),
+                nextCall: FfiConverterOptionalTypeActionNextCall.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -492,6 +557,8 @@ const FfiConverterTypeActionResult = (() => {
             FfiConverterOptionalTypeActionEscalation.write(value.escalation, into);
             FfiConverterOptionalString.write(value.summary, into);
             FfiConverterOptionalTypeActionError.write(value.error, into);
+            FfiConverterOptionalString.write(value.hint, into);
+            FfiConverterOptionalTypeActionNextCall.write(value.nextCall, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeActionEffect.allocationSize(value.effect) +
@@ -500,7 +567,9 @@ const FfiConverterTypeActionResult = (() => {
              FfiConverterOptionalSequenceTypeActionEvidence.allocationSize(value.evidence) +
              FfiConverterOptionalTypeActionEscalation.allocationSize(value.escalation) +
              FfiConverterOptionalString.allocationSize(value.summary) +
-             FfiConverterOptionalTypeActionError.allocationSize(value.error);
+             FfiConverterOptionalTypeActionError.allocationSize(value.error) +
+             FfiConverterOptionalString.allocationSize(value.hint) +
+             FfiConverterOptionalTypeActionNextCall.allocationSize(value.nextCall);
 
         }
     };
@@ -1317,30 +1386,67 @@ const FfiConverterTypeClipboardWriteOutput = (() => {
 })();
 
 /**
- * Per-effect overrides for the agent cursor. Unset fields are omitted on the wire, so they
- * keep their current setting.
+ * One cursor effect: `on`, `off`, or `default` (the style's own setting).
+ */
+export enum CursorEffectSetting {
+    On,
+    Off,
+    Default
+}
+
+const FfiConverterTypeCursorEffectSetting = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = CursorEffectSetting | boolean;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return CursorEffectSetting.On;
+                case 2: return CursorEffectSetting.Off;
+                case 3: return CursorEffectSetting.Default;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            if (typeof value === "boolean") value = value ? CursorEffectSetting.On : CursorEffectSetting.Off;
+            switch (value) {
+                case CursorEffectSetting.On: return ordinalConverter.write(1, into);
+                case CursorEffectSetting.Off: return ordinalConverter.write(2, into);
+                case CursorEffectSetting.Default: return ordinalConverter.write(3, into);
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+/**
+ * Per-effect overrides for the agent cursor. An omitted field keeps the current setting.
+ * `on` and `off` set it; `default` restores the style default.
  */
 export type CursorMotionEffects = {
     /**
      * Short fading trail behind the cursor.
      */
-    trail?: boolean,
+    trail?: CursorEffectSetting | boolean,
     /**
      * Soft glow around the cursor that grows with speed.
      */
-    glow?: boolean,
+    glow?: CursorEffectSetting | boolean,
     /**
      * Target glow when the `magnetic` style locks on.
      */
-    magnet?: boolean,
+    magnet?: CursorEffectSetting | boolean,
     /**
      * Ring that expands from the hotspot on click.
      */
-    ripple?: boolean,
+    ripple?: CursorEffectSetting | boolean,
     /**
      * Brief scale-down of the cursor on click.
      */
-    squish?: boolean
+    squish?: CursorEffectSetting | boolean
 }
 
 /**
@@ -1364,26 +1470,26 @@ const FfiConverterTypeCursorMotionEffects = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         read(from: RustBuffer): TypeName {
             return {
-                trail: FfiConverterOptionalBoolean.read(from),
-                glow: FfiConverterOptionalBoolean.read(from),
-                magnet: FfiConverterOptionalBoolean.read(from),
-                ripple: FfiConverterOptionalBoolean.read(from),
-                squish: FfiConverterOptionalBoolean.read(from)
+                trail: FfiConverterOptionalTypeCursorEffectSetting.read(from),
+                glow: FfiConverterOptionalTypeCursorEffectSetting.read(from),
+                magnet: FfiConverterOptionalTypeCursorEffectSetting.read(from),
+                ripple: FfiConverterOptionalTypeCursorEffectSetting.read(from),
+                squish: FfiConverterOptionalTypeCursorEffectSetting.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
-            FfiConverterOptionalBoolean.write(value.trail, into);
-            FfiConverterOptionalBoolean.write(value.glow, into);
-            FfiConverterOptionalBoolean.write(value.magnet, into);
-            FfiConverterOptionalBoolean.write(value.ripple, into);
-            FfiConverterOptionalBoolean.write(value.squish, into);
+            FfiConverterOptionalTypeCursorEffectSetting.write(value.trail, into);
+            FfiConverterOptionalTypeCursorEffectSetting.write(value.glow, into);
+            FfiConverterOptionalTypeCursorEffectSetting.write(value.magnet, into);
+            FfiConverterOptionalTypeCursorEffectSetting.write(value.ripple, into);
+            FfiConverterOptionalTypeCursorEffectSetting.write(value.squish, into);
         }
         allocationSize(value: TypeName): number {
-            return FfiConverterOptionalBoolean.allocationSize(value.trail) +
-             FfiConverterOptionalBoolean.allocationSize(value.glow) +
-             FfiConverterOptionalBoolean.allocationSize(value.magnet) +
-             FfiConverterOptionalBoolean.allocationSize(value.ripple) +
-             FfiConverterOptionalBoolean.allocationSize(value.squish);
+            return FfiConverterOptionalTypeCursorEffectSetting.allocationSize(value.trail) +
+             FfiConverterOptionalTypeCursorEffectSetting.allocationSize(value.glow) +
+             FfiConverterOptionalTypeCursorEffectSetting.allocationSize(value.magnet) +
+             FfiConverterOptionalTypeCursorEffectSetting.allocationSize(value.ripple) +
+             FfiConverterOptionalTypeCursorEffectSetting.allocationSize(value.squish);
 
         }
     };
@@ -1492,7 +1598,11 @@ const FfiConverterTypeCursorMotionStyle = (() => {
 export enum CursorMotionTiming {
     Native,
     Fitts,
-    Fixed
+    Fixed,
+    Relaxed,
+    Steady,
+    Calm,
+    Deliberate
 }
 
 const FfiConverterTypeCursorMotionTiming = (() => {
@@ -1504,6 +1614,10 @@ const FfiConverterTypeCursorMotionTiming = (() => {
                 case 1: return CursorMotionTiming.Native;
                 case 2: return CursorMotionTiming.Fitts;
                 case 3: return CursorMotionTiming.Fixed;
+                case 4: return CursorMotionTiming.Relaxed;
+                case 5: return CursorMotionTiming.Steady;
+                case 6: return CursorMotionTiming.Calm;
+                case 7: return CursorMotionTiming.Deliberate;
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -1512,6 +1626,10 @@ const FfiConverterTypeCursorMotionTiming = (() => {
                 case CursorMotionTiming.Native: return ordinalConverter.write(1, into);
                 case CursorMotionTiming.Fitts: return ordinalConverter.write(2, into);
                 case CursorMotionTiming.Fixed: return ordinalConverter.write(3, into);
+                case CursorMotionTiming.Relaxed: return ordinalConverter.write(4, into);
+                case CursorMotionTiming.Steady: return ordinalConverter.write(5, into);
+                case CursorMotionTiming.Calm: return ordinalConverter.write(6, into);
+                case CursorMotionTiming.Deliberate: return ordinalConverter.write(7, into);
             }
         }
         allocationSize(value: TypeName): number {
@@ -1629,13 +1747,15 @@ export type CursorMotionSelection = {
      */
     style?: CursorMotionStyle,
     /**
+     * `steady` (default) keeps the style's timing but makes every move take at least 600 ms,
+     * with a gentler ease; `relaxed` and `calm` do the same with a 450 or 750 ms floor.
      * `native` uses the style's own timing; `fitts` scales the move time with distance and
-     * target size; `fixed` uses glide_duration_ms (1430 ms when 0).
+     * target size; `deliberate` is a slower Fitts curve (450..1300 ms); `fixed` uses
+     * glide_duration_ms (1430 ms when 0).
      */
     timing?: CursorMotionTiming,
     /**
-     * Turn single effects on or off. An omitted effect keeps its current setting; null
-     * restores the style's default.
+     * Turn effects on or off. Omit a field to keep it; `"default"` restores the style default.
      */
     effects?: CursorMotionEffects,
     /**
@@ -1665,7 +1785,8 @@ export type CursorMotionSelection = {
     spring?: number,
     /**
      * Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A
-     * nonzero value with `native` timing also fixes the duration. Clamped to 0..5000.
+     * nonzero value with `native` or the default `steady` timing also fixes the duration.
+     * Clamped to 0..5000.
      */
     glideDurationMs?: number,
     /**
@@ -5258,13 +5379,15 @@ export type SetAgentCursorMotionInput = {
      */
     style?: CursorMotionStyle,
     /**
+     * `steady` (default) keeps the style's timing but makes every move take at least 600 ms,
+     * with a gentler ease; `relaxed` and `calm` do the same with a 450 or 750 ms floor.
      * `native` uses the style's own timing; `fitts` scales the move time with distance and
-     * target size; `fixed` uses glide_duration_ms (1430 ms when 0).
+     * target size; `deliberate` is a slower Fitts curve (450..1300 ms); `fixed` uses
+     * glide_duration_ms (1430 ms when 0).
      */
     timing?: CursorMotionTiming,
     /**
-     * Turn single effects on or off. An omitted effect keeps its current setting; null
-     * restores the style's default.
+     * Turn effects on or off. Omit a field to keep it; `"default"` restores the style default.
      */
     effects?: CursorMotionEffects,
     /**
@@ -5294,7 +5417,8 @@ export type SetAgentCursorMotionInput = {
     spring?: number,
     /**
      * Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A
-     * nonzero value with `native` timing also fixes the duration. Clamped to 0..5000.
+     * nonzero value with `native` or the default `steady` timing also fixes the duration.
+     * Clamped to 0..5000.
      */
     glideDurationMs?: number,
     /**
@@ -6517,6 +6641,9 @@ const FfiConverterOptionalTypeActionEscalation = new FfiConverterOptional(FfiCon
 // FfiConverter for ActionError | undefined
 const FfiConverterOptionalTypeActionError = new FfiConverterOptional(FfiConverterTypeActionError);
 
+// FfiConverter for ActionNextCall | undefined
+const FfiConverterOptionalTypeActionNextCall = new FfiConverterOptional(FfiConverterTypeActionNextCall);
+
 // FfiConverter for number | undefined
 const FfiConverterOptionalFloat64 = new FfiConverterOptional(FfiConverterFloat64);
 
@@ -6526,8 +6653,8 @@ const FfiConverterOptionalTypeClickButton = new FfiConverterOptional(FfiConverte
 // FfiConverter for Array<string>
 const FfiConverterSequenceString = new FfiConverterArray(FfiConverterString);
 
-// FfiConverter for boolean | undefined
-const FfiConverterOptionalBoolean = new FfiConverterOptional(FfiConverterBool);
+// FfiConverter for CursorEffectSetting | undefined
+const FfiConverterOptionalTypeCursorEffectSetting = new FfiConverterOptional(FfiConverterTypeCursorEffectSetting);
 
 // FfiConverter for CursorMotionStyle | undefined
 const FfiConverterOptionalTypeCursorMotionStyle = new FfiConverterOptional(FfiConverterTypeCursorMotionStyle);
@@ -6552,6 +6679,9 @@ const FfiConverterOptionalUInt64 = new FfiConverterOptional(FfiConverterUInt64);
 
 // FfiConverter for Array<string> | undefined
 const FfiConverterOptionalSequenceString = new FfiConverterOptional(FfiConverterSequenceString);
+
+// FfiConverter for boolean | undefined
+const FfiConverterOptionalBoolean = new FfiConverterOptional(FfiConverterBool);
 
 // FfiConverter for CursorPointOutput | undefined
 const FfiConverterOptionalTypeCursorPointOutput = new FfiConverterOptional(FfiConverterTypeCursorPointOutput);
@@ -6671,6 +6801,7 @@ export default Object.freeze({
     FfiConverterTypeActionEscalationTarget,
     FfiConverterTypeActionEvidence,
     FfiConverterTypeActionEvidenceKind,
+    FfiConverterTypeActionNextCall,
     FfiConverterTypeActionResult,
     FfiConverterTypeActionRoute,
     FfiConverterTypeActionTarget,
@@ -6685,6 +6816,7 @@ export default Object.freeze({
     FfiConverterTypeClipboardWriteInput,
     FfiConverterTypeClipboardWriteOutput,
     FfiConverterTypeCursorAction,
+    FfiConverterTypeCursorEffectSetting,
     FfiConverterTypeCursorMotionEffects,
     FfiConverterTypeCursorMotionEffectsOutput,
     FfiConverterTypeCursorMotionOutput,

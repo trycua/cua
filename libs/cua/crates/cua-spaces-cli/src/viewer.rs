@@ -2,10 +2,9 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 //! `cua viewer`: the cua-spacesd HTML5 viewer's standalone server over every
-//! sandbox this SDK knows (local, Fleet, direct). Each sandbox's page is
+//! sandbox this SDK knows (local, direct). Each sandbox's page is
 //! served under `/s/<id>/viewer/`; its calls are piped to the sandbox's
-//! `env` service URL (the published loopback port, or a signed Fleet
-//! service URL that needs no bearer). The viewer ticket minted for the
+//! `env` service URL (the published loopback port). The viewer ticket minted for the
 //! browser authorizes every call at the sandbox.
 
 use std::io::Write;

@@ -18,6 +18,8 @@ public struct NewSpaceWizardView: View {
     /// "Use built-in Lume" (the core's `runtimeSwitch`).
     let onRuntimeSwitch: ((AppRuntimeSwitch) async -> Void)?
     @State private var switchingRuntime = false
+    /// A slider's typed value has the keyboard.
+    @FocusState private var typingValue: Bool
 
     public init(wizard: WizardModel, onCreate: @escaping (AppCreatePlan) -> Void,
                 onAdd: @escaping (String, String?, String?) async throws -> Void,
@@ -109,7 +111,7 @@ public struct NewSpaceWizardView: View {
                 get: { v.image.os },
                 set: { wizard.send(.chooseOs(os: $0)) })) {
                 ForEach(v.osTiles, id: \.id) { tile in
-                    Text(tile.title).tag(osOf(tile.id)).help(tile.detail)
+                    Text(tile.title).tag(osOf(tile.id)).selectionDisabled(!tile.enabled).help(tile.detail)
                 }
             }
             .pickerStyle(.segmented)
@@ -126,7 +128,10 @@ public struct NewSpaceWizardView: View {
                 // chosen showed an empty "Run on".
                 ForEach(Self.groups(v.placements), id: \.self) { group in
                     Section {
-                        ForEach(v.placements.filter { $0.group == group }, id: \.id) { option in
+                        // Keyed by the line too: an item whose words change
+                        // with the system (Linux's container, Windows' QEMU)
+                        // is a new item, so its tooltip follows.
+                        ForEach(v.placements.filter { $0.group == group }, id: \.self) { option in
                             Text(option.label)
                                 .tag(option.id)
                                 .selectionDisabled(!option.enabled)
@@ -136,6 +141,9 @@ public struct NewSpaceWizardView: View {
                 }
             }
             .pickerStyle(.menu)
+            // The closed menu's tooltip is the chosen place's line, for every
+            // system (it showed only macOS's: the menu kept the first item's).
+            .help(Self.runOnHelp(v))
             .accessibilityIdentifier("wizard-run-on")
             if let error = field.error {
                 HStack(alignment: .firstTextBaseline) {
@@ -254,17 +262,19 @@ public struct NewSpaceWizardView: View {
                 Slider(value: Binding(get: { Double(v.cpus) },
                                       set: { wizard.send(.setCpus(cpus: UInt32($0.rounded()))) }),
                        in: Double(v.minCpus)...Double(max(v.maxCpus, v.minCpus + 1)), step: 1)
-                Text(v.cpusText).monospacedDigit().frame(width: 64, alignment: .trailing)
+                sliderValue(v, .cpus, v.cpusText, id: "cpus")
             }
         }
+        typedError(v, "cpus")
         LabeledContent(label(v, "memory")) {
             HStack {
                 Slider(value: Binding(get: { Double(v.memoryGb) },
                                       set: { wizard.send(.setMemory(memoryGb: UInt32($0.rounded()))) }),
                        in: Double(v.minMemoryGb)...Double(v.maxMemoryGb), step: 1)
-                Text(v.memoryText).monospacedDigit().frame(width: 64, alignment: .trailing)
+                sliderValue(v, .memory, v.memoryText, id: "memory")
             }
         }
+        typedError(v, "memory")
         }
         if v.diskEditable {
             LabeledContent(label(v, "disk")) {
@@ -274,9 +284,10 @@ public struct NewSpaceWizardView: View {
                            // Continuous: a GB step over hundreds of GB draws a solid tick rail.
                            in: Double(v.minDiskGb)...Double(max(v.maxDiskGb, v.minDiskGb + 1)))
                         .help(v.diskHelp ?? "")
-                    Text(v.diskText).monospacedDigit().frame(width: 64, alignment: .trailing)
+                    sliderValue(v, .disk, v.diskText, id: "disk")
                 }
             }
+            typedError(v, "disk")
             if v.diskNote != nil || v.diskResetLabel != nil {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     if let note = v.diskNote {
@@ -296,6 +307,44 @@ public struct NewSpaceWizardView: View {
         if let price = v.price {
             Text(price).foregroundStyle(.secondary).monospacedDigit()
                 .accessibilityIdentifier("wizard-price")
+        }
+    }
+
+    /// A slider's number: click it to type a value. The core checks it
+    /// against the slider's own limits; Return or leaving the field uses
+    /// it, Escape keeps the slider's value.
+    @ViewBuilder private func sliderValue(_ v: AppWizardView, _ f: AppResourceField, _ text: String, id: String) -> some View {
+        if let edit = v.resourceEdit, edit.field == f {
+            TextField(label(v, id), text: Binding(get: { edit.text }, set: { wizard.send(.setResourceText(text: $0)) }))
+                .labelsHidden()
+                .multilineTextAlignment(.trailing)
+                .monospacedDigit()
+                .frame(width: 64)
+                .focused($typingValue)
+                .onAppear { typingValue = true }
+                .onSubmit { wizard.send(.commitResource) }
+                .onExitCommand { wizard.send(.cancelResource) }
+                .onChange(of: typingValue) { _, focused in
+                    if !focused { wizard.send(.commitResource) }
+                }
+                .accessibilityIdentifier("wizard-\(id)-value-field")
+        } else {
+            Button { wizard.send(.editResource(field: f)) } label: {
+                Text(text).monospacedDigit().frame(width: 64, alignment: .trailing)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Click to type a value")
+            .accessibilityIdentifier("wizard-\(id)-value")
+        }
+    }
+
+    /// Why a typed value cannot be used (the slider's limits), under it.
+    @ViewBuilder private func typedError(_ v: AppWizardView, _ id: String) -> some View {
+        if let error = field(v, id)?.error {
+            Text(error).foregroundStyle(.red).font(.callout)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .accessibilityIdentifier("wizard-\(id)-error")
         }
     }
 
@@ -370,8 +419,9 @@ public struct NewSpaceWizardView: View {
 
     @ViewBuilder private func footer(_ v: AppWizardView) -> some View {
         HStack {
-            // While the image suggestions are open, Escape and Return are theirs.
-            let menuOpen = v.mode == .create && v.imageField.open
+            // While the image suggestions are open, or a slider's value is
+            // typed, Escape and Return are theirs.
+            let menuOpen = v.mode == .create && (v.imageField.open || v.resourceEdit != nil)
             Button(v.labels.cancel, action: onCancel).keyboardShortcut(menuOpen ? nil : .cancelAction)
             Spacer()
             if v.mode == .address {
@@ -394,6 +444,12 @@ public struct NewSpaceWizardView: View {
                 }
             }
         }
+    }
+
+    /// "Run on"'s tooltip: what the chosen place runs the Space on
+    /// ("Container on this Mac (gVisor when installed)").
+    static func runOnHelp(_ v: AppWizardView) -> String {
+        v.placements.first { $0.id == v.placementId }?.detail ?? ""
     }
 
     private func osOf(_ id: String) -> AppSpaceOs {

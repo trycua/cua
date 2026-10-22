@@ -79,6 +79,7 @@ pub const JSON_UNARY_METHODS: &[&str] = &[
     "/cua.env.v1.HostSpacesService/CancelHostSpace",
     "/cua.env.v1.HostSpacesService/SetHostSpacePower",
     "/cua.env.v1.HostSpacesService/DeleteCloudSpace",
+    "/cua.env.v1.HostSpacesService/DiagnoseHost",
     "/cua.env.v1.VolumeService/AttachVolume",
     "/cua.env.v1.VolumeService/DetachVolume",
     "/cua.env.v1.VolumeService/GetVolumeStatus",
@@ -480,6 +481,14 @@ pub(crate) async fn call_unary<C: Channel>(ch: C, path: &str, json: &str) -> Res
             unary::<C, pb::DeleteCloudSpaceRequest, pb::DeleteCloudSpaceResponse>(
                 ch,
                 "/cua.env.v1.HostSpacesService/DeleteCloudSpace",
+                json,
+            )
+            .await
+        }
+        "/cua.env.v1.HostSpacesService/DiagnoseHost" => {
+            unary::<C, pb::DiagnoseHostRequest, pb::DiagnoseHostResponse>(
+                ch,
+                "/cua.env.v1.HostSpacesService/DiagnoseHost",
                 json,
             )
             .await

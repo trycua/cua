@@ -4,7 +4,7 @@
 //! Cua Cloud billing as both apps show it. The apps have no payment
 //! onboarding: the website does it (sign-up credit, adding a card). The
 //! apps only show the account's credit in Settings (with "Manage billing",
-//! the website's billing page) and, when Fleet refuses a new cloud Space
+//! the website's billing page) and, when a new cloud Space is refused
 //! because the account is out of credit, one plain line with "Add credit".
 //! Local Spaces never depend on any of it.
 
@@ -14,6 +14,10 @@ use serde::{Deserialize, Serialize};
 /// cloud Space's "Add credit". Off while the apps do not offer Cua Cloud
 /// ([`crate::model::CLOUD_SPACES_OFFERED`]); the SDK's billing calls stay.
 pub const BILLING_SHOWN: bool = crate::model::CLOUD_SPACES_OFFERED;
+
+/// The account app's billing page: billing and account links point at the
+/// account app, and only while [`BILLING_SHOWN`] is on (off by default).
+pub const BILLING_URL: &str = "https://app.cua.ai/billing";
 
 /// The saved card (never its number).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -33,8 +37,7 @@ pub struct BillingCredit {
     pub balance_usd_cents: i64,
 }
 
-/// The account's billing (the SDK's `Fleet.billing_status()`, Fleet's
-/// `GET /api/billing/status`).
+/// The account's billing, as the apps read it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BillingStatus {
@@ -60,8 +63,8 @@ pub const ADD_CREDIT: &str = "Add credit";
 /// "Manage billing" (Settings).
 pub const MANAGE_BILLING: &str = "Manage billing";
 
-/// A cloud Space Fleet refused for want of credit: the line, the button,
-/// and the website billing page it opens.
+/// A cloud Space refused for want of credit: the line, the button, and the
+/// website billing page it opens.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreditNotice {
     /// [`OUT_OF_CREDIT`].
@@ -72,9 +75,9 @@ pub struct CreditNotice {
     pub url: String,
 }
 
-/// The out-of-credit notice for an SDK error, when that is what `raw` is:
-/// the SDK's `CloudCreditExhausted` message ("You're out of Cua Cloud
-/// credit. Add credit at <url>"), with or without a variant prefix.
+/// The out-of-credit notice for an error message, when that is what `raw`
+/// is ("You're out of Cua Cloud credit. Add credit at <url>"), with or
+/// without a prefix.
 pub fn credit_notice(raw: &str) -> Option<CreditNotice> {
     let lower = raw.to_ascii_lowercase();
     if !lower.contains("out of cua cloud credit") {
@@ -86,10 +89,11 @@ pub fn credit_notice(raw: &str) -> Option<CreditNotice> {
         .split_whitespace()
         .next()?
         .trim_end_matches(['.', ')', ',', '"', '\'']);
+    // Whatever page the error names, the button opens the account app.
     (url.starts_with("https://") || url.starts_with("http://")).then(|| CreditNotice {
         text: OUT_OF_CREDIT.into(),
         button: ADD_CREDIT.into(),
-        url: url.into(),
+        url: BILLING_URL.into(),
     })
 }
 
@@ -150,7 +154,7 @@ mod tests {
             credit: Some(BillingCredit {
                 balance_usd_cents: 742,
             }),
-            billing_url: Some("https://run.cua.ai/billing".into()),
+            billing_url: Some(BILLING_URL.into()),
         };
         assert_eq!(billing_line(&s), "$7.42 credit left");
         s.credit = None;
@@ -162,22 +166,22 @@ mod tests {
     #[test]
     fn out_of_credit_errors_become_one_line_and_a_button() {
         for raw in [
-            "You're out of Cua Cloud credit. Add credit at https://run.cua.ai/billing",
-            "cloud_credit_exhausted: You're out of Cua Cloud credit. Add credit at https://run.cua.ai/billing.",
-            "CloudCreditExhausted(\"You're out of Cua Cloud credit. Add credit at https://run.cua.ai/billing\")",
+            "You're out of Cua Cloud credit. Add credit at https://app.cua.ai/billing",
+            "cloud_credit_exhausted: You're out of Cua Cloud credit. Add credit at https://app.cua.ai/billing.",
+            "CloudCreditExhausted(\"You're out of Cua Cloud credit. Add credit at https://app.cua.ai/billing\")",
         ] {
             assert_eq!(
                 credit_notice(raw),
                 Some(CreditNotice {
                     text: OUT_OF_CREDIT.into(),
                     button: ADD_CREDIT.into(),
-                    url: "https://run.cua.ai/billing".into(),
+                    url: BILLING_URL.into(),
                 }),
                 "{raw}"
             );
         }
         for raw in [
-            "fleet admission denied: sandbox size is over the Fleet limits",
+            "admission denied: sandbox size is over the limits",
             "You're out of Cua Cloud credit.",
             "out of Cua Cloud credit. Add credit at javascript:alert(1)",
             "no local runtime",

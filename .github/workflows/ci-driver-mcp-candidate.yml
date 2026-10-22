@@ -20,6 +20,11 @@ concurrency:
   group: driver-mcp-candidate-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
+
 jobs:
   candidate:
     name: MCP candidate (${{ matrix.os }})

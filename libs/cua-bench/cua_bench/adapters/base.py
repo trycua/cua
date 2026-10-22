@@ -31,7 +31,7 @@ What the base class does for every adapter:
   kind selection (``--kind auto|container|vm``, VM-only OSes) and the
   requirement check happen in ``cb run`` before any sandbox starts;
 * :class:`Endpoints` (``ep``): the benchmark's own server and other guest
-  ports, the same way locally and on Fleet;
+  ports;
 * timeouts: setup, evaluate and the oracle are bounded (``timeouts``).
 """
 
@@ -61,7 +61,7 @@ class ServerSpec:
 
 
 class Endpoints:
-    """How an adapter reaches guest ports, the same locally and on Fleet.
+    """How an adapter reaches guest ports.
 
     * ``await ep.url()`` / ``await ep.url("server")``: the benchmark server;
     * ``await ep.url(9222)``: any exposed guest port;
@@ -69,8 +69,8 @@ class Endpoints:
       request through the SDK's service API;
     * ``await ep.host_port(9222)``: a ``(host, port)`` for code that builds
       ``http://{host}:{port}/...`` itself (upstream controllers). Locally that
-      is the published port; when the service URL has a path prefix (Fleet
-      signed URLs) it is a loopback :class:`~cua_bench.adapters.bridge.PathBridge`
+      is the published port; when the service URL has a path prefix (a
+      signed URL) it is a loopback :class:`~cua_bench.adapters.bridge.PathBridge`
       to it, closed by ``await ep.aclose()``.
 
     Sessions attached to a legacy computer-server by URL (no cua-sandbox
@@ -171,7 +171,7 @@ class BenchAdapter:
     ports: tuple[int, ...] = ()
     #: How a task starts clean: a fresh sandbox (default), the benchmark's own
     #: reset endpoint, or a snapshot restore inside the guest.
-    reset: Literal["fresh-claim", "server", "snapshot"] = "fresh-claim"
+    reset: Literal["fresh-sandbox", "server", "snapshot"] = "fresh-sandbox"
     #: driver: agents act through cua-driver (sb.mouse/keyboard); native: the
     #: adapter translates cb actions into the benchmark's API (``act``).
     action_mode: Literal["driver", "native", "both"] = "driver"
@@ -332,7 +332,6 @@ class BenchAdapter:
 def unmet_requirements(
     requires: "list[str] | tuple[str, ...] | frozenset",
     *,
-    cloud: bool,
     environ: Mapping[str, str],
     has_kvm: bool,
 ) -> list[str]:
@@ -340,10 +339,10 @@ def unmet_requirements(
     problems = []
     for word in sorted(requires or ()):
         word = REQUIREMENT_ALIASES.get(word, word)
-        if word == "kvm" and not cloud and not has_kvm:
+        if word == "kvm" and not has_kvm:
             problems.append(
                 "needs KVM for local VMs (/dev/kvm is missing): run on a Linux host with "
-                "virtualization enabled, or use --on cloud"
+                "virtualization enabled"
             )
         elif word.startswith("env:"):
             name = word[4:]

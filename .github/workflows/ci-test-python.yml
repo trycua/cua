@@ -17,6 +17,15 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Test ${{ matrix.package }}
@@ -87,7 +96,7 @@ jobs:
     # cua-sandbox drives sandboxes through the cua SDK (UniFFI over cua-sdk),
     # so the native library and the MockServer fixture are built first. The
     # hermetic suite never touches the host or a cloud;
-    # the live runtime/Fleet suites are excluded (they are gated separately).
+    # the live runtime suites are excluded (they are gated separately).
     name: Test cua-sandbox (hermetic, on the cua SDK)
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -101,10 +110,7 @@ jobs:
       - uses: ./.github/actions/linux-rust-prep
 
       - name: Install protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          version: "29.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./.github/actions/setup-protoc
 
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
@@ -136,7 +142,6 @@ jobs:
           --ignore=tests/live
           --ignore=tests/test_runtime.py
           --ignore=tests/test_snapshots.py
-          --ignore=tests/test_windows_cloud.py
           --ignore=tests/test_windows_timing.py
           --deselect tests/test_oci.py::TestLiveRegistry
 
@@ -144,7 +149,7 @@ jobs:
     name: Test Summary
     runs-on: ubuntu-latest
     needs: [test, cua-sandbox]
-    if: always()
+    if: ${{ !cancelled() }}
 
     steps:
       - name: Check test results

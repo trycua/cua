@@ -15,11 +15,21 @@
 #                                          Updater.app, then the framework
 #   Contents/Frameworks/libcua_sdk.dylib   (no entitlements)
 #   Contents/MacOS/cua                     com.trycua.cua, Support/cua.entitlements
+#   Contents/MacOS/cua-spacesd             com.trycua.cua-env-driver (the host service,
+#                                          which the app's own executable runs as its
+#                                          login item)
 #   Cua Spaces.app                         com.trycua.spaces.macos, Support/CuaSpacesMac.entitlements
 #
 #   scripts/build-release.sh --version 0.2.0[-suffix] [--build-number N]
 #       [--arch universal|arm64|x86_64] [--sign IDENTITY] [--out DIR]
-#       [--feed-url URL] [--skip-cargo]
+#       [--feed-url URL] [--channel stable|beta] [--skip-cargo]
+#
+# --channel beta builds the beta channel: it talks to Cua staging by default
+# (Info.plist CuaEnv=staging, and the bundled cua is compiled with
+# CUA_DEFAULT_ENV=staging), with a staging session and home
+# (~/.cua/envs/staging). CUA_ENV=prod at launch still selects production.
+# stable (the default) is production. With --skip-cargo, build the reused
+# binaries with CUA_DEFAULT_ENV=staging yourself.
 #
 # --feed-url sets the updater's appcast (SUFeedURL; default Support/Info.plist's,
 # trycua/cua's rolling cua-spaces-latest release). The release workflow passes
@@ -52,6 +62,7 @@ identity="-"
 out="$here/.build/release-app"
 skip_cargo=0
 feed_url=""
+channel=stable
 while [ $# -gt 0 ]; do
   case "$1" in
     --version) version="$2"; shift ;;
@@ -61,7 +72,8 @@ while [ $# -gt 0 ]; do
     --out) out="$2"; shift ;;
     --skip-cargo) skip_cargo=1 ;;
     --feed-url) feed_url="$2"; shift ;;
-    -h | --help) sed -n '5,37p' "$0"; exit 0 ;;
+    --channel) channel="$2"; shift ;;
+    -h | --help) sed -n '5,45p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
   shift
@@ -86,13 +98,18 @@ case "$arch" in
   arm64 | x86_64) archs="$arch" ;;
   *) echo "--arch must be universal, arm64 or x86_64" >&2; exit 2 ;;
 esac
+case "$channel" in
+  stable) default_env="" ;;
+  beta) default_env=staging ;;
+  *) echo "--channel must be stable or beta" >&2; exit 2 ;;
+esac
 triple() { [ "$1" = arm64 ] && echo aarch64-apple-darwin || echo x86_64-apple-darwin; }
 
 target="${CARGO_TARGET_DIR:-$cua/target}"
 case "$target" in /*) ;; *) target="$cua/$target" ;; esac
 if [ "$skip_cargo" = 0 ]; then
   for a in $archs; do
-    (cd "$cua" && cargo build --locked --release -p cua-spaces-ffi -p cua-spaces-cli --target "$(triple "$a")")
+    (cd "$cua" && CUA_DEFAULT_ENV="$default_env" cargo build --locked --release -p cua-spaces-ffi -p cua-spaces-cli --target "$(triple "$a")")
   done
 fi
 
@@ -122,9 +139,23 @@ plist="$app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $bundle_version" "$plist"
 /usr/libexec/PlistBuddy -c "Delete :CuaVersion" "$plist" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Add :CuaVersion string $version" "$plist"
+/usr/libexec/PlistBuddy -c "Delete :CuaEnv" "$plist" 2>/dev/null || true
+if [ -n "$default_env" ]; then
+  /usr/libexec/PlistBuddy -c "Add :CuaEnv string $default_env" "$plist"
+fi
 if [ -n "$feed_url" ]; then
   case "$feed_url" in https://*) ;; *) echo "--feed-url must be https" >&2; exit 2 ;; esac
   /usr/libexec/PlistBuddy -c "Set :SUFeedURL $feed_url" "$plist"
+fi
+[ -x "$app/Contents/MacOS/cua-spacesd" ] || { echo "$app has no Contents/MacOS/cua-spacesd" >&2; exit 1; }
+[ -f "$app/Contents/Library/LaunchAgents/com.trycua.spaces.helper.plist" ] ||
+  { echo "$app has no com.trycua.spaces.helper.plist" >&2; exit 1; }
+# The symbols build-app.sh took out of the binaries, for symbolicating crash
+# reports (the release workflow keeps it as an artifact; not shipped).
+if [ -d "$out/dSYMs" ]; then
+  rm -f "$out/cua-spaces-$version-dSYMs.zip"
+  (cd "$out" && ditto -c -k --keepParent dSYMs "cua-spaces-$version-dSYMs.zip")
+  rm -rf "$out/dSYMs"
 fi
 for key in SUFeedURL SUPublicEDKey; do
   /usr/libexec/PlistBuddy -c "Print :$key" "$plist" >/dev/null 2>&1 || { echo "Info.plist has no $key" >&2; exit 1; }
@@ -133,7 +164,7 @@ done
 # Inside out: nested code first, the bundle last (its signature seals the
 # nested signatures). No --deep: each piece gets its own identifier and
 # entitlements.
-sign=(codesign --force --options runtime --sign "$identity")
+sign=("$here/scripts/retry-apple.sh" -- codesign --force --options runtime --sign "$identity")
 [ "$identity" = "-" ] || sign+=(--timestamp)
 # Sparkle, inside out, as its documentation orders it for a Developer ID
 # app outside the App Sandbox: the XPC services (the Downloader keeps its
@@ -157,6 +188,10 @@ done
 "${sign[@]}" "$app/Contents/Frameworks/libcua_sdk.dylib"
 "${sign[@]}" --identifier com.trycua.cua \
   --entitlements "$here/Support/cua.entitlements" "$app/Contents/MacOS/cua"
+# The host service. The app's own executable runs it, so its permissions
+# are the app's (designated requirement: identifier and team, checked
+# below), and they stay granted across updates.
+"${sign[@]}" --identifier com.trycua.cua-env-driver "$app/Contents/MacOS/cua-spacesd"
 app_entitlements="$here/Support/CuaSpacesMac.entitlements"
 if [ "$identity" = "-" ]; then
   app_entitlements="$out/.adhoc.entitlements"
@@ -167,7 +202,8 @@ fi
 [ "$identity" = "-" ] && rm -f "$app_entitlements"
 
 codesign --verify --deep --strict --verbose=2 "$app" >&2
-for f in "$app" "$app/Contents/MacOS/cua" "$app/Contents/Frameworks/libcua_sdk.dylib" "${sparkle_parts[@]}"; do
+for f in "$app" "$app/Contents/MacOS/cua" "$app/Contents/Frameworks/libcua_sdk.dylib" "${sparkle_parts[@]}" \
+  "$app/Contents/MacOS/cua-spacesd"; do
   flags="$(codesign -dv "$f" 2>&1 | sed -n 's/^CodeDirectory.*flags=\([^ ]*\).*/\1/p')"
   case "$flags" in *runtime*) ;; *) echo "$f is not signed with the hardened runtime ($flags)" >&2; exit 1 ;; esac
 done
@@ -191,10 +227,26 @@ if [ "$identity" != "-" ]; then
       { echo "$f does not meet the Keyvault requirement (team $team, $id): sign with the Cua team's Developer ID" >&2; exit 1; }
   done
 fi
+# The saved sign-in's keychain items trust each Cua executable by its
+# designated requirement (cua-auth's macos_keychain.rs, README "Keychain"):
+# it must be the identifier and the team, never a cdhash, or the next build
+# would not meet it and macOS would ask for the login password again.
+if [ "$identity" != "-" ]; then
+  for pair in "$app/Contents/MacOS/CuaSpacesMac:com.trycua.spaces.macos" "$app/Contents/MacOS/cua:com.trycua.cua"; do
+    f="${pair%:*}"
+    id="${pair##*:}"
+    dr="$(codesign -d -r- "$f" 2>&1 | sed -n 's/^designated => //p')"
+    case "$dr" in
+      *cdhash*|"") echo "$f has no stable designated requirement ($dr)" >&2; exit 1 ;;
+      *"identifier \"$id\""*"leaf[subject.OU] = $team"*) ;;
+      *) echo "$f: designated requirement does not name $id and team $team ($dr)" >&2; exit 1 ;;
+    esac
+  done
+fi
 # A Developer ID build signs Sparkle with the same team (library
 # validation stays on: the app loads only its own team's code).
 if [ "$identity" != "-" ]; then
-  for f in "${sparkle_parts[@]}"; do
+  for f in "${sparkle_parts[@]}" "$app/Contents/MacOS/cua-spacesd"; do
     codesign --verify -R="anchor apple generic and certificate leaf[subject.OU] = \"$team\"" "$f" ||
       { echo "$f is not signed by team $team" >&2; exit 1; }
   done

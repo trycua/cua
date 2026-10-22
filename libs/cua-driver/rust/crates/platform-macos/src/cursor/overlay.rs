@@ -150,6 +150,7 @@ fn cursor_may_paint(state: &RenderState) -> bool {
     state.focus_rect.is_some()
         || (state.core.cfg.enabled
             && state.core.visible
+            && state.core.placed
             && state.core.idle_alpha > 0.0
             && on_main_screen(state.core.pos))
 }
@@ -253,6 +254,9 @@ pub fn init(cfg: CursorConfig) {
                         reduced_motion: selection.reduced_motion,
                     },
                 ),
+                CursorEvent::KeyCombo { session, keys } => {
+                    (session, OverlayCommand::ShowKeyCombo(keys))
+                }
                 CursorEvent::SelectMotion { session, motion } => {
                     (session, OverlayCommand::ApplyMotion(motion))
                 }
@@ -367,11 +371,11 @@ pub fn current_theme_state(
 /// the sentinel and only `ClickPulse` snapped a static arrow, which is easy to
 /// miss. See the AX-no-glide report.
 ///
-/// No-op when the cursor is already placed (`is_placed`) or absent. The
+/// No-op when the cursor is already placed or absent. The
 /// seed is clamped to the main screen frame so it never starts off-display.
 /// Returns true if a seed was applied (i.e. the cursor was at the sentinel and
 /// is now primed to glide).
-fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool {
+fn seed_start_if_unplaced(key: &CursorKey, target_x: f64, target_y: f64) -> bool {
     let mut guard = RENDER.lock().unwrap();
     let Some(map) = guard.as_mut() else {
         return false;
@@ -380,7 +384,7 @@ fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool
     // keeps the start point off negative coordinates.
     let MacScreen { win_w, win_h, .. } = map.platform;
     let frame = (win_w > 0.0 && win_h > 0.0).then(|| ScreenFrame::new(0.0, 0.0, win_w, win_h));
-    map.seed_start_if_sentinel(key, target_x, target_y, frame)
+    map.seed_start_if_unplaced(key, target_x, target_y, frame)
 }
 
 /// Animate the overlay cursor to `(x, y)` and suspend until the Dubins path
@@ -389,7 +393,7 @@ fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool
 /// Mirrors Swift's `AgentCursor.shared.animateAndWait(to:)`.
 /// Returns immediately (no animation) only when the overlay is disabled for
 /// this cursor. A brand-new cursor still at the off-screen sentinel is first
-/// seeded on-screen via [`seed_start_if_sentinel`] so its FIRST action glides
+/// seeded on-screen via [`seed_start_if_unplaced`] so its FIRST action glides
 /// in (it previously snapped silently via `ClickPulse`, invisible on a pure-AX
 /// run).
 pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
@@ -406,9 +410,9 @@ pub async fn animate_cursor_to_target(key: CursorKey, x: f64, y: f64, target: Op
         return;
     }
     // Seed a sentinel cursor on-screen so the MoveTo below glides instead of
-    // being short-circuited. After this the cursor is placed (`is_placed`), so the
+    // being short-circuited. After this the cursor is placed, so the
     // should-animate check passes on the first action just like later ones.
-    seed_start_if_sentinel(&key, x, y);
+    seed_start_if_unplaced(&key, x, y);
 
     // Check whether animation should run for THIS cursor. A disabled cursor
     // never animates; an absent cursor (seed found nothing to prime) is skipped.
@@ -416,7 +420,7 @@ pub async fn animate_cursor_to_target(key: CursorKey, x: f64, y: f64, target: Op
         let guard = RENDER.lock().unwrap();
         matches!(
             guard.as_ref().and_then(|m| m.cursors.get(&key)),
-            Some(rs) if rs.core.cfg.enabled && cursor_overlay::render_state::is_placed(rs.core.pos)
+            Some(rs) if rs.core.cfg.enabled && rs.core.placed
         )
     };
     if !should_animate {
@@ -446,12 +450,32 @@ pub async fn animate_cursor_to_target(key: CursorKey, x: f64, y: f64, target: Op
     // thread never entered `run_on_main_thread`): the command stays queued
     // for a loop that starts later, and the action proceeds now. Bounded
     // either way.
-    wait_for_arrival(
-        rx,
-        RENDER_LOOP_RUNNING.load(Ordering::Acquire),
-        ARRIVAL_TIMEOUT,
-    )
-    .await;
+    await_arrival(rx, RENDER_LOOP_RUNNING.load(Ordering::Acquire)).await;
+}
+
+/// Waits for the cursor's arrival signal for as long as the current step's
+/// pacing allows. A step of a batch waits only briefly for the glide (it plays
+/// on), so a chain of actions is not held up by one cursor move per step.
+pub(crate) async fn await_arrival(
+    rx: tokio::sync::oneshot::Receiver<()>,
+    render_loop_running: bool,
+) -> bool {
+    let limit = cua_driver_core::step_pacing::glide_wait_limit(ARRIVAL_TIMEOUT);
+    if limit < ARRIVAL_TIMEOUT {
+        wait_for_arrival_briefly(rx, render_loop_running, limit).await
+    } else {
+        wait_for_arrival(rx, render_loop_running, ARRIVAL_TIMEOUT).await
+    }
+}
+
+/// [`wait_for_arrival`] for a deliberately short wait: the cursor is still
+/// gliding when the limit passes, which is expected and not logged.
+async fn wait_for_arrival_briefly(
+    rx: tokio::sync::oneshot::Receiver<()>,
+    render_loop_running: bool,
+    limit: Duration,
+) -> bool {
+    render_loop_running && tokio::time::timeout(limit, rx).await.is_ok()
 }
 
 /// Waits for `rx` only while a render loop runs, and never longer than
@@ -1073,6 +1097,7 @@ fn hardware_cursor_position() -> Option<(f64, f64)> {
 fn cursor_is_externally_visible(state: &RenderState) -> bool {
     state.core.cfg.enabled
         && state.core.visible
+        && state.core.placed
         && on_main_screen(state.core.pos)
         && state.core.idle_alpha >= 0.004
 }
@@ -1442,6 +1467,29 @@ mod tests {
         assert!(rt.block_on(wait_for_arrival(rx, true, Duration::from_secs(60))));
     }
 
+    #[test]
+    fn a_batched_step_waits_for_the_glide_only_up_to_the_batch_cap() {
+        use cua_driver_core::step_pacing::{glide_wait_limit, scope, StepPacing, BATCH_GLIDE_WAIT};
+        let rt = runtime();
+        // The sender stays alive and never fires: the glide is still playing.
+        let (_tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let started = Instant::now();
+        let arrived = rt.block_on(scope(StepPacing::Batched, async {
+            let limit = glide_wait_limit(ARRIVAL_TIMEOUT);
+            assert_eq!(limit, BATCH_GLIDE_WAIT);
+            wait_for_arrival_briefly(rx, true, limit).await
+        }));
+        assert!(!arrived);
+        assert!(started.elapsed() >= BATCH_GLIDE_WAIT);
+        assert!(started.elapsed() < ARRIVAL_TIMEOUT / 4);
+        // A direct call keeps the full arrival limit.
+        assert_eq!(glide_wait_limit(ARRIVAL_TIMEOUT), ARRIVAL_TIMEOUT);
+        // An arrival inside the cap is still seen.
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        tx.send(()).unwrap();
+        assert!(rt.block_on(wait_for_arrival_briefly(rx, true, BATCH_GLIDE_WAIT)));
+    }
+
     fn window(window_id: u32, pid: i32, z_index: usize) -> crate::windows::WindowInfo {
         crate::windows::WindowInfo {
             window_id,
@@ -1476,7 +1524,7 @@ mod tests {
 
     fn placed<'a>(map: &'a mut RenderMap, key: &str) -> &'a mut RenderState {
         let frame = Some(ScreenFrame::new(0.0, 0.0, 100.0, 100.0));
-        assert!(map.seed_start_if_sentinel(key, 60.0, 60.0, frame));
+        assert!(map.seed_start_if_unplaced(key, 60.0, 60.0, frame));
         map.cursors.get_mut(key).unwrap()
     }
 
@@ -1512,6 +1560,10 @@ mod tests {
 
         placed(&mut map, "sessA");
         assert!(cursor_is_externally_visible(&map.cursors["sessA"]));
+        map.cursors.get_mut("sessA").unwrap().core.placed = false;
+        assert!(!cursor_may_paint(&map.cursors["sessA"]));
+        assert!(!cursor_is_externally_visible(&map.cursors["sessA"]));
+        map.cursors.get_mut("sessA").unwrap().core.placed = true;
 
         map.cursors.get_mut("sessA").unwrap().core.cfg.enabled = false;
         assert!(!cursor_is_externally_visible(&map.cursors["sessA"]));

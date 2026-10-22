@@ -163,26 +163,76 @@ pub async fn run(program: impl AsRef<std::ffi::OsStr>, args: &[&str]) -> Result<
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+static SUDO_AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+pub fn sudo_available() -> bool {
+    *SUDO_AVAILABLE.get_or_init(|| {
+        which("sudo").is_some_and(|sudo| {
+            std::process::Command::new(sudo)
+                .args(["-n", "true"])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+        })
+    })
+}
+
 /// Whether hardware virtualisation is usable for a guest of `guest` arch, and
 /// which QEMU accelerator to use.
-pub fn qemu_accel(guest: Arch) -> &'static str {
+pub fn qemu_accel(os: HostOs, guest: Arch, kvm: &std::io::Result<()>) -> Result<&'static str> {
+    qemu_accel_with(os, guest, kvm, sudo_available, |message| {
+        tracing::warn!("{message}")
+    })
+}
+
+pub(crate) fn qemu_accel_with(
+    os: HostOs,
+    guest: Arch,
+    kvm: &std::io::Result<()>,
+    sudo: impl Fn() -> bool,
+    mut warn: impl FnMut(&str),
+) -> Result<&'static str> {
     let host = Arch::host();
-    match HostOs::current() {
+    match (os, kvm) {
         // HVF only virtualises the host's own architecture.
-        HostOs::Macos if host == guest => "hvf",
-        HostOs::Linux if host == guest && kvm_usable() => "kvm",
-        HostOs::Windows if host == guest => "whpx",
-        _ => "tcg",
+        (HostOs::Macos, _) if host == guest => Ok("hvf"),
+        (HostOs::Linux, Ok(())) if host == guest => Ok("kvm"),
+        (HostOs::Linux, Err(e)) if host == guest && e.kind() != std::io::ErrorKind::NotFound => {
+            if e.kind() == std::io::ErrorKind::PermissionDenied && !sudo() {
+                warn("KVM access denied and sudo unavailable; using slow TCG emulation");
+                Ok("tcg")
+            } else {
+                Err(VmmError::missing("KVM", kvm_hint(e)))
+            }
+        }
+        (HostOs::Windows, _) if host == guest => Ok("whpx"),
+        _ => Ok("tcg"),
     }
 }
 
-/// `/dev/kvm` exists and is openable read/write.
-pub fn kvm_usable() -> bool {
+/// Opens `/dev/kvm` read/write.
+pub fn kvm_usable() -> std::io::Result<()> {
     std::fs::OpenOptions::new()
         .read(true)
         .write(true)
         .open("/dev/kvm")
-        .is_ok()
+        .map(drop)
+}
+
+/// Why `/dev/kvm` could not be opened, and how to fix it.
+pub fn kvm_hint(e: &std::io::Error) -> String {
+    match e.kind() {
+        std::io::ErrorKind::NotFound => "/dev/kvm is missing, so same-architecture guests run \
+            under slow TCG emulation; enable virtualization on the host (nested virtualization \
+            if the host is a VM)"
+            .into(),
+        std::io::ErrorKind::PermissionDenied => "permission denied opening /dev/kvm; add your \
+            user to its group (for the kvm group: `sudo usermod -aG kvm \"$USER\"`), then log \
+            out and back in"
+            .into(),
+        _ => format!("cannot open /dev/kvm: {e}"),
+    }
 }
 
 /// Unix seconds.
@@ -278,9 +328,58 @@ mod tests {
             Arch::X86_64 => Arch::Aarch64,
             Arch::Aarch64 => Arch::X86_64,
         };
-        assert_eq!(qemu_accel(foreign), "tcg");
-        #[cfg(target_os = "macos")]
-        assert_eq!(qemu_accel(Arch::host()), "hvf");
+        let denied = Err(std::io::ErrorKind::PermissionDenied.into());
+        for os in [HostOs::Linux, HostOs::Macos, HostOs::Windows] {
+            assert_eq!(qemu_accel(os, foreign, &denied).unwrap(), "tcg");
+        }
+        assert_eq!(
+            qemu_accel(HostOs::Macos, Arch::host(), &denied).unwrap(),
+            "hvf"
+        );
+        assert_eq!(
+            qemu_accel(HostOs::Windows, Arch::host(), &denied).unwrap(),
+            "whpx"
+        );
+    }
+
+    #[test]
+    fn native_linux_accel_tells_missing_from_unopenable_kvm() {
+        let native = |kvm| qemu_accel_with(HostOs::Linux, Arch::host(), &kvm, || true, |_| {});
+        assert_eq!(native(Ok(())).unwrap(), "kvm");
+        assert_eq!(
+            native(Err(std::io::ErrorKind::NotFound.into())).unwrap(),
+            "tcg"
+        );
+        let missing = kvm_hint(&std::io::ErrorKind::NotFound.into());
+        assert!(missing.contains("nested virtualization"), "{missing}");
+        let denied = native(Err(std::io::ErrorKind::PermissionDenied.into()));
+        let denied = denied.unwrap_err().to_string();
+        assert!(denied.contains("permission denied"), "{denied}");
+        assert!(
+            denied.contains("sudo usermod -aG kvm \"$USER\""),
+            "{denied}"
+        );
+        let mut warning = String::new();
+        assert_eq!(
+            qemu_accel_with(
+                HostOs::Linux,
+                Arch::host(),
+                &Err(std::io::ErrorKind::PermissionDenied.into()),
+                || false,
+                |message| warning.push_str(message)
+            )
+            .unwrap(),
+            "tcg"
+        );
+        assert_eq!(
+            warning,
+            "KVM access denied and sudo unavailable; using slow TCG emulation"
+        );
+        let other = native(Err(std::io::Error::other("device busy")))
+            .unwrap_err()
+            .to_string();
+        assert!(other.contains("device busy"), "{other}");
+        assert!(!other.contains("usermod"), "{other}");
     }
 
     /// Regression for #4756: Windows reported every pid as dead.

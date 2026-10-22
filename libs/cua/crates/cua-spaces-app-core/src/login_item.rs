@@ -15,10 +15,10 @@
 //! the daemon back after a restart, and with it the Spaces this machine
 //! provides, its persistent agents and Cua Volume.
 //!
-//! The default: on once the first run finishes (the Done checkbox, ticked
-//! unless unticked). An install that finished its first run before this
-//! setting existed is turned on only when it provides Spaces or runs
-//! persistent agents ([`launch_plan`]). Once the user has chosen, the app
+//! The default: on for unattended access, off for accessing other machines
+//! (the Done checkbox can override either). An install that finished its
+//! first run before this setting existed is turned on only when it provides
+//! Spaces or runs persistent agents ([`launch_plan`]). Once the user has chosen, the app
 //! never changes it again.
 
 use serde::{Deserialize, Serialize};
@@ -91,9 +91,9 @@ pub struct LoginItemInput {
 /// What turning it off stops, in one line; none when nothing runs here.
 pub fn off_warning(provides_spaces: bool, runs_agents: bool) -> Option<String> {
     let what = match (provides_spaces, runs_agents) {
-        (true, true) => "This machine provides Spaces and runs persistent agents",
-        (true, false) => "This machine provides Spaces",
-        (false, true) => "This machine runs persistent agents",
+        (true, true) => "This computer provides Spaces and runs persistent agents",
+        (true, false) => "This computer provides Spaces",
+        (false, true) => "This computer runs persistent agents",
         (false, false) => return None,
     };
     Some(format!(
@@ -238,7 +238,7 @@ mod tests {
         });
         assert_eq!(
             ids(&off)[1],
-            "launch-at-login-note:This machine provides Spaces, which stop after a restart until you open Cua Spaces."
+            "launch-at-login-note:This computer provides Spaces, which stop after a restart until you open Cua Spaces."
         );
         let on = rows(&LoginItemInput {
             status: LoginItemStatus::Enabled,

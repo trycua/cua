@@ -490,16 +490,19 @@ pub fn filter(spaces: &[Space], query: &str) -> Vec<Space> {
         .collect()
 }
 
-/// The Space tiles: MRU order, not this machine, at most [`MAX_TILES`].
+/// The Space tiles: the Spaces the user can open
+/// ([`crate::spaces::openable_spaces`], never This machine or another
+/// machine that only provides Spaces, the same Spaces the tab counts), in
+/// MRU order, at most [`MAX_TILES`].
 pub fn tiles(spaces: &[Space], targeted: Option<&str>) -> Vec<NotchTile> {
     tiles_matching(spaces, targeted, "")
 }
 
 /// [`tiles`] narrowed by the header's search.
 pub fn tiles_matching(spaces: &[Space], targeted: Option<&str>, query: &str) -> Vec<NotchTile> {
-    sort_by_mru(spaces)
+    sort_by_mru(&crate::spaces::openable_spaces(spaces))
         .into_iter()
-        .filter(|s| s.id != THIS_MACHINE_ID && matches(s, query))
+        .filter(|s| matches(s, query))
         .take(MAX_TILES)
         .map(|s| NotchTile {
             location: location(&s, spaces),
@@ -998,7 +1001,7 @@ pub struct NotchActivity {
     pub estimate_ms: u32,
 }
 
-/// Time to about 80% on a ring without real progress (the measured Fleet
+/// Time to about 80% on a ring without real progress (the measured cloud
 /// bind time).
 pub const ACTIVITY_ESTIMATE_MS: u32 = 80_000;
 
@@ -1048,9 +1051,9 @@ pub fn activity(
         return Some(NotchActivity {
             kind: NotchActivityKind::RemoteAccess,
             label: if connected == 1 {
-                "Someone is connected to this machine".into()
+                "Someone is connected to this computer".into()
             } else {
-                format!("{connected} are connected to this machine")
+                format!("{connected} are connected to this computer")
             },
             symbol: Some(REMOTE_ACCESS_SYMBOL.into()),
             permille: None,
@@ -1448,6 +1451,63 @@ mod tests {
         assert_eq!(t[0].label, "Dev, Linux, This Mac, Running");
     }
 
+    /// Hovering the notch lists the Spaces, never the machines that only
+    /// provide them (CUA-1619): not This machine while it hosts, not one of
+    /// your machines on the relay. The list and the tab's count are the same
+    /// Spaces, searching included.
+    #[test]
+    fn the_tiles_leave_out_the_machines_that_provide_spaces() {
+        use crate::host::{HostSummaryInput, this_machine_space};
+        use crate::model::SpaceProvider;
+        let hosting = HostSummaryInput {
+            configured: true,
+            service_running: true,
+            sharing: true,
+            ..Default::default()
+        };
+        let this_mac = this_machine_space(Some(&hosting), 0, SpaceOs::Macos);
+        let mut machine = space(
+            "relay:studio",
+            "Studio",
+            SpaceOs::Macos,
+            SpaceStatus::Running,
+        );
+        machine.provider = Some(SpaceProvider::Relay);
+        let mut provided = space(
+            "relay:studio/dev",
+            "Dev",
+            SpaceOs::Linux,
+            SpaceStatus::Running,
+        );
+        provided.provider = Some(SpaceProvider::Relay);
+        provided.host = Some("studio".into());
+        let spaces = vec![this_mac, machine, provided];
+
+        let ids = |t: &[NotchTile]| t.iter().map(|t| t.id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(&tiles(&spaces, None)), ["relay:studio/dev"]);
+        let open = NotchState {
+            open: true,
+            ..Default::default()
+        };
+        let v = view(&open, &spaces);
+        assert_eq!(ids(&v.tiles), ["relay:studio/dev"]);
+        assert_eq!(v.label, "1 Space");
+        assert_eq!(v.count_label, "1 Space");
+        assert_eq!(
+            v.tiles.len(),
+            crate::spaces::openable_count(&spaces) as usize
+        );
+        // The provided Space still says which machine it runs on.
+        assert_eq!(v.tiles[0].location, "Studio");
+        // A search never brings the machines back.
+        assert!(tiles_matching(&spaces, None, "this mac").is_empty());
+        assert!(tiles_matching(&spaces, None, "macos").is_empty());
+        // Only machines: no tiles, "0 Spaces".
+        let v = view(&open, &spaces[..2]);
+        assert!(v.tiles.is_empty());
+        assert_eq!(v.count_label, "0 Spaces");
+    }
+
     #[test]
     fn the_tab_counts_remote_spaces_and_tucks_away_during_a_drag() {
         let spaces = vec![
@@ -1764,7 +1824,7 @@ mod tests {
             "before the hotspot"
         );
         assert_eq!(a.symbol.as_deref(), Some(REMOTE_ACCESS_SYMBOL));
-        assert_eq!(a.label, "Someone is connected to this machine");
+        assert_eq!(a.label, "Someone is connected to this computer");
         // A transfer in flight still shows its progress first.
         let t = NotchTransfer {
             sent: Some(1),
@@ -1786,7 +1846,7 @@ mod tests {
         );
         assert_eq!(
             activity(&[two], false, None, None).unwrap().label,
-            "2 are connected to this machine"
+            "2 are connected to this computer"
         );
         let gone = this_machine_space(
             Some(&HostSummaryInput {

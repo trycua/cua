@@ -353,7 +353,7 @@ async def start(task_cfg: cb.Task, session: cb.DesktopSession):
 
 **Important limitations:**
 
-- Runs in a sandbox (a local container by default, `--on cloud` for Fleet)
+- Runs in a sandbox (a local container by default)
 - Slower than Universal GUI
 - Less deterministic than custom GUIs
 

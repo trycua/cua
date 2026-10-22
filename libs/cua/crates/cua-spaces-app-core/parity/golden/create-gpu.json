@@ -47,7 +47,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB"
+          "Disk: 2.9 GB–6.9 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -70,7 +70,7 @@
         },
         "canContinue": true,
         "cpusText": "4 cores",
-        "disk": "150 GB (150-1024) ~Uses about 32 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
+        "disk": "150 GB (150-1024) ~Uses about 33 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
         "fields": [
           "os: System",
           "image: Image [ghcr.io/org/app:tag]",
@@ -126,7 +126,7 @@
         },
         "canContinue": true,
         "cpusText": "4 cores",
-        "disk": "150 GB (150-1024) ~Uses about 32 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
+        "disk": "150 GB (150-1024) ~Uses about 33 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
         "fields": [
           "cpus: CPU cores",
           "memory: Memory",
@@ -179,7 +179,7 @@
         },
         "canContinue": true,
         "cpusText": "4 cores",
-        "disk": "150 GB (150-1024) ~Uses about 32 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
+        "disk": "150 GB (150-1024) ~Uses about 33 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
         "fields": [
           "cpus: CPU cores",
           "memory: Memory",
@@ -264,7 +264,7 @@
         "resourceFacts": [
           "Kind: Container",
           "Architecture: ARM",
-          "Disk: 2.8 GB"
+          "Disk: 2.9 GB–6.9 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -287,7 +287,7 @@
         },
         "canContinue": true,
         "cpusText": "4 cores",
-        "disk": "150 GB (150-1024) ~Uses about 32 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
+        "disk": "150 GB (150-1024) ~Uses about 33 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
         "fields": [
           "cpus: CPU cores",
           "memory: Memory",
@@ -340,9 +340,9 @@
         },
         "canContinue": true,
         "cpusText": "4 cores",
-        "disk": "150 GB (150-1024) ~Uses about 32 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
+        "disk": "150 GB (150-1024) ~Uses about 33 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
         "fields": [
-          "name: Name [Optional]",
+          "name: Name [space-000000002a]",
           "open-when-ready: Open when ready"
         ],
         "gpu": "GPU acceleration (Experimental) [x] Learn more -> https://cua.ai/docs/lume/guides/gpu-passthrough",
@@ -392,7 +392,7 @@
         },
         "canContinue": true,
         "cpusText": "4 cores",
-        "disk": "150 GB (150-1024) ~Uses about 32 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
+        "disk": "150 GB (150-1024) ~Uses about 33 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
         "fields": [],
         "gpu": "GPU acceleration (Experimental) [x] Learn more -> https://cua.ai/docs/lume/guides/gpu-passthrough",
         "image": "ghcr.io/trycua/macos:26",
@@ -439,11 +439,12 @@
           "image": "ghcr.io/trycua/macos:26",
           "kind": "vm",
           "memoryMb": 8192,
+          "name": "space-000000002a",
           "on": "local",
           "runtime": "auto",
           "spacesd": true
         },
-        "creating": "Creating macOS Tahoe 26. It appears in the list when it is ready.",
+        "creating": "Creating space-000000002a. It appears in the list when it is ready.",
         "failed": "Could not create the Space: no macOS image is configured",
         "openDesktop": true,
         "summary": [
@@ -455,7 +456,7 @@
           "Runtime: Lume virtual machine (Apple silicon)",
           "Resources: 4 cores, 8 GB memory, 150 GB disk",
           "GPU: GPU acceleration (Experimental)",
-          "Name: Chosen automatically",
+          "Name: space-000000002a",
           "When ready: Open the desktop"
         ]
       }
@@ -473,7 +474,7 @@
     },
     {
       "frame": {
-        "emptyText": "No Spaces yet",
+        "emptyText": "spaces.sidebar.empty",
         "sections": [],
         "selectedId": null,
         "thisMachine": null
@@ -482,7 +483,7 @@
     },
     {
       "frame": {
-        "emptyText": "No Spaces yet",
+        "emptyText": "spaces.sidebar.empty",
         "sections": [],
         "selectedId": null,
         "thisMachine": null

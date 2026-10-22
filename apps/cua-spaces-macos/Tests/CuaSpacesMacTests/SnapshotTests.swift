@@ -4,6 +4,8 @@
 import AppKit
 import CuaSDK
 import CuaSpacesFFI
+import CuaSpacesNotchHelper
+import CuaSpacesNotchUI
 import CuaSpacesStreaming
 @testable import CuaSpacesMacKit
 import SwiftUI
@@ -32,104 +34,11 @@ struct SnapshotTests {
                                            kv: kv ? FakeKeyvault(try overview ?? fixtureOverview()) : nil,
                                            host: FixtureHost(), account: FixtureAccount(),
                                            agents: FixtureAgentSetup(), loginItem: loginItem)
-        m.onboarding.finish()
+        // Done's "Launch at login" ticked, as the first run's default had it.
+        m.onboarding.finish(launchAtLogin: true)
         await m.refresh()
         await m.keyvault.refresh()
         return m
-    }
-
-    @Test func onboardingWelcome() throws {
-        let o = OnboardingModel(statePath: nil)
-        try assertSnapshot(OnboardingView(onboarding: o), "onboarding", size: CGSize(width: 820, height: 560))
-    }
-
-    /// Every first-run page (the Tauri app's pages, from the same core).
-    @Test func onboardingPages() async throws {
-        let o = OnboardingModel(statePath: nil, agentSetup: FixtureAgentSetup())
-        let size = CGSize(width: 820, height: 560)
-        // Every page, the Volume page included (its experiment on).
-        o.send(.experimentsLoaded(experiments: AppExperiments(cuaVolume: true, yourCloud: false, sharing: false)))
-        o.send(.start)
-        try assertSnapshot(OnboardingView(onboarding: o), "onboarding-signin", size: size)
-        o.send(.signinDone)
-        await o.loadAgents()
-        try assertSnapshot(OnboardingView(onboarding: o), "onboarding-agents", size: size)
-        o.finishAgents(skipped: true)
-        try assertSnapshot(OnboardingView(onboarding: o), "onboarding-presentation", size: size)
-        o.send(.presentationDone)
-        o.send(.driveChecked(os: .macos, status: try appDriveMountFromJson(
-            json: #"{"enabled":false,"state":"off","method":"fskit","volume_name":"Cua Volume"}"#)))
-        try assertSnapshot(OnboardingView(onboarding: o), "onboarding-drive", size: size)
-        o.send(.driveContinue)
-        try assertSnapshot(OnboardingView(onboarding: o), "onboarding-mode", size: size)
-        o.send(.modeChosen(mode: .client))
-        try assertSnapshot(OnboardingView(onboarding: o), "onboarding-done", size: size)
-    }
-
-    /// The AI agents page with twelve agents at the window's minimum size:
-    /// the list scrolls in two columns, so Back and Set up stay in view.
-    @Test func onboardingAgentsLongListAtMinimumSize() async throws {
-        let names = ["Claude Code", "Codex", "Cursor", "Gemini CLI", "GitHub Copilot", "Windsurf", "Cline",
-                     "Roo Code", "OpenCode", "Goose", "Amp", "Hermes"]
-        let statuses = names.map { n in
-            AppAgentSetupStatus(id: n.lowercased().replacingOccurrences(of: " ", with: "-"), name: n, installed: true,
-                                skillsDir: "~/.agents/skills", mcpConfig: nil, cuaConfigured: false,
-                                skillsInstalled: [], skillsOutdated: [], error: nil)
-        }
-        let o = OnboardingModel(statePath: nil, agentSetup: FixtureAgentSetup(statuses: statuses))
-        o.send(.start)
-        o.send(.signinDone)
-        await o.loadAgents()
-        #expect(o.installedAgents.count == 12)
-        #expect(o.view.canBack)
-        try assertSnapshot(OnboardingView(onboarding: o), "onboarding-agents-long", size: CGSize(width: 720, height: 520))
-    }
-
-    /// The AI agents page's background computer-use card at beats of its
-    /// loop (the agent gliding while the user drags a selection, the agent
-    /// clicking a box, both idle at the loop's end), ticked, and the Reduce
-    /// Motion still.
-    @Test func driverCard() throws {
-        let copy = appOnboardingCopy()
-        func card(_ ms: UInt32?, on: Bool = false, still: Bool? = nil) -> some View {
-            DriverCardView(title: copy.agentsDriver, imageLabel: copy.agentsDriverImage, isOn: .constant(on),
-                           fixedMs: ms, still: still)
-                .padding(12)
-        }
-        let size = CGSize(width: 380, height: 180)
-        for (ms, name) in [(UInt32(1500), "working"), (1750, "click"), (4799, "idle")] {
-            try assertSnapshot(card(ms), "onboarding-driver-\(name)", size: size)
-        }
-        try assertSnapshot(card(nil, on: true, still: true), "onboarding-driver-still-on", size: size)
-        let still = appDriverPreviewStill()
-        #expect(still.ripple > 0 && still.checked[0] == 1 && !still.agentPressed)
-    }
-
-    /// The presentation cards' miniatures (both cards) at beats of the loop:
-    /// the pointer gliding up, the notch's hover cue, the notch springing
-    /// open while the menu drops down, both expanded; then the Reduce Motion
-    /// still (the expanded state, no loop).
-    @Test func presentationPreviews() async throws {
-        let o = OnboardingModel(statePath: nil, agentSetup: FixtureAgentSetup())
-        o.send(.start)
-        o.send(.signinDone)
-        o.finishAgents(skipped: true)
-        let cards = o.view.presentations
-        #expect(cards.count == 2)
-        func pair(_ ms: UInt32?, still: Bool? = nil) -> some View {
-            VStack(spacing: 10) {
-                ForEach(cards, id: \.id) { PresentationCardView(card: $0, fixedMs: ms, still: still) {} }
-            }
-            .padding(12)
-        }
-        let size = CGSize(width: 320, height: 300)
-        for (ms, name) in [(UInt32(900), "glide"), (1550, "dwell"), (1760, "opening"), (2400, "open")] {
-            try assertSnapshot(pair(ms), "onboarding-preview-\(name)", size: size)
-        }
-        try assertSnapshot(pair(nil, still: true), "onboarding-preview-still", size: size)
-        let still = [false, true].map { appPresentationPreviewStill(menuBar: $0) }
-        #expect(still[0].open == 1 && still[0].content == 1, "the notch open")
-        #expect(still[1].open == 1 && still[1].highlighted != nil, "the menu down")
     }
 
     @Test func newSpaceWizard() async throws {
@@ -179,14 +88,22 @@ struct SnapshotTests {
                 spacesdVersion: "0.4.1", features: [], addedAt: nil, os: os,
                 osName: nil, osPrettyName: nil, image: nil, imageDigest: nil,
                 kind: nil, arch: nil, reachable: true, error: nil, host: nil, hostName: nil,
-                power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil)
+                power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil)
             let space = appRowsToSpaces(rows: [row], nowMs: 0)[0]
             let facts = appSpaceDetail(space: space).facts
             #expect(facts.first { $0.label == "System" }?.value == expected)
             #expect(space.os.label == expected)
             var notch = appNotchInitial()
             notch.open = true
-            let tile = try #require(appNotchView(state: notch, spaces: [space]).tiles.first)
+            // The machine itself is no notch tile (CUA-1619): a Space it
+            // provides, with the same OS, is.
+            var providedRow = row
+            providedRow.id = "relay:test-host/dev"
+            providedRow.host = "test-host"
+            let provided = appRowsToSpaces(rows: [providedRow], nowMs: 0)[0]
+            #expect(appNotchView(state: notch, spaces: [space]).tiles.isEmpty)
+            let tile = try #require(appNotchView(state: notch, spaces: [space, provided]).tiles.first)
+            #expect(tile.id == provided.id)
             #expect(tile.symbol == (os == nil ? "computer" : "os-macos"))
             let view = VStack(alignment: .leading, spacing: 12) {
                 HStack { OsIconImage(id: tile.symbol, size: 18); Text(space.name) }
@@ -347,7 +264,7 @@ struct SnapshotTests {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         m.sendCreate(.start(id: "pending:linux", name: "linux-dev", os: .linux, provider: .local, now: now,
                             image: "ghcr.io/trycua/linux:24.04", kind: .container, hostArch: "arm64",
-                            gpu: false))
+                            gpu: false, host: nil, hostName: nil))
         m.sendCreate(.progress(id: "pending:linux", phase: "preparing", fraction: 0.4, now: now,
                                bytesDone: 192 << 20, bytesTotal: 478 << 20, bytesPerSecond: 24e6))
         let space = try #require(m.spaces.first { $0.id == "pending:linux" })
@@ -380,7 +297,7 @@ struct SnapshotTests {
                         os: os, osName: osName, osPrettyName: nil, image: nil, imageDigest: nil,
                         kind: os == .macos ? .vm : .container, arch: "arm64", reachable: reachable,
                         error: nil, host: nil, hostName: nil, power: power, powerState: state,
-                        cloud: nil, cloudPlace: nil, cloudDelete: nil)
+                        cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil)
         }
         let backend = FixtureSpacesBackend(rows: [
             row("local:aurora", .linux, "Ubuntu", power: "suspend", state: "suspended", reachable: false),
@@ -412,6 +329,7 @@ struct SnapshotTests {
         #expect(m.host.panel.intro != nil)
         #expect(m.host.panel.setupChoices.map(\.id) == ["desktop", "spare"])
         try assertSnapshot(ThisMachineView(host: m.host), "this-machine-unset", size: CGSize(width: 640, height: 420))
+        m.host.computerName = { "Ada’s MacBook Pro" }
         m.host.openForm()
         try assertSnapshot(ThisMachineView(host: m.host), "host-setup", size: CGSize(width: 640, height: 420))
         m.host.send(.setName(name: "Studio"))
@@ -515,10 +433,60 @@ struct SnapshotTests {
         let m = try await model()
         setup(m.notch)
         let c = NotchController(model: m.notch)
-        c.apply(appNotchLayout(screen: NotchGeometry.fallbackScreen, prompt: NotchController.needsRow(m.notch.view)))
+        c.apply(appNotchLayout(screen: NotchGeometry.fallbackScreen.ffi, prompt: NotchController.needsRow(m.notch.view)))
         let g = c.geometry
-        try assertSnapshot(NotchContentView(model: m.notch, controller: c).background(Color(white: 0.85)),
+        try assertSnapshot(NotchContentView(surface: c).background(Color(white: 0.85)),
                            name, size: g.stage)
+        try assertHelperNotch(m.notch, name)
+    }
+
+    /// The Electron app's notch helper draws the same pixels for the same
+    /// core state: the state goes through the notch protocol as JSON (what
+    /// apps/cua-spaces-desktop/src/notch sends) into the helper's surface,
+    /// and its render is compared with the SwiftUI app's reference.
+    func assertHelperNotch(_ notch: NotchModel, _ name: String) throws {
+        let core = notch.view
+        var view = core.data
+        // Electron fills a ring's estimate (the helper has no core).
+        if var a = view.activity, a.permille == nil {
+            let start = a.startedAt ?? Int64(Date().timeIntervalSince1970 * 1000)
+            a.permille = appNotchEstimatedProgress(elapsedMs: Int64(Date().timeIntervalSince1970 * 1000) - start,
+                                                   estimateMs: a.estimateMs)
+            view.activity = a
+        }
+        let layout = appNotchLayout(screen: NotchGeometry.fallbackScreen.ffi, prompt: NotchController.needsRow(core)).data
+        var icons: [String: NotchData.OsIcon] = [:]
+        for t in view.tiles { icons[t.symbol] = NotchModel.osIcon(t.symbol) }
+        let state = HelperStateLine(view: view, query: notch.state.query, layout: layout, shown: true,
+                                    dragging: notch.state.drag.phase != .idle, icons: icons,
+                                    highlight: notch.highlight.map(Self.raw))
+        let hello = HelperHelloLine(motion: NotchModel.motion.data, radii: NotchModel.radii)
+        let helper = HelperNotch(emit: { _ in })
+        helper.makesPanel = false
+        let encoder = JSONEncoder()
+        #expect(helper.receive(try HostMessage.decode(try encoder.encode(hello))))
+        #expect(helper.receive(try HostMessage.decode(try encoder.encode(state))))
+        for tile in view.tiles {
+            guard let image = notch.thumbnails[tile.id], let tiff = image.tiffRepresentation,
+                  let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { continue }
+            let line = #"{"type":"thumbnail","id":"\#(tile.id)","image":"\#(png.base64EncodedString())"}"#
+            #expect(helper.receive(try HostMessage.decode(Data(line.utf8))))
+        }
+        #expect(helper.view == view)
+        try assertSnapshot(NotchContentView(surface: helper).background(Color(white: 0.85)),
+                           name, size: helper.geometry.stage)
+    }
+
+    /// A forced look as the protocol's `highlight` text.
+    static func raw(_ h: NotchHighlight) -> String {
+        let target: String
+        switch h.control {
+        case .tile(let id): target = "tile=\(id)"
+        case .button(let b): target = b.rawValue
+        case .search: target = "search"
+        case .tab: target = "tab"
+        }
+        return h.pressed ? target + ":pressed" : target
     }
 
     @Test func notchClosed() async throws {
@@ -630,7 +598,7 @@ struct SnapshotTests {
                         features: ["desktop_stream"], addedAt: "2026-09-25T08:00:00Z",
                         os: os, osName: osName, osPrettyName: nil, image: nil, imageDigest: nil,
                         kind: nil, arch: "arm64", reachable: true, error: nil, host: host, hostName: hostName,
-                        power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil)
+                        power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil)
         }
         let backend = FixtureSpacesBackend(rows: [
             row("local:dev", "Dev box", .linux, "Ubuntu", provider: "local"),
@@ -649,9 +617,10 @@ struct SnapshotTests {
         #expect(places["relay:m1/studio"] == "Mac mini")
         #expect(places["relay:m2/ci"] == "Dillon's Mac Studio in the Back Office Rack 3")
         let c = NotchController(model: m.notch)
-        c.apply(appNotchLayout(screen: NotchGeometry.fallbackScreen, prompt: NotchController.needsRow(m.notch.view)))
-        try assertSnapshot(NotchContentView(model: m.notch, controller: c).background(Color(white: 0.85)),
+        c.apply(appNotchLayout(screen: NotchGeometry.fallbackScreen.ffi, prompt: NotchController.needsRow(m.notch.view)))
+        try assertSnapshot(NotchContentView(surface: c).background(Color(white: 0.85)),
                            "notch-tile-locations", size: c.geometry.stage)
+        try assertHelperNotch(m.notch, "notch-tile-locations")
     }
 
     @Test func notchButtonPressed() async throws {
@@ -674,21 +643,6 @@ struct SnapshotTests {
 
     @Test func notchTabPressed() async throws {
         try await assertNotch("notch-tab-pressed") { $0.highlight = NotchHighlight(.tab, pressed: true) }
-    }
-
-    /// The host form inside onboarding: its Back and Set up take the
-    /// bottom corners like every other page.
-    @Test func onboardingHostForm() async throws {
-        let o = OnboardingModel(statePath: nil, host: FixtureHost(), agentSetup: FixtureAgentSetup())
-        // The page dots as recorded (the Cua Volume experiment on).
-        o.send(.experimentsLoaded(experiments: AppExperiments(cuaVolume: true, yourCloud: false, sharing: false)))
-        o.send(.start)
-        o.send(.signinDone)
-        o.finishAgents(skipped: true)
-        o.send(.presentationDone)
-        o.send(.driveContinue)
-        o.host.openForm()
-        try assertSnapshot(OnboardingView(onboarding: o), "onboarding-host-form", size: CGSize(width: 820, height: 560))
     }
 
     // MARK: - Harness
@@ -758,4 +712,24 @@ struct SnapshotTests {
         }
         return total == 0 ? 0 : Double(differing) / Double(total)
     }
+}
+
+/// The `hello` line Electron sends.
+struct HelperHelloLine: Encodable {
+    var type = "hello"
+    var v = NotchProtocol.version
+    var motion: NotchData.Motion
+    var radii: NotchData.RadiiPair
+}
+
+/// The `state` line Electron sends.
+struct HelperStateLine: Encodable {
+    var type = "state"
+    var view: NotchData.View
+    var query: String
+    var layout: NotchData.Layout
+    var shown: Bool
+    var dragging: Bool
+    var icons: [String: NotchData.OsIcon]
+    var highlight: String?
 }

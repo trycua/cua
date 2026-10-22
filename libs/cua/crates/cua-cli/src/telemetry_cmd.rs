@@ -24,7 +24,7 @@ pub enum TelemetryCmd {
     #[command(after_help = "Examples:
   cua telemetry off")]
     Off,
-    /// Print the last events this machine queued or sent, exactly as sent.
+    /// Print the last events this computer queued or sent, exactly as sent.
     #[command(
         name = "show-last",
         after_help = "Examples:
@@ -83,6 +83,18 @@ pub fn run(cmd: TelemetryCmd, json: bool, out: &mut dyn Write) -> Result<i32, Cu
                 );
                 line(out, format!("Endpoint: {}", s.endpoint));
                 line(out, format!("First-run notice shown: {}", s.notice_shown));
+                line(
+                    out,
+                    format!(
+                        "Linked to your account: {}",
+                        match s.link.as_str() {
+                            "linked" => "yes (an opaque account id while signed in)",
+                            "notice_due" => "not yet (the notice shows first)",
+                            "off" => "no (usage data is off)",
+                            _ => "no",
+                        }
+                    ),
+                );
                 line(out, format!("Offline spool: {} events", s.spooled));
                 line(out, format!("State: {}", s.state_dir));
                 line(
@@ -137,7 +149,7 @@ pub fn run(cmd: TelemetryCmd, json: bool, out: &mut dyn Write) -> Result<i32, Cu
                 line(
                     out,
                     if t.is_enabled() {
-                        "Nothing sent from this machine yet."
+                        "Nothing sent from this computer yet."
                     } else {
                         "Nothing sent: usage telemetry is off."
                     },

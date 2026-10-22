@@ -88,12 +88,12 @@ const config = {
       },
       {
         source: '/tutorials/your-first-cloud-sandbox',
-        destination: '/start-here/create-a-space-with-the-sdk',
+        destination: '/spaces/guides/create-a-space-with-the-sdk',
         permanent: true,
       },
       {
         source: '/tutorials/your-first-local-sandbox',
-        destination: '/start-here/create-a-space-with-the-sdk',
+        destination: '/spaces/guides/create-a-space-with-the-sdk',
         permanent: true,
       },
       {
@@ -108,22 +108,22 @@ const config = {
       },
       {
         source: '/how-to-guides/fleets/configure-run-cua-fleets',
-        destination: '/how-to-guides/sandbox/configure-pool-with-terraform',
+        destination: '/cua-sdk/guides/cua-cloud-ended',
         permanent: true,
       },
       {
         source: '/how-to-guides/(fleets)/configure-run-cua-fleets',
-        destination: '/how-to-guides/sandbox/configure-pool-with-terraform',
+        destination: '/cua-sdk/guides/cua-cloud-ended',
         permanent: true,
       },
       {
         source: '/how-to-guides/sandbox/create-pool-with-python',
-        destination: '/how-to-guides/sandbox/create-fleet-capacity',
+        destination: '/cua-sdk/guides/cua-cloud-ended',
         permanent: true,
       },
       {
         source: '/how-to-guides/sandbox/create-pool-with-typescript',
-        destination: '/how-to-guides/sandbox/create-fleet-capacity',
+        destination: '/cua-sdk/guides/cua-cloud-ended',
         permanent: true,
       },
       {

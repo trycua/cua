@@ -25,7 +25,7 @@ def test_sync_lume_release_docs_updates_every_generated_marker(tmp_path: Path):
 
     paths = lume_reference_paths(tmp_path)
     assert f"{DOCS}/http-api.mdx" in paths
-    assert any("/cli/" in relative for relative in paths)
+    assert f"{DOCS}/cli.mdx" in paths
     for relative in paths:
         assert "Version: 9.9.9" in (tmp_path / relative).read_text()
     assert "Documented against Lume **9.9.9**." in (tmp_path / DOCS / "http-api.mdx").read_text()

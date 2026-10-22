@@ -9,7 +9,6 @@
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use core_foundation::base::{CFRelease, CFTypeRef};
 use core_graphics::display::CGDisplay;
 use cua_driver_core::{
     protocol::ToolResult,
@@ -18,10 +17,7 @@ use cua_driver_core::{
 use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
 use serde_json::{json, Value};
 
-use crate::ax::bindings::{
-    ax_get_window_id, copy_ax_windows, perform_action, set_bool_attr_true,
-    AXUIElementCreateApplication,
-};
+use crate::ax::bindings::raise_exact_window_of_pid;
 use crate::windows::{WindowBounds, WindowInfo};
 
 pub struct BringToFrontTool;
@@ -252,7 +248,7 @@ pub(crate) fn activate_exact_window_blocking(pid: i32, window_id: u32) -> bool {
     unsafe {
         app.activateWithOptions(NSApplicationActivationOptions::NSApplicationActivateAllWindows)
     };
-    raise_exact_ax_window(pid, window_id);
+    raise_exact_window_of_pid(pid, window_id);
     wait_for_exact_window(pid, window_id).exact_postcondition(pid, window_id)
 }
 
@@ -266,34 +262,6 @@ pub(crate) fn reactivate_application(pid: i32) -> bool {
         return false;
     };
     unsafe { app.activateWithOptions(NSApplicationActivationOptions::empty()) }
-}
-
-/// Best-effort completion of the one exact-window request. This addresses only
-/// the requested AX window; it never orders every window owned by the process.
-fn raise_exact_ax_window(pid: i32, window_id: u32) -> bool {
-    unsafe {
-        let app = AXUIElementCreateApplication(pid);
-        if app.is_null() {
-            return false;
-        }
-        let mut target = None;
-        for window in copy_ax_windows(app) {
-            if target.is_none() && ax_get_window_id(window) == Some(window_id) {
-                target = Some(window);
-            } else {
-                CFRelease(window as CFTypeRef);
-            }
-        }
-        CFRelease(app as CFTypeRef);
-        let Some(target) = target else {
-            return false;
-        };
-        let raised = perform_action(target, "AXRaise") == 0;
-        let main = set_bool_attr_true(target, "AXMain") == 0;
-        let focused = set_bool_attr_true(target, "AXFocused") == 0;
-        CFRelease(target as CFTypeRef);
-        raised || main || focused
-    }
 }
 
 fn exact_result(
@@ -365,6 +333,8 @@ impl Tool for BringToFrontTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        crate::window_change_detector::end_tail();
+        crate::window_change_detector::note_intentional_activation();
         let pid = match args.get("pid").and_then(Value::as_i64) {
             Some(p) => match libc::pid_t::try_from(p) {
                 Ok(pid) => pid,
@@ -468,7 +438,7 @@ impl Tool for BringToFrontTool {
                     NSApplicationActivationOptions::NSApplicationActivateAllWindows,
                 )
             };
-            let ax_window_requested = raise_exact_ax_window(pid, window_id);
+            let ax_window_requested = raise_exact_window_of_pid(pid, window_id);
             let path = match (
                 skylight_process_accepted,
                 skylight_exact_accepted,

@@ -174,6 +174,10 @@ struct TicketPayload {
     p: String,
     e: u64,
     n: String,
+    /// The minting call's relay assertion `iat`, when relayed (the relay
+    /// refuses a ticket from before a revoke of `p`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    a: Option<u64>,
 }
 
 /// What an external credential authorized.
@@ -204,6 +208,10 @@ pub struct RelayCaller {
     pub name: Option<String>,
     /// `owner` or `shared` (an editor).
     pub role: String,
+    /// The relay assertion's `iat` (seconds, relay clock). Tickets minted
+    /// for the call carry it, so the relay can refuse one that predates a
+    /// revoke of this account.
+    pub issued_at: u64,
 }
 
 /// The only calls a relayed caller may make on a machine that does not
@@ -219,6 +227,7 @@ pub const HOST_ONLY_GRPC_METHODS: &[&str] = &[
     "/cua.env.v1.HostSpacesService/CancelHostSpace",
     "/cua.env.v1.HostSpacesService/SetHostSpacePower",
     "/cua.env.v1.HostSpacesService/DeleteCloudSpace",
+    "/cua.env.v1.HostSpacesService/DiagnoseHost",
 ];
 
 impl ExternalGrant {
@@ -432,8 +441,9 @@ impl Auth {
     }
 
     /// Checks the token in `authorization` **or** `x-cua-env-authorization`
-    /// (the Fleet gateway consumes and strips `authorization`, so the SDK
-    /// sends the env token in the alternate header through `/api/svc`).
+    /// (a gateway in front of the daemon may consume and strip
+    /// `authorization`, so the SDK sends the env token in the alternate header
+    /// when it goes through one).
     /// Always true with no token.
     pub fn check_headers(&self, headers: &http::HeaderMap) -> bool {
         match self.authenticate_external(headers) {
@@ -479,6 +489,19 @@ impl Auth {
         principal_id: &str,
         ttl: Duration,
     ) -> (String, SystemTime) {
+        self.mint_ticket_issued(scope, resource, principal_id, None, ttl)
+    }
+
+    /// [`Self::mint_ticket`] for a relayed call: records its assertion's
+    /// `iat` (`issued`) in the ticket.
+    pub fn mint_ticket_issued(
+        &self,
+        scope: TicketScope,
+        resource: &str,
+        principal_id: &str,
+        issued: Option<u64>,
+        ttl: Duration,
+    ) -> (String, SystemTime) {
         let expires_at = SystemTime::now() + ttl.min(MAX_TICKET_TTL);
         let exp_ms = expires_at
             .duration_since(UNIX_EPOCH)
@@ -490,6 +513,7 @@ impl Auth {
             p: principal_id.to_owned(),
             e: exp_ms,
             n: random_id(9),
+            a: issued,
         };
         let payload = serde_json::to_vec(&payload).expect("ticket payload serializes");
         let engine = base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -672,6 +696,40 @@ pub fn token_label(claimed: Option<Principal>) -> String {
         Some(name) => format!("token (claims {name})"),
         None => "token".into(),
     }
+}
+
+/// Separates an access line's caller from the agent session that made the
+/// call (` · agent Claude Code (agent:claude-code-4242)`).
+pub const AGENT_SESSION_TAG: &str = " \u{b7} agent ";
+
+/// The agent session a caller says it is, as an access line's suffix:
+/// ` · agent <name> (<id>)` for an agent principal (`agent:<label>-<pid>`,
+/// one per `cua mcp` process), empty for anything else. The name and id
+/// are the client's claim; the line's caller before the tag stays the
+/// verified identity. Readers use it to tell two agents of one account
+/// apart (the second-agent prompt in the apps).
+pub fn agent_session_suffix(claimed: Option<&Principal>) -> String {
+    let Some(p) = claimed.filter(|p| {
+        p.kind == cua_proto::env::v1::PrincipalKind::Agent as i32 && p.id.starts_with("agent:")
+    }) else {
+        return String::new();
+    };
+    let clean = |s: &str| -> String {
+        s.chars()
+            .filter(|c| !c.is_control() && !matches!(c, '(' | ')'))
+            .take(64)
+            .collect::<String>()
+            .trim()
+            .to_string()
+    };
+    let id = clean(&p.id);
+    let name = clean(&p.display_name);
+    let name = if name.is_empty() {
+        "Agent".to_string()
+    } else {
+        name
+    };
+    format!("{AGENT_SESSION_TAG}{name} ({id})")
 }
 
 /// The gRPC service of a `/pkg.Service/Method` path (`ProcessService`).
@@ -911,7 +969,7 @@ where
                             tonic::Code::PermissionDenied,
                             cua_proto::env::v1::ErrorReason::PermissionDenied,
                             format!(
-                                "this machine does not share its desktop (it only provides Spaces): \
+                                "this computer does not share its desktop (it only provides Spaces): \
                                  {who} cannot call {path}"
                             ),
                         )
@@ -947,7 +1005,7 @@ where
                             tonic::Code::PermissionDenied,
                             cua_proto::env::v1::ErrorReason::PermissionDenied,
                             format!(
-                                "this machine does not share its desktop (it only provides Spaces): \
+                                "this computer does not share its desktop (it only provides Spaces): \
                                  {who} cannot call {path}"
                             ),
                         )
@@ -955,10 +1013,19 @@ where
                         return Box::pin(async move { Ok(response) });
                     }
                     let owner = grant.account.as_ref().is_some_and(|a| a.role == "owner");
+                    // Only an owner keeps the agent kind (`principal_for`):
+                    // name which of its agent sessions this is.
+                    let session = if grant.principal.kind
+                        == cua_proto::env::v1::PrincipalKind::Agent as i32
+                    {
+                        agent_session_suffix(principal_from_headers(req.headers()).as_ref())
+                    } else {
+                        String::new()
+                    };
                     self.auth.record_call(
                         req.extensions_mut(),
                         "relay",
-                        &principal_label(&grant.principal),
+                        &format!("{}{session}", principal_label(&grant.principal)),
                         &path,
                         owner,
                     );
@@ -1070,13 +1137,13 @@ where
                 let principal = principal_from_headers(req.headers());
                 if token_verified {
                     let path = req.uri().path().to_owned();
-                    self.auth.record_call(
-                        req.extensions_mut(),
-                        "token",
-                        &token_label(principal.clone()),
-                        &path,
-                        true,
+                    let who = format!(
+                        "{}{}",
+                        token_label(principal.clone()),
+                        agent_session_suffix(principal.as_ref())
                     );
+                    self.auth
+                        .record_call(req.extensions_mut(), "token", &who, &path, true);
                 }
                 req.extensions_mut().insert(CallerIdentity {
                     principal,
@@ -1204,6 +1271,33 @@ mod tests {
     }
 
     #[test]
+    fn a_relayed_ticket_records_the_assertion_time_and_still_validates() {
+        use base64::Engine as _;
+        let auth = Auth::new(Some("secret".into()));
+        let payload = |ticket: &str| -> serde_json::Value {
+            let body = ticket.split('.').nth(1).unwrap();
+            let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(body)
+                .unwrap();
+            serde_json::from_slice(&raw).unwrap()
+        };
+        let (relayed, _) = auth.mint_ticket_issued(
+            TicketScope::Media,
+            "m",
+            "bob",
+            Some(1_791_773_000),
+            Duration::from_secs(60),
+        );
+        assert_eq!(payload(&relayed)["a"], 1_791_773_000);
+        assert_eq!(payload(&relayed)["p"], "bob");
+        let claims = auth.validate_ticket(&relayed, TicketScope::Media).unwrap();
+        assert_eq!(claims.principal_id, "bob");
+        // A local caller's ticket carries no `a` (same wire form as before).
+        let (local, _) = auth.mint_ticket(TicketScope::Media, "m", "", Duration::from_secs(60));
+        assert!(payload(&local).get("a").is_none());
+    }
+
+    #[test]
     fn ticket_expiry_is_enforced() {
         let auth = Auth::new(None);
         let (ticket, _) = auth.mint_ticket(TicketScope::Media, "m", "", Duration::ZERO);
@@ -1297,6 +1391,33 @@ mod tests {
         let found = ticket_from_parts(&"/tunnel".parse().unwrap(), &headers).unwrap();
         assert_eq!(found.ticket, "v1.c.d");
         assert_eq!(found.subprotocol.as_deref(), Some("cua.ticket.v1.c.d"));
+    }
+
+    #[test]
+    fn an_agent_caller_names_its_session_on_the_access_line() {
+        let agent = |id: &str, name: &str| Principal {
+            id: id.into(),
+            display_name: name.into(),
+            color: String::new(),
+            kind: cua_proto::env::v1::PrincipalKind::Agent as i32,
+        };
+        assert_eq!(
+            agent_session_suffix(Some(&agent("agent:claude-code-4242", "Claude Code"))),
+            " \u{b7} agent Claude Code (agent:claude-code-4242)"
+        );
+        // A person, a non-agent id, or nobody: nothing added.
+        let human = Principal {
+            kind: cua_proto::env::v1::PrincipalKind::Human as i32,
+            ..agent("agent:x-1", "Ada")
+        };
+        assert_eq!(agent_session_suffix(Some(&human)), "");
+        assert_eq!(agent_session_suffix(Some(&agent("u1", "Codex"))), "");
+        assert_eq!(agent_session_suffix(None), "");
+        // The claim can't break the line's shape.
+        assert_eq!(
+            agent_session_suffix(Some(&agent("agent:a-1", "Evil) (x\n"))),
+            " \u{b7} agent Evil x (agent:a-1)"
+        );
     }
 
     #[test]

@@ -13,7 +13,9 @@
 //! fake binaries only.
 
 use std::path::{Path, PathBuf};
+#[cfg(feature = "installer")]
 use std::process::Stdio;
+#[cfg(feature = "installer")]
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -21,6 +23,7 @@ use serde::{Deserialize, Serialize};
 /// Marker line written above a PATH edit (same text as install.sh).
 pub const PATH_MARKER: &str = "# Added by the cua installer";
 
+#[cfg(feature = "installer")]
 const VERSION_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// File name of the CLI on this OS.
@@ -117,6 +120,11 @@ pub struct CliInstallPlan {
     pub path_profile: Option<String>,
     /// The line that would be added to `path_profile`.
     pub path_line: Option<String>,
+    /// A working `cua` CLI already on this machine: `target`, else the
+    /// first in the usual install folders or on PATH (a Finder-launched
+    /// app's PATH lacks `~/.local/bin`, so the folders are searched too).
+    #[serde(default)]
+    pub found: Option<String>,
 }
 
 /// What the user agreed to in the CLI step.
@@ -130,6 +138,7 @@ pub struct CliInstallRequest {
 
 /// Installs the bundled CLI onto PATH. Paths and environment are injected.
 #[derive(Clone, Debug)]
+#[cfg(feature = "installer")]
 pub struct CliInstaller {
     pub bundled: Option<PathBuf>,
     pub bin_dir: PathBuf,
@@ -139,8 +148,12 @@ pub struct CliInstaller {
     pub profile: PathBuf,
     /// Symlink rather than copy (stable app location on macOS).
     pub prefer_symlink: bool,
+    /// Other folders a `cua` is usually installed in (Homebrew, a root
+    /// install.sh), searched with PATH for one already there.
+    pub search_dirs: Vec<PathBuf>,
 }
 
+#[cfg(feature = "installer")]
 impl CliInstaller {
     /// The real machine: sidecar next to `exe`, `$HOME`, `$PATH`, `$SHELL`.
     pub fn from_env(exe: &Path) -> Self {
@@ -158,7 +171,38 @@ impl CliInstaller {
             bin_dir: default_bin_dir(&home, local.as_deref()),
             path_env: std::env::var("PATH").unwrap_or_default(),
             profile: profile_for_shell(&home, shell.as_deref(), xdg.as_deref()),
+            search_dirs: known_bin_dirs(&home),
         }
+    }
+
+    /// A working `cua` CLI already here: `target` when it runs as one (its
+    /// `--version` is `installed_version`), else the first in
+    /// [`Self::search_dirs`] or on PATH.
+    async fn find_installed(
+        &self,
+        target: &Path,
+        installed_version: Option<&str>,
+    ) -> Option<String> {
+        if installed_version.is_some_and(is_cua_cli) {
+            return Some(target.display().to_string());
+        }
+        let mut seen = vec![target.to_path_buf()];
+        let dirs = self
+            .search_dirs
+            .iter()
+            .cloned()
+            .chain(std::env::split_paths(&self.path_env));
+        for dir in dirs {
+            let cli = dir.join(cli_file_name());
+            if seen.contains(&cli) || !cli.is_file() {
+                continue;
+            }
+            seen.push(cli.clone());
+            if cli_version(&cli).await.as_deref().is_some_and(is_cua_cli) {
+                return Some(cli.display().to_string());
+            }
+        }
+        None
     }
 
     /// The file the CLI is written to.
@@ -211,7 +255,11 @@ impl CliInstaller {
                 Some(path_line(&self.bin_dir, &self.profile)),
             )
         };
+        let found = self
+            .find_installed(&target, installed_version.as_deref())
+            .await;
         CliInstallPlan {
+            found,
             source: self.bundled.as_ref().map(|p| p.display().to_string()),
             target: target.display().to_string(),
             bin_dir: self.bin_dir.display().to_string(),
@@ -313,7 +361,7 @@ impl CliInstaller {
     }
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, feature = "installer"))]
 fn add_to_windows_user_path(dir: &Path) -> Result<(), String> {
     // HKCU\Environment Path through .NET, which also broadcasts the change.
     let script = format!(
@@ -332,14 +380,19 @@ fn add_to_windows_user_path(dir: &Path) -> Result<(), String> {
         .ok_or_else(|| "could not update the user PATH".to_string())
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), feature = "installer"))]
 fn add_to_windows_user_path(_dir: &Path) -> Result<(), String> {
     Err("not Windows".into())
 }
 
 /// App locations that survive relaunches (not a mounted dmg or App
-/// Translocation), where a symlink into the bundle stays valid.
+/// Translocation, not an AppImage's mount), where a symlink into the bundle
+/// stays valid: app updates update the CLI too, and removing the app takes
+/// it away, as dragging the Swift app to the Trash does.
 pub fn stable_app_location(cli: &Path) -> bool {
+    if cfg!(target_os = "linux") {
+        return linux_package_location(cli);
+    }
     if !cfg!(target_os = "macos") {
         return false;
     }
@@ -351,6 +404,13 @@ pub fn stable_app_location(cli: &Path) -> bool {
     in_apps && !s.contains("/AppTranslocation/")
 }
 
+/// A Linux package's install tree (the `.deb`'s `/opt/Cua Spaces`, or a
+/// distribution's `/usr`): root-owned and replaced in place by upgrades.
+pub fn linux_package_location(cli: &Path) -> bool {
+    cli.is_absolute() && (cli.starts_with("/opt") || cli.starts_with("/usr"))
+}
+
+#[cfg(feature = "installer")]
 fn same_file(a: &Path, b: &Path) -> bool {
     match (a.canonicalize(), b.canonicalize()) {
         (Ok(x), Ok(y)) if x == y => true,
@@ -359,6 +419,19 @@ fn same_file(a: &Path, b: &Path) -> bool {
             _ => false,
         },
     }
+}
+
+/// Where a `cua` is usually installed besides the GUI's own target:
+/// Homebrew and a root install.sh's `/usr/local/bin` (not on Windows).
+pub fn known_bin_dirs(home: &Path) -> Vec<PathBuf> {
+    if cfg!(windows) {
+        return vec![];
+    }
+    vec![
+        home.join(".local").join("bin"),
+        PathBuf::from("/opt/homebrew/bin"),
+        PathBuf::from("/usr/local/bin"),
+    ]
 }
 
 /// The first `name` on a PATH-style string.
@@ -370,6 +443,7 @@ pub fn first_on_path(path_env: &str, name: &str) -> Option<PathBuf> {
 
 /// Whether some *other* PATH entry with a `cua` comes before `bin_dir`
 /// (or `bin_dir` is not on PATH at all).
+#[cfg(feature = "installer")]
 fn on_path_before(path_env: &str, bin_dir: &Path) -> bool {
     for dir in std::env::split_paths(path_env) {
         if dir == bin_dir {
@@ -401,9 +475,11 @@ pub fn is_cua_cli(version_line: &str) -> bool {
 }
 
 /// `ETXTBSY` ("text file busy") on Linux and macOS.
+#[cfg(feature = "installer")]
 const ETXTBSY: i32 = 26;
 
 /// `cua --version`, first line, or `None` if it does not run.
+#[cfg(feature = "installer")]
 pub async fn cli_version(cli: &Path) -> Option<String> {
     // A file just written can be briefly "busy" to exec (ETXTBSY) while a
     // process forked elsewhere still holds its write handle: try again.
@@ -433,9 +509,26 @@ pub async fn cli_version(cli: &Path) -> Option<String> {
         .filter(|l| !l.is_empty())
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "installer"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_linux_package_links_its_cli_and_an_appimage_copies_it() {
+        assert!(linux_package_location(Path::new(
+            "/opt/Cua Spaces/resources/native/cua"
+        )));
+        assert!(linux_package_location(Path::new("/usr/lib/cua-spaces/cua")));
+        // An AppImage mounts somewhere new each launch; its CLI is copied.
+        assert!(!linux_package_location(Path::new(
+            "/tmp/.mount_CuaSpaXYZ/resources/native/cua"
+        )));
+        assert!(!linux_package_location(Path::new(
+            "/home/u/.local/share/cua-spaces/daemon/0.7.2-1/cua"
+        )));
+        assert!(!linux_package_location(Path::new("/optional/cua")));
+        assert!(!linux_package_location(Path::new("opt/cua")));
+    }
 
     #[test]
     fn profiles_and_path_lines() {
@@ -497,6 +590,7 @@ mod tests {
             path_env: "/usr/bin:/bin".into(),
             profile: profile_for_shell(&home, Some("/bin/zsh"), None),
             prefer_symlink: false,
+            search_dirs: vec![],
         };
         let plan = cli.plan().await;
         assert_eq!(
@@ -531,6 +625,28 @@ mod tests {
         .unwrap();
         let plan = cli.plan().await;
         assert!(plan.installed && !plan.up_to_date, "{plan:?}");
+        assert_eq!(plan.found, None, "an old Python cua-cli is not the cua CLI");
+        // install.sh's own copy (the cua CLI, not the app's): found, so the
+        // app says it is installed even though it would still offer its own.
+        let elsewhere = tmp.path().join("brew/bin");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::write(elsewhere.join("cua"), "#!/bin/sh\necho 'cua 0.4.4'\n").unwrap();
+        std::fs::set_permissions(
+            elsewhere.join("cua"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        let searching = CliInstaller {
+            search_dirs: vec![elsewhere.clone()],
+            ..cli.clone()
+        };
+        let plan = searching.plan().await;
+        assert_eq!(
+            plan.found,
+            Some(elsewhere.join("cua").display().to_string()),
+            "{plan:?}"
+        );
+        assert!(!plan.up_to_date);
         let done = cli.install(&CliInstallRequest::default()).await.unwrap();
         assert!(done.up_to_date, "{done:?}");
         assert_eq!(done.installed_version.as_deref(), Some("cua 1.2.3"));

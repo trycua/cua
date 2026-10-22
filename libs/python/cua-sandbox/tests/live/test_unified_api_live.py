@@ -1,4 +1,4 @@
-"""LIVE: the unified Sandbox API on a plain image, local (gVisor) and cloud.
+"""LIVE: the unified Sandbox API on a plain image, local (gVisor).
 
 The audit's probe scenario: ``python:3.12-slim`` running an MCP-style
 server as ``command=``, declared as ``services={"mcp": 8765}`` with an
@@ -14,12 +14,10 @@ Also: image layers (``pip_install``, ``run``, ``env``, ``copy``) on the same
 plain image with ``local=True`` build into the container engine before boot
 and are reused by an identical second sandbox.
 
-Opt-in (both create real resources, named ``cua-e2e-*`` and removed in
+Opt-in (it creates real resources, named ``cua-e2e-*`` and removed in
 ``finally``)::
 
     CUA_TEST_UNIFIED_LOCAL=1 .venv/bin/python -m pytest -q tests/live/test_unified_api_live.py
-    set -a; source ~/.env; set +a
-    CUA_TEST_UNIFIED_FLEET=1 .venv/bin/python -m pytest -q tests/live/test_unified_api_live.py
 
 The local run starts a cua daemon for the public URL under a throwaway
 ``CUA_HOME`` (``CUA_BIN`` must name the CLI) and stops it afterwards.
@@ -36,7 +34,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 import pytest
-from cua_sandbox import Image, Sandbox, _autopool, http
+from cua_sandbox import Image, Sandbox, http
 
 REPO = Path(__file__).resolve().parents[5]
 SERVER = (REPO / "tests" / "e2e" / "cua-sdk" / "fixtures" / "mcp_probe_server.py").read_text()
@@ -216,32 +214,3 @@ async def test_plain_image_layers_build_locally(monkeypatch, tmp_path):
     finally:
         for tag in created:
             _docker("rmi", "-f", f"cua-vmm/build:{tag}")
-
-
-@pytest.mark.skipif(not _on("CUA_TEST_UNIFIED_FLEET"), reason="CUA_TEST_UNIFIED_FLEET is not set")
-async def test_plain_image_mcp_fleet_gvisor():
-    if not (os.environ.get("CUA_CLIENT_ID") or os.environ.get("FLEETS_TOKEN")):
-        pytest.skip("no Fleet credentials")
-    sb = None
-    pool = None
-    try:
-        sb = await Sandbox.create(
-            Image.from_registry("docker.io/library/python:3.12-slim"),
-            command=["python", "-c", SERVER],
-            services={"mcp": 8765},
-            wait_for=http("mcp", "/health"),
-            name=f"cua-e2e-unified-{secrets.token_hex(3)}",
-            time_to_start=900,
-            telemetry_enabled=False,
-            local=False,
-        )
-        pool = sb.pool_name
-        info = await sb.info()
-        assert info.location == "cloud" and info.expires_at, info
-        await _exercise(sb, env_expected=False)
-    finally:
-        if sb is not None:
-            await sb.destroy()
-        if pool:
-            report = await _autopool.gc_pools([pool])
-            assert pool in report.pools_deleted or not report.errors, report

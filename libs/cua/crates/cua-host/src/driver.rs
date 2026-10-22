@@ -30,7 +30,7 @@ use std::path::{Path, PathBuf};
 
 /// The cua-spacesd release this build downloads by default (the driver
 /// is versioned and released on its own, `cua-spacesd-v<version>`).
-pub const SPACESD_VERSION: &str = include_str!("../../../../cua-spacesd/VERSION");
+pub const SPACESD_VERSION: &str = include_str!(concat!(env!("OUT_DIR"), "/cua-spacesd-VERSION"));
 
 /// Binary file name for this OS.
 pub fn binary_name() -> &'static str {

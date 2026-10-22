@@ -234,6 +234,11 @@ pub struct AgentSetupStatus {
     pub skills_outdated: Vec<String>,
     /// Problem reading its config.
     pub error: Option<String>,
+    /// The account it signs in with on its own (`ChatGPT` for Codex), when
+    /// the setup can see that sign-in.
+    pub sign_in: Option<String>,
+    /// That sign-in is on this computer.
+    pub signed_in: bool,
 }
 
 /// One Settings row for a coding agent.
@@ -258,6 +263,12 @@ pub struct AgentSettingsRow {
     pub mcp_config: Option<String>,
     /// Skills directory.
     pub skills_dir: Option<String>,
+    /// The account it signs in with on its own (`ChatGPT`), when known.
+    #[serde(default)]
+    pub sign_in: Option<String>,
+    /// That sign-in is on this computer.
+    #[serde(default)]
+    pub signed_in: bool,
 }
 
 /// One agent's row (`total`: skills bundled with this SDK).
@@ -296,6 +307,8 @@ pub fn agent_settings_row(a: &AgentSetupStatus, total: u32) -> AgentSettingsRow 
         skills_total: total,
         mcp_config: a.mcp_config.clone(),
         skills_dir: a.skills_dir.clone(),
+        sign_in: a.sign_in.clone(),
+        signed_in: a.signed_in,
     }
 }
 
@@ -445,6 +458,16 @@ mod tests {
         let labelled = agent_run_from_json(&json!({"run_id": "r", "status": "running",
             "meta": {"harness": "pi", "prompt": "long prompt", "label": "Nightly"}}));
         assert_eq!(labelled.summary, "Nightly");
+    }
+
+    #[test]
+    fn a_settings_row_without_the_sign_in_fields_still_reads() {
+        let row: AgentSettingsRow = serde_json::from_value(json!({
+            "agent": "codex", "name": "Codex", "installed": true, "configured": false,
+            "detail": "", "skillsInstalled": 0, "skillsTotal": 2, "mcpConfig": null, "skillsDir": null
+        }))
+        .unwrap();
+        assert_eq!((row.sign_in, row.signed_in), (None, false));
     }
 
     #[test]

@@ -51,9 +51,7 @@ def test_android_cmd_has_egress_unless_restricted():
     assert net(none).startswith("user,id=net0,restrict=on,hostfwd=")
 
 
-def test_cloud_sandboxes_refuse_network_none():
-    with pytest.raises(Unsupported, match="network='none'"):
-        asyncio.run(Sandbox.create(Image.linux(), local=False, network="none"))
+def test_unknown_network_modes_are_refused():
     with pytest.raises(ValueError):
         asyncio.run(Sandbox.create(Image.linux(), local=True, network="host"))
 

@@ -1,5 +1,8 @@
 # Discovery foundation validation
 
+> Note (18 Oct 2026): Cua Cloud (Fleets) ended on 18 Oct 2026. This is a dated
+> record of validation run on it; the Fleet references below are historical.
+
 The discovery-only plugin passed a native build and lifecycle checks on Cua
 Cloud Fleet on September 4, 2026. These results support review of the foundation;
 the full promotion gates in [the test plan](../tests/README.md) remain open.

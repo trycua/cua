@@ -3,7 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { MediaSession, type MediaSessionOptions, type MediaStatus } from "./mediaSession";
+import { commandAsControl, MediaSession, type FrameTiming, type MediaSessionOptions, type MediaStatus } from "./mediaSession";
 import { encodeAudioPacket, encodeVideoPacket, type VideoDescriptor } from "./mediaWire";
 
 /**
@@ -71,7 +71,16 @@ function frame(overrides: Partial<VideoDescriptor>, payload: Uint8Array): ArrayB
   );
 }
 
-let decoders: Array<{ configured: boolean; closed: boolean; decoded: number; fail: () => void }>;
+type DecoderEntry = {
+  configured: boolean;
+  closed: boolean;
+  decoded: number;
+  fail: () => void;
+  config?: Record<string, unknown>;
+  /** Hands out a decoded frame for the chunk with this timestamp. */
+  emit: (timestamp: number) => void;
+};
+let decoders: DecoderEntry[];
 const saved: Record<string, unknown> = {};
 
 beforeEach(() => {
@@ -83,13 +92,15 @@ beforeEach(() => {
   (globalThis as Record<string, unknown>).VideoDecoder = class {
     state = "configured";
     decodeQueueSize = 0;
-    private readonly entry = { configured: false, closed: false, decoded: 0, fail: () => {} };
-    constructor(init: { error: () => void }) {
+    private readonly entry: DecoderEntry = { configured: false, closed: false, decoded: 0, fail: () => {}, emit: () => {} };
+    constructor(init: { error: () => void; output: (frame: unknown) => void }) {
       this.entry.fail = () => init.error();
+      this.entry.emit = (timestamp) => init.output({ timestamp, displayWidth: 800, displayHeight: 600, close() {} });
       decoders.push(this.entry);
     }
-    configure() {
+    configure(config: Record<string, unknown>) {
       this.entry.configured = true;
+      this.entry.config = config;
     }
     decode() {
       this.entry.decoded += 1;
@@ -250,6 +261,27 @@ describe("MediaSession interactive input (§6)", () => {
     expect(socket.of("interactive_input")[0]!.payload!.first_sequence).toBe(77);
   });
 
+  it("maps pointer positions over the video, not the letterboxed canvas box", async () => {
+    const { socket, canvas } = start();
+    handshake(socket);
+    // A 1280x800 desktop in a 956x284 box under `object-fit: contain`: the video is 454.4 wide, centred.
+    canvas.width = 1280;
+    canvas.height = 800;
+    vi.spyOn(window, "getComputedStyle").mockReturnValue({ objectFit: "contain" } as CSSStyleDeclaration);
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({ left: 593, top: 323, width: 956, height: 284, right: 1549, bottom: 607, x: 593, y: 323, toJSON: () => ({}) });
+    const press = (clientX: number, clientY: number) => canvas.dispatchEvent(new MouseEvent("pointerdown", { clientX, clientY, button: 0 }));
+    press(1071, 465); // the middle of the box
+    press(843.8 + 454.4 * 0.25, 323 + 284 * 0.5); // a quarter of the way across the video
+    press(700, 323); // in the left bar: pinned to the video's left edge
+    await Promise.resolve();
+    const events = socket.of("interactive_input").flatMap((m) => m.payload!.events as Array<{ x_normalized: number; y_normalized: number }>);
+    expect(events).toHaveLength(3);
+    expect(events[0]!.x_normalized).toBeCloseTo(0.5, 2);
+    expect(events[0]!.y_normalized).toBeCloseTo(0.5, 2);
+    expect(events[1]!.x_normalized).toBeCloseTo(0.25, 2);
+    expect(events[2]!.x_normalized).toBe(0);
+  });
+
   it("sends no input on a view_only session or a non-interactive one", async () => {
     const viewOnly = start();
     handshake(viewOnly.socket, { policy: "view_only" });
@@ -346,5 +378,110 @@ describe("MediaSession disconnects and tickets (§2, §10)", () => {
     expect(socket.readyState).toBe(MockSocket.CLOSED);
     vi.advanceTimersByTime(10_000);
     expect(MockSocket.all).toHaveLength(1);
+  });
+});
+
+describe("MediaSession in the Electron shell (hardware decode, keys, scrolls, timing)", () => {
+  it("asks for the hardware decoder at low latency, and decodes in software once it failed before a frame", () => {
+    const { socket } = start({ hardwareAcceleration: "prefer-hardware" });
+    handshake(socket);
+    socket.binary(frame({ keyframe: true }, KEYFRAME));
+    expect(decoders[0]!.config).toMatchObject({ optimizeForLatency: true, hardwareAcceleration: "prefer-hardware" });
+    decoders[0]!.fail();
+    socket.binary(frame({ keyframe: true, sequence: 900_002 }, KEYFRAME));
+    expect(decoders[1]!.config).toMatchObject({ optimizeForLatency: true, hardwareAcceleration: "no-preference" });
+  });
+
+  it("keeps the hardware decoder after a failure once it had drawn a frame", () => {
+    const { socket } = start({ hardwareAcceleration: "prefer-hardware" });
+    handshake(socket);
+    socket.binary(frame({ keyframe: true, capture_timestamp_us: 1_000 }, KEYFRAME));
+    decoders[0]!.emit(1_000);
+    decoders[0]!.fail();
+    socket.binary(frame({ keyframe: true, sequence: 900_002 }, KEYFRAME));
+    expect(decoders[1]!.config).toMatchObject({ hardwareAcceleration: "prefer-hardware" });
+  });
+
+  it("decodes with no preference by default (the HTML5 viewer)", () => {
+    const { socket } = start();
+    handshake(socket);
+    socket.binary(frame({ keyframe: true }, KEYFRAME));
+    expect(decoders[0]!.config).toMatchObject({ hardwareAcceleration: "no-preference" });
+  });
+
+  it("times each drawn frame from its packet's arrival", () => {
+    const timings: FrameTiming[] = [];
+    const { socket } = start({ onFrameTiming: (t) => timings.push(t) });
+    handshake(socket);
+    vi.setSystemTime(10_000);
+    socket.binary(frame({ keyframe: true, capture_timestamp_us: 5_000 }, KEYFRAME));
+    vi.advanceTimersByTime(12);
+    decoders[0]!.emit(5_000);
+    expect(timings).toHaveLength(1);
+    expect(timings[0]!.drawnAt - timings[0]!.receivedAt).toBeCloseTo(12, 0);
+  });
+
+  it("sends a Mac's command as Control to a Linux or Windows guest", () => {
+    const { socket, canvas } = start({ metaAsControl: true });
+    handshake(socket);
+    canvas.dispatchEvent(new KeyboardEvent("keydown", { key: "c", metaKey: true }));
+    canvas.dispatchEvent(new KeyboardEvent("keydown", { key: "C", metaKey: true, shiftKey: true }));
+    canvas.dispatchEvent(new KeyboardEvent("keydown", { key: "a" }));
+    vi.runAllTicks();
+    return Promise.resolve().then(() => {
+      const events = socket.of("interactive_input").flatMap((m) => m.payload!.events as Array<Record<string, unknown>>);
+      expect(events).toEqual([
+        { kind: "key", key: "c", state: "down", modifiers: ["control"], repeat: false },
+        { kind: "key", key: "c", state: "down", modifiers: ["shift", "control"], repeat: false },
+        { kind: "text_commit", text: "a" },
+      ]);
+      expect(commandAsControl({ kind: "key", key: "meta", state: "down", modifiers: ["command"], repeat: false })).toEqual({
+        kind: "key",
+        key: "control",
+        state: "down",
+        modifiers: ["control"],
+        repeat: false,
+      });
+    });
+  });
+
+  it("sends a ⌘ chord whole from a Mac, whose key-up Chromium never fires", async () => {
+    const { socket, canvas } = start({ wholeCommandChords: true });
+    handshake(socket);
+    canvas.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta", metaKey: true }));
+    canvas.dispatchEvent(new KeyboardEvent("keydown", { key: "c", metaKey: true }));
+    canvas.dispatchEvent(new KeyboardEvent("keydown", { key: "x" }));
+    await Promise.resolve();
+    const events = socket.of("interactive_input").flatMap((m) => m.payload!.events as Array<Record<string, unknown>>);
+    expect(events).toEqual([
+      { kind: "key", key: "meta", state: "down", modifiers: ["command"], repeat: false },
+      { kind: "key", key: "c", state: "down", modifiers: ["command"], repeat: false },
+      { kind: "key", key: "c", state: "up", modifiers: ["command"], repeat: false },
+      { kind: "text_commit", text: "x" },
+    ]);
+  });
+
+  it("lets scrolls go to the page until the canvas has the keyboard", async () => {
+    const { socket, canvas } = start({ scrollNeedsFocus: true });
+    document.body.append(canvas);
+    handshake(socket);
+    const before = new WheelEvent("wheel", { deltaY: 40, cancelable: true });
+    canvas.dispatchEvent(before);
+    expect(before.defaultPrevented).toBe(false);
+    canvas.focus();
+    const after = new WheelEvent("wheel", { deltaY: 40, cancelable: true });
+    canvas.dispatchEvent(after);
+    expect(after.defaultPrevented).toBe(true);
+    await Promise.resolve();
+    expect(socket.of("interactive_input").flatMap((m) => m.payload!.events as Array<{ kind: string }>).map((e) => e.kind)).toEqual(["scroll"]);
+    canvas.remove();
+  });
+
+  it("hands input acknowledgements to the caller", () => {
+    const acks: Record<string, unknown>[] = [];
+    const { socket } = start({ onInputAck: (a) => acks.push(a) });
+    handshake(socket);
+    socket.server("interactive_input_acknowledgement", { through_sequence: 4, delivered: false, error: { code: "would_require_activation" } });
+    expect(acks).toEqual([{ through_sequence: 4, delivered: false, error: { code: "would_require_activation" } }]);
   });
 });

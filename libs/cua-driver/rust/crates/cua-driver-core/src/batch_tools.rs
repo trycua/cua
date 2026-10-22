@@ -1,4 +1,4 @@
-//! `run_actions`: run an ordered list of existing action tools in one call.
+//! `run_steps`: run an ordered list of existing action tools in one call.
 //!
 //! The tool owns no input logic. Every step is dispatched through the same
 //! [`ToolRegistry`] entry point a direct call uses, inside the batch's own
@@ -25,7 +25,7 @@ pub mod locate;
 use locate::{Check, ElementSpec, Locator, Window, WindowSpec};
 
 /// Public name of the batch tool.
-pub const RUN_ACTIONS_TOOL: &str = "run_actions";
+pub const RUN_STEPS_TOOL: &str = "run_steps";
 
 /// Action tools a batch may run. Observation tools are deliberately absent:
 /// the batch has exactly one optional observation, at the end.
@@ -43,7 +43,7 @@ pub const BATCHABLE_TOOLS: &[&str] = &[
 ];
 
 /// Most steps one call may carry. Keeps a batch inside client call timeouts.
-pub const MAX_STEPS: usize = 32;
+pub const MAX_STEPS: usize = 64;
 /// Longest pause between two steps.
 pub const MAX_DELAY_MS: u64 = 2_000;
 /// Default `max_elements` for the end-of-batch observation: the same budget as
@@ -141,11 +141,11 @@ const BATCH_WINDOW_KEYS: &[&str] = &["pid", "window_id", "app", "window"];
 /// How long a stale element target may take to be found again by its label.
 const REFIND_TIMEOUT: Duration = Duration::from_millis(1_500);
 
-pub struct RunActionsTool {
+pub struct RunStepsTool {
     registry: ReplayRegistrySlot,
 }
 
-impl RunActionsTool {
+impl RunStepsTool {
     pub fn new(registry: ReplayRegistrySlot) -> Self {
         Self { registry }
     }
@@ -154,20 +154,20 @@ impl RunActionsTool {
 static DEF: OnceLock<ToolDef> = OnceLock::new();
 
 #[async_trait]
-impl Tool for RunActionsTool {
+impl Tool for RunStepsTool {
     fn def(&self) -> &ToolDef {
         DEF.get_or_init(|| ToolDef {
-            name: RUN_ACTIONS_TOOL.into(),
+            name: RUN_STEPS_TOOL.into(),
             description: "The default way to act: run one or more action tools in ONE call, in \
                 order, stop at the first failure, and (with `observe`) get what changed in the \
                 same response. Use it whenever you know the next action(s) and would otherwise \
                 re-read the window after them: fill three fields, click, and see the result in \
-                one call instead of five. Even a single step plus `observe:true` replaces an \
+                one call instead of five. Even a single step plus `observe:{}` replaces an \
                 action call followed by a get_window_state call. \
                 Each step is `{tool, args}` where `tool` is one of click, double_click, \
                 right_click, set_value, type_text, press_key, hotkey, scroll, drag, move_cursor \
                 and `args` are exactly that tool's arguments. `pid` and `window_id` (or `app`/\
-                `window`) on run_actions itself are the default window of every step that names \
+                `window`) on run_steps itself are the default window of every step that names \
                 none. Reads (get_window_state, zoom) do not run between steps: one there is \
                 skipped; a get_window_state last is the `observe`, a zoom last runs after it. \
                 Every step goes through the same session, permission and approval checks as a \
@@ -189,7 +189,7 @@ impl Tool for RunActionsTool {
                 since your last read of the window, plus a new snapshot_id. Without \
                 `observe` nothing is read. The batch uses one session: steps may \
                 omit `session` or repeat the batch's. `delay_ms` pauses between steps (max \
-                2000). At most 32 steps.\n\n\
+                2000). At most 64 steps; `delivery_mode` on run_steps is the default for its steps.\n\n\
                 TARGET BY NAME (no earlier read needed, so one batch can cross screens): \
                 a step can be written `{\"click\": {...args}}` as well as `{tool, args}`, and \
                 its args may name the target instead of carrying a token: `role` (button, \
@@ -215,9 +215,9 @@ impl Tool for RunActionsTool {
                 Example (fill a form, submit, confirm the dialog, check the result):\n\
                 {\"steps\":[\
                 {\"set_value\":{\"app\":\"Safari\",\"role\":\"textfield\",\"name\":\"Email\",\"value\":\"ada@example.com\"}},\
-                {\"click\":{\"role\":\"button\",\"name\":\"Submit\"},\"expect\":{\"role\":\"button\",\"name\":\"Confirm\"}},\
+                {\"click\":{\"role\":\"button\",\"name\":\"Submit\"},\"expect\":[{\"role\":\"button\",\"name\":\"Confirm\"}]},\
                 {\"click\":{\"role\":\"button\",\"name\":\"Confirm\"},\"expect\":[{\"name\":\"Confirm\",\"gone\":true},{\"text\":\"Thanks\"}]}\
-                ],\"observe\":true}"
+                ],\"observe\":{}}"
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -229,30 +229,15 @@ impl Tool for RunActionsTool {
                         "maxItems": MAX_STEPS,
                         "description": "Ordered actions. Execution stops at the first failing step. Each step is {tool, args} or {<tool>: args}, plus optional wait_for / expect / timeout_ms; a step may also be only a wait_for or expect check.",
                         "items": {
-                            "anyOf": [
-                                {
-                                    "type": "object",
-                                    "required": ["tool"],
-                                    "properties": {
-                                        "tool": { "type": "string", "enum": BATCHABLE_TOOLS, "description": "Action tool to run." },
-                                        "args": { "type": "object", "description": "Arguments for that tool, as in a direct call, optionally with role/name/nth/app/window to name the target instead of pid/window_id/element_token." },
-                                        "wait_for": { "type": "object", "description": "Check that must hold before the action: {role?, name?, text?, gone?, app?, window?, timeout_ms?}. Default timeout 5000 ms." },
-                                        "expect": { "type": ["object", "array"], "description": "Check (or up to 4) that must hold after the action: {role?, name?, text?, gone?, value?, value_contains?, enabled?, selected?, app?, window?, timeout_ms?}. Default timeout 2000 ms." },
-                                        "timeout_ms": { "type": "integer", "minimum": 0, "maximum": 10000, "description": "How long a named target may take to appear. Default 3000." }
-                                    },
-                                    "additionalProperties": false
-                                },
-                                {
-                                    "type": "object",
-                                    "description": "Shorthand {<tool>: args} with optional wait_for / expect / timeout_ms, or a step that is only a wait_for or expect check.",
-                                    "properties": {
-                                        "wait_for": { "type": "object" },
-                                        "expect": { "type": ["object", "array"] },
-                                        "timeout_ms": { "type": "integer", "minimum": 0, "maximum": 10000 }
-                                    },
-                                    "additionalProperties": true
-                                }
-                            ]
+                            "type": "object",
+                            "properties": {
+                                "tool": { "type": "string", "enum": BATCHABLE_TOOLS, "description": "Action tool to run." },
+                                "args": { "type": "object", "description": "Arguments for that tool, as in a direct call, optionally with role/name/nth/app/window to name the target instead of pid/window_id/element_token." },
+                                "wait_for": { "type": "object", "description": "Check that must hold before the action: {role?, name?, text?, gone?, app?, window?, timeout_ms?}. Default timeout 5000 ms." },
+                                "expect": { "type": "array", "maxItems": 4, "items": {"type": "object"}, "description": "Up to 4 checks that must hold after the action: {role?, name?, text?, gone?, value?, value_contains?, enabled?, selected?, app?, window?, timeout_ms?}. Default timeout 2000 ms." },
+                                "timeout_ms": { "type": "integer", "minimum": 0, "maximum": 10000, "description": "How long a named target may take to appear. Default 3000." }
+                            },
+                            "additionalProperties": true
                         }
                     },
                     "delay_ms": {
@@ -277,13 +262,18 @@ impl Tool for RunActionsTool {
                         "type": "string",
                         "description": "Default window title substring for steps that name no window."
                     },
+                    "delivery_mode": {
+                        "type": "string",
+                        "enum": ["background", "foreground"],
+                        "description": "Default delivery_mode for steps whose tool takes one and that set none."
+                    },
                     "foreground_fallback": {
                         "type": "boolean",
                         "description": "When a step is refused because its target ignores background input (Electron, LibreOffice and other toolkits), retry it once with delivery_mode:\"foreground\": the window is activated and the pointer may move. Default false."
                     },
                     "observe": {
-                        "type": ["object", "boolean"],
-                        "description": "Optional end-of-batch observation: `true`, or arguments for ONE get_window_state call. `pid` and `window_id` default to those of the last step that names both. Defaults to since=\"latest\" (only what changed since your last read of that window with the same query/max_elements/max_depth; a full read when there is none), include_screenshot=false and max_elements=250; pass include_screenshot=true to see the window, or since=null for a full read. Omit to read nothing."
+                        "type": "object",
+                        "description": "Optional end-of-batch observation: arguments for ONE get_window_state call. `pid` and `window_id` default to those of the last step that names both. Defaults to since=\"latest\" (only what changed since your last read of that window with the same query/max_elements/max_depth; a full read when there is none), include_screenshot=false and max_elements=250; pass include_screenshot=true to see the window, or since=null for a full read. Omit to read nothing. {} observes the last window."
                     }
                 },
                 "additionalProperties": false
@@ -300,7 +290,7 @@ impl Tool for RunActionsTool {
             Some(registry) => registry,
             None => {
                 return ToolResult::error(
-                    "run_actions is not available: registry not initialised yet.",
+                    "run_steps is not available: registry not initialised yet.",
                 )
             }
         };
@@ -384,7 +374,7 @@ impl PlanError {
             None => String::new(),
         };
         ToolResult::error(format!(
-            "run_actions rejected before running anything: {location}{}",
+            "run_steps rejected before running anything: {location}{}",
             self.message
         ))
         .with_structured(json!({
@@ -458,6 +448,17 @@ impl Plan {
             .map(str::to_owned);
 
         let default_window = batch_window(object)?;
+        let default_delivery = match object.get("delivery_mode") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(mode)) if matches!(mode.as_str(), "background" | "foreground") => {
+                Some(mode.clone())
+            }
+            Some(_) => {
+                return Err(PlanError::batch(
+                    "`delivery_mode` must be \"background\" or \"foreground\"",
+                ))
+            }
+        };
         let foreground_fallback = match object.get("foreground_fallback") {
             None | Some(Value::Null) => false,
             Some(Value::Bool(flag)) => *flag,
@@ -537,7 +538,14 @@ impl Plan {
                 });
                 continue;
             }
-            let step = parse_step(registry, index, raw, session.as_deref(), has_window)?;
+            let mut step = parse_step(registry, index, raw, session.as_deref(), has_window)?;
+            if let (Some(mode), Some(action)) = (&default_delivery, step.action.as_mut()) {
+                if accepts(registry, action.tool, "delivery_mode") {
+                    if let Some(object) = action.args.as_object_mut() {
+                        object.entry("delivery_mode").or_insert_with(|| json!(mode));
+                    }
+                }
+            }
             let names_window = step
                 .action
                 .as_ref()
@@ -667,14 +675,26 @@ impl Plan {
                     json!({}),
                 )
             } else {
-                run_step(
-                    registry,
-                    &locator,
-                    index,
-                    step,
-                    &mut context,
-                    &mut last_window,
-                    self.foreground_fallback,
+                // Every step but the last is followed by another, so it does
+                // not hold up the batch for the cursor glide or the full
+                // window-change report. The last step keeps them: it reports
+                // what the batch left open.
+                let pacing = if index + 1 < total {
+                    crate::step_pacing::StepPacing::Batched
+                } else {
+                    crate::step_pacing::StepPacing::Single
+                };
+                crate::step_pacing::scope(
+                    pacing,
+                    run_step(
+                        registry,
+                        &locator,
+                        index,
+                        step,
+                        &mut context,
+                        &mut last_window,
+                        self.foreground_fallback,
+                    ),
                 )
                 .await
             };
@@ -701,9 +721,9 @@ impl Plan {
             "steps": reports,
         });
         let header = match failed_step {
-            None => format!("run_actions: {total}/{total} steps ok"),
+            None => format!("run_steps: {total}/{total} steps ok"),
             Some(index) => format!(
-                "run_actions: step {} of {total} failed; {} step(s) ran before it, {} not run",
+                "run_steps: step {} of {total} failed; {} step(s) ran before it, {} not run",
                 index + 1,
                 index,
                 total - executed
@@ -801,6 +821,9 @@ impl Plan {
         let mut content = vec![Content::text(lines.join("\n"))];
         content.append(&mut observation_content);
         content.append(&mut tail_content);
+        if failed_step.is_some() {
+            fit_error_text(&mut content, ERROR_TEXT_BUDGET);
+        }
         ToolResult {
             content,
             is_error: failed_step.map(|_| true),
@@ -981,7 +1004,7 @@ async fn run_step(
         } else if wants_foreground {
             foreground_hint = Some(format!(
                 " To run it, send the batch again from step {} with \"delivery_mode\":\"foreground\" \
-                 on this step, or set \"foreground_fallback\":true on run_actions (the window is \
+                 on this step, or set \"foreground_fallback\":true on run_steps (the window is \
                  activated and the pointer may move).",
                 index + 1
             ));
@@ -1007,6 +1030,17 @@ async fn run_step(
                 .and_then(Value::as_str)
             {
                 report["code"] = Value::String(code.to_owned());
+            }
+            // The step's own recovery hint and next call, so a failed batch
+            // says what to do next without a second tool call.
+            for key in ["hint", "next_call"] {
+                if let Some(value) = result
+                    .structured_content
+                    .as_ref()
+                    .and_then(|value| value.get(key))
+                {
+                    report[key] = value.clone();
+                }
             }
             return StepOutcome {
                 line: format!("{}. {label} ERROR (action): {message}", index + 1),
@@ -1276,6 +1310,41 @@ fn focus_holder(message: &str) -> Option<u64> {
         .take_while(char::is_ascii_digit)
         .collect();
     digits.parse().ok()
+}
+
+/// Most text characters a failed batch returns. MCP clients cut long error
+/// results to their first line or so (Claude Code keeps ~100 characters of
+/// an error over ~4 000), which hid why a step failed behind the read that
+/// followed it. The step report goes first and whole; the read is trimmed.
+const ERROR_TEXT_BUDGET: usize = 3_500;
+
+/// Keep the text of a failed batch within `budget` characters: the first
+/// part (the step report) up to the budget, then later text parts trimmed
+/// to what is left, with a note. Images are kept.
+fn fit_error_text(content: &mut Vec<Content>, budget: usize) {
+    let mut left = budget;
+    let mut trimmed = false;
+    for part in content.iter_mut() {
+        let Content::Text { text, .. } = part else {
+            continue;
+        };
+        let length = text.chars().count();
+        if length <= left {
+            left -= length;
+            continue;
+        }
+        let keep: String = text.chars().take(left).collect();
+        *text = keep;
+        left = 0;
+        trimmed = true;
+    }
+    content.retain(|part| !matches!(part, Content::Text { text, .. } if text.is_empty()));
+    if trimmed {
+        content.push(Content::text(
+            "[the rest of this read was cut so the step report stays readable; call \
+             get_window_state for the full window]",
+        ));
+    }
 }
 
 /// Whether a refusal names foreground delivery as the route that works:
@@ -1834,7 +1903,7 @@ fn prepare_args(args: &mut Value, session: Option<&str>) -> Result<(), String> {
             "session `{own}` differs from the batch's session `{batch}`; a batch runs in one session"
         )),
         (Some(own), None) if own != "default" => Err(format!(
-            "session `{own}` differs from the batch's session; set `session` on run_actions itself"
+            "session `{own}` differs from the batch's session; set `session` on run_steps itself"
         )),
         (_, Some(batch)) => {
             object.insert("session".to_owned(), Value::String(batch.to_owned()));

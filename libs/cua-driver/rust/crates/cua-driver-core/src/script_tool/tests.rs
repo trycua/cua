@@ -13,11 +13,13 @@ use crate::{
 };
 
 type Calls = Arc<Mutex<Vec<(String, Value)>>>;
+type Pacings = Arc<Mutex<Vec<(String, crate::step_pacing::StepPacing)>>>;
 
 /// Fake app: pid 42, window 7, a "Name" field and a "Save" button.
 struct Fake {
     def: ToolDef,
     calls: Calls,
+    pacings: Pacings,
 }
 
 #[async_trait]
@@ -28,6 +30,10 @@ impl Tool for Fake {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         let name = self.def.name.clone();
+        self.pacings
+            .lock()
+            .unwrap()
+            .push((name.clone(), crate::step_pacing::current()));
         self.calls
             .lock()
             .unwrap()
@@ -50,6 +56,8 @@ impl Tool for Fake {
                 ]
             })),
             "launch_app" => ToolResult::text("launched").with_structured(json!({"pid": 42})),
+            _ if args["refuse"] == true => ToolResult::error(format!("{name} refused: stale token"))
+                .with_structured(json!({"code": "stale_element_token"})),
             _ if args["fail"] == true => ToolResult::error(format!("{name} refused: asked to fail")),
             _ => ToolResult::text(format!("{name} done")),
         }
@@ -59,11 +67,13 @@ impl Tool for Fake {
 struct Harness {
     registry: Arc<ToolRegistry>,
     calls: Calls,
+    pacings: Pacings,
 }
 
 impl Harness {
     fn new() -> Self {
         let calls: Calls = Arc::default();
+        let pacings: Pacings = Arc::default();
         let mut registry = ToolRegistry::new();
         for name in crate::batch_tools::BATCHABLE_TOOLS
             .iter()
@@ -82,13 +92,18 @@ impl Harness {
                     open_world: false,
                 },
                 calls: calls.clone(),
+                pacings: pacings.clone(),
             }));
         }
         registry.register_session_tools();
         registry.register_script_tool();
         let registry = Arc::new(registry);
         registry.init_self_weak();
-        Self { registry, calls }
+        Self {
+            registry,
+            calls,
+            pacings,
+        }
     }
 
     async fn run(&self, script: &str) -> ToolResult {
@@ -189,6 +204,22 @@ async fn an_uncaught_driver_error_names_the_line_the_call_and_the_reason() {
 }
 
 #[tokio::test]
+async fn a_refusal_in_a_script_carries_the_drivers_recovery_hint() {
+    let harness = Harness::new();
+    let result = harness
+        .run("const app = await cua.getApp('Notes');\nawait app.click('s00000009:2', {refuse: true});\nreturn 1;")
+        .await;
+    assert_eq!(result.is_error, Some(true));
+    let message = text(&result);
+    assert!(
+        message.contains(
+            "click refused: stale token Hint: That element_token comes from an older read."
+        ),
+        "{message}"
+    );
+}
+
+#[tokio::test]
 async fn a_script_can_catch_a_failed_call_and_carry_on() {
     let harness = Harness::new();
     let result = harness
@@ -253,6 +284,10 @@ async fn only_driver_tools_on_the_allowlist_are_reachable() {
     for (script, needle) in [
         (
             "await cua.call('kill_app', {pid: 42})",
+            "not available to scripts",
+        ),
+        (
+            "await cua.call('run_steps', {steps: []})",
             "not available to scripts",
         ),
         (
@@ -429,34 +464,81 @@ async fn bad_requests_are_rejected_before_running() {
 }
 
 #[test]
-fn the_tool_is_off_unless_the_operator_opts_in() {
+fn the_tool_is_on_unless_the_operator_turns_it_off() {
+    use super::disabled_from as off;
     let dir = tempfile::tempdir().unwrap();
     let config = dir.path().join("config.json");
-    assert!(!super::enabled_from(None, None), "off by default");
-    assert!(!super::enabled_from(None, Some(&config)), "no config file");
+    assert_eq!(off(None, None, None), None, "on by default");
+    assert_eq!(off(None, None, Some(&config)), None, "no config file");
+    std::fs::write(&config, "not json").unwrap();
+    assert_eq!(off(None, None, Some(&config)), None, "unreadable config");
     std::fs::write(&config, r#"{"experimental_pip": true}"#).unwrap();
-    assert!(!super::enabled_from(None, Some(&config)));
-    std::fs::write(&config, r#"{"experimental_script": true}"#).unwrap();
-    assert!(super::enabled_from(None, Some(&config)), "config opt-in");
-    assert!(
-        !super::enabled_from(Some("0"), Some(&config)),
-        "the environment wins"
-    );
-    assert!(super::enabled_from(Some("1"), None));
-    assert!(super::enabled_from(Some(" TRUE "), None));
-    assert!(!super::enabled_from(Some("maybe"), None));
+    assert_eq!(off(None, None, Some(&config)), None, "other keys");
+
+    // The opt-outs.
+    assert!(off(Some("1"), None, None)
+        .unwrap()
+        .contains("CUA_DRIVER_DISABLE_RUN_SCRIPT"));
+    assert!(off(Some(" TRUE "), None, None).is_some());
+    assert_eq!(off(Some("0"), None, None), None);
+    assert_eq!(off(Some("maybe"), None, None), None);
+    std::fs::write(&config, r#"{"disable_run_script": true}"#).unwrap();
+    assert!(off(None, None, Some(&config))
+        .unwrap()
+        .contains("disable_run_script"));
+    std::fs::write(&config, r#"{"disable_run_script": false}"#).unwrap();
+    assert_eq!(off(None, None, Some(&config)), None);
+    std::fs::write(&config, r#"{"experimental_script": false}"#).unwrap();
+    assert!(off(None, None, Some(&config))
+        .unwrap()
+        .contains("experimental_script"));
 }
 
 #[test]
-fn an_unflagged_registry_does_not_offer_the_tool() {
+fn the_legacy_opt_in_flag_can_only_turn_the_tool_off() {
+    use super::disabled_from as off;
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config.json");
+    // `=1` and `true` were the old opt-in: now they change nothing.
+    assert_eq!(off(None, Some("1"), None), None);
+    std::fs::write(&config, r#"{"experimental_script": true}"#).unwrap();
+    assert_eq!(off(None, None, Some(&config)), None);
+    // ...and they do not override an opt-out.
+    assert!(off(Some("1"), Some("1"), Some(&config)).is_some());
+    std::fs::write(
+        &config,
+        r#"{"experimental_script": true, "disable_run_script": true}"#,
+    )
+    .unwrap();
+    assert!(off(None, Some("1"), Some(&config)).is_some());
+    std::fs::write(&config, r#"{"experimental_script": false}"#).unwrap();
+    assert!(off(None, Some("1"), Some(&config)).is_some());
+    // `=0` turns it off, even over a config opt-in.
+    std::fs::write(&config, r#"{"experimental_script": true}"#).unwrap();
+    assert!(off(None, Some("0"), Some(&config))
+        .unwrap()
+        .contains("CUA_DRIVER_EXPERIMENTAL_SCRIPT=0"));
+    assert!(off(None, Some("false"), None).is_some());
+}
+
+#[test]
+fn a_default_registry_offers_the_tool() {
     let mut registry = ToolRegistry::new();
     registry.register_session_tools();
-    // The flag is off in the test environment unless someone set it.
-    if !super::enabled() {
+    // On unless whoever runs the tests turned it off.
+    if super::enabled() {
+        assert!(registry.get_def(super::RUN_SCRIPT_TOOL).is_some());
+        let listed = registry.tools_list();
+        assert!(listed["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool["name"] == super::RUN_SCRIPT_TOOL));
+    } else {
         assert!(registry.get_def(super::RUN_SCRIPT_TOOL).is_none());
     }
     assert!(registry
-        .get_def(crate::batch_tools::RUN_ACTIONS_TOOL)
+        .get_def(crate::batch_tools::RUN_STEPS_TOOL)
         .is_some());
 }
 
@@ -472,4 +554,37 @@ async fn query_returns_static_text_rows_with_their_value() {
     assert_eq!(value["rows"][0]["label"], "Saved");
     assert_eq!(value["rows"][0]["window"]["window_id"], 7);
     assert_eq!(value["kinds"], json!(["AXButton", "text"]));
+}
+
+#[tokio::test]
+async fn script_actions_are_paced_as_batched_steps_and_reads_are_not() {
+    let harness = Harness::new();
+    let result = harness
+        .run(
+            "const app = await cua.getApp({pid: 42, windowId: 7});\n\
+             await app.getState();\n\
+             await app.click({role: 'AXButton', name: 'Save'});\n\
+             await app.pressKey('return');\n\
+             return 'ok';",
+        )
+        .await;
+    assert_ne!(result.is_error, Some(true), "{result:?}");
+    let pacings = harness.pacings.lock().unwrap().clone();
+    let of = |tool: &str| -> Vec<crate::step_pacing::StepPacing> {
+        pacings
+            .iter()
+            .filter(|(name, _)| name == tool)
+            .map(|(_, pacing)| *pacing)
+            .collect()
+    };
+    use crate::step_pacing::StepPacing::{Batched, Single};
+    assert_eq!(of("click"), vec![Batched]);
+    assert_eq!(of("press_key"), vec![Batched]);
+    assert!(
+        of("get_window_state")
+            .iter()
+            .all(|pacing| *pacing == Single),
+        "reads keep their own timing: {:?}",
+        of("get_window_state")
+    );
 }

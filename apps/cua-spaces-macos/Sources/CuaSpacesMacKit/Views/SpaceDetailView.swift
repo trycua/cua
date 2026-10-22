@@ -22,6 +22,8 @@ struct SpaceDetailView: View {
     @State private var teleport: TeleportModel?
     @State private var dropStatus: TeleportDropZone.Status?
     @State private var agents: AgentRunsModel?
+    /// The run whose conversation is open (a sheet).
+    @State private var openRun: RunTimelineModel?
     @State private var sharing: ShareModel?
     /// Connect (or Try again) was pressed: the stream opens even with
     /// "Connect to the desktop automatically" off.
@@ -68,7 +70,7 @@ struct SpaceDetailView: View {
                         switch title {
                         case "Stream": streamRows
                         case "Agents":
-                            if let agents { AgentRows(agents: agents, copy: copy) } else { Text(copy.agentsLoading).foregroundStyle(.secondary) }
+                            if let agents { AgentRows(agents: agents, copy: copy, open: open) } else { Text(copy.agentsLoading).foregroundStyle(.secondary) }
                         default: teleportRow
                         }
                     }
@@ -111,8 +113,21 @@ struct SpaceDetailView: View {
         .task(id: live) {
             guard detail.showSections else { return }
             let model = AgentRunsModel(backend: self.model.backend, spaceId: space.id)
+            model.onRead = { [weak app = self.model] in app?.sawAgentRuns($0) }
             agents = model
             await model.poll()
+        }
+        .sheet(item: $openRun) { RunTimelineView(timeline: $0) }
+        .task(id: space.id) {
+            // Captures: an agent run's conversation open (a running one first).
+            guard DevHooks.value("CUA_SPACES_START_VIEW") == "run-timeline" else { return }
+            for _ in 0..<40 {
+                if case .ready(let runs) = agents?.load, let run = runs.first(where: { $0.status == .running }) ?? runs.first {
+                    open(run)
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(250))
+            }
         }
         .task(id: space.id) {
             // Captures: this Space's own window (its live desktop, with the
@@ -133,6 +148,12 @@ struct SpaceDetailView: View {
             guard let p = model.pendingTeleport, p.spaceId == space.id else { return }
             model.pendingTeleport = nil
             await openTeleport(entry: p.entry, files: p.files)
+        }
+        // The checklist's Teleport or Share, on this Space.
+        .task(id: model.detailRequest) {
+            guard let r = model.detailRequest, r.spaceId == space.id else { return }
+            model.detailRequest = nil
+            perform(r.action)
         }
         .sheet(item: Binding(get: { teleport.map { TeleportSheetItem(model: $0) } },
                              set: { if $0 == nil { teleport = nil } })) { item in
@@ -204,6 +225,10 @@ struct SpaceDetailView: View {
     }
 
     /// Keeps the stream's last frame as the Space's preview.
+    private func open(_ run: AppSpaceAgentRun) {
+        openRun = RunTimelineModel(backend: model.backend, spaceId: space.id, run: run)
+    }
+
     private func keepLastFrame() {
         guard let frame = session?.frame, let image = SpaceThumbnails.image(frame) else { return }
         model.thumbnails.set(space.id, image)
@@ -254,8 +279,18 @@ struct SpaceDetailView: View {
 
     @ToolbarContentBuilder private func toolbar(_ detail: AppSpaceDetail) -> some ToolbarContent {
         ToolbarItemGroup {
+            let more = detail.actions.filter { !$0.primary && $0.id != .cancel && $0.id != .power }
+            if !more.isEmpty {
+                Menu {
+                    ForEach(Array(more.enumerated()), id: \.offset) { _, action in
+                        actionButton(action)
+                    }
+                } label: {
+                    Label("More actions", systemImage: "ellipsis.circle")
+                }
+            }
             ForEach(Array(detail.actions.enumerated()), id: \.offset) { _, action in
-                actionButton(action)
+                if !more.contains(action) { actionButton(action) }
             }
         }
     }
@@ -301,7 +336,14 @@ struct SpaceDetailView: View {
                 backend: model.backend, spaceId: space.id, spaceName: space.name,
                 signedIn: model.identity != nil,
                 shareable: space.id.hasPrefix("relay:") || (space.sdk?.features.contains("relay_attach") ?? false))
+            sharing?.hasTeam = model.hasSharingTeam
+            Task { [weak model] in
+                // Teams may not have been read yet: the sheet closes or stays open once they are.
+                await model?.reloadTeams()
+                sharing?.hasTeam = model?.hasSharingTeam
+            }
             sharing?.telemetry = model.telemetrySink
+            sharing?.onShared = { [weak model] in model?.checklist.done(.share) }
             model.recordFeature("share_open")
         case .power:
             if let button = appPowerButton(space: space) { model.setPower(space, on: button.turnOn) }
@@ -360,6 +402,7 @@ struct SpaceDetailView: View {
             // The review reads saved Keyvault items and a browser's sites
             // from the Keyvault, and starts from what was sent last time.
             t.keyvault = model.keyvault
+            t.onTeleported = { [weak model] in model?.checklist.done(.teleport) }
             t.rememberedChoices = model.settings.teleportChoices
             t.onRemember = { [weak model] choices in
                 model?.settings.teleportChoices = choices
@@ -601,10 +644,12 @@ struct StreamRowList: View {
 }
 
 /// The Agents section: one line per run (the agent and what it was asked),
-/// its status on the right, the reason as the tooltip.
+/// its status on the right, the reason as the tooltip. A run opens its
+/// conversation.
 struct AgentRows: View {
     let agents: AgentRunsModel
     let copy: AppDetailCopy
+    var open: (AppSpaceAgentRun) -> Void = { _ in }
 
     var body: some View {
         switch agents.load {
@@ -616,11 +661,15 @@ struct AgentRows: View {
             Text(copy.agentsEmpty).foregroundStyle(.secondary)
         case .ready(let runs):
             ForEach(runs, id: \.runId) { run in
-                LabeledContent {
-                    Text(AgentRunsModel.status(run)).foregroundStyle(.secondary)
-                } label: {
-                    Text(AgentRunsModel.line(run)).lineLimit(1).truncationMode(.tail)
+                Button { open(run) } label: {
+                    LabeledContent {
+                        Text(AgentRunsModel.status(run)).foregroundStyle(.secondary)
+                    } label: {
+                        Text(AgentRunsModel.line(run)).lineLimit(1).truncationMode(.tail)
+                    }
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
                 .help(run.reason)
                 .accessibilityIdentifier("agent-run-\(run.runId)")
             }
@@ -639,6 +688,10 @@ struct SpaceWindowView: View {
     let spaceId: String
     @State private var session: LiveStreamSession?
     @State private var error: String?
+    /// The Space was listed while this window was open: once it is gone
+    /// (deleted), the window closes instead of going blank.
+    @State private var seen = false
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         let space = model.spaces.first { $0.id == spaceId }
@@ -667,10 +720,24 @@ struct SpaceWindowView: View {
                         }
                     }
                 }
+            } else {
+                ZStack {
+                    Rectangle().fill(.quaternary)
+                    Text(seen ? "This Space was deleted." : "This Space isn\u{2019}t listed on this Mac.")
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .frame(minWidth: 640, minHeight: 400)
         .navigationTitle(space?.name ?? spaceId)
+        .onAppear { if space != nil { seen = true } }
+        .onChange(of: space != nil) { _, listed in
+            if listed {
+                seen = true
+            } else if seen {
+                dismiss()
+            }
+        }
         .onChange(of: space?.status == .deleting) { _, deleting in
             // Deleting: the stream stops now.
             guard deleting, let session else { return }

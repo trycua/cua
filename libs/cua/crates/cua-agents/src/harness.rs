@@ -3,8 +3,10 @@
 //! at a custom endpoint. None of this parses a harness's output: every
 //! harness is driven over ACP, natively or through its maintained adapter.
 
+use std::collections::BTreeMap;
+
 use serde::Serialize;
-use serde_json::json;
+use serde_json::{Value, json};
 
 /// A model endpoint's wire format.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
@@ -48,6 +50,12 @@ pub struct Harness {
     pub cli: Option<&'static str>,
     /// Credential env vars the harness reads, in preference order.
     pub keys: &'static [&'static str],
+    /// Shell tests (run in the guest) for a sign-in the harness uses
+    /// instead of a key: a credentials file under `$HOME`, a Keychain item.
+    /// `Some(&[])`: only a key works. `None`: the harness can also be set up
+    /// through its own config files, which cua does not read, so a missing
+    /// key is not conclusive.
+    pub logins: Option<&'static [&'static str]>,
     /// ACP `authenticate` method used with an env key, when the agent
     /// requires one.
     pub auth_method: Option<&'static str>,
@@ -81,6 +89,10 @@ pub const HARNESSES: &[Harness] = &[
             "CLAUDE_CODE_OAUTH_TOKEN",
             "ANTHROPIC_AUTH_TOKEN",
         ],
+        logins: Some(&[
+            "[ -s \"$HOME/.claude/.credentials.json\" ]",
+            "security find-generic-password -s 'Claude Code-credentials' >/dev/null 2>&1",
+        ]),
         auth_method: None,
         wires: &[Wire::Anthropic],
         mode_kinds: FULL,
@@ -96,6 +108,7 @@ pub const HARNESSES: &[Harness] = &[
         acp: &["codex-acp"],
         cli: Some("codex"),
         keys: &["OPENAI_API_KEY", "CODEX_API_KEY"],
+        logins: Some(&["[ -s \"$HOME/.codex/auth.json\" ]"]),
         auth_method: None,
         wires: &[Wire::OpenaiResponses],
         mode_kinds: FULL,
@@ -111,6 +124,7 @@ pub const HARNESSES: &[Harness] = &[
         acp: &["gemini", "--acp"],
         cli: Some("gemini"),
         keys: &["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+        logins: Some(&[]),
         auth_method: Some("gemini-api-key"),
         wires: &[Wire::Gemini],
         mode_kinds: FULL,
@@ -128,6 +142,7 @@ pub const HARNESSES: &[Harness] = &[
         acp: &["agy-acp-server", "--uid="],
         cli: None,
         keys: &["GEMINI_API_KEY"],
+        logins: Some(&[]),
         auth_method: Some("gemini-api-key"),
         wires: &[Wire::Gemini],
         mode_kinds: FULL,
@@ -151,6 +166,7 @@ pub const HARNESSES: &[Harness] = &[
             "GEMINI_API_KEY",
             "OPENROUTER_API_KEY",
         ],
+        logins: None,
         auth_method: None,
         wires: &[Wire::OpenaiChat],
         mode_kinds: FULL,
@@ -171,6 +187,7 @@ pub const HARNESSES: &[Harness] = &[
             "GOOGLE_API_KEY",
             "OPENROUTER_API_KEY",
         ],
+        logins: None,
         auth_method: None,
         wires: &[Wire::OpenaiChat],
         mode_kinds: FULL,
@@ -191,6 +208,7 @@ pub const HARNESSES: &[Harness] = &[
             "GEMINI_API_KEY",
             "OPENROUTER_API_KEY",
         ],
+        logins: None,
         auth_method: None,
         wires: &[Wire::OpenaiChat],
         mode_kinds: FULL,
@@ -209,6 +227,7 @@ pub const HARNESSES: &[Harness] = &[
         acp: &["hermes-acp"],
         cli: Some("hermes"),
         keys: &["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"],
+        logins: None,
         auth_method: None,
         wires: &[Wire::OpenaiChat],
         mode_kinds: FULL,
@@ -228,6 +247,7 @@ pub const HARNESSES: &[Harness] = &[
         acp: &["openclaw", "acp"],
         cli: Some("openclaw"),
         keys: &["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY"],
+        logins: None,
         auth_method: None,
         wires: &[Wire::OpenaiChat],
         mode_kinds: FULL,
@@ -267,6 +287,162 @@ pub fn ready() -> Vec<&'static str> {
     let mut v: Vec<_> = HARNESSES.iter().filter(|h| h.ready).map(|h| h.id).collect();
     v.sort_unstable();
     v
+}
+
+/// Whether a harness has a credential, as far as cua can tell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Auth {
+    /// A credential source was found.
+    Ok,
+    /// None was found, and cua knows every source this harness uses.
+    Missing,
+    /// None was found, but the harness may be set up through its own config
+    /// files (or there was nothing to look at).
+    Unknown,
+}
+
+/// What the guest probe found: `env:<NAME>`, `login`, or `none`.
+pub const PROBE_NONE: &str = "none";
+
+/// Where the Cua Spaces app takes a key named `env` (Settings, Agents):
+/// Anthropic and OpenAI have their own rows, any other key goes under Other.
+pub fn settings_hint(env: &str) -> String {
+    match env {
+        "ANTHROPIC_API_KEY" => "Add an Anthropic API key in Cua Spaces → Settings → Agents".into(),
+        "OPENAI_API_KEY" => "Add an OpenAI API key in Cua Spaces → Settings → Agents".into(),
+        other => format!("Add {other} under Other in Cua Spaces → Settings → Agents"),
+    }
+}
+
+impl Harness {
+    /// A POSIX sh script that prints where this harness's credential would
+    /// come from in the guest: `env:<NAME>` for a key in the environment
+    /// runs inherit, `login` for a sign-in, otherwise `none`.
+    pub fn auth_probe(&self) -> String {
+        let mut s = String::new();
+        for k in self.keys {
+            s.push_str(&format!(
+                "[ -n \"${{{k}:-}}\" ] && {{ echo env:{k}; exit 0; }}\n"
+            ));
+        }
+        for t in self.logins.unwrap_or_default() {
+            s.push_str(&format!("{t} && {{ echo login; exit 0; }}\n"));
+        }
+        s.push_str(&format!("echo {PROBE_NONE}\n"));
+        s
+    }
+
+    /// How to give this harness a credential: the keys it reads, how a key
+    /// reaches a run, and signing in inside the Space where that works.
+    pub fn auth_hint(&self) -> String {
+        let Some(first) = self.keys.first() else {
+            return format!("{} needs no key", self.name);
+        };
+        let others = if self.keys.len() > 1 {
+            format!(" (or {})", self.keys[1..].join(", "))
+        } else {
+            String::new()
+        };
+        let mut s = format!(
+            "{}, or set {first}{others} for the Cua daemon (export it, then `cua daemon stop` and `cua daemon start`) \
+             and forward it with env_from_host: [\"{first}\"] (CLI: --env-from-host {first})",
+            settings_hint(first)
+        );
+        match (self.logins, self.cli) {
+            (Some(l), Some(cli)) if !l.is_empty() => {
+                s.push_str(&format!(", or sign in by running `{cli}` inside the Space"));
+            }
+            (None, _) => s.push_str(&format!(", or configure {} inside the Space", self.name)),
+            _ => {}
+        }
+        s
+    }
+
+    /// The error for a run that has no credential, before anything is
+    /// installed.
+    pub fn missing_credential(&self) -> String {
+        format!(
+            "{} ({}) has no credential in this Space and would fail with \"Authentication required\": {}",
+            self.name,
+            self.id,
+            self.auth_hint()
+        )
+    }
+}
+
+/// The request the runner makes once, at the start of a run, to learn
+/// whether the provider rejects the run's API key (`keyCheck` in
+/// `run.json`; see `runner/acp-runner.mjs`).
+///
+/// A rejected key is slow to surface otherwise: Claude Code retries a 401
+/// ten times with growing pauses (about 3 minutes) and says nothing meanwhile.
+/// One read-only GET on the provider's models list answers in about 100 ms.
+/// Only a definitive "this key is invalid" ends the run's first turn; the
+/// runner treats every other outcome as "carry on".
+///
+/// The spec holds no secret: header values are `${NAME}` references into the
+/// run's env, which the runner resolves. `None` when there is nothing to
+/// check: the harness has no known provider, the run's key is not among
+/// `env` (the caller's own env: passed keys and saved Cua Spaces keys), more
+/// than one candidate key is set (the harness picks, cua cannot tell which),
+/// or a custom endpoint takes the key instead of the provider.
+pub fn key_check(
+    h: &Harness,
+    env: &BTreeMap<String, String>,
+    custom_endpoint: bool,
+) -> Option<Value> {
+    if custom_endpoint {
+        return None;
+    }
+    let (provider, url, candidates, skip_env, skip_file): (&str, &str, &[&str], &[&str], &[&str]) =
+        match h.id {
+            // The adapter drives Claude Code with the API key; another
+            // credential or backend takes precedence or replaces it.
+            "claude-code" => (
+                "Anthropic",
+                "https://api.anthropic.com/v1/models?limit=1",
+                &["ANTHROPIC_API_KEY"],
+                &[
+                    "ANTHROPIC_BASE_URL",
+                    "ANTHROPIC_AUTH_TOKEN",
+                    "CLAUDE_CODE_OAUTH_TOKEN",
+                    "CLAUDE_CODE_USE_BEDROCK",
+                    "CLAUDE_CODE_USE_VERTEX",
+                    "CLAUDE_CODE_USE_FOUNDRY",
+                ],
+                &[],
+            ),
+            // A signed-in Codex may not use the key at all.
+            "openai-codex" => (
+                "OpenAI",
+                "https://api.openai.com/v1/models",
+                &["OPENAI_API_KEY", "CODEX_API_KEY"],
+                &["OPENAI_BASE_URL", "OPENAI_API_BASE"],
+                &["~/.codex/auth.json"],
+            ),
+            _ => return None,
+        };
+    let mut set = candidates
+        .iter()
+        .filter(|k| env.get(**k).is_some_and(|v| !v.is_empty()));
+    let key = match (set.next(), set.next()) {
+        (Some(k), None) => *k,
+        _ => return None,
+    };
+    let headers = if h.id == "claude-code" {
+        json!({"x-api-key": format!("${{{key}}}"), "anthropic-version": "2023-06-01"})
+    } else {
+        json!({"authorization": format!("Bearer ${{{key}}}")})
+    };
+    Some(json!({
+        "provider": provider,
+        "url": url,
+        "keyEnv": key,
+        "headers": headers,
+        "skipIfEnv": skip_env,
+        "skipIfFile": skip_file,
+    }))
 }
 
 /// A custom model endpoint (a proxy, a gateway, a compatible server).
@@ -613,7 +789,17 @@ done
 pub struct HarnessInfo {
     pub id: &'static str,
     pub name: &'static str,
+    /// Supported and, as far as this server can tell, able to authenticate
+    /// (`supported` and `auth` is not `missing`).
     pub ready: bool,
+    /// Supported by the SDK: installed, driven and proven live.
+    pub supported: bool,
+    /// Whether a credential is available (see [`Auth`]); filled in by the
+    /// server that publishes capabilities, `unknown` until then.
+    pub auth: Auth,
+    /// How to provide a credential, when `auth` is not `ok`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_hint: Option<String>,
     pub protocol: &'static str,
     pub sandbox_mcp: bool,
     pub installs: Vec<String>,
@@ -632,6 +818,9 @@ impl Harness {
             id: self.id,
             name: self.name,
             ready: self.ready,
+            supported: self.ready,
+            auth: Auth::Unknown,
+            auth_hint: None,
             protocol: "acp",
             sandbox_mcp: self.sandbox_mcp,
             installs: crate::installables::resolve(self.installs).unwrap_or_default(),
@@ -642,6 +831,25 @@ impl Harness {
             followups: true,
             notes: self.notes,
         }
+    }
+
+    /// Its published capabilities given `host_key`, the first of its keys
+    /// set where the capabilities are served (a key `env_from_host` can
+    /// forward). Without one it is `missing` when cua knows every source the
+    /// harness uses (a run then needs a sign-in inside its Space, which
+    /// `agent_start` checks before installing), else `unknown`.
+    pub fn info_with_host_key(&self, host_key: Option<&str>) -> HarnessInfo {
+        let mut i = self.info();
+        i.auth = match (host_key, self.logins) {
+            (Some(_), _) => Auth::Ok,
+            (None, Some(_)) => Auth::Missing,
+            (None, None) => Auth::Unknown,
+        };
+        i.ready = self.ready && i.auth != Auth::Missing;
+        if i.auth != Auth::Ok {
+            i.auth_hint = Some(self.auth_hint());
+        }
+        i
     }
 }
 
@@ -834,6 +1042,79 @@ mod tests {
                 String::from_utf8_lossy(&out.stderr)
             );
             assert!(memory_dir(harness(id).unwrap()).is_some());
+        }
+    }
+    fn env(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn a_key_check_names_the_providers_models_list_and_holds_no_secret() {
+        let secret = "sk-ant-test-0123456789abcdef";
+        let claude = harness("claude-code").unwrap();
+        let c = key_check(claude, &env(&[("ANTHROPIC_API_KEY", secret)]), false).unwrap();
+        assert_eq!(c["provider"], "Anthropic");
+        assert_eq!(c["url"], "https://api.anthropic.com/v1/models?limit=1");
+        assert_eq!(c["keyEnv"], "ANTHROPIC_API_KEY");
+        assert_eq!(c["headers"]["x-api-key"], "${ANTHROPIC_API_KEY}");
+        assert_eq!(c["headers"]["anthropic-version"], "2023-06-01");
+        assert!(
+            c["skipIfEnv"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("ANTHROPIC_BASE_URL"))
+        );
+        assert!(!c.to_string().contains(secret));
+
+        let codex = harness("openai-codex").unwrap();
+        let c = key_check(
+            codex,
+            &env(&[("CODEX_API_KEY", "sk-test-0123456789")]),
+            false,
+        )
+        .unwrap();
+        assert_eq!(c["provider"], "OpenAI");
+        assert_eq!(c["url"], "https://api.openai.com/v1/models");
+        assert_eq!(c["keyEnv"], "CODEX_API_KEY");
+        assert_eq!(c["headers"]["authorization"], "Bearer ${CODEX_API_KEY}");
+        assert_eq!(c["skipIfFile"][0], "~/.codex/auth.json");
+        assert!(!c.to_string().contains("0123456789"));
+    }
+
+    #[test]
+    fn nothing_is_checked_when_the_key_is_not_the_runs_only_credential() {
+        let claude = harness("claude-code").unwrap();
+        let codex = harness("openai-codex").unwrap();
+        // No key, or an empty one: the runner has nothing to ask about.
+        assert!(key_check(claude, &env(&[]), false).is_none());
+        assert!(key_check(claude, &env(&[("ANTHROPIC_API_KEY", "")]), false).is_none());
+        // A custom endpoint takes the key, not the provider.
+        assert!(key_check(claude, &env(&[("ANTHROPIC_API_KEY", "k")]), true).is_none());
+        // Claude Code reads other credentials too; only the API key is checked.
+        assert!(key_check(claude, &env(&[("CLAUDE_CODE_OAUTH_TOKEN", "t")]), false).is_none());
+        // Two keys for one harness: cua cannot tell which one it uses.
+        assert!(
+            key_check(
+                codex,
+                &env(&[("OPENAI_API_KEY", "a"), ("CODEX_API_KEY", "b")]),
+                false
+            )
+            .is_none()
+        );
+        // Harnesses without a known provider.
+        for h in HARNESSES
+            .iter()
+            .filter(|h| !matches!(h.id, "claude-code" | "openai-codex"))
+        {
+            let all: BTreeMap<_, _> = h
+                .keys
+                .iter()
+                .map(|k| (k.to_string(), "k".to_string()))
+                .collect();
+            assert!(key_check(h, &all, false).is_none(), "{}", h.id);
         }
     }
 }

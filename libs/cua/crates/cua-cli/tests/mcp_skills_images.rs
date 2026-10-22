@@ -1,9 +1,8 @@
-//! `cua mcp`, `cua skills`, `cua trajectory` and Fleet `cua image`.
+//! `cua mcp`, `cua skills`, and `cua trajectory`.
 
 mod common;
 use common::*;
 use cua_daemon::fixtures;
-use cua_fleet::testing::FakeFleet;
 use serde_json::{Value, json};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -75,7 +74,10 @@ fn text(r: &Value) -> Value {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mcp_serves_sandbox_computer_and_skills_tools() {
     let env = fixtures::start_env(Some("t"), None).await;
-    let h = Home::new();
+    let mut h = Home::new();
+    // No local containers: this machine's own Docker Spaces must not show up
+    // in a "local" listing (the test runs next to real Spaces on dev Macs).
+    h.set("DOCKER_HOST", "unix:///nonexistent/cua-test-no-docker.sock");
     h.run(&[
         "--embedded",
         "sb",
@@ -576,52 +578,98 @@ async fn trajectory_view_serves_the_zip_with_cors_then_stops() {
     assert!(o.stdout.contains("No trajectory sessions found."), "{o:?}");
 }
 
+/// A Space another account shared through the relay (CUA-1418): the guest
+/// drives `relay:<id>` with the `computer_*` MCP tools and `cua do`, which
+/// resolve it through the Spaces API, not the sandboxes API ("not supported
+/// by the Direct provider" before).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn fleet_image_resources() {
-    let fake = FakeFleet::new();
-    fake.put_object(
-        "image",
-        "ns1",
-        "desktop",
-        json!({"apiVersion": "images.cua.ai/v1alpha1", "kind": "Image",
-            "metadata": {"name": "desktop", "namespace": "ns1", "creationTimestamp": "2026-09-01T00:00:00Z"},
-            "status": {"phase": "Ready"}}),
-    );
-    fake.add_namespace("ns2");
-    let fleet = fixtures::start_fleet_http(fake.clone()).await;
+async fn a_shared_relay_space_is_driven_by_the_guest() {
+    use cua_host::testing::FakeRelay;
+    const MACHINE: &str = "5a7ed0e1a5bce111";
+    let relay = FakeRelay::start().await;
+    relay.add_account("owner-token", "owner-1", Some("owner@example.com"));
+    relay.add_account("guest-token", "guest-1", Some("guest@example.com"));
+    let owner = cua_host::RelayClient::new(&relay.url).unwrap();
+    owner
+        .register(
+            "owner-token",
+            &cua_host::relay::RegisterRequest {
+                id: MACHINE.into(),
+                name: "Owner desk".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    owner
+        .patch(
+            "owner-token",
+            MACHINE,
+            &cua_host::relay::MachinePatch {
+                allow: Some(vec!["guest@example.com".into()]),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let env = fixtures::start_env(None, None).await;
+    relay.tunnel(MACHINE, &env.url);
+    relay.set_online(MACHINE, true, "0.0.0-mock");
+
+    // Signed in as the guest.
     let mut h = Home::new();
-    h.set("CUA_FLEET_BASE_URL", &fleet.base_url)
-        .set("FLEETS_TOKEN", "t");
-    let o = h.run(&["image", "ls"]).await;
-    o.ok();
-    assert!(
-        o.stdout.contains("desktop  ns1        Ready  2026-09-01"),
-        "{o:?}"
-    );
-    let o = h
-        .run(&["--json", "img", "list", "--namespace", "ns2"])
+    h.set("CUA_RELAY_URL", &relay.url);
+    h.set("DOCKER_HOST", "unix:///nonexistent/cua-test-no-docker.sock");
+    std::fs::create_dir_all(h.cua_home()).unwrap();
+    std::fs::write(
+        h.cua_home().join("credentials.json"),
+        json!({
+            "access_token": "guest-token",
+            "expires_at": "2999-01-01T00:00:00Z",
+            "token_type": "Bearer"
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let id = format!("relay:{MACHINE}");
+
+    let mut m = Mcp::start(&h, &["--embedded", "mcp"]);
+    m.call("initialize", json!({"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}})).await;
+    m.notify("notifications/initialized").await;
+    let r = m.tool("computer_screenshot", json!({"sandbox": id})).await;
+    assert_eq!(r["content"][0]["type"], "image", "{r}");
+    let r = m
+        .tool("computer_click", json!({"sandbox": id, "x": 600, "y": 300}))
         .await;
-    assert_eq!(o.json(), json!([]));
-    let o = h.run(&["image", "info", "desktop"]).await;
+    assert_eq!(r["isError"], false, "{r}");
+    let ptr = env
+        .mock
+        .state
+        .observed
+        .pointer
+        .lock()
+        .unwrap()
+        .last()
+        .cloned()
+        .unwrap();
+    assert!(ptr.contains("x: 640.0, y: 320.0"), "{ptr}");
+    let r = m
+        .tool(
+            "computer_type",
+            json!({"sandbox": id, "text": "guest-typed"}),
+        )
+        .await;
+    assert_eq!(r["isError"], false, "{r}");
+    let kb = env.mock.state.observed.keyboard.lock().unwrap().clone();
+    assert!(kb.iter().any(|k| k.contains("guest-typed")), "{kb:?}");
+    m.close().await;
+
+    let o = h.run(&["--embedded", "do", "switch", &id]).await;
     o.ok();
-    assert_eq!(o.json()["status"]["phase"], "Ready");
-    let manifest = h.dir.path().join("img.json");
-    std::fs::write(&manifest, json!({"apiVersion": "images.cua.ai/v1alpha1", "kind": "Image", "metadata": {"name": "built"}, "spec": {}}).to_string()).unwrap();
-    h.run(&[
-        "image",
-        "create",
-        "-f",
-        manifest.to_str().unwrap(),
-        "--namespace",
-        "ns2",
-    ])
-    .await
-    .ok();
-    assert!(fake.exists("image", "ns2", "built"));
-    let o = h.run(&["image", "rm", "desktop"]).await;
-    assert_eq!(o.code, 1, "needs --force non-interactively: {o:?}");
-    h.run(&["image", "delete", "desktop", "--force"]).await.ok();
-    assert!(!fake.exists("image", "ns1", "desktop"));
-    let o = h.run(&["image", "info", "desktop"]).await;
-    assert_eq!(o.code, 3, "{o:?}");
+    assert!(o.stdout.contains(&format!("✅ Switched to {id}")), "{o:?}");
+    let o = h
+        .run(&["--embedded", "do", "shell", "echo", "guest-ok"])
+        .await;
+    o.ok();
+    assert!(o.stdout.starts_with("✅ guest-ok"), "{o:?}");
 }

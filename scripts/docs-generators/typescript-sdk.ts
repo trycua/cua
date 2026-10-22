@@ -56,7 +56,7 @@ export const MODULES: Array<{
     title: 'TypeScript additions',
     importPath: '@trycua/cua',
     description:
-      'The hand-written helpers of @trycua/cua: embedded, connect, Image, probes, sidecars, specs and MCP.',
+      'The hand-written helpers of @trycua/cua (embedded, connect, Image, probes, sidecars, specs, MCP), and the Spaces transport and host modules.',
   },
   {
     entry: 'spaces/index.ts',
@@ -84,6 +84,12 @@ export const MODULES: Array<{
     description: 'The @trycua/cua/spaces/host helpers for hosting a Space from Node.',
   },
 ];
+
+/**
+ * Modules rendered as a section of another module's page (page -> the page it
+ * joins), so the TypeScript reference stays two pages within the page budget.
+ */
+export const TS_MERGED: Record<string, string> = { 'spaces-transport': 'index', 'spaces-host': 'index' };
 
 /** Options passed to typedoc (and typedoc-plugin-markdown). */
 export function typedocOptions(outDir: string, plugin: string): Record<string, unknown> {
@@ -154,7 +160,28 @@ async function runTypedoc(outDir: string): Promise<void> {
 function routeFor(file: string): string | undefined {
   const m = MODULES.find((mod) => mod.typedocFile === file);
   if (!m) return undefined;
-  return m.page === 'index' ? ROUTE : `${ROUTE}/${m.page}`;
+  const page = TS_MERGED[m.page] ?? m.page;
+  return page === 'index' ? ROUTE : `${ROUTE}/${page}`;
+}
+
+/**
+ * Drop class members that are only inherited (typedoc repeats the base
+ * class's methods under every subclass), which keeps pages in the page budget.
+ * Members that override or extend are kept.
+ */
+export function dropInheritedMembers(markdown: string): string {
+  const parts = markdown.split(/^(?=#{1,6} )/m);
+  const out: string[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    if (/^##### /.test(part)) {
+      let body = part;
+      while (i + 1 < parts.length && /^#{6} /.test(parts[i + 1])) body += parts[++i];
+      if (/^###### Inherited from/m.test(body) && !/^###### Overrides/m.test(body)) continue;
+      out.push(body);
+    } else out.push(part);
+  }
+  return out.join('');
 }
 
 /**
@@ -173,6 +200,7 @@ export function postProcess(markdown: string, file: string): string {
   // typedoc escapes `_` inside words; harmless, but keep identifiers readable.
   out = out.replace(/([A-Za-z0-9])\\_(?=[A-Za-z0-9])/g, '$1_');
   out = dropTableColumn(out, 'Defined in');
+  out = dropInheritedMembers(out);
   return (
     out
       .replace(/[ \t]+$/gm, '')
@@ -278,32 +306,40 @@ export function dropTableColumn(markdown: string, header: string): string {
 }
 
 export function buildPages(typedocDir: string, version: string): Map<string, string> {
+  const homes = MODULES.filter((m) => !TS_MERGED[m.page]);
+  const intro = (m: (typeof MODULES)[number]) =>
+    `Import from \`${m.importPath}\`.`;
   const bodies = new Map<string, string>();
-  for (const m of MODULES) {
-    const source = path.join(typedocDir, ...m.typedocFile.split('/'));
-    if (!fs.existsSync(source)) throw new Error(`typedoc produced no ${m.typedocFile}`);
-    bodies.set(
-      routeFor(m.typedocFile)!,
-      postProcess(fs.readFileSync(source, 'utf-8'), m.typedocFile)
-    );
+  for (const home of homes) {
+    const parts = [home, ...MODULES.filter((m) => TS_MERGED[m.page] === home.page)];
+    const sections = parts.map((m, i) => {
+      const source = path.join(typedocDir, ...m.typedocFile.split('/'));
+      if (!fs.existsSync(source)) throw new Error(`typedoc produced no ${m.typedocFile}`);
+      const body = postProcess(fs.readFileSync(source, 'utf-8'), m.typedocFile);
+      const header = readHeader(`cua-sdk/typescript/${m.page}.md`, { version });
+      // The page's own module first; each merged module under a heading of its import path.
+      const lead = i === 0 ? [] : [`## ${m.importPath}`, '', `${intro(m)} ${m.description}`];
+      return [...lead, header, body].filter(Boolean).join('\n\n');
+    });
+    bodies.set(routeFor(home.typedocFile)!, sections.join('\n\n'));
   }
   const fixed = fixFragments(bodies);
   const files = new Map<string, string>();
-  for (const m of MODULES) {
-    const intro =
-      `Import from \`${m.importPath}\`. This page covers the hand-written TypeScript layer; ` +
-      'the generated native binding (sandboxes, guest, fleet, spaces objects) is documented per object in the ' +
+  for (const m of homes) {
+    const lead =
+      `${intro(m)} This page covers the hand-written TypeScript layer; ` +
+      'the generated native binding (sandboxes, guest, spaces objects) is documented per module in the ' +
       '[Cua SDK reference](/cua-sdk/reference).';
-    const header = readHeader(`cua-sdk/typescript/${m.page}.md`, { version });
+    const merged = MODULES.filter((x) => TS_MERGED[x.page] === m.page);
     files.set(
       path.join(OUTPUT_DIR, `${m.page}.mdx`),
       renderPage({
         title: m.title,
         description: m.description,
         generator: 'pnpm --dir docs docs:generate:cua-sdk-ts',
-        source: `typedoc + typedoc-plugin-markdown over libs/cua/typescript/src/${m.entry}`,
+        source: `typedoc + typedoc-plugin-markdown over ${[m, ...merged].map((x) => `libs/cua/typescript/src/${x.entry}`).join(', ')}`,
         version: `@trycua/cua ${version}`,
-        body: [intro, header, fixed.get(routeFor(m.typedocFile)!)].filter(Boolean).join('\n\n'),
+        body: [lead, fixed.get(routeFor(m.typedocFile)!)].filter(Boolean).join('\n\n'),
       })
     );
   }
@@ -311,7 +347,7 @@ export function buildPages(typedocDir: string, version: string): Map<string, str
     path.join(OUTPUT_DIR, 'meta.json'),
     metaJson(
       'TypeScript additions',
-      MODULES.map((m) => m.page).filter((p) => p !== 'index')
+      homes.map((m) => m.page).filter((p) => p !== 'index')
     )
   );
   return files;

@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 
 import { hostFormInitial, hostFormView } from "../model/host";
 import { initialOnboarding, onboardingView, type OnboardingView } from "../model/onboarding";
 import type { HostBridge, HostStatus, OnboardingMode } from "../native/host";
 import { HostSetupForm } from "./HostSetupForm";
 import { Page } from "./desktop/OnboardingPage";
+import { useT } from "../i18n";
 
 /**
  * First run: what is this machine for?
@@ -39,8 +40,12 @@ export function Onboarding({
   identity?: string;
   onDone: (mode: OnboardingMode, status?: HostStatus) => void;
 }) {
+  const t = useT("onboarding");
   const view = viewProp ?? onboardingView({ ...initialOnboarding(installerMode ?? null, identity ?? null), step: "mode" });
   const [form, setForm] = useState(view.preselectedMode === "host");
+  // Choosing only selects; Continue (or Enter) moves on. "Access other
+  // machines" is the default so the page always has an enabled way forward.
+  const [selected, setSelected] = useState<OnboardingMode>(view.preselectedMode ?? "client");
 
   // The first run's telemetry (its notice on the Welcome page, the pages
   // and Done) is the installer flow's, from the app core.
@@ -50,6 +55,22 @@ export function Onboarding({
       .catch(() => {})
       .finally(() => onDone(mode, status));
   };
+
+  const advance = () => (selected === "host" ? setForm(true) : finish("client"));
+
+  // Enter continues unless a button or field has focus and handles it itself.
+  useEffect(() => {
+    if (form) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Enter" || e.defaultPrevented) return;
+      const t = e.target as HTMLElement | null;
+      if (t && t.closest("button, a, input, textarea, select")) return;
+      e.preventDefault();
+      advance();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
 
   if (form) {
     const formTitle = hostFormView(hostFormInitial(), identity).title;
@@ -66,20 +87,34 @@ export function Onboarding({
   }
 
   return (
-    <Page title={view.title} lede={view.lede} back={back ?? undefined}>
-      <div className="new-space-cards" role="group" aria-label={view.title}>
+    <Page
+      title={view.title}
+      lede={view.lede}
+      back={back ?? undefined}
+      primary={
+        <button type="button" className="primary-button" data-owns-enter autoFocus onClick={advance}>
+          {view.primaryLabel}
+        </button>
+      }
+    >
+      <div className="new-space-cards" role="radiogroup" aria-label={view.title}>
         {view.choices.map((c) => (
           <button
             key={c.mode}
             type="button"
-            className={`new-space-card${c.preselected ? " new-space-card-primary" : ""}`}
+            role="radio"
+            aria-checked={c.mode === selected}
+            className={`new-space-card${c.mode === selected ? " new-space-card-primary" : ""}`}
             data-owns-enter
-            onClick={() => (c.mode === "host" ? setForm(true) : finish("client"))}
+            onClick={() => setSelected(c.mode)}
           >
             <span className="new-space-card-title">{c.label}</span>
           </button>
         ))}
       </div>
+      <p className="host-setup-lede" data-testid="mode-later">
+        {t("onboarding.mode.change_later")}
+      </p>
       {view.notice && (
         <p className="onboarding-telemetry-notice" data-testid="telemetry-notice">
           {view.notice}{" "}

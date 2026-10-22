@@ -1001,6 +1001,80 @@
    "subcommands": []
   },
   {
+   "abstract": "Copy files between the host and a VM",
+   "arguments": [
+    {
+     "help": "Source path. Use VM:PATH for a path inside a VM",
+     "is_optional": false,
+     "name": "source",
+     "type": "String"
+    },
+    {
+     "help": "Destination path. Use VM:PATH for a path inside a VM",
+     "is_optional": false,
+     "name": "destination",
+     "type": "String"
+    }
+   ],
+   "discussion": "Copies a file or directory between the host and a running VM over SSH, using the same credentials as `lume ssh`. Exactly one of the source or destination is a VM path, written as VM:PATH. Host directories are copied recursively automatically; pass --recursive for a recursive guest-to-host copy.",
+   "examples": [
+    {
+     "command": "lume cp ./build.zip my-vm:/tmp/build.zip",
+     "description": "Copy a host file into the VM"
+    },
+    {
+     "command": "lume cp my-vm:/tmp/out.log ./out.log",
+     "description": "Copy a file out of the VM"
+    },
+    {
+     "command": "lume cp -r ./assets my-vm:/tmp/assets",
+     "description": "Copy a directory into the VM"
+    }
+   ],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Copy directories recursively",
+     "name": "recursive",
+     "short_name": "r"
+    }
+   ],
+   "name": "cp",
+   "options": [
+    {
+     "default_value": "lume",
+     "help": "SSH username",
+     "is_optional": true,
+     "name": "user",
+     "short_name": "u",
+     "type": "String"
+    },
+    {
+     "default_value": "lume",
+     "help": "SSH password",
+     "is_optional": true,
+     "name": "password",
+     "short_name": "p",
+     "type": "String"
+    },
+    {
+     "help": "Storage location name or path",
+     "is_optional": true,
+     "name": "storage",
+     "type": "String"
+    },
+    {
+     "default_value": "600",
+     "help": "Transfer timeout in seconds (0 for no timeout)",
+     "is_optional": true,
+     "name": "timeout",
+     "short_name": "t",
+     "type": "Int"
+    }
+   ],
+   "subcommands": []
+  },
+  {
    "abstract": "Enable or disable System Integrity Protection on a macOS VM",
    "arguments": [
     {

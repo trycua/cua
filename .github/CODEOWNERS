@@ -8,6 +8,7 @@
 /libs/lume/ @f-trycua
 /libs/python/ @ddupont808
 /libs/cua-bench/ @ddupont808
+/libs/cua-driver-bench/ @f-trycua @injaneity
 
 # Cua Driver documentation and driver-only release/CI automation.
 /docs/content/docs/cua-driver/reference/ @f-trycua @injaneity

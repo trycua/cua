@@ -492,11 +492,11 @@ wheels = [
 
 [[package]]
 name = "certifi"
-version = "2026.7.22"
+version = "2026.10.19"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a3/c2/24167ea9858356b47a87a50d39908bfdb72ceeefe0041586e704e5376b3a/certifi-2026.7.22.tar.gz", hash = "sha256:741e2c3b351ddf169a738da9f2c048608ff7f2c5cc02f1ebc6b118bb090d5d55", size = 138112, upload-time = "2026-07-22T03:35:12.644Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a6/bd/1436c50cc46699de0230fbaacc1d1de7bfec413176099949e9d5112e88f2/certifi-2026.10.19.tar.gz", hash = "sha256:035c1e85572b141bf1c3a3eff0e33a8eb74917522f2559075ff8d2fea780a1ae", size = 137598, upload-time = "2026-10-20T02:24:16.604Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-2026.7.22-py3-none-any.whl", hash = "sha256:62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775", size = 136983, upload-time = "2026-07-22T03:35:11.276Z" },
+    { url = "https://files.pythonhosted.org/packages/c4/51/29046e48f693c54e5b7412216d447a1d8362c9653148d98c02cdf65fa733/certifi-2026.10.19-py3-none-any.whl", hash = "sha256:42d35340cc5b9ba78e818ddbff0c5b1c2b779de448a340fd1b989f5fa8670e1b", size = 136464, upload-time = "2026-10-20T02:24:15.072Z" },
 ]
 
 [[package]]
@@ -857,7 +857,7 @@ wheels = [
 
 [[package]]
 name = "cua"
-version = "0.4.1"
+version = "0.7.0"
 source = { editable = "." }
 
 [package.optional-dependencies]
@@ -972,13 +972,13 @@ wheels = [
 [[package]]
 name = "cua-fleet"
 version = "0.1.17"
-source = { registry = "https://wheels.cua.ai/simple" }
+source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.17-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:a8908b5c7f0f3c75d09b908b58867d43270f69d3726bb0d90316443f2265d0e3" },
-    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.17-py3-none-macosx_11_0_arm64.whl", hash = "sha256:6aea577f21343326aeb06df03c07df65df8dd2f3b0097e02f25a7bc6b9d2c458" },
-    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.17-py3-none-manylinux_2_34_aarch64.whl", hash = "sha256:bda49298c77c65eb349e8420f9237f6b7fb2fd25203747df98a9513b98fd5d73" },
-    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.17-py3-none-manylinux_2_34_x86_64.whl", hash = "sha256:4cdbc89e850d841481713abf1e8bf9719b2e33b3c31f26bbea5f63e1ead3c6c0" },
-    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.17-py3-none-win_amd64.whl", hash = "sha256:ee4c139b1c0cebe1702114a34fd0fd60d216c5862d9fdc3472bb8b9879ac9eae" },
+    { url = "https://files.pythonhosted.org/packages/55/2a/406cc8d9a6f79368cd9a78361ba45c98909498068c345d5a92d3b8b5788e/cua_fleet-0.1.17-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:a8908b5c7f0f3c75d09b908b58867d43270f69d3726bb0d90316443f2265d0e3", size = 2281312, upload-time = "2026-09-11T02:55:56.726Z" },
+    { url = "https://files.pythonhosted.org/packages/6c/f5/7fc0160aa7b7f5c2ca110ba40d9c47acbdc76f4919e07621943403b39b4e/cua_fleet-0.1.17-py3-none-macosx_11_0_arm64.whl", hash = "sha256:6aea577f21343326aeb06df03c07df65df8dd2f3b0097e02f25a7bc6b9d2c458", size = 2227112, upload-time = "2026-09-11T02:55:57.916Z" },
+    { url = "https://files.pythonhosted.org/packages/cb/51/da3b0b7c6bfb22c0f1e5bdf016b120c9ba11d045a3e97ccb65234eda80a2/cua_fleet-0.1.17-py3-none-manylinux_2_34_aarch64.whl", hash = "sha256:bda49298c77c65eb349e8420f9237f6b7fb2fd25203747df98a9513b98fd5d73", size = 2596935, upload-time = "2026-09-11T02:55:59.122Z" },
+    { url = "https://files.pythonhosted.org/packages/31/a4/5137ff02e053181ce23f10fe53f1cc6e97165e925e6a00f97919d904fc6f/cua_fleet-0.1.17-py3-none-manylinux_2_34_x86_64.whl", hash = "sha256:4cdbc89e850d841481713abf1e8bf9719b2e33b3c31f26bbea5f63e1ead3c6c0", size = 2531926, upload-time = "2026-09-11T02:56:00.117Z" },
+    { url = "https://files.pythonhosted.org/packages/69/ab/cb222383d430cb6cef133e8b3f487e3482cb68823ef90047d1df2c9f3221/cua_fleet-0.1.17-py3-none-win_amd64.whl", hash = "sha256:ee4c139b1c0cebe1702114a34fd0fd60d216c5862d9fdc3472bb8b9879ac9eae", size = 2119057, upload-time = "2026-09-11T02:56:01.225Z" },
 ]
 
 [[package]]

@@ -27,22 +27,23 @@ pub mod targeted;
 pub use focus_guard::{FocusGuardReport, FocusSnapshot, SameAppWindow};
 pub use foreground::{with_x11_foreground_opts, FocusAfter, ForegroundOptions, ForegroundReport};
 pub use mpx_keyboard::{
-    real_keyboard_input_available, send_virtual_keyboard_key, send_virtual_keyboard_text,
-    KeyboardDeliveryReport, MPX_UINPUT_PATH,
+    real_keyboard_input_available, send_popup_keyboard_key, send_popup_keyboard_text,
+    send_virtual_keyboard_key, send_virtual_keyboard_text, KeyboardDeliveryReport, MPX_UINPUT_PATH,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
 use evdev::uinput::VirtualDevice;
 use evdev::{AttributeSet, EventType, InputEvent, Key, RelativeAxisType};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::fs;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 use x11rb::rust_connection::RustConnection;
@@ -50,6 +51,8 @@ use x11rb::rust_connection::RustConnection;
 const CLICK_DELAY_MS: u64 = 35;
 const DOUBLE_CLICK_DELAY_MS: u64 = 50;
 const KEY_DELAY_MS: u64 = 10;
+const PING_TIMEOUT: Duration = Duration::from_secs(1);
+static PING_SERIAL: AtomicU32 = AtomicU32::new(1);
 
 #[derive(Clone, Debug)]
 pub struct VirtualPointerDrag {
@@ -152,6 +155,7 @@ static XLIB_THREADS_READY: OnceLock<Result<(), String>> = OnceLock::new();
 static MPX_OP_LOCK: Mutex<()> = Mutex::new(());
 static MPX_LAST_USE: OnceLock<Mutex<HashMap<String, std::time::Instant>>> = OnceLock::new();
 static MPX_IDLE_REAPER: std::sync::Once = std::sync::Once::new();
+static MPX_CLICK_POPUPS: OnceLock<Mutex<HashMap<String, ClickPopups>>> = OnceLock::new();
 /// A session's retained master pair is removed after this much inactivity;
 /// `end_session` and the startup reaper cover the explicit and crash cases.
 /// `XIRemoveMaster` churns the XInput hierarchy, and mutter 42.x segfaults when
@@ -162,6 +166,7 @@ static MPX_IDLE_REAPER: std::sync::Once = std::sync::Once::new();
 /// `end_session`; the startup reaper reclaims anything it misses.
 const MPX_IDLE_TTL: Duration = Duration::from_secs(1800);
 const MPX_IDLE_REAPER_PERIOD: Duration = Duration::from_secs(60);
+const MPX_POPUP_QUIET: Duration = Duration::from_millis(250);
 static MPX_NAME_COUNTER: AtomicU64 = AtomicU64::new(1);
 // evdev 0.12.2 asserts `name.len() + 1 < UINPUT_MAX_NAME_SIZE` while building
 // a device. Linux defines UINPUT_MAX_NAME_SIZE as 80, leaving 78 usable bytes.
@@ -186,6 +191,66 @@ fn mpx_last_use() -> &'static Mutex<HashMap<String, std::time::Instant>> {
     MPX_LAST_USE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+#[derive(Default)]
+struct ClickPopups {
+    windows: Vec<u64>,
+    removal_due: Option<Instant>,
+}
+
+fn mpx_click_popups() -> &'static Mutex<HashMap<String, ClickPopups>> {
+    MPX_CLICK_POPUPS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn mark_mpx_use(cursor_id: &str) {
+    mpx_last_use()
+        .lock()
+        .unwrap()
+        .insert(cursor_id.to_owned(), Instant::now());
+    if let Some(popups) = mpx_click_popups().lock().unwrap().get_mut(cursor_id) {
+        popups.removal_due = None;
+    }
+}
+
+fn track_click_popups(cursor_id: &str, opened: impl IntoIterator<Item = u64>) {
+    let opened: Vec<u64> = opened.into_iter().collect();
+    let mut tracked = mpx_click_popups().lock().unwrap();
+    for (id, popups) in tracked.iter_mut() {
+        if id != cursor_id {
+            popups.windows.retain(|window| !opened.contains(window));
+        }
+    }
+    let windows = &mut tracked.entry(cursor_id.to_owned()).or_default().windows;
+    windows.extend(opened);
+    windows.sort_unstable();
+    windows.dedup();
+}
+
+fn popup_owner(
+    window: u64,
+    appeared: &HashMap<String, ClickPopups>,
+    live: impl Fn(&str) -> bool,
+) -> Option<String> {
+    appeared
+        .iter()
+        .find(|(id, popups)| popups.windows.contains(&window) && live(id))
+        .map(|(id, _)| id.clone())
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("no live session's click opened the popup")]
+pub struct PopupOwnerGone;
+
+fn popup_owner_guard(popup: u64) -> Result<(std::sync::MutexGuard<'static, ()>, String)> {
+    let guard = MPX_OP_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let appeared = mpx_click_popups().lock().unwrap();
+    let pointers = mpx_pointers().lock().unwrap();
+    let owner = popup_owner(popup, &appeared, |id| pointers.contains_key(id));
+    drop((pointers, appeared));
+    Ok((guard, owner.ok_or(PopupOwnerGone)?))
+}
+
 /// Take the MPX operation lock for one call on `cursor_id`, stamp its last
 /// use, and make sure the idle reaper is running. Hold the guard for the
 /// whole operation.
@@ -193,10 +258,7 @@ fn mpx_op_guard(cursor_id: &str) -> std::sync::MutexGuard<'static, ()> {
     let guard = MPX_OP_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    mpx_last_use()
-        .lock()
-        .unwrap()
-        .insert(cursor_id.to_owned(), std::time::Instant::now());
+    mark_mpx_use(cursor_id);
     MPX_IDLE_REAPER.call_once(|| {
         std::thread::Builder::new()
             .name("cua-mpx-idle-reaper".into())
@@ -211,7 +273,7 @@ fn mpx_op_guard(cursor_id: &str) -> std::sync::MutexGuard<'static, ()> {
                 };
                 for cursor_id in stale {
                     tracing::info!(cursor_id, "removing idle MPX master pair");
-                    forget_master_pointer(&cursor_id);
+                    forget_master_pointer_locked(&cursor_id);
                 }
             })
             .ok();
@@ -318,6 +380,10 @@ fn master_keyboard_device_name(master_name: &str) -> String {
 }
 
 fn open_display() -> Result<*mut x11::xlib::Display> {
+    open_named_display(ptr::null())
+}
+
+fn open_named_display(name: *const std::ffi::c_char) -> Result<*mut x11::xlib::Display> {
     match XLIB_THREADS_READY.get_or_init(|| {
         let rc = unsafe { x11::xlib::XInitThreads() };
         if rc == 0 {
@@ -329,7 +395,7 @@ fn open_display() -> Result<*mut x11::xlib::Display> {
         Ok(()) => {}
         Err(err) => bail!("{err}"),
     }
-    let display = unsafe { x11::xlib::XOpenDisplay(ptr::null()) };
+    let display = unsafe { x11::xlib::XOpenDisplay(name) };
     if display.is_null() {
         bail!("XOpenDisplay returned null");
     }
@@ -712,7 +778,81 @@ fn ensure_master_pointer_for_session(
 }
 
 pub fn forget_master_pointer(cursor_id: &str) {
-    mpx_last_use().lock().unwrap().remove(cursor_id);
+    let _op = MPX_OP_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    forget_master_pointer_locked(cursor_id);
+}
+
+fn forget_master_pointer_locked(cursor_id: &str) {
+    let mut tracked = mpx_click_popups().lock().unwrap();
+    let mut last_use = mpx_last_use().lock().unwrap();
+    match tracked.get_mut(cursor_id) {
+        Some(popups) if popups.removal_due.is_some() => {}
+        Some(popups) if !popups.windows.is_empty() => {
+            let remove_by = *last_use.get(cursor_id).unwrap_or(&Instant::now()) + MPX_IDLE_TTL;
+            match spawn_popup_waiter(cursor_id.to_owned(), remove_by) {
+                Ok(_) => {
+                    popups.removal_due = Some(remove_by);
+                    last_use.remove(cursor_id);
+                }
+                Err(error) => tracing::warn!(cursor_id, %error, "MPX popup waiter not started"),
+            }
+        }
+        _ => {
+            tracked.remove(cursor_id);
+            last_use.remove(cursor_id);
+            remove_master_pair(cursor_id);
+        }
+    }
+}
+
+fn popups_mapped(windows: &[u64]) -> Option<bool> {
+    let (conn, _) = RustConnection::connect(None).ok()?;
+    let mut mapped = false;
+    for &window in windows {
+        match conn.get_window_attributes(window as Window).ok()?.reply() {
+            Ok(attrs) => mapped |= attrs.map_state == MapState::VIEWABLE,
+            Err(x11rb::errors::ReplyError::X11Error(_)) => {}
+            Err(_) => return None,
+        }
+    }
+    Some(mapped)
+}
+
+fn popup_wait_over(mapped: Option<bool>, quiet: &mut Option<Instant>, remove_by: Instant) -> bool {
+    let now = Instant::now();
+    *quiet = (mapped == Some(false)).then(|| quiet.unwrap_or(now));
+    quiet.is_some_and(|since| now - since >= MPX_POPUP_QUIET) || now >= remove_by
+}
+
+fn spawn_popup_waiter(cursor_id: String, remove_by: Instant) -> Result<()> {
+    std::thread::Builder::new()
+        .name("cua-mpx-popup-wait".into())
+        .spawn(move || {
+            let mut quiet = None;
+            loop {
+                sleep(Duration::from_millis(100));
+                let _op = MPX_OP_LOCK
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut tracked = mpx_click_popups().lock().unwrap();
+                let Some(popups) = tracked.get(&cursor_id) else {
+                    return;
+                };
+                if popups.removal_due != Some(remove_by) {
+                    return;
+                }
+                if popup_wait_over(popups_mapped(&popups.windows), &mut quiet, remove_by) {
+                    tracked.remove(&cursor_id);
+                    return remove_master_pair(&cursor_id);
+                }
+            }
+        })?;
+    Ok(())
+}
+
+fn remove_master_pair(cursor_id: &str) {
     // Drop the uinput slaves first: closing the fds unplugs them, so the master
     // removal below never has to hand a live slave back to the user's core
     // devices (XIAttachToMaster only re-homes slaves that still exist).
@@ -1433,11 +1573,8 @@ pub fn send_parallel_virtual_pointer_drags(drags: &[(String, VirtualPointerDrag)
             .map(|(id, _)| id.as_str())
             .unwrap_or("default"),
     );
-    {
-        let mut last_use = mpx_last_use().lock().unwrap();
-        for (cursor_id, _) in drags {
-            last_use.insert(cursor_id.clone(), std::time::Instant::now());
-        }
+    for (cursor_id, _) in drags {
+        mark_mpx_use(cursor_id);
     }
     let display = open_display()?;
     supports_parallel_pointer_injection(display)?;
@@ -1800,11 +1937,7 @@ fn popup_info(display: *mut x11::xlib::Display, child: x11::xlib::Window) -> Opt
     if attrs.width <= 1 || attrs.height <= 1 {
         return None;
     }
-    let pid = crate::x11::window_pid(child).or_else(|| {
-        window_children(display, child)
-            .into_iter()
-            .find_map(crate::x11::window_pid)
-    });
+    let pid = window_or_child_pid(display, child);
     Some(PopupWindow {
         window: child,
         x: attrs.x,
@@ -1813,6 +1946,14 @@ fn popup_info(display: *mut x11::xlib::Display, child: x11::xlib::Window) -> Opt
         height: attrs.height as u32,
         title: window_title_for_report(display, child),
         pid,
+    })
+}
+
+fn window_or_child_pid(display: *mut x11::xlib::Display, window: x11::xlib::Window) -> Option<u32> {
+    crate::x11::window_pid(window).or_else(|| {
+        window_children(display, window)
+            .into_iter()
+            .find_map(crate::x11::window_pid)
     })
 }
 
@@ -2391,8 +2532,7 @@ fn window_title_for_report(display: *mut x11::xlib::Display, window: x11::xlib::
     title.unwrap_or_default()
 }
 
-/// Direct children of `window` (empty on error). Caller installs the error
-/// handler.
+/// Direct children of `window` (empty on error).
 fn window_children(
     display: *mut x11::xlib::Display,
     window: x11::xlib::Window,
@@ -2401,6 +2541,7 @@ fn window_children(
     let mut parent: x11::xlib::Window = 0;
     let mut children: *mut x11::xlib::Window = ptr::null_mut();
     let mut count: std::os::raw::c_uint = 0;
+    let previous_handler = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
     let rc = unsafe {
         x11::xlib::XQueryTree(
             display,
@@ -2411,6 +2552,7 @@ fn window_children(
             &mut count,
         )
     };
+    unsafe { x11::xlib::XSetErrorHandler(previous_handler) };
     if rc == 0 || children.is_null() {
         return Vec::new();
     }
@@ -2554,10 +2696,6 @@ pub fn send_virtual_pointer_click(
     click: &VirtualPointerClick,
 ) -> Result<PointerEffect> {
     let _op = mpx_op_guard(cursor_id);
-    mpx_last_use()
-        .lock()
-        .unwrap()
-        .insert(cursor_id.to_owned(), std::time::Instant::now());
     let display = open_display()?;
     supports_parallel_pointer_injection(display)?;
     let saved_focus = save_focus_state(display);
@@ -2624,6 +2762,19 @@ pub fn send_virtual_pointer_click(
             click.y,
         );
         effect.retargeted_to = retargeted_to;
+        let target_pid = if effect.popups.is_empty() {
+            None
+        } else {
+            window_or_child_pid(display, click.target_window as x11::xlib::Window)
+        };
+        track_click_popups(
+            cursor_id,
+            effect
+                .popups
+                .iter()
+                .filter(|popup| popup.pid.is_some() && popup.pid == target_pid)
+                .map(|popup| popup.window),
+        );
         Ok(effect)
     })();
 
@@ -2643,10 +2794,6 @@ pub fn send_virtual_pointer_drag(
     drag: &VirtualPointerDrag,
 ) -> Result<PointerEffect> {
     let _op = mpx_op_guard(cursor_id);
-    mpx_last_use()
-        .lock()
-        .unwrap()
-        .insert(cursor_id.to_owned(), std::time::Instant::now());
     let display = open_display()?;
     supports_parallel_pointer_injection(display)?;
     let saved_focus = save_focus_state(display);
@@ -2858,6 +3005,23 @@ fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
         // ours has landed — so don't stop at first success: require the
         // active window to hold stable for consecutive checks, re-sending on
         // every regression, within a bounded budget.
+        let name = unsafe { std::ffi::CStr::from_ptr(x11::xlib::XDisplayString(display)) };
+        let conn = name
+            .to_str()
+            .ok()
+            .and_then(|name| RustConnection::connect(Some(name)).ok())
+            .map(|(conn, _)| conn);
+        let prev_pid = conn
+            .as_ref()
+            .zip(u32::try_from(prev).ok())
+            .and_then(|(conn, prev)| crate::x11::get_window_pid(conn, prev).ok().flatten());
+        let own_dialog = |now: Option<x11::xlib::Window>| match (&conn, prev_pid, now) {
+            (Some(conn), Some(pid), Some(now)) => now != prev && is_own_dialog(conn, pid, now),
+            _ => false,
+        };
+        if own_dialog(ewmh_active_window(display)) {
+            return;
+        }
         sleep(Duration::from_millis(300));
         let mut stable = 0;
         for attempt in 0..15 {
@@ -2867,6 +3031,8 @@ fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
                 if stable >= 3 {
                     return;
                 }
+            } else if own_dialog(now) {
+                return;
             } else {
                 stable = 0;
                 // MPX clicks can leave a core-protocol WM believing the
@@ -2926,6 +3092,36 @@ fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
         x11::xlib::XSync(display, 0);
         x11::xlib::XSetErrorHandler(prev_handler);
     }
+}
+
+fn is_own_dialog(conn: &RustConnection, previous_pid: u32, active: x11::xlib::Window) -> bool {
+    let Ok(active) = u32::try_from(active) else {
+        return false;
+    };
+    if crate::x11::get_window_pid(conn, active).ok().flatten() != Some(previous_pid) {
+        return false;
+    }
+    let windows = |property: Atom, kind: Atom| -> Vec<u32> {
+        conn.get_property(false, active, property, kind, 0, 32)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+            .and_then(|reply| reply.value32().map(|values| values.collect()))
+            .unwrap_or_default()
+    };
+    if windows(AtomEnum::WM_TRANSIENT_FOR.into(), AtomEnum::WINDOW.into())
+        .iter()
+        .any(|&parent| parent != x11rb::NONE)
+    {
+        return true;
+    }
+    let atom = |name: &str| crate::x11::get_atom(conn, name).ok();
+    let (Some(window_type), Some(dialog)) = (
+        atom("_NET_WM_WINDOW_TYPE"),
+        atom("_NET_WM_WINDOW_TYPE_DIALOG"),
+    ) else {
+        return false;
+    };
+    windows(window_type, AtomEnum::ATOM.into()).contains(&dialog)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -3380,85 +3576,172 @@ pub fn send_type_text(xid: u64, text: &str) -> Result<()> {
     send_type_text_with_delay(xid, text, 0)
 }
 
+fn type_text_with_preflight<G>(
+    text: &str,
+    keymap: &GetKeyboardMappingReply,
+    mut remap: impl FnMut(char, &mut GetKeyboardMappingReply) -> Result<(u8, Option<G>)>,
+    mut send: impl FnMut(u8, bool) -> Result<()>,
+) -> Result<Vec<G>> {
+    let mut mapping = keymap.clone();
+    let mut guards = Vec::new();
+    let mut resolved = std::collections::HashMap::new();
+    let mut keys = Vec::new();
+    for ch in text.chars() {
+        let key = match resolved.get(&ch).copied() {
+            Some(key) => key,
+            None => {
+                let key = match char_to_keycode_shift(&mapping, mpx_keyboard::keysym_for_char(ch)) {
+                    Some(key) => key,
+                    None => {
+                        let (keycode, guard) = remap(ch, &mut mapping).map_err(|error| {
+                            let needed = text
+                                .chars()
+                                .map(mpx_keyboard::keysym_for_char)
+                                .filter(|keysym| !keymap.keysyms.contains(keysym))
+                                .collect::<std::collections::HashSet<_>>()
+                                .len();
+                            anyhow::anyhow!(
+                                "typed 0 of {} characters: the text needs {needed} spare keycodes: {error:#}",
+                                text.chars().count()
+                            )
+                        })?;
+                        guards.extend(guard);
+                        (keycode, false)
+                    }
+                };
+                resolved.insert(ch, key);
+                key
+            }
+        };
+        keys.push(key);
+    }
+    for (keycode, needs_shift) in keys {
+        send(keycode, needs_shift)?;
+    }
+    Ok(guards)
+}
+
+fn type_text_in_spare_batches<G>(
+    text: &str,
+    mapping: &GetKeyboardMappingReply,
+    mut remap: impl FnMut(char, &mut GetKeyboardMappingReply) -> Result<(u8, Option<G>)>,
+    mut send: impl FnMut(u8, bool) -> Result<()>,
+    mut finish: impl FnMut() -> bool,
+) -> Result<()> {
+    let total = text.chars().count();
+    let spares = match mapping.keysyms_per_keycode as usize {
+        0 => 0,
+        per => mapping
+            .keysyms
+            .chunks(per)
+            .filter(|syms| syms.iter().all(|&s| s == 0))
+            .count(),
+    };
+    let mut rest = text.chars().peekable();
+    let mut typed = 0;
+    while rest.peek().is_some() {
+        let mut mapping = mapping.clone();
+        let mut guards = Vec::new();
+        let mut resolved = std::collections::HashMap::new();
+        let mut remapped = 0;
+        let mut keys = Vec::new();
+        while let Some(&ch) = rest.peek() {
+            let key = match resolved
+                .get(&ch)
+                .copied()
+                .or_else(|| char_to_keycode_shift(&mapping, mpx_keyboard::keysym_for_char(ch)))
+            {
+                Some(key) => key,
+                None if spares > 0 && remapped == spares => break,
+                None => {
+                    let (keycode, guard) = remap(ch, &mut mapping).map_err(|error| {
+                        anyhow::anyhow!("typed {typed} of {total} characters: {error:#}")
+                    })?;
+                    remapped += 1;
+                    guards.extend(guard);
+                    resolved.insert(ch, (keycode, false));
+                    (keycode, false)
+                }
+            };
+            keys.push(key);
+            rest.next();
+        }
+        for (keycode, needs_shift) in keys {
+            send(keycode, needs_shift)?;
+            typed += 1;
+        }
+        if !finish() && rest.peek().is_some() {
+            bail!(
+                "typed {typed} of {total} characters: the client has not confirmed reading the keys on the spare keycodes the next characters need"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Type a string with an additional `inter_char_ms` delay between each character.
 pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Result<()> {
     let (conn, _) = connect_x11_for_input()?;
     let window = xid as u32;
     let root = conn.setup().roots[0].root;
     let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
-    // Remap guards live until the function returns: a character outside the
-    // keymap (CJK, emoji, ...) borrows a spare keycode rather than being
-    // silently dropped — see keycode_for_keysym's doc and the analogous fix
-    // in mpx_keyboard::plan_text_with_fallback for the background path.
-    let mut remap_guards = Vec::new();
-
-    for ch in text.chars() {
-        // Resolve the keycode and whether Shift must be held — without it,
-        // uppercase and shifted symbols would otherwise type their unshifted
-        // form (e.g. "A" arriving as "a").
-        let (keycode, needs_shift) =
-            match char_to_keycode_shift(&mapping, mpx_keyboard::keysym_for_char(ch)) {
-                Some(found) => found,
-                None => match keycode_for_keysym(
-                    &conn,
-                    &mapping,
-                    mpx_keyboard::keysym_for_char(ch),
-                    &ch.to_string(),
-                ) {
-                    Ok((keycode, guard)) => {
-                        remap_guards.extend(guard);
-                        (keycode, false)
-                    }
-                    Err(_) => continue,
-                },
+    let client = RefCell::new(TextClient::new(&conn, Some(window)));
+    type_text_in_spare_batches(
+        text,
+        &mapping,
+        |ch, mapping| text_keycode(&mut client.borrow_mut(), mapping, ch),
+        |keycode, needs_shift| {
+            client.borrow_mut().record_recipient(keycode);
+            let state = if needs_shift {
+                KeyButMask::SHIFT
+            } else {
+                KeyButMask::from(0u16)
             };
-        let state = if needs_shift {
-            KeyButMask::SHIFT
-        } else {
-            KeyButMask::from(0u16)
-        };
 
-        let press = KeyPressEvent {
-            response_type: KEY_PRESS_EVENT,
-            detail: keycode,
-            sequence: 0,
-            time: x11rb::CURRENT_TIME,
-            root,
-            event: window,
-            child: x11rb::NONE,
-            root_x: 0,
-            root_y: 0,
-            event_x: 0,
-            event_y: 0,
-            state,
-            same_screen: true,
-        };
-        let release = KeyReleaseEvent {
-            response_type: KEY_RELEASE_EVENT,
-            detail: keycode,
-            sequence: 0,
-            time: x11rb::CURRENT_TIME,
-            root,
-            event: window,
-            child: x11rb::NONE,
-            root_x: 0,
-            root_y: 0,
-            event_x: 0,
-            event_y: 0,
-            state,
-            same_screen: true,
-        };
+            let press = KeyPressEvent {
+                response_type: KEY_PRESS_EVENT,
+                detail: keycode,
+                sequence: 0,
+                time: x11rb::CURRENT_TIME,
+                root,
+                event: window,
+                child: x11rb::NONE,
+                root_x: 0,
+                root_y: 0,
+                event_x: 0,
+                event_y: 0,
+                state,
+                same_screen: true,
+            };
+            let release = KeyReleaseEvent {
+                response_type: KEY_RELEASE_EVENT,
+                detail: keycode,
+                sequence: 0,
+                time: x11rb::CURRENT_TIME,
+                root,
+                event: window,
+                child: x11rb::NONE,
+                root_x: 0,
+                root_y: 0,
+                event_x: 0,
+                event_y: 0,
+                state,
+                same_screen: true,
+            };
 
-        conn.send_event(false, window, EventMask::KEY_PRESS, press)?;
-        // Start the hold interval after sending the press, not while it is buffered.
-        conn.flush()?;
-        sleep(Duration::from_millis(KEY_DELAY_MS));
-        conn.send_event(false, window, EventMask::KEY_RELEASE, release)?;
-        conn.flush()?;
-        if inter_char_ms > 0 {
-            sleep(Duration::from_millis(inter_char_ms));
-        }
-    }
+            conn.send_event(false, window, EventMask::KEY_PRESS, press)?;
+            // Start the hold interval after sending the press, not while it is buffered.
+            conn.flush()?;
+            sleep(Duration::from_millis(KEY_DELAY_MS));
+            conn.send_event(false, window, EventMask::KEY_RELEASE, release)?;
+            conn.flush()?;
+            if inter_char_ms > 0 {
+                sleep(Duration::from_millis(inter_char_ms));
+            }
+            Ok(())
+        },
+        || client.borrow_mut().release(),
+    )?;
     // Deliver the final release before this short-lived connection closes.
     conn.get_input_focus()?.reply()?;
     Ok(())
@@ -3483,31 +3766,27 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
         .get(..kpm)
         .and_then(|s| s.iter().copied().find(|&k| k != 0))
         .unwrap_or(50);
-    // Remap guards live until the function returns — see send_type_text_with_delay.
-    let mut remap_guards = Vec::new();
-    for ch in text.chars() {
-        let cp = mpx_keyboard::keysym_for_char(ch);
-        let (keycode, needs_shift) = match char_to_keycode_shift(&mapping, cp) {
-            Some(found) => found,
-            None => match keycode_for_keysym(&conn, &mapping, cp, &ch.to_string()) {
-                Ok((keycode, guard)) => {
-                    remap_guards.extend(guard);
-                    (keycode, false)
-                }
-                Err(_) => continue,
-            },
-        };
-        if needs_shift {
-            conn.xtest_fake_input(KEY_PRESS_EVENT, shift_kc, 0, x11rb::NONE, 0, 0, 0)?;
-        }
-        conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
-        conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
-        if needs_shift {
-            conn.xtest_fake_input(KEY_RELEASE_EVENT, shift_kc, 0, x11rb::NONE, 0, 0, 0)?;
-        }
-        conn.flush()?;
-        sleep(Duration::from_millis(KEY_DELAY_MS));
-    }
+    let client = RefCell::new(TextClient::new(&conn, None));
+    type_text_in_spare_batches(
+        text,
+        &mapping,
+        |ch, mapping| text_keycode(&mut client.borrow_mut(), mapping, ch),
+        |keycode, needs_shift| {
+            client.borrow_mut().record_recipient(keycode);
+            if needs_shift {
+                conn.xtest_fake_input(KEY_PRESS_EVENT, shift_kc, 0, x11rb::NONE, 0, 0, 0)?;
+            }
+            conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
+            conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
+            if needs_shift {
+                conn.xtest_fake_input(KEY_RELEASE_EVENT, shift_kc, 0, x11rb::NONE, 0, 0, 0)?;
+            }
+            conn.flush()?;
+            sleep(Duration::from_millis(KEY_DELAY_MS));
+            Ok(())
+        },
+        || client.borrow_mut().release(),
+    )?;
     // Round-trip so the server delivers the final character's key events before
     // this short-lived connection drops (see send_key_xtest — keyboard XTEST
     // events queued on a connection that closes immediately can be lost).
@@ -3532,7 +3811,7 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
 pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
     use x11rb::protocol::xtest::ConnectionExt as _;
     let (conn, _) = connect_x11_for_input()?;
-    let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let mut mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
 
     // Resolve modifier keycodes first. Keep any spare-keycode remap guards alive
     // until after the events are delivered (drop at end of fn).
@@ -3540,7 +3819,7 @@ pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
     let mut mod_keycodes = Vec::new();
     for m in modifiers {
         let ks = key_name_to_keysym(m)?;
-        let (kc, guard) = keycode_for_keysym(&conn, &mapping, ks, m)?;
+        let (kc, guard) = keycode_for_keysym(&conn, &mut mapping, ks, m)?;
         if let Some(g) = guard {
             guards.push(g);
         }
@@ -3558,7 +3837,7 @@ pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
     let (keycode, needs_shift) = match char_to_keycode_shift(&mapping, keysym) {
         Some(found) => found,
         None => {
-            let (kc, guard) = keycode_for_keysym(&conn, &mapping, keysym, key)?;
+            let (kc, guard) = keycode_for_keysym(&conn, &mut mapping, keysym, key)?;
             if let Some(g) = guard {
                 guards.push(g);
             }
@@ -3647,12 +3926,12 @@ pub fn send_click_xtest_desktop_with_modifiers(
     use x11rb::protocol::xtest::ConnectionExt as _;
     let (conn, screen_num) = connect_x11_for_input()?;
     let root = conn.setup().roots[screen_num].root;
-    let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let mut mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
     let mut guards = Vec::new();
     let mut modifier_keycodes = Vec::new();
     for modifier in modifiers {
         let keysym = key_name_to_keysym(modifier)?;
-        let (keycode, guard) = keycode_for_keysym(&conn, &mapping, keysym, modifier)?;
+        let (keycode, guard) = keycode_for_keysym(&conn, &mut mapping, keysym, modifier)?;
         if let Some(guard) = guard {
             guards.push(guard);
         }
@@ -3791,12 +4070,12 @@ pub fn send_drag_xtest_desktop_with_modifiers(
     use x11rb::protocol::xtest::ConnectionExt as _;
     let (conn, screen_num) = connect_x11_for_input()?;
     let root = conn.setup().roots[screen_num].root;
-    let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let mut mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
     let mut guards = Vec::new();
     let mut modifier_keycodes = Vec::new();
     for modifier in modifiers {
         let keysym = key_name_to_keysym(modifier)?;
-        let (keycode, guard) = keycode_for_keysym(&conn, &mapping, keysym, modifier)?;
+        let (keycode, guard) = keycode_for_keysym(&conn, &mut mapping, keysym, modifier)?;
         if let Some(guard) = guard {
             guards.push(guard);
         }
@@ -3932,8 +4211,8 @@ fn send_key_to_target(
     // `keycode_for_keysym` instead borrows a spare keycode and hands back a guard
     // that restores the original mapping once the event has been delivered.
     let keysym = key_name_to_keysym(key)?;
-    let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
-    let (keycode, remap_guard) = keycode_for_keysym(&conn, &mapping, keysym, key)?;
+    let mut mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let (keycode, remap_guard) = keycode_for_keysym(&conn, &mut mapping, keysym, key)?;
 
     // XSendEvent's state mask describes modifiers for one key event, but does
     // not update Chromium's internal modifier state by itself. Emit the
@@ -3945,7 +4224,7 @@ fn send_key_to_target(
     for modifier in modifiers {
         let modifier_keysym = key_name_to_keysym(modifier)?;
         let (modifier_keycode, guard) =
-            keycode_for_keysym(&conn, &mapping, modifier_keysym, modifier)?;
+            keycode_for_keysym(&conn, &mut mapping, modifier_keysym, modifier)?;
         if let Some(guard) = guard {
             remap_guards.push(guard);
         }
@@ -4100,8 +4379,300 @@ pub(crate) fn key_name_to_keysym(key: &str) -> Result<u32> {
 }
 
 #[cfg(test)]
+mod own_dialog_tests {
+    use super::*;
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+    use x11rb::protocol::{xproto::*, Event};
+    use x11rb::wrapper::ConnectionExt as _;
+
+    struct Server(std::process::Child);
+    impl Drop for Server {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    fn set32(conn: &RustConnection, win: u32, name: &str, ty: AtomEnum, values: &[u32]) {
+        let atom = crate::x11::get_atom(conn, name).unwrap();
+        conn.change_property32(PropMode::REPLACE, win, atom, ty, values)
+            .unwrap();
+    }
+    #[test]
+    fn focus_restore_leaves_focus_on_a_dialog_the_app_opened() {
+        let mut server = Server(
+            Command::new("Xvfb")
+                .args(["-displayfd", "1", "-nolisten", "tcp"])
+                .stdout(Stdio::piped())
+                .spawn()
+                .expect("install xvfb to run focus tests"),
+        );
+        let mut number = String::new();
+        BufReader::new(server.0.stdout.take().unwrap())
+            .read_line(&mut number)
+            .unwrap();
+        let name = format!(":{}", number.trim());
+        let (conn, screen) = RustConnection::connect(Some(&name)).unwrap();
+        let root = conn.setup().roots[screen].root;
+        let window = |pid, transient| {
+            let win = conn.generate_id().unwrap();
+            conn.create_window(
+                0,
+                win,
+                root,
+                0,
+                0,
+                50,
+                50,
+                0,
+                WindowClass::INPUT_OUTPUT,
+                0,
+                &CreateWindowAux::new(),
+            )
+            .unwrap();
+            if pid != 0 {
+                set32(&conn, win, "_NET_WM_PID", AtomEnum::CARDINAL, &[pid]);
+            }
+            if transient != 0 {
+                set32(
+                    &conn,
+                    win,
+                    "WM_TRANSIENT_FOR",
+                    AtomEnum::WINDOW,
+                    &[transient],
+                );
+            }
+            conn.map_window(win).unwrap();
+            win
+        };
+        let main = window(4242, 0);
+        let dialog = window(4242, main);
+        let sibling = window(4242, 0);
+        let foreign = window(4343, main);
+        let typed = window(4242, 0);
+        let pidless = window(0, main);
+        set32(
+            &conn,
+            typed,
+            "_NET_WM_WINDOW_TYPE",
+            AtomEnum::ATOM,
+            &[crate::x11::get_atom(&conn, "_NET_WM_WINDOW_TYPE_DIALOG").unwrap()],
+        );
+        assert!(is_own_dialog(&conn, 4242, dialog.into()));
+        assert!(is_own_dialog(&conn, 4242, typed.into()));
+        for win in [sibling, foreign, pidless] {
+            assert!(!is_own_dialog(&conn, 4242, win.into()));
+        }
+        conn.get_input_focus().unwrap().reply().unwrap();
+        let cname = std::ffi::CString::new(name.clone()).unwrap();
+        let display = open_named_display(cname.as_ptr()).unwrap();
+        // The WM honors every activation, except the first delayed request opens a dialog.
+        for delayed in [false, true] {
+            let (wm, _) = RustConnection::connect(Some(&name)).unwrap();
+            wm.change_window_attributes(
+                root,
+                &ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_REDIRECT),
+            )
+            .unwrap()
+            .check()
+            .unwrap();
+            set32(
+                &conn,
+                root,
+                "_NET_ACTIVE_WINDOW",
+                AtomEnum::WINDOW,
+                &[sibling],
+            );
+            conn.set_input_focus(InputFocus::PARENT, sibling, 0u32)
+                .unwrap();
+            conn.get_input_focus().unwrap().reply().unwrap();
+            let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let done = stop.clone();
+            let thread = std::thread::spawn(move || {
+                let mut first = delayed;
+                while !done.load(std::sync::atomic::Ordering::Relaxed) {
+                    match wm.poll_for_event().unwrap() {
+                        Some(Event::ClientMessage(event)) => {
+                            let target = if first { dialog } else { event.window };
+                            first = false;
+                            set32(&wm, root, "_NET_ACTIVE_WINDOW", AtomEnum::WINDOW, &[target]);
+                            wm.set_input_focus(InputFocus::PARENT, target, 0u32)
+                                .unwrap();
+                            wm.flush().unwrap();
+                        }
+                        _ => std::thread::sleep(Duration::from_millis(1)),
+                    }
+                }
+            });
+            restore_focus_state(
+                display,
+                &SavedFocus {
+                    ewmh_active: Some(main.into()),
+                    core_focus: 0,
+                    core_revert_to: 0,
+                },
+            );
+            let focus = conn.get_input_focus().unwrap().reply().unwrap().focus;
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            thread.join().unwrap();
+            assert_eq!(focus, if delayed { dialog } else { main });
+        }
+        unsafe { x11::xlib::XCloseDisplay(display) };
+    }
+}
+
+#[cfg(test)]
 mod key_name_alias_tests {
-    use super::key_name_to_keysym;
+    use super::{
+        char_to_keycode_shift, key_name_to_keysym, reserve_spare_keycode,
+        type_text_in_spare_batches, GetKeyboardMappingReply,
+    };
+
+    #[test]
+    fn text_batches_types_more_distinct_unmapped_characters_than_spares() {
+        use std::cell::RefCell;
+        struct Restore<'a>(u8, &'a RefCell<Vec<(&'static str, u8)>>);
+        impl Drop for Restore<'_> {
+            fn drop(&mut self) {
+                self.1.borrow_mut().push(("restore", self.0));
+            }
+        }
+        let mapping = GetKeyboardMappingReply {
+            keysyms_per_keycode: 2,
+            sequence: 0,
+            keysyms: vec!['a' as u32, 'A' as u32, 0, 0, 0, 0],
+        };
+        let log = RefCell::new(Vec::new());
+        type_text_in_spare_batches(
+            "a你好你世a世",
+            &mapping,
+            |ch, mapping| {
+                reserve_spare_keycode(
+                    mapping,
+                    super::mpx_keyboard::keysym_for_char(ch),
+                    |spare, _, _, _| {
+                        log.borrow_mut().push(("remap", spare));
+                        Ok(Restore(spare, &log))
+                    },
+                )
+                .map(|(keycode, guard)| (keycode, Some(guard)))
+            },
+            |keycode, _| {
+                log.borrow_mut().push(("send", keycode));
+                Ok(())
+            },
+            || true,
+        )
+        .unwrap();
+        assert_eq!(
+            log.into_inner(),
+            [
+                ("remap", 10),
+                ("remap", 9),
+                ("send", 8),
+                ("send", 10),
+                ("send", 9),
+                ("send", 10),
+                ("restore", 10),
+                ("restore", 9),
+                ("remap", 10),
+                ("send", 10),
+                ("send", 8),
+                ("send", 10),
+                ("restore", 10),
+            ]
+        );
+    }
+
+    #[test]
+    fn text_batches_reports_progress_when_a_later_batch_fails() {
+        let mapping = GetKeyboardMappingReply {
+            keysyms_per_keycode: 2,
+            sequence: 0,
+            keysyms: vec!['a' as u32, 'A' as u32, 0, 0],
+        };
+        let mut events = Vec::new();
+        let error = type_text_in_spare_batches::<()>(
+            "你a好",
+            &mapping,
+            |ch, _| match ch {
+                '你' => Ok((9, None)),
+                _ => anyhow::bail!("keymap changed"),
+            },
+            |keycode, _| {
+                events.push(keycode);
+                Ok(())
+            },
+            || true,
+        )
+        .unwrap_err();
+        assert_eq!(error.to_string(), "typed 2 of 3 characters: keymap changed");
+        assert_eq!(events, [9, 8]);
+    }
+
+    #[test]
+    fn text_batches_stop_before_rebinding_keycodes_the_client_has_not_read() {
+        let mapping = GetKeyboardMappingReply {
+            keysyms_per_keycode: 2,
+            sequence: 0,
+            keysyms: vec!['a' as u32, 'A' as u32, 0, 0],
+        };
+        for (text, result) in [
+            ("你", Ok(vec![9])),
+            ("你好", Err("typed 1 of 2 characters: the client has not confirmed reading the keys on the spare keycodes the next characters need")),
+        ] {
+            let mut events = Vec::new();
+            let typed = type_text_in_spare_batches(
+                text,
+                &mapping,
+                |ch, mapping| {
+                    reserve_spare_keycode(
+                        mapping,
+                        super::mpx_keyboard::keysym_for_char(ch),
+                        |_, _, _, _| Ok(()),
+                    )
+                    .map(|(keycode, guard)| (keycode, Some(guard)))
+                },
+                |keycode, _| {
+                    events.push(keycode);
+                    Ok(())
+                },
+                || false,
+            )
+            .map(|()| events)
+            .map_err(|error| error.to_string());
+            assert_eq!(typed, result.map_err(String::from), "{text}");
+        }
+    }
+
+    #[test]
+    fn shifted_column_glyphs_need_shift_and_base_glyphs_do_not() {
+        let per = 2usize;
+        let mut keysyms = vec![0u32; (248 - 8 + 1) * per];
+        let mut set = |keycode: usize, syms: [u32; 2]| {
+            let idx = (keycode - 8) * per;
+            keysyms[idx..idx + per].copy_from_slice(&syms);
+        };
+        set(43, [0x68, 0x48]);
+        set(11, [0x32, 0x40]);
+        let mapping = GetKeyboardMappingReply {
+            keysyms_per_keycode: per as u8,
+            sequence: 0,
+            keysyms,
+        };
+        for (ch, keycode, needs_shift) in [
+            ('H', 43, true),
+            ('@', 11, true),
+            ('h', 43, false),
+            ('2', 11, false),
+        ] {
+            assert_eq!(
+                char_to_keycode_shift(&mapping, ch as u32),
+                Some((keycode, needs_shift)),
+                "{ch:?}"
+            );
+        }
+    }
 
     #[test]
     fn common_key_name_aliases_resolve_to_the_expected_keysym() {
@@ -4143,29 +4714,23 @@ pub(crate) struct RemappedKeycode<'a> {
 
 impl Drop for RemappedKeycode<'_> {
     fn drop(&mut self) {
-        // Best-effort restore: re-install the original keysyms for this keycode
-        // and flush. Errors are swallowed deliberately — Drop must not panic in
-        // the daemon, and the worst case of a failed restore is a single spare
-        // keycode left mapped (it was unused to begin with), never a crash.
         let _ = self.conn.change_keyboard_mapping(
             1,
             self.keycode,
             self.keysyms_per_keycode,
             &self.original_keysyms,
         );
-        let _ = self.conn.flush();
+        let _ = self.conn.get_input_focus().map(|cookie| cookie.reply());
     }
 }
 
-/// Temporarily bind `keysym` onto a spare (fully unused) keycode so it can be
-/// injected even when no existing keycode emits it. Returns a guard that
-/// restores the original mapping on drop. Errors only if the keymap has no free
-/// keycode left to borrow.
-fn remap_spare_keycode<'a>(
-    conn: &'a RustConnection,
-    mapping: &GetKeyboardMappingReply,
+/// Reserve a fully unused keycode for `keysym`, calling `bind` before updating
+/// the local mapping. Returns the keycode and the value produced by `bind`.
+fn reserve_spare_keycode<G>(
+    mapping: &mut GetKeyboardMappingReply,
     keysym: u32,
-) -> Result<RemappedKeycode<'a>> {
+    mut bind: impl FnMut(u8, u8, &[u32], &[u32]) -> Result<G>,
+) -> Result<(u8, G)> {
     let per = mapping.keysyms_per_keycode as usize;
     if per == 0 {
         bail!("empty keyboard mapping; cannot remap keysym 0x{keysym:X}");
@@ -4189,17 +4754,9 @@ fn remap_spare_keycode<'a>(
     let idx = (spare as usize - 8) * per;
     let original_keysyms = mapping.keysyms[idx..idx + per].to_vec();
     let new_keysyms = vec![keysym; per];
-    conn.change_keyboard_mapping(1, spare, per as u8, &new_keysyms)?;
-    // Round-trip so the server has installed the new mapping before we emit the
-    // key event against it.
-    let _ = conn.get_input_focus()?.reply();
-
-    Ok(RemappedKeycode {
-        conn,
-        keycode: spare,
-        keysyms_per_keycode: per as u8,
-        original_keysyms,
-    })
+    let guard = bind(spare, per as u8, &original_keysyms, &new_keysyms)?;
+    mapping.keysyms[idx..idx + per].copy_from_slice(&new_keysyms);
+    Ok((spare, guard))
 }
 
 /// Resolve `keysym` to a keycode usable in a synthetic key event. First scans
@@ -4209,7 +4766,7 @@ fn remap_spare_keycode<'a>(
 /// The guard is `None` when the keysym was already present (no cleanup needed).
 fn keycode_for_keysym<'a>(
     conn: &'a RustConnection,
-    mapping: &GetKeyboardMappingReply,
+    mapping: &mut GetKeyboardMappingReply,
     keysym: u32,
     key: &str,
 ) -> Result<(u8, Option<RemappedKeycode<'a>>)> {
@@ -4223,11 +4780,181 @@ fn keycode_for_keysym<'a>(
     }
 
     // Not in the map — fall back to remapping a spare keycode.
-    let guard = remap_spare_keycode(conn, mapping, keysym).with_context(|| {
+    let (keycode, guard) = reserve_spare_keycode(mapping, keysym, |spare, per, original, new| {
+        conn.change_keyboard_mapping(1, spare, per, new)?;
+        let guard = RemappedKeycode {
+            conn,
+            keycode: spare,
+            keysyms_per_keycode: per,
+            original_keysyms: original.to_vec(),
+        };
+        let _ = conn.get_input_focus()?.reply();
+        Ok(guard)
+    })
+    .with_context(|| {
         format!("Keysym 0x{keysym:X} not in keyboard map for key '{key}' and no spare keycode could be remapped")
     })?;
-    let keycode = guard.keycode;
     Ok((keycode, Some(guard)))
+}
+
+fn text_keycode(
+    client: &mut TextClient<'_>,
+    mapping: &mut GetKeyboardMappingReply,
+    ch: char,
+) -> Result<(u8, Option<()>)> {
+    let keysym = mpx_keyboard::keysym_for_char(ch);
+    let (keycode, guard) = keycode_for_keysym(client.conn, mapping, keysym, &ch.to_string())?;
+    let Some(guard) = guard else {
+        return Ok((keycode, None));
+    };
+    client.borrowed.push(guard);
+    if let Some(window) = client.recipient() {
+        client.ping(window);
+    }
+    Ok((keycode, Some(())))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClientSync {
+    Confirmed,
+    Unsupported,
+    Unanswered,
+}
+
+struct TextClient<'a> {
+    conn: &'a RustConnection,
+    target: Option<Window>,
+    borrowed: Vec<RemappedKeycode<'a>>,
+    sent: Vec<Window>,
+    unanswered: Vec<Window>,
+}
+
+impl<'a> TextClient<'a> {
+    fn new(conn: &'a RustConnection, target: Option<Window>) -> Self {
+        Self {
+            conn,
+            target,
+            borrowed: Vec::new(),
+            sent: Vec::new(),
+            unanswered: Vec::new(),
+        }
+    }
+
+    fn recipient(&self) -> Option<Window> {
+        self.target.or_else(|| {
+            let cookie = self.conn.get_input_focus().ok()?;
+            cookie.reply().ok().map(|reply| reply.focus)
+        })
+    }
+
+    fn record_recipient(&mut self, keycode: u8) {
+        if !self.borrowed.iter().any(|guard| guard.keycode == keycode) {
+            return;
+        }
+        if let Some(window) = self.recipient() {
+            if !self.sent.contains(&window) {
+                self.sent.push(window);
+            }
+        }
+    }
+
+    fn ping(&mut self, window: Window) {
+        if self.unanswered.contains(&window) {
+            return;
+        }
+        if sync_client(self.conn, Some(window)) == ClientSync::Unanswered {
+            self.unanswered.push(window);
+        }
+    }
+
+    fn release(&mut self) -> bool {
+        let sent = std::mem::take(&mut self.sent);
+        for &window in &sent {
+            self.ping(window);
+        }
+        self.borrowed.clear();
+        let unanswered = std::mem::take(&mut self.unanswered);
+        !sent.iter().any(|window| unanswered.contains(window))
+    }
+}
+
+impl Drop for TextClient<'_> {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+fn sync_client(conn: &RustConnection, window: Option<Window>) -> ClientSync {
+    let atom = |name: &str| {
+        conn.intern_atom(false, name.as_bytes())
+            .ok()?
+            .reply()
+            .ok()
+            .map(|reply| reply.atom)
+    };
+    let (Some(window), Some(protocols), Some(ping)) =
+        (window, atom("WM_PROTOCOLS"), atom("_NET_WM_PING"))
+    else {
+        return ClientSync::Unsupported;
+    };
+    let Some(window) = ping_window(conn, window, protocols, ping) else {
+        return ClientSync::Unsupported;
+    };
+    let root = conn.setup().roots[0].root;
+    let listen = ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_NOTIFY);
+    let serial = PING_SERIAL.fetch_add(1, Ordering::Relaxed).max(1);
+    let event = ClientMessageEvent::new(32, window, protocols, [ping, serial, window, 0, 0]);
+    if conn.change_window_attributes(root, &listen).is_err()
+        || conn
+            .send_event(false, window, EventMask::NO_EVENT, event)
+            .is_err()
+        || conn.flush().is_err()
+    {
+        return ClientSync::Unanswered;
+    }
+    let deadline = std::time::Instant::now() + PING_TIMEOUT;
+    while std::time::Instant::now() < deadline {
+        match conn.poll_for_event() {
+            Ok(Some(x11rb::protocol::Event::ClientMessage(pong)))
+                if pong.type_ == protocols
+                    && pong.data.as_data32()[..3] == [ping, serial, window] =>
+            {
+                return ClientSync::Confirmed;
+            }
+            Ok(Some(_)) => {}
+            Ok(None) => sleep(Duration::from_millis(1)),
+            Err(_) => return ClientSync::Unanswered,
+        }
+    }
+    ClientSync::Unanswered
+}
+
+fn ping_window(
+    conn: &RustConnection,
+    focus: Window,
+    protocols: Atom,
+    ping: Atom,
+) -> Option<Window> {
+    if focus == x11rb::NONE || focus == u32::from(InputFocus::POINTER_ROOT) {
+        return None;
+    }
+    let client = !conn.setup().resource_id_mask;
+    let mut window = focus;
+    while window != x11rb::NONE && window & client == focus & client {
+        let protocols = conn
+            .get_property(false, window, protocols, AtomEnum::ATOM, 0, 64)
+            .ok()?
+            .reply()
+            .ok()?;
+        if protocols
+            .value32()
+            .is_some_and(|mut atoms| atoms.any(|atom| atom == ping))
+        {
+            return Some(window);
+        }
+        window = conn.query_tree(window).ok()?.reply().ok()?.parent;
+    }
+    None
 }
 
 fn modifiers_to_state(modifiers: &[&str]) -> KeyButMask {
@@ -4463,6 +5190,181 @@ mod path_tests {
         stale.sort();
         assert_eq!(stale, vec!["edge".to_owned(), "old".to_owned()]);
         assert!(stale_cursor_ids(&std::collections::HashMap::new(), now, MPX_IDLE_TTL).is_empty());
+    }
+
+    fn popup_removal_due(cursor_id: &str) -> Option<Option<std::time::Instant>> {
+        super::mpx_click_popups()
+            .lock()
+            .unwrap()
+            .get(cursor_id)
+            .map(|popups| popups.removal_due)
+    }
+
+    fn mpx_op_lock() -> std::sync::MutexGuard<'static, ()> {
+        super::MPX_OP_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn end_session_after_click(cursor_id: &str, opened: &[u64]) {
+        super::mark_mpx_use(cursor_id);
+        super::track_click_popups(cursor_id, opened.iter().copied());
+        super::forget_master_pointer_locked(cursor_id);
+    }
+
+    #[test]
+    fn a_second_end_leaves_the_master_to_the_pending_popup_waiter() {
+        let _op = mpx_op_lock();
+        let cursor_id = "popup-test-double-end";
+        end_session_after_click(cursor_id, &[0x7fff_0001]);
+        let due = popup_removal_due(cursor_id);
+        assert!(matches!(due, Some(Some(_))));
+        super::forget_master_pointer_locked(cursor_id);
+        assert_eq!(popup_removal_due(cursor_id), due);
+        assert!(!super::mpx_last_use()
+            .lock()
+            .unwrap()
+            .contains_key(cursor_id));
+    }
+
+    #[test]
+    fn an_end_without_tracked_popups_removes_the_master_at_once() {
+        let _op = mpx_op_lock();
+        end_session_after_click("popup-test-no-popup", &[]);
+        assert_eq!(popup_removal_due("popup-test-no-popup"), None);
+        assert!(!super::mpx_last_use()
+            .lock()
+            .unwrap()
+            .contains_key("popup-test-no-popup"));
+    }
+
+    #[test]
+    fn a_click_that_opens_nothing_keeps_earlier_tracked_popups() {
+        let _op = mpx_op_lock();
+        let cursor_id = "popup-test-union";
+        super::track_click_popups(cursor_id, [5, 3]);
+        super::track_click_popups(cursor_id, []);
+        super::track_click_popups(cursor_id, [3, 7]);
+        let windows = super::mpx_click_popups().lock().unwrap()[cursor_id]
+            .windows
+            .clone();
+        assert_eq!(windows, vec![3, 5, 7]);
+    }
+
+    #[test]
+    fn reusing_an_ended_session_disowns_its_popup_waiter() {
+        let _op = mpx_op_lock();
+        let cursor_id = "popup-test-reuse";
+        end_session_after_click(cursor_id, &[0x7fff_0003]);
+        assert!(matches!(popup_removal_due(cursor_id), Some(Some(_))));
+        super::mark_mpx_use(cursor_id);
+        assert_eq!(popup_removal_due(cursor_id), Some(None));
+        super::forget_master_pointer_locked(cursor_id);
+        assert!(matches!(popup_removal_due(cursor_id), Some(Some(_))));
+    }
+
+    #[test]
+    fn a_popup_that_remaps_during_the_quiet_wait_keeps_the_master_until_the_deadline() {
+        use super::{popup_wait_over, MPX_POPUP_QUIET};
+        let now = std::time::Instant::now();
+        let deadline = now + std::time::Duration::from_secs(60);
+        let quiet_elapsed = Some(now - MPX_POPUP_QUIET * 2);
+        let mut quiet = quiet_elapsed;
+        assert!(!popup_wait_over(Some(true), &mut quiet, deadline));
+        assert_eq!(quiet, None);
+        assert!(!popup_wait_over(Some(false), &mut quiet, deadline));
+        assert!(quiet.is_some());
+        let mut quiet = quiet_elapsed;
+        assert!(!popup_wait_over(None, &mut quiet, deadline));
+        assert_eq!(quiet, None);
+        let mut quiet = quiet_elapsed;
+        assert!(popup_wait_over(Some(false), &mut quiet, deadline));
+        assert!(popup_wait_over(Some(true), &mut None, now));
+    }
+
+    #[test]
+    fn a_popup_belongs_to_the_live_session_whose_click_saw_it_appear() {
+        use super::{popup_owner, ClickPopups};
+        use std::collections::HashMap;
+        let appeared = HashMap::from([
+            (
+                "ctx".to_owned(),
+                ClickPopups {
+                    windows: vec![25165852],
+                    removal_due: None,
+                },
+            ),
+            ("combo".to_owned(), ClickPopups::default()),
+        ]);
+        let live = |_: &str| true;
+        assert_eq!(
+            popup_owner(25165852, &appeared, live).as_deref(),
+            Some("ctx")
+        );
+        assert_eq!(popup_owner(25165982, &appeared, live), None);
+        assert_eq!(
+            popup_owner(25165852, &appeared, |id: &str| id != "ctx"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_click_that_sees_a_popup_appear_takes_it_from_other_sessions() {
+        use super::{mpx_click_popups, popup_owner, track_click_popups};
+        let _op = mpx_op_lock();
+        track_click_popups("popup-reuse-a", [77_001, 77_002]);
+        track_click_popups("popup-reuse-b", [77_001]);
+        let mut tracked = mpx_click_popups().lock().unwrap();
+        assert_eq!(tracked["popup-reuse-a"].windows, vec![77_002]);
+        assert_eq!(
+            popup_owner(77_001, &tracked, |_: &str| true).as_deref(),
+            Some("popup-reuse-b")
+        );
+        tracked.remove("popup-reuse-a");
+        tracked.remove("popup-reuse-b");
+    }
+
+    #[test]
+    fn keys_for_a_popup_neither_stamp_nor_recreate_the_owner_pair() {
+        use super::{
+            mpx_last_use, mpx_pointers, popup_owner_guard, MasterPointerIds, PopupOwnerGone,
+        };
+        let gone = popup_owner_guard(90_001).unwrap_err();
+        assert!(gone.is::<PopupOwnerGone>());
+        super::track_click_popups("popup-owner-live", [90_001]);
+        mpx_pointers().lock().unwrap().insert(
+            "popup-owner-live".to_owned(),
+            MasterPointerIds {
+                pointer_id: 90,
+                keyboard_id: 91,
+                _slave_pointer_id: 92,
+                slave_keyboard_id: None,
+            },
+        );
+        assert_eq!(popup_owner_guard(90_001).unwrap().1, "popup-owner-live");
+        super::track_click_popups("popup-owner-next", [90_001]);
+        assert!(popup_owner_guard(90_001)
+            .unwrap_err()
+            .is::<PopupOwnerGone>());
+        mpx_pointers().lock().unwrap().insert(
+            "popup-owner-next".to_owned(),
+            MasterPointerIds {
+                pointer_id: 93,
+                keyboard_id: 94,
+                _slave_pointer_id: 95,
+                slave_keyboard_id: None,
+            },
+        );
+        assert_eq!(popup_owner_guard(90_001).unwrap().1, "popup-owner-next");
+        mpx_pointers().lock().unwrap().remove("popup-owner-next");
+        mpx_pointers().lock().unwrap().remove("popup-owner-live");
+        let mut tracked = super::mpx_click_popups().lock().unwrap();
+        tracked.remove("popup-owner-live");
+        tracked.remove("popup-owner-next");
+        drop(tracked);
+        let last_use = mpx_last_use().lock().unwrap();
+        assert!(!last_use.contains_key("popup-owner-live"));
+        assert!(!last_use.contains_key("popup-owner-next"));
     }
 
     #[test]

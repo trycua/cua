@@ -94,6 +94,70 @@ async fn a_relay_briefly_unavailable_is_retried_until_it_registers() {
 }
 
 #[tokio::test]
+async fn a_relay_hiccup_does_not_make_the_host_need_attention() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("good", "user-1", None);
+    let f = fixture();
+    f.host()
+        .setup(f.opts(&relay.url), &StaticToken("good".into()))
+        .await
+        .unwrap();
+    // One or two 503s from the proxy in front of the relay: read again.
+    relay.fail_reads(&[503, 503]);
+    let status = f.host().status().await.unwrap();
+    assert_eq!(status.error, None);
+    assert!(status.sharing);
+    // A deploy (every read 503 for a while): the relay's last answer.
+    relay.set_reads_down(true);
+    let status = f.host().status().await.unwrap();
+    assert_eq!(status.error, None);
+    assert!(status.sharing);
+    // A refusal is not a hiccup: it shows at once.
+    relay.set_reads_down(false);
+    relay.fail_reads(&[500]);
+    let status = f.host().status().await.unwrap();
+    assert!(status.error.unwrap().contains("HTTP 500"));
+}
+
+#[tokio::test]
+async fn a_relay_down_with_no_answer_to_fall_back_on_needs_attention() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("good", "user-1", None);
+    relay.set_reads_down(true);
+    let f = fixture();
+    // Setup registers (a POST); the status read after it has no answer yet.
+    let status = f
+        .host()
+        .setup(f.opts(&relay.url), &StaticToken("good".into()))
+        .await
+        .unwrap();
+    assert_eq!(
+        status.error.as_deref(),
+        Some("relay: HTTP 503: no available server")
+    );
+}
+
+#[test]
+fn relay_failures_that_pass_on_their_own_are_transient() {
+    for (e, transient) in [
+        (Error::Relay("HTTP 503: no available server".into()), true),
+        (Error::Relay("HTTP 502: bad gateway".into()), true),
+        (Error::Relay("HTTP 504: timeout".into()), true),
+        (Error::Relay("HTTP 429: slow down".into()), true),
+        (
+            Error::Relay("http://127.0.0.1:1: error sending request".into()),
+            true,
+        ),
+        (Error::Relay("HTTP 500: boom".into()), false),
+        (Error::Relay("bad relay response: EOF".into()), false),
+        (Error::Unauthenticated("relay: no".into()), false),
+        (Error::NotFound("relay: no such computer".into()), false),
+    ] {
+        assert_eq!(e.is_transient(), transient, "{e}");
+    }
+}
+
+#[tokio::test]
 async fn a_relay_that_stays_down_fails_at_register_with_its_status() {
     let relay = FakeRelay::start().await;
     relay.add_account("good", "user-1", None);
@@ -183,4 +247,44 @@ fn http_status_reads_relay_and_download_errors() {
         assert_eq!(e.http_status(), want, "{e}");
     }
     assert_eq!(SetupStage::Register.as_str(), "register");
+}
+
+#[tokio::test]
+async fn a_pairing_code_sets_up_the_machine_once_and_a_failed_download_does_not_spend_it() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-token", "ada", Some("ada@example.com"));
+    let code = RelayClient::new(&relay.url)
+        .unwrap()
+        .create_pairing_code("acct-token", &PairingCodeRequest::default())
+        .await
+        .unwrap()
+        .code
+        .unwrap();
+    let token = PairingCodeToken::parse(&code).unwrap();
+
+    // The driver is missing: setup stops at the download, before the relay
+    // is asked, so the code is still good.
+    let f = fixture();
+    let mut opts = f.opts(&relay.url);
+    opts.download_first = true;
+    opts.driver_bin = Some(f.home.join("missing-spacesd"));
+    let (stage, _) = f.host().setup_staged(opts, &token).await.unwrap_err();
+    assert_eq!(stage, SetupStage::Download);
+    assert_eq!(relay.register_calls(), 0);
+
+    // With the driver: registered as the account that made the code.
+    let mut opts = f.opts(&relay.url);
+    opts.download_first = true;
+    let status = f.host().setup(opts, &token).await.unwrap();
+    assert!(status.configured);
+    let id = f.host().config().unwrap().unwrap().machine_id.unwrap();
+    assert_eq!(relay.machine(&id).unwrap().owner.id, "ada");
+
+    // Spent: another machine cannot use it.
+    let g = fixture();
+    let mut opts = g.opts(&relay.url);
+    opts.download_first = true;
+    let (stage, e) = g.host().setup_staged(opts, &token).await.unwrap_err();
+    assert_eq!(stage, SetupStage::Register);
+    assert_eq!(e.http_status(), Some(401), "{e}");
 }

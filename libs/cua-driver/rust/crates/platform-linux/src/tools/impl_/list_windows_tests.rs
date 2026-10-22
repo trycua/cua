@@ -58,6 +58,42 @@ fn unavailable_wayland_order_serializes_as_null() {
 }
 
 #[test]
+fn desktop_discovery_retains_only_visible_windows_with_live_or_unknown_owners() {
+    let window = |xid, pid, is_on_screen| crate::x11::WindowInfo {
+        xid,
+        pid,
+        app_name: "native-wayland-app".to_owned(),
+        title: "Example".to_owned(),
+        is_on_screen,
+        z_index: None,
+        x: 10,
+        y: 20,
+        width: 300,
+        height: 400,
+    };
+    let windows = visible_live_desktop_windows(vec![
+        window(1, Some(std::process::id()), true),
+        window(2, Some(std::process::id()), false),
+        window(3, Some(u32::MAX), true),
+        window(4, None, true),
+        window(5, None, false),
+    ]);
+
+    assert_eq!(
+        windows.iter().map(|w| w.xid).collect::<Vec<_>>(),
+        vec![1, 4]
+    );
+    let record = window_record_json(&windows[0]);
+    assert_eq!(
+        record["bounds"],
+        json!({"x": 10, "y": 20, "width": 300, "height": 400})
+    );
+    assert_eq!(record["app_name"], json!("native-wayland-app"));
+    assert_eq!(record["is_on_screen"], json!(true));
+    assert_eq!(record["z_index"], Value::Null);
+}
+
+#[test]
 fn chromium_launch_detection_uses_executable_basename() {
     assert!(chromium_family_program("/usr/bin/google-chrome-stable"));
     assert!(chromium_family_program("CuaTestHarness.Electron"));

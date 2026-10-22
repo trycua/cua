@@ -253,9 +253,7 @@ impl DaemonBackend {
         let Some(home) = self.host.home_dir() else {
             return;
         };
-        let root = home.join(cua_teleport_bundle::layout::firefox::root_for(
-            self.platform,
-        ));
+        let root = ff::app_data_dir(&home, self.platform);
         let Some(profile) = ff::default_profile(&root) else {
             notes.push("no Firefox profile was found".into());
             return;
@@ -571,8 +569,14 @@ impl Backend for DaemonBackend {
         let source = spec.profile.clone().unwrap_or_else(|| "default".into());
         let mut out: Vec<Captured> = Vec::new();
         let mut display = self.app_display(&spec.app);
+        // Items carry the provider's id (`chrome` for a Microsoft Edge capture):
+        // the Space imports them through that provider.
+        let provider_id = self
+            .sessions
+            .provider_id(&spec.app)
+            .unwrap_or_else(|| spec.app.clone());
         let keep = |out: &mut Vec<Captured>, display: &str, scope: &str, n: record::NewRecord| {
-            let (meta, payload) = n.into_item(&spec.app, display, &source, scope);
+            let (meta, payload) = n.into_item(&provider_id, display, &source, scope);
             out.push(Captured { meta, payload });
         };
         // Sites named one by one (the MCP import path): their cookies, and
@@ -604,7 +608,7 @@ impl Backend for DaemonBackend {
         if spec.whole_app {
             let (scope, name, entries) = self.export_entries(&spec.app, spec.paths.as_deref())?;
             display = name;
-            let exported = record::codec_for(&spec.app).export(
+            let exported = record::codec_for(&provider_id).export(
                 entries,
                 &ExportOptions {
                     opted_in: spec.paths.clone().unwrap_or_default(),
@@ -614,7 +618,13 @@ impl Backend for DaemonBackend {
             // source's key here, never written to disk; the receiver
             // re-encrypts them under its own.
             if spec.passwords && spec.confirm_passwords {
-                let sites: Vec<String> = spec.domains.clone().unwrap_or_default();
+                // The review's choice of passwords, else those of the
+                // chosen sites.
+                let sites: Vec<String> = spec
+                    .password_domains
+                    .clone()
+                    .or_else(|| spec.domains.clone())
+                    .unwrap_or_default();
                 for l in self.site_logins_for(&spec.app, spec.profile.clone(), &sites)? {
                     keep(&mut out, &display, &scope, record::password_record(&l)?);
                 }
@@ -761,7 +771,7 @@ impl Backend for DaemonBackend {
                 })
             })
         };
-        // The env token / Fleet bearer authenticate this channel and are never
+        // The env token / gateway bearer authenticate this channel and are never
         // exposed to the MCP caller; the guest wipes on its own at expiry.
         let result = cua_teleport::upload_bundle(
             spacesd,
@@ -985,6 +995,32 @@ pub async fn serve_socket(broker: Arc<Broker>, path: std::path::PathBuf) {
                     tracing::debug!(error = %e, "keyvault: socket busy, retrying");
                     tokio::time::sleep(std::time::Duration::from_millis(250)).await;
                 }
+                // Still held after 10 s: by a daemon this one replaced that
+                // never exited (it outlived an app update, #4950). This
+                // daemon is the one its cua home runs, so that one is ended.
+                Err(e) if tries == 40 => {
+                    tries += 1;
+                    let p = path.clone();
+                    let ended = tokio::task::spawn_blocking(move || {
+                        cua_daemon::socket_listener_pid(&p).filter(|&pid| {
+                            pid != std::process::id()
+                                && cua_daemon::terminate_daemon(
+                                    pid,
+                                    std::time::Duration::from_secs(3),
+                                )
+                        })
+                    })
+                    .await
+                    .ok()
+                    .flatten();
+                    match ended {
+                        Some(pid) => tracing::warn!(
+                            pid,
+                            "keyvault: ended an old cua daemon that still held the socket"
+                        ),
+                        None => tracing::debug!(error = %e, "keyvault: socket busy"),
+                    }
+                }
                 Err(e) => {
                     tracing::warn!(error = %e, path = %path.display(), "keyvault: socket not served");
                     break None;
@@ -995,10 +1031,18 @@ pub async fn serve_socket(broker: Arc<Broker>, path: std::path::PathBuf) {
             cua_keyvault::ipc::serve(listener, broker, policy).await;
         }
     }
-    // The socket verifies every peer through the kernel (a Unix socket
-    // feature); on other OSes only the in-process broker (the app and the
-    // daemon's MCP tools) reaches the vault.
-    #[cfg(not(unix))]
+    // Windows serves a named pipe in its place, open to this account only,
+    // and identifies every client by its process and Authenticode signature.
+    #[cfg(windows)]
+    {
+        match cua_keyvault::ipc::bind_pipe(&path) {
+            Ok(listener) => cua_keyvault::ipc::serve_pipe(listener, broker, policy).await,
+            Err(e) => tracing::warn!(error = %e, "keyvault: pipe not served"),
+        }
+    }
+    // On other OSes only the in-process broker (the app and the daemon's MCP
+    // tools) reaches the vault.
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = (broker, policy);
         tracing::info!(path = %path.display(), "keyvault: no external socket on this OS");
@@ -1027,6 +1071,7 @@ impl SessionBroker for McpSessionBroker {
         &self,
         app: &str,
         target: &str,
+        paths: &[String],
         duration_secs: u64,
         reason: &str,
     ) -> Result<String, SessionBrokerError> {
@@ -1040,6 +1085,10 @@ impl SessionBroker for McpSessionBroker {
                     targets: vec![target.into()],
                     duration_secs: Some(duration_secs),
                     reason: reason.into(),
+                    // The caller's selection rides the request: approval
+                    // captures these paths, and the grant (and so the
+                    // delivery) covers only what that capture produced.
+                    paths: Some(paths.to_vec()),
                     ..Default::default()
                 },
             )

@@ -1,18 +1,26 @@
 {
   "title": "Guides",
   "pages": [
+    "---Get started---",
+    "install",
+    "connect-your-agent",
     "add-a-space",
-    "unattended-access",
+    "add-a-computer",
+    "---Teams and sharing---",
+    "teams",
     "share-a-space",
+    "---Work in a Space---",
     "stream-a-desktop",
-    "send-files",
     "teleport-an-app",
-    "persistent-agents",
     "keyvault",
-    "site-login",
-    "relay-security",
     "cua-volume",
-    "use-from-an-agent",
-    "updates"
+    "persistent-agents",
+    "create-a-space-with-the-sdk",
+    "use-grok-bot-dots-and-pi-with-spaces",
+    "---Keep it working---",
+    "troubleshoot",
+    "uninstall",
+    "---Advanced---",
+    "relay-security"
   ]
 }

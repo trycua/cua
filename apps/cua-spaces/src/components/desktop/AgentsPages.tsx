@@ -23,6 +23,7 @@ import type { AgentsBridge } from '../../native/persistent';
 import { readSetting, writeSetting } from '../../state/settings';
 import { featureSignals } from "../../model/telemetry";
 import { telemetryBridge } from "../../native/telemetry";
+import { useT } from "../../i18n";
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -88,6 +89,7 @@ function Group({ title, children }: { title?: string; children: React.ReactNode 
  * word; this loads its input and runs its requests through the daemon.
  */
 export function AgentsPage({ bridge, thisMachine, now = Date.now }: { bridge: AgentsBridge; thisMachine: string | null; now?: () => number }) {
+  const t = useT("agents");
   const [input, setInput] = useState<AgentsInput>({ agents: [], thisMachine });
   // Persistent agents adoption: the page was opened.
   useEffect(() => telemetryBridge().recordSignals(featureSignals("agents_page_open")), []);
@@ -218,15 +220,15 @@ export function AgentsPage({ bridge, thisMachine, now = Date.now }: { bridge: Ag
               </Group>
               <Group>
                 <div className="st-row">
-                  <input className="dw-input" aria-label="Title" placeholder="Title" value={d.form.title} onChange={(e) => void send({ type: 'set-title', title: e.target.value })} />
+                  <input className="dw-input" aria-label={t("agents.routine.title")} placeholder={t("agents.routine.title")} value={d.form.title} onChange={(e) => void send({ type: 'set-title', title: e.target.value })} />
                 </div>
                 <div className="st-row">
-                  <input className="dw-input" aria-label="Prompt" placeholder="Prompt" value={d.form.prompt} onChange={(e) => void send({ type: 'set-prompt', prompt: e.target.value })} />
+                  <input className="dw-input" aria-label={t("agents.routine.prompt")} placeholder={t("agents.routine.prompt")} value={d.form.prompt} onChange={(e) => void send({ type: 'set-prompt', prompt: e.target.value })} />
                 </div>
                 <div className="st-row">
                   <select
                     className="dw-input"
-                    aria-label="Schedule"
+                    aria-label={t("agents.routine.schedule")}
                     value={d.form.schedule}
                     onChange={(e) => void send({ type: 'set-schedule', schedule: e.target.value as 'every' | 'daily' | 'weekly' })}
                   >
@@ -239,17 +241,17 @@ export function AgentsPage({ bridge, thisMachine, now = Date.now }: { bridge: Ag
                   {d.form.schedule === 'every' ? (
                     <input
                       className="dw-input"
-                      aria-label="Minutes"
+                      aria-label={t("agents.routine.minutes")}
                       type="number"
                       min={1}
                       value={d.form.minutes}
                       onChange={(e) => void send({ type: 'set-minutes', minutes: Number(e.target.value) })}
                     />
                   ) : (
-                    <input className="dw-input" aria-label="Time" value={d.form.time} onChange={(e) => void send({ type: 'set-time', time: e.target.value })} />
+                    <input className="dw-input" aria-label={t("agents.routine.time")} value={d.form.time} onChange={(e) => void send({ type: 'set-time', time: e.target.value })} />
                   )}
                   {d.form.schedule === 'weekly' && (
-                    <select className="dw-input" aria-label="Day" value={d.form.weekday} onChange={(e) => void send({ type: 'set-weekday', weekday: e.target.value })}>
+                    <select className="dw-input" aria-label={t("agents.routine.day")} value={d.form.weekday} onChange={(e) => void send({ type: 'set-weekday', weekday: e.target.value })}>
                       {['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map((w) => (
                         <option key={w} value={w}>
                           {w}

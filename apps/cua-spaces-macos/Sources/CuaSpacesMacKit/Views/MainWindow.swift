@@ -7,9 +7,11 @@ import SwiftUI
 
 /// The main window: a sidebar of Spaces and the Keyvault (with its global
 /// switch), and the selected item's detail. Rows are one line; the
-/// sections, search, selection fallback and dimming are the core's.
+/// sections, search, selection fallback and dimming are the core's. ⌘K
+/// opens the command palette.
 public struct MainWindow: View {
     @Bindable var model: AppModel
+    @Environment(\.openSettings) private var openSettings
 
     public init(model: AppModel) {
         self.model = model
@@ -25,12 +27,15 @@ public struct MainWindow: View {
                 .safeAreaInset(edge: .top, spacing: 0) {
                     VStack(spacing: 0) {
                         DevicesBanner(devices: model.devices)
+                        ShareRemovalBanner(model: model)
+                        RelayAllowanceBanner(devices: model.devices)
                         if let error = model.rosterError {
                             SpacesDiscoveryNotice(error: error)
                         }
                     }
                 }
         }
+        .overlay(alignment: .bottomTrailing) { SignInToastView(model: model) }
         .background(WindowReader { model.dropTargets.window = $0 })
         .searchable(text: $model.query, placement: .sidebar, prompt: chrome.searchPlaceholder)
         .toolbar {
@@ -54,6 +59,9 @@ public struct MainWindow: View {
                                cloud: model.cloud,
                                onRuntimeSwitch: { await model.applyRuntimeSwitch($0) })
         }
+        .sheet(isPresented: $model.showingPalette) {
+            CommandPaletteView(model: model)
+        }
         .sheet(item: approvalBinding) { _ in
             ApprovalSheet(keyvault: model.keyvault)
         }
@@ -68,6 +76,18 @@ public struct MainWindow: View {
         .task {
             await model.refresh()
             await model.keyvault.refresh()
+            await model.reloadShareRemovals()
+        }
+        // The relay allowance: at once (and on every sign-in or out), every
+        // 5 minutes, and when the app comes to the front.
+        .task(id: model.devices.signedIn) {
+            while !Task.isCancelled {
+                await model.devices.readRelayUsage()
+                try? await Task.sleep(for: DevicesModel.relayUsagePoll)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await model.devices.readRelayUsage(maxAge: DevicesModel.relayUsageFocusAge) }
         }
     }
 
@@ -99,7 +119,10 @@ public struct MainWindow: View {
         case .keyvault(let selection):
             KeyvaultDetail(keyvault: model.keyvault, selection: selection)
         case .agents:
-            AgentsPageView(model: model.persistent)
+            AgentsPageView(model: model.persistent, openAgentKeys: {
+                model.settingsTab = .agents
+                openSettings()
+            })
                 .onAppear {
                     model.recordFeature("agents_page_open")
                     let id = model.sidebar.thisMachine?.id
@@ -111,6 +134,10 @@ public struct MainWindow: View {
             EmptySpaces(model: model)
         case .notifications:
             NotificationsPageView(model: model.persistent)
+        case .machines:
+            MachinesPageView(model: model)
+        case .gettingStarted:
+            GettingStartedView(model: model)
         case nil:
             EmptySpaces(model: model)
         }
@@ -131,19 +158,26 @@ struct Sidebar: View {
     var body: some View {
         let sidebar = model.sidebar
         let kv = model.keyvault
+        let checklist = model.checklist.view
         List(selection: $model.selection) {
+            if checklist.visible {
+                Label(checklist.title, systemImage: "checklist")
+                    .badge(Text(checklist.progress))
+                    .tag(MainSelection.gettingStarted)
+                    .accessibilityIdentifier("sidebar-getting-started")
+            }
             if let row = sidebar.thisMachine {
                 spaceRow(row)
             }
-            ForEach(sidebar.sections, id: \.title) { section in
-                Section(section.title) {
+            ForEach(sidebar.sections, id: \.title.code) { section in
+                Section(CoreMessages.text(section.title)) {
                     ForEach(section.rows, id: \.id) { row in
                         spaceRow(row)
                     }
                 }
             }
             if let empty = sidebar.emptyText, sidebar.thisMachine == nil, model.rosterError == nil {
-                Text(empty).foregroundStyle(.secondary)
+                Text(CoreMessages.text(empty)).foregroundStyle(.secondary)
             }
             Section {
                 ForEach(kv.sidebar.categories, id: \.category) { row in
@@ -164,6 +198,7 @@ struct Sidebar: View {
                 KeyvaultHeader(keyvault: kv, title: model.chrome.keyvaultTitle)
             }
             Section {
+                Label("Computers", systemImage: "server.rack").tag(MainSelection.machines)
                 Label("Agents", systemImage: "person.2").tag(MainSelection.agents)
                 // Only with the Cua Volume experiment on (the core's chrome).
                 if let volume = model.chrome.volumeLabel {
@@ -198,33 +233,157 @@ struct Sidebar: View {
     private func badge(_ row: KvCategoryRow) -> Int { Int(row.badge ?? 0) }
 }
 
-/// The sidebar's foot: the account line, Sign in when offered, Settings.
+/// The sidebar's foot: every sign-in state in one place (the core's
+/// `appSignInFooter`): signed in as, waiting for the browser with the code,
+/// Open again and Cancel, or why it failed with Try again; and Settings.
 struct SidebarFooter: View {
     let model: AppModel
+    @State private var showingDetails = false
 
     var body: some View {
-        let chrome = model.chrome
-        HStack(spacing: 8) {
-            Text(chrome.account)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .foregroundStyle(.secondary)
-                .accessibilityIdentifier("sidebar-account")
-            Spacer(minLength: 4)
-            if let label = chrome.signInLabel {
-                Button(label) { Task { await model.beginSignIn() } }
-                    .controlSize(.small)
+        let f = model.signInFooter
+        HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
+                switch f.state {
+                case .starting, .waiting:
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.mini)
+                        Text(f.text).lineLimit(2)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("sidebar-signin-waiting")
+                    // The code on its own line (it never wraps), then
+                    // Open again and Cancel.
+                    if let code = f.code {
+                        Text("\(f.codeLabel) \(Text(code).font(.callout.monospaced().weight(.semibold)).foregroundStyle(.primary))")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .lineLimit(1)
+                            .fixedSize()
+                            .padding(.leading, 20)
+                    }
+                    HStack(spacing: 4) {
+                        if let reopen = f.reopenLabel {
+                            Button(reopen) { model.reopenSignIn() }
+                                .buttonStyle(.link)
+                                .accessibilityIdentifier("sidebar-signin-reopen")
+                            Text("\u{b7}")
+                        }
+                        if let cancel = f.cancelLabel {
+                            Button(cancel) { model.cancelSignIn() }
+                                .buttonStyle(.link)
+                                .accessibilityIdentifier("sidebar-signin-cancel")
+                        }
+                    }
+                    .lineLimit(1)
+                    .fixedSize()
+                    .padding(.leading, 20)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                case .failed:
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundStyle(.red)
+                        Text(f.text)
+                            .lineLimit(4)
+                            .accessibilityIdentifier("sidebar-signin-failed")
+                    }
+                    HStack(spacing: 8) {
+                        if let retry = f.actionLabel {
+                            Button(retry) { Task { await model.beginSignIn() } }
+                                .controlSize(.small)
+                                .accessibilityIdentifier("sidebar-signin-retry")
+                        }
+                        if let detail = f.detail {
+                            Button(f.detailsLabel) { showingDetails.toggle() }
+                                .buttonStyle(.link)
+                                .font(.callout)
+                                .popover(isPresented: $showingDetails) {
+                                    Text(detail)
+                                        .font(.callout.monospaced())
+                                        .textSelection(.enabled)
+                                        .frame(width: 280, alignment: .leading)
+                                        .padding(12)
+                                }
+                        }
+                    }
+                    .padding(.leading, 20)
+                case .signedIn:
+                    // "Signed in as", then the whole address on its own line.
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Signed in as").font(.caption).foregroundStyle(.secondary)
+                        Text(f.identity ?? f.text)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    .help(f.text)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("sidebar-account")
+                case .signedOut:
+                    HStack(spacing: 8) {
+                        Text(f.text)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("sidebar-account")
+                        Spacer(minLength: 4)
+                        if let label = f.actionLabel {
+                            Button(label) { Task { await model.beginSignIn() } }
+                                .controlSize(.small)
+                        }
+                    }
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             SettingsLink {
                 Image(systemName: "gearshape")
             }
             .buttonStyle(.borderless)
-            .help(chrome.settingsLabel)
-            .accessibilityLabel(chrome.settingsLabel)
+            .help(model.chrome.settingsLabel)
+            .accessibilityLabel(model.chrome.settingsLabel)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(.bar)
+    }
+}
+
+/// A failed sign-in's toast: seen wherever the window is, then gone (the
+/// sidebar's foot keeps the reason and Try again).
+struct SignInToastView: View {
+    let model: AppModel
+
+    var body: some View {
+        if let toast = model.signInToast {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(toast.title).font(.headline)
+                    if let body = toast.body {
+                        Text(body).font(.callout).foregroundStyle(.secondary)
+                    }
+                }
+                Button {
+                    model.signInToast = nil
+                } label: {
+                    Image(systemName: "xmark").font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Dismiss")
+            }
+            .padding(12)
+            .frame(width: 300, alignment: .leading)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.separator))
+            .shadow(radius: 8, y: 2)
+            .padding(16)
+            .accessibilityIdentifier("signin-toast")
+            .task(id: toast) {
+                try? await Task.sleep(for: .seconds(15))
+                if model.signInToast == toast { model.signInToast = nil }
+            }
+        }
     }
 }
 
@@ -264,7 +423,7 @@ struct SpaceRowView: View {
                     .font(.callout.monospacedDigit())
                     .foregroundStyle(.secondary)
                 ProgressRing(permille: progress)
-                    .accessibilityLabel(row.statusText)
+                    .accessibilityLabel(CoreMessages.text(row.statusText))
             } else {
                 if let trailing = row.trailing {
                     // The create or the power action failed: why, inline.
@@ -285,7 +444,7 @@ struct SpaceRowView: View {
                 Circle()
                     .fill(color)
                     .frame(width: 7, height: 7)
-                    .accessibilityLabel(row.statusText)
+                    .accessibilityLabel(CoreMessages.text(row.statusText))
             }
         }
         // A Space one of your machines provides sits under that machine.
@@ -349,8 +508,8 @@ struct PowerButton: View {
         }
         .buttonStyle(.borderless)
         .disabled(!button.enabled)
-        .help(button.help)
-        .accessibilityLabel(button.help)
+        .help(CoreMessages.text(button.help))
+        .accessibilityLabel(CoreMessages.text(button.help))
         .accessibilityIdentifier("space-power")
     }
 }
@@ -385,9 +544,11 @@ struct KeyvaultHeader: View {
 
 struct EmptySpaces: View {
     let model: AppModel
+    @State private var stacked = false
 
     var body: some View {
         let chrome = model.chrome
+        let tiles = stacked ? AnyLayout(VStackLayout(spacing: 12)) : AnyLayout(HStackLayout(spacing: 12))
         ContentUnavailableView {
             Label(model.rosterError == nil ? chrome.emptyTitle : "Spaces could not be loaded",
                   systemImage: "desktopcomputer")
@@ -396,7 +557,7 @@ struct EmptySpaces: View {
         } actions: {
             VStack(spacing: 18) {
                 if model.rosterError == nil {
-                    HStack(spacing: 12) {
+                    tiles {
                         tile("os-linux", chrome.emptyAction, chrome.emptyLinuxDetail, .linux)
                         tile("os-macos", chrome.emptyMacosAction, chrome.emptyMacosDetail, .macos)
                     }
@@ -406,6 +567,9 @@ struct EmptySpaces: View {
             }
             .padding(.top, 10)
         }
+        // Neither the actions slot nor this view reports the pane width, so measure a pane-filling frame.
+        .frame(maxWidth: .infinity)
+        .onGeometryChange(for: Bool.self) { $0.size.width < 640 } action: { stacked = $0 }
     }
 
     private func tile(_ icon: String, _ name: String, _ detail: String, _ os: AppSpaceOs) -> some View {

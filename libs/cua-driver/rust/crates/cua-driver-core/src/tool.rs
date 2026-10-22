@@ -166,9 +166,15 @@ impl ToolDef {
         let input_schema = advertised_runtime_input_schema(&self.name, &self.input_schema);
         let caps = advertised_capabilities_for(&self.name, &input_schema);
         let risk = crate::authorization::risk_metadata_json(&self.name);
+        // Tools that most often need a guide point at `get_guide`, so an agent
+        // that never reads the skill still learns where the guidance lives.
+        let description = match crate::guide::description_hint(&self.name) {
+            Some(hint) => format!("{} {hint}", self.description),
+            None => self.description.clone(),
+        };
         let mut entry = serde_json::json!({
             "name": self.name,
-            "description": self.description,
+            "description": description,
             "inputSchema": input_schema,
             "annotations": {
                 "readOnlyHint": self.read_only,
@@ -214,7 +220,7 @@ fn unknown_argument(def: &ToolDef, args: &Value) -> Option<String> {
     if unknown.is_empty() {
         return None;
     }
-    // A direct action named by role/name: that targeting lives in run_actions.
+    // A direct action named by role/name: that targeting lives in run_steps.
     const NAME_TARGET: &[&str] = &["role", "name", "label", "app", "window", "nth"];
     let name_targeted = crate::batch_tools::BATCHABLE_TOOLS.contains(&def.name.as_str())
         && unknown.iter().all(|name| NAME_TARGET.contains(name));
@@ -234,8 +240,8 @@ fn unknown_argument(def: &ToolDef, args: &Value) -> Option<String> {
     };
     let hint = if name_targeted {
         format!(
-            ". To target by role/name/app/window, send the same arguments as one run_actions \
-             step: run_actions {{\"steps\":[{{\"{}\": {{...}}}}]}}",
+            ". To target by role/name/app/window, send the same arguments as one run_steps \
+             step: run_steps {{\"steps\":[{{\"{}\": {{...}}}}]}}",
             def.name
         )
     } else {
@@ -249,14 +255,39 @@ fn unknown_argument(def: &ToolDef, args: &Value) -> Option<String> {
 }
 
 /// Rewrite argument spellings models guess into the advertised ones, before
-/// the closed schema is checked. Shared by dispatch and `run_actions` step
+/// the closed schema is checked. Shared by dispatch and `run_steps` step
 /// validation, so a batch step accepts what a direct call accepts. `Err` is a
 /// refusal detail for an alias that cannot be translated.
 pub(crate) fn normalize_argument_aliases(tool_name: &str, args: &mut Value) -> Result<(), String> {
+    if cfg!(target_os = "linux") && tool_name == "set_value" {
+        if let Some(value @ Value::Number(_)) = args.get_mut("value") {
+            *value = Value::String(value.to_string());
+        }
+    }
     normalize_zoom_args(tool_name, args);
     normalize_key_args(tool_name, args);
     normalize_menu_args(tool_name, args);
-    normalize_scroll_args(tool_name, args)
+    normalize_scroll_args(tool_name, args)?;
+    normalize_set_config_args(tool_name, args)
+}
+
+/// `{key, value}` is unadvertised; rewrite it before the closed schema rejects `key`.
+fn normalize_set_config_args(tool_name: &str, args: &mut Value) -> Result<(), String> {
+    let Some(object) = args.as_object_mut().filter(|_| tool_name == "set_config") else {
+        return Ok(());
+    };
+    match (object.remove("key"), object.remove("value")) {
+        (None, None) => Ok(()),
+        (Some(Value::String(key)), Some(value))
+            if !key.starts_with('_') && !matches!(key.as_str(), "key" | "value" | "session") =>
+        {
+            object.insert(key, value);
+            Ok(())
+        }
+        (Some(Value::String(key)), Some(_)) => Err(format!("key '{key}' is reserved")),
+        (Some(_), _) => Err("key requires an exact value".into()),
+        (None, Some(_)) => Err("value requires an exact key".into()),
+    }
 }
 
 /// `invoke_menu` takes `path` as a list of labels. Models also send
@@ -503,7 +534,7 @@ fn normalize_scroll_args(tool_name: &str, args: &mut Value) -> Result<(), String
         (true, true) => {
             return Err(format!(
                 "scroll moves along one axis per call, got dx={dx} and dy={dy}. Pass only dx or \
-                 dy (or direction and amount), or use two scroll steps in run_actions."
+                 dy (or direction and amount), or use two scroll steps in run_steps."
             ))
         }
         (false, false) => {
@@ -591,8 +622,6 @@ pub(crate) fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -
     if !crate::action_target::supports_typed_target(tool_name) {
         return schema;
     }
-    // Reuse the portable contract's exact tagged-union schema while retaining
-    // the live runtime's broader legacy `scope=window|desktop` decoder.
     if let Some(portable) = cua_driver_contract::tool_contract(tool_name) {
         if let Some(portable_properties) = portable
             .input_schema
@@ -605,6 +634,30 @@ pub(crate) fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -
         }
     }
     schema
+}
+
+/// Tools renamed before 0.35.0, as (old name, new name). The old name still
+/// dispatches to the new tool, but it is not registered, so tools/list shows
+/// only the new name, and its result ends with a one-line deprecation note.
+/// To be removed in a future release.
+pub const RENAMED_TOOLS: &[(&str, &str)] = &[("run_actions", crate::batch_tools::RUN_STEPS_TOOL)];
+
+/// `~/.cua-driver/config.json` key that turns `run_script` off when `true`.
+pub const DISABLE_CONFIG_KEY: &str = "disable_run_script";
+/// Legacy `~/.cua-driver/config.json` key. `false` turns `run_script` off;
+/// `true` changes nothing.
+pub const LEGACY_CONFIG_KEY: &str = "experimental_script";
+
+/// The current name of a renamed tool, or `None` when `name` is not an old name.
+pub fn renamed_tool(name: &str) -> Option<&'static str> {
+    RENAMED_TOOLS
+        .iter()
+        .find(|(old, _)| *old == name)
+        .map(|(_, new)| *new)
+}
+
+fn deprecated_name_note(old: &str, new: &str) -> String {
+    format!("Note: `{old}` is deprecated and will be removed in a future release; call `{new}` instead.")
 }
 
 /// Centralised tool name → capability tokens map. Lookup is by name so
@@ -621,6 +674,8 @@ pub(crate) fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -
 ///   `input.pointer.click.right`, `input.pointer.click.double`,
 ///   `input.pointer.drag`, `input.pointer.scroll`,
 ///   `input.pointer.move`, `input.pointer.button` (raw down/up)
+/// - `input.scroll.coordinates` (the live scroll schema accepts numeric x/y;
+///   does not imply focus-free background delivery)
 /// - `input.keyboard.type`, `input.keyboard.hotkey`,
 ///   `input.keyboard.press`
 /// - `input.delivery_mode` (the live tool schema accepts the shared
@@ -651,7 +706,7 @@ pub(crate) fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -
 /// - `browser.state`, `browser.prepare`, `browser.navigate`,
 ///   `browser.input.click`, `browser.input.type`, `browser.input.files`,
 ///   `browser.dialog`
-/// - `driver.update_check`, `driver.probe`
+/// - `driver.update_check`, `driver.guide`, `driver.probe`
 /// - `history.status`, `history.query`
 ///
 /// Tools with no entry get `[]` — that's fine, it just means
@@ -770,7 +825,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "stop_recording" => &["recording.stop"],
         "get_recording_state" => &["recording.state"],
         "replay_trajectory" => &["recording.replay"],
-        "run_actions" => &["input.batch"],
+        "run_steps" => &["input.batch"],
         "run_script" => &["input.script"],
         "install_ffmpeg" => &["recording.install_dependency"],
         "install_extension" => &["extension.install"],
@@ -788,6 +843,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "browser_navigate" => &["browser.navigate"],
         "browser_click" => &["browser.input.click"],
         "browser_type" => &["browser.input.type"],
+        "browser_select" => &["browser.input.select"],
         "browser_dialog" => &["browser.dialog"],
         "browser_set_input_files" => &["browser.input.files"],
         "browser_download" => &["browser.download"],
@@ -795,6 +851,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
 
         // ── driver self-service ──────────────────────────────────────
         "check_for_update" => &["driver.update_check"],
+        "get_guide" => &["driver.guide"],
         "probe" => &["driver.probe"],
 
         // ── encrypted local Computer History ─────────────────────────
@@ -810,10 +867,10 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
 /// Capabilities advertised by a concrete runtime tool definition.
 ///
 /// Most capabilities are stable properties of a tool name and come from the
-/// typed portable contract (or the legacy runtime-only map). Delivery mode is
-/// different: the typed desktop SDK intentionally exposes a narrower,
-/// desktop-only input while the live platform schemas additionally accept
-/// window-targeted `delivery_mode`. Deriving this one token from the concrete
+/// typed portable contract (or the legacy runtime-only map). Delivery mode and
+/// scroll coordinates are derived from the live schema. The typed desktop SDK
+/// exposes a narrower, desktop-only input while the live schemas additionally accept
+/// window-targeted `delivery_mode`. Deriving these tokens from the concrete
 /// schema keeps `tools/list` truthful on every platform and prevents either
 /// overclaiming a tool that cannot accept the field or omitting support from a
 /// richer live schema.
@@ -826,6 +883,16 @@ pub fn advertised_capabilities_for(tool_name: &str, input_schema: &Value) -> Vec
             .any(|capability| capability == "input.delivery_mode")
     {
         capabilities.push("input.delivery_mode".into());
+    }
+    if tool_name == "scroll"
+        && ["x", "y"].iter().all(|field| {
+            matches!(
+                input_schema["properties"][field]["type"].as_str(),
+                Some("number" | "integer")
+            )
+        })
+    {
+        capabilities.push("input.scroll.coordinates".into());
     }
     capabilities
 }
@@ -1233,6 +1300,10 @@ impl ToolRegistry {
         self.tools.insert(name, tool);
     }
 
+    pub fn is_known_tool(&self, name: &str) -> bool {
+        name == "type_text_chars" || self.tools.contains_key(renamed_tool(name).unwrap_or(name))
+    }
+
     pub fn retain_session_end_hook(
         &mut self,
         registration: crate::session::SessionEndHookRegistration,
@@ -1301,26 +1372,30 @@ impl ToolRegistry {
         self.register(Box::new(ListSessionsTool));
         self.register(Box::new(GetSessionStateTool));
         self.register(Box::new(EndSessionTool));
+        self.register(Box::new(crate::guide::GetGuideTool));
         self.register_batch_tools();
     }
 
-    /// Register `run_actions`, which re-enters this registry for every step.
+    /// Register `run_steps`, which re-enters this registry for every step.
     /// Called from [`Self::register_session_tools`] so every platform that
     /// registers sessions gets it; [`Self::init_self_weak`] supplies the
     /// registry handle, as for `replay_trajectory`.
     fn register_batch_tools(&mut self) {
-        self.register(Box::new(crate::batch_tools::RunActionsTool::new(
+        self.register(Box::new(crate::batch_tools::RunStepsTool::new(
             self.replay_registry.clone(),
         )));
-        // Experimental and opt-in: only when the operator turned it on.
+        // On by default; the operator can turn it off (see script_tool).
         #[cfg(feature = "script")]
-        if crate::script_tool::enabled() {
-            self.register_script_tool();
+        match crate::script_tool::disabled_by() {
+            None => self.register_script_tool(),
+            Some(setting) => tracing::debug!("run_script not offered: turned off by {setting}"),
         }
+        #[cfg(not(feature = "script"))]
+        tracing::debug!("run_script not offered: built without the `script` engine feature");
     }
 
-    /// Register the experimental `run_script` tool, which, like
-    /// `run_actions`, re-enters this registry for every driver call.
+    /// Register the `run_script` tool, which, like
+    /// `run_steps`, re-enters this registry for every driver call.
     #[cfg(feature = "script")]
     pub fn register_script_tool(&mut self) {
         self.register(Box::new(crate::script_tool::RunScriptTool::new(
@@ -1606,7 +1681,32 @@ impl ToolRegistry {
             .await
     }
 
+    /// The canonical native dispatch boundary. Every refusal and every
+    /// unconfirmed action leaves it with a `hint` (and a `next_call` when one
+    /// exists); see [`crate::recovery_hint`].
     async fn invoke_authorized(
+        &self,
+        name: &str,
+        args: Value,
+        context: &crate::session_authorization::EffectiveAuthorizationContext,
+        evidence: &TrustedInvocationEvidence,
+    ) -> ToolResult {
+        let seed = crate::recovery_hint::Seed::from_args(&args);
+        let session = args
+            .get("session")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let in_batch = crate::step_pacing::in_batch();
+        let mut result = self
+            .invoke_authorized_unannotated(name, args, context, evidence)
+            .await;
+        let tool = renamed_tool(name).unwrap_or(name);
+        crate::recovery_hint::annotate(tool, &seed, &mut result);
+        crate::batch_nudge::annotate(tool, session.as_deref(), in_batch, &mut result);
+        result
+    }
+
+    async fn invoke_authorized_unannotated(
         &self,
         name: &str,
         mut args: Value,
@@ -1619,6 +1719,7 @@ impl ToolRegistry {
         // fields carry registry-internal attestations and must not be
         // caller-forgeable here.
         crate::tool_args::sanitize_reserved_args(&mut args);
+        let original_name = name;
 
         if crate::session::is_runtime_scope_suspended(&context.runtime_scope_key()) {
             return protected_refusal(
@@ -1643,7 +1744,7 @@ impl ToolRegistry {
                 eprintln!("[cua-driver-rs] deprecated tool name 'type_text_chars' — use 'type_text' instead.");
                 "type_text"
             }
-            other => other,
+            other => renamed_tool(other).unwrap_or(other),
         };
 
         let Some(tool) = self.tools.get(resolved_name) else {
@@ -1841,6 +1942,30 @@ impl ToolRegistry {
                 "os_permission_prompt_requires_trusted_host",
                 "operating-system permission prompts must be initiated by a trusted host outside the agent tool path; call check_permissions with prompt=false to inspect state",
             );
+        }
+
+        if resolved_name == "set_config" && args.get("capture_scope").is_some() {
+            return ToolResult::error(
+                "config key 'capture_scope' is retired; select a window or desktop target on each action",
+            )
+            .with_structured(serde_json::json!({
+                "code": "config_key_retired",
+                "key": "capture_scope",
+                "replacement": "action.target",
+            }));
+        }
+        if let Some(key) = [DISABLE_CONFIG_KEY, LEGACY_CONFIG_KEY]
+            .into_iter()
+            .find(|key| resolved_name == "set_config" && args.get(key).is_some())
+        {
+            return ToolResult::error(format!(
+                "config key '{key}' is set by whoever runs cua-driver, in \
+                 ~/.cua-driver/config.json or the environment, not through set_config"
+            ))
+            .with_structured(serde_json::json!({
+                "code": "config_key_operator_only",
+                "key": key,
+            }));
         }
 
         if let Some(detail) = unknown_argument {
@@ -2127,7 +2252,7 @@ impl ToolRegistry {
                     | "stop_recording"
                     | "get_recording_state"
                     | "replay_trajectory"
-                    | "run_actions"
+                    | "run_steps"
                     | "run_script"
                     | "start_session"
                     | "end_session"
@@ -2188,6 +2313,7 @@ impl ToolRegistry {
         // Desktop pixels read off a capped get_desktop_state image are mapped
         // back to the uncapped capture before any platform interprets them.
         crate::desktop_capture_scale::map_desktop_args(&mut args);
+        crate::tool_activity::note_tool_activity();
         let mut result = crate::recording::scope_dispatch_click_capture(
             pending_turn.as_ref(),
             tool.invoke(args.clone()),
@@ -2349,6 +2475,13 @@ impl ToolRegistry {
                     timestamp_ms: now_ms(),
                 });
             }
+        }
+
+        if renamed_tool(original_name).is_some() {
+            result.content.push(Content::text(deprecated_name_note(
+                original_name,
+                resolved_name,
+            )));
         }
 
         result
@@ -2943,20 +3076,6 @@ impl ToolRegistry {
         context: &crate::session_authorization::EffectiveAuthorizationContext,
         lifecycle_session: Option<&str>,
     ) -> Result<(), ToolResult> {
-        if args.get("capture_scope").is_some()
-            || args.get("key").and_then(Value::as_str) == Some("capture_scope")
-        {
-            return Err(
-                ToolResult::error(
-                    "config key 'capture_scope' is retired; select a window or desktop target on each action",
-                )
-                .with_structured(serde_json::json!({
-                    "code": "config_key_retired",
-                    "key": "capture_scope",
-                    "replacement": "action.target",
-                })),
-            );
-        }
         if context.mode() == crate::authorization::PermissionMode::Unrestricted
             && context.capability_manifest().is_none()
         {
@@ -2983,25 +3102,8 @@ impl ToolRegistry {
         }
 
         let mut exact = serde_json::Map::new();
-        if let Some(key) = args.get("key").and_then(Value::as_str) {
-            if matches!(key, "key" | "value" | "session" | "_session_id")
-                || !properties.contains_key(key)
-            {
-                return Err(protected_scope_refusal(&format!(
-                    "set_config key '{key}' is not present in the concrete tool schema"
-                )));
-            }
-            let value = args
-                .get("value")
-                .ok_or_else(|| protected_scope_refusal("set_config key requires an exact value"))?;
-            exact.insert(key.to_owned(), value.clone());
-        } else if args.get("value").is_some() {
-            return Err(protected_scope_refusal(
-                "set_config value requires an exact key",
-            ));
-        }
         for (key, value) in object {
-            if matches!(key.as_str(), "session" | "key" | "value") || key.starts_with('_') {
+            if key == "session" || key.starts_with('_') {
                 continue;
             }
             exact.insert(key.clone(), value.clone());
@@ -3390,6 +3492,7 @@ fn session_requiring_tool(tool_name: &str) -> bool {
         tool_name,
         "check_permissions"
             | "health_report"
+            | "get_guide"
             | "get_session"
             | "list_sessions"
             | "get_session_state"
@@ -4899,9 +5002,18 @@ resources:
                 .invoke_with_context("click", args, standard_context())
                 .await;
             assert_eq!(result.is_error, Some(true));
+            let mut structured = result.structured_content.expect("structured refusal");
+            // The refusal also carries a recovery hint (see `recovery_hint`).
+            let hint = structured
+                .as_object_mut()
+                .and_then(|object| object.remove("hint"))
+                .expect("a desktop background refusal carries a hint");
+            assert!(hint
+                .as_str()
+                .is_some_and(|hint| hint.contains("target {kind:\"window\"")));
             assert_eq!(
-                result.structured_content,
-                Some(serde_json::json!({
+                structured,
+                serde_json::json!({
                     "code": "background_unavailable",
                     "effect": "refused",
                     "suggestion": "Retry this action with delivery_mode:\"foreground\".",
@@ -4909,7 +5021,7 @@ resources:
                         "recommended": "foreground",
                         "reason": cua_driver_contract::ClickInput::DESKTOP_BACKGROUND_MESSAGE,
                     },
-                }))
+                })
             );
             assert_eq!(
                 hits.load(Ordering::SeqCst),
@@ -5541,10 +5653,23 @@ resources:
                     "value": true,
                     "session": "config"
                 }),
-                context,
+                context.clone(),
             )
             .await;
         assert_eq!(unknown.is_error, Some(true));
+        for key in ["disable_run_script", "experimental_script"] {
+            for args in [
+                serde_json::json!({"key": key, "value": true}),
+                serde_json::json!({key: true}),
+            ] {
+                let refused = registry
+                    .invoke_with_context("set_config", args.clone(), context.clone())
+                    .await;
+                let structured = refused.structured_content.unwrap();
+                assert_eq!(structured["code"], "config_key_operator_only", "{args}");
+                assert_eq!(structured["key"], key, "{args}");
+            }
+        }
         assert_eq!(hits.load(Ordering::SeqCst), 3);
         assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
     }
@@ -5685,9 +5810,29 @@ resources:
         let object = structured.as_object().expect("ActionResult is an object");
         assert_eq!(
             object.keys().map(String::as_str).collect::<Vec<_>>(),
-            ["delivery", "effect", "route", "summary"]
+            [
+                "delivery",
+                "effect",
+                "hint",
+                "next_call",
+                "route",
+                "summary"
+            ]
         );
         assert_eq!(structured["effect"], "unverifiable");
+        // An unconfirmed click says what to read next, built from the request.
+        assert_eq!(
+            structured["next_call"],
+            serde_json::json!({
+                "tool": "get_window_state",
+                "arguments": {
+                    "pid": 42,
+                    "window_id": 7,
+                    "session": "projection",
+                    "since": "latest",
+                },
+            })
+        );
         assert_eq!(structured["delivery"]["mode"], "unknown");
         // The producer's text travels inside the closed contract for clients
         // that surface only structuredContent.
@@ -6309,6 +6454,7 @@ mod capability_tests {
         // misc
         "page",
         "check_for_update",
+        "get_guide",
         "probe",
         // browser-tool v1
         "get_browser_state",
@@ -6316,6 +6462,7 @@ mod capability_tests {
         "browser_navigate",
         "browser_click",
         "browser_type",
+        "browser_select",
         "browser_dialog",
         "browser_set_input_files",
         "browser_download",
@@ -6337,6 +6484,7 @@ mod capability_tests {
         "input.pointer.click.double",
         "input.pointer.drag",
         "input.pointer.scroll",
+        "input.scroll.coordinates",
         "input.pointer.move",
         "input.pointer.button",
         // keyboard
@@ -6406,12 +6554,14 @@ mod capability_tests {
         "browser.navigate",
         "browser.input.click",
         "browser.input.type",
+        "browser.input.select",
         "browser.input.files",
         "browser.dialog",
         "browser.download",
         "browser.input.pointer",
         // driver self
         "driver.update_check",
+        "driver.guide",
         "driver.probe",
         // encrypted local history
         "history.status",
@@ -6621,6 +6771,61 @@ mod capability_tests {
             .expect("capabilities array")
             .iter()
             .any(|capability| capability == "input.delivery_mode"));
+    }
+
+    #[test]
+    fn to_list_entry_advertises_scroll_coordinates_only_when_accepted() {
+        use serde_json::json;
+
+        for (name, properties, expected) in [
+            (
+                "scroll",
+                json!({"x": {"type": "number"}, "y": {"type": "number"}}),
+                true,
+            ),
+            (
+                "scroll",
+                json!({"x": {"type": "integer"}, "y": {"type": "integer"}}),
+                true,
+            ),
+            ("scroll", json!({}), false),
+            ("scroll", json!({"x": {"type": "number"}}), false),
+            ("scroll", json!({"y": {"type": "number"}}), false),
+            (
+                "scroll",
+                json!({"x": {"type": "string"}, "y": {"type": "number"}}),
+                false,
+            ),
+            (
+                "scroll",
+                json!({"x": {"type": "number"}, "y": {"type": "string"}}),
+                false,
+            ),
+            (
+                "click",
+                json!({"x": {"type": "number"}, "y": {"type": "number"}}),
+                false,
+            ),
+            (
+                "unknown",
+                json!({"x": {"type": "number"}, "y": {"type": "number"}}),
+                false,
+            ),
+        ] {
+            let mut def = dummy_def(name);
+            def.input_schema = json!({"type": "object", "properties": properties});
+            let entry = def.to_list_entry();
+            let capabilities = entry["capabilities"].as_array().unwrap();
+            assert_eq!(
+                capabilities
+                    .iter()
+                    .filter(|capability| *capability == "input.scroll.coordinates")
+                    .count(),
+                usize::from(expected),
+                "{name}: {}",
+                def.input_schema
+            );
+        }
     }
 
     #[test]
@@ -6931,7 +7136,7 @@ mod argument_shape_tests {
     }
 
     #[test]
-    fn a_direct_action_named_by_role_points_to_run_actions() {
+    fn a_direct_action_named_by_role_points_to_run_steps() {
         let click = ToolDef {
             name: "click".into(),
             description: String::new(),
@@ -6943,9 +7148,9 @@ mod argument_shape_tests {
         };
         let detail =
             unknown_argument(&click, &json!({"pid": 1, "role": "button", "name": "OK"})).unwrap();
-        assert!(detail.contains("one run_actions step"), "{detail}");
+        assert!(detail.contains("one run_steps step"), "{detail}");
         let other = unknown_argument(&click, &json!({"pid": 1, "bogus": 1})).unwrap();
-        assert!(!other.contains("run_actions"), "{other}");
+        assert!(!other.contains("run_steps"), "{other}");
     }
 
     #[test]
@@ -7096,6 +7301,75 @@ mod argument_shape_tests {
         let mut click = json!({"dy": 4});
         normalize_argument_aliases("click", &mut click).unwrap();
         assert_eq!(click, json!({"dy": 4}));
+    }
+
+    #[test]
+    fn set_config_key_value_alias_matches_the_direct_field_for_every_key() {
+        for key in [
+            "capture_mode",
+            "max_image_dimension",
+            "experimental_pip",
+            "experimental_pip_geometry",
+            "cursor.motion",
+            "cursor.motion.style",
+            "cursor.motion.timing",
+            "cursor.motion.effects.trail",
+            "cursor.motion.effects.glow",
+            "cursor.motion.effects.magnet",
+            "cursor.motion.effects.ripple",
+            "cursor.motion.effects.squish",
+        ] {
+            let mut aliased = json!({"key": key, "value": "default"});
+            normalize_argument_aliases("set_config", &mut aliased).unwrap();
+            assert_eq!(aliased, json!({key: "default"}), "{key}");
+        }
+        let mut bare_key = json!({"key": "capture_mode"});
+        let error = normalize_argument_aliases("set_config", &mut bare_key).unwrap_err();
+        assert!(error.contains("exact value"), "{error}");
+        let mut bare_value = json!({"value": 1});
+        let error = normalize_argument_aliases("set_config", &mut bare_value).unwrap_err();
+        assert!(error.contains("exact key"), "{error}");
+
+        let mut unknown = json!({"key": "not_a_key", "value": 1});
+        normalize_argument_aliases("set_config", &mut unknown).unwrap();
+        let def = ToolDef {
+            name: "set_config".into(),
+            description: String::new(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {"max_image_dimension": {"type": "integer"}},
+                "additionalProperties": false
+            }),
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        };
+        let detail = unknown_argument(&def, &unknown).unwrap();
+        assert!(detail.contains("not_a_key"), "{detail}");
+        let mut retired = json!({"key": "capture_scope", "value": "desktop"});
+        normalize_argument_aliases("set_config", &mut retired).unwrap();
+        assert_eq!(retired, json!({"capture_scope": "desktop"}));
+    }
+
+    #[test]
+    fn set_config_alias_refuses_reserved_keys_before_authorization() {
+        for key in [
+            "_session_id",
+            "_transport_session_id",
+            "_public_session_label",
+            "_other",
+            "key",
+            "value",
+            "session",
+        ] {
+            let mut args = json!({"key": key, "value": "forged", "max_image_dimension": 1});
+            let error = normalize_argument_aliases("set_config", &mut args).unwrap_err();
+            assert_eq!(error, format!("key '{key}' is reserved"));
+            let object = args.as_object().unwrap();
+            assert!(object.keys().all(|name| !name.starts_with('_')), "{args}");
+            assert!(object.get(key).is_none(), "{key} was written: {args}");
+        }
     }
 
     #[test]

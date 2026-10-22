@@ -25,7 +25,8 @@ final class CuaSpacesMacUITests: XCTestCase {
 
     func testSidebarListsSpacesByLocation() {
         let app = launch()
-        XCTAssertTrue(app.staticTexts["Aurora"].waitForExistence(timeout: 10))
+        // Names show as typed (the core no longer title-cases them).
+        XCTAssertTrue(app.staticTexts["aurora"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Cua Cloud"].exists)
         XCTAssertTrue(app.staticTexts["Connected"].exists)
         XCTAssertTrue(app.staticTexts["All Items"].exists, "the Keyvault categories are in the sidebar")
@@ -42,18 +43,19 @@ final class CuaSpacesMacUITests: XCTestCase {
         XCTAssertTrue(app.otherElements["wizard-summary"].exists || app.staticTexts["Runs on"].exists)
     }
 
-    func testOnboardingStartsWithWelcome() {
+    /// The first run is the shared web onboarding in the New UI window, not
+    /// a view of the native app: no native Welcome, no native main window.
+    func testFirstRunOpensTheNewUIWindow() {
         let app = launch(onboarded: false)
-        XCTAssertTrue(app.staticTexts["Welcome to Cua Spaces"].waitForExistence(timeout: 10))
-        app.buttons["Get started"].click()
-        // First run no longer has a Command line page: Sign in follows Welcome.
-        XCTAssertTrue(app.staticTexts["Connect your machines and your team."].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.windows["cua-new-ui"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.staticTexts["Welcome to Cua Spaces"].exists, "no native onboarding")
+        XCTAssertFalse(app.staticTexts["aurora"].exists, "the native main window stays closed")
     }
 
     func testSpaceDetailShowsFactsAndTheDropWell() {
         let app = launch()
-        XCTAssertTrue(app.staticTexts["Aurora"].waitForExistence(timeout: 10))
-        app.staticTexts["Aurora"].click()
+        XCTAssertTrue(app.staticTexts["aurora"].waitForExistence(timeout: 10))
+        app.staticTexts["aurora"].click()
         XCTAssertTrue(app.staticTexts["Identifier"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Drop a file or window"].exists)
     }

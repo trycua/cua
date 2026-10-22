@@ -5,7 +5,7 @@ import CuaSDK
 import CuaSpacesFFI
 import SwiftUI
 
-/// The Settings window: General (the core's settings page), Devices,
+/// The Settings window: General (the core's settings page), Agents (provider keys), Devices,
 /// Experiments and About (with the updater).
 struct SettingsScene: View {
     @Bindable var model: AppModel
@@ -15,6 +15,9 @@ struct SettingsScene: View {
             SettingsView(model: model)
                 .tabItem { Label("General", systemImage: "gearshape") }
                 .tag(SettingsTab.general)
+            AgentKeysSettingsView(keys: model.agentKeys)
+                .tabItem { Label("Agents", systemImage: "key") }
+                .tag(SettingsTab.agents)
             DevicesSettingsView(devices: model.devices)
                 .tabItem { Label(model.devices.view.labels.title, systemImage: "laptopcomputer.and.iphone") }
                 .tag(SettingsTab.devices)
@@ -391,5 +394,122 @@ struct DevicesBanner: View {
             .overlay(alignment: .bottom) { Divider() }
             .accessibilityIdentifier("devices-banner")
         }
+    }
+}
+
+/// The relay allowance for the month is used up: one line above the main
+/// window with Upgrade, until dismissed. Nothing stops at the limit, so it
+/// only says so. The words are the core's (`appRelayUsageView`).
+struct RelayAllowanceBanner: View {
+    @Bindable var devices: DevicesModel
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        if let notice = devices.relayNotice {
+            HStack(spacing: 8) {
+                Text(notice.text).lineLimit(2).foregroundStyle(.secondary).help(notice.text)
+                Spacer(minLength: 8)
+                if let url = notice.upgradeUrl.flatMap(URL.init(string:)) {
+                    Button(notice.upgrade) {
+                        devices.recordUpsell("upsell_meter_click")
+                        openURL(url)
+                    }
+                        .controlSize(.small)
+                        .accessibilityIdentifier("relay-upgrade")
+                }
+                Button {
+                    devices.dismissRelayNotice()
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .accessibilityLabel(notice.dismiss)
+                .accessibilityIdentifier("relay-dismiss")
+            }
+            .font(.callout)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(.bar)
+            .overlay(alignment: .bottom) { Divider() }
+            .accessibilityIdentifier("relay-allowance")
+            .onAppear { devices.recordUpsell("upsell_meter_shown") }
+        }
+    }
+}
+
+/// Sharing is for teams (CUA-1883): one line, once, saying who can no longer
+/// open a shared computer, with "Invite to your team". The words are the
+/// app core's; closing it tells the account it was seen.
+struct ShareRemovalBanner: View {
+    @Bindable var model: AppModel
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        if let note = model.shareRemovalNote {
+            HStack(spacing: 8) {
+                Text(note.text).lineLimit(2).foregroundStyle(.secondary).help(note.text)
+                Spacer(minLength: 8)
+                if let url = URL(string: note.action.url) {
+                    Button(note.action.label) { openURL(url) }
+                        .controlSize(.small)
+                        .accessibilityIdentifier("share-removal-invite")
+                }
+                Button {
+                    model.dismissShareRemovalNote()
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .accessibilityLabel(note.dismiss)
+                .accessibilityIdentifier("share-removal-dismiss")
+            }
+            .font(.callout)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(.bar)
+            .overlay(alignment: .bottom) { Divider() }
+            .accessibilityIdentifier("share-removal")
+        }
+    }
+}
+
+/// Settings → Account: the plan and the relay allowance this month, where
+/// it applies. The plan card is always there, never a prompt: Free offers
+/// Pro and a team; each button opens its checkout on the account app.
+struct RelayUsageRow: View {
+    let view: AppRelayUsageView
+    var onPlanLink: () -> Void = {}
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        LabeledContent {
+            Text(view.plan).foregroundStyle(.secondary)
+        } label: {
+            Text(view.label)
+            Text(view.line)
+        }
+        .accessibilityIdentifier("settings-relay-usage")
+        LabeledContent {
+            HStack {
+                if let link = view.planCard.secondary { planButton(link, id: "plan-secondary") }
+                if let link = view.planCard.primary { planButton(link, id: "plan-primary") }
+            }
+        } label: {
+            Text(view.planCard.label)
+            Text(view.planCard.detail)
+        }
+        .accessibilityIdentifier("settings-plan-card")
+    }
+
+    private func planButton(_ link: AppPlanLink, id: String) -> some View {
+        Button(link.label) {
+            guard let url = URL(string: link.url) else { return }
+            onPlanLink()
+            openURL(url)
+        }
+        .controlSize(.small)
+        .accessibilityIdentifier(id)
     }
 }

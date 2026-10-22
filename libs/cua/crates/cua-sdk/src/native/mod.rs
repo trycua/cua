@@ -7,7 +7,6 @@ mod auth;
 mod cloud;
 mod config;
 mod cua;
-mod fleet;
 #[cfg(feature = "host")]
 mod host;
 mod image;
@@ -34,7 +33,6 @@ pub use auth::*;
 pub use cloud::*;
 pub use config::*;
 pub use cua::*;
-pub use fleet::*;
 #[cfg(feature = "host")]
 pub use host::*;
 pub use image::*;
@@ -86,6 +84,16 @@ where
         .map_err(|e| CuaError::Internal(format!("SDK task failed: {e}")))?
 }
 
+/// A not-found message as [`CuaError::NotFound`] carries it: its display
+/// says "not found: …" already, so a cua-spaces message that ends with "not
+/// found" ("{what} not found") loses that ending instead of saying it twice.
+pub(crate) fn not_found_message(message: String) -> String {
+    match message.strip_suffix(" not found") {
+        Some(what) if !what.trim().is_empty() => what.to_string(),
+        _ => message,
+    }
+}
+
 impl From<cua_daemon::Error> for CuaError {
     fn from(e: cua_daemon::Error) -> Self {
         use cua_daemon::Error as E;
@@ -93,15 +101,12 @@ impl From<cua_daemon::Error> for CuaError {
         match e {
             E::InvalidArgument(_) => CuaError::InvalidArgument(m),
             E::InvalidPlacement { .. } => CuaError::InvalidPlacement(m),
-            E::NotFound(_) => CuaError::NotFound(m),
+            E::NotFound(_) => CuaError::NotFound(not_found_message(m)),
             E::AmbiguousSandbox { .. } => CuaError::AmbiguousSandbox(m),
             E::ProviderNotConfigured(_) => CuaError::ProviderNotConfigured(m),
             E::Unsupported(_) => CuaError::Unsupported(m),
             E::SpacesdNotAvailable(_) => CuaError::SpacesdNotAvailable(m),
             E::Timeout(_) => CuaError::Timeout(m),
-            E::Fleet(_) => CuaError::Fleet(m),
-            E::FleetAdmissionDenied(_) => CuaError::FleetAdmissionDenied(m),
-            E::CloudCreditExhausted(_) => CuaError::CloudCreditExhausted(m),
             E::Cloud(c) => CuaError::Cloud(c),
             E::Runtime(_) => CuaError::Runtime(m),
             E::Env(_) => CuaError::Env(m),
@@ -112,8 +117,6 @@ impl From<cua_daemon::Error> for CuaError {
             E::CapabilityMissing(_) => CuaError::CapabilityMissing(m),
             E::HostCapabilityMissing(_) => CuaError::HostCapabilityMissing(m),
             E::TeleportRefused(_) => CuaError::TeleportRefused(m),
-            E::PoolSpecMismatch(_) => CuaError::PoolSpecMismatch(m),
-            E::ClaimSecretsNotDelivered(_) => CuaError::ClaimSecretsNotDelivered(m),
             E::InsufficientDisk(_) => CuaError::InsufficientDisk(m),
             E::Cancelled(_) => CuaError::Cancelled(m),
             E::Internal(_) => CuaError::Internal(m),
@@ -139,12 +142,6 @@ impl From<cua_spacesd_client::Error> for CuaError {
             E::Io(_) => CuaError::Internal(m),
             _ => CuaError::Env(m),
         }
-    }
-}
-
-impl From<cua_fleet::Error> for CuaError {
-    fn from(e: cua_fleet::Error) -> Self {
-        cua_daemon::Error::from(e).into()
     }
 }
 
@@ -235,5 +232,24 @@ pub(crate) mod test_env {
                 }
             }
         }
+    }
+}
+
+#[cfg(all(test, feature = "spaces"))]
+mod not_found_tests {
+    use super::*;
+
+    /// "Run on" a device that is no host: the create's error says "not
+    /// found" once, whether it came from the embedded runtime or the daemon.
+    #[test]
+    fn a_missing_machine_says_not_found_once() {
+        let what = "a computer matching \"dev_22\" among your computers (\"gamma-4 Mac Studio\" (host:96fe))";
+        let embedded: CuaError = cua_spaces::Error::NotFound(what.into()).into();
+        assert_eq!(embedded.to_string(), format!("not found: {what}"));
+        let daemon: CuaError = cua_daemon::Error::NotFound(format!("{what} not found")).into();
+        assert_eq!(daemon.to_string(), format!("not found: {what}"));
+        // A message that is only the word stays as it is.
+        assert_eq!(not_found_message(" not found".into()), " not found");
+        assert_eq!(not_found_message("local:box".into()), "local:box");
     }
 }

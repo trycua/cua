@@ -36,6 +36,8 @@ struct LineRow: View {
 /// access to this computer. Every word is the app core's.
 struct AgentsPageView: View {
     @Bindable var model: PersistentModel
+    /// Settings → Agents, where agents get their provider keys.
+    var openAgentKeys: (() -> Void)?
 
     var body: some View {
         let v = model.agentsView()
@@ -70,6 +72,16 @@ struct AgentsPageView: View {
                 }
             }
             if let e = v.error { Text(e).foregroundStyle(.red) }
+            if let openAgentKeys {
+                Section {
+                    HStack {
+                        Text("Agents need a provider key to run.").foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Add a provider key", action: openAgentKeys)
+                            .accessibilityIdentifier("agents-add-provider-key")
+                    }
+                }
+            }
         }
         .formStyle(.grouped)
         .task { await model.loadAgents() }
@@ -222,7 +234,10 @@ struct NotificationsPageView: View {
             Section(v.title) {
                 if v.rows.isEmpty { Text(v.emptyText).foregroundStyle(.secondary) }
                 ForEach(v.rows, id: \.id) { l in
-                    HStack {
+                    HStack(spacing: 10) {
+                        if let key = CuaKey.image {
+                            Image(nsImage: key).resizable().interpolation(.high).frame(width: 20, height: 20).accessibilityHidden(true)
+                        }
                         Text(l.text).lineLimit(1).fontWeight(l.on == true ? .semibold : .regular)
                         Spacer()
                         Text(l.trailing).foregroundStyle(.secondary)

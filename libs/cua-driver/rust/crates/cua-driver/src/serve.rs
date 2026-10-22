@@ -79,6 +79,16 @@ async fn resume_trusted_connection(
     bind_trusted_connection(sdk, record.options, record.transport_session)
 }
 
+fn reap_finished_connections(connection_tasks: &mut tokio::task::JoinSet<()>) {
+    while let Some(result) = connection_tasks.try_join_next() {
+        if let Err(error) = result {
+            if error.is_panic() {
+                tracing::warn!("service connection task panicked: {error}");
+            }
+        }
+    }
+}
+
 async fn take_trusted_resume_record(
     registry: &TrustedResumeRegistry,
     credential: &str,
@@ -486,18 +496,14 @@ async fn invoke_daemon_tool(
         }
     }
 
-    // Policy enforcement — defense-in-depth for direct daemon socket connections.
-    // Evaluate before registry lookup so a deny-by-default policy does not leak
-    // whether an unapproved name happens to be registered. This also preserves
-    // the MCP policy contract now that every call passes through the daemon.
-    if let Err(error) = cua_driver_core::authorization::authorize_tool_call(&tool_name, &args) {
-        observe_daemon_error(observation, 1);
-        return DaemonResponse::err(error.to_string(), 1);
-    }
-
     if !known_tool {
         observe_daemon_error(observation, 64);
         return DaemonResponse::err(format!("Unknown tool: {tool_name}"), 64);
+    }
+
+    if let Err(error) = cua_driver_core::authorization::authorize_tool_call(&tool_name, &args) {
+        observe_daemon_error(observation, 1);
+        return DaemonResponse::err(error.to_string(), 1);
     }
 
     inject_browser_approvals(&tool_name, &mut args, req.session_id.as_deref());
@@ -1000,6 +1006,7 @@ pub async fn run_serve(
         tokio::select! {
             result = listener.accept() => {
                 let (stream, _) = result?;
+                reap_finished_connections(&mut connection_tasks);
                 if let Err(error) = authenticate_unix_peer(&stream) {
                     tracing::warn!("service connection rejected before request parsing: {error}");
                     continue;
@@ -2695,6 +2702,26 @@ mod gate_tests {
 
         let sid = "gate-test-session-A1B2C3";
 
+        let unknown_socket = socket.clone();
+        let unknown = DaemonRequest {
+            method: "call".into(),
+            name: Some("get_active_window".into()),
+            args: Some(serde_json::json!({})),
+            session_id: Some(sid.to_owned()),
+            observation_origin: None,
+            client_kind: None,
+        };
+        let response = tokio::task::spawn_blocking(move || send_request(&unknown_socket, &unknown))
+            .await
+            .unwrap()
+            .expect("unknown call response");
+        assert!(!response.ok);
+        assert_eq!(response.exit_code, Some(64));
+        assert_eq!(
+            response.error.as_deref(),
+            Some("Unknown tool: get_active_window")
+        );
+
         // 1. LIVE session call → tool runs.
         let socket1 = socket.clone();
         let s1 = sid.to_owned();
@@ -2992,6 +3019,42 @@ mod trusted_resume_tests {
             .await
             .expect_err("consumed credential must not replay");
         assert!(replay.contains("unavailable or already used"));
+    }
+}
+
+#[cfg(test)]
+mod connection_reaping_tests {
+    use super::reap_finished_connections;
+
+    #[tokio::test]
+    async fn finished_connection_tasks_are_released() {
+        let mut tasks = tokio::task::JoinSet::new();
+        for _ in 0..8 {
+            tasks.spawn(async {});
+        }
+        let live = tokio::sync::Notify::new();
+        let live = std::sync::Arc::new(live);
+        let waiter = live.clone();
+        tasks.spawn(async move { waiter.notified().await });
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+
+        reap_finished_connections(&mut tasks);
+
+        assert_eq!(tasks.len(), 1, "only the still-running connection remains");
+        live.notify_one();
+    }
+
+    #[tokio::test]
+    async fn a_panicked_connection_task_is_reaped_without_panicking_the_daemon() {
+        let mut tasks = tokio::task::JoinSet::new();
+        tasks.spawn(async { panic!("connection task panic") });
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+        reap_finished_connections(&mut tasks);
+        assert!(tasks.is_empty());
     }
 }
 

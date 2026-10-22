@@ -24,7 +24,7 @@ pub fn app_rows_to_spaces(rows: Vec<AppSpaceRow>, now_ms: i64) -> Vec<AppSpace> 
     core::spaces::rows_to_spaces(&rows, now_ms)
 }
 
-/// "brave-otter" as "Brave Otter".
+/// A Space name as shown: as typed, trimmed.
 #[uniffi::export]
 pub fn app_display_name(name: String) -> String {
     core::spaces::display_name(&name)
@@ -749,6 +749,61 @@ pub fn app_share_view(input: AppShareInput, state: AppShareSheetState) -> AppSha
     core::share::share_view(&input, &state)
 }
 
+/// Why the Share sheet is closed, from whether the account is in a team
+/// that can share (`None`: the host could not say, so the sheet stays open
+/// and the server decides). Sharing is for teams (CUA-1883).
+#[uniffi::export]
+pub fn app_share_gate(has_team: Option<bool>) -> Option<AppShareGate> {
+    core::share::share_gate(has_team)
+}
+
+/// A refused share in plain words (`share_outside_team`,
+/// `sharing_needs_team`); `None` for any other error.
+#[uniffi::export]
+pub fn app_share_error_words(error: String, who: String) -> Option<String> {
+    core::share::share_error_words(&error, &who)
+}
+
+/// The owner's one-line note about people removed from shared computers.
+#[uniffi::export]
+pub fn app_share_removal_note(removals: Vec<AppShareRemovalInput>) -> Option<AppShareRemovalNote> {
+    core::share::share_removal_note(&removals)
+}
+
+/// People removed from the account's shared computers because sharing is
+/// for teams now, until [`app_ack_share_removals`]. Empty on a server that
+/// predates it.
+#[uniffi::export]
+pub async fn app_share_removals(account_token: String) -> Result<Vec<AppShareRemovalInput>> {
+    cua_sdk::support::run(async move {
+        let api = cua_host::spaces_api::SpacesApiClient::current()?;
+        match api.share_removals(&account_token).await {
+            Err(e) if cua_host::spaces_api::is_teams_unavailable(&e) => Ok(vec![]),
+            other => Ok(other?
+                .into_iter()
+                .map(|r| core::share::ShareRemovalInput {
+                    who: r.who,
+                    machine_name: r.machine_name,
+                })
+                .collect()),
+        }
+    })
+    .await
+}
+
+/// The owner has seen the note: it is not shown again.
+#[uniffi::export]
+pub async fn app_ack_share_removals(account_token: String) -> Result<()> {
+    cua_sdk::support::run(async move {
+        let api = cua_host::spaces_api::SpacesApiClient::current()?;
+        match api.ack_share_removals(&account_token).await {
+            Err(e) if cua_host::spaces_api::is_teams_unavailable(&e) => Ok(()),
+            other => Ok(other?),
+        }
+    })
+    .await
+}
+
 /// Share sheet input from JSON (fixtures, parity flows).
 #[uniffi::export]
 pub fn app_share_input_from_json(json: String) -> Result<AppShareInput> {
@@ -918,6 +973,50 @@ pub fn app_notifications_from_json(json: String) -> Result<Vec<AppNotificationIn
     from_json("notifications", &json)
 }
 
+// ---- Settings, Agents (provider keys) --------------------------------------
+
+/// Settings, Agents: the rows for the keys the daemon reported.
+#[uniffi::export]
+pub fn app_agent_keys_view(input: AppAgentKeysInput) -> AppAgentKeysView {
+    core::agent_keys::view(&input)
+}
+
+/// The add or replace sheet.
+#[uniffi::export]
+pub fn app_agent_key_form(
+    input: AppAgentKeysInput,
+    form: AppAgentKeyFormInput,
+) -> AppAgentKeyFormView {
+    core::agent_keys::form(&input, &form)
+}
+
+/// The question before removing the key `env` (`None`: none is saved).
+#[uniffi::export]
+pub fn app_agent_key_remove_confirm(
+    input: AppAgentKeysInput,
+    env: String,
+) -> Option<AppAgentKeyConfirm> {
+    core::agent_keys::remove_confirm(&input, &env)
+}
+
+/// Why `name` can't hold an Other key (`None`: it can).
+#[uniffi::export]
+pub fn app_agent_key_name_problem(name: String) -> Option<String> {
+    core::agent_keys::name_problem(&name)
+}
+
+/// The section's input from JSON (`agent_keys.list`'s answer, camelCase).
+#[uniffi::export]
+pub fn app_agent_keys_input_from_json(json: String) -> Result<AppAgentKeysInput> {
+    from_json("agent keys input", &json)
+}
+
+/// A sheet input from JSON (parity flows).
+#[uniffi::export]
+pub fn app_agent_key_form_input_from_json(json: String) -> Result<AppAgentKeyFormInput> {
+    from_json("agent key form", &json)
+}
+
 // ---- Settings, About and updates ------------------------------------------
 
 /// Settings, About: name, version, links, copyright and the update controls.
@@ -1023,6 +1122,12 @@ pub fn app_wizard_env_from_json(json: String) -> Result<AppWizardEnv> {
 #[uniffi::export]
 pub fn app_wizard_action_from_json(json: String) -> Result<AppWizardAction> {
     from_json("wizard action", &json)
+}
+
+/// A teleport picker event from JSON (fixtures, parity).
+#[uniffi::export]
+pub fn app_picker_event_from_json(json: String) -> Result<AppPickerEvent> {
+    from_json("picker event", &json)
 }
 
 /// One of your machines that provides Spaces (the SDK's `Spaces.hosts()`)
@@ -1445,7 +1550,7 @@ pub fn app_notch_estimated_progress(elapsed_ms: i64, estimate_ms: u32) -> u32 {
 /// The page chrome.
 #[uniffi::export]
 pub fn kv_page(overview: KeyvaultOverview, now_ms: i64) -> KvPage {
-    core::keyvault::view::page(&overview, now_ms)
+    core::keyvault::view::page_on(&overview, now_ms, core::model::SpaceOs::this_host())
 }
 
 /// The always-visible signal while Keyvault sign-ins are live in a Space
@@ -1525,7 +1630,7 @@ pub fn kv_vault_reduce(
 /// the batch bar.
 #[uniffi::export]
 pub fn kv_vault_view(overview: KeyvaultOverview, state: KvVaultState, now_ms: i64) -> KvVaultView {
-    core::keyvault::vault::view(&overview, &state, now_ms)
+    core::keyvault::vault::view_on(&overview, &state, now_ms, core::model::SpaceOs::this_host())
 }
 
 /// The selection without what the vault no longer holds.
@@ -1646,7 +1751,7 @@ pub fn kv_duration(ms: i64) -> String {
 /// when the daemon can use the OS key store, else a passphrase.
 #[uniffi::export]
 pub fn kv_credential_form(overview: KeyvaultOverview) -> Option<KvCredentialForm> {
-    core::keyvault::credential::credential_form(&overview)
+    core::keyvault::credential::credential_form_on(&overview, core::model::SpaceOs::this_host())
 }
 
 /// The passphrase fields' hint and whether the form can be sent. Pure: the
@@ -1684,21 +1789,40 @@ pub struct KeyvaultClient {
     inner: core::keyvault::client::KeyvaultCommands,
 }
 
+/// `$CUA_HOME`, else `.cua` in the user's home: `$HOME`, or on Windows
+/// (where `HOME` is usually unset) `%USERPROFILE%`, as the daemon finds it.
+/// Without it the Keyvault was looked for at a relative `.cua` on Windows
+/// and read as "not running".
+fn default_cua_home(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> PathBuf {
+    let set = |k: &str| var(k).filter(|v| !v.is_empty());
+    if let Some(h) = set("CUA_HOME") {
+        return PathBuf::from(h);
+    }
+    let base = set("HOME")
+        .or_else(|| set("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_default()
+        .join(".cua");
+    // A non-production `CUA_ENV` has its own home, where its daemon serves
+    // the Keyvault (`~/.cua/envs/staging`).
+    let env = var("CUA_ENV").and_then(|v| v.into_string().ok());
+    match cua_home::env::CuaEnv::try_from_value(env.as_deref())
+        .unwrap_or_default()
+        .home_subdir()
+    {
+        Some(sub) => base.join(sub),
+        None => base,
+    }
+}
+
 #[uniffi::export]
 impl KeyvaultClient {
     /// The broker in `cua_home` (`None`: `$CUA_HOME`, else `~/.cua`).
     #[uniffi::constructor]
     pub fn new(cua_home: Option<String>) -> Arc<Self> {
-        let home = cua_home.map(PathBuf::from).unwrap_or_else(|| {
-            std::env::var_os("CUA_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| {
-                    std::env::var_os("HOME")
-                        .map(PathBuf::from)
-                        .unwrap_or_default()
-                        .join(".cua")
-                })
-        });
+        let home = cua_home
+            .map(PathBuf::from)
+            .unwrap_or_else(|| default_cua_home(|k| std::env::var_os(k)));
         Arc::new(Self {
             inner: core::keyvault::client::KeyvaultCommands::for_cua_home(&home),
         })
@@ -1796,21 +1920,173 @@ pub fn app_onboarding_view(state: AppOnboardingState) -> AppOnboardingView {
     core::onboarding::view(&state)
 }
 
-/// The SDK's billing status as the app core takes it (Settings' Billing
-/// row).
+/// The account's relay allowance this month (`GET /v1/usage` on the relay
+/// `devices` uses, as `cua usage` reads it) with `account_token`; none
+/// from a relay that meters nothing. Both Spaces apps read it here.
 #[uniffi::export]
-pub fn app_billing_status(status: cua_sdk::FleetBillingStatus) -> AppBillingStatus {
-    core::billing::BillingStatus {
-        billing_enabled: status.billing_enabled,
-        card: status.card.map(|c| core::billing::BillingCard {
-            brand: c.brand,
-            last4: c.last4,
+pub async fn app_relay_usage(
+    devices: Arc<cua_sdk::Devices>,
+    account_token: String,
+) -> Result<Option<AppRelayUsage>> {
+    let relay = devices.relay_url();
+    cua_sdk::support::run(async move {
+        let usage = cua_host::RelayClient::new(&relay)?
+            .usage(&account_token)
+            .await?;
+        Ok(usage.map(relay_usage))
+    })
+    .await
+}
+
+fn relay_usage(u: cua_host::RelayUsage) -> AppRelayUsage {
+    let (soft_limit_reached, reasons) =
+        core::relay_usage::with_warnings(u.soft_limit_reached, u.reasons, &u.warnings);
+    core::relay_usage::checked(core::relay_usage::RelayUsage {
+        metered: u.metered,
+        period: u.period,
+        plan: u.plan,
+        team: u.team.map(|t| core::relay_usage::RelayUsageTeam {
+            id: t.id,
+            seats: t.seats,
         }),
-        credit: status.credit.map(|c| core::billing::BillingCredit {
-            balance_usd_cents: c.balance_usd_cents,
-        }),
-        billing_url: status.billing_url,
+        live_sessions: u.live_sessions,
+        live_sessions_limit: u.live_sessions_limit,
+        hours_used: u.hours_used,
+        hours_limit: u.hours_limit,
+        my_hours_used: u.my_hours_used,
+        soft_limit_reached,
+        reasons,
+        upgrade_url: u.upgrade_url,
+    })
+}
+
+/// The account's Teams (the organizations of `GET /v1/me` on the Spaces
+/// API for this environment, `api.cua.ai` or `api.staging.cua.ai`), each
+/// with its members and pending invites, read with `account_token`.
+/// Both Spaces apps read Teams here; Settings words them
+/// (`app_settings_page`'s `teams`).
+#[uniffi::export]
+pub async fn app_teams(account_token: String) -> Result<AppTeamsInput> {
+    cua_sdk::support::run(async move {
+        let snapshot = cua_host::spaces_api::SpacesApiClient::current()?
+            .teams(&account_token)
+            .await?;
+        Ok(teams_input(snapshot, cua_home::env::account_app_url()))
+    })
+    .await
+}
+
+fn teams_input(s: cua_host::spaces_api::TeamsSnapshot, account_app_url: String) -> AppTeamsInput {
+    core::teams::TeamsInput {
+        account_app_url,
+        state: core::teams::TeamsState::Ready {
+            teams: s
+                .teams
+                .into_iter()
+                .map(|t| core::teams::TeamInput {
+                    id: t.org.id,
+                    alias: t.org.alias,
+                    name: t.org.name,
+                    role: t.org.role,
+                    // STOPGAP (CUA-1710): the generated record has no field for
+                    // the end date yet, so it rides on the plan as `teams@<RFC 3339>`.
+                    plan: match t.org.plan_ends_at.as_deref().filter(|e| !e.is_empty()) {
+                        Some(ends) => format!("{}@{ends}", t.org.plan),
+                        None => t.org.plan,
+                    },
+                    seats: t.org.seats,
+                    members: t
+                        .members
+                        .into_iter()
+                        .map(|m| core::teams::TeamPersonInput {
+                            email: m.email,
+                            role: m.role,
+                        })
+                        .collect(),
+                    invites: t.invites.into_iter().map(|i| i.email).collect(),
+                    payment_failed: t.org.status == "grace",
+                    payment_failed_until: t.org.grace_until,
+                })
+                .collect(),
+        },
+        // The apps fill the saved team in from their settings.
+        current_team_id: None,
     }
+}
+
+/// The account app for this environment (`CUA_ACCOUNT_APP_URL`, else
+/// `https://app.cua.ai`, or `https://app.staging.cua.ai` under
+/// `CUA_ENV=staging`): billing, plans and team administration, which the
+/// apps open in the browser.
+#[uniffi::export]
+pub fn app_account_app_url() -> String {
+    cua_home::env::account_app_url()
+}
+
+/// Settings' "Relay usage" row and the notice past the allowance; none
+/// when the relay meters nothing.
+#[uniffi::export]
+pub fn app_relay_usage_view(usage: AppRelayUsage) -> Option<AppRelayUsageView> {
+    core::relay_usage::view(&usage)
+}
+
+/// The relay refusing a new session over the plan's cap, from the error's
+/// text: the sentence and Upgrade. None for any other error.
+#[uniffi::export]
+pub fn app_plan_limit_notice(
+    error: String,
+    account_app: String,
+) -> Option<AppRelayAllowanceNotice> {
+    core::relay_usage::plan_limit_notice(&error, &account_app)
+}
+
+/// An SDK record as the app core's (the same JSON, the same names).
+fn core_of<T: serde::Serialize, U: serde::de::DeserializeOwned + Default>(v: &T) -> U {
+    serde_json::to_value(v)
+        .and_then(serde_json::from_value)
+        .unwrap_or_default()
+}
+
+/// Everything the apps draw from one snapshot of what this Mac, its extra
+/// Spaces and your other computers use (`Spaces.resources`, or a snapshot
+/// event of `Spaces.watch_resources`): this Mac's rows and warning, each
+/// extra Space's rows and what it costs this Mac, each other computer's
+/// rows. The words are the core's; no shell formats a number. `now_ms` is
+/// the shell's clock (Unix ms), for how old another computer's numbers are.
+#[uniffi::export]
+pub fn app_resources_view(snapshot: cua_sdk::ResourcesSnapshot, now_ms: u64) -> AppResourcesView {
+    let snapshot: core::resources::ResourcesSnapshot = core_of(&snapshot);
+    core::resources::view(&snapshot, now_ms)
+}
+
+/// This Mac's panel (Processor, Memory, Space for files, what the extra
+/// Spaces use, the warning).
+#[uniffi::export]
+pub fn app_resources_this_mac(computer: cua_sdk::ComputerResources) -> AppThisMacView {
+    core::resources::this_mac_view(&core_of(&computer))
+}
+
+/// One extra Space's panel: what it was given and uses now, and what it
+/// costs this Mac.
+#[uniffi::export]
+pub fn app_resources_space(space: cua_sdk::SpaceResources) -> AppSpaceResourcesView {
+    core::resources::space_view(&core_of(&space))
+}
+
+/// Another of your computers' panel.
+#[uniffi::export]
+pub fn app_resources_computer(
+    computer: cua_sdk::ComputerResources,
+    now_ms: u64,
+) -> AppComputerView {
+    core::resources::computer_view(&core_of(&computer), now_ms)
+}
+
+/// The menu bar's low-disk warning (from a `LowDisk` event or a
+/// snapshot's `warning`); none when the disk is fine.
+#[uniffi::export]
+pub fn app_resources_warning(warning: cua_sdk::DiskWarning) -> Option<AppWarningView> {
+    core::resources::warning_view(&core_of(&warning))
 }
 
 /// Reads the settings file (defaults when missing or damaged).
@@ -1824,6 +2100,35 @@ pub fn app_settings_load(path: String) -> AppSettings {
 pub fn app_settings_save(path: String, settings: AppSettings) -> Result<()> {
     core::settings::save(std::path::Path::new(&path), &settings)
         .map_err(|e| CuaError::Internal(e.to_string()))
+}
+
+/// The settings with the New UI as a launch of `version` shows it: the
+/// user's choice, else the default for the update channel and version
+/// (again after the channel changes).
+#[uniffi::export]
+pub fn app_settings_resolve_new_ui(settings: AppSettings, version: String) -> AppSettings {
+    core::settings::resolve_new_ui(&settings, &version)
+}
+
+/// The update channel of an install's first launch, from the file's
+/// `channel`: Beta for a prerelease, else unchanged.
+#[uniffi::export]
+pub fn app_settings_first_launch_channel(
+    channel: AppUpdateChannel,
+    version: String,
+) -> AppUpdateChannel {
+    core::settings::first_launch_channel(channel, &version)
+}
+
+/// The settings after a Settings, Experiments row's choice (the switches,
+/// and the New UI's "Use classic UI" saved as the user's choice).
+#[uniffi::export]
+pub fn app_settings_choose_experiment(
+    settings: AppSettings,
+    row: String,
+    option: String,
+) -> AppSettings {
+    core::settings::choose_experiment(&settings, &row, &option)
 }
 
 /// The Settings page.
@@ -2059,17 +2364,32 @@ pub fn app_agent_setup_summary(
 /// The SDK's agent detection as the app core reads it.
 #[uniffi::export]
 pub fn app_agent_setup_status(info: cua_sdk::AgentInfo) -> AppAgentSetupStatus {
+    let installed = agent_really_installed(&info);
     AppAgentSetupStatus {
         id: info.id,
         name: info.name,
-        installed: info.installed,
+        installed,
         skills_dir: info.skills_dir,
         mcp_config: info.mcp_config,
         cua_configured: info.cua_configured,
         skills_installed: info.skills_installed,
         skills_outdated: info.skills_outdated,
         error: info.error,
+        sign_in: info.sign_in,
+        signed_in: info.signed_in,
     }
+}
+
+/// Whether first-run onboarding should treat the agent as installed: its
+/// program (`bin:`) or app bundle (`app:`) was found. A leftover or
+/// cua-created config folder alone (`path:`) is not enough: the AI agents
+/// step ticks and sets up only agents the user actually has (CUA-1771).
+fn agent_really_installed(info: &cua_sdk::AgentInfo) -> bool {
+    info.installed
+        && info
+            .evidence
+            .iter()
+            .any(|e| e.starts_with("bin:") || e.starts_with("app:"))
 }
 
 /// The SDK's setup outcome as the app core reads it.
@@ -2149,8 +2469,8 @@ pub fn app_host_looks_like_listen(value: String) -> bool {
     core::host::looks_like_listen(&value)
 }
 
-/// Puts the app's bundled `cua` on PATH on first launch (there is no
-/// onboarding page for it). The same installer the Tauri app runs;
+/// Puts the app's bundled `cua` on PATH after the first run's Command
+/// line page (`CliPlanned`, `CliDone`). The same installer the Tauri app runs;
 /// [`plan`](Self::plan) reads what installing would do without writing.
 #[derive(uniffi::Object)]
 pub struct AppCliInstaller {
@@ -2184,6 +2504,7 @@ impl AppCliInstaller {
                 path_env,
                 profile: profile.into(),
                 prefer_symlink: false,
+                search_dirs: vec![],
             },
         })
     }
@@ -2209,16 +2530,24 @@ impl AppCliInstaller {
 // ---- Usage telemetry ------------------------------------------------------------
 
 /// The app started: attributes this process's events to `spaces_app` at
-/// `version`, lets the app show the first-run notice itself (nothing is
+/// `version`, links usage data to the signed-in account in the background
+/// when the Spaces API offers it, lets the app show the first-run notice itself (nothing is
 /// sent before it has been shown once), and records `app_launched` (on a
 /// first run, once the notice shows). Call once at launch, before the
-/// first `Cua`. Returns whether the notice was already shown here.
+/// first `Cua`. `onboarding_eligible`: the first run is still to finish
+/// (`app_launched` carries it). Returns whether the notice was already
+/// shown here.
 #[uniffi::export]
-pub fn app_telemetry_start(version: String) -> bool {
+pub fn app_telemetry_start(version: String, onboarding_eligible: Option<bool>) -> bool {
     let t = cua_telemetry::global();
     t.set_product("spaces_app", &version);
     t.set_notice_mode(cua_telemetry::NoticeMode::External);
-    core::telemetry::start(t)
+    // Links usage data to the signed-in account when the Spaces API offers
+    // it (CUA-1881); the SDK's sign-in does the same. Off the launch path.
+    cua_sdk::support::spawn(async {
+        cua_sdk::telemetry_sync_account().await;
+    });
+    core::telemetry::start_with(t, onboarding_eligible)
 }
 
 /// Records `signals` on the SDK's telemetry client (the switch, the notice
@@ -2231,8 +2560,8 @@ pub fn app_telemetry_record(signals: Vec<AppTelemetrySignal>) -> u32 {
 
 /// The app started (`app_launched`).
 #[uniffi::export]
-pub fn app_telemetry_launched() -> Vec<AppTelemetrySignal> {
-    core::telemetry::launched()
+pub fn app_telemetry_launched(onboarding_eligible: Option<bool>) -> Vec<AppTelemetrySignal> {
+    core::telemetry::launched(onboarding_eligible)
 }
 
 /// A Spaces app feature (a fixed name).
@@ -2258,6 +2587,38 @@ pub fn app_telemetry_onboarding(
     action: AppOnboardingAction,
 ) -> Vec<AppTelemetrySignal> {
     core::telemetry::onboarding(&state, &action)
+}
+
+/// A sign-in failed (`message`, which never leaves: only its kind) or was
+/// cancelled (none).
+#[uniffi::export]
+pub fn app_telemetry_sign_in_failed(message: Option<String>) -> Vec<AppTelemetrySignal> {
+    core::telemetry::sign_in_failed(message.as_deref())
+}
+
+/// A sign-in failed for `reason` or was cancelled (none): its kind only.
+#[uniffi::export]
+pub fn app_telemetry_sign_in_failure(reason: Option<AppSignInFailure>) -> Vec<AppTelemetrySignal> {
+    core::telemetry::sign_in_failure(reason)
+}
+
+/// The sidebar's foot: every sign-in state in one place.
+#[uniffi::export]
+pub fn app_sign_in_footer(input: AppSignInFooterInput) -> AppSignInFooter {
+    core::sign_in::footer(&input)
+}
+
+/// The failed phase for a known reason, with the error's words for Details.
+#[uniffi::export]
+pub fn app_sign_in_failed(reason: AppSignInFailure, detail: Option<String>) -> AppSignInPhase {
+    core::sign_in::failed(reason, detail.as_deref())
+}
+
+/// The failed phase for an error the shell caught: the SDK error's case
+/// (`Timeout`, `Http`, ...; empty for another error) and its words.
+#[uniffi::export]
+pub fn app_sign_in_failed_from_error(variant: String, message: String) -> AppSignInPhase {
+    core::sign_in::failed_from_error(&variant, &message)
 }
 
 /// "Start using Cua Spaces".
@@ -2338,6 +2699,74 @@ pub fn app_telemetry_enroll(
     action: AppEnrollAction,
 ) -> Vec<AppTelemetrySignal> {
     core::telemetry::enroll(&state, &action)
+}
+
+// ---- Getting started and the command palette -----------------------------
+
+/// The getting-started checklist after `action`, and its usage events.
+#[uniffi::export]
+pub fn app_checklist_reduce(
+    state: AppChecklistState,
+    action: AppChecklistAction,
+) -> AppChecklistTransition {
+    core::checklist::reduce(&state, &action)
+}
+
+/// What the app shows as the checklist's `Observe` (every UI the same).
+#[uniffi::export]
+pub fn app_checklist_observe_from(seen: AppChecklistSeen) -> AppChecklistAction {
+    core::checklist::observe_from(&seen)
+}
+
+/// The Machines page's rows: this machine, your machines, your devices of
+/// their own, each computer once.
+#[uniffi::export]
+pub fn app_machines_page_rows(input: AppMachinesPageInput) -> Vec<AppMachinePageRow> {
+    core::machines::page_rows(&input)
+}
+
+/// The Machines page as every UI draws it: the list in groups, one line
+/// per row, and each machine's page.
+#[uniffi::export]
+pub fn app_machines_view(input: AppMachinesViewInput) -> AppMachinesView {
+    core::machines_view::view(&input)
+}
+
+/// Machines view input from JSON (fixtures, parity flows).
+#[uniffi::export]
+pub fn app_machines_view_input_from_json(json: String) -> Result<AppMachinesViewInput> {
+    from_json("machines view input", &json)
+}
+
+/// Machines page input from JSON (fixtures, parity flows).
+#[uniffi::export]
+pub fn app_machines_page_input_from_json(json: String) -> Result<AppMachinesPageInput> {
+    from_json("machines page input", &json)
+}
+
+/// Checklist state from JSON, steps as words (fixtures, parity flows).
+#[uniffi::export]
+pub fn app_checklist_state_from_json(json: String) -> Result<AppChecklistState> {
+    from_json("checklist state", &json)
+}
+
+/// The getting-started checklist as drawn.
+#[uniffi::export]
+pub fn app_checklist_view(state: AppChecklistState) -> AppChecklistView {
+    core::checklist::view(&state)
+}
+
+/// The default keyboard shortcuts (the shared UI's `keybindings.json`).
+#[uniffi::export]
+pub fn app_keybindings() -> Vec<AppKeybinding> {
+    core::palette::keybindings()
+}
+
+/// The command palette's matches for `query`, best first, as indices into
+/// `entries`.
+#[uniffi::export]
+pub fn app_palette_rank(entries: Vec<AppPaletteEntry>, query: String) -> Vec<u32> {
+    core::palette::rank(&entries, &query)
 }
 
 // ---- Fixtures ----------------------------------------------------------------
@@ -2507,33 +2936,326 @@ mod host_setup_tests {
 }
 
 #[cfg(test)]
-mod size_limit_tests {
-    use cua_spaces_app_core::wizard::{CLOUD_CPU_RANGE, CLOUD_MEMORY_GB_RANGE};
+mod keyvault_home_tests {
+    use super::*;
+    use std::ffi::OsString;
 
-    /// The wizard's cloud sliders offer the everyday range
-    /// (`cua_fleet::CLOUD_DEFAULT_RANGE_*`, what `fleet_size_limits`
-    /// returns), which sits inside what the SDK accepts
-    /// (`cua_fleet::FLEET_ABSOLUTE_*`).
+    fn home(vars: &[(&str, &str)]) -> PathBuf {
+        default_cua_home(|k| {
+            vars.iter()
+                .find(|(n, _)| *n == k)
+                .map(|(_, v)| OsString::from(v))
+        })
+    }
+
+    /// Windows has no `HOME`: the Keyvault is in the profile's `.cua`, where
+    /// the daemon serves it, not a relative `.cua` (which read as "the Cua
+    /// daemon is not running").
     #[test]
-    fn the_wizard_offers_the_everyday_cloud_sizes() {
-        let (cpus, mem) = (
-            cua_fleet::CLOUD_DEFAULT_RANGE_CPUS,
-            cua_fleet::CLOUD_DEFAULT_RANGE_MEMORY_MB,
-        );
-        assert_eq!(CLOUD_CPU_RANGE, (*cpus.start(), *cpus.end()));
-        assert!(CLOUD_MEMORY_GB_RANGE.0 * 1024 >= *mem.start());
-        assert_eq!(CLOUD_MEMORY_GB_RANGE.1 * 1024, *mem.end());
-        let l = cua_sdk::fleet_size_limits();
-        assert_eq!((l.min_cpus, l.max_cpus), (*cpus.start(), *cpus.end()));
+    fn the_keyvault_is_found_where_the_daemon_serves_it() {
         assert_eq!(
-            (l.min_memory_mb, l.max_memory_mb),
-            (*mem.start(), *mem.end())
+            home(&[("USERPROFILE", r"C:\Users\ada")]),
+            PathBuf::from(r"C:\Users\ada").join(".cua")
         );
-        let (abs_cpus, abs_mem) = (
-            cua_fleet::FLEET_ABSOLUTE_CPUS,
-            cua_fleet::FLEET_ABSOLUTE_MEMORY_MB,
+        assert_eq!(
+            home(&[("HOME", "/home/ada"), ("USERPROFILE", "ignored")]),
+            PathBuf::from("/home/ada/.cua")
         );
-        assert!(abs_cpus.contains(cpus.start()) && abs_cpus.contains(cpus.end()));
-        assert!(abs_mem.contains(mem.start()) && abs_mem.contains(mem.end()));
+        assert_eq!(
+            home(&[("CUA_HOME", "/srv/cua"), ("HOME", "/home/ada")]),
+            PathBuf::from("/srv/cua")
+        );
+        assert_eq!(
+            home(&[("HOME", ""), ("USERPROFILE", r"C:\Users\ada")]),
+            PathBuf::from(r"C:\Users\ada").join(".cua")
+        );
+    }
+
+    /// Under `CUA_ENV=staging` the daemon (and so its Keyvault) lives in
+    /// `~/.cua/envs/staging`; the client must look there, not in the prod
+    /// home (CUA-1528).
+    #[test]
+    fn the_keyvault_follows_cua_env() {
+        assert_eq!(
+            home(&[("HOME", "/home/ada"), ("CUA_ENV", "staging")]),
+            PathBuf::from("/home/ada/.cua").join("envs/staging")
+        );
+        assert_eq!(
+            home(&[("HOME", "/home/ada"), ("CUA_ENV", "prod")]),
+            PathBuf::from("/home/ada/.cua")
+        );
+        assert_eq!(
+            home(&[("CUA_HOME", "/srv/cua"), ("CUA_ENV", "staging")]),
+            PathBuf::from("/srv/cua")
+        );
+    }
+}
+
+#[cfg(test)]
+mod teams_tests {
+    use super::*;
+    use cua_host::spaces_api::{ApiInvite, ApiMember, ApiOrg, TeamDetail, TeamsSnapshot};
+
+    #[test]
+    fn a_snapshot_becomes_the_cores_teams_input() {
+        let snapshot = TeamsSnapshot {
+            email: "ada@example.com".into(),
+            plan: "pro".into(),
+            teams: vec![TeamDetail {
+                org: ApiOrg {
+                    id: "o1".into(),
+                    alias: "acme".into(),
+                    name: "".into(),
+                    role: "admin".into(),
+                    plan: "teams".into(),
+                    plan_ends_at: None,
+                    status: "grace".into(),
+                    grace_until: Some("2026-11-03T10:00:00Z".into()),
+                    seats: 3,
+                    features: vec!["team_machines".into()],
+                },
+                members: vec![ApiMember {
+                    sub: "u1".into(),
+                    email: "ada@example.com".into(),
+                    role: "admin".into(),
+                }],
+                invites: vec![ApiInvite {
+                    id: "i1".into(),
+                    email: "cy@example.com".into(),
+                }],
+            }],
+        };
+        let input = teams_input(snapshot, "https://app.cua.ai".into());
+        let rows = core::teams::rows(&input);
+        // The grace notice (this account is an admin, not the owner) comes first.
+        assert_eq!(rows[0].id, "payment-failed");
+        assert!(rows[0].value.as_deref().unwrap().contains("by 3 Nov 2026"));
+        assert_eq!(rows[1].label, "acme");
+        assert_eq!(rows[3].label, "cy@example.com");
+        assert_eq!(rows[3].value.as_deref(), Some("(Invited)"));
+    }
+}
+
+#[cfg(test)]
+mod relay_usage_tests {
+    use super::*;
+
+    #[test]
+    fn the_relays_answer_reaches_the_core_with_only_https_upgrade_links() {
+        let raw: cua_host::RelayUsage = serde_json::from_value(serde_json::json!({
+            "metered": true, "period": "2026-10", "plan": "free",
+            "team": { "id": "acme", "seats": 3 },
+            "live_sessions": 2, "live_sessions_limit": 2, "hours_used": 21.0, "hours_limit": 20,
+            "my_hours_used": 4.5, "soft_limit_reached": true, "reasons": ["hours"],
+            "upgrade_url": "https://cua.ai/pricing"
+        }))
+        .unwrap();
+        let u = relay_usage(raw.clone());
+        assert_eq!(
+            u.team.as_ref().map(|t| (t.id.as_str(), t.seats)),
+            Some(("acme", 3))
+        );
+        assert_eq!((u.live_sessions, u.live_sessions_limit), (2, Some(2)));
+        assert_eq!(
+            (u.hours_used, u.hours_limit, u.my_hours_used),
+            (21.0, Some(20.0), 4.5)
+        );
+        assert_eq!(u.reasons, vec!["hours".to_string()]);
+        let notice = app_relay_usage_view(u).unwrap().notice.unwrap();
+        assert_eq!(
+            notice.upgrade_url.as_deref(),
+            Some("https://app.cua.ai/buy/pro?from=app_meter")
+        );
+        // Free at 2 of 2 live sessions is at the sessions limit too (CUA-1745).
+        assert_eq!(notice.dismiss_key, "2026-10:hours,sessions");
+
+        let plain = relay_usage(cua_host::RelayUsage {
+            upgrade_url: Some("http://cua.ai/pricing".into()),
+            ..raw
+        });
+        assert_eq!(plain.upgrade_url, None);
+    }
+}
+
+#[cfg(test)]
+mod agent_detection_tests {
+    use super::*;
+
+    fn info(id: &str, installed: bool, evidence: &[&str]) -> cua_sdk::AgentInfo {
+        cua_sdk::AgentInfo {
+            id: id.into(),
+            name: id.into(),
+            installed,
+            evidence: evidence.iter().map(|e| e.to_string()).collect(),
+            skills_dir: None,
+            mcp_config: None,
+            mcp_format: None,
+            cua_configured: false,
+            cua_managed: false,
+            cua_driver_configured: false,
+            skills_installed: vec![],
+            skills_outdated: vec![],
+            error: None,
+            unverified: None,
+            sign_in: None,
+            signed_in: false,
+        }
+    }
+
+    /// Onboarding only ticks agents whose program or app is on the machine;
+    /// a leftover config folder is not an install (CUA-1771).
+    #[test]
+    fn onboarding_counts_a_program_or_an_app_not_a_config_folder() {
+        let s = |i| app_agent_setup_status(i).installed;
+        assert!(s(info(
+            "claude-code",
+            true,
+            &["bin:/usr/local/bin/claude", "path:/h/.claude"]
+        )));
+        assert!(s(info(
+            "vscode",
+            true,
+            &["app:/Applications/Visual Studio Code.app"]
+        )));
+        assert!(!s(info("copilot-cli", true, &["path:/h/.copilot"])));
+        assert!(!s(info("gemini-cli", false, &[])));
+    }
+}
+
+#[cfg(test)]
+mod resources_tests {
+    use super::*;
+    use cua_spaces::resources as rt;
+
+    const GIB: u64 = 1 << 30;
+
+    fn sdk_snapshot() -> cua_sdk::ResourcesSnapshot {
+        let runtime = rt::Resources {
+            sequence: 2,
+            sampled_at_ms: 1_000_000,
+            this_mac: rt::ComputerResources {
+                id: rt::THIS_MAC.into(),
+                online: true,
+                sampled_at_ms: 1_000_000,
+                cpu_count: 12,
+                cpu_percent: 38.0,
+                memory_total: 64 * GIB,
+                memory_used: 41 * GIB,
+                disk_total: 1024 * GIB,
+                disk_free: 41 * GIB,
+                spaces_count: 1,
+                spaces_running: 1,
+                spaces_cpu_allocated: 4,
+                spaces_memory_allocated: 8 * GIB,
+                spaces_disk_bytes: 31 * GIB,
+                spaces_disk_exact: true,
+                warning: rt::DiskWarning::assess(41 * GIB, 1024 * GIB, 5 * GIB, rt::DiskLevel::Ok),
+                ..Default::default()
+            },
+            spaces: vec![rt::SpaceResources {
+                id: "local:aurora".into(),
+                power_state: "running".into(),
+                cpu_allocated: 4,
+                memory_allocated: 8 * GIB,
+                disk_allocated: 80 * GIB,
+                usage: Some(rt::GuestUsage {
+                    cpu_count: 4,
+                    cpu_percent: 22.0,
+                    memory_used: 3 * GIB + GIB / 10,
+                    memory_total: 8 * GIB,
+                    memory_limited: true,
+                    ..Default::default()
+                }),
+                disk_on_host: Some(rt::DiskOnHost {
+                    bytes: Some(31 * GIB),
+                    allocated: 87 * GIB,
+                    shares_space: true,
+                }),
+            }],
+            computers: vec![rt::ComputerResources {
+                id: "mini".into(),
+                name: "Mac mini".into(),
+                online: true,
+                sampled_at_ms: 1_000_000,
+                cpu_count: 10,
+                cpu_percent: 5.0,
+                memory_total: 32 * GIB,
+                memory_used: 12 * GIB,
+                disk_total: 512 * GIB,
+                disk_free: 300 * GIB,
+                ..Default::default()
+            }],
+            warning: rt::DiskWarning::assess(41 * GIB, 1024 * GIB, 5 * GIB, rt::DiskLevel::Ok),
+        };
+        serde_json::from_value(serde_json::to_value(&runtime).unwrap()).unwrap()
+    }
+
+    /// The SDK's snapshot becomes the app core's without losing a field.
+    #[test]
+    fn the_sdk_snapshot_reaches_the_core_whole() {
+        let sdk = sdk_snapshot();
+        let core: core::resources::ResourcesSnapshot = core_of(&sdk);
+        assert_eq!(core.sequence, 2);
+        assert_eq!(core.this_mac.cpu_count, 12);
+        assert_eq!(core.this_mac.warning.level, core::resources::DiskLevel::Low);
+        assert_eq!(core.spaces[0].usage.unwrap().cpu_percent, 22.0);
+        assert_eq!(core.spaces[0].disk_on_host.unwrap().bytes, Some(31 * GIB));
+        assert_eq!(core.computers[0].name, "Mac mini");
+    }
+
+    /// What Swift draws from `app_resources_view`: the core's rows.
+    #[test]
+    fn the_view_has_the_rows_and_the_warning() {
+        let v = app_resources_view(sdk_snapshot(), 1_000_000);
+        assert_eq!(v.this_mac.rows[0].value, "12 cores \u{b7} 38% busy");
+        assert_eq!(v.spaces[0].rows[1].value, "3.1 of 8 GB");
+        assert_eq!(
+            v.spaces[0].on_this_mac.as_deref(),
+            Some("Uses about 31 GB on this Mac (shares space with other copies)")
+        );
+        assert_eq!(v.computers[0].rows[2].value, "300 GB free of 512 GB");
+        assert!(v.warning.is_some());
+        let w = app_resources_warning(sdk_snapshot().warning).unwrap();
+        assert_eq!(w.button, "See what's using space");
+    }
+
+    /// The CLI and the apps say the same things with the same numbers.
+    #[test]
+    fn the_cli_and_the_apps_use_the_same_words() {
+        let sdk = sdk_snapshot();
+        let v = app_resources_view(sdk.clone(), 1_000_000);
+        let runtime: rt::Resources =
+            serde_json::from_value(serde_json::to_value(&sdk).unwrap()).unwrap();
+        // This Mac.
+        let m = &runtime.this_mac;
+        assert_eq!(
+            v.this_mac.rows[0].value,
+            rt::words::processor(m.cpu_count, Some(m.cpu_percent))
+        );
+        assert_eq!(
+            v.this_mac.rows[1].value,
+            rt::words::memory_in_use(m.memory_used, m.memory_total)
+        );
+        assert_eq!(
+            v.this_mac.rows[2].value,
+            rt::words::disk_free(m.disk_free, m.disk_total)
+        );
+        assert_eq!(v.this_mac.extra_spaces, rt::words::extra_spaces_use(m));
+        assert_eq!(
+            v.this_mac.warning.as_ref().map(|w| w.text.as_str()),
+            rt::words::warning(&runtime.warning)
+        );
+        // A running Space.
+        let s = &runtime.spaces[0];
+        assert_eq!(v.spaces[0].rows[0].value, rt::words::space_cpu(s));
+        assert_eq!(v.spaces[0].rows[1].value, rt::words::space_memory(s));
+        // Another computer.
+        let c = &runtime.computers[0];
+        assert_eq!(v.computers[0].rows[0].value, rt::words::computer_cpu(c));
+        assert_eq!(
+            v.computers[0].rows[1].value,
+            format!("{} in use", rt::words::computer_memory(c))
+        );
+        assert_eq!(v.computers[0].rows[2].value, rt::words::computer_disk(c));
     }
 }

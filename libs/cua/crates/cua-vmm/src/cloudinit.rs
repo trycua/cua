@@ -285,8 +285,8 @@ pub fn guest_env_cloud_config(env: &BTreeMap<String, String>) -> Result<Option<S
 
 /// A `#cloud-config` that delivers `env` and runs `command` in the guest.
 ///
-/// The spacesd token (`CUA_ENV_TOKEN`) follows the cloud contract (the
-/// Fleet claim Secret): a root-owned `0600` file at `/run/cua/env-token`,
+/// The spacesd token (`CUA_ENV_TOKEN`) follows the cloud contract (a
+/// mounted secret): a root-owned `0600` file at `/run/cua/env-token`,
 /// which cua-spacesd reads in await-token-file mode.
 ///
 /// - `write_files`: `/etc/cua/env-token` (persistent copy) and
@@ -400,7 +400,7 @@ pub fn guest_cloud_config(
     Ok(Some(out))
 }
 
-/// Where the token lives in the guest, like the Fleet claim Secret mount.
+/// Where the token lives in the guest, like a mounted secret.
 pub const GUEST_TOKEN_DIR: &str = "/run/cua";
 /// Drop-in that puts cua-spacesd in await-token-file mode.
 pub const GUEST_DRIVER_DROPIN: &str =
@@ -726,7 +726,7 @@ mod tests {
         assert!(!ud.contains("CUA_ENV_TOKEN"), "{ud}");
         assert!(!ud.contains(GUEST_ENV_FILE), "no other env, no env file");
         assert_eq!(ud.matches("tok123").count(), 2, "{ud}");
-        // bootcmd: the Fleet-style private /run/cua and await-token-file
+        // bootcmd: the private /run/cua and await-token-file
         // mode, and the per-boot copy; no token in it.
         let boot = ud.lines().skip_while(|l| *l != "bootcmd:").nth(1).unwrap();
         assert!(!boot.contains("tok123"));

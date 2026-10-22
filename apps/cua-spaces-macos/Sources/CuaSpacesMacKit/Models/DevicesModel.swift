@@ -21,19 +21,38 @@ public protocol DevicesRunning: AnyObject, Sendable {
     /// Vouches for a machine that registered without an enrolled device's
     /// proof (S5), from this enrolled device.
     func confirmMachine(id: String) async throws
+    /// Renames a relay machine the account owns, from this enrolled device;
+    /// this Mac's host setup takes the name when it is this Mac.
+    func renameMachine(id: String, name: String) async throws
+    /// A one-time link, QR code and install commands that add another
+    /// computer to the account (or to `team`), from this enrolled device.
+    func createPairingCode(team: String?) async throws -> PairingCode
+    /// The account's pairing codes, newest first (without the codes).
+    func pairingCodes() async throws -> [PairingCode]
+    /// Revokes an unused pairing code (`pc_…`).
+    func revokePairingCode(id: String) async throws
+    /// The account's relay allowance this month; nil from a relay that
+    /// meters nothing.
+    func relayUsage() async throws -> AppRelayUsage?
 }
 
 /// The SDK's `Devices` for the signed-in session (key in the session's vault,
 /// shared with the `cua` CLI and daemon).
 public final class LiveDevices: DevicesRunning, @unchecked Sendable {
     let inner: CuaSDK.Devices
+    /// The account's token for the calls that take one (the allowance).
+    let auth: CuaSDK.Auth?
 
-    public init(inner: CuaSDK.Devices) { self.inner = inner }
+    public init(inner: CuaSDK.Devices, auth: CuaSDK.Auth? = nil) {
+        self.inner = inner
+        self.auth = auth
+    }
 
     /// This Mac on the default relay (`CUA_RELAY_URL`, else relay.cua.ai),
     /// named as Sharing names it ("Dana's MacBook Pro").
     public static func make(auth: CuaSDK.Auth) -> LiveDevices? {
-        (try? auth.devices(relayUrl: nil, name: Foundation.Host.current().localizedName)).map(LiveDevices.init)
+        (try? auth.devices(relayUrl: nil, name: Foundation.Host.current().localizedName))
+            .map { LiveDevices(inner: $0, auth: auth) }
     }
 
     public func snapshot() async throws -> DevicesSnapshot { try await inner.snapshot(auditLimit: 50) }
@@ -56,6 +75,19 @@ public final class LiveDevices: DevicesRunning, @unchecked Sendable {
     public func rename(id: String, name: String) async throws { _ = try await inner.rename(id: id, name: name) }
     public func revoke(id: String) async throws { _ = try await inner.revoke(id: id) }
     public func confirmMachine(id: String) async throws { _ = try await inner.confirmMachine(machineId: id) }
+    public func renameMachine(id: String, name: String) async throws {
+        _ = try await inner.renameMachine(machineId: id, name: name)
+    }
+    public func createPairingCode(team: String?) async throws -> PairingCode {
+        try await inner.createPairingCode(team: team, ttlSecs: nil)
+    }
+    public func pairingCodes() async throws -> [PairingCode] { try await inner.pairingCodes() }
+    public func revokePairingCode(id: String) async throws { try await inner.revokePairingCode(id: id) }
+    /// The same read as Electron's and `cua usage`'s (`app_relay_usage`).
+    public func relayUsage() async throws -> AppRelayUsage? {
+        guard let auth else { return nil }
+        return try await appRelayUsage(devices: inner, accountToken: try await auth.accessToken(force: false))
+    }
 }
 
 /// An in-memory account on a relay (fixtures, tests): this Mac enrolled,
@@ -69,6 +101,11 @@ public final class FixtureDevices: DevicesRunning, @unchecked Sendable {
     /// What `checkEnrolled` answers.
     public var enrolledNow = false
     public var failApprove: String?
+    /// `snapshot` fails with this (a device the relay has not enrolled).
+    public var failSnapshot: String?
+    /// What `relayUsage` answers (the free plan partway through the month
+    /// unless set; `CUA_SPACES_RELAY_USAGE` picks one in a fixtures run).
+    public var usage: AppRelayUsage? = FixtureDevices.usage(nil)
 
     public init(snapshot: DevicesSnapshot? = nil) {
         current = snapshot ?? FixtureDevices.sample(now: UInt64(Date().timeIntervalSince1970))
@@ -105,14 +142,17 @@ public final class FixtureDevices: DevicesRunning, @unchecked Sendable {
             machines: [
                 RelayMachine(id: "m1", spaceId: "relay:m1", name: "studio-mac", ownerId: "me",
                              ownerEmail: nil, role: "owner", online: true, sharing: true, version: "0.5.0",
-                             url: "", allow: [], clients: [], confirmed: true),
+                             url: "", allow: [], clients: [], confirmed: true, team: nil, providesSpaces: true),
                 RelayMachine(id: "m2", spaceId: "relay:m2", name: "build-box", ownerId: "me",
                              ownerEmail: nil, role: "owner", online: false, sharing: true, version: "0.5.0",
-                             url: "", allow: [], clients: [], confirmed: false),
+                             url: "", allow: [], clients: [], confirmed: false, team: nil, providesSpaces: nil),
             ])
     }
 
-    public func snapshot() async throws -> DevicesSnapshot { current }
+    public func snapshot() async throws -> DevicesSnapshot {
+        if let failSnapshot { throw CuaError.PermissionDenied(message: failSnapshot) }
+        return current
+    }
 
     public func enroll() async throws -> DeviceEnrollment {
         calls.append("enroll")
@@ -147,9 +187,83 @@ public final class FixtureDevices: DevicesRunning, @unchecked Sendable {
         for i in current.devices.indices where current.devices[i].id == id { current.devices[i].state = "revoked" }
     }
 
+    public func renameMachine(id: String, name: String) async throws {
+        calls.append("rename-machine:\(id):\(name)")
+        for i in current.machines.indices where current.machines[i].id == id { current.machines[i].name = name }
+    }
+
     public func confirmMachine(id: String) async throws {
         calls.append("confirm-machine:\(id)")
         for i in current.machines.indices where current.machines[i].id == id { current.machines[i].confirmed = true }
+    }
+
+    /// The account's pairing codes as the relay keeps them (with the codes).
+    public var pairing: [PairingCode] = []
+
+    public func createPairingCode(team: String?) async throws -> PairingCode {
+        calls.append("create-pairing-code:\(team ?? "")")
+        let now = UInt64(Date().timeIntervalSince1970)
+        let code = "K7QM-4XPB-\(String(format: "%04d", pairing.count + 1))"
+        let made = PairingCode(
+            id: "pc_fixture\(pairing.count + 1)", code: code, url: "https://cua.ai/add/\(code)",
+            installSh: "curl -fsSL https://cua.ai/install.sh | sh -s -- --pair \(code)",
+            installPowershell: "& ([scriptblock]::Create((irm https://cua.ai/install.ps1))) -Pair \(code)",
+            state: "active", team: team, createdAt: now, expiresAt: now + 1800, usedAt: nil, machine: nil)
+        pairing.insert(made, at: 0)
+        return made
+    }
+
+    public func pairingCodes() async throws -> [PairingCode] {
+        calls.append("pairing-codes")
+        return pairing.map {
+            var listed = $0
+            listed.code = nil
+            listed.url = nil
+            listed.installSh = nil
+            listed.installPowershell = nil
+            return listed
+        }
+    }
+
+    public func revokePairingCode(id: String) async throws {
+        calls.append("revoke-pairing-code:\(id)")
+        for i in pairing.indices where pairing[i].id == id { pairing[i].state = "revoked" }
+    }
+
+    public func relayUsage() async throws -> AppRelayUsage? {
+        calls.append("relay-usage")
+        return usage
+    }
+
+    /// A relay allowance by name: `reached` (past it: the notice shows),
+    /// `team` (a pooled team allowance, within it), `none` (a relay that
+    /// meters nothing), else the free plan partway through the month.
+    public static func usage(_ name: String?) -> AppRelayUsage? {
+        let free = AppRelayUsage(
+            metered: true, period: "2026-10", plan: "free", team: nil, liveSessions: 1, liveSessionsLimit: 2,
+            hoursUsed: 6.5, hoursLimit: 20, myHoursUsed: 6.5, softLimitReached: false, reasons: [],
+            upgradeUrl: "https://cua.ai/pricing")
+        var u = free
+        switch name {
+        case "none": return nil
+        case "warn":
+            u.hoursUsed = 16.5
+            u.myHoursUsed = 16.5
+        case "reached":
+            u.liveSessions = 2
+            u.hoursUsed = 20.4
+            u.myHoursUsed = 20.4
+            u.softLimitReached = true
+            u.reasons = ["hours"]
+        case "team":
+            u.plan = "team"
+            u.team = AppRelayUsageTeam(id: "acme", seats: 3)
+            u.liveSessionsLimit = 6
+            u.hoursUsed = 31.5
+            u.hoursLimit = 60
+        default: break
+        }
+        return u
     }
 }
 
@@ -211,8 +325,10 @@ public final class DevicesModel {
     let presence: PresenceChecking
     /// The relay's answer, once read.
     public private(set) var snapshot: DevicesSnapshot?
+    /// When `snapshot` was read.
+    public private(set) var refreshedAt: Date?
     /// The code this Mac shows while it waits for approval.
-    public private(set) var pendingCode: String?
+    public internal(set) var pendingCode: String?
     public private(set) var error: String?
     public private(set) var busy = false
     /// The enroll sheet, while it shows, and where.
@@ -223,8 +339,16 @@ public final class DevicesModel {
     public var approvalSurface: DevicesSurface = .main
     /// A new machine's confirm alert, while it shows (S5).
     public var confirming: AppUnconfirmedMachine?
-    /// Signed in to Cua (no account, no devices).
-    public var signedIn = false
+    /// Signed in to Cua (no account, no devices). A change forgets the
+    /// last allowance (another account's, or none).
+    public var signedIn = false {
+        didSet {
+            guard signedIn != oldValue else { return }
+            relayUsageGeneration += 1
+            relayUsage = nil
+            relayUsageReadAt = nil
+        }
+    }
     /// Runs the interactive sign-in; true once signed in again.
     public var signIn: (() async -> Bool)?
     /// Shows a system notification for a device asking to join.
@@ -242,9 +366,25 @@ public final class DevicesModel {
     var locale = Locale.current
     var timeZone = TimeZone.current
 
-    public init(devices: DevicesRunning?, presence: PresenceChecking = LivePresence()) {
+    /// The account's relay allowance this month (metered only).
+    public private(set) var relayUsage: AppRelayUsage?
+    var relayUsageReadAt: Date?
+    /// Bumped on every account change: an older read's answer is dropped.
+    var relayUsageGeneration = 0
+    /// Where a dismissed notice is remembered (the core's `dismissKey`).
+    let defaults: UserDefaults
+    static let relayNoticeDismissedKey = "cua.relayAllowance.dismissed"
+    public private(set) var relayNoticeDismissed: String?
+    /// The relay just refused a new session over the plan's cap: the sentence
+    /// with Upgrade, shown until dismissed or a session starts.
+    public private(set) var refusal: AppRelayAllowanceNotice?
+
+    public init(devices: DevicesRunning?, presence: PresenceChecking = LivePresence(),
+                defaults: UserDefaults = .standard) {
         self.devices = devices
         self.presence = presence
+        self.defaults = defaults
+        relayNoticeDismissed = defaults.string(forKey: Self.relayNoticeDismissedKey)
     }
 
     var nowSecs: UInt64 { UInt64(max(0, clock().timeIntervalSince1970)) }
@@ -311,6 +451,25 @@ public final class DevicesModel {
     // MARK: - Refresh
 
     /// Reads the relay; announces devices newly asking for approval.
+    /// Reads the relay again when the last answer is older than `maxAge`
+    /// seconds: the Machines page shows who is connected now, not at
+    /// sign-in.
+    public func refreshIfStale(maxAge: TimeInterval = 30) async {
+        if let at = refreshedAt, clock().timeIntervalSince(at) < maxAge { return }
+        await refresh()
+    }
+
+    /// Whether the relay saw each of the account's machines connected, by
+    /// machine id, at the last read.
+    public var relayOnline: [String: Bool] {
+        Dictionary((snapshot?.machines ?? []).map { ($0.id, $0.online) }, uniquingKeysWith: { a, _ in a })
+    }
+
+    /// Each device's state (`enrolled`, `pending`, `expired`, `revoked`), by id.
+    public var deviceStates: [String: String] {
+        Dictionary((snapshot?.devices ?? []).map { ($0.id, $0.state) }, uniquingKeysWith: { a, _ in a })
+    }
+
     public func refresh() async {
         guard signedIn, let devices else {
             snapshot = nil
@@ -318,6 +477,7 @@ public final class DevicesModel {
         }
         do {
             snapshot = try await devices.snapshot()
+            refreshedAt = clock()
             error = nil
         } catch {
             self.error = LiveSpacesBackend.words(error)
@@ -329,6 +489,72 @@ public final class DevicesModel {
             guard !prompt.expired || !dismissed.contains(prompt.deviceId) else { continue }
             notify?(prompt)
             if approval == nil, enroll == nil { openApproval(prompt, in: .main) }
+        }
+    }
+
+    // MARK: - Relay usage
+
+    /// How often the main window reads the allowance again, and how old a
+    /// read may be when the app comes to the front (as the web UI).
+    public static let relayUsagePoll: Duration = .seconds(300)
+    public static let relayUsageFocusAge: TimeInterval = 60
+
+    /// Settings' Relay usage row and the notice, in the core's words.
+    public var relayUsageView: AppRelayUsageView? { relayUsage.flatMap { appRelayUsageView(usage: $0) } }
+
+    /// The notice above the main window, until dismissed for this month and
+    /// these reasons.
+    ///
+    /// At 80% of the relay hours (`warn`) it is a prompt, so it waits while a
+    /// live session is going; past the allowance (`limit`) it always shows.
+    public var relayNotice: AppRelayAllowanceNotice? {
+        if let refusal { return refusal }
+        guard let notice = relayUsageView?.notice, notice.dismissKey != relayNoticeDismissed else { return nil }
+        if notice.level == "warn", (relayUsage?.liveSessions ?? 0) > 0 { return nil }
+        return notice
+    }
+
+    /// One usage event for a Pro or Teams surface (`upsell_<surface>_<action>`,
+    /// fixed names in the app core's telemetry schema).
+    public func recordUpsell(_ feature: String) {
+        telemetry?.record(appTelemetryFeature(feature: feature))
+    }
+
+    /// Keeps an error's text when it is the relay refusing a session over
+    /// the plan's cap (the core's `appPlanLimitNotice`); any other error is
+    /// not a refusal and leaves the notice alone.
+    public func noteRefusal(_ error: String) {
+        guard let notice = appPlanLimitNotice(error: error, accountApp: appAccountAppUrl()) else { return }
+        refusal = notice
+    }
+
+    public func dismissRelayNotice() {
+        if refusal != nil {
+            refusal = nil
+            return
+        }
+        guard let key = relayUsageView?.notice?.dismissKey else { return }
+        recordUpsell("upsell_meter_dismiss")
+        relayNoticeDismissed = key
+        defaults.set(key, forKey: Self.relayNoticeDismissedKey)
+    }
+
+    /// Reads the allowance unless the last read is newer than `maxAge`
+    /// seconds. A failed read keeps the last answer.
+    public func readRelayUsage(maxAge: TimeInterval = 0) async {
+        guard signedIn, let devices else {
+            relayUsage = nil
+            return
+        }
+        if maxAge > 0, let at = relayUsageReadAt, clock().timeIntervalSince(at) < maxAge { return }
+        relayUsageReadAt = clock()
+        let generation = relayUsageGeneration
+        do {
+            let usage = try await devices.relayUsage()
+            guard generation == relayUsageGeneration else { return }
+            relayUsage = usage?.metered == true ? usage : nil
+        } catch {
+            return
         }
     }
 
@@ -498,6 +724,8 @@ public final class DevicesModel {
 final class DeviceNotifier: NSObject, UNUserNotificationCenterDelegate {
     static let shared = DeviceNotifier()
     private var authorized: Bool?
+    /// A notification was clicked (its identifier): the app opens its main UI.
+    var onOpen: ((String) -> Void)?
 
     static var available: Bool { Bundle.main.bundleURL.pathExtension == "app" }
 
@@ -524,6 +752,10 @@ final class DeviceNotifier: NSObject, UNUserNotificationCenterDelegate {
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
                                             didReceive response: UNNotificationResponse) async {
-        await MainActor.run { NSApp.activate() }
+        let id = response.notification.request.identifier
+        await MainActor.run {
+            NSApp.activate()
+            onOpen?(id)
+        }
     }
 }

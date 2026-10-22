@@ -82,6 +82,19 @@ pub fn profiles(app_data: &Path) -> Vec<FirefoxProfile> {
         .collect()
 }
 
+/// The Firefox application-data directory under `home` on `platform`: the
+/// first location with a `profiles.ini` (Linux has several, see
+/// [`cua_teleport_bundle::layout::firefox::source_roots_for`]), else the
+/// first one.
+pub fn app_data_dir(home: &Path, platform: cua_teleport_bundle::Platform) -> PathBuf {
+    let roots = cua_teleport_bundle::layout::firefox::source_roots_for(platform);
+    roots
+        .iter()
+        .map(|r| home.join(r))
+        .find(|dir| dir.join("profiles.ini").is_file())
+        .unwrap_or_else(|| home.join(roots[0]))
+}
+
 /// The profile Firefox opens: the install's `Default=` in `installs.ini`,
 /// else the one marked `Default=1`, else the only one.
 pub fn default_profile(app_data: &Path) -> Option<FirefoxProfile> {

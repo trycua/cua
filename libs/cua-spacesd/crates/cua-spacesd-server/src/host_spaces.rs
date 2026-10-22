@@ -45,8 +45,11 @@ pub const CALLER_METADATA: &str = "x-cua-host-caller";
 /// The feature `GetCapabilities` reports while this host provides Spaces.
 pub const HOST_SPACES_FEATURE: &str = "host_spaces";
 
-/// How long a forwarded create may run (a macOS VM's first boot).
-const CREATE_TIMEOUT: Duration = Duration::from_secs(20 * 60);
+/// How long a forwarded create may run: a macOS VM's first create
+/// downloads a 20+ GB image before it boots, which on a slow connection
+/// takes well over the 20 min this once was (the daemon's own budgets
+/// bound each phase; this only catches a daemon that lost the call).
+const CREATE_TIMEOUT: Duration = Duration::from_secs(2 * 60 * 60);
 /// How long the driver waits for a daemon it started (the daemon socket
 /// is a Unix socket; other systems do not start one).
 #[cfg(unix)]
@@ -94,7 +97,7 @@ impl ServiceProvider for HostSpacesProvider {
             if providing {
                 ""
             } else {
-                "this machine does not provide Spaces (on it: `cua host config --provide-spaces on`)"
+                "this computer does not provide Spaces (on it: `cua host config --provide-spaces on`)"
             },
         )]
     }
@@ -166,7 +169,7 @@ fn caller_json<T>(req: &Request<T>) -> Result<String, Status> {
             return Err(status(
                 Code::Unauthenticated,
                 ErrorReason::Unauthenticated,
-                "HostSpacesService needs a relay-verified account or this machine's token",
+                "HostSpacesService needs a relay-verified account or this computer's token",
             ))
         }
     };
@@ -278,7 +281,7 @@ impl HostSpacesImpl {
             return Err(status(
                 Code::FailedPrecondition,
                 ErrorReason::FeatureUnsupported,
-                "this machine does not provide Spaces (on it: `cua host config --provide-spaces on`)",
+                "this computer does not provide Spaces (on it: `cua host config --provide-spaces on`)",
             ));
         }
         let daemon = policy.spaces_daemon.ok_or_else(|| {
@@ -424,6 +427,21 @@ impl HostSpacesService for HostSpacesImpl {
             .await
     }
 
+    async fn diagnose_host(
+        &self,
+        request: Request<DiagnoseHostRequest>,
+    ) -> Result<Response<DiagnoseHostResponse>, Status> {
+        // Whether or not this machine provides Spaces: its health is the
+        // owner's to see either way (the daemon checks the caller).
+        let (mut client, who) = self.forward(&request, false).await?;
+        // This machine's own health only: never a hop to another machine.
+        let mut message = request.into_inner();
+        message.machine.clear();
+        client
+            .diagnose_host(with_caller(message, &who, Some(Duration::from_secs(30)))?)
+            .await
+    }
+
     async fn delete_host_space(
         &self,
         request: Request<DeleteHostSpaceRequest>,
@@ -475,6 +493,7 @@ mod tests {
                 email: Some("ada@example.com".into()),
                 name: None,
                 role: "owner".into(),
+                ..Default::default()
             }),
             ..Default::default()
         });
@@ -513,6 +532,7 @@ mod tests {
                     email: Some("ada@example.com".into()),
                     name: Some(name.into()),
                     role: "owner".into(),
+                    ..Default::default()
                 }),
                 ..Default::default()
             });

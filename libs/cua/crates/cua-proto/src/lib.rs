@@ -3,9 +3,10 @@
 //! clients and servers.
 //!
 //! The `.proto` files in `libs/cua/proto` are the source of truth; this
-//! crate only generates code from them. Applications should not use the
-//! generated client directly: the ergonomic client lives in `cua-spacesd-client` and is
-//! exposed to other languages only through the cua SDK.
+//! crate only generates code from them (the published crate carries a copy
+//! under `proto/`). Most programs want the typed client in
+//! [`cua-spacesd-client`](https://docs.rs/cua-spacesd-client); the raw
+//! generated clients here are for everything it does not wrap.
 //!
 //! Features:
 //! - `client` (default): `*_service_client` modules.
@@ -93,8 +94,8 @@ pub mod metadata {
     /// Bearer token header: `authorization: Bearer <token>`.
     pub const AUTHORIZATION: &str = "authorization";
     /// Alternate spacesd token header, `x-cua-env-authorization: Bearer <token>`,
-    /// for paths where `authorization` belongs to an outer hop (the Fleet
-    /// gateway consumes and strips it). Servers accept either header.
+    /// for paths where `authorization` belongs to an outer hop (a gateway
+    /// consumes and strips it). Servers accept either header.
     pub const ENV_AUTHORIZATION: &str = "x-cua-env-authorization";
     /// Binary metadata carrying a serialized `cua.env.v1.Principal`.
     pub const PRINCIPAL_BIN: &str = "x-cua-principal-bin";

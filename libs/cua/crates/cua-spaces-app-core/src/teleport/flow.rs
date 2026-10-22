@@ -10,8 +10,12 @@
 //! webview uses; `json` carries the SDK's own JSON for the entry or plan so
 //! the shell can hand it back to `plan` / `run` untouched.
 
-use super::review::{self, ReviewChoice, ReviewDomain, ReviewToggle, SendSource, VaultSource};
+use super::review::{
+    self, ReviewChoice, ReviewDomain, ReviewPassword, ReviewToggle, SendSource, VaultPassword,
+    VaultSource,
+};
 use crate::keyvault::wire::KvInventory;
+use crate::message::Msg;
 use crate::util::{contains_word, to_fixed};
 use serde::{Deserialize, Serialize};
 
@@ -78,24 +82,22 @@ pub enum SensitiveGroup {
 }
 
 impl SensitiveGroup {
-    /// The checkbox label.
-    pub fn label(self) -> &'static str {
-        match self {
-            SensitiveGroup::SignIns => "Keep me signed in",
-            SensitiveGroup::Passwords => "Saved passwords",
-            SensitiveGroup::History => "Browsing history",
-        }
+    /// The checkbox label (`teleport.sensitive.<group>.label`).
+    pub fn label(self) -> Msg {
+        Msg::new(match self {
+            SensitiveGroup::SignIns => "teleport.sensitive.sign_ins.label",
+            SensitiveGroup::Passwords => "teleport.sensitive.passwords.label",
+            SensitiveGroup::History => "teleport.sensitive.history.label",
+        })
     }
 
-    /// The line under it.
-    pub fn detail(self) -> &'static str {
-        match self {
-            SensitiveGroup::SignIns => "Sends the session cookies.",
-            SensitiveGroup::Passwords => "Sends the passwords saved in the app.",
-            SensitiveGroup::History => {
-                "Sends the history of pages visited, and the bookmarks where the browser keeps them together."
-            }
-        }
+    /// The line under it (`teleport.sensitive.<group>.detail`).
+    pub fn detail(self) -> Msg {
+        Msg::new(match self {
+            SensitiveGroup::SignIns => "teleport.sensitive.sign_ins.detail",
+            SensitiveGroup::Passwords => "teleport.sensitive.passwords.detail",
+            SensitiveGroup::History => "teleport.sensitive.history.detail",
+        })
     }
 }
 
@@ -106,9 +108,9 @@ pub struct SensitiveOption {
     /// The group.
     pub group: SensitiveGroup,
     /// Label.
-    pub label: String,
+    pub label: Msg,
     /// The line under the label.
-    pub detail: String,
+    pub detail: Msg,
     /// Checked.
     pub checked: bool,
 }
@@ -317,6 +319,10 @@ pub struct Consent {
     /// Also send the saved passwords (ticked in the review).
     #[serde(default, skip_serializing_if = "is_false")]
     pub include_passwords: bool,
+    /// Reading the app: the sites whose saved passwords to send (the
+    /// review's per-site choice); `None` when no password is sent this way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password_domains: Option<Vec<String>>,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -594,11 +600,35 @@ pub enum PickerEvent {
         /// The app's saved passwords (ids): sent only when ticked.
         #[serde(default)]
         password_ids: Vec<String>,
+        /// The same passwords with their site and username (never a
+        /// value), for the review to list.
+        #[serde(default)]
+        passwords: Vec<VaultPassword>,
+        /// The Keyvault daemon enforces a choice of passwords by site
+        /// (`password_domains` in its status); off for an older one.
+        #[serde(default)]
+        password_picks: bool,
     },
     /// Tick or untick "Also send saved passwords".
     TogglePasswords {
         /// Ticked.
         value: bool,
+    },
+    /// Pick or drop one saved password choice (a site, or a saved item's
+    /// id: [`ReviewPassword::key`]).
+    TogglePassword {
+        /// The choice.
+        key: String,
+    },
+    /// Pick or drop every saved password choice the search shows.
+    SelectShownPasswords {
+        /// Pick (true) or drop.
+        value: bool,
+    },
+    /// The passwords list's search text.
+    PasswordQuery {
+        /// Text.
+        text: String,
     },
     /// The chosen saved items changed.
     VaultSelection {
@@ -741,8 +771,8 @@ pub fn sensitive_options(s: &PickerState) -> Vec<SensitiveOption> {
         .flat_map(|e| e.sensitive_groups.iter())
         .map(|&group| SensitiveOption {
             group,
-            label: group.label().into(),
-            detail: group.detail().into(),
+            label: group.label(),
+            detail: group.detail(),
             checked: s.sensitive.contains(&group),
         })
         .collect()
@@ -779,22 +809,47 @@ pub fn can_plan(s: &PickerState) -> bool {
 pub fn passwords_offered(s: &PickerState) -> bool {
     match s.choice.source {
         SendSource::Vault => !s.choice.vault.password_ids.is_empty(),
-        SendSource::Live => password_count(s) > 0,
+        // Without the daemon's support, as before: the chosen sites'.
+        SendSource::Live if !s.choice.vault.password_picks => password_count(s) > 0,
+        SendSource::Live => s.choice.domains.iter().any(|d| d.passwords > 0),
     }
 }
 
-/// How many saved passwords ticking the box would send.
+/// The saved password choice in effect: the one made, else the default the
+/// first tick picks (`(sites, saved ids)`).
+fn password_picks(c: &ReviewChoice) -> (Vec<String>, Vec<String>) {
+    if c.passwords_picked && c.vault.password_picks {
+        (c.password_domains.clone(), c.password_items.clone())
+    } else {
+        review::default_passwords(c)
+    }
+}
+
+/// How many saved passwords ticking the box would send: those of the
+/// chosen sites (reading the app) or the chosen saved ones.
 pub fn password_count(s: &PickerState) -> u32 {
+    let (domains, items) = password_picks(&s.choice);
     match s.choice.source {
-        SendSource::Vault => s.choice.vault.password_ids.len() as u32,
+        SendSource::Vault => s
+            .choice
+            .vault
+            .password_ids
+            .iter()
+            .filter(|id| items.contains(id))
+            .count() as u32,
         SendSource::Live => s
             .choice
             .domains
             .iter()
-            .filter(|d| s.choice.selected_domains.contains(&d.domain))
+            .filter(|d| domains.contains(&d.domain))
             .map(|d| d.passwords)
             .sum(),
     }
+}
+
+/// Saved passwords go with this teleport: ticked, and at least one chosen.
+fn sends_passwords(s: &PickerState) -> bool {
+    s.choice.include_passwords && passwords_offered(s) && password_count(s) > 0
 }
 
 /// The review can be confirmed: a plan, secrets acknowledged when any, and
@@ -803,7 +858,7 @@ pub fn can_confirm(s: &PickerState) -> bool {
     let from_vault_ok = s.choice.source != SendSource::Vault || !s.choice.vault.selected.is_empty();
     from_vault_ok
         && s.plan.as_ref().is_some_and(|p| {
-            (!(p.sensitive || s.choice.include_passwords) || s.acknowledged)
+            (!(p.sensitive || sends_passwords(s)) || s.acknowledged)
                 && (!p.relay_unsealed || s.acknowledged_relay_plaintext)
         })
 }
@@ -841,12 +896,33 @@ pub fn consent(s: &PickerState) -> Consent {
         exclude: s.choice.excluded.clone(),
         from_vault: vault.then(|| {
             let mut ids = s.choice.vault.selected.clone();
-            if s.choice.include_passwords {
-                ids.extend(s.choice.vault.password_ids.iter().cloned());
+            if sends_passwords(s) {
+                let (_, items) = password_picks(&s.choice);
+                ids.extend(
+                    s.choice
+                        .vault
+                        .password_ids
+                        .iter()
+                        .filter(|id| items.contains(id))
+                        .cloned(),
+                );
             }
             ids
         }),
-        include_passwords: passwords_offered(s) && s.choice.include_passwords,
+        include_passwords: sends_passwords(s),
+        // Only to a daemon that enforces it: an older one reads the chosen
+        // sites' passwords, which is what the review then offered.
+        password_domains: (!vault && sends_passwords(s) && s.choice.vault.password_picks).then(
+            || {
+                let (domains, _) = password_picks(&s.choice);
+                s.choice
+                    .domains
+                    .iter()
+                    .filter(|d| d.passwords > 0 && domains.contains(&d.domain))
+                    .map(|d| d.domain.clone())
+                    .collect()
+            },
+        ),
     }
 }
 
@@ -1158,10 +1234,23 @@ pub fn reduce(s: &PickerState, e: &PickerEvent) -> PickerState {
             now_ms,
             selected,
             password_ids,
+            passwords,
+            password_picks,
         } => {
             if s.step == Step::Consent {
+                // The saved passwords picked stay picked while they exist;
+                // the first list of them starts with every one picked.
+                if s.choice.vault.password_ids.is_empty() {
+                    n.choice.password_items = password_ids.clone();
+                } else {
+                    n.choice
+                        .password_items
+                        .retain(|id| password_ids.contains(id));
+                }
                 n.choice.vault = VaultSource {
                     password_ids: password_ids.clone(),
+                    passwords: passwords.clone(),
+                    password_picks: *password_picks,
                     available: *count > 0,
                     items: *count,
                     saved: if *newest_ms > 0 {
@@ -1179,6 +1268,28 @@ pub fn reduce(s: &PickerState, e: &PickerEvent) -> PickerState {
         PickerEvent::TogglePasswords { value } => {
             if s.step == Step::Consent && passwords_offered(s) {
                 n.choice.include_passwords = *value;
+                // The first tick picks the default; the list then shows it.
+                if *value && !n.choice.passwords_picked {
+                    let (domains, items) = review::default_passwords(&n.choice);
+                    n.choice.password_domains = domains;
+                    n.choice.password_items = items;
+                    n.choice.passwords_picked = true;
+                }
+            }
+        }
+        PickerEvent::TogglePassword { key } => {
+            if s.step == Step::Consent && s.choice.include_passwords {
+                review::toggle_password(&mut n.choice, key);
+            }
+        }
+        PickerEvent::SelectShownPasswords { value } => {
+            if s.step == Step::Consent && s.choice.include_passwords {
+                review::set_shown_passwords(&mut n.choice, *value);
+            }
+        }
+        PickerEvent::PasswordQuery { text } => {
+            if s.step == Step::Consent {
+                n.choice.password_query = text.clone();
             }
         }
         PickerEvent::VaultSelection { selected } => {
@@ -1210,6 +1321,12 @@ pub fn reduce(s: &PickerState, e: &PickerEvent) -> PickerState {
                 if s.entries.is_some() {
                     n.step = Step::Pick;
                     n.plan = None;
+                    // Back on the grid: no app is open any more (the sheet's
+                    // title goes back to "Teleport an app to …"); the grid
+                    // keeps its selection.
+                    n.entry = None;
+                    n.moves = None;
+                    n.sensitive.clear();
                 }
             }
             Step::Consent => {
@@ -1224,6 +1341,11 @@ pub fn reduce(s: &PickerState, e: &PickerEvent) -> PickerState {
                 n.step = s.error_back;
                 n.error = None;
                 n.install_prompt = None;
+                if n.step == Step::Pick {
+                    n.entry = None;
+                    n.moves = None;
+                    n.sensitive.clear();
+                }
             }
             _ => {}
         },
@@ -1239,7 +1361,11 @@ pub struct ReviewView {
     pub title: String,
     /// The consent lines.
     pub items: Vec<ConsentItem>,
-    /// Plan steps.
+    /// What happens, in plan steps, when the review has nothing to choose
+    /// (no files, state, secrets or sites; e.g. "Just the app" for an app
+    /// the Space's image already has), so the review is never blank. Empty
+    /// otherwise: the lines below say what is sent, and a step's counts
+    /// would not follow what is turned off. The installs are in `items`.
     pub steps: Vec<PlanStepView>,
     /// The secrets checkbox shows.
     pub needs_acknowledgement: bool,
@@ -1295,6 +1421,17 @@ pub struct ReviewView {
     pub include_passwords: bool,
     /// "Also send 14 saved passwords".
     pub passwords_label: String,
+    /// Ticked: the saved passwords to pick from (sites with counts when
+    /// reading the app, each saved password's site and username from the
+    /// Keyvault; never a value), filtered by the search.
+    #[serde(default)]
+    pub passwords: Vec<ReviewPassword>,
+    /// "2 of 5 sites", "2 of 5 passwords".
+    #[serde(default)]
+    pub password_summary: String,
+    /// The passwords search text.
+    #[serde(default)]
+    pub password_query: String,
     /// What the Keychain will do for this source, in a line.
     pub source_note: String,
 }
@@ -1333,10 +1470,27 @@ pub fn review(s: &PickerState) -> Option<ReviewView> {
         (bytes > 0).then(|| format!("{} leaves this Mac", format_bytes(bytes)))
     };
     let app = &plan.app.name;
+    let chooses = vault || cookies || plan.consent.iter().any(|c| toggleable(c, choice));
     Some(ReviewView {
         title: format!("Teleport {} to {}", plan.app.name, s.space_name),
         items: plan.consent.clone(),
-        steps: plan.steps.clone(),
+        steps: if chooses {
+            vec![]
+        } else {
+            plan.steps
+                .iter()
+                .filter(|st| st.kind != "install")
+                .map(|st| PlanStepView {
+                    // The app's own name ("Open Firefox"), not its program's.
+                    summary: if st.kind == "launch" {
+                        format!("Open {app}")
+                    } else {
+                        st.summary.clone()
+                    },
+                    ..st.clone()
+                })
+                .collect()
+        },
         toggles: plan
             .consent
             .iter()
@@ -1389,8 +1543,10 @@ pub fn review(s: &PickerState) -> Option<ReviewView> {
         include_passwords: s.choice.include_passwords && passwords_offered(s),
         passwords_label: {
             let n = password_count(s);
-            if n == 0 {
+            if !passwords_offered(s) {
                 String::new()
+            } else if n == 0 {
+                "Also send saved passwords".into()
             } else {
                 format!(
                     "Also send {n} saved password{}",
@@ -1398,8 +1554,14 @@ pub fn review(s: &PickerState) -> Option<ReviewView> {
                 )
             }
         },
-        needs_acknowledgement: plan.sensitive
-            || (s.choice.include_passwords && passwords_offered(s)),
+        passwords: if s.choice.include_passwords && passwords_offered(s) {
+            review::password_rows(choice)
+        } else {
+            vec![]
+        },
+        password_summary: review::password_summary(choice),
+        password_query: choice.password_query.clone(),
+        needs_acknowledgement: plan.sensitive || sends_passwords(s),
         acknowledged: s.acknowledged,
         offers_save_to_keyvault: plan.sensitive,
         save_to_keyvault: s.save_to_keyvault,
@@ -1525,14 +1687,16 @@ mod tests {
             },
         );
         let opts = sensitive_options(&s);
-        let labels: Vec<(&str, bool)> =
-            opts.iter().map(|o| (o.label.as_str(), o.checked)).collect();
+        let labels: Vec<(&str, bool)> = opts
+            .iter()
+            .map(|o| (o.label.code.as_str(), o.checked))
+            .collect();
         assert_eq!(
             labels,
             [
-                ("Keep me signed in", true),
-                ("Saved passwords", false),
-                ("Browsing history", false)
+                ("teleport.sensitive.sign_ins.label", true),
+                ("teleport.sensitive.passwords.label", false),
+                ("teleport.sensitive.history.label", false)
             ]
         );
         assert_eq!(plan_sensitive(&s), [SensitiveGroup::SignIns]);
@@ -1636,6 +1800,40 @@ mod tests {
         }
     }
 
+    /// Back from an app's options returns to the grid with no app open, so
+    /// the sheet's title is the grid's again; the grid keeps its selection.
+    #[test]
+    fn back_to_the_grid_closes_the_app() {
+        let chrome = chrome_entry();
+        let s = reduce(
+            &initial("dev"),
+            &PickerEvent::Loaded {
+                entries: vec![chrome.clone()],
+            },
+        );
+        let s = reduce(
+            &s,
+            &PickerEvent::Choose {
+                id: Some(chrome.id.clone()),
+            },
+        );
+        assert_eq!(s.step, Step::Options);
+        assert!(s.entry.is_some());
+        let back = reduce(&s, &PickerEvent::Back);
+        assert_eq!(back.step, Step::Pick);
+        assert_eq!(back.entry, None);
+        assert_eq!(back.moves, None);
+        assert!(back.sensitive.is_empty());
+        assert!(!can_plan(&back));
+        // Choosing again opens it afresh.
+        let again = reduce(&back, &PickerEvent::Choose { id: None });
+        assert_eq!(again.step, Step::Options);
+        assert_eq!(
+            again.entry.as_ref().map(|e| e.id.as_str()),
+            Some(chrome.id.as_str())
+        );
+    }
+
     /// Walks `initial` to `Step::Consent` the way the picker really does
     /// (preselect, choose the signed-in state move, plan).
     fn consent_state() -> PickerState {
@@ -1653,6 +1851,90 @@ mod tests {
             },
         );
         reduce(&s, &PickerEvent::Plan)
+    }
+
+    /// "Just the app" for an app the Space's image already has sends
+    /// nothing and installs nothing: the review still says what happens
+    /// (CUA-1616), and only when there is nothing to choose.
+    #[test]
+    fn a_review_with_nothing_to_choose_lists_what_happens() {
+        let step = |kind: &str, summary: &str| PlanStepView {
+            kind: kind.into(),
+            summary: summary.into(),
+        };
+        let s = reduce(
+            &initial("dev"),
+            &PickerEvent::Preselect {
+                entry: chrome_entry(),
+                files: vec![],
+            },
+        );
+        let s = reduce(
+            &reduce(
+                &s,
+                &PickerEvent::Move {
+                    moves: Move::AppOnly,
+                },
+            ),
+            &PickerEvent::Plan,
+        );
+        let app_only = Plan {
+            moves: Move::AppOnly,
+            steps: vec![step("launch", "Open google-chrome")],
+            total_bytes: 0,
+            ..plan(false)
+        };
+        let s = reduce(
+            &s,
+            &PickerEvent::Planned {
+                plan: app_only.clone(),
+            },
+        );
+        let rv = review(&s).unwrap();
+        assert!(rv.items.is_empty() && rv.toggles.is_empty() && rv.warnings.is_empty());
+        assert_eq!(rv.steps, vec![step("launch", "Open Google Chrome")]);
+        assert!(rv.can_confirm);
+
+        // An install is listed in `items` already, not again as a step.
+        let installs = Plan {
+            steps: vec![
+                step("install", "Install google-chrome (pinned, verified)"),
+                step("launch", "Open google-chrome"),
+            ],
+            consent: vec![ConsentItem {
+                kind: ConsentKind::Install,
+                key: "google-chrome".into(),
+                label: "Install Google Chrome 141".into(),
+                detail: String::new(),
+                bytes: 0,
+                sensitive: false,
+            }],
+            ..app_only.clone()
+        };
+        let s2 = reduce(&reduce(&s, &PickerEvent::Back), &PickerEvent::Plan);
+        let rv = review(&reduce(&s2, &PickerEvent::Planned { plan: installs })).unwrap();
+        assert_eq!(rv.steps, vec![step("launch", "Open Google Chrome")]);
+
+        // Something to choose: the lines say what is sent, not the steps.
+        let files = Plan {
+            moves: Move::AppWithFiles,
+            steps: vec![
+                step("files", "Send 1 item(s) to ~/Downloads/x"),
+                step("launch", "Open google-chrome"),
+            ],
+            consent: vec![ConsentItem {
+                kind: ConsentKind::File,
+                key: "/Users/me/a.txt".into(),
+                label: "a.txt".into(),
+                detail: String::new(),
+                bytes: 10,
+                sensitive: false,
+            }],
+            ..app_only
+        };
+        let rv = review(&reduce(&s2, &PickerEvent::Planned { plan: files })).unwrap();
+        assert_eq!(rv.toggles.len(), 1);
+        assert!(rv.steps.is_empty());
     }
 
     /// "Save to Keyvault" only shows and only takes for a sensitive plan (a
@@ -1906,6 +2188,8 @@ mod tests {
                 now_ms: now,
                 selected: vec!["a".into(), "b".into()],
                 password_ids: vec![],
+                passwords: vec![],
+                password_picks: false,
             },
         );
         let rv = review(&s).unwrap();
@@ -1964,6 +2248,8 @@ mod tests {
                 now_ms: now,
                 selected: vec![],
                 password_ids: vec![],
+                passwords: vec![],
+                password_picks: false,
             },
         );
         assert_eq!(review(&gone).unwrap().source, SendSource::Live);
@@ -1992,6 +2278,8 @@ mod tests {
                 now_ms: now,
                 selected: vec!["a".into(), "b".into()],
                 password_ids: vec!["p1".into(), "p2".into(), "p3".into()],
+                passwords: vec![],
+                password_picks: false,
             },
         );
         let s = reduce(
@@ -2026,5 +2314,276 @@ mod tests {
         // Off again, and a different source forgets nothing but also sends none.
         let off = reduce(&on, &PickerEvent::TogglePasswords { value: false });
         assert!(!consent(&off).include_passwords);
+    }
+
+    /// Ticking "Saved passwords" lists them to pick from, like the sites:
+    /// reading the app, its sites with how many passwords each (starting
+    /// from the sites chosen to keep you signed in); from the Keyvault, each
+    /// saved password's site and username. Never a value. Only the chosen
+    /// ones are sent.
+    #[test]
+    fn saved_passwords_can_be_reviewed_and_picked_by_site_or_login() {
+        use crate::keyvault::wire::KvDomainCount;
+        let now = 1_800_000_000_000_i64;
+        let mut inv = inventory();
+        inv.domains[0].passwords = 2; // github.com, a sign-in site
+        inv.domains.push(KvDomainCount {
+            domain: "bank.example".into(),
+            passwords: 1,
+            ..Default::default()
+        });
+        let s = reduce(
+            &review_state(),
+            &PickerEvent::DomainsLoaded {
+                inventory: inv,
+                remembered: None,
+            },
+        );
+        // The Keyvault daemon enforces a choice of passwords by site.
+        let s = daemon(&s, true);
+        let rv = review(&s).unwrap();
+        assert!(rv.offers_passwords && !rv.include_passwords);
+        assert_eq!(rv.passwords_label, "Also send 2 saved passwords");
+        assert!(rv.passwords.is_empty(), "the list shows once ticked");
+
+        let on = reduce(&s, &PickerEvent::TogglePasswords { value: true });
+        let rv = review(&on).unwrap();
+        let rows = |rv: &ReviewView| {
+            rv.passwords
+                .iter()
+                .map(|p| {
+                    (
+                        p.site.clone(),
+                        p.username.clone(),
+                        p.counts.clone(),
+                        p.selected,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            rows(&rv),
+            [
+                ("bank.example".into(), "".into(), "1 password".into(), false),
+                ("github.com".into(), "".into(), "2 passwords".into(), true),
+            ]
+        );
+        assert_eq!(rv.password_summary, "1 of 2 sites");
+        assert_eq!(
+            consent(&on).password_domains,
+            Some(vec!["github.com".to_string()])
+        );
+        assert_eq!(
+            consent(&on).cookie_domains,
+            Some(vec!["github.com".to_string(), "notion.so".to_string()])
+        );
+
+        // A site without its cookies: its password only.
+        let both = reduce(
+            &on,
+            &PickerEvent::TogglePassword {
+                key: "bank.example".into(),
+            },
+        );
+        let c = consent(&both);
+        assert_eq!(
+            c.password_domains,
+            Some(vec!["bank.example".to_string(), "github.com".to_string()])
+        );
+        assert!(c.include_passwords && c.approved);
+        assert_eq!(
+            review(&both).unwrap().passwords_label,
+            "Also send 3 saved passwords"
+        );
+        // The search filters; None drops what it shows.
+        let q = reduce(
+            &both,
+            &PickerEvent::PasswordQuery {
+                text: "bank".into(),
+            },
+        );
+        assert_eq!(review(&q).unwrap().passwords.len(), 1);
+        let q = reduce(&q, &PickerEvent::SelectShownPasswords { value: false });
+        assert_eq!(
+            consent(&q).password_domains,
+            Some(vec!["github.com".to_string()])
+        );
+        // Nothing picked: no password goes, though the box is ticked.
+        let none = reduce(&on, &PickerEvent::SelectShownPasswords { value: false });
+        let c = consent(&none);
+        assert!(!c.include_passwords && c.password_domains.is_none());
+        assert_eq!(
+            review(&none).unwrap().passwords_label,
+            "Also send saved passwords"
+        );
+        // Unticked and ticked again: the choice is kept.
+        let again = reduce(
+            &reduce(&both, &PickerEvent::TogglePasswords { value: false }),
+            &PickerEvent::TogglePasswords { value: true },
+        );
+        assert_eq!(
+            consent(&again).password_domains,
+            consent(&both).password_domains
+        );
+
+        // From the Keyvault: each saved password by site and username, all
+        // picked at first.
+        let v = reduce(
+            &s,
+            &PickerEvent::VaultItems {
+                count: 1,
+                newest_ms: now,
+                now_ms: now,
+                selected: vec!["a".into()],
+                password_ids: vec!["p1".into(), "p2".into()],
+                passwords: vec![
+                    VaultPassword {
+                        id: "p1".into(),
+                        site: "github.com".into(),
+                        username: "octocat".into(),
+                    },
+                    VaultPassword {
+                        id: "p2".into(),
+                        site: "".into(),
+                        username: "".into(),
+                    },
+                ],
+                password_picks: true,
+            },
+        );
+        let v = reduce(
+            &v,
+            &PickerEvent::SendFrom {
+                source: SendSource::Vault,
+            },
+        );
+        let v = reduce(&v, &PickerEvent::TogglePasswords { value: true });
+        let rv = review(&v).unwrap();
+        assert_eq!(
+            rows(&rv),
+            [
+                ("github.com".into(), "octocat".into(), "".into(), true),
+                ("Saved password".into(), "".into(), "".into(), true),
+            ]
+        );
+        assert_eq!(rv.password_summary, "2 of 2 passwords");
+        let one = reduce(&v, &PickerEvent::TogglePassword { key: "p2".into() });
+        let c = consent(&one);
+        assert_eq!(c.from_vault, Some(vec!["a".to_string(), "p1".to_string()]));
+        assert!(c.include_passwords && c.password_domains.is_none());
+        // Searching by username.
+        let q = reduce(
+            &one,
+            &PickerEvent::PasswordQuery {
+                text: "octo".into(),
+            },
+        );
+        assert_eq!(review(&q).unwrap().passwords.len(), 1);
+        // No row carries a value: only the site, username and counts exist.
+        let json = serde_json::to_string(&review(&one).unwrap().passwords).unwrap();
+        assert!(!json.contains("password\":"), "{json}");
+    }
+
+    /// What the Keyvault daemon says it supports: `picks` is the
+    /// `password_domains` feature (no saved items).
+    fn daemon(s: &PickerState, picks: bool) -> PickerState {
+        reduce(
+            s,
+            &PickerEvent::VaultItems {
+                count: 0,
+                newest_ms: 0,
+                now_ms: 0,
+                selected: vec![],
+                password_ids: vec![],
+                passwords: vec![],
+                password_picks: picks,
+            },
+        )
+    }
+
+    /// A Keyvault daemon that predates the per-site choice of passwords
+    /// would ignore it and read the passwords of every chosen site. With
+    /// one, the review offers the passwords as before (those of the sites
+    /// kept signed in, or every saved one) and lists none to pick, so it
+    /// never shows a choice that would not be kept; the consent carries no
+    /// `passwordDomains`.
+    #[test]
+    fn an_older_keyvault_daemon_gets_no_password_picker() {
+        use crate::keyvault::wire::KvDomainCount;
+        let mut inv = inventory();
+        inv.domains[0].passwords = 2; // github.com, a sign-in site
+        inv.domains.push(KvDomainCount {
+            domain: "bank.example".into(),
+            passwords: 1,
+            ..Default::default()
+        });
+        let loaded = reduce(
+            &review_state(),
+            &PickerEvent::DomainsLoaded {
+                inventory: inv,
+                remembered: None,
+            },
+        );
+        for s in [loaded.clone(), daemon(&loaded, false)] {
+            let rv = review(&s).unwrap();
+            assert!(rv.offers_passwords);
+            assert_eq!(rv.passwords_label, "Also send 2 saved passwords");
+            let on = reduce(&s, &PickerEvent::TogglePasswords { value: true });
+            let rv = review(&on).unwrap();
+            assert!(rv.include_passwords && rv.passwords.is_empty(), "no picker");
+            // Picking does nothing: the chosen sites' passwords go, as before.
+            let tried = reduce(
+                &on,
+                &PickerEvent::TogglePassword {
+                    key: "bank.example".into(),
+                },
+            );
+            let tried = reduce(&tried, &PickerEvent::SelectShownPasswords { value: false });
+            let c = consent(&tried);
+            assert!(c.include_passwords);
+            assert_eq!(
+                c.password_domains, None,
+                "never sent to a daemon that ignores it"
+            );
+            assert_eq!(
+                review(&tried).unwrap().passwords_label,
+                "Also send 2 saved passwords"
+            );
+            // Dropping the only site with passwords takes the offer away.
+            let gone = reduce(
+                &on,
+                &PickerEvent::ToggleDomain {
+                    domain: "github.com".into(),
+                },
+            );
+            assert!(!review(&gone).unwrap().offers_passwords);
+            assert!(!consent(&gone).include_passwords);
+        }
+        // From the Keyvault: every saved password, as before.
+        let v = reduce(
+            &loaded,
+            &PickerEvent::VaultItems {
+                count: 1,
+                newest_ms: 1,
+                now_ms: 1,
+                selected: vec!["a".into()],
+                password_ids: vec!["p1".into(), "p2".into()],
+                passwords: vec![],
+                password_picks: false,
+            },
+        );
+        let v = reduce(
+            &v,
+            &PickerEvent::SendFrom {
+                source: SendSource::Vault,
+            },
+        );
+        let v = reduce(&v, &PickerEvent::TogglePasswords { value: true });
+        let v = reduce(&v, &PickerEvent::TogglePassword { key: "p2".into() });
+        assert!(review(&v).unwrap().passwords.is_empty());
+        assert_eq!(
+            consent(&v).from_vault,
+            Some(vec!["a".to_string(), "p1".to_string(), "p2".to_string()])
+        );
     }
 }

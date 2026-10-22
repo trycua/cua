@@ -48,6 +48,10 @@
     "kotlin": {
       "e2e": "kotlin",
       "what": "Kotlin blocks compile against libs/cua/kotlin (tests/e2e/cua-sdk/docs/compile_lane.py --lane kotlin; compile-only)"
+    },
+    "rust": {
+      "e2e": "rust",
+      "what": "Rust blocks type-check against libs/cua/crates/cua-sdk (tests/e2e/cua-sdk/docs/compile_lane.py --lane rust; cargo check, nothing runs)"
     }
   },
   "skip": {

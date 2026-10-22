@@ -35,33 +35,44 @@ pub mod access;
 pub mod device;
 pub mod direct;
 pub mod driver;
+pub mod helper_migration;
+#[cfg(test)]
+mod helper_migration_tests;
 mod host;
 pub mod machine;
+pub mod pairing;
 pub mod preflight;
 pub mod provided;
 pub mod relay;
 pub mod service;
 #[cfg(test)]
 mod setup_tests;
+pub mod spaces_api;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 #[cfg(test)]
 mod tests;
 
 pub use device::{DeviceAuth, DeviceKey, FileKeySlot, KeySlot, MemoryKeySlot, PendingCode};
+pub use helper_migration::{ServiceMigration, VerifyTiming};
 pub use host::SetupStage;
 pub use host::{
     DirectHosting, Host, HostConfig, HostMode, HostPaths, HostPolicy, HostSettingsChange,
-    HostStatus, META_PROVIDES_SPACES, PermissionHint, SetupOptions, SpacesDaemon, permission_hints,
+    HostStatus, META_ARCH, META_OS, META_PROVIDES_SPACES, PermissionHint, RELAY_HICCUP_GRACE,
+    SetupOptions, SpacesDaemon, local_network_hint, permission_hints,
 };
 pub use machine::machine_id;
+pub use pairing::{
+    PairingCode, PairingCodeRequest, PairingCodeToken, add_machine_url, display_pairing_code,
+    install_command, normalize_pairing_code, pairing_link_relay,
+};
 pub use provided::{
     HostProfile, HostSpacesSettings, MachineMatch, ProvidedSpace, SpacesAuditRecord, match_machine,
 };
 pub use relay::{
     AccountTokens, AuditEvent, ConnectedClient, DEFAULT_RELAY_URL, DeviceListing, DeviceState,
-    DeviceView, Enrollment, Identity, Machine, MachinePatch, NoAccount, RelayClient, StaticToken,
-    relay_url_from_env,
+    DeviceView, Enrollment, Identity, Machine, MachinePatch, NoAccount, RelayClient, RelayUsage,
+    RelayUsageTeam, StaticToken, relay_url_from_env,
 };
 pub use service::{RunnerKind, ServiceManager, ServiceSpec, ServiceState};
 
@@ -130,6 +141,11 @@ pub enum Error {
     /// Relay unreachable or failed.
     #[error("relay: {0}")]
     Relay(String),
+    /// The relay refused a new live session over the plan's cap (HTTP 429,
+    /// `x-cua-relay-error: plan_limit_*`). The text is the plain sentence
+    /// ([`cua_home::plan_limit::PlanLimit::sentence`]); never retried.
+    #[error("{0}")]
+    PlanLimit(String),
     /// Driver download failed.
     #[error("download: {0}")]
     Download(String),
@@ -155,8 +171,24 @@ impl Error {
             Error::PermissionDenied(m) if m.starts_with("relay: ") => Some(403),
             Error::NotFound(m) if m.starts_with("relay: ") => Some(404),
             Error::Conflict(m) if m.starts_with("relay: ") => Some(409),
+            Error::PlanLimit(_) => Some(429),
             Error::Relay(m) | Error::Download(m) => status_in(m),
             _ => None,
+        }
+    }
+
+    /// A relay failure that may pass on its own: the relay (or the proxy in
+    /// front of it, which answers 503 "no available server" while the
+    /// relay's one pod is replaced) answered 429, 502, 503 or 504, or it
+    /// was not reached at all (offline, DNS, a timeout). Not a refusal, a
+    /// missing machine or an answer that could not be read.
+    pub fn is_transient(&self) -> bool {
+        match self {
+            Error::Relay(m) => match status_in(m) {
+                Some(code) => matches!(code, 429 | 502 | 503 | 504),
+                None => !m.starts_with("bad relay response"),
+            },
+            _ => false,
         }
     }
 }

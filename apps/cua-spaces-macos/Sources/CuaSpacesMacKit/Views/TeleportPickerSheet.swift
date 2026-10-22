@@ -82,11 +82,11 @@ struct TeleportPickerSheet: View {
             // The core's opt-ins, each unchecked until chosen: "Keep me
             // signed in" (the session cookies), "Saved passwords",
             // "Browsing history".
-            ForEach(appPickerSensitiveOptions(state: s), id: \.label) { option in
+            ForEach(appPickerSensitiveOptions(state: s), id: \.group) { option in
                 Toggle(isOn: Binding(get: { option.checked },
                                      set: { teleport.send(.sensitive(group: option.group, value: $0)) })) {
-                    Text(option.label)
-                    Text(option.detail)
+                    Text(CoreMessages.text(option.label))
+                    Text(CoreMessages.text(option.detail))
                 }
                 .toggleStyle(.checkbox)
             }

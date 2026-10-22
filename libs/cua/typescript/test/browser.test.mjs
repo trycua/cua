@@ -28,7 +28,7 @@ test(
   "browser build: env over gRPC-Web and typed errors",
   { skip: !built ? "browser build missing (npm run build:browser)" : !binary("CUA_TEST_FIXTURES", "cua-test-fixtures") },
   async () => {
-    const cua = sdk.Cua.embedded(sdk.CuaConfig.create({}))
+    const cua = sdk.Cua.embedded()
     const env = await cua.spacesd(fx.env_url, fx.env_token)
     const caps = await env.capabilities()
     assert.ok(caps.version.length > 0)
@@ -41,6 +41,5 @@ test(
     await assert.rejects(cua.spacesd(fx.env_url, "wrong"), (e) =>
       sdk.CuaError.Unauthenticated.instanceOf(e),
     )
-    assert.throws(() => cua.fleet(), (e) => sdk.CuaError.ProviderNotConfigured.instanceOf(e))
   },
 )

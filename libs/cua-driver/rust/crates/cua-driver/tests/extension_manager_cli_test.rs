@@ -490,25 +490,57 @@ fn mcp_inventory_exposes_only_the_confirm_gated_extension_installer() {
 fn cli_rejects_ambiguous_extension_arguments() {
     let temp = TempDir::new().unwrap();
     let home = temp.path().join("driver-home");
-    for args in [
-        vec!["extension", "list", "extra"],
-        vec!["extension", "status", "--json", "--json"],
-        vec!["extension", "install", "cua-perception", "--archive"],
-        vec![
-            "extension",
-            "install",
-            "cua-perception",
-            "--archive",
-            "x",
-            "--catalog",
-            "y",
-            "--allow-unsigned-local",
-        ],
-        vec!["extension", "path", "cua-perception"],
+    for (args, message) in [
+        (vec!["extension", "bogus"], "unknown subcommand \"bogus\""),
+        (
+            vec!["extension", "status", "--bogus"],
+            "unknown extension option \"--bogus\"",
+        ),
+        (vec!["extension", "info"], "info requires an extension name"),
+        (
+            vec!["extension", "list", "extra"],
+            "list does not accept an extension name",
+        ),
+        (
+            vec!["extension", "status", "--json", "--json"],
+            "duplicate flag --json",
+        ),
+        (
+            vec!["extension", "install", "cua-perception", "--archive"],
+            "--archive requires a value",
+        ),
+        (
+            vec![
+                "extension",
+                "install",
+                "cua-perception",
+                "--archive",
+                "x",
+                "--catalog",
+                "y",
+                "--allow-unsigned-local",
+            ],
+            "--allow-unsigned-local cannot be combined with --catalog",
+        ),
     ] {
         let output = run(&home, &args);
-        assert!(!output.status.success(), "accepted {args:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(64), "{args:?}: {stderr}");
+        assert!(stderr.contains(message), "{args:?}: {stderr}");
     }
+}
+
+#[test]
+fn cli_operation_failure_is_not_a_usage_error() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path().join("driver-home");
+    let output = run(&home, &["extension", "path", "cua-perception"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains("cua-perception is not installed"),
+        "{stderr}"
+    );
 }
 
 #[test]

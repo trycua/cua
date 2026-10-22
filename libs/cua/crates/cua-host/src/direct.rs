@@ -20,7 +20,7 @@ use crate::{Error, Result};
 
 /// Why a public address needs `--allow-any-address`, for people.
 pub const PLAINTEXT_WARNING: &str = "the direct listener is plaintext HTTP: anyone on the path \
-     can read the env token, and the token is a shell on this machine and creates Spaces on it";
+     can read the env token, and the token is a shell on this computer and creates Spaces on it";
 
 /// Loopback, Tailscale (100.64.0.0/10 and fd7a:115c:a1e0::/48) or a
 /// private LAN address (10/8, 172.16/12, 192.168/16, fc00::/7). An
@@ -65,7 +65,7 @@ pub fn check_listen(listen: SocketAddr, allow_any_address: bool) -> Result<Optio
         return Ok(None);
     }
     Err(Error::InvalidArgument(format!(
-        "{ip} is a public address and {PLAINTEXT_WARNING}; bind this machine's Tailscale or LAN \
+        "{ip} is a public address and {PLAINTEXT_WARNING}; bind this computer's Tailscale or LAN \
          address (or 0.0.0.0, which accepts host calls only from loopback, Tailscale and LAN \
          addresses), or pass --allow-any-address to accept the risk"
     )))

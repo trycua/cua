@@ -4,7 +4,7 @@
 //! `~/.cua/do_target.json`; coordinates are in screenshot-image space and
 //! are mapped to screen points with the last screenshot's scale and origin.
 //!
-//! Targets are SDK sandboxes (Fleet, local or direct) and relay Spaces
+//! Targets are SDK sandboxes (local or direct) and relay Spaces
 //! (`relay:<machine-id>`). `host` is a direct sandbox pointing at a
 //! cua-spacesd on this machine (default `http://127.0.0.1:3211`), gated
 //! behind `cua do-host-consent`.
@@ -22,14 +22,11 @@ use std::{io::Write, path::PathBuf, sync::Arc};
 
 /// Legacy provider words accepted by `cua do switch <provider> <name>`.
 const LEGACY_PROVIDERS: &[&str] = &[
-    "cloud",
-    "cloudv2",
     "local",
     "lume",
     "lumier",
     "docker",
     "winsandbox",
-    "fleet",
     "direct",
     "sandbox",
 ];
@@ -51,9 +48,8 @@ pub enum DoAction {
     /// `host`, `url <URL>`, or a legacy `<provider> <name>` pair.
     #[command(after_help = "Examples:
   cua do switch dev
-  cua do switch cloud:dev
   cua do switch relay:0123abcd4567ef89
-  # This machine (after `cua do-host-consent`)
+  # This computer (after `cua do-host-consent`)
   cua do switch host")]
     Switch {
         /// Sandbox name or ref, `relay:<id>`, `host`, `url`, or a legacy provider word.
@@ -706,7 +702,6 @@ impl Run<'_> {
                 util::line(out, "  host  [local]");
                 return Ok(0);
             }
-            Some("cloud" | "cloudv2" | "fleet") => Some("cloud"),
             Some("local" | "lume" | "lumier" | "docker" | "winsandbox") => Some("local"),
             Some("direct" | "url") => Some("direct"),
             Some(o) => return fail(&format!("Unknown provider '{o}'")),
@@ -729,11 +724,7 @@ impl Run<'_> {
                     "  {}  [{}]  {}",
                     s.name,
                     format!("{:?}", s.status).to_lowercase(),
-                    // `cua do ls` keeps its provider words.
-                    match s.location.as_str() {
-                        "cloud" => "fleet",
-                        other => other,
-                    }
+                    s.location
                 ),
             );
         }

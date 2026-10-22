@@ -119,6 +119,91 @@ pub fn telemetry_use_app_notice() {
     t().set_notice_mode(cua_telemetry::NoticeMode::External);
 }
 
+// ---- Linking usage data to the signed-in account (CUA-1881) ------------------
+
+/// The one-time notice for machines that saw the older "anonymous" wording,
+/// shown before anything is linked to the account. Both buttons close it;
+/// the second also turns usage data off.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct TelemetryLinkNotice {
+    pub title: String,
+    pub body: String,
+    /// Keeps usage data on ("Got it").
+    pub ok_label: String,
+    /// Turns usage data off ("Turn off usage data").
+    pub turn_off_label: String,
+    /// The link to what is collected.
+    pub details_label: String,
+    pub docs_url: String,
+}
+
+/// The one-time linking notice's words.
+#[uniffi::export]
+pub fn telemetry_link_notice() -> TelemetryLinkNotice {
+    use cua_telemetry::link;
+    TelemetryLinkNotice {
+        title: link::NOTICE_TITLE.into(),
+        body: link::NOTICE_BODY.into(),
+        ok_label: link::NOTICE_OK.into(),
+        turn_off_label: link::NOTICE_TURN_OFF.into(),
+        details_label: link::NOTICE_DETAILS.into(),
+        docs_url: cua_telemetry::notice::DOCS_URL.into(),
+    }
+}
+
+/// Whether the app should show the one-time linking notice now: usage data
+/// is on, the account offered linking, and this machine has not shown it.
+#[uniffi::export]
+pub fn telemetry_link_notice_due() -> bool {
+    t().link_notice_due()
+}
+
+/// The person closed the linking notice (either button). Linking starts
+/// with the app's next launch, never in the process that showed it.
+#[uniffi::export]
+pub fn telemetry_acknowledge_link_notice() {
+    t().acknowledge_link_notice();
+}
+
+/// Where linking stands: `off`, `not_offered`, `notice_due` or `linked`.
+#[uniffi::export]
+pub fn telemetry_link_state() -> String {
+    t().link_state().as_str().into()
+}
+
+/// Asks the Spaces API for the signed-in account's opaque id and hands it
+/// to telemetry (none unlinks). Call at launch and after a sign-in; the
+/// SDK's own sign-in already does. Returns the link state. Best effort:
+/// offline or signed out, nothing changes.
+#[cfg(feature = "host")]
+#[uniffi::export]
+pub async fn telemetry_sync_account() -> String {
+    let _ = crate::native::run(async {
+        sync_account(&cua_auth::Session::from_env()).await;
+        Ok(())
+    })
+    .await;
+    telemetry_link_state()
+}
+
+/// [`telemetry_sync_account`] for `session`.
+#[cfg(feature = "host")]
+pub(crate) async fn sync_account(session: &cua_auth::Session) {
+    if !t().is_enabled() {
+        return;
+    }
+    let budget = Duration::from_secs(10);
+    let Ok(Ok(token)) = tokio::time::timeout(budget, session.access_token(false)).await else {
+        return;
+    };
+    let Ok(api) = cua_host::spaces_api::SpacesApiClient::current() else {
+        return;
+    };
+    if let Ok(Ok(me)) = tokio::time::timeout(budget, api.me(&token)).await {
+        t().offer_account(me.analytics_id.as_deref());
+    }
+}
+
 /// Records use of a Spaces app feature (fixed names: `space_create_local`,
 /// `teleport_drop`, ... see the docs). Returns whether it was queued;
 /// unknown names are dropped.
@@ -252,6 +337,28 @@ pub(crate) fn variant<T>(r: &Result<T>) -> Option<&'static str> {
     r.as_ref().err().map(CuaError::variant)
 }
 
+/// A create's error kind: the cause the error's text names
+/// (`image_pull_not_found`, `runtime_not_running`, `vm_boot_timeout`, ...;
+/// [`cua_create_failure::create_failure_kind`]), else the variant. Only the
+/// bounded word leaves the process, never the message. A cloud create's
+/// "X is not available" is its provider, not a local runtime.
+fn create_error_kind<T>(on: &str, r: &Result<T>) -> Option<&'static str> {
+    let e = r.as_ref().err()?;
+    let local = on == "local";
+    let variant = match e {
+        // A cloud account that is not set up stays provider_not_configured.
+        CuaError::ProviderNotConfigured(_) if !local => return Some(e.variant()),
+        CuaError::ProviderNotConfigured(_) => "Runtime",
+        _ => e.variant(),
+    };
+    Some(cua_create_failure::create_failure_kind(
+        &e.to_string(),
+        "",
+        variant,
+        local,
+    ))
+}
+
 fn outcome<T>(r: &Result<T>) -> Outcome {
     if r.is_ok() {
         Outcome::Ok
@@ -332,7 +439,7 @@ impl CreateFacts {
                 with_build: self.build,
             },
             outcome(r),
-            variant(r),
+            create_error_kind(&self.on, r),
             self.started.elapsed(),
         );
         t().capture(e);
@@ -412,6 +519,64 @@ mod cua_keyvault_links {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn create_error_kind_splits_local_runtime_failures() {
+        let err = |e: CuaError| -> Result<()> { Err(e) };
+        let kind = |on: &str, e: CuaError| {
+            create_error_kind(on, &err(e)).map(cua_telemetry::events::error_kind)
+        };
+        let no_engine = "local runtime: [local] a container engine is not available: no socket";
+        assert_eq!(
+            kind("local", CuaError::Runtime(no_engine.into())),
+            Some("runtime_missing")
+        );
+        assert_eq!(
+            kind("local", CuaError::ProviderNotConfigured(no_engine.into())),
+            Some("runtime_missing")
+        );
+        assert_eq!(
+            kind(
+                "local",
+                CuaError::Runtime("permission denied on unix:///x: add".into())
+            ),
+            Some("runtime_permission")
+        );
+        assert_eq!(
+            kind("local", CuaError::Runtime("boom".into())),
+            Some("runtime")
+        );
+        // A cloud without an account stays provider_not_configured.
+        assert_eq!(
+            kind(
+                "cloud",
+                CuaError::ProviderNotConfigured("x is not available: y".into())
+            ),
+            Some("provider_not_configured")
+        );
+        assert_eq!(
+            kind(
+                "local",
+                CuaError::Runtime("container engine: pull ghcr.io/x/y:1: manifest unknown".into())
+            ),
+            Some("image_pull_not_found")
+        );
+        assert_eq!(
+            kind(
+                "local",
+                CuaError::Runtime("Docker is not running: start Docker Desktop".into())
+            ),
+            Some("runtime_not_running")
+        );
+        assert_eq!(
+            kind(
+                "cloud",
+                CuaError::Runtime("sandbox quota exceeded for this account".into())
+            ),
+            Some("quota_exceeded")
+        );
+        assert_eq!(create_error_kind::<()>("local", &Ok(())), None);
+    }
 
     #[test]
     fn requires_cua_app_maps_to_its_own_outcome() {

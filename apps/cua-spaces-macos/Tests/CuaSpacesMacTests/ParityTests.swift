@@ -46,33 +46,14 @@ struct ParityTests {
     @Test("drive-storage") func driveStorage() throws { try check("drive-storage", runDriveStorage) }
     @Test("notifications") func notifications() throws { try check("notifications", runNotifications) }
     @Test("about") func about() throws { try check("about", runAbout) }
+    @Test("agent-keys") func agentKeys() throws { try check("agent-keys", runAgentKeys) }
     @Test("your-cloud") func yourCloud() throws { try check("your-cloud", runYourCloud) }
     @Test("launch-at-login") func launchAtLogin() throws { try check("launch-at-login", runLaunchAtLogin) }
     @Test("telemetry-funnel") func telemetryFunnel() throws { try check("telemetry-funnel", runTelemetry) }
     @Test("experiments") func experiments() throws { try check("experiments", runExperiments) }
     @Test("placement-picker") func placementPicker() throws { try check("placement-picker", runPlacementPicker) }
-
-    /// The app's own first run records exactly the golden's events: the
-    /// `OnboardingModel` the window drives, on a recording telemetry.
-    @MainActor @Test("telemetry-funnel through the first-run model")
-    func telemetryFunnelThroughTheModel() throws {
-        let flow = try json(Self.dir.appendingPathComponent("telemetry-funnel.json"))
-        let golden = try json(Self.dir.appendingPathComponent("golden/telemetry-funnel.json"))
-        for run in ["onboarding", "skipping", "no-usage-data"] {
-            let telemetry = FixtureTelemetry()
-            let o = OnboardingModel(statePath: nil)
-            o.telemetry = telemetry
-            for a in flow[run] as! [[String: Any]] {
-                o.send(try appOnboardingActionFromJson(json: text(a)))
-            }
-            o.finish()
-            let want = (golden["frames"] as! [[String: Any]])
-                .filter { ($0["at"] as? String) == run }
-                .flatMap { $0["signals"] as! [Any] }
-            let got = telemetry.recorded.map(Self.signalFrame)
-            #expect(canonical(got) == canonical(want), "\(run):\n want \(canonical(want))\n  got \(canonical(got))")
-        }
-    }
+    @Test("checklist") func checklist() throws { try check("checklist", runChecklist) }
+    @Test("create-stages") func createStages() throws { try check("create-stages", runProvisioning) }
 
     // MARK: - Harness
 
@@ -137,6 +118,9 @@ struct ParityTests {
         case "set-address": return .setAddress(url: a["url"] as! String)
         case "set-token": return .setToken(token: a["token"] as! String)
         case "set-address-name": return .setAddressName(name: a["name"] as! String)
+        // Typed slider values, decoded as the core does.
+        case "edit-resource", "set-resource-text", "commit-resource", "cancel-resource":
+            return try! appWizardActionFromJson(json: text(a))
         case let other: fatalError("unmapped wizard action \(other)")
         }
     }
@@ -151,7 +135,7 @@ struct ParityTests {
     }
 
     func wizardFrame(_ v: AppWizardView) -> [String: Any] {
-        [
+        var out: [String: Any] = [
             "step": Int(v.step),
             "canContinue": v.canContinue,
             "primaryLabel": v.primaryLabel,
@@ -197,6 +181,16 @@ struct ParityTests {
                 "submit": v.address.submit.map { "\($0.url) token=\($0.token ?? "") name=\($0.name ?? "")" } ?? NSNull(),
             ] as [String: Any],
         ]
+        // A slider's value being typed, only while one is.
+        if let e = v.resourceEdit {
+            let field = switch e.field {
+            case .cpus: "cpus"
+            case .memory: "memory"
+            case .disk: "disk"
+            }
+            out["resourceEdit"] = "\(field): \(e.text)" + (e.error.map { " !\($0)" } ?? "")
+        }
+        return out
     }
 
     func storage(_ s: [String: Any]) -> AppLocalStorage {
@@ -208,7 +202,8 @@ struct ParityTests {
         }
         return AppLocalStorage(reserveBytes: (s["reserveBytes"] as! NSNumber).uint64Value,
                                lume: volume(s["lume"]), qemu: volume(s["qemu"]),
-                               container: volume(s["container"]), pulled: s["pulled"] as! [String])
+                               container: volume(s["container"]), pulled: s["pulled"] as! [String],
+                               linuxRuntimeDownloadBytes: (s["linuxRuntimeDownloadBytes"] as? NSNumber)?.uint64Value ?? 0)
     }
 
     /// `id: Label [placeholder] !error (advanced)`, as `parity.rs` writes it.
@@ -246,11 +241,11 @@ struct ParityTests {
         [
             "thisMachine": opt(v.thisMachine?.name),
             "sections": v.sections.map { sec in
-                "\(sec.title): " + sec.rows.map { "\($0.name)\($0.dim ? " (dim)" : "")\($0.selected ? " (selected)" : "")" }
+                "\(sec.title.code): " + sec.rows.map { "\($0.name)\($0.dim ? " (dim)" : "")\($0.selected ? " (selected)" : "")" }
                     .joined(separator: ", ")
             },
             "selectedId": opt(v.selectedId),
-            "emptyText": opt(v.emptyText),
+            "emptyText": opt(v.emptyText?.code),
         ]
     }
 
@@ -312,15 +307,26 @@ struct ParityTests {
 
     // MARK: - provisioning
 
+    /// A flow's provider word (a create on another machine is `relay`).
+    func provider(_ word: String) -> AppSpaceProvider {
+        switch word {
+        case "cloud": return .cloud
+        case "relay": return .relay
+        case "direct": return .direct
+        default: return .local
+        }
+    }
+
     func createAction(_ a: [String: Any]) -> AppCreateAction {
         let id = a["id"] as? String ?? ""
         switch a["type"] as! String {
         case "start":
             let kind = (a["kind"] as? String).flatMap { AppSpaceKind(word: $0) }
             return .start(id: id, name: a["name"] as! String, os: os(a["os"] as! String),
-                          provider: (a["provider"] as! String) == "cloud" ? .cloud : .local,
+                          provider: provider(a["provider"] as! String),
                           now: Int64(a["now"] as! Int), image: a["image"] as? String, kind: kind,
-                          hostArch: a["hostArch"] as? String, gpu: a["gpu"] as? Bool ?? false)
+                          hostArch: a["hostArch"] as? String, gpu: a["gpu"] as? Bool ?? false,
+                          host: a["host"] as? String, hostName: a["hostName"] as? String)
         case "progress":
             return .progress(id: id, phase: a["phase"] as! String,
                              fraction: (a["fraction"] as? NSNumber)?.doubleValue,
@@ -330,7 +336,8 @@ struct ParityTests {
                              bytesPerSecond: (a["bytesPerSecond"] as? NSNumber)?.doubleValue)
         case "tick": return .tick(now: Int64(a["now"] as! Int))
         case "finish": return .finish(id: id, spaceId: a["spaceId"] as! String)
-        case "fail": return .fail(id: id, error: a["error"] as! String)
+        case "fail": return .fail(id: id, error: a["error"] as! String,
+                                  errorVariant: a["errorVariant"] as? String ?? "")
         case "dismiss": return .dismiss(id: id)
         case "delete-start": return .deleteStart(id: id, now: Int64(a["now"] as! Int))
         case "delete-fail": return .deleteFail(id: id)
@@ -352,7 +359,7 @@ struct ParityTests {
         let spaces = roster.spaces
         let sb = appSidebar(spaces: spaces, query: "", selectedId: roster.selectedId)
         let rows = sb.sections.flatMap(\.rows).map { r in
-            "\(r.osIcon) \(r.name) [\(r.statusText)] \(r.progress.map(String.init) ?? "-") \(r.trailing ?? "-")\(powerText(r.power))"
+            "\(r.osIcon) \(r.name) [\(r.statusText.code)] \(r.progress.map(String.init) ?? "-") \(r.trailing ?? "-")\(powerText(r.power))"
         }
         let closed = appNotchView(state: appNotchInitial(), spaces: spaces)
         // The open panel's tiles (the Rust flow reads `notch.tiles`: the same list).
@@ -437,7 +444,7 @@ struct ParityTests {
     /// A row's power button: ` <power Suspend>`, ` <power Resuming… on busy>`.
     func powerText(_ b: AppPowerButton?) -> String {
         guard let b else { return "" }
-        return " <\(b.symbol) \(b.help)\(b.turnOn ? " on" : "")\(b.busy ? " busy" : "")>"
+        return " <\(b.symbol) \(b.help.code)\(b.turnOn ? " on" : "")\(b.busy ? " busy" : "")>"
     }
 
     // MARK: - space-power
@@ -470,7 +477,8 @@ struct ParityTests {
     // MARK: - teleport-review
 
     func pickerFrame(_ s: AppPickerState) -> [String: Any] {
-        let review: Any = appPickerReview(state: s).map { r -> [String: Any] in
+        let r0 = appPickerReview(state: s)
+        let review: Any = r0.map { r -> [String: Any] in
             [
                 "title": r.title,
                 "items": r.items.map { "\(word($0.kind)):\($0.label)\($0.sensitive ? " (secret)" : "")" },
@@ -481,7 +489,7 @@ struct ParityTests {
                 "warnings": r.warnings,
             ]
         } ?? NSNull()
-        return [
+        var out: [String: Any] = [
             "step": word(s.step),
             "selectedId": opt(s.selectedId),
             "entry": opt(s.entry?.id),
@@ -493,10 +501,20 @@ struct ParityTests {
             "error": opt(s.error),
             "report": opt(s.report?.appId),
             "sensitive": appPickerSensitiveOptions(state: s).map {
-                "\(word($0.group)):\($0.label):\($0.detail):\($0.checked ? "on" : "off")"
+                "\(word($0.group)):\($0.label.code):\($0.detail.code):\($0.checked ? "on" : "off")"
             },
             "planSensitive": appPickerPlanSensitive(state: s).map(word),
         ]
+        // Saved passwords, while the review offers them.
+        if let r = r0, r.offersPasswords {
+            out["passwords"] = [
+                "label": r.passwordsLabel,
+                "on": r.includePasswords,
+                "summary": r.passwordSummary,
+                "rows": r.passwords.map { "\($0.site) \($0.username) (\($0.counts)) [\($0.selected ? "x" : " ")]" },
+            ] as [String: Any]
+        }
+        return out
     }
 
     func word(_ g: AppSensitiveGroup) -> String {
@@ -537,6 +555,10 @@ struct ParityTests {
             case "acknowledge-relay-plaintext": event = .acknowledgeRelayPlaintext(value: e["value"] as! Bool)
             case "sensitive": event = .sensitive(group: group(e["group"] as! String), value: e["value"] as! Bool)
             case "back": event = .back
+            // The review's sites, saved items and passwords, decoded as the core does.
+            case "domains-loaded", "toggle-passwords", "toggle-password", "password-query",
+                 "select-shown-passwords", "vault-items", "send-from":
+                event = try appPickerEventFromJson(json: text(e))
             case "progress":
                 let p = e["event"] as! [String: Any]
                 event = .progress(event: AppTeleportRunEvent(
@@ -554,7 +576,14 @@ struct ParityTests {
             frames.append(["picker": e["type"]!, "frame": pickerFrame(s)])
         }
         let consent = appPickerConsent(state: s)
-        frames.append(["consent": ["approved": consent.approved, "acknowledgeSensitive": consent.acknowledgeSensitive, "acknowledgeRelayPlaintext": consent.acknowledgeRelayPlaintext, "saveToKeyvault": consent.saveToKeyvault]])
+        var consentFrame: [String: Any] = ["approved": consent.approved, "acknowledgeSensitive": consent.acknowledgeSensitive, "acknowledgeRelayPlaintext": consent.acknowledgeRelayPlaintext, "saveToKeyvault": consent.saveToKeyvault]
+        // The fields the core leaves out at their defaults.
+        if let d = consent.cookieDomains { consentFrame["cookieDomains"] = d }
+        if !consent.exclude.isEmpty { consentFrame["exclude"] = consent.exclude }
+        if let v = consent.fromVault { consentFrame["fromVault"] = v }
+        if consent.includePasswords { consentFrame["includePasswords"] = true }
+        if let d = consent.passwordDomains { consentFrame["passwordDomains"] = d }
+        frames.append(["consent": consentFrame])
 
         let spaces = try appSpacesFromJson(json: text(f["spaces"]))
         frames += notchFrames(f["notch"] as! [[String: Any]], spaces: spaces)
@@ -1036,15 +1065,15 @@ struct ParityTests {
     func dash(_ s: String?) -> String { s ?? "-" }
 
     func sidebarRowLine(_ r: AppSidebarRow) -> String {
-        "<\(r.osIcon)> \(r.name)\(r.place.map { " @ \($0)" } ?? "") | \(r.statusText) | \(r.detail)\(r.dim ? " (dim)" : "")\(r.selected ? " (selected)" : "")"
+        "<\(r.osIcon)> \(r.name)\(r.place.map { " @ \($0)" } ?? "") | \(r.statusText.code) | \(r.detail)\(r.dim ? " (dim)" : "")\(r.selected ? " (selected)" : "")"
     }
 
     func windowSidebar(_ v: AppSidebarView) -> [String: Any] {
         [
             "thisMachine": v.thisMachine.map(sidebarRowLine) as Any? ?? NSNull(),
-            "sections": v.sections.flatMap { ["# \($0.title)"] + $0.rows.map(sidebarRowLine) },
+            "sections": v.sections.flatMap { ["# \($0.title.code)"] + $0.rows.map(sidebarRowLine) },
             "selectedId": opt(v.selectedId),
-            "emptyText": opt(v.emptyText),
+            "emptyText": opt(v.emptyText?.code),
         ]
     }
 
@@ -1233,6 +1262,10 @@ struct ParityTests {
             "showMark": v.showMark,
             "dots": v.dots.map { "\($0.current ? "*" : "")\($0.label)" }.joined(separator: ","),
             "summary": facts(v.summary),
+            // Done's to-do list: `[x] title ~note -> fix (optional)`.
+            "todos": v.todos.map { t in
+                "[\(t.done ? "x" : " ")] \(t.title) ~\(t.note)\(t.action.map { " -> \($0)" } ?? "")\(t.optional ? " (optional)" : "")"
+            },
             "choices": v.choices.map { "\($0.mode): \($0.label)\($0.preselected ? " (preselected)" : "")" },
             "presentations": v.presentations.map { "\($0.title) [\($0.id)]\($0.selected ? " (selected)" : "")" },
             "prompts": v.prompts,
@@ -1247,6 +1280,40 @@ struct ParityTests {
     }
 
     /// The notch and the menu count the same Spaces (`run_menu_count`).
+    /// The checklist: the Machines page from each case's input
+    /// (`appMachinesPageRows`), the core's reading of it, its Spaces and
+    /// agents (`appChecklistObserveFrom`), the count after it, and after
+    /// merging progress kept elsewhere before.
+    func runChecklist(_ f: [String: Any]) throws -> [Any] {
+        var frames: [Any] = []
+        for c in f["cases"] as! [[String: Any]] {
+            let page = try appMachinesPageInputFromJson(json: text(c["page"]))
+            let rows = appMachinesPageRows(input: page)
+            let action = appChecklistObserveFrom(seen: AppChecklistSeen(
+                machines: rows, spaces: page.spaces,
+                agents: UInt32(c["agents"] as! Int), runs: UInt32(c["runs"] as! Int)))
+            guard case let .observe(otherMachine, hasSpace, agentRan) = action else {
+                Issue.record("not an observation")
+                return frames
+            }
+            let t = appChecklistReduce(state: try appChecklistStateFromJson(json: text(c["state"])), action: action)
+            var frame: [String: Any] = [
+                "case": c["name"] as! String,
+                "observe": ["otherMachine": otherMachine, "hasSpace": hasSpace, "agentRan": agentRan],
+                "progress": appChecklistView(state: t.state).progress,
+                "events": t.signals.compactMap { if case let .step(step, _) = $0 { return step } else { return nil } },
+            ]
+            if let earlier = c["earlier"], !(earlier is NSNull) {
+                let merged = appChecklistReduce(state: t.state,
+                                                action: .merge(state: try appChecklistStateFromJson(json: text(earlier))))
+                let view = appChecklistView(state: merged.state)
+                frame["merged"] = ["progress": view.progress, "visible": view.visible, "events": merged.signals.count]
+            }
+            frames.append(frame)
+        }
+        return frames
+    }
+
     func runMenuCount(_ f: [String: Any]) throws -> [Any] {
         let now = Int64(f["now"] as! Int)
         var frames: [Any] = []
@@ -1533,7 +1600,10 @@ struct ParityTests {
             let rows = try appSpaceRowsFromJson(json: text([c["row"]!]))
             let space = appRowsToSpaces(rows: rows, nowMs: Int64(f["now"] as! Int))[0]
             let usage = (c["usage"] as? [String: Any]).map { u in
-                AppSpaceUsage(memoryUsed: (u["memoryUsed"] as! NSNumber).uint64Value,
+                AppSpaceUsage(cpuCount: (u["cpuCount"] as? NSNumber)?.uint32Value ?? 0,
+                              cpuPercent: (u["cpuPercent"] as? NSNumber)?.doubleValue ?? 0,
+                              loadAverage1m: (u["loadAverage1m"] as? NSNumber)?.doubleValue ?? 0,
+                              memoryUsed: (u["memoryUsed"] as! NSNumber).uint64Value,
                               memoryTotal: (u["memoryTotal"] as! NSNumber).uint64Value,
                               memoryLimited: u["memoryLimited"] as! Bool,
                               diskUsed: (u["diskUsed"] as! NSNumber).uint64Value,
@@ -2106,19 +2176,24 @@ struct ParityTests {
         switch s {
         case let .feature(feature): return ["type": "feature", "feature": feature]
         case let .step(step, ok): return ["type": "step", "step": step, "ok": ok]
+        case let .signInFailed(kind): return ["type": "sign-in-failed", "errorKind": kind]
+        case let .launched(eligible):
+            return ["type": "launched", "onboardingEligible": eligible.map { $0 as Any } ?? NSNull()]
         case let .onboardingPage(page, action, choice):
             return ["type": "onboarding-page", "page": page, "action": action, "choice": choice]
         case let .spaceWizard(action): return ["type": "space-wizard", "action": action]
-        case let .spaceCreate(location, guestOs, kind, outcome, failedPhase, stalled, elapsedMs, gpu):
+        case let .spaceCreate(location, guestOs, kind, outcome, failedPhase, stalled, elapsedMs, gpu, errorVariant):
             return ["type": "space-create", "location": location, "guestOs": guestOs, "kind": kind,
                     "outcome": outcome, "failedPhase": failedPhase, "stalled": stalled, "elapsedMs": Int(elapsedMs),
-                    "gpu": gpu]
+                    "gpu": gpu, "errorVariant": errorVariant]
         case let .spaceCreateStarted(location, guestOs, kind, gpu):
             return ["type": "space-create-started", "location": location, "guestOs": guestOs, "kind": kind, "gpu": gpu]
         case let .volumeSetup(surface, storage, addToFinder, mountMethod, outcome):
             return ["type": "volume-setup", "surface": surface, "storage": storage, "addToFinder": addToFinder,
                     "mountMethod": mountMethod, "outcome": outcome]
-        case let .share(action, role, outcome): return ["type": "share", "action": action, "role": role, "outcome": outcome]
+        case let .share(action, role, outcome, errorKind, failedStage):
+            return ["type": "share", "action": action, "role": role, "outcome": outcome,
+                    "errorKind": errorKind, "failedStage": failedStage]
         case let .appUpdate(action, channel, trigger):
             return ["type": "app-update", "action": action, "channel": channel, "trigger": trigger]
         case let .deviceEnroll(method, outcome): return ["type": "device-enroll", "method": method, "outcome": outcome]
@@ -2133,7 +2208,8 @@ struct ParityTests {
     /// `run_telemetry`: the usage events each reducer step means, through
     /// the Swift bindings the app's models call.
     func runTelemetry(_ f: [String: Any]) throws -> [Any] {
-        var frames: [Any] = [["at": "launch", "signals": signals(appTelemetryLaunched())]]
+        let eligible = (f["launch"] as? [String: Any])?["onboardingEligible"] as? Bool
+        var frames: [Any] = [["at": "launch", "signals": signals(appTelemetryLaunched(onboardingEligible: eligible))]]
         for run in ["onboarding", "skipping", "no-usage-data"] {
             var st = appOnboardingInitial(installerMode: nil, identity: nil)
             for a in f[run] as! [[String: Any]] {
@@ -2183,6 +2259,43 @@ struct ParityTests {
         case .terms: "terms"
         case .issue: "issue"
         }
+    }
+
+    /// Settings → Agents (`run_agent_keys`): the section for each input, the
+    /// add or replace sheet, the Remove question and the variable names.
+    func runAgentKeys(_ f: [String: Any]) throws -> [Any] {
+        var frames: [Any] = []
+        for case let step as [String: Any] in f["sections"] as! [Any] {
+            let v = appAgentKeysView(input: try appAgentKeysInputFromJson(json: text(step["input"])))
+            let rows = v.rows.map { r in
+                "\(r.title) | \(r.env) | \(r.provider) | \(r.status) | \(r.actionLabel) | \(r.removeLabel ?? "-") | added \(r.addedMs.map(String.init) ?? "-") | \(r.detail)"
+            }
+            frames.append(["step": step["step"] as! String, "section": [
+                "title": v.title, "intro": v.intro, "rows": rows,
+                "addOther": "\(v.addOtherLabel) (\(v.otherHelp))",
+                "notice": opt(v.notice), "canEdit": v.canEdit, "added": v.addedLabel,
+            ] as [String: Any]])
+        }
+        let saved = try appAgentKeysInputFromJson(json: text(f["saved"]))
+        for case let step as [String: Any] in f["forms"] as! [Any] {
+            let v = appAgentKeyForm(input: saved, form: try appAgentKeyFormInputFromJson(json: text(step["form"])))
+            frames.append(["step": step["step"] as! String, "form": [
+                "title": v.title, "lede": v.lede,
+                "name": "\(v.nameLabel ?? "-") / \(v.namePlaceholder ?? "-") / \(v.nameError ?? "-")",
+                "value": "\(v.valueLabel) / \(v.valuePlaceholder) / \(v.valueHelp)",
+                "buttons": "\(v.saveLabel) \(v.canSave ? "on" : "off") | \(v.cancelLabel)",
+                "sets": "\(v.provider) \(v.env ?? "-")",
+            ] as [String: Any]])
+        }
+        for case let step as [String: Any] in f["removes"] as! [Any] {
+            let c = appAgentKeyRemoveConfirm(input: saved, env: step["env"] as! String)
+            frames.append(["step": step["step"] as! String,
+                           "confirm": opt(c.map { "\($0.title) | \($0.message) | \($0.confirmLabel) | \($0.cancelLabel)" })])
+        }
+        for case let name as String in f["names"] as! [Any] {
+            frames.append(["name": name, "problem": opt(appAgentKeyNameProblem(name: name))])
+        }
+        return frames
     }
 
     func runAbout(_ f: [String: Any]) throws -> [Any] {

@@ -1,0 +1,503 @@
+{
+  "flow": "first-run",
+  "frames": [
+    {
+      "art": "claude-code on none",
+      "case": "01 agents, nothing changed: the installed ones ticked",
+      "connect": {
+        "agents": "On this Mac: [=] Claude Code (Already uses Cua), [x] Codex, [ ] Hermes, [ ] Cursor, [ ] OpenClaw",
+        "agentsNote": "Cua adds its skills and MCP server to each one you pick, on this Mac only. Your other computers set up their own.",
+        "busy": null,
+        "connects": "codex",
+        "credentials": "Sign-ins and keys (They stay on this Mac. Other computers keep their own.): Anthropic key — For Claude Code in your Spaces [Saved] / OpenAI key — For Codex in your Spaces (add-key:Add key)",
+        "intro": "Pick any, or none.",
+        "lede": "Connect your agents and give them computers to work on: macOS, Linux or Windows, right here on this Mac.",
+        "more": "More agents: ",
+        "primary": "continue:Continue",
+        "title": "A shared Space for every agent."
+      },
+      "step": "connect"
+    },
+    {
+      "art": "codex on none",
+      "case": "01 agents, only Codex installed",
+      "connect": {
+        "agents": "On this Mac: [ ] Claude Code, [x] OpenAI Codex, [ ] Hermes, [ ] Cursor, [ ] OpenClaw",
+        "agentsNote": "Cua adds its skills and MCP server to each one you pick, on this Mac only. Your other computers set up their own.",
+        "busy": null,
+        "connects": "codex",
+        "credentials": "Sign-ins and keys (They stay on this Mac. Other computers keep their own.): ChatGPT sign-in — OpenAI Codex uses it on this Mac (agent-sign-in:Sign in)",
+        "intro": "Pick any, or none.",
+        "lede": "Connect your agents and give them computers to work on: macOS, Linux or Windows, right here on this Mac.",
+        "more": "More agents: ",
+        "primary": "continue:Continue",
+        "title": "A shared Space for every agent."
+      },
+      "step": "connect"
+    },
+    {
+      "art": "claude-code on none",
+      "case": "01 agents, none picked",
+      "connect": {
+        "agents": "On this Mac: [=] Claude Code (Already uses Cua), [ ] Codex, [ ] Hermes, [ ] Cursor, [ ] OpenClaw",
+        "agentsNote": "Cua adds its skills and MCP server to each one you pick, on this Mac only. Your other computers set up their own.",
+        "busy": null,
+        "connects": "",
+        "credentials": null,
+        "intro": "Pick any, or none.",
+        "lede": "Connect your agents and give them computers to work on: macOS, Linux or Windows, right here on this Mac.",
+        "more": "More agents: ",
+        "primary": "continue:Continue",
+        "title": "A shared Space for every agent."
+      },
+      "step": "connect"
+    },
+    {
+      "art": "codex on none",
+      "case": "01 agents, Codex only, signing in",
+      "connect": {
+        "agents": "On this Mac: [ ] Claude Code, [x] OpenAI Codex, [ ] Hermes, [ ] Cursor, [ ] OpenClaw",
+        "agentsNote": "Cua adds its skills and MCP server to each one you pick, on this Mac only. Your other computers set up their own.",
+        "busy": null,
+        "connects": "codex",
+        "credentials": "Sign-ins and keys (They stay on this Mac. Other computers keep their own.): ChatGPT sign-in — OpenAI Codex uses it on this Mac [Finish in your browser…] / OpenAI key — For OpenAI Codex in your Spaces (add-key:Add key)",
+        "intro": "Pick any, or none.",
+        "lede": "Connect your agents and give them computers to work on: macOS, Linux or Windows, right here on this Mac.",
+        "more": "More agents: [ ] Goose (Not found on this Mac)",
+        "primary": "continue:Continue",
+        "title": "A shared Space for every agent."
+      },
+      "step": "connect"
+    },
+    {
+      "art": "codex on none",
+      "case": "01 agents, several, Claude Code already set up",
+      "connect": {
+        "agents": "On this Mac: [=] Claude Code (Already uses Cua), [x] OpenAI Codex, [x] Hermes, [ ] Cursor, [ ] OpenClaw",
+        "agentsNote": "Cua adds its skills and MCP server to each one you pick, on this Mac only. Your other computers set up their own.",
+        "busy": "Adding Cua to OpenAI Codex and Hermes…",
+        "connects": "codex, hermes",
+        "credentials": "Sign-ins and keys (They stay on this Mac. Other computers keep their own.): ChatGPT sign-in — OpenAI Codex uses it on this Mac [Signed in] / Anthropic key — For Claude Code in your Spaces [Saved] / OpenAI key — For OpenAI Codex in your Spaces (add-key:Add key)",
+        "intro": "Pick any, or none.",
+        "lede": "Connect your agents and give them computers to work on: macOS, Linux or Windows, right here on this Mac.",
+        "more": "More agents: ",
+        "primary": "continue:Continue",
+        "title": "A shared Space for every agent."
+      },
+      "step": "connect"
+    },
+    {
+      "art": "claude-code faded outline",
+      "case": "02 checking",
+      "setup": {
+        "extra": {
+          "action": "not-now:Not now",
+          "choices": [
+            "macOS: 22 GB download · 10 to 30 min the first time",
+            "Linux: Ready in about 2 min"
+          ],
+          "footnote": null,
+          "note": "A fresh computer inside this Mac, so your agent can't touch your files or your mouse.",
+          "phase": "choose",
+          "title": "Give your agent its own Space"
+        },
+        "primary": "done:Done (off)",
+        "prompt": "Try this in Claude Code: List my computers and tell me what's on this Mac / This works now, on this Mac.",
+        "rows": [
+          "[checking] Claude Code — Checking that it can use Cua…",
+          "[checking] This Mac — Checking that your agent can use it…"
+        ],
+        "title": "Checking your setup.",
+        "upsell": null
+      },
+      "step": "setup"
+    },
+    {
+      "art": "claude-code on outline",
+      "case": "03 ready, choose",
+      "setup": {
+        "extra": {
+          "action": "not-now:Not now",
+          "choices": [
+            "macOS: 22 GB download · 10 to 30 min the first time",
+            "Linux: Ready in about 2 min"
+          ],
+          "footnote": null,
+          "note": "A fresh computer inside this Mac, so your agent can't touch your files or your mouse.",
+          "phase": "choose",
+          "title": "Give your agent its own Space"
+        },
+        "primary": "done:Done",
+        "prompt": "Try this in Claude Code: List my computers and tell me what's on this Mac / This works now, on this Mac.",
+        "rows": [
+          "[ok] Claude Code can use Cua — We added Cua to Claude Code's settings. If Claude Code was already open, restart it.",
+          "[ok] This Mac is your first Space — Ready now. Your agent can see the screen, click and type."
+        ],
+        "title": "Your agent can use this Mac.",
+        "upsell": null
+      },
+      "step": "setup"
+    },
+    {
+      "art": "claude-code on filling",
+      "case": "04 ready, creating macOS",
+      "setup": {
+        "extra": {
+          "action": "cancel:Cancel",
+          "choices": [],
+          "footnote": "You can press Done now. We'll let you know when it's ready.",
+          "note": "Downloading macOS · 4.2 of 22.3 GB · 85 MB/s · about 4 min",
+          "phase": "creating",
+          "title": "Making macOS 1 in the background"
+        },
+        "primary": "done:Done",
+        "prompt": "Try this in Claude Code: List my computers and tell me what's on this Mac / This works now, on this Mac.",
+        "rows": [
+          "[ok] Claude Code can use Cua — We added Cua to Claude Code's settings. If Claude Code was already open, restart it.",
+          "[ok] This Mac is your first Space — Ready now. Your agent can see the screen, click and type."
+        ],
+        "title": "Your agent can use this Mac.",
+        "upsell": null
+      },
+      "step": "setup"
+    },
+    {
+      "art": "claude-code on filling",
+      "case": "05 restart the agent",
+      "setup": {
+        "extra": {
+          "action": "cancel:Cancel",
+          "choices": [],
+          "footnote": "You can press Done now. We'll let you know when it's ready.",
+          "note": "Downloading macOS · 4.2 of 22.3 GB · 85 MB/s · about 4 min",
+          "phase": "creating",
+          "title": "Making macOS 1 in the background"
+        },
+        "primary": "finish-later:Finish later",
+        "prompt": "Try this in Claude Code: List my computers and tell me what's on this Mac / This works now, on this Mac.",
+        "rows": [
+          "[fix] Restart Claude Code — It was open when we added Cua. Close it, then open it again. (restart-check:Check again)",
+          "[ok] This Mac is your first Space — Ready now. Your agent can see the screen, click and type."
+        ],
+        "title": "One step left.",
+        "upsell": null
+      },
+      "step": "setup",
+      "todos": {
+        "complete": false,
+        "items": [
+          "[ ] Restart Claude Code — It was open when we added Cua. Close it, then open it again. (restart-check:Check again)",
+          "[x] Make this Mac your first Space — Ready now. Your agent can see the screen, click and type.",
+          "[ ] Try your first request — Ask Claude Code: “List my computers and tell me what's on this Mac” (copy:Copy)",
+          "[x] Give your agent its own Space (optional) — A fresh computer inside this Mac, away from your files and your mouse.",
+          "[x] Sign in — Signed in to Cua."
+        ],
+        "lede": "A couple of things are left.",
+        "progress": "3 of 5 done"
+      }
+    },
+    {
+      "art": "claude-code faded outline",
+      "case": "06 let Cua control this Mac",
+      "setup": {
+        "extra": {
+          "action": "not-now:Not now",
+          "choices": [
+            "macOS: 22 GB download · 10 to 30 min the first time",
+            "Linux: Ready in about 2 min"
+          ],
+          "footnote": null,
+          "note": "A fresh computer inside this Mac, so your agent can't touch your files or your mouse.",
+          "phase": "choose",
+          "title": "Give your agent its own Space"
+        },
+        "primary": "finish-later:Finish later",
+        "prompt": "Try this in Claude Code: List my computers and tell me what's on this Mac / This works now, on this Mac.",
+        "rows": [
+          "[ok] Claude Code can use Cua — We added Cua to Claude Code's settings. If Claude Code was already open, restart it.",
+          "[fix] Let Cua control this Mac — So your agent can click and type. macOS asks you once. (open-settings:Open Settings)"
+        ],
+        "title": "One step left.",
+        "upsell": null
+      },
+      "step": "setup",
+      "todos": {
+        "complete": false,
+        "items": [
+          "[x] Connect Claude Code — Claude Code can use Cua.",
+          "[ ] Let Cua control this Mac — So your agent can click and type. macOS asks you once. (open-settings:Open Settings)",
+          "[ ] Try your first request — Ask Claude Code: “List my computers and tell me what's on this Mac” (copy:Copy)",
+          "[ ] Give your agent its own Space (optional) — A fresh computer inside this Mac, away from your files and your mouse. (add:Add a Space)",
+          "[x] Sign in — Signed in to Cua."
+        ],
+        "lede": "Claude Code is connected. A couple of things are left.",
+        "progress": "2 of 5 done"
+      }
+    },
+    {
+      "art": "claude-code faded outline",
+      "case": "07 sign in",
+      "setup": {
+        "extra": {
+          "action": "not-now:Not now",
+          "choices": [
+            "macOS: 22 GB download · 10 to 30 min the first time",
+            "Linux: Ready in about 2 min"
+          ],
+          "footnote": null,
+          "note": "A fresh computer inside this Mac, so your agent can't touch your files or your mouse.",
+          "phase": "choose",
+          "title": "Give your agent its own Space"
+        },
+        "primary": "finish-later:Finish later",
+        "prompt": "Try this in Claude Code: List my computers and tell me what's on this Mac / This works now, on this Mac.",
+        "rows": [
+          "[ok] Claude Code can use Cua — We added Cua to Claude Code's settings. If Claude Code was already open, restart it.",
+          "[fix] Sign in to Cua — So your agent can find this Mac and your other computers. (sign-in:Sign in)"
+        ],
+        "title": "One step left.",
+        "upsell": null
+      },
+      "step": "setup",
+      "todos": {
+        "complete": false,
+        "items": [
+          "[x] Connect Claude Code — Claude Code can use Cua.",
+          "[ ] Make this Mac your first Space — After you sign in.",
+          "[ ] Try your first request — Ask Claude Code: “List my computers and tell me what's on this Mac” (copy:Copy)",
+          "[ ] Give your agent its own Space (optional) — A fresh computer inside this Mac, away from your files and your mouse. (add:Add a Space)",
+          "[ ] Sign in — So your agent can find this Mac and your other computers. (sign-in:Sign in)"
+        ],
+        "lede": "Claude Code is connected. A couple of things are left.",
+        "progress": "1 of 5 done"
+      }
+    },
+    {
+      "art": "claude-code on none",
+      "case": "08 first success, not now",
+      "setup": {
+        "extra": {
+          "action": "add:Add a Space",
+          "choices": [],
+          "footnote": null,
+          "note": "Add one from Home whenever you like.",
+          "phase": "not-now",
+          "title": "No extra Space for now"
+        },
+        "primary": "done:Done",
+        "prompt": "You asked Claude Code: List my computers and tell me what's on this Mac / It answered in Claude Code. Ask it anything else.",
+        "rows": [
+          "[ok] Claude Code can use Cua — It used Cua at 18:12.",
+          "[ok] This Mac is your first Space — Ready now. Your agent can see the screen, click and type."
+        ],
+        "title": "Your agent can use this Mac.",
+        "upsell": null
+      },
+      "step": "setup"
+    },
+    {
+      "art": "claude-code on none",
+      "case": "16 first success, Pro card",
+      "setup": {
+        "extra": {
+          "action": "add:Add a Space",
+          "choices": [],
+          "footnote": null,
+          "note": "Add one from Home whenever you like.",
+          "phase": "not-now",
+          "title": "No extra Space for now"
+        },
+        "primary": "done:Done",
+        "prompt": "You asked Claude Code: List my computers and tell me what's on this Mac / It answered in Claude Code. Ask it anything else.",
+        "rows": [
+          "[ok] Claude Code can use Cua — It used Cua at 18:12.",
+          "[ok] This Mac is your first Space — Ready now. Your agent can see the screen, click and type."
+        ],
+        "title": "Your agent can use this Mac.",
+        "upsell": "pro | More remote hours with Pro | Free: 20 remote hours a month · 2 connections at once / Pro: 200 remote hours a month · 5 connections at once | $18 a month | upsell:Try Pro"
+      },
+      "step": "setup"
+    },
+    {
+      "art": "claude-code on none",
+      "case": "17 first success, Teams card",
+      "setup": {
+        "extra": {
+          "action": "add:Add a Space",
+          "choices": [],
+          "footnote": null,
+          "note": "Add one from Home whenever you like.",
+          "phase": "not-now",
+          "title": "No extra Space for now"
+        },
+        "primary": "done:Done",
+        "prompt": "You asked Claude Code: List my computers and tell me what's on this Mac / It answered in Claude Code. Ask it anything else.",
+        "rows": [
+          "[ok] Claude Code can use Cua — It used Cua at 18:12.",
+          "[ok] This Mac is your first Space — Ready now. Your agent can see the screen, click and type."
+        ],
+        "title": "Your agent can use this Mac.",
+        "upsell": "teams | Working with others? | Teams gives your team computers you share, with roles and device approval. | $30 per person a month, starting at 1 | upsell:Start Teams"
+      },
+      "step": "setup"
+    },
+    {
+      "art": "claude-code on on",
+      "case": "macOS made, ready",
+      "setup": {
+        "extra": {
+          "action": "",
+          "choices": [],
+          "footnote": null,
+          "note": "A fresh macOS computer inside this Mac. Your agent can use it now.",
+          "phase": "ready",
+          "title": "macOS 1 is ready"
+        },
+        "primary": "done:Done",
+        "prompt": "You asked Claude Code: List my computers and tell me what's on this Mac / It answered in Claude Code. Ask it anything else.",
+        "rows": [
+          "[ok] Claude Code can use Cua — It used Cua at 18:12.",
+          "[ok] This Mac is your first Space — Ready now. Your agent can see the screen, click and type."
+        ],
+        "title": "Your agent can use this Mac.",
+        "upsell": null
+      },
+      "step": "setup",
+      "todos": {
+        "complete": true,
+        "items": [
+          "[x] Connect Claude Code — Claude Code can use Cua.",
+          "[x] Make this Mac your first Space — Ready now. Your agent can see the screen, click and type.",
+          "[x] Try your first request — Ask Claude Code: “List my computers and tell me what's on this Mac”",
+          "[x] Give your agent its own Space (optional) — A fresh computer inside this Mac, away from your files and your mouse.",
+          "[x] Sign in — Signed in to Cua."
+        ],
+        "lede": "Claude Code is connected. You're all set.",
+        "progress": "5 of 5 done"
+      }
+    },
+    {
+      "art": "claude-code on outline",
+      "case": "an Intel Mac: Linux only",
+      "setup": {
+        "extra": {
+          "action": "not-now:Not now",
+          "choices": [
+            "Linux: Ready in about 2 min"
+          ],
+          "footnote": null,
+          "note": "A fresh computer inside this Mac, so your agent can't touch your files or your mouse.",
+          "phase": "choose",
+          "title": "Give your agent its own Space"
+        },
+        "primary": "done:Done",
+        "prompt": "Try this in Claude Code: List my computers and tell me what's on this Mac / This works now, on this Mac.",
+        "rows": [
+          "[ok] Claude Code can use Cua — We added Cua to Claude Code's settings. If Claude Code was already open, restart it.",
+          "[ok] This Mac is your first Space — Ready now. Your agent can see the screen, click and type."
+        ],
+        "title": "Your agent can use this Mac.",
+        "upsell": null
+      },
+      "step": "setup"
+    },
+    {
+      "art": "claude-code on outline",
+      "case": "a Windows PC",
+      "setup": {
+        "extra": {
+          "action": "not-now:Not now",
+          "choices": [
+            "Linux: Ready in about 2 min"
+          ],
+          "footnote": null,
+          "note": "A fresh computer inside this PC, so your agent can't touch your files or your mouse.",
+          "phase": "choose",
+          "title": "Give your agent its own Space"
+        },
+        "primary": "done:Done",
+        "prompt": "Try this in Claude Code: List my computers and tell me what's on this PC / This works now, on this PC.",
+        "rows": [
+          "[ok] Claude Code can use Cua — We added Cua to Claude Code's settings. If Claude Code was already open, restart it.",
+          "[ok] This PC is your first Space — Ready now. Your agent can see the screen, click and type."
+        ],
+        "title": "Your agent can use this PC.",
+        "upsell": null
+      },
+      "step": "setup"
+    },
+    {
+      "art": "other on outline",
+      "case": "no agent picked, ready",
+      "setup": {
+        "extra": {
+          "action": "not-now:Not now",
+          "choices": [
+            "macOS: 22 GB download · 10 to 30 min the first time",
+            "Linux: Ready in about 2 min"
+          ],
+          "footnote": null,
+          "note": "A fresh computer inside this Mac, so your agent can't touch your files or your mouse.",
+          "phase": "choose",
+          "title": "Give your agent its own Space"
+        },
+        "primary": "done:Done",
+        "prompt": null,
+        "rows": [
+          "[ok] This Mac is your first Space — Ready now. Your agent can see the screen, click and type."
+        ],
+        "title": "This Mac is ready.",
+        "upsell": null
+      },
+      "step": "setup",
+      "todos": {
+        "complete": true,
+        "items": [
+          "[x] Make this Mac your first Space — Ready now. Your agent can see the screen, click and type.",
+          "[ ] Give your agent its own Space (optional) — A fresh computer inside this Mac, away from your files and your mouse. (add:Add a Space)",
+          "[x] Sign in — Signed in to Cua."
+        ],
+        "lede": "You're all set.",
+        "progress": "2 of 3 done"
+      }
+    },
+    {
+      "art": "claude-code on outline",
+      "case": "two agents picked, one not set up",
+      "setup": {
+        "extra": {
+          "action": "not-now:Not now",
+          "choices": [
+            "macOS: 22 GB download · 10 to 30 min the first time",
+            "Linux: Ready in about 2 min"
+          ],
+          "footnote": null,
+          "note": "A fresh computer inside this Mac, so your agent can't touch your files or your mouse.",
+          "phase": "choose",
+          "title": "Give your agent its own Space"
+        },
+        "primary": "finish-later:Finish later",
+        "prompt": "Try this in Claude Code or Codex: List my computers and tell me what's on this Mac / This works now, on this Mac.",
+        "rows": [
+          "[fix] Connect Codex — Cua isn't in Codex's settings yet. (connect:Connect)",
+          "[ok] This Mac is your first Space — Ready now. Your agent can see the screen, click and type."
+        ],
+        "title": "One step left.",
+        "upsell": null
+      },
+      "step": "setup",
+      "todos": {
+        "complete": false,
+        "items": [
+          "[ ] Connect Codex — Cua isn't in Codex's settings yet. (connect:Connect)",
+          "[x] Make this Mac your first Space — Ready now. Your agent can see the screen, click and type.",
+          "[ ] Try your first request — Ask Claude Code or Codex: “List my computers and tell me what's on this Mac” (copy:Copy)",
+          "[ ] Give your agent its own Space (optional) — A fresh computer inside this Mac, away from your files and your mouse. (add:Add a Space)",
+          "[x] Sign in — Signed in to Cua."
+        ],
+        "lede": "A couple of things are left.",
+        "progress": "2 of 5 done"
+      }
+    }
+  ]
+}

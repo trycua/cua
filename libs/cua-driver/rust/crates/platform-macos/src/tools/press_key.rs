@@ -170,7 +170,39 @@ fn action_record(confirmed: bool, foreground: bool) -> ActionExecutionRecord {
     record.build().expect("press_key record is valid")
 }
 
-fn delivery_failed(error: impl std::fmt::Display) -> ToolResult {
+#[derive(Debug, thiserror::Error)]
+#[error("the addressed element did not acquire keyboard focus; no key was dispatched")]
+struct KeyFocusUnconfirmed;
+
+fn with_confirmed_key_focus<T>(
+    target: Option<usize>,
+    mut focus: impl FnMut(usize) -> anyhow::Result<()>,
+    mut is_focused: impl FnMut(usize) -> bool,
+    dispatch: impl FnOnce() -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    if let Some(target) = target {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(200);
+        loop {
+            focus(target)?;
+            if is_focused(target) {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(KeyFocusUnconfirmed.into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+    dispatch()
+}
+
+fn delivery_failed(error: anyhow::Error) -> ToolResult {
+    if error.is::<KeyFocusUnconfirmed>() {
+        return ToolResult::error(error.to_string()).with_structured(serde_json::json!({
+            "code": "target_focus_unconfirmed", "effect": "refused", "dispatched": false,
+            "message": error.to_string(),
+        }));
+    }
     let message = format!("press_key delivery failed: {error}");
     ToolResult::error(&message).with_structured(serde_json::json!({
         "code": "delivery_failed",
@@ -185,6 +217,7 @@ fn def() -> &'static ToolDef {
             - `background` (default): posts to the pid without raising the window; with `element_token` it focuses that element first.\n\
             - `foreground`: fronts the exact window (needs `window_id`), sends a real HID key transition (Chromium content, inline editors, menu equivalents), then restores the prior app.\n\
             \n\
+            An element target whose focus cannot be confirmed is refused with `target_focus_unconfirmed`, effect \"refused\", and no key dispatched.\n\
             Confirmed only when a native AX value/selection read-back changes; otherwise `effect:\"unverifiable\"` (not a delivery failure). Keys: return, tab, escape, up/down/left/right, space, delete, home, end, pageup, pagedown, f1-f12, any letter or digit.".into(),
         input_schema: serde_json::json!({
             "type": "object",
@@ -315,7 +348,9 @@ impl Tool for PressKeyTool {
                     pid,
                     wid,
                     pre_focus_ptr,
-                    cua_driver_core::background_input::BackgroundAction::GenericKey,
+                    super::window_keyboard_action(
+                        cua_driver_core::background_input::BackgroundAction::GenericKey,
+                    ),
                 )
                 .await
                 {
@@ -327,6 +362,13 @@ impl Tool for PressKeyTool {
             }
         } else {
             None
+        };
+
+        // The addressed window must be the app's confirmed key window before
+        // any key (or focus click) goes out; otherwise refuse (window_not_key).
+        let _key_scope = match super::acquire_key_scope(pid, window_id, fg).await {
+            Ok(scope) => scope,
+            Err(refusal) => return refusal,
         };
 
         // px form: pixel-click to focus, then the key goes to the focused element.
@@ -400,16 +442,6 @@ impl Tool for PressKeyTool {
             prior_front,
             "press_key.CGEvent",
             || async move {
-                // Pre-focus the element under suppression so its
-                // side-effects are captured by the snapshot + lease.
-                if let Some(guard) = pre_focus_guard.clone() {
-                    let _ = tokio::task::spawn_blocking(move || {
-                        crate::input::ax_actions::focus_element(guard.as_ptr())
-                    })
-                    .await;
-                    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
-                }
-
                 tokio::task::spawn_blocking(move || {
                     let pre_focus_ptr = pre_focus_guard.as_ref().map(|guard| guard.as_ptr());
                     let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
@@ -430,22 +462,31 @@ impl Tool for PressKeyTool {
                                 pid as libc::pid_t,
                                 wid,
                                 || {
-                                    // Activation can change the first responder, so
-                                    // repeat the best-effort AX focus write inside
-                                    // the guarded foreground interval immediately
-                                    // before the physical key transition.
-                                    if let Some(element_ptr) = pre_focus_ptr {
-                                        let _ =
-                                            crate::input::ax_actions::focus_element(element_ptr);
-                                    }
-                                    crate::input::keyboard::press_key_bare_global(&key, &m)
+                                    // Activation may replace the first responder; confirm inside the HID guard.
+                                    with_confirmed_key_focus(
+                                        pre_focus_ptr,
+                                        crate::input::ax_actions::focus_element,
+                                        |target| {
+                                            crate::input::ax_actions::element_has_keyboard_focus(
+                                                pid, target,
+                                            )
+                                        },
+                                        || crate::input::keyboard::press_key_bare_global(&key, &m),
+                                    )
                                 },
                             )
                         });
                     }
                     // background (default): auth-envelope post, no raise.
                     dispatch_with_ax_oracle(pid, window_id, pre_focus_ptr, || {
-                        crate::input::keyboard::press_key(pid, &key, &m)
+                        with_confirmed_key_focus(
+                            pre_focus_ptr,
+                            crate::input::ax_actions::focus_element,
+                            |target| {
+                                crate::input::ax_actions::element_has_keyboard_focus(pid, target)
+                            },
+                            || crate::input::keyboard::press_key(pid, &key, &m),
+                        )
                     })
                 })
                 .await
@@ -491,6 +532,108 @@ impl Tool for PressKeyTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn targeted_key_requires_focus_readback_before_dispatch() {
+        use std::cell::RefCell;
+        let events = RefCell::new(Vec::new());
+        let result = with_confirmed_key_focus(
+            Some(42),
+            |target| {
+                events.borrow_mut().push(("focus", target));
+                Ok(())
+            },
+            |target| {
+                events.borrow_mut().push(("verify", target));
+                false
+            },
+            || {
+                events.borrow_mut().push(("dispatch", 0));
+                Ok(())
+            },
+        );
+        let failure = delivery_failed(result.unwrap_err());
+        assert_eq!(
+            failure.structured_content.as_ref().unwrap()["code"],
+            "target_focus_unconfirmed"
+        );
+        assert_eq!(
+            failure.structured_content.as_ref().unwrap()["effect"],
+            "refused"
+        );
+        let events = events.borrow();
+        assert!(events.len() >= 4);
+        for pair in events.chunks(2) {
+            assert_eq!(pair, &[("focus", 42), ("verify", 42)]);
+        }
+    }
+
+    #[test]
+    fn targeted_key_retries_focus_before_dispatch() {
+        use std::cell::RefCell;
+        let events = RefCell::new(Vec::new());
+        let mut checks = 0;
+        with_confirmed_key_focus(
+            Some(42),
+            |target| {
+                events.borrow_mut().push(("focus", target));
+                Ok(())
+            },
+            |target| {
+                events.borrow_mut().push(("verify", target));
+                checks += 1;
+                checks == 2
+            },
+            || {
+                events.borrow_mut().push(("dispatch", 0));
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            *events.borrow(),
+            vec![
+                ("focus", 42),
+                ("verify", 42),
+                ("focus", 42),
+                ("verify", 42),
+                ("dispatch", 0)
+            ]
+        );
+    }
+
+    #[test]
+    fn confirmed_target_dispatches_once_and_window_keys_do_not_focus() {
+        use std::cell::Cell;
+        let sent = Cell::new(0);
+        for target in [Some(42), None] {
+            with_confirmed_key_focus(
+                target,
+                |_| Ok(()),
+                |_| true,
+                || {
+                    sent.set(sent.get() + 1);
+                    Ok(())
+                },
+            )
+            .unwrap();
+        }
+        assert_eq!(sent.get(), 2);
+        let failed = with_confirmed_key_focus(
+            Some(42),
+            |_| anyhow::bail!("focus unavailable"),
+            |_| panic!("must not confirm failed focus"),
+            || -> anyhow::Result<()> { panic!("must not dispatch") },
+        );
+        assert_eq!(failed.unwrap_err().to_string(), "focus unavailable");
+        with_confirmed_key_focus(
+            None,
+            |_| panic!("window key has no element"),
+            |_| panic!("window key has no element"),
+            || Ok(()),
+        )
+        .unwrap();
+    }
 
     #[test]
     fn delivery_outcome_mapper_distinguishes_confirmed_unverifiable_and_failed() {

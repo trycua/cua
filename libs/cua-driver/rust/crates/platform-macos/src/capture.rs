@@ -20,6 +20,17 @@
 //! Compatibility fallback: `screencapture -l <windowID> -x -o <file>` when
 //! the native path errors or returns empty bytes.
 //!
+//! ## Windows on another Space (CUA-1351)
+//!
+//! ScreenCaptureKit and `screencapture -l` return no content for a window
+//! that sits on a Space the user is not looking at (another desktop or a
+//! full-screen Space). For those windows the private SkyLight call
+//! `SLSHWCaptureWindowList` reads the window's backing store directly, without
+//! switching Spaces, ordering windows or activating anything. It is used first
+//! only when WindowServer says the window is off the current Space, and last
+//! when every public path failed. A missing symbol or a fully transparent
+//! image counts as a failure.
+//!
 //! ## Display capture
 //!
 //! `screencapture -x <file>` captures the full main display. The agent-facing
@@ -29,6 +40,7 @@
 //! its fallback and reports that it could not exclude the overlay.
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use objc2::rc::autoreleasepool;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::process::Command;
@@ -407,7 +419,7 @@ where
     std::thread::Builder::new()
         .name("cua-sck-window-capture".into())
         .spawn(move || {
-            let result = work();
+            let result = autoreleasepool(|_| work());
             drop(permit);
             let _ = sender.send(result);
         })
@@ -451,7 +463,7 @@ fn build_window_capture_plan(
     window_id: u32,
     expected_identity: WindowCaptureIdentity,
 ) -> anyhow::Result<std::sync::Arc<WindowCapturePlan>> {
-    use screencapturekit::prelude::{SCContentFilter, SCShareableContent, SCStreamConfiguration};
+    use screencapturekit::prelude::{SCContentFilter, SCShareableContent};
 
     let content = SCShareableContent::get()
         .map_err(|e| anyhow::anyhow!("SCShareableContent::get failed: {e}"))?;
@@ -507,15 +519,33 @@ fn build_window_capture_plan(
     let out_w = rounded_pixel_dim(width_pts * scale, "width")?;
     let out_h = rounded_pixel_dim(height_pts * scale, "height")?;
 
-    let config = SCStreamConfiguration::new()
-        .with_width(out_w)
-        .with_height(out_h);
+    let config = window_capture_config(out_w, out_h);
 
     Ok(std::sync::Arc::new(WindowCapturePlan {
         filter,
         config,
         identity: expected_identity,
     }))
+}
+
+/// Output configuration for a single-window capture.
+///
+/// The hardware pointer stays out. ScreenCaptureKit draws it by default, and
+/// with a desktop-independent window filter it grows the captured area to
+/// take in a pointer that sits outside the window, then shrinks that larger
+/// area into the configured `width`x`height`. The window then shows up scaled
+/// (for example to 96.5%) and offset inside an image whose size still matches
+/// its bounds, so the frame check passes with scale 1 and every pixel
+/// coordinate read off it lands off target. `screencapture -l` and the
+/// SkyLight path never include the pointer either.
+fn window_capture_config(
+    out_w: u32,
+    out_h: u32,
+) -> screencapturekit::prelude::SCStreamConfiguration {
+    screencapturekit::prelude::SCStreamConfiguration::new()
+        .with_width(out_w)
+        .with_height(out_h)
+        .with_shows_cursor(false)
 }
 
 /// Single-frame capture + RGBA/PNG encode from an existing plan.
@@ -737,11 +767,131 @@ fn screenshot_window_bytes_sck(window_id: u32) -> anyhow::Result<Vec<u8>> {
 /// Tries ScreenCaptureKit first; falls back to the `screencapture` CLI on
 /// native error or empty output.
 pub fn screenshot_window_bytes(window_id: u32) -> anyhow::Result<Vec<u8>> {
-    capture_window_with_backends(
+    refuse_without_direct_capture_consent()?;
+    let off_space = crate::windows::window_on_current_space_by_id(window_id) == Some(false);
+    capture_window_with_space_route(
         window_id,
-        screenshot_window_bytes_sck,
-        screenshot_window_bytes_shell,
+        off_space,
+        |id| {
+            capture_window_with_backends(
+                id,
+                screenshot_window_bytes_sck,
+                screenshot_window_bytes_shell,
+            )
+        },
+        screenshot_window_bytes_skylight,
     )
+}
+
+/// Route a window capture by Space.
+///
+/// Off the current Space, the public backends return nothing useful, so the
+/// SkyLight capture goes first and the public chain is the fallback. On the
+/// current Space the public chain goes first and SkyLight is the last resort.
+/// When everything fails the error keeps every backend's context.
+fn capture_window_with_space_route<P, S>(
+    window_id: u32,
+    off_space: bool,
+    public: P,
+    skylight: S,
+) -> anyhow::Result<Vec<u8>>
+where
+    P: FnOnce(u32) -> anyhow::Result<Vec<u8>>,
+    S: FnOnce(u32) -> anyhow::Result<Vec<u8>>,
+{
+    if off_space {
+        let skylight_err = match skylight(window_id) {
+            Ok(bytes) if !bytes.is_empty() => return Ok(bytes),
+            Ok(_) => anyhow::anyhow!("SkyLight capture produced empty bytes"),
+            Err(error) => error,
+        };
+        return public(window_id).map_err(|public_err| {
+            anyhow::anyhow!(
+                "window {window_id} is on another Space; SkyLight capture: {skylight_err:#}; \
+                 {public_err:#}"
+            )
+        });
+    }
+    match public(window_id) {
+        Ok(bytes) => Ok(bytes),
+        Err(public_err) => match skylight(window_id) {
+            Ok(bytes) if !bytes.is_empty() => Ok(bytes),
+            Ok(_) => Err(anyhow::anyhow!(
+                "{public_err:#}; SkyLight capture produced empty bytes"
+            )),
+            Err(skylight_err) => Err(anyhow::anyhow!(
+                "{public_err:#}; SkyLight capture: {skylight_err:#}"
+            )),
+        },
+    }
+}
+
+/// Off-Space capture through `SLSHWCaptureWindowList` (see module docs).
+fn screenshot_window_bytes_skylight(window_id: u32) -> anyhow::Result<Vec<u8>> {
+    let image = crate::input::skylight::hw_capture_window(window_id).ok_or_else(|| {
+        anyhow::anyhow!("SLSHWCaptureWindowList returned no image for window {window_id}")
+    })?;
+    core_cgimage_to_png(&image, &format!("window {window_id}"))
+}
+
+/// Encode a CoreGraphics image of any pixel layout as an RGBA PNG by drawing
+/// it into an RGBA8 bitmap. Fails on a fully transparent image, which is what
+/// WindowServer hands back for a window with no backing store.
+fn core_cgimage_to_png(
+    image: &core_graphics::image::CGImage,
+    label: &str,
+) -> anyhow::Result<Vec<u8>> {
+    use core_graphics::base::{kCGBitmapByteOrder32Big, kCGImageAlphaPremultipliedLast};
+    use core_graphics::color_space::CGColorSpace;
+    use core_graphics::context::CGContext;
+    use core_graphics::geometry::{CGPoint, CGRect, CGSize};
+
+    let w = checked_image_dim(image.width(), "CGImage width")?;
+    let h = checked_image_dim(image.height(), "CGImage height")?;
+    let (wu, hu) = (w as usize, h as usize);
+    let mut context = CGContext::create_bitmap_context(
+        None,
+        wu,
+        hu,
+        8,
+        wu * 4,
+        &CGColorSpace::create_device_rgb(),
+        kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big,
+    );
+    context.draw_image(
+        CGRect::new(
+            &CGPoint::new(0.0, 0.0),
+            &CGSize::new(f64::from(w), f64::from(h)),
+        ),
+        image,
+    );
+    let mut rgba = context.data().to_vec();
+    if rgba.len() != wu * hu * 4 {
+        anyhow::bail!("bitmap length {} != {w}*{h}*4 for {label}", rgba.len());
+    }
+    if !unpremultiply_rgba(&mut rgba) {
+        anyhow::bail!("capture of {label} is fully transparent (no window content)");
+    }
+    cua_driver_core::image_utils::encode_rgba_to_png(&rgba, w, h)
+}
+
+/// Convert premultiplied RGBA8 to straight alpha in place. Returns whether
+/// any pixel is visible (alpha > 0).
+fn unpremultiply_rgba(rgba: &mut [u8]) -> bool {
+    let mut visible = false;
+    for pixel in rgba.chunks_exact_mut(4) {
+        let alpha = u16::from(pixel[3]);
+        if alpha == 0 {
+            continue;
+        }
+        visible = true;
+        if alpha < 255 {
+            for channel in &mut pixel[..3] {
+                *channel = ((u16::from(*channel) * 255 + alpha / 2) / alpha).min(255) as u8;
+            }
+        }
+    }
+    visible
 }
 
 /// Capture a window by its `window_id` (CGWindowID).
@@ -756,6 +906,7 @@ pub fn screenshot_window(window_id: u32) -> anyhow::Result<(String, u32, u32)> {
 /// Capture the full main display.
 /// Returns raw PNG bytes or an error.
 pub fn screenshot_display_bytes() -> anyhow::Result<Vec<u8>> {
+    refuse_without_direct_capture_consent()?;
     let capture = SecureCapturePath::new("display.png")?;
     let tmp_path = capture.file.to_string_lossy().into_owned();
 
@@ -835,6 +986,7 @@ pub fn screenshot_display_bytes_excluding_overlay() -> anyhow::Result<(
     cursor_overlay::capture_exclusion::AgentOverlayCapture,
 )> {
     use cursor_overlay::capture_exclusion::{capture_excluding_overlays, ResidualCheck};
+    refuse_without_direct_capture_consent()?;
     capture_excluding_overlays(&OverlayExcluder, |overlay| {
         let Some(&overlay_window_id) = overlay else {
             return Ok((screenshot_display_bytes()?, ResidualCheck::Clean));
@@ -920,6 +1072,42 @@ fn screenshot_main_display_sck_excluding(excluded_window_id: u32) -> anyhow::Res
     cgimage_to_png(&image, "main display")
 }
 
+/// Skip an implicit capture that would make macOS show its one-time
+/// direct-capture consent over the user's window (CUA-1792).
+fn refuse_without_direct_capture_consent() -> anyhow::Result<()> {
+    match crate::capture_consent::capture_blocked_reason() {
+        Some(reason) => Err(anyhow::anyhow!(reason)),
+        None => Ok(()),
+    }
+}
+
+/// Take one tiny frame of the main display through ScreenCaptureKit.
+///
+/// Listing shareable content does not make macOS ask for its direct-capture
+/// consent; the first real capture does. The explicit grant flow calls this so
+/// the consent appears there, while the user expects system prompts, and not
+/// later over their window. Returns whether the frame came back.
+pub fn capture_probe_frame() -> bool {
+    use screencapturekit::prelude::{SCContentFilter, SCShareableContent, SCStreamConfiguration};
+    use screencapturekit::screenshot_manager::SCScreenshotManager;
+
+    let Ok(content) = SCShareableContent::get() else {
+        return false;
+    };
+    let Some(display) = content.displays().into_iter().next() else {
+        return false;
+    };
+    let filter = SCContentFilter::create()
+        .with_display(&display)
+        .with_excluding_windows(&[])
+        .build();
+    let config = SCStreamConfiguration::new()
+        .with_width(16)
+        .with_height(16)
+        .with_shows_cursor(false);
+    SCScreenshotManager::capture_image(&filter, &config).is_ok()
+}
+
 /// Capture the main display and return (base64-encoded PNG, width, height).
 pub fn screenshot_display() -> anyhow::Result<(String, u32, u32)> {
     let bytes = screenshot_display_bytes()?;
@@ -972,6 +1160,165 @@ mod tests {
     use std::cell::Cell;
     use std::rc::Rc;
     use std::sync::Arc;
+
+    /// Regression for trycua/cua#5476: with the pointer outside the window,
+    /// a pointer-showing window capture came back scaled and offset while
+    /// still sized like the window, so clicks aimed from it missed by ~37 px.
+    #[test]
+    fn window_capture_config_leaves_the_pointer_out_at_the_planned_size() {
+        let config = window_capture_config(1240, 900);
+        assert!(!config.shows_cursor());
+        assert_eq!((config.width(), config.height()), (1240, 900));
+    }
+
+    #[test]
+    fn off_space_window_uses_skylight_before_public_backends() {
+        let public_calls = Cell::new(0u32);
+        let got = capture_window_with_space_route(
+            7,
+            true,
+            |_| {
+                public_calls.set(public_calls.get() + 1);
+                anyhow::bail!("public backends must not run when SkyLight succeeds off-Space")
+            },
+            |window_id| Ok(format!("sky-{window_id}").into_bytes()),
+        )
+        .expect("off-Space SkyLight capture should succeed");
+        assert_eq!(got, b"sky-7");
+        assert_eq!(public_calls.get(), 0);
+    }
+
+    #[test]
+    fn off_space_skylight_failure_falls_back_to_public_backends() {
+        let got = capture_window_with_space_route(
+            7,
+            true,
+            |_| Ok(b"public".to_vec()),
+            |_| anyhow::bail!("SPI missing"),
+        )
+        .expect("public fallback should run");
+        assert_eq!(got, b"public");
+
+        let got = capture_window_with_space_route(
+            7,
+            true,
+            |_| Ok(b"public".to_vec()),
+            |_| Ok(Vec::new()),
+        )
+        .expect("empty SkyLight bytes fall back");
+        assert_eq!(got, b"public");
+    }
+
+    #[test]
+    fn on_space_window_uses_public_backends_and_skylight_last() {
+        let sky_calls = Cell::new(0u32);
+        let got = capture_window_with_space_route(
+            7,
+            false,
+            |_| Ok(b"public".to_vec()),
+            |_| {
+                sky_calls.set(sky_calls.get() + 1);
+                Ok(b"sky".to_vec())
+            },
+        )
+        .expect("public capture should succeed");
+        assert_eq!(got, b"public");
+        assert_eq!(
+            sky_calls.get(),
+            0,
+            "SkyLight must not run when public capture works"
+        );
+
+        let got = capture_window_with_space_route(
+            7,
+            false,
+            |_| anyhow::bail!("sck and shell failed"),
+            |_| Ok(b"sky".to_vec()),
+        )
+        .expect("SkyLight is the last resort");
+        assert_eq!(got, b"sky");
+    }
+
+    #[test]
+    fn space_route_errors_keep_every_backend_context() {
+        let off = capture_window_with_space_route(
+            7,
+            true,
+            |_| anyhow::bail!("public denied"),
+            |_| anyhow::bail!("sky denied"),
+        )
+        .expect_err("all backends fail")
+        .to_string();
+        assert!(
+            off.contains("another Space")
+                && off.contains("sky denied")
+                && off.contains("public denied"),
+            "{off}"
+        );
+
+        let on = capture_window_with_space_route(
+            7,
+            false,
+            |_| anyhow::bail!("public denied"),
+            |_| anyhow::bail!("sky denied"),
+        )
+        .expect_err("all backends fail")
+        .to_string();
+        assert!(
+            on.contains("public denied") && on.contains("sky denied"),
+            "{on}"
+        );
+    }
+
+    #[test]
+    fn unpremultiply_restores_straight_alpha_and_detects_blank() {
+        let mut blank = vec![0u8; 16];
+        assert!(
+            !unpremultiply_rgba(&mut blank),
+            "all-transparent image is blank"
+        );
+
+        // Opaque pixel unchanged; half-alpha premultiplied grey -> straight.
+        let mut px = vec![10, 20, 30, 255, 64, 32, 0, 128];
+        assert!(unpremultiply_rgba(&mut px));
+        assert_eq!(&px[..4], &[10, 20, 30, 255]);
+        assert_eq!(&px[4..], &[128, 64, 0, 128]);
+    }
+
+    #[test]
+    fn core_cgimage_to_png_round_trips_pixels() {
+        use core_graphics::base::{kCGBitmapByteOrder32Big, kCGImageAlphaPremultipliedLast};
+        use core_graphics::color_space::CGColorSpace;
+        use core_graphics::context::CGContext;
+
+        let mut ctx = CGContext::create_bitmap_context(
+            None,
+            3,
+            2,
+            8,
+            12,
+            &CGColorSpace::create_device_rgb(),
+            kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big,
+        );
+        ctx.data().copy_from_slice(&[255u8, 0, 0, 255].repeat(6));
+        let image = ctx.create_image().expect("image from bitmap");
+        let png = core_cgimage_to_png(&image, "test").expect("encode");
+        assert_eq!(png_dimensions(&png).expect("dims"), (3, 2));
+
+        let mut clear = CGContext::create_bitmap_context(
+            None,
+            2,
+            2,
+            8,
+            8,
+            &CGColorSpace::create_device_rgb(),
+            kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big,
+        );
+        clear.data().fill(0);
+        let image = clear.create_image().expect("image from bitmap");
+        let err = core_cgimage_to_png(&image, "test").expect_err("blank image fails");
+        assert!(err.to_string().contains("fully transparent"), "{err}");
+    }
 
     #[test]
     fn native_window_capture_short_circuits_shell_fallback() {
@@ -1189,6 +1536,23 @@ mod tests {
             GATE.try_acquire().is_some(),
             "gate reopens only when the worker-owned permit drops"
         );
+    }
+
+    #[test]
+    fn pooled_native_worker_returns_work_result_and_error() {
+        static GATE: NativeCaptureGate = NativeCaptureGate::new();
+
+        let ok = run_native_capture_worker(&GATE, Duration::from_secs(5), || Ok(7u8));
+        assert_eq!(ok.expect("work result flows through the pooled worker"), 7);
+
+        let err: anyhow::Result<u8> =
+            run_native_capture_worker(&GATE, Duration::from_secs(5), || {
+                Err(anyhow::anyhow!("boom"))
+            });
+        assert!(err
+            .expect_err("work error flows through")
+            .to_string()
+            .contains("boom"));
     }
 
     #[test]

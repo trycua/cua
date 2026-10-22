@@ -20,6 +20,7 @@ cua-spaces-ext.workspace = true
 cua-spaces = { path = "../cua-spaces" }
 cua-teleport.workspace = true
 cua-keyvault.workspace = true
+cua-home.workspace = true
 cua-host.workspace = true
 cua-spacesd-client.workspace = true
 cua-telemetry.workspace = true
@@ -47,7 +48,6 @@ cua-media-codec = { workspace = true, features = ["openh264", "opus"] }
 serde_json.workspace = true
 cua-sandbox-core = { workspace = true, features = ["testing"] }
 cua-spacesd-client = { workspace = true, features = ["testing"] }
-cua-fleet = { workspace = true, features = ["testing"] }
 cua-daemon = { workspace = true, features = ["server", "client", "test-fixtures"] }
 tempfile.workspace = true
 # The teleport fixture encrypts a cookie the way a real Chromium Safe

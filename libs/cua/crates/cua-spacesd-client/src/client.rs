@@ -100,7 +100,7 @@ pub struct ConnectOptions {
     pub principal: Option<pb::Principal>,
     /// Wire protocol preference.
     pub transport: TransportPreference,
-    /// Fleet gateway credentials (Fleet endpoints only).
+    /// Gateway credentials (the relay's account session).
     pub gateway: Option<GatewayAuth>,
     /// TCP/TLS connect timeout.
     pub connect_timeout: Duration,
@@ -113,6 +113,9 @@ pub struct ConnectOptions {
     /// Probe with `GetCapabilities` while connecting. Disabling it requires
     /// an explicit transport and skips `SpacesdNotAvailable` detection.
     pub probe: bool,
+    /// Extra headers sent on every request (gRPC, HTTP and WebSocket), as
+    /// sensitive values: for example a mesh forward's session key.
+    pub headers: Vec<(String, String)>,
 }
 
 impl ConnectOptions {
@@ -129,6 +132,7 @@ impl ConnectOptions {
             keepalive: Keepalive::default(),
             retry: RetryPolicy::default(),
             probe: true,
+            headers: Vec::new(),
         }
     }
 
@@ -155,9 +159,10 @@ impl ConnectOptions {
         self
     }
 
-    /// Routes through the Fleet gateway with this bearer and claim.
-    pub fn fleet_gateway(mut self, bearer: Arc<dyn BearerProvider>, claim: Option<String>) -> Self {
-        self.gateway = Some(GatewayAuth { bearer, claim });
+    /// Authenticates through a gateway (the relay) with this bearer; the
+    /// spacesd token moves to `x-cua-env-authorization`.
+    pub fn gateway(mut self, bearer: Arc<dyn BearerProvider>) -> Self {
+        self.gateway = Some(GatewayAuth { bearer });
         self
     }
 
@@ -179,6 +184,12 @@ impl ConnectOptions {
         self
     }
 
+    /// Adds a header sent on every request.
+    pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers.push((name.into(), value.into()));
+        self
+    }
+
     /// Enables or disables the connect-time probe.
     pub fn probe(mut self, probe: bool) -> Self {
         self.probe = probe;
@@ -193,6 +204,7 @@ impl ConnectOptions {
             gateway: self.gateway.clone(),
             connect_timeout: self.connect_timeout,
             keepalive: self.keepalive,
+            headers: self.headers.clone(),
         }
     }
 }

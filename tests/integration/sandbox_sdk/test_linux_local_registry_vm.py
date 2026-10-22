@@ -14,7 +14,6 @@ Image.from_registry() is required — TartRuntime only works with OCI registry r
 Contrast:
     Image.linux("ubuntu", "24.04", kind="vm") + local=True              -> QEMU VM, managed Cua image
     Image.from_registry("ghcr.io/trycua/...") + local=True + TartRuntime -> Tart VM, OCI registry image (macOS only)
-    Image.from_registry("ghcr.io/trycua/...") + local=False              -> Cua cloud VM
 """
 
 from __future__ import annotations

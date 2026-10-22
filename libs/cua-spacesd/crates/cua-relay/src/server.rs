@@ -114,6 +114,11 @@ pub struct RelayConfig {
     /// yamux's per-machine connection receive window: the most one
     /// machine's connection buffers across all of its streams (S7).
     pub machine_window_bytes: usize,
+    /// For this long after start, a request for a known machine that is
+    /// not connected waits for it to reconnect instead of failing: the
+    /// machines of the relay this one took over from are on their way.
+    /// Zero: fail at once.
+    pub reconnect_grace: Duration,
 }
 
 impl Default for RelayConfig {
@@ -146,6 +151,7 @@ impl Default for RelayConfig {
             max_global_streams: 4096,
             machine_max_streams: crate::mux::MAX_STREAMS,
             machine_window_bytes: crate::mux::DEFAULT_WINDOW_BYTES,
+            reconnect_grace: Duration::ZERO,
         }
     }
 }
@@ -250,6 +256,8 @@ pub struct Relay {
     /// Open client streams across every machine (S7): the global memory
     /// budget's live counter.
     pub(crate) global_streams: Arc<AtomicU64>,
+    /// When this relay started (the reconnect grace counts from it).
+    started: Instant,
 }
 
 /// One row of `/relay/v1/machines`.
@@ -304,6 +312,7 @@ impl Relay {
             devices: Arc::new(devices),
             key,
             global_streams: Arc::default(),
+            started: Instant::now(),
         })
     }
 
@@ -367,6 +376,23 @@ impl Relay {
     /// The connected machine `id`, if any.
     pub(crate) fn machine(&self, id: &str) -> Option<Arc<Machine>> {
         self.machines.lock().expect("machines").get(id).cloned()
+    }
+
+    /// Within the reconnect grace after start, waits for the known machine
+    /// `id` to connect (it was connected to the relay this one replaced and
+    /// is reconnecting); `None` once the grace is over or for an unknown id.
+    pub(crate) async fn await_reconnect(&self, id: &str) -> Option<Arc<Machine>> {
+        let until = self.started + self.config.reconnect_grace;
+        if Instant::now() >= until || self.directory.get(id).is_none() {
+            return None;
+        }
+        while Instant::now() < until {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            if let Some(machine) = self.machine(id) {
+                return Some(machine);
+            }
+        }
+        None
     }
 
     /// Drops machine `id` and cuts its clients.
@@ -433,12 +459,21 @@ impl Relay {
         listener: tokio::net::TcpListener,
         shutdown: impl std::future::Future<Output = ()> + Send + 'static,
     ) -> std::io::Result<()> {
+        let handle = self.clone();
         axum::serve(
             listener,
             self.router()
                 .into_make_service_with_connect_info::<SocketAddr>(),
         )
-        .with_graceful_shutdown(shutdown)
+        .with_graceful_shutdown(async move {
+            shutdown.await;
+            // Machines reconnect at once, to the relay that replaces this
+            // one, instead of holding the shutdown open until the process
+            // exits.
+            let machines = handle.machine_ids().len();
+            handle.disconnect_all();
+            tracing::info!(machines, "closed machine connections");
+        })
         .await
     }
 
@@ -587,13 +622,13 @@ async fn machine_connect(
         .map(str::to_owned)
         .filter(|id| valid_machine_id(id))
     else {
-        return text(StatusCode::BAD_REQUEST, "missing or invalid machine id");
+        return text(StatusCode::BAD_REQUEST, "missing or invalid computer id");
     };
     let registrant = if let Some(index) = relay.token_index(&headers) {
         if relay.directory.get(&id).is_some() {
             return text(
                 StatusCode::CONFLICT,
-                "machine id is registered to an account",
+                "computer id is registered to an account",
             );
         }
         Registrant::Static(index)
@@ -606,7 +641,7 @@ async fn machine_connect(
             Some(_) => {
                 return text(
                     StatusCode::FORBIDDEN,
-                    "machine token belongs to another machine id",
+                    "computer token belongs to another computer id",
                 )
             }
             None => {
@@ -637,7 +672,7 @@ async fn machine_connect(
             if same_token >= relay.config.max_machines_per_token {
                 return text(
                     StatusCode::TOO_MANY_REQUESTS,
-                    "machine limit for this token reached",
+                    "computer limit for this token reached",
                 );
             }
         }
@@ -645,7 +680,7 @@ async fn machine_connect(
             if existing.registrant != registrant {
                 return text(
                     StatusCode::CONFLICT,
-                    "machine id registered with another token",
+                    "computer id registered with another token",
                 );
             }
         }
@@ -882,7 +917,7 @@ async fn authorize_account_client(
             headers,
             StatusCode::BAD_GATEWAY,
             GrpcCode::Unavailable,
-            format!("machine {id:?} is not registered"),
+            format!("computer {id:?} is not registered"),
         ));
     };
     let is_health = forwarded == "/health" || forwarded.starts_with("/health?");
@@ -907,7 +942,7 @@ async fn authorize_account_client(
             headers,
             StatusCode::FORBIDDEN,
             GrpcCode::PermissionDenied,
-            "the host stopped sharing this machine",
+            "the host stopped sharing this computer",
         ));
     }
     let mut gate = None;
@@ -918,7 +953,7 @@ async fn authorize_account_client(
                     headers,
                     StatusCode::FORBIDDEN,
                     GrpcCode::PermissionDenied,
-                    "this machine is not shared with your account",
+                    "this computer is not shared with your account",
                 ));
             };
             // The account token alone is not enough: the client device must
@@ -964,7 +999,7 @@ async fn authorize_account_client(
                 headers,
                 StatusCode::UNAUTHORIZED,
                 GrpcCode::Unauthenticated,
-                "sign in: this machine accepts cua.ai account tokens",
+                "sign in: this computer accepts cua.ai account tokens",
             ));
         }
     };
@@ -985,8 +1020,8 @@ async fn authorize_account_client(
 async fn proxy(State(relay): State<Relay>, mut request: Request) -> Response {
     let Some((id, forwarded, prefix)) = route(&relay, request.uri(), request.headers()) else {
         let message = match &relay.config.host_domain {
-            Some(domain) => format!("use <machine-id>.{domain}/…"),
-            None => "use /m/<machine-id>/…".to_owned(),
+            Some(domain) => format!("use <computer-id>.{domain}/…"),
+            None => "use /m/<computer-id>/…".to_owned(),
         };
         return refuse(
             request.headers(),
@@ -1033,12 +1068,16 @@ async fn proxy(State(relay): State<Relay>, mut request: Request) -> Response {
             "the relay forwards only requests carrying a spacesd credential",
         );
     }
+    let machine = match machine {
+        Some(machine) => Some(machine),
+        None => relay.await_reconnect(&id).await,
+    };
     let Some(machine) = machine else {
         return refuse(
             request.headers(),
             StatusCode::BAD_GATEWAY,
             GrpcCode::Unavailable,
-            format!("machine {id:?} is not connected"),
+            format!("computer {id:?} is not connected"),
         );
     };
     if machine.active.fetch_add(1, Ordering::SeqCst) >= relay.config.max_streams_per_machine {
@@ -1047,7 +1086,7 @@ async fn proxy(State(relay): State<Relay>, mut request: Request) -> Response {
             request.headers(),
             StatusCode::SERVICE_UNAVAILABLE,
             GrpcCode::ResourceExhausted,
-            "too many concurrent streams for this machine",
+            "too many concurrent streams for this computer",
         );
     }
     // The global memory budget (S7): checked in addition to the per-machine
@@ -1081,7 +1120,7 @@ async fn proxy(State(relay): State<Relay>, mut request: Request) -> Response {
                 request.headers(),
                 StatusCode::BAD_GATEWAY,
                 GrpcCode::Unavailable,
-                format!("machine tunnel: {e}"),
+                format!("computer tunnel: {e}"),
             )
         }
     };

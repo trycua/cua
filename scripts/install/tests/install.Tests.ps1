@@ -30,7 +30,8 @@ BeforeAll {
 
     function script:Invoke-Installer([hashtable]$Params, [hashtable]$Vars = @{}) {
         $saved = @{}
-        $all = @{ CUA_INSTALL_MANIFEST_URL = $env:CUA_TEST_MANIFEST_URL; CUA_INSTALL_ARCH = 'AMD64'; CUA_HOME = (Join-Path $env:CUA_TEST_ROOT 'cuahome') }
+        # Install telemetry may only reach a loopback endpoint here.
+        $all = @{ CUA_INSTALL_MANIFEST_URL = $env:CUA_TEST_MANIFEST_URL; CUA_INSTALL_ARCH = 'AMD64'; CUA_HOME = (Join-Path $env:CUA_TEST_ROOT 'cuahome'); CUA_TELEMETRY_FORBID_NETWORK = '1' }
         foreach ($k in $Vars.Keys) { $all[$k] = $Vars[$k] }
         foreach ($k in $all.Keys) { $saved[$k] = [Environment]::GetEnvironmentVariable($k); [Environment]::SetEnvironmentVariable($k, $all[$k]) }
         try {
@@ -87,7 +88,8 @@ Describe 'functions' {
 
     It 'selects defaults, -Select, -Only and the legacy switches' {
         $d = Get-CuaSelection -SelectList '' -OnlyList '' -Cli $false -App $false -InstallMode ''
-        @($d.cli, $d.spaces, $d['cua-driver'], $d.host) | Should -Be @($true, $false, $false, $false)
+        @($d.cli, $d.spaces, $d['cua-driver'], $d.host) | Should -Be @($true, $true, $false, $false)
+        (Get-CuaSelection -SelectList '' -OnlyList '' -Cli $true -App $false -InstallMode '').spaces | Should -BeFalse
         (Get-CuaSelection -SelectList 'cua-driver' -OnlyList '' -Cli $false -App $false -InstallMode '')['cua-driver'] | Should -BeTrue
         $o = Get-CuaSelection -SelectList '' -OnlyList 'host' -Cli $false -App $false -InstallMode ''
         @($o.cli, $o.spaces, $o.host) | Should -Be @($true, $false, $true)
@@ -105,27 +107,52 @@ Describe 'functions' {
         { Get-CuaSelection -SelectList '' -OnlyList '' -Cli $true -App $true -InstallMode '' } | Should -Throw '*mutually exclusive*'
     }
 
-    It 'toggles items in the numbered checklist; the CLI row is locked' {
-        $script:answers = [Collections.Generic.Queue[string]]::new([string[]]@('1 2', '3', ''))
+    It 'toggles the Cua Spaces and Cua Driver rows; there is no CLI row and no hosting row' {
+        # 2 turns Cua Driver on, 3 is past the last row, 1 turns the app off.
+        $script:answers = [Collections.Generic.Queue[string]]::new([string[]]@('2 3', '1', ''))
         $sel = Get-CuaSelection -SelectList '' -OnlyList '' -Cli $false -App $false -InstallMode ''
         $sel = Read-CuaSelection $sel { $script:answers.Dequeue() } 6>$null
-        @($sel.cli, $sel.spaces, $sel['cua-driver'], $sel.host) | Should -Be @($true, $false, $true, $true)
+        @($sel.cli, $sel.spaces, $sel['cua-driver'], $sel.host) | Should -Be @($true, $false, $true, $false)
         $script:Picked | Should -BeTrue
         $script:Picked = $false
     }
 
-    It 'shows Spaces in the checklist only when preselected' {
-        $script:answers = [Collections.Generic.Queue[string]]::new([string[]]@('2', ''))
+    It 'shows Spaces in the list, where it can be unticked' {
+        $script:answers = [Collections.Generic.Queue[string]]::new([string[]]@('1', ''))
         $sel = Get-CuaSelection -SelectList 'spaces' -OnlyList '' -Cli $false -App $false -InstallMode ''
         $sel = Read-CuaSelection $sel { $script:answers.Dequeue() } 6>$null
         @($sel.spaces, $sel['cua-driver']) | Should -Be @($false, $false)
         $script:Picked = $false
     }
 
+    It 'says what Cua Spaces is and what is always installed, and describes each row' {
+        $script:answers = [Collections.Generic.Queue[string]]::new([string[]]@(''))
+        $sel = Get-CuaSelection -SelectList '' -OnlyList '' -Cli $false -App $false -InstallMode ''
+        $shown = @(& { $null = Read-CuaSelection $sel { $script:answers.Dequeue() } } 6>&1 | ForEach-Object { "$($_.MessageData)" })
+        $text = $shown -join "`n"
+        $text | Should -Match 'Cua Spaces lets your AI agents use computers, and lets you watch them work\.'
+        $text | Should -Match 'Needed, so always installed:'
+        $text | Should -Match 'Command-line tools: the "cua" program that the app and your AI agents use\.'
+        $text | Should -Match '1 \[x\] Cua Spaces app: lets your AI agents use computers'
+        $text | Should -Match '2 \[ \] Cua Driver: lets AI agents use your apps while you keep working'
+        $text | Should -Match 'For advanced users\. Adds it to Claude Code, Codex and other coding agents\.'
+        $text | Should -Not -Match 'Host this machine'
+        $text | Should -Not -Match 'cua CLI \(required\)'
+        $script:Picked = $false
+    }
+
+    It 'says a scripted -Select host is on, though the list has no hosting row' {
+        $script:answers = [Collections.Generic.Queue[string]]::new([string[]]@(''))
+        $sel = Get-CuaSelection -SelectList 'host' -OnlyList '' -Cli $false -App $false -InstallMode ''
+        $shown = @(& { $null = Read-CuaSelection $sel { $script:answers.Dequeue() } } 6>&1 | ForEach-Object { "$($_.MessageData)" })
+        ($shown -join "`n") | Should -Match 'Also: your other devices will be able to use this computer'
+        $script:Picked = $false
+    }
+
     It 'forwards -RequireSignature and -NoPathUpdate to the cua-driver installer' {
-        $RequireSignature = $false; $ModifyPath = $false
+        $RequireSignature = $false; $NoModifyPath = $true
         Get-DriverInstallArgs | Should -Be @('-NoPathUpdate')
-        $RequireSignature = $true; $ModifyPath = $true
+        $RequireSignature = $true; $NoModifyPath = $false
         Get-DriverInstallArgs | Should -Be @('-RequireSignature')
     }
 
@@ -146,7 +173,7 @@ Set-Content (Join-Path `$env:CUA_DRIVER_RS_INSTALL_DIR 'cua-driver.exe') 'fake'
         Set-Content -LiteralPath $fakeCua -Value "#!/bin/sh`necho `"`$*`" >>'$cuaLog'"
         chmod +x $fakeCua
         $env:CUA_INSTALL_DRIVER_URL = ConvertTo-FileUrl $fakeDriver
-        $Prefix = $prefix; $DryRun = $false; $RequireSignature = $true; $ModifyPath = $false
+        $Prefix = $prefix; $DryRun = $false; $RequireSignature = $true; $NoModifyPath = $true
         try {
             Install-CuaDriver $fakeCua (New-Item -ItemType Directory -Force -Path (Join-Path $root 'tmp')).FullName 'file:///r.json' 6>$null
         } finally { $env:CUA_INSTALL_DRIVER_URL = $null }
@@ -154,6 +181,28 @@ Set-Content (Join-Path `$env:CUA_DRIVER_RS_INSTALL_DIR 'cua-driver.exe') 'fake'
         Get-Content $log | Should -Be "NoPathUpdate=True RequireSignature=True dir=$bin"
         Get-Content $cuaLog | Should -Be "agents setup --cua-driver --agents all --yes --mcp-command $(Join-Path $bin 'cua-driver.exe')"
         $env:CUA_DRIVER_RS_INSTALL_DIR | Should -BeNullOrEmpty
+    }
+
+    It 'adds the MCP server without the skill with -NoSkills' -Skip:($IsWindows) {
+        $root = Join-Path $env:CUA_TEST_ROOT 'noskills'
+        $prefix = Join-Path $root 'prefix'
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        $cuaLog = Join-Path $root 'cua.log'
+        $fakeDriver = Join-Path $root 'install.ps1'
+        Set-Content -LiteralPath $fakeDriver -Value @"
+param([switch]`$NoPathUpdate, [switch]`$RequireSignature)
+New-Item -ItemType Directory -Force -Path `$env:CUA_DRIVER_RS_INSTALL_DIR | Out-Null
+Set-Content (Join-Path `$env:CUA_DRIVER_RS_INSTALL_DIR 'cua-driver.exe') 'fake'
+"@
+        $fakeCua = Join-Path $root 'cua'
+        Set-Content -LiteralPath $fakeCua -Value "#!/bin/sh`necho `"`$*`" >>'$cuaLog'"
+        chmod +x $fakeCua
+        $env:CUA_INSTALL_DRIVER_URL = ConvertTo-FileUrl $fakeDriver
+        $Prefix = $prefix; $DryRun = $false; $NoModifyPath = $true; $NoSkills = $true
+        try {
+            Install-CuaDriver $fakeCua (New-Item -ItemType Directory -Force -Path (Join-Path $root 'tmp')).FullName 'file:///r.json' 6>$null
+        } finally { $env:CUA_INSTALL_DRIVER_URL = $null; $NoSkills = $false }
+        Get-Content $cuaLog | Should -Be "agents setup --cua-driver --agents all --yes --no-skills --mcp-command $(Join-Path (Join-Path $prefix 'bin') 'cua-driver.exe')"
     }
 
     It 'refuses a plain-HTTP cua-driver installer URL' {
@@ -172,28 +221,77 @@ Set-Content (Join-Path `$env:CUA_DRIVER_RS_INSTALL_DIR 'cua-driver.exe') 'fake'
 Describe 'install.ps1' {
     It 'installs the CLI into -Prefix\bin and verifies the checksum' {
         $prefix = Join-Path $env:CUA_TEST_ROOT 'p1'
-        $out = Invoke-Installer @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; Prefix = $prefix }
+        $out = Invoke-Installer @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; NoModifyPath = $true; Prefix = $prefix }
         Join-Path $prefix 'bin/cua.exe' | Should -Exist
-        $out | Should -Match 'Next steps'
+        $out | Should -Match 'Installed the command-line tools \(downloads checked\)\.'
+        $out | Should -Match 'Next: run "cua auth login" to sign in, then "cua agents setup" to connect your AI agents\.'
+        $out | Should -Match 'To let your other devices use this computer, run "cua host setup"\.'
         $out | Should -Match 'is not on your PATH'
     }
 
-    # Cua Spaces is macOS-only for now: Windows skips the app with a note.
-    It 'dry run: plans the CLI, skips the app (macOS only) and changes nothing' {
+    It 'prints one plain line per step by default, and the detail with -Verbose' {
+        $prefix = Join-Path $env:CUA_TEST_ROOT 'p-quiet'
+        $out = Invoke-Installer @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; NoModifyPath = $true; Prefix = $prefix }
+        $out | Should -Match 'Installing the command-line tools to '
+        $out | Should -Not -Match 'cua-install:'
+        $out | Should -Not -Match 'manifest|checksum|sha256'
+        $verbose = Invoke-Installer @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; NoModifyPath = $true; Prefix = (Join-Path $env:CUA_TEST_ROOT 'p-verbose'); Verbose = $true }
+        $verbose | Should -Match 'cua-install: platform windows-x64, manifest '
+    }
+
+    # CUA-1704: `cua` must work in the next terminal without a manual step.
+    It 'adds the CLI to the user PATH by default; -CliOnly neither asks nor signs in' {
+        $out = Invoke-Installer @{ DryRun = $true; CliOnly = $true; Prefix = (Join-Path $env:CUA_TEST_ROOT 'p11') }
+        $out | Should -Match '\[dry-run\] add .*p11.bin to the user PATH'
+        $out | Should -Not -Match 'is not on your PATH'
+        $out | Should -Not -Match 'Install the command-line tools to'
+        $out | Should -Not -Match 'signing in'
+        $out | Should -Not -Match 'setup.exe'
+    }
+
+    # Cua Spaces for Windows is the Electron app's NSIS setup.exe.
+    It 'dry run: -Mode plans the CLI and the silent setup.exe, and changes nothing' {
         $prefix = Join-Path $env:CUA_TEST_ROOT 'p2'
         $out = Invoke-Installer @{ DryRun = $true; Yes = $true; Prefix = $prefix; Mode = 'host' } @{ CUA_INSTALL_ARCH = 'ARM64' }
         $out | Should -Match 'cua-cli-1.2.3-windows-arm64.zip'
-        $out | Should -Match 'Cua Spaces is macOS-only for now'
+        $out | Should -Match 'cua-spaces-1.2.3-windows-arm64-setup.exe'
+        $out | Should -Match '/S'
         $out | Should -Not -Match 'msiexec'
-        $out | Should -Not -Match 'cua-spaces-1.2.3-windows'
         $prefix | Should -Not -Exist
     }
 
-    It 'dry run: -AppOnly skips the app with a note and installs nothing' {
-        $out = Invoke-Installer @{ DryRun = $true; Yes = $true; AppOnly = $true; Installer = 'nsis'; Mode = 'client' }
-        $out | Should -Match 'Cua Spaces is macOS-only for now'
-        $out | Should -Not -Match 'setup.exe'
+    It 'dry run: -AppOnly plans only the silent setup.exe' {
+        $out = Invoke-Installer @{ DryRun = $true; Yes = $true; AppOnly = $true; Mode = 'client' }
+        $out | Should -Match 'cua-spaces-1.2.3-windows-x64-setup.exe'
         $out | Should -Not -Match 'cua-cli-1.2.3'
+    }
+
+    # Clean machine: the manifest lists signatures but neither minisign nor
+    # cosign is installed. The signature note reads $script:SigNoted,
+    # which crashed under Set-StrictMode when it was never initialised.
+    It 'installs under StrictMode when the manifest has signatures but no verifier is installed' {
+        $sig = Join-Path $env:CUA_TEST_ROOT 'sig'
+        New-Item -ItemType Directory -Force -Path $sig | Out-Null
+        Copy-Item (Join-Path $env:CUA_TEST_ROOT 'release/*') $sig
+        Get-ChildItem $sig -Filter 'cua-cli-*.zip' | ForEach-Object { Set-Content -LiteralPath "$($_.FullName).minisig" -Value 'sig' }
+        $sigManifest = Join-Path $sig 'release-artifacts.json'
+        & $Python.Source $Tool --component cli --version 1.2.3 --dir $sig --out $sigManifest
+        (Get-Content -Raw $sigManifest) | Should -Match 'minisig'
+        $prefix = Join-Path $env:CUA_TEST_ROOT 'p-sig'
+        $out = Invoke-Installer @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; NoModifyPath = $true; Prefix = $prefix } @{
+            CUA_INSTALL_MANIFEST_URL = (ConvertTo-FileUrl $sigManifest)
+            PATH = ((Get-Command python3).Source | Split-Path)
+        }
+        $out | Should -Not -Match 'has not been set'
+        $out | Should -Match 'Installed the command-line tools \(downloads checked\)\.'
+        $out | Should -Not -Match 'cosign|minisign|signatures were not'
+        Join-Path $prefix 'bin/cua.exe' | Should -Exist
+        # The detail is for -Verbose.
+        $verbose = Invoke-Installer @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; NoModifyPath = $true; Prefix = (Join-Path $env:CUA_TEST_ROOT 'p-sig-v'); Verbose = $true } @{
+            CUA_INSTALL_MANIFEST_URL = (ConvertTo-FileUrl $sigManifest)
+            PATH = ((Get-Command python3).Source | Split-Path)
+        }
+        $verbose | Should -Match 'release signatures were not checked'
     }
 
     It 'aborts on a checksum mismatch' {
@@ -206,6 +304,43 @@ Describe 'install.ps1' {
         { Invoke-Installer @{ CliOnly = $true; Yes = $true; Prefix = $prefix } @{ CUA_INSTALL_MANIFEST_URL = ConvertTo-FileUrl (Join-Path $bad 'release-artifacts.json') } } |
             Should -Throw '*checksum mismatch*'
         Join-Path $prefix 'bin/cua.exe' | Should -Not -Exist
+    }
+
+    It 'dry run: -Pair installs the CLI and runs host setup with the code, no sign-in or checklist' {
+        $out = Invoke-Installer @{ DryRun = $true; Pair = 'K7QM-4XPB-2RHD'; Relay = 'https://relay.example.com' } @{ CUA_INSTALL_REINSTALL = '1' }
+        $out | Should -Match 'cua-cli-1.2.3-windows-x64.zip'
+        $out | Should -Match 'host setup --pair K7QM-4XPB-2RHD --relay https://relay.example.com'
+        $out | Should -Not -Match 'auth login'
+        $out | Should -Not -Match 'Choose what to install'
+    }
+
+    It '-Pair on a computer that already has cua: uses it and downloads nothing' {
+        $dir = Join-Path $env:CUA_TEST_ROOT 'existing-cua'
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        $sep = [IO.Path]::PathSeparator
+        if ($IsWindows) {
+            Set-Content -LiteralPath (Join-Path $dir 'cua.cmd') -Value "@echo off`r`necho       --pair ^<CODE^>  add this machine with a code"
+        } else {
+            $fake = Join-Path $dir 'cua'
+            Set-Content -LiteralPath $fake -Value "#!/bin/sh`necho '      --pair <CODE>  add this machine with a code'"
+            chmod +x $fake
+        }
+        $vars = @{ PATH = "$dir$sep$env:PATH"; CUA_INSTALL_REINSTALL = $null }
+        $out = Invoke-Installer @{ DryRun = $true; Pair = 'K7QM-4XPB-2RHD' } $vars
+        $out | Should -Match 'already installed at'
+        $out | Should -Match 'host setup --pair K7QM-4XPB-2RHD'
+        $out | Should -Not -Match 'cua-cli-1.2.3'
+        $out | Should -Not -Match 'manifest'
+        # -Version and CUA_INSTALL_REINSTALL install anyway.
+        (Invoke-Installer @{ DryRun = $true; Pair = 'K7QM-4XPB-2RHD'; Version = '1.2.3' } $vars) | Should -Match 'cua-cli-1.2.3'
+        (Invoke-Installer @{ DryRun = $true; Pair = 'K7QM-4XPB-2RHD' } @{ PATH = $vars.PATH; CUA_INSTALL_REINSTALL = '1' }) | Should -Match 'cua-cli-1.2.3'
+    }
+
+    It '-Pair refuses codes and relays with shell characters' {
+        { Invoke-Installer @{ DryRun = $true; Pair = 'K7QM;calc' } } | Should -Throw '*not a pairing code*'
+        { Invoke-Installer @{ DryRun = $true; Pair = 'K7QM-4XPB-2RHD'; Relay = 'http://evil.example' } } | Should -Throw '*https*'
+        { Invoke-Installer @{ DryRun = $true; Pair = 'K7QM-4XPB-2RHD'; Relay = 'http://localhost.evil.example' } } | Should -Throw '*https*'
+        { Invoke-Installer @{ DryRun = $true; Relay = 'https://relay.example.com' } } | Should -Throw '*goes with -Pair*'
     }
 
     It 'rejects -CliOnly with -AppOnly' {
@@ -246,24 +381,31 @@ Describe 'install.ps1' {
         Get-Content $log | Should -Not -Match 'identity-regexp'
     }
 
-    It 'dry run: Spaces is off by default on Windows' {
+    It 'dry run: Spaces is on by default on Windows' {
         $out = Invoke-Installer @{ DryRun = $true; Yes = $true }
         $out | Should -Match 'cua-cli-1.2.3-windows-x64.zip'
+        $out | Should -Match 'cua-spaces-1.2.3-windows-x64-setup.exe /S'
         $out | Should -Not -Match 'msiexec'
         $out | Should -Not -Match 'cua-driver'
     }
 
-    It 'dry run: -Only spaces installs the CLI and skips the app' {
+    It 'dry run: -Only spaces installs the CLI and the setup.exe' {
         $out = Invoke-Installer @{ DryRun = $true; Only = 'spaces' }
         $out | Should -Match 'cua-cli-1.2.3-windows-x64.zip'
-        $out | Should -Match 'Cua Spaces is macOS-only for now'
+        $out | Should -Match 'cua-spaces-1.2.3-windows-x64-setup.exe'
         $out | Should -Not -Match 'msiexec'
+    }
+
+    It 'dry run: -NoSkills leaves the skill out of the planned agent setup' {
+        $out = Invoke-Installer @{ DryRun = $true; Select = 'cua-driver'; NoSkills = $true; Prefix = (Join-Path $env:CUA_TEST_ROOT 'p11') } @{ CUA_INSTALL_NONINTERACTIVE = '1'; CUA_INSTALL_DRIVER_URL = 'https://example.test/driver/install.ps1' }
+        $out | Should -Match 'agents setup --cua-driver --agents all --yes --no-skills --mcp-command .*p11.bin.cua-driver.exe'
     }
 
     It 'dry run: -Select cua-driver,host prints the driver, agents and host steps' {
         $out = Invoke-Installer @{ DryRun = $true; Select = 'cua-driver,host'; Prefix = (Join-Path $env:CUA_TEST_ROOT 'p10') } @{ CUA_INSTALL_NONINTERACTIVE = '1'; CUA_INSTALL_DRIVER_URL = 'https://example.test/driver/install.ps1' }
         $out | Should -Match '\[dry-run\] download https://example.test/driver/install.ps1'
-        $out | Should -Match 'cua-driver-install.ps1 -NoPathUpdate'
+        $out | Should -Match 'cua-driver-install.ps1'
+        $out | Should -Not -Match 'NoPathUpdate'
         $out | Should -Match 'agents setup --cua-driver --agents all --yes --mcp-command .*p10.bin.cua-driver.exe'
         $out | Should -Match '\[dry-run\] .*cua.exe host setup'
         $out | Should -Not -Match 'msiexec'
@@ -275,8 +417,103 @@ Describe 'install.ps1' {
         { Invoke-Installer @{ DryRun = $true; CliOnly = $true; Select = 'spaces' } } | Should -Throw '*use -Only spaces*'
     }
 
-    It 'dry run: -Mode writes no install-mode file while the app is skipped' {
+    It 'dry run: -Mode writes the install-mode file when the app is installed' {
         $out = Invoke-Installer @{ DryRun = $true; Yes = $true; AppOnly = $true; Mode = 'host' }
-        $out | Should -Not -Match 'spaces-install-mode'
+        $out | Should -Match 'spaces-install-mode'
+    }
+}
+
+Describe 'install telemetry' {
+    BeforeAll {
+        $env:CUA_INSTALL_NO_RUN = '1'
+        . $script:Installer
+        Remove-Item Env:CUA_INSTALL_NO_RUN
+        $script:Fixture = Get-Content -Raw (Join-Path $PSScriptRoot 'fixtures/installer-step.json') | ConvertFrom-Json
+        $script:Switches = @('DO_NOT_TRACK', 'CUA_TELEMETRY', 'CUA_TELEMETRY_ENABLED', 'CUA_TELEMETRY_DISABLED') + $script:TelCiVars
+        function script:With-Env([hashtable]$Vars, [scriptblock]$Body) {
+            $saved = @{}
+            foreach ($k in $script:Switches + @($Vars.Keys)) { $saved[$k] = [Environment]::GetEnvironmentVariable($k); [Environment]::SetEnvironmentVariable($k, $null) }
+            foreach ($k in $Vars.Keys) { [Environment]::SetEnvironmentVariable($k, $Vars[$k]) }
+            try { return (& $Body) } finally { foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k]) } }
+        }
+        function script:Get-Events([string]$Out) {
+            return @(($Out -split "`r?`n") | Where-Object { $_ -like '`[cua telemetry`] *' } | ForEach-Object { ($_.Substring(16) | ConvertFrom-Json).batch[0] })
+        }
+    }
+
+    It 'follows the same switches as every Cua program' {
+        $h = Join-Path $env:CUA_TEST_ROOT 'tel-home'
+        New-Item -ItemType Directory -Force -Path $h | Out-Null
+        With-Env @{} { Test-TelemetryEnabled $h } | Should -BeTrue
+        With-Env @{ DO_NOT_TRACK = '1'; CUA_TELEMETRY = '1' } { Test-TelemetryEnabled $h } | Should -BeFalse
+        With-Env @{ CUA_TELEMETRY = '0' } { Test-TelemetryEnabled $h } | Should -BeFalse
+        With-Env @{ CUA_TELEMETRY_ENABLED = 'false' } { Test-TelemetryEnabled $h } | Should -BeFalse
+        With-Env @{ CUA_TELEMETRY_DISABLED = '1' } { Test-TelemetryEnabled $h } | Should -BeFalse
+        With-Env @{ GITHUB_ACTIONS = 'true' } { Test-TelemetryEnabled $h } | Should -BeFalse
+        With-Env @{ CI = 'true'; CUA_TELEMETRY = '1' } { Test-TelemetryEnabled $h } | Should -BeTrue
+        Set-Content -LiteralPath (Join-Path $h 'config.toml') -Value "[other]`nenabled = `"on`"`n[telemetry]`nenabled = `"off`""
+        With-Env @{} { Test-TelemetryEnabled $h } | Should -BeFalse
+    }
+
+    It 'names a failure with a fixed word, never the message' {
+        Get-CuaInstallErrorKind 'cua-install: error: checksum mismatch for cua.zip' | Should -Be 'checksum'
+        Get-CuaInstallErrorKind 'cua-install: error: cosign signature check failed' | Should -Be 'signature'
+        Get-CuaInstallErrorKind 'cua-install: error: unsupported CPU architecture: x86' | Should -Be 'unsupported_platform'
+        Get-CuaInstallErrorKind 'Unable to connect to the remote server' | Should -Be 'network'
+        Get-CuaInstallErrorKind 'C:\Users\alice\secret' | Should -Be 'other'
+    }
+
+    It 'sends nothing on a dry run, with DO_NOT_TRACK, or to a real endpoint in tests' {
+        foreach ($vars in @(@{ DO_NOT_TRACK = '1' }, @{ CUA_TELEMETRY_ENDPOINT = 'https://eu.i.posthog.com/batch/' })) {
+            $vars.CUA_TELEMETRY_DEBUG = '1'
+            $vars.CUA_HOME = Join-Path $env:CUA_TEST_ROOT ('tel-off-' + [Guid]::NewGuid().ToString('N'))
+            $out = Invoke-Installer @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; NoModifyPath = $true; Prefix = (Join-Path $env:CUA_TEST_ROOT 'p-tel-off') } $vars
+            $out | Should -Not -Match 'cua telemetry'
+            $out | Should -Not -Match 'anonymous data about this install'
+            Test-Path (Join-Path $vars.CUA_HOME 'telemetry/install_id') | Should -BeFalse
+        }
+        $out = Invoke-Installer @{ DryRun = $true; CliOnly = $true } @{ CUA_TELEMETRY_DEBUG = '1'; CUA_TELEMETRY_ENDPOINT = 'http://127.0.0.1:9/batch/' }
+        $out | Should -Not -Match 'cua telemetry'
+    }
+
+    It 'sends started then completed with the fixture properties and the stored install id' {
+        $cuaHome = Join-Path $env:CUA_TEST_ROOT 'tel-on'
+        $vars = @{ CUA_TELEMETRY_DEBUG = '1'; CUA_TELEMETRY_ENDPOINT = 'http://127.0.0.1:9/batch/'; CUA_HOME = $cuaHome; CUA_POSTHOG_KEY = 'phc_test' }
+        $out = Invoke-Installer @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; NoModifyPath = $true; Prefix = (Join-Path $env:CUA_TEST_ROOT 'p-tel') } $vars
+        $out | Should -Match 'anonymous data about this install'
+        $events = Get-Events $out
+        @($events | ForEach-Object { $_.properties.step }) | Should -Be @('installer_started', 'installer_completed')
+        $id = (Get-Content -Raw (Join-Path $cuaHome 'telemetry/install_id')).Trim()
+        $ref = $script:Fixture.events[2].properties
+        foreach ($e in $events) {
+            $e.distinct_id | Should -Be $id
+            $e.event | Should -Be 'cua_installer_step'
+            @($e.properties.PSObject.Properties.Name | Sort-Object) | Should -Be @($ref.PSObject.Properties.Name | Sort-Object)
+            $e.properties.installer | Should -Be 'ps1'
+            $e.properties.items | Should -Be 'cli'
+            $e.properties.'$lib' | Should -Be 'cua-installer'
+        }
+        $events[1].properties.product_version | Should -Be '1.2.3'
+        $out | Should -Not -Match ([regex]::Escape('"api_key":"phc_eSk'))
+    }
+
+    It 'sends installer_failed with the stage and kind when the install stops' {
+        $vars = @{ CUA_INSTALL_MANIFEST_URL = (ConvertTo-FileUrl (Join-Path $env:CUA_TEST_ROOT 'missing/release-artifacts.json'))
+            CUA_INSTALL_ARCH = 'AMD64'; CUA_HOME = (Join-Path $env:CUA_TEST_ROOT 'tel-fail'); CUA_TELEMETRY_FORBID_NETWORK = '1'
+            CUA_TELEMETRY_DEBUG = '1'; CUA_TELEMETRY_ENDPOINT = 'http://127.0.0.1:9/batch/'
+        }
+        $out = With-Env $vars {
+            $params = @{ CliOnly = $true; Yes = $true; NoOnboarding = $true; NoModifyPath = $true; Prefix = (Join-Path $env:CUA_TEST_ROOT 'p-tel-fail') }
+            $lines = & { try { & $env:CUA_TEST_INSTALLER @params } catch { "threw: $_" } } *>&1
+            ($lines | ForEach-Object { "$_" }) -join "`n"
+        }
+        $out | Should -Match 'threw: '
+        $events = Get-Events $out
+        @($events | ForEach-Object { $_.properties.step }) | Should -Be @('installer_started', 'installer_failed')
+        $failed = $events[1].properties
+        $failed.install_stage | Should -Be 'manifest'
+        $failed.outcome | Should -Be 'error'
+        $failed.error_kind | Should -BeIn @('network', 'other')
+        ($events | ConvertTo-Json -Depth 6) | Should -Not -Match 'missing'
     }
 }

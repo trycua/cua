@@ -10,12 +10,19 @@ import SwiftUI
 struct ShareSheetView: View {
     @Bindable var model: ShareModel
     let onDone: () -> Void
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         let v = model.view
+        let gate = model.gate
+        let closed = v.disabledReason != nil || gate != nil
         Form {
-            if let reason = v.disabledReason {
+            if let reason = v.disabledReason ?? gate?.reason {
                 Text(reason).foregroundStyle(.secondary)
+            }
+            if v.disabledReason == nil, let gate, let url = URL(string: gate.action.url) {
+                Button(gate.action.label) { openURL(url) }
+                    .accessibilityIdentifier("share-see-teams")
             }
             Section {
                 HStack {
@@ -23,10 +30,11 @@ struct ShareSheetView: View {
                         get: { v.who },
                         set: { who in Task { await model.send(.setWho(who: who)) } }))
                         .textFieldStyle(.roundedBorder)
+                        .disabled(closed)
                         .onSubmit { Task { await model.send(.submit) } }
                     roleMenu(v, selection: v.role) { role in Task { await model.send(.setRole(role: role)) } }
                     Button(v.shareLabel) { Task { await model.send(.submit) } }
-                        .disabled(!v.canShare)
+                        .disabled(!v.canShare || closed)
                         .keyboardShortcut(.defaultAction)
                 }
                 if let hint = v.hint { Text(hint).foregroundStyle(.secondary) }
@@ -63,6 +71,6 @@ struct ShareSheetView: View {
         }
         .labelsHidden()
         .fixedSize()
-        .disabled(v.busy || v.disabledReason != nil)
+        .disabled(v.busy || v.disabledReason != nil || model.gate != nil)
     }
 }

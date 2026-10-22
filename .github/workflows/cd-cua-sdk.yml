@@ -5,10 +5,18 @@ name: "CD: cua SDK"
 #   - platform wheels of PyPI `cua` (linux x86_64/aarch64 with the
 #     glibc 2.31 floor from debian:11, macOS arm64/x86_64, Windows x64/arm64),
 #   - `@trycua/cua` + six optional native npm packages (+ the browser build),
-#   - `CuaSDKFFI.xcframework.zip` for the Swift `.binaryTarget`,
+#   - `CuaSDKFFI.xcframework.zip` for the Swift `.binaryTarget` (attached by
+#     attach-xcframework after the release is out; it never blocks the CLI),
 #   - the `cua` CLI binaries, plus standalone `cua-cli-<version>-<platform>`
 #     archives, checksums.txt and release-artifacts.json for install.sh /
-#     install.ps1 (also mirrored to the rolling `cua-install-latest` release).
+#     install.ps1 (also mirrored to the rolling `cua-install-latest` release),
+#   - `cua-proto-<version>.tar.gz`: the protobuf contract (.proto files,
+#     buf.yaml, buf.gen.yaml, README) for clients in any language,
+#   - the Rust crates on crates.io: `cua-sdk`, `cua-spacesd-client`, `cua-proto`
+#     and the other workspace crates the SDK needs
+#     (libs/cua/scripts/publish-crates.sh; every run packages and verifies
+#     them with `cargo publish --dry-run`, and the upload needs the
+#     CARGO_REGISTRY_TOKEN secret: without it the crates step is skipped).
 # Mirrors cd-rust-cua-driver.yml / cd-py-cua-driver.yml.
 #
 # Signing (required whenever the run publishes; refuses to publish unsigned):
@@ -27,7 +35,8 @@ name: "CD: cua SDK"
 # Canonical vs staging: only trycua/cua publishes to PyPI and npm and fails
 # closed on missing signing secrets. Any other repository (trycua/cua-staging)
 # runs the same pipeline end to end but PyPI gets `twine check` (and TestPyPI
-# when TEST_PYPI_TOKEN is set), npm gets `npm publish --dry-run`, a missing
+# when TEST_PYPI_TOKEN is set), npm gets `npm publish --dry-run`, crates.io
+# gets `cargo publish --dry-run`, a missing
 # Apple/Azure secret gives unsigned binaries, and the GitHub release is a
 # prerelease whose title and notes say so. The CLI's download URLs, the
 # installers' default repository and their Sigstore identity derive from
@@ -53,6 +62,9 @@ permissions:
   contents: read
 
 env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
   # Cua programs and packages run here never send usage telemetry.
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
@@ -162,10 +174,7 @@ jobs:
           apt-get install -y nodejs
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          version: "29.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@1.97.1
         with:
           targets: ${{ matrix.target }}
@@ -181,7 +190,7 @@ jobs:
           # Windows native packages must load without the VC++ redistributable.
           RUSTFLAGS: ${{ contains(matrix.target, 'windows') && '-C target-feature=+crt-static' || '' }}
         run: |
-          cargo build --locked --release -p cua-sdk -p cua-cli --target ${{ matrix.target }}
+          cargo build --locked --release -p cua-sdk -p cua-cli --features cua-cli/byoc --target ${{ matrix.target }}
           npm --prefix typescript ci --ignore-scripts
           node scripts/build-node-runtime.mjs --target ${{ matrix.target }} \
             --output "native/${{ matrix.label }}/cua_node_runtime.node"
@@ -329,7 +338,7 @@ jobs:
         run: |
           python -m pip install --force-reinstall dist/*.whl
           VERSION="${{ needs.version.outputs.version }}"
-          cd / && python -c "import cua, sys; v = cua.cua_sdk_version(); print(v); cua.embedded(fleet_from_env=False); sys.exit(v != sys.argv[1])" "$VERSION"
+          cd / && python -c "import cua, sys; v = cua.cua_sdk_version(); print(v); cua.embedded(); sys.exit(v != sys.argv[1])" "$VERSION"
           test "$(cua --version | tr -d '\r')" = "cua $VERSION"
       - uses: actions/upload-artifact@v4
         with:
@@ -349,10 +358,7 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - name: Install protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          version: "29.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./.github/actions/setup-protoc
       - uses: actions/download-artifact@v4
         with:
           pattern: native-*
@@ -388,13 +394,14 @@ jobs:
   xcframework:
     needs: version
     runs-on: macos-26
+    # A normal build takes 80-100 min (iOS + macOS slices). Nothing waits on
+    # it except attach-xcframework, so the CLI, registries and installer feed
+    # ship without it.
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          version: "29.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@1.97.1
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin,aarch64-apple-ios,aarch64-apple-ios-sim
@@ -417,8 +424,46 @@ jobs:
             xcframework.log
           if-no-files-found: error
 
+  # The protobuf contract tarball (a release asset) and a crates.io dry run
+  # of the Rust crates. Runs on every build, publishing or not.
+  protos-and-crates:
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - name: Install buf
+        uses: bufbuild/buf-action@85aebf73123b5c15fd5528aaecbf9129cddf7fa7 # v1.6.0
+        with:
+          version: "1.73.0"
+          setup_only: true
+      - name: Build cua-proto-${{ needs.version.outputs.version }}.tar.gz
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          tarball="$(libs/cua/scripts/package-proto.sh "$VERSION" dist-proto)"
+          # The tarball is a self-contained buf module.
+          mkdir -p "$RUNNER_TEMP/proto-check"
+          tar -xzf "$tarball" -C "$RUNNER_TEMP/proto-check"
+          (cd "$RUNNER_TEMP/proto-check/cua-proto-$VERSION" && buf build -o /dev/null)
+      # No protoc on purpose: the published cua-proto must build without one.
+      - name: Package and verify the crates (cargo publish --dry-run)
+        run: libs/cua/scripts/publish-crates.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: proto-tarball
+          path: dist-proto/cua-proto-*.tar.gz
+          if-no-files-found: error
+
   publish:
-    needs: [version, wheels, npm, xcframework, native]
+    # Not xcframework: the Swift build is slow and must never hold back the
+    # CLI or the installer feed. attach-xcframework adds it to the release.
+    needs: [version, wheels, npm, native, protos-and-crates]
     if: needs.version.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -489,11 +534,7 @@ jobs:
           PRERELEASE: ${{ needs.version.outputs.prerelease }}
         run: |
           mkdir -p release
-          cp dist/wheel-*/*.whl dist/npm/*.tgz release/
-          # upload-artifact keeps the paths below the files' common root.
-          xcframework="$(find dist/xcframework -name CuaSDKFFI.xcframework.zip)"
-          [ "$(printf '%s\n' "$xcframework" | grep -c .)" = 1 ] || { echo "expected one CuaSDKFFI.xcframework.zip, got: $xcframework" >&2; exit 1; }
-          cp "$xcframework" release/
+          cp dist/wheel-*/*.whl dist/npm/*.tgz dist/proto-tarball/cua-proto-*.tar.gz release/
           for d in dist/native-*; do
             label="${d##*/native-}"
             tar -czf "release/cua-${{ needs.version.outputs.version }}-$label.tar.gz" -C "$d" .
@@ -587,4 +628,71 @@ jobs:
           # Sigstore identity they verify).
           python3 scripts/install/stamp_installers.py --repo "$GITHUB_REPOSITORY" --out stamped
           gh release upload cua-install-latest release-artifacts.json \
-            stamped/install.sh stamped/install.ps1 --clobber --repo "$GITHUB_REPOSITORY"
+            stamped/install.sh stamped/install.ps1 stamped/uninstall.sh stamped/uninstall.ps1 \
+            --clobber --repo "$GITHUB_REPOSITORY"
+
+  # crates.io after the GitHub release is out, like PyPI and npm: trycua/cua
+  # only, and only when the CARGO_REGISTRY_TOKEN secret (a crates.io API
+  # token with publish-new and publish-update scopes) is set; otherwise the
+  # step says so and the release goes on without it.
+  crates:
+    needs: [version, publish]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - name: Publish cua-sdk and the crates it needs to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          crates="$(cargo metadata --manifest-path libs/cua/Cargo.toml --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "cua-sdk") | .version')"
+          if [ "$CANONICAL" != true ]; then
+            echo "::notice::$GITHUB_REPOSITORY is not trycua/cua: crates.io got the dry run only (protos-and-crates)"
+          elif [ -z "$CARGO_REGISTRY_TOKEN" ]; then
+            echo "::warning::CARGO_REGISTRY_TOKEN is not set: the cua-sdk $VERSION crates were not published to crates.io"
+          elif [ "$crates" != "$VERSION" ]; then
+            echo "::warning::the crates are $crates, not $VERSION (a hand-pushed tag?): not published to crates.io"
+          else
+            libs/cua/scripts/publish-crates.sh --publish "$VERSION"
+          fi
+
+  # The Swift package's CuaSDKFFI.xcframework.zip joins the already-published
+  # release when its build finishes; checksums.txt is rewritten to include it.
+  attach-xcframework:
+    needs: [version, xcframework, publish]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: xcframework
+          path: dist/xcframework
+      - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
+      - name: Attach CuaSDKFFI.xcframework.zip to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          # upload-artifact keeps the paths below the files' common root.
+          xcframework="$(find dist/xcframework -name CuaSDKFFI.xcframework.zip)"
+          [ "$(printf '%s\n' "$xcframework" | grep -c .)" = 1 ] || { echo "expected one CuaSDKFFI.xcframework.zip, got: $xcframework" >&2; exit 1; }
+          cp "$xcframework" release/
+          cosign sign-blob --yes --bundle release/CuaSDKFFI.xcframework.zip.sigstore.json \
+            release/CuaSDKFFI.xcframework.zip >/dev/null
+          gh release download "$TAG" --pattern checksums.txt --dir previous --repo "$GITHUB_REPOSITORY"
+          (cd release && sha256sum -- CuaSDKFFI.xcframework.zip CuaSDKFFI.xcframework.zip.sigstore.json) > new.txt
+          grep -v ' CuaSDKFFI\.xcframework\.zip' previous/checksums.txt | cat - new.txt | sort > release/checksums.txt
+          gh release upload "$TAG" release/* --clobber --repo "$GITHUB_REPOSITORY"

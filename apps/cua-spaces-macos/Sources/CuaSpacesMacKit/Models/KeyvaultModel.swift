@@ -289,7 +289,10 @@ public final class KeyvaultModel {
     /// Re-reads the broker (never throws: unavailability is a page state).
     public func refresh() async {
         guard let client else { return }
-        overview = await client.overview()
+        // Only a different answer is a change: the New UI window asks again
+        // on every change (`keyvault.changed`), and each ask reads the broker.
+        let next = await client.overview()
+        if next != overview { overview = next }
         vault = kvVaultPrune(overview: overview, state: vault)
         openNewApps()
         // Forget dismissals of copies that were wiped or expired (only
@@ -391,17 +394,23 @@ public final class KeyvaultModel {
 
     public func setAutoWipe(_ on: Bool) async { await run(.setAutoWipe(on: on)) }
 
-    public func run(_ command: KvCommand) async {
-        guard let client else { return }
+    /// Sends one command, then re-reads the broker. Returns what the broker
+    /// answered (nil when it failed: `error` says why, or with no client).
+    @discardableResult
+    public func run(_ command: KvCommand) async -> KvOutcome? {
+        guard let client else { return nil }
         busy = true
         error = nil
+        var result: KvOutcome?
         do {
             let outcome = try await client.execute(command: command)
             if case .recoveryKey(let key) = outcome { recoveryKey = key }
+            result = outcome
         } catch {
             self.error = Self.words(error)
         }
         busy = false
         await refresh()
+        return result
     }
 }

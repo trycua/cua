@@ -190,10 +190,6 @@ window, toggle its uniquely labelled per-instance checkbox, prove that the
 loopback endpoint belongs to the approved process, and close the temporary
 tab. The result reports all visible `side_effects`. Missing, localized, or
 ambiguous controls are refused; never click a similar-looking prompt yourself.
-On macOS, Dia is also supported: setup drives its tab through AppleScript and
-clicks its checkbox with the window briefly in front, so pass
-`delivery_mode:"foreground"` while Dia's remote debugging is off. Arc is refused:
-Chromium rejects every connection to it.
 On current macOS Chrome, the internal page may omit its web AX subtree. The
 driver's bounded fallback is limited to a temporary tab it created and
 navigated. It requires the committed fixed URL, expected selected-tab title,

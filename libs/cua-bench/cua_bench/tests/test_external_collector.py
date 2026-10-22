@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import subprocess
 import sys
 from argparse import Namespace
@@ -19,14 +20,38 @@ from PIL import Image
 EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "external_collector.py"
 
 
+@pytest.fixture(params=["inherited", "ascii"])
+def collector_env(request):
+    env = dict(os.environ)
+    if request.param == "ascii":
+        env.update(LC_ALL="C", PYTHONUTF8="0", PYTHONCOERCECLOCALE="0")
+        env.pop("PYTHONIOENCODING", None)
+    return env
+
+
+def test_external_collector_emits_portable_jsonl(collector_env):
+    result = subprocess.run(
+        [sys.executable, str(EXAMPLE), "--emit"],
+        check=True,
+        capture_output=True,
+        env=collector_env,
+        timeout=30,
+    )
+    events = [json.loads(line) for line in result.stdout.decode("utf-8").splitlines()]
+    assert len(events) == 3
+    assert events[1]["data"]["payload"]["arguments"]["label"] == 'Demo <form> "✓"'
+
+
 @pytest.fixture
-def recorded_trace(tmp_path):
+def recorded_trace(tmp_path, collector_env):
     output = tmp_path / "collector trace"
     subprocess.run(
         [sys.executable, str(EXAMPLE), "--output", str(output)],
         check=True,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        env=collector_env,
         timeout=60,
     )
     return output

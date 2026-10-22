@@ -1809,7 +1809,7 @@ write_frame({'protocol':'cua-perception/1','request_id':request['request_id'],'s
     async fn contained_worker_is_denied_every_route_off_its_own_bundle() {
         let evidence = tempfile::Builder::new()
             .prefix("cua-perception-secrets-")
-            .tempdir()
+            .tempdir_in("/tmp")
             .unwrap();
         let secret = evidence.path().join("credentials");
         std::fs::write(&secret, b"token").unwrap();

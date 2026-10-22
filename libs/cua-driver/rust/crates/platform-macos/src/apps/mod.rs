@@ -684,6 +684,9 @@ pub(crate) fn locate_by_name(name: &str) -> Option<AppLocator> {
             return Some(AppLocator::Path(path));
         }
     }
+    if app_name.eq_ignore_ascii_case("Finder.app") {
+        return resolve_bundle_id_to_locator("com.apple.finder");
+    }
     // Fallback: maybe caller passed a bundle id as `name`. Use the
     // Cryptex-safe locator (carries the bundle id, never the lossy
     // url.path()).
@@ -1326,6 +1329,14 @@ mod tests {
         assert_eq!(merged[0].pid, 0);
         assert!(merged[1].running);
         assert_eq!(merged[1].pid, 42);
+    }
+
+    #[test]
+    fn finder_is_located_by_name_outside_the_app_roots() {
+        let (_, bundle_id) = super::locate_by_name("Finder")
+            .expect("Finder ships with every macOS")
+            .app_ref_and_bundle_id();
+        assert_eq!(bundle_id.as_deref(), Some("com.apple.finder"));
     }
 
     #[test]

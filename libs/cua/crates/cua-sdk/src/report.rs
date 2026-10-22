@@ -778,9 +778,9 @@ mod tests {
             ),
             (
                 "ProviderNotConfigured",
-                "provider not configured: cannot read ghcr.io/trycua/doesnotexist:9: registry: Not authorized: Not authorized: url https://ghcr.io/v2/trycua/doesnotexist/manifests/9. Log in to ghcr.io (`docker login`, ...), or set CUA_REGISTRY_USERNAME/PASSWORD",
+                "provider not configured: cannot read registry.example.com/team/missing:9: registry: Not authorized: Not authorized: url https://registry.example.com/v2/team/missing/manifests/9. Log in to ghcr.io (`docker login`, ...), or set CUA_REGISTRY_USERNAME/PASSWORD",
                 "registry_auth",
-                "the registry refused to serve ghcr.io/trycua/doesnotexist:9",
+                "the registry refused to serve registry.example.com/team/missing:9",
                 "docker login",
             ),
             (

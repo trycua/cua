@@ -11,7 +11,7 @@ fn enabled_home() -> Home {
     h
 }
 
-const NOTICE: &str = "Cua collects usage data to help improve it";
+const NOTICE: &str = "Cua sends anonymous usage data";
 
 #[tokio::test]
 async fn notice_once_then_events_that_show_last_prints_without_arguments() {
@@ -47,13 +47,13 @@ async fn notice_once_then_events_that_show_last_prints_without_arguments() {
     // The argument value and the temp home never appear.
     assert!(!text.contains(&format!("\"{os_arg}\"")), "{text}");
     assert!(!text.contains(h.dir.path().to_str().unwrap()), "{text}");
-    // The first process sent nothing: only one cli command was recorded.
+    // Sending did not wait for the notice: both runs recorded a command.
     assert_eq!(
         events
             .iter()
             .filter(|e| e["payload"]["event"] == "cua_cli_command")
             .count(),
-        1
+        2
     );
     // Retention: the day is marked active once, however many commands run.
     let third = h.run(&["images", "ls", "--os", os_arg]).await;

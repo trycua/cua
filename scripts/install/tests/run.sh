@@ -164,7 +164,7 @@ inst() {
     # shellcheck disable=SC2086
     # Install telemetry may only reach a loopback endpoint here (none is set).
     env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_HOME="$home/.cua" CUA_TELEMETRY_FORBID_NETWORK=1 \
-        CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux CUA_INSTALL_ARCH=x86_64 \
+        CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux CUA_INSTALL_ARCH=x86_64 CUA_INSTALL_HEADLESS=0 \
         CUA_FAKE_LOG="$home/cua.log" $envs \
         "$sh_bin" "$installer" "$@" </dev/null >"$work/out" 2>&1
     status=$?
@@ -176,6 +176,31 @@ exists() { [ -e "$1" ]; }
 absent() { [ ! -e "$1" ]; }
 
 # ------------------------------------------------------------ tests
+
+# A server (no display) gets the CLI and no desktop app, with one line saying so.
+inst CUA_INSTALL_HEADLESS=1 -- --yes --no-onboarding --prefix "$work/hl1"
+check "linux without a display: installs the CLI, skips the app" sh -c "[ $status = 0 ] && [ -e '$work/hl1/bin/cua' ] && [ ! -e '$work/hl1/bin/cua-spaces' ] && grep -q 'No display found, so the Cua Spaces app is skipped (add --select spaces to install it)' '$work/out'"
+inst CUA_INSTALL_HEADLESS=1 -- --yes --no-onboarding --select spaces --prefix "$work/hl2"
+check "linux without a display: --select spaces still installs the app" sh -c "[ $status = 0 ] && [ -x '$work/hl2/bin/cua-spaces' ]"
+inst -- --yes --no-onboarding --prefix "$work/hl3"
+check "linux with a display: installs the app by default" sh -c "[ -x '$work/hl3/bin/cua-spaces' ] && ! grep -q 'No display found' '$work/out'"
+
+# apt-get runs quietly: its chatter goes to a log, shown only if it fails.
+fakebin="$work/fakebin"
+mkdir -p "$fakebin"
+printf '#!/bin/sh\nshift_n=0\nwhile [ "$1" = -n ]; do shift; done\n[ "$1" = true ] && exit 0\nexec "$@"\n' >"$fakebin/sudo"
+cat >"$fakebin/apt-get" <<'APT'
+#!/bin/sh
+i=0
+while [ $i -lt 60 ]; do echo "Reading package lists... $i"; i=$((i + 1)); done
+echo "args: $*" >>"$CUA_FAKE_LOG.apt"
+[ -z "${CUA_FAKE_APT_FAIL:-}" ] || { echo "E: Unable to locate package nope" >&2; exit 100; }
+APT
+chmod +x "$fakebin/sudo" "$fakebin/apt-get"
+inst PATH="$fakebin:$PATH" -- --yes --no-onboarding
+check "apt: the app installs quietly" sh -c "[ $status = 0 ] && ! grep -q 'Reading package lists' '$work/out' && grep -q -e '-qq' '$home/cua.log.apt'"
+inst PATH="$fakebin:$PATH" CUA_FAKE_APT_FAIL=1 -- --yes --no-onboarding
+check "apt failure: shows the last lines of its output" sh -c "[ $status != 0 ] && grep -q 'apt-get failed; the last lines' '$work/out' && grep -q 'Unable to locate package nope' '$work/out' && [ \$(grep -c 'Reading package lists' '$work/out') -le 8 ]"
 
 inst -- --yes --no-onboarding --verbose --prefix "$work/p1"
 check "linux x64: exits 0" [ "$status" = 0 ]

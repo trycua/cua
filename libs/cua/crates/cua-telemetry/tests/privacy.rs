@@ -508,33 +508,22 @@ fn turning_off_drops_queued_events_and_the_spool() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn nothing_is_sent_before_the_first_run_notice_was_shown() {
+fn sending_does_not_wait_for_the_notice_and_the_cli_prints_it_once() {
     let h = tempfile::tempdir().unwrap();
     let sink = Arc::new(MemorySink::new());
-    let t = client(h.path(), &[], sink.clone());
-    assert!(!t.notice_shown());
-    assert_eq!(
-        t.capture(events::sandbox_deleted("local", Outcome::Ok, None)),
-        Captured::NoticePending
-    );
-    assert!(
-        t.notice_shown(),
-        "the notice was shown (stderr) and recorded"
-    );
-    t.flush(Duration::from_secs(1));
-    assert!(sink.batches().is_empty());
-    assert!(!h.path().join("telemetry/install_id").exists());
-
-    // The next process sends, plus the one-time first-run event.
     let t = client(
         h.path(),
         &[("CUA_INSTALL_CHANNEL", "homebrew")],
         sink.clone(),
     );
+    assert!(!t.notice_shown());
+    // A headless SDK process sends without the notice ever being printed:
+    // library code does not print it.
     assert_eq!(
         t.capture(events::sandbox_deleted("local", Outcome::Ok, None)),
         Captured::Queued
     );
+    assert!(!t.notice_shown());
     t.flush(Duration::from_secs(1));
     let names: Vec<String> = sink
         .events()
@@ -546,6 +535,12 @@ fn nothing_is_sent_before_the_first_run_notice_was_shown() {
         sink.events()[0]["properties"]["install_channel"],
         "homebrew"
     );
+    // The CLI prints the two-line notice once per machine, terminal or not.
+    assert_eq!(cua_telemetry::notice::SHORT.lines().count(), 2);
+    assert_eq!(cua_telemetry::link::NOTICE_SHORT.lines().count(), 2);
+    assert!(t.show_notice_if_needed());
+    assert!(t.notice_shown());
+    assert!(!t.show_notice_if_needed(), "once per machine");
     // Only once per install.
     let t = client(h.path(), &[], sink.clone());
     t.capture(events::sandbox_deleted("local", Outcome::Ok, None));

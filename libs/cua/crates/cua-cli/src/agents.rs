@@ -94,7 +94,7 @@ pub struct RemoveArgs {
     #[arg(long)]
     pub mcp_only: bool,
     /// Do not ask for confirmation.
-    #[arg(long, short = 'y')]
+    #[arg(long, short = 'y', visible_alias = "force", short_alias = 'f')]
     pub yes: bool,
 }
 

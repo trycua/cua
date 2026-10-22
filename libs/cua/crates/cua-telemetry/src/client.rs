@@ -521,9 +521,12 @@ impl Telemetry {
         self.enqueue(payload);
     }
 
-    /// Shows the first-run notice on stderr if it has not been shown and
-    /// telemetry is on. Returns whether it printed. The CLI calls this at
-    /// startup; SDK processes get it on their first event.
+    /// Shows the first-run notice on stderr, two lines, once per machine,
+    /// if telemetry is on and the notice has not been shown here. Terminal
+    /// or not: a script or a server sees it in its logs. Returns whether it
+    /// printed. The CLI calls this at startup; library code (the SDKs)
+    /// never prints it. Showing it is recorded, but sending does not wait
+    /// for it (the Spaces app, which asks first, does: see [`NoticeMode`]).
     pub fn show_notice_if_needed(&self) -> bool {
         if !self.is_enabled() {
             return false;
@@ -532,13 +535,13 @@ impl Telemetry {
             return false;
         }
         if !self.notice_shown() {
-            eprintln!("{}", notice::TEXT);
+            eprintln!("{}", notice::SHORT);
             self.acknowledge_notice();
             self.inner.notice_shown_here.store(true, Ordering::SeqCst);
             return true;
         }
         if self.link_notice_due() {
-            eprintln!("{}", link::NOTICE_TEXT);
+            eprintln!("{}", link::NOTICE_SHORT);
             self.acknowledge_link_notice();
             self.inner
                 .link_notice_shown_here
@@ -650,13 +653,9 @@ impl Telemetry {
             }
             return Captured::Disabled;
         }
-        if self.inner.notice_shown_here.load(Ordering::SeqCst) {
-            return Captured::NoticePending;
-        }
-        if !self.notice_shown() {
-            // Nothing is sent before the notice has been shown once. The
-            // process that shows it sends nothing.
-            self.show_notice_if_needed();
+        // Only a host that shows the notice itself and asks first (the
+        // Spaces app) holds events back until it has been answered.
+        if *lock(&self.inner.notice_mode) == NoticeMode::External && !self.notice_shown() {
             return Captured::NoticePending;
         }
         if self.repeated_within_hour(&event) {

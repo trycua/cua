@@ -37,11 +37,15 @@ cua telemetry schema      # every event and property, with its allowed values
 cua telemetry reset-id    # a new anonymous install id
 ```
 
-Nothing is sent from a machine until the first-run notice has been shown
-there once (in the terminal, or in the Spaces app's onboarding or Settings).
-The process that shows it sends nothing. In the Spaces app the notice is on
-the first run's Welcome page, next to a "Share usage data to help improve
-Cua" switch:
+The `cua` CLI prints a two-line notice to stderr the first time it runs on a
+machine, whether or not stderr is a terminal, and records that it was shown
+(it never prints it again). Sending does not wait for it, so a script, a CI
+job or a server that only uses the SDKs sends anonymous usage data too; the
+SDKs (library code) never print the notice. `cua telemetry off`,
+`CUA_TELEMETRY=0` and `DO_NOT_TRACK=1` turn it off everywhere, before
+anything is sent. In the Spaces app the notice is on the first run's Welcome
+page, next to a "Share usage data to help improve Cua" switch, and the app asks
+first:
 nothing is queued or sent until you leave that page, and if you turn the
 switch off there, nothing is sent at all (the setting is saved for every Cua
 program on the machine).

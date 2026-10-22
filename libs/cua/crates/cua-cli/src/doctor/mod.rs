@@ -371,7 +371,7 @@ pub async fn run(
     {
         identity::fill(cua, target, &mut report).await;
     }
-    report.producer = if report.producer.is_empty() {
+    report.producer = if report.producer.is_empty() || report.producer == "cua doctor" {
         "cua doctor".into()
     } else {
         format!("cua doctor + {}", report.producer)
@@ -428,7 +428,9 @@ pub async fn run(
     }
     let format = if json { Format::Json } else { args.format };
     let text = match format {
-        Format::Human => report.to_human(),
+        Format::Human => {
+            report.to_human_short(crate::diag::settings().level >= crate::diag::Level::Info)
+        }
         Format::Json => json_text + "\n",
         Format::Junit => report.to_junit(),
     };
@@ -459,7 +461,8 @@ async fn machine_run(
     let text = match format {
         // The report's own first line is about an image; a machine has none.
         Format::Human => {
-            let human = report.to_human();
+            let human =
+                report.to_human_short(crate::diag::settings().level >= crate::diag::Level::Info);
             let body = human.split_once('\n').map_or("", |(_, rest)| rest);
             let who = if target_is_this(machine) {
                 "this machine"

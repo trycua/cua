@@ -42,6 +42,11 @@ files, what you type or your screen.
   Turn it off:  cua telemetry off
   What is collected:  https://cua.ai/docs/cua-sdk/concepts/telemetry";
 
+/// The linking notice as the terminal shows it: two lines.
+pub const NOTICE_SHORT: &str = "\
+Usage data is now linked to your Cua account through a random ID when you are signed in.
+Turn it off: cua telemetry off. Details: https://cua.ai/docs/cua-sdk/concepts/telemetry";
+
 /// The app's one-time notice: title.
 pub const NOTICE_TITLE: &str = "We've updated how usage data works";
 /// The app's one-time notice: body.

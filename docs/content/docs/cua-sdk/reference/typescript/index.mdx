@@ -24,6 +24,18 @@ cua does not implement MCP: `connectMcp(await sb.mcpConfig(service, undefined))`
 
 ## Interfaces
 
+### CreateExtra
+
+What `Sandboxes.create` takes beside the options.
+
+#### Properties
+
+| Property | Type | Description |
+| ------ | ------ | ------ |
+| <a id="property-onprogress"></a> `onProgress?` | (`progress`) => `void` | Called with each step of the create (`phase`, `detail`, `fraction`, `bytesDone` ...). |
+
+***
+
 ### ImageOptions
 
 Options for `Image.linux()` / `windows()` / `macos()`.
@@ -177,6 +189,26 @@ A provider's headers may be short-lived: fetch a fresh config per connection.
 
 ***
 
+### cuaErrorCode()
+
+```ts
+function cuaErrorCode(error): string | undefined;
+```
+
+The error's stable code (`not_found`), or `undefined` for any other value.
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `error` | `unknown` |
+
+#### Returns
+
+`string` \| `undefined`
+
+***
+
 ### cuaErrorDocUrl()
 
 ```ts
@@ -186,6 +218,26 @@ function cuaErrorDocUrl(error): string | undefined;
 The link to a `CuaError`'s entry (cause and fix) on the errors
 reference; `undefined` for any other value. Every `CuaError` also carries
 it as `docUrl`.
+
+#### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `error` | `unknown` |
+
+#### Returns
+
+`string` \| `undefined`
+
+***
+
+### cuaErrorHint()
+
+```ts
+function cuaErrorHint(error): string | undefined;
+```
+
+The error's next step, one sentence.
 
 #### Parameters
 

@@ -188,7 +188,12 @@ check "linux with a display: installs the app by default" sh -c "[ -x '$work/hl3
 # apt-get runs quietly: its chatter goes to a log, shown only if it fails.
 fakebin="$work/fakebin"
 mkdir -p "$fakebin"
-printf '#!/bin/sh\nshift_n=0\nwhile [ "$1" = -n ]; do shift; done\n[ "$1" = true ] && exit 0\nexec "$@"\n' >"$fakebin/sudo"
+cat >"$fakebin/sudo" <<'SUDO'
+#!/bin/sh
+while [ "$1" = -n ]; do shift; done
+[ "$1" = true ] && exit 0
+exec "$@"
+SUDO
 cat >"$fakebin/apt-get" <<'APT'
 #!/bin/sh
 i=0
@@ -471,7 +476,7 @@ check "a cosign bundle from another identity aborts" sh -c "[ $status != 0 ] && 
 inst -- --yes --cli-only --modify-path --prefix "$work/p12"
 check "--modify-path writes the profile" sh -c "grep -q '$work/p12/bin' '$home/.profile'"
 first_home="$home"
-env -i PATH="$PATH" HOME="$first_home" SHELL=/bin/sh CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux \
+env -i PATH="$PATH" HOME="$first_home" SHELL=/bin/sh CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux CUA_INSTALL_HEADLESS=0 \
     CUA_INSTALL_ARCH=x86_64 "$sh_bin" "$installer" --yes --cli-only --modify-path --prefix "$work/p12" </dev/null >"$work/out" 2>&1
 check "--modify-path is idempotent" [ "$(grep -c "$work/p12/bin" "$first_home/.profile")" = 1 ]
 
@@ -550,12 +555,12 @@ check "--help prints usage" sh -c "[ $status = 0 ] && grep -q -- '--cli-only' '$
 if script --version 2>/dev/null | grep -q util-linux; then
     home="$work/home.tty"
     mkdir -p "$home"
-    env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux \
+    env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux CUA_INSTALL_HEADLESS=0 \
         CUA_INSTALL_ARCH=x86_64 CUA_FAKE_LOG="$home/cua.log" \
         script -qec "$sh_bin '$installer' --yes --cli-only --prefix '$work/p14'" /dev/null >"$work/out" 2>&1 </dev/null
     check "interactive: runs 'cua auth login'" sh -c "grep -qx 'auth login' '$home/cua.log'"
     check "interactive: after sign-in, the closing line points at agents setup" sh -c "grep -q 'Signing in to Cua' '$work/out' && grep -q 'Next: run \"cua agents setup\" to connect your AI agents.' '$work/out' && ! grep -q 'Next: run \"cua auth login\"' '$work/out'"
-    env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux \
+    env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux CUA_INSTALL_HEADLESS=0 \
         CUA_INSTALL_ARCH=x86_64 CUA_FAKE_LOG="$home/cua2.log" \
         script -qec "$sh_bin '$installer' --yes --cli-only --no-onboarding --prefix '$work/p14'" /dev/null >"$work/out" 2>&1 </dev/null
     check "interactive + --no-onboarding: no login" absent "$home/cua2.log"
@@ -572,7 +577,7 @@ if script --version 2>/dev/null | grep -q util-linux; then
                 sleep 2
                 printf '%b' "$1"
                 sleep 2
-            ) | env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_HOME="$home/.cua" \
+            ) | env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_INSTALL_HEADLESS=0 CUA_HOME="$home/.cua" \
                 CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux CUA_INSTALL_ARCH=x86_64 CUA_FAKE_LOG="$home/cua.log" \
                 timeout 60 script -qec "env SHELL=/bin/zsh $sh_bin '$installer' --cli-only --no-onboarding --prefix '$2'" /dev/null >"$work/out" 2>&1
             status=$?
@@ -594,7 +599,7 @@ if script --version 2>/dev/null | grep -q util-linux; then
                 sleep 1
                 printf '\004'
                 sleep 2
-            ) | env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_HOME="$home/.cua" \
+            ) | env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_INSTALL_HEADLESS=0 CUA_HOME="$home/.cua" \
                 CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux CUA_INSTALL_ARCH=x86_64 CUA_FAKE_LOG="$home/cua.log" \
                 timeout 60 script -qec "env SHELL=/bin/zsh $sh_bin '$installer' --cli-only --no-onboarding --prefix '$1'" /dev/null >"$work/out" 2>&1
             status=$?
@@ -615,7 +620,7 @@ if script --version 2>/dev/null | grep -q util-linux; then
             sleep 2
             printf '%b' "$keys"
             sleep 3
-        ) | env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh TERM="${tty_term:-xterm}" CUA_HOME="$home/.cua" \
+        ) | env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh TERM="${tty_term:-xterm}" CUA_INSTALL_HEADLESS=0 CUA_HOME="$home/.cua" \
             CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux CUA_INSTALL_ARCH=x86_64 CUA_FAKE_LOG="$home/cua.log" \
             CUA_INSTALL_DRIVER_URL="$driver_url" \
             timeout 60 script -qec "$sh_bin '$installer' --no-onboarding --no-modify-path $*" /dev/null >"$work/out" 2>&1

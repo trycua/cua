@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+from cua_bench.runner.output import print_status
+
 
 @dataclass
 class AgentOptions:
@@ -109,7 +111,7 @@ async def _screenshot(session: Any) -> Optional[bytes]:
     try:
         return await asyncio.wait_for(session.screenshot(), SCREENSHOT_TIMEOUT_S)
     except Exception as error:  # noqa: BLE001 - daemon-less images have no screen API
-        print(f"Warning: screenshot unavailable, tracing without images ({error!r})")
+        print_status(f"Warning: screenshot unavailable, tracing without images ({error!r})")
         try:
             session._cb_no_screen = True
         except Exception:  # noqa: BLE001
@@ -124,7 +126,7 @@ def _record(env: Any, name: str, data: dict, shots: Optional[list] = None) -> No
         writer = getattr(env.tracing, "bundle_writer", None)
         if writer is not None:
             writer.failed = True
-        print(f"Warning: failed to record {name} event: {error}")
+        print_status(f"Warning: failed to record {name} event: {error}")
 
 
 async def run_episode(
@@ -161,16 +163,16 @@ async def _run_episode(env, task_index, opts, output_dir, *, session=None):
     env.headless = True
     try:
         tid = env.tracing.start()
-        print(f"Tracing started. trajectory_id={tid}")
+        print_status(f"Tracing started. trajectory_id={tid}")
     except Exception:  # noqa: BLE001
-        print("Failed to start tracing; continuing without trace.")
+        print_status("Failed to start tracing; continuing without trace.")
 
     timing: dict = {}
     setup_started = _now()
     if session is None:
         _, task_cfg = await env.reset(task_id=task_index)
         session = env.session
-        print(f"✓ Session ready: {task_cfg.description}")
+        print_status(f"✓ Session ready: {task_cfg.description}")
     else:
         if env.tasks_config_fn is None:
             raise EpisodeError("no @cb.tasks_config function found")
@@ -180,19 +182,19 @@ async def _run_episode(env, task_index, opts, output_dir, *, session=None):
         task_cfg = tasks[task_index]
         env.current_task = task_cfg
         env.session = session
-        print(f"Running task {task_index}: {task_cfg.description}")
+        print_status(f"Running task {task_index}: {task_cfg.description}")
         from .desktop import wait_for_desktop
 
         waited = time.perf_counter()
         if await wait_for_desktop(session) == "ready":
-            print(f"✓ Desktop ready in {time.perf_counter() - waited:.2f}s")
+            print_status(f"✓ Desktop ready in {time.perf_counter() - waited:.2f}s")
         t0 = time.perf_counter()
         if env.setup_task_fn:
             await env.setup_task_fn(task_cfg, session)
         await asyncio.sleep(2.0)
         shot = await _screenshot(session)
         elapsed = time.perf_counter() - t0
-        print(f"✓ Setup complete in {elapsed:.2f}s")
+        print_status(f"✓ Setup complete in {elapsed:.2f}s")
         _record(
             env,
             "reset",
@@ -204,19 +206,19 @@ async def _run_episode(env, task_index, opts, output_dir, *, session=None):
     result = EpisodeResult(success=True, timing=timing, description=task_cfg.description)
     agent_started = _now()
     if opts.dump:
-        print("ℹ Dump mode: skipping solver")
+        print_status("ℹ Dump mode: skipping solver")
     elif opts.oracle:
         if env.solve_task_fn:
             await env.solve_task_fn(task_cfg, session)
             shot = await _screenshot(session)
-            print("✓ Solution complete")
+            print_status("✓ Solution complete")
             _record(env, "solve", {"completed": True}, [shot])
         else:
-            print("Warning: No @cb.solve_task function found")
+            print_status("Warning: No @cb.solve_task function found")
     else:
         agent_class = load_agent_class(opts)
         if agent_class is None:
-            print("ℹ Eval mode without agent: skipping to evaluation")
+            print_status("ℹ Eval mode without agent: skipping to evaluation")
         else:
             kwargs: dict[str, Any] = {}
             if opts.model:
@@ -226,20 +228,20 @@ async def _run_episode(env, task_index, opts, output_dir, *, session=None):
             agent = agent_class(**kwargs)
             logging_dir = output_dir / f"task_{task_index}_agent_logs"
             logging_dir.mkdir(exist_ok=True, parents=True)
-            print(f"Running agent: {agent.name()}")
+            print_status(f"Running agent: {agent.name()}")
             agent_result = await agent.perform_task(
                 task_description=task_cfg.description,
                 session=session,
                 logging_dir=logging_dir,
                 tracer=env.tracing,
             )
-            print(f"✓ Agent complete: {agent_result}")
+            print_status(f"✓ Agent complete: {agent_result}")
             from cua_bench.agents.base import FailureMode
 
             if agent_result.failure_mode not in (FailureMode.UNSET, FailureMode.NONE):
                 result.success = False
                 result.failure_mode = str(agent_result.failure_mode)
-                print(f"✗ Agent failed with failure mode: {agent_result.failure_mode}")
+                print_status(f"✗ Agent failed with failure mode: {agent_result.failure_mode}")
 
     timing["agent"] = (agent_started, _now())
     if env.evaluate_task_fn:
@@ -248,7 +250,7 @@ async def _run_episode(env, task_index, opts, output_dir, *, session=None):
         timing["verifier"] = (verify_started, _now())
         result.evaluation = evaluation
         result.reward = reward_of(evaluation)
-        print(f"✓ Evaluation result: {evaluation}")
+        print_status(f"✓ Evaluation result: {evaluation}")
         _record(env, "evaluate", {"result": evaluation})
 
     if opts.trace_only:
@@ -267,9 +269,9 @@ async def _run_episode(env, task_index, opts, output_dir, *, session=None):
             image_dir=str(output_dir / "imgs"),
             filter_events=opts.filter_events,
         )
-        print(f"✓ Trace saved to {trace_dir}")
+        print_status(f"✓ Trace saved to {trace_dir}")
     except Exception as error:  # noqa: BLE001 - the task result stands without a trace
-        print(f"Warning: Failed to save trace (task result unaffected): {error}")
+        print_status(f"Warning: Failed to save trace (task result unaffected): {error}")
 
     try:
         from ..results import write_atif
@@ -285,8 +287,8 @@ async def _run_episode(env, task_index, opts, output_dir, *, session=None):
             evaluation=result.evaluation,
             reward=result.reward,
         )
-        print(f"✓ ATIF trajectory saved to {path}")
+        print_status(f"✓ ATIF trajectory saved to {path}")
     except Exception as error:  # noqa: BLE001 - optional export
-        print(f"Warning: Failed to write trajectory.json: {error}")
+        print_status(f"Warning: Failed to write trajectory.json: {error}")
 
     return result

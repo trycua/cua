@@ -363,11 +363,17 @@ def test_disk_only_export_refuses_even_after_scope(tmp_path, save_pngs):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("outcome", ["success", "failure", "cancel"])
-async def test_disk_only_episode_lifecycle(tmp_path, outcome):
+async def test_disk_only_episode_lifecycle(tmp_path, outcome, monkeypatch):
     import asyncio
+    import io
+    import sys
     from types import SimpleNamespace
+
     from cua_bench.runner.episode import AgentOptions, run_episode
 
+    # Redirected Windows output uses CP1252; logging must not abort lifecycle.
+    stream = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", write_through=True)
+    monkeypatch.setattr(sys, "stdout", stream)
     trace = Tracing(None)
 
     async def reset(**kwargs):
@@ -412,6 +418,7 @@ async def test_disk_only_episode_lifecycle(tmp_path, outcome):
 @pytest.mark.asyncio
 async def test_disk_only_rejects_export_options_before_start(tmp_path):
     from types import SimpleNamespace
+
     from cua_bench.runner.episode import AgentOptions, run_episode
 
     with pytest.raises(
@@ -528,6 +535,7 @@ def test_download_ticket_authorization_preview_and_integrity(tmp_path, monkeypat
 def test_large_download_has_explicit_limits_and_bounded_memory(tmp_path):
     import hashlib
     import tracemalloc
+
     from cua_bench.trace_bundle import MAX_ATTACHMENT
 
     source = tmp_path / "large"

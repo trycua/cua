@@ -6,14 +6,17 @@ browser is launched (``webbrowser.open`` is replaced)."""
 from __future__ import annotations
 
 import builtins
+import io
+import sys
 
 import pytest
 from cua_bench import sandboxes
 from cua_bench.cli.commands import interact
 from cua_bench.targets import EnvSpec, Target
 
-from .test_cli_golden import HELLO, run_cb
+from .test_cli_golden import HELLO
 from .test_cli_golden import cli_env as _cli_env
+from .test_cli_golden import run_cb
 
 cli_env = _cli_env
 
@@ -122,7 +125,16 @@ def test_no_display_service_is_published():
         assert "services" not in kwargs
 
 
-def test_interact_live_bundle_and_legacy_export(cli_env, browser, tmp_path):
+@pytest.fixture(params=["utf-8", "cp1252"])
+def status_stream(request):
+    stream = io.TextIOWrapper(io.BytesIO(), encoding=request.param, write_through=True)
+    return stream
+
+
+def test_interact_live_bundle_and_legacy_export(
+    cli_env, browser, tmp_path, status_stream, monkeypatch
+):
+    monkeypatch.setattr(sys, "stdout", status_stream)
     from cua_bench.trace_bundle import TraceBundleReader
     from datasets import load_from_disk
 
@@ -149,11 +161,17 @@ def test_interact_live_bundle_and_legacy_export(cli_env, browser, tmp_path):
 
 
 @pytest.mark.parametrize("mode", ["--live-trace", "--trace-only"])
-def test_run_bundle_export_contract(cli_env, tmp_path, mode):
+def test_run_bundle_export_contract(cli_env, tmp_path, mode, status_stream, monkeypatch):
+    monkeypatch.setattr(sys, "stdout", status_stream)
     from cua_bench.trace_bundle import TraceBundleReader
 
     output = tmp_path / "run"
     assert run_cb(["run", str(HELLO), mode, "--output-dir", str(output)]) == 0
+    # Per-task logs remain lossless even when the console cannot encode markers.
+    logs = [path.read_text(encoding="utf-8") for path in output.rglob("*.log")]
+    assert any("✓ Evaluation result:" in text for text in logs)
+    marker = "✓" if status_stream.encoding == "utf-8" else r"\u2713"
+    assert marker in status_stream.buffer.getvalue().decode(status_stream.encoding)
     bundles = list(output.rglob("trace.json"))
     assert len(bundles) == 1
     with TraceBundleReader(bundles[0].parent) as reader:
@@ -163,6 +181,7 @@ def test_run_bundle_export_contract(cli_env, tmp_path, mode):
     assert bool(list(output.rglob("trajectory.json"))) == (mode == "--live-trace")
     if mode == "--trace-only":
         import json
+
         result = json.loads(next(output.rglob("result.json")).read_text())
         assert result["extra"]["trace"]["legacy_exports"] is False
         assert result["extra"]["trace"]["state"] == "completed"

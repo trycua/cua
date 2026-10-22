@@ -27,6 +27,8 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Optional
 
+from cua_bench.runner.output import print_status, write_console
+
 RESET = "\033[0m"
 BOLD = "\033[1m"
 CYAN = "\033[36m"
@@ -126,7 +128,7 @@ def _check_provider_type(value) -> None:
     if word in ("native", "computer"):
         message = "--provider-type is deprecated and has no effect: every task runs natively"
         warnings.warn(message, DeprecationWarning, stacklevel=3)
-        print(f"warning: {message}", file=sys.stderr)
+        print_status(f"warning: {message}", file=sys.stderr)
         return
     if word in ("simulated", "webtop"):
         raise TargetError(
@@ -172,7 +174,7 @@ class ConsoleReporter:
         return f"{color}{text}{RESET}" if self._color else text
 
     def line(self, text: str) -> None:
-        self.stream.write(text + "\n")
+        write_console(self.stream, text + "\n")
         self.stream.flush()
         if self.log_file is not None:
             import re
@@ -382,7 +384,7 @@ def _load_dotenv() -> None:
     env_file = Path.cwd() / ".env"
     if env_file.exists():
         load_dotenv(env_file)
-        print(f"{GREY}Loaded environment from: {env_file}{RESET}")
+        print_status(f"{GREY}Loaded environment from: {env_file}{RESET}")
 
 
 def cmd_run_task(args) -> int:
@@ -401,7 +403,7 @@ def _cmd_execute(args, kind: str) -> int:
     args = _apply_config_defaults_for_task(args)
 
     if getattr(args, "dev_paths", None):
-        print(
+        print_status(
             f"{GREY}--with is not needed anymore: tasks and agents run in this Python "
             f"environment (pip install -e the package instead).{RESET}"
         )
@@ -414,7 +416,7 @@ def _cmd_execute(args, kind: str) -> int:
         opts = agent_options(args)
         jobs = build_jobs(args, run_id, output_dir, target, kind)
     except (TargetError, FileNotFoundError, ValueError) as error:
-        print(f"{RED}Error: {error}{RESET}")
+        print_status(f"{RED}Error: {error}{RESET}")
         return 1
 
     if getattr(args, "dry_run", False):
@@ -442,8 +444,8 @@ def _cmd_execute(args, kind: str) -> int:
             }
         )
 
-    print(f"\n  {BOLD}Run ID:{RESET}  {run_id}")
-    print(f"  {BOLD}Output:{RESET}  {output_dir}")
+    print_status(f"\n  {BOLD}Run ID:{RESET}  {run_id}")
+    print_status(f"  {BOLD}Output:{RESET}  {output_dir}")
 
     if getattr(args, "detach", False):
         return _spawn_detached(args, run_id, output_dir, jobs)
@@ -459,9 +461,7 @@ def _cmd_execute(args, kind: str) -> int:
         )
     except KeyboardInterrupt:
         _track_run_completed(taskset, None, len(jobs), "cancelled")
-        print(
-            f"\n{YELLOW}Interrupted: sandboxes released.{RESET}"
-        )
+        print_status(f"\n{YELLOW}Interrupted: sandboxes released.{RESET}")
         return 130
     except BaseException:
         _track_run_completed(taskset, None, len(jobs), "error")
@@ -531,21 +531,21 @@ def _results_housekeeping(args, output_dir: Path) -> None:
             )
         )
     except ValueError as error:
-        print(f"{YELLOW}Retention not applied: {error}{RESET}")
+        print_status(f"{YELLOW}Retention not applied: {error}{RESET}")
         policy = retention.Retention()
     if policy.enabled:
         if custom:
-            print(
+            print_status(
                 f"{GREY}Retention applies to {runs_dir}; results in {output_dir} "
                 f"(--output-dir) are left alone.{RESET}"
             )
         else:
             removed = retention.apply(runs_dir, policy, protect=[output_dir])
             if removed:
-                print(f"{GREY}Removed {len(removed)} old run(s) (retention).{RESET}")
+                print_status(f"{GREY}Removed {len(removed)} old run(s) (retention).{RESET}")
     warning = retention.size_warning(Path(custom) if custom else runs_dir)
     if warning:
-        print(f"{YELLOW}{warning}{RESET}")
+        print_status(f"{YELLOW}{warning}{RESET}")
 
 
 async def _run_batch(target, opts, jobs, reporter, run_id, retries: int = 0):
@@ -588,8 +588,7 @@ def _summarize(results, output_dir: Path, kind: str, args) -> int:
     from cua_bench.runner.batch_runner import RESULT_SCHEMA_VERSION
 
     targets: Counter = Counter(
-        (r.on, r.kind, r.runtime, r.image_variant, r.image_digest or r.image_ref)
-        for r in results
+        (r.on, r.kind, r.runtime, r.image_variant, r.image_digest or r.image_ref) for r in results
     )
     summary = {
         "schema_version": RESULT_SCHEMA_VERSION,
@@ -632,27 +631,25 @@ def _summarize(results, output_dir: Path, kind: str, args) -> int:
                 "image": img,
                 "count": n,
             }
-            for (on, kind, rt, var, img), n in sorted(
-                targets.items(), key=lambda kv: str(kv[0])
-            )
+            for (on, kind, rt, var, img), n in sorted(targets.items(), key=lambda kv: str(kv[0]))
         ],
     }
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2))
-    print()
+    print_status()
     avg = "-" if summary["avg_reward"] is None else f"{summary['avg_reward']:.3f}"
     color = GREEN if not failed else RED
-    print(f"{color}{len(ok)}/{len(results)} completed{RESET}, avg reward {avg}")
+    print_status(f"{color}{len(ok)}/{len(results)} completed{RESET}, avg reward {avg}")
     if summary["pass_at_k"]:
         ks = ", ".join(f"pass@{k}={v:.3f}" for k, v in summary["pass_at_k"].items())
-        print(f"  {ks}")
+        print_status(f"  {ks}")
     for r in failed:
         attempt = f" a{r.attempt}" if r.attempt else ""
-        print(
+        print_status(
             f"  {RED}✗ {r.task} v{r.variant}{attempt}{RESET}: "
             f"{(r.error or r.status).splitlines()[0]}"
         )
-        print(f"    {GREY}log: {Path(r.output_dir) / 'run.log'}{RESET}")
-    print(f"Results: {output_dir}")
+        print_status(f"    {GREY}log: {Path(r.output_dir) / 'run.log'}{RESET}")
+    print_status(f"Results: {output_dir}")
     return 0 if not failed else 1
 
 
@@ -690,10 +687,12 @@ def _spawn_detached(args, run_id: str, output_dir: Path, jobs) -> int:
             cmd, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, env=env
         )
     (output_dir / "run.pid").write_text(str(proc.pid))
-    print(f"\n{GREEN}✓ Started {len(jobs)} variant(s) in the background (pid {proc.pid}){RESET}")
-    print(f"\n  cb run watch {run_id}   {GREY}# live status{RESET}")
-    print(f"  cb run logs {run_id}    {GREY}# logs{RESET}")
-    print(f"  cb run stop {run_id}    {GREY}# stop and release sandboxes{RESET}")
+    print_status(
+        f"\n{GREEN}✓ Started {len(jobs)} variant(s) in the background (pid {proc.pid}){RESET}"
+    )
+    print_status(f"\n  cb run watch {run_id}   {GREY}# live status{RESET}")
+    print_status(f"  cb run logs {run_id}    {GREY}# logs{RESET}")
+    print_status(f"  cb run stop {run_id}    {GREY}# stop and release sandboxes{RESET}")
     return 0
 
 
@@ -729,7 +728,10 @@ def _rows(sessions: list[dict]) -> list[dict]:
                 "session_id": session.get("session_id", "?"),
                 "environment": Path(session.get("env_path", "?")).name,
                 "variant": str(session.get("task_index", 0)),
-                "on": session.get("location") or session.get("on") or session.get("provider") or "-",
+                "on": session.get("location")
+                or session.get("on")
+                or session.get("provider")
+                or "-",
                 "status": info["status"],
                 "reward": info["reward"],
                 "output_dir": session.get("output_dir"),
@@ -750,9 +752,9 @@ def cmd_list(args) -> int:
         if session.get("run_id"):
             runs[session["run_id"]].append(session)
     if not runs:
-        print(f"{GREY}No runs found.{RESET}\n\nStart one with:\n  cb run <task|dataset>")
+        print_status(f"{GREY}No runs found.{RESET}\n\nStart one with:\n  cb run <task|dataset>")
         return 0
-    print(
+    print_status(
         f"{BOLD}{'RUN ID':<10}  {'ON':<6}  {'DATASET':<24}  {'AGENT':<12}  "
         f"{'STATUS':<34}  AVG REWARD{RESET}"
     )
@@ -762,45 +764,45 @@ def cmd_list(args) -> int:
         rewards = [row["reward"] for row in rows if row["reward"] is not None]
         avg = f"{sum(rewards) / len(rewards):.3f}" if rewards else "-"
         status = " ".join(f"{k}({v})" for k, v in sorted(counts.items()))
-        print(
+        print_status(
             f"{run_id:<10}  {rows[0]['on']:<6}  {_dataset_of(sessions)[:24]:<24}  "
             f"{(sessions[0].get('agent') or '-')[:12]:<12}  {status[:34]:<34}  {avg}"
         )
-    print(f"\n{GREY}cb run info <id> | watch <id> | logs <id> | stop <id>{RESET}")
+    print_status(f"\n{GREY}cb run info <id> | watch <id> | logs <id> | stop <id>{RESET}")
     return 0
 
 
 def cmd_info(args) -> int:
     sessions = _run_sessions(args.run_id)
     if not sessions:
-        print(f"{RED}Error: No sessions found for run: {args.run_id}{RESET}")
+        print_status(f"{RED}Error: No sessions found for run: {args.run_id}{RESET}")
         return 1
     rows = _rows(sessions)
     done = sum(1 for row in rows if row["status"] in FINAL)
     rewards = [row["reward"] for row in rows if row["reward"] is not None]
     first = sessions[0]
-    print(f"\n{BOLD}Run: {args.run_id}{RESET}")
-    print(f"Dataset:  {_dataset_of(sessions)}")
+    print_status(f"\n{BOLD}Run: {args.run_id}{RESET}")
+    print_status(f"Dataset:  {_dataset_of(sessions)}")
     where = first.get("location") or first.get("on") or "-"
-    print(f"Target:   {where} ({first.get('backend', '-')})")
-    print(f"Image:    {first.get('image', '-')}")
+    print_status(f"Target:   {where} ({first.get('backend', '-')})")
+    print_status(f"Image:    {first.get('image', '-')}")
     if first.get("kind") or first.get("runtime"):
         variant = first.get("image_variant") or "-"
         engine = f", {first['runtime']}" if first.get("runtime") else ""
-        print(f"Kind:     {first.get('kind') or '-'}{engine} ({variant})")
+        print_status(f"Kind:     {first.get('kind') or '-'}{engine} ({variant})")
     if first.get("image_digest"):
-        print(f"Digest:   {first.get('image_digest')}")
-    print(f"Agent:    {first.get('agent') or '-'}")
-    print(f"Model:    {first.get('model') or '-'}")
-    print(f"Progress: {done}/{len(rows)}")
+        print_status(f"Digest:   {first.get('image_digest')}")
+    print_status(f"Agent:    {first.get('agent') or '-'}")
+    print_status(f"Model:    {first.get('model') or '-'}")
+    print_status(f"Progress: {done}/{len(rows)}")
     if rewards:
-        print(f"Avg reward: {sum(rewards) / len(rewards):.3f}")
+        print_status(f"Avg reward: {sum(rewards) / len(rewards):.3f}")
     out = Path(first.get("output_dir", "")).parent if first.get("output_dir") else None
     if out:
-        print(f"Output:   {out}")
-    print(f"\n{BOLD}{'SESSION ID':<48}  {'VARIANT':<7}  {'STATUS':<10}  REWARD{RESET}")
+        print_status(f"Output:   {out}")
+    print_status(f"\n{BOLD}{'SESSION ID':<48}  {'VARIANT':<7}  {'STATUS':<10}  REWARD{RESET}")
     for row in rows:
-        print(
+        print_status(
             f"{row['session_id'][:48]:<48}  {row['variant']:<7}  {row['status']:<10}  "
             f"{_fmt_reward(row['reward'])}"
         )
@@ -813,11 +815,11 @@ def cmd_watch(args) -> int:
         from rich.live import Live
         from rich.table import Table
     except ImportError:
-        print(f"{RED}Error: 'rich' is required for watch mode.{RESET}")
+        print_status(f"{RED}Error: 'rich' is required for watch mode.{RESET}")
         return 1
     run_id = args.run_id
     if not _run_sessions(run_id):
-        print(f"{RED}No sessions found for run: {run_id}{RESET}")
+        print_status(f"{RED}No sessions found for run: {run_id}{RESET}")
         return 1
     console = Console()
 
@@ -862,7 +864,9 @@ def cmd_stop(args) -> int:
         try:
             pid = int(pid_file.read_text().strip())
             os.kill(pid, signal.SIGTERM)
-            print(f"{CYAN}Stopping run {run_id} (pid {pid}); it releases its sandboxes...{RESET}")
+            print_status(
+                f"{CYAN}Stopping run {run_id} (pid {pid}); it releases its sandboxes...{RESET}"
+            )
             for _ in range(120):  # up to 60 s for a clean release
                 try:
                     os.kill(pid, 0)
@@ -870,13 +874,13 @@ def cmd_stop(args) -> int:
                     break
                 time.sleep(0.5)
             else:
-                print(f"{YELLOW}Still running after 60s.{RESET}")
+                print_status(f"{YELLOW}Still running after 60s.{RESET}")
         except (ValueError, ProcessLookupError):
             pass
     for session in sessions:
         if session.get("status") not in FINAL:
             manager.update_session(session["session_id"], {"status": "cancelled"})
-    print(f"{GREEN}✓ Run stopped{RESET}")
+    print_status(f"{GREEN}✓ Run stopped{RESET}")
     return 0
 
 
@@ -888,11 +892,11 @@ def cmd_logs(args) -> int:
     session = get_session(identifier)
     sessions = [session] if session else _run_sessions(identifier)
     if not sessions:
-        print(f"{RED}Error: no run or session {identifier}{RESET}")
+        print_status(f"{RED}Error: no run or session {identifier}{RESET}")
         return 1
     for session in sessions:
-        print(f"\n{'=' * 60}\nSession: {session.get('session_id')}\n{'=' * 60}")
-        print(session_logs(session, tail=tail) or f"{GREY}(no log yet){RESET}")
+        print_status(f"\n{'=' * 60}\nSession: {session.get('session_id')}\n{'=' * 60}")
+        print_status(session_logs(session, tail=tail) or f"{GREY}(no log yet){RESET}")
     return 0
 
 
@@ -911,7 +915,7 @@ def _apply_config_defaults_for_task(args):
         search_path = Path.cwd()
     config_loader = ConfigLoader(search_path)
     if config_loader.find_config_dir():
-        print(f"{GREY}Found config at: {config_loader.find_config_dir()}{RESET}")
+        print_status(f"{GREY}Found config at: {config_loader.find_config_dir()}{RESET}")
     env_type = detect_env_type(str(path_arg)) if path_arg else None
     keys = ("agent", "agent_import_path", "model", "max_steps", "output_dir")
     effective = config_loader.get_effective_config(
@@ -936,8 +940,8 @@ def execute(args):
     }
     command = commands.get(getattr(args, "run_command", None))
     if command is None:
-        print(f"{YELLOW}Usage:{RESET}")
-        print("  cb run <task|dataset> [--on local]         Run tasks")
-        print("  cb run list | info <id> | watch <id> | logs <id> | stop <id>")
+        print_status(f"{YELLOW}Usage:{RESET}")
+        print_status("  cb run <task|dataset> [--on local]         Run tasks")
+        print_status("  cb run list | info <id> | watch <id> | logs <id> | stop <id>")
         return 1
     return command(args)

@@ -17,7 +17,7 @@ use super::bindings::{
     copy_string_attr, focused_element_of_pid, AXUIElementCreateApplication, AXUIElementRef,
 };
 use super::snapshot::RetainedElement;
-use crate::windows::{all_windows, resolve_window_owner, WindowOwner};
+use crate::windows::{all_windows_without_spaces, resolve_window_owner, WindowOwner};
 
 /// Bounded `AXParent` ascent used when an element does not expose `AXWindow`.
 const MAX_ANCESTRY_DEPTH: usize = 40;
@@ -337,13 +337,15 @@ pub fn gather_background_facts(
     let competing_keyboard_destinations = count_competing_keyboard_destinations(
         pid,
         window_id,
-        all_windows().iter().map(|window| WindowServerRow {
-            pid: window.pid,
-            window_id: window.window_id,
-            visible: window.is_on_screen
-                && window.bounds.width >= 2.0
-                && window.bounds.height >= 2.0,
-        }),
+        all_windows_without_spaces()
+            .iter()
+            .map(|window| WindowServerRow {
+                pid: window.pid,
+                window_id: window.window_id,
+                visible: window.is_on_screen
+                    && window.bounds.width >= 2.0
+                    && window.bounds.height >= 2.0,
+            }),
         &records,
         target.is_some() && focused_window_id == Some(window_id),
     );

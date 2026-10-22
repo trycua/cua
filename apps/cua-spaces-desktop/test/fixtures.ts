@@ -305,6 +305,8 @@ export function unconfiguredHost(): HostStatus {
     pausedSignedOut: false,
     owner: undefined,
     ownerEmail: undefined,
+    helperAvailable: false,
+    legacyService: false,
   };
 }
 

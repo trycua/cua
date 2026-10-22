@@ -437,7 +437,11 @@ export class BridgeStore {
           break;
         }
         case "machines": {
-          if (!this.machinesPinned) this.machineRows = await this.adapter.call("machines.list", {});
+          if (!this.machinesPinned) {
+            const rows = await this.adapter.call("machines.list", {});
+            // Rows shown meanwhile (`showMachines`, parity) must not lose to a listing that was already in flight.
+            if (!this.machinesPinned) this.machineRows = rows;
+          }
           this.publishMachines();
           break;
         }

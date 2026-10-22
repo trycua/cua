@@ -209,6 +209,18 @@ export interface MachinesViewToggle {
   setup?: string | null;
 }
 
+/** A machine's own desktop, the first row of its Spaces when it shares it: a Space row with a quiet label (`machines_view::MachinesViewDesktop`). */
+export interface MachinesViewDesktop {
+  /** The Space's id (its page). */
+  id: string;
+  name: string;
+  os: string;
+  status: string;
+  running: boolean;
+  /** "Desktop". */
+  label: string;
+}
+
 /** A Space on a machine: a link to its page (`machines_view::MachinesViewSpace`). */
 export interface MachinesViewSpace {
   id: string;
@@ -258,13 +270,15 @@ export interface MachinesViewIssueAction {
   url?: string | null;
   /** A host action to run (`host.action`). */
   hostAction?: HostActionId | null;
+  /** Restart into the Cua Spaces update already downloaded (the sidebar's "Restart to update"). */
+  appUpdate?: boolean;
 }
 
 /** One issue on a machine's page (`machines_health::MachinesViewIssue`). */
 export interface MachinesViewIssue {
   /** The check it comes from (`machine.disk`, `service`, `version`). */
   id: string;
-  /** `warn` or `fail`. */
+  /** `warn` or `fail`; `info` is a note that is no problem. */
   level: string;
   /** One plain sentence. */
   text: string;
@@ -301,6 +315,8 @@ export interface MachinesViewMachine {
   togglesNote?: string | null;
   spacesTitle: string;
   spaces: MachinesViewSpace[];
+  /** Its own desktop, when it shares it (above `spaces`; not one of the Spaces counted). */
+  desktop?: MachinesViewDesktop | null;
   spacesEmpty?: string | null;
   newSpace: MachinesViewNewSpace;
   detailsTitle: string;

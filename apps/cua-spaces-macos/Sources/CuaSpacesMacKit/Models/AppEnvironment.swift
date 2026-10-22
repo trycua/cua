@@ -73,6 +73,7 @@ public enum AppEnvironment {
             let fixture = FixtureSpacesBackend(rows: FixtureSpacesBackend.rows(environment: env))
             fixture.fixtureRuns["local:aurora"] = FixtureSpacesBackend.sampleRuns
             fixture.fixtureEvents = FixtureSpacesBackend.sampleEvents
+            fixture.fixtureHealth = FixtureSpacesBackend.peerHealth(environment: env)
             backend = fixture
         } else {
             backend = PendingSpacesBackend(gate: gate)
@@ -90,7 +91,7 @@ public enum AppEnvironment {
         // Fixtures never touch the host service, the account, the telemetry
         // config or the coding agents' configs.
         let host: HostRunning = fixtures ? FixtureHost() : PendingHost(gate: gate)
-        let account: AccountRunning = fixtures ? FixtureAccount() : PendingAccount(gate: gate)
+        let account: AccountRunning = fixtures ? FixtureAccount(identity: env["CUA_SPACES_FIXTURE_PEER_CUA"] != nil ? "ellie@example.com" : nil) : PendingAccount(gate: gate)
         let telemetry: TelemetryRunning = fixtures ? FixtureTelemetry() : LiveTelemetry()
         let agents: AgentSetupRunning = fixtures ? FixtureAgentSetup() : PendingAgentSetup(gate: gate)
         // The first run's pages are the web UI's; this is its state file.
@@ -153,6 +154,11 @@ public enum AppEnvironment {
         let updater: UpdaterDriving? = fixtures && env["CUA_SPACES_UPDATER"] != "live"
             ? FixtureUpdater(lastCheck: Date().addingTimeInterval(-2 * 3600))
             : SparkleUpdater.start(channels: appAboutAllowedChannels(channel: channel))
+        // `CUA_SPACES_FIXTURE_UPDATE=<version>` (fixtures): that update is found and downloaded.
+        if let fixture = updater as? FixtureUpdater, let version = env["CUA_SPACES_FIXTURE_UPDATE"] {
+            fixture.simulateFound(version: version)
+            fixture.simulateDownloaded()
+        }
         model.updates = UpdatesModel(updater: updater, channel: channel)
         model.updates.telemetry = telemetry
         model.updates.saveChannel = { [weak model] channel in model?.setUpdateChannel(channel) }

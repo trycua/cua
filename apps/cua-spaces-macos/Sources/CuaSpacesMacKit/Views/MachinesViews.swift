@@ -355,13 +355,18 @@ struct MachinePage: View {
                     .padding(.top, 28)
                     .padding(.bottom, 8)
                 card {
-                    ForEach(Array(m.spaces.enumerated()), id: \.element.id) { i, s in
+                    ForEach(Array(spaceRows(m).enumerated()), id: \.element.id) { i, s in
                         if i > 0 { Divider() }
                         Button {
                             model.select(s.id)
                         } label: {
                             HStack(spacing: 8) {
                                 Text(s.name).font(.system(.callout, design: .monospaced)).lineLimit(1)
+                                if let label = s.label {
+                                    Text(label).font(.caption2).foregroundStyle(.secondary)
+                                        .padding(.horizontal, 5)
+                                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
+                                }
                                 if !s.os.isEmpty {
                                     Text("\u{b7}").foregroundStyle(.tertiary)
                                     Text(s.os).foregroundStyle(.secondary).lineLimit(1)
@@ -497,9 +502,10 @@ struct MachinePage: View {
     /// here (a System Settings pane, or This Mac's host action).
     private func issueRow(_ issue: AppMachinesViewIssue) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Image(systemName: issue.level == "fail" ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
-                .foregroundStyle(issue.level == "fail" ? Color.red : Color.orange)
-                .accessibilityLabel(issue.level == "fail" ? "Problem" : "Warning")
+            Image(systemName: issue.level == "fail" ? "xmark.octagon.fill"
+                  : issue.level == "info" ? "info.circle" : "exclamationmark.triangle.fill")
+                .foregroundStyle(issue.level == "fail" ? Color.red : issue.level == "info" ? Color.secondary : Color.orange)
+                .accessibilityLabel(issue.level == "fail" ? "Problem" : issue.level == "info" ? "Note" : "Warning")
             Text(issue.text).fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 12)
             if let action = issue.action {
@@ -515,8 +521,24 @@ struct MachinePage: View {
         .accessibilityIdentifier("machine-issue-\(issue.id)")
     }
 
+    /// Its shared desktop first, then its Spaces: every row a Space row.
+    private struct SpaceRowItem {
+        let id: String, name: String, os: String, status: String, running: Bool, label: String?
+    }
+
+    private func spaceRows(_ m: AppMachinesViewMachine) -> [SpaceRowItem] {
+        let desktop = m.desktop.map {
+            SpaceRowItem(id: $0.id, name: $0.name, os: $0.os, status: $0.status, running: $0.running, label: $0.label)
+        }
+        return (desktop.map { [$0] } ?? [])
+            + m.spaces.map { SpaceRowItem(id: $0.id, name: $0.name, os: $0.os, status: $0.status, running: $0.running, label: nil) }
+    }
+
     private func fix(_ action: AppMachinesViewIssueAction) {
-        if let url = action.url {
+        if action.appUpdate {
+            // Restart into the Cua Spaces update already downloaded.
+            model.updates.installUpdate()
+        } else if let url = action.url {
             PermissionRows.open(url)
         } else if let id = action.hostAction, machine.current {
             Task {

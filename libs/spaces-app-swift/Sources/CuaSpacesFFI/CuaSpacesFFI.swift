@@ -19890,6 +19890,112 @@ public func FfiConverterTypeAppMachinesViewCheck_lower(_ value: AppMachinesViewC
 }
 
 
+public struct AppMachinesViewDesktop: Equatable, Hashable {
+    /**
+     * The Space's id (its page).
+     */
+    public var id: String
+    /**
+     * Its name, as the Spaces list names it.
+     */
+    public var name: String
+    /**
+     * Its system ("Ubuntu 24.04.5 LTS", "macOS").
+     */
+    public var os: String
+    /**
+     * Its status word ("Running", "Stopped").
+     */
+    public var status: String
+    /**
+     * Running (the green dot).
+     */
+    public var running: Bool
+    /**
+     * "Desktop".
+     */
+    public var label: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The Space's id (its page).
+         */id: String,
+        /**
+         * Its name, as the Spaces list names it.
+         */name: String,
+        /**
+         * Its system ("Ubuntu 24.04.5 LTS", "macOS").
+         */os: String,
+        /**
+         * Its status word ("Running", "Stopped").
+         */status: String,
+        /**
+         * Running (the green dot).
+         */running: Bool,
+        /**
+         * "Desktop".
+         */label: String) {
+        self.id = id
+        self.name = name
+        self.os = os
+        self.status = status
+        self.running = running
+        self.label = label
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppMachinesViewDesktop: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppMachinesViewDesktop: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppMachinesViewDesktop {
+        return
+            try AppMachinesViewDesktop(
+                id: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                os: FfiConverterString.read(from: &buf),
+                status: FfiConverterString.read(from: &buf),
+                running: FfiConverterBool.read(from: &buf),
+                label: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppMachinesViewDesktop, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.os, into: &buf)
+        FfiConverterString.write(value.status, into: &buf)
+        FfiConverterBool.write(value.running, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewDesktop_lift(_ buf: RustBuffer) throws -> AppMachinesViewDesktop {
+    return try FfiConverterTypeAppMachinesViewDesktop.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachinesViewDesktop_lower(_ value: AppMachinesViewDesktop) -> RustBuffer {
+    return FfiConverterTypeAppMachinesViewDesktop.lower(value)
+}
+
+
 public struct AppMachinesViewFact: Equatable, Hashable {
     /**
      * "OS", "App", "Connection", "Service".
@@ -20166,6 +20272,15 @@ public struct AppMachinesViewInput: Equatable, Hashable {
      * ([`crate::machines_health`]).
      */
     public var health: [AppMachinesViewHealth]
+    /**
+     * The Cua Spaces update this app found (its version); empty when this
+     * app is the newest release.
+     */
+    public var appUpdate: String
+    /**
+     * That update is downloaded and ready to restart into.
+     */
+    public var appUpdateReady: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -20190,13 +20305,22 @@ public struct AppMachinesViewInput: Equatable, Hashable {
          * What each machine's daemon reported of its health, by row id, for
          * the machines whose `health_target` the shell checked
          * ([`crate::machines_health`]).
-         */health: [AppMachinesViewHealth]) {
+         */health: [AppMachinesViewHealth],
+        /**
+         * The Cua Spaces update this app found (its version); empty when this
+         * app is the newest release.
+         */appUpdate: String,
+        /**
+         * That update is downloaded and ready to restart into.
+         */appUpdateReady: Bool) {
         self.page = page
         self.relay = relay
         self.host = host
         self.about = about
         self.rows = rows
         self.health = health
+        self.appUpdate = appUpdate
+        self.appUpdateReady = appUpdateReady
     }
 
 
@@ -20220,7 +20344,9 @@ public struct FfiConverterTypeAppMachinesViewInput: FfiConverterRustBuffer {
                 host: FfiConverterOptionTypeAppHostState.read(from: &buf),
                 about: FfiConverterTypeAppMachinesViewAbout.read(from: &buf),
                 rows: FfiConverterOptionSequenceTypeAppMachinePageRow.read(from: &buf),
-                health: FfiConverterSequenceTypeAppMachinesViewHealth.read(from: &buf)
+                health: FfiConverterSequenceTypeAppMachinesViewHealth.read(from: &buf),
+                appUpdate: FfiConverterString.read(from: &buf),
+                appUpdateReady: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -20231,6 +20357,8 @@ public struct FfiConverterTypeAppMachinesViewInput: FfiConverterRustBuffer {
         FfiConverterTypeAppMachinesViewAbout.write(value.about, into: &buf)
         FfiConverterOptionSequenceTypeAppMachinePageRow.write(value.rows, into: &buf)
         FfiConverterSequenceTypeAppMachinesViewHealth.write(value.health, into: &buf)
+        FfiConverterString.write(value.appUpdate, into: &buf)
+        FfiConverterBool.write(value.appUpdateReady, into: &buf)
     }
 }
 
@@ -20256,7 +20384,8 @@ public struct AppMachinesViewIssue: Equatable, Hashable {
      */
     public var id: String
     /**
-     * `warn` or `fail`.
+     * `warn` or `fail`; `info` for a note that is no problem (it does not
+     * tint the row's dot).
      */
     public var level: String
     /**
@@ -20275,7 +20404,8 @@ public struct AppMachinesViewIssue: Equatable, Hashable {
          * The check it comes from (`machine.disk`, `service`, `version`).
          */id: String,
         /**
-         * `warn` or `fail`.
+         * `warn` or `fail`; `info` for a note that is no problem (it does not
+         * tint the row's dot).
          */level: String,
         /**
          * One plain sentence.
@@ -20349,6 +20479,11 @@ public struct AppMachinesViewIssueAction: Equatable, Hashable {
      * A host action to run (`host.action`).
      */
     public var hostAction: AppHostActionId?
+    /**
+     * Restart into the Cua Spaces update this app already downloaded
+     * (the shell's own update flow, the sidebar's "Restart to update").
+     */
+    public var appUpdate: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -20361,10 +20496,15 @@ public struct AppMachinesViewIssueAction: Equatable, Hashable {
          */url: String?,
         /**
          * A host action to run (`host.action`).
-         */hostAction: AppHostActionId?) {
+         */hostAction: AppHostActionId?,
+        /**
+         * Restart into the Cua Spaces update this app already downloaded
+         * (the shell's own update flow, the sidebar's "Restart to update").
+         */appUpdate: Bool) {
         self.label = label
         self.url = url
         self.hostAction = hostAction
+        self.appUpdate = appUpdate
     }
 
 
@@ -20385,7 +20525,8 @@ public struct FfiConverterTypeAppMachinesViewIssueAction: FfiConverterRustBuffer
             try AppMachinesViewIssueAction(
                 label: FfiConverterString.read(from: &buf),
                 url: FfiConverterOptionString.read(from: &buf),
-                hostAction: FfiConverterOptionTypeAppHostActionId.read(from: &buf)
+                hostAction: FfiConverterOptionTypeAppHostActionId.read(from: &buf),
+                appUpdate: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -20393,6 +20534,7 @@ public struct FfiConverterTypeAppMachinesViewIssueAction: FfiConverterRustBuffer
         FfiConverterString.write(value.label, into: &buf)
         FfiConverterOptionString.write(value.url, into: &buf)
         FfiConverterOptionTypeAppHostActionId.write(value.hostAction, into: &buf)
+        FfiConverterBool.write(value.appUpdate, into: &buf)
     }
 }
 
@@ -20502,6 +20644,10 @@ public struct AppMachinesViewMachine: Equatable, Hashable {
      */
     public var spaces: [AppMachinesViewSpace]
     /**
+     * Its own desktop, when it shares it (shown above `spaces`).
+     */
+    public var desktop: AppMachinesViewDesktop?
+    /**
      * When it has none.
      */
     public var spacesEmpty: String?
@@ -20593,6 +20739,9 @@ public struct AppMachinesViewMachine: Equatable, Hashable {
          * The Spaces on it.
          */spaces: [AppMachinesViewSpace],
         /**
+         * Its own desktop, when it shares it (shown above `spaces`).
+         */desktop: AppMachinesViewDesktop?,
+        /**
          * When it has none.
          */spacesEmpty: String?,
         /**
@@ -20628,6 +20777,7 @@ public struct AppMachinesViewMachine: Equatable, Hashable {
         self.togglesNote = togglesNote
         self.spacesTitle = spacesTitle
         self.spaces = spaces
+        self.desktop = desktop
         self.spacesEmpty = spacesEmpty
         self.newSpace = newSpace
         self.detailsTitle = detailsTitle
@@ -20672,6 +20822,7 @@ public struct FfiConverterTypeAppMachinesViewMachine: FfiConverterRustBuffer {
                 togglesNote: FfiConverterOptionString.read(from: &buf),
                 spacesTitle: FfiConverterString.read(from: &buf),
                 spaces: FfiConverterSequenceTypeAppMachinesViewSpace.read(from: &buf),
+                desktop: FfiConverterOptionTypeAppMachinesViewDesktop.read(from: &buf),
                 spacesEmpty: FfiConverterOptionString.read(from: &buf),
                 newSpace: FfiConverterTypeAppMachinesViewNewSpace.read(from: &buf),
                 detailsTitle: FfiConverterString.read(from: &buf),
@@ -20702,6 +20853,7 @@ public struct FfiConverterTypeAppMachinesViewMachine: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.togglesNote, into: &buf)
         FfiConverterString.write(value.spacesTitle, into: &buf)
         FfiConverterSequenceTypeAppMachinesViewSpace.write(value.spaces, into: &buf)
+        FfiConverterOptionTypeAppMachinesViewDesktop.write(value.desktop, into: &buf)
         FfiConverterOptionString.write(value.spacesEmpty, into: &buf)
         FfiConverterTypeAppMachinesViewNewSpace.write(value.newSpace, into: &buf)
         FfiConverterString.write(value.detailsTitle, into: &buf)
@@ -62721,6 +62873,30 @@ fileprivate struct FfiConverterOptionTypeAppMachineAccessNotice: FfiConverterRus
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeAppMachineAccessNotice.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppMachinesViewDesktop: FfiConverterRustBuffer {
+    typealias SwiftType = AppMachinesViewDesktop?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppMachinesViewDesktop.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppMachinesViewDesktop.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }

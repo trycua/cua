@@ -25612,7 +25612,12 @@ export type AppMachinesViewIssueAction = {
     /**
      * A host action to run (`host.action`).
      */
-    hostAction?: AppHostActionId
+    hostAction?: AppHostActionId,
+    /**
+     * Restart into the Cua Spaces update this app already downloaded
+     * (the shell's own update flow, the sidebar's "Restart to update").
+     */
+    appUpdate: boolean
 }
 
 /**
@@ -25638,18 +25643,21 @@ const FfiConverterTypeAppMachinesViewIssueAction = (() => {
             return {
                 label: FfiConverterString.read(from),
                 url: FfiConverterOptionalString.read(from),
-                hostAction: FfiConverterOptionalTypeAppHostActionId.read(from)
+                hostAction: FfiConverterOptionalTypeAppHostActionId.read(from),
+                appUpdate: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterString.write(value.label, into);
             FfiConverterOptionalString.write(value.url, into);
             FfiConverterOptionalTypeAppHostActionId.write(value.hostAction, into);
+            FfiConverterBool.write(value.appUpdate, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.label) +
              FfiConverterOptionalString.allocationSize(value.url) +
-             FfiConverterOptionalTypeAppHostActionId.allocationSize(value.hostAction);
+             FfiConverterOptionalTypeAppHostActionId.allocationSize(value.hostAction) +
+             FfiConverterBool.allocationSize(value.appUpdate);
 
         }
     };
@@ -25662,7 +25670,8 @@ export type AppMachinesViewIssue = {
      */
     id: string,
     /**
-     * `warn` or `fail`.
+     * `warn` or `fail`; `info` for a note that is no problem (it does not
+     * tint the row's dot).
      */
     level: string,
     /**
@@ -25881,6 +25890,83 @@ const FfiConverterTypeAppMachinesViewSpace = (() => {
     return new FFIConverter();
 })();
 
+export type AppMachinesViewDesktop = {
+    /**
+     * The Space's id (its page).
+     */
+    id: string,
+    /**
+     * Its name, as the Spaces list names it.
+     */
+    name: string,
+    /**
+     * Its system ("Ubuntu 24.04.5 LTS", "macOS").
+     */
+    os: string,
+    /**
+     * Its status word ("Running", "Stopped").
+     */
+    status: string,
+    /**
+     * Running (the green dot).
+     */
+    running: boolean,
+    /**
+     * "Desktop".
+     */
+    label: string
+}
+
+/**
+ * Generated factory for {@link AppMachinesViewDesktop} record objects.
+ */
+export const AppMachinesViewDesktop = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppMachinesViewDesktop, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppMachinesViewDesktop>,
+    });
+})();
+
+const FfiConverterTypeAppMachinesViewDesktop = (() => {
+    type TypeName = AppMachinesViewDesktop;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                id: FfiConverterString.read(from),
+                name: FfiConverterString.read(from),
+                os: FfiConverterString.read(from),
+                status: FfiConverterString.read(from),
+                running: FfiConverterBool.read(from),
+                label: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.id, into);
+            FfiConverterString.write(value.name, into);
+            FfiConverterString.write(value.os, into);
+            FfiConverterString.write(value.status, into);
+            FfiConverterBool.write(value.running, into);
+            FfiConverterString.write(value.label, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.id) +
+             FfiConverterString.allocationSize(value.name) +
+             FfiConverterString.allocationSize(value.os) +
+             FfiConverterString.allocationSize(value.status) +
+             FfiConverterBool.allocationSize(value.running) +
+             FfiConverterString.allocationSize(value.label);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type AppMachinesViewNewSpace = {
     /**
      * "New Space here".
@@ -26083,6 +26169,10 @@ export type AppMachinesViewMachine = {
      */
     spaces: Array<AppMachinesViewSpace>,
     /**
+     * Its own desktop, when it shares it (shown above `spaces`).
+     */
+    desktop?: AppMachinesViewDesktop,
+    /**
      * When it has none.
      */
     spacesEmpty?: string,
@@ -26146,6 +26236,7 @@ const FfiConverterTypeAppMachinesViewMachine = (() => {
                 togglesNote: FfiConverterOptionalString.read(from),
                 spacesTitle: FfiConverterString.read(from),
                 spaces: FfiConverterSequenceTypeAppMachinesViewSpace.read(from),
+                desktop: FfiConverterOptionalTypeAppMachinesViewDesktop.read(from),
                 spacesEmpty: FfiConverterOptionalString.read(from),
                 newSpace: FfiConverterTypeAppMachinesViewNewSpace.read(from),
                 detailsTitle: FfiConverterString.read(from),
@@ -26175,6 +26266,7 @@ const FfiConverterTypeAppMachinesViewMachine = (() => {
             FfiConverterOptionalString.write(value.togglesNote, into);
             FfiConverterString.write(value.spacesTitle, into);
             FfiConverterSequenceTypeAppMachinesViewSpace.write(value.spaces, into);
+            FfiConverterOptionalTypeAppMachinesViewDesktop.write(value.desktop, into);
             FfiConverterOptionalString.write(value.spacesEmpty, into);
             FfiConverterTypeAppMachinesViewNewSpace.write(value.newSpace, into);
             FfiConverterString.write(value.detailsTitle, into);
@@ -26203,6 +26295,7 @@ const FfiConverterTypeAppMachinesViewMachine = (() => {
              FfiConverterOptionalString.allocationSize(value.togglesNote) +
              FfiConverterString.allocationSize(value.spacesTitle) +
              FfiConverterSequenceTypeAppMachinesViewSpace.allocationSize(value.spaces) +
+             FfiConverterOptionalTypeAppMachinesViewDesktop.allocationSize(value.desktop) +
              FfiConverterOptionalString.allocationSize(value.spacesEmpty) +
              FfiConverterTypeAppMachinesViewNewSpace.allocationSize(value.newSpace) +
              FfiConverterString.allocationSize(value.detailsTitle) +
@@ -26556,7 +26649,16 @@ export type AppMachinesViewInput = {
      * the machines whose `health_target` the shell checked
      * ([`crate::machines_health`]).
      */
-    health: Array<AppMachinesViewHealth>
+    health: Array<AppMachinesViewHealth>,
+    /**
+     * The Cua Spaces update this app found (its version); empty when this
+     * app is the newest release.
+     */
+    appUpdate: string,
+    /**
+     * That update is downloaded and ready to restart into.
+     */
+    appUpdateReady: boolean
 }
 
 /**
@@ -26585,7 +26687,9 @@ const FfiConverterTypeAppMachinesViewInput = (() => {
                 host: FfiConverterOptionalTypeAppHostState.read(from),
                 about: FfiConverterTypeAppMachinesViewAbout.read(from),
                 rows: FfiConverterOptionalSequenceTypeAppMachinePageRow.read(from),
-                health: FfiConverterSequenceTypeAppMachinesViewHealth.read(from)
+                health: FfiConverterSequenceTypeAppMachinesViewHealth.read(from),
+                appUpdate: FfiConverterString.read(from),
+                appUpdateReady: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -26595,6 +26699,8 @@ const FfiConverterTypeAppMachinesViewInput = (() => {
             FfiConverterTypeAppMachinesViewAbout.write(value.about, into);
             FfiConverterOptionalSequenceTypeAppMachinePageRow.write(value.rows, into);
             FfiConverterSequenceTypeAppMachinesViewHealth.write(value.health, into);
+            FfiConverterString.write(value.appUpdate, into);
+            FfiConverterBool.write(value.appUpdateReady, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeAppMachinesPageInput.allocationSize(value.page) +
@@ -26602,7 +26708,9 @@ const FfiConverterTypeAppMachinesViewInput = (() => {
              FfiConverterOptionalTypeAppHostState.allocationSize(value.host) +
              FfiConverterTypeAppMachinesViewAbout.allocationSize(value.about) +
              FfiConverterOptionalSequenceTypeAppMachinePageRow.allocationSize(value.rows) +
-             FfiConverterSequenceTypeAppMachinesViewHealth.allocationSize(value.health);
+             FfiConverterSequenceTypeAppMachinesViewHealth.allocationSize(value.health) +
+             FfiConverterString.allocationSize(value.appUpdate) +
+             FfiConverterBool.allocationSize(value.appUpdateReady);
 
         }
     };
@@ -63158,6 +63266,9 @@ const FfiConverterSequenceTypeAppMachinesViewToggle = new FfiConverterArray(FfiC
 // FfiConverter for Array<AppMachinesViewSpace>
 const FfiConverterSequenceTypeAppMachinesViewSpace = new FfiConverterArray(FfiConverterTypeAppMachinesViewSpace);
 
+// FfiConverter for AppMachinesViewDesktop | undefined
+const FfiConverterOptionalTypeAppMachinesViewDesktop = new FfiConverterOptional(FfiConverterTypeAppMachinesViewDesktop);
+
 // FfiConverter for Array<AppMachinesViewFact>
 const FfiConverterSequenceTypeAppMachinesViewFact = new FfiConverterArray(FfiConverterTypeAppMachinesViewFact);
 
@@ -64980,6 +65091,7 @@ export default Object.freeze({
     FfiConverterTypeAppMachinesView,
     FfiConverterTypeAppMachinesViewAbout,
     FfiConverterTypeAppMachinesViewCheck,
+    FfiConverterTypeAppMachinesViewDesktop,
     FfiConverterTypeAppMachinesViewFact,
     FfiConverterTypeAppMachinesViewGroup,
     FfiConverterTypeAppMachinesViewHealth,

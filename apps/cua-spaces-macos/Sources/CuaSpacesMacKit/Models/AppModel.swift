@@ -377,9 +377,14 @@ public final class AppModel {
             AppMachinesViewRelay(id: $0.id, role: $0.role, team: $0.team, ownerEmail: $0.ownerEmail,
                                  providesSpaces: $0.providesSpaces)
         }
+        // The Cua Spaces update this app found: a peer on a newer Cua is
+        // fixed by it (this app bundles its Cua), and by nothing else.
+        let update = updates.updateState
+        let found = [.available, .downloading, .downloaded].contains(update.status) ? update.version ?? "" : ""
         return appMachinesView(input: AppMachinesViewInput(
             page: machinesPageInput, relay: relay, host: host.state, about: Self.machinesAbout, rows: nil,
-            health: machineHealth.keys.sorted().compactMap { machineHealth[$0] }))
+            health: machineHealth.keys.sorted().compactMap { machineHealth[$0] },
+            appUpdate: found, appUpdateReady: !found.isEmpty && update.status == .downloaded))
     }
 
     /// What each machine's own daemon last reported of its health, by

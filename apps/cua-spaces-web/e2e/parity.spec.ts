@@ -357,8 +357,11 @@ async function checkTelemetry(page: Page, cps: Of<"telemetry">[]): Promise<numbe
   await expect.poll(() => tracked(page)).toContainEqual({ type: "launched", onboardingEligible: false });
   const before = (await tracked(page)).length;
   for (const cp of cps) await track(page, cp.signals);
-  // The getting-started checklist records its own steps as the page loads; they are not this flow's.
-  const ours = (await tracked(page)).slice(before).filter((s) => !(s.type === "step" && s.step.startsWith("checklist_")));
+  // The page records its own events as it loads (the getting-started checklist's steps, the first
+  // ready Space's agent offer, once per install); they are not this flow's.
+  const pages = (s: { type: string; step?: string; feature?: string }) =>
+    (s.type === "step" && s.step?.startsWith("checklist_")) || (s.type === "feature" && s.feature?.startsWith("agent_offer_"));
+  const ours = (await tracked(page)).slice(before).filter((s) => !pages(s));
   expect(ours, "the host recorded the core's events").toEqual(cps.flatMap((c) => c.signals));
 
   await page.evaluate(() => window.__cuaParity!.setTelemetry(false));

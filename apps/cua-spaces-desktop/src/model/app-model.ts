@@ -355,6 +355,9 @@ export class AppModel {
       about: this.about?.() ?? { computerName: "", appVersion: "", osVersion: "" },
       rows: undefined,
       health: [...this.machineHealth.values()],
+      // The Electron app has no in-app Mac update to offer on this page.
+      appUpdate: "",
+      appUpdateReady: false,
     });
   }
 

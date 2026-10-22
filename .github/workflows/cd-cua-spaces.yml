@@ -1705,6 +1705,38 @@ jobs:
   # version, this repository, the files' sha512). installer-manifest publishes
   # only after it passes; a manual run from a branch runs it on the build.
   # Unsigned parts (allowed off trycua/cua) are skipped with a warning.
+  # Start the staging smoke for this tag (CUA-1993): trycua/cloud's
+  # spaces-staging-smoke workflow runs it and posts the commit status that
+  # `staging-gate` waits for. Needs the release app installed on trycua/cloud
+  # (RELEASE_APP_ID / RELEASE_APP_PRIVATE_KEY). Never fails the run: without it
+  # the gate times out and the smoke is started by hand as before.
+  request-staging-smoke:
+    name: Request the staging smoke
+    if: startsWith(github.ref, 'refs/tags/cua-spaces-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: .
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mint a token to dispatch on trycua/cloud
+        id: app-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: trycua
+          repositories: cloud
+          permission-contents: write
+      - name: Send the cua-release-candidate dispatch
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: .github/scripts/request_staging_smoke.sh cua-spaces "$GITHUB_SHA"
+
   # Staging first (CUA-1907): customers get nothing unless the staging smoke
   # (cloud scripts/spaces-staging/smoke.py) is recorded green for this exact
   # commit as the commit status "staging-smoke/cua-spaces". Only a release
@@ -1713,7 +1745,8 @@ jobs:
     name: Staging smoke is green
     if: startsWith(github.ref, 'refs/tags/cua-spaces-v')
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Waits up to 30 minutes for the smoke that request-staging-smoke starts.
+    timeout-minutes: 40
     defaults:
       run:
         working-directory: .
@@ -1727,6 +1760,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SKIP_STAGING_GATE: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_staging_gate }}
           SKIP_REASON: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_staging_reason || '' }}
+          WAIT_MINUTES: "30"
         run: .github/scripts/require_staging_smoke.sh cua-spaces "$GITHUB_SHA"
 
   verify-release:

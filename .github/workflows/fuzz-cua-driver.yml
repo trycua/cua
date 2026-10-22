@@ -40,6 +40,7 @@ env:
 
 jobs:
   fuzz:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: ${{ matrix.target }}
     runs-on: ubuntu-latest
     timeout-minutes: 45

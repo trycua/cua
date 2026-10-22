@@ -25,6 +25,7 @@ env:
 
 jobs:
   windows:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Windows x64 install, launch, uninstall
     runs-on: windows-latest
     timeout-minutes: 20
@@ -115,6 +116,7 @@ jobs:
           if-no-files-found: warn
 
   linux:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Linux x64 deb and AppImage
     runs-on: ubuntu-latest
     timeout-minutes: 25

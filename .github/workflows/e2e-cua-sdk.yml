@@ -58,7 +58,7 @@ env:
 jobs:
   local:
     name: hermetic + container (${{ github.event_name == 'workflow_dispatch' && inputs.lanes || 'hermetic,container' }})
-    if: github.event_name != 'schedule'
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule') }}
     runs-on: ubuntu-24.04
     # Run 37562962482 exhausted 180 minutes during cold browser compilation,
     # before image preparation or the suite. Allow the hosted runner's full

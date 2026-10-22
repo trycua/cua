@@ -46,6 +46,7 @@ env:
 
 jobs:
   frontend:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: vitest + typecheck
     runs-on: ubuntu-24.04
     steps:

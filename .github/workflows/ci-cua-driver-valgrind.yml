@@ -33,6 +33,7 @@ env:
 
 jobs:
   memcheck:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Driver server E2E Memcheck
     # Memcheck results depend on the image's valgrind/glibc pairing, so pin
     # the runner instead of tracking ubuntu-latest migrations.

@@ -50,6 +50,7 @@ env:
 
 jobs:
   rust:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: providers against their API mocks
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -83,6 +84,7 @@ jobs:
           cargo check --locked -p cua-cli --features byoc
 
   modal-helper:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: cua-modal-helper (Modal's Go SDK)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -103,6 +105,7 @@ jobs:
           go build -o /dev/null .
 
   matrix:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: support matrix (recorded doctor reports)
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -116,6 +119,7 @@ jobs:
           python3 contrib_matrix.py check
 
   e2e:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: cua-bench and docs on --on daytona (mocks)
     runs-on: ubuntu-latest
     timeout-minutes: 60

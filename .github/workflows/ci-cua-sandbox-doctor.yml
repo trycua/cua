@@ -44,6 +44,7 @@ env:
 
 jobs:
   doctor:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Image doctor (overlaid cua-spacesd and cua-driver)
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -88,6 +89,7 @@ jobs:
             PY
 
   stale:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: The bundled builds are reported stale
     runs-on: ubuntu-latest
     timeout-minutes: 45

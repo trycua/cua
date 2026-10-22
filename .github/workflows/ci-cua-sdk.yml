@@ -53,6 +53,7 @@ env:
 
 jobs:
   rust:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: rust (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
@@ -153,6 +154,7 @@ jobs:
   # (a path dependency without a version, a file embedded from outside the
   # crate, a dependency on an unpublished crate).
   crates-dry-run:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: crates.io dry run
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -173,6 +175,7 @@ jobs:
   # cua-spacesd server core in process. A standalone workspace so libs/cua
   # never depends on the driver workspace (see the boundary check above).
   spaces-e2e:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: spaces e2e (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
@@ -207,6 +210,7 @@ jobs:
           CUA_ENV_TEST_SANDBOX: "1"
 
   bindings:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: bindings drift (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
@@ -241,6 +245,7 @@ jobs:
           cargo run --locked -q -p cua-spaces --bin cua-spaces-control-fixtures -- --check
 
   kotlin:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     # The generated binding must compile (an exported `close` once clashed
     # with AutoCloseable.close; uniffi.toml renames such methods).
     name: kotlin compile
@@ -253,6 +258,7 @@ jobs:
         run: gradle --no-daemon -p libs/cua/kotlin compileKotlin
 
   python:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: python smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     # A cold Windows run builds cua-sdk (release), the fixtures and the CLI:
@@ -296,6 +302,7 @@ jobs:
           uv run --no-project --isolated --python 3.12 --with pytest --with "$WHEEL" pytest -q -p no:cacheprovider tests
 
   node:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: node smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     # A cold macOS run (release cua-sdk, fixtures, both CLIs) passed 45
@@ -334,6 +341,7 @@ jobs:
         run: npm --prefix typescript test
 
   browser:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: browser (wasm32) build + smoke
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -370,7 +378,7 @@ jobs:
 
   swift:
     name: swift smoke (macOS)
-    if: ${{ github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-please--') || contains(github.event.pull_request.labels.*.name, 'ci:full') }}
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-please--') || contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
     runs-on: macos-26
     # Cold, the release cua-sdk build alone nears 45 minutes on macos-26.
     timeout-minutes: 90

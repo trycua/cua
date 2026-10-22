@@ -52,6 +52,7 @@ env:
 
 jobs:
   unit:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Rust macOS unit
     runs-on: macos-latest
     timeout-minutes: 30

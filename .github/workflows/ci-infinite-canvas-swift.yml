@@ -35,6 +35,7 @@ env:
 
 jobs:
   swift:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: infinite-canvas-swift (swift test)
     runs-on: macos-26
     timeout-minutes: 60

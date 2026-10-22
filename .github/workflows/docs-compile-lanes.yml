@@ -37,6 +37,7 @@ env:
 
 jobs:
   swift:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: swift blocks
     runs-on: macos-14
     timeout-minutes: 30
@@ -50,6 +51,7 @@ jobs:
         run: python3 tests/e2e/cua-sdk/docs/compile_lane.py --lane swift
 
   kotlin:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: kotlin blocks
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -63,6 +65,7 @@ jobs:
         run: python3 tests/e2e/cua-sdk/docs/compile_lane.py --lane kotlin
 
   rust:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: rust blocks
     runs-on: ubuntu-latest
     timeout-minutes: 40

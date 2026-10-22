@@ -47,6 +47,7 @@ env:
 
 jobs:
   core:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: app core (Rust) + FFI mirror gate
     runs-on: ubuntu-24.04
     defaults:

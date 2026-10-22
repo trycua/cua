@@ -143,12 +143,17 @@ async fn remote_sign_in_and_retry_keep_only_the_machine_credentials() {
     ] {
         let o = setup(&h, &args).await;
         assert_eq!(o.code, 2, "{o:?}");
-        assert!(
-            o.stdout.is_empty(),
-            "errors stay on stderr even with --json: {o:?}"
-        );
-        assert!(o.stderr.contains("host setup failed at download:"), "{o:?}");
-        assert!(o.stderr.contains("does not exist"), "{o:?}");
+        // With --json the error is one JSON object on stdout; the sign-in
+        // prompt still goes to stderr.
+        if args.contains(&"--json") {
+            let msg = o.json()["error"]["message"].as_str().unwrap().to_string();
+            assert!(msg.contains("host setup failed at download:"), "{o:?}");
+            assert!(msg.contains("does not exist"), "{o:?}");
+        } else {
+            assert!(o.stdout.is_empty(), "{o:?}");
+            assert!(o.stderr.contains("host setup failed at download:"), "{o:?}");
+            assert!(o.stderr.contains("does not exist"), "{o:?}");
+        }
         assert!(o.stderr.contains(&format!("{}/verify", oidc.url)), "{o:?}");
         assert!(o.stderr.contains("ABCD-EFGH"), "{o:?}");
         assert!(
@@ -178,9 +183,9 @@ async fn remote_refusals_stop_at_token_without_registering() {
         let h = home(&oidc, &relay);
         let o = setup(&h, &["--remote", "--json"]).await;
         assert_eq!(o.code, 6, "{o:?}");
-        assert!(o.stdout.is_empty(), "{o:?}");
-        assert!(o.stderr.contains("host setup failed at token:"), "{o:?}");
-        assert!(o.stderr.contains(refusal), "{o:?}");
+        let msg = o.json()["error"]["message"].as_str().unwrap().to_string();
+        assert!(msg.contains("host setup failed at token:"), "{o:?}");
+        assert!(msg.contains(refusal), "{o:?}");
         assert!(relay.requests().is_empty());
         no_account_state(&h);
     }

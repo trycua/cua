@@ -300,7 +300,7 @@ async fn status_and_whoami_say_logged_in_to_cua_not_run_cua_ai() {
 async fn removed_cloud_commands_fail_with_the_ended_message() {
     let h = Home::new();
     // The error as every command prints it (exit 4, "not supported").
-    let ended = format!("cua: unsupported: {}\n", cua_sandbox_core::CLOUD_ENDED);
+    let ended = "error: Cua Cloud has ended\nfix: use a local sandbox or your own computer; see https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended\n".to_string();
     let families: [(&str, &[&[&str]]); 6] = [
         (
             "fleet",
@@ -353,8 +353,16 @@ async fn removed_cloud_commands_fail_with_the_ended_message() {
             full.extend_from_slice(args);
             let o = h.run(&full).await;
             assert_eq!(o.code, 4, "{family} {args:?}: {o:?}");
-            assert!(o.stdout.is_empty(), "{family} {args:?}: {o:?}");
-            assert_eq!(o.stderr, ended, "{family} {args:?}: {o:?}");
+            assert!(
+                args.contains(&"--json") || o.stdout.is_empty(),
+                "{family} {args:?}: {o:?}"
+            );
+            if args.contains(&"--json") {
+                assert!(o.stderr.is_empty(), "{family} {args:?}: {o:?}");
+                assert_eq!(o.json()["error"]["message"], "Cua Cloud has ended");
+            } else {
+                assert_eq!(o.stderr, ended, "{family} {args:?}: {o:?}");
+            }
         }
     }
 }

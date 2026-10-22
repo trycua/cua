@@ -177,7 +177,7 @@ pub enum HostCmd {
         #[arg(long, hide = true)]
         relay: Option<String>,
         /// Do not ask for confirmation.
-        #[arg(long)]
+        #[arg(long, short = 'y', visible_alias = "force", short_alias = 'f')]
         yes: bool,
     },
     /// Stop sharing a relay computer with accounts; their open connections
@@ -204,7 +204,7 @@ pub enum HostCmd {
     Remove {
         /// Skip the confirmation prompt. Required when there is no terminal
         /// to ask on (scripts, agents): without it nothing is removed.
-        #[arg(long, short)]
+        #[arg(long, short, visible_alias = "yes", short_alias = 'y')]
         force: bool,
         /// For an uninstall of Cua Spaces: turns off the Spaces this computer
         /// provides and takes them off the relay too, instead of refusing
@@ -343,7 +343,7 @@ Examples:
         /// Space id or name.
         space: String,
         /// Skip the confirmation (required without a terminal).
-        #[arg(long, short)]
+        #[arg(long, short, visible_alias = "yes", short_alias = 'y')]
         force: bool,
     },
     /// Turn a Space off: a local container or QEMU VM is suspended (its
@@ -405,7 +405,7 @@ Examples:
         /// your password on this computer; without a terminal, `--yes`
         /// says someone will answer there (otherwise the command fails
         /// at once instead of waiting for a prompt nobody sees).
-        #[arg(long, short = 'y')]
+        #[arg(long, short = 'y', visible_alias = "force", short_alias = 'f')]
         yes: bool,
     },
     /// Stop sharing a Space with one account at once, or with everyone.
@@ -793,17 +793,19 @@ pub async fn run_spaces_sdk(
                     })
                 })
                 .collect();
-            use std::io::IsTerminal as _;
             // What each create is doing, on one updating line of the
-            // terminal (never in --json output).
-            let show = !json && std::io::stderr().is_terminal() && count == 1;
-            let steps = Arc::new(crate::util::StepLines::new(
-                crate::util::CreateWords::for_image(
-                    image.as_deref().unwrap_or_default(),
-                    kind.as_deref().unwrap_or_default(),
-                    true,
-                ),
-            ));
+            // terminal (never in --json output or with -q).
+            let show = crate::diag::show_steps(json) && count == 1;
+            let words = crate::util::CreateWords::for_image(
+                image.as_deref().unwrap_or_default(),
+                kind.as_deref().unwrap_or_default(),
+                true,
+            );
+            let steps = if show {
+                crate::util::StepLines::new(words)
+            } else {
+                Arc::new(crate::util::StepLines::bare(words))
+            };
             let creates = names.into_iter().enumerate().map(|(i, n)| {
                 let options = one(i as u32 + 1, n);
                 let spaces = spaces.clone();
@@ -844,7 +846,7 @@ pub async fn run_spaces_sdk(
             };
             crate::util::exit_on_ctrl_c();
             if show {
-                steps.finish();
+                steps.finish(results.iter().all(Result::is_ok));
             }
             let mut failed = 0;
             let mut rows = Vec::new();

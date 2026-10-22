@@ -318,9 +318,8 @@ fn helper_missing(at: Option<&Path>) -> Error {
     Error::Unsupported {
         provider: cua_sandbox_core::ProviderKind::Contrib,
         op: format!(
-            "modal: the Modal provider runs Modal's official Go SDK through {HELPER}{}; build it \
-             with `go build` in libs/cua/crates/cua-contrib/modal-helper and put it next to cua, \
-             on PATH, or in CUA_MODAL_HELPER",
+            "modal: the Modal helper ({HELPER}) is missing from this install{}; reinstall Cua, or \
+             point CUA_MODAL_HELPER at it",
             at.map(|p| format!(" (not found at {})", p.display()))
                 .unwrap_or_default()
         ),

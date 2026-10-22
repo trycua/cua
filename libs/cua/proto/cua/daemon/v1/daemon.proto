@@ -72,6 +72,9 @@ enum DaemonErrorReason {
   // call Cua made there: a missing permission, a quota, a region without
   // the machine type. The message names the cloud's own error.
   DAEMON_ERROR_REASON_CLOUD = 24;
+  // A sandbox with that name already exists, so the create did not touch
+  // it. The message names the sandbox; delete it first or pick another name.
+  DAEMON_ERROR_REASON_ALREADY_EXISTS = 25;
   // Removed with Cua Cloud (Fleets), which ended on 18 Oct 2026: the Fleet
   // API failure, a named pool's template mismatch, claim secrets that never
   // arrived, Fleet's admission refusal and the cloud credit refusal. Their

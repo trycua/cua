@@ -227,7 +227,11 @@ async fn low_disk_guard_fails_typed_with_a_prune_hint() {
         "stdout:\n{}\nstderr:\n{}",
         out.stdout, out.stderr
     );
-    assert!(out.stderr.contains("insufficient disk"), "{}", out.stderr);
+    assert!(
+        out.stderr.contains("not enough disk space"),
+        "{}",
+        out.stderr
+    );
     assert!(out.stderr.contains("cua cache prune"), "{}", out.stderr);
     // Nothing was created.
     assert!(!h.cua_home().join("vmm/qemu/lowdisk").exists());

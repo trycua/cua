@@ -151,7 +151,12 @@ async fn a_missing_helper_or_tokens_are_named_before_any_call() {
     let missing = provider(Some("/nonexistent/cua-modal-helper".into()), "tok-secret");
     let err = missing.check_configured().unwrap_err();
     assert!(matches!(err, Error::Unsupported { .. }), "{err:?}");
-    assert!(err.to_string().contains("go build"), "{err}");
+    assert!(
+        err.to_string().contains("missing from this install"),
+        "{err}"
+    );
+    // A released binary never names a path in the source tree.
+    assert!(!err.to_string().contains("libs/cua"), "{err}");
 
     let no_tokens = Modal::new(ModalConfig {
         token_id: None,

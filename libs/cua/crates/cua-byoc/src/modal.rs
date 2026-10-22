@@ -335,9 +335,8 @@ fn helper_missing(at: Option<&Path>) -> Error {
         "modal",
         "find the helper",
         format!(
-            "Modal runs through its official Go SDK in {HELPER}{}; build it with `go build` in \
-             libs/cua/crates/cua-contrib/modal-helper and put it next to cua, on PATH, or in \
-             CUA_MODAL_HELPER",
+            "the Modal helper ({HELPER}) is missing from this install{}; reinstall Cua, or point \
+             CUA_MODAL_HELPER at it",
             at.map(|p| format!(" (not at {})", p.display()))
                 .unwrap_or_default()
         ),

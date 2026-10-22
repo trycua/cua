@@ -40,6 +40,10 @@ pub fn cli() -> Value {
         .iter()
         .map(|(code, meaning)| json!({"code": code, "meaning": meaning}))
         .collect();
+    let error_codes: Vec<Value> = crate::ERROR_CODES
+        .iter()
+        .map(|(code, exit, meaning)| json!({"code": code, "exit": exit, "meaning": meaning}))
+        .collect();
     json!({
         "name": root.get_name(),
         "version": cua_sdk::VERSION,
@@ -47,6 +51,7 @@ pub fn cli() -> Value {
         "usage": "cua [OPTIONS] <COMMAND>",
         "global_options": global_options,
         "exit_codes": exit_codes,
+        "error_codes": error_codes,
         "commands": subcommands(&root),
     })
 }

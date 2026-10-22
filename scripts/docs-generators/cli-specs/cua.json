@@ -536,7 +536,10 @@
        "takes_value": false
       },
       {
-       "aliases": [],
+       "aliases": [
+        "force",
+        "-f"
+       ],
        "default_value": false,
        "env": null,
        "help": "Do not ask for confirmation",
@@ -3333,7 +3336,10 @@
      ],
      "flags": [
       {
-       "aliases": [],
+       "aliases": [
+        "yes",
+        "-y"
+       ],
        "default_value": false,
        "env": null,
        "help": "Skip the confirmation prompt. Required when there is no terminal to ask on (scripts, agents): without it nothing is deleted",
@@ -6374,7 +6380,10 @@
      "arguments": [],
      "flags": [
       {
-       "aliases": [],
+       "aliases": [
+        "force",
+        "-f"
+       ],
        "default_value": false,
        "env": null,
        "help": "Do not ask for confirmation",
@@ -6629,7 +6638,10 @@
      "arguments": [],
      "flags": [
       {
-       "aliases": [],
+       "aliases": [
+        "force",
+        "-f"
+       ],
        "default_value": false,
        "env": null,
        "help": "Do not ask for confirmation",
@@ -9614,14 +9626,17 @@
      ],
      "flags": [
       {
-       "aliases": [],
+       "aliases": [
+        "force",
+        "-f"
+       ],
        "default_value": false,
        "env": null,
        "help": "Do not ask for confirmation",
        "hidden": false,
        "name": "yes",
        "repeatable": false,
-       "short_name": null,
+       "short_name": "y",
        "takes_value": false
       }
      ],
@@ -9735,7 +9750,10 @@
      "arguments": [],
      "flags": [
       {
-       "aliases": [],
+       "aliases": [
+        "yes",
+        "-y"
+       ],
        "default_value": false,
        "env": null,
        "help": "Skip the confirmation prompt. Required when there is no terminal to ask on (scripts, agents): without it nothing is removed",
@@ -10154,7 +10172,10 @@
      ],
      "flags": [
       {
-       "aliases": [],
+       "aliases": [
+        "yes",
+        "-y"
+       ],
        "default_value": false,
        "env": null,
        "help": "Skip the confirmation (required without a terminal)",
@@ -10278,7 +10299,10 @@
      ],
      "flags": [
       {
-       "aliases": [],
+       "aliases": [
+        "force",
+        "-f"
+       ],
        "default_value": false,
        "env": null,
        "help": "Confirm without a terminal prompt. Without a daemon the share happens at once. A running daemon still asks with Touch ID or your password on this computer; without a terminal, `--yes` says someone will answer there (otherwise the command fails at once instead of waiting for a prompt nobody sees)",
@@ -10917,14 +10941,17 @@
      ],
      "flags": [
       {
-       "aliases": [],
+       "aliases": [
+        "force",
+        "-f"
+       ],
        "default_value": false,
        "env": null,
        "help": "Do not ask for confirmation",
        "hidden": false,
        "name": "yes",
        "repeatable": false,
-       "short_name": null,
+       "short_name": "y",
        "takes_value": false
       }
      ],
@@ -11072,14 +11099,17 @@
      ],
      "flags": [
       {
-       "aliases": [],
+       "aliases": [
+        "force",
+        "-f"
+       ],
        "default_value": false,
        "env": null,
        "help": "Do not ask for confirmation",
        "hidden": false,
        "name": "yes",
        "repeatable": false,
-       "short_name": null,
+       "short_name": "y",
        "takes_value": false
       }
      ],
@@ -11572,14 +11602,17 @@
      ],
      "flags": [
       {
-       "aliases": [],
+       "aliases": [
+        "force",
+        "-f"
+       ],
        "default_value": false,
        "env": null,
        "help": "Confirm without a prompt",
        "hidden": false,
        "name": "yes",
        "repeatable": false,
-       "short_name": null,
+       "short_name": "y",
        "takes_value": false
       }
      ],
@@ -11686,14 +11719,17 @@
      ],
      "flags": [
       {
-       "aliases": [],
+       "aliases": [
+        "force",
+        "-f"
+       ],
        "default_value": false,
        "env": null,
        "help": "Do not ask for confirmation",
        "hidden": false,
        "name": "yes",
        "repeatable": false,
-       "short_name": null,
+       "short_name": "y",
        "takes_value": false
       }
      ],
@@ -13430,6 +13466,153 @@
    "usage": "cua dump-docs [OPTIONS]"
   }
  ],
+ "error_codes": [
+  {
+   "code": "invalid_argument",
+   "exit": 2,
+   "meaning": "A flag or argument has a value Cua cannot use."
+  },
+  {
+   "code": "already_exists",
+   "exit": 2,
+   "meaning": "A sandbox with that name exists; pick another name or delete it."
+  },
+  {
+   "code": "ambiguous_sandbox",
+   "exit": 2,
+   "meaning": "A bare sandbox name matches more than one location; use `local:NAME`."
+  },
+  {
+   "code": "invalid_placement",
+   "exit": 2,
+   "meaning": "An `--on`, `--kind` or `--runtime` that does not exist or does not fit the image."
+  },
+  {
+   "code": "not_found",
+   "exit": 3,
+   "meaning": "No such sandbox, process, path, forward or session."
+  },
+  {
+   "code": "image_not_found",
+   "exit": 3,
+   "meaning": "No image by that name or reference."
+  },
+  {
+   "code": "image_not_published",
+   "exit": 3,
+   "meaning": "A catalog image CI has not published yet."
+  },
+  {
+   "code": "unsupported",
+   "exit": 4,
+   "meaning": "This provider, image, runtime or build cannot do that."
+  },
+  {
+   "code": "provider_not_configured",
+   "exit": 4,
+   "meaning": "A provider is missing its credentials or helper."
+  },
+  {
+   "code": "host_capability_missing",
+   "exit": 1,
+   "meaning": "This computer lacks something the command needs."
+  },
+  {
+   "code": "capability_missing",
+   "exit": 1,
+   "meaning": "The Space's cua-spacesd lacks a feature the command needs."
+  },
+  {
+   "code": "spacesd_not_available",
+   "exit": 5,
+   "meaning": "No cua-spacesd answered in the sandbox."
+  },
+  {
+   "code": "transport",
+   "exit": 5,
+   "meaning": "Could not reach the daemon or the endpoint."
+  },
+  {
+   "code": "daemon_not_running",
+   "exit": 5,
+   "meaning": "No `cua daemon` is running."
+  },
+  {
+   "code": "network",
+   "exit": 5,
+   "meaning": "The network refused or could not be reached."
+  },
+  {
+   "code": "unauthenticated",
+   "exit": 6,
+   "meaning": "Not signed in, or a missing or wrong token."
+  },
+  {
+   "code": "permission_denied",
+   "exit": 6,
+   "meaning": "The guest or the service denied permission."
+  },
+  {
+   "code": "registry_auth",
+   "exit": 6,
+   "meaning": "An image registry refused the pull."
+  },
+  {
+   "code": "cloud_credentials",
+   "exit": 6,
+   "meaning": "Your cloud account has no credentials or rejected them."
+  },
+  {
+   "code": "cloud",
+   "exit": 6,
+   "meaning": "Your own cloud account refused or failed a call."
+  },
+  {
+   "code": "insufficient_disk",
+   "exit": 7,
+   "meaning": "Not enough free disk space."
+  },
+  {
+   "code": "cancelled",
+   "exit": 130,
+   "meaning": "The command was cancelled (Ctrl-C); what it made was removed."
+  },
+  {
+   "code": "timeout",
+   "exit": 1,
+   "meaning": "A deadline elapsed."
+  },
+  {
+   "code": "runtime",
+   "exit": 1,
+   "meaning": "A local runtime failed."
+  },
+  {
+   "code": "env",
+   "exit": 1,
+   "meaning": "A cua-spacesd call failed."
+  },
+  {
+   "code": "http",
+   "exit": 1,
+   "meaning": "An HTTP call to a service failed."
+  },
+  {
+   "code": "closed",
+   "exit": 1,
+   "meaning": "The object was closed."
+  },
+  {
+   "code": "teleport_refused",
+   "exit": 1,
+   "meaning": "The teleport consent gate refused."
+  },
+  {
+   "code": "internal",
+   "exit": 1,
+   "meaning": "A bug or an I/O failure."
+  }
+ ],
  "exit_codes": [
   {
    "code": 0,
@@ -13441,7 +13624,7 @@
   },
   {
    "code": 2,
-   "meaning": "Invalid argument, or an ambiguous sandbox name (qualify it: `local:NAME`)"
+   "meaning": "Invalid argument, a sandbox name that is taken, or an ambiguous sandbox name (qualify it: `local:NAME`)"
   },
   {
    "code": 3,
@@ -13469,6 +13652,70 @@
   }
  ],
  "global_options": [
+  {
+   "aliases": [],
+   "default_value": false,
+   "env": null,
+   "help": "Show errors only",
+   "hidden": false,
+   "name": "quiet",
+   "repeatable": false,
+   "short_name": "q",
+   "takes_value": false
+  },
+  {
+   "aliases": [],
+   "default_value": false,
+   "env": null,
+   "help": "Show more: -v what Cua chose and did, -vv debug, -vvv everything (`CUA_LOG` takes a `tracing` filter for finer control)",
+   "hidden": false,
+   "name": "verbose",
+   "repeatable": true,
+   "short_name": "v",
+   "takes_value": false
+  },
+  {
+   "aliases": [],
+   "default_value": null,
+   "env": "CUA_LOG_LEVEL",
+   "help": "How much to log: error, warn (the default), info, debug or trace",
+   "hidden": false,
+   "is_optional": true,
+   "multiple_values": false,
+   "name": "log-level",
+   "possible_values": [
+    "error",
+    "warn",
+    "info",
+    "debug",
+    "trace"
+   ],
+   "repeatable": false,
+   "short_name": null,
+   "takes_value": true,
+   "type": "error | warn | info | debug | trace",
+   "value_name": "LEVEL"
+  },
+  {
+   "aliases": [],
+   "default_value": "auto",
+   "env": null,
+   "help": "When to use colour: auto (a terminal, unless NO_COLOR, TERM=dumb or CI is set), always or never",
+   "hidden": false,
+   "is_optional": true,
+   "multiple_values": false,
+   "name": "color",
+   "possible_values": [
+    "auto",
+    "always",
+    "never"
+   ],
+   "repeatable": false,
+   "short_name": null,
+   "takes_value": true,
+   "type": "auto | always | never",
+   "value_name": "WHEN"
+  },
   {
    "aliases": [],
    "default_value": false,

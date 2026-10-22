@@ -549,6 +549,16 @@ impl Runtime {
         }
         let mut o = CreateOptions::new(provider, req.image.clone());
         o.name = req.name.clone().filter(|n| !n.is_empty());
+        // A name that is taken is refused before anything is pulled or
+        // started: creating over it would probe the old sandbox with the new
+        // one's token and report that as an authentication failure.
+        if let Some(name) = &o.name
+            && self.inner.sandboxes.local_name_taken(name).await
+        {
+            return Err(Error::AlreadyExists(format!(
+                "a sandbox named '{name}' already exists"
+            )));
+        }
         if let Some(os) = req.os.filter(|s| !s.is_empty()) {
             o.os = os;
         }

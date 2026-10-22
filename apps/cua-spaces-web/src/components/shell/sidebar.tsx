@@ -159,8 +159,8 @@ export function AccountFooter() {
           </div>
           <div className="min-w-0 flex-1 leading-tight">
             <div className="truncate text-xs" title={footer.text} data-signin-identity="">
-              <span className="text-muted-foreground">Signed in as </span>
-              <span className="font-medium">{identity}</span>
+              <span className="block text-2xs text-muted-foreground">Signed in as </span>
+              <span className="block truncate font-medium">{identity}</span>
             </div>
             {plan?.primary ? (
               // The current plan, always visible; on Free it opens Pro's checkout.
@@ -176,9 +176,7 @@ export function AccountFooter() {
                 {plan.label}
                 {plan.plan === "free" ? " · Upgrade" : ""}
               </button>
-            ) : (
-              <div className="truncate text-2xs text-muted-foreground">Cua account</div>
-            )}
+            ) : null}
           </div>
           {session.fleet.authMode === "user" ? (
             <Tooltip content="Sign out" side="top">

@@ -252,11 +252,18 @@ struct SidebarFooter: View {
                     }
                     .accessibilityElement(children: .combine)
                     .accessibilityIdentifier("sidebar-signin-waiting")
+                    // The code on its own line (it never wraps), then
+                    // Open again and Cancel.
+                    if let code = f.code {
+                        Text("\(f.codeLabel) \(Text(code).font(.callout.monospaced().weight(.semibold)).foregroundStyle(.primary))")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .lineLimit(1)
+                            .fixedSize()
+                            .padding(.leading, 20)
+                    }
                     HStack(spacing: 4) {
-                        if let code = f.code {
-                            Text("\(f.codeLabel) \(Text(code).font(.callout.monospaced().weight(.semibold)))")
-                            Text("\u{b7}")
-                        }
                         if let reopen = f.reopenLabel {
                             Button(reopen) { model.reopenSignIn() }
                                 .buttonStyle(.link)
@@ -269,15 +276,17 @@ struct SidebarFooter: View {
                                 .accessibilityIdentifier("sidebar-signin-cancel")
                         }
                     }
+                    .lineLimit(1)
+                    .fixedSize()
+                    .padding(.leading, 20)
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
                 case .failed:
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Image(systemName: "exclamationmark.triangle")
                             .foregroundStyle(.red)
                         Text(f.text)
-                            .fixedSize(horizontal: false, vertical: true)
+                            .lineLimit(4)
                             .accessibilityIdentifier("sidebar-signin-failed")
                     }
                     HStack(spacing: 8) {
@@ -300,7 +309,18 @@ struct SidebarFooter: View {
                         }
                     }
                     .padding(.leading, 20)
-                case .signedIn, .signedOut:
+                case .signedIn:
+                    // "Signed in as", then the whole address on its own line.
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Signed in as").font(.caption).foregroundStyle(.secondary)
+                        Text(f.identity ?? f.text)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    .help(f.text)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("sidebar-account")
+                case .signedOut:
                     HStack(spacing: 8) {
                         Text(f.text)
                             .lineLimit(1)

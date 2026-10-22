@@ -2892,6 +2892,7 @@ name = "cua-spaces-app-core"
 version = "0.7.0"
 dependencies = [
  "async-trait",
+ "cua-agent-setup",
  "cua-create-failure",
  "cua-home",
  "cua-keyvault",

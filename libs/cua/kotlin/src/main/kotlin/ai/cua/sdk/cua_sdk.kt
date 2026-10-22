@@ -881,6 +881,8 @@ external fun uniffi_cua_sdk_checksum_method_agentsetup_set_onboarding_declined(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_agentsetup_setup_cua_driver(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_agentsetup_sign_in(
+): Short
 external fun uniffi_cua_sdk_checksum_method_agentsetup_skills(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_agentsetup_status(
@@ -1638,6 +1640,8 @@ external fun uniffi_cua_sdk_fn_method_agentsetup_set_onboarding_declined(`ptr`: 
 ): Unit
 external fun uniffi_cua_sdk_fn_method_agentsetup_setup_cua_driver(`ptr`: Long,`agents`: RustBuffer.ByValue,`command`: RustBuffer.ByValue,`skills`: Byte,`mcp`: Byte,
 ): Long
+external fun uniffi_cua_sdk_fn_method_agentsetup_sign_in(`ptr`: Long,`agent`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Unit
 external fun uniffi_cua_sdk_fn_method_agentsetup_skills(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 external fun uniffi_cua_sdk_fn_method_agentsetup_status(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
@@ -2888,6 +2892,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_agentsetup_setup_cua_driver() != 33764.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_agentsetup_sign_in() != 10179.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_agentsetup_skills() != 53692.toShort()) {
@@ -5125,6 +5132,13 @@ public interface AgentSetupInterface {
     suspend fun `setupCuaDriver`(`agents`: List<kotlin.String>, `command`: kotlin.String?, `skills`: kotlin.Boolean, `mcp`: kotlin.Boolean): List<AgentSetupOutcome>
 
     /**
+     * Starts `agent`'s own sign-in on this computer (`codex login`: the
+     * browser opens). Returns once it is running; `detect` reports
+     * `signed_in` when it is done. cua never reads or copies the sign-in.
+     */
+    fun `signIn`(`agent`: kotlin.String)
+
+    /**
      * The skills bundled with this SDK.
      */
     fun `skills`(): List<BundledSkill>
@@ -5406,6 +5420,24 @@ open class AgentSetup: Disposable, AutoCloseable, AgentSetupInterface
         CuaException.ErrorHandler,
     )
     }
+
+
+    /**
+     * Starts `agent`'s own sign-in on this computer (`codex login`: the
+     * browser opens). Returns once it is running; `detect` reports
+     * `signed_in` when it is done. cua never reads or copies the sign-in.
+     */
+    @Throws(CuaException::class)override fun `signIn`(`agent`: kotlin.String)
+        =
+    callWithHandle {
+    uniffiRustCallWithError(CuaException) { _status ->
+    UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_sign_in(
+        it,
+        FfiConverterString.lower(`agent`),_status)
+}
+    }
+
+
 
 
     /**
@@ -23106,6 +23138,17 @@ data class AgentInfo (
      * What could not be verified from the agent's official docs.
      */
     var `unverified`: kotlin.String?
+    ,
+    /**
+     * The account the agent signs in with on its own (`ChatGPT` for
+     * Codex), when cua can see that sign-in.
+     */
+    var `signIn`: kotlin.String? = null
+    ,
+    /**
+     * That sign-in is on this computer.
+     */
+    var `signedIn`: kotlin.Boolean = false
 
 ){
 
@@ -23136,6 +23179,8 @@ public object FfiConverterTypeAgentInfo: FfiConverterRustBuffer<AgentInfo> {
             FfiConverterSequenceString.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterBoolean.read(buf),
         )
     }
 
@@ -23153,7 +23198,9 @@ public object FfiConverterTypeAgentInfo: FfiConverterRustBuffer<AgentInfo> {
             FfiConverterSequenceString.allocationSize(value.`skillsInstalled`) +
             FfiConverterSequenceString.allocationSize(value.`skillsOutdated`) +
             FfiConverterOptionalString.allocationSize(value.`error`) +
-            FfiConverterOptionalString.allocationSize(value.`unverified`)
+            FfiConverterOptionalString.allocationSize(value.`unverified`) +
+            FfiConverterOptionalString.allocationSize(value.`signIn`) +
+            FfiConverterBoolean.allocationSize(value.`signedIn`)
     )
 
     override fun write(value: AgentInfo, buf: ByteBuffer) {
@@ -23171,6 +23218,8 @@ public object FfiConverterTypeAgentInfo: FfiConverterRustBuffer<AgentInfo> {
             FfiConverterSequenceString.write(value.`skillsOutdated`, buf)
             FfiConverterOptionalString.write(value.`error`, buf)
             FfiConverterOptionalString.write(value.`unverified`, buf)
+            FfiConverterOptionalString.write(value.`signIn`, buf)
+            FfiConverterBoolean.write(value.`signedIn`, buf)
     }
 }
 

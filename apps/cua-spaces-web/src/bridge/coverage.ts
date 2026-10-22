@@ -124,6 +124,7 @@ export const HOST_COVERAGE = {
   "agents.resume": { webkit: { methods: ["agents.resume"] }, tauri: ["agents_tool"] },
   "agents.setup": { webkit: { methods: ["agents.setup"] }, tauri: ["agent_setup_detect"] },
   "agents.configure": { webkit: { methods: ["agents.configure"] }, tauri: ["agent_setup_configure"] },
+  "agents.signIn": { webkit: { methods: ["agents.signIn"] }, tauri: [], unsupported: { tauri: "no command starts an agent's own sign-in" } },
   ...AGENT_DETAIL_COVERAGE,
   ...NEW_SPACE_COVERAGE,
   ...TELEPORT_COVERAGE,

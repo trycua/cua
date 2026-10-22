@@ -603,6 +603,8 @@ const AgentSetupRowShape = ref(
     skillsTotal: num,
     mcpConfig: nullable(str),
     skillsDir: nullable(str),
+    signIn: nullable(str),
+    signedIn: bool,
   }),
 );
 
@@ -868,6 +870,7 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "agents.resume": nul,
   "agents.setup": agentSetupRows,
   "agents.configure": agentSetupRows,
+  "agents.signIn": agentSetupRows,
   "agents.detail": AgentDetailShape,
   "agents.readFile": AgentOpenFileShape,
   "agents.restoreFile": nul,
@@ -1307,6 +1310,7 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "agents.resume": any,
   "agents.setup": agentSetupRows,
   "agents.configure": agentSetupRows,
+  "agents.signIn": agentSetupRows,
   "agents.setupDriver": OP_SHAPES["agents.setupDriver"],
   "agents.detail": AgentDetailShape,
   "agents.readFile": AgentOpenFileShape,

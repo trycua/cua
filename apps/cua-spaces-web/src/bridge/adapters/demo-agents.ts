@@ -41,6 +41,9 @@ export function demoAgentSetup(): AgentSetupRow[] {
     skillsTotal: 6,
     mcpConfig,
     skillsDir,
+    // Codex signs in with ChatGPT on its own (`codex login`); the demo isn't signed in yet.
+    signIn: agent === "codex" ? "ChatGPT" : null,
+    signedIn: false,
   });
   return [
     row("claude-code", "Claude Code", true, true, "~/.claude.json", "~/.claude/skills"),

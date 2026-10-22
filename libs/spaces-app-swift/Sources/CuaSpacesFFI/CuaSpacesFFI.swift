@@ -4781,6 +4781,14 @@ public struct AppAgentSettingsRow: Equatable, Hashable {
      * Skills directory.
      */
     public var skillsDir: String?
+    /**
+     * The account it signs in with on its own (`ChatGPT`), when known.
+     */
+    public var signIn: String?
+    /**
+     * That sign-in is on this computer.
+     */
+    public var signedIn: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -4811,7 +4819,13 @@ public struct AppAgentSettingsRow: Equatable, Hashable {
          */mcpConfig: String?,
         /**
          * Skills directory.
-         */skillsDir: String?) {
+         */skillsDir: String?,
+        /**
+         * The account it signs in with on its own (`ChatGPT`), when known.
+         */signIn: String?,
+        /**
+         * That sign-in is on this computer.
+         */signedIn: Bool) {
         self.agent = agent
         self.name = name
         self.installed = installed
@@ -4821,6 +4835,8 @@ public struct AppAgentSettingsRow: Equatable, Hashable {
         self.skillsTotal = skillsTotal
         self.mcpConfig = mcpConfig
         self.skillsDir = skillsDir
+        self.signIn = signIn
+        self.signedIn = signedIn
     }
 
 
@@ -4847,7 +4863,9 @@ public struct FfiConverterTypeAppAgentSettingsRow: FfiConverterRustBuffer {
                 skillsInstalled: FfiConverterUInt32.read(from: &buf),
                 skillsTotal: FfiConverterUInt32.read(from: &buf),
                 mcpConfig: FfiConverterOptionString.read(from: &buf),
-                skillsDir: FfiConverterOptionString.read(from: &buf)
+                skillsDir: FfiConverterOptionString.read(from: &buf),
+                signIn: FfiConverterOptionString.read(from: &buf),
+                signedIn: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -4861,6 +4879,8 @@ public struct FfiConverterTypeAppAgentSettingsRow: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.skillsTotal, into: &buf)
         FfiConverterOptionString.write(value.mcpConfig, into: &buf)
         FfiConverterOptionString.write(value.skillsDir, into: &buf)
+        FfiConverterOptionString.write(value.signIn, into: &buf)
+        FfiConverterBool.write(value.signedIn, into: &buf)
     }
 }
 
@@ -5013,6 +5033,15 @@ public struct AppAgentSetupStatus: Equatable, Hashable {
      * Problem reading its config.
      */
     public var error: String?
+    /**
+     * The account it signs in with on its own (`ChatGPT` for Codex), when
+     * the setup can see that sign-in.
+     */
+    public var signIn: String?
+    /**
+     * That sign-in is on this computer.
+     */
+    public var signedIn: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -5043,7 +5072,14 @@ public struct AppAgentSetupStatus: Equatable, Hashable {
          */skillsOutdated: [String],
         /**
          * Problem reading its config.
-         */error: String?) {
+         */error: String?,
+        /**
+         * The account it signs in with on its own (`ChatGPT` for Codex), when
+         * the setup can see that sign-in.
+         */signIn: String?,
+        /**
+         * That sign-in is on this computer.
+         */signedIn: Bool) {
         self.id = id
         self.name = name
         self.installed = installed
@@ -5053,6 +5089,8 @@ public struct AppAgentSetupStatus: Equatable, Hashable {
         self.skillsInstalled = skillsInstalled
         self.skillsOutdated = skillsOutdated
         self.error = error
+        self.signIn = signIn
+        self.signedIn = signedIn
     }
 
 
@@ -5079,7 +5117,9 @@ public struct FfiConverterTypeAppAgentSetupStatus: FfiConverterRustBuffer {
                 cuaConfigured: FfiConverterBool.read(from: &buf),
                 skillsInstalled: FfiConverterSequenceString.read(from: &buf),
                 skillsOutdated: FfiConverterSequenceString.read(from: &buf),
-                error: FfiConverterOptionString.read(from: &buf)
+                error: FfiConverterOptionString.read(from: &buf),
+                signIn: FfiConverterOptionString.read(from: &buf),
+                signedIn: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -5093,6 +5133,8 @@ public struct FfiConverterTypeAppAgentSetupStatus: FfiConverterRustBuffer {
         FfiConverterSequenceString.write(value.skillsInstalled, into: &buf)
         FfiConverterSequenceString.write(value.skillsOutdated, into: &buf)
         FfiConverterOptionString.write(value.error, into: &buf)
+        FfiConverterOptionString.write(value.signIn, into: &buf)
+        FfiConverterBool.write(value.signedIn, into: &buf)
     }
 }
 

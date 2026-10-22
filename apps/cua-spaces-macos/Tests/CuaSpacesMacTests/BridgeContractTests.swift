@@ -211,7 +211,7 @@ struct BridgeContractTests {
             ("spaces.open", ["id": space]),
             ("machines.list", [:]), ("host.status", [:]),
             ("agents.list", [:]), ("agents.runs", ["spaceId": "local:aurora"]), ("agents.setup", [:]),
-            ("agents.configure", ["agents": ["claude-code"]]),
+            ("agents.configure", ["agents": ["claude-code"]]), ("agents.signIn", ["agent": "codex"]),
             ("agents.detail", ["name": "ada"]), ("agents.readFile", ["path": "agents/ada/hermes/MEMORY.md"]),
             ("agents.restoreFile", ["path": "agents/ada/hermes/MEMORY.md", "version": "v1"]),
             ("agents.addRoutine", ["agent": "ada", "title": "Inbox", "prompt": "Sort my inbox", "everyMinutes": NSNull(),

@@ -623,6 +623,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_agentsetup_setup_cua_driver() != 33764:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_agentsetup_sign_in() != 10179:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_agentsetup_skills() != 53692:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_agentsetup_status() != 46185:
@@ -2337,6 +2339,12 @@ _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_setup_cua_driver.argtypes = (
     ctypes.c_int8,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_setup_cua_driver.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_sign_in.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_sign_in.restype = None
 _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_skills.argtypes = (
     ctypes.c_uint64,
     ctypes.POINTER(_UniffiRustCallStatus),
@@ -4384,6 +4392,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_set_onboarding_declined.res
 _UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_setup_cua_driver.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_setup_cua_driver.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_sign_in.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_sign_in.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_skills.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_skills.restype = ctypes.c_uint16
@@ -6092,7 +6103,7 @@ class AgentInfo:
     """
     One AI coding agent and what cua configured for it.
 """
-    def __init__(self, *, id:str, name:str, installed:bool, evidence:typing.List[str], skills_dir:typing.Optional[str], mcp_config:typing.Optional[str], mcp_format:typing.Optional[str], cua_configured:bool, cua_managed:bool, cua_driver_configured:bool, skills_installed:typing.List[str], skills_outdated:typing.List[str], error:typing.Optional[str], unverified:typing.Optional[str]):
+    def __init__(self, *, id:str, name:str, installed:bool, evidence:typing.List[str], skills_dir:typing.Optional[str], mcp_config:typing.Optional[str], mcp_format:typing.Optional[str], cua_configured:bool, cua_managed:bool, cua_driver_configured:bool, skills_installed:typing.List[str], skills_outdated:typing.List[str], error:typing.Optional[str], unverified:typing.Optional[str], sign_in:typing.Optional[str] = _DEFAULT, signed_in:bool = False):
         self.id = id
         self.name = name
         self.installed = installed
@@ -6107,12 +6118,17 @@ class AgentInfo:
         self.skills_outdated = skills_outdated
         self.error = error
         self.unverified = unverified
+        if sign_in is _DEFAULT:
+            self.sign_in = None
+        else:
+            self.sign_in = sign_in
+        self.signed_in = signed_in
 
 
 
 
     def __str__(self):
-        return "AgentInfo(id={}, name={}, installed={}, evidence={}, skills_dir={}, mcp_config={}, mcp_format={}, cua_configured={}, cua_managed={}, cua_driver_configured={}, skills_installed={}, skills_outdated={}, error={}, unverified={})".format(self.id, self.name, self.installed, self.evidence, self.skills_dir, self.mcp_config, self.mcp_format, self.cua_configured, self.cua_managed, self.cua_driver_configured, self.skills_installed, self.skills_outdated, self.error, self.unverified)
+        return "AgentInfo(id={}, name={}, installed={}, evidence={}, skills_dir={}, mcp_config={}, mcp_format={}, cua_configured={}, cua_managed={}, cua_driver_configured={}, skills_installed={}, skills_outdated={}, error={}, unverified={}, sign_in={}, signed_in={})".format(self.id, self.name, self.installed, self.evidence, self.skills_dir, self.mcp_config, self.mcp_format, self.cua_configured, self.cua_managed, self.cua_driver_configured, self.skills_installed, self.skills_outdated, self.error, self.unverified, self.sign_in, self.signed_in)
     def __eq__(self, other):
         if self.id != other.id:
             return False
@@ -6142,6 +6158,10 @@ class AgentInfo:
             return False
         if self.unverified != other.unverified:
             return False
+        if self.sign_in != other.sign_in:
+            return False
+        if self.signed_in != other.signed_in:
+            return False
         return True
 
 class _UniffiFfiConverterTypeAgentInfo(_UniffiConverterRustBuffer):
@@ -6162,6 +6182,8 @@ class _UniffiFfiConverterTypeAgentInfo(_UniffiConverterRustBuffer):
             skills_outdated=_UniffiFfiConverterSequenceString.read(buf),
             error=_UniffiFfiConverterOptionalString.read(buf),
             unverified=_UniffiFfiConverterOptionalString.read(buf),
+            sign_in=_UniffiFfiConverterOptionalString.read(buf),
+            signed_in=_UniffiFfiConverterBoolean.read(buf),
         )
 
     @staticmethod
@@ -6180,6 +6202,8 @@ class _UniffiFfiConverterTypeAgentInfo(_UniffiConverterRustBuffer):
         _UniffiFfiConverterSequenceString.check_lower(value.skills_outdated)
         _UniffiFfiConverterOptionalString.check_lower(value.error)
         _UniffiFfiConverterOptionalString.check_lower(value.unverified)
+        _UniffiFfiConverterOptionalString.check_lower(value.sign_in)
+        _UniffiFfiConverterBoolean.check_lower(value.signed_in)
 
     @staticmethod
     def write(value, buf):
@@ -6197,6 +6221,8 @@ class _UniffiFfiConverterTypeAgentInfo(_UniffiConverterRustBuffer):
         _UniffiFfiConverterSequenceString.write(value.skills_outdated, buf)
         _UniffiFfiConverterOptionalString.write(value.error, buf)
         _UniffiFfiConverterOptionalString.write(value.unverified, buf)
+        _UniffiFfiConverterOptionalString.write(value.sign_in, buf)
+        _UniffiFfiConverterBoolean.write(value.signed_in, buf)
 
 class _UniffiFfiConverterMapStringString(_UniffiConverterRustBuffer):
     @classmethod
@@ -22536,6 +22562,13 @@ class AgentSetupProtocol(typing.Protocol):
         `cua agents setup --cua-driver` and the installers' `cua-driver` item.
 """
         raise NotImplementedError
+    def sign_in(self, agent: str) -> None:
+        """
+        Starts `agent`'s own sign-in on this computer (`codex login`: the
+        browser opens). Returns once it is running; `detect` reports
+        `signed_in` when it is done. cua never reads or copies the sign-in.
+"""
+        raise NotImplementedError
     def skills(self, ) -> typing.List[BundledSkill]:
         """
         The skills bundled with this SDK.
@@ -22761,6 +22794,26 @@ class AgentSetup(AgentSetupProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    def sign_in(self, agent: str) -> None:
+        """
+        Starts `agent`'s own sign-in on this computer (`codex login`: the
+        browser opens). Returns once it is running; `detect` reports
+        `signed_in` when it is done. cua never reads or copies the sign-in.
+"""
+
+        _UniffiFfiConverterString.check_lower(agent)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(agent),
+        )
+        _uniffi_lift_return = lambda val: None
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_sign_in,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
     def skills(self, ) -> typing.List[BundledSkill]:
         """
         The skills bundled with this SDK.

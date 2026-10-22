@@ -38,5 +38,7 @@ tokio = { workspace = true, optional = true, features = ["sync"] }
 # Wire-drift tests: the core's Keyvault mirror types decode the broker's
 # real serde output.
 cua-keyvault.workspace = true
+# Drift guard: the first run lists every agent the setup's registry knows.
+cua-agent-setup.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tempfile.workspace = true

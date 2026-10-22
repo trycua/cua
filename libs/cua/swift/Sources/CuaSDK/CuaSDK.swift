@@ -1024,6 +1024,13 @@ public protocol AgentSetupProtocol: AnyObject, Sendable {
     func setupCuaDriver(agents: [String], command: String?, skills: Bool, mcp: Bool) async throws  -> [AgentSetupOutcome]
 
     /**
+     * Starts `agent`'s own sign-in on this computer (`codex login`: the
+     * browser opens). Returns once it is running; `detect` reports
+     * `signed_in` when it is done. cua never reads or copies the sign-in.
+     */
+    func signIn(agent: String) throws
+
+    /**
      * The skills bundled with this SDK.
      */
     func skills()  -> [BundledSkill]
@@ -1223,6 +1230,19 @@ open func setupCuaDriver(agents: [String], command: String?, skills: Bool, mcp: 
             liftFunc: FfiConverterSequenceTypeAgentSetupOutcome.lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
+}
+
+    /**
+     * Starts `agent`'s own sign-in on this computer (`codex login`: the
+     * browser opens). Returns once it is running; `detect` reports
+     * `signed_in` when it is done. cua never reads or copies the sign-in.
+     */
+open func signIn(agent: String)throws   {try rustCallWithError(FfiConverterTypeCuaError_lift) {
+    uniffi_cua_sdk_fn_method_agentsetup_sign_in(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(agent),$0
+    )
+}
 }
 
     /**
@@ -13911,6 +13931,15 @@ public struct AgentInfo: Equatable, Hashable {
      * What could not be verified from the agent's official docs.
      */
     public var unverified: String?
+    /**
+     * The account the agent signs in with on its own (`ChatGPT` for
+     * Codex), when cua can see that sign-in.
+     */
+    public var signIn: String?
+    /**
+     * That sign-in is on this computer.
+     */
+    public var signedIn: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -13956,7 +13985,14 @@ public struct AgentInfo: Equatable, Hashable {
          */error: String?,
         /**
          * What could not be verified from the agent's official docs.
-         */unverified: String?) {
+         */unverified: String?,
+        /**
+         * The account the agent signs in with on its own (`ChatGPT` for
+         * Codex), when cua can see that sign-in.
+         */signIn: String? = nil,
+        /**
+         * That sign-in is on this computer.
+         */signedIn: Bool = false) {
         self.id = id
         self.name = name
         self.installed = installed
@@ -13971,6 +14007,8 @@ public struct AgentInfo: Equatable, Hashable {
         self.skillsOutdated = skillsOutdated
         self.error = error
         self.unverified = unverified
+        self.signIn = signIn
+        self.signedIn = signedIn
     }
 
 
@@ -14002,7 +14040,9 @@ public struct FfiConverterTypeAgentInfo: FfiConverterRustBuffer {
                 skillsInstalled: FfiConverterSequenceString.read(from: &buf),
                 skillsOutdated: FfiConverterSequenceString.read(from: &buf),
                 error: FfiConverterOptionString.read(from: &buf),
-                unverified: FfiConverterOptionString.read(from: &buf)
+                unverified: FfiConverterOptionString.read(from: &buf),
+                signIn: FfiConverterOptionString.read(from: &buf),
+                signedIn: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -14021,6 +14061,8 @@ public struct FfiConverterTypeAgentInfo: FfiConverterRustBuffer {
         FfiConverterSequenceString.write(value.skillsOutdated, into: &buf)
         FfiConverterOptionString.write(value.error, into: &buf)
         FfiConverterOptionString.write(value.unverified, into: &buf)
+        FfiConverterOptionString.write(value.signIn, into: &buf)
+        FfiConverterBool.write(value.signedIn, into: &buf)
     }
 }
 
@@ -39040,6 +39082,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_agentsetup_setup_cua_driver() != 33764) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_agentsetup_sign_in() != 10179) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_agentsetup_skills() != 53692) {

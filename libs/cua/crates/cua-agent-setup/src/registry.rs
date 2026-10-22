@@ -286,6 +286,22 @@ pub struct AgentSpec {
     pub mcp: Option<McpSpec>,
     /// What could not be verified from official docs (empty when all was).
     pub unverified: &'static str,
+    /// The agent's own sign-in, when cua can see it and start it.
+    pub login: Option<LoginSpec>,
+}
+
+/// An agent's own sign-in (its account, not cua's): the file it keeps the
+/// sign-in in on this computer, and the command that starts it. Each
+/// computer signs in on its own; cua never copies or reads the tokens.
+#[derive(Clone, Copy, Debug)]
+pub struct LoginSpec {
+    /// The account it signs in with ("ChatGPT").
+    pub label: &'static str,
+    /// Present and not empty once signed in.
+    pub file: Loc,
+    /// Arguments to the agent's first binary that start the sign-in
+    /// (`codex login` opens the browser and waits for it).
+    pub args: &'static [&'static str],
 }
 
 /// The cross-agent user skills directory (agentskills.io convention) read
@@ -319,6 +335,7 @@ pub static AGENTS: &[AgentSpec] = &[
             owner_cli: Some(OwnerCli::Claude),
         }),
         unverified: "the .claude.json location under CLAUDE_CONFIG_DIR",
+        login: None,
     },
     AgentSpec {
         id: "codex",
@@ -338,6 +355,13 @@ pub static AGENTS: &[AgentSpec] = &[
             owner_cli: None,
         }),
         unverified: "the Codex.app bundle name",
+        // `codex login` signs in with ChatGPT and keeps the tokens in
+        // `$CODEX_HOME/auth.json` (docs: authentication, checked 2026-10-21).
+        login: Some(LoginSpec {
+            label: "ChatGPT",
+            file: Loc::home(".codex/auth.json").env("CODEX_HOME", "auth.json"),
+            args: &["login"],
+        }),
     },
     AgentSpec {
         id: "cursor",
@@ -357,6 +381,7 @@ pub static AGENTS: &[AgentSpec] = &[
             owner_cli: None,
         }),
         unverified: "the Cursor.app bundle name",
+        login: None,
     },
     AgentSpec {
         id: "gemini-cli",
@@ -379,6 +404,7 @@ pub static AGENTS: &[AgentSpec] = &[
             owner_cli: None,
         }),
         unverified: "",
+        login: None,
     },
     AgentSpec {
         id: "cline",
@@ -399,6 +425,7 @@ pub static AGENTS: &[AgentSpec] = &[
             owner_cli: None,
         }),
         unverified: "Cline's docs also name ~/.cline/mcp.json for the CLI; the VS Code extension's globalStorage file is not configured",
+        login: None,
     },
     AgentSpec {
         id: "kiro",
@@ -418,6 +445,7 @@ pub static AGENTS: &[AgentSpec] = &[
             owner_cli: None,
         }),
         unverified: "the Kiro.app bundle name",
+        login: None,
     },
     AgentSpec {
         id: "openclaw",
@@ -437,6 +465,7 @@ pub static AGENTS: &[AgentSpec] = &[
             owner_cli: None,
         }),
         unverified: "OPENCLAW_CONFIG_PATH is not honored; a running Gateway may need `openclaw mcp reload`",
+        login: None,
     },
     AgentSpec {
         id: "opencode",
@@ -458,6 +487,7 @@ pub static AGENTS: &[AgentSpec] = &[
             owner_cli: None,
         }),
         unverified: "XDG_CONFIG_HOME handling",
+        login: None,
     },
     AgentSpec {
         id: "pi",
@@ -471,6 +501,7 @@ pub static AGENTS: &[AgentSpec] = &[
         // Pi has no MCP support by design (pi.dev: "No MCP").
         mcp: None,
         unverified: "",
+        login: None,
     },
     AgentSpec {
         id: "windsurf",
@@ -490,6 +521,7 @@ pub static AGENTS: &[AgentSpec] = &[
             owner_cli: None,
         }),
         unverified: "app bundle names; whether the legacy ~/.codeium/windsurf/mcp_config.json is still read",
+        login: None,
     },
     AgentSpec {
         id: "copilot-cli",
@@ -509,6 +541,7 @@ pub static AGENTS: &[AgentSpec] = &[
             owner_cli: None,
         }),
         unverified: "",
+        login: None,
     },
     AgentSpec {
         id: "amp",
@@ -528,6 +561,7 @@ pub static AGENTS: &[AgentSpec] = &[
             owner_cli: None,
         }),
         unverified: "the Windows settings path",
+        login: None,
     },
     AgentSpec {
         id: "goose",
@@ -547,6 +581,7 @@ pub static AGENTS: &[AgentSpec] = &[
             owner_cli: None,
         }),
         unverified: "the Windows path (%APPDATA%\\Block\\goose\\config) is not used; whether `description` is required",
+        login: None,
     },
     AgentSpec {
         id: "zed",
@@ -566,6 +601,7 @@ pub static AGENTS: &[AgentSpec] = &[
             owner_cli: None,
         }),
         unverified: "the Zed.app bundle name",
+        login: None,
     },
     AgentSpec {
         id: "vscode",
@@ -585,6 +621,7 @@ pub static AGENTS: &[AgentSpec] = &[
             owner_cli: None,
         }),
         unverified: "the default-profile mcp.json path (inferred from the profile folder)",
+        login: None,
     },
     AgentSpec {
         id: "antigravity",
@@ -608,6 +645,7 @@ pub static AGENTS: &[AgentSpec] = &[
             owner_cli: None,
         }),
         unverified: "the Antigravity.app bundle name; the CLI-only skills dir ~/.gemini/antigravity-cli/skills is not written",
+        login: None,
     },
     // Hermes Agent (NousResearch/hermes-agent). Same id as the cua-agents
     // harness. Everything lives in the Hermes home: `$HERMES_HOME`, else
@@ -641,6 +679,7 @@ pub static AGENTS: &[AgentSpec] = &[
             owner_cli: None,
         }),
         unverified: "named profiles (`hermes profile use`) are not configured, only HERMES_HOME or the default home; HERMES_DATA_DIR_SUFFIX is ignored",
+        login: None,
     },
 ];
 

@@ -1662,6 +1662,14 @@ public final class AppModel {
         agentsBusy = false
     }
 
+    /// Starts the agent's own sign-in on this Mac (`codex login`); the rows
+    /// show `signedIn` once the agent wrote it.
+    func agentSignIn(_ agent: String) async throws {
+        guard let agentSetup else { return }
+        try await agentSetup.signIn(agent: agent)
+        await reloadAgents()
+    }
+
     func agentAction(_ ids: [String], remove: Bool) async {
         guard let agentSetup, !ids.isEmpty else { return }
         agentsPending += ids

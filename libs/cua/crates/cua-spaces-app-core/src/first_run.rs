@@ -3,8 +3,15 @@
 
 //! The first run every app shows (0.10.0): two screens.
 //!
-//! 1. **Connect your agent.** One button for the agent this computer has
-//!    (Claude Code first), the others under it.
+//! 1. **Agents.** Pick any, or none: a checkbox for every agent the setup
+//!    knows (the common ones and the ones on this computer first, the rest
+//!    under "More agents"), ticked for the ones installed here. Under it,
+//!    the agents' own sign-ins and keys. Both are per computer, and the page
+//!    says so: Cua's skills and MCP server go into each picked agent's
+//!    settings on this computer only, the ChatGPT sign-in Codex uses is
+//!    Codex's own file on this computer (`codex login`), and provider keys
+//!    stay in this computer's credential vault (`agent_keys`). Nothing here
+//!    follows the Cua account to another computer.
 //! 2. **Your agent can use this Mac.** Two checked rows, the agent and this
 //!    computer, then a first request that works on this computer now. This
 //!    computer is the user's first Space and is ready at once; an extra
@@ -37,9 +44,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::relay_usage::{BUY_PRO_PATH, BUY_TEAMS_PATH, PRO_HOURS, PRO_SESSIONS, buy, plan_kind};
 
-/// The agents step 1 offers by name, in order (setup ids). Any other agent
-/// is under "Other".
+/// The agents the access log tells apart by name (setup ids).
 pub const OFFERED: [&str; 4] = ["claude-code", "codex", "hermes", "openclaw"];
+
+/// The agents step 1 always lists first, in order (setup ids). Any other
+/// agent the setup knows is listed too: beside these when it is installed
+/// or ticked, else under "More agents".
+pub const FEATURED: [&str; 5] = ["claude-code", "codex", "hermes", "cursor", "openclaw"];
+
+/// The provider key each agent's runs in a Space read (`agent_keys`'
+/// providers), for the keys step 1 lists under the picked agents.
+const AGENT_KEYS: [(&str, &str); 2] = [("claude-code", "anthropic"), ("codex", "openai")];
 
 /// The first request: it works on this computer with nothing else set up.
 pub const FIRST_PROMPT: &str = "List my computers and tell me what's on this Mac";
@@ -65,6 +80,10 @@ pub struct FirstRunAgent {
     pub name: String,
     pub installed: bool,
     pub configured: bool,
+    /// The account it signs in with on its own (`ChatGPT` for Codex).
+    pub sign_in: Option<String>,
+    /// That sign-in is on this computer.
+    pub signed_in: bool,
 }
 
 /// A permission this computer still needs (`host.status`'s hint).
@@ -154,8 +173,19 @@ pub struct FirstRunInput {
     pub host_os: String,
     /// What the agent setup found (none yet: still looking).
     pub agents: Option<Vec<FirstRunAgent>>,
-    /// The agent the user connected (setup id).
+    /// The agent the first request names (setup id): the first one
+    /// connected. Older saved runs connected only this one.
     pub agent: Option<String>,
+    /// Step 1: the ticked agents (none: not changed yet, so the ones
+    /// installed here). Step 2: the agents connected (empty: none).
+    pub picked: Option<Vec<String>>,
+    /// The provider keys saved on this computer (none: not read, or this
+    /// app can't read them).
+    pub keys: Option<crate::agent_keys::AgentKeysInput>,
+    /// The agent whose own sign-in is waiting for the browser.
+    pub agent_signing_in: Option<String>,
+    /// Starting an agent's own sign-in failed with this.
+    pub agent_sign_in_error: Option<String>,
     /// Adding Cua to the agent's settings is running.
     pub connecting: bool,
     /// Adding Cua to the agent's settings failed with this.
@@ -193,13 +223,38 @@ fn button(id: &str, label: &str) -> FirstRunButton {
     }
 }
 
-/// An agent step 1 offers.
+/// An agent on step 1.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct FirstRunAgentChoice {
+pub struct AgentPick {
     pub agent: String,
     pub name: String,
+    pub checked: bool,
     pub installed: bool,
+    /// Cua is in its settings already: it stays ticked.
+    pub locked: bool,
+    /// "Already uses Cua", "Not found on this Mac".
+    pub note: Option<String>,
+}
+
+/// A sign-in or key on step 1.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialRow {
+    /// `sign-in:codex`, `key:anthropic`, `key:openai`.
+    pub id: String,
+    /// "ChatGPT sign-in", "Anthropic key".
+    pub title: String,
+    /// Who uses it: "Codex uses it on this Mac".
+    pub note: String,
+    /// "Signed in", "Saved", "Waiting for the browser…".
+    pub status: Option<String>,
+    /// `agent-sign-in` (with `agent`), or `add-key` (with `provider`).
+    pub action: Option<FirstRunButton>,
+    pub agent: Option<String>,
+    pub provider: Option<String>,
+    /// Starting it failed.
+    pub error: Option<String>,
 }
 
 /// Step 1.
@@ -211,21 +266,30 @@ pub struct ConnectView {
     pub title: String,
     pub accent: String,
     pub lede: String,
-    /// "Connect Claude Code".
+    /// "Pick any, or none."
+    pub intro: String,
+    /// "On this Mac".
+    pub agents_label: String,
+    /// The common agents, and any installed or ticked here.
+    pub agents: Vec<AgentPick>,
+    /// "More agents".
+    pub more_label: String,
+    /// Every other agent the setup knows.
+    pub more: Vec<AgentPick>,
+    /// What picking does, and that it is this computer only.
+    pub agents_note: String,
+    /// "Sign-ins and keys".
+    pub credentials_label: String,
+    /// "They stay on this Mac. Other computers keep their own."
+    pub credentials_note: String,
+    /// The picked agents' own sign-ins and provider keys (empty: the
+    /// section is not drawn).
+    pub credentials: Vec<CredentialRow>,
+    /// "Continue".
     pub primary: FirstRunButton,
-    /// The agent the primary connects.
-    pub agent: FirstRunAgentChoice,
-    /// "Your agent will use this Mac."
-    pub note: String,
-    /// "You can add a separate Space later."
-    pub note_more: String,
-    /// "Or".
-    pub or_label: String,
-    /// The other offered agents.
-    pub others: Vec<FirstRunAgentChoice>,
-    /// "Other": every agent the setup knows.
-    pub other_label: String,
-    /// "Adding Cua to Claude Code…" while it runs.
+    /// The agents Continue connects (setup ids, ticked and not set up yet).
+    pub connects: Vec<String>,
+    /// "Adding Cua to Claude Code and Codex…" while it runs.
     pub busy: Option<String>,
     pub error: Option<String>,
 }
@@ -346,7 +410,8 @@ pub struct SetupView {
     /// "Checking your setup.", "Your agent can use this Mac.", "One step left."
     pub title: String,
     pub rows: Vec<CheckRow>,
-    pub prompt: PromptView,
+    /// None when no agent was picked.
+    pub prompt: Option<PromptView>,
     pub extra: ExtraView,
     pub upsell: Option<UpsellCard>,
     pub primary: PrimaryView,
@@ -433,24 +498,22 @@ fn default_name(agent: &str) -> &'static str {
         "codex" => "Codex",
         "hermes" => "Hermes",
         "openclaw" => "OpenClaw",
+        "cursor" => "Cursor",
         _ => "your agent",
     }
 }
 
-fn choice(agents: &[FirstRunAgent], id: &str) -> FirstRunAgentChoice {
-    let row = agents.iter().find(|a| a.agent == id);
-    FirstRunAgentChoice {
-        agent: id.into(),
-        name: row
-            .map(|a| a.name.clone())
-            .filter(|n| !n.is_empty())
-            .unwrap_or_else(|| default_name(id).into()),
-        installed: row.is_some_and(|a| a.installed),
-    }
+fn name_of(agents: &[FirstRunAgent], id: &str) -> String {
+    agents
+        .iter()
+        .find(|a| a.agent == id)
+        .map(|a| a.name.clone())
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| default_name(id).into())
 }
 
-/// The agent step 1 leads with: the first offered one installed here,
-/// else Claude Code.
+/// The agent a single-agent screen leads with: the first offered one
+/// installed here, else Claude Code.
 pub fn lead_agent(agents: &[FirstRunAgent]) -> String {
     OFFERED
         .iter()
@@ -459,21 +522,184 @@ pub fn lead_agent(agents: &[FirstRunAgent]) -> String {
         .to_string()
 }
 
+/// "Claude Code", "Claude Code and Codex", "Claude Code, Codex and Hermes"
+/// (`or` for the first request: "Claude Code or Codex").
+fn names(agents: &[FirstRunAgent], ids: &[String], and: &str) -> String {
+    let n: Vec<String> = ids.iter().map(|id| name_of(agents, id)).collect();
+    match n.as_slice() {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} {and} {last}", rest.join(", ")),
+    }
+}
+
+/// Step 1's ticks: the user's, else every agent installed here (one Cua
+/// is in already counts as installed).
+pub fn picked(input: &FirstRunInput) -> Vec<String> {
+    let agents = input.agents.as_deref().unwrap_or(&[]);
+    let mut out: Vec<String> = match &input.picked {
+        Some(p) => p.clone(),
+        None => agents
+            .iter()
+            .filter(|a| a.installed || a.configured)
+            .map(|a| a.agent.clone())
+            .collect(),
+    };
+    // One Cua is already in can't be unticked here (Settings removes it).
+    for a in agents.iter().filter(|a| a.configured) {
+        if !out.contains(&a.agent) {
+            out.push(a.agent.clone());
+        }
+    }
+    out
+}
+
+/// The agents connected on step 2: what step 1 connected, or the one an
+/// older run connected.
+fn connected(input: &FirstRunInput) -> Vec<String> {
+    match &input.picked {
+        Some(p) => p.clone(),
+        None => input.agent.clone().into_iter().collect(),
+    }
+}
+
+/// The agent the first request names: the first connected.
+fn lead_of(input: &FirstRunInput) -> Option<String> {
+    connected(input).into_iter().next()
+}
+
 fn agent_name(input: &FirstRunInput) -> String {
     let agents = input.agents.as_deref().unwrap_or(&[]);
-    let id = input.agent.clone().unwrap_or_else(|| lead_agent(agents));
-    choice(agents, &id).name
+    lead_of(input)
+        .map(|id| name_of(agents, &id))
+        .unwrap_or_else(|| "your agent".into())
+}
+
+/// Every agent step 1 lists, in order: [`FEATURED`], then each other one
+/// the setup knows (`more` when it isn't installed or ticked here).
+fn agent_picks(input: &FirstRunInput) -> (Vec<AgentPick>, Vec<AgentPick>) {
+    let agents = input.agents.as_deref().unwrap_or(&[]);
+    let ticked = picked(input);
+    let place = this_computer(&input.host_os);
+    let pick = |id: &str| {
+        let row = agents.iter().find(|a| a.agent == id);
+        let installed = row.is_some_and(|a| a.installed);
+        let locked = row.is_some_and(|a| a.configured);
+        AgentPick {
+            agent: id.into(),
+            name: name_of(agents, id),
+            checked: ticked.iter().any(|t| t == id),
+            installed,
+            locked,
+            note: if locked {
+                Some("Already uses Cua".into())
+            } else if row.is_some() && !installed {
+                Some(format!("Not found on {place}"))
+            } else {
+                None
+            },
+        }
+    };
+    let mut main: Vec<AgentPick> = FEATURED.iter().map(|id| pick(id)).collect();
+    let mut more = Vec::new();
+    for a in agents
+        .iter()
+        .filter(|a| !FEATURED.contains(&a.agent.as_str()))
+    {
+        let p = pick(&a.agent);
+        if p.installed || p.checked {
+            main.push(p);
+        } else {
+            more.push(p);
+        }
+    }
+    (main, more)
+}
+
+/// The picked agents' own sign-ins (Codex's ChatGPT sign-in), then the
+/// provider keys their runs in a Space read, when this app can read keys.
+fn credentials(input: &FirstRunInput, ticked: &[String]) -> Vec<CredentialRow> {
+    let agents = input.agents.as_deref().unwrap_or(&[]);
+    let place = this_computer(&input.host_os);
+    let mut out = Vec::new();
+    for id in ticked {
+        let Some(a) = agents.iter().find(|a| &a.agent == id) else {
+            continue;
+        };
+        let Some(label) = a.sign_in.as_ref().filter(|l| !l.is_empty()) else {
+            continue;
+        };
+        let waiting = input.agent_signing_in.as_deref() == Some(id.as_str()) && !a.signed_in;
+        out.push(CredentialRow {
+            id: format!("sign-in:{id}"),
+            title: format!("{label} sign-in"),
+            note: format!("{} uses it on {place}", default_or(&a.name, id)),
+            status: if a.signed_in {
+                Some("Signed in".into())
+            } else if waiting {
+                Some("Finish in your browser…".into())
+            } else {
+                None
+            },
+            action: (!a.signed_in && !waiting && a.installed)
+                .then(|| button("agent-sign-in", "Sign in")),
+            agent: Some(id.clone()),
+            provider: None,
+            error: (!a.signed_in)
+                .then(|| input.agent_sign_in_error.clone())
+                .flatten()
+                .map(|e| format!("Couldn't start the sign-in: {e}")),
+        });
+    }
+    let Some(keys) = input
+        .keys
+        .as_ref()
+        .filter(|k| k.unavailable.is_none() && k.error.is_none())
+    else {
+        return out;
+    };
+    for (agent, provider) in AGENT_KEYS {
+        if !ticked.iter().any(|t| t == agent) {
+            continue;
+        }
+        let Some(row) = crate::agent_keys::view(keys)
+            .rows
+            .into_iter()
+            .find(|r| r.provider == provider)
+        else {
+            continue;
+        };
+        out.push(CredentialRow {
+            id: format!("key:{provider}"),
+            title: format!("{} key", row.title),
+            note: format!("For {} in your Spaces", name_of(agents, agent)),
+            status: row.set.then(|| "Saved".into()),
+            action: (!row.set).then(|| button("add-key", "Add key")),
+            agent: None,
+            provider: Some(provider.into()),
+            error: None,
+        });
+    }
+    out
+}
+
+fn default_or(name: &str, id: &str) -> String {
+    if name.is_empty() {
+        default_name(id).into()
+    } else {
+        name.into()
+    }
 }
 
 fn connect_view(input: &FirstRunInput) -> ConnectView {
     let agents = input.agents.as_deref().unwrap_or(&[]);
-    let lead = input.agent.clone().unwrap_or_else(|| lead_agent(agents));
-    let agent = choice(agents, &lead);
     let place = this_computer(&input.host_os);
-    let others = OFFERED
+    let (list, more) = agent_picks(input);
+    let ticked = picked(input);
+    let connects: Vec<String> = ticked
         .iter()
-        .filter(|id| **id != lead)
-        .map(|id| choice(agents, id))
+        .filter(|id| !agents.iter().any(|a| &a.agent == *id && a.configured))
+        .cloned()
         .collect();
     ConnectView {
         title: "A shared Space for every agent.".into(),
@@ -481,16 +707,21 @@ fn connect_view(input: &FirstRunInput) -> ConnectView {
         lede: format!(
             "Connect your agents and give them computers to work on: macOS, Linux or Windows, right here on {place}."
         ),
-        primary: button("connect", &format!("Connect {}", agent.name)),
-        busy: input
-            .connecting
-            .then(|| format!("Adding Cua to {}…", agent.name)),
-        agent,
-        note: format!("Your agent will use {place}."),
-        note_more: "You can add a separate Space later.".into(),
-        or_label: "Or".into(),
-        others,
-        other_label: "Other".into(),
+        intro: "Pick any, or none.".into(),
+        agents_label: format!("On {place}"),
+        agents: list,
+        more_label: "More agents".into(),
+        more,
+        agents_note: format!(
+            "Cua adds its skills and MCP server to each one you pick, on {place} only. Your other computers set up their own."
+        ),
+        credentials_label: "Sign-ins and keys".into(),
+        credentials_note: format!("They stay on {place}. Other computers keep their own."),
+        credentials: credentials(input, &ticked),
+        primary: button("continue", "Continue"),
+        busy: (input.connecting && !connects.is_empty())
+            .then(|| format!("Adding Cua to {}…", names(agents, &connects, "and"))),
+        connects,
         error: input
             .connect_error
             .as_ref()
@@ -498,13 +729,15 @@ fn connect_view(input: &FirstRunInput) -> ConnectView {
     }
 }
 
-fn agent_row(input: &FirstRunInput) -> CheckRow {
-    let name = agent_name(input);
-    let id = input.agent.clone().unwrap_or_default();
-    let found = input
-        .agents
-        .as_ref()
-        .map(|a| a.iter().find(|r| r.agent == id).cloned());
+/// Step 2's agent row (none when no agent was picked).
+fn agent_row(input: &FirstRunInput) -> Option<CheckRow> {
+    let ids = connected(input);
+    if ids.is_empty() {
+        return None;
+    }
+    let all = input.agents.as_deref().unwrap_or(&[]);
+    let name = names(all, &ids, "and");
+    let many = ids.len() > 1;
     let row = |state, title: String, note: String, action: Option<FirstRunButton>| CheckRow {
         id: "agent".into(),
         state,
@@ -513,62 +746,83 @@ fn agent_row(input: &FirstRunInput) -> CheckRow {
         action,
         settings_url: None,
     };
-    match found {
-        None => row(
+    let Some(agents) = &input.agents else {
+        return Some(row(
             RowState::Checking,
-            name.clone(),
-            "Checking that it can use Cua…".into(),
+            name,
+            format!(
+                "Checking that {} can use Cua…",
+                if many { "they" } else { "it" }
+            ),
             None,
-        ),
-        Some(None)
-        | Some(Some(FirstRunAgent {
-            configured: false, ..
-        })) => {
-            if input.connecting {
-                return row(
-                    RowState::Checking,
-                    name.clone(),
-                    format!("Adding Cua to {name}'s settings…"),
-                    None,
-                );
-            }
-            row(
-                RowState::Fix,
-                format!("Connect {name}"),
-                input.connect_error.clone().map_or_else(
-                    || format!("Cua isn't in {name}'s settings yet."),
-                    |e| format!("Couldn't add Cua: {e}"),
-                ),
-                Some(button("connect", "Connect")),
-            )
-        }
-        Some(Some(_)) => {
-            if let Some(at) = &input.agent_used_at {
-                return row(
-                    RowState::Ok,
-                    format!("{name} can use Cua"),
-                    format!("It used Cua at {at}."),
-                    None,
-                );
-            }
-            if input.agent_open_before_setup == Some(true) {
-                return row(
-                    RowState::Fix,
-                    format!("Restart {name}"),
-                    "It was open when we added Cua. Close it, then open it again.".into(),
-                    Some(button("restart-check", "Check again")),
-                );
-            }
-            row(
-                RowState::Ok,
-                format!("{name} can use Cua"),
-                format!(
-                    "We added Cua to {name}'s settings. If {name} was already open, restart it."
-                ),
+        ));
+    };
+    let missing: Vec<String> = ids
+        .iter()
+        .filter(|id| !agents.iter().any(|a| &a.agent == *id && a.configured))
+        .cloned()
+        .collect();
+    if !missing.is_empty() {
+        let them = names(all, &missing, "and");
+        if input.connecting {
+            return Some(row(
+                RowState::Checking,
+                name,
+                format!("Adding Cua to {them}…"),
                 None,
-            )
+            ));
         }
+        return Some(row(
+            RowState::Fix,
+            format!("Connect {them}"),
+            input.connect_error.clone().map_or_else(
+                || {
+                    if missing.len() > 1 {
+                        "Cua isn't in their settings yet.".into()
+                    } else {
+                        format!("Cua isn't in {them}'s settings yet.")
+                    }
+                },
+                |e| format!("Couldn't add Cua: {e}"),
+            ),
+            Some(button("connect", "Connect")),
+        ));
     }
+    let can = format!("{name} can use Cua");
+    if let Some(at) = &input.agent_used_at {
+        return Some(row(
+            RowState::Ok,
+            can,
+            format!(
+                "{} used Cua at {at}.",
+                if many { "Your agent" } else { "It" }
+            ),
+            None,
+        ));
+    }
+    if input.agent_open_before_setup == Some(true) {
+        return Some(row(
+            RowState::Fix,
+            format!("Restart {name}"),
+            format!(
+                "{} open when we added Cua. Close {}, then open {} again.",
+                if many { "They were" } else { "It was" },
+                if many { "them" } else { "it" },
+                if many { "them" } else { "it" }
+            ),
+            Some(button("restart-check", "Check again")),
+        ));
+    }
+    Some(row(
+        RowState::Ok,
+        can,
+        if many {
+            "We added Cua to their settings. If any was already open, restart it.".into()
+        } else {
+            format!("We added Cua to {name}'s settings. If {name} was already open, restart it.")
+        },
+        None,
+    ))
 }
 
 fn missing_permission(host: &FirstRunHost, id: &str) -> Option<FirstRunPermission> {
@@ -849,8 +1103,18 @@ pub fn upsell(plan: &FirstRunPlan, agent_used: bool) -> Option<UpsellCard> {
 /// it is made.
 fn art(input: &FirstRunInput, computer: &CheckRow) -> ArtView {
     let agents = input.agents.as_deref().unwrap_or(&[]);
+    let agent = match input.step {
+        FirstRunStep::Connect => picked(input).into_iter().next(),
+        FirstRunStep::Setup => lead_of(input),
+    };
     ArtView {
-        agent: input.agent.clone().unwrap_or_else(|| lead_agent(agents)),
+        agent: agent.unwrap_or_else(|| {
+            if input.step == FirstRunStep::Connect && input.agents.is_none() {
+                lead_agent(agents)
+            } else {
+                "other".into()
+            }
+        }),
         computer: if input.step == FirstRunStep::Setup && computer.state != RowState::Ok {
             "faded"
         } else {
@@ -886,13 +1150,18 @@ pub fn view(input: &FirstRunInput) -> FirstRunView {
         };
     }
     let place = this_computer(&input.host_os);
-    let name = agent_name(input);
-    let rows = vec![agent, computer];
+    let ids = connected(input);
+    let all = input.agents.as_deref().unwrap_or(&[]);
+    let rows: Vec<CheckRow> = agent.into_iter().chain([computer]).collect();
     let checking = rows.iter().any(|r| r.state == RowState::Checking);
     let fixes = rows.iter().filter(|r| r.state == RowState::Fix).count();
     let ready = rows.iter().all(|r| r.state == RowState::Ok);
     let title = if ready {
-        format!("Your agent can use {place}.")
+        match ids.len() {
+            0 => format!("{} is ready.", cap(place)),
+            1 => format!("Your agent can use {place}."),
+            _ => format!("Your agents can use {place}."),
+        }
     } else if fixes == 1 && !checking {
         "One step left.".into()
     } else if fixes > 1 && !checking {
@@ -901,21 +1170,24 @@ pub fn view(input: &FirstRunInput) -> FirstRunView {
         "Checking your setup.".into()
     };
     let used = input.agent_used_at.is_some();
-    let prompt = if used {
-        PromptView {
-            heading: format!("You asked {name}"),
-            text: first_prompt(&input.host_os).into(),
-            note: format!("It answered in {name}. Ask it anything else."),
-            copy: None,
+    let prompt = (!ids.is_empty()).then(|| {
+        if used {
+            let name = agent_name(input);
+            PromptView {
+                heading: format!("You asked {name}"),
+                text: first_prompt(&input.host_os).into(),
+                note: format!("It answered in {name}. Ask it anything else."),
+                copy: None,
+            }
+        } else {
+            PromptView {
+                heading: format!("Try this in {}", names(all, &ids, "or")),
+                text: first_prompt(&input.host_os).into(),
+                note: format!("This works now, on {place}."),
+                copy: Some("Copy".into()),
+            }
         }
-    } else {
-        PromptView {
-            heading: format!("Try this in {name}"),
-            text: first_prompt(&input.host_os).into(),
-            note: format!("This works now, on {place}."),
-            copy: Some("Copy".into()),
-        }
-    };
+    });
     let finish_later = fixes > 0 && !checking;
     FirstRunView {
         step: FirstRunStep::Setup,
@@ -953,27 +1225,33 @@ pub fn view(input: &FirstRunInput) -> FirstRunView {
 /// kept (frame 9). Nothing left that is required: `complete`.
 pub fn todos(input: &FirstRunInput) -> FirstRunTodos {
     let place = this_computer(&input.host_os);
-    let name = agent_name(input);
+    let ids = connected(input);
+    let all = input.agents.as_deref().unwrap_or(&[]);
+    let name = names(all, &ids, "and");
     let agent = agent_row(input);
     let computer = computer_row(input);
     let used = input.agent_used_at.is_some();
-    let mut items = vec![FirstRunTodo {
-        id: "agent".into(),
-        done: agent.state == RowState::Ok,
-        title: if agent.state == RowState::Fix {
-            agent.title.clone()
-        } else {
-            format!("Connect {name}")
-        },
-        note: if agent.state == RowState::Ok {
-            format!("{name} can use Cua.")
-        } else {
-            agent.note.clone()
-        },
-        optional: false,
-        action: agent.action.clone(),
-        settings_url: None,
-    }];
+    // No agent picked: no agent line and no first request.
+    let mut items: Vec<FirstRunTodo> = agent
+        .iter()
+        .map(|agent| FirstRunTodo {
+            id: "agent".into(),
+            done: agent.state == RowState::Ok,
+            title: if agent.state == RowState::Fix {
+                agent.title.clone()
+            } else {
+                format!("Connect {name}")
+            },
+            note: if agent.state == RowState::Ok {
+                format!("{name} can use Cua.")
+            } else {
+                agent.note.clone()
+            },
+            optional: false,
+            action: agent.action.clone(),
+            settings_url: None,
+        })
+        .collect();
     // Sign-in is its own line; the computer line is what is left after it.
     items.push(FirstRunTodo {
         id: "computer".into(),
@@ -998,18 +1276,21 @@ pub fn todos(input: &FirstRunInput) -> FirstRunTodos {
         },
         settings_url: computer.settings_url.clone(),
     });
-    items.push(FirstRunTodo {
-        id: "prompt".into(),
-        title: "Try your first request".into(),
-        note: format!(
-            "Ask {name}: \u{201c}{}\u{201d}",
-            first_prompt(&input.host_os)
-        ),
-        done: used,
-        optional: false,
-        action: (!used).then(|| button("copy", "Copy")),
-        settings_url: None,
-    });
+    if !ids.is_empty() {
+        items.push(FirstRunTodo {
+            id: "prompt".into(),
+            title: "Try your first request".into(),
+            note: format!(
+                "Ask {}: \u{201c}{}\u{201d}",
+                names(all, &ids, "or"),
+                first_prompt(&input.host_os)
+            ),
+            done: used,
+            optional: false,
+            action: (!used).then(|| button("copy", "Copy")),
+            settings_url: None,
+        });
+    }
     let extra_done = matches!(input.extra.phase.as_str(), "creating" | "ready");
     items.push(FirstRunTodo {
         id: "extra".into(),
@@ -1035,15 +1316,16 @@ pub fn todos(input: &FirstRunInput) -> FirstRunTodos {
     });
     let done = items.iter().filter(|i| i.done).count();
     let complete = items.iter().all(|i| i.done || i.optional);
-    let lede = if agent.state == RowState::Ok {
-        let left = items.iter().filter(|i| !i.done && !i.optional).count();
-        match left {
-            0 => format!("{name} is connected. You're all set."),
-            1 => format!("{name} is connected. One thing is left."),
-            _ => format!("{name} is connected. A couple of things are left."),
-        }
-    } else {
-        "A couple of things are left.".into()
+    let left = items.iter().filter(|i| !i.done && !i.optional).count();
+    let rest = match left {
+        0 => "You're all set.",
+        1 => "One thing is left.",
+        _ => "A couple of things are left.",
+    };
+    let lede = match &agent {
+        Some(a) if a.state == RowState::Ok => format!("{name} is connected. {rest}"),
+        Some(_) => "A couple of things are left.".into(),
+        None => rest.into(),
     };
     FirstRunTodos {
         title: "Finish setting up".into(),
@@ -1109,7 +1391,56 @@ mod tests {
             name: "Claude Code".into(),
             installed: true,
             configured,
+            ..Default::default()
         }
+    }
+
+    fn agent(id: &str, name: &str, installed: bool) -> FirstRunAgent {
+        FirstRunAgent {
+            agent: id.into(),
+            name: name.into(),
+            installed,
+            ..Default::default()
+        }
+    }
+
+    fn codex(installed: bool, signed_in: bool) -> FirstRunAgent {
+        FirstRunAgent {
+            sign_in: Some("ChatGPT".into()),
+            signed_in,
+            ..agent("codex", "OpenAI Codex", installed)
+        }
+    }
+
+    fn keys(saved: &[&str]) -> crate::agent_keys::AgentKeysInput {
+        crate::agent_keys::AgentKeysInput {
+            keys: saved
+                .iter()
+                .map(|env| crate::agent_keys::AgentKeyInput {
+                    provider: crate::agent_keys::provider_of(env).into(),
+                    env: (*env).into(),
+                    last4: "1234".into(),
+                    added_ms: 1,
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    fn connect(agents: Vec<FirstRunAgent>, picked: Option<&[&str]>) -> ConnectView {
+        view(&FirstRunInput {
+            host_os: "macos".into(),
+            agents: Some(agents),
+            picked: picked.map(|p| p.iter().map(|x| x.to_string()).collect()),
+            keys: Some(keys(&["ANTHROPIC_API_KEY"])),
+            ..Default::default()
+        })
+        .connect
+        .unwrap()
+    }
+
+    fn ids(p: &[AgentPick], f: impl Fn(&AgentPick) -> bool) -> Vec<String> {
+        p.iter().filter(|x| f(x)).map(|x| x.agent.clone()).collect()
     }
 
     fn ready_host() -> FirstRunHost {
@@ -1156,23 +1487,265 @@ mod tests {
     }
 
     #[test]
-    fn connect_leads_with_an_installed_agent() {
+    fn every_agent_is_listed_once_and_installed_ones_are_ticked() {
+        let all = vec![
+            claude(false),
+            codex(true, false),
+            agent("cursor", "Cursor", false),
+            agent("goose", "Goose", true),
+            agent("zed", "Zed", false),
+        ];
+        let c = connect(all.clone(), None);
+        assert_eq!(c.intro, "Pick any, or none.");
+        assert_eq!(c.agents_label, "On this Mac");
+        // The common ones first, then an installed other one; the rest under More.
+        assert_eq!(
+            ids(&c.agents, |_| true),
+            [
+                "claude-code",
+                "codex",
+                "hermes",
+                "cursor",
+                "openclaw",
+                "goose"
+            ]
+        );
+        assert_eq!(ids(&c.more, |_| true), ["zed"]);
+        assert_eq!(c.more_label, "More agents");
+        // Ticked by default: what is installed here.
+        assert_eq!(
+            ids(&c.agents, |p| p.checked),
+            ["claude-code", "codex", "goose"]
+        );
+        assert_eq!(c.connects, ["claude-code", "codex", "goose"]);
+        assert_eq!(c.primary.id, "continue");
+        let cursor = c.agents.iter().find(|p| p.agent == "cursor").unwrap();
+        assert_eq!(cursor.note.as_deref(), Some("Not found on this Mac"));
+        // Nothing read yet: the common ones, none ticked.
+        let none_yet = view(&FirstRunInput::default()).connect.unwrap();
+        assert_eq!(ids(&none_yet.agents, |_| true), FEATURED);
+        assert!(none_yet.agents.iter().all(|p| !p.checked) && none_yet.more.is_empty());
+    }
+
+    /// Drift guard: every agent the setup's registry knows is on step 1
+    /// exactly once, so a newly supported agent shows up without an edit
+    /// here; and every agent this file names is one the registry knows.
+    #[test]
+    fn every_registry_agent_is_on_step_one() {
+        let registry: Vec<FirstRunAgent> = cua_agent_setup::AGENTS
+            .iter()
+            .map(|a| agent(a.id, a.name, false))
+            .collect();
+        let c = connect(registry.clone(), None);
+        let mut listed = ids(&c.agents, |_| true);
+        listed.extend(ids(&c.more, |_| true));
+        let mut want: Vec<String> = registry.iter().map(|a| a.agent.clone()).collect();
+        listed.sort();
+        want.sort();
+        assert_eq!(listed, want);
+        let known = |id: &str| cua_agent_setup::registry::find(id).is_some_and(|a| a.id == id);
+        for id in FEATURED
+            .iter()
+            .chain(OFFERED.iter())
+            .chain(AGENT_KEYS.iter().map(|(a, _)| a))
+        {
+            assert!(known(id), "{id} is not a registry id");
+        }
+        // The agents with a sign-in the setup can start get a row for it.
+        for a in cua_agent_setup::AGENTS.iter().filter(|a| a.login.is_some()) {
+            let mut row = agent(a.id, a.name, true);
+            row.sign_in = a.login.map(|l| l.label.to_string());
+            let c = connect(vec![row], Some(&[a.id]));
+            assert!(
+                c.credentials
+                    .iter()
+                    .any(|r| r.id == format!("sign-in:{}", a.id)),
+                "{}",
+                a.id
+            );
+        }
+    }
+
+    #[test]
+    fn none_is_a_choice() {
+        let c = connect(vec![claude(false), codex(true, false)], Some(&[]));
+        assert!(c.agents.iter().all(|p| !p.checked));
+        assert!(c.connects.is_empty() && c.credentials.is_empty());
+        assert_eq!(c.primary.label, "Continue");
+        // Step 2 with none: no agent row and no first request; done once this Mac is.
+        let mut i = setup();
+        i.picked = Some(vec![]);
+        let v = view(&i);
+        let st = s(&v);
+        assert_eq!(st.rows.len(), 1);
+        assert_eq!(st.rows[0].id, "computer");
+        assert!(st.prompt.is_none());
+        assert_eq!(st.title, "This Mac is ready.");
+        assert!(st.primary.enabled);
+        assert_eq!(v.art.agent, "other");
+        let t = todos(&i);
+        assert!(t.items.iter().all(|x| x.id != "agent" && x.id != "prompt"));
+        assert!(t.complete);
+        assert_eq!(t.lede, "You're all set.");
+    }
+
+    #[test]
+    fn one_or_several_and_set_up_ones_stay_ticked() {
+        // Codex only.
+        let c = connect(vec![claude(false), codex(true, false)], Some(&["codex"]));
+        assert_eq!(ids(&c.agents, |p| p.checked), ["codex"]);
+        assert_eq!(c.connects, ["codex"]);
+        // Several, with one that already uses Cua: it can't be unticked here.
+        let c = connect(
+            vec![
+                claude(true),
+                codex(true, false),
+                agent("hermes", "Hermes", true),
+            ],
+            Some(&["codex", "hermes"]),
+        );
+        assert_eq!(
+            ids(&c.agents, |p| p.checked),
+            ["claude-code", "codex", "hermes"]
+        );
+        assert_eq!(ids(&c.agents, |p| p.locked), ["claude-code"]);
+        assert_eq!(c.connects, ["codex", "hermes"]);
         let mut i = FirstRunInput {
-            host_os: "macos".into(),
+            agents: Some(vec![
+                claude(true),
+                codex(true, false),
+                agent("hermes", "Hermes", true),
+            ]),
+            picked: Some(vec!["codex".into(), "hermes".into()]),
+            connecting: true,
             ..Default::default()
         };
+        assert_eq!(
+            view(&i).connect.unwrap().busy.as_deref(),
+            Some("Adding Cua to OpenAI Codex and Hermes…")
+        );
+        // Step 2 names them all.
+        i.step = FirstRunStep::Setup;
+        i.connecting = false;
+        i.picked = Some(vec!["claude-code".into(), "codex".into()]);
+        i.agents = Some(vec![
+            claude(true),
+            FirstRunAgent {
+                configured: true,
+                ..codex(true, false)
+            },
+        ]);
+        i.signed_in = true;
+        i.host = Some(ready_host());
+        i.host_os = "macos".into();
         let v = view(&i);
-        let c = v.connect.unwrap();
-        assert_eq!(c.primary.label, "Connect Claude Code");
-        assert_eq!(c.note, "Your agent will use this Mac.");
-        assert_eq!(c.others.len(), 3);
-        i.agents = Some(vec![FirstRunAgent {
-            agent: "codex".into(),
-            name: "Codex".into(),
-            installed: true,
-            configured: false,
-        }]);
-        assert_eq!(view(&i).connect.unwrap().primary.label, "Connect Codex");
+        let st = s(&v);
+        assert_eq!(st.title, "Your agents can use this Mac.");
+        assert_eq!(st.rows[0].title, "Claude Code and OpenAI Codex can use Cua");
+        assert_eq!(
+            st.prompt.as_ref().unwrap().heading,
+            "Try this in Claude Code or OpenAI Codex"
+        );
+        // One not set up yet: the fix names only it.
+        i.agents = Some(vec![claude(true), codex(true, false)]);
+        let v = view(&i);
+        assert_eq!(s(&v).rows[0].title, "Connect OpenAI Codex");
+        assert_eq!(
+            s(&v).rows[0].note,
+            "Cua isn't in OpenAI Codex's settings yet."
+        );
+    }
+
+    #[test]
+    fn codex_signs_in_on_this_computer_and_keys_stay_here() {
+        // Codex only: its ChatGPT sign-in and the OpenAI key, never the Anthropic one.
+        let c = connect(vec![claude(false), codex(true, false)], Some(&["codex"]));
+        let rows: Vec<_> = c.credentials.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(rows, ["sign-in:codex", "key:openai"]);
+        let chatgpt = &c.credentials[0];
+        assert_eq!(chatgpt.title, "ChatGPT sign-in");
+        assert_eq!(chatgpt.note, "OpenAI Codex uses it on this Mac");
+        assert_eq!(chatgpt.action.as_ref().unwrap().id, "agent-sign-in");
+        assert_eq!(chatgpt.agent.as_deref(), Some("codex"));
+        let openai = &c.credentials[1];
+        assert_eq!(
+            (openai.title.as_str(), openai.status.as_deref()),
+            ("OpenAI key", None)
+        );
+        assert_eq!(openai.action.as_ref().unwrap().id, "add-key");
+        // Both: the Anthropic key is saved, so it says so and asks nothing.
+        let c = connect(
+            vec![claude(false), codex(true, true)],
+            Some(&["claude-code", "codex"]),
+        );
+        let rows: Vec<_> = c
+            .credentials
+            .iter()
+            .map(|r| (r.id.as_str(), r.status.as_deref(), r.action.is_some()))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("sign-in:codex", Some("Signed in"), false),
+                ("key:anthropic", Some("Saved"), false),
+                ("key:openai", None, true),
+            ]
+        );
+        // Waiting for the browser, then a failure to start.
+        let mut i = FirstRunInput {
+            agents: Some(vec![codex(true, false)]),
+            picked: Some(vec!["codex".into()]),
+            agent_signing_in: Some("codex".into()),
+            ..Default::default()
+        };
+        let row = view(&i).connect.unwrap().credentials[0].clone();
+        assert_eq!(row.status.as_deref(), Some("Finish in your browser…"));
+        assert!(row.action.is_none());
+        i.agent_signing_in = None;
+        i.agent_sign_in_error = Some("codex: not found".into());
+        let row = view(&i).connect.unwrap().credentials[0].clone();
+        assert_eq!(
+            row.error.as_deref(),
+            Some("Couldn't start the sign-in: codex: not found")
+        );
+        // Codex not installed here: nothing to start yet.
+        i.agents = Some(vec![codex(false, false)]);
+        assert!(view(&i).connect.unwrap().credentials[0].action.is_none());
+        // Keys this app can't read: only the sign-in.
+        i.keys = Some(crate::agent_keys::AgentKeysInput {
+            unavailable: Some("no vault".into()),
+            ..Default::default()
+        });
+        assert_eq!(view(&i).connect.unwrap().credentials.len(), 1);
+    }
+
+    #[test]
+    fn step_one_says_what_stays_on_this_computer() {
+        let c = connect(
+            vec![claude(false), codex(true, false)],
+            Some(&["claude-code", "codex"]),
+        );
+        assert_eq!(
+            c.agents_note,
+            "Cua adds its skills and MCP server to each one you pick, on this Mac only. Your other computers set up their own."
+        );
+        assert_eq!(c.credentials_label, "Sign-ins and keys");
+        assert_eq!(
+            c.credentials_note,
+            "They stay on this Mac. Other computers keep their own."
+        );
+        // Nothing follows the Cua account: the page never says it does.
+        let all = serde_json::to_string(&c).unwrap().to_lowercase();
+        for claim in ["account", "everywhere", "any computer", "sync"] {
+            assert!(!all.contains(claim), "{claim}");
+        }
+        let pc = view(&FirstRunInput {
+            host_os: "windows".into(),
+            ..Default::default()
+        })
+        .connect
+        .unwrap();
+        assert_eq!(pc.agents_label, "On this PC");
     }
 
     #[test]

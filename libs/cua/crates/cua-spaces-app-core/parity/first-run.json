@@ -1,6 +1,6 @@
 {
   "name": "first-run",
-  "about": "The 0.10.0 first run, one screen state per storyboard frame (v2-01 to v2-09, 16, 17): connect your agent, then the agent and this computer checked, a first request that works on this computer, the optional extra Space (macOS first, never blocking Done), the plan card after the first success, and Home's to-do list after Finish later. Each case patches the base input; every app draws firstRun.view's words and must say the same.",
+  "about": "The 0.10.0 first run, one screen state per storyboard frame (v2-01 to v2-09, 16, 17): step 1 picks any agents or none (every agent the setup knows; what is installed per computer, and the agents' own sign-ins and keys, which stay on this computer), then the agent and this computer checked, a first request that works on this computer, the optional extra Space (macOS first, never blocking Done), the plan card after the first success, and Home's to-do list after Finish later. Each case patches the base input; every app draws firstRun.view's words and must say the same.",
   "base": {
     "step": "setup",
     "hostOs": "macos",
@@ -19,8 +19,11 @@
     "plan": { "metered": true, "plan": "free", "sessionsLimit": 2, "hoursLimit": 20, "accountApp": "https://app.cua.ai" }
   },
   "cases": [
-    { "name": "01 connect", "patch": { "step": "connect", "agent": null } },
-    { "name": "01 connect, only Codex installed", "patch": { "step": "connect", "agent": null, "agents": [{ "agent": "codex", "name": "Codex", "installed": true, "configured": false }] } },
+    { "name": "01 agents, nothing changed: the installed ones ticked", "patch": { "step": "connect", "agent": null, "keys": { "keys": [{ "provider": "anthropic", "env": "ANTHROPIC_API_KEY", "last4": "1234", "addedMs": 1 }] } } },
+    { "name": "01 agents, only Codex installed", "patch": { "step": "connect", "agent": null, "agents": [{ "agent": "codex", "name": "OpenAI Codex", "installed": true, "configured": false, "signIn": "ChatGPT" }] } },
+    { "name": "01 agents, none picked", "patch": { "step": "connect", "agent": null, "picked": [] } },
+    { "name": "01 agents, Codex only, signing in", "patch": { "step": "connect", "agent": null, "picked": ["codex"], "agentSigningIn": "codex", "keys": { "keys": [] }, "agents": [{ "agent": "claude-code", "name": "Claude Code", "installed": true, "configured": false }, { "agent": "codex", "name": "OpenAI Codex", "installed": true, "configured": false, "signIn": "ChatGPT" }, { "agent": "goose", "name": "Goose", "installed": false, "configured": false }] } },
+    { "name": "01 agents, several, Claude Code already set up", "patch": { "step": "connect", "agent": null, "picked": ["codex", "hermes"], "connecting": true, "keys": { "keys": [{ "provider": "anthropic", "env": "ANTHROPIC_API_KEY", "last4": "1234", "addedMs": 1 }] }, "agents": [{ "agent": "claude-code", "name": "Claude Code", "installed": true, "configured": true }, { "agent": "codex", "name": "OpenAI Codex", "installed": true, "configured": false, "signIn": "ChatGPT", "signedIn": true }, { "agent": "hermes", "name": "Hermes", "installed": true, "configured": false }] } },
     { "name": "02 checking", "patch": { "agents": null, "host": null } },
     { "name": "03 ready, choose", "patch": {} },
     { "name": "04 ready, creating macOS", "patch": { "extra": { "phase": "creating", "name": "macOS 1", "os": "macos", "detail": "Downloading macOS · 4.2 of 22.3 GB · 85 MB/s · about 4 min", "fraction": 0.19 } } },
@@ -32,6 +35,8 @@
     { "name": "17 first success, Teams card", "patch": { "agentUsedAt": "18:12", "extra": { "phase": "not-now" }, "plan": { "metered": true, "plan": "free", "teammates": true, "accountApp": "https://app.cua.ai" } } },
     { "name": "macOS made, ready", "patch": { "agentUsedAt": "18:12", "extra": { "phase": "ready", "name": "macOS 1", "os": "macos" }, "plan": { "metered": true, "plan": "pro" } }, "todos": true },
     { "name": "an Intel Mac: Linux only", "patch": { "offers": [{ "os": "linux", "time": "about 2 min" }, { "os": "macos", "time": "10 to 30 min the first time", "blocked": "This Mac can't run macOS Spaces: they need Apple silicon." }] } },
-    { "name": "a Windows PC", "patch": { "hostOs": "windows", "host": { "configured": true, "running": true, "online": true, "permissions": [] }, "offers": [{ "os": "linux", "time": "about 2 min" }] } }
+    { "name": "a Windows PC", "patch": { "hostOs": "windows", "host": { "configured": true, "running": true, "online": true, "permissions": [] }, "offers": [{ "os": "linux", "time": "about 2 min" }] } },
+    { "name": "no agent picked, ready", "patch": { "picked": [] }, "todos": true },
+    { "name": "two agents picked, one not set up", "patch": { "picked": ["claude-code", "codex"] }, "todos": true }
   ]
 }

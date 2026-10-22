@@ -519,6 +519,16 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       return null;
     },
     "agents.setup": () => state.agentSetup.map((r) => ({ ...r })),
+    // The demo's browser sign-in finishes a moment later.
+    "agents.signIn": async ({ agent }) => {
+      const row = state.agentSetup.find((r) => r.agent === agent);
+      if (!row?.signIn) throw new Error(`${row?.name ?? agent} has no sign-in Cua can start`);
+      if (!row.installed) throw new Error(`${row.name} isn't installed on this computer`);
+      setTimeout(() => {
+        state.agentSetup = state.agentSetup.map((r) => (r.agent === agent ? { ...r, signedIn: true } : r));
+      }, step * 40);
+      return state.agentSetup.map((r) => ({ ...r }));
+    },
     "agents.configure": async ({ agents }) => {
       await wait(step);
       const wanted = (r: AgentSetupRow) => r.installed && (agents === null || agents.includes(r.agent));

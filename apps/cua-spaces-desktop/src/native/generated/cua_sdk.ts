@@ -1653,7 +1653,16 @@ export type AgentInfo = {
     /**
      * What could not be verified from the agent's official docs.
      */
-    unverified?: string
+    unverified?: string,
+    /**
+     * The account the agent signs in with on its own (`ChatGPT` for
+     * Codex), when cua can see that sign-in.
+     */
+    signIn?: string,
+    /**
+     * That sign-in is on this computer.
+     */
+    signedIn: boolean
 }
 
 /**
@@ -1661,6 +1670,8 @@ export type AgentInfo = {
  */
 export const AgentInfo = (() => {
     const defaults = () => ({
+        signIn: undefined,
+        signedIn: false
     });
     const create = (() => {
         return uniffiCreateRecord<AgentInfo, ReturnType<typeof defaults>>(defaults);
@@ -1690,7 +1701,9 @@ const FfiConverterTypeAgentInfo = (() => {
                 skillsInstalled: FfiConverterSequenceString.read(from),
                 skillsOutdated: FfiConverterSequenceString.read(from),
                 error: FfiConverterOptionalString.read(from),
-                unverified: FfiConverterOptionalString.read(from)
+                unverified: FfiConverterOptionalString.read(from),
+                signIn: FfiConverterOptionalString.read(from),
+                signedIn: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -1708,6 +1721,8 @@ const FfiConverterTypeAgentInfo = (() => {
             FfiConverterSequenceString.write(value.skillsOutdated, into);
             FfiConverterOptionalString.write(value.error, into);
             FfiConverterOptionalString.write(value.unverified, into);
+            FfiConverterOptionalString.write(value.signIn, into);
+            FfiConverterBool.write(value.signedIn, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
@@ -1723,7 +1738,9 @@ const FfiConverterTypeAgentInfo = (() => {
              FfiConverterSequenceString.allocationSize(value.skillsInstalled) +
              FfiConverterSequenceString.allocationSize(value.skillsOutdated) +
              FfiConverterOptionalString.allocationSize(value.error) +
-             FfiConverterOptionalString.allocationSize(value.unverified);
+             FfiConverterOptionalString.allocationSize(value.unverified) +
+             FfiConverterOptionalString.allocationSize(value.signIn) +
+             FfiConverterBool.allocationSize(value.signedIn);
 
         }
     };
@@ -19065,6 +19082,12 @@ export interface AgentSetupLike {
  */
     setupCuaDriver(agents: Array<string>, command: string | undefined, skills: boolean, mcp: boolean, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<AgentSetupOutcome>>;
 /**
+ * Starts `agent`'s own sign-in on this computer (`codex login`: the
+ * browser opens). Returns once it is running; `detect` reports
+ * `signed_in` when it is done. cua never reads or copies the sign-in.
+ */
+    signIn(agent: string) /*throws*/: void;
+/**
  * The skills bundled with this SDK.
  */
     skills(): Array<BundledSkill>;
@@ -19314,6 +19337,22 @@ private constructor(pointer: UniffiHandle) {
         }
         throw __error;
     }
+    }
+
+/**
+ * Starts `agent`'s own sign-in on this computer (`codex login`: the
+ * browser opens). Returns once it is running; `detect` reports
+ * `signed_in` when it is done. cua never reads or copies the sign-in.
+ */
+    signIn(agent: string): void /*throws*/ {uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError),
+            /*caller:*/ (callStatus) => { nativeModule().uniffi_cua_sdk_fn_method_agentsetup_sign_in(
+                uniffiTypeAgentSetupObjectFactory.clonePointer(this),
+        FfiConverterString.lower(agent, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    );
     }
 
 /**
@@ -35704,6 +35743,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_setup_cua_driver() !== 33764) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_agentsetup_setup_cua_driver");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_sign_in() !== 10179) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_agentsetup_sign_in");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_skills() !== 53692) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_agentsetup_skills");

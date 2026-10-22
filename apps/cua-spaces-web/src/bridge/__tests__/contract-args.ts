@@ -47,6 +47,7 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
   "agents.resume": { name: "ada" },
   "agents.setup": {},
   "agents.configure": { agents: null },
+  "agents.signIn": { agent: "codex" },
   "agents.detail": { name: "ada" },
   "agents.readFile": { path: "agents/ada/MEMORY.md" },
   "agents.restoreFile": { path: "agents/ada/MEMORY.md", version: "agents/ada/MEMORY.md@1" },

@@ -376,6 +376,8 @@ export interface AgentSetupRunning {
   setUpCuaDriver(agents: string[]): Promise<AppAgentSetupOutcomeInput[]>;
   /** Removes what cua added for `agents`. */
   remove(agents: string[]): Promise<AppAgentSetupOutcomeInput[]>;
+  /** Starts `agent`'s own sign-in on this computer (`codex login`); returns once it runs. */
+  signIn(agent: string): Promise<void>;
 }
 
 /** The SDK's `AgentSetup`, registering the app's own `cua` as the MCP server. */
@@ -416,6 +418,10 @@ export class LiveAgentSetup implements AgentSetupRunning {
   async remove(agents: string[]): Promise<AppAgentSetupOutcomeInput[]> {
     return this.outcomes(await this.inner.remove(agents, true, true));
   }
+
+  async signIn(agent: string): Promise<void> {
+    this.inner.signIn(agent);
+  }
 }
 
 /** The coding agents' setup until the SDK is in. */
@@ -439,6 +445,7 @@ export class PendingAgentSetup implements AgentSetupRunning {
   setUp = async (agents: string[], skills: boolean, mcp: boolean) => (await this.s()).setUp(agents, skills, mcp);
   setUpCuaDriver = async (agents: string[]) => (await this.s()).setUpCuaDriver(agents);
   remove = async (agents: string[]) => (await this.s()).remove(agents);
+  signIn = async (agent: string) => (await this.s()).signIn(agent);
 }
 
 /** The Settings rows for the coding agents, and the changes made to them (the SwiftUI app's `AppModel.agentRows`, `configureAllAgents`, `agentAction`). */
@@ -510,6 +517,13 @@ export class CodingAgents {
       }
       this.onChange();
     }
+  }
+
+  /** Starts `agent`'s own sign-in (`codex login` opens the browser); the rows follow when it is done. */
+  async signIn(agent: string): Promise<void> {
+    if (!this.setup) return;
+    await this.setup.signIn(agent);
+    await this.reload();
   }
 
   /** A Settings row was pressed (`agent:<id>`): configure it, or remove what cua added when it is configured. */

@@ -74,7 +74,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "spaces.setPower", "spaces.delete", "spaces.cancelCreate",
         "machines.list", "host.status",
         "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
-        "agents.setup", "agents.configure",
+        "agents.setup", "agents.configure", "agents.signIn",
         // A persistent agent's Memory, Routines and Access (`PersistentModel`).
         "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine",
         "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer",
@@ -295,7 +295,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             return hostStatus()
 
         case "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
-             "agents.setup", "agents.configure":
+             "agents.setup", "agents.configure", "agents.signIn":
             return try await agents(method, args)
 
         case "checklist.get": return ["state": model.checklist.stored]
@@ -704,6 +704,12 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             } else {
                 await model.agentAction(try strings(args, "agents"), remove: false)
             }
+            return BridgeValue.encode(model.agentRows ?? [])
+        case "agents.signIn":
+            guard model.agentSetup != nil else { throw Failure.unsupported("Agent setup is not available in this build") }
+            do { try await model.agentSignIn(try string(args, "agent")) }
+            catch let f as Failure { throw f }
+            catch { throw Failure(code: "failed", message: LiveSpacesBackend.words(error)) }
             return BridgeValue.encode(model.agentRows ?? [])
         default:
             throw Failure.unimplemented(method)

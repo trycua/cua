@@ -7641,6 +7641,11 @@ pub struct AppAgentSetupStatus {
     pub skills_outdated: Vec<String>,
     /// Problem reading its config.
     pub error: Option<String>,
+    /// The account it signs in with on its own (`ChatGPT` for Codex), when
+    /// the setup can see that sign-in.
+    pub sign_in: Option<String>,
+    /// That sign-in is on this computer.
+    pub signed_in: bool,
 }
 
 /// One Settings row for a coding agent.
@@ -7665,6 +7670,10 @@ pub struct AppAgentSettingsRow {
     pub mcp_config: Option<String>,
     /// Skills directory.
     pub skills_dir: Option<String>,
+    /// The account it signs in with on its own (`ChatGPT`), when known.
+    pub sign_in: Option<String>,
+    /// That sign-in is on this computer.
+    pub signed_in: bool,
 }
 
 /// One target's outcome of an agent setup step (the SDK's

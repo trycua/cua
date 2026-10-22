@@ -204,6 +204,14 @@ jobs:
             DECISION=$(python3 .github/scripts/release_branch_needs_rebase.py \
               --branch "$BRANCH" --head "origin/$BRANCH")
             echo "Release PR #$number: $DECISION"
+            # Main's copy of the replay tooling, taken before the checkout swaps
+            # in the branch's (possibly older) tree, which may not have it.
+            TOOLS="$RUNNER_TEMP/release-tools"
+            mkdir -p "$TOOLS"
+            for tool in replay_release_branch.sh merge_release_please_manifests.py; do
+              git show "origin/main:.github/scripts/$tool" > "$TOOLS/$tool"
+            done
+            chmod +x "$TOOLS/replay_release_branch.sh"
             git checkout -B "$BRANCH" "origin/$BRANCH"
             git config user.name "trycua-release[bot]"
             git config user.email "trycua-release[bot]@users.noreply.github.com"
@@ -231,7 +239,7 @@ jobs:
               if [[ "${SDK}" == "true" ]]; then
                 COMPONENT_ARGS+=(--component cua-sdk)
               fi
-              .github/scripts/replay_release_branch.sh "origin/$BRANCH" "${COMPONENT_ARGS[@]}"
+              "$TOOLS/replay_release_branch.sh" "origin/$BRANCH" "${COMPONENT_ARGS[@]}"
             fi
             if [[ "$PERCEPTION" == "true" ]]; then
               PERCEPTION_VERSION=$(tr -d '[:space:]' < \

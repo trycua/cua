@@ -253,7 +253,10 @@ fn walk_tree_with_web_content(
                 walk: budget.outcome(),
                 // No application AX element at all, so a requested window
                 // certainly did not resolve.
-                window_scope: window_id.map(|_| WindowScope::AxUnresolved { ax_window_count: 0 }),
+                window_scope: window_id.map(|_| WindowScope::AxUnresolved {
+                    ax_window_count: 0,
+                    ax_windows_error: None,
+                }),
             };
         }
         set_messaging_timeout(app_elem);
@@ -276,7 +279,7 @@ fn walk_tree_with_web_content(
             let attempt_started = Instant::now();
             super::enablement::ensure_chromium_ax_enabled(pid, app_elem);
 
-            let top_level = copy_top_level(app_elem, pid, window_id);
+            let (top_level, ax_windows_error) = copy_top_level(app_elem, pid, window_id);
 
             // Scope: keep non-window children (menu bar) + the target window —
             // but ONLY once the target window has actually been identified. When
@@ -287,7 +290,7 @@ fn walk_tree_with_web_content(
                 let walk = top_level.clone();
                 break (top_level, walk);
             };
-            let decision = scope_top_level(&top_level, pid, wid);
+            let decision = scope_top_level(&top_level, pid, wid, ax_windows_error);
             if matches!(decision.scope, WindowScope::AxUnresolved { .. }) {
                 match launch_wait.step(attempt_started, Instant::now(), || is_still_launching(pid))
                 {
@@ -366,13 +369,13 @@ unsafe fn copy_top_level(
     app_elem: AXUIElementRef,
     pid: i32,
     window_id: Option<u32>,
-) -> Vec<AXUIElementRef> {
+) -> (Vec<AXUIElementRef>, Option<AXError>) {
     let mut top_level = copy_children(app_elem);
     // A requested window on another Space is absent from AXWindows; the
     // `_including` variant recovers it by exact CGWindowID.
-    let from_windows = match window_id {
-        Some(wid) => copy_ax_windows_including(app_elem, pid, wid),
-        None => copy_ax_windows(app_elem),
+    let (from_windows, ax_windows_error) = match window_id {
+        Some(wid) => copy_ax_windows_including_or_error(app_elem, pid, wid),
+        None => (copy_ax_windows(app_elem), None),
     };
     for w in from_windows {
         // AXChildren and AXWindows can return different proxy pointers for
@@ -389,11 +392,16 @@ unsafe fn copy_top_level(
             CFRelease(w as CFTypeRef);
         }
     }
-    top_level
+    (top_level, ax_windows_error)
 }
 
 /// Decide which of `top_level` a walk scoped to `wid` covers.
-unsafe fn scope_top_level(top_level: &[AXUIElementRef], pid: i32, wid: u32) -> ScopeDecision {
+unsafe fn scope_top_level(
+    top_level: &[AXUIElementRef],
+    pid: i32,
+    wid: u32,
+    ax_windows_error: Option<AXError>,
+) -> ScopeDecision {
     let candidates: Vec<TopLevelCandidate> = top_level
         .iter()
         .map(|&child| {
@@ -416,7 +424,7 @@ unsafe fn scope_top_level(top_level: &[AXUIElementRef], pid: i32, wid: u32) -> S
             }
         })
         .collect();
-    decide_window_scope(&candidates, wid, || {
+    decide_window_scope(&candidates, wid, ax_windows_error, || {
         crate::windows::resolve_window_owner(pid, wid)
     })
 }

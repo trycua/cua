@@ -28,11 +28,20 @@ pub type AXUIElementRef = *mut __AXUIElement;
 pub type AXError = c_int;
 pub const kAXErrorSuccess: AXError = 0;
 pub const kAXErrorFailure: AXError = -25200;
+pub const kAXErrorIllegalArgument: AXError = -25201;
 pub const kAXErrorInvalidUIElement: AXError = -25202;
+pub const kAXErrorInvalidUIElementObserver: AXError = -25203;
+pub const kAXErrorCannotComplete: AXError = -25204;
 pub const kAXErrorAttributeUnsupported: AXError = -25205;
 pub const kAXErrorActionUnsupported: AXError = -25206;
-pub const kAXErrorNoValue: AXError = -25212;
+pub const kAXErrorNotificationUnsupported: AXError = -25207;
+pub const kAXErrorNotImplemented: AXError = -25208;
+pub const kAXErrorNotificationAlreadyRegistered: AXError = -25209;
+pub const kAXErrorNotificationNotRegistered: AXError = -25210;
 pub const kAXErrorAPIDisabled: AXError = -25211;
+pub const kAXErrorNoValue: AXError = -25212;
+pub const kAXErrorParameterizedAttributeUnsupported: AXError = -25213;
+pub const kAXErrorNotEnoughPrecision: AXError = -25214;
 
 // ── AXValue opaque type ──────────────────────────────────────────────────────
 
@@ -846,20 +855,32 @@ pub unsafe fn ax_get_window_id(element: AXUIElementRef) -> Option<u32> {
 ///
 /// `element` must be valid, and the caller must release every returned element.
 pub unsafe fn copy_ax_windows(element: AXUIElementRef) -> Vec<AXUIElementRef> {
+    copy_ax_windows_or_error(element).unwrap_or_default()
+}
+
+/// # Safety
+///
+/// `element` must be valid, and the caller must release every returned element.
+pub unsafe fn copy_ax_windows_or_error(
+    element: AXUIElementRef,
+) -> Result<Vec<AXUIElementRef>, AXError> {
     let attr = CFStr::new("AXWindows");
     let mut value: CFTypeRef = std::ptr::null();
     let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
-    if err != kAXErrorSuccess || value.is_null() {
-        return vec![];
+    if err != kAXErrorSuccess {
+        return Err(err);
+    }
+    if value.is_null() {
+        return Ok(vec![]);
     }
     let cf_array_type_id = CFArray::<CFTypeRef>::type_id();
     if core_foundation::base::CFGetTypeID(value) != cf_array_type_id {
         CFRelease(value);
-        return vec![];
+        return Ok(vec![]);
     }
     let arr = CFArray::<CFTypeRef>::wrap_under_create_rule(value as _);
     let ax_type_id = AXUIElementGetTypeID();
-    (0..arr.len())
+    Ok((0..arr.len())
         .filter_map(|i| {
             let item = *arr.get(i)?;
             if core_foundation::base::CFGetTypeID(item) == ax_type_id {
@@ -869,7 +890,28 @@ pub unsafe fn copy_ax_windows(element: AXUIElementRef) -> Vec<AXUIElementRef> {
                 None
             }
         })
-        .collect()
+        .collect())
+}
+
+pub fn ax_error_name(error: AXError) -> &'static str {
+    match error {
+        kAXErrorFailure => "kAXErrorFailure",
+        kAXErrorIllegalArgument => "kAXErrorIllegalArgument",
+        kAXErrorInvalidUIElement => "kAXErrorInvalidUIElement",
+        kAXErrorInvalidUIElementObserver => "kAXErrorInvalidUIElementObserver",
+        kAXErrorCannotComplete => "kAXErrorCannotComplete",
+        kAXErrorAttributeUnsupported => "kAXErrorAttributeUnsupported",
+        kAXErrorActionUnsupported => "kAXErrorActionUnsupported",
+        kAXErrorNotificationUnsupported => "kAXErrorNotificationUnsupported",
+        kAXErrorNotImplemented => "kAXErrorNotImplemented",
+        kAXErrorNotificationAlreadyRegistered => "kAXErrorNotificationAlreadyRegistered",
+        kAXErrorNotificationNotRegistered => "kAXErrorNotificationNotRegistered",
+        kAXErrorAPIDisabled => "kAXErrorAPIDisabled",
+        kAXErrorNoValue => "kAXErrorNoValue",
+        kAXErrorParameterizedAttributeUnsupported => "kAXErrorParameterizedAttributeUnsupported",
+        kAXErrorNotEnoughPrecision => "kAXErrorNotEnoughPrecision",
+        _ => "unknown AXError",
+    }
 }
 
 /// CGWindowIDs of `pid`'s `AXWindows`, or `None` when that list cannot be
@@ -1016,7 +1058,22 @@ pub unsafe fn copy_ax_windows_including(
     pid: i32,
     window_id: u32,
 ) -> Vec<AXUIElementRef> {
-    let mut windows = copy_ax_windows(app);
+    copy_ax_windows_including_or_error(app, pid, window_id).0
+}
+
+/// # Safety
+///
+/// `app` must be the valid application element of `pid`, and the caller must
+/// release every returned element.
+pub unsafe fn copy_ax_windows_including_or_error(
+    app: AXUIElementRef,
+    pid: i32,
+    window_id: u32,
+) -> (Vec<AXUIElementRef>, Option<AXError>) {
+    let (mut windows, error) = match copy_ax_windows_or_error(app) {
+        Ok(windows) => (windows, None),
+        Err(error) => (Vec::new(), Some(error)),
+    };
     let listed = windows
         .iter()
         .any(|&window| ax_get_window_id(window) == Some(window_id));
@@ -1025,7 +1082,7 @@ pub unsafe fn copy_ax_windows_including(
     }) {
         windows.extend(copy_ax_window_by_remote_token(pid, window_id));
     }
-    windows
+    (windows, error)
 }
 
 #[cfg(test)]

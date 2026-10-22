@@ -169,6 +169,14 @@ export class DevicesModel {
     await this.refresh();
   }
 
+  /** Renames one of your machines on the relay (this machine's host setup takes the name too). */
+  async renameMachine(machineId: string, name: string): Promise<void> {
+    const clean = this.native.appDevicesCleanName(name);
+    if (!clean) throw new RangeError("name");
+    await this.relay().renameMachine(machineId, clean);
+    await this.refresh();
+  }
+
   async revoke(id: string): Promise<void> {
     await this.relay().revoke(id);
     await this.refresh();

@@ -4,6 +4,8 @@
 
 import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
+import type { DiagnoseReport } from "./diagnose_pb";
+import { file_cua_env_v1_diagnose } from "./diagnose_pb";
 import type { AttachRelayRequest } from "./system_pb";
 import { file_cua_env_v1_system } from "./system_pb";
 import type { Message } from "@bufbuild/protobuf";
@@ -12,7 +14,67 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file cua/env/v1/host.proto.
  */
 export const file_cua_env_v1_host: GenFile = /*@__PURE__*/
-  fileDesc("ChVjdWEvZW52L3YxL2hvc3QucHJvdG8SCmN1YS5lbnYudjEibgoSSG9zdFNwYWNlc1NldHRpbmdzEhUKDXNoYXJlX2Rlc2t0b3AYASABKAgSFgoOcHJvdmlkZV9zcGFjZXMYAiABKAgSEgoKbWF4X3NwYWNlcxgDIAEoDRIVCg1tYXhfbWFjb3Nfdm1zGAQgASgNIlMKEkhvc3RTcGFjZXNDYXBhY2l0eRIQCghyZXNvdXJjZRgBIAEoCRIMCgR1c2VkGAIgASgNEg0KBWxpbWl0GAMgASgNEg4KBnJlYXNvbhgEIAEoCSLVAQoJSG9zdFNwYWNlEhUKDXJlbGF5X21hY2hpbmUYASABKAkSEwoLbG9jYWxfc3BhY2UYAiABKAkSDAoEbmFtZRgDIAEoCRINCgVpbWFnZRgEIAEoCRIKCgJvcxgFIAEoCRIMCgRraW5kGAYgASgJEg8KB3J1bnRpbWUYByABKAkSEgoKY3JlYXRlZF9ieRgIIAEoCRIVCg1jcmVhdGVkX2F0X21zGAkgASgDEhMKC2RpcmVjdF9wb3J0GAogASgNEhQKDGRpcmVjdF90b2tlbhgLIAEoCSJhChRIb3N0U3BhY2VzQXVkaXRFdmVudBINCgV0c19tcxgBIAEoAxIOCgZhY3Rpb24YAiABKAkSCwoDd2hvGAMgASgJEg0KBXNwYWNlGAQgASgJEg4KBmRldGFpbBgFIAEoCSIWChRHZXRIb3N0U3BhY2VzUmVxdWVzdCKuAgoVR2V0SG9zdFNwYWNlc1Jlc3BvbnNlEgwKBG5hbWUYASABKAkSCgoCb3MYAiABKAkSMAoIc2V0dGluZ3MYAyABKAsyHi5jdWEuZW52LnYxLkhvc3RTcGFjZXNTZXR0aW5ncxIwCghjYXBhY2l0eRgEIAMoCzIeLmN1YS5lbnYudjEuSG9zdFNwYWNlc0NhcGFjaXR5EiUKBnNwYWNlcxgFIAMoCzIVLmN1YS5lbnYudjEuSG9zdFNwYWNlEi8KBWF1ZGl0GAYgAygLMiAuY3VhLmVudi52MS5Ib3N0U3BhY2VzQXVkaXRFdmVudBIOCgZpbWFnZXMYByADKAkSLwoIY3JlYXRpbmcYCCADKAsyHS5jdWEuZW52LnYxLkhvc3RTcGFjZUNyZWF0aW5nIukBChFIb3N0U3BhY2VDcmVhdGluZxILCgNrZXkYASABKAkSDQoFcGhhc2UYAiABKAkSFQoIZnJhY3Rpb24YAyABKAFIAIgBARIOCgZkZXRhaWwYBCABKAkSFwoKYnl0ZXNfZG9uZRgFIAEoBEgBiAEBEhgKC2J5dGVzX3RvdGFsGAYgASgESAKIAQESHQoQYnl0ZXNfcGVyX3NlY29uZBgHIAEoAUgDiAEBQgsKCV9mcmFjdGlvbkINCgtfYnl0ZXNfZG9uZUIOCgxfYnl0ZXNfdG90YWxCEwoRX2J5dGVzX3Blcl9zZWNvbmQi2gEKFkNyZWF0ZUhvc3RTcGFjZVJlcXVlc3QSDQoFaW1hZ2UYASABKAkSDAoEa2luZBgCIAEoCRIPCgdydW50aW1lGAMgASgJEgwKBG5hbWUYBCABKAkSDAoEY3B1cxgFIAEoDRIRCgltZW1vcnlfbWIYBiABKAQSDwoHZGlza19nYhgHIAEoDRIuCgZhdHRhY2gYCCABKAsyHi5jdWEuZW52LnYxLkF0dGFjaFJlbGF5UmVxdWVzdBIOCgZkaXJlY3QYCSABKAgSEgoKY3JlYXRlX2tleRgKIAEoCSI/ChdDcmVhdGVIb3N0U3BhY2VSZXNwb25zZRIkCgVzcGFjZRgBIAEoCzIVLmN1YS5lbnYudjEuSG9zdFNwYWNlIicKFkRlbGV0ZUhvc3RTcGFjZVJlcXVlc3QSDQoFc3BhY2UYASABKAkiKgoXRGVsZXRlSG9zdFNwYWNlUmVzcG9uc2USDwoHbWVzc2FnZRgBIAEoCSIoChdEZWxldGVDbG91ZFNwYWNlUmVxdWVzdBINCgVzcGFjZRgBIAEoCSIrChhEZWxldGVDbG91ZFNwYWNlUmVzcG9uc2USDwoHbWVzc2FnZRgBIAEoCSInChZDYW5jZWxIb3N0U3BhY2VSZXF1ZXN0Eg0KBXNwYWNlGAEgASgJIioKF0NhbmNlbEhvc3RTcGFjZVJlc3BvbnNlEg8KB21lc3NhZ2UYASABKAkiNQoYU2V0SG9zdFNwYWNlUG93ZXJSZXF1ZXN0Eg0KBXNwYWNlGAEgASgJEgoKAm9uGAIgASgIIkoKGVNldEhvc3RTcGFjZVBvd2VyUmVzcG9uc2USDQoFc3RhdGUYASABKAkSDQoFcG93ZXIYAiABKAkSDwoHbWVzc2FnZRgDIAEoCTK+BAoRSG9zdFNwYWNlc1NlcnZpY2USVAoNR2V0SG9zdFNwYWNlcxIgLmN1YS5lbnYudjEuR2V0SG9zdFNwYWNlc1JlcXVlc3QaIS5jdWEuZW52LnYxLkdldEhvc3RTcGFjZXNSZXNwb25zZRJaCg9DcmVhdGVIb3N0U3BhY2USIi5jdWEuZW52LnYxLkNyZWF0ZUhvc3RTcGFjZVJlcXVlc3QaIy5jdWEuZW52LnYxLkNyZWF0ZUhvc3RTcGFjZVJlc3BvbnNlEloKD0RlbGV0ZUhvc3RTcGFjZRIiLmN1YS5lbnYudjEuRGVsZXRlSG9zdFNwYWNlUmVxdWVzdBojLmN1YS5lbnYudjEuRGVsZXRlSG9zdFNwYWNlUmVzcG9uc2USWgoPQ2FuY2VsSG9zdFNwYWNlEiIuY3VhLmVudi52MS5DYW5jZWxIb3N0U3BhY2VSZXF1ZXN0GiMuY3VhLmVudi52MS5DYW5jZWxIb3N0U3BhY2VSZXNwb25zZRJgChFTZXRIb3N0U3BhY2VQb3dlchIkLmN1YS5lbnYudjEuU2V0SG9zdFNwYWNlUG93ZXJSZXF1ZXN0GiUuY3VhLmVudi52MS5TZXRIb3N0U3BhY2VQb3dlclJlc3BvbnNlEl0KEERlbGV0ZUNsb3VkU3BhY2USIy5jdWEuZW52LnYxLkRlbGV0ZUNsb3VkU3BhY2VSZXF1ZXN0GiQuY3VhLmVudi52MS5EZWxldGVDbG91ZFNwYWNlUmVzcG9uc2ViBnByb3RvMw", [file_cua_env_v1_system]);
+  fileDesc("ChVjdWEvZW52L3YxL2hvc3QucHJvdG8SCmN1YS5lbnYudjEiJgoTRGlhZ25vc2VIb3N0UmVxdWVzdBIPCgdtYWNoaW5lGAEgASgJImMKFERpYWdub3NlSG9zdFJlc3BvbnNlEioKBnJlcG9ydBgBIAEoCzIaLmN1YS5lbnYudjEuRGlhZ25vc2VSZXBvcnQSEwoLY3VhX3ZlcnNpb24YAiABKAkSCgoCb3MYAyABKAkibgoSSG9zdFNwYWNlc1NldHRpbmdzEhUKDXNoYXJlX2Rlc2t0b3AYASABKAgSFgoOcHJvdmlkZV9zcGFjZXMYAiABKAgSEgoKbWF4X3NwYWNlcxgDIAEoDRIVCg1tYXhfbWFjb3Nfdm1zGAQgASgNIlMKEkhvc3RTcGFjZXNDYXBhY2l0eRIQCghyZXNvdXJjZRgBIAEoCRIMCgR1c2VkGAIgASgNEg0KBWxpbWl0GAMgASgNEg4KBnJlYXNvbhgEIAEoCSLVAQoJSG9zdFNwYWNlEhUKDXJlbGF5X21hY2hpbmUYASABKAkSEwoLbG9jYWxfc3BhY2UYAiABKAkSDAoEbmFtZRgDIAEoCRINCgVpbWFnZRgEIAEoCRIKCgJvcxgFIAEoCRIMCgRraW5kGAYgASgJEg8KB3J1bnRpbWUYByABKAkSEgoKY3JlYXRlZF9ieRgIIAEoCRIVCg1jcmVhdGVkX2F0X21zGAkgASgDEhMKC2RpcmVjdF9wb3J0GAogASgNEhQKDGRpcmVjdF90b2tlbhgLIAEoCSJhChRIb3N0U3BhY2VzQXVkaXRFdmVudBINCgV0c19tcxgBIAEoAxIOCgZhY3Rpb24YAiABKAkSCwoDd2hvGAMgASgJEg0KBXNwYWNlGAQgASgJEg4KBmRldGFpbBgFIAEoCSIWChRHZXRIb3N0U3BhY2VzUmVxdWVzdCKuAgoVR2V0SG9zdFNwYWNlc1Jlc3BvbnNlEgwKBG5hbWUYASABKAkSCgoCb3MYAiABKAkSMAoIc2V0dGluZ3MYAyABKAsyHi5jdWEuZW52LnYxLkhvc3RTcGFjZXNTZXR0aW5ncxIwCghjYXBhY2l0eRgEIAMoCzIeLmN1YS5lbnYudjEuSG9zdFNwYWNlc0NhcGFjaXR5EiUKBnNwYWNlcxgFIAMoCzIVLmN1YS5lbnYudjEuSG9zdFNwYWNlEi8KBWF1ZGl0GAYgAygLMiAuY3VhLmVudi52MS5Ib3N0U3BhY2VzQXVkaXRFdmVudBIOCgZpbWFnZXMYByADKAkSLwoIY3JlYXRpbmcYCCADKAsyHS5jdWEuZW52LnYxLkhvc3RTcGFjZUNyZWF0aW5nIukBChFIb3N0U3BhY2VDcmVhdGluZxILCgNrZXkYASABKAkSDQoFcGhhc2UYAiABKAkSFQoIZnJhY3Rpb24YAyABKAFIAIgBARIOCgZkZXRhaWwYBCABKAkSFwoKYnl0ZXNfZG9uZRgFIAEoBEgBiAEBEhgKC2J5dGVzX3RvdGFsGAYgASgESAKIAQESHQoQYnl0ZXNfcGVyX3NlY29uZBgHIAEoAUgDiAEBQgsKCV9mcmFjdGlvbkINCgtfYnl0ZXNfZG9uZUIOCgxfYnl0ZXNfdG90YWxCEwoRX2J5dGVzX3Blcl9zZWNvbmQi2gEKFkNyZWF0ZUhvc3RTcGFjZVJlcXVlc3QSDQoFaW1hZ2UYASABKAkSDAoEa2luZBgCIAEoCRIPCgdydW50aW1lGAMgASgJEgwKBG5hbWUYBCABKAkSDAoEY3B1cxgFIAEoDRIRCgltZW1vcnlfbWIYBiABKAQSDwoHZGlza19nYhgHIAEoDRIuCgZhdHRhY2gYCCABKAsyHi5jdWEuZW52LnYxLkF0dGFjaFJlbGF5UmVxdWVzdBIOCgZkaXJlY3QYCSABKAgSEgoKY3JlYXRlX2tleRgKIAEoCSI/ChdDcmVhdGVIb3N0U3BhY2VSZXNwb25zZRIkCgVzcGFjZRgBIAEoCzIVLmN1YS5lbnYudjEuSG9zdFNwYWNlIicKFkRlbGV0ZUhvc3RTcGFjZVJlcXVlc3QSDQoFc3BhY2UYASABKAkiKgoXRGVsZXRlSG9zdFNwYWNlUmVzcG9uc2USDwoHbWVzc2FnZRgBIAEoCSIoChdEZWxldGVDbG91ZFNwYWNlUmVxdWVzdBINCgVzcGFjZRgBIAEoCSIrChhEZWxldGVDbG91ZFNwYWNlUmVzcG9uc2USDwoHbWVzc2FnZRgBIAEoCSInChZDYW5jZWxIb3N0U3BhY2VSZXF1ZXN0Eg0KBXNwYWNlGAEgASgJIioKF0NhbmNlbEhvc3RTcGFjZVJlc3BvbnNlEg8KB21lc3NhZ2UYASABKAkiNQoYU2V0SG9zdFNwYWNlUG93ZXJSZXF1ZXN0Eg0KBXNwYWNlGAEgASgJEgoKAm9uGAIgASgIIkoKGVNldEhvc3RTcGFjZVBvd2VyUmVzcG9uc2USDQoFc3RhdGUYASABKAkSDQoFcG93ZXIYAiABKAkSDwoHbWVzc2FnZRgDIAEoCTKRBQoRSG9zdFNwYWNlc1NlcnZpY2USVAoNR2V0SG9zdFNwYWNlcxIgLmN1YS5lbnYudjEuR2V0SG9zdFNwYWNlc1JlcXVlc3QaIS5jdWEuZW52LnYxLkdldEhvc3RTcGFjZXNSZXNwb25zZRJaCg9DcmVhdGVIb3N0U3BhY2USIi5jdWEuZW52LnYxLkNyZWF0ZUhvc3RTcGFjZVJlcXVlc3QaIy5jdWEuZW52LnYxLkNyZWF0ZUhvc3RTcGFjZVJlc3BvbnNlEloKD0RlbGV0ZUhvc3RTcGFjZRIiLmN1YS5lbnYudjEuRGVsZXRlSG9zdFNwYWNlUmVxdWVzdBojLmN1YS5lbnYudjEuRGVsZXRlSG9zdFNwYWNlUmVzcG9uc2USWgoPQ2FuY2VsSG9zdFNwYWNlEiIuY3VhLmVudi52MS5DYW5jZWxIb3N0U3BhY2VSZXF1ZXN0GiMuY3VhLmVudi52MS5DYW5jZWxIb3N0U3BhY2VSZXNwb25zZRJgChFTZXRIb3N0U3BhY2VQb3dlchIkLmN1YS5lbnYudjEuU2V0SG9zdFNwYWNlUG93ZXJSZXF1ZXN0GiUuY3VhLmVudi52MS5TZXRIb3N0U3BhY2VQb3dlclJlc3BvbnNlEl0KEERlbGV0ZUNsb3VkU3BhY2USIy5jdWEuZW52LnYxLkRlbGV0ZUNsb3VkU3BhY2VSZXF1ZXN0GiQuY3VhLmVudi52MS5EZWxldGVDbG91ZFNwYWNlUmVzcG9uc2USUQoMRGlhZ25vc2VIb3N0Eh8uY3VhLmVudi52MS5EaWFnbm9zZUhvc3RSZXF1ZXN0GiAuY3VhLmVudi52MS5EaWFnbm9zZUhvc3RSZXNwb25zZWIGcHJvdG8z", [file_cua_env_v1_diagnose, file_cua_env_v1_system]);
+
+/**
+ * Request for `HostSpacesService.DiagnoseHost`.
+ *
+ * @generated from message cua.env.v1.DiagnoseHostRequest
+ */
+export type DiagnoseHostRequest = Message<"cua.env.v1.DiagnoseHostRequest"> & {
+  /**
+   * Another of the owner's machines to check instead, by id or name: the
+   * cua daemon asks that machine's own `DiagnoseHost` over the relay (or
+   * the mesh, or its direct address). Only for a call made on this machine
+   * itself; a host's cua-spacesd clears it on calls it forwards. Empty:
+   * this machine.
+   *
+   * @generated from field: string machine = 1;
+   */
+  machine: string;
+};
+
+/**
+ * Describes the message cua.env.v1.DiagnoseHostRequest.
+ * Use `create(DiagnoseHostRequestSchema)` to create a new message.
+ */
+export const DiagnoseHostRequestSchema: GenMessage<DiagnoseHostRequest> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_host, 0);
+
+/**
+ * Response for `HostSpacesService.DiagnoseHost`.
+ *
+ * @generated from message cua.env.v1.DiagnoseHostResponse
+ */
+export type DiagnoseHostResponse = Message<"cua.env.v1.DiagnoseHostResponse"> & {
+  /**
+   * The checks (ids `machine.*`), in the report schema `cua doctor` uses.
+   *
+   * @generated from field: cua.env.v1.DiagnoseReport report = 1;
+   */
+  report?: DiagnoseReport | undefined;
+
+  /**
+   * The Cua version of the daemon that ran them.
+   *
+   * @generated from field: string cua_version = 2;
+   */
+  cuaVersion: string;
+
+  /**
+   * The machine's operating system (`macos`, `linux`, `windows`).
+   *
+   * @generated from field: string os = 3;
+   */
+  os: string;
+};
+
+/**
+ * Describes the message cua.env.v1.DiagnoseHostResponse.
+ * Use `create(DiagnoseHostResponseSchema)` to create a new message.
+ */
+export const DiagnoseHostResponseSchema: GenMessage<DiagnoseHostResponse> = /*@__PURE__*/
+  messageDesc(file_cua_env_v1_host, 1);
 
 /**
  * The host's two independent settings and its limits.
@@ -56,7 +118,7 @@ export type HostSpacesSettings = Message<"cua.env.v1.HostSpacesSettings"> & {
  * Use `create(HostSpacesSettingsSchema)` to create a new message.
  */
 export const HostSpacesSettingsSchema: GenMessage<HostSpacesSettings> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 0);
+  messageDesc(file_cua_env_v1_host, 2);
 
 /**
  * How much of one limit is in use.
@@ -100,7 +162,7 @@ export type HostSpacesCapacity = Message<"cua.env.v1.HostSpacesCapacity"> & {
  * Use `create(HostSpacesCapacitySchema)` to create a new message.
  */
 export const HostSpacesCapacitySchema: GenMessage<HostSpacesCapacity> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 1);
+  messageDesc(file_cua_env_v1_host, 3);
 
 /**
  * A Space this host provides.
@@ -196,7 +258,7 @@ export type HostSpace = Message<"cua.env.v1.HostSpace"> & {
  * Use `create(HostSpaceSchema)` to create a new message.
  */
 export const HostSpaceSchema: GenMessage<HostSpace> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 2);
+  messageDesc(file_cua_env_v1_host, 4);
 
 /**
  * One line of the host's Spaces audit log.
@@ -245,7 +307,7 @@ export type HostSpacesAuditEvent = Message<"cua.env.v1.HostSpacesAuditEvent"> & 
  * Use `create(HostSpacesAuditEventSchema)` to create a new message.
  */
 export const HostSpacesAuditEventSchema: GenMessage<HostSpacesAuditEvent> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 3);
+  messageDesc(file_cua_env_v1_host, 5);
 
 /**
  * Request for `HostSpacesService.GetHostSpaces`.
@@ -260,7 +322,7 @@ export type GetHostSpacesRequest = Message<"cua.env.v1.GetHostSpacesRequest"> & 
  * Use `create(GetHostSpacesRequestSchema)` to create a new message.
  */
 export const GetHostSpacesRequestSchema: GenMessage<GetHostSpacesRequest> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 4);
+  messageDesc(file_cua_env_v1_host, 6);
 
 /**
  * Response for `HostSpacesService.GetHostSpaces`.
@@ -336,7 +398,7 @@ export type GetHostSpacesResponse = Message<"cua.env.v1.GetHostSpacesResponse"> 
  * Use `create(GetHostSpacesResponseSchema)` to create a new message.
  */
 export const GetHostSpacesResponseSchema: GenMessage<GetHostSpacesResponse> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 5);
+  messageDesc(file_cua_env_v1_host, 7);
 
 /**
  * A create a host is running, and what it is doing now. The progress
@@ -403,7 +465,7 @@ export type HostSpaceCreating = Message<"cua.env.v1.HostSpaceCreating"> & {
  * Use `create(HostSpaceCreatingSchema)` to create a new message.
  */
 export const HostSpaceCreatingSchema: GenMessage<HostSpaceCreating> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 6);
+  messageDesc(file_cua_env_v1_host, 8);
 
 /**
  * Request for `HostSpacesService.CreateHostSpace`.
@@ -496,7 +558,7 @@ export type CreateHostSpaceRequest = Message<"cua.env.v1.CreateHostSpaceRequest"
  * Use `create(CreateHostSpaceRequestSchema)` to create a new message.
  */
 export const CreateHostSpaceRequestSchema: GenMessage<CreateHostSpaceRequest> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 7);
+  messageDesc(file_cua_env_v1_host, 9);
 
 /**
  * Response for `HostSpacesService.CreateHostSpace`.
@@ -517,7 +579,7 @@ export type CreateHostSpaceResponse = Message<"cua.env.v1.CreateHostSpaceRespons
  * Use `create(CreateHostSpaceResponseSchema)` to create a new message.
  */
 export const CreateHostSpaceResponseSchema: GenMessage<CreateHostSpaceResponse> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 8);
+  messageDesc(file_cua_env_v1_host, 10);
 
 /**
  * Request for `HostSpacesService.DeleteHostSpace`.
@@ -538,7 +600,7 @@ export type DeleteHostSpaceRequest = Message<"cua.env.v1.DeleteHostSpaceRequest"
  * Use `create(DeleteHostSpaceRequestSchema)` to create a new message.
  */
 export const DeleteHostSpaceRequestSchema: GenMessage<DeleteHostSpaceRequest> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 9);
+  messageDesc(file_cua_env_v1_host, 11);
 
 /**
  * Response for `HostSpacesService.DeleteHostSpace`.
@@ -559,7 +621,7 @@ export type DeleteHostSpaceResponse = Message<"cua.env.v1.DeleteHostSpaceRespons
  * Use `create(DeleteHostSpaceResponseSchema)` to create a new message.
  */
 export const DeleteHostSpaceResponseSchema: GenMessage<DeleteHostSpaceResponse> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 10);
+  messageDesc(file_cua_env_v1_host, 12);
 
 /**
  * Request for `HostSpacesService.DeleteCloudSpace`.
@@ -580,7 +642,7 @@ export type DeleteCloudSpaceRequest = Message<"cua.env.v1.DeleteCloudSpaceReques
  * Use `create(DeleteCloudSpaceRequestSchema)` to create a new message.
  */
 export const DeleteCloudSpaceRequestSchema: GenMessage<DeleteCloudSpaceRequest> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 11);
+  messageDesc(file_cua_env_v1_host, 13);
 
 /**
  * Response for `HostSpacesService.DeleteCloudSpace`.
@@ -601,7 +663,7 @@ export type DeleteCloudSpaceResponse = Message<"cua.env.v1.DeleteCloudSpaceRespo
  * Use `create(DeleteCloudSpaceResponseSchema)` to create a new message.
  */
 export const DeleteCloudSpaceResponseSchema: GenMessage<DeleteCloudSpaceResponse> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 12);
+  messageDesc(file_cua_env_v1_host, 14);
 
 /**
  * Request for `HostSpacesService.CancelHostSpace`.
@@ -622,7 +684,7 @@ export type CancelHostSpaceRequest = Message<"cua.env.v1.CancelHostSpaceRequest"
  * Use `create(CancelHostSpaceRequestSchema)` to create a new message.
  */
 export const CancelHostSpaceRequestSchema: GenMessage<CancelHostSpaceRequest> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 13);
+  messageDesc(file_cua_env_v1_host, 15);
 
 /**
  * Response for `HostSpacesService.CancelHostSpace`.
@@ -643,7 +705,7 @@ export type CancelHostSpaceResponse = Message<"cua.env.v1.CancelHostSpaceRespons
  * Use `create(CancelHostSpaceResponseSchema)` to create a new message.
  */
 export const CancelHostSpaceResponseSchema: GenMessage<CancelHostSpaceResponse> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 14);
+  messageDesc(file_cua_env_v1_host, 16);
 
 /**
  * Request for `HostSpacesService.SetHostSpacePower`.
@@ -671,7 +733,7 @@ export type SetHostSpacePowerRequest = Message<"cua.env.v1.SetHostSpacePowerRequ
  * Use `create(SetHostSpacePowerRequestSchema)` to create a new message.
  */
 export const SetHostSpacePowerRequestSchema: GenMessage<SetHostSpacePowerRequest> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 15);
+  messageDesc(file_cua_env_v1_host, 17);
 
 /**
  * Response for `HostSpacesService.SetHostSpacePower`.
@@ -706,7 +768,7 @@ export type SetHostSpacePowerResponse = Message<"cua.env.v1.SetHostSpacePowerRes
  * Use `create(SetHostSpacePowerResponseSchema)` to create a new message.
  */
 export const SetHostSpacePowerResponseSchema: GenMessage<SetHostSpacePowerResponse> = /*@__PURE__*/
-  messageDesc(file_cua_env_v1_host, 16);
+  messageDesc(file_cua_env_v1_host, 18);
 
 /**
  * Spaces a host provides: a machine set up with `cua host setup
@@ -813,6 +875,22 @@ export const HostSpacesService: GenService<{
     methodKind: "unary";
     input: typeof DeleteCloudSpaceRequestSchema;
     output: typeof DeleteCloudSpaceResponseSchema;
+  },
+  /**
+   * This machine's health as a place to run Spaces, checked by its cua
+   * daemon (the process that runs them): Local Network access and the app
+   * macOS holds responsible for it, free disk, virtualization, memory, and
+   * the permissions sharing its desktop needs. Read-only and bounded (a
+   * few seconds). Only the owner. Works whether or not this machine
+   * provides Spaces. The Machines page shows the warnings and failures as
+   * the machine's issues; `cua doctor --machine` prints them.
+   *
+   * @generated from rpc cua.env.v1.HostSpacesService.DiagnoseHost
+   */
+  diagnoseHost: {
+    methodKind: "unary";
+    input: typeof DiagnoseHostRequestSchema;
+    output: typeof DiagnoseHostResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_cua_env_v1_host, 0);

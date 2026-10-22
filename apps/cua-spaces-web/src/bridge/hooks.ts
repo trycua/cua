@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { BridgeMode, DataAdapter } from "./adapter";
 import { BridgeContext, type BridgeContextValue } from "./BridgeProvider";
 import type { CoreClient } from "./core";
 import type { AgentSetupRow } from "./contracts/agents";
-import type { OnboardingMode, PermissionHint, SignInStart } from "./contracts/host";
+import type { MachinesView, OnboardingMode, PermissionHint, SignInStart } from "./contracts/host";
 import type {
   OnboardingAction,
   OnboardingCheckbox,
@@ -96,6 +96,17 @@ export function useFeatureRecorded(feature: string, when = true): void {
   }, [ready, feature, when]);
 }
 
+/** Records one named feature now, for a click or a step rather than a page opening. */
+export function useFeatureRecorder(): (feature: string) => void {
+  const ready = useContext(BridgeContext)?.ready;
+  return useCallback(
+    (feature: string) => {
+      void ready?.then((s) => s.telemetry.track([{ type: "feature", feature }]));
+    },
+    [ready],
+  );
+}
+
 /** The host, the app core and the raw adapter. */
 export function useBridge(): { mode: BridgeMode; core: CoreClient; data: DataAdapter | null } {
   const { mode, core, adapter } = useBridgeContext();
@@ -163,6 +174,16 @@ export function useSpaces(): SpacesHook {
 
 export interface MachinesHook extends Resource<Machine[]> {
   refresh(): Promise<void>;
+  /** The Machines page as every UI draws it (`machines_view::view`). */
+  view: MachinesView | null;
+  /** Renames a machine (`machines.rename`). */
+  rename(id: string, name: string): Promise<void>;
+  /** Removes a machine from the account (`machines.remove`). */
+  remove(machine: string | null, device: string | null): Promise<void>;
+  /** Asks the machines for their health (`machines.checkHealth`); their
+   * issues show in the next view. Never throws: a check that fails shows
+   * on that machine. */
+  checkHealth(): Promise<void>;
   /** How another machine is set up for access, in the core's words (the
    * "Add a machine" explainer). Setup itself runs on that machine. */
   setupGuide: HostSetupGuide;
@@ -170,9 +191,20 @@ export interface MachinesHook extends Resource<Machine[]> {
 
 /** Your machines (this one first), each with the Spaces it runs. */
 export function useMachines(): MachinesHook {
-  const { core } = useBridgeContext();
-  const setupGuide = useMemo(() => hostSetupGuide(core), [core]);
-  return { ...useResource<Machine[]>("machines"), setupGuide };
+  const ctx = useBridgeContext();
+  const setupGuide = useMemo(() => hostSetupGuide(ctx.core), [ctx.core]);
+  const run = useAction();
+  const r = useResource<Machine[]>("machines");
+  return {
+    ...r,
+    setupGuide,
+    view: ctx.store?.machinesView ?? null,
+    rename: (id, name) => run((s) => s.renameMachine(id, name)),
+    remove: (machine, device) => run((s) => s.removeMachine(machine, device)),
+    checkHealth: async () => {
+      await ctx.store?.checkMachinesHealth().catch(() => undefined);
+    },
+  };
 }
 
 export interface SettingsHook extends Resource<SettingsData> {

@@ -118,6 +118,11 @@ jobs:
         run: |
           npx playwright install --with-deps chromium
           pnpm parity
+      # Layout shift of every route's first load (CUA-1951): fails at 0.05 or more, or a first render over its loose budget.
+      - name: Layout shift per route
+        if: matrix.host == 'browser'
+        working-directory: apps/cua-spaces-web
+        run: pnpm perf --shift
       - name: Parity flows and the bridge on the Electron shell (demo mode)
         if: matrix.host == 'electron'
         working-directory: apps/cua-spaces-web

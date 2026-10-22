@@ -11,5 +11,5 @@
     "check": "node --check main.js && node --check preload.js && node --check store.js && node --check renderer/app.js",
     "test": "node --test \"tests/**/*.test.js\""
   },
-  "devDependencies": { "electron": "43.4.0" }
+  "devDependencies": { "electron": "43.8.1" }
 }

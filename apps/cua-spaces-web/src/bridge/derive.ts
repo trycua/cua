@@ -17,7 +17,9 @@ import type {
   HostPanelView,
   HostSetupChoice,
   HostStatus,
+  MachinePageRow,
   MachineRow,
+  MachinesView,
   SettingsInput,
   SettingsPage,
 } from "./contracts/host";
@@ -339,6 +341,53 @@ export interface Machine {
   /** This machine only: signed in, but it cannot open the account's
    * machines (not enrolled): each machine's detail says why. */
   accessNotice?: MachineAccessNotice;
+}
+
+/** One Machines row as the core lists it, from the page's own machine
+ * (an older host's rows, merged here): the core draws the page from it. */
+function pageRowOf(m: Machine, spaces: readonly Space[]): MachinePageRow {
+  const own = m.current ? spaces.find((s) => s.id === "this-mac") : spaces.find((s) => s.id === `relay:${m.id}`);
+  // The Spaces on it, never its own desktop (`machines::page_rows`).
+  const n = spaces.filter((s) => (m.current ? s.provider === "local" && s.id !== "this-mac" : s.host === m.id)).length;
+  return {
+    id: m.id,
+    name: m.name,
+    online: m.online,
+    os: m.os,
+    via: m.current ? "local" : "relay",
+    current: m.current,
+    device: m.device ? m.id : null,
+    deviceOnly: Boolean(m.device),
+    spaceId: own?.id ?? null,
+    stoppedSharing: Boolean(m.online && m.notSharing),
+    lastSeen: m.lastSeen ?? null,
+    status: m.status ?? (!m.online ? "Offline" : m.notSharing ? "Not sharing" : "Online"),
+    spaces: n,
+    spacesLabel: m.spacesLabel ?? (m.device ? "" : n === 0 ? "No Spaces" : `${n} Space${n === 1 ? "" : "s"}`),
+  };
+}
+
+/**
+ * The Machines page as every UI draws it (`machines.view`): the host's own
+ * when it sent one (what the SwiftUI page shows), else the core's from the
+ * rows listed here. Null without the core.
+ */
+export function machinesView(
+  core: CoreClient | undefined,
+  input: { hostView: MachinesView | null; machines: readonly Machine[]; spaces: readonly Space[]; host: object | null; nowSecs?: number },
+): MachinesView | null {
+  if (input.hostView) return input.hostView;
+  const current = input.machines.find((m) => m.current);
+  const hostOs = current && ["macos", "linux", "windows"].includes(current.os) ? current.os : "macos";
+  return (
+    core?.tryCall<MachinesView>("machines.view", {
+      input: {
+        page: { hostOs, spaces: input.spaces, now: input.nowSecs ?? Math.floor(Date.now() / 1000) },
+        rows: input.machines.map((m) => pageRowOf(m, input.spaces)),
+        host: input.host,
+      },
+    }) ?? null
+  );
 }
 
 /** Which machine a Space runs on: its relay host, the machine itself for

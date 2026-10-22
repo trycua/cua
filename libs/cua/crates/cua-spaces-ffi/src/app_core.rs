@@ -1988,7 +1988,12 @@ fn teams_input(s: cua_host::spaces_api::TeamsSnapshot, account_app_url: String) 
                     alias: t.org.alias,
                     name: t.org.name,
                     role: t.org.role,
-                    plan: t.org.plan,
+                    // STOPGAP (CUA-1710): the generated record has no field for
+                    // the end date yet, so it rides on the plan as `teams@<RFC 3339>`.
+                    plan: match t.org.plan_ends_at.as_deref().filter(|e| !e.is_empty()) {
+                        Some(ends) => format!("{}@{ends}", t.org.plan),
+                        None => t.org.plan,
+                    },
                     seats: t.org.seats,
                     members: t
                         .members
@@ -1999,6 +2004,8 @@ fn teams_input(s: cua_host::spaces_api::TeamsSnapshot, account_app_url: String) 
                         })
                         .collect(),
                     invites: t.invites.into_iter().map(|i| i.email).collect(),
+                    payment_failed: t.org.status == "grace",
+                    payment_failed_until: t.org.grace_until,
                 })
                 .collect(),
         },
@@ -2691,6 +2698,19 @@ pub fn app_machines_page_rows(input: AppMachinesPageInput) -> Vec<AppMachinePage
     core::machines::page_rows(&input)
 }
 
+/// The Machines page as every UI draws it: the list in groups, one line
+/// per row, and each machine's page.
+#[uniffi::export]
+pub fn app_machines_view(input: AppMachinesViewInput) -> AppMachinesView {
+    core::machines_view::view(&input)
+}
+
+/// Machines view input from JSON (fixtures, parity flows).
+#[uniffi::export]
+pub fn app_machines_view_input_from_json(json: String) -> Result<AppMachinesViewInput> {
+    from_json("machines view input", &json)
+}
+
 /// Machines page input from JSON (fixtures, parity flows).
 #[uniffi::export]
 pub fn app_machines_page_input_from_json(json: String) -> Result<AppMachinesPageInput> {
@@ -2961,7 +2981,9 @@ mod teams_tests {
                     name: "".into(),
                     role: "admin".into(),
                     plan: "teams".into(),
-                    status: "active".into(),
+                    plan_ends_at: None,
+                    status: "grace".into(),
+                    grace_until: Some("2026-11-03T10:00:00Z".into()),
                     seats: 3,
                     features: vec!["team_machines".into()],
                 },
@@ -2978,9 +3000,12 @@ mod teams_tests {
         };
         let input = teams_input(snapshot, "https://app.cua.ai".into());
         let rows = core::teams::rows(&input);
-        assert_eq!(rows[0].label, "acme");
-        assert_eq!(rows[2].label, "cy@example.com");
-        assert_eq!(rows[2].value.as_deref(), Some("(Invited)"));
+        // The grace notice (this account is an admin, not the owner) comes first.
+        assert_eq!(rows[0].id, "payment-failed");
+        assert!(rows[0].value.as_deref().unwrap().contains("by 3 Nov 2026"));
+        assert_eq!(rows[1].label, "acme");
+        assert_eq!(rows[3].label, "cy@example.com");
+        assert_eq!(rows[3].value.as_deref(), Some("(Invited)"));
     }
 }
 

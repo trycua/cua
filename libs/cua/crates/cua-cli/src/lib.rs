@@ -64,13 +64,31 @@ use cua_sdk::{Cua, CuaConfig, CuaError, SpacesdClient};
 use std::{io::Write, path::PathBuf, sync::Arc, time::Duration};
 use util::line;
 
+/// The log filter spec for `CUA_LOG` (`None`: not set): the spec, else
+/// warnings (info in the background daemon), without the WireGuard library's
+/// own timer messages (`boringtun`) unless the spec names it. It logs a
+/// warning every few seconds while a mesh peer that went away is retried and
+/// an error when it gives up: normal churn that says nothing a user can act
+/// on. `CUA_LOG=warn,boringtun=debug` brings them back.
+fn log_filter_spec(env: Option<&str>, daemon_log: bool) -> String {
+    let base = env
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(if daemon_log { "info" } else { "warn" });
+    if base.contains("boringtun") {
+        base.to_owned()
+    } else {
+        format!("{base},boringtun=off")
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(
     name = "cua",
     version = cua_sdk::VERSION,
     disable_version_flag = true,
     about = "Cua: sandboxes, computer actions, MCP, skills and the cua daemon",
-    after_help = "Docs: https://cua.ai/docs/cua-cli/reference/cli"
+    after_help = "Remote Spaces use the end-to-end encrypted mesh when both ends and the relay\nsupport it, and the relay's HTTPS path otherwise. CUA_MESH=off turns the mesh\noff; CUA_MESH=require refuses any other path.\n\nDocs: https://cua.ai/docs/cua-cli/reference/cli"
 )]
 struct Cli {
     /// Print the version.
@@ -557,8 +575,12 @@ enum SpacesdCmd {
     },
     /// Run a command (argv, no shell).
     #[command(after_help = "Examples:
-  cua spacesd exec http://127.0.0.1:3211 uname -a")]
+  cua spacesd exec http://127.0.0.1:3211 uname -a
+  # A long-lived stdio stream (stdin forwarded, no time limit, killed with this command)
+  cua spacesd exec -i http://127.0.0.1:3211 cat")]
     Exec {
+        #[command(flatten)]
+        flags: shell::ExecFlags,
         /// spacesd URL (`http://host:port`).
         url: String,
         /// spacesd token.
@@ -1777,12 +1799,25 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                 }
             }
             SpacesdCmd::Exec {
+                flags,
                 url,
                 token,
                 command,
             } => {
                 let env = env_at(&cua, &url, token).await?;
-                return shell::exec(&env, &command, out).await;
+                if flags.stdin {
+                    return shell::stream(
+                        &env,
+                        &command,
+                        flags.opts(None),
+                        tokio::io::stdin(),
+                        shell::os_signals(),
+                        out,
+                        &mut std::io::stderr(),
+                    )
+                    .await;
+                }
+                return shell::exec_with(&env, &command, flags.opts(None), out).await;
             }
             SpacesdCmd::Cp {
                 url,
@@ -2451,13 +2486,11 @@ pub fn main() {
         })
     ) && std::env::var("CUA_DAEMON_LOG").as_deref() != Ok("off");
     let filter = || {
-        tracing_subscriber::EnvFilter::try_from_env("CUA_LOG").unwrap_or_else(|_| {
-            if daemon_log {
-                "info".into()
-            } else {
-                "warn".into()
-            }
-        })
+        tracing_subscriber::EnvFilter::try_new(log_filter_spec(
+            std::env::var("CUA_LOG").ok().as_deref(),
+            daemon_log,
+        ))
+        .unwrap_or_else(|_| log_filter_spec(None, daemon_log).into())
     };
     let file = daemon_log
         .then(|| {
@@ -2632,6 +2665,62 @@ fn runtime_setup_output(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The WireGuard library's retry/expiry messages stay out of the log
+    /// (also with `CUA_LOG=info`, as a service sets), unless
+    /// the filter names them.
+    #[test]
+    fn the_log_filter_hides_the_wireguard_timers_unless_asked_for() {
+        use std::io::Write;
+        #[derive(Clone, Default)]
+        struct Buf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl Write for Buf {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Buf {
+            type Writer = Buf;
+            fn make_writer(&'a self) -> Buf {
+                self.clone()
+            }
+        }
+        let run = |spec: Option<&str>, daemon: bool| {
+            let buf = Buf::default();
+            let subscriber = tracing_subscriber::fmt()
+                .with_env_filter(tracing_subscriber::EnvFilter::new(log_filter_spec(
+                    spec, daemon,
+                )))
+                .with_writer(buf.clone())
+                .finish();
+            tracing::subscriber::with_default(subscriber, || {
+                tracing::warn!(target: "boringtun::noise::timers", "HANDSHAKE(REKEY_TIMEOUT)");
+                tracing::error!(target: "boringtun::noise::timers", "CONNECTION_EXPIRED(REKEY_ATTEMPT_TIME)");
+                tracing::warn!(target: "cua_mesh::node", "kept warning");
+            });
+            let bytes = buf.0.lock().unwrap().clone();
+            String::from_utf8(bytes).unwrap()
+        };
+        for daemon in [false, true] {
+            for spec in [None, Some(""), Some("info"), Some("debug"), Some(" warn ")] {
+                let out = run(spec, daemon);
+                assert!(
+                    !out.contains("HANDSHAKE") && !out.contains("CONNECTION_EXPIRED"),
+                    "{spec:?}: {out}"
+                );
+                assert!(out.contains("kept warning"), "{spec:?}: {out}");
+            }
+        }
+        let out = run(Some("warn,boringtun=debug"), false);
+        assert!(
+            out.contains("HANDSHAKE") && out.contains("CONNECTION_EXPIRED"),
+            "{out}"
+        );
+    }
 
     /// Self-hosting stays out of every `--help` but `cua help advanced`;
     /// the flags still parse.
@@ -2837,6 +2926,26 @@ mod tests {
         .await;
         assert_eq!(r.unwrap(), 0);
         assert_eq!(out, "hi\n");
+        // The streaming form parses with the flags that go with it (it runs
+        // against the real binary in tests/sandbox_do.rs: it reads stdin).
+        for args in [
+            &[
+                "cua", "spacesd", "exec", "-i", "--user", "u", "--cwd", "/w", "URL", "cat",
+            ][..],
+            &[
+                "cua",
+                "sandbox",
+                "exec",
+                "-i",
+                "--timeout",
+                "0",
+                "dev",
+                "--",
+                "cat",
+            ],
+        ] {
+            assert!(Cli::try_parse_from(args).is_ok(), "{args:?}");
+        }
         let (r, _) = cli(&[
             "--embedded",
             "spacesd",

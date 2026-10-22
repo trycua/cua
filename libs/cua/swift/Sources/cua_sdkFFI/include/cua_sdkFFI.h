@@ -737,6 +737,11 @@ RustBuffer uniffi_cua_sdk_fn_method_devices_relay_url(uint64_t ptr, RustCallStat
 uint64_t uniffi_cua_sdk_fn_method_devices_rename(uint64_t ptr, RustBuffer id, RustBuffer name
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_RENAME_MACHINE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_RENAME_MACHINE
+uint64_t uniffi_cua_sdk_fn_method_devices_rename_machine(uint64_t ptr, RustBuffer machine_id, RustBuffer name
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_REVOKE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_REVOKE
 uint64_t uniffi_cua_sdk_fn_method_devices_revoke(uint64_t ptr, RustBuffer id
@@ -770,6 +775,11 @@ uint64_t uniffi_cua_sdk_fn_constructor_host_new(RustBuffer cua_home, RustCallSta
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_HOST_CONFIGURE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_HOST_CONFIGURE
 uint64_t uniffi_cua_sdk_fn_method_host_configure(uint64_t ptr, RustBuffer change
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_HOST_MIGRATE_SERVICE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_HOST_MIGRATE_SERVICE
+uint64_t uniffi_cua_sdk_fn_method_host_migrate_service(uint64_t ptr, int8_t force, RustBuffer app_version
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_HOST_PAUSE_SIGNED_OUT
@@ -2002,6 +2012,11 @@ uint64_t uniffi_cua_sdk_fn_method_spaces_list(uint64_t ptr
 uint64_t uniffi_cua_sdk_fn_method_spaces_list_tools_json(uint64_t ptr
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_MACHINE_HEALTH
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_MACHINE_HEALTH
+uint64_t uniffi_cua_sdk_fn_method_spaces_machine_health(uint64_t ptr, RustBuffer machine
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_RELAY_REGISTER
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_RELAY_REGISTER
 uint64_t uniffi_cua_sdk_fn_method_spaces_relay_register(uint64_t ptr, RustBuffer space
@@ -2454,7 +2469,7 @@ uint64_t uniffi_cua_sdk_fn_method_spacesdprocess_resize(uint64_t ptr, uint32_t c
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACESDPROCESS_SIGNAL
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACESDPROCESS_SIGNAL
-uint64_t uniffi_cua_sdk_fn_method_spacesdprocess_signal(uint64_t ptr, RustBuffer signal
+uint64_t uniffi_cua_sdk_fn_method_spacesdprocess_signal(uint64_t ptr, RustBuffer signal, int8_t process_group
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACESDPROCESS_TAG
@@ -3709,6 +3724,12 @@ uint16_t uniffi_cua_sdk_checksum_method_devices_rename(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_RENAME_MACHINE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_RENAME_MACHINE
+uint16_t uniffi_cua_sdk_checksum_method_devices_rename_machine(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_REVOKE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_REVOKE
 uint16_t uniffi_cua_sdk_checksum_method_devices_revoke(void
@@ -3730,6 +3751,12 @@ uint16_t uniffi_cua_sdk_checksum_method_devices_snapshot(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_HOST_CONFIGURE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_HOST_CONFIGURE
 uint16_t uniffi_cua_sdk_checksum_method_host_configure(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_HOST_MIGRATE_SERVICE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_HOST_MIGRATE_SERVICE
+uint16_t uniffi_cua_sdk_checksum_method_host_migrate_service(void
 
 );
 #endif
@@ -4942,6 +4969,12 @@ uint16_t uniffi_cua_sdk_checksum_method_spaces_list(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_LIST_TOOLS_JSON
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_LIST_TOOLS_JSON
 uint16_t uniffi_cua_sdk_checksum_method_spaces_list_tools_json(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_MACHINE_HEALTH
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_MACHINE_HEALTH
+uint16_t uniffi_cua_sdk_checksum_method_spaces_machine_health(void
 
 );
 #endif

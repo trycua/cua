@@ -29,8 +29,16 @@ pub struct ApiOrg {
     /// `free`, `pro`, `teams`, ...
     #[serde(default)]
     pub plan: String,
+    /// When a cancelled plan that is still running ends (RFC 3339). Empty
+    /// while the plan renews.
+    #[serde(default)]
+    pub plan_ends_at: Option<String>,
+    /// `active`, `grace` (a payment failed), ...
     #[serde(default)]
     pub status: String,
+    /// While `status` is `grace`: when the plan lapses (RFC 3339).
+    #[serde(default)]
+    pub grace_until: Option<String>,
     #[serde(default)]
     pub seats: i64,
     /// Paid features the org has (`team_machines`, `space_sharing`,
@@ -198,6 +206,61 @@ pub const SETUP_RETRY_WINDOW: Duration = Duration::from_secs(60);
 /// feature, or a just-bought plan has not reached the API yet).
 pub fn is_feature_required(e: &Error) -> bool {
     e.to_string().contains("HTTP 402 (feature_required")
+}
+
+/// Where an owner buys Teams (team machines, roles, device approval, seats).
+pub const BUY_TEAMS_URL: &str = "https://app.cua.ai/buy/teams";
+
+/// Where someone buys Pro.
+pub const BUY_PRO_URL: &str = "https://app.cua.ai/buy/pro";
+
+/// How long a team operation keeps retrying a `402 feature_required` when
+/// the org does pay (its features are on their way). An org that never paid
+/// for Teams does not wait at all.
+pub const PAID_RETRY_WINDOW: Duration = Duration::from_secs(20);
+
+/// The feature a `402 feature_required` names (`team_machines`), if `e` is one.
+pub fn feature_required_detail(e: &Error) -> Option<String> {
+    let text = e.to_string();
+    let rest = text.split("HTTP 402 (feature_required").nth(1)?;
+    let rest = rest.trim_start_matches(':').trim_start();
+    let name: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect();
+    Some(name)
+}
+
+/// What a plan error says in plain words, or `None` when `e` is not about
+/// the plan. Covers `feature_required` (`team_machines`, `team_roles`,
+/// `device_approval`), `add_seats` and `machine_limit`. An owner gets the
+/// link to buy ([`BUY_TEAMS_URL`], last, on its own so an app can turn it
+/// into a button); anyone else is told to ask the owner.
+pub fn plan_error_text(e: &Error, owner: bool) -> Option<String> {
+    let text = e.to_string();
+    let what = if let Some(feature) = feature_required_detail(e) {
+        match feature.as_str() {
+            "team_machines" => "Team computers need the Teams plan.",
+            "team_roles" => "Admin roles need the Teams plan.",
+            "device_approval" => "Approving devices needs the Teams plan.",
+            "space_sharing" => "Sharing with a team needs the Teams plan.",
+            _ => "This needs the Teams plan.",
+        }
+    } else if text.contains("add_seats") {
+        "Your team has no free seats."
+    } else if text.contains("machine_limit") {
+        "Your team has as many computers as it has seats."
+    } else {
+        return None;
+    };
+    let seats = text.contains("add_seats") || text.contains("machine_limit");
+    Some(if owner {
+        format!("{what} {BUY_TEAMS_URL}")
+    } else if seats {
+        format!("{what} Ask the team owner to add seats.")
+    } else {
+        format!("{what} Ask the team owner to upgrade.")
+    })
 }
 
 /// Whether `e` says Teams are not available on this server (see
@@ -894,6 +957,66 @@ impl SpacesApiClient {
         }
     }
 
+    /// [`Self::finishing_setup`] for an operation on `org`. A `402
+    /// feature_required` on an org that never paid for Teams (plan free) is
+    /// returned at once: nothing is on its way. An org that pays keeps
+    /// retrying, for at most [`PAID_RETRY_WINDOW`].
+    pub async fn finishing_setup_org<T, F, Fut>(
+        &self,
+        token: &str,
+        org: &str,
+        window: Duration,
+        mut waiting: impl FnMut(Duration),
+        mut op: F,
+    ) -> Result<T>
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = Result<T>>,
+    {
+        let window = window.min(PAID_RETRY_WINDOW);
+        let start = std::time::Instant::now();
+        let mut pause = Duration::from_millis(500);
+        let mut checked = false;
+        loop {
+            let res = op().await;
+            let Err(e) = &res else { return res };
+            if !is_retryable(e) {
+                return res;
+            }
+            if is_feature_required(e) && !checked {
+                checked = true;
+                let never_paid = matches!(
+                    self.org(token, org).await,
+                    Ok(d) if matches!(d.plan.as_str(), "" | "free")
+                );
+                if never_paid {
+                    return res;
+                }
+            }
+            let spent = start.elapsed();
+            if spent >= window {
+                return res;
+            }
+            waiting(spent);
+            let _ = self.entitlements(token).await;
+            tokio::time::sleep(pause.min(window.saturating_sub(start.elapsed()))).await;
+            pause = (pause * 2).min(Duration::from_secs(8));
+        }
+    }
+
+    /// Rewrites a plan error of an operation on `org` into plain words (see
+    /// [`plan_error_text`]); any other error is returned as is.
+    pub async fn explain_plan_error(&self, token: &str, org: &str, e: Error) -> Error {
+        if plan_error_text(&e, false).is_none() {
+            return e;
+        }
+        let owner = matches!(self.org(token, org).await, Ok(d) if d.role == "owner");
+        match plan_error_text(&e, owner) {
+            Some(text) => Error::PermissionDenied(text),
+            None => e,
+        }
+    }
+
     /// The account's Teams: `/v1/me`, then each org's members and pending
     /// invites. A plain member cannot list invites (403): they read as
     /// none. An org whose people cannot be read keeps its row without them.
@@ -972,7 +1095,7 @@ mod tests {
                         Json(json!({
                             "sub":"u1","email":"ada@example.com",
                             "orgs":[
-                                {"id":"o1","alias":"acme","name":"Acme Inc","role":"owner","plan":"teams","status":"active","seats":3},
+                                {"id":"o1","alias":"acme","name":"Acme Inc","role":"owner","plan":"teams","status":"grace","grace_until":"2026-11-03T10:00:00Z","seats":3},
                                 {"id":"o2","alias":"side","role":"member","plan":"free","status":"none","seats":0}
                             ],
                             "entitlements":{"sub":"u1","plan":"pro","status":"active","warnings":[],"later":1}
@@ -1216,6 +1339,96 @@ mod tests {
             .await
             .unwrap_err();
         assert!(is_feature_required(&e), "{e}");
+    }
+
+    #[tokio::test]
+    async fn an_org_that_never_paid_does_not_wait() {
+        let api = crate::testing::FakeSpacesApi::start().await;
+        api.add_account("ada", "sub-ada", "ada@example.com");
+        let free = api.add_org("free", "Free", "sub-ada", &[]);
+        let c = SpacesApiClient::new(&api.url).unwrap();
+        let start = std::time::Instant::now();
+        let mut waits = 0;
+        let e = c
+            .finishing_setup_org(
+                "ada",
+                &free,
+                SETUP_RETRY_WINDOW,
+                |_| waits += 1,
+                || c.add_org_machine("ada", &free, "m1", "linux", ""),
+            )
+            .await
+            .unwrap_err();
+        assert!(is_feature_required(&e), "{e}");
+        assert_eq!(waits, 0);
+        assert!(start.elapsed() < Duration::from_secs(2));
+
+        // An org that pays still waits for its features.
+        let paid = api.add_org("acme", "Acme", "sub-ada", &["team_machines"]);
+        api.feature_lag(1);
+        c.finishing_setup_org(
+            "ada",
+            &paid,
+            SETUP_RETRY_WINDOW,
+            |_| waits += 1,
+            || c.add_org_machine("ada", &paid, "m1", "linux", ""),
+        )
+        .await
+        .unwrap();
+        assert_eq!(waits, 1);
+    }
+
+    #[test]
+    fn plan_errors_read_in_plain_words() {
+        let e = org_error(
+            402,
+            r#"{"error":"feature_required","detail":"team_machines"}"#,
+        );
+        assert_eq!(
+            feature_required_detail(&e).as_deref(),
+            Some("team_machines")
+        );
+        assert_eq!(
+            plan_error_text(&e, true).unwrap(),
+            "Team computers need the Teams plan. https://app.cua.ai/buy/teams"
+        );
+        assert_eq!(
+            plan_error_text(&e, false).unwrap(),
+            "Team computers need the Teams plan. Ask the team owner to upgrade."
+        );
+        for (feature, words) in [
+            ("team_roles", "Admin roles need"),
+            ("device_approval", "Approving devices needs"),
+        ] {
+            let e = org_error(
+                402,
+                &format!(r#"{{"error":"feature_required","detail":"{feature}"}}"#),
+            );
+            assert!(plan_error_text(&e, true).unwrap().starts_with(words));
+        }
+        let e = org_error(402, r#"{"error":"add_seats"}"#);
+        assert_eq!(
+            plan_error_text(&e, false).unwrap(),
+            "Your team has no free seats. Ask the team owner to add seats."
+        );
+        let e = org_error(403, r#"{"error":"machine_limit"}"#);
+        assert!(plan_error_text(&e, true).unwrap().ends_with("/buy/teams"));
+        assert_eq!(plan_error_text(&org_error(409, "{}"), true), None);
+    }
+
+    #[tokio::test]
+    async fn a_plan_error_is_explained_by_the_callers_role() {
+        let api = crate::testing::FakeSpacesApi::start().await;
+        api.add_account("ada", "sub-ada", "ada@example.com");
+        let free = api.add_org("free", "Free", "sub-ada", &[]);
+        let c = SpacesApiClient::new(&api.url).unwrap();
+        let e = c
+            .add_org_machine("ada", &free, "m1", "linux", "")
+            .await
+            .unwrap_err();
+        let e = c.explain_plan_error("ada", &free, e).await;
+        assert!(!e.to_string().contains("HTTP 402"), "{e}");
+        assert!(e.to_string().contains("Teams plan"), "{e}");
     }
 
     #[tokio::test]

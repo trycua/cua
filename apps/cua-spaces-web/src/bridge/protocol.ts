@@ -47,6 +47,7 @@ import { STREAM_OPERATIONS, type StreamOps } from "./ops/stream";
 import { RELAY_USAGE_OPERATIONS, type RelayUsageOps } from "./ops/relay-usage";
 import { NUDGES_OPERATIONS, type NudgesOps } from "./ops/nudges";
 import { RESOURCES_OPERATIONS, type ResourcesOps } from "./ops/resources";
+import { MACHINES_OPERATIONS, type MachinesOps } from "./ops/machines";
 import { CHECKLIST_OPERATIONS, type ChecklistOps } from "./ops/checklist";
 import { PRESENCE_OPERATIONS, type PresenceOps } from "./ops/presence";
 import { RUNTIME_FIX_OPERATIONS, type RuntimeFixOps } from "./ops/runtime-fix";
@@ -190,6 +191,7 @@ export interface HostOperations
     RelayUsageOps,
     NudgesOps,
     ResourcesOps,
+    MachinesOps,
     ChecklistOps,
     PresenceOps,
     RuntimeFixOps {
@@ -296,6 +298,7 @@ export const OPERATIONS = [
   ...RELAY_USAGE_OPERATIONS,
   ...NUDGES_OPERATIONS,
   ...RESOURCES_OPERATIONS,
+  ...MACHINES_OPERATIONS,
   ...CHECKLIST_OPERATIONS,
   ...PRESENCE_OPERATIONS,
   ...RUNTIME_FIX_OPERATIONS,

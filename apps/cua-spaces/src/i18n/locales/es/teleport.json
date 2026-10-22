@@ -34,5 +34,14 @@
   "teleport.picker.preparing": "Preparando…",
   "teleport.picker.tabs_label": "Teletransportar",
   "teleport.picker.search": "Buscar",
-  "teleport.drop_zone.label": "Teletransportar a {name}"
+  "teleport.drop_zone.label": "Teletransportar a {name}",
+  "teleport.move.app_only": "Solo la app",
+  "teleport.move.app_with_files": "La app con archivos o carpetas",
+  "teleport.move.app_with_state": "La app con su sesión iniciada",
+  "teleport.sensitive.sign_ins.label": "Mantener mi sesión iniciada",
+  "teleport.sensitive.sign_ins.detail": "Envía las cookies de sesión.",
+  "teleport.sensitive.passwords.label": "Contraseñas guardadas",
+  "teleport.sensitive.passwords.detail": "Envía las contraseñas guardadas en la app.",
+  "teleport.sensitive.history.label": "Historial de navegación",
+  "teleport.sensitive.history.detail": "Envía el historial de páginas visitadas y los marcadores donde el navegador los guarda juntos."
 }

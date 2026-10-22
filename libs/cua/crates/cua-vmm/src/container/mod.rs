@@ -465,86 +465,106 @@ impl ContainerRuntime {
         // layers it never named are there already.
         let mut named = std::collections::HashSet::new();
         let mut existing_settled = seeded.is_empty();
-        let mut stream = self.docker.create_image(Some(opts), None, creds);
-        while let Some(item) = stream.next().await {
-            // The engine's message never carries the credentials.
-            let info = item.map_err(|e| VmmError::Engine(format!("pull {reference}: {e}")))?;
-            if let Some(id) = info.id.as_deref() {
-                named.insert(id.to_string());
-            }
-            let announcing = matches!(
-                info.status.as_deref(),
-                Some("Pulling fs layer" | "Waiting") | None
-            ) || info
-                .status
-                .as_deref()
-                .is_some_and(|s| s.starts_with("Pulling from"));
-            if !existing_settled && !announcing {
-                existing_settled = true;
-                for id in seeded.iter().filter(|id| !named.contains(*id)) {
-                    bytes.complete(id);
-                    extracted.complete(id);
-                }
-            }
-            // Layer byte counts: "Downloading" carries (current, total),
-            // and so does "Extracting" on the classic image store (the
-            // containerd store reports seconds instead, so a layer counts as
-            // extracted at "Pull complete"); "Download complete" finishes a
-            // download, "Pull complete" / "Already exists" a layer.
-            let layer = info.id.as_deref().unwrap_or_default();
-            let size = |d: &bollard::models::ProgressDetail| {
-                (
-                    d.current.unwrap_or(0).max(0) as u64,
-                    d.total.unwrap_or(0).max(0) as u64,
-                )
-            };
-            let changed = match (info.status.as_deref(), info.progress_detail.as_ref()) {
-                (Some("Downloading"), Some(d)) => {
-                    let (c, t) = size(d);
-                    bytes.update(layer, c, t);
-                    // The layer's extraction, still to come, weighs its size.
-                    if extracted.fraction_of(layer).is_none() {
-                        extracted.update(layer, 0, t);
+        let mut attempt = 1u32;
+        'attempts: loop {
+            let mut stream = self
+                .docker
+                .create_image(Some(opts.clone()), None, creds.clone());
+            while let Some(item) = stream.next().await {
+                // The engine's message never carries the credentials. A network
+                // drop mid-pull is tried again (the engine keeps the layers it
+                // finished); anything else fails at once.
+                let info = match item {
+                    Ok(info) => info,
+                    Err(e) => {
+                        let message = e.to_string();
+                        if attempt < PULL_ATTEMPTS && pull_error_is_transient(&message) {
+                            tracing::warn!(image = reference, attempt, error = %message, "image pull broke; trying again");
+                            tokio::time::sleep(pull_retry_delay(attempt)).await;
+                            attempt += 1;
+                            continue 'attempts;
+                        }
+                        return Err(VmmError::Engine(format!("pull {reference}: {message}")));
                     }
-                    true
+                };
+                if let Some(id) = info.id.as_deref() {
+                    named.insert(id.to_string());
                 }
-                (Some("Extracting"), Some(d)) if d.total.unwrap_or(0) > 0 => {
-                    let (c, t) = size(d);
-                    bytes.complete(layer);
-                    extracted.update(layer, c, t);
-                    true
+                let announcing = matches!(
+                    info.status.as_deref(),
+                    Some("Pulling fs layer" | "Waiting") | None
+                ) || info
+                    .status
+                    .as_deref()
+                    .is_some_and(|s| s.starts_with("Pulling from"));
+                if !existing_settled && !announcing {
+                    existing_settled = true;
+                    for id in seeded.iter().filter(|id| !named.contains(*id)) {
+                        bytes.complete(id);
+                        extracted.complete(id);
+                    }
                 }
-                (Some("Download complete"), _) => {
-                    bytes.complete(layer);
-                    true
+                // Layer byte counts: "Downloading" carries (current, total),
+                // and so does "Extracting" on the classic image store (the
+                // containerd store reports seconds instead, so a layer counts as
+                // extracted at "Pull complete"); "Download complete" finishes a
+                // download, "Pull complete" / "Already exists" a layer.
+                let layer = info.id.as_deref().unwrap_or_default();
+                let size = |d: &bollard::models::ProgressDetail| {
+                    (
+                        d.current.unwrap_or(0).max(0) as u64,
+                        d.total.unwrap_or(0).max(0) as u64,
+                    )
+                };
+                let changed = match (info.status.as_deref(), info.progress_detail.as_ref()) {
+                    (Some("Downloading"), Some(d)) => {
+                        let (c, t) = size(d);
+                        bytes.update(layer, c, t);
+                        // The layer's extraction, still to come, weighs its size.
+                        if extracted.fraction_of(layer).is_none() {
+                            extracted.update(layer, 0, t);
+                        }
+                        true
+                    }
+                    (Some("Extracting"), Some(d)) if d.total.unwrap_or(0) > 0 => {
+                        let (c, t) = size(d);
+                        bytes.complete(layer);
+                        extracted.update(layer, c, t);
+                        true
+                    }
+                    (Some("Download complete"), _) => {
+                        bytes.complete(layer);
+                        true
+                    }
+                    (Some("Pull complete" | "Already exists"), _) => {
+                        bytes.complete(layer);
+                        extracted.complete(layer);
+                        true
+                    }
+                    _ => false,
+                };
+                if !changed {
+                    continue;
                 }
-                (Some("Pull complete" | "Already exists"), _) => {
-                    bytes.complete(layer);
-                    extracted.complete(layer);
-                    true
+                let (done, total) = bytes.totals();
+                let fraction = pull_fraction(bytes.fraction(), extracted.fraction());
+                // The download's bytes, a few reports a second (the meter's
+                // throttle); a percent of the fraction always reports too.
+                let transfer = (total > 0).then(|| meter.sample(done, total)).flatten();
+                let moved = fraction.is_some_and(|f| (f - last).abs() >= 0.01);
+                if transfer.is_some() || moved {
+                    let mut p = Progress::phase(Phase::Pulling).detail(reference);
+                    if let Some(f) = fraction {
+                        last = f;
+                        p = p.fraction(f);
+                    }
+                    if total > 0 {
+                        p = p.bytes(transfer.unwrap_or_else(|| meter.peek(done, total)));
+                    }
+                    crate::progress::report(p);
                 }
-                _ => false,
-            };
-            if !changed {
-                continue;
             }
-            let (done, total) = bytes.totals();
-            let fraction = pull_fraction(bytes.fraction(), extracted.fraction());
-            // The download's bytes, a few reports a second (the meter's
-            // throttle); a percent of the fraction always reports too.
-            let transfer = (total > 0).then(|| meter.sample(done, total)).flatten();
-            let moved = fraction.is_some_and(|f| (f - last).abs() >= 0.01);
-            if transfer.is_some() || moved {
-                let mut p = Progress::phase(Phase::Pulling).detail(reference);
-                if let Some(f) = fraction {
-                    last = f;
-                    p = p.fraction(f);
-                }
-                if total > 0 {
-                    p = p.bytes(transfer.unwrap_or_else(|| meter.peek(done, total)));
-                }
-                crate::progress::report(p);
-            }
+            break;
         }
         // Remember that the SDK pulled it (it was not here before), so the
         // cache GC may remove it again once nothing uses it.
@@ -1907,6 +1927,60 @@ fn sidecar_body(sandbox: &str, sc: &SidecarSpec, runtime: String) -> ContainerCr
     }
 }
 
+/// Tries at one container image pull: a network drop mid-pull is common on
+/// home and mobile networks, and a second try continues from the layers the
+/// engine already has.
+const PULL_ATTEMPTS: u32 = 3;
+
+/// The pause before try `attempt` + 1 (2 s, then 4 s).
+fn pull_retry_delay(attempt: u32) -> std::time::Duration {
+    std::time::Duration::from_secs(2u64 << attempt.saturating_sub(1).min(3))
+}
+
+/// Whether a pull's error is the network dropping (worth another try), not
+/// the image, the credentials or the disk (which a retry cannot fix).
+fn pull_error_is_transient(message: &str) -> bool {
+    let l = message.to_ascii_lowercase();
+    const PERMANENT: &[&str] = &[
+        "not found",
+        "manifest unknown",
+        "unauthorized",
+        "denied",
+        "authentication required",
+        "no space left",
+        "invalid reference",
+        "no matching manifest",
+        "toomanyrequests",
+        "rate limit",
+    ];
+    if PERMANENT.iter().any(|p| l.contains(p)) {
+        return false;
+    }
+    const TRANSIENT: &[&str] = &[
+        "timeout",
+        "timed out",
+        "connection reset",
+        "connection refused",
+        "connection closed",
+        "broken pipe",
+        "unexpected eof",
+        "unexpected end of",
+        "tls handshake",
+        "temporary failure",
+        "no such host",
+        "service unavailable",
+        "bad gateway",
+        "gateway timeout",
+        "502",
+        "503",
+        "504",
+        "i/o error",
+        "network is unreachable",
+        "eof",
+    ];
+    TRANSIENT.iter().any(|t| l.contains(t))
+}
+
 /// Share of a container image pull spent downloading layers (the rest is
 /// extracting them), from a measured cold pull of `linux:24.04-slim` on an
 /// Apple silicon Mac (Docker 29, containerd image store): about 6 s down,
@@ -1976,6 +2050,36 @@ mod tests {
             ContainerRuntime::exit_from(&inspected(S::EXITED, "0001-01-01T00:00:00Z", 0, false)),
             None
         );
+    }
+
+    #[test]
+    fn a_dropped_network_is_retried_but_a_bad_image_or_disk_is_not() {
+        for m in [
+            "error pulling image: net/http: TLS handshake timeout",
+            "read tcp 10.0.0.2:5000: connection reset by peer",
+            "Get \"https://registry-1.docker.io/v2/\": dial tcp: lookup registry-1.docker.io: no such host",
+            "unexpected EOF",
+            "Error response from daemon: received unexpected HTTP status: 503 Service Unavailable",
+        ] {
+            assert!(pull_error_is_transient(m), "{m}");
+        }
+        for m in [
+            "manifest for cua/x:1 not found: manifest unknown",
+            "pull access denied for x, repository does not exist or may require authorization",
+            "unauthorized: authentication required",
+            "write /var/lib/docker/tmp: no space left on device",
+            "toomanyrequests: You have reached your pull rate limit (timeout)",
+            "boom",
+        ] {
+            assert!(!pull_error_is_transient(m), "{m}");
+        }
+    }
+
+    #[test]
+    fn the_pull_pauses_grow_and_stay_short() {
+        assert_eq!(pull_retry_delay(1), std::time::Duration::from_secs(2));
+        assert_eq!(pull_retry_delay(2), std::time::Duration::from_secs(4));
+        assert!(pull_retry_delay(9) <= std::time::Duration::from_secs(16));
     }
 
     #[test]

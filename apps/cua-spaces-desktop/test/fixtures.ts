@@ -21,7 +21,7 @@ import type {
   SpacePresenceLike,
   TeleportLike,
 } from "../src/native/generated/index";
-import type { LocalRuntimes, SpaceThumbnailData, SpacesBackend } from "../src/model/backend";
+import type { LocalRuntimes, MachineHealthReport, SpaceThumbnailData, SpacesBackend } from "../src/model/backend";
 import type { StreamWindow } from "../src/model/streams";
 import type { AccountProfile, AccountRunning, LinkNoticeView, SignInAttempt, TelemetryRunning } from "../src/model/services";
 
@@ -134,6 +134,20 @@ export class FixtureSpacesBackend implements SpacesBackend {
   async remove(id: string, removeOnly: boolean) {
     this.removed.push({ id, removeOnly });
     this.rowsNow = this.rowsNow.filter((r) => r.id !== id);
+  }
+  /** What `machineHealth` answers, by machine (`this` for this one); a string is the error it throws. */
+  health = new Map<string, MachineHealthReport | string>();
+  readonly healthAsked: (string | null)[] = [];
+  async machineHealth(machine: string | null): Promise<MachineHealthReport> {
+    this.healthAsked.push(machine);
+    const h = this.health.get(machine ?? "this");
+    if (typeof h === "string") throw new Error(h);
+    return h ?? { cuaVersion: "0.4.1", checks: [] };
+  }
+  readonly unregistered: string[] = [];
+  async relayUnregister(machineId: string) {
+    this.unregistered.push(machineId);
+    this.rowsNow = this.rowsNow.filter((r) => r.id !== `relay:${machineId}`);
   }
   async setPower(id: string, on: boolean) {
     this.power.push({ id, on });
@@ -291,6 +305,8 @@ export function unconfiguredHost(): HostStatus {
     pausedSignedOut: false,
     owner: undefined,
     ownerEmail: undefined,
+    helperAvailable: false,
+    legacyService: false,
   };
 }
 

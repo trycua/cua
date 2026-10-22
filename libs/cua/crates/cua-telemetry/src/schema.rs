@@ -159,6 +159,9 @@ pub const ERROR_KINDS: &[&str] = &[
     "virtualization_unavailable",
     // The account's sandbox quota, plan limit or credits ran out.
     "quota_exceeded",
+    // Cua Cloud has ended: a cloud create is refused up front. Expected, so
+    // reports can leave it out of the failures that need a fix.
+    "cloud_ended",
     "env",
     "http",
     "unauthenticated",

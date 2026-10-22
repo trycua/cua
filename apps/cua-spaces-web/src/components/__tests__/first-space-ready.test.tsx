@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { ReactNode } from "react";
+
 import type { AgentSetupRow, Space } from "@/bridge";
+import { BridgeContext, type BridgeContextValue } from "@/bridge/BridgeProvider";
 import { RunAgentDialog, runAgentPrompt } from "@/components/agents/run-agent-dialog";
-import { SpaceReadyCard } from "@/components/space-ready-card";
+import { SpaceReadyCard, useAgentOffer } from "@/components/space-ready-card";
 import { EXPLAINED_KEY, needsExplainer, TeleportExplainer } from "@/components/teleport/explainer";
 
 const nav = vi.fn();
@@ -30,12 +33,67 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("SpaceReadyCard", () => {
-  it("has one primary action, Run an agent here", () => {
+  it("lists the agents it found and has one action", async () => {
+    rows = [row({}), row({ agent: "codex", name: "Codex", configured: true }), row({ agent: "hermes", name: "Hermes", installed: false })];
     const onRun = vi.fn();
     render(<SpaceReadyCard space={space} onRun={onRun} />);
-    expect(screen.getAllByRole("button")).toHaveLength(1);
-    fireEvent.click(screen.getByRole("button", { name: "Run an agent here" }));
+    expect(await screen.findByText(/We found Claude Code and Codex on this computer/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Start with Codex" }));
     expect(onRun).toHaveBeenCalledOnce();
+    expect(document.body.textContent).not.toMatch(/relay|MCP|\bhost\b/i);
+  });
+
+  it("offers to connect an agent that is installed but not connected", async () => {
+    rows = [row({})];
+    render(<SpaceReadyCard space={space} onRun={() => {}} />);
+    expect(await screen.findByRole("button", { name: "Connect Claude Code" })).toBeTruthy();
+  });
+
+  it("says how when no agent is found, and can be closed", async () => {
+    rows = [];
+    const onDismiss = vi.fn();
+    render(<SpaceReadyCard space={space} onRun={() => {}} onDismiss={onDismiss} />);
+    expect(await screen.findByRole("button", { name: "Show me how" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Not now" }));
+    expect(onDismiss).toHaveBeenCalledOnce();
+  });
+});
+
+describe("useAgentOffer", () => {
+  const track = vi.fn();
+  const wrapper = ({ children }: { children?: ReactNode }) => {
+    const store = { telemetry: { track } };
+    const value = { mode: "electron", core: {}, adapter: null, store, ready: Promise.resolve(store) } as unknown as BridgeContextValue;
+    return <BridgeContext.Provider value={value}>{children}</BridgeContext.Provider>;
+  };
+  const events = () => track.mock.calls.map((c) => (c[0] as { feature: string }[])[0]!.feature);
+  beforeEach(() => track.mockClear());
+
+  it("records shown once, then clicked and completed, and never shows again", async () => {
+    const { result, rerender } = renderHook(() => useAgentOffer(true), { wrapper });
+    await waitFor(() => expect(events()).toEqual(["agent_offer_shown"]));
+    act(() => result.current.clicked());
+    act(() => result.current.completed());
+    await waitFor(() => expect(events()).toEqual(["agent_offer_shown", "agent_offer_clicked", "agent_offer_completed"]));
+    expect(result.current.visible).toBe(false);
+    rerender();
+    const again = renderHook(() => useAgentOffer(true), { wrapper });
+    expect(again.result.current.visible).toBe(false);
+    expect(events()).toHaveLength(3);
+  });
+
+  it("stays closed after Not now, and counts shown once per install", async () => {
+    const first = renderHook(() => useAgentOffer(true), { wrapper });
+    await waitFor(() => expect(events()).toEqual(["agent_offer_shown"]));
+    act(() => first.result.current.dismiss());
+    expect(first.result.current.visible).toBe(false);
+    expect(renderHook(() => useAgentOffer(true), { wrapper }).result.current.visible).toBe(false);
+    expect(events()).toEqual(["agent_offer_shown"]);
+  });
+
+  it("is hidden until a Space is ready", () => {
+    expect(renderHook(() => useAgentOffer(false), { wrapper }).result.current.visible).toBe(false);
+    expect(track).not.toHaveBeenCalled();
   });
 });
 

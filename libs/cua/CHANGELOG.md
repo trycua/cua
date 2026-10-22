@@ -1,5 +1,57 @@
 # Changelog
 
+## [0.7.0](https://github.com/trycua/cua/compare/cua-sdk-v0.6.0...cua-sdk-v0.7.0) (2026-10-21)
+
+
+### Features
+
+* **mesh:** the mesh is on by default for every client (CUA-1947) ([#5630](https://github.com/trycua/cua/issues/5630)) ([e5d09e4](https://github.com/trycua/cua/commit/e5d09e40291a080124da6469b3c7023e02e229fd))
+* **sdk:** cua sb exec -i streams a command's stdio into a Space (CUA-1949) ([#5629](https://github.com/trycua/cua/issues/5629)) ([cd50985](https://github.com/trycua/cua/commit/cd509859675ec2e16ad8509eb484f846302ef0bc))
+
+
+### Bug Fixes
+
+* **sdk:** gate the Unix-only exec -i signal test, format test_compile_lane (CUA-1949) ([#5666](https://github.com/trycua/cua/issues/5666)) ([7b590f5](https://github.com/trycua/cua/commit/7b590f5bc98340432cf9d4b5ba753fc9a4dbf09d))
+* **sdk:** scope the Duration import to the Unix-only exec -i test (CUA-1949) ([#5668](https://github.com/trycua/cua/issues/5668)) ([f8f1bc2](https://github.com/trycua/cua/commit/f8f1bc2ee9d4b7471867ca95d7227085e10c37a0))
+* **sdk:** unused variable in exec -i on Windows, format the e2e (CUA-1949) ([#5662](https://github.com/trycua/cua/issues/5662)) ([d86b5a3](https://github.com/trycua/cua/commit/d86b5a309d8951f531ad5ab181a75bd29b1bd149))
+* **telemetry:** Cua Cloud-ended creates report cloud_ended, not unsupported (CUA-1957) ([#5644](https://github.com/trycua/cua/issues/5644)) ([1516be7](https://github.com/trycua/cua/commit/1516be78c69c2924e779187d0c45804cb7f64ba1))
+* **vmm:** retry a container image pull when the network drops (CUA-1957) ([#5646](https://github.com/trycua/cua/issues/5646)) ([af9a819](https://github.com/trycua/cua/commit/af9a81994ac77404fc75c8a035a936176953a161))
+
+## [0.6.0](https://github.com/trycua/cua/compare/cua-sdk-v0.5.0...cua-sdk-v0.6.0) (2026-10-20)
+
+
+### Features
+
+* **cli:** cua sb info --connection prints a Space's spacesd URL and token (CUA-1902) ([#5551](https://github.com/trycua/cua/issues/5551)) ([b8c764e](https://github.com/trycua/cua/commit/b8c764e34e2f907f3cc0943fc4ad7c9bc630cd06))
+* **cua-driver:** install the skill pack when setting up an agent, and add get_guide ([#5491](https://github.com/trycua/cua/issues/5491)) ([8637cae](https://github.com/trycua/cua/commit/8637cae79b3decfd8e9e43291a63ffab66bfb867))
+* **sdk:** publish cua-sdk and the proto contract so you can build your own harness (CUA-1902) ([#5532](https://github.com/trycua/cua/issues/5532)) ([78175bd](https://github.com/trycua/cua/commit/78175bd5d425c4945df8887aa308bfafd682cd2b))
+* **spaces:** "remote hours" everywhere users see it; self-hosting under Settings → Advanced ([#5461](https://github.com/trycua/cua/issues/5461)) ([b9f1874](https://github.com/trycua/cua/commit/b9f1874ba871a13b9e8efc772cb39472a9b0dd58))
+* **spaces:** core returns message codes for teleport opt-ins (CUA-1928) ([#5599](https://github.com/trycua/cua/issues/5599)) ([12720d6](https://github.com/trycua/cua/commit/12720d6ab44e99550728d3b54500004b85183046))
+* **spaces:** core returns message codes for the sidebar (CUA-1928) ([#5608](https://github.com/trycua/cua/issues/5608)) ([4cddeec](https://github.com/trycua/cua/commit/4cddeec8308871eedb0f26e57f76f3fff065505c))
+* **spaces:** each computer's issues on the Machines page from its own health checks, cua doctor --machine (CUA-1820) ([#5379](https://github.com/trycua/cua/issues/5379)) ([904436a](https://github.com/trycua/cua/commit/904436adc45435959566f911290d9e56dd79c516))
+* **spaces:** one first run everywhere: connect your agent, then This Mac is your first Space (0.10.0) ([#5462](https://github.com/trycua/cua/issues/5462)) ([c4b4b09](https://github.com/trycua/cua/commit/c4b4b0922f7f0c4d87982a972eea0a0c073e5883))
+* **spaces:** preflight checks before creating a local Space (CUA-1916) ([#5553](https://github.com/trycua/cua/issues/5553)) ([7bfb8e1](https://github.com/trycua/cua/commit/7bfb8e17e5a1baecf43a5682835821f7dbc1cd47))
+* **spaces:** resources view, daemon resource sampler, relay summaries, CLI columns and SDK resources API (CUA-1880) ([#5469](https://github.com/trycua/cua/issues/5469)) ([5380f80](https://github.com/trycua/cua/commit/5380f800502440243ec6db76e99f731b0e853b29))
+* **spaces:** Run an agent here when the first Space is ready, teleport explainer, Skip on first run (CUA-1915, CUA-1917) ([#5550](https://github.com/trycua/cua/issues/5550)) ([5e6b6a3](https://github.com/trycua/cua/commit/5e6b6a3840b5a3950487ab17b7ec921882f3e0f3))
+* **spaces:** second-agent and risky-action prompts for This Mac ([#5459](https://github.com/trycua/cua/issues/5459)) ([41648bc](https://github.com/trycua/cua/commit/41648bc84e65d21223db86e01075740e74480f06))
+* **telemetry:** installer funnel events and an agent-used-a-Space event (CUA-1881) ([#5457](https://github.com/trycua/cua/issues/5457)) ([ba3e14f](https://github.com/trycua/cua/commit/ba3e14fd8beb441c532bf75e3ef84c29d454213c))
+* **telemetry:** link signed-in usage data to an opaque account id, off until the policy is published (CUA-1881) ([#5472](https://github.com/trycua/cua/issues/5472)) ([911fc16](https://github.com/trycua/cua/commit/911fc16042b2f7327947f47dd935095e174e6b1c))
+* **telemetry:** ui_locale on cua_app_active (CUA-1928) ([#5569](https://github.com/trycua/cua/issues/5569)) ([e4b0baa](https://github.com/trycua/cua/commit/e4b0baaf5f3c91cd0da739e91a76a866550812be))
+
+
+### Bug Fixes
+
+* **cua-cli:** treat provisionable Mac engines as usable in runtime checks ([b31ff43](https://github.com/trycua/cua/commit/b31ff4332cbd547dcbc7d5d6f3d3a4ae0dc7ad46))
+* **cua-driver:** fix Windows selected-browser launch guidance ([50313e7](https://github.com/trycua/cua/commit/50313e7a7475846a459048b89758e6d0bc14df6d))
+* **cua-driver:** launch the installed app by path, stop daemons from any copy, drop extra copies ([#5471](https://github.com/trycua/cua/issues/5471)) ([41eee2f](https://github.com/trycua/cua/commit/41eee2fb91c20a77a9e55e4f013fc968081ad74c))
+* **cua-spaces:** teleport_app moves only the selected items ([#5504](https://github.com/trycua/cua/issues/5504)) ([d247bf3](https://github.com/trycua/cua/commit/d247bf36adb77f9b76bac43f6295defa2a8769bc))
+* **sdk:** delete the Fleet SDK, pools and claims from the Rust SDK, cua-sandbox, Cua Bench and the apps (CUA-1836) ([#5488](https://github.com/trycua/cua/issues/5488)) ([348c47c](https://github.com/trycua/cua/commit/348c47cc30b1d222844480838ccc4acf53f7a511))
+* **security:** distrust the compromised eMudhra intermediates in every Cua client (CUA-1948) ([#5622](https://github.com/trycua/cua/issues/5622)) ([149ea51](https://github.com/trycua/cua/commit/149ea51c613cc840c3760dec822c57b7e65df05a))
+* **spaces:** honest Done screen that sees the CLI and sign-in you already have (CUA-1862) ([#5447](https://github.com/trycua/cua/issues/5447)) ([bea1cfd](https://github.com/trycua/cua/commit/bea1cfd3f55b36af6f1d3d290e67d316dfecf5ff))
+* **spaces:** Linux Share in remote desktops asks for the password, says what to do when it cannot, and cua_share says why it failed (CUA-1725, CUA-1855) ([#5273](https://github.com/trycua/cua/issues/5273)) ([522e032](https://github.com/trycua/cua/commit/522e032fb3ac340aca1f0e1301413d7f08839e31))
+* **spaces:** plain plan errors and a way to upgrade when adding a team computer ([#5217](https://github.com/trycua/cua/issues/5217)) ([db87d66](https://github.com/trycua/cua/commit/db87d6676d820da152291072df3715c05a0d7e62))
+* **spaces:** say computer instead of machine (CUA-1863) ([#5508](https://github.com/trycua/cua/issues/5508)) ([5cbe31c](https://github.com/trycua/cua/commit/5cbe31c7109fa70eb596b6bde3b5964449e8676e))
+
 ## [0.5.0](https://github.com/trycua/cua/compare/cua-sdk-v0.4.1...cua-sdk-v0.5.0) (2026-10-19)
 
 

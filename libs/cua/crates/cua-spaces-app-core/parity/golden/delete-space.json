@@ -60,8 +60,8 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux demo [Deleting…] - -",
-          "os-linux keep [Running] - -"
+          "os-linux demo [spaces.status.deleting] - -",
+          "os-linux keep [spaces.status.running] - -"
         ],
         "tiles": [
           "os-linux demo, Linux, This Mac, Deleting… - Deleting…",
@@ -130,8 +130,8 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux demo [Deleting…] - -",
-          "os-linux keep [Running] - -"
+          "os-linux demo [spaces.status.deleting] - -",
+          "os-linux keep [spaces.status.running] - -"
         ],
         "tiles": [
           "os-linux demo, Linux, This Mac, Deleting… - Deleting…",
@@ -200,8 +200,8 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux demo [Deleting…] - -",
-          "os-linux keep [Running] - -"
+          "os-linux demo [spaces.status.deleting] - -",
+          "os-linux keep [spaces.status.running] - -"
         ],
         "tiles": [
           "os-linux demo, Linux, This Mac, Deleting… - Deleting…",
@@ -270,8 +270,8 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux demo [Deleting…] - -",
-          "os-linux keep [Running] - -"
+          "os-linux demo [spaces.status.deleting] - -",
+          "os-linux keep [spaces.status.running] - -"
         ],
         "tiles": [
           "os-linux demo, Linux, This Mac, Deleting… - Deleting…",
@@ -319,7 +319,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux keep [Running] - -"
+          "os-linux keep [spaces.status.running] - -"
         ],
         "tiles": [
           "os-linux keep, Linux, This Mac, Running - -"
@@ -366,7 +366,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux keep [Running] - -"
+          "os-linux keep [spaces.status.running] - -"
         ],
         "tiles": [
           "os-linux keep, Linux, This Mac, Running - -"
@@ -411,7 +411,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux keep [Running] - -"
+          "os-linux keep [spaces.status.running] - -"
         ],
         "tiles": [
           "os-linux keep, Linux, This Mac, Running - -"
@@ -458,7 +458,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux keep [Deleting…] - -"
+          "os-linux keep [spaces.status.deleting] - -"
         ],
         "tiles": [
           "os-linux keep, Linux, This Mac, Deleting… - Deleting…"
@@ -503,7 +503,7 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux keep [Running] - -"
+          "os-linux keep [spaces.status.running] - -"
         ],
         "tiles": [
           "os-linux keep, Linux, This Mac, Running - -"

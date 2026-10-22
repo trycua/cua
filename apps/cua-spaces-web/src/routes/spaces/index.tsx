@@ -10,7 +10,7 @@ import { EmptyHome } from "@/components/empty-home";
 import { ConnectAgentDialog } from "@/components/agents/connect-dialog";
 import { RunAgentDialog } from "@/components/agents/run-agent-dialog";
 import { GettingStarted } from "@/components/getting-started";
-import { SpaceReadyCard } from "@/components/space-ready-card";
+import { SpaceReadyCard, useAgentOffer } from "@/components/space-ready-card";
 import { FirstRunTodosCard, useFirstRunTodosShown } from "@/components/first-run-todos";
 import { OsIcon } from "@/components/os-icon";
 import { EmptyState, Page, PageHeader } from "@/components/page";
@@ -20,6 +20,7 @@ import { SpaceCanvas } from "@/components/space-canvas";
 import { StateLabel } from "@/components/state-dot";
 import { useTileVideo } from "@/components/video/tile-video";
 import { useNewSpace } from "@/hooks/use-new-space";
+import { useQuiet } from "@/hooks/use-quiet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/segmented";
@@ -71,9 +72,15 @@ function SpacesPage() {
   const { data: agents } = useAgents();
   const readySpace = spaces.find((s) => spaceState(s) === "running");
   const agentRan = checklist.done.run_agent || (agents?.runs.length ?? 0) > 0 || (agents?.agents.length ?? 0) > 0;
-  const runHere = readySpace && !agentRan ? readySpace : undefined;
+  const offer = useAgentOffer(Boolean(readySpace) && !agentRan);
+  const runHere = readySpace && !agentRan && offer.visible ? readySpace : undefined;
   const [runOpen, setRunOpen] = useState(false);
   const [connectOpen, setConnectOpen] = useState(false);
+  // The cards above the list (ready, checklist, computers) and the list come from separate host reads. Draw them
+  // together once those have answered, not one by one with the page jumping at each (CUA-1951).
+  const settled = useQuiet(
+    [isLoading, all.length, machines.length, Object.keys(checklist.done).length, checklist.dismissed, agents?.runs.length, agents?.agents.length, resources ? 1 : 0].join("|"),
+  );
 
   return (
     <Page>
@@ -86,12 +93,14 @@ function SpacesPage() {
           </Button>
         }
       />
+      {settled ? (
+        <>
       <FirstRunTodosCard />
-      {runHere ? <SpaceReadyCard space={runHere} onRun={() => setRunOpen(true)} /> : null}
+      {runHere ? <SpaceReadyCard space={runHere} onRun={() => { offer.clicked(); setRunOpen(true); }} onDismiss={offer.dismiss} /> : null}
       {firstRunTodos ? null : <GettingStarted onRunAgent={runHere ? () => setRunOpen(true) : undefined} />}
       {readySpace ? (
         <>
-          <RunAgentDialog open={runOpen} space={readySpace} onOpenChange={setRunOpen} onManual={() => setConnectOpen(true)} />
+          <RunAgentDialog open={runOpen} space={readySpace} onOpenChange={setRunOpen} onManual={() => setConnectOpen(true)} onConnected={offer.completed} />
           <ConnectAgentDialog open={connectOpen} onOpenChange={setConnectOpen} />
         </>
       ) : null}
@@ -163,6 +172,8 @@ function SpacesPage() {
           ))}
         </ul>
       )}
+        </>
+      ) : null}
     </Page>
   );
 }

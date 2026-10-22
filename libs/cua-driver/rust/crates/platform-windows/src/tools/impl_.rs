@@ -7763,7 +7763,9 @@ impl Tool for DragTool {
             name: "drag".into(),
             description: "Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local screenshot pixels. \
                           duration_ms (default 500) is the wall-clock budget; steps (default 20) interpolates intermediate \
-                          WM_MOUSEMOVE events along the path. No focus steal. After a zoom call, pass from_zoom=true. \
+                          WM_MOUSEMOVE events along the path. Background delivery does not steal focus; delivery_mode:\"foreground\" \
+                          activates the target and refuses with foreground_unavailable, sending nothing, when another window still \
+                          covers the start point. After a zoom call, pass from_zoom=true. \
                           Drags that start on a window caption / title bar or resize border (i.e. moving or resizing the \
                           window itself) cannot be delivered in the background — the OS move/resize loop needs real pointer \
                           input — so they return background_unavailable; re-issue those with delivery_mode:\"foreground\".".into(),
@@ -7993,8 +7995,8 @@ impl Tool for DragTool {
         // Slider thumbs (and any framework that polls GetKeyState during
         // its drag handler — PostMessage doesn't update per-thread input
         // state, so those targets see a button-up world during the drag
-        // and never start tracking). Subject to the same UIAccess
-        // foreground-lock constraint as send_click_synthesized.
+        // and never start tracking). Like the foreground click, it activates
+        // the target and refuses rather than drag in a window that covers it.
         if delivery == DeliveryMode::Foreground {
             let btn_fg = button.clone();
             pin_overlay_above(&cursor_key, hwnd);
@@ -8002,7 +8004,7 @@ impl Tool for DragTool {
                 windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
             };
             let send_result = tokio::task::spawn_blocking(move || {
-                crate::input::mouse::send_drag_synthesized(
+                crate::input::mouse::send_drag_synthesized_active(
                     hwnd,
                     sx_from,
                     sy_from,
@@ -8033,7 +8035,21 @@ impl Tool for DragTool {
                      from screen ({sx_from},{sy_from}) → ({sx_to},{sy_to}) \
                      in {duration_ms}ms / {steps} steps (delivery_mode:foreground)."
                 )),
-                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Ok(Err(e)) => {
+                    let message = e.to_string();
+                    if message.starts_with("foreground_unavailable:") {
+                        // Nothing was sent; give callers the structured code
+                        // and its recovery hint rather than bare text.
+                        ToolResult::error(message).with_structured(json!({
+                            "code": "foreground_unavailable",
+                            "effect": "refused",
+                            "pid": raw_pid,
+                            "window_id": hwnd,
+                        }))
+                    } else {
+                        ToolResult::error(message)
+                    }
+                }
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }

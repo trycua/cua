@@ -64,7 +64,11 @@ class CompileLaneTest(unittest.TestCase):
     def test_rust_wrap(self):
         whole = "use cua_sdk::Cua;\n\n#[tokio::main]\nasync fn main() {}\n"
         self.assertEqual(cl.wrap(whole, "rust", "DocsR"), whole)
-        out = cl.wrap("use cua_sdk::{Cua, CuaConfig};\n\nlet c = Cua::embedded(CuaConfig::default())?;\n", "rust", "DocsR")
+        out = cl.wrap(
+            "use cua_sdk::{Cua, CuaConfig};\n\nlet c = Cua::embedded(CuaConfig::default())?;\n",
+            "rust",
+            "DocsR",
+        )
         lines = out.splitlines()
         self.assertEqual(lines[:2], ["#![allow(unused)]", "use cua_sdk::{Cua, CuaConfig};"])
         self.assertIn("async fn docs_r() -> Result<(), Box<dyn std::error::Error>> {", out)

@@ -21,6 +21,9 @@ public protocol DevicesRunning: AnyObject, Sendable {
     /// Vouches for a machine that registered without an enrolled device's
     /// proof (S5), from this enrolled device.
     func confirmMachine(id: String) async throws
+    /// Renames a relay machine the account owns, from this enrolled device;
+    /// this Mac's host setup takes the name when it is this Mac.
+    func renameMachine(id: String, name: String) async throws
     /// A one-time link, QR code and install commands that add another
     /// computer to the account (or to `team`), from this enrolled device.
     func createPairingCode(team: String?) async throws -> PairingCode
@@ -72,6 +75,9 @@ public final class LiveDevices: DevicesRunning, @unchecked Sendable {
     public func rename(id: String, name: String) async throws { _ = try await inner.rename(id: id, name: name) }
     public func revoke(id: String) async throws { _ = try await inner.revoke(id: id) }
     public func confirmMachine(id: String) async throws { _ = try await inner.confirmMachine(machineId: id) }
+    public func renameMachine(id: String, name: String) async throws {
+        _ = try await inner.renameMachine(machineId: id, name: name)
+    }
     public func createPairingCode(team: String?) async throws -> PairingCode {
         try await inner.createPairingCode(team: team, ttlSecs: nil)
     }
@@ -136,10 +142,10 @@ public final class FixtureDevices: DevicesRunning, @unchecked Sendable {
             machines: [
                 RelayMachine(id: "m1", spaceId: "relay:m1", name: "studio-mac", ownerId: "me",
                              ownerEmail: nil, role: "owner", online: true, sharing: true, version: "0.5.0",
-                             url: "", allow: [], clients: [], confirmed: true),
+                             url: "", allow: [], clients: [], confirmed: true, team: nil, providesSpaces: true),
                 RelayMachine(id: "m2", spaceId: "relay:m2", name: "build-box", ownerId: "me",
                              ownerEmail: nil, role: "owner", online: false, sharing: true, version: "0.5.0",
-                             url: "", allow: [], clients: [], confirmed: false),
+                             url: "", allow: [], clients: [], confirmed: false, team: nil, providesSpaces: nil),
             ])
     }
 
@@ -179,6 +185,11 @@ public final class FixtureDevices: DevicesRunning, @unchecked Sendable {
     public func revoke(id: String) async throws {
         calls.append("revoke:\(id)")
         for i in current.devices.indices where current.devices[i].id == id { current.devices[i].state = "revoked" }
+    }
+
+    public func renameMachine(id: String, name: String) async throws {
+        calls.append("rename-machine:\(id):\(name)")
+        for i in current.machines.indices where current.machines[i].id == id { current.machines[i].name = name }
     }
 
     public func confirmMachine(id: String) async throws {

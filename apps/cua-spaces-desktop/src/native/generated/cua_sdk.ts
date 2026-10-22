@@ -5059,7 +5059,17 @@ export type RelayMachine = {
      * check existed. `false` shows the machine as "new" until an enrolled
      * device confirms it ([`Devices::confirm_machine`]) (S5).
      */
-    confirmed: boolean
+    confirmed: boolean,
+    /**
+     * The team you reach it through, for a team machine not shared with
+     * you directly.
+     */
+    team?: string,
+    /**
+     * It creates Spaces for its owner's devices, when it said so at
+     * registration (`None` from a host or relay that predates it).
+     */
+    providesSpaces?: boolean
 }
 
 /**
@@ -5095,7 +5105,9 @@ const FfiConverterTypeRelayMachine = (() => {
                 url: FfiConverterString.read(from),
                 allow: FfiConverterSequenceString.read(from),
                 clients: FfiConverterSequenceTypeRelayClientInfo.read(from),
-                confirmed: FfiConverterBool.read(from)
+                confirmed: FfiConverterBool.read(from),
+                team: FfiConverterOptionalString.read(from),
+                providesSpaces: FfiConverterOptionalBoolean.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -5112,6 +5124,8 @@ const FfiConverterTypeRelayMachine = (() => {
             FfiConverterSequenceString.write(value.allow, into);
             FfiConverterSequenceTypeRelayClientInfo.write(value.clients, into);
             FfiConverterBool.write(value.confirmed, into);
+            FfiConverterOptionalString.write(value.team, into);
+            FfiConverterOptionalBoolean.write(value.providesSpaces, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
@@ -5126,7 +5140,9 @@ const FfiConverterTypeRelayMachine = (() => {
              FfiConverterString.allocationSize(value.url) +
              FfiConverterSequenceString.allocationSize(value.allow) +
              FfiConverterSequenceTypeRelayClientInfo.allocationSize(value.clients) +
-             FfiConverterBool.allocationSize(value.confirmed);
+             FfiConverterBool.allocationSize(value.confirmed) +
+             FfiConverterOptionalString.allocationSize(value.team) +
+             FfiConverterOptionalBoolean.allocationSize(value.providesSpaces);
 
         }
     };
@@ -7688,6 +7704,67 @@ const FfiConverterTypeHostProvidedSpace = (() => {
 })();
 
 /**
+ * What [`Host::migrate_service`] did.
+ */
+export type HostServiceMigration = {
+    /**
+     * `migrated`, `switched`, `cleaned-up`, `rolled-back`, `kept` or
+     * `not-needed`.
+     */
+    outcome: string,
+    /**
+     * In words.
+     */
+    detail: string,
+    /**
+     * macOS will ask for Screen Recording and Accessibility for Cua Spaces
+     * Helper.
+     */
+    permissionsNeeded: boolean
+}
+
+/**
+ * Generated factory for {@link HostServiceMigration} record objects.
+ */
+export const HostServiceMigration = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<HostServiceMigration, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<HostServiceMigration>,
+    });
+})();
+
+const FfiConverterTypeHostServiceMigration = (() => {
+    type TypeName = HostServiceMigration;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                outcome: FfiConverterString.read(from),
+                detail: FfiConverterString.read(from),
+                permissionsNeeded: FfiConverterBool.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.outcome, into);
+            FfiConverterString.write(value.detail, into);
+            FfiConverterBool.write(value.permissionsNeeded, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.outcome) +
+             FfiConverterString.allocationSize(value.detail) +
+             FfiConverterBool.allocationSize(value.permissionsNeeded);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
  * A change to this machine's Spaces settings (`None` keeps a value).
  */
 export type HostSettingsChange = {
@@ -8062,7 +8139,16 @@ export type HostStatus = {
     /**
      * The owner's email, when the relay gave one.
      */
-    ownerEmail?: string
+    ownerEmail?: string,
+    /**
+     * macOS: a Cua Spaces app that can run the host service is
+     * installed, so the host service can run as it.
+     */
+    helperAvailable: boolean,
+    /**
+     * macOS: the old hand-written LaunchAgent is still there.
+     */
+    legacyService: boolean
 }
 
 /**
@@ -8081,7 +8167,9 @@ export const HostStatus = (() => {
         spacesAuditError: undefined,
         pausedSignedOut: false,
         owner: undefined,
-        ownerEmail: undefined
+        ownerEmail: undefined,
+        helperAvailable: false,
+        legacyService: false
     });
     const create = (() => {
         return uniffiCreateRecord<HostStatus, ReturnType<typeof defaults>>(defaults);
@@ -8125,7 +8213,9 @@ const FfiConverterTypeHostStatus = (() => {
                 spacesAuditError: FfiConverterOptionalString.read(from),
                 pausedSignedOut: FfiConverterBool.read(from),
                 owner: FfiConverterOptionalString.read(from),
-                ownerEmail: FfiConverterOptionalString.read(from)
+                ownerEmail: FfiConverterOptionalString.read(from),
+                helperAvailable: FfiConverterBool.read(from),
+                legacyService: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -8157,6 +8247,8 @@ const FfiConverterTypeHostStatus = (() => {
             FfiConverterBool.write(value.pausedSignedOut, into);
             FfiConverterOptionalString.write(value.owner, into);
             FfiConverterOptionalString.write(value.ownerEmail, into);
+            FfiConverterBool.write(value.helperAvailable, into);
+            FfiConverterBool.write(value.legacyService, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterBool.allocationSize(value.configured) +
@@ -8186,7 +8278,9 @@ const FfiConverterTypeHostStatus = (() => {
              FfiConverterOptionalString.allocationSize(value.spacesAuditError) +
              FfiConverterBool.allocationSize(value.pausedSignedOut) +
              FfiConverterOptionalString.allocationSize(value.owner) +
-             FfiConverterOptionalString.allocationSize(value.ownerEmail);
+             FfiConverterOptionalString.allocationSize(value.ownerEmail) +
+             FfiConverterBool.allocationSize(value.helperAvailable) +
+             FfiConverterBool.allocationSize(value.legacyService);
 
         }
     };
@@ -9050,6 +9144,147 @@ const FfiConverterTypeLocationInfo = (() => {
              FfiConverterString.allocationSize(value.description) +
              FfiConverterSequenceString.allocationSize(value.kinds) +
              FfiConverterMapStringSequenceString.allocationSize(value.runtimes);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * One check of a machine's health ([`Spaces::machine_health`]).
+ */
+export type MachineHealthCheck = {
+    /**
+     * `machine.local_network`, `machine.disk`, `machine.virtualization`,
+     * `machine.memory`, `machine.permissions.<id>`.
+     */
+    id: string,
+    /**
+     * `pass`, `warn`, `fail` or `skip`.
+     */
+    status: string,
+    /**
+     * What it found, in one line.
+     */
+    message: string,
+    /**
+     * What to do about a warning or failure.
+     */
+    remediation: string,
+    /**
+     * What a UI needs to word it and offer its fix (`app`, `settings_url`,
+     * `free_gb`, ...).
+     */
+    facts: Map<string, string>
+}
+
+/**
+ * Generated factory for {@link MachineHealthCheck} record objects.
+ */
+export const MachineHealthCheck = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<MachineHealthCheck, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<MachineHealthCheck>,
+    });
+})();
+
+const FfiConverterTypeMachineHealthCheck = (() => {
+    type TypeName = MachineHealthCheck;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                id: FfiConverterString.read(from),
+                status: FfiConverterString.read(from),
+                message: FfiConverterString.read(from),
+                remediation: FfiConverterString.read(from),
+                facts: FfiConverterMapStringString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.id, into);
+            FfiConverterString.write(value.status, into);
+            FfiConverterString.write(value.message, into);
+            FfiConverterString.write(value.remediation, into);
+            FfiConverterMapStringString.write(value.facts, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.id) +
+             FfiConverterString.allocationSize(value.status) +
+             FfiConverterString.allocationSize(value.message) +
+             FfiConverterString.allocationSize(value.remediation) +
+             FfiConverterMapStringString.allocationSize(value.facts);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * A machine's health as its own cua daemon checks it.
+ */
+export type MachineHealth = {
+    /**
+     * The Cua version of the daemon that checked.
+     */
+    cuaVersion: string,
+    /**
+     * `macos`, `linux`, `windows`.
+     */
+    os: string,
+    /**
+     * Every check, in order.
+     */
+    checks: Array<MachineHealthCheck>,
+    /**
+     * The whole report as JSON (the schema `cua doctor --json` writes).
+     */
+    reportJson: string
+}
+
+/**
+ * Generated factory for {@link MachineHealth} record objects.
+ */
+export const MachineHealth = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<MachineHealth, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<MachineHealth>,
+    });
+})();
+
+const FfiConverterTypeMachineHealth = (() => {
+    type TypeName = MachineHealth;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                cuaVersion: FfiConverterString.read(from),
+                os: FfiConverterString.read(from),
+                checks: FfiConverterSequenceTypeMachineHealthCheck.read(from),
+                reportJson: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.cuaVersion, into);
+            FfiConverterString.write(value.os, into);
+            FfiConverterSequenceTypeMachineHealthCheck.write(value.checks, into);
+            FfiConverterString.write(value.reportJson, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.cuaVersion) +
+             FfiConverterString.allocationSize(value.os) +
+             FfiConverterSequenceTypeMachineHealthCheck.allocationSize(value.checks) +
+             FfiConverterString.allocationSize(value.reportJson);
 
         }
     };
@@ -15661,7 +15896,14 @@ export type SpacesdCommand = {
     /**
      * Run in a PTY of this size.
      */
-    pty?: PtySize
+    pty?: PtySize,
+    /**
+     * Kill the process (`term`, then `kill`) when this client's connection
+     * to cua-spacesd ends before the process does, including when the
+     * client process dies. Off by default: processes are detached and can be
+     * reattached by tag.
+     */
+    killOnDisconnect: boolean
 }
 
 /**
@@ -15676,7 +15918,8 @@ export const SpacesdCommand = (() => {
         timeoutMs: undefined,
         tag: undefined,
         stdin: false,
-        pty: undefined
+        pty: undefined,
+        killOnDisconnect: false
     });
     const create = (() => {
         return uniffiCreateRecord<SpacesdCommand, ReturnType<typeof defaults>>(defaults);
@@ -15701,7 +15944,8 @@ const FfiConverterTypeSpacesdCommand = (() => {
                 timeoutMs: FfiConverterOptionalUInt32.read(from),
                 tag: FfiConverterOptionalString.read(from),
                 stdin: FfiConverterBool.read(from),
-                pty: FfiConverterOptionalTypePtySize.read(from)
+                pty: FfiConverterOptionalTypePtySize.read(from),
+                killOnDisconnect: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -15714,6 +15958,7 @@ const FfiConverterTypeSpacesdCommand = (() => {
             FfiConverterOptionalString.write(value.tag, into);
             FfiConverterBool.write(value.stdin, into);
             FfiConverterOptionalTypePtySize.write(value.pty, into);
+            FfiConverterBool.write(value.killOnDisconnect, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.program) +
@@ -15724,7 +15969,8 @@ const FfiConverterTypeSpacesdCommand = (() => {
              FfiConverterOptionalUInt32.allocationSize(value.timeoutMs) +
              FfiConverterOptionalString.allocationSize(value.tag) +
              FfiConverterBool.allocationSize(value.stdin) +
-             FfiConverterOptionalTypePtySize.allocationSize(value.pty);
+             FfiConverterOptionalTypePtySize.allocationSize(value.pty) +
+             FfiConverterBool.allocationSize(value.killOnDisconnect);
 
         }
     };
@@ -20259,6 +20505,12 @@ export interface DevicesLike {
  */
     rename(id: string, name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<RelayDevice>;
 /**
+ * Renames `machine_id`, a machine the account owns, on the relay (from
+ * this enrolled device). When it is this machine's own registration,
+ * its host setup takes the new name too.
+ */
+    renameMachine(machineId: string, name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<RelayMachine>;
+/**
  * Revokes a device (from this enrolled device). Revoking this device
  * also deletes its key.
  */
@@ -20585,6 +20837,43 @@ private constructor(pointer: UniffiHandle) {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterTypeRelayDevice.lift.bind(FfiConverterTypeRelayDevice),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * Renames `machine_id`, a machine the account owns, on the relay (from
+ * this enrolled device). When it is this machine's own registration,
+ * its host setup takes the new name too.
+ */
+    async renameMachine(machineId: string, name: string, asyncOpts_?: { signal: AbortSignal }): Promise<RelayMachine> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_devices_rename_machine(
+                    uniffiTypeDevicesObjectFactory.clonePointer(this),FfiConverterString.lower(machineId, nativeModule().rustbuffer_alloc),FfiConverterString.lower(name, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeRelayMachine.lift.bind(FfiConverterTypeRelayMachine),
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
@@ -22764,9 +23053,11 @@ export interface SpacesdProcessLike {
  */
     resize(cols: number, rows: number, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
 /**
- * Sends a signal by name (`term`, `kill`, `SIGINT`, ...).
+ * Sends a signal by name (`term`, `kill`, `SIGINT`, ...). With
+ * `process_group`, to the process's whole group (everything it started),
+ * as a terminal's Ctrl-C does; by default to the process alone.
  */
-    signal(signal: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
+    signal(signal: string, processGroup: boolean, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
 /**
  * Tag, when set.
  */
@@ -22980,16 +23271,18 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Sends a signal by name (`term`, `kill`, `SIGINT`, ...).
+ * Sends a signal by name (`term`, `kill`, `SIGINT`, ...). With
+ * `process_group`, to the process's whole group (everything it started),
+ * as a terminal's Ctrl-C does; by default to the process alone.
  */
-    async signal(signal: string, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
+    async signal(signal: string, processGroup: boolean = false, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
     try {
         return await uniffiRustCallAsync(
             /*rustCaller:*/ uniffiCaller,
             /*rustFutureFunc:*/ () => {
                 return nativeModule().uniffi_cua_sdk_fn_method_spacesdprocess_signal(
-                    uniffiTypeSpacesdProcessObjectFactory.clonePointer(this),FfiConverterString.lower(signal, nativeModule().rustbuffer_alloc)
+                    uniffiTypeSpacesdProcessObjectFactory.clonePointer(this),FfiConverterString.lower(signal, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(processGroup, nativeModule().rustbuffer_alloc)
                 );
             },
             /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_void,
@@ -30781,6 +31074,16 @@ export interface SpacesLike {
  */
     listToolsJson(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
 /**
+ * A machine's health as its own cua daemon checks it: Local Network
+ * access (and which app macOS holds responsible), free disk,
+ * virtualization, memory left by running Spaces, the permissions
+ * sharing its desktop needs. `machine`: another of your machines, by
+ * id or name (asked over the relay, the mesh or its direct address);
+ * `None` for this one. Read-only; fails plainly when that machine is
+ * offline, not yours, or runs a Cua that predates the check.
+ */
+    machineHealth(machine: string | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<MachineHealth>;
+/**
  * The notifications feed, newest first.
  */
     notifications(unreadOnly: boolean, sinceMs: bigint | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<NotificationInfo>>;
@@ -31813,6 +32116,47 @@ private constructor(pointer: UniffiHandle) {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * A machine's health as its own cua daemon checks it: Local Network
+ * access (and which app macOS holds responsible), free disk,
+ * virtualization, memory left by running Spaces, the permissions
+ * sharing its desktop needs. `machine`: another of your machines, by
+ * id or name (asked over the relay, the mesh or its direct address);
+ * `None` for this one. Read-only; fails plainly when that machine is
+ * offline, not yours, or runs a Cua that predates the check.
+ */
+    async machineHealth(machine: string | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<MachineHealth> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_spaces_machine_health(
+                    uniffiTypeSpacesObjectFactory.clonePointer(this),FfiConverterOptionalString.lower(machine, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeMachineHealth.lift.bind(FfiConverterTypeMachineHealth),
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
@@ -33926,6 +34270,15 @@ export interface HostLike {
  */
     configure(change: HostSettingsChange, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<HostStatus>;
 /**
+ * macOS: moves the host service from the old LaunchAgent to the Cua
+ * Spaces app (its own login item, "Cua Spaces"), keeping this machine's
+ * registration, id and Spaces; puts the old one back if the helper
+ * does not take over (the outcome says so). `app_version`: a failed
+ * move is not tried again by itself with the same version; `force`
+ * tries anyway.
+ */
+    migrateService(force: boolean, appVersion: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<HostServiceMigration>;
+/**
  * Pause relay sharing while nobody is signed in to the owner's
  * account: the host leaves the relay and stays off it (also across a
  * restart) with its setup kept. Direct mode is left alone.
@@ -34019,6 +34372,46 @@ export class Host extends UniffiAbstractObject implements HostLike {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterTypeHostStatus.lift.bind(FfiConverterTypeHostStatus),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * macOS: moves the host service from the old LaunchAgent to the Cua
+ * Spaces app (its own login item, "Cua Spaces"), keeping this machine's
+ * registration, id and Spaces; puts the old one back if the helper
+ * does not take over (the outcome says so). `app_version`: a failed
+ * move is not tried again by itself with the same version; `force`
+ * tries anyway.
+ */
+    async migrateService(force: boolean, appVersion: string, asyncOpts_?: { signal: AbortSignal }): Promise<HostServiceMigration> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_host_migrate_service(
+                    uniffiTypeHostObjectFactory.clonePointer(this),FfiConverterBool.lower(force, nativeModule().rustbuffer_alloc),FfiConverterString.lower(appVersion, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeHostServiceMigration.lift.bind(FfiConverterTypeHostServiceMigration),
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
@@ -34840,6 +35233,9 @@ const FfiConverterOptionalTypeStorageVolume = new FfiConverterOptional(FfiConver
 // FfiConverter for Map<string, Array<string>>
 const FfiConverterMapStringSequenceString = new FfiConverterMap(FfiConverterString, FfiConverterSequenceString);
 
+// FfiConverter for Array<MachineHealthCheck>
+const FfiConverterSequenceTypeMachineHealthCheck = new FfiConverterArray(FfiConverterTypeMachineHealthCheck);
+
 // FfiConverter for PresenceParticipant | undefined
 const FfiConverterOptionalTypePresenceParticipant = new FfiConverterOptional(FfiConverterTypePresenceParticipant);
 
@@ -35435,6 +35831,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_devices_rename() !== 59535) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_devices_rename");
     }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_devices_rename_machine() !== 63088) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_devices_rename_machine");
+    }
     if (nativeModule().uniffi_cua_sdk_checksum_method_devices_revoke() !== 27802) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_devices_revoke");
     }
@@ -35467,6 +35866,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_host_configure() !== 36828) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_host_configure");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_host_migrate_service() !== 36386) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_host_migrate_service");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_host_pause_signed_out() !== 3338) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_host_pause_signed_out");
@@ -36038,6 +36440,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_list_tools_json() !== 19259) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_list_tools_json");
     }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_machine_health() !== 35352) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_machine_health");
+    }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_notifications() !== 10964) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_notifications");
     }
@@ -36320,7 +36725,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_spacesdprocess_resize() !== 46607) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spacesdprocess_resize");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_spacesdprocess_signal() !== 61925) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spacesdprocess_signal() !== 44588) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spacesdprocess_signal");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spacesdprocess_tag() !== 24315) {
@@ -36445,6 +36850,7 @@ export default Object.freeze({
     FfiConverterTypeHostAccessRecord,
     FfiConverterTypeHostPermission,
     FfiConverterTypeHostProvidedSpace,
+    FfiConverterTypeHostServiceMigration,
     FfiConverterTypeHostSettingsChange,
     FfiConverterTypeHostSetupOptions,
     FfiConverterTypeHostSpacesAuditRecord,
@@ -36461,6 +36867,8 @@ export default Object.freeze({
     FfiConverterTypeLocationInfo,
     FfiConverterTypeLoginAttempt,
     FfiConverterTypeLoginMethod,
+    FfiConverterTypeMachineHealth,
+    FfiConverterTypeMachineHealthCheck,
     FfiConverterTypeMcpClient,
     FfiConverterTypeMcpConfig,
     FfiConverterTypeMediaBridge,

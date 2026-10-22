@@ -123,6 +123,11 @@ def test_native_appkit_job_uses_released_driver_and_source_harness() -> None:
     assert "tests/fixtures/build/macos.sh --only appkit" in native
     assert "--app /Applications/CuaDriver.app --expected-client com.trycua.driver" in native
     assert "verify_native.py --typescript" in native
+    # The native tasks need a capture_id; since Driver 0.37 there is none until
+    # replayd holds the released app's direct-capture approval (CUA-1792).
+    assert "group.com.apple.replayd/ScreenCaptureApprovals.plist" in native
+    assert 'defaults write "$approvals" com.trycua.driver -dict' in native
+    assert native.index("ScreenCaptureApprovals.plist") < native.index("--args serve")
     assert "--live" not in native
     # The audit reads the harness-owned oracle result and the v2 contract.
     assert 'check["verified"] is True' in native

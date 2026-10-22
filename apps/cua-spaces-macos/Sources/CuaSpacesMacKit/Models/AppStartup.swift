@@ -631,6 +631,12 @@ public final class PendingSpacesBackend: SpacesBackend, AgentsToolRunning, Cloud
     public func localStorage() async -> LocalStorage? { await b().localStorage() }
     public func cloudAvailable() async -> Bool { await b().cloudAvailable() }
     public func runningMacosVms() async -> Int? { await b().runningMacosVms() }
+    // The Machines page: Remove from account and each computer's health
+    // checks (the protocol's defaults would refuse them).
+    public func relayUnregister(id: String) async throws { try await b().relayUnregister(id: id) }
+    public func machineHealth(machine: String?) async throws -> AppMachinesViewHealth {
+        try await b().machineHealth(machine: machine)
+    }
     public func cloudPricing() async -> AppCloudPricing? { await b().cloudPricing() }
     public func teleportContext(id: String) async throws -> (CuaSpacesFFI.Teleport, CuaSDK.Space)? {
         try await b().teleportContext(id: id)
@@ -738,6 +744,7 @@ public final class PendingDevices: DevicesRunning, @unchecked Sendable {
     public func rename(id: String, name: String) async throws { try await d().rename(id: id, name: name) }
     public func revoke(id: String) async throws { try await d().revoke(id: id) }
     public func confirmMachine(id: String) async throws { try await d().confirmMachine(id: id) }
+    public func renameMachine(id: String, name: String) async throws { try await d().renameMachine(id: id, name: name) }
     public func createPairingCode(team: String?) async throws -> PairingCode {
         try await d().createPairingCode(team: team)
     }
@@ -765,5 +772,8 @@ public final class PendingHost: HostRunning, @unchecked Sendable {
     public func remove() async throws { try await h().remove() }
     public func configure(change: HostSettingsChange) async throws -> HostStatus {
         try await h().configure(change: change)
+    }
+    public func migrateService(force: Bool, appVersion: String) async throws -> HostServiceMigration {
+        try await h().migrateService(force: force, appVersion: appVersion)
     }
 }

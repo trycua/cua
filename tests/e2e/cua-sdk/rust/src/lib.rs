@@ -15,7 +15,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 pub use cua_sdk::{self as cua, CuaError};
-use cua_sdk::{Cua, CuaConfig, ReadinessProbe, SandboxCreateOptions, SpacesdClient, SpacesdCommand};
+use cua_sdk::{Cua, CuaConfig, ReadinessProbe, ReplayMode, SandboxCreateOptions, SpacesdClient, SpacesdCommand};
 
 pub type Res<T = ()> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -288,6 +288,7 @@ pub fn cmd(program: &str, args: &[&str]) -> SpacesdCommand {
         tag: None,
         stdin: false,
         pty: None,
+        kill_on_disconnect: false,
     }
 }
 
@@ -565,6 +566,15 @@ pub async fn env_smoke(env: &SpacesdClient, desktop: bool, mock: bool) -> Res<se
     p.write_stdin(b"xyz".to_vec()).await?;
     p.close_stdin().await?;
     assert_eq!(p.wait().await?.stdout, b"xyz");
+    // kill_on_disconnect: letting go of the starting stream ends the process.
+    let mut c = cmd("cat", &[]);
+    c.stdin = true;
+    c.kill_on_disconnect = true;
+    c.tag = Some(format!("kod-rs-{}", run_id()));
+    let p = env.spawn(c.clone()).await?;
+    p.detach().await;
+    let ended = env.attach(None, c.tag.clone(), ReplayMode::None).await?.wait().await?;
+    assert!(!ended.exit.success, "kill_on_disconnect left it running: {ended:?}");
     let blob: Vec<u8> = (0..(1usize << 20)).map(|i| (i % 251) as u8).collect();
     let path = format!("/tmp/cua-e2e-{}/blob-rs.bin", run_id());
     let up = env.upload(path.clone(), blob.clone(), None).await?;

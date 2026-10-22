@@ -1204,7 +1204,7 @@ dependencies = [
 
 [[package]]
 name = "cua-agent-setup"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "hex",
@@ -1220,7 +1220,7 @@ dependencies = [
 
 [[package]]
 name = "cua-agents"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "cua-agent-setup",
  "cua-proto",
@@ -1236,7 +1236,7 @@ dependencies = [
 
 [[package]]
 name = "cua-auth"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -1258,7 +1258,7 @@ dependencies = [
 
 [[package]]
 name = "cua-chromium-storage"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "base64 0.22.1",
  "cua-teleport-bundle",
@@ -1273,14 +1273,14 @@ dependencies = [
 
 [[package]]
 name = "cua-create-failure"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "cua-daemon"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -1324,7 +1324,7 @@ dependencies = [
 
 [[package]]
 name = "cua-disk"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "bollard",
@@ -1338,7 +1338,7 @@ dependencies = [
 
 [[package]]
 name = "cua-home"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
@@ -1346,7 +1346,7 @@ dependencies = [
 
 [[package]]
 name = "cua-host"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -1372,7 +1372,7 @@ dependencies = [
 
 [[package]]
 name = "cua-hotspot"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "futures-util",
  "tokio",
@@ -1380,7 +1380,7 @@ dependencies = [
 
 [[package]]
 name = "cua-icon-cache"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "cua-home",
  "hex",
@@ -1392,7 +1392,7 @@ dependencies = [
 
 [[package]]
 name = "cua-image"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1417,7 +1417,7 @@ dependencies = [
 
 [[package]]
 name = "cua-keyvault"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "argon2",
  "async-trait",
@@ -1444,7 +1444,7 @@ dependencies = [
 
 [[package]]
 name = "cua-machine-seal"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "chacha20poly1305 0.11.0",
  "cua-home",
@@ -1458,7 +1458,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-client"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "cua-media-protocol",
  "cua-media-transport",
@@ -1466,7 +1466,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-protocol"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1474,7 +1474,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-transport"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "cua-media-protocol",
  "quinn",
@@ -1487,7 +1487,7 @@ dependencies = [
 
 [[package]]
 name = "cua-mesh"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "base64 0.22.1",
  "boringtun",
@@ -1512,12 +1512,12 @@ dependencies = [
  "tokio-tungstenite",
  "tracing",
  "url",
- "webpki-roots 1.0.9",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
 name = "cua-proto"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "pbjson",
  "pbjson-build",
@@ -1533,7 +1533,7 @@ dependencies = [
 
 [[package]]
 name = "cua-sandbox-core"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1562,7 +1562,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spaces"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -1610,7 +1610,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spaces-app"
-version = "0.11.0"
+version = "0.13.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1657,7 +1657,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spaces-app-core"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "cua-create-failure",
@@ -1671,7 +1671,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spaces-contract"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "schemars 1.2.2",
  "serde",
@@ -1680,7 +1680,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spaces-ext"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1720,7 +1720,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-client"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -1751,12 +1751,12 @@ dependencies = [
  "tower",
  "tracing",
  "url",
- "webpki-roots 1.0.9",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
 name = "cua-telemetry"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "hex",
  "rand 0.9.5",
@@ -1769,7 +1769,7 @@ dependencies = [
 
 [[package]]
 name = "cua-teleport"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "aes 0.8.4",
  "block2",
@@ -1808,7 +1808,7 @@ dependencies = [
 
 [[package]]
 name = "cua-teleport-bundle"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "aes 0.8.4",
  "aes-gcm",
@@ -1827,7 +1827,7 @@ dependencies = [
 
 [[package]]
 name = "cua-vmm"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1853,7 +1853,7 @@ dependencies = [
 
 [[package]]
 name = "cua-volume"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "cua-home",
@@ -3222,7 +3222,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
- "webpki-roots 1.0.9",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
@@ -5519,7 +5519,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "webpki-roots 1.0.9",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
@@ -5742,9 +5742,9 @@ checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.15"
+version = "0.103.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
+checksum = "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281"
 dependencies = [
  "aws-lc-rs",
  "ring",
@@ -6914,7 +6914,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -7253,7 +7253,7 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
- "webpki-roots 1.0.9",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
@@ -7591,7 +7591,7 @@ dependencies = [
  "serde_json",
  "ureq-proto",
  "utf8-zero",
- "webpki-roots 1.0.9",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
@@ -7890,9 +7890,9 @@ dependencies = [
 
 [[package]]
 name = "webpki-root-certs"
-version = "1.0.9"
+version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b96554aa2acc8ccdb7e1c9a58a7a68dd5d13bccc69cd124cb09406db612a1c9b"
+checksum = "58ec80e73fd8baf57bf0d9615554c75348bda990d6d5bbeab964dd068319fecb"
 dependencies = [
  "rustls-pki-types",
 ]
@@ -7903,14 +7903,14 @@ version = "0.26.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
 dependencies = [
- "webpki-roots 1.0.9",
+ "webpki-roots 1.0.10",
 ]
 
 [[package]]
 name = "webpki-roots"
-version = "1.0.9"
+version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
+checksum = "1c1c8e20c8a38fc7d65abfe74eb7280e4aa667e8eec8bc84996d2874810748d9"
 dependencies = [
  "rustls-pki-types",
 ]

@@ -707,6 +707,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_devices_rename() != 59535:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_devices_rename_machine() != 63088:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_devices_revoke() != 27802:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_devices_revoke_pairing_code() != 3143:
@@ -728,6 +730,8 @@ def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cua_sdk_checksum_constructor_host_new() != 62533:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_host_configure() != 36828:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_host_migrate_service() != 36386:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_host_pause_signed_out() != 3338:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -1109,6 +1113,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_list_tools_json() != 19259:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_spaces_machine_health() != 35352:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_notifications() != 10964:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_notifications_ack() != 64477:
@@ -1297,7 +1303,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spacesdprocess_resize() != 46607:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_spacesdprocess_signal() != 61925:
+    if lib.uniffi_cua_sdk_checksum_method_spacesdprocess_signal() != 44588:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spacesdprocess_tag() != 24315:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -2547,6 +2553,12 @@ _UniffiLib.uniffi_cua_sdk_fn_method_devices_rename.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_devices_rename.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_devices_rename_machine.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_devices_rename_machine.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_devices_revoke.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -2604,6 +2616,12 @@ _UniffiLib.uniffi_cua_sdk_fn_method_host_configure.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_host_configure.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_host_migrate_service.argtypes = (
+    ctypes.c_uint64,
+    ctypes.c_int8,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_host_migrate_service.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_host_pause_signed_out.argtypes = (
     ctypes.c_uint64,
 )
@@ -3597,6 +3615,11 @@ _UniffiLib.uniffi_cua_sdk_fn_method_spaces_list_tools_json.argtypes = (
     ctypes.c_uint64,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_list_tools_json.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_machine_health.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_machine_health.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_notifications.argtypes = (
     ctypes.c_uint64,
     ctypes.c_int8,
@@ -4114,6 +4137,7 @@ _UniffiLib.uniffi_cua_sdk_fn_method_spacesdprocess_resize.restype = ctypes.c_uin
 _UniffiLib.uniffi_cua_sdk_fn_method_spacesdprocess_signal.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
+    ctypes.c_int8,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_spacesdprocess_signal.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_spacesdprocess_tag.argtypes = (
@@ -4486,6 +4510,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_devices_relay_url.restype = ctypes.c_u
 _UniffiLib.uniffi_cua_sdk_checksum_method_devices_rename.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_devices_rename.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_devices_rename_machine.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_devices_rename_machine.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_devices_revoke.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_devices_revoke.restype = ctypes.c_uint16
@@ -4519,6 +4546,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_constructor_host_new.restype = ctypes.c_uint1
 _UniffiLib.uniffi_cua_sdk_checksum_method_host_configure.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_host_configure.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_host_migrate_service.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_host_migrate_service.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_host_pause_signed_out.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_host_pause_signed_out.restype = ctypes.c_uint16
@@ -5089,6 +5119,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_list.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_list_tools_json.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_list_tools_json.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_machine_health.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_machine_health.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_notifications.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_notifications.restype = ctypes.c_uint16
@@ -9542,7 +9575,7 @@ class RelayMachine:
     """
     A machine of the account's relay directory (`relay:<id>`).
 """
-    def __init__(self, *, id:str, space_id:str, name:str, owner_id:str, owner_email:typing.Optional[str], role:str, online:bool, sharing:bool, version:str, url:str, allow:typing.List[str], clients:typing.List[RelayClientInfo], confirmed:bool):
+    def __init__(self, *, id:str, space_id:str, name:str, owner_id:str, owner_email:typing.Optional[str], role:str, online:bool, sharing:bool, version:str, url:str, allow:typing.List[str], clients:typing.List[RelayClientInfo], confirmed:bool, team:typing.Optional[str], provides_spaces:typing.Optional[bool]):
         self.id = id
         self.space_id = space_id
         self.name = name
@@ -9556,12 +9589,14 @@ class RelayMachine:
         self.allow = allow
         self.clients = clients
         self.confirmed = confirmed
+        self.team = team
+        self.provides_spaces = provides_spaces
 
 
 
 
     def __str__(self):
-        return "RelayMachine(id={}, space_id={}, name={}, owner_id={}, owner_email={}, role={}, online={}, sharing={}, version={}, url={}, allow={}, clients={}, confirmed={})".format(self.id, self.space_id, self.name, self.owner_id, self.owner_email, self.role, self.online, self.sharing, self.version, self.url, self.allow, self.clients, self.confirmed)
+        return "RelayMachine(id={}, space_id={}, name={}, owner_id={}, owner_email={}, role={}, online={}, sharing={}, version={}, url={}, allow={}, clients={}, confirmed={}, team={}, provides_spaces={})".format(self.id, self.space_id, self.name, self.owner_id, self.owner_email, self.role, self.online, self.sharing, self.version, self.url, self.allow, self.clients, self.confirmed, self.team, self.provides_spaces)
     def __eq__(self, other):
         if self.id != other.id:
             return False
@@ -9589,6 +9624,10 @@ class RelayMachine:
             return False
         if self.confirmed != other.confirmed:
             return False
+        if self.team != other.team:
+            return False
+        if self.provides_spaces != other.provides_spaces:
+            return False
         return True
 
 class _UniffiFfiConverterTypeRelayMachine(_UniffiConverterRustBuffer):
@@ -9608,6 +9647,8 @@ class _UniffiFfiConverterTypeRelayMachine(_UniffiConverterRustBuffer):
             allow=_UniffiFfiConverterSequenceString.read(buf),
             clients=_UniffiFfiConverterSequenceTypeRelayClientInfo.read(buf),
             confirmed=_UniffiFfiConverterBoolean.read(buf),
+            team=_UniffiFfiConverterOptionalString.read(buf),
+            provides_spaces=_UniffiFfiConverterOptionalBoolean.read(buf),
         )
 
     @staticmethod
@@ -9625,6 +9666,8 @@ class _UniffiFfiConverterTypeRelayMachine(_UniffiConverterRustBuffer):
         _UniffiFfiConverterSequenceString.check_lower(value.allow)
         _UniffiFfiConverterSequenceTypeRelayClientInfo.check_lower(value.clients)
         _UniffiFfiConverterBoolean.check_lower(value.confirmed)
+        _UniffiFfiConverterOptionalString.check_lower(value.team)
+        _UniffiFfiConverterOptionalBoolean.check_lower(value.provides_spaces)
 
     @staticmethod
     def write(value, buf):
@@ -9641,6 +9684,8 @@ class _UniffiFfiConverterTypeRelayMachine(_UniffiConverterRustBuffer):
         _UniffiFfiConverterSequenceString.write(value.allow, buf)
         _UniffiFfiConverterSequenceTypeRelayClientInfo.write(value.clients, buf)
         _UniffiFfiConverterBoolean.write(value.confirmed, buf)
+        _UniffiFfiConverterOptionalString.write(value.team, buf)
+        _UniffiFfiConverterOptionalBoolean.write(value.provides_spaces, buf)
 
 class _UniffiFfiConverterSequenceTypeRelayMachine(_UniffiConverterRustBuffer):
     @classmethod
@@ -12299,6 +12344,51 @@ class _UniffiFfiConverterTypeHostProvidedSpace(_UniffiConverterRustBuffer):
         _UniffiFfiConverterInt64.write(value.created_at_ms, buf)
 
 @dataclass
+class HostServiceMigration:
+    """
+    What [`Host::migrate_service`] did.
+"""
+    def __init__(self, *, outcome:str, detail:str, permissions_needed:bool):
+        self.outcome = outcome
+        self.detail = detail
+        self.permissions_needed = permissions_needed
+
+
+
+
+    def __str__(self):
+        return "HostServiceMigration(outcome={}, detail={}, permissions_needed={})".format(self.outcome, self.detail, self.permissions_needed)
+    def __eq__(self, other):
+        if self.outcome != other.outcome:
+            return False
+        if self.detail != other.detail:
+            return False
+        if self.permissions_needed != other.permissions_needed:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeHostServiceMigration(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return HostServiceMigration(
+            outcome=_UniffiFfiConverterString.read(buf),
+            detail=_UniffiFfiConverterString.read(buf),
+            permissions_needed=_UniffiFfiConverterBoolean.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.outcome)
+        _UniffiFfiConverterString.check_lower(value.detail)
+        _UniffiFfiConverterBoolean.check_lower(value.permissions_needed)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.outcome, buf)
+        _UniffiFfiConverterString.write(value.detail, buf)
+        _UniffiFfiConverterBoolean.write(value.permissions_needed, buf)
+
+@dataclass
 class HostSettingsChange:
     """
     A change to this machine's Spaces settings (`None` keeps a value).
@@ -12612,7 +12702,7 @@ class HostStatus:
     """
     Host status.
 """
-    def __init__(self, *, configured:bool, mode:typing.Optional[str], relay_url:typing.Optional[str], direct_url:typing.Optional[str], env_token_path:typing.Optional[str], machine_id:typing.Optional[str], name:typing.Optional[str], sharing:bool, service_installed:bool, service_running:bool, service_kind:str, online:typing.Optional[bool], clients:typing.List[RelayClientInfo], allow:typing.List[str], permissions:typing.List[HostPermission], error:typing.Optional[str], recent_access:typing.List[HostAccessRecord] = _DEFAULT, access_log_error:typing.Optional[str] = _DEFAULT, share_desktop:bool = True, provide_spaces:bool = False, max_spaces:int = 0, max_macos_vms:int = 0, provided_spaces:typing.List[HostProvidedSpace] = _DEFAULT, spaces_audit:typing.List[HostSpacesAuditRecord] = _DEFAULT, spaces_audit_error:typing.Optional[str] = _DEFAULT, paused_signed_out:bool = False, owner:typing.Optional[str] = _DEFAULT, owner_email:typing.Optional[str] = _DEFAULT):
+    def __init__(self, *, configured:bool, mode:typing.Optional[str], relay_url:typing.Optional[str], direct_url:typing.Optional[str], env_token_path:typing.Optional[str], machine_id:typing.Optional[str], name:typing.Optional[str], sharing:bool, service_installed:bool, service_running:bool, service_kind:str, online:typing.Optional[bool], clients:typing.List[RelayClientInfo], allow:typing.List[str], permissions:typing.List[HostPermission], error:typing.Optional[str], recent_access:typing.List[HostAccessRecord] = _DEFAULT, access_log_error:typing.Optional[str] = _DEFAULT, share_desktop:bool = True, provide_spaces:bool = False, max_spaces:int = 0, max_macos_vms:int = 0, provided_spaces:typing.List[HostProvidedSpace] = _DEFAULT, spaces_audit:typing.List[HostSpacesAuditRecord] = _DEFAULT, spaces_audit_error:typing.Optional[str] = _DEFAULT, paused_signed_out:bool = False, owner:typing.Optional[str] = _DEFAULT, owner_email:typing.Optional[str] = _DEFAULT, helper_available:bool = False, legacy_service:bool = False):
         self.configured = configured
         self.mode = mode
         self.relay_url = relay_url
@@ -12662,12 +12752,14 @@ class HostStatus:
             self.owner_email = None
         else:
             self.owner_email = owner_email
+        self.helper_available = helper_available
+        self.legacy_service = legacy_service
 
 
 
 
     def __str__(self):
-        return "HostStatus(configured={}, mode={}, relay_url={}, direct_url={}, env_token_path={}, machine_id={}, name={}, sharing={}, service_installed={}, service_running={}, service_kind={}, online={}, clients={}, allow={}, permissions={}, error={}, recent_access={}, access_log_error={}, share_desktop={}, provide_spaces={}, max_spaces={}, max_macos_vms={}, provided_spaces={}, spaces_audit={}, spaces_audit_error={}, paused_signed_out={}, owner={}, owner_email={})".format(self.configured, self.mode, self.relay_url, self.direct_url, self.env_token_path, self.machine_id, self.name, self.sharing, self.service_installed, self.service_running, self.service_kind, self.online, self.clients, self.allow, self.permissions, self.error, self.recent_access, self.access_log_error, self.share_desktop, self.provide_spaces, self.max_spaces, self.max_macos_vms, self.provided_spaces, self.spaces_audit, self.spaces_audit_error, self.paused_signed_out, self.owner, self.owner_email)
+        return "HostStatus(configured={}, mode={}, relay_url={}, direct_url={}, env_token_path={}, machine_id={}, name={}, sharing={}, service_installed={}, service_running={}, service_kind={}, online={}, clients={}, allow={}, permissions={}, error={}, recent_access={}, access_log_error={}, share_desktop={}, provide_spaces={}, max_spaces={}, max_macos_vms={}, provided_spaces={}, spaces_audit={}, spaces_audit_error={}, paused_signed_out={}, owner={}, owner_email={}, helper_available={}, legacy_service={})".format(self.configured, self.mode, self.relay_url, self.direct_url, self.env_token_path, self.machine_id, self.name, self.sharing, self.service_installed, self.service_running, self.service_kind, self.online, self.clients, self.allow, self.permissions, self.error, self.recent_access, self.access_log_error, self.share_desktop, self.provide_spaces, self.max_spaces, self.max_macos_vms, self.provided_spaces, self.spaces_audit, self.spaces_audit_error, self.paused_signed_out, self.owner, self.owner_email, self.helper_available, self.legacy_service)
     def __eq__(self, other):
         if self.configured != other.configured:
             return False
@@ -12725,6 +12817,10 @@ class HostStatus:
             return False
         if self.owner_email != other.owner_email:
             return False
+        if self.helper_available != other.helper_available:
+            return False
+        if self.legacy_service != other.legacy_service:
+            return False
         return True
 
 class _UniffiFfiConverterTypeHostStatus(_UniffiConverterRustBuffer):
@@ -12759,6 +12855,8 @@ class _UniffiFfiConverterTypeHostStatus(_UniffiConverterRustBuffer):
             paused_signed_out=_UniffiFfiConverterBoolean.read(buf),
             owner=_UniffiFfiConverterOptionalString.read(buf),
             owner_email=_UniffiFfiConverterOptionalString.read(buf),
+            helper_available=_UniffiFfiConverterBoolean.read(buf),
+            legacy_service=_UniffiFfiConverterBoolean.read(buf),
         )
 
     @staticmethod
@@ -12791,6 +12889,8 @@ class _UniffiFfiConverterTypeHostStatus(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.check_lower(value.paused_signed_out)
         _UniffiFfiConverterOptionalString.check_lower(value.owner)
         _UniffiFfiConverterOptionalString.check_lower(value.owner_email)
+        _UniffiFfiConverterBoolean.check_lower(value.helper_available)
+        _UniffiFfiConverterBoolean.check_lower(value.legacy_service)
 
     @staticmethod
     def write(value, buf):
@@ -12822,6 +12922,8 @@ class _UniffiFfiConverterTypeHostStatus(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.write(value.paused_signed_out, buf)
         _UniffiFfiConverterOptionalString.write(value.owner, buf)
         _UniffiFfiConverterOptionalString.write(value.owner_email, buf)
+        _UniffiFfiConverterBoolean.write(value.helper_available, buf)
+        _UniffiFfiConverterBoolean.write(value.legacy_service, buf)
 
 @dataclass
 class HttpHeader:
@@ -13666,6 +13768,137 @@ class _UniffiFfiConverterTypeLocationInfo(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.write(value.description, buf)
         _UniffiFfiConverterSequenceString.write(value.kinds, buf)
         _UniffiFfiConverterMapStringSequenceString.write(value.runtimes, buf)
+
+@dataclass
+class MachineHealthCheck:
+    """
+    One check of a machine's health ([`Spaces::machine_health`]).
+"""
+    def __init__(self, *, id:str, status:str, message:str, remediation:str, facts:dict[str, str]):
+        self.id = id
+        self.status = status
+        self.message = message
+        self.remediation = remediation
+        self.facts = facts
+
+
+
+
+    def __str__(self):
+        return "MachineHealthCheck(id={}, status={}, message={}, remediation={}, facts={})".format(self.id, self.status, self.message, self.remediation, self.facts)
+    def __eq__(self, other):
+        if self.id != other.id:
+            return False
+        if self.status != other.status:
+            return False
+        if self.message != other.message:
+            return False
+        if self.remediation != other.remediation:
+            return False
+        if self.facts != other.facts:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeMachineHealthCheck(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return MachineHealthCheck(
+            id=_UniffiFfiConverterString.read(buf),
+            status=_UniffiFfiConverterString.read(buf),
+            message=_UniffiFfiConverterString.read(buf),
+            remediation=_UniffiFfiConverterString.read(buf),
+            facts=_UniffiFfiConverterMapStringString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.id)
+        _UniffiFfiConverterString.check_lower(value.status)
+        _UniffiFfiConverterString.check_lower(value.message)
+        _UniffiFfiConverterString.check_lower(value.remediation)
+        _UniffiFfiConverterMapStringString.check_lower(value.facts)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.id, buf)
+        _UniffiFfiConverterString.write(value.status, buf)
+        _UniffiFfiConverterString.write(value.message, buf)
+        _UniffiFfiConverterString.write(value.remediation, buf)
+        _UniffiFfiConverterMapStringString.write(value.facts, buf)
+
+class _UniffiFfiConverterSequenceTypeMachineHealthCheck(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeMachineHealthCheck.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeMachineHealthCheck.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeMachineHealthCheck.read(buf) for i in range(count)
+        ]
+
+@dataclass
+class MachineHealth:
+    """
+    A machine's health as its own cua daemon checks it.
+"""
+    def __init__(self, *, cua_version:str, os:str, checks:typing.List[MachineHealthCheck], report_json:str):
+        self.cua_version = cua_version
+        self.os = os
+        self.checks = checks
+        self.report_json = report_json
+
+
+
+
+    def __str__(self):
+        return "MachineHealth(cua_version={}, os={}, checks={}, report_json={})".format(self.cua_version, self.os, self.checks, self.report_json)
+    def __eq__(self, other):
+        if self.cua_version != other.cua_version:
+            return False
+        if self.os != other.os:
+            return False
+        if self.checks != other.checks:
+            return False
+        if self.report_json != other.report_json:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeMachineHealth(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return MachineHealth(
+            cua_version=_UniffiFfiConverterString.read(buf),
+            os=_UniffiFfiConverterString.read(buf),
+            checks=_UniffiFfiConverterSequenceTypeMachineHealthCheck.read(buf),
+            report_json=_UniffiFfiConverterString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.cua_version)
+        _UniffiFfiConverterString.check_lower(value.os)
+        _UniffiFfiConverterSequenceTypeMachineHealthCheck.check_lower(value.checks)
+        _UniffiFfiConverterString.check_lower(value.report_json)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.cua_version, buf)
+        _UniffiFfiConverterString.write(value.os, buf)
+        _UniffiFfiConverterSequenceTypeMachineHealthCheck.write(value.checks, buf)
+        _UniffiFfiConverterString.write(value.report_json, buf)
 
 @dataclass
 class McpConfig:
@@ -19807,7 +20040,7 @@ class SpacesdCommand:
     """
     A command to run in the guest.
 """
-    def __init__(self, *, program:str, args:typing.List[str] = _DEFAULT, env:dict[str, str] = _DEFAULT, cwd:typing.Optional[str] = _DEFAULT, user:typing.Optional[str] = _DEFAULT, timeout_ms:typing.Optional[int] = _DEFAULT, tag:typing.Optional[str] = _DEFAULT, stdin:bool = False, pty:typing.Optional[PtySize] = _DEFAULT):
+    def __init__(self, *, program:str, args:typing.List[str] = _DEFAULT, env:dict[str, str] = _DEFAULT, cwd:typing.Optional[str] = _DEFAULT, user:typing.Optional[str] = _DEFAULT, timeout_ms:typing.Optional[int] = _DEFAULT, tag:typing.Optional[str] = _DEFAULT, stdin:bool = False, pty:typing.Optional[PtySize] = _DEFAULT, kill_on_disconnect:bool = False):
         self.program = program
         if args is _DEFAULT:
             self.args = []
@@ -19838,12 +20071,13 @@ class SpacesdCommand:
             self.pty = None
         else:
             self.pty = pty
+        self.kill_on_disconnect = kill_on_disconnect
 
 
 
 
     def __str__(self):
-        return "SpacesdCommand(program={}, args={}, env={}, cwd={}, user={}, timeout_ms={}, tag={}, stdin={}, pty={})".format(self.program, self.args, self.env, self.cwd, self.user, self.timeout_ms, self.tag, self.stdin, self.pty)
+        return "SpacesdCommand(program={}, args={}, env={}, cwd={}, user={}, timeout_ms={}, tag={}, stdin={}, pty={}, kill_on_disconnect={})".format(self.program, self.args, self.env, self.cwd, self.user, self.timeout_ms, self.tag, self.stdin, self.pty, self.kill_on_disconnect)
     def __eq__(self, other):
         if self.program != other.program:
             return False
@@ -19863,6 +20097,8 @@ class SpacesdCommand:
             return False
         if self.pty != other.pty:
             return False
+        if self.kill_on_disconnect != other.kill_on_disconnect:
+            return False
         return True
 
 class _UniffiFfiConverterTypeSpacesdCommand(_UniffiConverterRustBuffer):
@@ -19878,6 +20114,7 @@ class _UniffiFfiConverterTypeSpacesdCommand(_UniffiConverterRustBuffer):
             tag=_UniffiFfiConverterOptionalString.read(buf),
             stdin=_UniffiFfiConverterBoolean.read(buf),
             pty=_UniffiFfiConverterOptionalTypePtySize.read(buf),
+            kill_on_disconnect=_UniffiFfiConverterBoolean.read(buf),
         )
 
     @staticmethod
@@ -19891,6 +20128,7 @@ class _UniffiFfiConverterTypeSpacesdCommand(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.check_lower(value.tag)
         _UniffiFfiConverterBoolean.check_lower(value.stdin)
         _UniffiFfiConverterOptionalTypePtySize.check_lower(value.pty)
+        _UniffiFfiConverterBoolean.check_lower(value.kill_on_disconnect)
 
     @staticmethod
     def write(value, buf):
@@ -19903,6 +20141,7 @@ class _UniffiFfiConverterTypeSpacesdCommand(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.write(value.tag, buf)
         _UniffiFfiConverterBoolean.write(value.stdin, buf)
         _UniffiFfiConverterOptionalTypePtySize.write(value.pty, buf)
+        _UniffiFfiConverterBoolean.write(value.kill_on_disconnect, buf)
 
 @dataclass
 class SpacesdHttpHeader:
@@ -23522,6 +23761,13 @@ class DevicesProtocol(typing.Protocol):
         Renames a device (from this enrolled device).
 """
         raise NotImplementedError
+    async def rename_machine(self, machine_id: str,name: str) -> RelayMachine:
+        """
+        Renames `machine_id`, a machine the account owns, on the relay (from
+        this enrolled device). When it is this machine's own registration,
+        its host setup takes the new name too.
+"""
+        raise NotImplementedError
     async def revoke(self, id: str) -> RelayDevice:
         """
         Revokes a device (from this enrolled device). Revoking this device
@@ -23752,6 +23998,31 @@ class Devices(DevicesProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_sdk_fn_method_devices_rename(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def rename_machine(self, machine_id: str,name: str) -> RelayMachine:
+        """
+        Renames `machine_id`, a machine the account owns, on the relay (from
+        this enrolled device). When it is this machine's own registration,
+        its host setup takes the new name too.
+"""
+
+        _UniffiFfiConverterString.check_lower(machine_id)
+
+        _UniffiFfiConverterString.check_lower(name)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(machine_id),
+            _UniffiFfiConverterString.lower(name),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeRelayMachine.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_devices_rename_machine(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
@@ -25371,9 +25642,11 @@ class SpacesdProcessProtocol(typing.Protocol):
         Resizes the PTY.
 """
         raise NotImplementedError
-    async def signal(self, signal: str) -> None:
+    async def signal(self, signal: str,process_group: bool = False) -> None:
         """
-        Sends a signal by name (`term`, `kill`, `SIGINT`, ...).
+        Sends a signal by name (`term`, `kill`, `SIGINT`, ...). With
+        `process_group`, to the process's whole group (everything it started),
+        as a terminal's Ctrl-C does; by default to the process alone.
 """
         raise NotImplementedError
     def tag(self, ) -> typing.Optional[str]:
@@ -25539,15 +25812,20 @@ class SpacesdProcess(SpacesdProcessProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
-    async def signal(self, signal: str) -> None:
+    async def signal(self, signal: str,process_group: bool = False) -> None:
         """
-        Sends a signal by name (`term`, `kill`, `SIGINT`, ...).
+        Sends a signal by name (`term`, `kill`, `SIGINT`, ...). With
+        `process_group`, to the process's whole group (everything it started),
+        as a terminal's Ctrl-C does; by default to the process alone.
 """
 
         _UniffiFfiConverterString.check_lower(signal)
+
+        _UniffiFfiConverterBoolean.check_lower(process_group)
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
             _UniffiFfiConverterString.lower(signal),
+            _UniffiFfiConverterBoolean.lower(process_group),
         )
         _uniffi_lift_return = lambda val: None
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
@@ -32170,6 +32448,17 @@ class SpacesProtocol(typing.Protocol):
         The Spaces MCP `tools/list` result as JSON (the contract).
 """
         raise NotImplementedError
+    async def machine_health(self, machine: typing.Optional[str]) -> MachineHealth:
+        """
+        A machine's health as its own cua daemon checks it: Local Network
+        access (and which app macOS holds responsible), free disk,
+        virtualization, memory left by running Spaces, the permissions
+        sharing its desktop needs. `machine`: another of your machines, by
+        id or name (asked over the relay, the mesh or its direct address);
+        `None` for this one. Read-only; fails plainly when that machine is
+        offline, not yours, or runs a Cua that predates the check.
+"""
+        raise NotImplementedError
     async def notifications(self, unread_only: bool,since_ms: typing.Optional[int]) -> typing.List[NotificationInfo]:
         """
         The notifications feed, newest first.
@@ -32968,6 +33257,32 @@ class Spaces(SpacesProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_sdk_fn_method_spaces_list_tools_json(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def machine_health(self, machine: typing.Optional[str]) -> MachineHealth:
+        """
+        A machine's health as its own cua daemon checks it: Local Network
+        access (and which app macOS holds responsible), free disk,
+        virtualization, memory left by running Spaces, the permissions
+        sharing its desktop needs. `machine`: another of your machines, by
+        id or name (asked over the relay, the mesh or its direct address);
+        `None` for this one. Read-only; fails plainly when that machine is
+        offline, not yours, or runs a Cua that predates the check.
+"""
+
+        _UniffiFfiConverterOptionalString.check_lower(machine)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterOptionalString.lower(machine),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeMachineHealth.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_spaces_machine_health(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
@@ -34397,6 +34712,16 @@ class HostProtocol(typing.Protocol):
         the desktop on or off restarts the host service.
 """
         raise NotImplementedError
+    async def migrate_service(self, force: bool,app_version: str) -> HostServiceMigration:
+        """
+        macOS: moves the host service from the old LaunchAgent to the Cua
+        Spaces app (its own login item, "Cua Spaces"), keeping this machine's
+        registration, id and Spaces; puts the old one back if the helper
+        does not take over (the outcome says so). `app_version`: a failed
+        move is not tried again by itself with the same version; `force`
+        tries anyway.
+"""
+        raise NotImplementedError
     async def pause_signed_out(self, ) -> HostStatus:
         """
         Pause relay sharing while nobody is signed in to the owner's
@@ -34502,6 +34827,34 @@ class Host(HostProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_sdk_fn_method_host_configure(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def migrate_service(self, force: bool,app_version: str) -> HostServiceMigration:
+        """
+        macOS: moves the host service from the old LaunchAgent to the Cua
+        Spaces app (its own login item, "Cua Spaces"), keeping this machine's
+        registration, id and Spaces; puts the old one back if the helper
+        does not take over (the outcome says so). `app_version`: a failed
+        move is not tried again by itself with the same version; `force`
+        tries anyway.
+"""
+
+        _UniffiFfiConverterBoolean.check_lower(force)
+
+        _UniffiFfiConverterString.check_lower(app_version)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterBoolean.lower(force),
+            _UniffiFfiConverterString.lower(app_version),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeHostServiceMigration.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_host_migrate_service(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
@@ -36078,6 +36431,7 @@ __all__ = [
     "HostAccessRecord",
     "HostPermission",
     "HostProvidedSpace",
+    "HostServiceMigration",
     "HostSettingsChange",
     "HostSetupOptions",
     "HostSpacesAuditRecord",
@@ -36090,6 +36444,8 @@ __all__ = [
     "StorageVolume",
     "LocalStorage",
     "LocationInfo",
+    "MachineHealthCheck",
+    "MachineHealth",
     "McpConfig",
     "MediaBridge",
     "MediaEvent",

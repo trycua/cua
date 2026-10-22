@@ -99,6 +99,36 @@ fn prefetch_capture<T: Send + 'static>(
     (should_capture && want_tree).then(|| tokio::task::spawn_blocking(capture))
 }
 
+fn verified_capture(
+    window_id: u32,
+    prefetched: Option<anyhow::Result<Vec<u8>>>,
+    bounds: &crate::windows::WindowBounds,
+    capture: impl FnOnce() -> anyhow::Result<Vec<u8>>,
+) -> Result<(Vec<u8>, u32, u32, f64), super::px_frame::PxFrameError> {
+    use super::px_frame::{validate_capture_frame, PxFrameError};
+    let validate = |raw: anyhow::Result<Vec<u8>>| {
+        let (raw, w, h) = (|| -> anyhow::Result<_> {
+            let raw = raw?;
+            let (w, h) = crate::capture::png_dimensions(&raw)?;
+            Ok((raw, w, h))
+        })()
+        .map_err(|e| PxFrameError::CaptureUnavailable {
+            window_id,
+            reason: e.to_string(),
+        })?;
+        let scale = validate_capture_frame(window_id, bounds, w, h)?;
+        Ok((raw, w, h, scale))
+    };
+    if let Some(raw) = prefetched {
+        match validate(raw) {
+            Ok(frame) => return Ok(frame),
+            Err(e @ PxFrameError::WindowNotFound { .. }) => return Err(e),
+            Err(_) => {}
+        }
+    }
+    validate(capture())
+}
+
 /// Chromium stops painting and stops updating its accessibility tree while its
 /// window is not visible, which includes sitting on another Space (CUA-1351,
 /// cdb-v2-40: a click delivered off-Space only showed once the Space was shown).
@@ -389,22 +419,12 @@ impl Tool for GetWindowStateTool {
                 let bounds = crate::windows::window_bounds_by_id(window_id)
                     .filter(|b| b.width > 0.0 && b.height > 0.0)
                     .ok_or(super::px_frame::PxFrameError::WindowNotFound { window_id })?;
-                let raw = match prefetched_raw {
-                    Some(raw) => raw,
-                    None => crate::capture::screenshot_window_bytes(window_id),
-                }
-                .map_err(|e| super::px_frame::PxFrameError::CaptureUnavailable {
+                let (raw, orig_w, orig_h, scale) = verified_capture(
                     window_id,
-                    reason: e.to_string(),
-                })?;
-                let (orig_w, orig_h) = crate::capture::png_dimensions(&raw).map_err(|e| {
-                    super::px_frame::PxFrameError::CaptureUnavailable {
-                        window_id,
-                        reason: e.to_string(),
-                    }
-                })?;
-                let scale =
-                    super::px_frame::validate_capture_frame(window_id, &bounds, orig_w, orig_h)?;
+                    prefetched_raw,
+                    &bounds,
+                    || crate::capture::screenshot_window_bytes(window_id),
+                )?;
                 let png = crate::capture::resize_png_if_needed(&raw, max_dim).map_err(|e| {
                     super::px_frame::PxFrameError::CaptureUnavailable {
                         window_id,
@@ -1409,6 +1429,59 @@ mod window_scope_contract_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn verified_capture_reuses_or_recovers_prefetch() {
+        use super::super::px_frame::PxFrameError;
+        use std::{cell::Cell, io::Cursor};
+
+        let png = |w, h| {
+            let mut bytes = Cursor::new(Vec::new());
+            image::DynamicImage::new_rgba8(w, h)
+                .write_to(&mut bytes, image::ImageFormat::Png)
+                .unwrap();
+            bytes.into_inner()
+        };
+        let bounds = crate::windows::WindowBounds {
+            x: 0.0,
+            y: 0.0,
+            width: 4.0,
+            height: 4.0,
+        };
+        let valid = png(4, 4);
+        for (prefetched, expected_calls) in [
+            (Some(Ok(valid.clone())), 0),
+            (Some(Err(anyhow::anyhow!("prefetch failed"))), 1),
+            (Some(Ok(png(3, 4))), 1),
+            (Some(Ok(vec![0])), 1),
+            (None, 1),
+        ] {
+            let calls = Cell::new(0);
+            let frame = verified_capture(7, prefetched, &bounds, || {
+                calls.set(calls.get() + 1);
+                Ok(valid.clone())
+            })
+            .unwrap();
+            assert_eq!(frame, (valid.clone(), 4, 4, 1.0));
+            assert_eq!(calls.get(), expected_calls);
+        }
+        for prefetched in [Some(Err(anyhow::anyhow!("old error"))), None] {
+            let calls = Cell::new(0);
+            let error = verified_capture(7, prefetched, &bounds, || {
+                calls.set(calls.get() + 1);
+                Err(anyhow::anyhow!("fresh error"))
+            })
+            .unwrap_err();
+            assert_eq!(
+                error,
+                PxFrameError::CaptureUnavailable {
+                    window_id: 7,
+                    reason: "fresh error".into(),
+                }
+            );
+            assert_eq!(calls.get(), 1);
+        }
+    }
 
     #[test]
     fn a_capture_is_prefetched_only_when_a_tree_walk_can_overlap_it() {

@@ -45,6 +45,15 @@ extension WebUIBridge {
         case "sharing.unshare":
             return BridgeValue.encode(try await model.backend.unshare(id: try spaceId(args), who: try string(args, "who")))
 
+        // Sharing is for teams: who lost access, and "seen" (empty when signed
+        // out or from a server that predates it).
+        case "sharing.removals":
+            guard model.identity != nil, let reader = model.teamsReader else { return [] as [Any] }
+            return BridgeValue.encode(try await reader.shareRemovals())
+        case "sharing.ackRemovals":
+            if model.identity != nil { try await model.teamsReader?.ackShareRemovals() }
+            return NSNull()
+
         // Settings, Agents: the daemon's agent_keys methods (the key travels
         // once, in agentKeys.set's arguments; answers never carry one).
         case "agentKeys.list": return try await model.agentKeys.call("agent_keys.list")
@@ -144,6 +153,22 @@ extension WebUIBridge {
         // daemon's per-Space numbers join them once it serves `resources`.
         case "resources.get":
             return HostResourceSampler.shared.sample().snapshot()
+        // The Machines page: rename a machine, Remove from account (what
+        // each does to which machine is the core's `machines_view`).
+        case "machines.rename":
+            try await model.renameMachine(id: try string(args, "id"), name: try string(args, "name"))
+            return NSNull()
+        case "machines.remove":
+            let machine = (args["machine"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            let device = (args["device"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            guard machine != nil || device != nil else { throw Failure.badArgs("machine or device") }
+            try await model.removeMachine(machine: machine, device: device)
+            return NSNull()
+        // Each machine's own daemon checks its health; the next
+        // `machines.list` view carries the issues.
+        case "machines.checkHealth":
+            await model.checkMachineHealth()
+            return NSNull()
 
         // Settings, Storage
         case "storage.get":

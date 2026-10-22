@@ -1878,7 +1878,19 @@ fn run_roundtrip(spec: &BrowserSpec) {
                     "session": session,
                 }),
             );
+            assert_ne!(
+                click.action_effect(),
+                Some("suspected_noop"),
+                "{}",
+                click.raw
+            );
             assert_eq!(click.action_effect(), Some("unverifiable"), "{}", click.raw);
+            assert_eq!(
+                click.structured()["evidence"][0]["kind"],
+                "value_readback",
+                "{}",
+                click.raw
+            );
             wait_for_text(&fixture.server, "lbl-counter", "counter=1");
 
             let snapshot = fixture.driver.call(
@@ -1955,11 +1967,13 @@ fn run_trust_gated_dom_click(spec: &BrowserSpec) {
                 click.raw
             );
             assert!(
-                click.text().contains("application effect not verified")
-                    && click.text().contains("trust-gated controls"),
+                click.text().contains(
+                    "target state remained unchanged; application effect is unverifiable"
+                ),
                 "{}",
                 click.raw
             );
+            assert_eq!(click.structured()["evidence"][0]["kind"], "value_readback");
             wait_for_text(
                 &fixture.server,
                 "standalone-trust-gated-state",

@@ -2217,6 +2217,60 @@ impl SpacesToolCaller {
     }
 }
 
+// ------------------------------------------------------------ Machine health
+
+/// One check of a machine's health ([`Spaces::machine_health`]).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MachineHealthCheck {
+    /// `machine.local_network`, `machine.disk`, `machine.virtualization`,
+    /// `machine.memory`, `machine.permissions.<id>`.
+    pub id: String,
+    /// `pass`, `warn`, `fail` or `skip`.
+    pub status: String,
+    /// What it found, in one line.
+    pub message: String,
+    /// What to do about a warning or failure.
+    pub remediation: String,
+    /// What a UI needs to word it and offer its fix (`app`, `settings_url`,
+    /// `free_gb`, ...).
+    pub facts: std::collections::HashMap<String, String>,
+}
+
+/// A machine's health as its own cua daemon checks it.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MachineHealth {
+    /// The Cua version of the daemon that checked.
+    pub cua_version: String,
+    /// `macos`, `linux`, `windows`.
+    pub os: String,
+    /// Every check, in order.
+    pub checks: Vec<MachineHealthCheck>,
+    /// The whole report as JSON (the schema `cua doctor --json` writes).
+    pub report_json: String,
+}
+
+impl From<cua_proto::env::v1::DiagnoseHostResponse> for MachineHealth {
+    fn from(r: cua_proto::env::v1::DiagnoseHostResponse) -> Self {
+        let report = cua_spacesd_client::diagnose::Report::from_pb(r.report.unwrap_or_default());
+        Self {
+            cua_version: r.cua_version,
+            os: r.os,
+            checks: report
+                .checks
+                .iter()
+                .map(|c| MachineHealthCheck {
+                    id: c.id.clone(),
+                    status: c.status.as_str().to_string(),
+                    message: c.message.clone(),
+                    remediation: c.remediation.clone(),
+                    facts: c.facts.clone().into_iter().collect(),
+                })
+                .collect(),
+            report_json: report.to_json(),
+        }
+    }
+}
+
 // ------------------------------------------------------------ Spaces
 
 /// The Spaces registry: add a machine by URL, provision a local one, and get
@@ -2674,6 +2728,27 @@ impl Spaces {
                     .map(Into::into)
                     .collect(),
             })
+        })
+        .await
+    }
+
+    /// A machine's health as its own cua daemon checks it: Local Network
+    /// access (and which app macOS holds responsible), free disk,
+    /// virtualization, memory left by running Spaces, the permissions
+    /// sharing its desktop needs. `machine`: another of your machines, by
+    /// id or name (asked over the relay, the mesh or its direct address);
+    /// `None` for this one. Read-only; fails plainly when that machine is
+    /// offline, not yours, or runs a Cua that predates the check.
+    pub async fn machine_health(&self, machine: Option<String>) -> Result<MachineHealth> {
+        let host = self.host.clone();
+        run(async move {
+            let machine = machine.filter(|m| !m.trim().is_empty());
+            let r = match (&host, machine) {
+                (Host::Embedded(_), None) => cua_daemon::machine_doctor::response().await,
+                (Host::Embedded(s), Some(m)) => s.machine_health(&m).await?,
+                (Host::Daemon(d), m) => d.diagnose_host(m.unwrap_or_default()).await?,
+            };
+            Ok(r.into())
         })
         .await
     }

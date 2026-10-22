@@ -25,6 +25,7 @@ import PackageDescription
 // (XcodeGen) on a macOS runner with Xcode.
 let package = Package(
     name: "CuaSpacesMac",
+    defaultLocalization: "en",
     platforms: [.macOS(.v26)],
     products: [
         .executable(name: "CuaSpacesMac", targets: ["CuaSpacesMac"]),

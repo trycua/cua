@@ -27,6 +27,7 @@ public struct MainWindow: View {
                 .safeAreaInset(edge: .top, spacing: 0) {
                     VStack(spacing: 0) {
                         DevicesBanner(devices: model.devices)
+                        ShareRemovalBanner(model: model)
                         RelayAllowanceBanner(devices: model.devices)
                         if let error = model.rosterError {
                             SpacesDiscoveryNotice(error: error)
@@ -74,6 +75,7 @@ public struct MainWindow: View {
         .task {
             await model.refresh()
             await model.keyvault.refresh()
+            await model.reloadShareRemovals()
         }
         // The relay allowance: at once (and on every sign-in or out), every
         // 5 minutes, and when the app comes to the front.
@@ -166,15 +168,15 @@ struct Sidebar: View {
             if let row = sidebar.thisMachine {
                 spaceRow(row)
             }
-            ForEach(sidebar.sections, id: \.title) { section in
-                Section(section.title) {
+            ForEach(sidebar.sections, id: \.title.code) { section in
+                Section(CoreMessages.text(section.title)) {
                     ForEach(section.rows, id: \.id) { row in
                         spaceRow(row)
                     }
                 }
             }
             if let empty = sidebar.emptyText, sidebar.thisMachine == nil, model.rosterError == nil {
-                Text(empty).foregroundStyle(.secondary)
+                Text(CoreMessages.text(empty)).foregroundStyle(.secondary)
             }
             Section {
                 ForEach(kv.sidebar.categories, id: \.category) { row in
@@ -296,7 +298,7 @@ struct SpaceRowView: View {
                     .font(.callout.monospacedDigit())
                     .foregroundStyle(.secondary)
                 ProgressRing(permille: progress)
-                    .accessibilityLabel(row.statusText)
+                    .accessibilityLabel(CoreMessages.text(row.statusText))
             } else {
                 if let trailing = row.trailing {
                     // The create or the power action failed: why, inline.
@@ -317,7 +319,7 @@ struct SpaceRowView: View {
                 Circle()
                     .fill(color)
                     .frame(width: 7, height: 7)
-                    .accessibilityLabel(row.statusText)
+                    .accessibilityLabel(CoreMessages.text(row.statusText))
             }
         }
         // A Space one of your machines provides sits under that machine.
@@ -381,8 +383,8 @@ struct PowerButton: View {
         }
         .buttonStyle(.borderless)
         .disabled(!button.enabled)
-        .help(button.help)
-        .accessibilityLabel(button.help)
+        .help(CoreMessages.text(button.help))
+        .accessibilityLabel(CoreMessages.text(button.help))
         .accessibilityIdentifier("space-power")
     }
 }

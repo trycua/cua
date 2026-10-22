@@ -1,6 +1,6 @@
 name: "CI: CLA"
 
-# Asks each pull request author to accept CLA.md once. Signatures are stored as
+# Asks each pull request author to accept legal/CLA.md once. Signatures are stored as
 # JSON on the `cla-signatures` branch of this repository, not on main.
 # pull_request_target is used so the check can comment on fork pull requests;
 # the job never checks out or runs pull request code.
@@ -37,7 +37,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           path-to-signatures: "signatures/version1/cla.json"
-          path-to-document: "https://github.com/${{ github.repository }}/blob/main/CLA.md"
+          path-to-document: "https://github.com/${{ github.repository }}/blob/main/legal/CLA.md"
           branch: "cla-signatures"
           # The action locks every merged PR by default. A locked release PR
           # (labelled `autorelease: pending`) makes release-please die when it

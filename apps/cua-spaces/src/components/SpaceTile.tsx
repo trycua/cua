@@ -13,6 +13,7 @@ import { OsIcon } from "./OsIcon";
 import { SfIcon } from "./SfIcon";
 import { STATUS_LABEL, StatusDot } from "./StatusDot";
 import { Thumbnail } from "./Thumbnail";
+import { tMsg, useT } from "../i18n";
 
 interface SpaceTileProps {
   space: Space;
@@ -107,6 +108,7 @@ function useLiveThumbnail(space: Space): { shot: string | null; preload: () => v
 }
 
 export function SpaceTile({ space, focused, onFocus, onSelect, onPin, onShareApp, hotspot = false, onDelete, onPower, dropMode = false, dropTarget = false, dropGhost = null }: SpaceTileProps) {
+  const t = useT("spaces");
   const ref = useRef<HTMLButtonElement>(null);
   const { shot, preload } = useLiveThumbnail(space);
   // The core's Deleting row: shows the instant Delete is pressed.
@@ -166,7 +168,7 @@ export function SpaceTile({ space, focused, onFocus, onSelect, onPin, onShareApp
             local={space.provider === "local"}
           />
           {hotspot && (
-            <span className="tile-hotspot-badge" title="Browsing through your network" aria-hidden="true">
+            <span className="tile-hotspot-badge" title={t("spaces.tile.hotspot_badge")} aria-hidden="true">
               <SfIcon
                 name="personalhotspot"
                 size={11}
@@ -193,8 +195,8 @@ export function SpaceTile({ space, focused, onFocus, onSelect, onPin, onShareApp
           className="tile-action tile-delete"
           data-owns-enter
           tabIndex={-1}
-          aria-label={`Delete ${space.name}`}
-          title="Delete this Space"
+          aria-label={t("spaces.tile.delete_label", { name: space.name })}
+          title={t("spaces.tile.delete_hint")}
           onClick={(event) => {
             event.stopPropagation();
             onDelete?.();
@@ -210,8 +212,8 @@ export function SpaceTile({ space, focused, onFocus, onSelect, onPin, onShareApp
           data-owns-enter
           data-busy={power.busy ? "true" : undefined}
           tabIndex={-1}
-          aria-label={`${power.help} ${space.name}`}
-          title={power.help}
+          aria-label={t("spaces.tile.power_label", { action: tMsg(power.help), name: space.name })}
+          title={tMsg(power.help)}
           disabled={!power.enabled}
           onClick={(event) => {
             event.stopPropagation();
@@ -231,8 +233,8 @@ export function SpaceTile({ space, focused, onFocus, onSelect, onPin, onShareApp
           className="tile-action tile-share"
           data-owns-enter
           tabIndex={-1}
-          aria-label={`Teleport an app to ${space.name}`}
-          title="Teleport an app to this sandbox"
+          aria-label={t("spaces.tile.teleport_label", { name: space.name })}
+          title={t("spaces.tile.teleport_hint")}
           onClick={(event) => {
             event.stopPropagation();
             onShareApp?.();
@@ -247,8 +249,8 @@ export function SpaceTile({ space, focused, onFocus, onSelect, onPin, onShareApp
           className="tile-action tile-pin"
           data-owns-enter
           tabIndex={-1}
-          aria-label={`Pin ${space.name} as picture-in-picture`}
-          title="Pin as picture-in-picture"
+          aria-label={t("spaces.tile.pin_label", { name: space.name })}
+          title={t("spaces.tile.pin_hint")}
           onClick={(event) => {
             event.stopPropagation();
             onPin?.();

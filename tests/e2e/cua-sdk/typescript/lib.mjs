@@ -287,6 +287,12 @@ export async function envSmoke(env, { desktop, mock = false }) {
   await p.writeStdin(u8("xyz").buffer)
   await p.closeStdin()
   if (str((await p.wait()).stdout) !== "xyz") throw new Error("stdin roundtrip")
+  // kill_on_disconnect: letting go of the starting stream ends the process.
+  const kodTag = `kod-ts-${RUN}`
+  const kod = await env.spawn(cmd("cat", [], { stdin: true, tag: kodTag, killOnDisconnect: true }))
+  await kod.detach()
+  const ended = await (await env.attach(undefined, kodTag, cua.ReplayMode.None.new())).wait()
+  if (ended.exit.success) throw new Error("kill_on_disconnect left the process running")
   const blob = new Uint8Array(1 << 20).map((_, i) => i % 251)
   const path = `/tmp/cua-e2e-${RUN}/blob-ts.bin`
   const up = await env.upload(path, blob.buffer, undefined)

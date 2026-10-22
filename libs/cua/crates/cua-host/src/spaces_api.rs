@@ -29,8 +29,16 @@ pub struct ApiOrg {
     /// `free`, `pro`, `teams`, ...
     #[serde(default)]
     pub plan: String,
+    /// When a cancelled plan that is still running ends (RFC 3339). Empty
+    /// while the plan renews.
+    #[serde(default)]
+    pub plan_ends_at: Option<String>,
+    /// `active`, `grace` (a payment failed), ...
     #[serde(default)]
     pub status: String,
+    /// While `status` is `grace`: when the plan lapses (RFC 3339).
+    #[serde(default)]
+    pub grace_until: Option<String>,
     #[serde(default)]
     pub seats: i64,
     /// Paid features the org has (`team_machines`, `space_sharing`,
@@ -97,8 +105,54 @@ pub struct ApiOrgMachine {
     pub label: String,
     #[serde(default)]
     pub added_by: String,
+    /// What the team may do with it: `editor` ("Can edit") or `viewer`
+    /// ("Can view"). Empty from a server that predates view-only team
+    /// shares: read it as `editor`.
+    #[serde(default)]
+    pub role: String,
     #[serde(default)]
     pub added_at: String,
+}
+
+/// A team the account may share with as a whole (`GET /v1/me/sharing`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ApiSharingTeam {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub alias: String,
+    #[serde(default)]
+    pub name: String,
+    /// The caller is an owner or admin, so can share a whole team.
+    #[serde(default)]
+    pub can_add: bool,
+}
+
+/// `GET /v1/me/sharing`: whether this account can share Spaces. Sharing is
+/// for teams (CUA-1883): only a member of a team on a plan with sharing can.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ApiSharing {
+    #[serde(default)]
+    pub can_share: bool,
+    /// `no_team` when `can_share` is false.
+    #[serde(default)]
+    pub reason: String,
+    #[serde(default)]
+    pub teams: Vec<ApiSharingTeam>,
+}
+
+/// Someone who lost access to a computer because sharing became team-only
+/// (`GET /v1/me/share-removals`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ApiShareRemoval {
+    #[serde(default)]
+    pub machine_id: String,
+    #[serde(default)]
+    pub machine_name: String,
+    #[serde(default)]
+    pub who: String,
+    #[serde(default)]
+    pub removed_at: String,
 }
 
 /// A member device's approval in an org (`GET /v1/orgs/{org}/devices`).
@@ -152,6 +206,61 @@ pub const SETUP_RETRY_WINDOW: Duration = Duration::from_secs(60);
 /// feature, or a just-bought plan has not reached the API yet).
 pub fn is_feature_required(e: &Error) -> bool {
     e.to_string().contains("HTTP 402 (feature_required")
+}
+
+/// Where an owner buys Teams (team machines, roles, device approval, seats).
+pub const BUY_TEAMS_URL: &str = "https://app.cua.ai/buy/teams";
+
+/// Where someone buys Pro.
+pub const BUY_PRO_URL: &str = "https://app.cua.ai/buy/pro";
+
+/// How long a team operation keeps retrying a `402 feature_required` when
+/// the org does pay (its features are on their way). An org that never paid
+/// for Teams does not wait at all.
+pub const PAID_RETRY_WINDOW: Duration = Duration::from_secs(20);
+
+/// The feature a `402 feature_required` names (`team_machines`), if `e` is one.
+pub fn feature_required_detail(e: &Error) -> Option<String> {
+    let text = e.to_string();
+    let rest = text.split("HTTP 402 (feature_required").nth(1)?;
+    let rest = rest.trim_start_matches(':').trim_start();
+    let name: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect();
+    Some(name)
+}
+
+/// What a plan error says in plain words, or `None` when `e` is not about
+/// the plan. Covers `feature_required` (`team_machines`, `team_roles`,
+/// `device_approval`), `add_seats` and `machine_limit`. An owner gets the
+/// link to buy ([`BUY_TEAMS_URL`], last, on its own so an app can turn it
+/// into a button); anyone else is told to ask the owner.
+pub fn plan_error_text(e: &Error, owner: bool) -> Option<String> {
+    let text = e.to_string();
+    let what = if let Some(feature) = feature_required_detail(e) {
+        match feature.as_str() {
+            "team_machines" => "Team computers need the Teams plan.",
+            "team_roles" => "Admin roles need the Teams plan.",
+            "device_approval" => "Approving devices needs the Teams plan.",
+            "space_sharing" => "Sharing with a team needs the Teams plan.",
+            _ => "This needs the Teams plan.",
+        }
+    } else if text.contains("add_seats") {
+        "Your team has no free seats."
+    } else if text.contains("machine_limit") {
+        "Your team has as many computers as it has seats."
+    } else {
+        return None;
+    };
+    let seats = text.contains("add_seats") || text.contains("machine_limit");
+    Some(if owner {
+        format!("{what} {BUY_TEAMS_URL}")
+    } else if seats {
+        format!("{what} Ask the team owner to add seats.")
+    } else {
+        format!("{what} Ask the team owner to upgrade.")
+    })
 }
 
 /// Whether `e` says Teams are not available on this server (see
@@ -657,6 +766,91 @@ impl SpacesApiClient {
         }
     }
 
+    /// [`Self::add_org_machine`] with what the team may do: `viewer`
+    /// ("Can view") or `editor` ("Can edit"). A computer already on the team
+    /// gets the role changed instead.
+    pub async fn add_org_machine_as(
+        &self,
+        token: &str,
+        org: &str,
+        machine_id: &str,
+        platform: &str,
+        label: &str,
+        role: &str,
+    ) -> Result<()> {
+        let label: String = label.chars().take(120).collect();
+        match self
+            .org_post::<serde_json::Value>(
+                &format!("/v1/orgs/{}/machines", seg(org)),
+                token,
+                serde_json::json!({ "machine_id": machine_id, "platform": platform, "label": label, "role": role }),
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(Error::Conflict(m)) if m.contains("already_added") => {
+                self.set_org_machine_role(token, org, machine_id, role).await
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// `PATCH /v1/orgs/{org}/machines/{id}` (owner or admin): "Can view"
+    /// (`viewer`) or "Can edit" (`editor`) for the whole team.
+    pub async fn set_org_machine_role(
+        &self,
+        token: &str,
+        org: &str,
+        machine_id: &str,
+        role: &str,
+    ) -> Result<()> {
+        self.send_org::<serde_json::Value>(
+            self.http
+                .patch(self.url(&format!(
+                    "/v1/orgs/{}/machines/{}",
+                    seg(org),
+                    seg(machine_id)
+                )))
+                .json(&serde_json::json!({ "role": role })),
+            token,
+        )
+        .await
+        .map(|_| ())
+    }
+
+    /// `GET /v1/me/sharing`: can this account share, and with which teams as
+    /// a whole. A server that predates team-only sharing answers "Teams are
+    /// not available" ([`is_teams_unavailable`]): callers let the server
+    /// decide.
+    pub async fn sharing(&self, token: &str) -> Result<ApiSharing> {
+        self.org_get("/v1/me/sharing", token).await
+    }
+
+    /// `GET /v1/me/share-removals`: people removed from the account's
+    /// shared computers since it last asked, until
+    /// [`Self::ack_share_removals`].
+    pub async fn share_removals(&self, token: &str) -> Result<Vec<ApiShareRemoval>> {
+        #[derive(Deserialize)]
+        struct R {
+            #[serde(default)]
+            removals: Vec<ApiShareRemoval>,
+        }
+        Ok(self
+            .org_get::<R>("/v1/me/share-removals", token)
+            .await?
+            .removals)
+    }
+
+    /// `POST /v1/me/share-removals/ack`: the owner has seen them.
+    pub async fn ack_share_removals(&self, token: &str) -> Result<()> {
+        self.send_org::<serde_json::Value>(
+            self.http.post(self.url("/v1/me/share-removals/ack")),
+            token,
+        )
+        .await
+        .map(|_| ())
+    }
+
     /// `DELETE /v1/orgs/{org}/machines/{id}` (owner or admin).
     pub async fn remove_org_machine(&self, token: &str, org: &str, machine_id: &str) -> Result<()> {
         self.org_delete(
@@ -763,6 +957,66 @@ impl SpacesApiClient {
         }
     }
 
+    /// [`Self::finishing_setup`] for an operation on `org`. A `402
+    /// feature_required` on an org that never paid for Teams (plan free) is
+    /// returned at once: nothing is on its way. An org that pays keeps
+    /// retrying, for at most [`PAID_RETRY_WINDOW`].
+    pub async fn finishing_setup_org<T, F, Fut>(
+        &self,
+        token: &str,
+        org: &str,
+        window: Duration,
+        mut waiting: impl FnMut(Duration),
+        mut op: F,
+    ) -> Result<T>
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = Result<T>>,
+    {
+        let window = window.min(PAID_RETRY_WINDOW);
+        let start = std::time::Instant::now();
+        let mut pause = Duration::from_millis(500);
+        let mut checked = false;
+        loop {
+            let res = op().await;
+            let Err(e) = &res else { return res };
+            if !is_retryable(e) {
+                return res;
+            }
+            if is_feature_required(e) && !checked {
+                checked = true;
+                let never_paid = matches!(
+                    self.org(token, org).await,
+                    Ok(d) if matches!(d.plan.as_str(), "" | "free")
+                );
+                if never_paid {
+                    return res;
+                }
+            }
+            let spent = start.elapsed();
+            if spent >= window {
+                return res;
+            }
+            waiting(spent);
+            let _ = self.entitlements(token).await;
+            tokio::time::sleep(pause.min(window.saturating_sub(start.elapsed()))).await;
+            pause = (pause * 2).min(Duration::from_secs(8));
+        }
+    }
+
+    /// Rewrites a plan error of an operation on `org` into plain words (see
+    /// [`plan_error_text`]); any other error is returned as is.
+    pub async fn explain_plan_error(&self, token: &str, org: &str, e: Error) -> Error {
+        if plan_error_text(&e, false).is_none() {
+            return e;
+        }
+        let owner = matches!(self.org(token, org).await, Ok(d) if d.role == "owner");
+        match plan_error_text(&e, owner) {
+            Some(text) => Error::PermissionDenied(text),
+            None => e,
+        }
+    }
+
     /// The account's Teams: `/v1/me`, then each org's members and pending
     /// invites. A plain member cannot list invites (403): they read as
     /// none. An org whose people cannot be read keeps its row without them.
@@ -841,7 +1095,7 @@ mod tests {
                         Json(json!({
                             "sub":"u1","email":"ada@example.com",
                             "orgs":[
-                                {"id":"o1","alias":"acme","name":"Acme Inc","role":"owner","plan":"teams","status":"active","seats":3},
+                                {"id":"o1","alias":"acme","name":"Acme Inc","role":"owner","plan":"teams","status":"grace","grace_until":"2026-11-03T10:00:00Z","seats":3},
                                 {"id":"o2","alias":"side","role":"member","plan":"free","status":"none","seats":0}
                             ],
                             "entitlements":{"sub":"u1","plan":"pro","status":"active","warnings":[],"later":1}
@@ -996,6 +1250,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sharing_is_for_teams_and_a_team_share_has_a_role() {
+        let api = crate::testing::FakeSpacesApi::start().await;
+        api.add_account("ada", "sub-ada", "ada@example.com");
+        api.add_account("dan", "sub-dan", "dan@example.com");
+        let org = api.add_org(
+            "acme",
+            "Acme",
+            "sub-ada",
+            &["team_machines", "space_sharing"],
+        );
+        let c = SpacesApiClient::new(&api.url).unwrap();
+
+        // In a team that can share: yes, and the team is offered.
+        let s = c.sharing("ada").await.unwrap();
+        assert!(s.can_share && s.reason.is_empty());
+        assert_eq!(s.teams.len(), 1);
+        assert!(s.teams[0].can_add && s.teams[0].alias == "acme");
+        // In no team: no, and why.
+        let s = c.sharing("dan").await.unwrap();
+        assert!(!s.can_share && s.reason == "no_team" && s.teams.is_empty());
+
+        // A whole-team share is "Can view" or "Can edit", and can change.
+        c.add_org_machine_as("ada", &org, "m1", "linux", "box", "viewer")
+            .await
+            .unwrap();
+        assert_eq!(api.machine_role(&org, "m1").as_deref(), Some("viewer"));
+        c.add_org_machine_as("ada", &org, "m1", "linux", "box", "editor")
+            .await
+            .unwrap();
+        assert_eq!(api.machine_role(&org, "m1").as_deref(), Some("editor"));
+        let listed = c.org_machines("ada", &org).await.unwrap();
+        assert_eq!(listed[0].role, "editor");
+        let e = c
+            .set_org_machine_role("ada", &org, "m1", "owner")
+            .await
+            .unwrap_err();
+        assert!(e.to_string().contains("bad_role"), "{e}");
+
+        // The owner's one-line note: read, then acknowledged once.
+        api.add_share_removal("sub-ada", "Design", "eve@outside.test");
+        let r = c.share_removals("ada").await.unwrap();
+        assert_eq!(r.len(), 1);
+        assert_eq!(
+            (r[0].who.as_str(), r[0].machine_name.as_str()),
+            ("eve@outside.test", "Design")
+        );
+        assert!(c.share_removals("dan").await.unwrap().is_empty());
+        c.ack_share_removals("ada").await.unwrap();
+        assert!(c.share_removals("ada").await.unwrap().is_empty());
+
+        // A server without these routes: Teams are not available (the caller
+        // lets the server decide).
+        api.without_teams();
+        let e = c.sharing("ada").await.unwrap_err();
+        assert!(is_teams_unavailable(&e), "{e}");
+    }
+
+    #[tokio::test]
     async fn a_just_paid_plan_is_retried_until_it_arrives() {
         let api = crate::testing::FakeSpacesApi::start().await;
         api.add_account("ada", "sub-ada", "ada@example.com");
@@ -1027,6 +1339,96 @@ mod tests {
             .await
             .unwrap_err();
         assert!(is_feature_required(&e), "{e}");
+    }
+
+    #[tokio::test]
+    async fn an_org_that_never_paid_does_not_wait() {
+        let api = crate::testing::FakeSpacesApi::start().await;
+        api.add_account("ada", "sub-ada", "ada@example.com");
+        let free = api.add_org("free", "Free", "sub-ada", &[]);
+        let c = SpacesApiClient::new(&api.url).unwrap();
+        let start = std::time::Instant::now();
+        let mut waits = 0;
+        let e = c
+            .finishing_setup_org(
+                "ada",
+                &free,
+                SETUP_RETRY_WINDOW,
+                |_| waits += 1,
+                || c.add_org_machine("ada", &free, "m1", "linux", ""),
+            )
+            .await
+            .unwrap_err();
+        assert!(is_feature_required(&e), "{e}");
+        assert_eq!(waits, 0);
+        assert!(start.elapsed() < Duration::from_secs(2));
+
+        // An org that pays still waits for its features.
+        let paid = api.add_org("acme", "Acme", "sub-ada", &["team_machines"]);
+        api.feature_lag(1);
+        c.finishing_setup_org(
+            "ada",
+            &paid,
+            SETUP_RETRY_WINDOW,
+            |_| waits += 1,
+            || c.add_org_machine("ada", &paid, "m1", "linux", ""),
+        )
+        .await
+        .unwrap();
+        assert_eq!(waits, 1);
+    }
+
+    #[test]
+    fn plan_errors_read_in_plain_words() {
+        let e = org_error(
+            402,
+            r#"{"error":"feature_required","detail":"team_machines"}"#,
+        );
+        assert_eq!(
+            feature_required_detail(&e).as_deref(),
+            Some("team_machines")
+        );
+        assert_eq!(
+            plan_error_text(&e, true).unwrap(),
+            "Team computers need the Teams plan. https://app.cua.ai/buy/teams"
+        );
+        assert_eq!(
+            plan_error_text(&e, false).unwrap(),
+            "Team computers need the Teams plan. Ask the team owner to upgrade."
+        );
+        for (feature, words) in [
+            ("team_roles", "Admin roles need"),
+            ("device_approval", "Approving devices needs"),
+        ] {
+            let e = org_error(
+                402,
+                &format!(r#"{{"error":"feature_required","detail":"{feature}"}}"#),
+            );
+            assert!(plan_error_text(&e, true).unwrap().starts_with(words));
+        }
+        let e = org_error(402, r#"{"error":"add_seats"}"#);
+        assert_eq!(
+            plan_error_text(&e, false).unwrap(),
+            "Your team has no free seats. Ask the team owner to add seats."
+        );
+        let e = org_error(403, r#"{"error":"machine_limit"}"#);
+        assert!(plan_error_text(&e, true).unwrap().ends_with("/buy/teams"));
+        assert_eq!(plan_error_text(&org_error(409, "{}"), true), None);
+    }
+
+    #[tokio::test]
+    async fn a_plan_error_is_explained_by_the_callers_role() {
+        let api = crate::testing::FakeSpacesApi::start().await;
+        api.add_account("ada", "sub-ada", "ada@example.com");
+        let free = api.add_org("free", "Free", "sub-ada", &[]);
+        let c = SpacesApiClient::new(&api.url).unwrap();
+        let e = c
+            .add_org_machine("ada", &free, "m1", "linux", "")
+            .await
+            .unwrap_err();
+        let e = c.explain_plan_error("ada", &free, e).await;
+        assert!(!e.to_string().contains("HTTP 402"), "{e}");
+        assert!(e.to_string().contains("Teams plan"), "{e}");
     }
 
     #[tokio::test]

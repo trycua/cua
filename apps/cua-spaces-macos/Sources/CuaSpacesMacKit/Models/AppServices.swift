@@ -383,6 +383,16 @@ public final class FixtureBilling: BillingRunning, @unchecked Sendable {
 /// roles and billing are the account app's (app.cua.ai).
 public protocol TeamsReading: AnyObject, Sendable {
     func teams() async throws -> AppTeamsInput
+    /// People removed from the account's shared computers because sharing is
+    /// for teams now, until acknowledged (none from a server that predates it).
+    func shareRemovals() async throws -> [AppShareRemovalInput]
+    /// The owner has seen the removal note.
+    func ackShareRemovals() async throws
+}
+
+public extension TeamsReading {
+    func shareRemovals() async throws -> [AppShareRemovalInput] { [] }
+    func ackShareRemovals() async throws {}
 }
 
 /// Reads Teams with the account's access token (`force`: refresh it).
@@ -396,23 +406,38 @@ public final class LiveTeams: TeamsReading, @unchecked Sendable {
         }
         return try await appTeams(accountToken: token)
     }
+
+    public func shareRemovals() async throws -> [AppShareRemovalInput] {
+        guard let token = try await token(false) else { return [] }
+        return try await appShareRemovals(accountToken: token)
+    }
+
+    public func ackShareRemovals() async throws {
+        guard let token = try await token(false) else { return }
+        try await appAckShareRemovals(accountToken: token)
+    }
 }
 
 /// A fixture account's team (captures, tests).
 public final class FixtureTeams: TeamsReading, @unchecked Sendable {
     public var current: AppTeamsInput
+    /// Who the fixture's owner has not been told was removed yet.
+    public var removals: [AppShareRemovalInput]
 
-    public init(_ teams: [AppTeamInput]? = nil) {
+    public init(_ teams: [AppTeamInput]? = nil, removals: [AppShareRemovalInput] = []) {
+        self.removals = removals
         current = AppTeamsInput(accountAppUrl: "https://app.cua.ai", state: .ready(teams: teams ?? [
             AppTeamInput(
                 id: "o1", alias: "acme", name: "Acme Inc", role: "owner", plan: "teams", seats: 3,
                 members: [AppTeamPersonInput(email: "ada@example.com", role: "owner"),
                           AppTeamPersonInput(email: "grace@example.com", role: "member")],
-                invites: ["linus@example.com"]),
+                invites: ["linus@example.com"], paymentFailed: false, paymentFailedUntil: nil),
         ]), currentTeamId: nil)
     }
 
     public func teams() async throws -> AppTeamsInput { current }
+    public func shareRemovals() async throws -> [AppShareRemovalInput] { removals }
+    public func ackShareRemovals() async throws { removals = [] }
 }
 
 /// Opens the website billing page (Settings' Manage billing, a refused

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
+import type { MachinesView } from "./contracts/host";
 import type { HostEvent, OpArgs, OpName, OpResult } from "./protocol";
 
 export type BridgeMode = "tauri" | "electron" | "webkit" | "demo";
@@ -38,6 +39,13 @@ export interface DataAdapter {
    * and this app uses it). Undefined: the host has none.
    */
   hostNotice?(): string | null;
+  /**
+   * The Machines page as the host's core drew it, read with
+   * `machines.list` (`machines_view::view`, what the SwiftUI page shows).
+   * Null: the host did not send one (the store draws it with the core from
+   * the rows). Undefined: the host never does.
+   */
+  machinesView?(): MachinesView | null;
   /** Releases timers and listeners. */
   dispose?(): void;
 }

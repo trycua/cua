@@ -42,12 +42,15 @@ const SPOOL_FILE: &str = "spool.jsonl";
 const LAST_FILE: &str = "last_events.jsonl";
 const FIRST_RUN_FILE: &str = "first_run_recorded";
 const FUNNEL_DIR: &str = "funnel";
+const HOURLY_DIR: &str = "hourly";
 /// The UTC day (days since the epoch) `cua_app_active` was last sent.
 const ACTIVE_DAY_FILE: &str = "active_day";
 /// The UTC day of the last `cua_agent_used_space`.
 const AGENT_USED_SPACE_FILE: &str = "agent_used_space_day";
 /// The Spaces app's experiments that are on (`cua_volume+sharing`, `none`).
 const EXPERIMENTS_FILE: &str = "experiments_on";
+/// The Spaces app's interface language (`en`, `zh-Hans`, ..., `other`).
+const UI_LOCALE_FILE: &str = "ui_locale";
 
 /// What happened to one captured event.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -595,7 +598,9 @@ impl Telemetry {
                 self.env(config::ENV_SYNTHETIC)
                     .as_deref()
                     .and_then(config::parse_bool)
-                    .unwrap_or(false),
+                    .unwrap_or_else(|| {
+                        self.product().starts_with("sdk_") && config::is_test_run(&|k| self.env(k))
+                    }),
             ),
         );
         put(
@@ -654,9 +659,42 @@ impl Telemetry {
             self.show_notice_if_needed();
             return Captured::NoticePending;
         }
+        if self.repeated_within_hour(&event) {
+            return Captured::AlreadyRecorded;
+        }
         self.record_first_run();
         self.identify_if_needed();
         self.capture_inner(event)
+    }
+
+    /// A failing persistent agent (a resume retried every few seconds sent
+    /// 86,000 events in a week) reports each distinct failure at most once
+    /// per install per hour. The marker is the file's modified time.
+    fn repeated_within_hour(&self, event: &Event) -> bool {
+        if event.name != schema::event::PERSISTENT_AGENT
+            || event.props.get("outcome").and_then(Value::as_str) != Some("error")
+        {
+            return false;
+        }
+        let Some(dir) = self.state_dir() else {
+            return false;
+        };
+        let key: String = ["action", "harness", "error_kind"]
+            .iter()
+            .map(|k| event.props.get(*k).and_then(Value::as_str).unwrap_or("-"))
+            .collect::<Vec<_>>()
+            .join("_");
+        let marker = dir.join(HOURLY_DIR).join(format!("{}_{key}", event.name));
+        let fresh = std::fs::metadata(&marker)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| SystemTime::now().duration_since(t).ok())
+            .is_some_and(|age| age < Duration::from_secs(3600));
+        if fresh {
+            return true;
+        }
+        let _ = fsutil::write_replace(&marker, b"1\n");
+        false
     }
 
     fn capture_inner(&self, event: Event) -> Captured {
@@ -814,7 +852,14 @@ impl Telemetry {
         // this install sends the day's event; the set is the install's).
         let experiments = std::fs::read_to_string(dir.join(EXPERIMENTS_FILE)).unwrap_or_default();
         let ids: Vec<&str> = experiments.trim().split('+').collect();
-        let r = self.capture(crate::events::app_active_with(&ids));
+        // And the interface language it last said (`en` before it says).
+        let locale = std::fs::read_to_string(dir.join(UI_LOCALE_FILE)).unwrap_or_default();
+        let locale = if locale.trim().is_empty() {
+            "en"
+        } else {
+            locale.trim()
+        };
+        let r = self.capture(crate::events::app_active_with(&ids, locale));
         if r == Captured::Queued {
             let _ = fsutil::write_replace(&marker, today.as_bytes());
         }
@@ -872,6 +917,23 @@ impl Telemetry {
         let Some(dir) = self.state_dir() else { return };
         let path = dir.join(EXPERIMENTS_FILE);
         let word = crate::events::experiments_set(ids);
+        if std::fs::read_to_string(&path).is_ok_and(|s| s.trim() == word) {
+            return;
+        }
+        let _ = fsutil::write_replace(&path, format!("{word}\n").as_bytes());
+    }
+
+    /// The Spaces app's interface language now (a fixed set; any other
+    /// language is `other`): kept in the state directory, so the day's
+    /// `cua_app_active` carries it whichever product sends it. Nothing is
+    /// written while telemetry is off.
+    pub fn set_ui_locale(&self, locale: &str) {
+        if !self.is_enabled() {
+            return;
+        }
+        let Some(dir) = self.state_dir() else { return };
+        let path = dir.join(UI_LOCALE_FILE);
+        let word = crate::events::ui_locale(locale);
         if std::fs::read_to_string(&path).is_ok_and(|s| s.trim() == word) {
             return;
         }

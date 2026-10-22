@@ -137,6 +137,11 @@ pub enum Error {
     /// Relay unreachable or failed.
     #[error("relay: {0}")]
     Relay(String),
+    /// The relay refused a new live session over the plan's cap (HTTP 429,
+    /// `x-cua-relay-error: plan_limit_*`). The text is the plain sentence
+    /// ([`cua_home::plan_limit::PlanLimit::sentence`]); never retried.
+    #[error("{0}")]
+    PlanLimit(String),
     /// Driver download failed.
     #[error("download: {0}")]
     Download(String),
@@ -162,6 +167,7 @@ impl Error {
             Error::PermissionDenied(m) if m.starts_with("relay: ") => Some(403),
             Error::NotFound(m) if m.starts_with("relay: ") => Some(404),
             Error::Conflict(m) if m.starts_with("relay: ") => Some(409),
+            Error::PlanLimit(_) => Some(429),
             Error::Relay(m) | Error::Download(m) => status_in(m),
             _ => None,
         }

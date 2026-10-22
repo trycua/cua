@@ -29,6 +29,7 @@ on:
       - ".github/scripts/cua-driver-mcp-compat/**"
       - ".github/workflows/cd-py-cua-driver.yml"
       - ".github/workflows/ci-cua-driver-contract-clients.yml"
+      - ".github/scripts/ci_component_scope.py"
   push:
     branches: [main]
     paths:
@@ -58,6 +59,7 @@ on:
       - ".github/scripts/cua-driver-mcp-compat/**"
       - ".github/workflows/cd-py-cua-driver.yml"
       - ".github/workflows/ci-cua-driver-contract-clients.yml"
+      - ".github/scripts/ci_component_scope.py"
   workflow_dispatch:
 
 permissions:
@@ -76,14 +78,48 @@ env:
   DO_NOT_TRACK: "1"
 
 jobs:
+  changes:
+    name: "contract clients / changes"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      run: ${{ steps.scope.outputs.run }}
+      matrix: ${{ steps.scope.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          sparse-checkout: .github/scripts
+      # CUA-1910: pull requests run only the OS lanes the changed paths can
+      # reach (explicit dependency map in ci_component_scope.py). Pushes,
+      # manual runs and release PRs run everything.
+      - id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          files=""
+          if [[ "$EVENT" == pull_request ]]; then
+            files=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --jq '.[].filename')
+          fi
+          python3 .github/scripts/ci_component_scope.py contract-clients <<< "$files" | tee -a "$GITHUB_STEP_SUMMARY"
+
   mcp-client-discovery:
     name: MCP discovery in pinned clients (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ fromJSON(needs.changes.outputs.matrix) }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
@@ -137,12 +173,14 @@ jobs:
 
   runtime-parity:
     name: Portable contract parity (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ fromJSON(needs.changes.outputs.matrix) }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
@@ -217,6 +255,8 @@ jobs:
 
   verify:
     name: Generated contract and SDK bindings
+    needs: changes
+    if: needs.changes.outputs.run == 'true' && contains(needs.changes.outputs.matrix, 'ubuntu')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -420,3 +460,19 @@ jobs:
       - name: Check TypeScript agent SDK example
         working-directory: libs/cua-driver/examples/agent-sdks
         run: npm run typecheck
+
+  # Always-run aggregator: skipped lanes pass, so this is the one check to
+  # require if branch protection ever needs one.
+  result:
+    name: "contract clients / result"
+    if: always()
+    needs: [changes, mcp-client-discovery, runtime-parity, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          LANES: ${{ toJSON(needs) }}
+        run: |
+          bad=$(jq -r 'to_entries[] | select(.value.result != "success" and .value.result != "skipped") | "\(.key)=\(.value.result)"' <<< "$LANES")
+          if [[ -n "$bad" ]]; then echo "::error::lanes not green: $bad"; exit 1; fi
+          echo "All applicable lanes passed." | tee -a "$GITHUB_STEP_SUMMARY"

@@ -12,7 +12,7 @@
 //!    was the multi-second stall behind every element-index click.
 //!
 //! 2. A process-global (pid, xid) side index over the same elements, so the
-//!    free functions in `atspi` (perform_action_in, get_element_bounds,
+//!    free functions in `atspi` (perform_action, get_element_bounds,
 //!    perform_action_at_point_in, ...) can consult the last snapshot by window
 //!    without the tool state threaded through every input path.
 //!

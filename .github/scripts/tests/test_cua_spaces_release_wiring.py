@@ -103,7 +103,8 @@ class TestCuaSpacesReleaseWiring(unittest.TestCase):
         self.assertIn("brew install osslsigncode", verify)
         # installer-manifest publishes the release and the feeds only after it.
         publish = workflow.split("\n  installer-manifest:\n", 1)[1]
-        self.assertIn("verify-release]", publish.split("\n", 3)[1])
+        self.assertIn("verify-release", publish.split("\n", 3)[1])
+        self.assertIn("staging-gate]", publish.split("\n", 3)[1])
         self.assertIn("needs.verify-release.result == 'success'", publish)
         # checksums.txt and release-artifacts.json cover every asset, the
         # Electron Windows and Linux installers included (CUA-1507).

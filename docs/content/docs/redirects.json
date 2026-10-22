@@ -481,7 +481,7 @@
     "spaces/guides/send-files": "spaces/guides/cua-volume#send-a-file-into-a-space",
     "spaces/guides/site-login": "spaces/guides/keyvault#let-an-agent-sign-in-to-a-site",
     "spaces/guides/troubleshoot-create": "spaces/guides/troubleshoot",
-    "spaces/guides/mesh": "spaces/guides/relay-security#end-to-end-encrypted-connections-beta",
+    "spaces/guides/mesh": "spaces/guides/relay-security#end-to-end-encrypted-connections",
     "spaces/examples/other-languages": "spaces/guides/create-a-space-with-the-sdk#examples-in-other-languages",
     "cua-cli/reference/cli/spaces": "cua-cli/reference/cli/spaces-and-computers#cua-spaces",
     "cua-cli/reference/cli/host": "cua-cli/reference/cli/spaces-and-computers#cua-host",

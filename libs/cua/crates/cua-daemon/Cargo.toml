@@ -7,7 +7,6 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-publish = false
 
 [features]
 default = ["server", "client", "spaces"]
@@ -39,11 +38,12 @@ cua-proto = { workspace = true, features = ["client", "server", "serde"] }
 cua-spacesd-client.workspace = true
 cua-sandbox-core.workspace = true
 cua-contrib = { workspace = true, optional = true }
-cua-vmm = { path = "../cua-vmm" }
-cua-image = { path = "../cua-image" }
+cua-create-failure.workspace = true
+cua-vmm = { workspace = true, default-features = true }
+cua-image.workspace = true
 # Disk accounting, cache GC and orphan reaping.
 cua-disk.workspace = true
-cua-spaces = { path = "../cua-spaces", optional = true }
+cua-spaces = { workspace = true, optional = true }
 # The fixtures' `/media` socket frames video like the real driver.
 # Relay account machines (space://relay/<id>) in SpaceService / `cua daemon mcp`.
 cua-host = { workspace = true, optional = true }
@@ -81,7 +81,7 @@ libc = "0.2"
 
 [dev-dependencies]
 cua-host = { workspace = true, features = ["testing"] }
-cua-spaces = { path = "../cua-spaces", features = ["mcp-client"] }
+cua-spaces = { workspace = true, features = ["mcp-client"] }
 cua-spacesd-client = { workspace = true, features = ["testing"] }
 # Keyvault delivery test: a deterministic in-memory export provider and the
 # broker types, exercised against the mock spacesd.

@@ -43,12 +43,12 @@ import type { CloudModel } from "./cloud";
 import type { DevicesModel } from "./devices";
 import { TeamsModel } from "./teams";
 import { NotchActivity } from "./activity";
-import { createErrorVariant, daemonAnswered, isCancelled, words } from "./errors";
+import { createErrorVariant, daemonAnswered, isCancelled, sdkErrorKind, words } from "./errors";
 import type { HostModel } from "./host";
 import { KeyvaultModel } from "./keyvault";
 import type { AccountRunning, TelemetryRunning } from "./services";
 import type { StartupModel } from "./startup";
-import { SignInRuns } from "./sign-in";
+import { SignInRuns, type SignInEnd } from "./sign-in";
 import { SpaceThumbnails } from "./thumbnails";
 import { noLocalRuntimeReason } from "./local-runtime";
 import type { LinuxRuntime } from "./linux-runtime";
@@ -256,10 +256,10 @@ export class AppModel {
       starting: () => this.setSignIn(new this.native.AppSignInPhase.Starting()),
       waiting: (attempt) => {
         this.signInUrl = attempt.url;
-        this.setSignIn(new this.native.AppSignInPhase.Waiting({ userCode: attempt.userCode ?? undefined }));
+        this.setSignIn(new this.native.AppSignInPhase.Waiting({ userCode: attempt.userCode ?? undefined, opened: attempt.opened !== false }));
       },
       signedIn: (who) => this.signedIn(who),
-      failed: (message) => this.signInFailed(message),
+      failed: (end) => this.signInFailed(end),
     });
     this.identity = d.account?.identity() ?? null;
     this.host.identity = this.identity;
@@ -912,18 +912,25 @@ export class AppModel {
     this.changed("session");
   }
 
-  /** Shown where the sign-in was started; counted by its kind only. */
-  private signInFailed(message: string): void {
+  /** Shown with its reason in the sidebar's foot (and a toast there);
+   * counted by its kind only (the core keeps the words). */
+  private signInFailed(end: SignInEnd): void {
+    const n = this.native;
+    const phase =
+      "timedOut" in end
+        ? n.appSignInFailed(n.AppSignInFailure.NotConfirmed, undefined)
+        : n.appSignInFailedFromError(sdkErrorKind(end.error) ?? "", words(end.error));
     this.signInUrl = null;
-    this.setSignIn(new this.native.AppSignInPhase.Failed({ message }));
-    this.telemetry?.record(this.native.appTelemetrySignInFailed(message));
+    this.setSignIn(phase);
+    const reason = phase.tag === "Failed" ? phase.inner.reason : n.AppSignInFailure.Unknown;
+    this.telemetry?.record(n.appTelemetrySignInFailure(reason));
   }
 
   /** Stops waiting for the browser (the page can start again). */
   cancelSignIn(): void {
     if (this.signInPhase() === "Starting" || this.signInPhase() === "Waiting") {
       this.signIns.cancel();
-      this.telemetry?.record(this.native.appTelemetrySignInFailed(undefined));
+      this.telemetry?.record(this.native.appTelemetrySignInFailure(undefined));
     }
     this.signInUrl = null;
     this.setSignIn(new this.native.AppSignInPhase.Idle());

@@ -67,7 +67,7 @@ import type { HostChecklistState } from "../ops/checklist";
 import type { PresenceCursorWire, PresenceJoinInfo, PresenceParticipantWire } from "../ops/presence";
 import type { StartupState } from "../ops/startup";
 import type { StreamTicket } from "../ops/stream";
-import type { GlobalShortcut, HostSettings, HostSignIn, OpName, SessionSnapshot, SettingsSnapshot, SettingsValues } from "../protocol";
+import type { GlobalShortcut, HostSettings, HostSignIn, HostSignInFailure, OpName, SessionSnapshot, SettingsSnapshot, SettingsValues } from "../protocol";
 import type { WebkitMethod, WkHostState, WkMachines, WkOnboarding, WkSession, WkSettings, WkSettingsRow, WkSpace, WkSpaces } from "../webkit-protocol";
 import { Defs, any, bool, dict, list, nul, nullable, num, obj, object, oneOf, opt, optNull, str, union, type Schema } from "./schema";
 
@@ -233,7 +233,8 @@ const SessionShape = ref(
     daemon: nullable(
       obj<DaemonStatus>()({ connected: bool, version: opt(str), socketPath: opt(str), loopbackUrl: opt(str), error: opt(str) }),
     ),
-    hostSignIn: optNull(obj<HostSignIn>()({ userCode: nullable(str), url: nullable(str) })),
+    hostSignIn: optNull(obj<HostSignIn>()({ userCode: nullable(str), url: nullable(str), opened: opt(bool) })),
+    hostSignInFailure: optNull(obj<HostSignInFailure>()({ reason: str, message: str, detail: nullable(str) })),
   }),
 );
 
@@ -1147,7 +1148,10 @@ const WkSessionShape = ref(
     identity: nullable(str),
     signedIn: bool,
     cloudConfigured: bool,
-    signIn: union(oneOf("idle", "starting"), object({ type: str, userCode: optNull(str), message: opt(str) })),
+    signIn: union(
+      oneOf("idle", "starting"),
+      object({ type: str, userCode: optNull(str), opened: opt(bool), reason: opt(str), message: opt(str), detail: optNull(str) }),
+    ),
     signInUrl: optNull(str),
   }),
 );

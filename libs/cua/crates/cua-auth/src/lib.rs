@@ -123,6 +123,43 @@ fn http_err(e: impl std::fmt::Display) -> Error {
     Error::Http(e.to_string())
 }
 
+/// How an error starts when the identity provider could not be reached at
+/// all (no network, DNS, refused, timed out). The Spaces app core reads it
+/// to say "can't reach Cua" instead of showing the transport's words.
+pub const UNREACHABLE: &str = "could not reach the sign-in service";
+
+/// How an error starts when the person declined the sign-in in the browser
+/// (`access_denied`).
+pub const LOGIN_DECLINED: &str = "sign-in was declined in the browser";
+
+/// A request that failed before any answer: [`UNREACHABLE`] for transport
+/// failures, the error's own words otherwise.
+fn net_err(e: reqwest::Error) -> Error {
+    if e.is_connect() || e.is_timeout() || e.is_request() {
+        Error::Http(format!("{UNREACHABLE}: {e}"))
+    } else {
+        Error::Http(e.to_string())
+    }
+}
+
+/// Whether `e` is [`UNREACHABLE`] (worth another poll).
+fn is_unreachable(e: &Error) -> bool {
+    matches!(e, Error::Http(m) if m.starts_with(UNREACHABLE))
+}
+
+/// A non-200 answer from the token or device endpoint: the provider's own
+/// trouble (5xx) is [`Error::Http`], a refusal [`Error::Unauthenticated`].
+fn token_refusal(status: u16, v: &serde_json::Value, fallback: &str) -> Error {
+    if status >= 500 {
+        Error::Http(format!(
+            "the sign-in service answered HTTP {status}: {}",
+            describe(v, fallback)
+        ))
+    } else {
+        Error::Unauthenticated(describe(v, fallback))
+    }
+}
+
 fn store_err(e: impl std::fmt::Display) -> Error {
     Error::Store(e.to_string())
 }
@@ -1671,7 +1708,7 @@ impl Oidc {
             .form(form)
             .send()
             .await
-            .map_err(http_err)?;
+            .map_err(net_err)?;
         let status = r.status().as_u16();
         let text = r.text().await.map_err(http_err)?;
         let v = serde_json::from_str(&text)
@@ -1682,7 +1719,7 @@ impl Oidc {
     /// Fetches the discovery document.
     pub async fn discover(&self) -> Result<Discovery> {
         let url = format!("{}/.well-known/openid-configuration", self.issuer);
-        let r = self.http.get(&url).send().await.map_err(http_err)?;
+        let r = self.http.get(&url).send().await.map_err(net_err)?;
         if !r.status().is_success() {
             return Err(Error::Http(format!(
                 "OIDC discovery failed (HTTP {})",
@@ -1953,10 +1990,12 @@ async fn begin_device(oidc: &Oidc, d: &Discovery) -> Result<PendingLogin> {
         )
         .await?;
     if status != 200 {
-        return Err(Error::Unauthenticated(describe(
-            &v,
-            "could not start device authorization",
-        )));
+        return Err(match token_refusal(status, &v, "refused") {
+            Error::Unauthenticated(why) => {
+                Error::Unauthenticated(format!("could not start the sign-in: {why}"))
+            }
+            other => other,
+        });
     }
     let device_code = v["device_code"].as_str().unwrap_or_default().to_string();
     let user_code = v["user_code"].as_str().unwrap_or_default().to_string();
@@ -2030,10 +2069,11 @@ impl PendingLogin {
                     matches!(&exchanged, Ok((_, v)) if v["error"] == "invalid_grant");
                 let creds = match exchanged {
                     Ok((200, v)) => Credentials::from_token_response(&v),
-                    Ok((status, v)) => Err(Error::Unauthenticated(describe(
+                    Ok((status, v)) => Err(token_refusal(
+                        status,
                         &v,
                         &format!("token request failed (HTTP {status})"),
-                    ))),
+                    )),
                     Err(e) => Err(e),
                 };
                 let (status, outcome) = match &creds {
@@ -2056,8 +2096,12 @@ impl PendingLogin {
                     .unwrap_or(Duration::from_secs(1));
                 let deadline = tokio::time::Instant::now() + unit * expires_in as u32;
                 // Hard bound on iterations, independent of the clock.
+                // A network drop or the provider's own trouble (5xx) while
+                // the person confirms is retried until the code expires; it
+                // is the error then, never a silent "expired".
+                let mut last: Option<Error> = None;
                 for _ in 0..(expires_in / interval + 20) {
-                    let (status, v) = self
+                    let polled = self
                         .oidc
                         .form(
                             &self.token_endpoint,
@@ -2067,28 +2111,48 @@ impl PendingLogin {
                                 ("client_id", &self.oidc.client_id),
                             ],
                         )
-                        .await?;
-                    if status == 200 {
-                        return Credentials::from_token_response(&v);
-                    }
-                    match v["error"].as_str() {
-                        Some("authorization_pending") => {}
-                        Some("slow_down") => interval += 5,
-                        _ => {
-                            return Err(Error::Unauthenticated(describe(
-                                &v,
-                                &format!("token request failed (HTTP {status})"),
-                            )));
-                        }
+                        .await;
+                    match polled {
+                        Ok((200, v)) => return Credentials::from_token_response(&v),
+                        Ok((status, v)) => match v["error"].as_str() {
+                            Some("authorization_pending") => last = None,
+                            Some("slow_down") => {
+                                interval += 5;
+                                last = None;
+                            }
+                            Some("expired_token") => {
+                                return Err(Error::Timeout(
+                                    "the sign-in code expired before it was confirmed".into(),
+                                ));
+                            }
+                            Some("access_denied") => {
+                                return Err(Error::Unauthenticated(format!(
+                                    "{LOGIN_DECLINED}: {}",
+                                    describe(&v, "access_denied")
+                                )));
+                            }
+                            _ if status >= 500 => {
+                                last = Some(token_refusal(status, &v, "token request failed"));
+                            }
+                            _ => {
+                                return Err(token_refusal(
+                                    status,
+                                    &v,
+                                    &format!("token request failed (HTTP {status})"),
+                                ));
+                            }
+                        },
+                        Err(e) if is_unreachable(&e) => last = Some(e),
+                        Err(e) => return Err(e),
                     }
                     if tokio::time::Instant::now() >= deadline {
                         break;
                     }
                     tokio::time::sleep(unit * interval as u32).await;
                 }
-                Err(Error::Timeout(
-                    "device authorization expired before it was completed".into(),
-                ))
+                Err(last.unwrap_or_else(|| {
+                    Error::Timeout("device authorization expired before it was completed".into())
+                }))
             }
         }
     }
@@ -2161,6 +2225,9 @@ async fn await_callback(
                 Outcome::Failed
             };
             respond_page(&mut sock, "400 Bad Request", &outcome, to).await;
+            if e == "access_denied" {
+                return Err(Error::Unauthenticated(format!("{LOGIN_DECLINED}: {msg}")));
+            }
             return Err(Error::Unauthenticated(format!("sign-in failed: {msg}")));
         }
         let Some(code) = q.get("code").filter(|c| !c.is_empty()).cloned() else {

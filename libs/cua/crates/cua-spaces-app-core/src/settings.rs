@@ -13,6 +13,7 @@ use crate::CoreError;
 use crate::about::UpdateChannel;
 use crate::experiments::{Experiment, Experiments};
 use crate::model::Location;
+use crate::sign_in::SignInFailure;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -300,12 +301,26 @@ pub enum SignInPhase {
         /// The code to confirm there, when the flow has one.
         #[serde(default)]
         user_code: Option<String>,
+        /// A browser opened on this computer (false: the page is to be
+        /// opened by hand, here or on another device).
+        #[serde(default = "yes")]
+        opened: bool,
     },
-    /// It failed.
+    /// It failed ([`crate::sign_in::failed`] makes it).
     Failed {
-        /// Why.
+        /// Why ([`crate::sign_in::SignInFailure`]).
+        #[serde(default)]
+        reason: SignInFailure,
+        /// The line shown: "Sign-in didn't finish." and the reason.
         message: String,
+        /// The error's own words, behind Details (never shown by default).
+        #[serde(default)]
+        detail: Option<String>,
     },
+}
+
+fn yes() -> bool {
+    true
 }
 
 /// The usage-telemetry switch's state.
@@ -675,7 +690,7 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
             r.enabled = true;
             account.push(r);
         }
-    } else if let SignInPhase::Waiting { user_code } = &input.sign_in {
+    } else if let SignInPhase::Waiting { user_code, .. } = &input.sign_in {
         let mut r = row(
             "sign-in-code",
             Text,
@@ -705,7 +720,7 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
         );
         r.enabled = input.sign_in != SignInPhase::Starting;
         account.push(r);
-        if let SignInPhase::Failed { message } = &input.sign_in {
+        if let SignInPhase::Failed { message, .. } = &input.sign_in {
             account.push(row("sign-in-error", Error, message));
         }
     }
@@ -1079,7 +1094,8 @@ mod tests {
         assert_eq!(
             sign_in,
             SignInPhase::Waiting {
-                user_code: Some("AB-CD".into())
+                user_code: Some("AB-CD".into()),
+                opened: true,
             }
         );
     }

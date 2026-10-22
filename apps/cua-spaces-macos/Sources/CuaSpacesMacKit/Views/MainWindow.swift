@@ -35,6 +35,7 @@ public struct MainWindow: View {
                     }
                 }
         }
+        .overlay(alignment: .bottomTrailing) { SignInToastView(model: model) }
         .background(WindowReader { model.dropTargets.window = $0 })
         .searchable(text: $model.query, placement: .sidebar, prompt: chrome.searchPlaceholder)
         .toolbar {
@@ -232,33 +233,137 @@ struct Sidebar: View {
     private func badge(_ row: KvCategoryRow) -> Int { Int(row.badge ?? 0) }
 }
 
-/// The sidebar's foot: the account line, Sign in when offered, Settings.
+/// The sidebar's foot: every sign-in state in one place (the core's
+/// `appSignInFooter`): signed in as, waiting for the browser with the code,
+/// Open again and Cancel, or why it failed with Try again; and Settings.
 struct SidebarFooter: View {
     let model: AppModel
+    @State private var showingDetails = false
 
     var body: some View {
-        let chrome = model.chrome
-        HStack(spacing: 8) {
-            Text(chrome.account)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .foregroundStyle(.secondary)
-                .accessibilityIdentifier("sidebar-account")
-            Spacer(minLength: 4)
-            if let label = chrome.signInLabel {
-                Button(label) { Task { await model.beginSignIn() } }
-                    .controlSize(.small)
+        let f = model.signInFooter
+        HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
+                switch f.state {
+                case .starting, .waiting:
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.mini)
+                        Text(f.text).lineLimit(2)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("sidebar-signin-waiting")
+                    HStack(spacing: 4) {
+                        if let code = f.code {
+                            Text("\(f.codeLabel) \(Text(code).font(.callout.monospaced().weight(.semibold)))")
+                            Text("\u{b7}")
+                        }
+                        if let reopen = f.reopenLabel {
+                            Button(reopen) { model.reopenSignIn() }
+                                .buttonStyle(.link)
+                                .accessibilityIdentifier("sidebar-signin-reopen")
+                            Text("\u{b7}")
+                        }
+                        if let cancel = f.cancelLabel {
+                            Button(cancel) { model.cancelSignIn() }
+                                .buttonStyle(.link)
+                                .accessibilityIdentifier("sidebar-signin-cancel")
+                        }
+                    }
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                case .failed:
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundStyle(.red)
+                        Text(f.text)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("sidebar-signin-failed")
+                    }
+                    HStack(spacing: 8) {
+                        if let retry = f.actionLabel {
+                            Button(retry) { Task { await model.beginSignIn() } }
+                                .controlSize(.small)
+                                .accessibilityIdentifier("sidebar-signin-retry")
+                        }
+                        if let detail = f.detail {
+                            Button(f.detailsLabel) { showingDetails.toggle() }
+                                .buttonStyle(.link)
+                                .font(.callout)
+                                .popover(isPresented: $showingDetails) {
+                                    Text(detail)
+                                        .font(.callout.monospaced())
+                                        .textSelection(.enabled)
+                                        .frame(width: 280, alignment: .leading)
+                                        .padding(12)
+                                }
+                        }
+                    }
+                    .padding(.leading, 20)
+                case .signedIn, .signedOut:
+                    HStack(spacing: 8) {
+                        Text(f.text)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("sidebar-account")
+                        Spacer(minLength: 4)
+                        if let label = f.actionLabel {
+                            Button(label) { Task { await model.beginSignIn() } }
+                                .controlSize(.small)
+                        }
+                    }
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             SettingsLink {
                 Image(systemName: "gearshape")
             }
             .buttonStyle(.borderless)
-            .help(chrome.settingsLabel)
-            .accessibilityLabel(chrome.settingsLabel)
+            .help(model.chrome.settingsLabel)
+            .accessibilityLabel(model.chrome.settingsLabel)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(.bar)
+    }
+}
+
+/// A failed sign-in's toast: seen wherever the window is, then gone (the
+/// sidebar's foot keeps the reason and Try again).
+struct SignInToastView: View {
+    let model: AppModel
+
+    var body: some View {
+        if let toast = model.signInToast {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(toast.title).font(.headline)
+                    if let body = toast.body {
+                        Text(body).font(.callout).foregroundStyle(.secondary)
+                    }
+                }
+                Button {
+                    model.signInToast = nil
+                } label: {
+                    Image(systemName: "xmark").font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Dismiss")
+            }
+            .padding(12)
+            .frame(width: 300, alignment: .leading)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.separator))
+            .shadow(radius: 8, y: 2)
+            .padding(16)
+            .accessibilityIdentifier("signin-toast")
+            .task(id: toast) {
+                try? await Task.sleep(for: .seconds(15))
+                if model.signInToast == toast { model.signInToast = nil }
+            }
+        }
     }
 }
 

@@ -358,6 +358,7 @@ export function fixtureDevices(now = BigInt(Math.floor(Date.now() / 1000))): Dev
 export class FixtureAccount implements AccountRunning {
   current: string | null;
   private finish: ((who: string) => void) | null = null;
+  private fail: ((e: Error) => void) | null = null;
   constructor(identity: string | null = null) {
     this.current = identity;
   }
@@ -368,7 +369,7 @@ export class FixtureAccount implements AccountRunning {
     return this.current ? { email: this.current } : null;
   }
   async beginSignIn(): Promise<SignInAttempt> {
-    const done = new Promise<string>((resolve) => (this.finish = resolve));
+    const done = new Promise<string>((resolve, reject) => ((this.finish = resolve), (this.fail = reject)));
     return {
       userCode: "ABCD-1234",
       url: "https://cua.ai/device",
@@ -380,6 +381,10 @@ export class FixtureAccount implements AccountRunning {
   }
   completeSignIn(who: string) {
     this.finish?.(who);
+  }
+  /** The sign-in fails (the network dropped, the code expired). */
+  failSignIn(error: Error) {
+    this.fail?.(error);
   }
   async signOut() {
     this.current = null;

@@ -342,6 +342,17 @@ pub fn sign_in_failed(message: Option<&str>) -> Vec<TelemetrySignal> {
     }]
 }
 
+/// A sign-in failed for `reason` or was cancelled (`None`): its fixed
+/// word only ([`crate::sign_in::error_kind`]).
+pub fn sign_in_failure(reason: Option<crate::sign_in::SignInFailure>) -> Vec<TelemetrySignal> {
+    vec![TelemetrySignal::SignInFailed {
+        error_kind: reason
+            .map(crate::sign_in::error_kind)
+            .unwrap_or("cancelled")
+            .into(),
+    }]
+}
+
 /// "Start using Cua Spaces" on Done (nothing while usage data is off).
 pub fn onboarding_finished(s: &OnboardingState) -> Vec<TelemetrySignal> {
     if !s.shares_usage() {

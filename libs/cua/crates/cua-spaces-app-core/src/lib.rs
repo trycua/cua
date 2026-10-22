@@ -93,6 +93,7 @@ pub mod relay_usage;
 pub mod resources;
 pub mod settings;
 pub mod share;
+pub mod sign_in;
 pub mod spaces;
 pub mod teams;
 pub mod telemetry;

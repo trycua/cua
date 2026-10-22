@@ -33338,6 +33338,336 @@ public func FfiConverterTypeAppSidebarView_lower(_ value: AppSidebarView) -> Rus
 }
 
 
+public struct AppSignInFooter: Equatable, Hashable {
+    /**
+     * Which state.
+     */
+    public var state: AppSignInFooterState
+    /**
+     * The line: "Signed in as …", "Waiting for your browser…", "Sign-in
+     * didn't finish. …", "Not signed in".
+     */
+    public var text: String
+    /**
+     * The signed-in account (state `SignedIn`).
+     */
+    public var identity: String?
+    /**
+     * Waiting: the code to confirm in the browser.
+     */
+    public var code: String?
+    /**
+     * "Code".
+     */
+    public var codeLabel: String
+    /**
+     * Waiting with a page: "Open again".
+     */
+    public var reopenLabel: String?
+    /**
+     * Starting or waiting: "Cancel".
+     */
+    public var cancelLabel: String?
+    /**
+     * "Sign in" or "Try again" (none while signed in or waiting).
+     */
+    public var actionLabel: String?
+    /**
+     * Failed: why.
+     */
+    public var reason: AppSignInFailure?
+    /**
+     * Failed: the error's own words, behind "Details".
+     */
+    public var detail: String?
+    /**
+     * "Details".
+     */
+    public var detailsLabel: String
+    /**
+     * Failed: the toast the shell shows once, when it fails.
+     */
+    public var toast: AppSignInToast?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Which state.
+         */state: AppSignInFooterState,
+        /**
+         * The line: "Signed in as …", "Waiting for your browser…", "Sign-in
+         * didn't finish. …", "Not signed in".
+         */text: String,
+        /**
+         * The signed-in account (state `SignedIn`).
+         */identity: String?,
+        /**
+         * Waiting: the code to confirm in the browser.
+         */code: String?,
+        /**
+         * "Code".
+         */codeLabel: String,
+        /**
+         * Waiting with a page: "Open again".
+         */reopenLabel: String?,
+        /**
+         * Starting or waiting: "Cancel".
+         */cancelLabel: String?,
+        /**
+         * "Sign in" or "Try again" (none while signed in or waiting).
+         */actionLabel: String?,
+        /**
+         * Failed: why.
+         */reason: AppSignInFailure?,
+        /**
+         * Failed: the error's own words, behind "Details".
+         */detail: String?,
+        /**
+         * "Details".
+         */detailsLabel: String,
+        /**
+         * Failed: the toast the shell shows once, when it fails.
+         */toast: AppSignInToast?) {
+        self.state = state
+        self.text = text
+        self.identity = identity
+        self.code = code
+        self.codeLabel = codeLabel
+        self.reopenLabel = reopenLabel
+        self.cancelLabel = cancelLabel
+        self.actionLabel = actionLabel
+        self.reason = reason
+        self.detail = detail
+        self.detailsLabel = detailsLabel
+        self.toast = toast
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppSignInFooter: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppSignInFooter: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppSignInFooter {
+        return
+            try AppSignInFooter(
+                state: FfiConverterTypeAppSignInFooterState.read(from: &buf),
+                text: FfiConverterString.read(from: &buf),
+                identity: FfiConverterOptionString.read(from: &buf),
+                code: FfiConverterOptionString.read(from: &buf),
+                codeLabel: FfiConverterString.read(from: &buf),
+                reopenLabel: FfiConverterOptionString.read(from: &buf),
+                cancelLabel: FfiConverterOptionString.read(from: &buf),
+                actionLabel: FfiConverterOptionString.read(from: &buf),
+                reason: FfiConverterOptionTypeAppSignInFailure.read(from: &buf),
+                detail: FfiConverterOptionString.read(from: &buf),
+                detailsLabel: FfiConverterString.read(from: &buf),
+                toast: FfiConverterOptionTypeAppSignInToast.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppSignInFooter, into buf: inout [UInt8]) {
+        FfiConverterTypeAppSignInFooterState.write(value.state, into: &buf)
+        FfiConverterString.write(value.text, into: &buf)
+        FfiConverterOptionString.write(value.identity, into: &buf)
+        FfiConverterOptionString.write(value.code, into: &buf)
+        FfiConverterString.write(value.codeLabel, into: &buf)
+        FfiConverterOptionString.write(value.reopenLabel, into: &buf)
+        FfiConverterOptionString.write(value.cancelLabel, into: &buf)
+        FfiConverterOptionString.write(value.actionLabel, into: &buf)
+        FfiConverterOptionTypeAppSignInFailure.write(value.reason, into: &buf)
+        FfiConverterOptionString.write(value.detail, into: &buf)
+        FfiConverterString.write(value.detailsLabel, into: &buf)
+        FfiConverterOptionTypeAppSignInToast.write(value.toast, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppSignInFooter_lift(_ buf: RustBuffer) throws -> AppSignInFooter {
+    return try FfiConverterTypeAppSignInFooter.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppSignInFooter_lower(_ value: AppSignInFooter) -> RustBuffer {
+    return FfiConverterTypeAppSignInFooter.lower(value)
+}
+
+
+public struct AppSignInFooterInput: Equatable, Hashable {
+    /**
+     * The signed-in account.
+     */
+    public var identity: String?
+    /**
+     * Cua Cloud works through client credentials (an API key).
+     */
+    public var cloudConfigured: Bool
+    /**
+     * Signing in is possible here.
+     */
+    public var canSignIn: Bool
+    /**
+     * The sign-in in progress.
+     */
+    public var signIn: AppSignInPhase
+    /**
+     * The page the sign-in finishes on is known (Open again).
+     */
+    public var hasUrl: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The signed-in account.
+         */identity: String?,
+        /**
+         * Cua Cloud works through client credentials (an API key).
+         */cloudConfigured: Bool,
+        /**
+         * Signing in is possible here.
+         */canSignIn: Bool,
+        /**
+         * The sign-in in progress.
+         */signIn: AppSignInPhase,
+        /**
+         * The page the sign-in finishes on is known (Open again).
+         */hasUrl: Bool) {
+        self.identity = identity
+        self.cloudConfigured = cloudConfigured
+        self.canSignIn = canSignIn
+        self.signIn = signIn
+        self.hasUrl = hasUrl
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppSignInFooterInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppSignInFooterInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppSignInFooterInput {
+        return
+            try AppSignInFooterInput(
+                identity: FfiConverterOptionString.read(from: &buf),
+                cloudConfigured: FfiConverterBool.read(from: &buf),
+                canSignIn: FfiConverterBool.read(from: &buf),
+                signIn: FfiConverterTypeAppSignInPhase.read(from: &buf),
+                hasUrl: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppSignInFooterInput, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.identity, into: &buf)
+        FfiConverterBool.write(value.cloudConfigured, into: &buf)
+        FfiConverterBool.write(value.canSignIn, into: &buf)
+        FfiConverterTypeAppSignInPhase.write(value.signIn, into: &buf)
+        FfiConverterBool.write(value.hasUrl, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppSignInFooterInput_lift(_ buf: RustBuffer) throws -> AppSignInFooterInput {
+    return try FfiConverterTypeAppSignInFooterInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppSignInFooterInput_lower(_ value: AppSignInFooterInput) -> RustBuffer {
+    return FfiConverterTypeAppSignInFooterInput.lower(value)
+}
+
+
+public struct AppSignInToast: Equatable, Hashable {
+    /**
+     * "Sign-in didn't finish".
+     */
+    public var title: String
+    /**
+     * The reason (none for an unknown one).
+     */
+    public var body: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * "Sign-in didn't finish".
+         */title: String,
+        /**
+         * The reason (none for an unknown one).
+         */body: String?) {
+        self.title = title
+        self.body = body
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppSignInToast: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppSignInToast: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppSignInToast {
+        return
+            try AppSignInToast(
+                title: FfiConverterString.read(from: &buf),
+                body: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppSignInToast, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterOptionString.write(value.body, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppSignInToast_lift(_ buf: RustBuffer) throws -> AppSignInToast {
+    return try FfiConverterTypeAppSignInToast.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppSignInToast_lower(_ value: AppSignInToast) -> RustBuffer {
+    return FfiConverterTypeAppSignInToast.lower(value)
+}
+
+
 public struct AppSpace: Equatable, Hashable {
     /**
      * Sandbox ref (`cloud:<name>`, `local:<name>`, `direct:<host:port>`, ...).
@@ -55725,6 +56055,234 @@ public func FfiConverterTypeAppShareSheetAction_lower(_ value: AppShareSheetActi
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum AppSignInFailure: Equatable, Hashable {
+
+    /**
+     * The browser never confirmed: the wait ran out, or the code expired
+     * before it was confirmed.
+     */
+    case notConfirmed
+    /**
+     * The person declined it in the browser.
+     */
+    case declined
+    /**
+     * The sign-in service refused the code (expired or already used).
+     */
+    case codeRejected
+    /**
+     * This computer could not reach the sign-in service.
+     */
+    case offline
+    /**
+     * The sign-in service answered with its own error.
+     */
+    case serviceUnavailable
+    /**
+     * Signed in, but the session could not be stored on this computer (a
+     * locked keychain, a credential store that refused the write).
+     */
+    case couldNotSave
+    /**
+     * Anything else (the words are behind Details).
+     */
+    case unknown
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppSignInFailure: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppSignInFailure: FfiConverterRustBuffer {
+    typealias SwiftType = AppSignInFailure
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppSignInFailure {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .notConfirmed
+
+        case 2: return .declined
+
+        case 3: return .codeRejected
+
+        case 4: return .offline
+
+        case 5: return .serviceUnavailable
+
+        case 6: return .couldNotSave
+
+        case 7: return .unknown
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AppSignInFailure, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .notConfirmed:
+            writeInt(&buf, Int32(1))
+
+
+        case .declined:
+            writeInt(&buf, Int32(2))
+
+
+        case .codeRejected:
+            writeInt(&buf, Int32(3))
+
+
+        case .offline:
+            writeInt(&buf, Int32(4))
+
+
+        case .serviceUnavailable:
+            writeInt(&buf, Int32(5))
+
+
+        case .couldNotSave:
+            writeInt(&buf, Int32(6))
+
+
+        case .unknown:
+            writeInt(&buf, Int32(7))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppSignInFailure_lift(_ buf: RustBuffer) throws -> AppSignInFailure {
+    return try FfiConverterTypeAppSignInFailure.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppSignInFailure_lower(_ value: AppSignInFailure) -> RustBuffer {
+    return FfiConverterTypeAppSignInFailure.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum AppSignInFooterState: Equatable, Hashable {
+
+    /**
+     * Not signed in: "Sign in".
+     */
+    case signedOut
+    /**
+     * Asking for a code / opening the browser.
+     */
+    case starting
+    /**
+     * The browser is open.
+     */
+    case waiting
+    /**
+     * It failed: the reason and Try again.
+     */
+    case failed
+    /**
+     * Signed in.
+     */
+    case signedIn
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppSignInFooterState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppSignInFooterState: FfiConverterRustBuffer {
+    typealias SwiftType = AppSignInFooterState
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppSignInFooterState {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .signedOut
+
+        case 2: return .starting
+
+        case 3: return .waiting
+
+        case 4: return .failed
+
+        case 5: return .signedIn
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AppSignInFooterState, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .signedOut:
+            writeInt(&buf, Int32(1))
+
+
+        case .starting:
+            writeInt(&buf, Int32(2))
+
+
+        case .waiting:
+            writeInt(&buf, Int32(3))
+
+
+        case .failed:
+            writeInt(&buf, Int32(4))
+
+
+        case .signedIn:
+            writeInt(&buf, Int32(5))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppSignInFooterState_lift(_ buf: RustBuffer) throws -> AppSignInFooterState {
+    return try FfiConverterTypeAppSignInFooterState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppSignInFooterState_lower(_ value: AppSignInFooterState) -> RustBuffer {
+    return FfiConverterTypeAppSignInFooterState.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum AppSignInPhase: Equatable, Hashable {
 
     /**
@@ -55741,15 +56299,25 @@ public enum AppSignInPhase: Equatable, Hashable {
     case waiting(
         /**
          * The code to confirm there, when the flow has one.
-         */userCode: String?
+         */userCode: String?,
+        /**
+         * A browser opened on this computer (false: the page is to be
+         * opened by hand, here or on another device).
+         */opened: Bool
     )
     /**
-     * It failed.
+     * It failed ([`crate::sign_in::failed`] makes it).
      */
     case failed(
         /**
-         * Why.
-         */message: String
+         * Why ([`crate::sign_in::SignInFailure`]).
+         */reason: AppSignInFailure,
+        /**
+         * The line shown: "Sign-in didn't finish." and the reason.
+         */message: String,
+        /**
+         * The error's own words, behind Details (never shown by default).
+         */detail: String?
     )
 
 
@@ -55776,10 +56344,10 @@ public struct FfiConverterTypeAppSignInPhase: FfiConverterRustBuffer {
 
         case 2: return .starting
 
-        case 3: return .waiting(userCode: try FfiConverterOptionString.read(from: &buf)
+        case 3: return .waiting(userCode: try FfiConverterOptionString.read(from: &buf), opened: try FfiConverterBool.read(from: &buf)
         )
 
-        case 4: return .failed(message: try FfiConverterString.read(from: &buf)
+        case 4: return .failed(reason: try FfiConverterTypeAppSignInFailure.read(from: &buf), message: try FfiConverterString.read(from: &buf), detail: try FfiConverterOptionString.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -55798,14 +56366,17 @@ public struct FfiConverterTypeAppSignInPhase: FfiConverterRustBuffer {
             writeInt(&buf, Int32(2))
 
 
-        case let .waiting(userCode):
+        case let .waiting(userCode,opened):
             writeInt(&buf, Int32(3))
             FfiConverterOptionString.write(userCode, into: &buf)
+            FfiConverterBool.write(opened, into: &buf)
 
 
-        case let .failed(message):
+        case let .failed(reason,message,detail):
             writeInt(&buf, Int32(4))
+            FfiConverterTypeAppSignInFailure.write(reason, into: &buf)
             FfiConverterString.write(message, into: &buf)
+            FfiConverterOptionString.write(detail, into: &buf)
 
         }
     }
@@ -63449,6 +64020,30 @@ fileprivate struct FfiConverterOptionTypeAppSidebarRow: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeAppSignInToast: FfiConverterRustBuffer {
+    typealias SwiftType = AppSignInToast?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppSignInToast.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppSignInToast.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeAppSpacePower: FfiConverterRustBuffer {
     typealias SwiftType = AppSpacePower?
 
@@ -64329,6 +64924,30 @@ fileprivate struct FfiConverterOptionTypeAppShareRequest: FfiConverterRustBuffer
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeAppShareRequest.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppSignInFailure: FfiConverterRustBuffer {
+    typealias SwiftType = AppSignInFailure?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppSignInFailure.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppSignInFailure.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -71497,6 +72116,39 @@ public func appSidebar(spaces: [AppSpace], query: String, selectedId: String) ->
 })
 }
 /**
+ * The failed phase for a known reason, with the error's words for Details.
+ */
+public func appSignInFailed(reason: AppSignInFailure, detail: String?) -> AppSignInPhase  {
+    return try!  FfiConverterTypeAppSignInPhase_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_sign_in_failed(
+        FfiConverterTypeAppSignInFailure_lower(reason),
+        FfiConverterOptionString.lower(detail),$0
+    )
+})
+}
+/**
+ * The failed phase for an error the shell caught: the SDK error's case
+ * (`Timeout`, `Http`, ...; empty for another error) and its words.
+ */
+public func appSignInFailedFromError(variant: String, message: String) -> AppSignInPhase  {
+    return try!  FfiConverterTypeAppSignInPhase_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_sign_in_failed_from_error(
+        FfiConverterString.lower(variant),
+        FfiConverterString.lower(message),$0
+    )
+})
+}
+/**
+ * The sidebar's foot: every sign-in state in one place.
+ */
+public func appSignInFooter(input: AppSignInFooterInput) -> AppSignInFooter  {
+    return try!  FfiConverterTypeAppSignInFooter_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_sign_in_footer(
+        FfiConverterTypeAppSignInFooterInput_lower(input),$0
+    )
+})
+}
+/**
  * Whether a Space takes a teleport drop (the notch tiles' and the Space
  * rows' rule).
  */
@@ -71911,6 +72563,16 @@ public func appTelemetrySignInFailed(message: String?) -> [AppTelemetrySignal]  
     return try!  FfiConverterSequenceTypeAppTelemetrySignal.lift(try! rustCall() {
     uniffi_cua_spaces_ffi_fn_func_app_telemetry_sign_in_failed(
         FfiConverterOptionString.lower(message),$0
+    )
+})
+}
+/**
+ * A sign-in failed for `reason` or was cancelled (none): its kind only.
+ */
+public func appTelemetrySignInFailure(reason: AppSignInFailure?) -> [AppTelemetrySignal]  {
+    return try!  FfiConverterSequenceTypeAppTelemetrySignal.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_telemetry_sign_in_failure(
+        FfiConverterOptionTypeAppSignInFailure.lower(reason),$0
     )
 })
 }
@@ -73250,6 +73912,15 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_sidebar() != 2197) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_sign_in_failed() != 6165) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_sign_in_failed_from_error() != 6411) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_sign_in_footer() != 8779) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_spaces_ffi_checksum_func_app_space_accepts_drop() != 51121) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -73359,6 +74030,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_telemetry_sign_in_failed() != 34262) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_telemetry_sign_in_failure() != 23014) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_telemetry_start() != 30125) {

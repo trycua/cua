@@ -457,7 +457,14 @@ struct ViewModelTests {
         let model = makeModel(account: account, telemetry: telemetry)
         let first = Task { await model.beginSignIn() }
         try await waitUntil { if case .waiting = model.signIn { true } else { false } }
-        #expect(model.signIn == .waiting(userCode: "ABCD-EFGH"))
+        #expect(model.signIn == .waiting(userCode: "ABCD-EFGH", opened: true))
+        // The sidebar's foot: the spinner line, the code, Open again, Cancel.
+        let waiting = model.signInFooter
+        #expect(waiting.state == .waiting)
+        #expect(waiting.text == "Waiting for your browser\u{2026}")
+        #expect(waiting.code == "ABCD-EFGH")
+        #expect(waiting.reopenLabel == "Open again")
+        #expect(waiting.cancelLabel == "Cancel")
         #expect(model.signInURL?.absoluteString == "https://cua.ai/device")
         model.cancelSignIn()
         #expect(model.signIn == .idle)
@@ -467,13 +474,87 @@ struct ViewModelTests {
         model.signInTimeout = .milliseconds(50)
         let second = Task { await model.beginSignIn() }
         try await waitUntil { if case .failed = model.signIn { true } else { false } }
-        #expect(model.signIn == .failed(message: "The sign-in timed out. Try again."))
+        #expect(model.signIn == .failed(reason: .notConfirmed,
+                                        message: "Sign-in didn't finish. The browser didn't confirm in time.",
+                                        detail: nil))
+        #expect(model.signInFooter.actionLabel == "Try again")
+        #expect(model.signInToast?.title == "Sign-in didn't finish")
         second.cancel()
         let kinds = telemetry.recorded.compactMap { s -> String? in
             if case let .signInFailed(kind) = s { return kind }
             return nil
         }
         #expect(kinds == ["cancelled", "timeout"])
+    }
+
+    /// Every way the account's sign-in fails is shown in the sidebar's
+    /// foot with its reason, Try again and a toast; never a silent stop.
+    @Test func everySignInFailureIsShownWithItsReason() async throws {
+        let cases: [(Error, AppSignInFailure, String)] = [
+            (CuaError.Http(message: "could not reach the sign-in service: error sending request"), .offline, "transport"),
+            (CuaError.Timeout(message: "device authorization expired before it was completed"), .notConfirmed, "timeout"),
+            (CuaError.Unauthenticated(message: "sign-in was declined in the browser: access_denied"), .declined, "permission_denied"),
+            (CuaError.Unauthenticated(message: "Code not valid"), .codeRejected, "unauthenticated"),
+            (CuaError.Http(message: "the sign-in service answered HTTP 503: down"), .serviceUnavailable, "http"),
+            (CuaError.Internal(message: "credential store: User interaction is not allowed."), .couldNotSave, "internal"),
+        ]
+        for (error, reason, kind) in cases {
+            for whileStarting in [true, false] {
+                let telemetry = FixtureTelemetry()
+                let account = FailingAccount(error: error, whileStarting: whileStarting)
+                let model = makeModel(account: account, telemetry: telemetry)
+                await model.beginSignIn()
+                guard case let .failed(got, message, detail) = model.signIn else {
+                    Issue.record("\(error): \(model.signIn)")
+                    continue
+                }
+                #expect(got == reason, "\(error)")
+                #expect(message.hasPrefix("Sign-in didn't finish. "))
+                #expect(detail == LiveSpacesBackend.words(error), "the words stay behind Details")
+                let footer = model.signInFooter
+                #expect(footer.state == .failed)
+                #expect(footer.actionLabel == "Try again")
+                #expect(footer.detail == detail)
+                #expect(model.signInToast != nil, "a failure toasts")
+                let kinds = telemetry.recorded.compactMap { s -> String? in
+                    if case let .signInFailed(kind) = s { return kind }
+                    return nil
+                }
+                #expect(kinds == [kind])
+            }
+        }
+    }
+
+    /// Open again or Try again starts a new attempt; when the person then
+    /// confirms the first tab, the app is signed in all the same.
+    @Test func anEarlierTabThatConfirmsStillSignsIn() async throws {
+        let account = TwoTabAccount()
+        let model = makeModel(account: account)
+        let first = Task { await model.beginSignIn() }
+        try await waitUntil { model.signIn == .waiting(userCode: "TAB-1", opened: true) }
+        model.cancelSignIn()
+        let second = Task { await model.beginSignIn() }
+        try await waitUntil { model.signIn == .waiting(userCode: "TAB-2", opened: true) }
+        account.confirm(tab: 1)
+        await first.value
+        #expect(model.identity == "ellie@example.com")
+        #expect(model.signIn == .idle)
+        #expect(model.signInFooter.text == "Signed in as ellie@example.com")
+        // The second attempt's own end is no longer shown.
+        account.fail(tab: 2)
+        await second.value
+        #expect(model.signIn == .idle)
+    }
+
+    /// No browser opened: the foot says to open the page instead of
+    /// waiting on a browser that is not there.
+    @Test func noBrowserSaysToOpenThePage() async throws {
+        let model = makeModel(account: StuckAccount(opened: false))
+        let task = Task { await model.beginSignIn() }
+        try await waitUntil { if case .waiting = model.signIn { true } else { false } }
+        #expect(model.signInFooter.text == "Open the sign-in page to continue.")
+        #expect(model.signInFooter.code == "ABCD-EFGH")
+        task.cancel()
     }
 
     func waitUntil(_ done: @MainActor () -> Bool) async throws {
@@ -1412,12 +1493,57 @@ struct ViewModelTests {
 
 /// An account whose browser sign-in never finishes.
 final class StuckAccount: AccountRunning, @unchecked Sendable {
+    let opened: Bool
+    init(opened: Bool = true) { self.opened = opened }
     func identity() -> String? { nil }
     func beginSignIn() async throws -> SignInAttempt {
-        SignInAttempt(userCode: "ABCD-EFGH", url: URL(string: "https://cua.ai/device")) {
+        SignInAttempt(userCode: "ABCD-EFGH", url: URL(string: "https://cua.ai/device"), opened: opened) {
             try await Task.sleep(for: .seconds(3600))
             return nil
         }
+    }
+    func signOut() async throws {}
+}
+
+/// An account whose sign-in fails with `error`, while starting or while
+/// waiting for the browser.
+final class FailingAccount: AccountRunning, @unchecked Sendable {
+    let error: Error
+    let whileStarting: Bool
+    init(error: Error, whileStarting: Bool) {
+        self.error = error
+        self.whileStarting = whileStarting
+    }
+    func identity() -> String? { nil }
+    func beginSignIn() async throws -> SignInAttempt {
+        if whileStarting { throw error }
+        let error = error
+        return SignInAttempt(userCode: "ABCD-EFGH", url: URL(string: "https://cua.ai/device")) { throw error }
+    }
+    func signOut() async throws {}
+}
+
+/// An account with two browser tabs (two attempts) the test confirms or
+/// fails by hand.
+final class TwoTabAccount: AccountRunning, @unchecked Sendable {
+    private let lock = NSLock()
+    private var tabs: [Int: CheckedContinuation<String?, Error>] = [:]
+    private var started = 0
+    private var signedIn: String?
+
+    func identity() -> String? { lock.withLock { signedIn } }
+    func beginSignIn() async throws -> SignInAttempt {
+        let tab = lock.withLock { started += 1; return started }
+        return SignInAttempt(userCode: "TAB-\(tab)", url: URL(string: "https://cua.ai/device")) { [self] in
+            try await withCheckedThrowingContinuation { c in lock.withLock { tabs[tab] = c } }
+        }
+    }
+    func confirm(tab: Int) {
+        let c = lock.withLock { signedIn = "ellie@example.com"; return tabs.removeValue(forKey: tab) }
+        c?.resume(returning: "ellie@example.com")
+    }
+    func fail(tab: Int) {
+        lock.withLock { tabs.removeValue(forKey: tab) }?.resume(throwing: CuaError.Timeout(message: "expired"))
     }
     func signOut() async throws {}
 }

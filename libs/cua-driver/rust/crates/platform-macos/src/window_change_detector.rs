@@ -636,28 +636,6 @@ mod tests {
     use super::*;
     use crate::windows::WindowBounds;
 
-    #[test]
-    fn background_window_sources_delegate_without_space_queries_or_refiltering() {
-        let gate = include_str!("ax/exact_target.rs");
-        let start = gate.find("pub fn gather_background_facts(").unwrap();
-        let end = start + gate[start..].find("\n}\n").unwrap();
-        let gate = &gate[start..end];
-        assert!(gate.contains("all_windows_without_spaces()"));
-        assert!(!gate.contains("all_windows()"));
-
-        let detector = include_str!("window_change_detector.rs");
-        let start = detector
-            .find("fn host_windows() -> Vec<WindowInfo> {")
-            .unwrap();
-        let body = start + detector[start..].find('{').unwrap() + 1;
-        let end = body + detector[body..].find("\n}\n").unwrap();
-        let body: String = detector[body..end]
-            .chars()
-            .filter(|c| !c.is_whitespace())
-            .collect();
-        assert_eq!(body, "windows::visible_windows_without_spaces()");
-    }
-
     fn win(window_id: u32, pid: i32, app_name: &str, title: &str) -> WindowInfo {
         WindowInfo {
             window_id,

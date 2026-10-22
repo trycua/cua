@@ -765,7 +765,6 @@ export const MERGED: Record<string, string> = {
   'spaces/volume-sync': 'spaces/volume',
   'spaces/devices': 'spaces/host',
   'spaces/machine-health': 'spaces/host',
-  'agent-setup': 'agents',
   telemetry: 'auth',
 };
 
@@ -807,7 +806,7 @@ export const MAX_TABS = 30;
 /** Groups of the reference sidebar; folders other generators own are listed by name. */
 const NAV: Array<[label: string, pages: string[]]> = [
   ['Sandboxes', ['cua', 'sandbox', 'image', 'os-image-catalog', 'image-software', 'services', 'runtime-support']],
-  ['Inside a sandbox', ['spacesd', 'agents']],
+  ['Inside a sandbox', ['spacesd', 'agents', 'agent-setup']],
   ['Spaces', ['spaces']],
   ['Account', ['auth']],
   ['Errors and types', [ERRORS_SLUG, TYPES_SLUG]],

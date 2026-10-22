@@ -437,7 +437,11 @@ export class BridgeStore {
           break;
         }
         case "machines": {
-          if (!this.machinesPinned) this.machineRows = await this.adapter.call("machines.list", {});
+          if (!this.machinesPinned) {
+            const rows = await this.adapter.call("machines.list", {});
+            // Rows shown on purpose (`showMachines`) while the host answered stay.
+            if (!this.machinesPinned) this.machineRows = rows;
+          }
           this.publishMachines();
           break;
         }

@@ -55,6 +55,7 @@ TYPES = [
     ("login_item.rs", "login_item", ["LoginItemStatus", "LoginItemInput", "LoginItemPlan"]),
     ("experiments.rs", "experiments", ["Experiments"]),
     ("settings.rs", "settings", ["SwitcherTheme", "AppSettings", "KeyCombo", "SignInPhase", "TelemetryInput", "SettingsInput", "SettingsRowKind", "SettingsOption", "SettingsRow", "SettingsSection", "SettingsPage"]),
+    ("sign_in.rs", "sign_in", ["SignInFailure", "SignInFooterState", "SignInFooterInput", "SignInToast", "SignInFooter"]),
     ("window.rs", "window", ["ChromeInput", "MainChrome", "MenuItemId", "MenuItem", "MenuInput"]),
     ("host.rs", "host", ["HostSummaryInput", "HostSetupRequest", "HostClient", "HostAccess", "HostPermissionInput", "HostProvidedSpace", "HostSpacesAudit", "HostState", "HostAccount", "HostAccountStep", "HostActionId", "HostSettingChange", "HostToggle", "HostConfirm", "HostAction", "HostAccessRow", "PermissionRow", "HostSetupChoice", "HostPanelView", "HostFormState", "HostFormAction", "HostFormChoice", "HostFormField", "HostFormView"]),
     ("installer.rs", "installer", ["InstallMethod", "CliInstallPlan", "CliInstallRequest"]),

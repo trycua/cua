@@ -163,12 +163,25 @@ export interface SessionSnapshot {
   /** A native host's sign-in waiting for the browser (it runs the flow
    * itself): the code to confirm and the page it finishes on. */
   hostSignIn?: HostSignIn | null;
+  /** A native host's sign-in that failed (its reason, the core's line and
+   * the error's words for Details): the page shows it, never a wait that
+   * goes on. Absent from an older host. */
+  hostSignInFailure?: HostSignInFailure | null;
 }
 
 /** A sign-in the host waits on (`SessionSnapshot.hostSignIn`). */
 export interface HostSignIn {
   userCode: string | null;
   url: string | null;
+  /** A browser opened on the host (false: open the page by hand). */
+  opened?: boolean;
+}
+
+/** A host sign-in that failed (`SessionSnapshot.hostSignInFailure`). */
+export interface HostSignInFailure {
+  reason: string;
+  message: string;
+  detail: string | null;
 }
 
 /* ---- Operations ---------------------------------------------------------- */

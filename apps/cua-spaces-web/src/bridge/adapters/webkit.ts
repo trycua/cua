@@ -330,8 +330,16 @@ export function toSessionSnapshot(s: WkSession, onboarding: WkOnboarding | null 
     // The SwiftUI app's first run is its own window; Electron's is the page's.
     onboarding: onboarding ? { completed: onboarding.completed, mode: onboarding.mode } : { completed: true, mode: "client" },
     daemon: null,
-    // The host runs the sign-in: while it waits, its code and page.
-    hostSignIn: typeof s.signIn === "object" && s.signIn.type === "waiting" ? { userCode: opt(s.signIn.userCode) ?? null, url: opt(s.signInUrl) ?? null } : null,
+    // The host runs the sign-in: while it waits, its code and page; when
+    // it failed, why (the page shows it instead of waiting on).
+    hostSignIn:
+      typeof s.signIn === "object" && s.signIn.type === "waiting"
+        ? { userCode: opt(s.signIn.userCode) ?? null, url: opt(s.signInUrl) ?? null, opened: s.signIn.opened !== false }
+        : null,
+    hostSignInFailure:
+      typeof s.signIn === "object" && s.signIn.type === "failed"
+        ? { reason: s.signIn.reason ?? "unknown", message: s.signIn.message ?? "", detail: opt(s.signIn.detail) ?? null }
+        : null,
   };
 }
 

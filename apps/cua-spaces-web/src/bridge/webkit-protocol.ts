@@ -306,8 +306,8 @@ export interface WkSession {
   identity: string | null;
   signedIn: boolean;
   cloudConfigured: boolean;
-  /** `idle`, `starting`, `{type: "waiting", userCode}`, `{type: "failed", message}`. */
-  signIn: string | { type: string; userCode?: string | null; message?: string };
+  /** `idle`, `starting`, `{type: "waiting", userCode, opened}`, `{type: "failed", reason, message, detail}`. */
+  signIn: string | { type: string; userCode?: string | null; opened?: boolean; reason?: string; message?: string; detail?: string | null };
   /** The page a waiting sign-in finishes on (null otherwise), to show and copy. */
   signInUrl?: string | null;
 }

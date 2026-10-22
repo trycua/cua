@@ -4472,6 +4472,69 @@ export function appSidebar(spaces: Array<AppSpace>, query: string, selectedId: s
     }
 
 /**
+ * The failed phase for a known reason, with the error's words for Details.
+ */
+export function appSignInFailed(reason: AppSignInFailure, detail: string | undefined): AppSignInPhase {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeAppSignInPhase.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_sign_in_failed(
+        FfiConverterTypeAppSignInFailure.lower(reason, nativeModule().rustbuffer_alloc),
+        FfiConverterOptionalString.lower(detail, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * The failed phase for an error the shell caught: the SDK error's case
+ * (`Timeout`, `Http`, ...; empty for another error) and its words.
+ */
+export function appSignInFailedFromError(variant: string, message: string): AppSignInPhase {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeAppSignInPhase.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_sign_in_failed_from_error(
+        FfiConverterString.lower(variant, nativeModule().rustbuffer_alloc),
+        FfiConverterString.lower(message, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * The sidebar's foot: every sign-in state in one place.
+ */
+export function appSignInFooter(input: AppSignInFooterInput): AppSignInFooter {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeAppSignInFooter.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_sign_in_footer(
+        FfiConverterTypeAppSignInFooterInput.lower(input, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
  * Whether a Space takes a teleport drop (the notch tiles' and the Space
  * rows' rule).
  */
@@ -5253,6 +5316,26 @@ export function appTelemetrySignInFailed(message: string | undefined): Array<App
             /*caller:*/ (callStatus) => {
                 return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_telemetry_sign_in_failed(
         FfiConverterOptionalString.lower(message, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * A sign-in failed for `reason` or was cancelled (none): its kind only.
+ */
+export function appTelemetrySignInFailure(reason: AppSignInFailure | undefined): Array<AppTelemetrySignal> {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterSequenceTypeAppTelemetrySignal.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_telemetry_sign_in_failure(
+        FfiConverterOptionalTypeAppSignInFailure.lower(reason, nativeModule().rustbuffer_alloc),
                 callStatus);
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
@@ -35885,6 +35968,73 @@ const FfiConverterTypeAppSettings = (() => {
     return new FFIConverter();
 })();
 
+export enum AppSignInFailure {
+    /**
+     * The browser never confirmed: the wait ran out, or the code expired
+     * before it was confirmed.
+     */
+    NotConfirmed = "notConfirmed",
+    /**
+     * The person declined it in the browser.
+     */
+    Declined = "declined",
+    /**
+     * The sign-in service refused the code (expired or already used).
+     */
+    CodeRejected = "codeRejected",
+    /**
+     * This computer could not reach the sign-in service.
+     */
+    Offline = "offline",
+    /**
+     * The sign-in service answered with its own error.
+     */
+    ServiceUnavailable = "serviceUnavailable",
+    /**
+     * Signed in, but the session could not be stored on this computer (a
+     * locked keychain, a credential store that refused the write).
+     */
+    CouldNotSave = "couldNotSave",
+    /**
+     * Anything else (the words are behind Details).
+     */
+    Unknown = "unknown"
+}
+
+const FfiConverterTypeAppSignInFailure = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = AppSignInFailure;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return AppSignInFailure.NotConfirmed;
+                case 2: return AppSignInFailure.Declined;
+                case 3: return AppSignInFailure.CodeRejected;
+                case 4: return AppSignInFailure.Offline;
+                case 5: return AppSignInFailure.ServiceUnavailable;
+                case 6: return AppSignInFailure.CouldNotSave;
+                case 7: return AppSignInFailure.Unknown;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case AppSignInFailure.NotConfirmed: return ordinalConverter.write(1, into);
+                case AppSignInFailure.Declined: return ordinalConverter.write(2, into);
+                case AppSignInFailure.CodeRejected: return ordinalConverter.write(3, into);
+                case AppSignInFailure.Offline: return ordinalConverter.write(4, into);
+                case AppSignInFailure.ServiceUnavailable: return ordinalConverter.write(5, into);
+                case AppSignInFailure.CouldNotSave: return ordinalConverter.write(6, into);
+                case AppSignInFailure.Unknown: return ordinalConverter.write(7, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
 
 // Enum: AppSignInPhase
 export enum AppSignInPhase_Tags {
@@ -35952,7 +36102,7 @@ export const AppSignInPhase = (() => {
     type Waiting__interface = {
         tag: AppSignInPhase_Tags.Waiting;
         inner:
-Readonly<{userCode?: string}>
+Readonly<{userCode?: string; opened: boolean}>
     };
     /**
      * The browser is open.
@@ -35965,15 +36115,15 @@ Readonly<{userCode?: string}>
         readonly [uniffiTypeNameSymbol] = "AppSignInPhase";
         readonly tag = AppSignInPhase_Tags.Waiting;
         readonly inner:
-Readonly<{userCode?: string}>;
+Readonly<{userCode?: string; opened: boolean}>;
         constructor(
-inner: {userCode?: string }) {
+inner: {userCode?: string; opened: boolean }) {
             super("AppSignInPhase", "Waiting");
 
             this.inner = Object.freeze(inner);
         }
         static new(
-inner: {userCode?: string }): Waiting_ {
+inner: {userCode?: string; opened: boolean }): Waiting_ {
             return new Waiting_(inner);
         }
 
@@ -35986,10 +36136,10 @@ inner: {userCode?: string }): Waiting_ {
     type Failed__interface = {
         tag: AppSignInPhase_Tags.Failed;
         inner:
-Readonly<{message: string}>
+Readonly<{reason: AppSignInFailure; message: string; detail?: string}>
     };
     /**
-     * It failed.
+     * It failed ([`crate::sign_in::failed`] makes it).
      */
     class Failed_ extends UniffiEnum implements Failed__interface {
         /**
@@ -35999,15 +36149,15 @@ Readonly<{message: string}>
         readonly [uniffiTypeNameSymbol] = "AppSignInPhase";
         readonly tag = AppSignInPhase_Tags.Failed;
         readonly inner:
-Readonly<{message: string}>;
+Readonly<{reason: AppSignInFailure; message: string; detail?: string}>;
         constructor(
-inner: {message: string }) {
+inner: {reason: AppSignInFailure; message: string; detail?: string }) {
             super("AppSignInPhase", "Failed");
 
             this.inner = Object.freeze(inner);
         }
         static new(
-inner: {message: string }): Failed_ {
+inner: {reason: AppSignInFailure; message: string; detail?: string }): Failed_ {
             return new Failed_(inner);
         }
 
@@ -36043,8 +36193,8 @@ const FfiConverterTypeAppSignInPhase = (() => {
             switch (ordinalConverter.read(from)) {
                 case 1: return new AppSignInPhase.Idle();
                 case 2: return new AppSignInPhase.Starting();
-                case 3: return new AppSignInPhase.Waiting({userCode: FfiConverterOptionalString.read(from) });
-                case 4: return new AppSignInPhase.Failed({message: FfiConverterString.read(from) });
+                case 3: return new AppSignInPhase.Waiting({userCode: FfiConverterOptionalString.read(from), opened: FfiConverterBool.read(from) });
+                case 4: return new AppSignInPhase.Failed({reason: FfiConverterTypeAppSignInFailure.read(from), message: FfiConverterString.read(from), detail: FfiConverterOptionalString.read(from) });
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -36062,12 +36212,15 @@ const FfiConverterTypeAppSignInPhase = (() => {
                     ordinalConverter.write(3, into);
                     const inner = value.inner;
                     FfiConverterOptionalString.write(inner.userCode, into);
+                    FfiConverterBool.write(inner.opened, into);
                     return;
                 }
                 case AppSignInPhase_Tags.Failed: {
                     ordinalConverter.write(4, into);
                     const inner = value.inner;
+                    FfiConverterTypeAppSignInFailure.write(inner.reason, into);
                     FfiConverterString.write(inner.message, into);
+                    FfiConverterOptionalString.write(inner.detail, into);
                     return;
                 }
                 default:
@@ -36087,12 +36240,15 @@ const FfiConverterTypeAppSignInPhase = (() => {
                     const inner = value.inner;
                     let size = ordinalConverter.allocationSize(3);
                     size += FfiConverterOptionalString.allocationSize(inner.userCode);
+                    size += FfiConverterBool.allocationSize(inner.opened);
                     return size;
                 }
                 case AppSignInPhase_Tags.Failed: {
                     const inner = value.inner;
                     let size = ordinalConverter.allocationSize(4);
+                    size += FfiConverterTypeAppSignInFailure.allocationSize(inner.reason);
                     size += FfiConverterString.allocationSize(inner.message);
+                    size += FfiConverterOptionalString.allocationSize(inner.detail);
                     return size;
                 }
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
@@ -37871,6 +38027,298 @@ const FfiConverterTypeAppSidebarView = (() => {
              FfiConverterSequenceTypeAppSidebarSection.allocationSize(value.sections) +
              FfiConverterOptionalString.allocationSize(value.selectedId) +
              FfiConverterOptionalTypeAppMsg.allocationSize(value.emptyText);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export enum AppSignInFooterState {
+    /**
+     * Not signed in: "Sign in".
+     */
+    SignedOut = "signedOut",
+    /**
+     * Asking for a code / opening the browser.
+     */
+    Starting = "starting",
+    /**
+     * The browser is open.
+     */
+    Waiting = "waiting",
+    /**
+     * It failed: the reason and Try again.
+     */
+    Failed = "failed",
+    /**
+     * Signed in.
+     */
+    SignedIn = "signedIn"
+}
+
+const FfiConverterTypeAppSignInFooterState = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = AppSignInFooterState;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return AppSignInFooterState.SignedOut;
+                case 2: return AppSignInFooterState.Starting;
+                case 3: return AppSignInFooterState.Waiting;
+                case 4: return AppSignInFooterState.Failed;
+                case 5: return AppSignInFooterState.SignedIn;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case AppSignInFooterState.SignedOut: return ordinalConverter.write(1, into);
+                case AppSignInFooterState.Starting: return ordinalConverter.write(2, into);
+                case AppSignInFooterState.Waiting: return ordinalConverter.write(3, into);
+                case AppSignInFooterState.Failed: return ordinalConverter.write(4, into);
+                case AppSignInFooterState.SignedIn: return ordinalConverter.write(5, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+export type AppSignInToast = {
+    /**
+     * "Sign-in didn't finish".
+     */
+    title: string,
+    /**
+     * The reason (none for an unknown one).
+     */
+    body?: string
+}
+
+/**
+ * Generated factory for {@link AppSignInToast} record objects.
+ */
+export const AppSignInToast = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppSignInToast, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppSignInToast>,
+    });
+})();
+
+const FfiConverterTypeAppSignInToast = (() => {
+    type TypeName = AppSignInToast;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                title: FfiConverterString.read(from),
+                body: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.title, into);
+            FfiConverterOptionalString.write(value.body, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.title) +
+             FfiConverterOptionalString.allocationSize(value.body);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppSignInFooter = {
+    /**
+     * Which state.
+     */
+    state: AppSignInFooterState,
+    /**
+     * The line: "Signed in as …", "Waiting for your browser…", "Sign-in
+     * didn't finish. …", "Not signed in".
+     */
+    text: string,
+    /**
+     * The signed-in account (state `SignedIn`).
+     */
+    identity?: string,
+    /**
+     * Waiting: the code to confirm in the browser.
+     */
+    code?: string,
+    /**
+     * "Code".
+     */
+    codeLabel: string,
+    /**
+     * Waiting with a page: "Open again".
+     */
+    reopenLabel?: string,
+    /**
+     * Starting or waiting: "Cancel".
+     */
+    cancelLabel?: string,
+    /**
+     * "Sign in" or "Try again" (none while signed in or waiting).
+     */
+    actionLabel?: string,
+    /**
+     * Failed: why.
+     */
+    reason?: AppSignInFailure,
+    /**
+     * Failed: the error's own words, behind "Details".
+     */
+    detail?: string,
+    /**
+     * "Details".
+     */
+    detailsLabel: string,
+    /**
+     * Failed: the toast the shell shows once, when it fails.
+     */
+    toast?: AppSignInToast
+}
+
+/**
+ * Generated factory for {@link AppSignInFooter} record objects.
+ */
+export const AppSignInFooter = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppSignInFooter, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppSignInFooter>,
+    });
+})();
+
+const FfiConverterTypeAppSignInFooter = (() => {
+    type TypeName = AppSignInFooter;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                state: FfiConverterTypeAppSignInFooterState.read(from),
+                text: FfiConverterString.read(from),
+                identity: FfiConverterOptionalString.read(from),
+                code: FfiConverterOptionalString.read(from),
+                codeLabel: FfiConverterString.read(from),
+                reopenLabel: FfiConverterOptionalString.read(from),
+                cancelLabel: FfiConverterOptionalString.read(from),
+                actionLabel: FfiConverterOptionalString.read(from),
+                reason: FfiConverterOptionalTypeAppSignInFailure.read(from),
+                detail: FfiConverterOptionalString.read(from),
+                detailsLabel: FfiConverterString.read(from),
+                toast: FfiConverterOptionalTypeAppSignInToast.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeAppSignInFooterState.write(value.state, into);
+            FfiConverterString.write(value.text, into);
+            FfiConverterOptionalString.write(value.identity, into);
+            FfiConverterOptionalString.write(value.code, into);
+            FfiConverterString.write(value.codeLabel, into);
+            FfiConverterOptionalString.write(value.reopenLabel, into);
+            FfiConverterOptionalString.write(value.cancelLabel, into);
+            FfiConverterOptionalString.write(value.actionLabel, into);
+            FfiConverterOptionalTypeAppSignInFailure.write(value.reason, into);
+            FfiConverterOptionalString.write(value.detail, into);
+            FfiConverterString.write(value.detailsLabel, into);
+            FfiConverterOptionalTypeAppSignInToast.write(value.toast, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeAppSignInFooterState.allocationSize(value.state) +
+             FfiConverterString.allocationSize(value.text) +
+             FfiConverterOptionalString.allocationSize(value.identity) +
+             FfiConverterOptionalString.allocationSize(value.code) +
+             FfiConverterString.allocationSize(value.codeLabel) +
+             FfiConverterOptionalString.allocationSize(value.reopenLabel) +
+             FfiConverterOptionalString.allocationSize(value.cancelLabel) +
+             FfiConverterOptionalString.allocationSize(value.actionLabel) +
+             FfiConverterOptionalTypeAppSignInFailure.allocationSize(value.reason) +
+             FfiConverterOptionalString.allocationSize(value.detail) +
+             FfiConverterString.allocationSize(value.detailsLabel) +
+             FfiConverterOptionalTypeAppSignInToast.allocationSize(value.toast);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppSignInFooterInput = {
+    /**
+     * The signed-in account.
+     */
+    identity?: string,
+    /**
+     * Cua Cloud works through client credentials (an API key).
+     */
+    cloudConfigured: boolean,
+    /**
+     * Signing in is possible here.
+     */
+    canSignIn: boolean,
+    /**
+     * The sign-in in progress.
+     */
+    signIn: AppSignInPhase,
+    /**
+     * The page the sign-in finishes on is known (Open again).
+     */
+    hasUrl: boolean
+}
+
+/**
+ * Generated factory for {@link AppSignInFooterInput} record objects.
+ */
+export const AppSignInFooterInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppSignInFooterInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppSignInFooterInput>,
+    });
+})();
+
+const FfiConverterTypeAppSignInFooterInput = (() => {
+    type TypeName = AppSignInFooterInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                identity: FfiConverterOptionalString.read(from),
+                cloudConfigured: FfiConverterBool.read(from),
+                canSignIn: FfiConverterBool.read(from),
+                signIn: FfiConverterTypeAppSignInPhase.read(from),
+                hasUrl: FfiConverterBool.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalString.write(value.identity, into);
+            FfiConverterBool.write(value.cloudConfigured, into);
+            FfiConverterBool.write(value.canSignIn, into);
+            FfiConverterTypeAppSignInPhase.write(value.signIn, into);
+            FfiConverterBool.write(value.hasUrl, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalString.allocationSize(value.identity) +
+             FfiConverterBool.allocationSize(value.cloudConfigured) +
+             FfiConverterBool.allocationSize(value.canSignIn) +
+             FfiConverterTypeAppSignInPhase.allocationSize(value.signIn) +
+             FfiConverterBool.allocationSize(value.hasUrl);
 
         }
     };
@@ -63509,6 +63957,12 @@ const FfiConverterSequenceTypeAppSidebarSection = new FfiConverterArray(FfiConve
 // FfiConverter for AppMsg | undefined
 const FfiConverterOptionalTypeAppMsg = new FfiConverterOptional(FfiConverterTypeAppMsg);
 
+// FfiConverter for AppSignInFailure | undefined
+const FfiConverterOptionalTypeAppSignInFailure = new FfiConverterOptional(FfiConverterTypeAppSignInFailure);
+
+// FfiConverter for AppSignInToast | undefined
+const FfiConverterOptionalTypeAppSignInToast = new FfiConverterOptional(FfiConverterTypeAppSignInToast);
+
 // FfiConverter for Array<AppDetailAction>
 const FfiConverterSequenceTypeAppDetailAction = new FfiConverterArray(FfiConverterTypeAppDetailAction);
 
@@ -64467,6 +64921,15 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_sidebar() !== 2197) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_sidebar");
     }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_sign_in_failed() !== 6165) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_sign_in_failed");
+    }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_sign_in_failed_from_error() !== 6411) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_sign_in_failed_from_error");
+    }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_sign_in_footer() !== 8779) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_sign_in_footer");
+    }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_space_accepts_drop() !== 51121) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_space_accepts_drop");
     }
@@ -64577,6 +65040,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_telemetry_sign_in_failed() !== 34262) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_telemetry_sign_in_failed");
+    }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_telemetry_sign_in_failure() !== 23014) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_telemetry_sign_in_failure");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_telemetry_start() !== 30125) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_telemetry_start");
@@ -65243,7 +65709,12 @@ export default Object.freeze({
     FfiConverterTypeAppSidebarRow,
     FfiConverterTypeAppSidebarSection,
     FfiConverterTypeAppSidebarView,
+    FfiConverterTypeAppSignInFailure,
+    FfiConverterTypeAppSignInFooter,
+    FfiConverterTypeAppSignInFooterInput,
+    FfiConverterTypeAppSignInFooterState,
     FfiConverterTypeAppSignInPhase,
+    FfiConverterTypeAppSignInToast,
     FfiConverterTypeAppSpace,
     FfiConverterTypeAppSpaceAgentRun,
     FfiConverterTypeAppSpaceDetail,

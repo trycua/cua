@@ -17,8 +17,8 @@ use crate::{
     CoreError, about, agent_keys, agents, checklist, cloud_connect, devices, diagnostics,
     drive_mount_preview, drive_page, drive_settings, driver_preview, experiments, host, login_item,
     machines, notch, notifications, nudges, onboarding, onboarding_preview, palette, paths,
-    persistent, presence, relay_usage, resources, settings, share, telemetry, upsell, window,
-    wizard,
+    persistent, presence, relay_usage, resources, settings, share, sign_in, telemetry, upsell,
+    window, wizard,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -159,6 +159,11 @@ pub const METHODS: &[&str] = &[
     "onboarding.copy",
     "onboarding.signedInText",
     "onboarding.signInCodeText",
+    "signIn.footer",
+    "signIn.failed",
+    "signIn.failedFromError",
+    "signIn.failureOf",
+    "signIn.reasonText",
     "onboarding.replacesText",
     "onboarding.installedAtText",
     "onboarding.preview",
@@ -277,6 +282,7 @@ pub const METHODS: &[&str] = &[
     "telemetry.onboardingFinished",
     "telemetry.onboardingSkipped",
     "telemetry.signInFailed",
+    "telemetry.signInFailure",
     "telemetry.creates",
     "telemetry.storage",
     "telemetry.share",
@@ -780,6 +786,20 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "onboarding.signInCodeText" => out(onboarding::sign_in_code_text(
             a.get::<Option<String>>("userCode")?.as_deref(),
         )),
+        "signIn.footer" => out(sign_in::footer(&a.get("input")?)),
+        "signIn.failed" => out(sign_in::failed(
+            a.get("reason")?,
+            a.get::<Option<String>>("detail")?.as_deref(),
+        )),
+        "signIn.failedFromError" => out(sign_in::failed_from_error(
+            &a.get::<Option<String>>("variant")?.unwrap_or_default(),
+            &a.get::<String>("message")?,
+        )),
+        "signIn.failureOf" => out(sign_in::failure_of(
+            &a.get::<Option<String>>("variant")?.unwrap_or_default(),
+            &a.get::<String>("message")?,
+        )),
+        "signIn.reasonText" => out(sign_in::reason_text(a.get("reason")?)),
         "onboarding.replacesText" => out(onboarding::replaces_text(
             a.get::<Option<String>>("installedVersion")?.as_deref(),
         )),
@@ -1143,6 +1163,7 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "telemetry.signInFailed" => out(telemetry::sign_in_failed(
             a.get::<Option<String>>("message")?.as_deref(),
         )),
+        "telemetry.signInFailure" => out(telemetry::sign_in_failure(a.get("reason")?)),
         "telemetry.creates" => out(telemetry::creates(
             &a.get::<Option<creating::CreatesState>>("state")?
                 .unwrap_or_default(),

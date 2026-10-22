@@ -2746,11 +2746,39 @@
                 "string",
                 "null"
               ]
+            },
+            "opened": {
+              "type": "boolean"
             }
           },
           "required": [
             "userCode",
             "url"
+          ]
+        },
+        "hostSignInFailure": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "reason",
+            "message",
+            "detail"
           ]
         }
       },
@@ -4482,8 +4510,20 @@
                     "null"
                   ]
                 },
+                "opened": {
+                  "type": "boolean"
+                },
+                "reason": {
+                  "type": "string"
+                },
                 "message": {
                   "type": "string"
+                },
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 }
               },
               "required": [

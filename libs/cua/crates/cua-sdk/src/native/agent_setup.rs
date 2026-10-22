@@ -49,6 +49,13 @@ pub struct AgentInfo {
     pub error: Option<String>,
     /// What could not be verified from the agent's official docs.
     pub unverified: Option<String>,
+    /// The account the agent signs in with on its own (`ChatGPT` for
+    /// Codex), when cua can see that sign-in.
+    #[uniffi(default = None)]
+    pub sign_in: Option<String>,
+    /// That sign-in is on this computer.
+    #[uniffi(default = false)]
+    pub signed_in: bool,
 }
 
 /// A skill bundled with the SDK.
@@ -145,6 +152,8 @@ impl From<cua_agent_setup::AgentStatus> for AgentInfo {
             skills_outdated: a.skills_outdated,
             error: a.error,
             unverified: a.unverified,
+            sign_in: a.sign_in,
+            signed_in: a.signed_in,
         }
     }
 }
@@ -241,6 +250,13 @@ impl AgentSetup {
     /// Same as `detect`, named for status displays.
     pub fn status(&self) -> Vec<AgentInfo> {
         self.detect()
+    }
+
+    /// Starts `agent`'s own sign-in on this computer (`codex login`: the
+    /// browser opens). Returns once it is running; `detect` reports
+    /// `signed_in` when it is done. cua never reads or copies the sign-in.
+    pub fn sign_in(&self, agent: String) -> Result<()> {
+        Ok(self.inner.sign_in(&agent)?)
     }
 
     /// The skills bundled with this SDK.

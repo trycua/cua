@@ -261,6 +261,8 @@ export interface HostOperations
   "agents.setup": { args: Record<string, never>; result: AgentSetupRow[] };
   /** Adds the cua skills and MCP server to `agents`, or every installed one (`agent_setup_configure`). */
   "agents.configure": { args: { agents: string[] | null }; result: AgentSetupRow[] };
+  /** Starts `agent`'s own sign-in on this computer (`codex login` opens the browser); the rows after. */
+  "agents.signIn": { args: { agent: string }; result: AgentSetupRow[] };
 }
 
 export type OpName = keyof HostOperations;
@@ -299,6 +301,7 @@ export const OPERATIONS = [
   "agents.resume",
   "agents.setup",
   "agents.configure",
+  "agents.signIn",
   ...AGENT_DETAIL_OPERATIONS,
   ...NEW_SPACE_OPERATIONS,
   ...TELEPORT_OPERATIONS,

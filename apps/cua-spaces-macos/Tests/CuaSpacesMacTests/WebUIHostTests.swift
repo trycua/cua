@@ -176,7 +176,7 @@ struct WebUIHostTests {
     @Test func theContractsOperationsAreRouted() {
         for m in ["spaces.cancelCreate", "host.status", "keyvault.approve", "keyvault.deny", "keyvault.revokeGrant",
                   "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
-                  "agents.setup", "agents.configure"] {
+                  "agents.setup", "agents.configure", "agents.signIn"] {
             #expect(WebUIBridge.methods.contains(m), "\(m)")
         }
     }
@@ -309,6 +309,12 @@ struct WebUIHostTests {
         #expect(rows?.first?["skillsTotal"] != nil)
         let configured = try await bridge.handle("agents.configure", ["agents": ["claude-code"]]) as? [[String: Any]]
         #expect(configured?.first { $0["agent"] as? String == "claude-code" }?["configured"] as? Bool == true)
+        // Codex's own ChatGPT sign-in: started on this Mac, and the row says when it is there.
+        #expect(rows?.first { $0["agent"] as? String == "codex" }?["signIn"] as? String == "ChatGPT")
+        #expect(rows?.first { $0["agent"] as? String == "codex" }?["signedIn"] as? Bool == false)
+        let signedIn = try await bridge.handle("agents.signIn", ["agent": "codex"]) as? [[String: Any]]
+        #expect(setup.calls.contains("sign-in:codex"))
+        #expect(signedIn?.first { $0["agent"] as? String == "codex" }?["signedIn"] as? Bool == true)
         // A Settings row's button, as the native one: Remove on a configured agent.
         _ = try await bridge.handle("settings.choose", ["row": "agent:claude-code", "option": "press"])
         let removed = try await bridge.handle("agents.setup", [:]) as? [[String: Any]]

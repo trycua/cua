@@ -69,10 +69,12 @@ function SpacesPage() {
   const firstRunTodos = useFirstRunTodosShown();
   // The first Space is ready and no agent has worked in it yet: one action, "Run an agent here".
   const { state: checklist } = useChecklist();
-  const { data: agents } = useAgents();
+  const { data: agents, isLoading: agentsLoading } = useAgents();
   const readySpace = spaces.find((s) => spaceState(s) === "running");
   const agentRan = checklist.done.run_agent || (agents?.runs.length ?? 0) > 0 || (agents?.agents.length ?? 0) > 0;
-  const offer = useAgentOffer(Boolean(readySpace) && !agentRan);
+  // Only once the agents are read: before that "no agent ran" isn't known, and the offer would show (and be
+  // counted as shown) for a moment on a computer whose agents already work.
+  const offer = useAgentOffer(Boolean(readySpace) && !agentsLoading && !agentRan);
   const runHere = readySpace && !agentRan && offer.visible ? readySpace : undefined;
   const [runOpen, setRunOpen] = useState(false);
   const [connectOpen, setConnectOpen] = useState(false);

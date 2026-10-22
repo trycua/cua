@@ -658,6 +658,7 @@ export function createWebkitAdapter(
     },
     "agents.setup": async () => list(await request("agents.setup")) as AgentSetupRow[],
     "agents.configure": async ({ agents }) => list(await request("agents.configure", { agents: agents ?? null })) as AgentSetupRow[],
+    "agents.signIn": async ({ agent }) => list(await request("agents.signIn", { agent })) as AgentSetupRow[],
     "session.openExternal": async ({ url }) => {
       win.open?.(url, "_blank", "noopener");
       return null;

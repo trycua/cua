@@ -381,6 +381,11 @@ void uniffi_cua_sdk_fn_method_agentsetup_set_onboarding_declined(uint64_t ptr, i
 uint64_t uniffi_cua_sdk_fn_method_agentsetup_setup_cua_driver(uint64_t ptr, RustBuffer agents, RustBuffer command, int8_t skills, int8_t mcp
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_SIGN_IN
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_SIGN_IN
+void uniffi_cua_sdk_fn_method_agentsetup_sign_in(uint64_t ptr, RustBuffer agent, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_SKILLS
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_SKILLS
 RustBuffer uniffi_cua_sdk_fn_method_agentsetup_skills(uint64_t ptr, RustCallStatus *_Nonnull out_status
@@ -3403,6 +3408,12 @@ uint16_t uniffi_cua_sdk_checksum_method_agentsetup_set_onboarding_declined(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_AGENTSETUP_SETUP_CUA_DRIVER
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_AGENTSETUP_SETUP_CUA_DRIVER
 uint16_t uniffi_cua_sdk_checksum_method_agentsetup_setup_cua_driver(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_AGENTSETUP_SIGN_IN
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_AGENTSETUP_SIGN_IN
+uint16_t uniffi_cua_sdk_checksum_method_agentsetup_sign_in(void
 
 );
 #endif

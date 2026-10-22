@@ -8428,7 +8428,15 @@ export type AppAgentSettingsRow = {
     /**
      * Skills directory.
      */
-    skillsDir?: string
+    skillsDir?: string,
+    /**
+     * The account it signs in with on its own (`ChatGPT`), when known.
+     */
+    signIn?: string,
+    /**
+     * That sign-in is on this computer.
+     */
+    signedIn: boolean
 }
 
 /**
@@ -8460,7 +8468,9 @@ const FfiConverterTypeAppAgentSettingsRow = (() => {
                 skillsInstalled: FfiConverterUInt32.read(from),
                 skillsTotal: FfiConverterUInt32.read(from),
                 mcpConfig: FfiConverterOptionalString.read(from),
-                skillsDir: FfiConverterOptionalString.read(from)
+                skillsDir: FfiConverterOptionalString.read(from),
+                signIn: FfiConverterOptionalString.read(from),
+                signedIn: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -8473,6 +8483,8 @@ const FfiConverterTypeAppAgentSettingsRow = (() => {
             FfiConverterUInt32.write(value.skillsTotal, into);
             FfiConverterOptionalString.write(value.mcpConfig, into);
             FfiConverterOptionalString.write(value.skillsDir, into);
+            FfiConverterOptionalString.write(value.signIn, into);
+            FfiConverterBool.write(value.signedIn, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.agent) +
@@ -8483,7 +8495,9 @@ const FfiConverterTypeAppAgentSettingsRow = (() => {
              FfiConverterUInt32.allocationSize(value.skillsInstalled) +
              FfiConverterUInt32.allocationSize(value.skillsTotal) +
              FfiConverterOptionalString.allocationSize(value.mcpConfig) +
-             FfiConverterOptionalString.allocationSize(value.skillsDir);
+             FfiConverterOptionalString.allocationSize(value.skillsDir) +
+             FfiConverterOptionalString.allocationSize(value.signIn) +
+             FfiConverterBool.allocationSize(value.signedIn);
 
         }
     };
@@ -8596,7 +8610,16 @@ export type AppAgentSetupStatus = {
     /**
      * Problem reading its config.
      */
-    error?: string
+    error?: string,
+    /**
+     * The account it signs in with on its own (`ChatGPT` for Codex), when
+     * the setup can see that sign-in.
+     */
+    signIn?: string,
+    /**
+     * That sign-in is on this computer.
+     */
+    signedIn: boolean
 }
 
 /**
@@ -8628,7 +8651,9 @@ const FfiConverterTypeAppAgentSetupStatus = (() => {
                 cuaConfigured: FfiConverterBool.read(from),
                 skillsInstalled: FfiConverterSequenceString.read(from),
                 skillsOutdated: FfiConverterSequenceString.read(from),
-                error: FfiConverterOptionalString.read(from)
+                error: FfiConverterOptionalString.read(from),
+                signIn: FfiConverterOptionalString.read(from),
+                signedIn: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -8641,6 +8666,8 @@ const FfiConverterTypeAppAgentSetupStatus = (() => {
             FfiConverterSequenceString.write(value.skillsInstalled, into);
             FfiConverterSequenceString.write(value.skillsOutdated, into);
             FfiConverterOptionalString.write(value.error, into);
+            FfiConverterOptionalString.write(value.signIn, into);
+            FfiConverterBool.write(value.signedIn, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
@@ -8651,7 +8678,9 @@ const FfiConverterTypeAppAgentSetupStatus = (() => {
              FfiConverterBool.allocationSize(value.cuaConfigured) +
              FfiConverterSequenceString.allocationSize(value.skillsInstalled) +
              FfiConverterSequenceString.allocationSize(value.skillsOutdated) +
-             FfiConverterOptionalString.allocationSize(value.error);
+             FfiConverterOptionalString.allocationSize(value.error) +
+             FfiConverterOptionalString.allocationSize(value.signIn) +
+             FfiConverterBool.allocationSize(value.signedIn);
 
         }
     };

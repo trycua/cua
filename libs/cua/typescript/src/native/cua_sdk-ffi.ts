@@ -958,6 +958,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_fn_method_agentsetup_sign_in": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Void,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_sdk_fn_method_agentsetup_skills": {
       args: [FfiType.Handle],
       ret: FfiType.RustBuffer,
@@ -3053,6 +3058,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_agentsetup_sign_in": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_agentsetup_skills": {
       args: [],
       ret: FfiType.UInt16,
@@ -5104,6 +5114,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_agentsetup_select(uniffiSelf: bigint, selection: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_method_agentsetup_set_onboarding_declined(uniffiSelf: bigint, declined: number, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_sdk_fn_method_agentsetup_setup_cua_driver(uniffiSelf: bigint, agents: Uint8Array, command: Uint8Array, skills: number, mcp: number): bigint;
+    uniffi_cua_sdk_fn_method_agentsetup_sign_in(uniffiSelf: bigint, agent: Uint8Array, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_sdk_fn_method_agentsetup_skills(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_method_agentsetup_status(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_method_agentsetup_update(uniffiSelf: bigint, server: Uint8Array): bigint;
@@ -5523,6 +5534,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_agentsetup_select(): number;
     uniffi_cua_sdk_checksum_method_agentsetup_set_onboarding_declined(): number;
     uniffi_cua_sdk_checksum_method_agentsetup_setup_cua_driver(): number;
+    uniffi_cua_sdk_checksum_method_agentsetup_sign_in(): number;
     uniffi_cua_sdk_checksum_method_agentsetup_skills(): number;
     uniffi_cua_sdk_checksum_method_agentsetup_status(): number;
     uniffi_cua_sdk_checksum_method_agentsetup_update(): number;

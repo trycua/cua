@@ -3329,18 +3329,75 @@ fn run_first_run(f: &Value, h: &dyn Host) -> Result<Value, String> {
         });
         if v["connect"].is_object() {
             let k = &v["connect"];
-            let others: Vec<String> = k["others"]
+            // "[x] Claude Code", "[ ] Cursor (Not found on this Mac)", "[=] ..." locked.
+            let picks = |key: &str| -> Vec<String> {
+                k[key]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|p| {
+                        let mark = if p["locked"].as_bool() == Some(true) {
+                            "="
+                        } else if p["checked"].as_bool() == Some(true) {
+                            "x"
+                        } else {
+                            " "
+                        };
+                        let note = if p["note"].is_string() {
+                            format!(" ({})", s(&p["note"]))
+                        } else {
+                            String::new()
+                        };
+                        format!("[{mark}] {}{note}", s(&p["name"]))
+                    })
+                    .collect()
+            };
+            let creds: Vec<String> = k["credentials"]
                 .as_array()
                 .into_iter()
                 .flatten()
-                .map(|o| s(&o["name"]))
+                .map(|r| {
+                    format!(
+                        "{} — {}{}{}{}",
+                        s(&r["title"]),
+                        s(&r["note"]),
+                        if r["status"].is_string() {
+                            format!(" [{}]", s(&r["status"]))
+                        } else {
+                            String::new()
+                        },
+                        if r["action"].is_object() {
+                            format!(" ({})", btn(&r["action"]))
+                        } else {
+                            String::new()
+                        },
+                        if r["error"].is_string() {
+                            format!(" !{}", s(&r["error"]))
+                        } else {
+                            String::new()
+                        },
+                    )
+                })
+                .collect();
+            let connects: Vec<String> = k["connects"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(&s)
                 .collect();
             frame["connect"] = json!({
                 "title": k["title"],
                 "lede": k["lede"],
+                "intro": k["intro"],
+                "agents": format!("{}: {}", s(&k["agentsLabel"]), picks("agents").join(", ")),
+                "more": format!("{}: {}", s(&k["moreLabel"]), picks("more").join(", ")),
+                "agentsNote": k["agentsNote"],
+                "credentials": if creds.is_empty() { Value::Null } else {
+                    json!(format!("{} ({}): {}", s(&k["credentialsLabel"]), s(&k["credentialsNote"]), creds.join(" / ")))
+                },
                 "primary": btn(&k["primary"]),
-                "note": format!("{} {}", s(&k["note"]), s(&k["noteMore"])),
-                "others": others.join(", "),
+                "connects": connects.join(", "),
+                "busy": k["busy"],
             });
         }
         if v["setup"].is_object() {
@@ -3384,7 +3441,9 @@ fn run_first_run(f: &Value, h: &dyn Host) -> Result<Value, String> {
             frame["setup"] = json!({
                 "title": k["title"],
                 "rows": rows,
-                "prompt": format!("{}: {} / {}", s(&k["prompt"]["heading"]), s(&k["prompt"]["text"]), s(&k["prompt"]["note"])),
+                "prompt": if k["prompt"].is_object() {
+                    json!(format!("{}: {} / {}", s(&k["prompt"]["heading"]), s(&k["prompt"]["text"]), s(&k["prompt"]["note"])))
+                } else { Value::Null },
                 "extra": {
                     "phase": x["phase"],
                     "title": x["title"],

@@ -710,6 +710,7 @@ public final class PendingAgentSetup: AgentSetupRunning, @unchecked Sendable {
     public func remove(agents: [String]) async throws -> [AppAgentSetupOutcomeInput] {
         try await s().remove(agents: agents)
     }
+    public func signIn(agent: String) async throws { try await s().signIn(agent: agent) }
 }
 
 /// Cua Cloud billing until the SDK is in.

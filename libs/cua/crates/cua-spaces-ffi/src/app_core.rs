@@ -2375,6 +2375,8 @@ pub fn app_agent_setup_status(info: cua_sdk::AgentInfo) -> AppAgentSetupStatus {
         skills_installed: info.skills_installed,
         skills_outdated: info.skills_outdated,
         error: info.error,
+        sign_in: info.sign_in,
+        signed_in: info.signed_in,
     }
 }
 
@@ -3095,6 +3097,8 @@ mod agent_detection_tests {
             skills_outdated: vec![],
             error: None,
             unverified: None,
+            sign_in: None,
+            signed_in: false,
         }
     }
 

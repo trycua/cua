@@ -329,6 +329,15 @@
             "string",
             "null"
           ]
+        },
+        "signIn": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "signedIn": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -340,7 +349,9 @@
         "skillsInstalled",
         "skillsTotal",
         "mcpConfig",
-        "skillsDir"
+        "skillsDir",
+        "signIn",
+        "signedIn"
       ]
     },
     "CatalogEntry": {
@@ -5185,6 +5196,12 @@
         ]
       }
     },
+    "agents.signIn": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentSetupRow"
+      }
+    },
     "checklist.get": {
       "type": "object",
       "properties": {
@@ -6765,6 +6782,12 @@
           "change",
           "detail"
         ]
+      }
+    },
+    "agents.signIn": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentSetupRow"
       }
     },
     "app.info": {

@@ -62,8 +62,8 @@ The 11 items of Processor, memory and disk are listed on [its page](/cua-sdk/ref
 | [`AgentEvent`](/cua-sdk/reference/agents#agentevent-record) | record | One normalized event. |
 | [`AgentEventPage`](/cua-sdk/reference/agents#agenteventpage-record) | record | A page of events. |
 | [`AgentFile`](/cua-sdk/reference/agents#agentfile-record) | record | A file for the first prompt or a follow-up. |
-| [`AgentInfo`](/cua-sdk/reference/agents#agentinfo-record) | record | One AI coding agent and what cua configured for it. |
-| [`AgentMcpServer`](/cua-sdk/reference/agents#agentmcpserver-record) | record | The MCP server to register. |
+| [`AgentInfo`](/cua-sdk/reference/agent-setup#agentinfo-record) | record | One AI coding agent and what cua configured for it. |
+| [`AgentMcpServer`](/cua-sdk/reference/agent-setup#agentmcpserver-record) | record | The MCP server to register. |
 | [`AgentPauseReport`](/cua-sdk/reference/spaces/persistent-agents#agentpausereport-record) | record | What `Spaces.agent_pause` did. |
 | [`AgentResumeReport`](/cua-sdk/reference/spaces/persistent-agents#agentresumereport-record) | record | What `Spaces.agent_resume` did. |
 | [`AgentRun`](/cua-sdk/reference/agents#agentrun) | object | One run. |
@@ -73,10 +73,10 @@ The 11 items of Processor, memory and disk are listed on [its page](/cua-sdk/ref
 | [`AgentRunResult`](/cua-sdk/reference/agents#agentrunresult-record) | record | What the last turn produced. |
 | [`AgentRunStatus`](/cua-sdk/reference/spaces#agentrunstatus-record) | record | One agent run's status. |
 | [`Agents`](/cua-sdk/reference/agents#agents) | object | Agent runs in one sandbox. |
-| [`AgentSetup`](/cua-sdk/reference/agents#agentsetup) | object | Agent onboarding for this machine's user. |
-| [`AgentSetupChange`](/cua-sdk/reference/agents#agentsetupchange-enum) | enum | What happened to one target. |
-| [`AgentSetupOutcome`](/cua-sdk/reference/agents#agentsetupoutcome-record) | record | One target's outcome. |
-| [`AgentSetupTarget`](/cua-sdk/reference/agents#agentsetuptarget-enum) | enum | What an operation touched. |
+| [`AgentSetup`](/cua-sdk/reference/agent-setup#agentsetup) | object | Agent onboarding for this machine's user. |
+| [`AgentSetupChange`](/cua-sdk/reference/agent-setup#agentsetupchange-enum) | enum | What happened to one target. |
+| [`AgentSetupOutcome`](/cua-sdk/reference/agent-setup#agentsetupoutcome-record) | record | One target's outcome. |
+| [`AgentSetupTarget`](/cua-sdk/reference/agent-setup#agentsetuptarget-enum) | enum | What an operation touched. |
 | [`AgentStartReport`](/cua-sdk/reference/spaces#agentstartreport-record) | record | Result of `Space.agent_start`. |
 | [`AgentTranscript`](/cua-sdk/reference/agents#agenttranscript) | object | A run's events folded into conversation items, the same rule in every language: the agent's message chunks join into `message` items, the prompt is a `user` item (never repeated as agent text), and consecutive activity of one turn folds into one `activity` group. |
 | [`AgentTranscriptItem`](/cua-sdk/reference/agents#agenttranscriptitem-record) | record | One item of an `AgentTranscript`. |
@@ -87,7 +87,7 @@ The 11 items of Processor, memory and disk are listed on [its page](/cua-sdk/ref
 | [`AuthIdentity`](/cua-sdk/reference/auth#authidentity-record) | record | Who is signed in (from token claims; display only). |
 | [`AuthStatus`](/cua-sdk/reference/auth#authstatus-record) | record | The stored session, read without network access. |
 | [`BuildFile`](/cua-sdk/reference/image#buildfile-record) | record | A local file copied into a built image. |
-| [`BundledSkill`](/cua-sdk/reference/agents#bundledskill-record) | record | A skill bundled with the SDK. |
+| [`BundledSkill`](/cua-sdk/reference/agent-setup#bundledskill-record) | record | A skill bundled with the SDK. |
 | [`canonical_image`](/cua-sdk/reference/image#canonical_image) | function | The canonical image for `os` (`linux`, `windows`, `macos`) and `version` (`None` = default: `ghcr.io/trycua/linux:24.04`, `ghcr.io/trycua/windows:2022`, `ghcr.io/trycua/macos:26`; macOS accepts `tahoe`/`sequoia`). |
 | [`canonical_image_tier`](/cua-sdk/reference/image#canonical_image_tier) | function | The canonical image for `os`, `version` and `tier`: `slim` (the minimum that passes `cua-spacesd doctor --strict`; CI and benchmarks use it), `full` or `None` (the default, with dev tooling) or, on macOS, `xcode` / `xcode-<X.Y>` (full plus one pinned Xcode). |
 | [`check_placement`](/cua-sdk/reference/cua#check_placement) | function | Checks a location, kind and runtime against each other without creating anything: `InvalidPlacement` (listing the valid values) when the combination does not exist. |

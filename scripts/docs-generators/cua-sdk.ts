@@ -242,6 +242,21 @@ export const PAGES: PageSpec[] = [
     python: [['`Sandbox` lifecycle', `${PY}/sandbox#sandboxdestroy`]],
   },
   {
+    slug: 'sandbox/progress',
+    title: 'Progress',
+    description: 'See what a sandbox create is doing: a listener for each step, or the same lines the cua CLI prints.',
+    intro:
+      'The SDK is silent by default. `create_with_progress` tells a listener each step of a create (Python: `on_progress=` on `create`; TypeScript: `{ onProgress }`), and `enable_output` prints one plain line per step to stderr.',
+    members: [
+      {
+        object: 'Sandboxes',
+        title: 'Create with progress',
+        methods: ['create_with_progress'],
+      },
+    ],
+    items: ['enable_output', 'disable_output'],
+  },
+  {
     slug: 'sandbox/without-spacesd',
     title: 'Without cua-spacesd',
     description: 'Run commands, take screenshots and open the display of a local Lume sandbox that has no cua-spacesd.',

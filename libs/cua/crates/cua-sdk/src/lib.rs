@@ -93,8 +93,8 @@ uniffi::setup_scaffolding!("cua_sdk");
 pub enum CuaError {
     /// Bad input.
     ///
-    /// Fix: Check the value against the reference; the message names the
-    /// argument and what it accepts.
+    /// Fix: Run the command with `--help` (or check the reference) to see what
+    /// each option accepts; the message names the argument.
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
     /// A location, kind or runtime that does not exist, or a combination of
@@ -108,8 +108,8 @@ pub enum CuaError {
     InvalidPlacement(String),
     /// No such sandbox, process, path, forward or session.
     ///
-    /// Fix: Check the ref, path or id; `cua sb ls` (`Sandboxes.list`) lists the
-    /// sandboxes you can use.
+    /// Fix: Run `cua sb ls` to see the sandboxes you can use, and check the
+    /// ref, path or id (`Sandboxes.list` in the SDKs).
     #[error("not found: {0}")]
     NotFound(String),
     /// The provider is not configured (for example no credentials for it).
@@ -138,8 +138,8 @@ pub enum CuaError {
     Timeout(String),
     /// Local runtime failure.
     ///
-    /// Fix: Run `cua runtime doctor` (`Local.doctor`) and follow the steps it
-    /// prints.
+    /// Fix: Run `cua runtime doctor` and follow the steps it prints
+    /// (`Local.doctor` in the SDKs).
     #[error("local runtime: {0}")]
     Runtime(String),
     /// spacesd call failure.
@@ -254,8 +254,8 @@ pub enum CuaError {
     /// A sandbox with that name already exists, so a create did not touch
     /// it. The message names the sandbox.
     ///
-    /// Fix: Pick another name, or delete the existing sandbox first (`cua sb
-    /// rm <name>`, `Sandboxes.delete`).
+    /// Fix: Pick another name, or delete the existing sandbox first with `cua
+    /// sb rm <name>` (`Sandboxes.delete` in the SDKs).
     #[error("{0}")]
     AlreadyExists(String),
 }

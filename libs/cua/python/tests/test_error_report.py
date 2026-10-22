@@ -13,7 +13,7 @@ def test_every_error_has_a_code_and_a_hint():
     e = cua.CuaError.NotFound("sandbox nope")
     assert e.code == "not_found"
     assert "cua sb ls" in e.hint
-    assert e.report.message == "sandbox nope"
+    assert e.report.message == "sandbox nope not found"
     # The raw text is untouched.
     assert str(e) == "sandbox nope"
 

@@ -8,7 +8,7 @@ test("an error has a message, a code and a hint", () => {
   assert.match(e.message, /sandbox nope/)
   assert.equal(e.code, "not_found")
   assert.match(e.hint, /cua sb ls/)
-  assert.equal(e.report.message, "sandbox nope")
+  assert.equal(e.report.message, "sandbox nope not found")
   // Node prints the message, not just the class name.
   assert.match(String(e.stack), /sandbox nope/)
 })

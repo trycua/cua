@@ -45,7 +45,7 @@ pub(crate) const VARIANTS: &[Variant] = &[
         "InvalidArgument",
         "invalid_argument",
         "invalid argument: ",
-        "Check the value against the reference; the message names the argument and what it accepts",
+        "Run the command with `--help` (or check the reference) to see what each option accepts",
     ),
     Variant::new(
         "InvalidPlacement",
@@ -57,7 +57,7 @@ pub(crate) const VARIANTS: &[Variant] = &[
         "NotFound",
         "not_found",
         "not found: ",
-        "Check the ref, path or id; `cua sb ls` (`Sandboxes.list`) lists the sandboxes you can use",
+        "Run `cua sb ls` to see the sandboxes you can use, and check the ref, path or id",
     ),
     Variant::new(
         "ProviderNotConfigured",
@@ -87,7 +87,7 @@ pub(crate) const VARIANTS: &[Variant] = &[
         "Runtime",
         "runtime",
         "local runtime: ",
-        "Run `cua runtime doctor` (`Local.doctor`) and follow the steps it prints",
+        "Run `cua runtime doctor` and follow the steps it prints",
     ),
     Variant::new(
         "Env",
@@ -189,7 +189,7 @@ pub(crate) const VARIANTS: &[Variant] = &[
         "AlreadyExists",
         "already_exists",
         "",
-        "Pick another name, or delete the existing sandbox first (`cua sb rm <name>`, `Sandboxes.delete`)",
+        "Pick another name, or delete the existing sandbox first with `cua sb rm <name>`",
     ),
 ];
 
@@ -319,6 +319,14 @@ fn code_static(code: &str) -> &'static str {
 
 fn classify(code: &str, body: &str) -> Option<Cause> {
     let lower = body.to_ascii_lowercase();
+    // "sandbox nope" reads as an error only with what is wrong with it.
+    if code == "not_found" && !lower.contains("not found") && !lower.contains("no such") {
+        return Some(Cause {
+            code: "not_found",
+            message: format!("{body} not found"),
+            hint: None,
+        });
+    }
     // Cua Cloud, which has ended.
     if body.starts_with("Cua Cloud has ended") {
         return cause(
@@ -828,7 +836,7 @@ mod tests {
                 "NotFound",
                 "not found: sandbox nope",
                 "not_found",
-                "sandbox nope",
+                "sandbox nope not found",
                 "cua sb ls",
             ),
         ];

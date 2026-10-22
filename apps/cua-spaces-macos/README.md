@@ -390,6 +390,14 @@ splits commits by package path and skips a path with no commits (even for a
 targeted bump), so a change only under `libs/spaces-app-swift` does not open
 one on its own: land it with the app change that uses it.
 
+The same holds for the `cua` the app bundles (built from `libs/cua`): a
+cua-sdk release is a chore commit under `libs/cua`, so it opens no app
+release. `BUNDLED_CUA_VERSION` records the cua the app bundles, and the
+`Release: Bundle the new cua in Cua Spaces` workflow opens a
+`fix(spaces-macos)` PR that updates it whenever `libs/cua/VERSION` changes
+on main. Merging that PR makes Release Please open the next `cua-spaces`
+release, so the app never lags the machines running the new cua.
+
 ### Publishing the appcast (runbook)
 
 1. The key: the `CUA_SPACES_SPARKLE_ED_PRIVATE_KEY` secret (base64 Ed25519

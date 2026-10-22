@@ -1927,6 +1927,9 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "appUpdate": {
+                          "type": "boolean"
                         }
                       },
                       "required": [
@@ -2098,6 +2101,40 @@
                     "running"
                   ]
                 }
+              },
+              "desktop": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "os": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "running": {
+                    "type": "boolean"
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "os",
+                  "status",
+                  "running",
+                  "label"
+                ]
               },
               "spacesEmpty": {
                 "type": [

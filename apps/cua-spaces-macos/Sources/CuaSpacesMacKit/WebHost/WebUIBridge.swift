@@ -1014,7 +1014,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         // only when what the page shows differs.
         followChanges("machines.changed") { [weak self] in
             guard let self else { return "" }
-            return Self.signature([self.hostStatus(), BridgeValue.encode(self.model.devices.view)])
+            return Self.signature([self.hostStatus(), BridgeValue.encode(self.model.devices.view), self.model.updates.updateState.json])
         }
         followChanges("update.changed") { [model] in Self.signature(model.updates.updateState.json) }
         followChanges("checklist.changed") { [model] in Self.signature(model.checklist.stored) }

@@ -60,6 +60,9 @@ extension ParityTests {
                 lines.append("\(t.label): \(t.on ? "on" : "off") (\(how))")
             }
             if let note = m.togglesNote { lines.append("note: \(note)") }
+            if let d = m.desktop {
+                lines.append("desktop \(d.name) \u{b7} \(d.os) \u{b7} \(d.status) [\(d.label)] -> \(d.id)")
+            }
             for s in m.spaces { lines.append("space \(s.name) \u{b7} \(s.os) \u{b7} \(s.status) -> \(s.id)") }
             if let e = m.spacesEmpty { lines.append("spaces: \(e)") }
             let ns = m.newSpace

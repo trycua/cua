@@ -58,9 +58,9 @@ async function mockupView(): Promise<MachinesView> {
 
 /** The mockup with each machine's health as its daemon reported it
  * (`parity/machines.json`, the view "the mockup with issues"). */
-async function issuesView(): Promise<MachinesView> {
+async function issuesView(name = "the mockup with issues"): Promise<MachinesView> {
   const fixture = JSON.parse(readFileSync(resolve(process.cwd(), "../../libs/cua/crates/cua-spaces-app-core/parity/machines.json"), "utf8"));
-  const v = (fixture.views as { name: string; input: object }[]).find((x) => x.name.startsWith("the mockup with issues"))!;
+  const v = (fixture.views as { name: string; input: object }[]).find((x) => x.name.startsWith(name))!;
   const core = await testCore();
   return core.call<MachinesView>("machines.view", { input: v.input });
 }
@@ -260,5 +260,63 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     const detail = await detailOf("Ada's MacBook Pro");
     fireEvent.click(within(detail).getByRole("button", { name: "Restart service" }));
     await waitFor(() => expect(calls.some(([op, a]) => op === "host.action" && JSON.stringify(a).includes("resume-sharing"))).toBe(true));
+  });
+
+  it("a peer on a newer Cua is a plain note when this app is the newest release: no warning, no button", async () => {
+    const view = await issuesView("the Mac Studio runs a newer Cua and this app is the newest");
+    const { router } = await mountApp("/machines", hostDrawn(view, []));
+    await router.load();
+    await screen.findByText(view.summary);
+    expect(document.querySelector('[data-machine-id="studio"] [data-machine-health]')?.getAttribute("data-machine-health")).toBe("warn");
+    select("studio");
+    const detail = await detailOf("cua's Mac Studio");
+    const note = detail.querySelector<HTMLElement>('[data-machine-issue="version"]')!;
+    expect(note.dataset.level).toBe("info");
+    expect(note.textContent).toContain("newer than this Mac’s 0.4.1");
+    expect(note.textContent).not.toContain("Update Cua here");
+    expect(note.querySelector("[data-machine-issue-action]")).toBeNull();
+  });
+
+  it("with the Cua Spaces update downloaded, the newer-Cua row offers Restart to update", async () => {
+    const view = await issuesView("the Mac Studio runs a newer Cua and this app has the update");
+    const calls: [string, unknown][] = [];
+    const h = hostDrawn(view, calls);
+    const base = h.intercept;
+    h.intercept = (op, args) => {
+      if (op === "update.install") {
+        calls.push([op, args]);
+        return null;
+      }
+      // No agent is working: a restart cuts nothing short.
+      if (op === "agents.runs") return [];
+      return base?.(op, args);
+    };
+    const { router } = await mountApp("/machines", h);
+    await router.load();
+    await screen.findByText(view.summary);
+    select("studio");
+    const detail = await detailOf("cua's Mac Studio");
+    const row = detail.querySelector<HTMLElement>('[data-machine-issue="version"]')!;
+    expect(row.dataset.level).toBe("warn");
+    expect(row.textContent).toContain("Cua Spaces 0.12.2 is ready to install");
+    fireEvent.click(within(row).getByRole("button", { name: "Restart to update" }));
+    await waitFor(() => expect(calls.some(([op]) => op === "update.install")).toBe(true));
+  });
+
+  it("lists a shared desktop first among a machine's Spaces, drawn as any Space row", async () => {
+    const view = await issuesView();
+    const studio = view.machines.find((m) => m.id === "studio")!;
+    expect(studio.desktop?.label).toBe("Desktop");
+    const { router } = await mountApp("/machines", hostDrawn(view, []));
+    await router.load();
+    await screen.findByText(view.summary);
+    select("studio");
+    const detail = await detailOf("cua's Mac Studio");
+    const rows = [...detail.querySelectorAll<HTMLElement>("[data-machine-spaces] [data-space-row]")];
+    // The desktop first, then the Spaces: one row component, one look.
+    expect(rows.map((r) => r.dataset.spaceRow)).toEqual([studio.desktop!.id, ...studio.spaces.map((x) => x.id)]);
+    expect(rows[0]!.getAttribute("href")).toBe(`/spaces/${encodeURIComponent(studio.desktop!.id)}`);
+    expect(rows[0]!.textContent).toContain("Desktop");
+    expect(rows[1]!.textContent).not.toContain("Desktop");
   });
 });

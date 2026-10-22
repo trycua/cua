@@ -9477,6 +9477,9 @@ pub struct AppMachinesViewIssueAction {
     pub url: Option<String>,
     /// A host action to run (`host.action`).
     pub host_action: Option<AppHostActionId>,
+    /// Restart into the Cua Spaces update this app already downloaded
+    /// (the shell's own update flow, the sidebar's "Restart to update").
+    pub app_update: bool,
 }
 
 /// One issue on a machine's page.
@@ -9485,7 +9488,8 @@ pub type AppMachinesViewIssue = core::machines_health::MachinesViewIssue;
 pub struct AppMachinesViewIssue {
     /// The check it comes from (`machine.disk`, `service`, `version`).
     pub id: String,
-    /// `warn` or `fail`.
+    /// `warn` or `fail`; `info` for a note that is no problem (it does not
+    /// tint the row's dot).
     pub level: String,
     /// One plain sentence.
     pub text: String,
@@ -9541,6 +9545,11 @@ pub struct AppMachinesViewInput {
     /// the machines whose `health_target` the shell checked
     /// ([`crate::machines_health`]).
     pub health: Vec<AppMachinesViewHealth>,
+    /// The Cua Spaces update this app found (its version); empty when this
+    /// app is the newest release.
+    pub app_update: String,
+    /// That update is downloaded and ready to restart into.
+    pub app_update_ready: bool,
 }
 
 /// One of the two switches on a machine's page.
@@ -9580,6 +9589,27 @@ pub struct AppMachinesViewSpace {
     pub status: String,
     /// Running (the green dot).
     pub running: bool,
+}
+
+/// A machine's own desktop, listed first under "Spaces on this machine"
+/// when it shares it, as any Space row (its name, system, status), with a
+/// quiet "Desktop" label. It is not one of the Spaces counted (the sidebar
+/// and the machine's line leave it out).
+pub type AppMachinesViewDesktop = core::machines_view::MachinesViewDesktop;
+#[uniffi::remote(Record)]
+pub struct AppMachinesViewDesktop {
+    /// The Space's id (its page).
+    pub id: String,
+    /// Its name, as the Spaces list names it.
+    pub name: String,
+    /// Its system ("Ubuntu 24.04.5 LTS", "macOS").
+    pub os: String,
+    /// Its status word ("Running", "Stopped").
+    pub status: String,
+    /// Running (the green dot).
+    pub running: bool,
+    /// "Desktop".
+    pub label: String,
 }
 
 /// New Space here: the wizard with this machine chosen.
@@ -9691,6 +9721,8 @@ pub struct AppMachinesViewMachine {
     pub spaces_title: String,
     /// The Spaces on it.
     pub spaces: Vec<AppMachinesViewSpace>,
+    /// Its own desktop, when it shares it (shown above `spaces`).
+    pub desktop: Option<AppMachinesViewDesktop>,
     /// When it has none.
     pub spaces_empty: Option<String>,
     /// New Space here.

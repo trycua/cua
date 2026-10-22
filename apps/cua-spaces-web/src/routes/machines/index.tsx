@@ -23,6 +23,7 @@ import { JoinWithCodeDialog } from "@/components/join-with-code-dialog";
 import { UpsellPrompt } from "@/components/upsell-prompt";
 import { OsIcon } from "@/components/os-icon";
 import { EmptyState, Page, PageHeader } from "@/components/page";
+import { RestartDialog, useUpdateIndicator } from "@/components/shell/update-indicator";
 import { ThisMachineExtras } from "@/components/this-machine";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
@@ -359,9 +360,12 @@ function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMa
   // reached at all (offline), plain with a note when it is.
   const dim = (t: MachinesViewToggle) => !t.editable && !m.togglesNote;
 
+  // Its shared desktop first, then its Spaces, all drawn as Space rows.
+  const rows: { id: string; name: string; os: string; status: string; running: boolean; label?: string }[] = [...(m.desktop ? [m.desktop] : []), ...m.spaces];
+
   // This machine's setup form takes the page while it is open.
   if (m.current && host.formView) {
-    return (
+  return (
       <section aria-label={`${m.name} details`} className="min-w-0">
         <ThisMachineExtras panel={row?.panel ?? null} progress={row?.hostProgress} />
       </section>
@@ -439,7 +443,7 @@ function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMa
 
       <h3 className="mt-7 mb-2 text-xs font-semibold text-muted-foreground">{m.spacesTitle}</h3>
       <div className="overflow-hidden rounded-xl border bg-card" data-machine-spaces>
-        {m.spaces.map((s, i) => (
+        {rows.map((s, i) => (
           <Link
             key={s.id}
             to="/spaces/$spaceId"
@@ -449,6 +453,7 @@ function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMa
             className={cn("flex items-center gap-2.5 px-4 py-2.5 text-[13px] outline-none hover:bg-accent/50 focus-visible:bg-accent/60", i > 0 && "border-t")}
           >
             <span className="truncate font-mono text-xs">{s.name}</span>
+            {s.label ? <span className="shrink-0 rounded bg-muted px-1.5 text-2xs text-muted-foreground">{s.label}</span> : null}
             {s.os ? (
               <>
                 <span className="text-muted-foreground/50">·</span>
@@ -462,7 +467,7 @@ function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMa
             <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground/60" />
           </Link>
         ))}
-        {m.spacesEmpty ? <p className="px-4 py-3.5 text-xs text-muted-foreground">{m.spacesEmpty}</p> : null}
+        {m.spacesEmpty ? <p className={cn("px-4 py-3.5 text-xs text-muted-foreground", rows.length > 0 && "border-t")}>{m.spacesEmpty}</p> : null}
         <div className="border-t px-3 py-2.5">
           <NewSpaceHere machine={m} />
         </div>
@@ -536,8 +541,11 @@ function MachineIssues({ machine: m, hidePermissions, onFail }: { machine: Machi
   const host = useThisMachine(session?.identity ?? null);
   const issues = (m.issues ?? []).filter((i) => !(hidePermissions && i.id.startsWith("machine.permissions.")));
   if (!issues.length) return null;
+  const update = useUpdateIndicator();
   const act = (i: MachinesViewIssue) => {
     const a = i.action!;
+    // Restart into the downloaded Cua Spaces update: the sidebar's own flow, which asks first while an agent is running.
+    if (a.appUpdate) return update.restart();
     const done = a.url ? host.openSettings(a.url) : a.hostAction ? host.run(a.hostAction) : Promise.resolve();
     void Promise.resolve(done).catch(onFail(`Couldn't ${a.label.charAt(0).toLowerCase()}${a.label.slice(1)}`));
   };
@@ -549,18 +557,21 @@ function MachineIssues({ machine: m, hidePermissions, onFail }: { machine: Machi
           <div key={i.id} className={cn("flex items-center gap-2.5 px-4 py-2.5", n > 0 && "border-t")} data-machine-issue={i.id} data-level={i.level}>
             {i.level === "fail" ? (
               <CircleAlertIcon aria-label="Problem" className="size-3.5 shrink-0 text-destructive" />
+            ) : i.level === "info" ? (
+              <InfoIcon aria-label="Note" className="size-3.5 shrink-0 text-muted-foreground" />
             ) : (
               <TriangleAlertIcon aria-label="Warning" className="size-3.5 shrink-0 text-warning" />
             )}
             <span className="min-w-0 flex-1 text-[13px]">{i.text}</span>
             {i.action ? (
-              <Button size="sm" variant="outline" className="shrink-0" disabled={host.busy} onClick={() => act(i)} data-machine-issue-action={i.id}>
+              <Button size="sm" variant="outline" className="shrink-0" disabled={host.busy || (i.action.appUpdate && update.installing)} onClick={() => act(i)} data-machine-issue-action={i.id}>
                 {i.action.label}
               </Button>
             ) : null}
           </div>
         ))}
       </div>
+      <RestartDialog ui={update} />
     </>
   );
 }

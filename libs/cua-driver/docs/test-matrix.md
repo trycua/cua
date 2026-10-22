@@ -191,7 +191,7 @@ background delivery and attach desktop-side-effect oracles.
 
 | Harness | Source test | Coverage |
 | --- | --- | --- |
-| AppKit | `harness_appkit_test.rs` | AX tree/capture, AX value/text, AX scroll, PX clicks, and foreground slider drag across the proven delivery modes; background drag is an exact refusal |
+| AppKit | `harness_appkit_test.rs` | AX tree/capture, AX value/text, AX scroll, PX clicks, and slider drag in both background and foreground |
 | SwiftUI | `harness_swiftui_test.rs` | AX tree/capture, background click/value, and foreground popover-trigger state |
 | WKWebView | `cross_platform_behavior_test.rs` | Dedicated native host running the full 40-cell shared web catalog |
 | Desktop target | `desktop_scope_macos_test.rs` | Per-call window/desktop modality, screen-absolute action delivery, and strict rejection |

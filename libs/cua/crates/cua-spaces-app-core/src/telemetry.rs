@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! Which anonymous usage events a UI transition means, for both shells.
+//! Which usage events a UI transition means, for both shells.
 //!
 //! The apps drive the core's reducers; these functions look at one step of
 //! a reducer (the state before and the action) and answer with
@@ -129,8 +129,19 @@ pub enum TelemetrySignal {
         action: String,
         /// `viewer`, `editor` or `none`.
         role: String,
-        /// `ok` or `error`.
+        /// `ok`, `error`, or `cancelled` when the confirmation prompt was
+        /// dismissed.
         outcome: String,
+        /// Why it did not happen (`presence_denied`, `presence_cancelled`,
+        /// `presence_unavailable`, `not_signed_in`, `device_not_enrolled`,
+        /// `driver_unsupported`, `relay_refused`, `relay_unreachable`,
+        /// `invalid_who` or `other`); `none` when it worked.
+        #[serde(default = "none_word")]
+        error_kind: String,
+        /// Where it stopped (`request`, `presence`, `account`, `device`,
+        /// `driver`, `relay` or `other`); `none` when it worked.
+        #[serde(default = "none_word")]
+        failed_stage: String,
     },
     /// An updater step (`cua_app_update`).
     AppUpdate {
@@ -202,6 +213,26 @@ pub fn feature_used(name: &str) -> Vec<TelemetrySignal> {
     vec![feature(name)]
 }
 
+/// The in-app Pro and Teams prompts, as `cua_spaces_feature_used`
+/// `upsell_<surface>_<action>`: `meter`, `share` and `machine` are shown,
+/// clicked or dismissed; the always-visible `plan_card` (Settings) and
+/// `account_menu` (the plan under the account name) are only clicked.
+/// Anything else: nothing.
+pub fn upsell(surface: &str, action: &str) -> Vec<TelemetrySignal> {
+    let ok = match surface {
+        "meter" | "share" | "machine" | "onboarding" => {
+            matches!(action, "shown" | "click" | "dismiss")
+        }
+        "plan_card" | "account_menu" => action == "click",
+        _ => false,
+    };
+    if ok {
+        vec![feature(&format!("upsell_{surface}_{action}"))]
+    } else {
+        vec![]
+    }
+}
+
 // ---- Getting started -----------------------------------------------------------
 
 /// The getting-started checklist's steps, in the order it lists them.
@@ -234,6 +265,7 @@ pub fn checklist(event: &str) -> Vec<TelemetrySignal> {
 pub fn page_name(s: OnboardingStep) -> &'static str {
     match s {
         OnboardingStep::Welcome => "welcome",
+        OnboardingStep::Cli => "command_line",
         OnboardingStep::Signin => "signin",
         OnboardingStep::Agents => "agents",
         OnboardingStep::Presentation => "presentation",
@@ -310,6 +342,17 @@ pub fn sign_in_failed(message: Option<&str>) -> Vec<TelemetrySignal> {
     }]
 }
 
+/// A sign-in failed for `reason` or was cancelled (`None`): its fixed
+/// word only ([`crate::sign_in::error_kind`]).
+pub fn sign_in_failure(reason: Option<crate::sign_in::SignInFailure>) -> Vec<TelemetrySignal> {
+    vec![TelemetrySignal::SignInFailed {
+        error_kind: reason
+            .map(crate::sign_in::error_kind)
+            .unwrap_or("cancelled")
+            .into(),
+    }]
+}
+
 /// "Start using Cua Spaces" on Done (nothing while usage data is off).
 pub fn onboarding_finished(s: &OnboardingState) -> Vec<TelemetrySignal> {
     if !s.shares_usage() {
@@ -325,6 +368,10 @@ pub fn onboarding_finished(s: &OnboardingState) -> Vec<TelemetrySignal> {
 fn leave(s: &OnboardingState, a: &OnboardingAction) -> (&'static str, &'static str) {
     match s.step {
         OnboardingStep::Welcome | OnboardingStep::Done => ("completed", "none"),
+        OnboardingStep::Cli => match a {
+            OnboardingAction::CliPlanned { .. } => ("completed", "installed"),
+            _ => ("skipped", "not_installed"),
+        },
         OnboardingStep::Signin => {
             if s.identity.as_deref().is_some_and(|i| !i.is_empty()) {
                 ("completed", "signed_in")
@@ -524,13 +571,15 @@ pub fn creates(before: &CreatesState, action: &CreateAction, now_ms: i64) -> Vec
             }
             Some(p) if p.space_id.is_none() && (p.error.is_none() || stalled(p)) => {
                 // The shell's enum case is often `Runtime` or none: the
-                // cause the app reads from the text (Local Network, Apple's
-                // VM limit, disk) says more.
+                // cause the app reads from the text (an image that is not
+                // in the registry, Local Network, a VM that did not boot in
+                // time, disk) says more. Only the word is sent.
                 let variant = crate::spaces::creating::failure_variant(
                     error,
                     Some(&p.phase),
                     p.gpu,
                     error_variant,
+                    Some(p.provider),
                 );
                 vec![create_event(p, "error", stalled(p), variant, now_ms)]
             }
@@ -631,11 +680,102 @@ pub fn share(
         Some(ShareRequest::Unshare { .. }) => ("unshare", "none"),
         None => return vec![],
     };
+    let (outcome, error_kind, failed_stage) = match action {
+        ShareSheetAction::Failed { error } => {
+            let (kind, stage) = share_failure(error);
+            let word = if kind == "presence_cancelled" {
+                "cancelled"
+            } else {
+                "error"
+            };
+            (word.to_string(), kind, stage)
+        }
+        _ => (outcome(ok), "none", "none"),
+    };
     vec![TelemetrySignal::Share {
         action: act.into(),
         role: role.into(),
-        outcome: outcome(ok),
+        outcome,
+        error_kind: error_kind.into(),
+        failed_stage: failed_stage.into(),
     }]
+}
+
+fn none_word() -> String {
+    "none".into()
+}
+
+/// Why a share, unshare or role change failed, and where it stopped, from
+/// the error's words (what the daemon and the relay say): one of the fixed
+/// kinds of `cua_share`, never the words themselves (CUA-1855).
+pub fn share_failure(error: &str) -> (&'static str, &'static str) {
+    let e = error.to_ascii_lowercase();
+    let has = |words: &[&str]| words.iter().any(|w| e.contains(w));
+    // The user's own confirmation, asked before anything reaches the relay
+    // (`share_space`: "not shared: <why>").
+    if has(&["nothing here can ask you to confirm"]) {
+        return ("presence_unavailable", "presence");
+    }
+    if has(&["not shared:", "presence was not confirmed"]) {
+        return if has(&["cancelled", "canceled", "dismissed"]) {
+            ("presence_cancelled", "presence")
+        } else if has(&[
+            "unavailable",
+            "prompt failed",
+            "no confirmation prompt",
+            "cannot run pkcheck",
+        ]) {
+            ("presence_unavailable", "presence")
+        } else {
+            ("presence_denied", "presence")
+        };
+    }
+    if has(&[
+        "is not an email",
+        "not an email or account id",
+        "share with an account",
+    ]) {
+        return ("invalid_who", "request");
+    }
+    if has(&["device"]) && has(&["enroll", "approv", "revoked", "re-verification"]) {
+        return ("device_not_enrolled", "device");
+    }
+    if has(&[
+        "sign in",
+        "signed in",
+        "not signed",
+        "unauthenticated",
+        "auth login",
+        "session expired",
+        "token expired",
+    ]) {
+        return ("not_signed_in", "account");
+    }
+    if has(&["relay_attach", "has no cua-spacesd", "cannot be shared"]) {
+        return ("driver_unsupported", "driver");
+    }
+    if has(&[
+        "relay: error sending",
+        "connection refused",
+        "connection reset",
+        "timed out",
+        "dns error",
+        "unreachable",
+        "could not connect",
+        "failed to connect",
+    ]) {
+        return ("relay_unreachable", "relay");
+    }
+    if has(&[
+        "relay",
+        "only its owner can share",
+        "forbidden",
+        "permission denied",
+        "limit",
+    ]) {
+        return ("relay_refused", "relay");
+    }
+    ("other", "other")
 }
 
 // ---- Enrollment ----------------------------------------------------------------
@@ -787,7 +927,16 @@ pub fn record(t: &cua_telemetry::Telemetry, signals: &[TelemetrySignal]) -> usiz
                 action,
                 role,
                 outcome,
-            } => events::share(action, role, Outcome::from_word(outcome)).map(|e| t.capture(e)),
+                error_kind,
+                failed_stage,
+            } => events::share(
+                action,
+                role,
+                Outcome::from_word(outcome),
+                error_kind,
+                failed_stage,
+            )
+            .map(|e| t.capture(e)),
             TelemetrySignal::AppUpdate {
                 action,
                 channel,
@@ -887,6 +1036,127 @@ pub fn welcome_left(t: &cua_telemetry::Telemetry, on: bool) -> std::io::Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// CUA-1855: a failed share says why and where, in fixed words; a
+    /// dismissed prompt is `cancelled`, not `error`.
+    #[test]
+    fn a_failed_share_says_why_in_fixed_words() {
+        let cases = [
+            (
+                "env: not shared: user presence was not confirmed: biometric authorization was denied",
+                "presence_denied",
+            ),
+            ("not shared: you declined", "presence_denied"),
+            (
+                "not shared: user presence was not confirmed: biometric authorization was cancelled",
+                "presence_cancelled",
+            ),
+            (
+                "not shared: user presence was not confirmed: user confirmation is unavailable: install Cua Spaces from the .deb",
+                "presence_unavailable",
+            ),
+            (
+                "share consent: nothing here can ask you to confirm; share from the Cua app",
+                "presence_unavailable",
+            ),
+            (
+                "invalid argument: \"grace\" is not an email address",
+                "invalid_who",
+            ),
+            (
+                "sign in to cua.ai (`cua auth login` or the app) to list your machines",
+                "not_signed_in",
+            ),
+            (
+                "this device is not enrolled for your cua.ai account (run `cua devices enroll`)",
+                "device_not_enrolled",
+            ),
+            (
+                "local:studio does not support `relay_attach`",
+                "driver_unsupported",
+            ),
+            (
+                "relay: error sending request for url (https://relay.cua.ai/v1/machines)",
+                "relay_unreachable",
+            ),
+            (
+                "relay:abc is shared with you; only its owner can share it",
+                "relay_refused",
+            ),
+            ("something else broke", "other"),
+        ];
+        for (error, kind) in cases {
+            assert_eq!(share_failure(error).0, kind, "{error}");
+        }
+        let input = ShareInput {
+            space_id: "local:studio".into(),
+            space_name: "studio".into(),
+            shares: vec![],
+            signed_in: true,
+            shareable: true,
+        };
+        let before = ShareSheetState {
+            request: Some(ShareRequest::Share {
+                space: "local:studio".into(),
+                who: "grace@example.com".into(),
+                role: "viewer".into(),
+            }),
+            busy: true,
+            ..Default::default()
+        };
+        let failed = |error: &str| {
+            share(
+                &input,
+                &before,
+                &ShareSheetAction::Failed {
+                    error: error.into(),
+                },
+            )
+        };
+        assert_eq!(
+            failed(
+                "not shared: user presence was not confirmed: biometric authorization was cancelled"
+            ),
+            [TelemetrySignal::Share {
+                action: "share".into(),
+                role: "viewer".into(),
+                outcome: "cancelled".into(),
+                error_kind: "presence_cancelled".into(),
+                failed_stage: "presence".into(),
+            }]
+        );
+        assert_eq!(
+            failed("not shared: user presence was not confirmed: polkit did not confirm it is you"),
+            [TelemetrySignal::Share {
+                action: "share".into(),
+                role: "viewer".into(),
+                outcome: "error".into(),
+                error_kind: "presence_denied".into(),
+                failed_stage: "presence".into(),
+            }]
+        );
+        assert_eq!(
+            share(&input, &before, &ShareSheetAction::Done),
+            [TelemetrySignal::Share {
+                action: "share".into(),
+                role: "viewer".into(),
+                outcome: "ok".into(),
+                error_kind: "none".into(),
+                failed_stage: "none".into(),
+            }]
+        );
+        // Never who, never the words.
+        let text = serde_json::to_string(&failed("grace@example.com: no")).unwrap();
+        assert!(!text.contains("grace"), "{text}");
+        // A host that sends the signal without the new fields still parses.
+        let old: TelemetrySignal = serde_json::from_str(
+            r#"{"type":"share","action":"share","role":"viewer","outcome":"ok"}"#,
+        )
+        .unwrap();
+        assert!(
+            matches!(old, TelemetrySignal::Share { ref error_kind, .. } if error_kind == "none")
+        );
+    }
 
     #[test]
     fn checklist_events_are_fixed_steps_in_the_schema() {
@@ -1099,6 +1369,53 @@ mod tests {
     }
 
     #[test]
+    fn installing_the_command_and_skipping_it_are_told_apart() {
+        let planned = reduce(
+            &initial(None, None),
+            &OnboardingAction::CliPlanned {
+                plan: crate::installer::CliInstallPlan {
+                    found: None,
+                    source: Some("/Applications/Cua Spaces.app/Contents/MacOS/cua".into()),
+                    target: "/Users/alice/.local/bin/cua".into(),
+                    ..Default::default()
+                },
+            },
+        );
+        let s = reduce(&planned, &OnboardingAction::Start);
+        assert_eq!(
+            pages(&onboarding(&planned, &OnboardingAction::Start))[1..],
+            ["welcome completed none", "command_line shown none"]
+        );
+        let installing = reduce(&s, &OnboardingAction::CliDone { install: true });
+        assert!(onboarding(&s, &OnboardingAction::CliDone { install: true }).is_empty());
+        let installed = OnboardingAction::CliPlanned {
+            plan: crate::installer::CliInstallPlan {
+                found: None,
+                source: Some("/Applications/Cua Spaces.app/Contents/MacOS/cua".into()),
+                target: "/Users/alice/.local/bin/cua".into(),
+                up_to_date: true,
+                ..Default::default()
+            },
+        };
+        let done = onboarding(&installing, &installed);
+        assert_eq!(
+            pages(&done),
+            ["command_line completed installed", "signin shown none"]
+        );
+        assert!(!serde_json::to_string(&done).unwrap().contains("alice"));
+        let failed = OnboardingAction::CliInstallFailed {
+            error: "/Users/alice/.zshrc: Permission denied".into(),
+        };
+        assert!(onboarding(&installing, &failed).is_empty());
+        let skip = onboarding(&s, &OnboardingAction::CliDone { install: false });
+        assert_eq!(
+            pages(&skip),
+            ["command_line skipped not_installed", "signin shown none"]
+        );
+        assert!(!serde_json::to_string(&skip).unwrap().contains("alice"));
+    }
+
+    #[test]
     fn no_signal_carries_caller_text() {
         let s = reduce(&initial(None, None), &OnboardingAction::Start);
         let s = reduce(
@@ -1233,14 +1550,19 @@ mod tests {
             (
                 "runtime: Local Network access is not available: Cua Spaces cannot reach the VM at 192.168.64.5:3211 (No route to host (os error 65))",
                 "Runtime",
-                "LocalNetwork",
+                "local_network",
             ),
             (
                 "lume: The number of virtual machines exceeds the limit",
                 "",
-                "VmLimit",
+                "vm_limit",
             ),
             ("something else at /Users/alice", "Runtime", "Runtime"),
+            (
+                "container engine: pull ghcr.io/trycua/linux:24.04: manifest unknown",
+                "",
+                "image_pull_not_found",
+            ),
             // A specific case from the shell stays.
             (
                 "cua-spacesd timed out",
@@ -1365,11 +1687,11 @@ mod tests {
     #[test]
     fn an_experiment_toggle_is_one_event_and_the_set_that_is_on() {
         use crate::experiments::Experiments;
-        let off = Experiments::default();
-        let on = Experiments {
-            sharing: true,
+        let off = Experiments {
+            sharing: false,
             ..Default::default()
         };
+        let on = Experiments::default();
         let signals = experiments_changed(&off, &on);
         assert_eq!(
             signals,
@@ -1444,12 +1766,16 @@ mod tests {
             .foreground()
             .build();
         t.acknowledge_notice();
+        let off = Experiments {
+            sharing: false,
+            ..Default::default()
+        };
         let on = Experiments {
             cua_volume: true,
             sharing: true,
             ..Default::default()
         };
-        let signals = experiments_changed(&Experiments::default(), &on);
+        let signals = experiments_changed(&off, &on);
         assert_eq!(
             record(&t, &signals),
             2,

@@ -3,7 +3,7 @@
 //!
 //! The keys live in the OS credential vault through cua-auth's secret store
 //! ([`cua_auth::Store::save_secret`]): one item, `agent-keys`, next to the
-//! session (service `run.cua.ai`), with the same access list, so the app,
+//! session (service `ai.cua.session`), with the same access list, so the app,
 //! the daemon and the CLI read it without a prompt. A build whose store is
 //! a file (an unsigned macOS build, Linux) refuses to save them: keys are
 //! never written to a plain file. Set the key in the daemon's environment

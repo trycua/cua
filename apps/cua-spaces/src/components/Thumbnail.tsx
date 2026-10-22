@@ -3,6 +3,7 @@
 
 import type { SpaceStatus, ThumbnailScene } from "../model/types";
 import { RadialProgress } from "./RadialProgress";
+import { useT } from "../i18n";
 
 interface ThumbnailProps {
   scene: ThumbnailScene;
@@ -30,7 +31,7 @@ interface ThumbnailProps {
 
 // Measured Lume lifecycle (avg of 3 clone→ready→teardown cycles): clone ~2s +
 // boot→running ~15s ≈ ~17s to a streamable/running tile; stop ~7s + delete ~2s
-// ≈ ~8s teardown. Cua Cloud keeps the default ~80s estimate.
+// ≈ ~8s teardown. Other Spaces keep the default ~80s estimate.
 const LOCAL_START_ESTIMATE_MS = 17_000;
 const LOCAL_DELETE_ESTIMATE_MS = 8_000;
 
@@ -50,6 +51,7 @@ export function Thumbnail({
   deleting,
   local,
 }: ThumbnailProps) {
+  const t = useT("spaces");
   const live = status === "running" || status === "local";
   // Overlays render over BOTH the screenshot and the synthetic scene, so a
   // starting tile shows the pie even if it has a cached shot, and a
@@ -60,7 +62,7 @@ export function Thumbnail({
         className="thumb-radial"
         estimateMs={local ? LOCAL_DELETE_ESTIMATE_MS : undefined}
       />
-      <span className="thumb-provisioning-status">Deleting…</span>
+      <span className="thumb-provisioning-status">{t("spaces.thumbnail.deleting")}</span>
     </span>
   ) : status === "provisioning" ? (
     <span className="thumb-provisioning">

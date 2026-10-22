@@ -1,8 +1,8 @@
 //! `cua daemon`: the cua SDK runtime hosted out of process.
 //!
 //! - [`Runtime`] is *the* SDK runtime: one [`cua_sandbox_core::Sandboxes`]
-//!   (Fleet, local, direct), a Fleet client, cached sandbox handles and
-//!   spacesd connections. `cua-sdk` embeds it in-process
+//!   (local, direct, your own cloud), cached sandbox handles and spacesd
+//!   connections. `cua-sdk` embeds it in-process
 //!   (`Cua::embedded`); the daemon hosts the same value.
 //! - [`server`] serves `cua.daemon.v1` on a Unix socket (`~/.cua/cua.sock`,
 //!   mode 0600, no token) and/or loopback TCP (bearer token). The loopback
@@ -13,7 +13,7 @@
 //!     daemon, including the `/media` WebSocket;
 //!   - the **media bridge** `/v1/bridge/media?ticket=<bridge ticket>` for
 //!     webviews: a short-lived bridge ticket from `OpenMediaBridge`, so a
-//!     browser never sees a Fleet bearer or an env token.
+//!     browser never sees an env token.
 //! - [`client::DaemonClient`] is the typed client `Cua::connect` uses.
 //!
 //! Errors cross the wire as `google.rpc.Status` with a packed
@@ -38,13 +38,14 @@ pub mod fixtures;
 mod host_svc;
 pub mod identity;
 pub mod local;
+#[cfg(feature = "spaces")]
+pub mod machine_doctor;
 pub mod maintenance;
 #[cfg(feature = "server")]
 mod passthrough;
 mod runtime;
 #[cfg(feature = "server")]
 pub mod server;
-pub mod session;
 pub mod shares;
 #[cfg(feature = "server")]
 mod spaces_svc;
@@ -98,7 +99,7 @@ pub enum Error {
         /// The accepted values.
         valid: Vec<String>,
     },
-    /// Provider not configured (for example no Fleet credentials).
+    /// Provider not configured (for example a missing provider credential).
     #[error("provider not configured: {0}")]
     ProviderNotConfigured(String),
     /// The provider or this build cannot do this.
@@ -110,18 +111,6 @@ pub enum Error {
     /// A deadline elapsed.
     #[error("timed out: {0}")]
     Timeout(String),
-    /// Fleet API failure.
-    #[error("fleet: {0}")]
-    Fleet(String),
-    /// Fleet's admission refused a write (a size over the account's
-    /// limits); the message is Fleet's.
-    #[error("fleet admission denied: {0}")]
-    FleetAdmissionDenied(String),
-    /// The account is out of Cua Cloud credit (no credit, card or plan);
-    /// the message names the billing page. New cloud sandboxes are
-    /// refused; running ones keep running.
-    #[error("{0}")]
-    CloudCreditExhausted(String),
     /// Your own cloud account refused or failed a call (the message names
     /// the cloud's error).
     #[error("your cloud: {0}")]
@@ -155,12 +144,6 @@ pub enum Error {
     /// The teleport consent gate refused.
     #[error("teleport refused: {0}")]
     TeleportRefused(String),
-    /// A named cloud pool's template differs from the requested fields.
-    #[error("pool spec mismatch: {0}")]
-    PoolSpecMismatch(String),
-    /// A claim's secrets never reached the sandbox (the claim was released).
-    #[error("claim secrets not delivered: {0}")]
-    ClaimSecretsNotDelivered(String),
     /// Not enough free disk space for a pull, build or VM create.
     #[error("insufficient disk: {0}")]
     InsufficientDisk(String),
@@ -188,9 +171,6 @@ impl Error {
             Error::Unsupported(_) => R::Unsupported,
             Error::SpacesdNotAvailable(_) => R::SpacesdNotAvailable,
             Error::Timeout(_) => R::Timeout,
-            Error::Fleet(_) => R::Fleet,
-            Error::FleetAdmissionDenied(_) => R::FleetAdmissionDenied,
-            Error::CloudCreditExhausted(_) => R::CloudCreditExhausted,
             Error::Cloud(_) => R::Cloud,
             Error::Runtime(_) => R::Runtime,
             Error::Env(_) => R::Env,
@@ -199,8 +179,6 @@ impl Error {
             Error::CapabilityMissing(_) => R::CapabilityMissing,
             Error::HostCapabilityMissing(_) => R::HostCapabilityMissing,
             Error::TeleportRefused(_) => R::TeleportRefused,
-            Error::PoolSpecMismatch(_) => R::PoolSpecMismatch,
-            Error::ClaimSecretsNotDelivered(_) => R::ClaimSecretsNotDelivered,
             Error::InsufficientDisk(_) => R::InsufficientDisk,
             Error::Cancelled(_) => R::Cancelled,
             Error::Transport(_) | Error::DaemonNotRunning(_) | Error::Internal(_) => R::Internal,
@@ -216,9 +194,6 @@ impl Error {
             | Error::Unsupported(m)
             | Error::SpacesdNotAvailable(m)
             | Error::Timeout(m)
-            | Error::Fleet(m)
-            | Error::FleetAdmissionDenied(m)
-            | Error::CloudCreditExhausted(m)
             | Error::Cloud(m)
             | Error::Runtime(m)
             | Error::Env(m)
@@ -229,8 +204,6 @@ impl Error {
             | Error::CapabilityMissing(m)
             | Error::HostCapabilityMissing(m)
             | Error::TeleportRefused(m)
-            | Error::PoolSpecMismatch(m)
-            | Error::ClaimSecretsNotDelivered(m)
             | Error::InsufficientDisk(m)
             | Error::Cancelled(m)
             | Error::Internal(m)
@@ -288,9 +261,6 @@ impl Error {
             R::Unsupported => Error::Unsupported(m),
             R::SpacesdNotAvailable => Error::SpacesdNotAvailable(m),
             R::Timeout => Error::Timeout(m),
-            R::Fleet => Error::Fleet(m),
-            R::FleetAdmissionDenied => Error::FleetAdmissionDenied(m),
-            R::CloudCreditExhausted => Error::CloudCreditExhausted(m),
             R::Cloud => Error::Cloud(m),
             R::Runtime => Error::Runtime(m),
             R::Env => Error::Env(m),
@@ -299,8 +269,6 @@ impl Error {
             R::CapabilityMissing => Error::CapabilityMissing(m),
             R::HostCapabilityMissing => Error::HostCapabilityMissing(m),
             R::TeleportRefused => Error::TeleportRefused(m),
-            R::PoolSpecMismatch => Error::PoolSpecMismatch(m),
-            R::ClaimSecretsNotDelivered => Error::ClaimSecretsNotDelivered(m),
             R::InsufficientDisk => Error::InsufficientDisk(m),
             R::Cancelled => Error::Cancelled(m),
             R::Internal | R::Unspecified => Error::Internal(m),
@@ -322,16 +290,10 @@ impl Error {
             Error::CapabilityMissing(_) | Error::HostCapabilityMissing(_) => {
                 Code::FailedPrecondition
             }
-            Error::TeleportRefused(_) | Error::FleetAdmissionDenied(_) => Code::PermissionDenied,
-            Error::PoolSpecMismatch(_) => Code::FailedPrecondition,
-            Error::ClaimSecretsNotDelivered(_) => Code::DeadlineExceeded,
-            Error::InsufficientDisk(_) | Error::CloudCreditExhausted(_) => Code::ResourceExhausted,
+            Error::TeleportRefused(_) => Code::PermissionDenied,
+            Error::InsufficientDisk(_) => Code::ResourceExhausted,
             Error::Cancelled(_) => Code::Cancelled,
-            Error::Fleet(_)
-            | Error::Cloud(_)
-            | Error::Runtime(_)
-            | Error::Env(_)
-            | Error::Http(_) => Code::Aborted,
+            Error::Cloud(_) | Error::Runtime(_) | Error::Env(_) | Error::Http(_) => Code::Aborted,
             Error::Transport(_) | Error::DaemonNotRunning(_) | Error::Internal(_) => Code::Internal,
         };
         let mut metadata = std::collections::HashMap::new();
@@ -397,6 +359,7 @@ impl From<cua_sandbox_core::Error> for Error {
         let m = e.to_string();
         match e {
             E::InvalidArgument(a) => Error::InvalidArgument(a),
+            E::CloudEnded => Error::Unsupported(m),
             E::InvalidPlacement(p) => Error::from(p),
             E::NotFound(_) => Error::NotFound(m),
             E::AmbiguousSandbox {
@@ -411,7 +374,6 @@ impl From<cua_sandbox_core::Error> for Error {
                 cua_sandbox_core::ProviderKind::Local => {
                     "local runtimes are not available in this build yet (cua-vmm)".into()
                 }
-                cua_sandbox_core::ProviderKind::Fleet => cua_fleet::MISSING_CREDENTIALS.into(),
                 cua_sandbox_core::ProviderKind::Direct
                 | cua_sandbox_core::ProviderKind::Contrib => m,
             }),
@@ -420,7 +382,6 @@ impl From<cua_sandbox_core::Error> for Error {
             E::SpacesdNotAvailable { .. } => Error::SpacesdNotAvailable(m),
             E::Timeout(t) => Error::Timeout(t),
             E::Http(h) => Error::Http(h),
-            E::Fleet(f) => Error::from(f),
             E::UnsupportedImage(u) => Error::Unsupported(u),
             E::Runtime(cua_sandbox_core::RuntimeError::UnsupportedImage(u)) => {
                 Error::Unsupported(u)
@@ -448,32 +409,6 @@ impl From<cua_sandbox_core::placement::PlacementError> for Error {
             message: p.message,
             axis: p.axis.as_str().to_string(),
             valid: p.valid,
-        }
-    }
-}
-
-impl From<cua_fleet::Error> for Error {
-    fn from(e: cua_fleet::Error) -> Self {
-        match e {
-            ref e if e.is_not_found() => Error::NotFound(e.to_string()),
-            cua_fleet::Error::MissingCredentials => Error::ProviderNotConfigured(e.to_string()),
-            cua_fleet::Error::InvalidArgument(a) => Error::InvalidArgument(a),
-            cua_fleet::Error::Timeout(t) => Error::Timeout(t),
-            cua_fleet::Error::Env(env) => Error::from(env),
-            cua_fleet::Error::Unsupported(u) => Error::Unsupported(u),
-            ref e @ cua_fleet::Error::PoolSpecMismatch { .. } => {
-                Error::PoolSpecMismatch(e.to_string())
-            }
-            ref e @ cua_fleet::Error::ClaimSecretsNotDelivered { .. } => {
-                Error::ClaimSecretsNotDelivered(e.to_string())
-            }
-            ref e @ cua_fleet::Error::AdmissionDenied { .. } => {
-                Error::FleetAdmissionDenied(e.to_string())
-            }
-            ref e @ cua_fleet::Error::CreditExhausted { .. } => {
-                Error::CloudCreditExhausted(e.to_string())
-            }
-            other => Error::Fleet(other.to_string()),
         }
     }
 }
@@ -506,12 +441,13 @@ impl From<cua_spaces::Error> for Error {
             E::CapabilityMissing { .. } => Error::CapabilityMissing(m),
             E::HostCapabilityMissing { .. } => Error::HostCapabilityMissing(m),
             E::WrongProvider { .. } => Error::Unsupported(m),
-            // Both are a consent gate saying no; the message names which.
-            E::TeleportRefused(_) | E::LoginRefused(_) => Error::TeleportRefused(m),
+            // Both are a consent gate saying no; the message names which (a
+            // teleport's own words: this error says "teleport refused:" itself).
+            E::TeleportRefused(why) => Error::TeleportRefused(why),
+            E::LoginRefused(_) => Error::TeleportRefused(m),
             E::Timeout(_) => Error::Timeout(m),
             E::Cancelled(c) => Error::Cancelled(c),
             E::Env(env) => Error::from(env),
-            E::Fleet(f) => Error::from(f),
             E::Sandbox(s) => Error::from(s),
             E::Transfer(_) | E::Agent(_) | E::Stream(_) => Error::Env(m),
             E::Io(_) | E::Json(_) => Error::Internal(m),
@@ -673,6 +609,114 @@ pub fn pid_alive(pid: u32) -> bool {
     pid != 0 && cua_vmm::host::pid_alive(pid)
 }
 
+/// Whether `command` (a process's command line) runs a cua daemon:
+/// `<dir>/cua daemon start ...` (or the Cua Spaces `cua-spaces-cli`).
+#[cfg(unix)]
+fn is_daemon_command(command: &str) -> bool {
+    let Some(at) = command.find(" daemon start") else {
+        return false;
+    };
+    // The executable path may hold spaces ("Cua Spaces.app"): its last
+    // component is the program.
+    std::path::Path::new(command[..at].trim())
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| matches!(n, "cua" | "cua-spaces-cli"))
+}
+
+/// Whether the live process `pid` is a cua daemon (by its command line),
+/// so a pid read earlier was not reused by another program.
+#[cfg(unix)]
+pub fn is_daemon_process(pid: u32) -> bool {
+    std::process::Command::new("ps")
+        .args(["-o", "command=", "-p", &pid.to_string()])
+        .stderr(std::process::Stdio::null())
+        .output()
+        .is_ok_and(|o| o.status.success() && is_daemon_command(&String::from_utf8_lossy(&o.stdout)))
+}
+
+/// Ends the cua daemon process `pid` that did not exit when asked: SIGTERM,
+/// then SIGKILL, waiting up to `grace` after each. A daemon that closed
+/// its listeners on `Shutdown` but never exited kept holding the Keyvault
+/// socket after an app update (trycua/cua#4950). Never signals this
+/// process or one that is not a cua daemon. Returns whether `pid` is gone.
+/// Blocking; call it off the async runtime.
+#[cfg(unix)]
+pub fn terminate_daemon(pid: u32, grace: std::time::Duration) -> bool {
+    if pid == 0 || pid == std::process::id() || pid > i32::MAX as u32 {
+        return false;
+    }
+    if !pid_alive(pid) {
+        return true;
+    }
+    if !is_daemon_process(pid) {
+        return false;
+    }
+    for signal in [libc::SIGTERM, libc::SIGKILL] {
+        // SAFETY: plain kill(2) on a positive pid checked above.
+        unsafe { libc::kill(pid as libc::pid_t, signal) };
+        let deadline = std::time::Instant::now() + grace;
+        while std::time::Instant::now() < deadline {
+            if !pid_alive(pid) {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+    !pid_alive(pid)
+}
+
+/// The pid of the process listening on the Unix socket at `path`
+/// (`LOCAL_PEERPID` on macOS, `SO_PEERCRED` on Linux); `None` when nothing
+/// listens or the OS does not say.
+#[cfg(unix)]
+pub fn socket_listener_pid(path: &std::path::Path) -> Option<u32> {
+    use std::os::fd::AsRawFd;
+    let stream = std::os::unix::net::UnixStream::connect(path).ok()?;
+    let fd = stream.as_raw_fd();
+    #[cfg(target_vendor = "apple")]
+    {
+        let mut pid: libc::pid_t = 0;
+        let mut len = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
+        // SAFETY: getsockopt into a properly sized pid_t on a live socket.
+        let rc = unsafe {
+            libc::getsockopt(
+                fd,
+                libc::SOL_LOCAL,
+                libc::LOCAL_PEERPID,
+                (&mut pid as *mut libc::pid_t).cast(),
+                &mut len,
+            )
+        };
+        (rc == 0 && pid > 0).then_some(pid as u32)
+    }
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        let mut cred = libc::ucred {
+            pid: 0,
+            uid: 0,
+            gid: 0,
+        };
+        let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+        // SAFETY: getsockopt into a properly sized ucred on a live socket.
+        let rc = unsafe {
+            libc::getsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_PEERCRED,
+                (&mut cred as *mut libc::ucred).cast(),
+                &mut len,
+            )
+        };
+        (rc == 0 && cred.pid > 0).then_some(cred.pid as u32)
+    }
+    #[cfg(not(any(target_vendor = "apple", target_os = "linux", target_os = "android")))]
+    {
+        let _ = fd;
+        None
+    }
+}
+
 /// Whether a server accepts connections on the Unix socket at `path`
 /// (a missing file or a refused connect is not listening).
 #[cfg(unix)]
@@ -767,16 +811,109 @@ pub fn random_token() -> String {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[test]
+    fn only_a_cua_daemon_command_line_counts() {
+        assert!(is_daemon_command(
+            "/Applications/Cua Spaces.app/Contents/Resources/native/cua daemon start --foreground --loopback 127.0.0.1:0\n"
+        ));
+        assert!(is_daemon_command(
+            "/usr/local/bin/cua-spaces-cli daemon start --foreground"
+        ));
+        assert!(!is_daemon_command("/usr/bin/vim daemon start"));
+        assert!(!is_daemon_command(
+            "/Applications/Cua Spaces.app/Contents/MacOS/cua daemon stop"
+        ));
+        assert!(!is_daemon_command(""));
+    }
+
+    /// A process that looks like a daemon and ignores SIGTERM, as the
+    /// daemon that never exited after `Shutdown` did (#4950); reaped by a
+    /// thread so a killed one does not linger as a zombie.
+    #[cfg(unix)]
+    fn stubborn_daemon(dir: &std::path::Path) -> (u32, std::sync::mpsc::Receiver<()>) {
+        use std::os::unix::fs::PermissionsExt;
+        let exe = dir.join("cua");
+        std::fs::write(&exe, "#!/bin/sh\ntrap '' TERM\nwhile :; do sleep 1; done\n").unwrap();
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut child = std::process::Command::new(&exe)
+            .args(["daemon", "start", "--foreground"])
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = child.wait();
+            let _ = tx.send(());
+        });
+        // Until the shell has set its trap.
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        (pid, rx)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_daemon_that_ignores_sigterm_is_killed() {
+        let dir = tempfile::tempdir().unwrap();
+        let (pid, exited) = stubborn_daemon(dir.path());
+        assert!(is_daemon_process(pid));
+        assert!(terminate_daemon(pid, std::time::Duration::from_secs(2)));
+        exited
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the stubborn daemon exited");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn terminate_never_signals_another_program() {
+        let mut other = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        assert!(!is_daemon_process(other.id()));
+        assert!(!terminate_daemon(
+            other.id(),
+            std::time::Duration::from_millis(100)
+        ));
+        assert!(other.try_wait().unwrap().is_none(), "left running");
+        assert!(!terminate_daemon(
+            std::process::id(),
+            std::time::Duration::from_millis(100)
+        ));
+        other.kill().unwrap();
+        other.wait().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_listener_of_a_socket_is_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        assert_eq!(socket_listener_pid(&path), None);
+        let _listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        assert_eq!(socket_listener_pid(&path), Some(std::process::id()));
+    }
+
+    #[cfg(feature = "spaces")]
+    #[test]
+    fn a_teleport_refusal_says_teleport_refused_once() {
+        let err = Error::from(cua_spaces::Error::TeleportRefused(
+            "the approver declined".into(),
+        ));
+        assert_eq!(err, Error::TeleportRefused("the approver declined".into()));
+        assert_eq!(err.to_string(), "teleport refused: the approver declined");
+        let back = Error::from_status(&err.to_status());
+        assert_eq!(back.to_string(), "teleport refused: the approver declined");
+    }
+
     #[test]
     fn error_roundtrips_through_status() {
         for e in [
             Error::NotFound("sandbox x".into()),
             Error::SpacesdNotAvailable("no driver".into()),
             Error::Unsupported("local".into()),
-            Error::ProviderNotConfigured("fleet".into()),
+            Error::ProviderNotConfigured("local".into()),
             Error::Timeout("t".into()),
-            Error::Fleet("f".into()),
-            Error::FleetAdmissionDenied("sandbox size is over the Fleet limits".into()),
             Error::InsufficientDisk("needs 3 GiB".into()),
             Error::AmbiguousSandbox {
                 message: "\"box\" names 2 sandboxes; use one of: local:box, cloud:box".into(),
@@ -793,36 +930,6 @@ mod tests {
             Error::from_status(&tonic::Status::unauthenticated("no")),
             Error::Unauthenticated(_)
         ));
-    }
-
-    #[test]
-    fn fleet_404_and_read_403_are_not_found() {
-        let status = |op: &str, code: u16| {
-            Error::from(cua_fleet::Error::Sdk(cua_fleet::SdkError::status(
-                op, code, b"x",
-            )))
-        };
-        assert!(matches!(status("get pool", 404), Error::NotFound(_)));
-        assert!(matches!(status("delete claim", 404), Error::NotFound(_)));
-        assert!(matches!(status("get pool", 403), Error::NotFound(_)));
-        assert!(matches!(status("list claims", 403), Error::NotFound(_)));
-        assert!(matches!(status("create claim", 403), Error::Fleet(_)));
-        assert!(matches!(status("get pool", 500), Error::Fleet(_)));
-    }
-
-    #[test]
-    fn fleet_admission_denial_keeps_fleets_message() {
-        let e = Error::from(cua_fleet::Error::from(cua_fleet::SdkError::status(
-            "create template",
-            403,
-            br#"{"error":"sandbox size is over the Fleet limits"}"#,
-        )));
-        assert!(
-            matches!(&e, Error::FleetAdmissionDenied(m) if m.contains("sandbox size is over the Fleet limits")),
-            "{e:?}"
-        );
-        assert_eq!(e.to_status().code(), tonic::Code::PermissionDenied);
-        assert_eq!(Error::from_status(&e.to_status()), e);
     }
 
     #[test]

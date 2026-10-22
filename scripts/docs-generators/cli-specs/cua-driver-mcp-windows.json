@@ -18,7 +18,7 @@
    "read_only": true
   },
   {
-   "description": "List every top-level window currently known to the window manager. Each record self-contains its owning app identity so the caller never has to join back against list_apps.\n\nUse this — not list_apps — for any window-level reasoning: \"does this app have a visible window right now?\", \"which of this pid's windows is the main one?\".\n\nPer-record fields: window_id (HWND), pid + app_name, title, bounds {x, y, width, height}, layer (always 0), z_index (integer or null; higher values are closer to the front; null means stacking order is unavailable and callers must not infer one), is_on_screen, minimized. To select a frontmost candidate, take the maximum integer z_index; if every value is null, use an explicit fallback instead of relying on array order. The macOS-specific on_current_space / space_ids fields are omitted on Windows; current_space_id is null.\n\nInputs: pid (optional pid filter), app (app-name filter), on_screen_only (bool, default false). Filter with app or pid: an unfiltered call lists every window.",
+   "description": "List every top-level window currently known to the window manager. Each record self-contains its owning app identity so the caller never has to join back against list_apps.\n\nUse this — not list_apps — for any window-level reasoning: \"does this app have a visible window right now?\", \"which of this pid's windows is the main one?\".\n\nPer-record fields: window_id (HWND), pid + app_name, title, bounds {x, y, width, height}, layer (always 0), z_index (integer or null; higher values are closer to the front; null means stacking order is unavailable and callers must not infer one), is_on_screen, minimized. To select a frontmost candidate, take the maximum integer z_index; if every value is null, use an explicit fallback instead of relying on array order. The macOS-specific on_current_space / space_ids fields are omitted on Windows; current_space_id is null.\n\nInputs: pid (optional pid filter), app (app-name filter), on_screen_only (bool, default false). Filter with app or pid: an unfiltered call lists every window. The driver's own overlay is omitted.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -47,7 +47,7 @@
    "read_only": true
   },
   {
-   "description": "Walk a running app's UIA tree and return it ONCE, as compact Markdown by default (`tree_format:\"markdown\"`). Every actionable element is tagged `[N]` (an element_index); its element_token is `<snapshot_id>:N`, where `snapshot_id` is printed in the response header and returned in structuredContent. Pass `tree_format:\"elements\"` for the structured `elements` array instead (explicit `element_token`, `frame`, `parent_index`, `value`, `actions` per row), or `\"both\"` for both (about twice the size).\n\nSize: a read is bounded by default (`max_elements` 250). When the walk stops at that budget the response says `Tree truncated at max_elements=…` and `truncated: true`; pass a larger `max_elements`, or `query` / `max_depth`, to reach the rest. `_note` is omitted unless `verbose:true`. `full_output:true` restores the previous full response: both representations, all metadata, and the platform's walk limits (≤5 000 elements, depth ≤25).\n\nDIFF READS: pass `since: <snapshot_id>` from an earlier read of the same window to get only what changed: `+` added rows, `~` changed rows, `-` removed rows (their ids are the old snapshot's), or `no change since …`. Rows not listed keep their previous `[N]` unless a `reindexed:` line says otherwise. The response carries a NEW snapshot_id: use it in element_tokens. An unknown, expired, other-window or differently-scoped (query/max_elements/max_depth) `since` falls back to a full read and `since_status` says why. The focused element is not reported on Windows yet.\n\nINVARIANT: call `get_window_state` once per turn per (pid, window_id) before any element action against that window. The next snapshot of the same (pid, window_id) replaces this one, stales its element tokens, and lists the replaced ids in `invalidated_snapshot_ids`. A screenshot-only read (`include_accessibility_tree:false`) keeps the current snapshot's rows and tokens valid, and `display_only:true` also leaves its pixel frame alone.\n\nThe UIA tree walked is the window's tree (HWND-scoped); the screenshot and window bounds reported come from the same `window_id`. This is the source of truth for which window the caller intends to reason about — the driver never picks a window implicitly.\n\n`window_id` MUST belong to `pid`; the call returns `isError: true` otherwise. The driver does not auto-fall-back to a different window.\n\nSet `query` to a case-insensitive substring to project the tree to matching rows plus their ancestor chain. Original element indices are preserved. `total_element_count` reports the complete snapshot; `returned_element_count` reports the projection.\n\nAlways returns BOTH the element tree AND a screenshot — ground on both and cross-check (the tree lies on some surfaces). Choose the modality at ACTION time: an element ax action (element_token → accessibility rung) or an element px action (x,y → pixel rung off this screenshot). capture_mode is deprecated and ignored.\n\nThe mirror image: pass `include_accessibility_tree:false` to SKIP the UIA walk entirely and return just the screenshot plus window metadata (window_bounds, app_name, window_title) — the capture-only path for a live window preview / picture-in-picture. Setting BOTH `include_accessibility_tree:false` and `include_screenshot:false` is an error. Optional `max_image_dimension` overrides the configured screenshot long-edge limit for this call; pass 0 for native resolution. Legacy `max_dimension` remains a cap on the configured limit.\n\nUses `IUIAutomationCacheRequest` to batch-fetch all element properties in a single COM call (Chrome's ~5000-element tree returns in ~2-3s instead of timing out at 4s with per-property RPCs).\n\nOptional `max_elements` / `max_depth` bound the UIA walk (Electron / large web apps produce 10k+ element trees). Markdown and structured elements are truncated identically. Default: `max_elements` 250, depth ≤25.\n\nCHROMIUM COVERAGE: a browser-owned permission bubble can be composited outside the requested native window. Chromium-family snapshots therefore describe this limit in structuredContent.capture_coverage. After a verified ineffective window action, call escalate_session, take a fresh get_desktop_state snapshot, act explicitly in desktop scope if needed, then verify with another fresh desktop snapshot. This is separate from page JavaScript dialogs, which remain on browser_dialog.\n\nWindows requires no special permissions.",
+   "description": "Walk a running app's UIA tree and return it ONCE, as compact Markdown by default (`tree_format:\"markdown\"`). Every actionable element is tagged `[N]` (an element_index); its element_token is `<snapshot_id>:N`, where `snapshot_id` is printed in the response header and returned in structuredContent. Pass `tree_format:\"elements\"` for the structured `elements` array instead (explicit `element_token`, `frame`, `parent_index`, `value`, `actions` per row), or `\"both\"` for both (about twice the size).\n\nSize: a read is bounded by default (`max_elements` 250). When the walk stops at that budget the response says `Tree truncated at max_elements=…` and `truncated: true`; pass a larger `max_elements`, or `query` / `max_depth`, to reach the rest. `_note` is omitted unless `verbose:true`. `full_output:true` restores the previous full response: both representations, all metadata, and the platform's walk limits (≤5 000 elements, depth ≤25).\n\nDIFF READS: pass `since: <snapshot_id>` from an earlier read of the same window to get only what changed: `+` added rows, `~` changed rows, `-` removed rows (their ids are the old snapshot's), or `no change since …`. Rows not listed keep their previous `[N]` unless a `reindexed:` line says otherwise. The response carries a NEW snapshot_id: use it in element_tokens. An unknown, expired, other-window or differently-scoped (query/max_elements/max_depth) `since` falls back to a full read and `since_status` says why. The focused element is not reported on Windows yet.\n\nINVARIANT: call `get_window_state` once per turn per (pid, window_id) before any element action against that window. The next snapshot of the same (pid, window_id) replaces this one, stales its element tokens, and lists the replaced ids in `invalidated_snapshot_ids`. A screenshot-only read (`include_accessibility_tree:false`) keeps the current snapshot's rows and tokens valid, and `display_only:true` also leaves its pixel frame alone.\n\nThe UIA tree walked is the window's tree (HWND-scoped); the screenshot and window bounds reported come from the same `window_id`. This is the source of truth for which window the caller intends to reason about — the driver never picks a window implicitly.\n\n`window_id` MUST belong to `pid`; the call returns `isError: true` otherwise. The driver does not auto-fall-back to a different window.\n\nSet `query` to a case-insensitive substring to project the tree to matching rows plus their ancestor chain. Original element indices are preserved. `total_element_count` reports the unprojected walked snapshot; `returned_element_count` reports the projection. `elements_complete` describes the underlying walk and is unaffected by query projection.\n\nAlways returns BOTH the element tree AND a screenshot — ground on both and cross-check (the tree lies on some surfaces). Choose the modality at ACTION time: an element ax action (element_token → accessibility rung) or an element px action (x,y → pixel rung off this screenshot). capture_mode is deprecated and ignored.\n\nThe mirror image: pass `include_accessibility_tree:false` to SKIP the UIA walk entirely and return just the screenshot plus window metadata (window_bounds, app_name, window_title) — the capture-only path for a live window preview / picture-in-picture. Setting BOTH `include_accessibility_tree:false` and `include_screenshot:false` is an error. Optional `max_image_dimension` overrides the configured screenshot long-edge limit for this call; pass 0 for native resolution. Legacy `max_dimension` remains a cap on the configured limit.\n\nUses `IUIAutomationCacheRequest` to batch-fetch all element properties in a single COM call (Chrome's ~5000-element tree returns in ~2-3s instead of timing out at 4s with per-property RPCs).\n\nOptional `max_elements` / `max_depth` bound the UIA walk (Electron / large web apps produce 10k+ element trees). Markdown and structured elements are truncated identically. `elements_complete` is false when a bound skips a node or subtree; ending exactly at a bound remains complete. Default: `max_elements` 250, depth ≤25.\n\nCHROMIUM COVERAGE: a browser-owned permission bubble can be composited outside the requested native window. Chromium-family snapshots therefore describe this limit in structuredContent.capture_coverage. After a verified ineffective window action, call escalate_session, take a fresh get_desktop_state snapshot, act explicitly in desktop scope if needed, then verify with another fresh desktop snapshot. This is separate from page JavaScript dialogs, which remain on browser_dialog.\n\nWindows requires no special permissions.",
    "destructive": false,
    "idempotent": false,
    "input_schema": {
@@ -102,7 +102,7 @@
       "type": "integer"
      },
      "query": {
-      "description": "Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count.",
+      "description": "Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count; elements_complete continues to describe the underlying unprojected walk.",
       "type": "string"
      },
      "screenshot_out_file": {
@@ -458,7 +458,7 @@
    "read_only": false
   },
   {
-   "description": "Resolve an exact application-menu path one live native level at a time and invoke its final item through accessibility APIs. Missing, ambiguous, disabled, or structurally mismatched segments fail closed; this tool never falls back to pixels.",
+   "description": "Resolve an exact application-menu path one live native level at a time and invoke its final item through accessibility APIs. Missing, ambiguous, disabled, or structurally mismatched segments fail closed; this tool never falls back to pixels. Menu paths and refusals: `get_guide({topic:\"menus\"})`.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -648,7 +648,7 @@
    "read_only": false
   },
   {
-   "description": "Double-click against a target pid. Two addressing modes:\n\n- `element_token` (from the last `get_window_state` snapshot of that window) — synthesizes a stamped pixel double-click at the element's cached on-screen center via PostMessage. (Windows has no AXOpen analogue; Swift's AXOpen-first path falls through to the same pixel recipe when the element doesn't advertise AXOpen, so the user-visible behavior matches.)\n\n- `x`, `y` (window-local screenshot pixels, top-left origin of the PNG returned by `get_window_state`) — posts two WM_LBUTTONDOWN/UP pairs in quick succession to the deepest child window at that point.\n\nExactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is required in both modes. The macOS-only `modifier` field is accepted for parity (no-op on Windows — PostMessage doesn't propagate modifier-key state).",
+   "description": "Double-click against a target pid. Two addressing modes:\n\n- `element_token` (from the last `get_window_state` snapshot of that window) — synthesizes a stamped pixel double-click at the element's cached on-screen center via PostMessage. (Windows has no AXOpen analogue; Swift's AXOpen-first path falls through to the same pixel recipe when the element doesn't advertise AXOpen, so the user-visible behavior matches.)\n\n- `x`, `y` (window-local screenshot pixels, top-left origin of the PNG returned by `get_window_state`) — posts two WM_LBUTTONDOWN/UP pairs in quick succession to the deepest child window at that point.\n\nExactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is required with `x`, `y`; an `element_token` carries its own pid. The macOS-only `modifier` field is accepted for parity (no-op on Windows — PostMessage doesn't propagate modifier-key state).",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -679,7 +679,7 @@
       "type": "array"
      },
      "pid": {
-      "description": "Target process ID.",
+      "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
      },
      "session": {
@@ -699,16 +699,14 @@
       "type": "number"
      }
     },
-    "required": [
-     "pid"
-    ],
+    "required": [],
     "type": "object"
    },
    "name": "double_click",
    "read_only": false
   },
   {
-   "description": "Right-click against a target pid. Two addressing modes:\n\n- `element_token` (from the last `get_window_state` snapshot of that window) — posts WM_RBUTTONDOWN/UP at the element's cached on-screen center via PostMessage. (Windows has no AXShowMenu analogue wired up yet; Swift's AX-action path falls through to the same pixel recipe on non-advertising elements, so user-visible behavior matches.)\n\n- `x`, `y` (window-local screenshot pixels, top-left origin of the PNG returned by `get_window_state`) — posts WM_RBUTTONDOWN/UP to the deepest child window at that point.\n\nExactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is required in both modes. `modifier` is accepted for parity (no-op on Windows — PostMessage doesn't propagate modifier-key state).",
+   "description": "Right-click against a target pid. Two addressing modes:\n\n- `element_token` (from the last `get_window_state` snapshot of that window) — posts WM_RBUTTONDOWN/UP at the element's cached on-screen center via PostMessage. (Windows has no AXShowMenu analogue wired up yet; Swift's AX-action path falls through to the same pixel recipe on non-advertising elements, so user-visible behavior matches.)\n\n- `x`, `y` (window-local screenshot pixels, top-left origin of the PNG returned by `get_window_state`) — posts WM_RBUTTONDOWN/UP to the deepest child window at that point.\n\nExactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is required with `x`, `y`; an `element_token` carries its own pid. `modifier` is accepted for parity (no-op on Windows — PostMessage doesn't propagate modifier-key state).",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -739,7 +737,7 @@
       "type": "array"
      },
      "pid": {
-      "description": "Target process ID.",
+      "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
      },
      "session": {
@@ -759,16 +757,14 @@
       "type": "number"
      }
     },
-    "required": [
-     "pid"
-    ],
+    "required": [],
     "type": "object"
    },
    "name": "right_click",
    "read_only": false
   },
   {
-   "description": "Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local screenshot pixels. duration_ms (default 500) is the wall-clock budget; steps (default 20) interpolates intermediate WM_MOUSEMOVE events along the path. No focus steal. After a zoom call, pass from_zoom=true. Drags that start on a window caption / title bar or resize border (i.e. moving or resizing the window itself) cannot be delivered in the background — the OS move/resize loop needs real pointer input — so they return background_unavailable; re-issue those with delivery_mode:\"foreground\".",
+   "description": "Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local screenshot pixels. duration_ms (default 500) is the wall-clock budget; steps (default 20) interpolates intermediate WM_MOUSEMOVE events along the path. Background delivery does not steal focus; delivery_mode:\"foreground\" activates the target and refuses with foreground_unavailable, sending nothing, when another window still covers the start point. After a zoom call, pass from_zoom=true. Drags that start on a window caption / title bar or resize border (i.e. moving or resizing the window itself) cannot be delivered in the background — the OS move/resize loop needs real pointer input — so they return background_unavailable; re-issue those with delivery_mode:\"foreground\". Limits and fallbacks: `get_guide({topic:\"drag\"})`.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -895,7 +891,7 @@
    "read_only": false
   },
   {
-   "description": "Insert text into the target pid via character-by-character PostMessage(WM_CHAR) to the focused window. No focus steal.\n\nSpecial keys (Return, Escape, arrows, Tab) go through `press_key` / `hotkey` — they are not text.\n\n**Routing on Windows.** When the target's owning EXE or top-level window class identifies it as a XAML / WinUI3 / UWP host (modern Notepad, Calculator, Photos, Settings, etc.), the tool requires `element_token` and routes through UI Automation's `ValuePattern.SetValue` — same backend as the `set_value` tool. PostMessage WM_CHAR doesn't reach those hosts (their CoreInput dispatcher only consumes events from the system input queue), so the fallback path silently dropped chars. If you call `type_text(pid, text)` on a XAML host without `element_token`, the tool returns an actionable error pointing you at `get_window_state` first. Native ConsoleHost on Windows ARM64 is hard-refused because it can accept synthesized Unicode events without delivering them; use a process or PTY setup channel instead. Legacy Win32 apps still use the PostMessage path, preserving the no-focus-steal property.\n\n`delay_ms` (0–200, default 30) spaces successive characters on the PostMessage path so autocomplete and IME can keep up. Ignored on the UIA path (SetValue is atomic).",
+   "description": "Insert text into the target pid via character-by-character PostMessage(WM_CHAR) to the focused window. No focus steal.\n\nSpecial keys (Return, Escape, arrows, Tab) go through `press_key` / `hotkey` — they are not text.\n\n**Routing on Windows.** `element_token` selects a specific UIA element and writes its ValuePattern value. For no-element foreground typing, a separate capability-gated path can use the exact focused UIA Document only when it is writable and empty. Eligibility depends on control capabilities and live focus, not app names. Chromium/Electron windows keep their existing boundary because a UIA value echo does not prove that the renderer accepted the text. The path reads the value and caret back; after SetValue starts, an unverifiable result requires a fresh observation before any retry and is never replayed through native input. This replaces the full ValuePattern value, so rich-text formatting and native undo behavior are not guaranteed; single-line Edit controls keep the existing input route. For other XAML / WinUI3 / UWP cases, use `element_token` from `get_window_state`; background WM_CHAR does not reach their CoreInput dispatcher. Native ConsoleHost on Windows ARM64 is hard-refused because it can accept synthesized Unicode events without delivering them; use a process or PTY setup channel instead. Legacy Win32 apps still use the PostMessage path, preserving the no-focus-steal property.\n\n`delay_ms` (0–200, default 30) spaces successive characters on the PostMessage path so autocomplete and IME can keep up. Ignored on the UIA path (SetValue is atomic).",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -1211,7 +1207,7 @@
       "type": "string"
      },
      "pid": {
-      "description": "Target process ID.",
+      "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
      },
      "session": {
@@ -1228,7 +1224,6 @@
      }
     },
     "required": [
-     "pid",
      "value"
     ],
     "type": "object"
@@ -1638,7 +1633,7 @@
       "type": "number"
      },
      "glide_duration_ms": {
-      "description": "Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A\nnonzero value with `native` timing also fixes the duration. Clamped to 0..5000.",
+      "description": "Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A\nnonzero value with `native` or the default `steady` timing also fixes the duration.\nClamped to 0..5000.",
       "type": "number"
      },
      "idle_hide_ms": {
@@ -1670,11 +1665,15 @@
       "type": "string"
      },
      "timing": {
-      "description": "`native` uses the style's own timing; `fitts` scales the move time with distance and\ntarget size; `fixed` uses glide_duration_ms (1430 ms when 0).",
+      "description": "`steady` (default) keeps the style's timing but makes every move take at least 600 ms,\nwith a gentler ease; `relaxed` and `calm` do the same with a 450 or 750 ms floor.\n`native` uses the style's own timing; `fitts` scales the move time with distance and\ntarget size; `deliberate` is a slower Fitts curve (450..1300 ms); `fixed` uses\nglide_duration_ms (1430 ms when 0).",
       "enum": [
        "native",
        "fitts",
-       "fixed"
+       "fixed",
+       "relaxed",
+       "steady",
+       "calm",
+       "deliberate"
       ],
       "type": "string"
      },
@@ -1749,12 +1748,16 @@
    "read_only": false
   },
   {
-   "description": "Check required permissions for cua-driver-rs on Windows.",
+   "description": "Check required permissions for cua-driver-rs on Windows. How to get them granted: `get_guide({topic:\"permissions\"})`.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
     "additionalProperties": false,
     "properties": {
+     "prompt": {
+      "description": "Ignored: Windows has no permission prompts.",
+      "type": "boolean"
+     },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
       "type": "string"
@@ -1766,7 +1769,7 @@
    "read_only": true
   },
   {
-   "description": "Single-call end-to-end driver diagnostics. Designed to let downstream consumers ship one stable call instead of stitching together check_permissions, doctor, version, bundle attribution, and platform capability status. On macOS, prompt-capable direct capture is deliberately skipped. For standalone CuaDriver, use `cua-driver permissions grant` to verify it explicitly. For an embedded or linked driver, use the host's permission flow for the app or executable macOS attributes this process's permission request to; the standalone command does not verify the host's capture readiness. cua-driver owns the health model; consumers stay thin.\n\nInput — all optional:\n  {\n    \"include\": [\"<check_name>\", ...],   // run only these\n    \"skip\":    [\"<check_name>\", ...]    // skip these\n  }\nIf both are given, `include` wins.\n\nCanonical check names:\n  macOS  : binary_version, platform_supported, session_active,\n           bundle_identity, tcc_accessibility, tcc_screen_recording,\n           ax_capability, screen_capture_capability\n  Windows: binary_version, platform_supported, session_active,\n           ax_capability (via UIA), screen_capture_capability (via DXGI)\n  Linux  : binary_version, platform_supported, session_active,\n           ax_capability (via AT-SPI), screen_capture_capability (via X11)\n\nOutput — stable contract, schema_version=\"1\":\n  {\n    \"schema_version\": \"1\",\n    \"platform\": \"darwin\" | \"win32\" | \"linux\",\n    \"driver_version\": \"<semver>\",\n    \"overall\": \"ok\" | \"degraded\" | \"failed\",\n    \"checks\": [\n      {\n        \"name\": \"<one of the canonical names above>\",\n        \"status\": \"pass\" | \"fail\" | \"skip\",\n        \"message\": \"<one-line summary, always present>\",\n        \"hint\": \"<remediation step, present when status=fail>\",\n        \"data\": { /* check-specific structured fields */ }\n      },\n      ...\n    ]\n  }\n\n`overall` rules:\n  - `ok`       — every non-skipped check passes\n  - `degraded` — at least one non-core check fails (binary is still usable)\n  - `failed`   — any core check fails (binary_version, platform_supported, session_active)\n\nStability: schema_version=\"1\" is the contract. Future breaking changes will be `\"2\"`. Adding new check names under the same schema_version is non-breaking; consumers must tolerate unknown check names.",
+   "description": "Single-call end-to-end driver diagnostics. Designed to let downstream consumers ship one stable call instead of stitching together check_permissions, doctor, version, bundle attribution, and platform capability status. On macOS, prompt-capable direct capture is deliberately skipped. For standalone CuaDriver, use `cua-driver permissions grant` to verify it explicitly. For an embedded or linked driver, use the host's permission flow for the app or executable macOS attributes this process's permission request to; the standalone command does not verify the host's capture readiness. cua-driver owns the health model; consumers stay thin.\n\nInput — all optional:\n  {\n    \"include\": [\"<check_name>\", ...],   // run only these\n    \"skip\":    [\"<check_name>\", ...]    // skip these\n  }\nIf both are given, `include` wins.\n\nCanonical check names:\n  macOS  : binary_version, platform_supported, session_active,\n           bundle_identity, tcc_accessibility, tcc_screen_recording,\n           ax_capability, screen_capture_capability, windowserver_connection\n  Windows: binary_version, platform_supported, session_active,\n           ax_capability (via UIA), screen_capture_capability (via DXGI)\n  Linux  : binary_version, platform_supported, session_active,\n           ax_capability (via AT-SPI), screen_capture_capability (via X11)\n\nOutput — stable contract, schema_version=\"1\":\n  {\n    \"schema_version\": \"1\",\n    \"platform\": \"darwin\" | \"win32\" | \"linux\",\n    \"driver_version\": \"<semver>\",\n    \"overall\": \"ok\" | \"degraded\" | \"failed\",\n    \"checks\": [\n      {\n        \"name\": \"<one of the canonical names above>\",\n        \"status\": \"pass\" | \"fail\" | \"skip\",\n        \"message\": \"<one-line summary, always present>\",\n        \"hint\": \"<remediation step, present when status=fail>\",\n        \"data\": { /* check-specific structured fields */ }\n      },\n      ...\n    ]\n  }\n\n`overall` rules:\n  - `ok`       — every non-skipped check passes\n  - `degraded` — at least one non-core check fails (binary is still usable)\n  - `failed`   — any core check fails (binary_version, platform_supported, session_active)\n\nStability: schema_version=\"1\" is the contract. Future breaking changes will be `\"2\"`. Adding new check names under the same schema_version is non-breaking; consumers must tolerate unknown check names.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -1814,7 +1817,7 @@
    "read_only": true
   },
   {
-   "description": "Write a setting into the persistent driver config. Values take effect immediately. Pass each setting as its own field.\n\nKnown keys:\n- `capture_mode` (string: `vision` | `ax` | `som`) — DEPRECATED and ignored; `get_window_state` always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect.\n- `max_image_dimension` (integer)\n- `experimental_pip` (boolean; persisted to config.json, applies on next daemon restart — Windows backend stubbed today, see issue #1729)\n- `experimental_pip_geometry` (string `WxH` or `WxH+X+Y`; persisted; applies on next daemon restart)\n\n- `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>` (`on`, `off`, or `default`) — saved default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.\n\nReturns the full updated config in the same shape as `get_config`.",
+   "description": "Write a setting into the persistent driver config. Values take effect immediately. Pass each setting as its own field.\n\nKnown keys:\n- `capture_mode` (string: `vision` | `ax` | `som`) — DEPRECATED and ignored; `get_window_state` always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect.\n- `max_image_dimension` (integer)\n- `experimental_pip` (boolean; persisted to config.json, applies on next daemon restart — Windows backend stubbed today, see issue #1729)\n- `experimental_pip_geometry` (string `WxH` or `WxH+X+Y`; persisted; applies on next daemon restart)\n\n- `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>` (`on`, `off`, or `default`) — saved default cursor motion for sessions started afterwards. `cursor.motion: \"default\"` clears every saved cursor motion default.\n- `cursor.badges` (`minimal` default, `verbose`, or `off`) — agent cursor badge; applies to every cursor at once.\n\nReturns the full updated config in the same shape as `get_config`.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -1825,6 +1828,16 @@
       "enum": [
        "ax",
        "vision"
+      ],
+      "type": "string"
+     },
+     "cursor.badges": {
+      "description": "Agent cursor badge. minimal (default): no badge at rest; a brief chip for a foreground moment or a key combo, and the session name on hover or when two or more agent cursors are on screen. verbose: the earlier badge with the session name and delivery/target chips on every action. off: no badge. Applies immediately to every cursor.",
+      "enum": [
+       "minimal",
+       "verbose",
+       "off",
+       "default"
       ],
       "type": "string"
      },
@@ -1893,11 +1906,15 @@
       "type": "string"
      },
      "cursor.motion.timing": {
-      "description": "Saved default cursor move timing for new sessions.",
+      "description": "Saved default cursor move timing for new sessions. Built-in default: steady (a 600 ms floor on every move).",
       "enum": [
        "native",
        "fitts",
-       "fixed"
+       "fixed",
+       "relaxed",
+       "steady",
+       "calm",
+       "deliberate"
       ],
       "type": "string"
      },
@@ -2071,7 +2088,7 @@
    "read_only": false
   },
   {
-   "description": "Read-only browser inspection. Mode 1 (bind): pass pid + window_id of a native browser window to classify it, correlate it to a CDP target (exact-or-refuse), and mint a session-scoped target id plus tab ids. Mode 2 (snapshot): pass target_id + tab_id. The dom_refs_v1 compatibility format returns composed DOM refs. semantic_v2 joins accessibility, DOM, layout, and viewport state; ranks visible content before retained/offscreen state; and returns a semantic outline, typed action refs, content refs, scoped reads, and opaque continuation. Never performs setup — a missing endpoint is a structured browser_requires_setup refusal pointing at browser_prepare.",
+   "description": "Read-only browser inspection. Mode 1 (bind): pass pid + window_id of a native browser window to classify it, correlate it to a CDP target (exact-or-refuse), and mint a session-scoped target id plus tab ids. Mode 2 (snapshot): pass target_id + tab_id. The dom_refs_v1 compatibility format returns composed DOM refs. semantic_v2 joins accessibility, DOM, layout, and viewport state; ranks visible content before retained/offscreen state; and returns a semantic outline, typed action refs, content refs, scoped reads, and opaque continuation. Never performs setup: a browser that is not attached yet refuses with browser_consent_required or browser_requires_setup, and detail.next_call names the browser_prepare call that attaches it. Use this route for any web page in Chrome, Edge or Brave; desktop pointer tools move the user's pointer. Setup and recovery: `get_guide({topic:\"browser\"})`.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -2129,7 +2146,7 @@
    "read_only": true
   },
   {
-   "description": "Explicitly prepare an owned DevTools endpoint for a browser. pid is required for an existing process or existing-profile attachment, and optional only for allow_launch=true with an isolated profile. Existing endpoints are detected without side effects. Acting setup for an isolated profile follows the runtime permission mode and optional capability manifest. It requires allow_launch=true, launches a separate browser, and never copies, modifies, or terminates the requested user profile. Without pid, only a platform-attested system Chrome/Edge installation (or a root-owned package payload on Linux) is eligible; redirects and user-controlled locations fail closed. Existing-profile attachment is explicit and follows the runtime's immutable permission mode: standard requires an explicit --grant existing-profile launch grant or an embedding authorization host, bounded requires a launch-approved exact resource manifest, and unrestricted requires explicit trusted startup risk acceptance. Ordinary MCP transport approval never proves profile authorization. On proven platforms, an authorized request also permits one bounded exact-window setup: open the recognized browser product's fixed remote-debugging page, toggle its uniquely matched per-instance checkbox, prove the PID-owned loopback endpoint, and close the temporary tab. Every visible effect is reported; ambiguity is refused. Where attaching would bring the browser in front of the user's app (macOS Chrome shows its own remote-debugging prompt in front for every new connection), existing-profile attachment refuses with background_unavailable unless delivery_mode is \"foreground\"; the app that was in front is then brought back afterwards.",
+   "description": "Attach the browser tools to a browser. For a page in the user's running Chrome, Edge or Brave, call it once with pid, window_id, session and strategy {\"kind\":\"existing_profile\"} when get_browser_state refuses with browser_consent_required or browser_requires_setup; then call get_browser_state again and act with browser_click, browser_type or browser_pointer. It attaches, or refuses with nothing changed and says why. Explicitly prepare an owned DevTools endpoint for a browser. pid is required for an existing process or existing-profile attachment, and optional only for allow_launch=true with an isolated profile. Existing endpoints are detected without side effects. Acting setup for an isolated profile follows the runtime permission mode and optional capability manifest. It requires allow_launch=true, launches a separate browser, and never copies, modifies, or terminates the requested user profile. Without pid, only a platform-attested system Chrome/Edge installation (or a root-owned package payload on Linux) is eligible; redirects and user-controlled locations fail closed. Existing-profile attachment is explicit and follows the runtime's immutable permission mode: standard requires an explicit --grant existing-profile launch grant or an embedding authorization host, bounded requires a launch-approved exact resource manifest, and unrestricted requires explicit trusted startup risk acceptance. Ordinary MCP transport approval never proves profile authorization. On proven platforms, an authorized request also permits one bounded exact-window setup: open the recognized browser product's fixed remote-debugging page, toggle its uniquely matched per-instance checkbox, prove the PID-owned loopback endpoint, and close the temporary tab. Every visible effect is reported; ambiguity is refused. Where attaching would bring the browser in front of the user's app (macOS Chrome shows its own remote-debugging prompt in front whenever the driver opens a new browser connection; sessions for the same browser share one approved connection, kept for up to 30 minutes idle and 8 hours in total, so later sessions do not prompt again), existing-profile attachment refuses with background_unavailable unless delivery_mode is \"foreground\" (the app that was in front is brought back afterwards) or the browser window is on another Space than the user's, where it attaches in the background while the driver reverts the browser's own brief activations. A driver-owned isolated launch result carries an advisory lifecycle object: the browser process ends with the calling session after idle_expires_in_seconds without session activity, an isolated_named profile persists after the session and an isolated_new profile does not, and explicit end, disconnect, revocation or shutdown end it earlier. Setup and recovery: `get_guide({topic:\"browser\"})`.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -2141,7 +2158,7 @@
      },
      "delivery_mode": {
       "default": "background",
-      "description": "Existing-profile attachment only. background (default) refuses with background_unavailable, before any visible effect, where attaching would bring the browser in front of the user's app. foreground accepts that, for a screen nobody else is using or when the user agreed; the app that was in front is brought back afterwards.",
+      "description": "Existing-profile attachment only. background (default) attaches in the background when the browser window is on another Space than the user's, and otherwise refuses with background_unavailable, before any visible effect, where attaching would bring the browser in front of the user's app. foreground accepts that, for a screen nobody else is using or when the user agreed; the app that was in front is brought back afterwards.",
       "enum": [
        "background",
        "foreground"
@@ -2179,7 +2196,7 @@
      },
      "strategy": {
       "additionalProperties": false,
-      "description": "Attach to an already-running browser instead of launching one. kind=existing_profile attaches to the user's running profile at pid/window_id and requires explicit profile authorization.",
+      "description": "Attach to an already-running browser instead of launching one. Pass an object, {\"kind\":\"existing_profile\"}, not a string. kind=existing_profile attaches to the user's running profile at pid/window_id under the runtime's profile authorization.",
       "properties": {
        "kind": {
         "enum": [
@@ -2239,7 +2256,7 @@
    "read_only": false
   },
   {
-   "description": "Click a page element (by ref) or viewport coordinates in an exactly-bound tab. Default route is trusted hardware-like input (Input.dispatchMouseEvent), and refuses where that route cannot preserve standalone-browser background posture unless delivery_mode=\"foreground\" accepts that the browser window may activate (including Linux Chromium and macOS Chromium configurations whose trusted route cannot stay in the background; for example a browser inside a sandbox). input_route=\"dom_event\" (synthetic el.click(), ref required) is used only when explicitly requested; it proves dispatch, not control activation, because trust-gated controls may ignore synthetic events. Refused for heuristic bindings.",
+   "description": "Click a page element (by ref) or viewport coordinates in an exactly-bound tab. Default route is trusted hardware-like input (Input.dispatchMouseEvent), and refuses where that route cannot preserve standalone-browser background posture unless delivery_mode=\"foreground\" accepts that the browser window may activate (including Linux Chromium configurations whose trusted route cannot stay in the background; for example a browser inside a sandbox). input_route=\"dom_event\" (synthetic pointer and mouse down/up/click sequence at the element's center, ref required) is used only when explicitly requested; it proves dispatch, not control activation, because trust-gated controls may ignore synthetic events. Refused for heuristic bindings.",
    "destructive": false,
    "idempotent": false,
    "input_schema": {
@@ -2345,6 +2362,48 @@
     "type": "object"
    },
    "name": "browser_type",
+   "read_only": false
+  },
+  {
+   "description": "Select one option of a native HTML <select> ref on an exactly-bound tab without opening its popup. Pass exactly one of label or value; exactly one option must equal it. Refuses non-native, multiple-selection, and disabled selects, disabled options, and zero or ambiguous matches before changing anything. A change dispatches bubbling input and change events; they are synthetic, so verify the page accepted the selection. Selecting the option that is already selected dispatches no events.",
+   "destructive": false,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "label": {
+      "description": "Exact visible label of the option to select.",
+      "type": "string"
+     },
+     "ref": {
+      "description": "Page element ref in the p<snapshot>:<index> namespace from get_browser_state. Refs are invalidated by navigation and by newer snapshots of the same tab.",
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "type": "string"
+     },
+     "tab_id": {
+      "description": "Opaque tab id from get_browser_state (session-scoped).",
+      "type": "string"
+     },
+     "target_id": {
+      "description": "Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id).",
+      "type": "string"
+     },
+     "value": {
+      "description": "Exact value attribute of the option to select.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "target_id",
+     "tab_id",
+     "ref"
+    ],
+    "type": "object"
+   },
+   "name": "browser_select",
    "read_only": false
   },
   {
@@ -2799,7 +2858,7 @@
         "type": "number"
        },
        "glide_duration_ms": {
-        "description": "Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A\nnonzero value with `native` timing also fixes the duration. Clamped to 0..5000.",
+        "description": "Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A\nnonzero value with `native` or the default `steady` timing also fixes the duration.\nClamped to 0..5000.",
         "type": "number"
        },
        "idle_hide_ms": {
@@ -2827,11 +2886,15 @@
         "type": "string"
        },
        "timing": {
-        "description": "`native` uses the style's own timing; `fitts` scales the move time with distance and\ntarget size; `fixed` uses glide_duration_ms (1430 ms when 0).",
+        "description": "`steady` (default) keeps the style's timing but makes every move take at least 600 ms,\nwith a gentler ease; `relaxed` and `calm` do the same with a 450 or 750 ms floor.\n`native` uses the style's own timing; `fitts` scales the move time with distance and\ntarget size; `deliberate` is a slower Fitts curve (450..1300 ms); `fixed` uses\nglide_duration_ms (1430 ms when 0).",
         "enum": [
          "native",
          "fitts",
-         "fixed"
+         "fixed",
+         "relaxed",
+         "steady",
+         "calm",
+         "deliberate"
         ],
         "type": "string"
        },
@@ -2991,7 +3054,28 @@
    "read_only": false
   },
   {
-   "description": "The default way to act: run one or more action tools in ONE call, in order, stop at the first failure, and (with `observe`) get what changed in the same response. Use it whenever you know the next action(s) and would otherwise re-read the window after them: fill three fields, click, and see the result in one call instead of five. Even a single step plus `observe:{}` replaces an action call followed by a get_window_state call. Each step is `{tool, args}` where `tool` is one of click, double_click, right_click, set_value, type_text, press_key, hotkey, scroll, drag, move_cursor and `args` are exactly that tool's arguments. `pid` and `window_id` (or `app`/`window`) on run_steps itself are the default window of every step that names none. Reads (get_window_state, zoom) do not run between steps: one there is skipped; a get_window_state last is the `observe`, a zoom last runs after it. Every step goes through the same session, permission and approval checks as a direct call; a batch grants nothing extra. All steps are validated before the first one runs, so a malformed step 4 changes nothing. Element tokens and element_index values come from a get_window_state read before the batch; a step that changes the UI can invalidate later element targets, so put element-targeted actions before the actions that reshuffle the window, or target later steps by role/name. A token that went stale is retried once on the element with the same role and label, if exactly one matches.\n\nReturns per-step status (`ok` or the error message) and, when `observe` is given, ONE bounded get_window_state read after the last executed step (after a failure caused by a dialog holding focus, that dialog is read, even without `observe`). A step refused because its app ignores background input says how to re-send it; `foreground_fallback:true` retries such steps in the foreground once (the window is activated). That read is a `since:\"latest\"` diff by default: only the rows that changed since your last read of the window, plus a new snapshot_id. Without `observe` nothing is read. The batch uses one session: steps may omit `session` or repeat the batch's. `delay_ms` pauses between steps (max 2000). At most 64 steps; `delivery_mode` on run_steps is the default for its steps.\n\nTARGET BY NAME (no earlier read needed, so one batch can cross screens): a step can be written `{\"click\": {...args}}` as well as `{tool, args}`, and its args may name the target instead of carrying a token: `role` (button, textfield, link, checkbox, menuitem, ...; AX/UIA/AT-SPI names also work), `name` (the element's label; exact match wins over substring, case-insensitive), `nth` (0-based, when several match), and `app` (app name or bundle id) and/or `window` (title substring) instead of pid/window_id. The batch reads the window fresh, waits up to 3 s (step `timeout_ms`, max 10000) for the element to appear, and acts on it; with only `app` it uses that app's frontmost window, so a dialog that opened on top is found. Later steps inherit the window, so name `app` once. The first lookup in a window also reads it once for `observe`, so the end diff shows what the batch changed even in a window you never read. Several matches fail with the candidates listed; add `nth` or a fuller name.\n\nWAITS AND CHECKS: a step may add `wait_for` (checked before its action) and `expect` (one check or up to 4, checked after it); a step may also be only a check. A check is {role?, name?, text?, gone?, value?, value_contains?, enabled?, selected?, app?, window?, timeout_ms?}: `text` matches any row of the tree, static text included; `gone:true` waits for it to disappear. Checks poll until they hold or time out (wait_for 5 s, expect 2 s, max 10 s), and a check that does not hold fails the step with what was found instead. The report says which step failed, in which phase (wait_for, find, action, expect) and why. Whole batch: at most 60 s.\n\nExample (fill a form, submit, confirm the dialog, check the result):\n{\"steps\":[{\"set_value\":{\"app\":\"Safari\",\"role\":\"textfield\",\"name\":\"Email\",\"value\":\"ada@example.com\"}},{\"click\":{\"role\":\"button\",\"name\":\"Submit\"},\"expect\":[{\"role\":\"button\",\"name\":\"Confirm\"}]},{\"click\":{\"role\":\"button\",\"name\":\"Confirm\"},\"expect\":[{\"name\":\"Confirm\",\"gone\":true},{\"text\":\"Thanks\"}]}],\"observe\":{}}",
+   "description": "Read Cua Driver guidance on demand, taken from the guide bundled with this driver (no skill install needed). Topics: overview, drag, browser, permissions, batching, menus. Call with no topic to list them. Read-only.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     },
+     "topic": {
+      "description": "One of: overview, drag, browser, permissions, batching, menus. Omit to list the topics.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "get_guide",
+   "read_only": true
+  },
+  {
+   "description": "The default way to act: run one or more action tools in ONE call, in order, stop at the first failure, and (with `observe`) get what changed in the same response. Use it whenever you know the next action(s) and would otherwise re-read the window after them: fill three fields, click, and see the result in one call instead of five. Even a single step plus `observe:{}` replaces an action call followed by a get_window_state call. Each step is `{tool, args}` where `tool` is one of click, double_click, right_click, set_value, type_text, press_key, hotkey, scroll, drag, move_cursor and `args` are exactly that tool's arguments. `pid` and `window_id` (or `app`/`window`) on run_steps itself are the default window of every step that names none. Reads (get_window_state, zoom) do not run between steps: one there is skipped; a get_window_state last is the `observe`, a zoom last runs after it. Every step goes through the same session, permission and approval checks as a direct call; a batch grants nothing extra. All steps are validated before the first one runs, so a malformed step 4 changes nothing. Element tokens and element_index values come from a get_window_state read before the batch; a step that changes the UI can invalidate later element targets, so put element-targeted actions before the actions that reshuffle the window, or target later steps by role/name. A token that went stale is retried once on the element with the same role and label, if exactly one matches.\n\nReturns per-step status (`ok` or the error message) and, when `observe` is given, ONE bounded get_window_state read after the last executed step (after a failure caused by a dialog holding focus, that dialog is read, even without `observe`). A step refused because its app ignores background input says how to re-send it; `foreground_fallback:true` retries such steps in the foreground once (the window is activated). That read is a `since:\"latest\"` diff by default: only the rows that changed since your last read of the window, plus a new snapshot_id. Without `observe` nothing is read. The batch uses one session: steps may omit `session` or repeat the batch's. `delay_ms` pauses between steps (max 2000). At most 64 steps; `delivery_mode` on run_steps is the default for its steps.\n\nTARGET BY NAME (no earlier read needed, so one batch can cross screens): a step can be written `{\"click\": {...args}}` as well as `{tool, args}`, and its args may name the target instead of carrying a token: `role` (button, textfield, link, checkbox, menuitem, ...; AX/UIA/AT-SPI names also work), `name` (the element's label; exact match wins over substring, case-insensitive), `nth` (0-based, when several match), and `app` (app name or bundle id) and/or `window` (title substring) instead of pid/window_id. The batch reads the window fresh, waits up to 3 s (step `timeout_ms`, max 10000) for the element to appear, and acts on it; with only `app` it uses that app's frontmost window, so a dialog that opened on top is found. Later steps inherit the window, so name `app` once. The first lookup in a window also reads it once for `observe`, so the end diff shows what the batch changed even in a window you never read. Several matches fail with the candidates listed; add `nth` or a fuller name.\n\nWAITS AND CHECKS: a step may add `wait_for` (checked before its action) and `expect` (one check or up to 4, checked after it); a step may also be only a check. A check is {role?, name?, text?, gone?, value?, value_contains?, enabled?, selected?, app?, window?, timeout_ms?}: `text` matches any row of the tree, static text included; `gone:true` waits for it to disappear. Checks poll until they hold or time out (wait_for 5 s, expect 2 s, max 10 s), and a check that does not hold fails the step with what was found instead. The report says which step failed, in which phase (wait_for, find, action, expect) and why. Whole batch: at most 60 s.\n\nExample (fill a form, submit, confirm the dialog, check the result):\n{\"steps\":[{\"set_value\":{\"app\":\"Safari\",\"role\":\"textfield\",\"name\":\"Email\",\"value\":\"ada@example.com\"}},{\"click\":{\"role\":\"button\",\"name\":\"Submit\"},\"expect\":[{\"role\":\"button\",\"name\":\"Confirm\"}]},{\"click\":{\"role\":\"button\",\"name\":\"Confirm\"},\"expect\":[{\"name\":\"Confirm\",\"gone\":true},{\"text\":\"Thanks\"}]}],\"observe\":{}} Batching rules: `get_guide({topic:\"batching\"})`.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -3099,7 +3183,7 @@
    "read_only": false
   },
   {
-   "description": "Run a JavaScript program that drives apps through Cua Driver, in ONE call: loops, conditions, reads and checks between actions, and only the result comes back. Use it when the flow needs logic (a loop over rows, a branch on what the app shows, a retry); use run_steps for a fixed list of steps.\n\nThe script is the body of an async function: use `await`, and `return` a JSON value. It runs in a sandbox with no filesystem, network, process, timers or environment; the only API is `cua`:\n- `await cua.getApp(\"TextEdit\" | \"com.apple.TextEdit\" | {pid, windowId})` → app (follows the app's frontmost window unless a windowId is given)\n- `await cua.launch(nameOrBundleId)` → app; `cua.listApps()`, `cua.listWindows({pid?})`, `cua.sleep(ms)`, `cua.computer.target`\n- app.getState(opts?) → get_window_state result (`tree_markdown` or `tree_diff`, `snapshot_id`; pass get_window_state options such as {since:\"latest\"})\n- app.query({role?, name?, text?}) → matching elements across the app's windows {element_token, role, label, value, enabled, selected, frame}, then matching static-text rows {role, label, value, text, display_only} (read text such as a status line from their `value`)\n- app.waitFor({role?, name?, text?, gone?, value?, timeout_ms?}) and app.verify(predicate | predicates) (verify_state)\n- app.click(t), doubleClick(t), rightClick(t), typeText(text, t?), pressKey(\"return\" | \"cmd+s\", t?), hotkey([\"cmd\",\"s\"]), scroll(t, direction, amount?), setValue(t, value), drag([x,y], [x,y]), zoom([x1,y1,x2,y2])\nwhere a target `t` is {role, name, nth?} (found fresh, waits up to 3 s), an element_token string, a row number from this app's last getState(), or [x, y] window pixels.\n- `cua.call(tool, args)` for any other allowed tool: click, double_click, right_click, set_value, type_text, press_key, hotkey, scroll, drag, launch_app, list_apps, list_windows, get_window_state, verify_state, zoom.\nA failed driver call throws a CuaError (catch it to recover). Every call goes through the same session, permission and approval checks as a direct call.\n\nLimits: `timeout_ms` wall time (default 30000, max 120000), `max_calls` driver calls (default 100, max 500), 32 MiB heap. Returns the return value, console output, and a per-call log; an error names the script line, the call and the reason.\n\nExample:\nconst app = await cua.getApp(\"Calculator\");\nfor (const key of [\"7\", \"multiply\", \"6\", \"equals\"]) await app.click({role: \"button\", name: key});\nconst [display] = await app.query({role: \"statictext\"});\nreturn display.value;",
+   "description": "Run a JavaScript program that drives apps through Cua Driver, in ONE call: loops, conditions, reads and checks between actions, and only the result comes back. Use it when the flow needs logic (a loop over rows, a branch on what the app shows, a retry); use run_steps for a fixed list of steps.\n\nThe script is the body of an async function: use `await`, and `return` a JSON value. It runs in a sandbox with no filesystem, network, process, timers or environment; the only API is `cua`:\n- `await cua.getApp(\"TextEdit\" | \"com.apple.TextEdit\" | {pid, windowId})` → app (follows the app's frontmost window unless a windowId is given)\n- `await cua.launch(nameOrBundleId)` → app; `cua.listApps()`, `cua.listWindows({pid?})`, `cua.sleep(ms)`, `cua.computer.target`\n- app.getState(opts?) → get_window_state result (`tree_markdown` or `tree_diff`, `snapshot_id`; pass get_window_state options such as {since:\"latest\"})\n- app.query({role?, name?, text?}) → matching elements across the app's windows {element_token, role, label, value, enabled, selected, frame}, then matching static-text rows {role, label, value, text, display_only} (read text such as a status line from their `value`)\n- app.waitFor({role?, name?, text?, gone?, value?, timeout_ms?}) and app.verify(predicate | predicates) (verify_state)\n- app.click(t), doubleClick(t), rightClick(t), typeText(text, t?), pressKey(\"return\" | \"cmd+s\", t?), hotkey([\"cmd\",\"s\"]), scroll(t, direction, amount?), setValue(t, value), drag([x,y], [x,y]), zoom([x1,y1,x2,y2])\nwhere a target `t` is {role, name, nth?} (found fresh, waits up to 3 s), an element_token string, a row number from this app's last getState(), or [x, y] window pixels.\n- `cua.call(tool, args)` for any other allowed tool: click, double_click, right_click, set_value, type_text, press_key, hotkey, scroll, drag, launch_app, list_apps, list_windows, get_window_state, verify_state, zoom.\nA failed driver call throws a CuaError (catch it to recover). Every call goes through the same session, permission and approval checks as a direct call.\n\nLimits: `timeout_ms` wall time (default 30000, max 120000), `max_calls` driver calls (default 100, max 500), 32 MiB heap. Returns the return value, console output, and a per-call log; an error names the script line, the call and the reason.\n\nExample:\nconst app = await cua.getApp(\"Calculator\");\nfor (const key of [\"7\", \"multiply\", \"6\", \"equals\"]) await app.click({role: \"button\", name: key});\nconst [display] = await app.query({role: \"statictext\"});\nreturn display.value; Batching rules: `get_guide({topic:\"batching\"})`.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {

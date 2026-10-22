@@ -99,6 +99,8 @@ export class PendingSpacesBackend implements SpacesBackend {
   reportedHostname = (id: string) => this.current?.reportedHostname(id) ?? null;
   add = async (url: string, token: string | null, name: string | null) => (await this.b()).add(url, token, name);
   remove = async (id: string, removeOnly: boolean) => (await this.b()).remove(id, removeOnly);
+  relayUnregister = async (machineId: string) => (await this.b()).relayUnregister(machineId);
+  machineHealth = async (machine: string | null) => (await this.b()).machineHealth(machine);
   setPower = async (id: string, on: boolean) => (await this.b()).setPower(id, on);
   localRuntimes = async () => (await this.b()).localRuntimes();
   lumeSource = async () => (await this.b()).lumeSource();

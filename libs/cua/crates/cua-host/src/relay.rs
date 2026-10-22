@@ -235,6 +235,10 @@ pub struct MachinePatch {
     /// Sharing on/off.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sharing: Option<bool>,
+    /// Meta keys to set (merged into the machine's [`Machine::meta`]; an
+    /// empty value removes the key). Older relays ignore it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meta: Option<std::collections::BTreeMap<String, String>>,
 }
 
 /// `GET /v1/info`.
@@ -243,8 +247,9 @@ pub struct RelayInfo {
     /// Public base URL.
     #[serde(default)]
     pub public_url: String,
-    /// Assertion issuer.
-    #[serde(default)]
+    /// Assertion issuer (empty on a static-token relay, which sends
+    /// `null`).
+    #[serde(default, deserialize_with = "null_as_empty")]
     pub issuer: String,
     /// Accepts account tokens.
     #[serde(default)]
@@ -252,6 +257,23 @@ pub struct RelayInfo {
     /// Accepts static relay tokens.
     #[serde(default)]
     pub static_tokens: bool,
+    /// The WireGuard®-based mesh this relay coordinates, if any.
+    #[serde(default)]
+    pub mesh: Option<RelayMeshInfo>,
+}
+
+fn null_as_empty<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<String, D::Error> {
+    Ok(Option::<String>::deserialize(d)?.unwrap_or_default())
+}
+
+/// What a relay says about its mesh (`/v1/info` `mesh`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RelayMeshInfo {
+    /// Mesh protocol version.
+    pub version: u32,
+    /// STUN servers it advertises.
+    #[serde(default)]
+    pub stun: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -410,6 +432,9 @@ pub struct RelayUsage {
     pub soft_limit_reached: bool,
     /// What is past it: `sessions` and/or `hours`.
     pub reasons: Vec<String>,
+    /// Free plan only: `free_limit_sessions` and/or `free_limit_relay_hours`
+    /// when at or over that allowance (CUA-1745). Older relays send none.
+    pub warnings: Vec<String>,
     /// Where to get more.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upgrade_url: Option<String>,
@@ -452,6 +477,16 @@ const REGISTER_RETRIES: u32 = 3;
 const REGISTER_RETRY_BASE: Duration = Duration::from_secs(1);
 #[cfg(test)]
 const REGISTER_RETRY_BASE: Duration = Duration::from_millis(5);
+
+/// Times a read (a GET, which changes nothing) is tried again when the
+/// relay was not reached or answered 429, 502 or 503, before the caller
+/// sees the failure.
+const READ_RETRIES: u32 = 2;
+/// The first wait before reading again (tripled each time).
+#[cfg(not(test))]
+const READ_RETRY_BASE: Duration = Duration::from_millis(250);
+#[cfg(test)]
+const READ_RETRY_BASE: Duration = Duration::from_millis(5);
 
 /// HTTP client for one relay.
 #[derive(Clone, Debug)]
@@ -523,11 +558,17 @@ impl RelayClient {
             .await
             .map_err(|e| (Error::Relay(format!("{}: {e}", self.base)), e.is_connect()))?;
         let status = resp.status();
+        let limit = plan_limit(resp.headers());
         let body = resp
             .text()
             .await
             .map_err(|e| (Error::Relay(e.to_string()), false))?;
         if !status.is_success() {
+            // A plan limit is a decision, not a hiccup: sending it again
+            // gets the same answer.
+            if let (429, Some(l)) = (status.as_u16(), limit) {
+                return Err((Error::PlanLimit(l.sentence()), false));
+            }
             let retry = matches!(status.as_u16(), 429 | 502 | 503);
             return Err((http_error(status.as_u16(), &body), retry));
         }
@@ -538,6 +579,26 @@ impl RelayClient {
         };
         serde_json::from_str(body)
             .map_err(|e| (Error::Relay(format!("bad relay response: {e}")), false))
+    }
+
+    /// `GET path`, tried again (twice, about a second in all) when the
+    /// relay is briefly unreachable or overloaded. A read changes nothing,
+    /// so sending it again is always safe.
+    async fn get<T: serde::de::DeserializeOwned>(&self, path: &str, bearer: &str) -> Result<T> {
+        let mut delay = READ_RETRY_BASE;
+        let mut attempt = 0;
+        loop {
+            match self.send_once(self.http.get(self.url(path)), bearer).await {
+                // Not a timeout: one that hung would hang again.
+                Err((e, true)) if attempt < READ_RETRIES => {
+                    attempt += 1;
+                    tracing::debug!(attempt, path, "relay read failed, retrying: {e}");
+                    tokio::time::sleep(delay).await;
+                    delay *= 3;
+                }
+                r => return r.map_err(|(e, _)| e),
+            }
+        }
     }
 
     /// One call with an optional JSON body (see [`RelayClient::send`]).
@@ -757,19 +818,13 @@ impl RelayClient {
 
     /// Machines the account owns or that are shared with it.
     pub async fn machines(&self, account_token: &str) -> Result<Vec<Machine>> {
-        let list: MachineList = self
-            .send(self.http.get(self.url("/v1/machines")), account_token)
-            .await?;
+        let list: MachineList = self.get("/v1/machines", account_token).await?;
         Ok(list.machines)
     }
 
     /// One machine (`credential` = account token or the machine token).
     pub async fn machine(&self, credential: &str, id: &str) -> Result<Machine> {
-        self.send(
-            self.http.get(self.url(&format!("/v1/machines/{id}"))),
-            credential,
-        )
-        .await
+        self.get(&format!("/v1/machines/{id}"), credential).await
     }
 
     /// Renames / changes the allowlist / toggles sharing (owner).
@@ -832,6 +887,18 @@ impl RelayClient {
         )
         .await
     }
+}
+
+/// The plan-limit refusal the relay's headers describe, if it is one.
+fn plan_limit(h: &reqwest::header::HeaderMap) -> Option<cua_home::plan_limit::PlanLimit> {
+    use cua_home::plan_limit as pl;
+    let get = |k: &str| h.get(k).and_then(|v| v.to_str().ok());
+    pl::PlanLimit::from_headers(
+        get(pl::ERROR_HEADER),
+        get(pl::PLAN_HEADER),
+        get(pl::USED_HEADER),
+        get(pl::LIMIT_HEADER),
+    )
 }
 
 fn http_error(status: u16, body: &str) -> Error {
@@ -898,6 +965,19 @@ fn sharing_default() -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_static_relays_info_parses() {
+        // A static-token relay has no OIDC issuer: `null`. Rejecting it
+        // kept self-hosted relays' clients off their mesh (CUA-1426).
+        let info: RelayInfo = serde_json::from_str(
+            r#"{"account_auth":false,"issuer":null,"mesh":{"stun":[],"version":1},"public_url":"http://relay","state_writable":true,"static_tokens":true}"#,
+        )
+        .unwrap();
+        assert_eq!(info.issuer, "");
+        assert!(info.static_tokens);
+        assert_eq!(info.mesh.map(|m| m.version), Some(1));
+    }
+
     use super::*;
 
     #[test]
@@ -954,5 +1034,44 @@ mod tests {
         assert_eq!(u.reasons, ["hours"]);
         let bare: RelayUsage = serde_json::from_str("{}").unwrap();
         assert!(!bare.metered && bare.live_sessions_limit.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_plan_limit_refusal_is_one_plain_sentence_and_is_not_retried() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counter = hits.clone();
+        let app = axum::Router::new().route(
+            "/v1/machines",
+            axum::routing::get(move || {
+                counter.fetch_add(1, Ordering::SeqCst);
+                async {
+                    (
+                        axum::http::StatusCode::TOO_MANY_REQUESTS,
+                        [
+                            ("x-cua-relay-error", "plan_limit_sessions"),
+                            ("x-cua-relay-plan", "pro"),
+                            ("x-cua-relay-used", "5"),
+                            ("x-cua-relay-limit", "5"),
+                        ],
+                        "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams: https://x",
+                    )
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = RelayClient::new(&format!("http://{addr}")).unwrap();
+        let e = client.machines("tok").await.unwrap_err();
+        assert!(matches!(e, Error::PlanLimit(_)), "{e:?}");
+        assert_eq!(
+            e.to_string(),
+            "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams."
+        );
+        assert_eq!(e.http_status(), Some(429));
+        assert!(!e.is_transient());
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
     }
 }

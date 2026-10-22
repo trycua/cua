@@ -168,5 +168,7 @@ export class FixtureAgentSetup implements AgentSetupRunning {
 /** The methods test/agents.test.ts checks (their answers need a daemon's tools, which the shared bridge test has none of). */
 export const AGENT_METHODS = [
   "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume", "agents.setup", "agents.configure", "agents.setupDriver",
+  "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine", "agents.removeRoutine",
+  "agents.allowComputer", "agents.revokeComputer",
   "agentKeys.list", "agentKeys.set", "agentKeys.remove",
 ];

@@ -2,15 +2,12 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { XIcon } from "lucide-react";
-import { useState } from "react";
+import { useSyncExternalStore } from "react";
 
-import { useRelayUsage, useSession, type RelayUsage } from "@/bridge";
+import { useRelayUsageView, useSession, useUpsellGate } from "@/bridge";
 import { Button } from "@/components/ui/button";
 
 const DISMISSED_KEY = "cua.relayAllowance.dismissed";
-
-/** One dismissal per month and reason: a new month, or another limit reached, shows it again. */
-const dismissKey = (u: RelayUsage) => `${u.period}:${[...u.reasons].sort().join(",")}`;
 
 function readDismissed(): string | null {
   try {
@@ -20,36 +17,65 @@ function readDismissed(): string | null {
   }
 }
 
+const listeners = new Set<() => void>();
+const subscribe = (l: () => void) => {
+  listeners.add(l);
+  return () => listeners.delete(l);
+};
+
 /**
- * The relay allowance for the month is used up: one line above every page
- * with Upgrade, until dismissed. Nothing stops at the limit, so it only
- * says so.
+ * Whether the allowance notice is on screen now. The update indicator
+ * (`update-indicator.tsx`) steps back to an icon while it is, so the two
+ * prompts are never both open at once.
+ */
+export function useRelayAllowanceShowing(): boolean {
+  const notice = useRelayUsageView()?.notice;
+  const dismissed = useSyncExternalStore(subscribe, readDismissed, () => null);
+  return Boolean(notice) && dismissed !== notice?.dismissKey;
+}
+
+/**
+ * The relay allowance for the month: one line above every page with
+ * Upgrade, until dismissed (for that month and reason: the core's
+ * `dismissKey`). At 80% of the hours it is a heads-up (`warn`: a prompt, held
+ * back while a live session or an agent run is going); past the allowance it
+ * is the status (`limit`) and always shows. Nothing stops at the limit, so it
+ * only says so. Free leads to Pro, Pro to Teams.
  */
 export function RelayAllowanceNotice() {
-  const usage = useRelayUsage();
+  const notice = useRelayUsageView()?.notice;
   const { openExternal } = useSession();
-  const [dismissed, setDismissed] = useState(readDismissed);
-  if (!usage?.softLimitReached || dismissed === dismissKey(usage)) return null;
+  const dismissed = useSyncExternalStore(subscribe, readDismissed, () => null);
+  const hidden = !notice || dismissed === notice.dismissKey;
+  const gate = useUpsellGate("meter", !hidden, notice?.level === "warn");
+  if (!notice || hidden || !gate.show) return null;
   const dismiss = () => {
-    const key = dismissKey(usage);
+    gate.dismiss();
     try {
-      globalThis.localStorage?.setItem(DISMISSED_KEY, key);
+      globalThis.localStorage?.setItem(DISMISSED_KEY, notice.dismissKey);
     } catch {
       // Not kept: it shows again next launch.
     }
-    setDismissed(key);
+    for (const l of [...listeners]) l();
   };
+  const upgradeUrl = notice.upgradeUrl;
   return (
-    <div role="status" data-relay-allowance="" className="flex shrink-0 items-center gap-3 border-b px-4 py-2 text-xs text-muted-foreground">
-      <span className="min-w-0 flex-1">
-        You've used your {usage.plan === "free" ? "free " : ""}relay allowance for this month. Your Spaces keep working. Upgrade for more.
-      </span>
-      {usage.upgradeUrl ? (
-        <Button size="sm" variant="outline" data-relay-upgrade="" onClick={() => void openExternal(usage.upgradeUrl!).catch(() => {})}>
-          Upgrade
+    <div role="status" data-relay-allowance={notice.level} className="flex shrink-0 items-center gap-3 border-b px-4 py-2 text-xs text-muted-foreground">
+      <span className="min-w-0 flex-1">{notice.text}</span>
+      {upgradeUrl ? (
+        <Button
+          size="sm"
+          variant="outline"
+          data-relay-upgrade=""
+          onClick={() => {
+            gate.click();
+            void openExternal(upgradeUrl).catch(() => {});
+          }}
+        >
+          {notice.upgrade}
         </Button>
       ) : null}
-      <Button size="icon-sm" variant="ghost" aria-label="Dismiss" data-relay-dismiss="" onClick={dismiss}>
+      <Button size="icon-sm" variant="ghost" aria-label={notice.dismiss} data-relay-dismiss="" onClick={dismiss}>
         <XIcon className="size-3.5" />
       </Button>
     </div>

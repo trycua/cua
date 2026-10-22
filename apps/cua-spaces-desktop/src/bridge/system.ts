@@ -18,6 +18,8 @@ export interface SystemNote {
   title: string;
   body: string;
   route?: string;
+  /** An image shown with it: a file name in the web build's directory (`cua-key-128.png`). */
+  icon?: string;
 }
 
 export interface SystemServices {

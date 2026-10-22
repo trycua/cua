@@ -96,7 +96,7 @@ export function useAgentsStep(active: boolean): AgentsStep {
           return { ...s, text: [detail, s.text].filter((t) => t && t !== "nothing to change").join(" · ") || s.text };
         }),
       );
-      if (driverMissing) setError("cua-driver needs the Cua Spaces app on this machine. Set it up later in Settings.");
+      if (driverMissing) setError("cua-driver needs the Cua Spaces app on this computer. Set it up later in Settings.");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

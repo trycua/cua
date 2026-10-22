@@ -14,6 +14,9 @@ import { fakeFleetBridge } from "../../test/fakeFleet";
 import { MainWindow } from "./MainWindow";
 import { createFakeCloudBridge, type CloudBridge } from '../../native/cloud';
 
+/** A Space created unnamed: the name the wizard generated and showed. */
+const GENERATED = /space-[0-9a-f]{10}/;
+
 const ROWS: SpaceRow[] = [
   { id: "cloud:aurora", name: "aurora", provider: "cloud", spacesdVersion: "0.4.0", features: [], os: "linux", reachable: true },
   { id: "local:cua-e2e-vm", name: "cua-e2e-vm", provider: "local", spacesdVersion: "0.4.0", features: [], os: "linux", reachable: true },
@@ -33,7 +36,7 @@ function setup(
     isNative: true,
     listSpaces: async () => ROWS,
     localStatus: async () => LOCAL,
-    status: async () => ({ configured: true, authMode: "user", baseUrl: "", tokenUrl: "", identity: "ada@example.com" }),
+    status: async () => ({ configured: true, authMode: "user", identity: "ada@example.com" }),
     screenshot: async () => "data:image/png;base64,AAAA",
     createSpace,
     setDefaultLocation,
@@ -50,7 +53,7 @@ describe("MainWindow", () => {
   it("first run shows the welcome flow in the window, then the Spaces", async () => {
     const { host } = setup({}, false);
     fireEvent.click(await screen.findByRole("button", { name: "Get started" }));
-    // Already signed in (the fleet status names the account): just continue.
+    // Already signed in (the account status names the user): just continue.
     await screen.findByText("Signed in as ada@example.com.");
     fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
     await screen.findByRole("heading", { name: "AI agents" });
@@ -59,7 +62,8 @@ describe("MainWindow", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
     // No Cua Volume page without its experiment (Settings, Experiments).
     expect(screen.queryByRole("heading", { name: "Cua Volume" })).toBeNull();
-    fireEvent.click(await screen.findByText("Access other machines"));
+    await screen.findByText("Just use this Mac to open my other computers");
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     fireEvent.click(await screen.findByRole("button", { name: "Start using Cua Spaces" }));
     expect(await screen.findByRole("listbox", { name: "Cua Cloud" })).toBeInTheDocument();
     expect(host.state.onboarding).toMatchObject({ completed: true, mode: "client" });
@@ -70,11 +74,11 @@ describe("MainWindow", () => {
     const cloud = await screen.findByRole("listbox", { name: "Cua Cloud" });
     expect(within(cloud).getByRole("option", { name: /aurora/ })).toBeInTheDocument();
     expect(within(screen.getByRole("listbox", { name: "This Mac" })).getByRole("option", { name: /cua-e2e-vm/ })).toBeInTheDocument();
-    expect(within(screen.getByRole("listbox", { name: "This machine" })).getByRole("option")).toBeInTheDocument();
+    expect(within(screen.getByRole("listbox", { name: "This computer" })).getByRole("option")).toBeInTheDocument();
     // Each row leads with its OS mark (the notch tiles' icon); This machine is this Mac.
     const aurora = within(cloud).getByRole("option", { name: /aurora/ });
     expect(aurora.querySelector("[data-os-icon]")).not.toBeNull();
-    const host = within(screen.getByRole("listbox", { name: "This machine" })).getByRole("option");
+    const host = within(screen.getByRole("listbox", { name: "This computer" })).getByRole("option");
     expect(host.querySelector('[data-os-icon="os-macos"]')).not.toBeNull();
   });
 
@@ -106,7 +110,7 @@ describe("MainWindow", () => {
         on: "local",
         kind: "vm",
         runtime: "auto",
-        name: undefined,
+        name: expect.stringMatching(/^space-[0-9a-f]{10}$/),
         cpus: 2,
         memoryMb: 4096,
         spacesd: true,
@@ -230,17 +234,17 @@ describe("MainWindow", () => {
     for (let i = 0; i < 3; i++) fireEvent.click(within(dialog).getByRole("button", { name: "Continue" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Create Space" }));
     // Before the create resolves: the row, selected, at 2%, and its detail.
-    const row = await screen.findByRole("option", { name: /New Space/ });
+    const row = await screen.findByRole("option", { name: GENERATED });
     expect(row).toHaveAttribute("aria-selected", "true");
     expect(row).toHaveTextContent("1%");
-    expect(await screen.findByRole("heading", { level: 1, name: "New Space" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: GENERATED })).toBeInTheDocument();
     expect(pendingId).toMatch(/^pending:/);
     // The SDK's pull moves it.
     act(() => progress.forEach((h) => h({ pendingId, phase: "pulling", fraction: 0.5, detail: "" })));
-    await waitFor(() => expect(screen.getByRole("option", { name: /New Space/ })).toHaveTextContent("42%"));
+    await waitFor(() => expect(screen.getByRole("option", { name: GENERATED })).toHaveTextContent("42%"));
     // Ready: it gives way to the registry's row.
     act(() => finish(ROWS[1]!));
-    await waitFor(() => expect(screen.queryByRole("option", { name: /New Space/ })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("option", { name: GENERATED })).toBeNull());
   });
 
   /** Starts a local create from the wizard; resolves with its pending id and
@@ -266,7 +270,7 @@ describe("MainWindow", () => {
     fireEvent.change(within(dialog).getByRole("combobox", { name: "Run on" }), { target: { value: "local" } });
     for (let i = 0; i < 3; i++) fireEvent.click(within(dialog).getByRole("button", { name: "Continue" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Create Space" }));
-    await screen.findByRole("option", { name: /New Space/ });
+    await screen.findByRole("option", { name: GENERATED });
     const emit = (p: Omit<CreateProgress, "pendingId" | "detail">) =>
       act(() => progress.forEach((h) => h({ pendingId, detail: "", ...p })));
     return { ...ctx, pendingId: () => pendingId, emit, settle: () => settle! };
@@ -302,11 +306,11 @@ describe("MainWindow", () => {
     // The button keeps its label, disabled; the preview says Cancelling.
     await waitFor(() => expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled());
     expect(screen.getByText("Cancelling\u2026")).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: /New Space/ })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: GENERATED })).toBeInTheDocument();
     // The SDK cleans up; the create ends with its Cancelled error.
     act(() => settle().reject(new Error("cancelled: Cancelled local:space-1; removed its VM or container.")));
     await act(async () => done());
-    await waitFor(() => expect(screen.queryByRole("option", { name: /New Space/ })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("option", { name: GENERATED })).toBeNull());
     expect(screen.queryByText(/Failed/)).toBeNull();
     expect(screen.queryByRole("option", { name: /cancelled/i })).toBeNull();
   });
@@ -314,7 +318,7 @@ describe("MainWindow", () => {
   it("a cancelled create's error never shows as a failure, even from another client", async () => {
     const { settle } = await startPendingCreate({});
     act(() => settle().reject(new Error("cancelled: Cancelled local:space-1.")));
-    await waitFor(() => expect(screen.queryByRole("option", { name: /New Space/ })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("option", { name: GENERATED })).toBeNull());
   });
 
   it("a cancel that fails says so on the row", async () => {
@@ -366,7 +370,7 @@ describe("MainWindow", () => {
     for (let i = 0; i < 3; i++) fireEvent.click(within(dialog).getByRole("button", { name: "Continue" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Create Space" }));
     const row = await screen.findByRole("option", { name: /docker is not running/ });
-    expect(row).toHaveTextContent("New Space");
+    expect(row).toHaveTextContent(GENERATED);
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
@@ -377,20 +381,20 @@ describe("MainWindow", () => {
     const labels = [...document.querySelectorAll(".dw-toolbar-actions button")].map(
       (b) => b.getAttribute("aria-label") ?? b.textContent,
     );
-    // No Share without the Sharing experiment (Settings, Experiments).
-    expect(labels).toEqual(["Teleport an app", "Picture in picture", "Delete Space", "Open"]);
+    // Share is on by default (Settings, Experiments, Sharing).
+    expect(labels).toEqual(["Teleport an app", "Picture in picture", "Share", "Delete Space", "Open"]);
     expect(screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent)).toEqual([
       "Stream",
       "Agents",
       "Teleport",
     ]);
-    fireEvent.click(within(screen.getByRole("listbox", { name: "This machine" })).getByRole("option"));
-    fireEvent.click(await screen.findByRole("button", { name: "Set up for access" }));
-    expect(await screen.findByText("Set up this machine")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Set up for access" }));
+    fireEvent.click(within(screen.getByRole("listbox", { name: "This computer" })).getByRole("option"));
+    fireEvent.click(await screen.findByRole("button", { name: "Turn on remote access" }));
+    expect(await screen.findByText("Set up this computer")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Turn on remote access" }));
     expect(await screen.findByRole("button", { name: "Stop sharing" })).toBeInTheDocument();
     await waitFor(() =>
-      expect(within(screen.getByRole("listbox", { name: "This machine" })).getByRole("option")).toHaveAttribute(
+      expect(within(screen.getByRole("listbox", { name: "This computer" })).getByRole("option")).toHaveAttribute(
         "aria-selected",
         "true",
       ),
@@ -479,7 +483,7 @@ describe("MainWindow", () => {
     // The toolbar's power button sits right before Delete; the row has one too.
     const toolbar = document.querySelector(".dw-toolbar-actions")!;
     const labels = [...toolbar.querySelectorAll("button")].map((b) => b.getAttribute("aria-label") ?? b.textContent);
-    expect(labels).toEqual(["Teleport an app", "Picture in picture", "Suspend", "Delete Space", "Open"]);
+    expect(labels).toEqual(["Teleport an app", "Picture in picture", "Share", "Suspend", "Delete Space", "Open"]);
     expect(screen.getAllByRole("button", { name: "Suspend" })).toHaveLength(2);
     // aurora (cloud) cannot be turned off: no power button on its row.
     expect(document.querySelectorAll(".dw-row-power")).toHaveLength(1);
@@ -509,15 +513,15 @@ describe("MainWindow", () => {
     expect(screen.getByRole("radiogroup", { name: "Spaces tab in the notch" })).toBeInTheDocument();
   });
 
-  it("Settings has no default-location choice and opens the Teams waitlist", async () => {
+  it("Settings has no default-location choice and opens the account app for Teams", async () => {
     const openExternal = vi.fn(async () => {});
     setup({ openExternal });
     await screen.findByRole("option", { name: /aurora/ });
     fireEvent.keyDown(window, { key: ",", metaKey: true });
     await screen.findByRole("radiogroup", { name: "Spaces tab in the notch" });
     expect(screen.queryByRole("radiogroup", { name: "New Spaces run on" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Join the waitlist" }));
-    expect(openExternal).toHaveBeenCalledWith("https://cua.ai/teams");
+    fireEvent.click(screen.getByRole("button", { name: "Manage team" }));
+    expect(openExternal).toHaveBeenCalledWith("https://app.cua.ai/team");
   });
 });
 
@@ -561,7 +565,7 @@ describe("empty home", () => {
     setup({ listSpaces: async () => [] });
     expect(await screen.findByRole("heading", { name: "No Spaces yet" })).toBeInTheDocument();
     expect(screen.getByText("Choose a system for your first Space.")).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "This machine" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "This computer" })).toBeNull();
     expect(screen.getByRole("button", { name: "Linux, About 1 minute · 3.2–7.1 GB of disk" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^macOS, About .+ download$/ })).toBeInTheDocument();
   });

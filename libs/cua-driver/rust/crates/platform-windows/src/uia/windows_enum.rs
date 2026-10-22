@@ -164,6 +164,22 @@ where
     run_uia_single_flight(uia_single_flight(), stage, timeout, fallback, f)
 }
 
+pub(crate) fn run_focused_document_uia<T, F>(f: F) -> Result<T, UiaDeadlineError>
+where
+    T: Send + 'static,
+    F: FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
+{
+    static GATE: OnceLock<Arc<SingleFlight>> = OnceLock::new();
+    const FOCUSED_DOCUMENT_PROBE_TIMEOUT: Duration = Duration::from_millis(200);
+    run_uia_single_flight(
+        GATE.get_or_init(|| Arc::new(SingleFlight::new(Duration::ZERO))),
+        "focused document typing",
+        FOCUSED_DOCUMENT_PROBE_TIMEOUT,
+        "native typing if no write started; otherwise an unknown-effect result without retry",
+        f,
+    )
+}
+
 pub(crate) struct ComInit {
     needs_uninit: bool,
 }

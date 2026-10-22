@@ -7,7 +7,6 @@ mod auth;
 mod cloud;
 mod config;
 mod cua;
-mod fleet;
 #[cfg(feature = "host")]
 mod host;
 mod image;
@@ -34,7 +33,6 @@ pub use auth::*;
 pub use cloud::*;
 pub use config::*;
 pub use cua::*;
-pub use fleet::*;
 #[cfg(feature = "host")]
 pub use host::*;
 pub use image::*;
@@ -109,9 +107,6 @@ impl From<cua_daemon::Error> for CuaError {
             E::Unsupported(_) => CuaError::Unsupported(m),
             E::SpacesdNotAvailable(_) => CuaError::SpacesdNotAvailable(m),
             E::Timeout(_) => CuaError::Timeout(m),
-            E::Fleet(_) => CuaError::Fleet(m),
-            E::FleetAdmissionDenied(_) => CuaError::FleetAdmissionDenied(m),
-            E::CloudCreditExhausted(_) => CuaError::CloudCreditExhausted(m),
             E::Cloud(c) => CuaError::Cloud(c),
             E::Runtime(_) => CuaError::Runtime(m),
             E::Env(_) => CuaError::Env(m),
@@ -122,8 +117,6 @@ impl From<cua_daemon::Error> for CuaError {
             E::CapabilityMissing(_) => CuaError::CapabilityMissing(m),
             E::HostCapabilityMissing(_) => CuaError::HostCapabilityMissing(m),
             E::TeleportRefused(_) => CuaError::TeleportRefused(m),
-            E::PoolSpecMismatch(_) => CuaError::PoolSpecMismatch(m),
-            E::ClaimSecretsNotDelivered(_) => CuaError::ClaimSecretsNotDelivered(m),
             E::InsufficientDisk(_) => CuaError::InsufficientDisk(m),
             E::Cancelled(_) => CuaError::Cancelled(m),
             E::Internal(_) => CuaError::Internal(m),
@@ -149,12 +142,6 @@ impl From<cua_spacesd_client::Error> for CuaError {
             E::Io(_) => CuaError::Internal(m),
             _ => CuaError::Env(m),
         }
-    }
-}
-
-impl From<cua_fleet::Error> for CuaError {
-    fn from(e: cua_fleet::Error) -> Self {
-        cua_daemon::Error::from(e).into()
     }
 }
 
@@ -256,7 +243,7 @@ mod not_found_tests {
     /// found" once, whether it came from the embedded runtime or the daemon.
     #[test]
     fn a_missing_machine_says_not_found_once() {
-        let what = "a machine matching \"dev_22\" among your machines (\"gamma-4 Mac Studio\" (host:96fe))";
+        let what = "a computer matching \"dev_22\" among your computers (\"gamma-4 Mac Studio\" (host:96fe))";
         let embedded: CuaError = cua_spaces::Error::NotFound(what.into()).into();
         assert_eq!(embedded.to_string(), format!("not found: {what}"));
         let daemon: CuaError = cua_daemon::Error::NotFound(format!("{what} not found")).into();

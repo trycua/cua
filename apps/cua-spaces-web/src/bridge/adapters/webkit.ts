@@ -19,18 +19,19 @@
  * `spaces.createProgress`); the host's menu items ask for the wizard with
  * `spaces.newRequested`. By design: a passphrase never
  * crosses the bridge, so `keyvault.unlock` with one fails with `native_only`.
- * The SwiftUI app's first run is native, so there `session.completeOnboarding`
- * resolves without a call; the Electron shell's is this page's
- * (`onboarding.get`, `onboarding.complete`). Appearance and the hotkey are page-side; an appearance change sets
+ * The first run is this page's on both hosts (`onboarding.get`,
+ * `onboarding.complete`). Appearance and the hotkey are page-side; an appearance change sets
  * the window's background (`window.setBackgroundColor`). The page tells the
- * window where it drags (`window.setDragRegions`, `../drag-regions.ts`).
+ * window where it drags (`window.setDragRegions`, `../drag-regions.ts`), and
+ * where its Space tiles are for a real window dragged onto one
+ * (`window.setDropTargets`, `../window-drop.ts`).
  */
 
 import { Emitter, HostError, type DataAdapter } from "../adapter";
 import { hostOs, THIS_MACHINE, type HostOs } from "../host-os";
 import { electronTransport, webkitTransport, type HostTransport } from "../transport";
 import type { AgentEventsPage, AgentSetupRow, PersistentAgent, SpaceAgentRun } from "../contracts/agents";
-import type { CancelOutcome, DefaultLocation, HostStatus, MachineRow, SpacePowerReport } from "../contracts/host";
+import type { CancelOutcome, DefaultLocation, HostActionId, HostStatus, MachinePageRow, MachineRow, MachinesView, SpacePowerReport } from "../contracts/host";
 import type { HostWindow } from "../detect";
 import {
   DEFAULT_SETTINGS,
@@ -45,6 +46,7 @@ import {
 import type { KeyvaultOverview, KvGrant, KvPending } from "../contracts/keyvault";
 import type { CreateProgress } from "../contracts/host";
 import { syncDragRegions } from "../drag-regions";
+import { setWindowDropTarget, syncDropTargets, WINDOW_DROP_EVENT, windowDropTargetOf } from "../window-drop";
 import { requestNewSpace } from "../new-space";
 import { STOPPED_SHARING_ERROR, stoppedSharingLine, withNotSharing } from "../sharing";
 import { teleportProgressFromWk, webkitPageOps } from "../ops/webkit-pages";
@@ -54,9 +56,14 @@ import { webkitKeyvaultManageOps } from "../ops/keyvault-manage";
 import { webkitKeyvaultSetupOps } from "../ops/keyvault-setup";
 import { webkitSettingsOps } from "../ops/settings";
 import { startupFromHost, webkitStartupOps } from "../ops/startup";
+import { webkitTelemetryNoticeOps } from "../ops/telemetry";
 import { unsupportedStreamOps, type StreamTicket } from "../ops/stream";
-import { unsupportedRelayUsageOps, type RelayUsage } from "../ops/relay-usage";
+import type { RelayUsage } from "../ops/relay-usage";
+import type { RiskyRequest } from "../ops/nudges";
+import type { ResourcesSnapshot } from "../ops/resources";
+import type { HostChecklistState } from "../ops/checklist";
 import { unsupportedPresenceOps, type PresenceJoinInfo } from "../ops/presence";
+import { unsupportedRuntimeFixOps } from "../ops/runtime-fix";
 import type { SpaceRow } from "../contracts/spaces";
 import {
   isWebkitResponse,
@@ -117,6 +124,7 @@ export function spaceToRow(s: WkSpace): SpaceRow {
     hostName: opt(s.hostName),
     power: s.power?.control,
     powerState: running ? "running" : powerState,
+    stopReason: off ? opt(s.power?.stopReason) : undefined,
     cloud: opt(s.cloud),
     cloudPlace: opt(s.cloudPlace),
     cloudDelete: opt(s.cloudDelete),
@@ -131,12 +139,17 @@ export function spaceToRow(s: WkSpace): SpaceRow {
  * the store lists a machine and the device on it once
  * (`mergeMachineRows`). */
 export function toMachineRows(spaces: WkSpaces, machines: WkMachines | null, os: HostOs = "macos"): MachineRow[] {
+  if (machines?.rows?.length) return fromPageRows(spaces, machines, machines.rows);
   const self: MachineRow = { id: "this-mac", name: THIS_MACHINE[os], via: "local", online: true, os, current: true, limits: [] };
   if (machines?.thisMachine?.detail) self.detail = machines.thisMachine.detail;
   if (machines?.host) self.host = toHostStatus(machines.host);
   if (machines?.accessNotice) self.accessNotice = machines.accessNotice;
   const rows: MachineRow[] = [self];
   const byId = new Map(rows.map((r) => [r.id, r] as const));
+  // This computer is also on the relay under its own machine id once it is set
+  // up for access: that is the same row, not a second machine.
+  const hostMachineId = machines?.host?.machineId || undefined;
+  if (hostMachineId) byId.set(hostMachineId, self);
   const add = (row: MachineRow) => {
     byId.set(row.id, row);
     rows.push(row);
@@ -144,6 +157,8 @@ export function toMachineRows(spaces: WkSpaces, machines: WkMachines | null, os:
   for (const { space } of spaces.spaces) {
     // A machine's own desktop: `relay:<machine>` with no host above it.
     const own = space.provider === "relay" && !space.host && space.id.startsWith("relay:") ? space.id.slice(6) : undefined;
+    // A Space registered on the relay (`space-…`) is a Space, not a machine.
+    if (own?.startsWith("space-")) continue;
     if (own && !own.includes("/")) {
       // The list's connect probe was refused by a machine that stopped
       // sharing: it is connected (that is how it refused), not offline.
@@ -151,6 +166,8 @@ export function toMachineRows(spaces: WkSpaces, machines: WkMachines | null, os:
       const online = space.status === "running" || space.status === "local" || stopped;
       const limits = stopped ? withNotSharing([], stoppedSharingLine(space.name)) : [];
       const known = byId.get(own);
+      // This computer keeps its own name and system ("This computer", Linux).
+      if (known === self) continue;
       if (known) Object.assign(known, { name: space.name, os: space.os, online, limits });
       else add({ id: own, name: space.name, via: "relay", online, os: space.os, detail: space.detail || undefined, limits });
       continue;
@@ -182,6 +199,63 @@ export function toMachineRows(spaces: WkSpaces, machines: WkMachines | null, os:
     });
   }
   return rows;
+}
+
+/** A host action as the bridge names it: the hosts encode the core's enum
+ * by its case (`provideSpaces`), the bridge by its wire word
+ * (`provide-spaces`). */
+const actionId = (a: string): HostActionId => a.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`) as HostActionId;
+
+/** The host's Machines view with its switches' actions as the bridge names them. */
+export function fromHostView(v: MachinesView): MachinesView {
+  return {
+    ...v,
+    machines: v.machines.map((m) => ({
+      ...m,
+      toggles: m.toggles.map((t) => ({ ...t, actions: t.actions.map(actionId) })),
+      noticeAction: m.noticeAction ? { ...m.noticeAction, id: actionId(m.noticeAction.id) } : m.noticeAction,
+      issues: m.issues?.map((i) => (i.action?.hostAction ? { ...i, action: { ...i.action, hostAction: actionId(i.action.hostAction) } } : i)),
+    })),
+  };
+}
+
+/** The host's rows from the core (`machines.pageRows`, as the SwiftUI
+ * Machines page lists them), with what the page draws beside them: this
+ * machine's host status and summary, a device's state and detail, and why
+ * a machine that stopped sharing is not reachable. */
+function fromPageRows(spaces: WkSpaces, machines: WkMachines, rows: MachinePageRow[]): MachineRow[] {
+  const devices = new Map((machines.devices?.rows ?? []).map((d) => [d.id, d] as const));
+  const spaceById = new Map(spaces.spaces.map(({ space }) => [space.id, space] as const));
+  return rows.map((r): MachineRow => {
+    const dev = r.device ? devices.get(r.device) : undefined;
+    const own = r.spaceId ? spaceById.get(r.spaceId) : undefined;
+    const row: MachineRow = {
+      id: r.id,
+      name: r.name,
+      via: r.via,
+      online: r.online,
+      os: r.os,
+      limits: r.stoppedSharing ? withNotSharing([], stoppedSharingLine(r.name)) : [],
+      merged: true,
+    };
+    // The core's words for the row, the same the SwiftUI list shows.
+    if (r.status) row.status = r.status;
+    if (r.spacesLabel != null) row.spacesLabel = r.spacesLabel;
+    const detail = r.current ? machines.thisMachine?.detail : r.deviceOnly ? dev?.detail : own?.detail || dev?.detail;
+    if (detail) row.detail = detail;
+    if (r.lastSeen != null) row.lastSeen = r.lastSeen;
+    if (r.current) {
+      row.current = true;
+      if (machines.host) row.host = toHostStatus(machines.host);
+      if (machines.accessNotice) row.accessNotice = machines.accessNotice;
+    }
+    if (r.deviceOnly) {
+      row.device = true;
+      const state = machines.deviceStates?.[r.id];
+      if (state) row.deviceState = state;
+    }
+    return row;
+  });
 }
 
 const rowsById = (s: WkSettings) => new Map(s.page.sections.flatMap((sec) => sec.rows).map((r) => [r.id, r] as const));
@@ -240,6 +314,7 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
       keyvaultProtection: protection.length ? protection : null,
     },
     globalShortcut: s.globalShortcut ? { label: s.globalShortcut.label, registered: s.globalShortcut.registered } : null,
+    accountUrl: s.accountUrl ?? null,
   };
 }
 
@@ -255,8 +330,16 @@ export function toSessionSnapshot(s: WkSession, onboarding: WkOnboarding | null 
     // The SwiftUI app's first run is its own window; Electron's is the page's.
     onboarding: onboarding ? { completed: onboarding.completed, mode: onboarding.mode } : { completed: true, mode: "client" },
     daemon: null,
-    // The host runs the sign-in: while it waits, its code and page.
-    hostSignIn: typeof s.signIn === "object" && s.signIn.type === "waiting" ? { userCode: opt(s.signIn.userCode) ?? null, url: opt(s.signInUrl) ?? null } : null,
+    // The host runs the sign-in: while it waits, its code and page; when
+    // it failed, why (the page shows it instead of waiting on).
+    hostSignIn:
+      typeof s.signIn === "object" && s.signIn.type === "waiting"
+        ? { userCode: opt(s.signIn.userCode) ?? null, url: opt(s.signInUrl) ?? null, opened: s.signIn.opened !== false }
+        : null,
+    hostSignInFailure:
+      typeof s.signIn === "object" && s.signIn.type === "failed"
+        ? { reason: s.signIn.reason ?? "unknown", message: s.signIn.message ?? "", detail: opt(s.signIn.detail) ?? null }
+        : null,
   };
 }
 
@@ -363,8 +446,10 @@ const EVENTS: Record<string, HostEvent[]> = {
   "spaces.changed": [{ type: "spaces.changed" }, { type: "machines.changed" }],
   "machines.changed": [{ type: "machines.changed" }],
   "agents.changed": [{ type: "agents.changed" }],
+  "checklist.changed": [{ type: "checklist.changed" }],
   "keyvault.changed": [{ type: "keyvault.changed" }],
   "settings.changed": [{ type: "settings.changed" }],
+  "update.changed": [{ type: "update.changed" }],
   "session.changed": [{ type: "session.changed" }],
 };
 
@@ -447,6 +532,8 @@ export function createWebkitAdapter(
   let rosterError: string | null = null;
   // The host's standing notice (`hostNotice`).
   let daemonNotice: string | null = null;
+  // The Machines page the host's core drew (`machinesView`).
+  let machinesView: MachinesView | null = null;
   const listSpaces = async () => {
     const answer = await request<WkSpaces>("spaces.list");
     rosterError = answer.rosterError ?? null;
@@ -456,9 +543,10 @@ export function createWebkitAdapter(
 
   const ops: { [K in OpName]: (args: OpArgs<K>) => Promise<OpResult<K>> } = {
     "spaces.list": async () => (await listSpaces()).spaces.filter((s) => !ownCreates.has(s.space.id)).map((s) => spaceToRow(s.space)),
-    "spaces.create": async ({ config, pendingId, os }) => {
+    "spaces.create": async ({ config, pendingId, os, notifyWhenReady }) => {
       ownCreates.add(pendingId);
-      return spaceToRow(await request<WkSpace>("spaces.create", { config, pendingId, os: os ?? null }, null));
+      const args = notifyWhenReady ? { config, pendingId, os: os ?? null, notifyWhenReady } : { config, pendingId, os: os ?? null };
+      return spaceToRow(await request<WkSpace>("spaces.create", args, null));
     },
     "spaces.cancelCreate": ({ pendingId }) => request<CancelOutcome>("spaces.cancelCreate", { pendingId }),
     "spaces.setPower": async ({ spaceId, on }): Promise<SpacePowerReport> => {
@@ -476,6 +564,7 @@ export function createWebkitAdapter(
     },
     "machines.list": async () => {
       const [spaces, machines] = await Promise.all([listSpaces(), request<WkMachines>("machines.list").catch(() => null)]);
+      machinesView = machines?.view ? fromHostView(machines.view) : null;
       return toMachineRows(spaces, machines, os);
     },
     "host.status": async () => {
@@ -503,7 +592,7 @@ export function createWebkitAdapter(
           await choose("telemetry", value ? "on" : "off");
           break;
         case "defaultLocation":
-          if (value !== "local" && value !== "cloud") throw new HostError("New Spaces can start on This Mac or Cua Cloud here", "unsupported");
+          if (value !== "local") throw new HostError("New Spaces can start on This Mac here", "unsupported");
           await choose("default-location", value);
           break;
         case "launchAtLogin":
@@ -537,8 +626,8 @@ export function createWebkitAdapter(
     },
     "keyvault.revokeGrant": async ({ id }) => Number(await request<number>("keyvault.revokeGrant", { id })),
     "session.get": async () => {
-      if (!electron) return toSessionSnapshot(await request<WkSession>("session.get"));
-      const [s, onboarding] = await Promise.all([request<WkSession>("session.get"), request<WkOnboarding>("onboarding.get")]);
+      // A SwiftUI host from before the shared first run has no `onboarding.get`: it ran its own.
+      const [s, onboarding] = await Promise.all([request<WkSession>("session.get"), request<WkOnboarding>("onboarding.get").catch(() => null)]);
       return toSessionSnapshot(s, onboarding);
     },
     "session.signIn": async () => {
@@ -551,7 +640,7 @@ export function createWebkitAdapter(
       return null;
     },
     "session.completeOnboarding": async ({ mode, launchAtLogin }) => {
-      if (electron) await request("onboarding.complete", launchAtLogin === undefined ? { mode } : { mode, launchAtLogin });
+      await request("onboarding.complete", launchAtLogin === undefined ? { mode } : { mode, launchAtLogin });
       return null;
     },
 
@@ -576,6 +665,7 @@ export function createWebkitAdapter(
     ...webkitSettingsOps(request),
     ...webkitPageOps(request, toHostStatus, spaceToRow),
     ...webkitStartupOps(request),
+    ...webkitTelemetryNoticeOps(request),
     ...webkitAgentDetailOps(request),
     ...webkitAgentKeysOps(request),
     ...webkitKeyvaultManageOps(request, toKeyvaultOverview as (wk: never) => KeyvaultOverview),
@@ -585,8 +675,24 @@ export function createWebkitAdapter(
     ...(electron
       ? { "spaces.openStream": (target: OpArgs<"spaces.openStream">) => request<StreamTicket>("spaces.openStream", { ...target }) }
       : unsupportedStreamOps("webkit")),
-    // The relay allowance: Electron reads it; the Mac app not yet.
-    ...(electron ? { "relay.usage": () => request<RelayUsage | null>("relay.usage") } : unsupportedRelayUsageOps("webkit")),
+    "relay.usage": () => request<RelayUsage | null>("relay.usage"),
+    "nudges.pending": () => request<RiskyRequest[]>("nudges.pending"),
+    "nudges.answer": ({ id, choice }) => request<null>("nudges.answer", { id, choice }),
+    "resources.get": ({ visible }) => request<ResourcesSnapshot | null>("resources.get", { visible }),
+    "machines.rename": async ({ id, name }) => {
+      await request("machines.rename", { id, name });
+      return null;
+    },
+    "machines.checkHealth": async () => {
+      await request("machines.checkHealth");
+      return null;
+    },
+    "machines.remove": async ({ machine, device }) => {
+      await request("machines.remove", { machine: machine ?? null, device: device ?? null });
+      return null;
+    },
+    "checklist.get": () => request<{ state: HostChecklistState }>("checklist.get"),
+    "checklist.send": ({ action }) => request<{ state: HostChecklistState }>("checklist.send", { action }),
     // Presence over the page's own video: the Mac app draws it natively.
     ...(electron
       ? {
@@ -595,6 +701,10 @@ export function createWebkitAdapter(
           "presence.leave": (args: OpArgs<"presence.leave">) => request<null>("presence.leave", { ...args }),
         }
       : unsupportedPresenceOps("webkit")),
+    // Windows' "Install Docker Desktop": a Mac sets up its runtimes itself.
+    ...(electron
+      ? { "spaces.fixRuntime": (args: OpArgs<"spaces.fixRuntime">) => request<null>("spaces.fixRuntime", { ...args }) }
+      : unsupportedRuntimeFixOps("webkit")),
   };
 
   const onEvent = (detail: WebkitEventDetail) => {
@@ -619,6 +729,11 @@ export function createWebkitAdapter(
       events.emit({ type: "startup.changed", state: startupFromHost(detail.payload) });
       return;
     }
+    // A real window dragged over a Space tile (the host follows the drag).
+    if (detail?.event === WINDOW_DROP_EVENT) {
+      setWindowDropTarget(windowDropTargetOf(detail.payload));
+      return;
+    }
     if (detail?.event === "teleport.progress") {
       const ev = teleportProgressFromWk(detail.payload);
       if (ev) events.emit(ev);
@@ -635,6 +750,12 @@ export function createWebkitAdapter(
     !electron && dom.document && dom.requestAnimationFrame && typeof MutationObserver !== "undefined"
       ? syncDragRegions(dom as Window, (rects) => void request("window.setDragRegions", { rects }).catch(() => {}))
       : null;
+  // Where the Space tiles are, for a real window dragged onto one (both
+  // hosts: neither sees such a drag in the page; `../window-drop.ts`).
+  const stopDropTargets =
+    dom.document && dom.requestAnimationFrame && typeof MutationObserver !== "undefined"
+      ? syncDropTargets(dom as Window, (targets) => void request("window.setDropTargets", { targets }).catch(() => {}))
+      : null;
 
   return {
     mode: electron ? "electron" : "webkit",
@@ -644,11 +765,14 @@ export function createWebkitAdapter(
     subscribe: (l) => events.subscribe(l),
     listNotice: () => rosterError,
     hostNotice: () => daemonNotice,
+    machinesView: () => machinesView,
     dispose() {
       for (const fail of [...pending]) fail(new HostError("the bridge was closed", "closed"));
       events.clear();
       stopEvents();
       stopDragRegions?.();
+      stopDropTargets?.();
+      setWindowDropTarget(null);
     },
   };
 }

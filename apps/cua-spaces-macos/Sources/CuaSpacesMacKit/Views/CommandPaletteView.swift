@@ -44,7 +44,7 @@ struct NavTarget: Identifiable {
 
     @MainActor static func all(_ model: AppModel) -> [NavTarget] {
         [NavTarget(command: "nav.spaces", label: "Spaces", symbol: "square.grid.2x2"),
-         NavTarget(command: "nav.machines", label: "Machines", symbol: "server.rack"),
+         NavTarget(command: "nav.machines", label: "Computers", symbol: "server.rack"),
          NavTarget(command: "nav.agents", label: "Agents", symbol: "person.2"),
          NavTarget(command: "nav.keyvault", label: model.chrome.keyvaultTitle, symbol: "key")]
     }
@@ -73,20 +73,24 @@ struct NavigationCommands: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Button("Command Palette…") { inMain { model.showingPalette = true } }
+        Button("Command Palette…") { inMain(.home) { model.showingPalette = true } }
             .keyboardShortcut(SharedShortcuts.shortcut("commandPalette.toggle"))
         Divider()
         ForEach(NavTarget.all(model)) { target in
-            Button(target.label) { inMain { model.go(target.command) } }
+            Button(target.label) { inMain(MainUIRouter.route(forNav: target.command)) { model.go(target.command) } }
                 .keyboardShortcut(SharedShortcuts.shortcut(target.command))
         }
     }
 
-    private func inMain(_ then: () -> Void) {
+    /// The native main window, then `then`; New UI's window at `route`
+    /// while it is on (its page handles these keys itself when in front).
+    private func inMain(_ route: MainUIRoute?, _ then: () -> Void) {
         if WebUIWindowController.shared?.window?.isKeyWindow == true { return }
         guard model.startup.isReady, model.onboarding.completed else { return }
-        openWindow(id: "main")
-        then()
+        MainUIRouter(model: model).open(route ?? .home) {
+            openWindow(id: "main")
+            then()
+        }
     }
 }
 
@@ -207,7 +211,7 @@ struct CommandPaletteView: View {
         var out: [Command] = [
             Command(id: "space:new", entry: entry("Actions", chrome.newSpaceLabel, keywords: "create add"),
                     symbol: "plus", shortcut: "⌘N") { Task { await model.openNewSpace() } },
-            Command(id: "machine:add", entry: entry("Actions", "Add a machine", keywords: "connect computer address"),
+            Command(id: "machine:add", entry: entry("Actions", "Add a computer", keywords: "connect computer address"),
                     symbol: "plus.rectangle.on.rectangle") {
                 model.selection = .machines
                 Task { await model.openAddMachine() }
@@ -233,7 +237,7 @@ struct CommandPaletteView: View {
         let rows = appSidebar(spaces: model.spaces, query: "", selectedId: "").sections.flatMap(\.rows)
         for space in model.realSpaces {
             let row = rows.first { $0.id == space.id }
-            let hint = row?.statusText
+            let hint = row.map { CoreMessages.text($0.statusText) }
             let keywords = "\(row?.osIcon ?? "") \(hint ?? "")"
             out.append(Command(id: "space:open:\(space.id)", entry: entry("Spaces", "Open \(space.name)", hint: hint, keywords: keywords),
                                osIcon: row?.osIcon) { model.selection = .space(space.id) })

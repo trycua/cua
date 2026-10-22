@@ -53,7 +53,11 @@ function spaceFor(spaces: Space[], offers: (space: Space) => boolean | undefined
   return { offered };
 }
 
-export function GettingStarted() {
+/** With a Space ready, the order that leads somewhere: run an agent in it first; Add computer and Share last. */
+const READY_ORDER: ChecklistStep[] = ["run_agent", "create_space", "teleport", "add_machine", "share"];
+
+/** `onRunAgent`: the Space is ready, so Run an agent opens "Run an agent here" and leads the list. */
+export function GettingStarted({ onRunAgent }: { onRunAgent?: () => void } = {}) {
   const { view, shown, dismiss } = useChecklist();
   const navigate = useNavigate();
   const newSpace = useNewSpace();
@@ -102,9 +106,10 @@ export function GettingStarted() {
       case "share":
         return onSpace("share", (space) => share.open(space, session?.signedIn ?? false), "Share");
       case "run_agent":
-        return void navigate({ to: "/agents" });
+        return onRunAgent ? onRunAgent() : void navigate({ to: "/agents" });
     }
   };
+  const rows = onRunAgent ? [...view.rows].sort((a, b) => READY_ORDER.indexOf(a.step) - READY_ORDER.indexOf(b.step)) : view.rows;
 
   return (
     <section data-checklist="" aria-labelledby="checklist-title" className="mb-6 rounded-xl border bg-card shadow-xs">
@@ -116,14 +121,14 @@ export function GettingStarted() {
           <p className="mt-0.5 text-xs text-muted-foreground">{view.detail}</p>
         </div>
         <span className="mt-0.5 text-xs tabular-nums text-muted-foreground" data-checklist-count="">
-          {view.progress}
+          {view.progress} done
         </span>
         <Button variant="ghost" size="icon-sm" aria-label={view.closeLabel} onClick={() => dismiss()}>
           <XIcon className="size-3.5 text-muted-foreground" />
         </Button>
       </header>
       <ol className="divide-y border-t">
-        {view.rows.map(({ step, title, detail, action, done }) => (
+        {rows.map(({ step, title, detail, action, done }) => (
           <li key={step} data-checklist-step={step} data-done={done || undefined} className="flex items-center gap-3 px-4 py-2.5">
             <span
               aria-hidden
@@ -156,7 +161,9 @@ export function GettingStarted() {
 /**
  * Tells the checklist what the app already shows (another machine, a
  * Space, an agent; the core ticks those steps off) and answers Help >
- * Getting Started. Teleport and Share tick themselves off where they
+ * Getting Started. In the Mac app and Electron the host ticks those steps
+ * off itself (`checklist::observe_from`) and this page's observations are
+ * not sent; they count only where the page keeps its own copy (the demo). Teleport and Share tick themselves off where they
  * finish (`bridge/teleport.ts`, `bridge/share.ts`). Mounted once, under
  * the main layout.
  */

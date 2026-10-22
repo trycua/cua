@@ -1,6 +1,6 @@
 //! User defaults (`$CUA_HOME/config.toml`, `cua config`) for every
 //! language: where sandboxes and Spaces run when `on` is not given, the
-//! default kind and runtime, and the cloud defaults. Each value comes with
+//! default kind and runtime, and the runtime sources. Each value comes with
 //! where it came from (the environment, the config file, or the built-in
 //! default); an explicit argument always wins over all three.
 //!
@@ -15,8 +15,8 @@ use cua_sandbox_core::settings::{self, Entry, Settings};
 /// One setting's effective value.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ConfigEntry {
-    /// `default.on`, `default.kind`, `default.runtime`, `cloud.warm`,
-    /// `cloud.max_pool_size` or `cloud.claim_ttl`.
+    /// `default.on`, `default.kind`, `default.runtime`, `runtime.lume`,
+    /// `runtime.linux` or `telemetry.enabled`.
     pub key: String,
     /// The effective value.
     pub value: String,
@@ -69,7 +69,7 @@ pub fn config_get(key: String) -> Result<ConfigEntry> {
 }
 
 /// Writes a setting to the config file (checked and normalised: `default.on`
-/// takes `local`, `cloud` or a provider). Returns its effective value, which
+/// takes `local` or a provider). Returns its effective value, which
 /// an environment variable may still override.
 #[uniffi::export]
 pub fn config_set(key: String, value: String) -> Result<ConfigEntry> {
@@ -95,7 +95,7 @@ pub fn config_path() -> String {
     settings::config_path().display().to_string()
 }
 
-/// The locations `on` accepts: `local`, `cloud`, then registered providers.
+/// The locations `on` accepts: `local`, then registered providers.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct LocationInfo {
     /// The location's name.
@@ -158,8 +158,11 @@ mod tests {
     fn set_get_unset_and_sources() {
         let env = super::super::test_env::EnvGuard::isolated();
         assert_eq!(config_get("default.on".into()).unwrap().value, "local");
-        let e = config_set("default.on".into(), "cloud".into()).unwrap();
-        assert_eq!((e.value.as_str(), e.source.as_str()), ("cloud", "config"));
+        let e = config_set("default.on".into(), "aws".into()).unwrap();
+        assert_eq!((e.value.as_str(), e.source.as_str()), ("aws", "config"));
+        // Cua Cloud has ended.
+        let e = config_set("default.on".into(), "cloud".into()).unwrap_err();
+        assert!(e.to_string().contains("Cua Cloud has ended"), "{e}");
         env.set("CUA_DEFAULT_ON", "local");
         let e = config_get("default.on".into()).unwrap();
         assert_eq!((e.value.as_str(), e.source.as_str()), ("local", "env"));
@@ -170,7 +173,12 @@ mod tests {
             config_set("default.on".into(), "qemu".into()),
             Err(CuaError::InvalidArgument(_))
         ));
-        assert!(config_list().unwrap().iter().any(|e| e.key == "cloud.warm"));
+        assert!(
+            config_list()
+                .unwrap()
+                .iter()
+                .any(|e| e.key == "runtime.linux")
+        );
         assert!(config_path().ends_with("config.toml"));
     }
 
@@ -180,14 +188,8 @@ mod tests {
         let l = locations();
         let local = l.iter().find(|l| l.name == "local").unwrap();
         assert_eq!(local.runtimes["container"], ["gvisor", "runc"]);
-        let cloud = l.iter().find(|l| l.name == "cloud").unwrap();
-        assert_eq!(cloud.runtimes["vm"], ["kubevirt"]);
-        check_placement("cloud".into(), "vm".into(), "".into()).unwrap();
-        let e = check_placement("cloud".into(), "vm".into(), "gvisor".into()).unwrap_err();
-        assert!(
-            e.to_string().contains("valid runtime: auto, kubevirt"),
-            "{e}"
-        );
+        // Cua Cloud has ended: no longer listed.
+        assert!(!l.iter().any(|l| l.name == "cloud"));
         check_placement("".into(), "".into(), "".into()).unwrap();
     }
 }

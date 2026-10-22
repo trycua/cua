@@ -20,7 +20,6 @@ import {
 } from '../../model/window';
 import { createFileSendBridge, type FileSendBridge } from '../../native/fileSend';
 import {
-  type CloudPricing,
   type GpuChoice,
   createFleetBridge,
   type FleetBridge,
@@ -41,7 +40,7 @@ import { createDevicesBridge, type DevicesBridge } from '../../native/devices';
 import { createShareBridge, type ShareBridge } from '../../native/share';
 import { connectedClouds, createCloudBridge, isCloudWord, type CloudBridge, type CloudStatusWire } from '../../native/cloud';
 import { ConnectCloudSheet } from '../ConnectCloudSheet';
-import { ShareSheet } from '../ShareSheet';
+import { ShareRemovalBanner, ShareSheet } from '../ShareSheet';
 import { hasFeature } from '../../model/spaces';
 import { canRunContainer, canRunMacos, type LocalStatus } from '../../native/local';
 import { createWindowDragBridge, type WindowDragBridge } from '../../native/windowDrag';
@@ -78,6 +77,7 @@ import { useExperiments } from '../../state/experiments';
 import { createLoginItemBridge, type LoginItemBridge } from '../../native/loginItem';
 import { launchPlan, readLaunchChoice, writeLaunchChoice } from '../../model/loginItem';
 import { Sym } from './Sym';
+import { tMsg, useT } from "../../i18n";
 
 export interface MainWindowProps {
   fleet?: FleetBridge;
@@ -150,6 +150,8 @@ export function MainWindow({
   now = Date.now,
   forceOnboarding = false,
 }: MainWindowProps) {
+  const t = useT("spaces");
+  const tc = useT("common");
   const fleet = useMemo(() => fleetProp ?? createFleetBridge(), [fleetProp]);
   const host = useMemo(() => hostProp ?? createHostBridge(), [hostProp]);
   const installer = useMemo(() => installerProp ?? createInstallerBridge(), [installerProp]);
@@ -220,7 +222,6 @@ export function MainWindow({
   );
   const [hostStatus, setHostStatus] = useState<HostStatus | null>(null);
   const [local, setLocal] = useState<LocalStatus | null>(null);
-  const [cloudPricing, setCloudPricing] = useState<CloudPricing | null>(null);
   const [gpus, setGpus] = useState<GpuChoice[] | null>(null);
   const [hosts, setHosts] = useState<SpaceHost[]>([]);
   // Settings, Experiments: what the window shows (Share, your clouds).
@@ -247,7 +248,7 @@ export function MainWindow({
     const q = new URLSearchParams(window.location.search);
     const actions: ({ type: string } & Record<string, unknown>)[] = [];
     if (q.get('image')) actions.push({ type: 'choose-image', ref: q.get('image') });
-    actions.push({ type: 'set-placement', placement: q.get('on') === 'cloud' ? 'cloud' : 'local' });
+    actions.push({ type: 'set-placement', placement: 'local' });
     actions.push({ type: 'next' });
     if (Number(q.get('disk'))) actions.push({ type: 'set-disk', diskGb: Number(q.get('disk')) });
     if (Number(q.get('cpus'))) actions.push({ type: 'set-cpus', cpus: Number(q.get('cpus')) });
@@ -344,20 +345,6 @@ export function MainWindow({
     };
   }, [fleet, live, wizard]);
 
-  // This account's cloud rates for the estimate, each time New Space opens
-  // (the SDK reuses an answer for five minutes).
-  useEffect(() => {
-    if (!live || !wizard || !sync.fleetConfigured || !fleet.cloudPricing) return;
-    let cancelled = false;
-    void fleet
-      .cloudPricing()
-      .then((next) => !cancelled && setCloudPricing(next))
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [fleet, live, wizard, sync.fleetConfigured]);
-
   // The GPU option of each local runtime, each time New Space opens.
   useEffect(() => {
     if (!live || !wizard || !fleet.gpuSupport) return;
@@ -441,7 +428,8 @@ export function MainWindow({
   }, [teleport, usageId]);
   const chrome = mainChrome({
     identity: sync.identity,
-    cloudConfigured: sync.fleetConfigured,
+    // Cua Cloud has ended: no account signs in with an API key.
+    cloudConfigured: false,
     canSignIn: live,
     experiments,
   });
@@ -449,7 +437,8 @@ export function MainWindow({
   // experiment on (the core's `volumeLabel`); off, it shows the Spaces.
   const volumeShown = Boolean(chrome.volumeLabel);
 
-  const cloudAvailable = live ? sync.fleetConfigured : true;
+  // Cua Cloud has ended: it is never an available location.
+  const cloudAvailable = false;
   const localAvailable = live ? canRunContainer(local) || canRunMacos(local) : true;
 
   const startCreate = useCallback(
@@ -597,13 +586,13 @@ export function MainWindow({
 
   return (
     <div className="dw" data-view="spaces">
-      <aside className="dw-sidebar" aria-label="Spaces">
+      <aside className="dw-sidebar" aria-label={t("spaces.main.sidebar_label")}>
         <div className="dw-sidebar-top" data-tauri-drag-region>
           <button
             type="button"
             className="dw-icon-btn"
             aria-label={chrome.newSpaceLabel}
-            title={`${chrome.newSpaceLabel} (${chrome.newSpaceShortcut})`}
+            title={t("spaces.main.new_hint", { label: chrome.newSpaceLabel, shortcut: chrome.newSpaceShortcut })}
             onClick={() => setWizard(true)}
           >
             <Sym name="plus" />
@@ -615,13 +604,13 @@ export function MainWindow({
             className="dw-input"
             type="search"
             placeholder={chrome.searchPlaceholder}
-            aria-label="Search Spaces"
+            aria-label={t("spaces.main.search_label")}
             value={query}
             spellCheck={false}
             onChange={(event) => setQuery(event.target.value)}
           />
         </div>
-        <nav className="dw-nav" aria-label="Sidebar">
+        <nav className="dw-nav" aria-label={t("spaces.main.nav_label")}>
           {sidebar.thisMachine && (
             <ul className="dw-nav-list" role="listbox" aria-label={sidebar.thisMachine.name}>
               <SpaceRowItem
@@ -632,9 +621,9 @@ export function MainWindow({
             </ul>
           )}
           {sidebar.sections.map((section) => (
-            <div key={section.title}>
-              <div className="dw-nav-section">{section.title}</div>
-              <ul className="dw-nav-list" role="listbox" aria-label={section.title}>
+            <div key={section.title.code}>
+              <div className="dw-nav-section">{tMsg(section.title)}</div>
+              <ul className="dw-nav-list" role="listbox" aria-label={tMsg(section.title)}>
                 {section.rows.map((row) => (
                   <SpaceRowItem
                     key={row.id}
@@ -648,9 +637,9 @@ export function MainWindow({
             </div>
           ))}
           {sidebar.emptyText && !sidebar.thisMachine && !sync.rosterError && (
-            <p className="dw-hint dw-nav-section">{sidebar.emptyText}</p>
+            <p className="dw-hint dw-nav-section">{tMsg(sidebar.emptyText)}</p>
           )}
-          <ul className="dw-nav-list" aria-label="Agents">
+          <ul className="dw-nav-list" aria-label={t("spaces.main.agents_label")}>
             {(
               [
                 ['agents', 'Agents'],
@@ -677,7 +666,7 @@ export function MainWindow({
             type="button"
             className="dw-icon-btn"
             aria-label={chrome.settingsLabel}
-            title={`${chrome.settingsLabel} (${chrome.settingsShortcut})`}
+            title={t("spaces.main.settings_hint", { label: chrome.settingsLabel, shortcut: chrome.settingsShortcut })}
             aria-pressed={view === 'settings'}
             onClick={() => setView((v) => (v === 'settings' ? 'spaces' : 'settings'))}
           >
@@ -794,8 +783,15 @@ export function MainWindow({
                 signedIn={Boolean(sync.identity)}
                 shareable={sharing.id.startsWith('relay:') || hasFeature(sharing, 'relay_attach')}
                 onClose={() => setSharing(null)}
+                onOpenExternal={(url) => void fleet.openExternal(url).catch(() => {})}
               />
             )}
+
+            <ShareRemovalBanner
+              bridge={shareBridge}
+              signedIn={Boolean(sync.identity)}
+              onOpenExternal={(url) => void fleet.openExternal(url).catch(() => {})}
+            />
 
             {sync.rosterError && (
               <div className="dw-banner" data-tone="error" role="alert">
@@ -813,7 +809,7 @@ export function MainWindow({
                 <button
                   type="button"
                   className="dw-icon-btn"
-                  aria-label="Dismiss"
+                  aria-label={tc("common.action.dismiss")}
                   onClick={() => setBanner(null)}
                 >
                   <Sym name="xmark" size={12} />
@@ -833,8 +829,6 @@ export function MainWindow({
                         .then(({ emit }) => emit('settings:changed', { menuBar: enabled }))
                         .catch(() => {});
                     }}
-                    fleetLive={sync.fleetConfigured}
-                    clientId={sync.clientId}
                     signedInIdentity={sync.identity}
                     auth={
                       fleet.isNative
@@ -889,7 +883,7 @@ export function MainWindow({
                           ['linux', chrome.emptyAction, chrome.emptyLinuxDetail],
                           ['macos', chrome.emptyMacosAction, chrome.emptyMacosDetail],
                         ] as const).map(([os, name, detail]) => (
-                          <button key={os} type="button" className="wz-tile" aria-label={`${name}, ${detail}`} onClick={() => setWizard(os)}>
+                          <button key={os} type="button" className="wz-tile" aria-label={t("spaces.main.os_tile_label", { name, detail })} onClick={() => setWizard(os)}>
                             <span className="wz-tile-icon"><OsIconMark id={`os-${os}`} size={24} /></span>
                             <span className="wz-tile-title">{name}</span>
                             <span className="wz-tile-desc">{detail}</span>
@@ -941,11 +935,7 @@ export function MainWindow({
         >
           <NewSpaceWizard
             defaultLocation={
-              sync.defaultLocation.value === 'cloud'
-                ? 'cloud'
-                : isCloudWord(sync.defaultLocation.value)
-                  ? 'yours'
-                  : 'local'
+              isCloudWord(sync.defaultLocation.value) ? 'yours' : 'local'
             }
             clouds={clouds}
             hosts={hosts}
@@ -957,7 +947,6 @@ export function MainWindow({
             localBackends={live ? (local?.backends ?? []) : undefined}
             hostArch={sync.hostArch ?? local?.hostArch}
             storage={live ? local?.storage : undefined}
-            cloudPricing={live && sync.fleetConfigured ? cloudPricing : null}
             gpus={live ? gpus : null}
             onOpenExternal={(url) => void fleet.openExternal(url).catch(() => {})}
             startActions={startActions}
@@ -1069,8 +1058,8 @@ function PowerRowButton({ button, onPress }: { button: PowerButton; onPress: () 
     <button
       type="button"
       className="dw-icon-btn dw-row-power"
-      aria-label={button.help}
-      title={button.help}
+      aria-label={tMsg(button.help)}
+      title={tMsg(button.help)}
       disabled={!button.enabled}
       data-busy={button.busy ? 'true' : undefined}
       onClick={onPress}
@@ -1113,7 +1102,7 @@ function SpaceRowItem({
           // Being created: the percentage and a ring, no dot.
           <>
             <span className="dw-row-trailing">{row.trailing}</span>
-            <span role="img" aria-label={row.statusText}>
+            <span role="img" aria-label={tMsg(row.statusText)}>
               <RadialProgress className="dw-row-ring" fraction={row.progress / 1000} />
             </span>
           </>
@@ -1125,7 +1114,7 @@ function SpaceRowItem({
                 {row.trailing}
               </span>
             )}
-            <span className="dw-dot" data-status={row.status} aria-label={row.statusText} />
+            <span className="dw-dot" data-status={row.status} aria-label={tMsg(row.statusText)} />
           </>
         )}
       </button>
@@ -1153,6 +1142,7 @@ function SpaceDetail({
   windowDrag: WindowDragBridge;
   copyText?: WriteText;
 }) {
+  const t = useT("spaces");
   const [shot, setShot] = useState<string | null>(null);
   const alive = useRef(true);
   const reachable = Boolean(space.sdk?.reachable);
@@ -1223,7 +1213,7 @@ function SpaceDetail({
     <div className="dw-content-inner">
       <div className={shot ? 'dw-preview dw-preview-live' : 'dw-preview'}>
         {shot ? (
-          <img src={shot} alt={`${space.name} desktop`} />
+          <img src={shot} alt={t("spaces.detail.preview_alt", { name: space.name })} />
         ) : space.sdk ? (
           <div className="dw-preview-empty">
             <Sym name="desktopcomputer" />

@@ -23,13 +23,13 @@ rcdp-handoff / computer-server daemons.
 ```bash
 cd apps/cua-spaces
 pnpm install
-./run-live.sh            # loads ~/.env (Fleet creds), starts `cua daemon`, prints the launch command
+./run-live.sh            # starts `cua daemon`, prints the launch command
 ./run-live.sh --launch   # same, then `pnpm tauri dev` (opens the app's windows)
 ```
 
-Fleet credentials (`~/.env`, never committed): `CUA_CLIENT_ID`,
-`CUA_CLIENT_SECRET`, `CUA_TOKEN_URL`, `CUA_FLEET_BASE_URL`, or `FLEETS_TOKEN`.
-Without them Cloud is unavailable; **Add by address** and **Local** still work.
+Sign in from the app (Settings → Sign in to Cua) or with `cua auth login` to
+see your relay machines. **Add by address** and **Local** need no sign-in. Cua
+Cloud has ended.
 
 Quick direct Space for manual testing (Docker, gVisor, 4 GiB cap):
 
@@ -50,16 +50,17 @@ Agent CLIs: Settings → AI agents installs the cua skills and registers
 
 ## 3. Tauri command contract
 
-Space ids are `space://direct/<host:port>`, `space://fleet/<ns>/<claim>`,
-`space://local/<name>`.
+Space ids are `direct:<host:port>`, `local:<name>` and `relay:<id>`. A `cloud:<name>`
+Space registered before Cua Cloud ended still lists, answers that it has ended
+on any action, and can be removed from the list.
 
 | Area | Commands |
 | --- | --- |
-| Roster | `list_spaces`, `space_info(spaceId)`, `add_space(url, token, name)`, `create_space({image, on, kind, runtime, name, …})`, `delete_space`, `remove_space`, `get_default_location`, `set_default_location(on)`, `keep_alive_space`; event `spaces:changed` |
-| Status | `fleet_status`, `begin_sign_in`, `sign_out`, `daemon_status`, `ensure_daemon`, `local_status` |
+| Roster | `list_spaces`, `space_info(spaceId)`, `add_space(url, token, name)`, `create_space({image, on, kind, runtime, name, …})`, `delete_space`, `remove_space`, `get_default_location`, `set_default_location(on)`; event `spaces:changed` |
+| Status | `fleet_status` (who is signed in; reads the local session), `begin_sign_in`, `sign_out`, `daemon_status`, `ensure_daemon`, `local_status` |
 | This machine | `host_status`, `host_setup`, `host_stop_sharing`, `host_start_sharing`, `host_remove`, `onboarding_state`, `complete_onboarding`, `installer_*` |
 | Space ops | `space_screenshot`, `send_files_to_space`, `list_remote_windows`, `remote_window_thumbnail`, `space_app_icon`, `list_space_agents` |
-| Streams | `open_space_stream(space, {kind: display|window}, opts)` → ticketed `wsUrl` (direct, or daemon media bridge), `close_space_stream` |
+| Streams | `open_space_stream(space, {kind: display|window}, opts)` → ticketed `wsUrl` (the Space's own ticket URL), `close_space_stream` |
 | Teleport an app | `teleport_catalog(spaceId?)`, `teleport_app_icon(path, size)`, `teleport_entry_for_path(path)`, `teleport_parse_drop(items)`, `teleport_plan(spaceId, entry, options)`, `teleport_run(spaceId, plan, consent, onEvent)`, `teleport_choose_files` → the SDK core (`cua_teleport::ux`, `cua_spaces::teleport_app`) |
 | Session teleport | `teleport_manifest(app, scope)`, `teleport_push(app, scope, space, include, acknowledgeSensitive)` → cua-spaces `Approval` + `Space::teleport` (the transfer overlay's Retry) |
 | Hotspot | `start_hotspot`, `stop_hotspot`, `hotspot_status`; event `hotspot:changed` |

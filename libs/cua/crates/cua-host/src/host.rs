@@ -1,6 +1,10 @@
 //! [`Host`]: setup / status / stop / start / remove.
 
 use crate::driver::{self, DriverSource};
+use crate::helper_migration::{
+    self, LegacyService, MigrationFacts, MigrationPlan, MigrationRecord, ServiceMigration,
+    VerifyTiming,
+};
 use crate::preflight::{self, SessionProbe};
 use crate::relay::{AccountTokens, ConnectedClient, MachinePatch, RegisterRequest, RelayClient};
 use crate::service::{self, RunnerKind, ServiceManager, ServiceSpec, ServiceState};
@@ -292,6 +296,19 @@ pub struct HostConfig {
     /// [`Host::resume_signed_in`] can bring it back.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub paused_signed_out: bool,
+    /// `CUA_MESH` as it was set where `cua host setup` ran (an explicit
+    /// opt-in to the WireGuard®-based mesh, or out of it): passed on to the
+    /// service. Unset, the service follows its own default (prefer).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mesh: Option<String>,
+}
+
+/// `CUA_MESH` where setup runs, when set.
+fn mesh_env() -> Option<String> {
+    std::env::var("CUA_MESH")
+        .ok()
+        .map(|v| v.trim().to_owned())
+        .filter(|v| !v.is_empty())
 }
 
 /// A macOS privacy pane the user must grant the driver in.
@@ -314,7 +331,9 @@ pub fn permission_hints(os: &str, driver: &Path) -> Vec<PermissionHint> {
     if os != "macos" {
         return vec![];
     }
-    let d = driver.display();
+    let d = service_name(driver);
+    // The app's executable runs the service: both are "Cua Spaces".
+    let screen = d.clone();
     vec![
         PermissionHint {
             id: "screen-recording".into(),
@@ -323,7 +342,7 @@ pub fn permission_hints(os: &str, driver: &Path) -> Vec<PermissionHint> {
                 "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
                     .into(),
             instructions: format!(
-                "System Settings → Privacy & Security → Screen & System Audio Recording: turn on cua-spacesd ({d}), so people you share with can see this screen."
+                "System Settings → Privacy & Security → Screen & System Audio Recording: turn on {screen}, so people you share with can see this screen."
             ),
         },
         PermissionHint {
@@ -333,10 +352,20 @@ pub fn permission_hints(os: &str, driver: &Path) -> Vec<PermissionHint> {
                 "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
                     .into(),
             instructions: format!(
-                "System Settings → Privacy & Security → Accessibility: turn on cua-spacesd ({d}), so they can control the mouse and keyboard."
+                "System Settings → Privacy & Security → Accessibility: turn on {d}, so they can control the mouse and keyboard."
             ),
         },
     ]
+}
+
+/// How System Settings lists the host service: "Cua Spaces" when the app
+/// runs it, else "cua-spacesd (<path>)".
+fn service_name(driver: &Path) -> String {
+    if crate::service::is_app_helper_launcher(driver) {
+        crate::service::APP_HELPER_NAME.to_string()
+    } else {
+        format!("cua-spacesd ({})", driver.display())
+    }
 }
 
 /// What a Mac that provides Spaces must allow in Local Network privacy, or
@@ -354,16 +383,21 @@ pub fn local_network_hint(os: &str, provide_spaces: bool, driver: &Path) -> Opti
     if os != "macos" || !provide_spaces {
         return None;
     }
-    let d = driver.display();
+    let d = service_name(driver);
+    let short = if crate::service::is_app_helper_launcher(driver) {
+        crate::service::APP_HELPER_NAME
+    } else {
+        "cua-spacesd"
+    };
     Some(PermissionHint {
         id: "local-network".into(),
         title: "Local Network".into(),
         settings_url:
             "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork".into(),
         instructions: format!(
-            "macOS Spaces on this Mac need Local Network access for cua-spacesd ({d}). When \
-             macOS asks \"Allow cua-spacesd to find devices on local networks?\" on this Mac's \
-             screen, click Allow; or turn on cua-spacesd in System Settings → Privacy & \
+            "macOS Spaces on this Mac need Local Network access for {d}. When \
+             macOS asks \"Allow {short} to find devices on local networks?\" on this Mac's \
+             screen, click Allow; or turn on {short} in System Settings → Privacy & \
              Security → Local Network. If the cua daemon was started from Terminal or over SSH, \
              run `cua daemon stop` so the host service starts it at the next create (over SSH \
              nothing can grant it). Without it, macOS Space creates fail with \"No route to \
@@ -492,6 +526,14 @@ pub struct HostStatus {
     /// The owner's email, when the relay gave one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner_email: Option<String>,
+    /// macOS: a Cua Spaces app that can run the host service is
+    /// installed, so the host service can run as it.
+    #[serde(default)]
+    pub helper_available: bool,
+    /// macOS: the old hand-written LaunchAgent
+    /// (`com.trycua.spacesd.host`) is still there (loaded or its plist).
+    #[serde(default)]
+    pub legacy_service: bool,
 }
 
 /// Files under `<home>/host`.
@@ -675,7 +717,7 @@ pub(crate) fn hostname() -> String {
         .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "this machine".into())
+        .unwrap_or_else(|| "this computer".into())
 }
 
 /// The name a person knows this machine by, for display and as the default
@@ -774,6 +816,13 @@ pub struct Host {
     paths: HostPaths,
     manager: Option<Arc<dyn ServiceManager>>,
     preflight: Option<Arc<dyn SessionProbe>>,
+    /// The Cua Spaces app with the helper (tests; else found).
+    helper_app: Option<PathBuf>,
+    /// The helper's runner (tests; else [`service::AppHelper`]).
+    helper: Option<Arc<dyn ServiceManager>>,
+    /// The old LaunchAgent (tests; else [`service::Launchd`]).
+    legacy: Option<Arc<dyn LegacyService>>,
+    verify: VerifyTiming,
 }
 
 impl std::fmt::Debug for Host {
@@ -791,6 +840,57 @@ impl Host {
             home,
             manager: None,
             preflight: None,
+            helper_app: None,
+            helper: None,
+            legacy: None,
+            verify: VerifyTiming::default(),
+        }
+    }
+
+    /// Uses `app` as the installed Cua Spaces app with its helper, run by
+    /// `helper`, and `legacy` as the old LaunchAgent (tests).
+    pub fn with_app_helper(
+        mut self,
+        app: PathBuf,
+        helper: Arc<dyn ServiceManager>,
+        legacy: Arc<dyn LegacyService>,
+    ) -> Self {
+        self.helper_app = Some(app);
+        self.helper = Some(helper);
+        self.legacy = Some(legacy);
+        self
+    }
+
+    /// How long a moved host service has to prove itself (tests).
+    pub fn with_verify_timing(mut self, timing: VerifyTiming) -> Self {
+        self.verify = timing;
+        self
+    }
+
+    /// The installed Cua Spaces app with its helper.
+    fn helper_app(&self) -> Option<PathBuf> {
+        if self.helper.is_some() {
+            return self.helper_app.clone();
+        }
+        service::find_app_helper()
+    }
+
+    /// The helper's runner for `app`.
+    fn helper_manager(&self, app: &Path) -> Arc<dyn ServiceManager> {
+        match &self.helper {
+            Some(h) => h.clone(),
+            None => Arc::new(service::AppHelper::for_current_user(
+                app.to_path_buf(),
+                &user_home(&self.home),
+            )),
+        }
+    }
+
+    /// The old LaunchAgent.
+    fn legacy(&self) -> Arc<dyn LegacyService> {
+        match &self.legacy {
+            Some(l) => l.clone(),
+            None => Arc::new(service::Launchd::for_current_user(&user_home(&self.home))),
         }
     }
 
@@ -830,6 +930,11 @@ impl Host {
     }
 
     fn manager(&self, runner: RunnerKind) -> Arc<dyn ServiceManager> {
+        if runner == RunnerKind::AppHelper
+            && let (Some(h), Some(_)) = (&self.helper, &self.helper_app)
+        {
+            return h.clone();
+        }
         if let Some(m) = &self.manager {
             return m.clone();
         }
@@ -903,10 +1008,14 @@ impl Host {
                 "--no-mcp".into(),
             ]);
         }
+        let mut env = vec![("CUA_ENV_LOG".into(), "info".into())];
+        if let Some(mesh) = &config.mesh {
+            env.push(("CUA_MESH".into(), mesh.clone()));
+        }
         ServiceSpec {
             program: config.driver_bin.clone(),
             args,
-            env: vec![("CUA_ENV_LOG".into(), "info".into())],
+            env,
             log_path: p.log(),
             working_dir: user_home(&self.home),
         }
@@ -944,9 +1053,27 @@ impl Host {
         tokens: &dyn AccountTokens,
         stage: &mut SetupStage,
     ) -> Result<HostStatus> {
-        let runner = match &self.manager {
-            Some(m) => m.kind(),
-            None => opts.runner.resolve(),
+        let runner = match (&self.manager, opts.runner) {
+            (_, RunnerKind::Auto) if self.helper.is_some() => RunnerKind::AppHelper,
+            (Some(m), _) => m.kind(),
+            (None, r) => r.resolve(),
+        };
+        // The app's helper runs the cua-spacesd sealed in the app; its
+        // launcher is the driver the config names (and the permission
+        // checks ask).
+        let helper_launcher = match runner {
+            RunnerKind::AppHelper => Some(
+                self.helper_app()
+                    .map(|app| service::app_helper_launcher(&app))
+                    .ok_or_else(|| {
+                        Error::Service(
+                            "the host service runs inside the Cua Spaces app, which is not \
+                             installed; install it, or run `cua host setup --runner launchd`"
+                                .into(),
+                        )
+                    })?,
+            ),
+            _ => None,
         };
         let name = opts
             .name
@@ -965,8 +1092,13 @@ impl Host {
         // (set up over ssh with nobody logged in at the console). Checked
         // first so a doomed setup never registers with the relay,
         // downloads the driver, or leaves a config file behind.
-        if runner == RunnerKind::Launchd {
-            preflight::check(self.preflight_probe().as_ref(), &self.paths.driver_bin())?;
+        if runner == RunnerKind::Launchd || runner == RunnerKind::AppHelper {
+            preflight::check(
+                self.preflight_probe().as_ref(),
+                helper_launcher
+                    .as_deref()
+                    .unwrap_or(&self.paths.driver_bin()),
+            )?;
         }
         // Hosting Spaces on the plaintext direct listener: never on a
         // public address without --allow-any-address.
@@ -984,13 +1116,16 @@ impl Host {
         let mut config = HostConfig {
             name: name.clone(),
             runner: runner.as_str().into(),
-            driver_bin: self.paths.driver_bin(),
+            driver_bin: helper_launcher
+                .clone()
+                .unwrap_or_else(|| self.paths.driver_bin()),
             sharing: true,
             share_desktop: opts.share_desktop,
             provide_spaces: opts.provide_spaces,
+            mesh: mesh_env(),
             ..Default::default()
         };
-        if opts.download_first {
+        if opts.download_first && helper_launcher.is_none() {
             *stage = SetupStage::Download;
             install_driver(opts.driver_bin.as_deref(), &config.driver_bin).await?;
         }
@@ -1066,12 +1201,17 @@ impl Host {
                 write_json(&self.paths.policy(), &policy)?;
             }
         }
-        if !opts.download_first {
+        if !opts.download_first && helper_launcher.is_none() {
             *stage = SetupStage::Download;
             install_driver(opts.driver_bin.as_deref(), &config.driver_bin).await?;
         }
         *stage = SetupStage::Service;
         write_json(&self.paths.config(), &config)?;
+        if runner == RunnerKind::AppHelper {
+            // Never two services: the old LaunchAgent (and its binary)
+            // goes before the helper starts.
+            self.retire_legacy()?;
+        }
         let manager = self.manager(runner);
         manager.install(&self.service_spec(&config))?;
         manager.start()?;
@@ -1296,8 +1436,12 @@ impl Host {
             status.owner_email = p.owner_email.clone();
         }
         status.paused_signed_out = config.paused_signed_out;
+        if cfg!(target_os = "macos") || self.helper.is_some() {
+            status.helper_available = self.helper_app().is_some();
+            status.legacy_service = self.legacy().found().present();
+        }
         if let (Some(url), Some(id)) = (&config.relay_url, &config.machine_id) {
-            match self.relay_machine(url, id).await {
+            match recall_relay_view(url, id, self.relay_machine(url, id).await) {
                 Ok(m) => {
                     status.online = Some(m.online);
                     // Paused: nobody can reach it, whatever the relay's
@@ -1386,9 +1530,25 @@ impl Host {
         RelayClient::new(url)?.machine(&token, id).await
     }
 
+    /// Takes `name` as this machine's display name when `machine_id` is
+    /// this machine's relay registration (after the owner renamed it on
+    /// the relay from an enrolled device). Returns whether it did: another
+    /// machine, or a machine not set up, is left alone.
+    pub fn adopt_name(&self, machine_id: &str, name: &str) -> Result<bool> {
+        let Some(mut config) = self.config()? else {
+            return Ok(false);
+        };
+        if config.machine_id.as_deref() != Some(machine_id) || name.trim().is_empty() {
+            return Ok(false);
+        }
+        config.name = name.trim().to_string();
+        write_json(&self.paths.config(), &config)?;
+        Ok(true)
+    }
+
     fn require_config(&self) -> Result<HostConfig> {
         self.config()?.ok_or_else(|| {
-            Error::NotFound("this machine is not set up for access (run `cua host setup`)".into())
+            Error::NotFound("this computer is not set up for access (run `cua host setup`)".into())
         })
     }
 
@@ -1506,7 +1666,7 @@ impl Host {
             && !owned_by(p, account)
         {
             return Err(Error::InvalidArgument(
-                "this machine is shared with another Cua account; remove the host setup \
+                "this computer is shared with another Cua account; remove the host setup \
                  and set it up again to share it with this one"
                     .into(),
             ));
@@ -1541,7 +1701,7 @@ impl Host {
         let mut config = self.require_config()?;
         let (Some(url), Some(id)) = (config.relay_url.clone(), config.machine_id.clone()) else {
             return Err(Error::InvalidArgument(
-                "name and allowlist live on the relay; this machine is in direct mode".into(),
+                "name and allowlist live on the relay; this computer is in direct mode".into(),
             ));
         };
         let token = tokens.access_token().await?;
@@ -1554,6 +1714,7 @@ impl Host {
                     allow: allow.clone(),
                     viewers: None,
                     sharing: None,
+                    meta: None,
                 },
             )
             .await?;
@@ -1595,14 +1756,284 @@ impl Host {
     /// and deletes `<home>/host`. The machine id is kept so a later setup
     /// reuses it.
     pub async fn remove(&self) -> Result<()> {
+        self.remove_inner(false).await
+    }
+
+    /// [`Self::remove`] for an uninstall of the app: the Spaces this machine
+    /// provides do not stop it. Their relay machines (each Space joined the
+    /// relay as its own) are unregistered too, so nothing stays reachable
+    /// through the relay; the Spaces themselves are left as they are for
+    /// the caller to turn off ([`Self::provided_spaces`]).
+    pub async fn remove_for_uninstall(&self) -> Result<()> {
+        self.remove_inner(true).await
+    }
+
+    /// The Spaces this host provides to the owner's other devices.
+    pub fn provided_spaces(&self) -> Result<Vec<crate::provided::ProvidedSpace>> {
+        crate::provided::load_provided(&self.paths.dir)
+    }
+
+    // ------------------------------------------------- the app's helper
+
+    /// Moves the host service from the old hand-written LaunchAgent to the
+    /// Cua Spaces app (its login item, under the app's own name), keeping the machine
+    /// (config, machine id and token, policy, provided Spaces); see
+    /// [`helper_migration`]. `app_version` is the app's (a failed move is
+    /// not tried again by itself with the same version); `force` tries
+    /// again anyway. Never fails for a move that did not work: the old
+    /// agent is put back and the outcome says so (`rolled-back`).
+    pub async fn migrate_service(
+        &self,
+        force: bool,
+        app_version: &str,
+    ) -> Result<ServiceMigration> {
+        let config = self.config()?;
+        let app = self.helper_app();
+        let legacy = self.legacy();
+        let facts = MigrationFacts {
+            helper_available: app.is_some(),
+            configured: config.is_some(),
+            runner: config
+                .as_ref()
+                .and_then(|c| RunnerKind::parse(&c.runner).ok()),
+            paused: config.as_ref().is_some_and(|c| c.paused_signed_out),
+            legacy: legacy.found(),
+            legacy_binary: self.paths.driver_bin().is_file(),
+            last: read_json(&self.paths.dir.join(helper_migration::RECORD_FILE))
+                .ok()
+                .flatten(),
+            app_version: app_version.to_string(),
+            force,
+        };
+        let plan = helper_migration::plan(&facts);
+        let (Some(app), Some(mut config)) = (app, config) else {
+            if let MigrationPlan::Nothing(why) = plan {
+                return Ok(ServiceMigration::new("not-needed", why, false));
+            }
+            return Ok(ServiceMigration::new(
+                "not-needed",
+                "nothing to move",
+                false,
+            ));
+        };
+        let launcher = service::app_helper_launcher(&app);
+        match plan {
+            MigrationPlan::Nothing(why) => Ok(ServiceMigration::new("not-needed", why, false)),
+            MigrationPlan::KeepAfterFailure => Ok(ServiceMigration::new(
+                "kept",
+                "moving into the Cua Spaces app failed before with this version; the old host \
+                 service keeps running (`cua host migrate --force` tries again)",
+                false,
+            )),
+            MigrationPlan::RemoveLeftovers => {
+                self.retire_legacy()?;
+                Ok(ServiceMigration::new(
+                    "cleaned-up",
+                    "removed what was left of the old host service",
+                    false,
+                ))
+            }
+            MigrationPlan::SwitchPaused => {
+                config.runner = RunnerKind::AppHelper.as_str().into();
+                config.driver_bin = launcher;
+                write_json(&self.paths.config(), &config)?;
+                self.retire_legacy()?;
+                self.record_migration("done", app_version, None);
+                Ok(ServiceMigration::new(
+                    "switched",
+                    "the host service will run inside the Cua Spaces app when sharing resumes",
+                    config.share_desktop,
+                ))
+            }
+            MigrationPlan::Move => self.move_to_helper(config, &app, legacy, app_version).await,
+        }
+    }
+
+    async fn move_to_helper(
+        &self,
+        config: HostConfig,
+        app: &Path,
+        legacy: Arc<dyn LegacyService>,
+        app_version: &str,
+    ) -> Result<ServiceMigration> {
+        let helper = self.helper_manager(app);
+        let mut next = config.clone();
+        next.runner = RunnerKind::AppHelper.as_str().into();
+        next.driver_bin = service::app_helper_launcher(app);
+        // Direct mode with sharing stopped keeps the service stopped.
+        let run = config.mode == "relay" || config.sharing;
+        let before = self.relay_session(&config).await;
+        let found = legacy.found();
+        self.record_migration("in-progress", app_version, None);
+
+        // 1. The old agent out (its plist kept aside, so a restart in the
+        //    middle never runs two services).
+        if let Err(e) = legacy.bootout() {
+            let why = format!("the old host service did not stop: {e}");
+            self.record_migration("rolled-back", app_version, Some(&why));
+            return Ok(ServiceMigration::new("rolled-back", why, false));
+        }
+        let plist = legacy.plist();
+        let backup = self.paths.dir.join(helper_migration::LEGACY_PLIST_BACKUP);
+        let moved = plist.is_file() && move_file(&plist, &backup).is_ok();
+
+        // 2. The helper in, and proved.
+        let mut result = helper.install(&self.service_spec(&next));
+        if result.is_ok() {
+            result = if run { helper.start() } else { helper.stop() };
+        }
+        if result.is_ok() && run {
+            result = self.verify_helper(helper.as_ref(), &next, before).await;
+        }
+
+        match result {
+            Ok(()) => {
+                write_json(&self.paths.config(), &next)?;
+                let _ = std::fs::remove_file(&backup);
+                self.remove_legacy_binary();
+                self.record_migration("done", app_version, None);
+                let _ = crate::provided::audit(
+                    &self.paths.dir,
+                    "config",
+                    "local",
+                    &next.name,
+                    "host service moved into the Cua Spaces app",
+                );
+                let needs = next.share_desktop && !self.missing_permissions(&next).is_empty();
+                Ok(ServiceMigration::new(
+                    "migrated",
+                    "the host service now runs inside the Cua Spaces app; this machine kept its id, \
+                     its registration and its Spaces",
+                    needs,
+                ))
+            }
+            Err(e) => {
+                let _ = helper.uninstall();
+                if moved {
+                    let _ = move_file(&backup, &plist);
+                }
+                let mut why = format!("the Cua Spaces app's host service did not take over: {e}");
+                if found.loaded
+                    && let Err(e) = legacy.bootstrap()
+                {
+                    why.push_str(&format!(
+                        "; restarting the old host service failed too: {e}"
+                    ));
+                }
+                self.record_migration("rolled-back", app_version, Some(&why));
+                Ok(ServiceMigration::new(
+                    "rolled-back",
+                    format!("{why}. The old host service runs as before."),
+                    false,
+                ))
+            }
+        }
+    }
+
+    /// The relay's view of this machine's session: `(online, connected_at)`
+    /// (relay mode; `None` when it could not be read). Read fresh, never
+    /// the remembered answer [`Host::status`] shows during a hiccup.
+    async fn relay_session(&self, config: &HostConfig) -> Option<(bool, Option<u64>)> {
+        let (Some(url), Some(id)) = (&config.relay_url, &config.machine_id) else {
+            return None;
+        };
+        if config.mode != "relay" || config.paused_signed_out {
+            return None;
+        }
+        self.relay_machine(url, id)
+            .await
+            .ok()
+            .map(|m| (m.online, m.connected_at))
+    }
+
+    /// The helper keeps running, and, when the old service was online at
+    /// the relay, a new session of this machine is online there.
+    async fn verify_helper(
+        &self,
+        helper: &dyn ServiceManager,
+        config: &HostConfig,
+        before: Option<(bool, Option<u64>)>,
+    ) -> Result<()> {
+        let t = self.verify;
+        let start = std::time::Instant::now();
+        let mut stable_since: Option<std::time::Instant> = None;
+        let was_online = matches!(before, Some((true, _)));
+        let mut last = "it did not start".to_string();
+        loop {
+            if helper.state().running {
+                let since = *stable_since.get_or_insert_with(std::time::Instant::now);
+                if since.elapsed() >= t.stable {
+                    match self.relay_session(config).await {
+                        Some((true, at))
+                            if !was_online || at.is_none() || at != before.and_then(|b| b.1) =>
+                        {
+                            return Ok(());
+                        }
+                        _ if !was_online && start.elapsed() >= t.offline_grace => return Ok(()),
+                        Some(_) => last = "it is not online at the relay yet".into(),
+                        None if was_online => last = "the relay did not answer".into(),
+                        None => {}
+                    }
+                }
+            } else {
+                if stable_since.is_some() {
+                    last = "it stopped after starting".into();
+                }
+                stable_since = None;
+            }
+            if start.elapsed() >= t.timeout {
+                return Err(Error::Service(format!(
+                    "{last} (checked for {} s)",
+                    t.timeout.as_secs()
+                )));
+            }
+            tokio::time::sleep(t.poll).await;
+        }
+    }
+
+    /// Stops and removes the old LaunchAgent and its binary (the helper
+    /// replaced them).
+    fn retire_legacy(&self) -> Result<()> {
+        let legacy = self.legacy();
+        legacy.bootout()?;
+        let plist = legacy.plist();
+        if plist.is_file() {
+            std::fs::remove_file(&plist)?;
+        }
+        self.remove_legacy_binary();
+        Ok(())
+    }
+
+    fn remove_legacy_binary(&self) {
+        let bin = self.paths.driver_bin();
+        let _ = std::fs::remove_file(&bin);
+        if let Some(dir) = bin.parent() {
+            // Only when empty.
+            let _ = std::fs::remove_dir(dir);
+        }
+    }
+
+    fn record_migration(&self, state: &str, app_version: &str, reason: Option<&str>) {
+        let _ = write_json(
+            &self.paths.dir.join(helper_migration::RECORD_FILE),
+            &MigrationRecord {
+                state: state.into(),
+                app_version: app_version.into(),
+                at_ms: now_ms(),
+                reason: reason.map(Into::into),
+            },
+        );
+    }
+
+    async fn remove_inner(&self, uninstalling: bool) -> Result<()> {
         let Some(config) = self.config()? else {
             return Ok(());
         };
         // Spaces it provides would keep running with nobody to delete them.
         let provided = crate::provided::load_provided(&self.paths.dir)?;
-        if !provided.is_empty() {
+        if !provided.is_empty() && !uninstalling {
             return Err(Error::InvalidArgument(format!(
-                "this machine still provides {} Space{} ({}); delete {} first (`cua spaces delete <local:name>`)",
+                "this computer still provides {} Space{} ({}); delete {} first (`cua spaces delete <local:name>`)",
                 provided.len(),
                 if provided.len() == 1 { "" } else { "s" },
                 provided
@@ -1614,26 +2045,94 @@ impl Host {
             )));
         }
         let mut relay_error = None;
-        if let (Some(url), Some(id)) = (&config.relay_url, &config.machine_id)
-            && let Ok(token) = read_secret(&self.paths.machine_token())
-        {
-            match RelayClient::new(url)?.delete(&token, id).await {
-                // Already gone: nothing to tell the relay.
-                Ok(()) | Err(Error::NotFound(_)) => {}
-                // A refused machine token leaves the entry listed under My
-                // machines; report it (after the local cleanup) rather than
-                // pretending the unregister worked.
-                Err(e) => relay_error = Some(e),
+        let mut note = |e: Error| match e {
+            // Already gone: nothing to tell the relay.
+            Error::NotFound(_) => {}
+            // A refused machine token leaves the entry listed under My
+            // machines; report it (after the local cleanup) rather than
+            // pretending the unregister worked.
+            e => relay_error = Some(e),
+        };
+        if uninstalling {
+            for space in &provided {
+                if space.machine_token.is_empty() || space.relay_url.is_empty() {
+                    continue;
+                }
+                if let Err(e) = RelayClient::new(&space.relay_url)?
+                    .delete(&space.machine_token, &space.relay_machine)
+                    .await
+                {
+                    note(e);
+                }
             }
         }
+        if let (Some(url), Some(id)) = (&config.relay_url, &config.machine_id)
+            && let Ok(token) = read_secret(&self.paths.machine_token())
+            && let Err(e) = RelayClient::new(url)?.delete(&token, id).await
+        {
+            note(e);
+        }
         self.manager_for_config(&config).uninstall()?;
-        std::fs::remove_dir_all(&self.paths.dir)?;
+        if config.runner == RunnerKind::AppHelper.as_str() {
+            // Whatever an interrupted move left of the old agent.
+            let _ = self.retire_legacy();
+        }
+        remove_dir_retrying(&self.paths.dir).await?;
         match relay_error {
             Some(e) => Err(Error::Relay(format!(
                 "removed locally, but the relay could not be told: {e}"
             ))),
             None => Ok(()),
         }
+    }
+}
+
+/// Renames `from` to `to`, copying across volumes.
+fn move_file(from: &Path, to: &Path) -> std::io::Result<()> {
+    if let Some(dir) = to.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    match std::fs::rename(from, to) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            std::fs::copy(from, to)?;
+            std::fs::remove_file(from)
+        }
+    }
+}
+
+/// How long [`Host::status`] keeps the relay's last answer about this
+/// machine while the relay is briefly unreachable, before it shows the
+/// failure ("Needs attention"). A relay deploy replaces its one pod, and
+/// the proxy in front of it answers 503 for about 20 s meanwhile; the
+/// host service reconnects on its own.
+pub const RELAY_HICCUP_GRACE: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// The relay's last answer about each machine (relay URL, machine id),
+/// and when it came.
+type RelayViews = std::collections::HashMap<(String, String), (std::time::Instant, crate::Machine)>;
+static RELAY_VIEWS: std::sync::Mutex<Option<RelayViews>> = std::sync::Mutex::new(None);
+
+/// `read` (the relay's answer about machine `id`), remembered when it
+/// worked; a transient failure ([`Error::is_transient`]) within
+/// [`RELAY_HICCUP_GRACE`] of the last answer gets that answer instead.
+fn recall_relay_view(url: &str, id: &str, read: Result<crate::Machine>) -> Result<crate::Machine> {
+    let key = (url.to_string(), id.to_string());
+    let mut views = RELAY_VIEWS.lock().unwrap_or_else(|e| e.into_inner());
+    let views = views.get_or_insert_with(Default::default);
+    match read {
+        Ok(m) => {
+            views.insert(key, (std::time::Instant::now(), m.clone()));
+            Ok(m)
+        }
+        Err(e) if e.is_transient() => match views.get(&key) {
+            Some((at, m)) if at.elapsed() < RELAY_HICCUP_GRACE => {
+                tracing::debug!("relay status read failed; showing its last answer: {e}");
+                Ok(m.clone())
+            }
+            _ => Err(e),
+        },
+        Err(e) => Err(e),
     }
 }
 
@@ -1662,6 +2161,23 @@ async fn install_driver(explicit: Option<&Path>, dest: &Path) -> Result<()> {
         DriverSource::Local(_) => {}
     }
     driver::install_to(&source, dest).await
+}
+
+/// `remove_dir_all`, retried for up to 5 s: Windows releases a stopped
+/// driver's files (its exe, driver.log) a moment after it exits (CUA-1749).
+async fn remove_dir_retrying(dir: &Path) -> std::io::Result<()> {
+    let mut tries = 0;
+    loop {
+        match std::fs::remove_dir_all(dir) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) if tries >= 20 => return Err(e),
+            Err(_) => {
+                tries += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1724,6 +2240,38 @@ mod tests {
                 .contains("Privacy & Security → Local Network")
         );
         assert!(h.instructions.contains("`cua daemon stop`"));
+    }
+
+    #[test]
+    fn permission_hints_name_the_app_helper() {
+        let helper = Path::new("/Applications/Cua Spaces.app/Contents/MacOS/CuaSpacesMac");
+        for h in permission_hints("macos", helper) {
+            assert!(
+                h.instructions.contains("turn on Cua Spaces,"),
+                "{}",
+                h.instructions
+            );
+            assert!(
+                !h.instructions.contains("cua-spacesd"),
+                "{}",
+                h.instructions
+            );
+        }
+        let ln = local_network_hint("macos", true, helper).unwrap();
+        assert!(
+            ln.instructions.contains("Allow Cua Spaces to find devices"),
+            "{}",
+            ln.instructions
+        );
+        let old = Path::new("/Users/ada/.cua/host/bin/cua-spacesd");
+        for h in permission_hints("macos", old) {
+            assert!(
+                h.instructions
+                    .contains("cua-spacesd (/Users/ada/.cua/host/bin/cua-spacesd)"),
+                "{}",
+                h.instructions
+            );
+        }
     }
 
     #[test]
@@ -1804,5 +2352,17 @@ mod tests {
             std::fs::metadata(&p).unwrap().permissions().mode() & 0o777,
             0o600
         );
+    }
+
+    #[tokio::test]
+    async fn remove_dir_retrying_removes_and_tolerates_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = dir.path().join("host");
+        std::fs::create_dir_all(host.join("bin")).unwrap();
+        std::fs::write(host.join("driver.log"), "x").unwrap();
+        super::remove_dir_retrying(&host).await.unwrap();
+        assert!(!host.exists());
+        // Already gone (removed by another step): not an error.
+        super::remove_dir_retrying(&host).await.unwrap();
     }
 }

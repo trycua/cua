@@ -46,7 +46,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0 GB–7.1 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -160,7 +160,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0 GB–7.1 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -218,7 +218,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0 GB–7.1 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -276,7 +276,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0 GB–7.1 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -334,7 +334,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0 GB–7.1 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -448,7 +448,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0 GB–7.1 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -506,7 +506,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0 GB–7.1 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "gvisor",
@@ -571,7 +571,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0 GB–7.1 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "gvisor",
@@ -636,7 +636,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0 GB–7.1 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "gvisor",
@@ -701,7 +701,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0 GB–7.1 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "gvisor",
@@ -759,7 +759,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0 GB–7.1 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "gvisor",
@@ -1161,7 +1161,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB"
+          "Disk: 3.0 GB–7.1 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "gvisor",
@@ -1732,7 +1732,7 @@
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
-          "name: Name [Optional]",
+          "name: Name [space-000000002a]",
           "open-when-ready: Open when ready"
         ],
         "gpu": null,
@@ -1785,7 +1785,7 @@
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
-          "name: Name [Optional] !Lowercase letters, digits and dashes",
+          "name: Name [space-000000002a] !Lowercase letters, digits and dashes",
           "open-when-ready: Open when ready"
         ],
         "gpu": null,
@@ -1838,7 +1838,7 @@
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
-          "name: Name [Optional] !Lowercase letters, digits and dashes",
+          "name: Name [space-000000002a] !Lowercase letters, digits and dashes",
           "open-when-ready: Open when ready"
         ],
         "gpu": null,
@@ -1891,7 +1891,7 @@
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
-          "name: Name [Optional]",
+          "name: Name [space-000000002a]",
           "open-when-ready: Open when ready"
         ],
         "gpu": null,
@@ -1944,7 +1944,7 @@
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
-          "name: Name [Optional]",
+          "name: Name [space-000000002a]",
           "open-when-ready: Open when ready"
         ],
         "gpu": null,
@@ -2047,7 +2047,7 @@
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
-          "name: Name [Optional]",
+          "name: Name [space-000000002a]",
           "open-when-ready: Open when ready"
         ],
         "gpu": null,
@@ -2271,8 +2271,8 @@
       "frame": {
         "emptyText": null,
         "sections": [
-          "This Mac: demo (selected)",
-          "Connected: 10.0.0.5:3211 (dim)"
+          "spaces.sidebar.section.this_mac: demo (selected)",
+          "spaces.sidebar.section.connected: 10.0.0.5:3211 (dim)"
         ],
         "selectedId": "local:demo",
         "thisMachine": null
@@ -2283,7 +2283,7 @@
       "frame": {
         "emptyText": null,
         "sections": [
-          "This Mac: demo (selected)"
+          "spaces.sidebar.section.this_mac: demo (selected)"
         ],
         "selectedId": "local:demo",
         "thisMachine": null
@@ -2311,7 +2311,7 @@
         "canStream": false,
         "deleteLabel": "Remove",
         "facts": [
-          "Status: timed out",
+          "Status: Unreachable ?timed out",
           "Identifier: direct:10.0.0.5:3211 [copy direct:10.0.0.5:3211 doc.on.doc Copy / checkmark Copied 1500ms]",
           "System: Unknown"
         ],

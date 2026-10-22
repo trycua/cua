@@ -3,19 +3,22 @@
 
 /**
  * The account's relay allowance (`relay.usage`), read while a screen shows
- * it: at once, every 5 minutes, and when the app comes to the front (at
+ * it: at once, every minute, and when the app comes to the front (at
  * most once a minute). A host without the operation, signed out, or a relay
- * that meters nothing reads as null, and the page shows nothing.
+ * that meters nothing reads as null, and the page shows nothing. The words
+ * are the app core's (`relayUsage.view`).
  */
 
-import { useContext, useSyncExternalStore } from "react";
+import { useContext, useMemo, useSyncExternalStore } from "react";
 import { isUnsupported, type DataAdapter } from "./adapter";
 import { BridgeContext } from "./BridgeProvider";
-import type { RelayUsage } from "./ops/relay-usage";
+import { planLimitNotice, relayUsageView } from "./derive";
+import { useSettings } from "./hooks";
+import type { RelayAllowanceNotice, RelayUsage, RelayUsageView } from "./ops/relay-usage";
 
-export type { RelayUsage } from "./ops/relay-usage";
+export type { PlanCard, PlanLink, RelayAllowanceNotice, RelayUsage, RelayUsageView } from "./ops/relay-usage";
 
-export const RELAY_USAGE_POLL_MS = 5 * 60_000;
+export const RELAY_USAGE_POLL_MS = 60_000;
 /** A focus reads again only when the last read is older than this. */
 export const RELAY_USAGE_FOCUS_MS = 60_000;
 
@@ -124,17 +127,19 @@ export function useRelayUsage(): RelayUsage | null {
   return useSyncExternalStore(store?.subscribe ?? none, store?.snapshot ?? nothing, nothing);
 }
 
-/** `20` or `6.5`. */
-export function formatHours(h: number): string {
-  const tenths = Math.round(h * 10) / 10;
-  return Number.isInteger(tenths) ? String(tenths) : tenths.toFixed(1);
+/** Settings' row and the notice, as the app core draws them; null when
+ * there is nothing to show (or no core to say it). */
+export function useRelayUsageView(): RelayUsageView | null {
+  const usage = useRelayUsage();
+  const core = useContext(BridgeContext)?.core;
+  const accountApp = useSettings().data?.accountUrl ?? null;
+  return useMemo(() => (usage && core ? relayUsageView(core, usage, accountApp) : null), [usage, core, accountApp]);
 }
 
-/** "Live sessions 1 of 2 · Relay hours 6.5 of 20 this month". */
-export function relayUsageLine(u: RelayUsage): string {
-  const of = (used: string, limit: string | null) => (limit === null ? used : `${used} of ${limit}`);
-  const sessions = of(String(u.liveSessions), u.liveSessionsLimit === null ? null : String(u.liveSessionsLimit));
-  const hours = of(formatHours(u.hoursUsed), u.hoursLimit === null ? null : formatHours(u.hoursLimit));
-  return `Live sessions ${sessions} · Relay hours ${hours} this month`;
+/** The plan-limit refusal in an error's text, as the core's sentence with
+ * its Upgrade link; null for any other error (or without the core). */
+export function usePlanLimitNotice(): (error: string) => RelayAllowanceNotice | null {
+  const core = useContext(BridgeContext)?.core;
+  const accountApp = useSettings().data?.accountUrl ?? null;
+  return useMemo(() => (error: string) => (core ? planLimitNotice(core, error, accountApp) : null), [core, accountApp]);
 }
-

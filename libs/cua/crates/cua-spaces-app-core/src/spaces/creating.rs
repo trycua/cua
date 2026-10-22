@@ -363,7 +363,7 @@ pub enum CreateFamily {
     Macos,
     /// A Windows VM (QEMU; emulated on Apple silicon).
     Windows,
-    /// A cloud Space (a Fleet claim).
+    /// A cloud Space.
     Cloud,
 }
 
@@ -565,6 +565,35 @@ pub fn phase_label(phase: &str) -> &'static str {
     }
 }
 
+/// The words for the step a create is on, for its kind of Space (the
+/// stages a person sees): a macOS Space says "Downloading macOS (first
+/// time only)…", "Preparing the disk…" (its copy-on-write clone), "Booting
+/// macOS…", then "Starting Cua inside the Space…"; a Linux or Windows VM
+/// the same with its OS, a container "Creating the container…" and
+/// "Starting the container…". A step it has no words of its own for
+/// (preparing, connecting, a cloud claim) reads as [`phase_label`].
+pub fn stage_label(p: &PendingCreate) -> String {
+    let here = p.provider != SpaceProvider::Cloud;
+    let vm = matches!(p.os, SpaceOs::Macos | SpaceOs::Windows) || p.kind == Some(SpaceKind::Vm);
+    let container = !vm && p.kind == Some(SpaceKind::Container);
+    let os = match p.os {
+        SpaceOs::Macos => "macOS",
+        SpaceOs::Windows => "Windows",
+        SpaceOs::Linux => "Linux",
+        SpaceOs::Unknown => "",
+    };
+    match p.phase.as_str() {
+        // Lume keeps the base image: later macOS Spaces clone it.
+        "pulling" if p.os == SpaceOs::Macos => "Downloading macOS (first time only)\u{2026}".into(),
+        "creating" if here && vm => "Preparing the disk\u{2026}".into(),
+        "creating" if here && container => "Creating the container\u{2026}".into(),
+        "booting" if here && vm && !os.is_empty() => format!("Booting {os}\u{2026}"),
+        "booting" if here && container => "Starting the container\u{2026}".into(),
+        "waiting_for_services" => "Starting Cua inside the Space\u{2026}".into(),
+        other => phase_label(other).into(),
+    }
+}
+
 /// The end of every stall message ([`stall_error`]): progress that arrives
 /// after it clears the row again. A failure the SDK reported never ends
 /// with it ([`failure_text`]).
@@ -662,6 +691,24 @@ fn short_duration(secs: f64) -> String {
     }
 }
 
+/// The first thing that would stop a create of `space` (`linux_container`,
+/// `linux_vm`, `macos_vm`, `windows_vm`), from the `preflight` entry of the
+/// daemon's runtime doctor report (`report_json`), to show before Create:
+/// its plain sentence and the single fix button, when there is one. `None`:
+/// nothing in the way, or the report has no verdict for it (an older
+/// daemon), so Create goes ahead.
+pub fn preflight_issue(
+    report_json: &str,
+    space: &str,
+) -> Option<cua_create_failure::preflight::Issue> {
+    let report: serde_json::Value = serde_json::from_str(report_json).ok()?;
+    let issues = report.get("preflight")?.get(space)?.clone();
+    serde_json::from_value::<Vec<cua_create_failure::preflight::Issue>>(issues)
+        .ok()?
+        .into_iter()
+        .next()
+}
+
 /// The SDK's disk refusal ("not enough disk space to pull ...: it needs
 /// about 30.0 GB and cua keeps 5.0 GB free, but only 12.0 GB is available
 /// on /Users/me/.lume (...)") in plain words, with its numbers when present.
@@ -732,6 +779,12 @@ pub enum FailureCause {
     ServiceTimeout,
     /// The image download did not finish in time.
     PullTimeout,
+    /// The image download stopped partway: Lume's pull failed or was
+    /// cancelled, or Lume stopped. Another try resumes it.
+    PullStopped,
+    /// The VM's runtime is not on this machine (QEMU for a Windows or Linux
+    /// VM on a PC without it): trying again does not help.
+    RuntimeMissing,
 }
 
 impl FailureCause {
@@ -746,9 +799,15 @@ impl FailureCause {
             Self::Gpu => "Unsupported",
             Self::Unauthenticated => "Unauthenticated",
             Self::ServiceTimeout | Self::PullTimeout => "Timeout",
+            Self::PullStopped => "ImagePull",
+            Self::RuntimeMissing => "RuntimeMissing",
         }
     }
 }
+
+/// The SDK's words for an image download that stopped partway
+/// (`VmmError::PullStopped`), lowercased.
+const PULL_STOPPED: &str = "the image download stopped before it finished";
 
 /// Which known cause the SDK's `raw` error is, if any. `phase` is where it
 /// failed and `gpu` whether GPU acceleration was asked for, when known.
@@ -787,6 +846,15 @@ pub fn failure_cause(raw: &str, phase: Option<&str>, gpu: bool) -> Option<Failur
     if l.contains("unauthenticated") {
         return Some(FailureCause::Unauthenticated);
     }
+    if l.contains(PULL_STOPPED) {
+        return Some(FailureCause::PullStopped);
+    }
+    // The SDK's `VmmError::Missing` for QEMU: "QEMU (qemu-system-x86_64,
+    // qemu-img) is not available: ...", or older SDKs' "qemu-img is not
+    // available: ..." after the image was pulled.
+    if l.contains("qemu") && (l.contains("is not available") || l.contains("not found on path")) {
+        return Some(FailureCause::RuntimeMissing);
+    }
     let timed_out =
         l.contains("timed out") || l.contains("timeout") || l.contains("not ready after");
     if l.contains("cua-spacesd did not answer within ") {
@@ -799,15 +867,28 @@ pub fn failure_cause(raw: &str, phase: Option<&str>, gpu: bool) -> Option<Failur
     }
 }
 
-/// The error enum case name a failed create records in telemetry: what
-/// the shell sent, unless that is none or a generic case (`Runtime`,
-/// `Other`, as most are) and the text names a known cause
-/// ([`failure_cause`]).
-pub fn failure_variant<'a>(raw: &str, phase: Option<&str>, gpu: bool, shell: &'a str) -> &'a str {
-    if !matches!(shell.trim(), "" | "Runtime" | "Other") {
-        return shell;
+/// The `error_kind` word a failed create records in telemetry: the cause
+/// the SDK's text names (`image_pull_not_found`, `vm_boot_timeout`,
+/// `services_unreachable`, ...; [`cua_create_failure::create_failure_kind`]),
+/// else what the shell sent (`Runtime`, as most are), else `other`. Only
+/// the word leaves the process, never the text. `provider` is where it ran:
+/// a cloud create's "X is not available" is not this machine's runtime.
+pub fn failure_variant<'a>(
+    raw: &str,
+    phase: Option<&str>,
+    gpu: bool,
+    shell: &'a str,
+    provider: Option<SpaceProvider>,
+) -> &'a str {
+    if failure_cause(raw, phase, gpu) == Some(FailureCause::Gpu) {
+        return FailureCause::Gpu.variant();
     }
-    failure_cause(raw, phase, gpu).map_or(shell, |c| c.variant())
+    cua_create_failure::create_failure_kind(
+        &crate::errors::plain_error(raw),
+        phase.unwrap_or(""),
+        shell,
+        provider != Some(SpaceProvider::Cloud),
+    )
 }
 
 /// [`failure_text`] for a create on one of your machines named `host_name`:
@@ -877,10 +958,33 @@ pub fn failure_text_on(
                     .into(),
             }
         }
+        Some(FailureCause::PullStopped) => {
+            // The SDK's "The image download stopped before it finished
+            // (<cause>). Try again; ..." with its cause.
+            let at = l.find(PULL_STOPPED).unwrap_or(0) + PULL_STOPPED.len();
+            let cause = plain[at..]
+                .trim_start()
+                .strip_prefix('(')
+                .and_then(|r| r.rsplit_once(')'))
+                .map(|(c, _)| c.trim())
+                .filter(|c| !c.is_empty());
+            let cause = cause.map(|c| format!(" ({c})")).unwrap_or_default();
+            let place = match host_name.map(str::trim).filter(|n| !n.is_empty()) {
+                Some(name) => format!(" on {name}"),
+                None if matches!(provider, Some(SpaceProvider::Relay | SpaceProvider::Direct)) => {
+                    " on the Mac running this Space".into()
+                }
+                None => String::new(),
+            };
+            format!(
+                "The image download{place} stopped before it finished{cause}. Try again; it \
+                 picks up where it stopped."
+            )
+        }
         Some(FailureCause::PullTimeout) => "The image download did not finish in the time \
              allowed. Check your internet connection, then try again."
             .into(),
-        None => plain,
+        Some(FailureCause::RuntimeMissing) | None => plain,
     }
 }
 
@@ -1142,13 +1246,44 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
 
 /// The inline line a failed power action shows: "Could not turn it on:
 /// <why>".
+///
+/// The known causes ([`failure_cause`], as for a failed create) read in
+/// plain words: a Local Network block names the app to turn on, instead of
+/// the SDK's raw error (CUA-1807).
 pub fn power_failed_text(on: bool, error: &str) -> String {
     let what = if on { "turn it on" } else { "turn it off" };
     if error.trim().is_empty() {
-        format!("Could not {what}")
-    } else {
-        format!("Could not {what}: {}", crate::errors::plain_error(error))
+        return format!("Could not {what}");
     }
+    let plain = crate::errors::plain_error(error);
+    let why = match failure_cause(error, None, false) {
+        Some(FailureCause::LocalNetwork) => {
+            let app = local_network_app(&plain).unwrap_or("Cua Spaces (or cua-spacesd)");
+            format!(
+                "Cua can't reach the Space's VM because it doesn't have Local Network access on \
+                 the Mac running it. On that Mac, open System Settings > Privacy & Security > \
+                 Local Network, turn on {app}, then try again."
+            )
+        }
+        Some(FailureCause::Disk) => "there isn't enough disk space on the Mac running it. Free \
+             up space there (or run `cua cache prune` in Terminal), then try again."
+            .into(),
+        Some(FailureCause::VmLimit) => "the Mac running it is already running two macOS VMs, \
+             the most Apple's macOS license allows at once. Stop one, then try again."
+            .into(),
+        _ => plain,
+    };
+    format!("Could not {what}: {why}")
+}
+
+/// The app the SDK's Local Network error names ("Local Network access is
+/// not available: <App> (<path>) cannot reach ..."), when it names one.
+fn local_network_app(plain: &str) -> Option<&str> {
+    const LEAD: &str = "Local Network access is not available: ";
+    let rest = &plain[plain.find(LEAD)? + LEAD.len()..];
+    let (name, _) = rest.split_once(" (")?;
+    let name = name.trim();
+    (!name.is_empty() && name != "cua" && !name.contains("cannot reach")).then_some(name)
 }
 
 /// Drops finished creates whose Space the registry now lists, and finished
@@ -1226,7 +1361,7 @@ pub fn pending_space(p: &PendingCreate) -> Space {
         SpaceProvider::Cloud => "Cua Cloud",
         SpaceProvider::Local => "This Mac",
         // Created on another of your machines: not this Mac.
-        SpaceProvider::Relay | SpaceProvider::Direct => "Another machine",
+        SpaceProvider::Relay | SpaceProvider::Direct => "Another computer",
     };
     let label = if failed {
         "Failed".to_string()
@@ -1241,7 +1376,7 @@ pub fn pending_space(p: &PendingCreate) -> Space {
             _ => "Setting up the runtime\u{2026}".to_string(),
         }
     } else {
-        phase_label(&p.phase).to_string()
+        stage_label(p)
     };
     // The catalog's distribution: the right icon and System from the start.
     let distro = p.image.as_deref().and_then(crate::wizard::image_distro);
@@ -1359,6 +1494,71 @@ pub fn compose(registry: &[Space], state: &CreatesState) -> Vec<Space> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn preflight_issue_reads_the_daemons_report() {
+        let report = r#"{"preflight":{
+            "linux_container":[{"kind":"engine_missing",
+              "message":"Install Docker Desktop to run Linux computers.",
+              "fix":{"label":"Get Docker","action":{"type":"open_url","value":"https://www.docker.com/products/docker-desktop/"}}}],
+            "linux_vm":[]}}"#;
+        let issue = preflight_issue(report, "linux_container").unwrap();
+        assert_eq!(
+            issue.message,
+            "Install Docker Desktop to run Linux computers."
+        );
+        assert_eq!(issue.fix.unwrap().label, "Get Docker");
+        assert!(preflight_issue(report, "linux_vm").is_none());
+        assert!(preflight_issue(report, "windows_vm").is_none());
+        // An older daemon has no verdict; garbage never blocks a create.
+        assert!(preflight_issue("{}", "linux_vm").is_none());
+        assert!(preflight_issue("not json", "linux_vm").is_none());
+    }
+
+    #[test]
+    fn a_failed_create_with_a_preflight_sentence_keeps_its_cause() {
+        let raw = "Install Docker Desktop to run Linux computers.";
+        assert_eq!(failure_text(raw, Some("preparing"), None, false), raw);
+        assert_eq!(
+            failure_variant(raw, Some("preparing"), false, "Runtime", None),
+            "runtime_missing"
+        );
+    }
+
+    /// CUA-1807: Turn on showed the SDK's raw Local Network error.
+    #[test]
+    fn a_failed_turn_on_says_the_known_cause_in_plain_words() {
+        let raw = "local runtime: Local Network access is not available: Cua Spaces \
+                   (/Applications/Cua Spaces.app) cannot reach the VM at 192.168.64.191:3211 \
+                   (No route to host (os error 65)). macOS blocks Cua Spaces's local network \
+                   connections until they are allowed: ...";
+        let t = power_failed_text(true, raw);
+        assert!(
+            t.starts_with("Could not turn it on: Cua can't reach"),
+            "{t}"
+        );
+        assert!(t.contains("turn on Cua Spaces, then try again"), "{t}");
+        assert!(!t.contains("os error"), "{t}");
+        // An older SDK's bare EHOSTUNREACH to a vmnet address.
+        let t = power_failed_text(
+            true,
+            "connect 192.168.64.5:3211: No route to host (os error 65)",
+        );
+        assert!(t.contains("turn on Cua Spaces (or cua-spacesd)"), "{t}");
+        // A bare binary is not an app to turn on.
+        let t = power_failed_text(
+            true,
+            "Local Network access is not available: cua cannot reach the VM at 192.168.64.5:3211",
+        );
+        assert!(t.contains("turn on Cua Spaces (or cua-spacesd)"), "{t}");
+        // Unknown causes stay as they were.
+        assert_eq!(
+            power_failed_text(false, "Docker is not running"),
+            "Could not turn it off: Docker is not running"
+        );
+        assert_eq!(power_failed_text(true, " "), "Could not turn it on");
+        assert!(power_failed_text(true, "No space left on device").contains("disk space"));
+    }
+
     fn start(id: &str, name: &str, os: SpaceOs) -> CreateAction {
         CreateAction::Start {
             id: id.into(),
@@ -1427,6 +1627,141 @@ mod tests {
         }
     }
 
+    /// A create says which step it is on, in the words of its kind of
+    /// Space, with the download's bytes and time left under the bar: the
+    /// same on this Mac and on another of your machines.
+    #[test]
+    fn a_create_names_each_stage_for_its_kind_of_space() {
+        let stages = |os: SpaceOs, kind: Option<SpaceKind>, provider: SpaceProvider| {
+            let mut s = reduce(
+                &CreatesState::default(),
+                &CreateAction::Start {
+                    id: "pending:s".into(),
+                    name: String::new(),
+                    os,
+                    provider,
+                    now: 1_000,
+                    image: None,
+                    kind,
+                    host_arch: None,
+                    gpu: false,
+                    host: (provider == SpaceProvider::Relay).then(|| "mini".into()),
+                    host_name: (provider == SpaceProvider::Relay).then(|| "Mac mini".into()),
+                },
+            );
+            let mut labels = vec![pending_space(&s.pending[0]).progress.unwrap().label];
+            for (i, phase) in PHASES.iter().enumerate().skip(1) {
+                s = reduce(
+                    &s,
+                    &CreateAction::Progress {
+                        id: "pending:s".into(),
+                        phase: (*phase).into(),
+                        fraction: None,
+                        now: Some(2_000 + i as i64),
+                        bytes_done: None,
+                        bytes_total: None,
+                        bytes_per_second: None,
+                    },
+                );
+                labels.push(pending_space(&s.pending[0]).progress.unwrap().label);
+            }
+            labels
+        };
+        let e = |s: &str| s.replace("...", "\u{2026}");
+        let want = |v: [&str; 6]| v.map(e).to_vec();
+        let macos = want([
+            "Starting...",
+            "Downloading macOS (first time only)...",
+            "Preparing the disk...",
+            "Booting macOS...",
+            "Starting Cua inside the Space...",
+            "Connecting...",
+        ]);
+        assert_eq!(stages(SpaceOs::Macos, None, SpaceProvider::Local), macos);
+        // On another of your machines: the same stages.
+        assert_eq!(stages(SpaceOs::Macos, None, SpaceProvider::Relay), macos);
+        assert_eq!(
+            stages(SpaceOs::Linux, Some(SpaceKind::Vm), SpaceProvider::Local),
+            want([
+                "Starting...",
+                "Downloading image...",
+                "Preparing the disk...",
+                "Booting Linux...",
+                "Starting Cua inside the Space...",
+                "Connecting...",
+            ])
+        );
+        assert_eq!(
+            stages(
+                SpaceOs::Linux,
+                Some(SpaceKind::Container),
+                SpaceProvider::Local
+            ),
+            want([
+                "Starting...",
+                "Downloading image...",
+                "Creating the container...",
+                "Starting the container...",
+                "Starting Cua inside the Space...",
+                "Connecting...",
+            ])
+        );
+        // A cloud claim: no disk or boot of its own to name.
+        assert_eq!(
+            stages(SpaceOs::Linux, Some(SpaceKind::Vm), SpaceProvider::Cloud),
+            want([
+                "Starting...",
+                "Downloading image...",
+                "Creating...",
+                "Booting...",
+                "Starting Cua inside the Space...",
+                "Connecting...",
+            ])
+        );
+
+        // The download: bytes, rate and time left under the bar, on the
+        // row of a create on another machine too.
+        let s = reduce(
+            &CreatesState::default(),
+            &CreateAction::Start {
+                id: "pending:r".into(),
+                name: String::new(),
+                os: SpaceOs::Macos,
+                provider: SpaceProvider::Relay,
+                now: 1_000,
+                image: None,
+                kind: None,
+                host_arch: None,
+                gpu: false,
+                host: Some("mini".into()),
+                host_name: Some("Mac mini".into()),
+            },
+        );
+        let gb = 1u64 << 30;
+        let s = reduce(
+            &s,
+            &bytes_at(
+                "pending:r",
+                gb * 124 / 10,
+                30 * gb,
+                (85u64 << 20) as f64,
+                5_000,
+            ),
+        );
+        let row = pending_space(&s.pending[0]);
+        let p = row.progress.unwrap();
+        assert_eq!(p.label, e("Downloading macOS (first time only)..."));
+        assert_eq!(
+            p.transfer.as_deref(),
+            Some("12.4 of 30.0 GB \u{b7} 85 MB/s \u{b7} about 4 min")
+        );
+        assert!(p.permille > 10, "past the 1% floor: {}", p.permille);
+        assert_eq!(
+            row.detail,
+            e("Another computer \u{b7} Downloading macOS (first time only)...")
+        );
+    }
+
     #[test]
     fn unknown_os_cannot_start_a_create() {
         let state = CreatesState::default();
@@ -1465,7 +1800,7 @@ mod tests {
         let s = reduce(&s, &bytes_at("pending:m", 1 << 30, 20 << 30, 5e7, 3_000));
         assert_eq!(
             pending_space(&s.pending[0]).progress.unwrap().label,
-            "Downloading image\u{2026}"
+            "Downloading macOS (first time only)\u{2026}"
         );
     }
 
@@ -2116,7 +2451,7 @@ mod tests {
                 (
                     crate::billing::OUT_OF_CREDIT,
                     "Add credit",
-                    "https://run.cua.ai/billing"
+                    crate::billing::BILLING_URL
                 )
             );
         } else {
@@ -2246,6 +2581,48 @@ mod tests {
             "The image download did not finish in the time allowed. Check your internet \
              connection, then try again."
         );
+        // A download that stopped partway says why, also on another Mac.
+        let stopped = "local runtime: [local] The image download stopped before it finished \
+                       (The network connection was lost). Try again; it picks up where it stopped.";
+        assert_eq!(
+            failure_text(stopped, Some("pulling"), Some(SpaceProvider::Local), false),
+            "The image download stopped before it finished (The network connection was lost). \
+             Try again; it picks up where it stopped."
+        );
+        assert_eq!(
+            failure_text_on(
+                "host: create failed: The image download stopped before it finished (Lume \
+                 stopped running). Try again; it picks up where it stopped.",
+                Some("pulling"),
+                Some(SpaceProvider::Relay),
+                Some("Studio"),
+                false
+            ),
+            "The image download on Studio stopped before it finished (Lume stopped running). \
+             Try again; it picks up where it stopped."
+        );
+        assert_eq!(
+            failure_variant(stopped, Some("pulling"), false, "Runtime", None),
+            "image_pull"
+        );
+        // QEMU missing on a Windows PC: 0.9.2's after the pull, and the
+        // refusal before it. Not `other` in telemetry, and the SDK's words.
+        for raw in [
+            "local runtime: [local] qemu-img is not available: install QEMU (macOS: `brew \
+             install qemu`; Debian/Ubuntu: `apt install qemu-utils`)",
+            "local runtime: [local] QEMU (qemu-system-x86_64, qemu-img) is not available: \
+             Windows VMs on a Windows PC need QEMU, which Cua does not install for you.",
+        ] {
+            assert_eq!(
+                failure_cause(raw, Some("pulling"), false),
+                Some(FailureCause::RuntimeMissing),
+                "{raw}"
+            );
+            assert_eq!(
+                failure_variant(raw, Some("pulling"), false, "Other", None),
+                "runtime_missing"
+            );
+        }
         // Local Network privacy on the Mac that runs the VM.
         let sdk = "Local Network access is not available: cua cannot reach the VM at \
                    192.168.64.45:3211 (No route to host (os error 65)). macOS blocks an app's \
@@ -2364,7 +2741,7 @@ mod tests {
         let s = reduce(&CreatesState::default(), &relay(SpaceOs::Macos));
         assert_eq!(
             compose(&[], &s)[0].detail,
-            "Another machine \u{b7} Starting\u{2026}"
+            "Another computer \u{b7} Starting\u{2026}"
         );
         // The host pulls 22 GB without reporting: no stall at 5 min, nor
         // at the local preparing limit.
@@ -2451,6 +2828,7 @@ mod tests {
                 cloud: None,
                 cloud_place: None,
                 cloud_delete: None,
+                stop_reason: None,
             },
             SKEW_BASE,
         );

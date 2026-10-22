@@ -6,6 +6,10 @@
 allowBuilds:
   electron: true
   electron-winstaller: false
+# Security fix (CUA-1948): Electron 44.9.1 distrusts the compromised eMudhra
+# intermediates and is newer than the release-age cooldown.
+minimumReleaseAgeExclude:
+  - electron@44.9.1
 # The UniFFI runtime lowers a TypeScript object (a callback such as
 # Teleport's run listener) inside an optional, a sequence or a record as it
 # lowers a bare argument (test/teleport-native.test.ts).

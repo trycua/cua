@@ -31,7 +31,7 @@ struct CreateOptionsTests {
         backend.fixtureBackends = ["container", "lume", "qemu"]
         let hd = StorageVolume(availableBytes: 82 * Self.gb, totalBytes: 1_800 * Self.gb, name: "Macintosh HD")
         backend.fixtureStorage = LocalStorage(hostArch: "arm64", reserveBytes: 5 * Self.gb, lume: hd, qemu: hd,
-                                              container: hd, pulled: ["ghcr.io/trycua/linux:24.04"])
+                                              container: hd, pulled: ["ghcr.io/trycua/linux:24.04"], linuxRuntimeDownloadBytes: 0)
         backend.fixtureMacosVms = 2
         return backend
     }
@@ -57,7 +57,7 @@ struct CreateOptionsTests {
         #expect(try decodedEnv(options) == (await model.newSpaceEnv()))
         let env = try #require(options["env"] as? [String: Any])
         let storage = try #require(env["storage"] as? [String: Any])
-        #expect(Set(storage.keys) == ["reserveBytes", "lume", "qemu", "container", "pulled"])
+        #expect(Set(storage.keys) == ["reserveBytes", "lume", "qemu", "container", "pulled", "linuxRuntimeDownloadBytes"])
         let container = try #require(storage["container"] as? [String: Any])
         #expect(Set(container.keys) == ["availableBytes", "totalBytes", "name"])
         #expect(container["name"] as? String == "Macintosh HD")

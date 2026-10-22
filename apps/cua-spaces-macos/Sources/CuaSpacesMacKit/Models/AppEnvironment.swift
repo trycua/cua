@@ -60,7 +60,6 @@ public enum AppEnvironment {
             refresh = UpdateRefresh(cua: cua, bundle: Bundle.main.bundlePath)
         }
         let updateRefresh = refresh
-        let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
         // This app's own daemon, started before the SDK connects (it
         // replaces another build's, or its own from before an update);
         // fixtures never touch the host.
@@ -74,6 +73,7 @@ public enum AppEnvironment {
             let fixture = FixtureSpacesBackend(rows: FixtureSpacesBackend.rows(environment: env))
             fixture.fixtureRuns["local:aurora"] = FixtureSpacesBackend.sampleRuns
             fixture.fixtureEvents = FixtureSpacesBackend.sampleEvents
+            fixture.fixtureHealth = FixtureSpacesBackend.peerHealth(environment: env)
             backend = fixture
         } else {
             backend = PendingSpacesBackend(gate: gate)
@@ -91,27 +91,14 @@ public enum AppEnvironment {
         // Fixtures never touch the host service, the account, the telemetry
         // config or the coding agents' configs.
         let host: HostRunning = fixtures ? FixtureHost() : PendingHost(gate: gate)
-        let account: AccountRunning = fixtures ? FixtureAccount() : PendingAccount(gate: gate)
+        let account: AccountRunning = fixtures ? FixtureAccount(identity: env["CUA_SPACES_FIXTURE_PEER_CUA"] != nil ? "ellie@example.com" : nil) : PendingAccount(gate: gate)
         let telemetry: TelemetryRunning = fixtures ? FixtureTelemetry() : LiveTelemetry()
         let agents: AgentSetupRunning = fixtures ? FixtureAgentSetup() : PendingAgentSetup(gate: gate)
-        // First run's writes go through the shared core (the Tauri app runs
-        // the same installer and host setup); fixtures run none of them.
-        let onboarding = OnboardingModel(
-            statePath: onboardingPath,
-            identity: account.identity(),
-            cli: fixtures ? nil : AppCliInstaller.forExecutable(executable: executable),
-            host: host, agentSetup: agents)
-        if !fixtures {
-            onboarding.onWelcomeLeft = { on in
-                do { try appTelemetryWelcomeLeft(on: on) } catch {
-                    NSLog("Cua Spaces: the usage-data setting was not saved: %@", LiveSpacesBackend.words(error))
-                }
-            }
-            onboarding.driveTools = backend as? AgentsToolRunning
-        }
+        // The first run's pages are the web UI's; this is its state file.
+        let onboarding = OnboardingModel(statePath: onboardingPath)
         // This Mac on the relay: the session's device key (fixtures: an
         // in-memory account; presence answers yes there).
-        let devices: DevicesRunning = fixtures ? FixtureDevices() : PendingDevices(gate: gate)
+        let devices: DevicesRunning = fixtures ? fixtureDevices(env["CUA_SPACES_RELAY_USAGE"]) : PendingDevices(gate: gate)
         let startup = fixtures ? fixtureStartup(env["CUA_SPACES_STARTUP"]) : StartupModel(phase: .starting)
         let model = AppModel(backend: backend, keyvault: keyvault, onboarding: onboarding,
                              settingsPath: settingsPath,
@@ -120,7 +107,11 @@ public enum AppEnvironment {
                              devices: devices,
                              presence: fixtures ? FixturePresence() : LivePresence(),
                              loginItem: fixtures ? fixtureLoginItem(env["CUA_SPACES_LOGIN_ITEM"]) : MainAppLoginItem(),
-                             startup: startup)
+                             startup: startup,
+                             // Fixtures (UI tests, captures) keep the classic UI
+                             // unless they turn the New UI on.
+                             appVersion: fixtures ? nil : info.version)
+        if fixtures { model.teamsReader = FixtureTeams() }
         if !fixtures {
             LiveLocalNetworkPermission().request()
             // Signed out is nil (setup signs in first); anything else (no
@@ -134,8 +125,8 @@ public enum AppEnvironment {
                     return nil
                 }
             }
-            onboarding.accountToken = token
             model.host.accountToken = token
+            model.teamsReader = LiveTeams(token: token)
             // The keychain check first (the bundled `cua`, without a prompt),
             // then the daemon and the SDK, all off the main thread.
             startup.keychain = bundledCua.map { BundledCuaKeychain(cua: $0) }
@@ -163,12 +154,14 @@ public enum AppEnvironment {
         let updater: UpdaterDriving? = fixtures && env["CUA_SPACES_UPDATER"] != "live"
             ? FixtureUpdater(lastCheck: Date().addingTimeInterval(-2 * 3600))
             : SparkleUpdater.start(channels: appAboutAllowedChannels(channel: channel))
+        // `CUA_SPACES_FIXTURE_UPDATE=<version>` (fixtures): that update is found and downloaded.
+        if let fixture = updater as? FixtureUpdater, let version = env["CUA_SPACES_FIXTURE_UPDATE"] {
+            fixture.simulateFound(version: version)
+            fixture.simulateDownloaded()
+        }
         model.updates = UpdatesModel(updater: updater, channel: channel)
         model.updates.telemetry = telemetry
-        model.updates.saveChannel = { [weak model] channel in
-            model?.settings.updateChannel = channel
-            model?.saveSettings()
-        }
+        model.updates.saveChannel = { [weak model] channel in model?.setUpdateChannel(channel) }
         // End-to-end runs: check now, with no window unless one is found.
         if env["CUA_SPACES_UPDATE_CHECK"] == "background", let sparkle = updater as? SparkleUpdater {
             sparkle.checkInBackground()
@@ -343,6 +336,15 @@ public enum AppEnvironment {
         }
     }
 
+    /// Fixtures' relay account: `CUA_SPACES_RELAY_USAGE` sets its allowance
+    /// (`reached`, `team`, `none`; default the free plan partway through
+    /// the month), for captures of Settings' Relay usage row and the notice.
+    static func fixtureDevices(_ usage: String?) -> FixtureDevices {
+        let devices = FixtureDevices()
+        devices.usage = FixtureDevices.usage(usage)
+        return devices
+    }
+
     /// The supervision of this app's daemon ([`DaemonSupervisor`]), for the
     /// app's lifetime.
     static var daemonSupervision: Task<Void, Never>?
@@ -402,7 +404,7 @@ public enum AppEnvironment {
     }
 
     /// `CUA_SPACES_START_VIEW`: `new-space`, `new-space-picker`, `new-space-resources`, `keyvault`, `keyvault-waiting`,
-    /// `approval`, `onboarding`, `onboarding-mode`, `this-machine`, `host-setup`,
+    /// `approval`, `onboarding` (the first run, in the New UI window), `this-machine`, `host-setup`,
     /// `host-configured`, `settings`, `settings-devices` (Settings on its
     /// Devices tab), `settings-about` (on its About tab), `settings-experiments`
     /// (on its Experiments tab), `device-approval` (the approval sheet for the first
@@ -413,11 +415,7 @@ public enum AppEnvironment {
     /// (`notch`; 1.5 s after launch), `notch-hover`, `notch-permission`,
     /// `notch-drag-target` (`notch-prompt`) and `notch-drop`; `notch-menu` (the notch
     /// open and the menu bar menu) and `menu` (the menu alone; `menu-popup`
-    /// shows its items as a context menu over the main window); the onboarding
-    /// pages `onboarding-signin`, `-agents`, `-presentation`, `-drive`
-    /// (`-drive-bucket`: Your S3 bucket's prompt, `-drive-manual`: its
-    /// fields), `-mode`,
-    /// `-host-form`, `-done`;
+    /// shows its items as a context menu over the main window);
     /// `CUA_SPACES_CREATE` (`<image>[,<name>]`) creates a Space on this Mac
     /// through the New Space wizard's plan and the real create path, as if
     /// Create were pressed (end-to-end runs and captures), and
@@ -482,63 +480,13 @@ public enum AppEnvironment {
                 model.selection = .keyvault(.category(category: .waiting))
                 if let first = model.keyvault.overview.pending.first { model.keyvault.openApproval(first.id) }
             case "onboarding":
+                // The first run is the web page's: its window opens on it
+                // (`RootView`) once the launch is ready.
                 model.onboarding.restart()
-            case "onboarding-mode":
-                model.onboarding.restart()
-                model.onboarding.send(.start)
-                model.onboarding.send(.signinDone)
-                model.onboarding.send(.agentsDone(configured: []))
-                model.onboarding.send(.presentationDone)
-                model.onboarding.send(.driveContinue)
-            case "onboarding-host-form":
-                model.onboarding.restart()
-                model.onboarding.send(.start)
-                model.onboarding.send(.signinDone)
-                model.onboarding.send(.agentsDone(configured: []))
-                model.onboarding.send(.presentationDone)
-                model.onboarding.send(.driveContinue)
-                model.onboarding.host.openForm()
-            case "onboarding-signin":
-                model.onboarding.restart()
-                model.onboarding.send(.start)
-            case "onboarding-agents":
-                model.onboarding.restart()
-                model.onboarding.send(.start)
-                model.onboarding.send(.signinDone)
-            case "onboarding-presentation":
-                model.onboarding.restart()
-                model.onboarding.send(.start)
-                model.onboarding.send(.signinDone)
-                model.onboarding.send(.agentsDone(configured: []))
-            case "onboarding-drive", "onboarding-drive-bucket", "onboarding-drive-manual":
-                // The Volume page shows with the Cua Volume experiment on
-                // (for this run only; the settings file is not written).
-                model.settings.experiments.cuaVolume = true
-                model.onboarding.restart()
-                model.onboarding.send(.start)
-                model.onboarding.send(.signinDone)
-                model.onboarding.send(.agentsDone(configured: []))
-                model.onboarding.send(.presentationDone)
-                if env["CUA_SPACES_START_VIEW"] != "onboarding-drive" {
-                    // Your S3 bucket: the agent prompt, or its fields.
-                    await model.onboarding.checkDrive()
-                    model.onboarding.send(.storageChosen(choice: .s3))
-                    if env["CUA_SPACES_START_VIEW"] == "onboarding-drive-manual" {
-                        model.onboarding.send(.driveStorage(action: .showManual(on: true)))
-                    }
-                }
             case "drive":
                 // The Volume page shows with Cua Volume on (this run only).
                 model.settings.experiments.cuaVolume = true
                 model.selection = .drive
-            case "onboarding-done":
-                model.onboarding.restart()
-                model.onboarding.send(.start)
-                model.onboarding.send(.signinDone)
-                model.onboarding.send(.agentsDone(configured: []))
-                model.onboarding.send(.presentationDone)
-                model.onboarding.send(.driveContinue)
-                model.onboarding.send(.modeChosen(mode: .client))
             case "settings", "settings-devices", "settings-storage", "settings-about", "settings-experiments":
                 if env["CUA_SPACES_START_VIEW"] == "settings-devices" { model.settingsTab = .devices }
                 if env["CUA_SPACES_START_VIEW"] == "settings-about" { model.settingsTab = .about }

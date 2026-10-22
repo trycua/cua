@@ -16,7 +16,7 @@ export function useNotificationToasts(): void {
   const { mode } = useBridge();
   const show = useCallback(
     (note: SystemNote) => {
-      if (!isNativeHost(mode)) toast(note.title, { description: note.body || undefined });
+      if (!isNativeHost(mode)) toast(note.title, { description: note.body || undefined, fromCua: true });
     },
     [mode],
   );

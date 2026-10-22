@@ -94,6 +94,12 @@ RUN set -eu; \
     yes | pacman -Scc >/dev/null; rm -f /tmp/packages.desktop; \
     mv /etc/pacman.d/mirrorlist.omarchy /etc/pacman.d/mirrorlist
 
+# CUA-1948: the compromised eMudhra intermediates. Arch's ca-certificates-mozilla
+# 3.131.1-1 drops the roots they chain to; an older archive snapshot may not have
+# it yet, so block them explicitly (a no-op once they are gone).
+COPY omarchy/files/distrust-emudhra.sh /tmp/distrust-emudhra.sh
+RUN sh /tmp/distrust-emudhra.sh && rm -f /tmp/distrust-emudhra.sh
+
 # The desktop user (uid 1000, like every libs/images desktop), seeded from
 # Omarchy's /etc/skel and its unattended setup: the default theme applied
 # headless, first-run and finalize marked done (they are interactive), and the
@@ -135,7 +141,7 @@ RUN --mount=type=bind,source=linux/dist,target=/dist \
     if [ -x "$bin" ]; then ldd "$bin" | grep 'not found' && exit 1 || true; fi; \
     mkdir -p /etc/cua-image; echo "$CUA_SPACESD_SOURCE" >/etc/cua-image/spacesd-source
 
-# Token handling, Fleet claim token sync and the in-guest fixtures are shared
+# Token handling, claim token sync and the in-guest fixtures are shared
 # with libs/images/linux; the session glue and units are Omarchy's own.
 COPY linux/files/ensure-env-token.sh linux/files/env-token-mode.sh \
      linux/files/start-spacesd.sh linux/files/start-token-sync.sh \

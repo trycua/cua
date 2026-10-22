@@ -5,16 +5,22 @@
 //! Spaces, ticked off as they happen, closable, and opened again from the
 //! command palette or Help, Getting Started.
 //!
-//! The shell keeps the [`ChecklistState`] (the React UI in the page's
-//! storage, the SwiftUI app in its support folder), sends a
-//! [`ChecklistAction`] for each thing that happens and records the usage
-//! events the [`ChecklistTransition`] carries. [`ChecklistAction::Observe`]
-//! ticks steps off from what the app already shows (another machine, a
-//! Space, an agent); Teleport and Share tick themselves off where they
-//! finish.
+//! The host app keeps the [`ChecklistState`] in one place
+//! (`checklist.json` beside its settings; the web UI asks the host for it
+//! with `checklist.get` and `checklist.send`), sends a [`ChecklistAction`]
+//! for each thing that happens and records the usage events the
+//! [`ChecklistTransition`] carries. [`observe_from`] turns what the app
+//! knows (its machines, its Spaces, its agents) into the
+//! [`ChecklistAction::Observe`] that ticks steps off, the same for every
+//! UI; Teleport and Share tick themselves off where they finish.
+//! [`ChecklistAction::Merge`] takes in progress kept elsewhere before (the
+//! web UI's own storage) without recording its events again.
 
 use serde::{Deserialize, Serialize};
 
+use crate::machines::MachinePageRow;
+use crate::model::{Space, SpaceStatus};
+use crate::spaces::{creating, is_machine_desktop};
 use crate::telemetry::{self, TelemetrySignal};
 
 /// One step, in the order the checklist lists them
@@ -58,13 +64,13 @@ impl ChecklistStep {
     fn copy(self) -> (&'static str, &'static str, &'static str) {
         match self {
             ChecklistStep::AddMachine => (
-                "Add a machine",
+                "Add a computer",
                 "Connect a Mac, Linux or Windows computer you own.",
-                "Add machine",
+                "Add computer",
             ),
             ChecklistStep::CreateSpace => (
                 "Create a Space",
-                "A computer for one task, on one of your machines.",
+                "A computer for one task, on one of your computers.",
                 "Create",
             ),
             ChecklistStep::Teleport => (
@@ -129,6 +135,56 @@ pub enum ChecklistAction {
         /// An agent exists or has run.
         agent_ran: bool,
     },
+    /// Progress kept elsewhere before (the web UI's own storage, another
+    /// copy of the file): its steps are ticked, and it stays closed or
+    /// shown if it was. Its events were recorded where it was ticked, so
+    /// none are recorded again.
+    Merge {
+        /// The other copy.
+        state: ChecklistState,
+    },
+}
+
+/// What the app knows, for [`observe_from`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChecklistSeen {
+    /// The Machines page's rows ([`crate::machines::page_rows`]).
+    #[serde(default)]
+    pub machines: Vec<MachinePageRow>,
+    /// The Spaces list.
+    #[serde(default)]
+    pub spaces: Vec<Space>,
+    /// Persistent agents listed.
+    #[serde(default)]
+    pub agents: u32,
+    /// Agent runs listed in any Space.
+    #[serde(default)]
+    pub runs: u32,
+}
+
+/// What the app shows as the checklist's [`ChecklistAction::Observe`]:
+///
+/// - another machine: any row of the Machines page but this one (a
+///   machine on the relay, one that provides Spaces, a device of your own);
+/// - a Space: one you made (not a machine's own desktop), there now:
+///   running, waiting for approval, or stopped; not one being created,
+///   deleted, or whose create failed;
+/// - an agent: a persistent agent, or a run in any Space.
+pub fn observe_from(seen: &ChecklistSeen) -> ChecklistAction {
+    ChecklistAction::Observe {
+        other_machine: seen.machines.iter().any(|m| !m.current),
+        has_space: seen.spaces.iter().any(|s| {
+            !is_machine_desktop(s)
+                && !creating::is_pending(&s.id)
+                && matches!(
+                    s.status,
+                    SpaceStatus::Running | SpaceStatus::Approval | SpaceStatus::Suspended
+                )
+                && s.progress.as_ref().is_none_or(|p| p.error.is_none())
+        }),
+        agent_ran: seen.agents + seen.runs > 0,
+    }
 }
 
 /// The state after an action and the usage events it means.
@@ -246,6 +302,18 @@ pub fn reduce(state: &ChecklistState, action: &ChecklistAction) -> ChecklistTran
             .collect();
             tick(state, &seen)
         }
+        ChecklistAction::Merge { state: other } => ChecklistTransition {
+            state: ChecklistState {
+                done: STEPS
+                    .iter()
+                    .copied()
+                    .filter(|s| is_done(state, *s) || is_done(other, *s))
+                    .collect(),
+                dismissed: state.dismissed || other.dismissed,
+                shown: state.shown || other.shown,
+            },
+            signals: vec![],
+        },
         ChecklistAction::Shown if !state.shown => ChecklistTransition {
             state: ChecklistState {
                 shown: true,
@@ -286,7 +354,7 @@ pub fn view(state: &ChecklistState) -> ChecklistView {
         detail: if complete {
             "Your team and its agents can now share computers you own."
         } else {
-            "Shared computers for your team and its agents, on machines you own."
+            "Shared computers for your team and its agents, on computers you own."
         }
         .into(),
         progress: format!("{count} of {}", STEPS.len()),
@@ -433,13 +501,132 @@ mod tests {
         assert_eq!(
             rows,
             [
-                ("Add a machine", "Add machine", false),
+                ("Add a computer", "Add computer", false),
                 ("Create a Space", "Create", false),
                 ("Teleport an app", "Teleport", true),
                 ("Share a Space", "Share", false),
                 ("Run an agent", "Open Agents", false),
             ]
         );
+    }
+
+    #[test]
+    fn merging_another_copy_ticks_its_steps_without_events() {
+        let here = ChecklistState {
+            done: vec![ChecklistStep::CreateSpace, ChecklistStep::AddMachine],
+            ..Default::default()
+        };
+        let there = ChecklistState {
+            done: vec![ChecklistStep::Teleport, ChecklistStep::AddMachine],
+            shown: true,
+            ..Default::default()
+        };
+        let t = reduce(&here, &ChecklistAction::Merge { state: there });
+        assert!(t.signals.is_empty(), "recorded where they were ticked");
+        assert_eq!(
+            t.state.done,
+            [
+                ChecklistStep::AddMachine,
+                ChecklistStep::CreateSpace,
+                ChecklistStep::Teleport
+            ]
+        );
+        assert!(t.state.shown && !t.state.dismissed);
+        assert_eq!(view(&t.state).progress, "3 of 5");
+        // Merging again changes nothing.
+        let again = reduce(&t.state, &ChecklistAction::Merge { state: here });
+        assert_eq!(again.state, t.state);
+    }
+
+    fn space(id: &str, status: &str, extra: serde_json::Value) -> Space {
+        let mut v = serde_json::json!({
+            "id": id, "name": id, "os": "linux", "status": status, "detail": "",
+            "lastUsedAt": 0, "scene": "linux-terminal"
+        });
+        for (k, val) in extra.as_object().unwrap() {
+            v[k] = val.clone();
+        }
+        serde_json::from_value(v).unwrap()
+    }
+
+    fn row(id: &str, current: bool, device_only: bool) -> MachinePageRow {
+        MachinePageRow {
+            id: id.into(),
+            name: id.into(),
+            online: true,
+            os: "macos".into(),
+            via: if current { "local" } else { "relay" }.into(),
+            current,
+            device: None,
+            device_only,
+            space_id: None,
+            stopped_sharing: false,
+            last_seen: None,
+            status: "Online".into(),
+            spaces: 0,
+            spaces_label: "No Spaces".into(),
+        }
+    }
+
+    fn seen(t: &ChecklistAction) -> (bool, bool, bool) {
+        match t {
+            ChecklistAction::Observe {
+                other_machine,
+                has_space,
+                agent_ran,
+            } => (*other_machine, *has_space, *agent_ran),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn observe_from_reads_machines_spaces_and_agents_alike_for_every_ui() {
+        // Only this machine, its own desktop, a machine's desktop and
+        // Spaces that are not there yet: nothing.
+        let none = ChecklistSeen {
+            machines: vec![row("this-mac", true, false)],
+            spaces: vec![
+                space("this-mac", "local", serde_json::json!({})),
+                space(
+                    "relay:b695",
+                    "suspended",
+                    serde_json::json!({"provider": "relay"}),
+                ),
+                space("pending:1", "provisioning", serde_json::json!({})),
+                space("local:gone", "deleting", serde_json::json!({})),
+                space(
+                    "local:failed",
+                    "suspended",
+                    serde_json::json!({
+                        "progress": {"phase": "pull", "permille": 0, "label": "", "error": "no disk",
+                                     "cancellable": false}
+                    }),
+                ),
+            ],
+            agents: 0,
+            runs: 0,
+        };
+        assert_eq!(seen(&observe_from(&none)), (false, false, false));
+        // A device of your own counts as another machine; a stopped Space
+        // counts; a run in a Space counts as an agent.
+        let some = ChecklistSeen {
+            machines: vec![row("this-mac", true, false), row("dev_lap", false, true)],
+            spaces: vec![space("local:fbd1", "suspended", serde_json::json!({}))],
+            agents: 0,
+            runs: 1,
+        };
+        assert_eq!(seen(&observe_from(&some)), (true, true, true));
+        // A Space a machine provides counts too.
+        let hosted = ChecklistSeen {
+            spaces: vec![space(
+                "relay:m-mini/space-1",
+                "running",
+                serde_json::json!({"provider": "relay", "host": "m-mini"}),
+            )],
+            agents: 2,
+            ..Default::default()
+        };
+        assert_eq!(seen(&observe_from(&hosted)), (false, true, true));
     }
 
     #[test]

@@ -75,9 +75,19 @@ pub(super) async fn call(
 ) -> ToolOutcome {
     // A former tool name (`drive_ls`) runs as the tool it now is.
     let tool = cua_spaces_contract::canonical(tool);
+    let space = arguments
+        .get("space")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     match dispatch(spaces, tool, arguments, broker).await {
         Ok(outcome) => outcome,
         Err(e) => {
+            // A call cut because the Space's mesh connection went away
+            // says why, not just "broken pipe".
+            let e = match &space {
+                Some(space) => spaces.explain_mesh_cut(space, e).await,
+                None => e,
+            };
             tracing::debug!(tool, error = %e, "tool failed");
             ToolOutcome::error(&e)
         }
@@ -106,9 +116,8 @@ pub(super) async fn call_on(space: &Space, tool: &str, mut arguments: Value) -> 
 }
 
 /// One `phase` vocabulary for every provider (the client's `SpaceState`):
-/// `ready` once the Space answered its handshake (direct, relay), its claim
-/// bound (Fleet) or its instance runs (local); `starting` while a claim is
-/// pending or an instance is provisioning.
+/// `ready` once the Space answered its handshake (direct, relay) or its
+/// instance runs (local); `starting` while an instance is provisioning.
 pub const PHASE_READY: &str = "ready";
 /// See [`PHASE_READY`].
 pub const PHASE_STARTING: &str = "starting";

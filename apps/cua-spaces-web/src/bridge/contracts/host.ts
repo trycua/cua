@@ -148,6 +148,197 @@ export interface MachineRow extends SpaceHost {
   /** This machine only: why it cannot open the account's machines (signed
    * in, not enrolled), as the host's devices model says it. */
   accessNotice?: MachineAccessNotice | null;
+  /** The host listed the rows with the core (`machines.pageRows`): each
+   * computer is already once, so the store does not merge them again. */
+  merged?: boolean;
+  /** The core's status word for the row (`MachinePageRow.status`). */
+  status?: string;
+  /** The core's Spaces count for the row (`MachinePageRow.spacesLabel`). */
+  spacesLabel?: string;
+}
+
+/** One Machines row as the core lists it (`machines::MachinePageRow`),
+ * the same rows the SwiftUI app's Machines page shows. */
+export interface MachinePageRow {
+  id: string;
+  name: string;
+  online: boolean;
+  /** `macos`, `linux`, `windows`, or empty when unknown. */
+  os: string;
+  via: "local" | "relay";
+  current: boolean;
+  /** The device listed in this row. */
+  device: string | null;
+  /** A device that is none of the machines. */
+  deviceOnly: boolean;
+  /** The Spaces list's row that is this machine's own desktop. */
+  spaceId: string | null;
+  /** Online, but its owner stopped sharing it. */
+  stoppedSharing: boolean;
+  /** The device's last session (Unix seconds). */
+  lastSeen: number | null;
+  /** "Online", "Not sharing" or "Offline" (`machines::status_word`). */
+  status?: string;
+  /** The Spaces it runs (`machines::page_rows`). */
+  spaces?: number;
+  /** "1 Space", "3 Spaces", "No Spaces"; empty for a device of its own. */
+  spacesLabel?: string;
+}
+
+/** A confirmation (`host::HostConfirm`). */
+export interface HostConfirm {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  cancelLabel: string;
+}
+
+/** One of a machine's two switches (`machines_view::MachinesViewToggle`). */
+export interface MachinesViewToggle {
+  /** `spaces` or `desktop`. */
+  id: string;
+  label: string;
+  help: string;
+  on: boolean;
+  /** Changed here (This machine); another machine's are read-only. */
+  editable: boolean;
+  enabled: boolean;
+  /** What flipping it runs, in order (`host.action` ids). */
+  actions: HostActionId[];
+  /** Before setup: flipping it opens the setup form with this profile. */
+  setup?: string | null;
+}
+
+/** A machine's own desktop, the first row of its Spaces when it shares it: a Space row with a quiet label (`machines_view::MachinesViewDesktop`). */
+export interface MachinesViewDesktop {
+  /** The Space's id (its page). */
+  id: string;
+  name: string;
+  os: string;
+  status: string;
+  running: boolean;
+  /** "Desktop". */
+  label: string;
+}
+
+/** A Space on a machine: a link to its page (`machines_view::MachinesViewSpace`). */
+export interface MachinesViewSpace {
+  id: string;
+  name: string;
+  os: string;
+  status: string;
+  running: boolean;
+}
+
+/** New Space here (`machines_view::MachinesViewNewSpace`). */
+export interface MachinesViewNewSpace {
+  label: string;
+  /** The wizard's placement (`local`, `host:<id>`). */
+  on: string;
+  enabled: boolean;
+  help?: string | null;
+}
+
+/** Rename (`machines_view::MachinesViewRename`). */
+export interface MachinesViewRename {
+  /** `host`, `machine` or `device`. */
+  target: string;
+  id: string;
+  title: string;
+  confirmLabel: string;
+}
+
+/** Remove from account (`machines_view::MachinesViewRemove`). */
+export interface MachinesViewRemove {
+  label: string;
+  enabled: boolean;
+  help?: string | null;
+  /** This machine: its host setup is removed (`host.action` `remove`). */
+  host: boolean;
+  /** Another machine: it leaves the relay directory. */
+  machine?: string | null;
+  /** The device on it, revoked too. */
+  device?: string | null;
+  confirm: HostConfirm;
+}
+
+/** What fixes an issue (`machines_health::MachinesViewIssueAction`). */
+export interface MachinesViewIssueAction {
+  /** "Open Local Network settings", "Free disk space", "Restart service". */
+  label: string;
+  /** A System Settings pane to open (`host.openSettings`). */
+  url?: string | null;
+  /** A host action to run (`host.action`). */
+  hostAction?: HostActionId | null;
+  /** Restart into the Cua Spaces update already downloaded (the sidebar's "Restart to update"). */
+  appUpdate?: boolean;
+}
+
+/** One issue on a machine's page (`machines_health::MachinesViewIssue`). */
+export interface MachinesViewIssue {
+  /** The check it comes from (`machine.disk`, `service`, `version`). */
+  id: string;
+  /** `warn` or `fail`; `info` is a note that is no problem. */
+  level: string;
+  /** One plain sentence. */
+  text: string;
+  action?: MachinesViewIssueAction | null;
+}
+
+/** One machine's row and page (`machines_view::MachinesViewMachine`). */
+export interface MachinesViewMachine {
+  id: string;
+  name: string;
+  badge?: string | null;
+  /** The row's one muted line. */
+  line: string;
+  /** Usable now (the green dot). */
+  online: boolean;
+  /** The dot's tint for its issues: `warn`, `fail`, or empty. */
+  health?: string;
+  /** What the host passes to `Spaces.machine_health` (empty: This Mac); null when it can't be checked from here. */
+  healthTarget?: string | null;
+  /** "Issues". */
+  issuesTitle?: string;
+  /** What is wrong, one sentence each; empty when healthy or offline. */
+  issues?: MachinesViewIssue[];
+  os: string;
+  current: boolean;
+  team: boolean;
+  /** The page's status line. */
+  status: string;
+  sharedBy?: string | null;
+  rename?: MachinesViewRename | null;
+  notice?: string | null;
+  noticeAction?: HostAction | null;
+  toggles: MachinesViewToggle[];
+  togglesNote?: string | null;
+  spacesTitle: string;
+  spaces: MachinesViewSpace[];
+  /** Its own desktop, when it shares it (above `spaces`; not one of the Spaces counted). */
+  desktop?: MachinesViewDesktop | null;
+  spacesEmpty?: string | null;
+  newSpace: MachinesViewNewSpace;
+  detailsTitle: string;
+  details: { label: string; value: string }[];
+  remove?: MachinesViewRemove | null;
+}
+
+/** A group of the list (`machines_view::MachinesViewGroup`). */
+export interface MachinesViewGroup {
+  /** `yours`, `old` or `team`. */
+  id: string;
+  title: string;
+  collapsed: boolean;
+  ids: string[];
+  removeAll?: { label: string; confirm: HostConfirm; removes: MachinesViewRemove[] } | null;
+}
+
+/** The Machines page as every UI draws it (`machines_view::MachinesView`). */
+export interface MachinesView {
+  summary: string;
+  groups: MachinesViewGroup[];
+  machines: MachinesViewMachine[];
 }
 
 export interface ServiceState {
@@ -406,12 +597,32 @@ export interface TelemetryView {
 
 /* ---- Settings page (app core `settings::page`) --------------------------- */
 
+/** Why a sign-in did not finish (`sign_in::SignInFailure`). */
+export type SignInFailure = "notConfirmed" | "declined" | "codeRejected" | "offline" | "serviceUnavailable" | "couldNotSave" | "unknown";
+
 /** Where the Account section's sign-in stands (`settings::SignInPhase`). */
 export type SignInPhase =
   | { kind: "idle" }
   | { kind: "starting" }
-  | { kind: "waiting"; userCode?: string | null }
-  | { kind: "failed"; message: string };
+  | { kind: "waiting"; userCode?: string | null; opened?: boolean }
+  /** `message` is the core's line; `detail` the error's own words (Details). */
+  | { kind: "failed"; reason?: SignInFailure; message: string; detail?: string | null };
+
+/** The sidebar's foot (`sign_in::SignInFooter`): every sign-in state in one place. */
+export interface SignInFooter {
+  state: "signedOut" | "starting" | "waiting" | "failed" | "signedIn";
+  text: string;
+  identity: string | null;
+  code: string | null;
+  codeLabel: string;
+  reopenLabel: string | null;
+  cancelLabel: string | null;
+  actionLabel: string | null;
+  reason: SignInFailure | null;
+  detail: string | null;
+  detailsLabel: string;
+  toast: { title: string; body: string | null } | null;
+}
 
 /** `settings::SettingsInput` (the fields the bridge fills; the rest default). */
 export interface SettingsInput {

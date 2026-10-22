@@ -273,7 +273,7 @@ protocol; it does not replace the driver's tool policy or process lifecycle.
 
 ## Acceptance path
 
-The Fleet release path requires focused protocol and security tests, the
+The release path requires focused protocol and security tests, the
 repository's complete native Linux harness, bounded qualified-app compatibility
 and isolation evidence, review and merge, compatible release artifacts, and
 image packaging and lifecycle validation. Source-built proof does not establish
@@ -281,9 +281,9 @@ that the released package or final image works.
 
 Physical-host support requires a separate acceptance run on the exact
 Hyprland/plugin pair, with focus, z-order, cursor, input-isolation, and
-fixture-state evidence. Fleet evidence does not establish physical-host parity;
+fixture-state evidence. VM evidence does not establish physical-host parity;
 that separate support claim is not a prerequisite for publishing a validated
-Fleet image.
+VM image.
 
 The exact initial host acceptance baseline is:
 

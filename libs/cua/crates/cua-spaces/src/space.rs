@@ -67,24 +67,14 @@ pub fn unreported_feature_limitation(version: &str, feature: &str) -> String {
 #[derive(Clone)]
 pub enum ServiceSource {
     /// A sandbox service (local loopback or any other sandbox route).
-    Sandbox(cua_sandbox_core::Service),
-    /// A Fleet claim's service, through the gateway.
-    Fleet {
-        /// Client (mints the gateway bearer).
-        fleet: cua_fleet::FleetClient,
-        /// The claim.
-        bound: cua_fleet::BoundSandbox,
-        /// Service name.
-        service: String,
-    },
+    Sandbox(Box<cua_sandbox_core::Service>),
     /// A fixed URL and headers (a Space added by its MCP URL, or a `cua
     /// daemon` passthrough).
     Url(ServiceEndpoint),
 }
 
 /// A service a Space declares (an MCP server, a web app, ...), reachable
-/// through a protocol-transparent pipe: loopback locally, the Fleet gateway
-/// on Fleet, or a URL.
+/// through a protocol-transparent pipe: loopback locally, or a URL.
 #[derive(Clone)]
 pub struct SpaceService {
     /// How requests reach it.
@@ -102,25 +92,10 @@ impl std::fmt::Debug for SpaceService {
 }
 
 impl SpaceService {
-    /// Where the service is reachable from this process (URL and headers,
-    /// freshly minted for Fleet).
+    /// Where the service is reachable from this process (URL and headers).
     pub async fn endpoint(&self) -> Result<ServiceEndpoint> {
         match &self.source {
             ServiceSource::Sandbox(s) => Ok(s.endpoint().await?),
-            ServiceSource::Fleet {
-                fleet,
-                bound,
-                service,
-            } => {
-                let token = fleet.access_token(false).await?;
-                Ok(ServiceEndpoint {
-                    url: fleet.service_url(bound, service)?,
-                    headers: vec![
-                        ("authorization".into(), format!("Bearer {token}")),
-                        ("x-cua-fleet-claim".into(), bound.claim.clone()),
-                    ],
-                })
-            }
             ServiceSource::Url(e) => Ok(e.clone()),
         }
     }
@@ -131,14 +106,10 @@ impl SpaceService {
     }
 }
 
-/// Media / tunnel WebSockets through the Fleet gateway need the gateway's own
+/// Media / tunnel WebSockets through a gateway need the gateway's own
 /// credentials next to the ticket.
 #[derive(Clone)]
 pub(crate) enum Gateway {
-    Fleet {
-        fleet: cua_fleet::FleetClient,
-        claim: String,
-    },
     /// Fixed headers (a `cua daemon` env passthrough: its loopback bearer).
     Headers(Vec<(String, String)>),
 }
@@ -159,6 +130,9 @@ pub(crate) struct SpaceInner {
     pub(crate) image: std::sync::OnceLock<(String, String)>,
     /// `(kind, arch)` from the local sandbox's record, when it has one.
     pub(crate) platform: std::sync::OnceLock<(String, String)>,
+    /// Why no cua-spacesd answered when this connected (`endpoint`,
+    /// `reason`), for a Space connected without one.
+    pub(crate) spacesd_unavailable: std::sync::OnceLock<(String, String)>,
 }
 
 /// A connected Space. Cheap to clone; every clone shares one spacesd
@@ -209,6 +183,7 @@ impl Space {
                 mcp: Default::default(),
                 image: Default::default(),
                 platform: Default::default(),
+                spacesd_unavailable: Default::default(),
             }),
         }
     }
@@ -355,6 +330,22 @@ impl Space {
         self.inner.env.is_some()
     }
 
+    pub(crate) fn set_spacesd_unavailable(&self, endpoint: String, reason: String) {
+        let _ = self.inner.spacesd_unavailable.set((endpoint, reason));
+    }
+
+    /// When no cua-spacesd answered because this host has no route to a
+    /// local VM (on macOS: Local Network privacy blocks this process), the
+    /// cause in words, naming the app to allow. `None` for any other reason
+    /// (still starting, nothing listening) or a Space that is not local.
+    pub fn spacesd_unreachable_cause(&self) -> Option<String> {
+        if !matches!(self.inner.id, SpaceId::Local { .. }) {
+            return None;
+        }
+        let (endpoint, reason) = self.inner.spacesd_unavailable.get()?;
+        unreachable_cause(endpoint, reason)
+    }
+
     fn no_spacesd(&self) -> Error {
         Error::CapabilityMissing {
             space: self.inner.id.to_string(),
@@ -457,30 +448,10 @@ impl Space {
     }
 
     /// Headers a WebSocket to this Space's spacesd needs besides its
-    /// ticket (the Fleet gateway's bearer and claim).
+    /// ticket (a `cua daemon` passthrough's loopback bearer).
     pub async fn websocket_headers(&self) -> Result<Vec<(String, String)>> {
         match &self.inner.gateway {
             None => Ok(vec![]),
-            Some(Gateway::Fleet { fleet, claim }) => {
-                let bearer = fleet.access_token(false).await?;
-                let mut h = vec![
-                    (
-                        cua_proto::metadata::AUTHORIZATION.into(),
-                        format!("Bearer {bearer}"),
-                    ),
-                    ("x-cua-fleet-claim".into(), claim.clone()),
-                ];
-                // The gateway consumes `authorization`; the env token rides
-                // in its own header (MEDIA.md: tickets still authenticate
-                // the socket, this lets a gateway-side check pass too).
-                if let Some(t) = self.inner.token.as_deref().filter(|t| !t.is_empty()) {
-                    h.push((
-                        cua_proto::metadata::ENV_AUTHORIZATION.into(),
-                        format!("Bearer {t}"),
-                    ));
-                }
-                Ok(h)
-            }
             Some(Gateway::Headers(h)) => Ok(h.clone()),
         }
     }
@@ -499,7 +470,7 @@ pub struct SpaceInfo {
     pub id: String,
     /// Display name.
     pub name: String,
-    /// `fleet`, `local` or `direct`.
+    /// `local`, `direct` or `relay`.
     pub provider: Provider,
     /// spacesd version at the last handshake.
     pub spacesd_version: String,
@@ -571,6 +542,11 @@ pub struct SpaceInfo {
     /// sharing it). Empty when reachable, and for other Spaces.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub status: String,
+    /// Why a local Space stopped without being asked to, in plain words
+    /// ("out of memory", "killed", "exited with code 1"); empty otherwise,
+    /// and once it is started again.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub stop_reason: String,
 }
 
 impl SpaceInfo {
@@ -604,6 +580,7 @@ impl SpaceInfo {
             cloud_place: record.cloud_place.clone(),
             cloud_delete: record.cloud_delete.clone(),
             status: String::new(),
+            stop_reason: record.stop_reason.clone(),
         })
     }
 }
@@ -691,5 +668,40 @@ mod tests {
             super::humantime_rfc3339(std::time::UNIX_EPOCH),
             "1970-01-01T00:00:00Z"
         );
+    }
+}
+
+/// [`Space::spacesd_unreachable_cause`] from the endpoint and the
+/// connect's reason (pure).
+pub(crate) fn unreachable_cause(endpoint: &str, reason: &str) -> Option<String> {
+    let l = reason.to_ascii_lowercase();
+    let cause = if l.contains("no route to host") {
+        "No route to host"
+    } else if l.contains("network is unreachable") {
+        "Network is unreachable"
+    } else {
+        return None;
+    };
+    let addr = endpoint
+        .trim_start_matches("http://")
+        .trim_start_matches("https://")
+        .trim_end_matches('/');
+    Some(cua_vmm::probe::unreachable_error(addr, &cause).to_string())
+}
+
+#[cfg(test)]
+mod unreachable_tests {
+    use super::unreachable_cause;
+
+    #[test]
+    fn no_route_to_a_local_vm_names_local_network_access() {
+        let reason = "nothing answered at http://192.168.64.191:3211/ (it may still be starting; \
+                      retry in a few seconds): grpc: transport error (No route to host (os error 65))";
+        let c = unreachable_cause("http://192.168.64.191:3211/", reason).unwrap();
+        assert!(c.contains("192.168.64.191:3211"), "{c}");
+        if cfg!(target_os = "macos") {
+            assert!(c.contains("Local Network access is not available"), "{c}");
+        }
+        assert!(unreachable_cause("http://x:1", "nothing answered: connection refused").is_none());
     }
 }

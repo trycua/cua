@@ -1,0 +1,15 @@
+{
+  "name": "rillwatch-cases",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Benchmark-owned Rillwatch case review application.",
+  "license": "FSL-1.1-MIT",
+  "main": "main.js",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "electron .",
+    "check": "node --check main.js && node --check preload.js && node --check store.js && node --check renderer/app.js",
+    "test": "node --test \"tests/**/*.test.js\""
+  },
+  "devDependencies": { "electron": "43.8.1" }
+}

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 //! Await-token-file mode: the root token comes only from a file that an
-//! orchestrator writes (a Fleet claim Secret mounted at `/run/cua`), never
+//! orchestrator writes (a token Secret mounted at `/run/cua`), never
 //! from the network.
 //!
 //! The file is empty until a claim binds, updated in place on rotation and
@@ -274,9 +274,9 @@ impl TokenFileWatcher {
 }
 
 /// The privileged half of await-token-file mode: copies a root-only token
-/// file (the Fleet claim Secret, `root 0600`) to a file the unprivileged
-/// driver can read (`0600`, owned by `owner`), validating it the same way.
-/// An empty, missing, invalid or insecure source empties the target, so a
+/// file (the token Secret the orchestrator writes, `root 0600`) to a file the
+/// unprivileged driver can read (`0600`, owned by `owner`), validating it the
+/// same way. An empty, missing, invalid or insecure source empties the target, so a
 /// revocation propagates. The target's directory should be root-owned so the
 /// unprivileged user cannot swap the file.
 #[derive(Debug, Clone)]

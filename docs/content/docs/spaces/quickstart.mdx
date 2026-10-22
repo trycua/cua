@@ -1,117 +1,107 @@
 ---
 title: Quickstart
-description: 'Install the cua CLI and, on macOS, the Cua Spaces app, run a local Space in Docker, and register it from code.'
+description: 'Install Cua Spaces, connect your AI agent, make this Mac your first Space and send your first request. About five minutes.'
 ---
 
+import { Callout } from 'fumadocs-ui/components/callout';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-Install the cua CLI (and the macOS-only Cua Spaces app), run a Linux desktop
-locally, and register it as your first Space.
+In about five minutes you install Cua Spaces, connect your AI coding agent, make
+this computer your first Space and ask your agent to use it while you watch.
 
-## Prerequisites
+<VideoDemo
+  src="https://trycua.github.io/assets/videos/cua-spaces/quickstart.mp4"
+  poster="https://trycua.github.io/assets/videos/cua-spaces/quickstart-poster.jpg"
+  title="Cua Spaces quickstart"
+>
+  Install Cua Spaces, connect your agent and watch it work in a Space (39 seconds, no sound).
+</VideoDemo>
 
-- macOS, Linux or Windows. The Cua Spaces app for macOS needs macOS 26 or
-  later.
-- Docker, for the local Space.
+## Before you start
 
-For CLI-managed local Linux Spaces, use Docker (gVisor `runsc`, when installed, adds
-isolation) or QEMU. QEMU needs read/write access to `/dev/kvm` for hardware
-acceleration of same-architecture guests. The managed runtime is macOS-only.
+- A Mac (macOS 26 or later), a Windows PC (preview) or a Linux PC (Ubuntu 24.04).
+- An AI coding agent, such as Claude Code, Codex or Cursor. See the
+  [supported agents](/cua-cli/guides/mcp-server#supported-agents).
+- A free Cua account. The app asks you to sign in during setup.
 
-## Run
+Your computer is your first Space, so there is nothing big to download. An extra
+Space is optional: a Linux Space needs a container engine such as Docker, and a
+macOS Space needs an Apple silicon Mac and about 50 GB of free disk.
 
-<Tabs items={['macOS and Linux', 'Windows']}>
+## 1. Install Cua Spaces
+
+<Tabs items={['macOS and Linux', 'Windows (preview)']}>
   <Tab value="macOS and Linux">
     ```bash skip="host-install"
     curl -fsSL https://cua.ai/install.sh | sh
     ```
   </Tab>
-  <Tab value="Windows">
+  <Tab value="Windows (preview)">
     ```powershell skip="host-install"
     irm https://cua.ai/install.ps1 | iex
     ```
   </Tab>
 </Tabs>
 
-In a terminal it first shows a checklist: the `cua` CLI, the Cua Spaces app
-(macOS only, selected by default there), the cua-driver MCP and skill for your
-agents, and hosting this machine. On Linux and Windows the Spaces app is skipped.
-Then it signs you in and offers to set up your AI coding agents.
-Flags: `--select ITEMS`, `--only ITEMS`, `--cli-only`, `--app-only`,
-`--mode host|client`, `--version X`, `--no-onboarding`, `--dry-run`, `--yes`
-(`-Select`, `-CliOnly`, ... on Windows). GUI installers are on
-[GitHub releases](https://github.com/trycua/cua/releases).
+The command installs the `cua` command and the app. You can also download the
+app from the [download page](https://cua.ai/download). [Install](/spaces/guides/install)
+has the details for each system.
 
-Start the canonical Linux image with a token:
+## 2. Connect your agent
 
-```bash skip="no-runner"
-TOKEN=$(openssl rand -hex 24)
-docker run -d --name my-space -e CUA_ENV_TOKEN=$TOKEN -p 127.0.0.1:3211:3211 \
-  ghcr.io/trycua/linux:24.04
-```
+Open Cua Spaces. The first screen says "A shared Space for every agent."
 
-Register it and run a command in it (use `http://127.0.0.1:3211` and your
-`$TOKEN`):
+Press **Connect Claude Code**. If you use another agent, pick it instead:
+Codex, Hermes, OpenClaw or **Other**. The app adds Cua to that agent's settings.
 
-<Tabs items={['Python', 'TypeScript', 'Swift']}>
-  <Tab value="Python">
-    ```python test="docs" id="add-direct" session="add-direct" prelude="space-url"
-    import asyncio
-    import cua
+If your agent was already open, close it and open it again so it loads the new
+tools. To connect more agents later, see [Connect your agent](/spaces/guides/connect-your-agent).
 
-    async def main():
-        spaces = cua.embedded().spaces()      # or cua.connect().spaces()
-        info = await spaces.add("http://10.0.0.5:3211", "TOKEN", "lab")
-        space = await spaces.space(info.id)
-        out = await space.bash("uname -a", None)
-        print(info.id, out.stdout)
+## 3. Make this computer your first Space
 
-    asyncio.run(main())
-    ```
-  </Tab>
-  <Tab value="TypeScript">
-    ```ts test="docs" id="add-direct-ts" prelude="space-url"
-    import { embedded } from "@trycua/cua"
+The app checks your setup and shows what's left. These steps use the Mac
+wording; on Windows and Linux the app says "this PC" or "this computer". Press the button on each row:
 
-    const spaces = embedded().spaces()        // or connect().spaces()
-    const info = await spaces.add("http://10.0.0.5:3211", "TOKEN", "lab")
-    const space = await spaces.space(info.id)
-    console.log(info.id, (await space.bash("uname -a", undefined)).stdout)
-    ```
-  </Tab>
-  <Tab value="Swift">
-    ```swift test="swift" id="add-direct-space"
-    import Cua
+1. **Sign in**, then finish signing in to Cua in your browser. The app then
+   adds this Mac to your account by itself.
+2. **Let Cua control this Mac**, so your agent can click and type.
+3. **Let Cua see this screen**, so your agent can see what's on it.
 
-    let spaces = try Cua.embedded().spaces()  // or Cua.connect(address: nil, token: nil)
-    let info = try await spaces.add(url: "http://10.0.0.5:3211", token: "TOKEN", name: "lab")
-    let space = try await spaces.space(space: info.id)
-    print(try await space.bash(command: "uname -a", timeoutMs: nil).stdout)
-    ```
-  </Tab>
-</Tabs>
+Each of the last two opens System Settings. Turn Cua on there; macOS asks you
+only once. When every row is done, the app says "Your agent can use this Mac."
+This Mac is now your first Space.
 
-## Result
+## 4. Try your first request
 
-The program prints the Space id (`direct:127.0.0.1:3211`) and the guest's
-`uname -a`. The Space is now in the shared registry, so the app and the CLI see
-it too:
+Under **Try this in Claude Code**, press **Copy** and paste the request into
+your agent:
 
-```bash test="cli-shape" id="cua"
-cua --version
-cua auth status
-cua spaces ls
-```
+> List my computers and tell me what's on this Mac
 
-## Clean up
+It works right away, on this Mac. Open Cua Spaces to watch your agent work, and
+use the desktop yourself whenever you want to take over.
 
-```bash skip="no-runner"
-docker rm -f my-space
-```
+## 5. Add a Linux Space (optional)
+
+**Give your agent its own Space** offers a fresh computer inside this Mac, away
+from your files and your mouse. Choose **Linux** for the quickest one (a Mac can
+also make a macOS Space), or choose **No extra Space for now**. The card shows
+how long it takes and how much it downloads.
+
+Press **Done** whenever you like. The new Space keeps getting made after the
+window closes, shows its progress in the sidebar, and you get a notice when it's
+ready.
+
+<Callout type="info">
+  If a step is still open, the button says **Finish later**. Home then keeps a
+  **Finish setting up** list with the same steps. A Space that fails to create
+  shows the reason and a **Try again** button. See
+  [Troubleshoot](/spaces/guides/troubleshoot).
+</Callout>
 
 ## Next
 
-- [Add a Space](/spaces/guides/add-a-space): create one locally or in the cloud, from any image.
-- [Stream a desktop](/spaces/guides/stream-a-desktop).
-- [Use Spaces from an agent](/spaces/guides/use-from-an-agent).
-- [Cua Bots](/spaces/examples/cua-bots): an example app of persistent bots, each with its own Space.
+- [Add a computer](/spaces/guides/add-a-computer): use another computer you own.
+- [Share a Space](/spaces/guides/share-a-space): let a teammate watch or work in it.
+- [Plans and Teams](/spaces/guides/teams): what Free, Pro and Teams include.
+- Using code instead? [Use Spaces from code](/spaces/guides/create-a-space-with-the-sdk).

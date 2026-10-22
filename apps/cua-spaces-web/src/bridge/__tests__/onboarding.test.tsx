@@ -63,11 +63,11 @@ describe.each([
   it("walks the web pages in the core's order, past the native-only ones", async () => {
     const core = await getCore();
     let s = onboardingInitial(core, null);
-    expect(onboardingView(core, s, "linux").dots.map((d) => d.label)).toEqual(["Welcome", "Sign in", "AI agents", "This machine", "Done"]);
+    expect(onboardingView(core, s, "linux").dots.map((d) => d.label)).toEqual(["Welcome", "Sign in", "AI agents", "This computer", "Done"]);
     s = onboardingReduce(core, s, { type: "start" }, ctx);
     expect(s.step).toBe("signin");
     expect(onboardingView(core, s, "linux").canSkip).toBe(true);
-    expect(onboardingView(core, s, "linux").lede).toBe("Sign in for account-based access to your machines and Spaces across devices; skip to continue without it.");
+    expect(onboardingView(core, s, "linux").lede).toBe("Sign in to reach your computers and Spaces from any of your devices. You can skip this and sign in later.");
     s = onboardingReduce(core, s, { type: "signin-done" }, ctx);
     expect(s.step).toBe("agents");
     s = onboardingReduce(core, s, { type: "agents-done", configured: ["Codex"] }, ctx);
@@ -77,10 +77,20 @@ describe.each([
     s = onboardingReduce(core, s, { type: "agents-done", configured: ["Codex"] }, ctx);
     s = onboardingReduce(core, s, { type: "mode-chosen", mode: "client" }, ctx);
     expect(s.step).toBe("done");
-    const v = onboardingView(core, s, "linux");
+    // Not signed in yet: Done says so, with the fix (the web has no Cua CLI page, so no CLI line).
+    let v = onboardingView(core, s, "linux");
+    expect(v.title).toBe("Almost done");
+    expect(v.lede).toBe("One thing is left. You can finish it now, or later from the system tray.");
+    const required = (view: typeof v) => (view.todos ?? []).filter((t) => !t.optional);
+    expect(required(v).map((t) => [t.id, t.done, t.action ?? null])).toEqual([
+      ["signin", false, "Sign in"],
+      ["agents", true, null],
+    ]);
+    expect(v.summary.map((f) => f.label)).toEqual(["This computer"]);
+    expect(onboardingView(core, s, "windows").summary.map((f) => f.label)).toEqual(["This computer"]);
+    s = onboardingReduce(core, s, { type: "signed-in", identity: "ada@example.com" }, ctx);
+    v = onboardingView(core, s, "linux");
     expect(v.title).toBe("You're all set");
-    expect(v.summary.map((f) => f.label)).toEqual(["Account", "AI agents", "This machine"]);
-    expect(onboardingView(core, s, "windows").summary.map((f) => f.label)).toEqual(["Account", "AI agents", "This machine"]);
     // Where the app stays: the menu bar on a Mac, the tray on Windows and Linux.
     expect(onboardingView(core, s, "macos").lede).toBe("Cua Spaces is in your menu bar.");
     expect(onboardingView(core, s, "windows").lede).toBe("Cua Spaces is in your system tray.");
@@ -99,7 +109,7 @@ describe.each([
     const core = await getCore();
     const mac = { menuBar: false, os: "macos" as HostOs };
     let s = onboardingInitial(core, null);
-    expect(onboardingView(core, s, "macos").dots.map((d) => d.label)).toEqual(["Welcome", "Sign in", "AI agents", "Menu bar", "This machine", "Done"]);
+    expect(onboardingView(core, s, "macos").dots.map((d) => d.label)).toEqual(["Welcome", "Sign in", "AI agents", "Menu bar", "This computer", "Done"]);
     s = onboardingReduce(core, s, { type: "start" }, mac);
     s = onboardingReduce(core, s, { type: "signin-done" }, mac);
     s = onboardingReduce(core, s, { type: "agents-done", configured: [] }, mac);
@@ -120,7 +130,8 @@ describe.each([
     s = onboardingReduce(core, s, { type: "presentation-done" }, { ...mac, menuBar: true });
     s = onboardingReduce(core, s, { type: "mode-chosen", mode: "client" }, { ...mac, menuBar: true });
     v = onboardingView(core, s, "macos");
-    expect(v.summary.map((f) => f.label)).toEqual(["Account", "AI agents", "Shows in", "This machine"]);
+    expect(v.summary.map((f) => f.label)).toEqual(["Shows in", "This computer"]);
+    expect((v.todos ?? []).some((t) => t.id === "cli")).toBe(false);
     expect(v.summary.find((f) => f.label === "Shows in")?.value).toBe("Menu bar only");
   });
 
@@ -162,7 +173,17 @@ describe.each([
       { id: "accessibility", label: "Accessibility", granted: true },
     ]);
     expect(rows).toEqual([{ id: "screen-recording", title: "Screen Recording", help: "Turn it on", settingsUrl: "x-apple.systempreferences:a" }]);
-    expect(firstSpaceImages(core).map((i) => i.os)).toEqual(["macos", "linux", "windows"]);
+    expect(firstSpaceImages(core, "macos").map((i) => i.os)).toEqual(["macos", "linux", "windows"]);
+  });
+});
+
+describe("the first Space's images per host", () => {
+  it.each([
+    ["macos", ["macos", "linux", "windows"]],
+    ["linux", ["linux", "windows"]],
+    ["windows", ["linux", "windows"]],
+  ] as const)("on %s", (os, expected) => {
+    expect(firstSpaceImages(noCore, os).map((i) => i.os)).toEqual(expected);
   });
 });
 
@@ -234,6 +255,18 @@ describe.skipIf(!wasmBuilt)("useOnboarding over the demo adapter", () => {
     expect(readSavedOnboarding().state).toBeNull();
   });
 
+  it("stops the pending browser sign-in when Sign in is skipped", async () => {
+    const { probe } = mount(await testCore());
+    await waitFor(() => expect(probe.flow.state).toBeTruthy());
+    act(() => probe.flow.send({ type: "start" }));
+    await act(async () => {
+      void probe.session.signIn().catch(() => {});
+    });
+    await waitFor(() => expect(["starting", "waiting"]).toContain(probe.session.data?.signIn.kind));
+    act(() => probe.flow.send({ type: "signin-done" }));
+    await waitFor(() => expect(probe.session.data?.signIn.kind).toBe("idle"));
+  });
+
   it("drops the account when signed out", async () => {
     const { probe } = mount(await testCore());
     await waitFor(() => expect(probe.flow.state).toBeTruthy());
@@ -281,14 +314,25 @@ describe.skipIf(!wasmBuilt)("Done's Launch at login", () => {
   it('shows where the host applies it (Electron), and finishes with the choice', async () => {
     const { probe, calls } = mount(await testCore(), 'electron');
     await toDone(probe);
-    expect(probe.flow.launchAtLogin).toMatchObject({ checked: false });
+    expect(probe.flow.launchAtLogin).toMatchObject({ checked: true });
     expect(probe.flow.launchAtLogin?.label).toBeTruthy();
     await act(async () => {
       await probe.flow.finish();
     });
     expect(calls.filter(([op]) => op === 'session.completeOnboarding')).toEqual([
-      ['session.completeOnboarding', { mode: 'client', launchAtLogin: false }],
+      ['session.completeOnboarding', { mode: 'client', launchAtLogin: true }],
     ]);
+  });
+
+  it('registers the login item only on Start, not while the box is merely ticked', async () => {
+    const { probe, calls } = mount(await testCore(), 'electron');
+    await toDone(probe);
+    expect(probe.flow.launchAtLogin).toMatchObject({ checked: true });
+    expect(calls.filter(([op]) => op === 'session.completeOnboarding' || String(op).startsWith('loginItem.'))).toEqual([]);
+    await act(async () => {
+      await probe.flow.finish();
+    });
+    expect(calls.filter(([op]) => op === 'session.completeOnboarding')).toHaveLength(1);
   });
 
   it('is not offered where the host does not apply it', async () => {
@@ -301,5 +345,33 @@ describe.skipIf(!wasmBuilt)("Done's Launch at login", () => {
     expect(calls.filter(([op]) => op === 'session.completeOnboarding')).toEqual([
       ['session.completeOnboarding', { mode: 'client' }],
     ]);
+  });
+});
+
+describe("the permission rows of the first run", () => {
+  beforeEach(() => onPlatform("MacIntel"));
+
+  it("reads the permissions again and ticks a pane once it is granted (CUA-1765)", async () => {
+    const { probe, adapter } = mount(noCore);
+    const real = adapter.call.bind(adapter);
+    let granted: string[] = [];
+    (adapter as { call: unknown }).call = (op: string, args: unknown) =>
+      op === "host.status"
+        ? real(op as never, args as never).then((h: any) => ({ ...h, permissions: h.permissions.filter((p: { id: string }) => !granted.includes(p.id)) }))
+        : real(op as never, args as never);
+    await waitFor(() => expect(probe.flow.state).toBeTruthy());
+    await waitFor(() => expect(probe.flow.permissions.map((p) => p.id)).toEqual(["screen-recording", "accessibility"]));
+    expect(probe.flow.grantedPermissions).toEqual([]);
+
+    granted = ["screen-recording"];
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => expect(probe.flow.permissions.map((p) => p.id)).toEqual(["accessibility"]));
+    expect(probe.flow.grantedPermissions.map((p) => p.id)).toEqual(["screen-recording"]);
+
+    granted = ["screen-recording", "accessibility"];
+    await waitFor(() => expect(probe.flow.permissions).toEqual([]), { timeout: 5000 });
+    expect(probe.flow.grantedPermissions.map((p) => p.id).sort()).toEqual(["accessibility", "screen-recording"]);
   });
 });

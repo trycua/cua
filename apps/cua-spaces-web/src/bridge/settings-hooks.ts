@@ -22,9 +22,10 @@ import type {
   NotificationsData,
   SettingsFeature,
   StorageData,
+  UpdateData,
 } from "./settings-feature";
 
-export type { AboutData, DevicesData, ExperimentsData, FeatureResource, LoginItemData, NotificationsData, StorageData } from "./settings-feature";
+export type { UpdateData, AboutData, DevicesData, ExperimentsData, FeatureResource, LoginItemData, NotificationsData, StorageData } from "./settings-feature";
 
 function useCtx(): BridgeContextValue {
   const ctx = useContext(BridgeContext);
@@ -67,6 +68,18 @@ export function useAbout(): AboutHook {
   const r = useFeature<AboutData>("about");
   const run = useRun();
   return { ...r, setAbout: (p) => run((f) => f.setAbout(p)), checkNow: () => run((f) => f.checkNow()) };
+}
+
+export interface UpdateHook extends Hook<UpdateData> {
+  /** "Restart to update": the host installs the downloaded update and relaunches. */
+  install(): Promise<void>;
+}
+
+/** The in-app update indicator: the host's updater state (found, downloading, ready). */
+export function useUpdate(): UpdateHook {
+  const r = useFeature<UpdateData>("update");
+  const run = useRun();
+  return { ...r, install: () => run((f) => f.installUpdate()) };
 }
 
 export interface ExperimentsHook extends Hook<ExperimentsData> {
@@ -157,13 +170,15 @@ export function useStorageSettings(): StorageHook {
 
 export interface NotificationsHook extends Hook<NotificationsData> {
   markAllRead(): Promise<void>;
+  /** Marks one entry read (it was opened). */
+  markRead(id: string): Promise<void>;
 }
 
 /** The daemon's notifications feed, polled every 5 s while the app is open. */
 export function useNotifications(): NotificationsHook {
   const r = useFeature<NotificationsData>("notifications");
   const run = useRun();
-  return { ...r, markAllRead: () => run((f) => f.markAllRead()) };
+  return { ...r, markAllRead: () => run((f) => f.markAllRead()), markRead: (id) => run((f) => f.markRead(id)) };
 }
 
 /** Calls `listener` for each entry the core says to announce. */

@@ -14,7 +14,9 @@ import PackageDescription
 //    notch panel and the menu bar extra. The notch's views are
 //    CuaSpacesNotchUI (libs/spaces-notch-swift), shared with the Electron
 //    app's notch helper.
-//  * CuaSpacesMac: the app entry point.
+//  * CuaSpacesMac: the app entry point, and the host service's login item
+//    (`--service-helper run`: the bundled cua-spacesd as its child, under
+//    the app's own identity).
 //  * CuaSpacesMacTests: view-model, parity and snapshot tests (swift-testing).
 //
 // Sparkle (pinned; Package.resolved) is the macOS updater: a binary
@@ -25,6 +27,7 @@ import PackageDescription
 // (XcodeGen) on a macOS runner with Xcode.
 let package = Package(
     name: "CuaSpacesMac",
+    defaultLocalization: "en",
     platforms: [.macOS(.v26)],
     products: [
         .executable(name: "CuaSpacesMac", targets: ["CuaSpacesMac"]),

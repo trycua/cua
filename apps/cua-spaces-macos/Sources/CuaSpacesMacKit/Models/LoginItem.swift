@@ -84,3 +84,53 @@ public enum LoginLaunch {
             == OSType(keyAELaunchedAsLogInItem)
     }
 }
+
+/// The host service's login item: this app's own executable
+/// (`CuaSpacesMac --service-helper run`, so its permissions are the app's) run by
+/// `SMAppService.agent` from Contents/Library/LaunchAgents/
+/// com.trycua.spaces.helper.plist. cua-host (the `app-helper` runner, in
+/// this app's SDK and in the `cua` CLI) drives it through
+/// `CuaSpacesMac --service-helper register|unregister|status`, because only
+/// this bundle's code may register it; it writes what the helper runs
+/// (~/.cua/helper/service.json) and starts it with launchctl.
+public enum HelperService {
+    public static let plistName = "com.trycua.spaces.helper.plist"
+    public static let label = "com.trycua.spaces.helper"
+
+    static var service: SMAppService { SMAppService.agent(plistName: plistName) }
+
+    public static func status() -> AppLoginItemStatus { MainAppLoginItem.map(service.status) }
+
+    static func name(_ s: AppLoginItemStatus) -> String {
+        switch s {
+        case .enabled: return "enabled"
+        case .notRegistered: return "not-registered"
+        case .requiresApproval: return "requires-approval"
+        case .notFound: return "not-found"
+        }
+    }
+
+    /// The command line: prints one JSON object, returns the exit code.
+    public static func run(_ args: [String]) -> Int32 {
+        var failure: String?
+        switch args.first {
+        case "register":
+            do { try service.register() } catch { failure = error.localizedDescription }
+        case "unregister":
+            // Not registered is already done.
+            if service.status != .notRegistered {
+                do { try service.unregister() } catch { failure = error.localizedDescription }
+            }
+        case "status": break
+        default:
+            FileHandle.standardError.write(Data("usage: CuaSpacesMac --service-helper register|unregister|status\n".utf8))
+            return 2
+        }
+        var out: [String: String] = ["status": name(status())]
+        if let failure { out["error"] = failure }
+        if let data = try? JSONSerialization.data(withJSONObject: out, options: [.sortedKeys]) {
+            FileHandle.standardOutput.write(data + Data("\n".utf8))
+        }
+        return failure == nil ? 0 : 1
+    }
+}

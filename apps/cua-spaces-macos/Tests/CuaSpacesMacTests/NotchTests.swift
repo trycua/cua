@@ -188,6 +188,35 @@ struct NotchTests {
         #expect(notch.view.phase == .closed)
     }
 
+    /// Hovering the notch lists the Spaces, never a machine that only
+    /// provides them (CUA-1619): This machine and your other Mac on the
+    /// relay stay off the tiles, the Space that Mac provides is listed, and
+    /// the tab counts what the tiles list.
+    @Test func hoverListsOnlySpacesNeverTheMachinesThatProvideThem() async {
+        var machine = FixtureSpacesBackend.sample[0]
+        machine.id = "relay:studio"
+        machine.name = "Studio"
+        machine.provider = "relay"
+        var provided = FixtureSpacesBackend.sample[0]
+        provided.id = "relay:studio/dev"
+        provided.name = "Dev"
+        provided.provider = "relay"
+        provided.host = "studio"
+        let m = ViewModelTests().makeModel(FixtureSpacesBackend(rows: [machine, provided]))
+        await m.refresh()
+        #expect(m.notch.spaces.contains { $0.id == "relay:studio" }, "the roster still has the machine")
+
+        let clock = ManualScheduler()
+        let notch = NotchModel(scheduler: clock)
+        notch.spaces = m.notch.spaces
+        notch.send(.hoverEnter)
+        clock.advance(motion.hoverDwellMs)
+        #expect(notch.view.phase == .tiles)
+        #expect(notch.view.tiles.map(\.id) == ["relay:studio/dev"])
+        #expect(notch.view.tab.count == "1")
+        #expect(notch.view.tiles.count == Int(appOpenableCount(spaces: notch.spaces)))
+    }
+
     // MARK: - The presentation state machine
 
     @Test func openingSpringsTheShapeThenFadesTheContentIn() {
@@ -485,6 +514,39 @@ struct NotchTests {
         #expect(c.isShown && !m.notch.view.hidden)
         c.setShown(false)
     }
+
+    /// CUA-1618: the setting off at launch, the SDK in, then the setting
+    /// turned on while the app runs: window drags are followed (onto the
+    /// notch and the New UI's tiles) without a relaunch, stop when it turns
+    /// off and start again when it turns back on.
+    @Test func turningTheNotchOnLiveStartsWindowDragsAndOffStopsThem() async {
+        let m = ViewModelTests().makeModel(FixtureSpacesBackend())
+        let c = NotchController(model: m.notch)
+        c.makesPanel = false
+        m.settings.menuBar = true
+        AppDelegate.followNotchSetting(m, c)
+        #expect(!c.isShown)
+        // The SDK comes in after the launch (`followWindowDrags`).
+        var started = 0
+        c.permitted = { true }
+        c.startDrags = { started += 1 }
+        c.recheckPermission()
+        #expect(started == 0 && !c.dragsRunning, "no drag monitor while hidden")
+        await m.choose(row: "notch", option: "show")
+        for _ in 0..<20 where !c.isShown { try? await Task.sleep(for: .milliseconds(20)) }
+        #expect(c.isShown)
+        #expect(started == 1 && c.dragsRunning, "turned on live: window drags are followed")
+        await m.choose(row: "notch", option: "hide")
+        for _ in 0..<20 where c.isShown { try? await Task.sleep(for: .milliseconds(20)) }
+        #expect(!c.isShown && !c.dragsRunning, "turned off: the monitor stops")
+        await m.choose(row: "notch", option: "show")
+        for _ in 0..<20 where !c.isShown { try? await Task.sleep(for: .milliseconds(20)) }
+        #expect(started == 2 && c.dragsRunning, "on again: it starts again")
+        // Showing an already shown notch keeps the one monitor.
+        c.show()
+        #expect(started == 2)
+        c.setShown(false)
+    }
 }
 
 @Suite("Launch")
@@ -500,12 +562,12 @@ struct LaunchTests {
         #expect(defaults.bool(forKey: "ApplePersistenceIgnoreState"))
     }
 
-    /// With New UI on (and the first run done), a launch opens the New UI
-    /// window, not the native main window; the first run stays native.
-    @Test func newUIOnOpensItsWindowAtLaunchInsteadOfTheMainWindow() {
+    /// With New UI on, or the first run due (it is the web UI's onboarding),
+    /// a launch opens the New UI window, not the native main window.
+    @Test func newUIOrAFirstRunOpensItsWindowAtLaunchInsteadOfTheMainWindow() {
         #expect(CuaSpacesMacApp.opensWebUIAtLaunch(webUi: true, onboarded: true))
-        #expect(!CuaSpacesMacApp.opensWebUIAtLaunch(webUi: true, onboarded: false))
+        #expect(CuaSpacesMacApp.opensWebUIAtLaunch(webUi: true, onboarded: false))
         #expect(!CuaSpacesMacApp.opensWebUIAtLaunch(webUi: false, onboarded: true))
-        #expect(!CuaSpacesMacApp.opensWebUIAtLaunch(webUi: false, onboarded: false))
+        #expect(CuaSpacesMacApp.opensWebUIAtLaunch(webUi: false, onboarded: false))
     }
 }

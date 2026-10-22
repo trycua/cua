@@ -55,24 +55,21 @@ type Stream<T> = Pin<Box<dyn futures_util::Stream<Item = Result<T, Status>> + Se
 pub struct MockAuth {
     /// Required env token (direct mode: `authorization`).
     pub token: Option<String>,
-    /// Fleet gateway emulation: required path prefix, gateway bearer and
-    /// claim header. In this mode the env token is read from
-    /// `x-cua-env-authorization`.
+    /// Gateway emulation: required path prefix and gateway bearer. In this
+    /// mode the env token is read from `x-cua-env-authorization`.
     pub gateway: Option<MockGateway>,
     /// Path prefix to strip without gateway checks (relay emulation, e.g.
     /// `/m/<machine-id>`).
     pub prefix: Option<String>,
 }
 
-/// Fleet gateway emulation settings.
+/// Gateway emulation settings.
 #[derive(Clone, Debug)]
 pub struct MockGateway {
-    /// Path prefix, e.g. `/api/svc/ns/sbx-env`.
+    /// Path prefix, e.g. `/m/<machine-id>`.
     pub prefix: String,
     /// Expected gateway bearer.
     pub bearer: String,
-    /// Expected `X-Cua-Fleet-Claim`.
-    pub claim: String,
 }
 
 /// Observations the tests assert on.
@@ -132,6 +129,10 @@ pub struct MockState {
     files: Mutex<HashMap<String, Vec<u8>>>,
     uploads: Mutex<HashMap<String, Upload>>,
     procs: Mutex<HashMap<u32, Proc>>,
+    /// `StartProcess` requests received, in order.
+    started: Mutex<Vec<pb::StartProcessRequest>>,
+    /// Signals delivered through `SignalProcess` as `(pid, signal)`.
+    signalled: Mutex<Vec<(u32, i32, bool)>>,
     next_pid: AtomicU32,
     clipboard: Mutex<(Option<String>, u64)>,
     cursor: Mutex<(f64, f64)>,
@@ -197,8 +198,6 @@ pub struct TunnelAttach {
     pub path: String,
     /// `authorization` header.
     pub authorization: Option<String>,
-    /// `x-cua-fleet-claim` header.
-    pub claim: Option<String>,
     /// `x-cua-env-authorization` header.
     pub env_authorization: Option<String>,
     /// Whether the attach was accepted.
@@ -228,6 +227,31 @@ pub struct TeleportImport {
 }
 
 impl MockState {
+    /// `StartProcess` requests received, in order.
+    pub fn started_processes(&self) -> Vec<pb::StartProcessRequest> {
+        self.started.lock().unwrap().clone()
+    }
+
+    /// The pid of the newest process started.
+    pub fn last_pid(&self) -> Option<u32> {
+        self.procs.lock().unwrap().keys().max().copied()
+    }
+
+    /// How the process `pid` ended, or `None` while it runs.
+    pub fn process_end(&self, pid: u32) -> Option<pb::ProcessEnd> {
+        self.procs
+            .lock()
+            .unwrap()
+            .get(&pid)
+            .and_then(|p| p.end.clone())
+    }
+
+    /// Signals delivered by `SignalProcess` as `(pid, signal number,
+    /// whole process group)`.
+    pub fn signals(&self) -> Vec<(u32, i32, bool)> {
+        self.signalled.lock().unwrap().clone()
+    }
+
     /// Session bundles committed through `TeleportService.ImportSession`
     /// and not wiped since.
     pub fn teleport_imports(&self) -> Vec<TeleportImport> {
@@ -546,9 +570,6 @@ where
             if header("authorization").as_deref() != Some(&format!("Bearer {}", gw.bearer)) {
                 denied = Some(Status::unauthenticated("gateway bearer"));
             }
-            if header("x-cua-fleet-claim").as_deref() != Some(gw.claim.as_str()) {
-                denied = Some(Status::permission_denied("claim header"));
-            }
             env_auth = header(crate::transport::ENV_TOKEN_HEADER);
         }
         if let Some(t) = &state.auth.token
@@ -720,8 +741,12 @@ impl SystemService for Svc {
         &self,
         _: tonic::Request<pb::MetricsRequest>,
     ) -> Result<tonic::Response<pb::MetricsResponse>, Status> {
-        // A 4 GiB guest with a 32 GiB disk, both its own.
+        // A 4-core guest at 12.5% with a 4 GiB memory and a 32 GiB disk, both
+        // its own.
         Ok(tonic::Response::new(pb::MetricsResponse {
+            cpu_count: 4,
+            cpu_percent: 12.5,
+            load_average_1m: 0.75,
             memory_total_bytes: 4 << 30,
             memory_used_bytes: 1_610_612_736,
             memory_limited: true,
@@ -915,6 +940,10 @@ impl Svc {
     }
 
     fn finish(&self, pid: u32, code: Option<i32>, timed_out: bool, error: String) {
+        self.finish_with(pid, code, timed_out, error, pb::Signal::Kill as i32);
+    }
+
+    fn finish_with(&self, pid: u32, code: Option<i32>, timed_out: bool, error: String, sig: i32) {
         let mut procs = self.0.procs.lock().unwrap();
         if let Some(p) = procs.get_mut(&pid)
             && p.end.is_none()
@@ -922,7 +951,7 @@ impl Svc {
             p.end = Some(pb::ProcessEnd {
                 exit_code: code,
                 signal: if code.is_none() && error.is_empty() {
-                    pb::Signal::Kill as i32
+                    sig
                 } else {
                     0
                 },
@@ -962,11 +991,28 @@ impl Svc {
         pid: u32,
         from: u64,
         keepalive: Duration,
+        kill_on_disconnect: bool,
         wrap: fn(pb::ProcessEvent) -> T,
     ) -> Stream<T> {
         let (tx, rx) = mpsc::channel::<Result<T, Status>>(64);
         let svc = self.clone();
         tokio::spawn(async move {
+            // Dropped without `finished` when the client goes away first.
+            struct KillGuard(Svc, u32, bool);
+            impl Drop for KillGuard {
+                fn drop(&mut self) {
+                    if self.2 {
+                        self.0.finish_with(
+                            self.1,
+                            None,
+                            false,
+                            String::new(),
+                            pb::Signal::Term as i32,
+                        );
+                    }
+                }
+            }
+            let mut guard = KillGuard(svc.clone(), pid, kill_on_disconnect);
             let (start, changed) = {
                 let procs = svc.0.procs.lock().unwrap();
                 let p = &procs[&pid];
@@ -1024,10 +1070,12 @@ impl Svc {
                     }
                 }
                 if let Some(end) = end {
+                    guard.2 = false;
                     let _ = tx.send(Ok(send(pb::process_event::Event::End(end)))).await;
                     return;
                 }
                 tokio::select! {
+                    _ = tx.closed() => return,
                     _ = notified => {}
                     _ = tokio::time::sleep(keepalive) => {
                         let ev = pb::process_event::Event::Keepalive(pb::KeepAlive {});
@@ -1052,6 +1100,7 @@ impl ProcessService for Svc {
         req: tonic::Request<pb::StartProcessRequest>,
     ) -> Result<tonic::Response<Self::StartProcessStream>, Status> {
         let req = req.into_inner();
+        self.0.started.lock().unwrap().push(req.clone());
         let cfg = req.config.clone().unwrap_or_default();
         let script = parse_script(&cfg);
         let pid = self.0.next_pid.fetch_add(1, Ordering::Relaxed);
@@ -1165,6 +1214,7 @@ impl ProcessService for Svc {
             pid,
             0,
             keepalive,
+            req.kill_on_disconnect,
             |e| pb::StartProcessResponse { event: Some(e) },
         )))
     }
@@ -1191,6 +1241,7 @@ impl ProcessService for Svc {
             pid,
             from,
             keepalive,
+            false,
             |e| pb::ConnectProcessResponse { event: Some(e) },
         )))
     }
@@ -1307,8 +1358,14 @@ impl ProcessService for Svc {
         &self,
         req: tonic::Request<pb::SignalProcessRequest>,
     ) -> Result<tonic::Response<pb::SignalProcessResponse>, Status> {
-        let pid = self.find(&req.into_inner().process)?;
-        self.finish(pid, None, false, String::new());
+        let req = req.into_inner();
+        let pid = self.find(&req.process)?;
+        self.0
+            .signalled
+            .lock()
+            .unwrap()
+            .push((pid, req.signal, req.process_group));
+        self.finish_with(pid, None, false, String::new(), req.signal);
         Ok(tonic::Response::new(pb::SignalProcessResponse {}))
     }
 
@@ -2679,7 +2736,6 @@ async fn serve_tunnel(stream: TcpStream, state: Arc<MockState>) {
         let mut attach = TunnelAttach {
             path: full.clone(),
             authorization: header("authorization"),
-            claim: header(crate::transport::FLEET_CLAIM_HEADER),
             env_authorization: header(crate::transport::ENV_TOKEN_HEADER),
             accepted: false,
         };
@@ -2700,13 +2756,10 @@ async fn serve_tunnel(stream: TcpStream, state: Arc<MockState>) {
             if path != format!("{prefix}{}", cua_proto::metadata::TUNNEL_WS_PATH) {
                 return Err(refuse(404, "no route"));
             }
-            if let Some(gw) = &cb_state.auth.gateway {
-                if attach.authorization.as_deref() != Some(&format!("Bearer {}", gw.bearer)) {
-                    return Err(refuse(401, "gateway bearer"));
-                }
-                if attach.claim.as_deref() != Some(gw.claim.as_str()) {
-                    return Err(refuse(403, "claim header"));
-                }
+            if let Some(gw) = &cb_state.auth.gateway
+                && attach.authorization.as_deref() != Some(&format!("Bearer {}", gw.bearer))
+            {
+                return Err(refuse(401, "gateway bearer"));
             }
             let ticket = req
                 .uri()

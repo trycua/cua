@@ -113,6 +113,7 @@ struct SpaceDetailView: View {
         .task(id: live) {
             guard detail.showSections else { return }
             let model = AgentRunsModel(backend: self.model.backend, spaceId: space.id)
+            model.onRead = { [weak app = self.model] in app?.sawAgentRuns($0) }
             agents = model
             await model.poll()
         }
@@ -335,6 +336,12 @@ struct SpaceDetailView: View {
                 backend: model.backend, spaceId: space.id, spaceName: space.name,
                 signedIn: model.identity != nil,
                 shareable: space.id.hasPrefix("relay:") || (space.sdk?.features.contains("relay_attach") ?? false))
+            sharing?.hasTeam = model.hasSharingTeam
+            Task { [weak model] in
+                // Teams may not have been read yet: the sheet closes or stays open once they are.
+                await model?.reloadTeams()
+                sharing?.hasTeam = model?.hasSharingTeam
+            }
             sharing?.telemetry = model.telemetrySink
             sharing?.onShared = { [weak model] in model?.checklist.done(.share) }
             model.recordFeature("share_open")

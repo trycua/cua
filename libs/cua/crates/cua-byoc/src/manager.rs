@@ -62,7 +62,7 @@ impl Clouds {
             let mut item = CloudSweepItem {
                 resource: rec.wire(t),
                 action: "delete".into(),
-                reason: "a relay machine a failed create left".into(),
+                reason: "a relay computer a failed create left".into(),
             };
             if !dry_run {
                 match &self.relay {

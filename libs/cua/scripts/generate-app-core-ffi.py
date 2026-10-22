@@ -19,6 +19,7 @@ OUT = ROOT / "crates/cua-spaces-ffi/src/app_core_types.rs"
 
 # (source file, module path, [types]) in FFI order.
 TYPES = [
+    ("message.rs", "message", ["Msg"]),
     ("model.rs", "model", ["SpaceOs", "SpaceStatus", "ThumbnailScene", "SpaceProvider", "SpaceSdkRef", "SpaceProgress", "PowerControl", "SpacePower", "Space", "SpaceRow", "Location", "SpaceKind", "Runtime"]),
     ("spaces/mod.rs", "spaces", ["AmbientDots"]),
     ("spaces/roster.rs", "spaces::roster", ["NoticeKind", "Notice", "RosterState", "RosterAction"]),
@@ -33,9 +34,9 @@ TYPES = [
     ("teleport/transfer.rs", "teleport::transfer", ["TransferPhase", "TransferOverlayState", "TransferStatus", "TransferSignal", "SentFileInfo"]),
     ("teleport/windows.rs", "teleport::windows", ["OpenWindow", "OpenApp", "RemoteWindow", "RemoteWindowGroup", "PickerTab", "PickerAction", "PickerPrimary"]),
     ("teleport/grid.rs", "teleport::grid", ["PickerTileIcon", "PickerTileThumbnail", "PickerTile", "PickerTileSection", "PickerGrid", "PickerGridTab", "PickerGridTabItem", "PickerGridPrimary"]),
-    ("teleport/review.rs", "teleport::review", ["SendSource", "RememberedChoice", "ReviewDomain", "ReviewToggle", "VaultSource", "ReviewChoice"]),
+    ("teleport/review.rs", "teleport::review", ["SendSource", "RememberedChoice", "ReviewDomain", "ReviewToggle", "VaultPassword", "ReviewPassword", "VaultSource", "ReviewChoice"]),
     ("teleport/flow.rs", "teleport::flow", ["Capability", "Move", "SensitiveGroup", "SensitiveOption", "CatalogEntry", "ConsentKind", "ConsentItem", "PlanStepView", "Plan", "RunPhase", "RunEvent", "RunReport", "Consent", "InstallCuaPrompt", "Step", "PickerState", "PickerEvent", "EntrySection", "ReviewView"]),
-    ("wizard.rs", "wizard", ["LocalEngine", "CloudEngine", "ImageTier", "ImageDistro", "PlatformSize", "ImageSizes", "SandboxImage", "ImageGroup", "KindOption", "StorageVolume", "LocalStorage", "CloudPricing", "CloudOffer", "ConnectedCloud", "HostLimit", "SpaceHost", "RuntimeSwitch", "PlacementOption", "GpuChoice", "WizardEnv", "WizardMode", "AddressForm", "WizardState", "WizardAction", "StepState", "StepView", "Tile", "MenuOption", "CreatePlan", "CreateSpaceArgs", "AddressView", "AddressSubmit", "ImageSuggestion", "SuggestionGroup", "ImageFieldView", "WizardField", "WizardLabels", "WizardFact", "GpuRow", "WizardView"]),
+    ("wizard.rs", "wizard", ["LocalEngine", "CloudEngine", "ImageTier", "ImageDistro", "PlatformSize", "ImageSizes", "SandboxImage", "ImageGroup", "KindOption", "StorageVolume", "LocalStorage", "CloudPricing", "CloudOffer", "ConnectedCloud", "HostLimit", "SpaceHost", "RuntimeSwitch", "PlacementOption", "GpuChoice", "WizardEnv", "WizardMode", "AddressForm", "ResourceField", "ResourceEdit", "WizardState", "WizardAction", "StepState", "StepView", "Tile", "MenuOption", "CreatePlan", "CreateSpaceArgs", "AddressView", "AddressSubmit", "ImageSuggestion", "SuggestionGroup", "ImageFieldView", "WizardField", "WizardLabels", "WizardFact", "GpuRow", "ResourceEditView", "WizardView"]),
     ("keyvault/wire.rs", "keyvault::wire", ["KvItemPolicy", "KvItem", "KvFavicon", "KvDomainCount", "KvInventory", "KvSigning", "KvCaller", "KvSelector", "KvAccessRequest", "KvPending", "KvGrant", "KvRuleCaller", "KvRule", "KvDelivery", "KvAuditEntry", "KvStatus", "KvVerification", "KeyvaultOverview", "KvCommand"]),
     ("keyvault/view.rs", "keyvault::view", ["Tone", "SigningBadge", "Tri", "DecisionTone", "Decision", "PendingRow", "AccessKind", "AccessRow", "KvLabels", "KeyvaultPage"]),
     ("keyvault/vault.rs", "keyvault::vault", ["KvKind", "KvLock", "VaultState", "VaultAction", "VaultRow", "VaultSite", "VaultFiles", "VaultApp", "VaultSelection", "VaultView", "UnlockPrompt", "KvDeleteConfirm", "KvVaultSource"]),
@@ -45,7 +46,7 @@ TYPES = [
     ("keyvault/client.rs", "keyvault::client", ["KvOutcome"]),
     ("billing.rs", "billing", ["BillingCard", "BillingCredit", "BillingStatus", "CreditNotice"]),
     ("drive_settings.rs", "drive_settings", ["DriveMountInput", "DriveS3Input", "DriveStorageInput", "DriveCheckInput", "DriveCacheInput", "StorageInput", "DriveStorageUpdate", "StorageForm", "StorageField", "StorageRequest", "StorageState", "StorageAction"]),
-    ("onboarding.rs", "onboarding", ["OnboardingStep", "DriveStepRequest", "StorageChoice", "OnboardingMode", "OnboardingState", "OnboardingAction", "StepDot", "UsageToggle", "ModeChoice", "OnboardingView", "DriveCard", "PresentationCard", "OnboardingCopy", "OnboardingCheckbox"]),
+    ("onboarding.rs", "onboarding", ["OnboardingStep", "DriveStepRequest", "StorageChoice", "OnboardingMode", "OnboardingState", "OnboardingAction", "OnboardingTodoId", "OnboardingTodo", "StepDot", "UsageToggle", "ModeChoice", "OnboardingView", "DriveCard", "PresentationCard", "OnboardingCopy", "OnboardingCheckbox"]),
     ("onboarding_preview.rs", "onboarding_preview", ["PreviewPoint", "NotchPreview", "MenuPreviewRow", "MenuPreview", "PresentationPreview", "PreviewFrame"]),
     ("driver_preview.rs", "driver_preview", ["PreviewSegment", "PreviewWindow", "DriverPreview", "DriverFrame"]),
     ("drive_mount_preview.rs", "drive_mount_preview", ["DriveMountPreview", "DriveMountFrame"]),
@@ -54,19 +55,26 @@ TYPES = [
     ("login_item.rs", "login_item", ["LoginItemStatus", "LoginItemInput", "LoginItemPlan"]),
     ("experiments.rs", "experiments", ["Experiments"]),
     ("settings.rs", "settings", ["SwitcherTheme", "AppSettings", "KeyCombo", "SignInPhase", "TelemetryInput", "SettingsInput", "SettingsRowKind", "SettingsOption", "SettingsRow", "SettingsSection", "SettingsPage"]),
+    ("sign_in.rs", "sign_in", ["SignInFailure", "SignInFooterState", "SignInFooterInput", "SignInToast", "SignInFooter"]),
     ("window.rs", "window", ["ChromeInput", "MainChrome", "MenuItemId", "MenuItem", "MenuInput"]),
     ("host.rs", "host", ["HostSummaryInput", "HostSetupRequest", "HostClient", "HostAccess", "HostPermissionInput", "HostProvidedSpace", "HostSpacesAudit", "HostState", "HostAccount", "HostAccountStep", "HostActionId", "HostSettingChange", "HostToggle", "HostConfirm", "HostAction", "HostAccessRow", "PermissionRow", "HostSetupChoice", "HostPanelView", "HostFormState", "HostFormAction", "HostFormChoice", "HostFormField", "HostFormView"]),
     ("installer.rs", "installer", ["InstallMethod", "CliInstallPlan", "CliInstallRequest"]),
     ("agents.rs", "agents", ["AgentStatus", "SpaceAgentRun", "AgentSetupStatus", "AgentSettingsRow", "AgentSetupOutcomeInput", "AgentSetupSummary"]),
     ("devices.rs", "devices", ["DeviceInput", "MachineInput", "AuditInput", "DevicesInput", "BannerTone", "DeviceAction", "DeviceBanner", "DeviceConfirm", "UnconfirmedMachine", "DeviceRow", "ApprovalPrompt", "ActivityRow", "EnrollmentKind", "MachineAccessNotice", "ThisDevice", "DevicesLabels", "DevicesView", "EnrollMethod", "EnrollPhase", "EnrollState", "EnrollAction", "EnrollOption", "EnrollView", "ApproveSheetState", "ApproveSheetAction", "ApproveRequest", "ApproveSheetView"]),
     ("cloud_connect.rs", "cloud_connect", ["CloudProviderInput", "CloudConnectInput", "CloudCheckInput", "CloudConnectPhase", "CloudConnectState", "CloudConnectAction", "CloudTargetArgs", "CloudConnectRequest", "CloudProviderRow", "CloudField", "CloudCheckRow", "CloudConnectView"]),
-    ("share.rs", "share", ["ShareEntryInput", "ShareInput", "ShareRequest", "ShareSheetState", "ShareSheetAction", "RoleOption", "ShareRowView", "ShareSheetView"]),
+    ("share.rs", "share", ["ShareEntryInput", "ShareInput", "ShareRequest", "ShareSheetState", "ShareSheetAction", "RoleOption", "ShareRowView", "ShareActionView", "ShareSheetView", "ShareGate", "ShareRemovalInput", "ShareRemovalNote"]),
     ("persistent.rs", "persistent", ["PersistentAgentInput", "DriveEntryInput", "FileVersionInput", "OpenFileInput", "RoutineInput", "ComputerGrantInput", "AccessAuditInput", "AgentsInput", "AgentTab", "RoutineScheduleKind", "RoutineForm", "AgentsRequest", "AgentsState", "AgentsAction", "AgentRowView", "LineView", "TabView", "FileView", "AgentDetailView", "AgentsView"]),
     ("drive_page.rs", "drive_page", ["DriveRequestInput", "DriveGrantInput", "DriveDeviceInput", "DriveConflictInput", "DriveSyncInput", "DriveInput", "DriveRequest", "DriveState", "DriveAction", "ConflictView", "DriveView"]),
     ("notifications.rs", "notifications", ["NotificationInput", "SystemNote", "NotificationsPlan", "NotificationsView"]),
     ("telemetry.rs", "telemetry", ["TelemetrySignal"]),
-    ("checklist.rs", "checklist", ["ChecklistStep", "ChecklistState", "ChecklistAction", "ChecklistTransition", "ChecklistRow", "ChecklistView"]),
+    ("machines.rs", "machines", ["DeviceIn", "MachinesPageInput", "MachinePageRow"]),
+    ("machines_health.rs", "machines_health", ["MachinesViewCheck", "MachinesViewHealth", "MachinesViewIssueAction", "MachinesViewIssue"]),
+    ("machines_view.rs", "machines_view", ["MachinesViewRelay", "MachinesViewAbout", "MachinesViewInput", "MachinesViewToggle", "MachinesViewSpace", "MachinesViewDesktop", "MachinesViewNewSpace", "MachinesViewRename", "MachinesViewRemove", "MachinesViewFact", "MachinesViewMachine", "MachinesViewRemoveAll", "MachinesViewGroup", "MachinesView"]),
+    ("checklist.rs", "checklist", ["ChecklistStep", "ChecklistState", "ChecklistAction", "ChecklistSeen", "ChecklistTransition", "ChecklistRow", "ChecklistView"]),
     ("palette.rs", "palette", ["Keybinding", "PaletteEntry"]),
+    ("teams.rs", "teams", ["TeamPersonInput", "TeamInput", "TeamsState", "TeamsInput"]),
+    ("relay_usage.rs", "relay_usage", ["RelayUsageTeam", "RelayUsage", "RelayAllowanceNotice", "PlanLink", "PlanCard", "RelayUsageView"]),
+    ("resources.rs", "resources", ["DiskLevel", "DiskWarning", "ComputerResources", "GuestUsage", "DiskOnHost", "SpaceResources", "ResourcesSnapshot", "ResourceTone", "ResourceRow", "WarningView", "ThisMacView", "SpaceResourcesView", "ComputerView", "ResourcesView"]),
 ]
 
 # FFI names that read better than the plain prefix.
@@ -155,7 +163,7 @@ def block(src, name):
 
 
 out = [
-    # cua-spaces-ffi is FSL-1.1-MIT (see LICENSING.md and scripts/spdx-headers.py).
+    # cua-spaces-ffi is FSL-1.1-MIT (see legal/LICENSING.md and scripts/spdx-headers.py).
     "// SPDX-License-Identifier: FSL-1.1-MIT",
     "// Copyright (c) 2026 Cua AI, Inc.",
     "",

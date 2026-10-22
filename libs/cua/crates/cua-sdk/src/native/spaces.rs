@@ -120,6 +120,8 @@ pub const SPACES_SDK_ONLY_METHODS: &[&str] = &[
     "Spaces.space",
     "Spaces.list_tools_json",
     "Spaces.call_tool_json",
+    "Spaces.resources",
+    "Spaces.watch_resources",
     "Space.home",
     "Space.screenshot",
     "Space.close_stream",
@@ -232,6 +234,12 @@ pub struct SpaceInfo {
     /// Empty for other Spaces.
     #[serde(default)]
     pub cloud_delete: String,
+    /// Why a local Space stopped without being asked to, in plain words
+    /// ("out of memory", "killed", "exited with code 1"); empty otherwise,
+    /// and once it is started again.
+    #[serde(default)]
+    #[uniffi(default)]
+    pub stop_reason: String,
 }
 
 impl From<dpb::Space> for SpaceInfo {
@@ -265,6 +273,7 @@ impl From<dpb::Space> for SpaceInfo {
             cloud: s.cloud,
             cloud_place: s.cloud_place,
             cloud_delete: s.cloud_delete,
+            stop_reason: s.stop_reason,
         }
     }
 }
@@ -293,6 +302,7 @@ impl From<cua_spaces::SpaceInfo> for SpaceInfo {
             cloud: s.cloud,
             cloud_place: s.cloud_place,
             cloud_delete: s.cloud_delete,
+            stop_reason: s.stop_reason,
         }
     }
 }
@@ -330,8 +340,9 @@ pub struct SpaceCreateOptions {
     /// Image (default: the canonical Linux image).
     #[uniffi(default = None)]
     pub image: Option<String>,
-    /// Where: `local` (free) or `cloud` (metered). `None`: the user default
-    /// (`default.on`, `CUA_DEFAULT_ON`, else `local`).
+    /// Where: `local` (free), a connected cloud account (`aws`, `gcp`,
+    /// `modal`) or `host:<name>`. `None`: the user default (`default.on`,
+    /// `CUA_DEFAULT_ON`, else `local`).
     #[uniffi(default = None)]
     pub on: Option<String>,
     /// `auto` (default), `container` or `vm`.
@@ -343,13 +354,10 @@ pub struct SpaceCreateOptions {
     /// Name (default `space-<hex>`).
     #[uniffi(default = None)]
     pub name: Option<String>,
-    /// vCPUs. Local default 2; cloud 1-64 (most accounts run 1-8; Fleet
-    /// decides), default the pool template's (4).
+    /// vCPUs. Local default 2.
     #[uniffi(default = None)]
     pub cpus: Option<u32>,
-    /// Memory in MiB. Local default 4096; cloud 512 up to 524288 (most
-    /// accounts run 1024-32768; Fleet decides), default the pool
-    /// template's (4096).
+    /// Memory in MiB. Local default 4096.
     #[uniffi(default = None)]
     pub memory_mb: Option<u64>,
     /// Grow the VM's disk to this many GiB (local VMs; default: the
@@ -492,7 +500,7 @@ impl From<dpb::SpacesHost> for SpacesHost {
 /// none.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct GpuSupport {
-    /// `lume`, `qemu`, `container`, `gvisor`, `fleet`, a provider's name.
+    /// `lume`, `qemu`, `container`, `gvisor`, a provider's name.
     pub runtime: String,
     /// Its options.
     pub options: Vec<GpuOption>,
@@ -810,11 +818,23 @@ pub struct SpaceWindow {
     pub limitation: String,
 }
 
-/// Memory and storage use ([`Space::usage`]). A size is the guest's own
-/// limit only when its `*_limited` flag says so (a VM's memory or disk, a
-/// container's cgroup memory limit).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record, Deserialize)]
+/// Processor, memory and storage use ([`Space::usage`]). A size is the
+/// guest's own limit only when its `*_limited` flag says so (a VM's memory
+/// or disk, a container's cgroup memory limit).
+#[derive(Debug, Clone, Copy, PartialEq, uniffi::Record, Deserialize)]
 pub struct SpaceUsage {
+    /// Cores the guest sees (0 from a guest that does not report it).
+    #[uniffi(default = 0)]
+    #[serde(default)]
+    pub cpu_count: u32,
+    /// Busy now, 0 to 100.
+    #[uniffi(default = 0.0)]
+    #[serde(default)]
+    pub cpu_percent: f64,
+    /// 1-minute load average.
+    #[uniffi(default = 0.0)]
+    #[serde(default)]
+    pub load_average_1m: f64,
     /// Memory in use, bytes.
     pub memory_used: u64,
     /// Memory size, bytes.
@@ -936,8 +956,8 @@ pub struct SpaceStreamTicket {
     pub width: u32,
     /// Initial height.
     pub height: u32,
-    /// Attaching needs [`Space::websocket_headers`] (Fleet gateway or the
-    /// daemon passthrough).
+    /// Attaching needs [`Space::websocket_headers`] (a gateway or the daemon
+    /// passthrough).
     pub needs_headers: bool,
 }
 
@@ -1821,9 +1841,6 @@ fn tag_error(kind: &str, message: String) -> CuaError {
         "timeout" => CuaError::Timeout(message),
         "cancelled" => CuaError::Cancelled(message),
         "unauthenticated" => CuaError::Unauthenticated(message),
-        "fleet" => CuaError::Fleet(message),
-        "fleet_admission_denied" => CuaError::FleetAdmissionDenied(message),
-        "cloud_credit_exhausted" => CuaError::CloudCreditExhausted(message),
         "cloud" => CuaError::Cloud(message),
         "sandbox" => CuaError::Runtime(message),
         // Cua Volume: refusals by the access rules or a declined presence
@@ -1845,7 +1862,9 @@ impl From<cua_spaces::Error> for CuaError {
         let message = e.to_string();
         match e {
             cua_spaces::Error::Env(env) => env.into(),
-            cua_spaces::Error::Fleet(f) => f.into(),
+            // The refusal's own words: `CuaError::TeleportRefused` says
+            // "teleport refused:" itself (not twice).
+            cua_spaces::Error::TeleportRefused(why) => CuaError::TeleportRefused(why),
             _ => tag_error(kind, message),
         }
     }
@@ -2031,6 +2050,11 @@ impl ToolOut {
     }
 }
 
+// The resource records and watch live in `spaces_resources.rs` (the docs
+// generators read `native/*.rs`), included here so they share this module's
+// private `Host` and `daemon_err`.
+include!("spaces_resources.rs");
+
 /// Where the Spaces runtime lives.
 #[derive(Clone)]
 enum Host {
@@ -2193,10 +2217,64 @@ impl SpacesToolCaller {
     }
 }
 
+// ------------------------------------------------------------ Machine health
+
+/// One check of a machine's health ([`Spaces::machine_health`]).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MachineHealthCheck {
+    /// `machine.local_network`, `machine.disk`, `machine.virtualization`,
+    /// `machine.memory`, `machine.permissions.<id>`.
+    pub id: String,
+    /// `pass`, `warn`, `fail` or `skip`.
+    pub status: String,
+    /// What it found, in one line.
+    pub message: String,
+    /// What to do about a warning or failure.
+    pub remediation: String,
+    /// What a UI needs to word it and offer its fix (`app`, `settings_url`,
+    /// `free_gb`, ...).
+    pub facts: std::collections::HashMap<String, String>,
+}
+
+/// A machine's health as its own cua daemon checks it.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MachineHealth {
+    /// The Cua version of the daemon that checked.
+    pub cua_version: String,
+    /// `macos`, `linux`, `windows`.
+    pub os: String,
+    /// Every check, in order.
+    pub checks: Vec<MachineHealthCheck>,
+    /// The whole report as JSON (the schema `cua doctor --json` writes).
+    pub report_json: String,
+}
+
+impl From<cua_proto::env::v1::DiagnoseHostResponse> for MachineHealth {
+    fn from(r: cua_proto::env::v1::DiagnoseHostResponse) -> Self {
+        let report = cua_spacesd_client::diagnose::Report::from_pb(r.report.unwrap_or_default());
+        Self {
+            cua_version: r.cua_version,
+            os: r.os,
+            checks: report
+                .checks
+                .iter()
+                .map(|c| MachineHealthCheck {
+                    id: c.id.clone(),
+                    status: c.status.as_str().to_string(),
+                    message: c.message.clone(),
+                    remediation: c.remediation.clone(),
+                    facts: c.facts.clone().into_iter().collect(),
+                })
+                .collect(),
+            report_json: report.to_json(),
+        }
+    }
+}
+
 // ------------------------------------------------------------ Spaces
 
-/// The Spaces registry: add a machine by URL, claim a Fleet Space,
-/// provision a local one, and get [`Space`] handles.
+/// The Spaces registry: add a machine by URL, provision a local one, and get
+/// [`Space`] handles.
 #[derive(uniffi::Object)]
 pub struct Spaces {
     host: Host,
@@ -2556,9 +2634,9 @@ impl Spaces {
     /// Cancels a create that is still running: `space` is the create's
     /// `create_id`, the id the Space will have (`local:<name>`, carried by
     /// every progress report) or its name. The work in flight stops (an
-    /// image download, a boot, a claim, a relay registration) and what the
-    /// create made is removed (its VM or container and disks, its cloud
-    /// claim, its relay machine); nothing that existed before is touched.
+    /// image download, a boot, a relay registration) and what the
+    /// create made is removed (its VM or container and disks, its relay
+    /// machine); nothing that existed before is touched.
     /// Finished image downloads stay cached, so the next create resumes.
     /// Returns once the clean-up is done; the create itself fails with
     /// `Cancelled`. Idempotent: a second call says `not_creating`. Works
@@ -2650,6 +2728,27 @@ impl Spaces {
                     .map(Into::into)
                     .collect(),
             })
+        })
+        .await
+    }
+
+    /// A machine's health as its own cua daemon checks it: Local Network
+    /// access (and which app macOS holds responsible), free disk,
+    /// virtualization, memory left by running Spaces, the permissions
+    /// sharing its desktop needs. `machine`: another of your machines, by
+    /// id or name (asked over the relay, the mesh or its direct address);
+    /// `None` for this one. Read-only; fails plainly when that machine is
+    /// offline, not yours, or runs a Cua that predates the check.
+    pub async fn machine_health(&self, machine: Option<String>) -> Result<MachineHealth> {
+        let host = self.host.clone();
+        run(async move {
+            let machine = machine.filter(|m| !m.trim().is_empty());
+            let r = match (&host, machine) {
+                (Host::Embedded(_), None) => cua_daemon::machine_doctor::response().await,
+                (Host::Embedded(s), Some(m)) => s.machine_health(&m).await?,
+                (Host::Daemon(d), m) => d.diagnose_host(m.unwrap_or_default()).await?,
+            };
+            Ok(r.into())
         })
         .await
     }
@@ -3229,8 +3328,8 @@ impl Space {
         run(async move { Ok(s.window_thumbnail(&window_id, epoch, max_dimension).await?) }).await
     }
 
-    /// Memory and storage use now (cheap: poll it at a low rate while a
-    /// detail is visible).
+    /// Processor, memory and storage use now (cheap: poll it at a low rate
+    /// while a detail is visible).
     pub async fn usage(&self) -> Result<SpaceUsage> {
         let s = self.inner.clone();
         run(async move { via_json(&s.usage().await?) }).await
@@ -4156,6 +4255,15 @@ fn parse_conflict(conflict: Option<&str>) -> Result<cua_spaces::files::Conflict>
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn a_teleport_refusal_says_teleport_refused_once() {
+        let err = CuaError::from(cua_spaces::Error::TeleportRefused(
+            "the approver declined".into(),
+        ));
+        assert!(matches!(err, CuaError::TeleportRefused(_)), "{err:?}");
+        assert_eq!(err.to_string(), "teleport refused: the approver declined");
+    }
 
     #[test]
     fn an_embedded_insufficient_disk_becomes_insufficient_disk() {

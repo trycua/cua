@@ -6,7 +6,10 @@
 # reconnects to whichever replica it lands on, so run one replica per
 # hostname (or route /relay/v1/connect and /m/<id> with consistent hashing
 # on the id). Account mode also keeps its directory on a ReadWriteOnce
-# volume, so replace the pod (Recreate) instead of rolling it.
+# volume. Deploys still overlap: the new pod starts on the same node, waits
+# in standby until the old one exits (a lock in the state directory) and
+# then takes over, with requests queued rather than refused (README,
+# "Deploys without downtime").
 #
 # Account mode (cua.ai logins, `cua host setup`): set CUA_RELAY_OIDC_ISSUER
 # (+ audience), and keep the machine directory and the assertion signing key
@@ -26,18 +29,34 @@ metadata:
   name: cua-relay
 spec:
   replicas: 1
-  strategy: { type: Recreate }
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
   selector:
     matchLabels: { app: cua-relay }
   template:
     metadata:
       labels: { app: cua-relay }
     spec:
+      # The next pod lands on the node that has the volume mounted.
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector: { matchLabels: { app: cua-relay } }
+              topologyKey: kubernetes.io/hostname
+      terminationGracePeriodSeconds: 20
       containers:
         - name: cua-relay
           image: ghcr.io/trycua/cua-relay:latest
-          ports: [{ containerPort: 8080, name: http }]
+          ports:
+            - { containerPort: 8080, name: http }
+            - { containerPort: 8081, name: health }
+          lifecycle:
+            # Keep serving while the ingress drops this pod.
+            preStop: { sleep: { seconds: 3 } }
           env:
+            - { name: CUA_RELAY_HEALTH_LISTEN, value: "0.0.0.0:8081" }
+            - { name: CUA_RELAY_SHUTDOWN_GRACE_SECS, value: "3" }
             - { name: CUA_RELAY_HOST_DOMAIN, value: relay.example.com }
             - name: CUA_RELAY_TOKENS
               valueFrom: { secretKeyRef: { name: cua-relay, key: tokens } }
@@ -50,9 +69,10 @@ spec:
             - { name: CUA_RELAY_SIGNING_KEY_FILE, value: /var/lib/cua-relay/signing.key }
           volumeMounts: [{ name: state, mountPath: /var/lib/cua-relay }]
           readinessProbe:
-            httpGet: { path: /healthz, port: http }
+            httpGet: { path: /healthz, port: health }
+            periodSeconds: 2
           livenessProbe:
-            httpGet: { path: /healthz, port: http }
+            httpGet: { path: /healthz, port: health }
             periodSeconds: 20
           resources:
             requests: { cpu: 100m, memory: 64Mi }

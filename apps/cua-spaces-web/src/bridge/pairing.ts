@@ -7,12 +7,19 @@
  * the other computer uses it, and revokes it on request
  * (`devices.revokePairingCode`). The relay holds the code's state; this
  * only asks.
+ *
+ * With `team` (an organization id) the machine that used the code is then
+ * made a team machine (`sharing.share` with `team:<id>`): pairing alone
+ * never puts a machine in a team. Right after a Teams checkout the host
+ * waits a few seconds for the plan ("Finishing setup…"); a team that never
+ * paid fails at once, with words and a way to upgrade (`planFailure`).
  */
 
 import { useEffect, useRef, useState } from "react";
 
 import { HostError, isUnsupported } from "./adapter";
 import type { PairingCode } from "./contracts/devices";
+import { plainPairingError } from "./friendly-errors";
 import { useBridge } from "./hooks";
 
 /** How often an open "Add a machine" asks whether its code was used (ms). */
@@ -26,7 +33,48 @@ export interface PairingState {
   code: PairingCode | null;
   /** Why no code could be made; `unsupported`: the host or relay can't make them. */
   error: { message: string; unsupported: boolean } | null;
+  /**
+   * With a `team`, after the code was used: `adding` (show "Finishing
+   * setup…"), `added`, or `failed` with the reason. Null otherwise.
+   */
+  team?: { phase: "adding" | "added" | "failed"; error: string | null; upgradeUrl?: string | null } | null;
 }
+
+/** Where a team owner buys Teams, and where anyone buys Pro. */
+export const BUY_TEAMS_URL = "https://app.cua.ai/buy/teams";
+export const BUY_PRO_URL = "https://app.cua.ai/buy/pro";
+
+const BUY_URL = /\s*https:\/\/app\.cua\.ai\/buy\/(?:teams|pro)\b\S*/;
+
+/**
+ * A failed team step in words. The host already words plan errors: an owner
+ * gets the checkout link last in the message (it becomes an Upgrade button),
+ * anyone else is told to ask the owner. A raw plan error from an older host
+ * (`HTTP 402 (feature_required: team_machines)`) is reworded here, without a
+ * button because the role is not known.
+ */
+export function planFailure(raw: string): { text: string; upgradeUrl: string | null } {
+  const link = BUY_URL.exec(raw);
+  if (link) return { text: raw.replace(BUY_URL, "").trim(), upgradeUrl: link[0].trim() };
+  const feature = /feature_required(?::\s*(\w+))?/.exec(raw)?.[1];
+  if (/feature_required/.test(raw)) {
+    const what =
+      feature === "team_machines"
+        ? "Team computers need the Teams plan."
+        : feature === "team_roles"
+          ? "Admin roles need the Teams plan."
+          : feature === "device_approval"
+            ? "Approving devices needs the Teams plan."
+            : "This needs the Teams plan.";
+    return { text: `${what} Ask the team owner to upgrade.`, upgradeUrl: null };
+  }
+  if (/add_seats/.test(raw)) return { text: "Your team has no free seats. Ask the team owner to add seats.", upgradeUrl: null };
+  if (/machine_limit/.test(raw)) return { text: "Your team has as many computers as it has seats. Ask the team owner to add seats.", upgradeUrl: null };
+  return { text: raw, upgradeUrl: null };
+}
+
+/** What "Add a machine" shows while a paired machine joins its team. */
+export const FINISHING_SETUP = "Finishing setup…";
 
 export interface PairingHook extends PairingState {
   /** Unix ms, ticking each second while a code is active (for the countdown). */
@@ -93,7 +141,7 @@ export function usePairingCode({
       },
       (e: unknown) => {
         if (mine !== seq.current) return;
-        setState({ phase: "error", code: null, error: { message: e instanceof Error ? e.message : String(e), unsupported: pairingUnsupported(e) } });
+        setState({ phase: "error", code: null, error: { message: plainPairingError(e), unsupported: pairingUnsupported(e) } });
       },
     );
   };
@@ -138,7 +186,10 @@ export function usePairingCode({
           const code: PairingCode = { ...s.code, state: listed.state, usedAt: listed.usedAt, machine: listed.machine };
           return { ...s, phase, code };
         });
-        if (listed.state === "used") usedRef.current?.(listed);
+        if (listed.state === "used") {
+          usedRef.current?.(listed);
+          if (team && listed.machine) void addToTeam(listed.machine);
+        }
       } catch {
         // A missed read: the next one tries again.
       } finally {
@@ -150,7 +201,20 @@ export function usePairingCode({
       stopped = true;
       clearInterval(timer);
     };
-  }, [adapter, watching, pollMs]);
+  }, [adapter, watching, pollMs, team]);
+
+  // The machine that used the code becomes a machine of `team`.
+  const addToTeam = async (machine: string) => {
+    if (!adapter || !team) return;
+    setState((s) => ({ ...s, team: { phase: "adding", error: null } }));
+    try {
+      await adapter.call("sharing.share", { spaceId: `relay:${machine}`, who: `team:${team}`, role: "editor" });
+      setState((s) => ({ ...s, team: { phase: "added", error: null } }));
+    } catch (e: unknown) {
+      const { text, upgradeUrl } = planFailure(e instanceof Error ? e.message : String(e));
+      setState((s) => ({ ...s, team: { phase: "failed", error: text, upgradeUrl } }));
+    }
+  };
 
   const revoke = async () => {
     const code = state.code;

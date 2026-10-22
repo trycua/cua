@@ -15,6 +15,9 @@
 #                                          Updater.app, then the framework
 #   Contents/Frameworks/libcua_sdk.dylib   (no entitlements)
 #   Contents/MacOS/cua                     com.trycua.cua, Support/cua.entitlements
+#   Contents/MacOS/cua-spacesd             com.trycua.cua-env-driver (the host service,
+#                                          which the app's own executable runs as its
+#                                          login item)
 #   Cua Spaces.app                         com.trycua.spaces.macos, Support/CuaSpacesMac.entitlements
 #
 #   scripts/build-release.sh --version 0.2.0[-suffix] [--build-number N]
@@ -144,6 +147,16 @@ if [ -n "$feed_url" ]; then
   case "$feed_url" in https://*) ;; *) echo "--feed-url must be https" >&2; exit 2 ;; esac
   /usr/libexec/PlistBuddy -c "Set :SUFeedURL $feed_url" "$plist"
 fi
+[ -x "$app/Contents/MacOS/cua-spacesd" ] || { echo "$app has no Contents/MacOS/cua-spacesd" >&2; exit 1; }
+[ -f "$app/Contents/Library/LaunchAgents/com.trycua.spaces.helper.plist" ] ||
+  { echo "$app has no com.trycua.spaces.helper.plist" >&2; exit 1; }
+# The symbols build-app.sh took out of the binaries, for symbolicating crash
+# reports (the release workflow keeps it as an artifact; not shipped).
+if [ -d "$out/dSYMs" ]; then
+  rm -f "$out/cua-spaces-$version-dSYMs.zip"
+  (cd "$out" && ditto -c -k --keepParent dSYMs "cua-spaces-$version-dSYMs.zip")
+  rm -rf "$out/dSYMs"
+fi
 for key in SUFeedURL SUPublicEDKey; do
   /usr/libexec/PlistBuddy -c "Print :$key" "$plist" >/dev/null 2>&1 || { echo "Info.plist has no $key" >&2; exit 1; }
 done
@@ -151,7 +164,7 @@ done
 # Inside out: nested code first, the bundle last (its signature seals the
 # nested signatures). No --deep: each piece gets its own identifier and
 # entitlements.
-sign=(codesign --force --options runtime --sign "$identity")
+sign=("$here/scripts/retry-apple.sh" -- codesign --force --options runtime --sign "$identity")
 [ "$identity" = "-" ] || sign+=(--timestamp)
 # Sparkle, inside out, as its documentation orders it for a Developer ID
 # app outside the App Sandbox: the XPC services (the Downloader keeps its
@@ -175,6 +188,10 @@ done
 "${sign[@]}" "$app/Contents/Frameworks/libcua_sdk.dylib"
 "${sign[@]}" --identifier com.trycua.cua \
   --entitlements "$here/Support/cua.entitlements" "$app/Contents/MacOS/cua"
+# The host service. The app's own executable runs it, so its permissions
+# are the app's (designated requirement: identifier and team, checked
+# below), and they stay granted across updates.
+"${sign[@]}" --identifier com.trycua.cua-env-driver "$app/Contents/MacOS/cua-spacesd"
 app_entitlements="$here/Support/CuaSpacesMac.entitlements"
 if [ "$identity" = "-" ]; then
   app_entitlements="$out/.adhoc.entitlements"
@@ -185,7 +202,8 @@ fi
 [ "$identity" = "-" ] && rm -f "$app_entitlements"
 
 codesign --verify --deep --strict --verbose=2 "$app" >&2
-for f in "$app" "$app/Contents/MacOS/cua" "$app/Contents/Frameworks/libcua_sdk.dylib" "${sparkle_parts[@]}"; do
+for f in "$app" "$app/Contents/MacOS/cua" "$app/Contents/Frameworks/libcua_sdk.dylib" "${sparkle_parts[@]}" \
+  "$app/Contents/MacOS/cua-spacesd"; do
   flags="$(codesign -dv "$f" 2>&1 | sed -n 's/^CodeDirectory.*flags=\([^ ]*\).*/\1/p')"
   case "$flags" in *runtime*) ;; *) echo "$f is not signed with the hardened runtime ($flags)" >&2; exit 1 ;; esac
 done
@@ -228,7 +246,7 @@ fi
 # A Developer ID build signs Sparkle with the same team (library
 # validation stays on: the app loads only its own team's code).
 if [ "$identity" != "-" ]; then
-  for f in "${sparkle_parts[@]}"; do
+  for f in "${sparkle_parts[@]}" "$app/Contents/MacOS/cua-spacesd"; do
     codesign --verify -R="anchor apple generic and certificate leaf[subject.OU] = \"$team\"" "$f" ||
       { echo "$f is not signed by team $team" >&2; exit 1; }
   done

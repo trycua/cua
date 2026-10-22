@@ -8,8 +8,7 @@
  *
  * Session setup is gRPC in the shell: `open_space_stream` returns a scoped
  * media ticket (`wsUrl` carries it, so no token ever reaches the webview and
- * no loopback bridge is needed for direct/local Spaces; Cua Cloud Spaces get a
- * `cua daemon` media-bridge ticket). `MediaSession` attaches and plays.
+ * no loopback bridge is needed). `MediaSession` attaches and plays.
  *
  * - SINGLE mode (`targetWindow` set): one remote window fills the OS window,
  *   which is sized to the remote and resize-synced when geometry control is
@@ -33,6 +32,7 @@ import { createTeleportBridge } from "../native/teleport";
 import { telemetryBridge, type TelemetryBridge } from "../native/telemetry";
 import { PresenceOverlay } from "./presence/PresenceOverlay";
 import { MediaSession, type MediaStatus, type MediaTicket, type SessionOpenedPayload } from "@cua/spacesd-html5/core/mediaSession";
+import { useT } from "../i18n";
 
 export { applyCursorShape, cursorShapeToCss } from "./cursorShape";
 
@@ -178,6 +178,7 @@ type Boot =
   | { kind: "ready"; config: ViewerConfig };
 
 export function WindowStream({ fleet, listWindows }: WindowStreamProps) {
+  const t = useT(["spaces", "common"]);
   const [boot, setBoot] = useState<Boot>({ kind: "loading" });
 
   useEffect(() => {
@@ -196,7 +197,7 @@ export function WindowStream({ fleet, listWindows }: WindowStreamProps) {
     };
   }, [fleet]);
 
-  if (boot.kind === "loading") return <div className="viewer viewer-message">Connecting…</div>;
+  if (boot.kind === "loading") return <div className="viewer viewer-message">{t("common.status.connecting")}</div>;
   if (boot.kind === "error") {
     return <div className="viewer viewer-message viewer-error">{boot.message}</div>;
   }
@@ -217,6 +218,7 @@ async function currentWindow() {
 }
 
 function SingleWindowStream({ fleet, config }: { fleet: FleetBridge; config: ViewerConfig }) {
+  const t = useT(["spaces", "common"]);
   const target = config.targetWindow!;
   const space = config.space;
   const [status, setStatus] = useState<MediaStatus>("connecting");
@@ -344,7 +346,7 @@ function SingleWindowStream({ fleet, config }: { fleet: FleetBridge; config: Vie
               <span>{detail ?? "The stream ended."}</span>
               {!borrowed && (
                 <button type="button" className="ghost-button" onClick={() => setGeneration((g) => g + 1)}>
-                  Retry
+                  {t("common.action.retry")}
                 </button>
               )}
             </>
@@ -376,6 +378,7 @@ function MultiWindowStream({
   config: ViewerConfig;
   listWindows: (spaceId: string) => Promise<RemoteWindow[]>;
 }) {
+  const t = useT(["spaces", "common"]);
   const space = config.space;
   const [windows, setWindows] = useState<RemoteWindow[]>([]);
   const [status, setStatus] = useState<"waiting" | "connected">("waiting");
@@ -416,12 +419,12 @@ function MultiWindowStream({
       {status === "waiting" && (
         <div className="window-stream-status">
           <span className="window-stream-spinner" aria-hidden="true" />
-          <span>Waiting for {space.name}…</span>
+          <span>{t("spaces.window_stream.waiting_for", { name: space.name })}</span>
         </div>
       )}
       {status === "connected" && windows.length === 0 && (
         <div className="window-stream-status">
-          <span>No open windows in {space.name} yet.</span>
+          <span>{t("spaces.window_stream.no_windows", { name: space.name })}</span>
         </div>
       )}
     </div>
@@ -439,6 +442,7 @@ function WindowPanel({
   win: RemoteWindow;
   index: number;
 }) {
+  const t = useT(["spaces", "common"]);
   const [pos, setPos] = useState({ x: 30 + ((index * 40) % 300), y: 24 + ((index * 36) % 220) });
   const [title, setTitle] = useState(win.title);
   const [badge, setBadge] = useState("");
@@ -474,7 +478,7 @@ function WindowPanel({
         <button
           type="button"
           className="ws-frame-close"
-          aria-label="Close window"
+          aria-label={t("spaces.window_stream.close_window")}
           onClick={() => {
             const id = sessionRef.current?.id;
             if (id) void fleet.closeStream(spaceId, id).catch(() => {});

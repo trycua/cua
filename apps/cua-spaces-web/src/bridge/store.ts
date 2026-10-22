@@ -9,12 +9,16 @@
  * `state/cloud.tsx` does. Hooks read it with `useSyncExternalStore`.
  */
 
+import { hostOs } from "./host-os";
+import { spokenName } from "./space-names";
 import { isUnsupported, type DataAdapter } from "./adapter";
 import type { AgentRunStatus, AgentSetupRow, PersistentAgent, SpaceAgentRun } from "./contracts/agents";
 import type { CoreClient } from "./core";
 import { withCreateContext } from "./create-context";
+import { createReport, reportMailto, type CreateReport, type ReportSend } from "./diagnostic-report";
+import type { AboutInput } from "./contracts/settings";
 import { passedSteps } from "./onboarding";
-import type { MachineRow, OnboardingMode, SettingsPage, SignInPhase, SignInStart, SpaceCreateConfig, TelemetryView } from "./contracts/host";
+import type { MachineRow, MachinesView, OnboardingMode, SettingsPage, SignInFailure, SignInPhase, SignInStart, SpaceCreateConfig, TelemetryView } from "./contracts/host";
 import type { OnboardingAction, OnboardingFlowState } from "./contracts/onboarding";
 import type { KeyvaultOverview, KvGrant, KvListView, KvSelection, VaultAction, VaultState } from "./contracts/keyvault";
 import type { KvAccessCommand } from "./ops/keyvault-manage";
@@ -29,6 +33,8 @@ import {
   keyvaultPane,
   groupByApp,
   hostPanelFromState,
+  hostState,
+  machinesView,
   keyvaultViews,
   reduceCreates,
   rowsToSpaces,
@@ -40,7 +46,8 @@ import {
   type KeyvaultViews,
   type Machine,
 } from "./derive";
-import type { HostEvent, HostSignIn, SessionSnapshot, SettingKey, SettingsSnapshot, SettingsValues } from "./protocol";
+import type { HostEvent, HostSignIn, HostSignInFailure, SessionSnapshot, SettingKey, SettingsSnapshot, SettingsValues } from "./protocol";
+import { signInFailedFromError, signInFailedPhase, type FailedPhase } from "./sign-in";
 import { createSettingsFeature, type SettingsFeature } from "./settings-feature";
 import { SpaceDetailStore } from "./space-detail";
 import {
@@ -51,7 +58,7 @@ import {
   telemetryOnboarding,
   telemetryOnboardingFinished,
   telemetryOnboardingSkipped,
-  telemetrySignInFailed,
+  telemetrySignInFailure,
 } from "./telemetry";
 import { ThisMachineStore } from "./this-machine";
 import { Transcript, type TranscriptItem } from "./transcript";
@@ -172,6 +179,9 @@ const timelineKey = (r: RunRef) => `${r.spaceId}\n${r.runId}`;
 /** `createSpace`'s request: the SDK's create config, plus the OS when the image doesn't say. */
 export interface CreateSpaceRequest extends SpaceCreateConfig {
   os?: SpaceOs;
+  /** The host also posts a system notification when it is ready (the
+   * first run's extra Space, which keeps going after the window closes). */
+  notifyWhenReady?: boolean;
 }
 
 export interface StoreOptions {
@@ -187,7 +197,6 @@ export interface StoreOptions {
 /** A device code lives about this long; a sign-in still waiting after it
  * will not finish. */
 const SIGN_IN_TIMEOUT_MS = 10 * 60_000;
-export const SIGN_IN_TIMED_OUT = "The sign-in timed out. Try again.";
 
 const CREATE_TICK_MS = 1_000;
 /** How often a watched run is read while a turn runs, and while it waits. */
@@ -251,6 +260,9 @@ export class BridgeStore {
   private agentsPending: string[] = [];
   private signInUrl: string | null = null;
   private signInTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Counts `session.signIn` answers: a session read started before the
+   * latest one says nothing about it (an earlier attempt's failure). */
+  private signInEpoch = 0;
   private readonly signInTimeoutMs: number;
   private overview: KeyvaultOverview | undefined;
   private vaultState: VaultState = INITIAL_VAULT_STATE;
@@ -258,8 +270,14 @@ export class BridgeStore {
   private seenApps = new Set<string>();
   /** Parity harness: this machine's host state as the core takes it. */
   private hostOverride: { state: object | null } | undefined;
+  /** A Machines page the core drew from a parity input (`showMachinesView`). */
+  private viewOverride: MachinesView | null = null;
+  /** Parity: the rows were drawn by `showMachines*`; a later listing (the page's health check) must not replace them. */
+  private machinesPinned = false;
   /** The clock `showMachines` lists its rows at (parity); else now. */
   private machinesNow: number | undefined;
+  /** The Machines page as drawn (`machinesView`). */
+  private machinesViewSnap: MachinesView | null = null;
   private inflight = new Map<ResourceName, Promise<void>>();
   private timelines = new Map<string, TimelineEntry>();
   private unsubscribe: (() => void) | undefined;
@@ -342,6 +360,33 @@ export class BridgeStore {
     return this.resources[name] as Resource<T>;
   }
 
+  /** The Machines page as every UI draws it (null: no core). */
+  get machinesView(): MachinesView | null {
+    return this.machinesViewSnap;
+  }
+
+  /** Renames a machine (`machines.rename`), then lists the machines again. */
+  async renameMachine(id: string, name: string): Promise<void> {
+    await this.adapter.call("machines.rename", { id, name });
+    await this.refresh("machines");
+  }
+
+  /** Asks each machine that can be checked for its health
+   * (`machines.checkHealth`), then lists the machines again, with their
+   * issues. */
+  async checkMachinesHealth(): Promise<void> {
+    await this.adapter.call("machines.checkHealth", {});
+    await this.refresh("machines");
+  }
+
+  /** Removes a machine from the account (`machines.remove`), then lists
+   * the Spaces and machines again. */
+  async removeMachine(machine: string | null, device: string | null): Promise<void> {
+    await this.adapter.call("machines.remove", { machine, device });
+    await this.refresh("spaces");
+    await this.refresh("machines");
+  }
+
   /** Why the listed Spaces may be out of date (null: the host's last read worked). */
   get listNotice(): string | null {
     return this.listNoticeText;
@@ -395,7 +440,11 @@ export class BridgeStore {
           break;
         }
         case "machines": {
-          this.machineRows = await this.adapter.call("machines.list", {});
+          if (!this.machinesPinned) {
+            const rows = await this.adapter.call("machines.list", {});
+            // Rows shown meanwhile (`showMachines`, parity) must not lose to a listing that was already in flight.
+            if (!this.machinesPinned) this.machineRows = rows;
+          }
           this.publishMachines();
           break;
         }
@@ -410,8 +459,9 @@ export class BridgeStore {
           break;
         }
         case "session": {
+          const epoch = this.signInEpoch;
           this.sessionSnap = await this.adapter.call("session.get", {});
-          this.followHostSignIn(this.sessionSnap.hostSignIn);
+          this.followHostSignIn(this.sessionSnap.hostSignIn, epoch === this.signInEpoch ? this.sessionSnap.hostSignInFailure : null);
           this.publishSession();
           if (this.settingsSnap) this.publishSettings();
           break;
@@ -537,7 +587,7 @@ export class BridgeStore {
   }
 
   private async runCreate(req: CreateSpaceRequest, pendingId: string): Promise<Space> {
-    const { os: _os, ...config } = req;
+    const { os: _os, notifyWhenReady, ...config } = req;
     const os = osOf(req);
     const on = config.on ?? this.settingsSnap?.values.defaultLocation ?? "local";
     // A Space on one of your machines or in your own cloud lists as a relay machine.
@@ -562,22 +612,68 @@ export class BridgeStore {
       hostName: machine?.name ?? null,
     });
     try {
-      const row = await this.adapter.call("spaces.create", { config, pendingId, os });
+      const row = await this.adapter.call("spaces.create", notifyWhenReady ? { config, pendingId, os, notifyWhenReady } : { config, pendingId, os });
       this.createdIds.set(pendingId, row.id);
       this.dispatch({ type: "finish", id: pendingId, spaceId: row.id });
       this.createRequests.delete(pendingId);
       await this.refresh("spaces");
       const space = (this.resources.spaces.data as Space[] | undefined)?.find((s) => s.id === row.id) ?? rowsToSpaces(this.core, [row], this.now())[0]!;
-      this.extras.record({ kind: "message", title: `${space.name} is ready` });
+      // Plain words: a fresh computer inside this one (never "VM" or "container").
+      const system = space.os === "macos" ? "macOS" : space.os === "windows" ? "Windows" : space.os === "linux" ? "Linux" : null;
+      const body = system ? `A fresh ${system} computer inside ${({ macos: "this Mac", windows: "this PC", linux: "this computer" } as const)[hostOs()]}. Your agent can use it now.` : undefined;
+      this.extras.record({ kind: "message", title: `${spokenName(space.name)} is ready`, ...(body && !machine ? { body } : {}), space: space.id });
       return space;
     } catch (e) {
       const message = toError(e).message;
+      // The words it failed with, for a diagnostic report the person may send.
+      this.createFailures.set(pendingId, { error: message, at: this.now() });
       if (message.startsWith("cancelled")) this.dispatch({ type: "cancel-done", id: pendingId });
       // The failed row, and its one notification (`noteFailures`).
       else this.dispatch({ type: "fail", id: pendingId, error: message });
       // Where it ran, for the notice that words the failure (`createFailedText`).
       throw withCreateContext(toError(e), { provider, hostName: machine?.name });
     }
+  }
+
+  /** Each failed create's error text and when it failed, by pending id. */
+  private readonly createFailures = new Map<string, { error: string; at: number }>();
+
+  /** Machine names a report hides (Bonjour names have no dots to find). */
+  private reportNames(): string[] {
+    const machines = (this.resources.machines.data as { name?: string }[] | undefined) ?? [];
+    return machines.map((m) => m.name ?? "").filter((n) => n.trim().length > 0);
+  }
+
+  /** The diagnostic report for a failed create, redacted by the core, for
+   * the review sheet. Null when the row is not a failed create. Builds the
+   * report only: nothing is sent. */
+  async createReport(pendingId: string): Promise<CreateReport | null> {
+    const p = this.creates.pending.find((c) => c.id === pendingId);
+    if (!p?.error) return null;
+    const failure = this.createFailures.get(pendingId);
+    const about = await this.adapter.call("about.get", {}).catch(() => null);
+    return createReport(this.core, {
+      error: failure?.error ?? p.error,
+      shown: p.error,
+      phase: p.phase,
+      os: p.os,
+      provider: p.provider,
+      kind: p.kind ?? null,
+      image: p.image ?? null,
+      gpu: Boolean(p.gpu),
+      elapsedMs: failure ? Math.max(0, failure.at - p.startedAt) : null,
+      about: (about as AboutInput | null) ?? null,
+      names: [...this.reportNames(), ...(p.hostName ? [p.hostName] : [])],
+    });
+  }
+
+  /** Send on the review sheet: opens a prefilled email to Cua support with
+   * the parts the person kept (redacted again) in their mail app, where they
+   * send it themselves. */
+  async sendCreateReport(send: ReportSend): Promise<void> {
+    const link = reportMailto(this.core, send, this.reportNames());
+    if (!link) throw new Error("The report could not be prepared. Try again.");
+    await this.openExternal(link);
   }
 
   async cancelCreate(pendingId: string): Promise<void> {
@@ -595,6 +691,7 @@ export class BridgeStore {
    * pending id does that), so it doesn't come back as a ghost. */
   async dismissCreate(pendingId: string): Promise<void> {
     this.dispatch({ type: "dismiss", id: pendingId });
+    this.createFailures.delete(pendingId);
     // A removed row is not followed to a Space it might still become.
     this.createdIds.delete(pendingId);
     await this.adapter.call("spaces.delete", { spaceId: pendingId }).catch(() => {});
@@ -643,6 +740,15 @@ export class BridgeStore {
     if (override) {
       machines = machines.map((m) => (m.current ? { ...m, panel: hostPanelFromState(this.core, override.state) } : m));
     }
+    const here = this.machineRows.find((m) => m.current && !m.device)?.host;
+    this.machinesViewSnap = machinesView(this.core, {
+      // The host's own drawing, unless a parity run drew This machine itself.
+      hostView: this.viewOverride ?? (override ? null : (this.adapter.machinesView?.() ?? null)),
+      machines,
+      spaces,
+      host: override ? override.state : here ? hostState(here) : null,
+      nowSecs: this.machinesNow,
+    });
     this.set("machines", { data: machines, isLoading: false, error: null });
   }
 
@@ -817,11 +923,32 @@ export class BridgeStore {
   /** A native host runs the sign-in and says when it waits (with the code
    * and the page) only after `session.signIn` answered: take them in, so
    * the page shows them. */
-  private followHostSignIn(waiting: HostSignIn | null | undefined): void {
-    if (!waiting || (this.signInPhase.kind !== "starting" && this.signInPhase.kind !== "waiting")) return;
+  private followHostSignIn(waiting: HostSignIn | null | undefined, failure?: HostSignInFailure | null): void {
+    if (this.signInPhase.kind !== "starting" && this.signInPhase.kind !== "waiting") return;
+    // A native host signed in, whichever attempt (a retry's, or one before
+    // it) finished: the wait is over.
+    const snap = this.sessionSnap;
+    if (snap && snap.hostSignIn !== undefined && snap.fleet.authMode === "user" && snap.fleet.identity) {
+      this.stopSignInTimer();
+      this.signInPhase = { kind: "idle" };
+      return;
+    }
+    // The host's sign-in failed (the browser never confirmed, the network
+    // dropped, the keychain refused): say why now, never keep waiting.
+    if (failure) {
+      this.signInFailed({
+        kind: "failed",
+        reason: (failure.reason as SignInFailure) || "unknown",
+        message: failure.message,
+        detail: failure.detail,
+      });
+      return;
+    }
+    if (!waiting) return;
     if (waiting.url) this.signInUrl = waiting.url;
-    if (this.signInPhase.kind === "waiting" && (this.signInPhase.userCode ?? null) === waiting.userCode) return;
-    this.signInPhase = { kind: "waiting", userCode: waiting.userCode };
+    const opened = waiting.opened !== false;
+    if (this.signInPhase.kind === "waiting" && (this.signInPhase.userCode ?? null) === waiting.userCode && (this.signInPhase.opened ?? true) === opened) return;
+    this.signInPhase = { kind: "waiting", userCode: waiting.userCode, opened };
   }
 
   private setSignIn(phase: SignInPhase): void {
@@ -835,16 +962,19 @@ export class BridgeStore {
     this.setSignIn({ kind: "starting" });
     try {
       const start = await this.adapter.call("session.signIn", {});
+      this.signInEpoch += 1;
       // Cancelled while it started: leave it.
       if (this.signInPhase.kind !== "starting") return start;
       this.signInUrl = start.verificationUri || null;
       this.setSignIn({ kind: "waiting", userCode: start.userCode ?? null });
       this.signInTimer = setTimeout(() => {
-        if (this.signInPhase.kind === "waiting") this.signInFailed(SIGN_IN_TIMED_OUT);
+        if (this.signInPhase.kind === "waiting") this.signInFailed(signInFailedPhase(this.core, "notConfirmed"));
       }, this.signInTimeoutMs);
       return start;
     } catch (e) {
-      this.signInFailed(toError(e).message);
+      // Shown in the sidebar's foot with its reason (and a toast there),
+      // so callers need not say it again.
+      this.signInFailed(signInFailedFromError(this.core, e));
       throw toError(e);
     }
   }
@@ -853,15 +983,16 @@ export class BridgeStore {
   cancelSignIn(): void {
     if (this.signInPhase.kind !== "starting" && this.signInPhase.kind !== "waiting") return;
     this.stopSignInTimer();
-    void this.telemetry.track(telemetrySignInFailed(this.core, null));
+    void this.telemetry.track(telemetrySignInFailure(this.core, null));
     this.setSignIn({ kind: "idle" });
   }
 
-  /** A sign-in failed: shown, and counted by its kind (never its words). */
-  private signInFailed(message: string): void {
+  /** A sign-in failed: shown with its reason, and counted by its kind
+   * (never its words). */
+  private signInFailed(phase: FailedPhase): void {
     this.stopSignInTimer();
-    void this.telemetry.track(telemetrySignInFailed(this.core, message));
-    this.setSignIn({ kind: "failed", message });
+    void this.telemetry.track(telemetrySignInFailure(this.core, phase.reason ?? "unknown"));
+    this.setSignIn(phase);
   }
 
   private stopSignInTimer(): void {
@@ -908,6 +1039,22 @@ export class BridgeStore {
     this.machineRows = rows;
     this.machinesNow = nowSecs;
     this.hostOverride = undefined;
+    this.viewOverride = null;
+    this.machinesPinned = true;
+    this.publishMachines();
+  }
+
+  /** Draws the Machines page the core draws for `input`
+   * (`machines_view::MachinesViewInput`, as a host would send it, its
+   * machines' health included): parity and previews. */
+  showMachinesView(input: object): void {
+    const view = this.core.tryCall<MachinesView>("machines.view", { input });
+    if (!view) return;
+    this.ensured.add("machines");
+    this.machineRows = view.machines.map((m) => ({ id: m.id, name: m.name, via: m.current ? "local" : "relay", online: m.online, os: m.os, current: m.current || undefined, limits: [] }));
+    this.hostOverride = undefined;
+    this.viewOverride = view;
+    this.machinesPinned = true;
     this.publishMachines();
   }
 
@@ -918,6 +1065,7 @@ export class BridgeStore {
       this.machineRows = [{ id: "this-mac", name: "This Mac", via: "local", online: true, os: "macos", current: true, limits: [] }, ...this.machineRows];
     }
     this.hostOverride = { state };
+    this.viewOverride = null;
     this.publishMachines();
   }
 
@@ -1230,7 +1378,8 @@ export class BridgeStore {
         reload("machines");
         break;
       case "session.signInFailed":
-        this.signInFailed(e.reason);
+        // A host that only has words (the Tauri app): the core reads them.
+        this.signInFailed(signInFailedFromError(this.core, new Error(e.reason)));
         break;
       case "session.signedOut":
         this.signInPhase = { kind: "idle" };

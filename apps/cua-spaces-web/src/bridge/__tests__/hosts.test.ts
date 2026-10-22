@@ -48,6 +48,22 @@ function tauriHost(answers: Record<string, unknown> = {}, withEvents = true) {
   return { win, calls, listeners, invoke };
 }
 
+describe("tauri adapter: the one-time linking notice", () => {
+  it("reads the notice from telemetry_link_notice and acknowledges with telemetry_acknowledge_link_notice", async () => {
+    const notice = { due: true, title: "We've updated how usage data works", body: "b", okLabel: "Got it", turnOffLabel: "Turn off usage data", detailsLabel: "What is collected", docsUrl: "https://cua.ai/docs/cua-sdk/concepts/telemetry" };
+    const { win, calls } = tauriHost({ telemetry_link_notice: notice });
+    const a = createTauriAdapter(win);
+    expect(await a.call("telemetry.linkNotice", {})).toEqual(notice);
+    expect(await a.call("telemetry.acknowledgeLinkNotice", {})).toBeNull();
+    expect(calls.map(([c]) => c)).toEqual(["telemetry_link_notice", "telemetry_acknowledge_link_notice"]);
+  });
+
+  it("a command that answers nothing (an older shell) reads as no notice", async () => {
+    const { win } = tauriHost();
+    expect(await createTauriAdapter(win).call("telemetry.linkNotice", {})).toBeNull();
+  });
+});
+
 describe("tauri adapter", () => {
   it("maps operations onto the existing invoke commands", async () => {
     const { win, calls } = tauriHost({ list_spaces: [], keyvault_set_unattended: [], set_space_power: {} });
@@ -109,6 +125,7 @@ describe("tauri adapter", () => {
         spaceId: "s",
         agents: null,
         signals: [],
+        ids: ["n1"],
         // storage.run takes a StorageRequest; host.setUp the host form's request.
         request: op === "host.setUp" ? { mode: "relay" } : { kind: "clear-cache" },
         action: "stop-sharing",
@@ -313,6 +330,20 @@ describe("electron adapter", () => {
   it("rejects a reply without an envelope", async () => {
     const { win } = electronHost(() => [1, 2]);
     await expect(createElectronAdapter(win).call("spaces.list", {})).rejects.toMatchObject({ code: "protocol" });
+  });
+
+  it("reads update.get and update.install from the host, and turns update.changed into the page's event", async () => {
+    const state = { status: "downloaded", currentVersion: "0.9.2", version: "0.9.3", percent: 100, notesUrl: "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3", message: null };
+    const asked: string[] = [];
+    const { win, subs } = electronHost(bridged((method) => (asked.push(method), { ok: true, result: state })));
+    const a = createElectronAdapter(win);
+    expect(await a.call("update.get", {})).toEqual(state);
+    expect(await a.call("update.install", {})).toEqual(state);
+    expect(asked).toEqual(["update.get", "update.install"]);
+    const got: HostEvent[] = [];
+    a.subscribe((e) => got.push(e));
+    subs.get(ELECTRON_EVENT_CHANNEL)?.({ event: "update.changed" });
+    expect(got).toEqual([{ type: "update.changed" }]);
   });
 
   it("delivers the host's cua:event pushes", () => {
@@ -528,7 +559,9 @@ describe("webkit adapter", () => {
     const { win } = webkitHost((req) =>
       req.method === "session.get"
         ? ok({ identity: "ada@example.com", signedIn: true, cloudConfigured: true, signIn: "idle" })
-        : ok({
+        : req.method === "onboarding.get"
+          ? ok({ completed: false, mode: "client" })
+          : ok({
             availability: "ready",
             busy: false,
             error: null,
@@ -543,8 +576,8 @@ describe("webkit adapter", () => {
     );
     const a = createWebkitAdapter(win);
     expect((await a.call("session.get", {})).fleet).toMatchObject({ identity: "ada@example.com", authMode: "user" });
-    // The SwiftUI app's first run is its own window: the page never shows one there.
-    expect((await a.call("session.get", {})).onboarding).toEqual({ completed: true, mode: "client" });
+    // The first run is this page's on the SwiftUI host too (`onboarding.get`).
+    expect((await a.call("session.get", {})).onboarding).toEqual({ completed: false, mode: "client" });
     const kv = await a.call("keyvault.overview", {});
     expect(kv.status).toMatchObject({ unlocked: true, os_protector_available: true });
     expect(kv.items[0]).toMatchObject({ provider_id: "chrome", app_display: "Google Chrome", policy: { unattended: true, ttl_secs: 0 }, updated_ms: 2 });
@@ -552,14 +585,14 @@ describe("webkit adapter", () => {
   });
 
   it("maps this Mac's own desktop (status local) to a local, running row", async () => {
-    const here = { id: "local", name: "This machine", os: "macos", status: "local", detail: "", lastUsedAt: 1, provider: null, sdk: null, power: null };
+    const here = { id: "local", name: "This computer", os: "macos", status: "local", detail: "", lastUsedAt: 1, provider: null, sdk: null, power: null };
     const { win } = webkitHost(() => ok({ loaded: true, selectedId: null, spaces: [{ space: here, deleting: false }] }));
     const [row] = await createWebkitAdapter(win).call("spaces.list", {});
     expect(row).toMatchObject({ provider: "local", reachable: true, powerState: "running" });
   });
 
   it("keeps this Mac local while it is not set up for access", async () => {
-    const mac = { id: "this-mac", name: "This machine", os: "macos", status: "suspended", detail: "Set up for access", lastUsedAt: 1, provider: null, sdk: null, power: null };
+    const mac = { id: "this-mac", name: "This computer", os: "macos", status: "suspended", detail: "Set up for access", lastUsedAt: 1, provider: null, sdk: null, power: null };
     const { win } = webkitHost(() => ok({ loaded: true, selectedId: null, spaces: [{ space: mac, deleting: false }] }));
     const [row] = await createWebkitAdapter(win).call("spaces.list", {});
     expect(row).toMatchObject({ provider: "local", reachable: false, powerState: "suspended" });
@@ -794,6 +827,27 @@ describe("webkit adapter", () => {
     }
   });
 
+  it("waits for a device approval while the host asks for Touch ID or the password", async () => {
+    vi.useFakeTimers();
+    try {
+      let answer!: (a: Answer) => void;
+      const { win } = webkitHost((req) => (req.method === "devices.approve" ? new Promise<Answer>((r) => (answer = r)) : ok(null)));
+      const call = createWebkitAdapter(win, { timeoutMs: 1_000 }).call("devices.approve", { code: "K7QX-M2RP", deviceId: null });
+      const settled = call.then(
+        (r) => ({ ok: true as const, r }),
+        (e: unknown) => ({ ok: false as const, e }),
+      );
+      // A person typing the login password: longer than the call timeout.
+      await vi.advanceTimersByTimeAsync(60_000);
+      answer({ ok: false, error: { code: "not_found", message: "no device is waiting with the code K7QX-M2RP" } });
+      const r = await settled;
+      expect(r.ok).toBe(false);
+      expect((r as { e: HostError }).e.message).toBe("no device is waiting with the code K7QX-M2RP");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("reads the host's own settings rows and picks their options with settings.choose", async () => {
     const choice = (id: string, active: string) => ({ id, kind: "choice", label: "", enabled: true, options: ["auto", "builtin", "system"].map((o) => ({ id: o, label: o, active: o === active })) });
     const toggle = (id: string, on: boolean) => ({ id, kind: "toggle", label: "", enabled: true, options: [{ id: "on", label: "On", active: on }, { id: "off", label: "Off", active: !on }] });
@@ -888,6 +942,22 @@ describe("webkit adapter", () => {
     expect(sent.map((r) => [r.method, r.args])).toEqual([["telemetry.track", { signals: [{ type: "feature", feature: "space_open" }] }]]);
     await expect(a.call("host.openSettings", { url: "https://example.com" })).rejects.toMatchObject({ code: "bad_args" });
     expect(sent).toHaveLength(1);
+  });
+
+  it("asks the host for the one-time linking notice and sends the acknowledgement; no answer reads as none", async () => {
+    const notice = { due: true, title: "We've updated how usage data works", body: "b", okLabel: "Got it", turnOffLabel: "Turn off usage data", detailsLabel: "What is collected", docsUrl: "https://cua.ai/docs/cua-sdk/concepts/telemetry" };
+    const { win, sent } = webkitHost((req) => (req.method === "telemetry.linkNotice" ? ok(notice) : ok(null)));
+    const a = createWebkitAdapter(win);
+    expect(await a.call("telemetry.linkNotice", {})).toEqual(notice);
+    expect(await a.call("telemetry.acknowledgeLinkNotice", {})).toBeNull();
+    expect(sent.map((r) => [r.method, r.args])).toEqual([
+      ["telemetry.linkNotice", {}],
+      ["telemetry.acknowledgeLinkNotice", {}],
+    ]);
+    const older = webkitHost(() => ({ ok: false, error: { code: "unimplemented", message: "telemetry.linkNotice is not available in this host" } }));
+    expect(await createWebkitAdapter(older.win).call("telemetry.linkNotice", {})).toBeNull();
+    const odd = webkitHost(() => ok({ due: true, title: "", body: 3 }));
+    expect(await createWebkitAdapter(odd.win).call("telemetry.linkNotice", {})).toBeNull();
   });
 
   it("runs New Space on the app's env and create, with its progress", async () => {

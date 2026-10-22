@@ -88,6 +88,7 @@ def test_matrix_summary_recovers_results_when_lane_summary_is_missing(tmp_path: 
             "SOURCE_SHA": "0123456789abcdef0123456789abcdef01234567",
         }
     )
+    (tmp_path / "scripts").symlink_to(ROOT / "scripts")
     subprocess.run(
         ["bash", "-euo", "pipefail", "-c", matrix_summary_script()],
         cwd=tmp_path,

@@ -86,17 +86,16 @@ where
             outcome = bounded.as_mut() => (None, outcome),
         }
     };
+    let consent_timed_out = outcome.is_err();
     let outcome = match outcome {
         Ok(outcome) => outcome?,
+        Err(_) if action.started() => consent.await.map_err(|mut error| {
+            error
+                .message
+                .push_str(" (consent attempt deadline expired)");
+            error
+        })?,
         Err(_) => {
-            if action.started() {
-                consent.await.map_err(|mut error| {
-                    error
-                        .message
-                        .push_str(" (consent attempt deadline expired)");
-                    error
-                })?;
-            }
             return Err(refusal(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "browser consent did not settle within its bounded attempt",
@@ -110,13 +109,19 @@ where
             "browser consent action did not produce a confirmed outcome",
         ));
     }
-    Ok((
-        match result {
-            Some(result) => result,
-            None => claim.as_mut().await,
-        },
-        accepted,
-    ))
+    let result = match result {
+        Some(result) => result,
+        None if consent_timed_out => tokio::time::timeout(Duration::from_secs(4), claim.as_mut())
+            .await
+            .map_err(|_| {
+                refusal(
+                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                    "browser reconnect did not settle after confirmed consent",
+                )
+            })?,
+        None => claim.as_mut().await,
+    };
+    Ok((result, accepted))
 }
 
 async fn claim_with_delayed_consent<T, Claim, Consent, MakeConsent>(
@@ -934,14 +939,32 @@ impl BrowserEngine {
         request: PrepareRequest,
     ) -> Result<PrepareOutcome, BrowserRefusal> {
         let browser_pid = request.pid;
+        // Where the platform can guard it (macOS: the browser window is on
+        // another Space), attach in the background under the guard instead of
+        // refusing.
+        let background_guard = match (browser_pid, request.window_id) {
+            (Some(pid), Some(window_id))
+                if !request.foreground
+                    && self
+                        .platform
+                        .existing_profile_attach_background_limitation()
+                        .is_some()
+                    && self.platform.frontmost_app_pid() != Some(pid) =>
+            {
+                self.platform.guard_background_attach(pid, window_id)
+            }
+            _ => None,
+        };
+        let guarded = background_guard.is_some();
         let previous_front = match browser_pid {
-            Some(pid) if request.foreground => self
+            Some(pid) if request.foreground || guarded => self
                 .platform
                 .frontmost_app_pid()
                 .filter(|front| *front != pid),
             _ => None,
         };
-        let mut result = self.attach_existing_profile_checked(request).await;
+        let mut result = self.attach_existing_profile_checked(request, guarded).await;
+        drop(background_guard);
         if let (Some(previous), Some(pid)) = (previous_front, browser_pid) {
             let restored = self.platform.restore_frontmost_app(previous, pid);
             match &mut result {
@@ -985,11 +1008,14 @@ impl BrowserEngine {
             BrowserRefusalCode::BackgroundUnavailable,
             format!(
                 "{limitation}, so attaching now would bring the browser in front of the app the \
-                 user is working in. Nothing was changed. Retry with delivery_mode:\"foreground\" \
-                 only when nobody is using this screen or the user agreed to the browser coming \
-                 forward; the driver then brings the user's app back. Otherwise work from the \
-                 window's accessibility tree and screenshot (get_window_state), which need no \
-                 attachment."
+                 user is working in. Nothing was changed, and browser_prepare is optional: \
+                 use get_window_state on the browser window and act through its accessibility \
+                 tree (set_value, click by element token), which needs no attachment. If the \
+                 first read shows only browser chrome, read the window again. A browser window \
+                 on another Space than the user's also attaches in the background. Retry with \
+                 delivery_mode:\"foreground\" only when nobody is using this screen or the \
+                 user agreed to the browser coming forward; the driver then brings the user's \
+                 app back."
             ),
         )
         .with_detail(serde_json::json!({
@@ -997,6 +1023,7 @@ impl BrowserEngine {
             "browser_pid": pid,
             "frontmost_pid": frontmost,
             "alternative_delivery_mode": "foreground",
+            "background_attach_requires": "browser_window_on_another_space",
             "visible_effects": false,
         })))
     }
@@ -1004,6 +1031,7 @@ impl BrowserEngine {
     async fn attach_existing_profile_checked(
         &self,
         request: PrepareRequest,
+        guarded: bool,
     ) -> Result<PrepareOutcome, BrowserRefusal> {
         enum ConsentPath {
             Protected,
@@ -1090,7 +1118,7 @@ impl BrowserEngine {
             ));
         }
         self.native_window_checked(pid, window_id).await?;
-        self.existing_profile_background_check(pid, request.foreground)?;
+        self.existing_profile_background_check(pid, request.foreground || guarded)?;
         let fingerprint = self.platform.process_fingerprint(pid).await?;
         let mut setup = ExistingProfileSetupOutcome::default();
         let setup_request = ExistingProfileSetupRequest {
@@ -1285,13 +1313,14 @@ impl BrowserEngine {
         );
         if let Some(previous) = previous_grant {
             self.pool
-                .release_existing(&previous.endpoint_ws_url, previous.generation)
+                .release_existing(
+                    &previous.endpoint_ws_url,
+                    previous.generation,
+                    super::cdp_ws::SharedSocketRelease::Park,
+                )
                 .await;
             if let Some(protected) = previous.protected_consent.as_ref() {
                 self.approval_broker.revoke(protected).await;
-            }
-            if previous.endpoint_ws_url != endpoint.ws_url {
-                self.pool.release_claim_marker(&previous.endpoint_ws_url);
             }
         }
         let (claimed, displayed_consent_prompt) = match claim_with_delayed_consent(
@@ -1593,7 +1622,7 @@ mod tests {
                 let result = claim_with_optional_consent(&mut claim, &action, consent).await;
                 assert!(dropped.load(Ordering::SeqCst));
                 match outcome {
-                    0 => {
+                    0 | 2 => {
                         let (claim, displayed) = result.unwrap();
                         assert_eq!(claim.is_ok(), claim_succeeds);
                         assert!(displayed && settled.load(Ordering::SeqCst));
@@ -1602,19 +1631,34 @@ mod tests {
                         result.unwrap_err().code,
                         BrowserRefusalCode::BrowserConsentRevoked
                     ),
-                    _ => {
-                        assert_eq!(
-                            result.unwrap_err().code,
-                            BrowserRefusalCode::BrowserWrongTargetRefused
-                        );
-                        assert!(
-                            settled.load(Ordering::SeqCst),
-                            "committed worker was detached on timeout"
-                        );
-                    }
+                    _ => unreachable!(),
                 }
             }
         }
+    }
+
+    #[tokio::test]
+    async fn late_confirmed_consent_allows_the_original_pending_claim_to_finish() {
+        let action = BrowserConsentAction::default();
+        let marker = action.clone();
+        let (confirmed, awaiting_confirmation) = tokio::sync::oneshot::channel();
+        let mut claim = Box::pin(async move {
+            awaiting_confirmation.await.unwrap();
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            Ok::<_, anyhow::Error>(7_u8)
+        });
+        let consent = async move {
+            marker.perform(|| ());
+            tokio::time::sleep(Duration::from_millis(4100)).await;
+            confirmed.send(()).unwrap();
+            Ok(BrowserConsentOutcome::Accepted)
+        };
+
+        let (result, displayed) = claim_with_optional_consent(&mut claim, &action, consent)
+            .await
+            .unwrap();
+        assert_eq!(result.unwrap(), 7);
+        assert!(displayed);
     }
 
     #[tokio::test]

@@ -23,7 +23,7 @@
  */
 
 import type { AgentDetailInput, AgentEventsPage, AgentOpenFile, AgentSetupRow, PersistentAgent, SpaceAgentRun } from "./agents";
-import type { DeviceInput, DevicesInput, EnrollResult, MachineAccessNotice, PairingCode } from "./devices";
+import type { DeviceInput, DevicesInput, EnrollResult, MachineAccessNotice, PairingCode, TeamChoice, TeamsList } from "./devices";
 import type {
   CancelOutcome,
   DaemonStatus,
@@ -45,25 +45,30 @@ import type {
   ConnectedCloud,
   GpuChoice,
   LocalStatus,
+  RuntimeFix,
   LocalStorage,
   NewSpaceOptions,
   StorageVolume,
   WizardEnv,
 } from "./new-space";
 import type { NotificationInput } from "./notifications";
-import type { AboutInput, DriveCheckInput, DriveStorageInput, LoginItemReport, StorageInput } from "./settings";
-import type { ShareEntry } from "./share";
+import type { AboutInput, DriveCheckInput, DriveStorageInput, LoginItemReport, StorageInput, UpdateState } from "./settings";
+import type { ShareEntry, ShareRemoval } from "./share";
 import type { SpaceProgress, SpaceRow } from "./spaces";
 import type { CatalogEntry, ConsentItem, KvDomainCount, KvInventory, OpenWindow, PlanStep, RemoteWindow, RunReport, TeleportPlan } from "./teleport";
 import type { AgentSetupOutcome, DriveGrantInput, DriveMountInput, DriveRequestInput, Experiments, VolumeOverview } from "./volume";
 import type { AgentKeysReport } from "../ops/agent-keys";
+import type { TelemetryLinkNotice } from "../ops/telemetry";
 import type { SentFileInfo, SpaceThumbnail, SpaceUsage, SpaceWindows } from "../ops/space-detail";
 import type { RelayUsage } from "../ops/relay-usage";
+import type { RiskyRequest } from "../ops/nudges";
+import type { ComputerResources, DiskOnHost, DiskWarning, GuestUsage, ResourcesSnapshot, SpaceResources } from "../ops/resources";
+import type { HostChecklistState } from "../ops/checklist";
 import type { PresenceCursorWire, PresenceJoinInfo, PresenceParticipantWire } from "../ops/presence";
 import type { StartupState } from "../ops/startup";
 import type { StreamTicket } from "../ops/stream";
-import type { GlobalShortcut, HostSettings, HostSignIn, OpName, SessionSnapshot, SettingsSnapshot, SettingsValues } from "../protocol";
-import type { WebkitMethod, WkHostState, WkMachines, WkSession, WkSettings, WkSettingsRow, WkSpace, WkSpaces } from "../webkit-protocol";
+import type { GlobalShortcut, HostSettings, HostSignIn, HostSignInFailure, OpName, SessionSnapshot, SettingsSnapshot, SettingsValues } from "../protocol";
+import type { WebkitMethod, WkHostState, WkMachines, WkOnboarding, WkSession, WkSettings, WkSettingsRow, WkSpace, WkSpaces } from "../webkit-protocol";
 import { Defs, any, bool, dict, list, nul, nullable, num, obj, object, oneOf, opt, optNull, str, union, type Schema } from "./schema";
 
 const defs = new Defs();
@@ -73,6 +78,34 @@ const limits = list(object({ resource: str, used: num, limit: num, reason: str }
 const os = oneOf("macos", "windows", "linux", "unknown");
 
 /* ---- Spaces and machines --------------------------------------------------- */
+
+const DiskWarningShape = ref("DiskWarning", obj<DiskWarning>()({ level: oneOf("ok", "low", "critical"), free: num, total: num, threshold: num }));
+
+/** `resources.get`'s computers (CUA-1880). */
+const ComputerResourcesShape = ref(
+  "ComputerResources",
+  obj<ComputerResources>()({
+    id: str,
+    name: str,
+    online: bool,
+    sampledAtMs: num,
+    cpuCount: num,
+    cpuPercent: num,
+    loadAverage1m: num,
+    memoryTotal: num,
+    memoryUsed: num,
+    diskTotal: num,
+    diskFree: num,
+    spacesCount: num,
+    spacesRunning: num,
+    spacesCpuAllocated: num,
+    spacesMemoryAllocated: num,
+    spacesMemoryUsed: num,
+    spacesDiskBytes: num,
+    spacesDiskExact: bool,
+    warning: DiskWarningShape,
+  }),
+);
 
 const SpaceProgressShape = ref(
   "SpaceProgress",
@@ -102,6 +135,7 @@ const SpaceRowShape = ref(
     hostName: opt(str),
     power: opt(str),
     powerState: opt(str),
+    stopReason: opt(str),
     cloud: opt(str),
     cloudPlace: opt(str),
     cloudDelete: opt(str),
@@ -170,6 +204,9 @@ const MachineRowShape = ref(
     hostname: opt(str),
     presence: optNull(bool),
     accessNotice: optNull(MachineAccessNoticeShape),
+    merged: opt(bool),
+    status: opt(str),
+    spacesLabel: opt(str),
   }),
 );
 
@@ -196,7 +233,8 @@ const SessionShape = ref(
     daemon: nullable(
       obj<DaemonStatus>()({ connected: bool, version: opt(str), socketPath: opt(str), loopbackUrl: opt(str), error: opt(str) }),
     ),
-    hostSignIn: optNull(obj<HostSignIn>()({ userCode: nullable(str), url: nullable(str) })),
+    hostSignIn: optNull(obj<HostSignIn>()({ userCode: nullable(str), url: nullable(str), opened: opt(bool) })),
+    hostSignInFailure: optNull(obj<HostSignInFailure>()({ reason: str, message: str, detail: nullable(str) })),
   }),
 );
 
@@ -229,6 +267,7 @@ const SettingsShape = ref(
       }),
     ),
     globalShortcut: optNull(obj<GlobalShortcut>()({ label: str, registered: bool })),
+    accountUrl: optNull(str),
   }),
 );
 
@@ -250,6 +289,18 @@ const AboutShape = ref(
     channel: oneOf("stable", "beta"),
     lastCheck: nullable(str),
     checking: bool,
+  }),
+);
+
+const UpdateShape = ref(
+  "UpdateState",
+  obj<UpdateState>()({
+    status: oneOf("idle", "checking", "available", "downloading", "downloaded", "error"),
+    currentVersion: str,
+    version: nullable(str),
+    percent: nullable(num),
+    notesUrl: nullable(str),
+    message: nullable(str),
   }),
 );
 
@@ -302,6 +353,16 @@ const PairingCodeShape = ref(
   }),
 );
 
+const TeamsListShape = ref(
+  "TeamsList",
+  obj<TeamsList>()({
+    teams: list(
+      obj<TeamChoice>()({ id: str, alias: str, name: str, role: str, plan: str }),
+    ),
+    currentTeamId: nullable(str),
+  }),
+);
+
 const DriveMountShape = ref(
   "DriveMountInput",
   obj<DriveMountInput>()({
@@ -351,7 +412,7 @@ const VolumeShape = ref(
 
 const NotificationShape = ref(
   "NotificationInput",
-  obj<NotificationInput>()({ id: str, atMs: num, agent: optNull(str), kind: str, title: str, body: str, read: opt(bool) }),
+  obj<NotificationInput>()({ id: str, atMs: num, agent: optNull(str), kind: str, title: str, body: str, read: opt(bool), space: optNull(str) }),
 );
 
 const AgentKeysShape = ref(
@@ -375,6 +436,19 @@ const StartupShape = ref(
   }),
 );
 
+const LinkNoticeShape = ref(
+  "TelemetryLinkNotice",
+  obj<TelemetryLinkNotice>()({
+    due: bool,
+    title: str,
+    body: str,
+    okLabel: str,
+    turnOffLabel: str,
+    detailsLabel: str,
+    docsUrl: str,
+  }),
+);
+
 /* ---- New Space ------------------------------------------------------------- */
 
 const StorageVolumeShape = obj<StorageVolume>()({ availableBytes: num, totalBytes: num, name: str });
@@ -382,6 +456,7 @@ const LocalStorageShape = ref(
   "LocalStorage",
   obj<LocalStorage>()({
     reserveBytes: num,
+    linuxRuntimeDownloadBytes: opt(num),
     lume: nullable(StorageVolumeShape),
     qemu: nullable(StorageVolumeShape),
     container: nullable(StorageVolumeShape),
@@ -401,6 +476,12 @@ const LocalStatusShape = ref(
     containerImage: opt(str),
     macosImage: optNull(str),
     error: nullable(str),
+    fix: optNull(
+      ref(
+        "RuntimeFix",
+        obj<RuntimeFix>()({ action: nullable(oneOf("install-docker", "start-docker")), label: str, note: nullable(str), busy: bool, termsUrl: nullable(str) }),
+      ),
+    ),
     hostArch: opt(str),
     storage: optNull(LocalStorageShape),
   }),
@@ -432,6 +513,7 @@ const WizardEnvShape = ref(
     hosts: opt(list(object({ id: str, name: str, via: str, online: bool, os: str, limits }))),
     experiments: opt(ExperimentsShape),
     gpus: optNull(list(GpuShape)),
+    nameSeed: optNull(num),
   }),
 );
 const createOptions = (strict: boolean) =>
@@ -589,6 +671,8 @@ const AgentOpenFileShape = ref(
   }),
 );
 const shares = list(ShareShape);
+const ShareRemovalShape = ref("ShareRemoval", obj<ShareRemoval>()({ who: str, machineName: str }));
+const shareRemovals = list(ShareRemovalShape);
 const PresenceParticipantShape = ref(
   "PresenceParticipant",
   obj<PresenceParticipantWire>()({ participantId: str, principalId: str, displayName: str, color: str, kind: str }),
@@ -606,6 +690,118 @@ const PresenceCursorShape = ref(
     shapeSource: str,
     atMs: num,
     receivedMs: num,
+  }),
+);
+
+/** The host's copy of the checklist (`ops/checklist.ts`). */
+const ChecklistAnswerShape = object({
+  state: obj<HostChecklistState>()({ done: strings, dismissed: bool, shown: bool }),
+});
+
+/** One Machines row as the core lists it (`machines::MachinePageRow`). */
+const MachinePageRowShape = ref(
+  "MachinePageRow",
+  object({
+    id: str,
+    name: str,
+    online: bool,
+    os: str,
+    via: str,
+    current: bool,
+    device: nullable(str),
+    deviceOnly: bool,
+    spaceId: nullable(str),
+    stoppedSharing: bool,
+    lastSeen: nullable(num),
+    status: str,
+    spaces: num,
+    spacesLabel: str,
+  }),
+);
+
+const HostConfirmShape = object({ title: str, message: str, confirmLabel: str, cancelLabel: str });
+
+/** A machine's remove (`machines_view::MachinesViewRemove`). */
+const MachinesViewRemoveShape = ref(
+  "MachinesViewRemove",
+  object({
+    label: str,
+    enabled: bool,
+    help: optNull(str),
+    host: bool,
+    machine: optNull(str),
+    device: optNull(str),
+    confirm: HostConfirmShape,
+  }),
+);
+
+/** The Machines page as the core draws it (`machines_view::MachinesView`). */
+const MachinesViewShape = ref(
+  "MachinesView",
+  object({
+    summary: str,
+    groups: list(
+      object({
+        id: str,
+        title: str,
+        collapsed: bool,
+        ids: strings,
+        removeAll: optNull(object({ label: str, confirm: HostConfirmShape, removes: list(MachinesViewRemoveShape) })),
+      }),
+    ),
+    machines: list(
+      object({
+        id: str,
+        name: str,
+        badge: optNull(str),
+        line: str,
+        online: bool,
+        // The machine's issues (`machines_health`): a host that predates
+        // them sends none.
+        health: opt(str),
+        healthTarget: optNull(str),
+        issuesTitle: opt(str),
+        issues: opt(
+          list(
+            object({
+              id: str,
+              level: str,
+              text: str,
+              action: optNull(object({ label: str, url: optNull(str), hostAction: optNull(str), appUpdate: opt(bool) })),
+            }),
+          ),
+        ),
+        os: str,
+        current: bool,
+        team: bool,
+        status: str,
+        sharedBy: optNull(str),
+        rename: optNull(object({ target: str, id: str, title: str, confirmLabel: str })),
+        notice: optNull(str),
+        noticeAction: optNull(object({ id: str, label: str, destructive: bool })),
+        toggles: list(
+          object({
+            id: str,
+            label: str,
+            help: str,
+            on: bool,
+            editable: bool,
+            enabled: bool,
+            actions: strings,
+            setup: optNull(str),
+          }),
+        ),
+        togglesNote: optNull(str),
+        spacesTitle: str,
+        spaces: list(object({ id: str, name: str, os: str, status: str, running: bool })),
+        desktop: optNull(object({ id: str, name: str, os: str, status: str, running: bool, label: str })),
+        spacesEmpty: optNull(str),
+        newSpace: object({ label: str, on: str, enabled: bool, help: optNull(str) }),
+        detailsTitle: str,
+        details: list(object({ label: str, value: str })),
+        remove: optNull(MachinesViewRemoveShape),
+      }),
+    ),
   }),
 );
 
@@ -742,6 +938,8 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "sharing.list": shares,
   "sharing.share": shares,
   "sharing.unshare": shares,
+  "sharing.removals": shareRemovals,
+  "sharing.ackRemovals": nul,
 
   "agentKeys.list": AgentKeysShape,
   "agentKeys.set": AgentKeysShape,
@@ -759,7 +957,12 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "volume.reveal": nul,
   "agents.setupDriver": list(obj<AgentSetupOutcome>()({ agents: strings, target: str, item: str, change: str, detail: str })),
 
+  "machines.rename": nul,
+  "machines.remove": nul,
+  "machines.checkHealth": nul,
   "spaces.openStream": obj<StreamTicket>()({ wsUrl: str, expiresAt: nullable(str) }),
+  "nudges.pending": list(obj<RiskyRequest>()({ id: str, agent: str, action: str, atMs: num, expiresMs: num })),
+  "nudges.answer": nul,
   "relay.usage": nullable(
     obj<RelayUsage>()({
       metered: bool,
@@ -776,6 +979,43 @@ export const OP_SHAPES: Record<OpName, Schema> = {
       upgradeUrl: nullable(str),
     }),
   ),
+  "resources.get": nullable(
+    obj<ResourcesSnapshot>()({
+      sequence: num,
+      sampledAtMs: num,
+      thisMac: ComputerResourcesShape,
+      spaces: list(
+        ref(
+          "SpaceResources",
+          obj<SpaceResources>()({
+            id: str,
+            powerState: oneOf("running", "stopped", "suspended", ""),
+            cpuAllocated: num,
+            memoryAllocated: num,
+            diskAllocated: num,
+            usage: nullable(
+              obj<GuestUsage>()({
+                cpuCount: num,
+                cpuPercent: num,
+                loadAverage1m: num,
+                memoryUsed: num,
+                memoryTotal: num,
+                memoryLimited: bool,
+                diskUsed: num,
+                diskTotal: num,
+                diskLimited: bool,
+              }),
+            ),
+            diskOnHost: nullable(obj<DiskOnHost>()({ bytes: nullable(num), allocated: num, sharesSpace: bool })),
+          }),
+        ),
+      ),
+      computers: list(ComputerResourcesShape),
+      warning: DiskWarningShape,
+    }),
+  ),
+  "checklist.get": ChecklistAnswerShape,
+  "checklist.send": ChecklistAnswerShape,
   "presence.join": obj<PresenceJoinInfo>()({
     handle: str,
     me: PresenceParticipantShape,
@@ -785,10 +1025,13 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   }),
   "presence.publish": nul,
   "presence.leave": nul,
+  "spaces.fixRuntime": nul,
 
   "about.get": AboutShape,
   "about.set": AboutShape,
   "about.checkNow": AboutShape,
+  "update.get": UpdateShape,
+  "update.install": UpdateShape,
   "experiments.get": ExperimentsShape,
   "experiments.set": ExperimentsShape,
   "loginItem.get": LoginItemShape,
@@ -804,12 +1047,16 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "devices.createPairingCode": PairingCodeShape,
   "devices.pairingCodes": list(PairingCodeShape),
   "devices.revokePairingCode": nul,
+  "teams.list": TeamsListShape,
   "storage.get": StorageShape,
   "storage.run": nullable(DriveCheckShape),
   "notifications.list": list(NotificationShape),
   "notifications.markAllRead": nul,
+  "notifications.markRead": nul,
 
   "telemetry.track": nul,
+  "telemetry.linkNotice": nullable(LinkNoticeShape),
+  "telemetry.acknowledgeLinkNotice": nul,
   "spaces.usage": nullable(
     obj<SpaceUsage>()({ memoryUsed: num, memoryTotal: num, memoryLimited: bool, diskUsed: num, diskTotal: num, diskLimited: bool }),
   ),
@@ -820,6 +1067,7 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "spaces.droppedFiles": strings,
   "spaces.sendFiles": list(obj<SentFileInfo>()({ name: str, dest: str, bytes: num })),
   "host.setUp": HostStatusShape,
+  "host.joinWithCode": HostStatusShape,
   "host.action": HostStatusShape,
   "host.openSettings": nul,
   "startup.get": StartupShape,
@@ -882,7 +1130,7 @@ const WkSpaceShape = ref(
     arch: optNull(str),
     host: optNull(str),
     hostName: optNull(str),
-    power: optNull(object({ control: str, off: bool, turningOn: optNull(bool), error: optNull(str) })),
+    power: optNull(object({ control: str, off: bool, turningOn: optNull(bool), error: optNull(str), stopReason: optNull(str) })),
     cloud: optNull(str),
     cloudPlace: optNull(str),
     cloudDelete: optNull(str),
@@ -901,7 +1149,10 @@ const WkSessionShape = ref(
     identity: nullable(str),
     signedIn: bool,
     cloudConfigured: bool,
-    signIn: union(oneOf("idle", "starting"), object({ type: str, userCode: optNull(str), message: opt(str) })),
+    signIn: union(
+      oneOf("idle", "starting"),
+      object({ type: str, userCode: optNull(str), opened: opt(bool), reason: opt(str), message: opt(str), detail: optNull(str) }),
+    ),
     signInUrl: optNull(str),
   }),
 );
@@ -930,6 +1181,7 @@ const WkSettingsShape = ref(
     }),
     updateChannel: optNull(oneOf("stable", "beta")),
     globalShortcut: optNull(object({ label: str, registered: bool })),
+    accountUrl: optNull(str),
   }),
 );
 
@@ -959,6 +1211,8 @@ const WkMachinesShape = ref(
     presence: optNull(dict(bool)),
     deviceStates: optNull(dict(str)),
     accessNotice: optNull(MachineAccessNoticeShape),
+    rows: opt(list(MachinePageRowShape)),
+    view: optNull(MachinesViewShape),
   }),
 );
 
@@ -1034,6 +1288,9 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "session.get": WkSessionShape,
   "session.signIn": WkSessionShape,
   "session.signOut": WkSessionShape,
+  // The first run is this page's on both hosts (`WkOnboarding`).
+  "onboarding.get": ref("WkOnboarding", obj<WkOnboarding>()({ completed: bool, mode: oneOf("client", "host") })),
+  "onboarding.complete": ref("WkOnboarding", obj<WkOnboarding>()({ completed: bool, mode: oneOf("client", "host") })),
   "spaces.list": WkSpacesShape,
   "spaces.setPower": WkSpacesShape,
   "spaces.delete": WkSpacesShape,
@@ -1046,6 +1303,7 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "machines.list": WkMachinesShape,
   "host.status": nullable(WkHostShape),
   "host.setUp": nullable(WkHostShape),
+  "host.joinWithCode": nullable(WkHostShape),
   "host.action": nullable(WkHostShape),
   "agents.list": OP_SHAPES["agents.list"],
   "agents.runs": OP_SHAPES["agents.runs"],
@@ -1083,6 +1341,8 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "sharing.list": shares,
   "sharing.share": shares,
   "sharing.unshare": shares,
+  "sharing.removals": shareRemovals,
+  "sharing.ackRemovals": nul,
   "volume.overview": VolumeShape,
   "volume.storage": nullable(DriveStorageShape),
   "volume.storageSet": DriveCheckShape,
@@ -1096,6 +1356,8 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "about.get": AboutShape,
   "about.set": AboutShape,
   "about.checkNow": AboutShape,
+  "update.get": UpdateShape,
+  "update.install": UpdateShape,
   "loginItem.get": LoginItemShape,
   "loginItem.set": LoginItemShape,
   "loginItem.openSettings": nul,
@@ -1109,11 +1371,15 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "devices.createPairingCode": PairingCodeShape,
   "devices.pairingCodes": list(PairingCodeShape),
   "devices.revokePairingCode": nul,
+  "teams.list": TeamsListShape,
   "storage.get": StorageShape,
   "storage.run": nullable(DriveCheckShape),
   "notifications.list": list(NotificationShape),
   "notifications.markAllRead": nul,
+  "notifications.markRead": nul,
   "telemetry.track": nul,
+  "telemetry.linkNotice": nullable(LinkNoticeShape),
+  "telemetry.acknowledgeLinkNotice": nul,
   "spaces.usage": OP_SHAPES["spaces.usage"],
   "spaces.windows": OP_SHAPES["spaces.windows"],
   "stream.pip": strings,
@@ -1139,8 +1405,18 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "keyvault.revokeGrant": num,
   "window.setBackgroundColor": nul,
   "window.setDragRegions": nul,
+  "window.setDropTargets": nul,
   "startup.get": StartupShape,
   "startup.act": StartupShape,
+  "relay.usage": OP_SHAPES["relay.usage"],
+  "nudges.pending": OP_SHAPES["nudges.pending"],
+  "nudges.answer": nul,
+  "resources.get": OP_SHAPES["resources.get"],
+  "machines.rename": nul,
+  "machines.remove": nul,
+  "machines.checkHealth": nul,
+  "checklist.get": OP_SHAPES["checklist.get"],
+  "checklist.send": OP_SHAPES["checklist.send"],
 };
 
 /** Methods whose answer has no shape here, and why (none today: keep the

@@ -31,7 +31,8 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
 
     /// The traffic lights' width plus a gap, for `--titlebar-left-inset`.
     static let fallbackLeftInset: CGFloat = 78
-    static let titlebarHeight: CGFloat = 38
+    static let titlebarHeight: CGFloat = 48
+    static let windowIdentifier = NSUserInterfaceItemIdentifier("cua-new-ui")
     /// Where the window's frame is saved (the defaults' `NSWindow Frame <name>`).
     static let frameName = "CuaSpacesWebUI"
     static let devServer = URL(string: "http://localhost:5174/")!
@@ -43,14 +44,23 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
         return devServer
     }
 
-    /// Opens the window, or brings it forward.
-    public static func show(model: AppModel) {
+    /// Opens the window, or brings it forward; at `frame` when given (the
+    /// native main window's, which it replaces).
+    public static func show(model: AppModel, frame: NSRect? = nil) {
+        show(model: model, frame: frame, startRoute: nil)
+    }
+
+    /// `startRoute`: the page a new window loads first (an open one is
+    /// asked to go there instead).
+    static func show(model: AppModel, frame: NSRect?, startRoute: String?) {
         if let c = shared {
             c.bridge.actions = actions ?? c.bridge.actions
+            if let frame { c.window?.setFrame(frame, display: true) }
             c.present()
             return
         }
-        let c = WebUIWindowController(model: model)
+        let c = WebUIWindowController(model: model, route: startRoute)
+        if let frame { c.window?.setFrame(frame, display: false) }
         shared = c
         c.load()
     }
@@ -58,9 +68,15 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
     /// Opens the window (or brings it forward) at `route`. A drop on a
     /// notch tile is kept for the page, which asks for it by name
     /// (`spaces.droppedFiles`).
-    public static func show(model: AppModel, at route: MainUIRoute) {
+    public static func show(model: AppModel, at route: MainUIRoute, frame: NSRect? = nil) {
         notchDrop = route.dropped
-        show(model: model)
+        guard shared != nil else {
+            // A new window loads the page there: a route asked for while it
+            // starts could reach it before its router listens, and be lost.
+            show(model: model, frame: frame, startRoute: route.webPath)
+            return
+        }
+        show(model: model, frame: frame)
         shared?.bridge.requestRoute(route.webPath)
     }
 
@@ -68,14 +84,15 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
     static var notchDrop: [URL] = []
 
     /// Closes the New UI window, if open (its experiment was turned off),
-    /// and shows the native main window in its place.
+    /// and shows the native main window in its place, at its frame.
     public static func closeShared() {
         guard let c = shared else { return }
-        let main = c.bridge.actions?.openMain
+        let main = c.bridge.actions?.openMain ?? actions?.openMain
         // After the bridge answered the page's switch.
         DispatchQueue.main.async {
+            let frame = c.window?.isVisible == true ? c.window?.frame : nil
             c.window?.close()
-            main?()
+            MainWindowSwitch.switchToNative(webFrame: frame, openMain: main)
         }
     }
 
@@ -87,6 +104,12 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
         guard let c = shared else { return false }
         c.bridge.requestNewSpace(on: on)
         return true
+    }
+
+    /// `route` (a page's path, its query too) under `base`.
+    static func url(_ route: String, in base: URL) -> URL {
+        let relative = route.hasPrefix("/") ? String(route.dropFirst()) : route
+        return URL(string: relative, relativeTo: base)?.absoluteURL ?? base
     }
 
     let bridge: WebUIBridge
@@ -102,7 +125,7 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
     init(model: AppModel, route: String? = nil) {
         let dev = Self.devURL
         let base = dev ?? WebUISchemeHandler.startURL
-        startURL = route.map { base.appendingPathComponent($0) } ?? base
+        startURL = route.map { Self.url($0, in: base) } ?? base
         var origins: Set<String> = ["\(WebUISchemeHandler.scheme)://\(WebUISchemeHandler.host)"]
         if let dev, let host = dev.host {
             origins.insert("\(dev.scheme ?? "http")://\(host)\(dev.port.map { ":\($0)" } ?? "")")
@@ -136,6 +159,8 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: true)
         window.title = "Cua Spaces"
+        // What the UI tests find this window by (the native one has none).
+        window.identifier = Self.windowIdentifier
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.isReleasedWhenClosed = false
@@ -146,12 +171,20 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
         // Where it was last (size and place), else centred.
         if !window.setFrameUsingName(Self.frameName) { window.center() }
         window.setFrameAutosaveName(Self.frameName)
+        // An offscreen run (`OffscreenRun`): invisible, though it paints.
+        OffscreenRun.hide(window)
         super.init(window: window)
         window.delegate = self
         webView.navigationDelegate = self
         webView.uiDelegate = self
         bridge.host = self
         videoSurfaces?.emit = { [weak self] event, payload in self?.emit(event, payload: payload) }
+        // A real window dragged over a tile: the page highlights it.
+        dropTargets.window = window
+        dropTargets.setFrames([:])
+        dropTargets.onTargeted = { [weak self] id in
+            self?.emit("window.dropTarget", payload: ["spaceId": id.map { $0 as Any } ?? NSNull()])
+        }
         setBackground(Self.storedBackground(for: window.effectiveAppearance), keep: false)
     }
 
@@ -173,6 +206,8 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
             shown = true
             applyInset()
         }
+        // Offscreen: in (so the page paints for `takeSnapshot`), never key, never active.
+        if OffscreenRun.isOn { return window.orderFrontRegardless() }
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
     }
@@ -197,8 +232,9 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
     }
 
     public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-        // A new page: the old one's video slots are gone with it.
+        // A new page: the old one's video slots and tiles are gone with it.
         videoSurfaces?.removeAll()
+        dropTargets.setFrames([:])
     }
 
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
@@ -234,7 +270,7 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
                         decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
         guard let url = action.request.url else { return decisionHandler(.cancel) }
         if isAppURL(url) || url.scheme == "about" { return decisionHandler(.allow) }
-        if action.navigationType == .linkActivated, ["http", "https", "mailto"].contains(url.scheme ?? "") {
+        if action.navigationType == .linkActivated, Self.opensOutside(url) {
             NSWorkspace.shared.open(url)
         }
         decisionHandler(.cancel)
@@ -242,10 +278,17 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
 
     public func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                         for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        if let url = action.request.url, ["http", "https", "mailto"].contains(url.scheme ?? "") {
+        if let url = action.request.url, Self.opensOutside(url) {
             NSWorkspace.shared.open(url)
         }
         return nil
+    }
+
+    /// What the page may hand to the system (`window.open`, a link): web
+    /// pages and mail, and System Settings' panes (`x-apple.systempreferences:`,
+    /// as Electron's `openExternal` allows).
+    static func opensOutside(_ url: URL) -> Bool {
+        ["http", "https", "mailto", "x-apple.systempreferences"].contains(url.scheme ?? "")
     }
 
     func isAppURL(_ url: URL) -> Bool {
@@ -267,7 +310,23 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
         return max(Self.fallbackLeftInset, (right + 20).rounded())
     }
 
+    /// Centres the traffic lights on the page's top bar (`titlebarHeight`):
+    /// a transparent title bar is shorter, so they would sit above the
+    /// search field's centre line. Nothing to do in full screen.
+    func centerTrafficLights() {
+        guard let window, !window.styleMask.contains(.fullScreen),
+              let close = window.standardWindowButton(.closeButton), let bar = close.superview,
+              let host = bar.superview else { return }
+        let height = Self.titlebarHeight
+        bar.frame = NSRect(x: bar.frame.minX, y: host.bounds.height - height, width: bar.frame.width, height: height)
+        for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+            guard let button = window.standardWindowButton(kind) else { continue }
+            button.setFrameOrigin(NSPoint(x: button.frame.minX, y: ((height - button.frame.height) / 2).rounded()))
+        }
+    }
+
     func applyInset() {
+        centerTrafficLights()
         let inset = Int(leftInset)
         webView.titlebarLeftInset = CGFloat(inset)
         webView.evaluateJavaScript(
@@ -330,6 +389,21 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
     func setDragRegions(_ rects: [CGRect]) {
         webView.dragRegions = rects
     }
+
+    /// The page's Space tiles (CSS pixels from its top left) as targets for
+    /// a real window dragged onto one, in the window content's points (the
+    /// web view is the content view).
+    func setDropTargets(_ frames: [String: CGRect]) {
+        let zoom = webView.pageZoom * webView.magnification
+        dropTargets.window = window
+        dropTargets.setFrames(frames.mapValues {
+            CGRect(x: $0.minX * zoom, y: $0.minY * zoom, width: $0.width * zoom, height: $0.height * zoom)
+        })
+    }
+
+    /// The drop targets this window's page reports (the app model's, which
+    /// the notch's drag monitor hit-tests).
+    var dropTargets: SidebarDropTargets { bridge.model.pageDropTargets }
 
     /// Tells the page something changed (`cua:event`).
     func emit(_ event: String, payload: Any? = nil) {
@@ -399,14 +473,19 @@ public final class WebUIWindowController: NSWindowController, NSWindowDelegate, 
 
     // MARK: - Window
 
+    public func windowDidResize(_ notification: Notification) { centerTrafficLights() }
     public func windowDidEnterFullScreen(_ notification: Notification) { applyInset() }
     public func windowDidExitFullScreen(_ notification: Notification) { applyInset() }
 
     public func windowWillClose(_ notification: Notification) {
-        // Opened again (⇧⌘U), it comes back where it was.
+        // Opened again, it comes back where it was.
         window?.saveFrame(usingName: Self.frameName)
         videoSurfaces?.removeAll()
         webView.configuration.userContentController.removeAllScriptMessageHandlers()
+        if dropTargets.window === window {
+            dropTargets.setFrames([:])
+            dropTargets.onTargeted = nil
+        }
         if Self.shared === self { Self.shared = nil }
     }
 }
@@ -530,31 +609,6 @@ extension NSColor {
         guard let c = usingColorSpace(.sRGB) else { return nil }
         let v = [c.redComponent, c.greenComponent, c.blueComponent].map { Int(($0 * 255).rounded()) }
         return String(format: "#%02x%02x%02x", v[0], v[1], v[2])
-    }
-}
-
-/// "Open New UI (preview)": the menu command and the main window's toolbar
-/// button, while the experiment is on. It also hands the bridge the scenes'
-/// window actions.
-public struct OpenWebUIButton: View {
-    let model: AppModel
-    var label: String = "Open New UI (preview)"
-    @Environment(\.openWindow) private var openWindow
-
-    public init(model: AppModel, label: String = "Open New UI (preview)") {
-        self.model = model
-        self.label = label
-    }
-
-    public var body: some View {
-        Button(label) {
-            WebUIWindowController.actions = actions
-            WebUIWindowController.show(model: model)
-        }
-    }
-
-    var actions: WebUIActions {
-        WebUIActions.make(openWindow: openWindow)
     }
 }
 

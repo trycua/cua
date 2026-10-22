@@ -10,6 +10,7 @@
 export const METHODS = [
   "app.info",
   "session.get", "session.signIn", "session.signOut",
+  "onboarding.get", "onboarding.complete",
   "spaces.list", "spaces.open",
   "spaces.createOptions", "spaces.create",
   "spaces.setPower", "spaces.delete", "spaces.cancelCreate",
@@ -23,31 +24,36 @@ export const METHODS = [
   "teleport.catalog", "teleport.entryForPath", "teleport.windows", "teleport.remoteWindows",
   "teleport.icon", "teleport.thumbnail", "teleport.plan", "teleport.run", "teleport.sites",
   "teleport.remembered", "teleport.streamWindow", "sharing.list", "sharing.share", "sharing.unshare",
+  "sharing.removals", "sharing.ackRemovals",
   "volume.overview", "volume.storage", "volume.storageSet", "volume.mount", "volume.unmount",
   "volume.approve", "volume.deny", "volume.revoke", "volume.resolve", "volume.reveal",
   "agents.setupDriver",
-  "about.get", "about.set", "about.checkNow", "loginItem.get", "loginItem.set", "loginItem.openSettings",
+  "about.get", "about.set", "about.checkNow", "update.get", "update.install", "loginItem.get", "loginItem.set", "loginItem.openSettings",
   "devices.get", "devices.enroll", "devices.checkEnrolled", "devices.approve", "devices.rename",
   "devices.revoke", "devices.confirmMachine", "devices.createPairingCode", "devices.pairingCodes",
-  "devices.revokePairingCode", "storage.get", "storage.run",
-  "notifications.list", "notifications.markAllRead",
-  "telemetry.track", "spaces.usage", "spaces.windows", "stream.pip",
+  "devices.revokePairingCode", "teams.list", "storage.get", "storage.run",
+  "notifications.list", "notifications.markAllRead", "notifications.markRead",
+  "telemetry.track", "telemetry.linkNotice", "telemetry.acknowledgeLinkNotice", "spaces.usage", "spaces.windows", "stream.pip",
   "spaces.thumbnail",
   "spaces.chooseFiles", "spaces.droppedFiles", "spaces.sendFiles",
-  "host.setUp", "host.action", "host.openSettings",
+  "host.setUp", "host.joinWithCode", "host.action", "host.openSettings",
   "settings.get", "settings.choose",
   "keyvault.get", "keyvault.lock", "keyvault.unlock",
   "keyvault.unlockVault", "keyvault.setup", "keyvault.setDisabled",
   "keyvault.approve", "keyvault.deny", "keyvault.revokeGrant",
   "keyvault.showItems", "keyvault.delete", "keyvault.run", "keyvault.dismiss",
-  "window.setBackgroundColor", "window.setDragRegions",
+  "window.setBackgroundColor", "window.setDragRegions", "window.setDropTargets",
   "startup.get", "startup.act",
+  "relay.usage",
+  "nudges.pending", "nudges.answer",
+  "resources.get",
+  "machines.rename", "machines.remove", "machines.checkHealth",
+  "checklist.get", "checklist.send",
 ] as const;
 
-/** A live desktop's media ticket for the page's WebCodecs player, the
- * first run's state (the SwiftUI app draws its first run natively), the
- * account's relay allowance, and presence over the page's video (the
- * SwiftUI app draws it natively). */
-export const ELECTRON_METHODS = ["onboarding.get", "onboarding.complete", "spaces.openStream", "relay.usage", "presence.join", "presence.publish", "presence.leave"] as const;
+/** A live desktop's media ticket for the page's WebCodecs player,
+ * presence over the page's video (the SwiftUI app draws it natively), and
+ * New Space's runtime fix on Windows ("Install Docker Desktop"). */
+export const ELECTRON_METHODS = ["spaces.openStream", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime"] as const;
 
 export type Method = (typeof METHODS)[number] | (typeof ELECTRON_METHODS)[number];

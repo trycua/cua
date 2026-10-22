@@ -194,6 +194,13 @@ Supported: Chrome and Edge on macOS, Windows, and Linux X11; Chrome on GNOME
 Wayland; Chrome, Edge, and Chromium on Sway. On Linux, start the browser
 with `--force-renderer-accessibility`. Setup recognizes English UI labels only.
 
+Dia is supported on macOS. Its setup page is `dia://inspect/#remote-debugging`,
+opened and closed through Dia's AppleScript, and its checkbox is clicked with
+the window briefly in front, so `delivery_mode: "foreground"` is required while
+remote debugging is off. Dia shows its own **Allow debugging connection?**
+prompt, which the driver accepts. Arc is not supported: it has no Chromium
+browser window to host the connection prompt, so it rejects every connection.
+
 ## Refusals
 
 | Code | Meaning |

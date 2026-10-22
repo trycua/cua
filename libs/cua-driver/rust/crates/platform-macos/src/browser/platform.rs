@@ -397,6 +397,10 @@ fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefus
 }
 
 fn is_chromium(name: &str, bundle_id: &str) -> bool {
+    // "dia" alone also names unrelated apps, so Dia matches by bundle id only.
+    if browser_product(name, bundle_id) == BrowserProduct::Dia {
+        return true;
+    }
     let value = format!("{name} {bundle_id}").to_ascii_lowercase();
     let products = [
         "chrome", "chromium", "electron", "brave", "edge", "vivaldi", "opera", "arc", "thorium",
@@ -424,6 +428,8 @@ fn browser_product(name: &str, bundle_id: &str) -> BrowserProduct {
         BrowserProduct::Opera
     } else if bundle_id.starts_with("company.thebrowser.browser") || name == "arc" {
         BrowserProduct::Arc
+    } else if bundle_id == "company.thebrowser.dia" {
+        BrowserProduct::Dia
     } else if bundle_id == "com.apple.safari" || name == "safari" {
         BrowserProduct::Safari
     } else if bundle_id.contains("firefox") || name == "firefox" {
@@ -522,12 +528,13 @@ fn stable_hash(value: &str) -> u64 {
     hasher.finish()
 }
 
-fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
+pub(super) fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
     let home = std::env::var_os("HOME").map(PathBuf::from)?;
     let relative = match product {
         BrowserProduct::GoogleChrome => "Library/Application Support/Google/Chrome",
         BrowserProduct::MicrosoftEdge => "Library/Application Support/Microsoft Edge",
         BrowserProduct::Chromium => "Library/Application Support/Chromium",
+        BrowserProduct::Dia => "Library/Application Support/Dia/User Data",
         _ => return None,
     };
     Some(home.join(relative))
@@ -1044,6 +1051,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                 | BrowserProduct::Vivaldi
                 | BrowserProduct::Opera
                 | BrowserProduct::Arc
+                | BrowserProduct::Dia
         ) {
             BrowserProcessRole::StandaloneConsumer
         } else {

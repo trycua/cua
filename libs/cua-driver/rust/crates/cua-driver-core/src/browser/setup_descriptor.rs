@@ -66,6 +66,20 @@ const EDGE: BrowserSetupDescriptor = BrowserSetupDescriptor {
     tab_close_labels: EDGE_TAB_CLOSE_LABELS,
 };
 
+// Dia has no accessible tab strip or omnibox; its macOS adapter opens, proves
+// and closes the tab through Dia's AppleScript instead. Arc shares the same
+// shell but has no Chromium browser window to host the connection prompt, so
+// Chromium denies every connection and Arc gets no descriptor.
+const DIA: BrowserSetupDescriptor = BrowserSetupDescriptor {
+    product: BrowserProduct::Dia,
+    product_name: "Dia",
+    setup_url: "dia://inspect/#remote-debugging",
+    page_titles: CHROME_TITLES,
+    page_heading: "Remote debugging",
+    checkbox_label: "Allow remote debugging for this browser instance",
+    tab_close_labels: &[],
+};
+
 pub fn existing_profile_setup_descriptor(
     product: BrowserProduct,
 ) -> Option<&'static BrowserSetupDescriptor> {
@@ -73,6 +87,7 @@ pub fn existing_profile_setup_descriptor(
         BrowserProduct::GoogleChrome => Some(&CHROME),
         BrowserProduct::Chromium => Some(&CHROMIUM),
         BrowserProduct::MicrosoftEdge => Some(&EDGE),
+        BrowserProduct::Dia => Some(&DIA),
         _ => None,
     }
 }
@@ -101,8 +116,17 @@ mod tests {
                 .product,
             BrowserProduct::Chromium
         );
+        let dia = existing_profile_setup_descriptor(BrowserProduct::Dia).unwrap();
+        assert_eq!(dia.setup_url, "dia://inspect/#remote-debugging");
+        assert_eq!(dia.page_titles, ["Inspect with Chrome Developer Tools"]);
+        assert_eq!(dia.page_heading, "Remote debugging");
+        assert_eq!(
+            dia.checkbox_label,
+            "Allow remote debugging for this browser instance"
+        );
         for product in [
             BrowserProduct::Brave,
+            BrowserProduct::Arc,
             BrowserProduct::Firefox,
             BrowserProduct::Safari,
             BrowserProduct::Electron,

@@ -64,6 +64,7 @@ pub enum BrowserProduct {
     Vivaldi,
     Opera,
     Arc,
+    Dia,
     Electron,
     Firefox,
     Safari,

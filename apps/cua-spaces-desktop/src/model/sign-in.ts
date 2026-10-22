@@ -8,18 +8,19 @@
 // finished after all, or another sign-in on this machine (`cua auth login`).
 // The account's session is read again while a sign-in waits, so a session
 // that appears ends the wait even when no attempt's wait returns.
-import { words } from "./errors";
 import type { AccountRunning, SignInAttempt } from "./services";
+
+/** Why a run ended without a session: the error it caught (the core reads
+ * its case and words), or the browser never confirmed in time. */
+export type SignInEnd = { error: unknown } | { timedOut: true };
 
 /** What a run shows: the AppModel's phase and identity. */
 export interface SignInView {
   starting(): void;
   waiting(attempt: SignInAttempt): void;
   signedIn(who: string | null): Promise<void>;
-  failed(message: string): void;
+  failed(end: SignInEnd): void;
 }
-
-export const SIGN_IN_TIMED_OUT = "The sign-in timed out. Try again.";
 
 export class SignInRuns {
   /** How long an attempt waits for the browser (ms). */
@@ -48,14 +49,14 @@ export class SignInRuns {
     try {
       attempt = await account.beginSignIn();
     } catch (error) {
-      if (current === this.attempt) this.fail(words(error));
+      if (current === this.attempt) this.fail({ error });
       return;
     }
     // Cancelled, retried or signed in while it started.
     if (current !== this.attempt) return;
     this.view.waiting(attempt);
     const timeout = setTimeout(() => {
-      if (current === this.attempt) this.fail(SIGN_IN_TIMED_OUT);
+      if (current === this.attempt) this.fail({ timedOut: true });
     }, this.timeoutMs);
     timeout.unref?.();
     let who: string | null;
@@ -63,7 +64,7 @@ export class SignInRuns {
       who = await attempt.wait();
     } catch (error) {
       // An attempt a retry or Cancel left behind ends quietly.
-      if (current === this.attempt) this.fail(words(error));
+      if (current === this.attempt) this.fail({ error });
       return;
     } finally {
       clearTimeout(timeout);
@@ -86,14 +87,14 @@ export class SignInRuns {
     try {
       await this.view.signedIn(who);
     } catch (error) {
-      this.view.failed(words(error));
+      this.view.failed({ error });
     }
   }
 
-  private fail(message: string): void {
+  private fail(end: SignInEnd): void {
     this.attempt += 1;
     this.stopWatch();
-    this.view.failed(message);
+    this.view.failed(end);
   }
 
   /** A session stored while the sign-in waits ends it. */

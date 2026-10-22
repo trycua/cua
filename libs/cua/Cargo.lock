@@ -2892,6 +2892,8 @@ name = "cua-spaces-app-core"
 version = "0.7.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
+ "cua-auth",
  "cua-create-failure",
  "cua-home",
  "cua-keyvault",
@@ -2900,6 +2902,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "url",
 ]
 
 [[package]]

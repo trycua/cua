@@ -114,6 +114,8 @@ public final class AppModel {
     public private(set) var signIn: AppSignInPhase = .idle
     /// The page a waiting sign-in finishes on ("Open the browser again").
     public private(set) var signInURL: URL?
+    /// A failed sign-in's toast (the classic window shows it for a while).
+    public var signInToast: AppSignInToast?
     /// A sign-in still waiting after this fails (a device code lives
     /// about this long).
     public var signInTimeout: Duration = .seconds(600)
@@ -377,9 +379,14 @@ public final class AppModel {
             AppMachinesViewRelay(id: $0.id, role: $0.role, team: $0.team, ownerEmail: $0.ownerEmail,
                                  providesSpaces: $0.providesSpaces)
         }
+        // The Cua Spaces update this app found: a peer on a newer Cua is
+        // fixed by it (this app bundles its Cua), and by nothing else.
+        let update = updates.updateState
+        let found = [.available, .downloading, .downloaded].contains(update.status) ? update.version ?? "" : ""
         return appMachinesView(input: AppMachinesViewInput(
             page: machinesPageInput, relay: relay, host: host.state, about: Self.machinesAbout, rows: nil,
-            health: machineHealth.keys.sorted().compactMap { machineHealth[$0] }))
+            health: machineHealth.keys.sorted().compactMap { machineHealth[$0] },
+            appUpdate: found, appUpdateReady: !found.isEmpty && update.status == .downloaded))
     }
 
     /// What each machine's own daemon last reported of its health, by
@@ -1285,24 +1292,44 @@ public final class AppModel {
 
     /// "Sign in" / "Sign in to Cua": the browser flow, the code while it waits.
     public func beginSignIn() async {
-        guard let account, signIn != .starting else { return }
+        guard let current = startSignIn() else { return }
+        await runSignIn(current)
+    }
+
+    /// Marks a sign-in as starting, now (the web page reads it at once), and
+    /// returns its attempt; nil when one is already starting.
+    @discardableResult
+    public func startSignIn() -> Int? {
+        guard account != nil, signIn != .starting else { return nil }
         signIn = .starting
+        signInURL = nil
         signInAttempt += 1
-        let current = signInAttempt
+        return signInAttempt
+    }
+
+    /// Runs attempt `current`: every way it ends is shown (`signIn`), never
+    /// a silent stop.
+    func runSignIn(_ current: Int) async {
+        guard let account else { return }
         do {
             let attempt = try await account.beginSignIn()
-            // Cancelled while it started.
+            // Cancelled, retried or signed in while it started.
             guard signInAttempt == current, signIn == .starting else { return }
-            signIn = .waiting(userCode: attempt.userCode)
+            signIn = .waiting(userCode: attempt.userCode, opened: attempt.opened)
             signInURL = attempt.url
             let timeout = signInTimeout
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: timeout)
                 guard let self, self.signInAttempt == current, case .waiting = self.signIn else { return }
-                self.signInFailed("The sign-in timed out. Try again.")
+                self.signInFailed(appSignInFailed(reason: .notConfirmed, detail: nil))
             }
             let who = try await attempt.wait()
-            guard signInAttempt == current, case .waiting = signIn else { return }
+            // Whichever attempt the browser finished stored the session:
+            // take it, even when a retry or Cancel superseded this one (an
+            // earlier tab confirmed after all). Only a sign-out since then
+            // leaves it.
+            guard signInAttempt == current || identity == nil else { return }
+            signInAttempt += 1
             let previous = identity
             identity = who ?? account.identity()
             host.identity = identity
@@ -1321,17 +1348,22 @@ public final class AppModel {
             await reloadTeams()
             await reloadShareRemovals()
         } catch {
+            // A superseded attempt (a retry, Cancel) ends quietly; the one
+            // shown fails with its reason.
             guard signInAttempt == current, signIn != .idle else { return }
-            signInFailed(LiveSpacesBackend.words(error))
+            let variant = (error as? CuaError).flatMap { Mirror(reflecting: $0).children.first?.label } ?? ""
+            signInFailed(appSignInFailedFromError(variant: variant, message: LiveSpacesBackend.words(error)))
         }
     }
 
-    /// Shown where the sign-in was started; counted by its kind only (the
-    /// core keeps the words).
-    private func signInFailed(_ message: String) {
-        signIn = .failed(message: message)
+    /// Shown where the sign-in was started and in the sidebar's foot, with
+    /// a toast; counted by its kind only (the core keeps the words).
+    private func signInFailed(_ phase: AppSignInPhase) {
+        signIn = phase
         signInURL = nil
-        telemetry?.record(appTelemetrySignInFailed(message: message))
+        guard case let .failed(reason, _, _) = phase else { return }
+        signInToast = signInFooter.toast
+        telemetry?.record(appTelemetrySignInFailure(reason: reason))
     }
 
     /// Stops waiting for the browser (the page can start again).
@@ -1339,11 +1371,24 @@ public final class AppModel {
         switch signIn {
         case .starting, .waiting:
             signInAttempt += 1
-            telemetry?.record(appTelemetrySignInFailed(message: nil))
+            telemetry?.record(appTelemetrySignInFailure(reason: nil))
         default: break
         }
         signIn = .idle
         signInURL = nil
+    }
+
+    /// Opens the sign-in page again (the tab was closed).
+    public func reopenSignIn() {
+        guard let signInURL else { return }
+        NSWorkspace.shared.open(signInURL)
+    }
+
+    /// The sidebar's foot: every sign-in state in one place.
+    public var signInFooter: AppSignInFooter {
+        appSignInFooter(input: AppSignInFooterInput(identity: identity, cloudConfigured: cloudConfigured,
+                                                    canSignIn: account != nil, signIn: signIn,
+                                                    hasUrl: signInURL != nil))
     }
 
     public func signOut() async {

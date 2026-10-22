@@ -319,6 +319,25 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     expect(sessionEvents()).toBe(2);
   });
 
+  it("says why a sign-in failed, typed, so the page never keeps waiting", async () => {
+    await call("session.signOut");
+    await call("session.signIn");
+    await until(() => model.signIn.tag === "Waiting");
+    account.failSignIn(new Error("could not reach the sign-in service: error sending request"));
+    await until(() => model.signIn.tag === "Failed");
+    expect(await call("session.get")).toMatchObject({
+      signIn: {
+        type: "failed",
+        reason: "offline",
+        message: "Sign-in didn't finish. Can't reach Cua. Check your connection.",
+        detail: "could not reach the sign-in service: error sending request",
+      },
+      signInUrl: null,
+    });
+    const kinds = telemetry.recorded.flatMap((s) => (s.tag === "SignInFailed" ? [s.inner.errorKind] : []));
+    expect(kinds.at(-1)).toBe("transport");
+  });
+
   it("answers the Machines page from the host and the relay's devices", async () => {
     const m = (await call("machines.list")) as Record<string, unknown>;
     expect(m.signedIn).toBe(true);

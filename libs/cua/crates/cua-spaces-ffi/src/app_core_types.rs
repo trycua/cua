@@ -6699,11 +6699,18 @@ pub enum AppSignInPhase {
     Waiting {
         /// The code to confirm there, when the flow has one.
         user_code: Option<String>,
+        /// A browser opened on this computer (false: the page is to be
+        /// opened by hand, here or on another device).
+        opened: bool,
     },
-    /// It failed.
+    /// It failed ([`crate::sign_in::failed`] makes it).
     Failed {
-        /// Why.
+        /// Why ([`crate::sign_in::SignInFailure`]).
+        reason: AppSignInFailure,
+        /// The line shown: "Sign-in didn't finish." and the reason.
         message: String,
+        /// The error's own words, behind Details (never shown by default).
+        detail: Option<String>,
     },
 }
 
@@ -6872,6 +6879,101 @@ pub struct AppSettingsPage {
     pub title: String,
     /// Account, General, Privacy (once read), AI agents.
     pub sections: Vec<AppSettingsSection>,
+}
+
+/// Why a sign-in did not finish.
+pub type AppSignInFailure = core::sign_in::SignInFailure;
+#[uniffi::remote(Enum)]
+pub enum AppSignInFailure {
+    /// The browser never confirmed: the wait ran out, or the code expired
+    /// before it was confirmed.
+    NotConfirmed,
+    /// The person declined it in the browser.
+    Declined,
+    /// The sign-in service refused the code (expired or already used).
+    CodeRejected,
+    /// This computer could not reach the sign-in service.
+    Offline,
+    /// The sign-in service answered with its own error.
+    ServiceUnavailable,
+    /// Signed in, but the session could not be stored on this computer (a
+    /// locked keychain, a credential store that refused the write).
+    CouldNotSave,
+    /// Anything else (the words are behind Details).
+    Unknown,
+}
+
+/// What the sidebar's foot shows.
+pub type AppSignInFooterState = core::sign_in::SignInFooterState;
+#[uniffi::remote(Enum)]
+pub enum AppSignInFooterState {
+    /// Not signed in: "Sign in".
+    SignedOut,
+    /// Asking for a code / opening the browser.
+    Starting,
+    /// The browser is open.
+    Waiting,
+    /// It failed: the reason and Try again.
+    Failed,
+    /// Signed in.
+    SignedIn,
+}
+
+/// What the foot depends on.
+pub type AppSignInFooterInput = core::sign_in::SignInFooterInput;
+#[uniffi::remote(Record)]
+pub struct AppSignInFooterInput {
+    /// The signed-in account.
+    pub identity: Option<String>,
+    /// Cua Cloud works through client credentials (an API key).
+    pub cloud_configured: bool,
+    /// Signing in is possible here.
+    pub can_sign_in: bool,
+    /// The sign-in in progress.
+    pub sign_in: AppSignInPhase,
+    /// The page the sign-in finishes on is known (Open again).
+    pub has_url: bool,
+}
+
+/// A toast for a failure, so it is seen wherever the person is.
+pub type AppSignInToast = core::sign_in::SignInToast;
+#[uniffi::remote(Record)]
+pub struct AppSignInToast {
+    /// "Sign-in didn't finish".
+    pub title: String,
+    /// The reason (none for an unknown one).
+    pub body: Option<String>,
+}
+
+/// The sidebar's foot: one place for every sign-in state.
+pub type AppSignInFooter = core::sign_in::SignInFooter;
+#[uniffi::remote(Record)]
+pub struct AppSignInFooter {
+    /// Which state.
+    pub state: AppSignInFooterState,
+    /// The line: "Signed in as …", "Waiting for your browser…", "Sign-in
+    /// didn't finish. …", "Not signed in".
+    pub text: String,
+    /// The signed-in account (state `SignedIn`).
+    pub identity: Option<String>,
+    /// Waiting: the code to confirm in the browser.
+    pub code: Option<String>,
+    /// "Code".
+    pub code_label: String,
+    /// Waiting with a page: "Open again".
+    pub reopen_label: Option<String>,
+    /// Starting or waiting: "Cancel".
+    pub cancel_label: Option<String>,
+    /// "Sign in" or "Try again" (none while signed in or waiting).
+    pub action_label: Option<String>,
+    /// Failed: why.
+    pub reason: Option<AppSignInFailure>,
+    /// Failed: the error's own words, behind "Details".
+    pub detail: Option<String>,
+    /// "Details".
+    pub details_label: String,
+    /// Failed: the toast the shell shows once, when it fails.
+    pub toast: Option<AppSignInToast>,
 }
 
 /// What the chrome depends on.
@@ -9477,6 +9579,9 @@ pub struct AppMachinesViewIssueAction {
     pub url: Option<String>,
     /// A host action to run (`host.action`).
     pub host_action: Option<AppHostActionId>,
+    /// Restart into the Cua Spaces update this app already downloaded
+    /// (the shell's own update flow, the sidebar's "Restart to update").
+    pub app_update: bool,
 }
 
 /// One issue on a machine's page.
@@ -9485,7 +9590,8 @@ pub type AppMachinesViewIssue = core::machines_health::MachinesViewIssue;
 pub struct AppMachinesViewIssue {
     /// The check it comes from (`machine.disk`, `service`, `version`).
     pub id: String,
-    /// `warn` or `fail`.
+    /// `warn` or `fail`; `info` for a note that is no problem (it does not
+    /// tint the row's dot).
     pub level: String,
     /// One plain sentence.
     pub text: String,
@@ -9541,6 +9647,11 @@ pub struct AppMachinesViewInput {
     /// the machines whose `health_target` the shell checked
     /// ([`crate::machines_health`]).
     pub health: Vec<AppMachinesViewHealth>,
+    /// The Cua Spaces update this app found (its version); empty when this
+    /// app is the newest release.
+    pub app_update: String,
+    /// That update is downloaded and ready to restart into.
+    pub app_update_ready: bool,
 }
 
 /// One of the two switches on a machine's page.
@@ -9580,6 +9691,27 @@ pub struct AppMachinesViewSpace {
     pub status: String,
     /// Running (the green dot).
     pub running: bool,
+}
+
+/// A machine's own desktop, listed first under "Spaces on this machine"
+/// when it shares it, as any Space row (its name, system, status), with a
+/// quiet "Desktop" label. It is not one of the Spaces counted (the sidebar
+/// and the machine's line leave it out).
+pub type AppMachinesViewDesktop = core::machines_view::MachinesViewDesktop;
+#[uniffi::remote(Record)]
+pub struct AppMachinesViewDesktop {
+    /// The Space's id (its page).
+    pub id: String,
+    /// Its name, as the Spaces list names it.
+    pub name: String,
+    /// Its system ("Ubuntu 24.04.5 LTS", "macOS").
+    pub os: String,
+    /// Its status word ("Running", "Stopped").
+    pub status: String,
+    /// Running (the green dot).
+    pub running: bool,
+    /// "Desktop".
+    pub label: String,
 }
 
 /// New Space here: the wizard with this machine chosen.
@@ -9691,6 +9823,8 @@ pub struct AppMachinesViewMachine {
     pub spaces_title: String,
     /// The Spaces on it.
     pub spaces: Vec<AppMachinesViewSpace>,
+    /// Its own desktop, when it shares it (shown above `spaces`).
+    pub desktop: Option<AppMachinesViewDesktop>,
     /// When it has none.
     pub spaces_empty: Option<String>,
     /// New Space here.

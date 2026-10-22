@@ -18,7 +18,7 @@ import { withCreateContext } from "./create-context";
 import { createReport, reportMailto, type CreateReport, type ReportSend } from "./diagnostic-report";
 import type { AboutInput } from "./contracts/settings";
 import { passedSteps } from "./onboarding";
-import type { MachineRow, MachinesView, OnboardingMode, SettingsPage, SignInPhase, SignInStart, SpaceCreateConfig, TelemetryView } from "./contracts/host";
+import type { MachineRow, MachinesView, OnboardingMode, SettingsPage, SignInFailure, SignInPhase, SignInStart, SpaceCreateConfig, TelemetryView } from "./contracts/host";
 import type { OnboardingAction, OnboardingFlowState } from "./contracts/onboarding";
 import type { KeyvaultOverview, KvGrant, KvListView, KvSelection, VaultAction, VaultState } from "./contracts/keyvault";
 import type { KvAccessCommand } from "./ops/keyvault-manage";
@@ -46,7 +46,8 @@ import {
   type KeyvaultViews,
   type Machine,
 } from "./derive";
-import type { HostEvent, HostSignIn, SessionSnapshot, SettingKey, SettingsSnapshot, SettingsValues } from "./protocol";
+import type { HostEvent, HostSignIn, HostSignInFailure, SessionSnapshot, SettingKey, SettingsSnapshot, SettingsValues } from "./protocol";
+import { signInFailedFromError, signInFailedPhase, type FailedPhase } from "./sign-in";
 import { createSettingsFeature, type SettingsFeature } from "./settings-feature";
 import { SpaceDetailStore } from "./space-detail";
 import {
@@ -57,7 +58,7 @@ import {
   telemetryOnboarding,
   telemetryOnboardingFinished,
   telemetryOnboardingSkipped,
-  telemetrySignInFailed,
+  telemetrySignInFailure,
 } from "./telemetry";
 import { ThisMachineStore } from "./this-machine";
 import { Transcript, type TranscriptItem } from "./transcript";
@@ -196,7 +197,6 @@ export interface StoreOptions {
 /** A device code lives about this long; a sign-in still waiting after it
  * will not finish. */
 const SIGN_IN_TIMEOUT_MS = 10 * 60_000;
-export const SIGN_IN_TIMED_OUT = "The sign-in timed out. Try again.";
 
 const CREATE_TICK_MS = 1_000;
 /** How often a watched run is read while a turn runs, and while it waits. */
@@ -260,6 +260,9 @@ export class BridgeStore {
   private agentsPending: string[] = [];
   private signInUrl: string | null = null;
   private signInTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Counts `session.signIn` answers: a session read started before the
+   * latest one says nothing about it (an earlier attempt's failure). */
+  private signInEpoch = 0;
   private readonly signInTimeoutMs: number;
   private overview: KeyvaultOverview | undefined;
   private vaultState: VaultState = INITIAL_VAULT_STATE;
@@ -437,7 +440,11 @@ export class BridgeStore {
           break;
         }
         case "machines": {
-          if (!this.machinesPinned) this.machineRows = await this.adapter.call("machines.list", {});
+          if (!this.machinesPinned) {
+            const rows = await this.adapter.call("machines.list", {});
+            // Rows shown meanwhile (`showMachines`, parity) must not lose to a listing that was already in flight.
+            if (!this.machinesPinned) this.machineRows = rows;
+          }
           this.publishMachines();
           break;
         }
@@ -452,8 +459,9 @@ export class BridgeStore {
           break;
         }
         case "session": {
+          const epoch = this.signInEpoch;
           this.sessionSnap = await this.adapter.call("session.get", {});
-          this.followHostSignIn(this.sessionSnap.hostSignIn);
+          this.followHostSignIn(this.sessionSnap.hostSignIn, epoch === this.signInEpoch ? this.sessionSnap.hostSignInFailure : null);
           this.publishSession();
           if (this.settingsSnap) this.publishSettings();
           break;
@@ -915,7 +923,7 @@ export class BridgeStore {
   /** A native host runs the sign-in and says when it waits (with the code
    * and the page) only after `session.signIn` answered: take them in, so
    * the page shows them. */
-  private followHostSignIn(waiting: HostSignIn | null | undefined): void {
+  private followHostSignIn(waiting: HostSignIn | null | undefined, failure?: HostSignInFailure | null): void {
     if (this.signInPhase.kind !== "starting" && this.signInPhase.kind !== "waiting") return;
     // A native host signed in, whichever attempt (a retry's, or one before
     // it) finished: the wait is over.
@@ -925,10 +933,22 @@ export class BridgeStore {
       this.signInPhase = { kind: "idle" };
       return;
     }
+    // The host's sign-in failed (the browser never confirmed, the network
+    // dropped, the keychain refused): say why now, never keep waiting.
+    if (failure) {
+      this.signInFailed({
+        kind: "failed",
+        reason: (failure.reason as SignInFailure) || "unknown",
+        message: failure.message,
+        detail: failure.detail,
+      });
+      return;
+    }
     if (!waiting) return;
     if (waiting.url) this.signInUrl = waiting.url;
-    if (this.signInPhase.kind === "waiting" && (this.signInPhase.userCode ?? null) === waiting.userCode) return;
-    this.signInPhase = { kind: "waiting", userCode: waiting.userCode };
+    const opened = waiting.opened !== false;
+    if (this.signInPhase.kind === "waiting" && (this.signInPhase.userCode ?? null) === waiting.userCode && (this.signInPhase.opened ?? true) === opened) return;
+    this.signInPhase = { kind: "waiting", userCode: waiting.userCode, opened };
   }
 
   private setSignIn(phase: SignInPhase): void {
@@ -942,16 +962,19 @@ export class BridgeStore {
     this.setSignIn({ kind: "starting" });
     try {
       const start = await this.adapter.call("session.signIn", {});
+      this.signInEpoch += 1;
       // Cancelled while it started: leave it.
       if (this.signInPhase.kind !== "starting") return start;
       this.signInUrl = start.verificationUri || null;
       this.setSignIn({ kind: "waiting", userCode: start.userCode ?? null });
       this.signInTimer = setTimeout(() => {
-        if (this.signInPhase.kind === "waiting") this.signInFailed(SIGN_IN_TIMED_OUT);
+        if (this.signInPhase.kind === "waiting") this.signInFailed(signInFailedPhase(this.core, "notConfirmed"));
       }, this.signInTimeoutMs);
       return start;
     } catch (e) {
-      this.signInFailed(toError(e).message);
+      // Shown in the sidebar's foot with its reason (and a toast there),
+      // so callers need not say it again.
+      this.signInFailed(signInFailedFromError(this.core, e));
       throw toError(e);
     }
   }
@@ -960,15 +983,16 @@ export class BridgeStore {
   cancelSignIn(): void {
     if (this.signInPhase.kind !== "starting" && this.signInPhase.kind !== "waiting") return;
     this.stopSignInTimer();
-    void this.telemetry.track(telemetrySignInFailed(this.core, null));
+    void this.telemetry.track(telemetrySignInFailure(this.core, null));
     this.setSignIn({ kind: "idle" });
   }
 
-  /** A sign-in failed: shown, and counted by its kind (never its words). */
-  private signInFailed(message: string): void {
+  /** A sign-in failed: shown with its reason, and counted by its kind
+   * (never its words). */
+  private signInFailed(phase: FailedPhase): void {
     this.stopSignInTimer();
-    void this.telemetry.track(telemetrySignInFailed(this.core, message));
-    this.setSignIn({ kind: "failed", message });
+    void this.telemetry.track(telemetrySignInFailure(this.core, phase.reason ?? "unknown"));
+    this.setSignIn(phase);
   }
 
   private stopSignInTimer(): void {
@@ -1354,7 +1378,8 @@ export class BridgeStore {
         reload("machines");
         break;
       case "session.signInFailed":
-        this.signInFailed(e.reason);
+        // A host that only has words (the Tauri app): the core reads them.
+        this.signInFailed(signInFailedFromError(this.core, new Error(e.reason)));
         break;
       case "session.signedOut":
         this.signInPhase = { kind: "idle" };

@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.13.1](https://github.com/trycua/cua/compare/cua-spaces-v0.13.0...cua-spaces-v0.13.1) (2026-10-22)
+
+
+### Bug Fixes
+
+* **spaces-macos:** newer-Cua note with a real action, shared desktop listed first, bundle new cua in Cua Spaces (CUA-1989) ([#5702](https://github.com/trycua/cua/issues/5702)) ([b131466](https://github.com/trycua/cua/commit/b131466103eccede0c65213a59ef2d082813fb9e))
+* **spaces:** show every sign-in state, with a reason and Try again ([#5708](https://github.com/trycua/cua/issues/5708)) ([c2a21e7](https://github.com/trycua/cua/commit/c2a21e764e2cc8b3a0a187aa9ca7d688265fe389))
+
+## [0.13.0](https://github.com/trycua/cua/compare/cua-spaces-v0.12.1...cua-spaces-v0.13.0) (2026-10-22)
+
+
+### Features
+
+* **spaces-macos:** run the host service as the Cua Spaces app itself, one name in System Settings (CUA-1885) ([#5494](https://github.com/trycua/cua/issues/5494)) ([cd134c2](https://github.com/trycua/cua/commit/cd134c2431ee9c88118080b5a40a0b120eaaecd1))
+
 ## [0.12.1](https://github.com/trycua/cua/compare/cua-spaces-v0.12.0...cua-spaces-v0.12.1) (2026-10-20)
 
 

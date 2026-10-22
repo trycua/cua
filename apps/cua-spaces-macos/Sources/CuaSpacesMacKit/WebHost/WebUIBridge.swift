@@ -251,9 +251,12 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
 
         case "session.get": return session()
         case "session.signIn":
-            // The browser flow can take minutes: answer now, and
-            // `session.changed` follows when it ends.
-            Task { @MainActor in await model.beginSignIn() }
+            // The browser flow can take minutes: answer now (already
+            // "starting", so an earlier failure never reads as this one's),
+            // and `session.changed` follows each step until it ends.
+            if let current = model.startSignIn() {
+                Task { @MainActor in await model.runSignIn(current) }
+            }
             return session()
         case "session.signOut":
             await model.signOut()
@@ -1014,7 +1017,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         // only when what the page shows differs.
         followChanges("machines.changed") { [weak self] in
             guard let self else { return "" }
-            return Self.signature([self.hostStatus(), BridgeValue.encode(self.model.devices.view)])
+            return Self.signature([self.hostStatus(), BridgeValue.encode(self.model.devices.view), self.model.updates.updateState.json])
         }
         followChanges("update.changed") { [model] in Self.signature(model.updates.updateState.json) }
         followChanges("checklist.changed") { [model] in Self.signature(model.checklist.stored) }

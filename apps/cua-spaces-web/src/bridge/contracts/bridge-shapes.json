@@ -1927,6 +1927,9 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "appUpdate": {
+                          "type": "boolean"
                         }
                       },
                       "required": [
@@ -2098,6 +2101,40 @@
                     "running"
                   ]
                 }
+              },
+              "desktop": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "os": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "running": {
+                    "type": "boolean"
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "os",
+                  "status",
+                  "running",
+                  "label"
+                ]
               },
               "spacesEmpty": {
                 "type": [
@@ -2709,11 +2746,39 @@
                 "string",
                 "null"
               ]
+            },
+            "opened": {
+              "type": "boolean"
             }
           },
           "required": [
             "userCode",
             "url"
+          ]
+        },
+        "hostSignInFailure": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "reason",
+            "message",
+            "detail"
           ]
         }
       },
@@ -4445,8 +4510,20 @@
                     "null"
                   ]
                 },
+                "opened": {
+                  "type": "boolean"
+                },
+                "reason": {
+                  "type": "string"
+                },
                 "message": {
                   "type": "string"
+                },
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 }
               },
               "required": [

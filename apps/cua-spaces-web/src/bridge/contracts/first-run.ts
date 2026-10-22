@@ -109,6 +109,8 @@ export interface FirstRunCredential {
   title: string;
   note: string;
   status: string | null;
+  /** The status is a done one ("Signed in", "Saved"), not a wait. */
+  ok: boolean;
   /** `agent-sign-in` (with `agent`) or `add-key` (with `provider`). */
   action: FirstRunButton | null;
   agent: string | null;

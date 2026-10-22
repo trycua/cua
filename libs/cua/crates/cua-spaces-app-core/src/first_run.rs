@@ -247,8 +247,10 @@ pub struct CredentialRow {
     pub title: String,
     /// Who uses it: "Codex uses it on this Mac".
     pub note: String,
-    /// "Signed in", "Saved", "Waiting for the browser…".
+    /// "Signed in", "Saved", "Finish in your browser…".
     pub status: Option<String>,
+    /// The status is a done one ("Signed in", "Saved"), not a wait.
+    pub ok: bool,
     /// `agent-sign-in` (with `agent`), or `add-key` (with `provider`).
     pub action: Option<FirstRunButton>,
     pub agent: Option<String>,
@@ -634,6 +636,7 @@ fn credentials(input: &FirstRunInput, ticked: &[String]) -> Vec<CredentialRow> {
             id: format!("sign-in:{id}"),
             title: format!("{label} sign-in"),
             note: format!("{} uses it on {place}", default_or(&a.name, id)),
+            ok: a.signed_in,
             status: if a.signed_in {
                 Some("Signed in".into())
             } else if waiting {
@@ -674,6 +677,7 @@ fn credentials(input: &FirstRunInput, ticked: &[String]) -> Vec<CredentialRow> {
             title: format!("{} key", row.title),
             note: format!("For {} in your Spaces", name_of(agents, agent)),
             status: row.set.then(|| "Saved".into()),
+            ok: row.set,
             action: (!row.set).then(|| button("add-key", "Add key")),
             agent: None,
             provider: Some(provider.into()),
@@ -1691,6 +1695,7 @@ mod tests {
                 ("key:openai", None, true),
             ]
         );
+        assert!(c.credentials.iter().all(|r| r.ok == r.status.is_some()));
         // Waiting for the browser, then a failure to start.
         let mut i = FirstRunInput {
             agents: Some(vec![codex(true, false)]),
@@ -1700,6 +1705,7 @@ mod tests {
         };
         let row = view(&i).connect.unwrap().credentials[0].clone();
         assert_eq!(row.status.as_deref(), Some("Finish in your browser…"));
+        assert!(!row.ok, "a wait is not a done status");
         assert!(row.action.is_none());
         i.agent_signing_in = None;
         i.agent_sign_in_error = Some("codex: not found".into());

@@ -245,7 +245,7 @@ function CredentialRowView({ row: r, onAct }: { row: FirstRunCredential; onAct: 
         ) : null}
       </div>
       {r.status ? (
-        <span className={cn("shrink-0 text-xs", r.action ? "text-muted-foreground" : "rounded-full bg-[#1f9d55]/10 px-2 py-0.5 font-medium text-[#1f9d55]")} data-first-run-credential-status="">
+        <span className={cn("shrink-0 text-xs", r.ok ? "rounded-full bg-[#1f9d55]/10 px-2 py-0.5 font-medium text-[#1f9d55]" : "text-muted-foreground")} data-first-run-credential-status="">
           {r.status}
         </span>
       ) : null}

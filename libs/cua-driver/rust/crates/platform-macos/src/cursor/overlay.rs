@@ -1225,6 +1225,14 @@ fn target_is_frontmost_visible_window(
         .is_some_and(|window| u64::from(window.window_id) == target_wid)
 }
 
+/// Whether `target_wid` is an on-screen window the overlay can be ordered
+/// relative to.
+fn target_in_stack(target_wid: u64, windows: &[crate::windows::WindowInfo]) -> bool {
+    windows
+        .iter()
+        .any(|window| u64::from(window.window_id) == target_wid && window.is_on_screen)
+}
+
 fn dispatch_pin_above(win_ptr: usize, target_wid: u64) {
     use std::ffi::c_void;
 
@@ -1257,6 +1265,13 @@ fn dispatch_pin_above(win_ptr: usize, target_wid: u64) {
     }
 
     let windows = crate::windows::visible_windows();
+    // A target that closed or left the screen (a dialog the action dismissed)
+    // has no place in the stack: AppKit orders a window relative to an unknown
+    // window number above every window of its level, which put the agent
+    // cursor over the user's front app. Keep the current order instead.
+    if !target_in_stack(target_wid, &windows) {
+        return;
+    }
     let raise_front =
         target_is_frontmost_visible_window(target_wid, crate::apps::frontmost_pid(), &windows);
     let payload = Box::new((win_ptr, target_wid, raise_front));
@@ -1551,6 +1566,17 @@ mod tests {
             Some(target_pid),
             &windows,
         ));
+    }
+
+    #[test]
+    fn a_closed_or_hidden_target_is_not_pinned_against() {
+        let mut windows = vec![window(10, 100, 20), window(11, 200, 30)];
+        assert!(target_in_stack(10, &windows));
+        // The dialog the action closed is gone from the list.
+        assert!(!target_in_stack(726, &windows));
+        // A window that is still listed but off screen.
+        windows[0].is_on_screen = false;
+        assert!(!target_in_stack(10, &windows));
     }
 
     #[test]

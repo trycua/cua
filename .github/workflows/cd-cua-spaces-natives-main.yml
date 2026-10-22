@@ -15,6 +15,11 @@ name: "CD: Cua Spaces natives on main"
 # the cua-spacesd pin, the build script), so a commit with unchanged inputs
 # finds its natives already saved and does nothing but restore-and-exit.
 #
+# Phase 0 of the build-once release model (docs/design/desktop-release-build-once-promote.md,
+# CUA-1991): warm natives first, then signed artifacts on main (a separate
+# workflow, phase 1), then a tag run that promotes them. This file stays
+# cache-only so it can land on its own.
+#
 # Builds only: no secrets, no signing, no artifacts, nothing published.
 # On a pull request (this file only) it checks that the workflow still runs.
 

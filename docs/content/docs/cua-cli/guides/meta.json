@@ -1,7 +1,6 @@
 {
   "title": "Guides",
   "pages": [
-    "authentication",
-    "mcp-server"
+    "authentication"
   ]
 }

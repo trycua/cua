@@ -1,14 +1,16 @@
 {
   "title": "Guides",
   "pages": [
-    "connect-your-agent",
+    "---Set up---",
     "permissions",
+    "use-the-sdk",
+    "vms-and-remote",
+    "operate",
+    "---Drive apps---",
     "browsers",
     "visual-regions",
-    "operate",
-    "vms-and-remote",
-    "use-the-sdk",
     "recipes",
+    "---Fix---",
     "troubleshoot"
   ]
 }

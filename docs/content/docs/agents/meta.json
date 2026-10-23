@@ -1,0 +1,16 @@
+{
+  "title": "Agents",
+  "root": true,
+  "pages": [
+    "index",
+    "claude-code",
+    "codex",
+    "cursor",
+    "gemini",
+    "hermes",
+    "openclaw",
+    "local-models",
+    "spaces-mcp",
+    "coding-agents-in-a-space"
+  ]
+}

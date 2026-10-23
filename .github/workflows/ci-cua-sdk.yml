@@ -77,6 +77,8 @@ jobs:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
+          # PRs restore main's cache but never save one (10 GB repo cache cap).
+          save-if: ${{ github.event_name != 'pull_request' }}
           workspaces: libs/cua
           key: cua-sdk
       - name: Format
@@ -165,6 +167,7 @@ jobs:
         uses: dtolnay/rust-toolchain@1.97.1
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
+          save-if: ${{ github.event_name != 'pull_request' }}
           workspaces: libs/cua
       - name: cargo publish --dry-run
         run: |
@@ -197,6 +200,8 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
+          # PRs restore main's cache but never save one (10 GB repo cache cap).
+          save-if: ${{ github.event_name != 'pull_request' }}
           workspaces: libs/cua-spacesd/tests/spaces-e2e
           key: cua-spaces-e2e
       - name: Format
@@ -226,6 +231,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.97.1
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
+          # PRs restore main's cache but never save one (10 GB repo cache cap).
+          save-if: ${{ github.event_name != 'pull_request' }}
           workspaces: libs/cua
           key: cua-sdk-bindings
       - uses: actions/setup-node@v4
@@ -279,6 +286,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.97.1
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
+          # PRs restore main's cache but never save one (10 GB repo cache cap).
+          save-if: ${{ github.event_name != 'pull_request' }}
           workspaces: libs/cua
           key: cua-sdk-python
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
@@ -323,6 +332,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.97.1
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
+          # PRs restore main's cache but never save one (10 GB repo cache cap).
+          save-if: ${{ github.event_name != 'pull_request' }}
           workspaces: libs/cua
           key: cua-sdk-node
       - uses: actions/setup-node@v4
@@ -358,6 +369,8 @@ jobs:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
+          # PRs restore main's cache but never save one (10 GB repo cache cap).
+          save-if: ${{ github.event_name != 'pull_request' }}
           workspaces: libs/cua
           key: cua-sdk-browser
       - uses: actions/setup-node@v4
@@ -392,6 +405,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.97.1
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
+          # PRs restore main's cache but never save one (10 GB repo cache cap).
+          save-if: ${{ github.event_name != 'pull_request' }}
           workspaces: libs/cua
           key: cua-sdk-swift
       - name: Dev dylib

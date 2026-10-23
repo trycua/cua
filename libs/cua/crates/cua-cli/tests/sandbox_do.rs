@@ -706,9 +706,7 @@ async fn sandbox_view_forwards_a_non_loopback_link_to_loopback() {
         "{url}"
     );
     // The forward lives while `view` runs.
-    reqwest::get(link.origin().ascii_serialization())
-        .await
-        .expect("the loopback origin does not reach the sandbox");
+    assert_viewer_reaches(&link.origin().ascii_serialization(), &env).await;
     assert!(view.try_wait().unwrap().is_none(), "view exited: {url}");
 }
 

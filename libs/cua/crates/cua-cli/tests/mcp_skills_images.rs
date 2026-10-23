@@ -291,9 +291,8 @@ async fn mcp_sandbox_view_hands_out_a_loopback_link_for_the_session() {
         link.origin().ascii_serialization()
     };
     let first = view().await;
-    reqwest::get(&first)
-        .await
-        .expect("the loopback origin does not outlive the call");
+    // The proxy outlives the call.
+    assert_viewer_reaches(&first, &env).await;
     assert_eq!(view().await, first, "a second call opened another proxy");
     m.close().await;
 }
@@ -628,9 +627,7 @@ async fn skills_record_opens_a_non_loopback_sandbox_viewer_on_loopback() {
         "{url}"
     );
     // The proxy lives while it records.
-    reqwest::get(link.origin().ascii_serialization())
-        .await
-        .expect("the loopback origin does not reach the sandbox");
+    assert_viewer_reaches(&link.origin().ascii_serialization(), &env).await;
     assert!(child.try_wait().unwrap().is_none(), "record exited: {url}");
 }
 

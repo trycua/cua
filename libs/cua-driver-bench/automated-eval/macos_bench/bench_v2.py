@@ -105,7 +105,7 @@ SIDE_DOOR_BUNDLES = {
     "com.apple.automator": "Automator",
     "com.apple.shortcuts": "Shortcuts",
 }
-SIDE_DOOR_PROCESSES = ("Script Editor", "Automator", "iTerm2", "Shortcuts", *LINUX_TERMINALS)
+SIDE_DOOR_PROCESSES = ("Script Editor", "Automator", "iTerm2", "Shortcuts")
 # Tool-input text that runs code outside the GUI or reads/writes files (a violation).
 EXEC_PATTERNS = (
     "osascript",

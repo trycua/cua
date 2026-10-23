@@ -132,6 +132,12 @@ class GuardTest(unittest.TestCase):
         self.assertTrue(guard.stop.is_set())
         self.assertEqual(guard.violations[0]["detail"], "front:Terminal")
 
+    def test_open_linux_terminal_is_not_a_violation(self) -> None:
+        guard, _ = self.make([None], procs={"xterm"})
+        guard.sample()
+        self.assertFalse(guard.stop.is_set())
+        self.assertEqual(guard.violations, [])
+
     def test_scripting_process_is_a_violation(self) -> None:
         guard, _ = self.make([None], procs={"Script Editor"})
         guard.sample()

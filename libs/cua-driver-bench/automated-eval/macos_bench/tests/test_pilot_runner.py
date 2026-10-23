@@ -74,6 +74,7 @@ class DesktopRuntimeTest(unittest.TestCase):
         from unittest.mock import patch
 
         with (
+            tempfile.TemporaryDirectory() as tmp,
             patch.object(desktop, "detect_platform", return_value="macos"),
             patch.dict(os.environ, {"PATH": "/injected/bin", "LANG": "injected", "DISPLAY": ":92"}),
         ):
@@ -81,10 +82,26 @@ class DesktopRuntimeTest(unittest.TestCase):
             self.assertEqual(env["PATH"], "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin")
             self.assertEqual(env["LANG"], "en_US.UTF-8")
             self.assertNotIn("DISPLAY", env)
-            self.assertEqual(
-                pilot.clean_app_env(Path("/tmp/home"))["PATH"],
-                f"/opt/homebrew/bin:{arms.CLOSED_PATH}",
-            )
+            home = Path(tmp) / "home"
+            app_env = pilot.clean_app_env(home)
+            self.assertEqual(app_env["PATH"], f"/opt/homebrew/bin:{arms.CLOSED_PATH}")
+            self.assertEqual(app_env["TMPDIR"], str(home / "tmp"))
+            self.assertTrue((home / "tmp").is_dir())
+
+    def test_linux_environment_uses_trial_tmpdir(self) -> None:
+        import desktop_runtime as desktop
+        import run_pilot as pilot
+        from unittest.mock import patch
+
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch.object(desktop, "detect_platform", return_value="linux"),
+            patch.dict(os.environ, {"TMPDIR": "/runner/tmp"}),
+        ):
+            home = Path(tmp) / "home"
+            env = pilot.clean_app_env(home)
+            self.assertEqual(env["TMPDIR"], str(home / "tmp"))
+            self.assertTrue((home / "tmp").is_dir())
 
     def test_stop_group_tolerates_permission_error_after_termination(self) -> None:
         import desktop_runtime as desktop
@@ -430,6 +447,10 @@ class DesktopRuntimeTest(unittest.TestCase):
             try:
                 sentinel.start()
                 self.assertIsNotNone(sentinel.proc)
+                windows = subprocess.check_output(
+                    ["xdotool", "search", "--name", "^User activity$"], text=True, timeout=10
+                ).splitlines()
+                self.assertTrue(windows)
                 sentinel.activate()
                 sentinel.toggle_armed()
                 time.sleep(2.5)

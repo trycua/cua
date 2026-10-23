@@ -222,6 +222,7 @@ def hid_drops(path: Path) -> int:
 
 
 def clean_app_env(home: Path) -> dict[str, str]:
+    (home / "tmp").mkdir(parents=True, exist_ok=True)
     extra = (
         {"PATH": f"/opt/homebrew/bin:{arms.CLOSED_PATH}"}
         if desktop.detect_platform() == "macos"

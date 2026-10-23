@@ -40,7 +40,7 @@ class Sentinel:
         self.clip = 0
         self.expected = ""
         self.previous = None
-        self.window = Gtk.Window(title="BenchSentinel — User window")
+        self.window = Gtk.Window(title="User activity" if args.user_activity else "Bench Sentinel")
         self.window.set_wmclass("BenchSentinel", "BenchSentinel")
         self.window.set_default_size(600, 320)
         if args.frame:

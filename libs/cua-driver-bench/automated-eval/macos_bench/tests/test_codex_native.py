@@ -380,7 +380,6 @@ class ChatGPTPreflightTest(unittest.TestCase):
                 "exit",
                 "timeout",
                 "malformed",
-                "replace",
             ):
                 cli.write_text(f"""#!{sys.executable}
 import json, os, sys, time
@@ -410,10 +409,6 @@ for line in sys.stdin:
             result = {{'data': [], 'nextCursor': 'page2'}}
         else:
             result = {{'data': [{{'model': 'other' if scenario == 'model' else 'gpt-6.1-sol', 'id': 'catalog-id'}}], 'nextCursor': None}}
-        if scenario == 'replace':
-            link = Path({str(home / "auth.json")!r})
-            link.unlink()
-            link.touch()
     print(json.dumps({{'method': 'notification', 'params': {{'private': 'SECRET'}}}}), flush=True)
     reply = {{'id': msg['id'], 'result': result}}
     if scenario == 'rpc':

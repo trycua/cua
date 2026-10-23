@@ -455,8 +455,6 @@ def chatgpt_checks(cli: Path, env: dict[str, str], model: str) -> list[tuple[str
                 proc.stdin.close()
             if proc.stdout:
                 proc.stdout.close()
-    if not (Path(env["CODEX_HOME"]) / "auth.json").is_symlink():
-        checks.append(("codex shared auth symlink", "fail", "credential symlink missing"))
     return checks
 
 

@@ -61,6 +61,7 @@ DESCRIPTOR = {
 }
 
 
+@unittest.skipUnless(sys.platform == "darwin", "macOS bundle descriptors")
 class AdapterTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -198,6 +199,41 @@ class AdapterTest(unittest.TestCase):
     def test_kill_only_in_disposable_vm(self) -> None:
         os.environ.pop("CDB_BENCH_DISPOSABLE", None)
         cdb_adapter.clear_leftovers(self.spec)  # must be a no-op, never a pkill on a real desktop
+
+
+@unittest.skipUnless(sys.platform == "linux", "Linux launch descriptors")
+class LinuxAdapterTest(unittest.TestCase):
+    def test_descriptor_launch_preserves_session_and_honors_unset_env(self) -> None:
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bundle = root / "tasks/shared/syn"
+            (bundle / "platform").mkdir(parents=True)
+            descriptor = {
+                "workspace_root": str(root / "workspace"),
+                "semantics": {"reset": {
+                    "setup": [sys.executable, "-c", "import os; assert os.environ['DISPLAY'] == ':unit-display'; assert os.environ['DBUS_SESSION_BUS_ADDRESS'] == 'unix:path=/unit-bus'"],
+                    "verify": [sys.executable, "-c", "pass"],
+                }},
+                "apps": [{"id": "desk", "kind": "electron",
+                    "command": [sys.executable, "-c", "import json, os; print(json.dumps(dict(os.environ)))"],
+                    "env": {"ELECTRON_RUN_AS_NODE": "1"}, "unset_env": ["ELECTRON_RUN_AS_NODE"]}],
+            }
+            (bundle / "platform/launch.linux.json").write_text(json.dumps(descriptor))
+            with mock.patch.dict(os.environ, {"CDB_TASKPACK": str(root), "CDB_BENCH_DISPOSABLE": "0", "DISPLAY": ":unit-display", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/unit-bus"}):
+                task = cdb_adapter.CdbTask({"pack_task": "shared/syn"}, root)
+                task.reset()
+                try:
+                    task.start_apps()
+                    task.procs[0].wait(timeout=5)
+                    observed = json.loads((root / "app-desk.log").read_text())
+                    self.assertEqual(observed["DISPLAY"], ":unit-display")
+                    self.assertEqual(observed["DBUS_SESSION_BUS_ADDRESS"], "unix:path=/unit-bus")
+                    self.assertNotIn("ELECTRON_RUN_AS_NODE", observed)
+                finally:
+                    task.stop_apps()
+        self.assertEqual(cdb_adapter.with_force_accessibility(["chromium", "https://example.invalid"], "browser"), ["chromium", ca.FORCE_ACCESSIBILITY_FLAG, "https://example.invalid"])
 
 
 class ArgvAndScanTest(unittest.TestCase):

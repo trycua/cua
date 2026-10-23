@@ -95,6 +95,19 @@ def run(rows, **kw):
     return az.analyze(rows, **kw)
 
 
+class LinuxDisturbanceTest(unittest.TestCase):
+    def test_unmeasured_hid_is_valid_only_with_linux_provenance(self):
+        row = make_row(A, "MB-09", 1, False, platform="linux")
+        row["disturbance"].update(hid_events=None, human_input_suspected=None)
+        az.validate_row(row, "linux")
+        summary = run([row])["disturbance"][A]
+        self.assertIsNone(summary["fields"]["hid_events_total"]["sum"])
+        self.assertIsNone(summary["any_disturbance"]["fraction"])
+        row["platform"] = "macos"
+        with self.assertRaises(az.TrialFormatError):
+            az.validate_row(row, "macos")
+
+
 class WilsonTests(unittest.TestCase):
     def test_zero_of_ten(self):
         lo, hi = az.wilson_interval(0, 10)

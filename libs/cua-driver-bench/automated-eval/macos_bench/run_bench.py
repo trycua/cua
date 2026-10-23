@@ -56,6 +56,8 @@ import claude_driver  # noqa: E402
 import claude_events  # noqa: E402
 import recorder as rec  # noqa: E402
 import run_pilot as pilot  # noqa: E402
+import desktop_runtime as desktop
+from dataclasses import replace
 
 SCHEMA = "cdb-bench-trial/1"
 WORK = ca.WORK
@@ -244,6 +246,8 @@ def git_commit(path: Path) -> str:
 
 
 def sw_vers() -> str:
+    if desktop.detect_platform() == "linux":
+        return os.uname().release
     return subprocess.run(
         ["sw_vers", "-productVersion"], capture_output=True, text=True
     ).stdout.strip()
@@ -266,6 +270,7 @@ def src_hash() -> str:
     digest = hashlib.sha256()
     for path in (
         sorted(HERE.glob("*.py"))
+        + sorted((HERE / "linux").rglob("*.py"))
         + sorted((HERE / "probes").rglob("*.py"))
         + sorted((HERE / "probes").rglob("*.md"))
         + sorted((HERE / "probes").rglob("task.json"))
@@ -506,9 +511,7 @@ def check_daemon(pins: dict[str, Any], arm: str = "cc-cua-driver") -> list[tuple
             "git_sha"
         ) == main.get("git_sha")
     checks = health.get("checks", {})
-    perms = (
-        checks.get("tcc_accessibility") == "pass" and checks.get("tcc_screen_recording") == "pass"
-    )
+    perms = desktop.capabilities_ok(health)
     return [
         (
             f"{arm} daemon reports version",
@@ -685,6 +688,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
     idle_start = pilot.hid_idle_seconds()
     row: dict[str, Any] = {
         "schema": SCHEMA,
+        "platform": desktop.detect_platform(),
         "trial_id": entry["trial_id"],
         "attempt": attempt,
         "final": False,
@@ -724,6 +728,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         if arm in ca.CUA_ARMS
         else None,
         "macos": ctx.versions.get("macos"),
+        "os_version": ctx.versions.get("os_version"),
         "bench_repo_commit": ctx.versions.get("bench_repo_commit"),
         "bench_src_sha256": ctx.versions.get("bench_src_sha256"),
         "system_prompt_sha256": hashlib.sha256(
@@ -746,8 +751,8 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
     if arm in cxn.ARMS:
         row["model"], row["effort"] = cxn.MODEL, cxn.EFFORT
     sentinel = pilot.Sentinel(
-        Path(args.build_dir) / "BenchSentinel.app"
-        if args.build_dir and not args.no_sentinel
+        Path(args.build_dir or HERE / "linux") / "BenchSentinel.app"
+        if (args.build_dir or desktop.detect_platform() == "linux") and not args.no_sentinel
         else None,
         artifacts / "sentinel.jsonl",
         v2.sentinel_args(condition) if bench_v2 else None,
@@ -784,9 +789,10 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         )
         kill_bench_apps()
         reset_needs_apps(needs)
-        subprocess.run(
-            ["pbcopy"], input=b"", capture_output=True
-        )  # no stale clipboard between trials
+        if desktop.detect_platform() == "macos":
+            subprocess.run(
+                ["pbcopy"], input=b"", capture_output=True
+            )  # no stale clipboard between trials
         if arm in ca.CUA_ARMS:
             ensure_agent_daemon(ctx, arm)
         elif (
@@ -795,7 +801,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             ensure_agent_daemon(ctx, cxn.SOURCE_ARM[arm])
         if getattr(args, "park_pointer", False):
             row["pointer_parked"] = park_pointer(ctx)
-        lab_app = Path(args.build_dir) / "BenchLab.app"
+        lab_app = Path(args.build_dir or HERE / "linux") / "BenchLab.app"
         if cdb is not None:
             cdb.reset()
             brief, paths = cdb.brief(), {}
@@ -814,6 +820,8 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             brief, paths = pilot.prepare_probe(task, seed, trial_dir, lab_app)
             sentinel.start()
             lab = pilot.launch_lab(task, seed, paths, lab_app, app_env)
+        if desktop.detect_platform() == "linux":
+            desktop.capture_screenshot(os.environ["DISPLAY"], artifacts / "startup.png")
         if sentinel_front:
             sentinel.activate()
         if condition == "background":  # A15.2: the user window covers part of the target on purpose
@@ -956,6 +964,17 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         failure = {"kind": "harness_exception", "message": f"{type(error).__name__}: {error}"}
         note = failure["message"]
     finally:
+        if desktop.detect_platform() == "linux":
+            try:
+                desktop.capture_screenshot(os.environ.get("DISPLAY", ""), artifacts / ("failure.png" if failure.get("kind") else "final.png"))
+            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                (artifacts / "screenshot-error.txt").write_text(str(error))
+            logs = {"recorder": ca.RECORDER_STATE / "daemon.log"}
+            if arm in ca.CUA_BUILDS:
+                logs["driver"] = ca.CUA_BUILDS[arm].state / "daemon.log"
+            for name, log in logs.items():
+                if log.is_file():
+                    shutil.copyfile(log, artifacts / f"{name}.log")
         try:
             sentinel.stop()
         except Exception:  # noqa: BLE001
@@ -1107,8 +1126,8 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                 "pointer_deviation_episodes": summary_sentinel.get("pointer_deviation_episodes", 0),
                 "pointer_moved": deviation > pilot_deviation_px(),
                 "frontmost_changed": bool(summary_sentinel.get("front_changes", 0)),
-                "hid_events": hid or {"move": 0, "down": 0, "key": 0, "scroll": 0},
-                "human_input_suspected": bool(hid_total and idle_start < 900),
+                "hid_events": (hid or {"move": 0, "down": 0, "key": 0, "scroll": 0}) if desktop.detect_platform() == "macos" else None,
+                "human_input_suspected": bool(hid_total and idle_start < 900) if desktop.detect_platform() == "macos" else None,
                 "windows_raised": summary_sentinel.get("windows_raised"),
                 "raised_by": summary_sentinel.get("raised_by", []),
                 "overlay_owners": summary_sentinel.get("overlay_owners", []),
@@ -1124,7 +1143,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             "gui_only": gui_only,
             "interruption": v2.interruption_of(evaluation),
             "hid_idle_drops": pilot.hid_drops(artifacts / "hid-idle.jsonl")
-            if (artifacts / "hid-idle.jsonl").exists()
+            if desktop.detect_platform() == "macos" and (artifacts / "hid-idle.jsonl").exists()
             else None,
             "confirmation_requested": False,
             "evaluator_read_suspected": bool(peeks),
@@ -1398,14 +1417,8 @@ def _walk_dicts(node: Any):
             yield from _walk_dicts(value)
 
 
-SIDE_DOOR_BUNDLES = {
-    "com.apple.Terminal": "Terminal",
-    "com.googlecode.iterm2": "iTerm",
-    "com.apple.ScriptEditor2": "Script Editor",
-    "com.apple.automator": "Automator",
-    "com.apple.shortcuts": "Shortcuts",
-}
-SIDE_DOOR_PROCESSES = ("Script Editor", "Automator", "iTerm2", "Shortcuts")
+SIDE_DOOR_BUNDLES = v2.SIDE_DOOR_BUNDLES
+SIDE_DOOR_PROCESSES = v2.SIDE_DOOR_PROCESSES
 SIDE_DOOR_PATTERNS = (
     "Terminal",
     "iTerm",
@@ -1429,6 +1442,16 @@ SIDE_DOOR_PATTERNS = (
 
 def frontmost_bundle() -> str | None:
     """Bundle id of the frontmost app through lsappinfo (no TCC permission needed)."""
+    if desktop.detect_platform() == "linux":
+        try:
+            window = subprocess.check_output(["xdotool", "getactivewindow"], text=True, timeout=3).strip()
+            props = subprocess.check_output(["xprop", "-id", window, "WM_CLASS"], text=True, timeout=3)
+            names = re.findall(r'"([^\"]+)"', props)
+            if not names:
+                return None
+            return next((name for name in v2.LINUX_TERMINALS if name.casefold() == names[-1].casefold()), names[-1])
+        except (OSError, subprocess.SubprocessError):
+            return None
     try:
         asn = subprocess.run(
             ["/usr/bin/lsappinfo", "front"], capture_output=True, text=True, timeout=3
@@ -1507,6 +1530,8 @@ SAVED_STATE = {
 
 def reset_needs_apps(names: list[str]) -> None:
     """Kill the apps a task needs and remove their saved window state so each trial starts clean."""
+    if desktop.detect_platform() == "linux":
+        return
     for name in names:
         subprocess.run(["pkill", "-x", name], capture_output=True)
     time.sleep(0.3)
@@ -1942,7 +1967,7 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
     )
     add(
         "terminal.app ancestor",
-        "pass" if terminal_ancestor() else ("warn" if args.allow_non_terminal else "fail"),
+        "skip" if desktop.detect_platform() == "linux" else "pass" if terminal_ancestor() else ("warn" if args.allow_non_terminal else "fail"),
         "runner started from Terminal.app"
         if terminal_ancestor()
         else "not started from Terminal.app (required for arm cc-codex-cu)",
@@ -1998,6 +2023,9 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
             ensure_agent_daemon(ctx, cua_arm)
             for name, status, detail in check_daemon(pins, cua_arm):
                 add(name, status, detail)
+            if desktop.detect_platform() == "linux":
+                for check in desktop.doctor(spec.bin, spec.socket, spec.home):
+                    add(check.name, check.status, check.detail)
             health = ca.cua_health(spec.socket, spec.home, spec.bin)
             ctx.versions.setdefault("builds", {}).setdefault(cua_arm, {})["cua_daemon_version"] = (
                 health.get("build", {}).get("version")
@@ -2090,12 +2118,18 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
                 add(f"CDB {tid} descriptor readable", "pass", f"{len(names)} app names")
             except Exception as error:  # noqa: BLE001
                 add(f"CDB pack {tid}", "fail", f"{type(error).__name__}: {error}")
-        for app in ("Google Chrome", "LibreOffice", "Gnucash"):
-            add(
-                f"CDB app installed: {app}",
-                "pass" if Path(f"/Applications/{app}.app").is_dir() else "fail",
-                f"/Applications/{app}.app",
-            )
+        if desktop.detect_platform() == "macos":
+            for app in ("Google Chrome", "LibreOffice", "Gnucash"):
+                add(f"CDB app installed: {app}", "pass" if Path(f"/Applications/{app}.app").is_dir() else "fail", f"/Applications/{app}.app")
+        else:
+            for tid in cdb_ids:
+                probe = cdb_adapter.CdbTask(task_spec(ctx.tasks[tid]), ctx.run_dir)
+                for prerequisite in probe.descriptor.get("prerequisites", []):
+                    try:
+                        done = subprocess.run([probe.sub(p) for p in prerequisite["check"]], cwd=probe.sub(prerequisite.get("cwd", str(probe.bundle))), env=desktop.desktop_env(Path.home()), capture_output=True, timeout=30)
+                        add(f"CDB {tid} prerequisite {prerequisite['id']}", "pass" if done.returncode == 0 else "fail", str(prerequisite["check"]))
+                    except (OSError, subprocess.TimeoutExpired) as error:
+                        add(f"CDB {tid} prerequisite {prerequisite['id']}", "fail", str(error))
         electron = list(cdb_adapter.pack_tasks_root().glob("*/*/apps/*/node_modules/electron/dist"))
         add(
             "CDB Electron apps installed (npm ci + install.js)",
@@ -2113,17 +2147,20 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
             "CDB_BENCH_DISPOSABLE=1 (the runner kills Electron/Chrome/LibreOffice by name)",
         )
     build = Path(args.build_dir) if args.build_dir else None
-    ok_build = bool(
-        build and (build / "BenchLab.app").is_dir() and (build / "BenchSentinel.app").is_dir()
-    )
+    try:
+        for name in BENCH_APPS:
+            desktop.bench_app_argv(name, build)
+        ok_build = True
+    except (OSError, ValueError, StopIteration):
+        ok_build = False
     add("BenchLab + BenchSentinel builds", "pass" if ok_build else "fail", str(build))
     copies = registered_bench_copies()
     per_name = {n: [c for c in copies if Path(c).name == n] for n in BENCH_APPS}
-    ok_copies = all(len(v) == 1 for v in per_name.values())
+    ok_copies = desktop.detect_platform() == "linux" or all(len(v) == 1 for v in per_name.values())
     add(
         "exactly one registered copy of BenchLab and BenchSentinel",
-        "pass" if ok_copies else "fail",
-        json.dumps(per_name) if not ok_copies else f"{[v[0] for v in per_name.values()]}",
+        "skip" if desktop.detect_platform() == "linux" else "pass" if ok_copies else "fail",
+        "not applicable on Linux" if desktop.detect_platform() == "linux" else json.dumps(per_name),
     )
     ps = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True).stdout
     leftovers = [
@@ -2135,6 +2172,8 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
                 "BenchLab.app/Contents/MacOS",
                 "BenchSentinel.app/Contents/MacOS",
                 "/Calculator.app/Contents/MacOS/Calculator",
+                str(HERE / "linux" / "benchlab.py"),
+                str(HERE / "linux" / "sentinel.py"),
             )
         )
     ]
@@ -2256,6 +2295,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="default: ToolSearch is in the built-in tool set so Claude Code's own deferral applies per arm",
     )
     p.add_argument("--tell-budget", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument("--cua-bin", type=Path, help="driver executable (required on Linux)")
+    p.add_argument("--cua-skills", type=Path, help="matching driver skill directory")
+    p.add_argument("--pins", type=Path, help="platform-specific identity pins")
     p.add_argument(
         "--build-dir",
         type=Path,
@@ -2358,6 +2400,23 @@ def make_ctx(args: argparse.Namespace) -> Ctx:
     task_ids = core.order_tasks(selected, explicit=explicit)
     full_ids = task_ids if args.tasks else core.order_tasks(defaults, explicit=bench_v2)
     arm_names = [args.only_arm] if args.only_arm else list(args.arms)
+    unsupported = []
+    if desktop.detect_platform() == "linux":
+        unsupported = [f"unsupported-platform: {a} requires macOS" for a in arm_names if a not in ca.CUA_ARMS]
+        for reason in unsupported:
+            print(reason, file=sys.stderr)
+        arm_names = [a for a in arm_names if a in ca.CUA_ARMS]
+        if not arm_names:
+            raise SystemExit("no supported arms remain: " + "; ".join(unsupported))
+    if args.pins:
+        ca.PINS_FILE = args.pins.resolve()
+    if args.cua_bin:
+        if not args.cua_skills:
+            raise SystemExit("--cua-bin requires --cua-skills from the same build")
+        ca.CUA_BIN = args.cua_bin.resolve()
+        ca.CUA_SKILLS = args.cua_skills.resolve()
+        for name, build in ca.CUA_BUILDS.items():
+            ca.CUA_BUILDS[name] = replace(build, executable=ca.CUA_BIN, skills=ca.CUA_SKILLS)
     codex = [a for a in arm_names if a in arms.CODEX_FALLBACK_ARMS]
     if codex and not args.allow_codex_arms:
         raise SystemExit(f"arms {codex} are fallback arms; pass --allow-codex-arms")
@@ -2372,17 +2431,27 @@ def make_ctx(args: argparse.Namespace) -> Ctx:
         args, run_dir, core.Ledger(args.ledger), tasks, task_ids, arm_names, full_task_ids=full_ids
     )
     ctx.cutoff = core.parse_utc(args.cutoff_utc) if args.cutoff_utc else None
+    os_version = sw_vers()
     ctx.versions = {
         "claude": claude_version(),
-        "macos": sw_vers(),
-        "bench_repo_commit": git_commit(Path.home() / "repo/cua-driver-bench-codex-vs-cua"),
+        "platform": desktop.detect_platform(),
+        "unsupported_arms": unsupported,
+        "os_version": os_version,
+        "macos": os_version if desktop.detect_platform() == "macos" else None,
+        "bench_repo_commit": git_commit(HERE),
         "bench_src_sha256": src_hash(),
     }
     return ctx
 
 
 def setup_arms(ctx: Ctx) -> None:
+    if desktop.detect_platform() == "linux" and not (ctx.args.cua_bin and ctx.args.cua_skills and ctx.args.pins):
+        raise SystemExit("Linux requires explicit --cua-bin, --cua-skills and --pins; macOS build identities cannot be reused")
     pins = ca.load_pins()
+    if desktop.detect_platform() == "linux":
+        required = ("cua_driver_version", "cua_driver_binary_sha256", "cua_skills_tree_sha256")
+        if pins.get("platform") != "linux" or not all(pins.get(k) for k in required):
+            raise SystemExit("Linux pins require platform=linux and driver version, binary and skills hashes")
     observed = ca.observed_pins(
         include_codex=any(a in ca.CODEX_ARMS or a in cxn.ARMS for a in ctx.arm_names),
         include_cua="cc-cua-driver" in ctx.arm_names,
@@ -2436,13 +2505,11 @@ def setup_arms(ctx: Ctx) -> None:
             except (FileNotFoundError, ValueError) as error:
                 raise SystemExit(f"arm {arm} unavailable: {error}")
             ctx.versions["codex_native"] = cxn.observed()
-    if ctx.args.build_dir:
+    if ctx.args.build_dir or desktop.detect_platform() == "linux":
         apps: dict[str, str] = {}
         for name in BENCH_APPS:
-            macos = Path(ctx.args.build_dir) / name / "Contents/MacOS"
-            exes = sorted(macos.iterdir()) if macos.is_dir() else []
-            if exes:
-                apps[name] = ca.sha256_file(exes[0])
+            argv = desktop.bench_app_argv(name, ctx.args.build_dir)
+            apps[name] = ca.sha256_file(Path(argv[-1]))
         ctx.versions["bench_apps_exe_sha256"] = apps
     for codex_arm in [a for a in ctx.mcp if a in ca.CODEX_ARMS]:
         key = "codex_cu_mcp_sha256" if codex_arm == "cc-codex-cu" else f"{codex_arm}_mcp_sha256"

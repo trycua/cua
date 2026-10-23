@@ -96,14 +96,16 @@ def validate_tasks(specs: dict[str, dict[str, Any]], task_ids: list[str]) -> lis
 
 # ------------------------------------------------------------------ GUI-only
 
+LINUX_TERMINALS = ("xterm", "gnome-terminal", "gnome-terminal-server", "gnome-terminal-", "konsole", "xfce4-terminal", "kitty", "alacritty", "Alacritty", "org.gnome.Terminal")
 SIDE_DOOR_BUNDLES = {
+    **{name: name for name in LINUX_TERMINALS},
     "com.apple.Terminal": "Terminal",
     "com.googlecode.iterm2": "iTerm",
     "com.apple.ScriptEditor2": "Script Editor",
     "com.apple.automator": "Automator",
     "com.apple.shortcuts": "Shortcuts",
 }
-SIDE_DOOR_PROCESSES = ("Script Editor", "Automator", "iTerm2", "Shortcuts")
+SIDE_DOOR_PROCESSES = ("Script Editor", "Automator", "iTerm2", "Shortcuts", *LINUX_TERMINALS)
 # Tool-input text that runs code outside the GUI or reads/writes files (a violation).
 EXEC_PATTERNS = (
     "osascript",
@@ -229,7 +231,7 @@ def terminal_session_ttys(rows: list[tuple[int, int, str, str]], exclude_pid: in
     never reads, and any tty its descendants open (agents, MCP servers, apps it starts)."""
     parent = {pid: ppid for pid, ppid, _, _ in rows}
     tty_of = {pid: tty for pid, _, tty, _ in rows}
-    terminals = {pid for pid, _, _, comm in rows if comm.rsplit("/", 1)[-1] == "Terminal"}
+    terminals = {pid for pid, _, _, comm in rows if comm.rsplit("/", 1)[-1] in ("Terminal", *LINUX_TERMINALS)}
 
     def ancestors(pid: int) -> set[int]:
         seen: set[int] = set()
@@ -239,9 +241,9 @@ def terminal_session_ttys(rows: list[tuple[int, int, str, str]], exclude_pid: in
         return seen
 
     def device(tty: str) -> str | None:
-        if tty in ("??", "-", ""):
+        if tty in ("??", "?", "-", ""):
             return None
-        return "/dev/" + (tty if tty.startswith("tty") else "tty" + tty)
+        return "/dev/" + (tty if tty.startswith(("tty", "pts/")) else "tty" + tty)
 
     excluded = {device(tty_of.get(p, "")) for p in ancestors(exclude_pid)} | {
         device(tty_of.get(exclude_pid, ""))

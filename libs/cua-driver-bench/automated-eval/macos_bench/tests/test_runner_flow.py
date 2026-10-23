@@ -95,6 +95,11 @@ def attempt_row(
 
 
 class ExecuteTrialTest(unittest.TestCase):
+    def setUp(self) -> None:
+        disk = mock.patch.object(rb.rec, "free_gb", return_value=100.0)
+        disk.start()
+        self.addCleanup(disk.stop)
+
     def run_trial(
         self, ctx: rb.Ctx, rows: list[dict]
     ) -> tuple[dict | None, list[tuple[str, float]], Exception | None]:
@@ -202,6 +207,11 @@ class ExecuteTrialTest(unittest.TestCase):
 
 
 class GateTest(unittest.TestCase):
+    def setUp(self) -> None:
+        disk = mock.patch.object(rb.rec, "free_gb", return_value=100.0)
+        disk.start()
+        self.addCleanup(disk.stop)
+
     def test_quota_stop_rule_blocks_new_trials(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ctx = make_ctx(tmp)
@@ -319,6 +329,41 @@ class FinalizeTest(unittest.TestCase):
             {"trial_id": "c", "smoke": True, "final": True},
         ]
         self.assertEqual(core.completed_trial_ids(rows), {"a"})
+
+
+class LinuxSetupTest(unittest.TestCase):
+    def test_macos_arms_are_skipped_before_setup(self) -> None:
+        import contextlib
+        import io
+        import desktop_runtime as desktop
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        args = rb.build_parser().parse_args(["dry-run", "--ledger", str(Path(tmp.name) / "ledger.jsonl"), "--bench-v2", "--arms", "cc-cua-driver", "cc-codex-cu", "cc-claude-cu-helper"])
+        output = io.StringIO()
+        with mock.patch.object(desktop, "detect_platform", return_value="linux"), contextlib.redirect_stderr(output):
+            ctx = rb.make_ctx(args)
+        self.assertEqual(ctx.arm_names, ["cc-cua-driver"])
+        self.assertIn("unsupported-platform: cc-codex-cu requires macOS", output.getvalue())
+        self.assertIn("unsupported-platform: cc-claude-cu-helper requires macOS", ctx.versions["unsupported_arms"])
+
+    def test_no_supported_arms_fails_clearly(self) -> None:
+        import desktop_runtime as desktop
+
+        args = rb.build_parser().parse_args(["dry-run", "--arms", "cc-codex-cu"])
+        with mock.patch.object(desktop, "detect_platform", return_value="linux"), self.assertRaisesRegex(SystemExit, "no supported arms remain"):
+            rb.make_ctx(args)
+
+    def test_linux_pack_descriptor_selection(self) -> None:
+        import cdb_adapter
+        import desktop_runtime as desktop
+
+        with mock.patch.object(desktop, "detect_platform", return_value="linux"):
+            descriptor = cdb_adapter._descriptor({"pack_task": "shared/cdb-s02"})
+        self.assertEqual(descriptor["platform"], "linux")
+        self.assertTrue(any("libreoffice" in " ".join(a["command"]) for a in descriptor["apps"]))
+        with mock.patch.object(desktop, "detect_platform", return_value="macos"):
+            self.assertEqual(cdb_adapter._descriptor({"pack_task": "shared/cdb-s02"})["platform"], "macos")
 
 
 class MiscTest(unittest.TestCase):

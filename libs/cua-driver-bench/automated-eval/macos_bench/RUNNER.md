@@ -162,11 +162,29 @@ arm, task, category, condition, run, seed, versions and hashes, status, pass and
 checks, turns, tool calls by class, tokens, cost, the background measures, the
 GUI-only evidence and the interruption diagnostic.
 
+## Capture setup and preflight
+
+Amendment 11: grant `app-cu-helper` Accessibility. Separately grant Apple's
+`/usr/sbin/screencapture` Screen Recording in System Settings → Privacy & Security
+→ Screen Recording → **+** → Go to `/usr/sbin/screencapture`. `cu-disclaim` wraps
+both processes. Do not grant Terminal, the adapter or launcher new permissions.
+Every selected arm gets a `real capture` row through its own MCP, even offline;
+the recorder also decodes its three-second test unless disabled. ffmpeg must be
+installed at `/opt/homebrew/bin/ffmpeg`. Empty, undecodable and uniform RGB
+frames fail; this is a deterministic blank check, not semantic recognition.
+Rows log dimensions, byte count and saved path, never image content.
+
+Errored tool results reporting capture/TCC/Accessibility setup failures or a
+stopped helper/daemon are infrastructure failures (`tool_setup`, `infra_pattern`).
+Assistant prose and successful tool results do not trigger these patterns.
+The existing policy retries once, then excludes; Cua daemon retries recheck and
+restart a down daemon. Quota and authentication classification retains precedence.
+
 ## Commands
 
 ```bash
 python3 run_bench.py dry-run --bench-v2 --phase1-runs 3 --phase2-runs 2    # schedule and commands, no side effects
-python3 run_bench.py preflight --offline --bench-v2 --build-dir WORK/build  # static checks only
+python3 run_bench.py preflight --offline --bench-v2 --build-dir WORK/build  # captures and recording, no model calls
 python3 run_bench.py gate-check                                             # HOLD file and quota, no model call
 python3 run_bench.py preflight --bench-v2 --build-dir WORK/build            # full: daemons, MCP, recording, 3 Haiku calls
 python3 run_bench.py run --bench-v2 --condition background --run-id RUN ... # see ../../README.md

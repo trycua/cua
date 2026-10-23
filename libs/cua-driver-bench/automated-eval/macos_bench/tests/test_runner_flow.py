@@ -8,6 +8,8 @@ finalize. No GUI, no model."""
 from __future__ import annotations
 
 import argparse
+import base64
+import os
 import contextlib
 import json
 import sys
@@ -136,7 +138,7 @@ class CodexAuthPreflightTest(unittest.TestCase):
                     self.assertNotIn(secret, json.dumps(checks))
 
     def test_native_trial_removes_auth_link_and_flags_replacement(self) -> None:
-        for replaced in (False, True):
+        for replaced in (False, True, "setup"):
             with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
                 ctx = make_ctx(
                     tmp,
@@ -198,15 +200,41 @@ class CodexAuthPreflightTest(unittest.TestCase):
                 def run_codex(cmd, env, *args, **kwargs):
                     link = Path(env["CODEX_HOME"]) / "auth.json"
                     self.assertTrue(link.is_symlink())
-                    if replaced:
+                    if replaced is True:
                         link.unlink()
                         link.write_text("FAKE_TOKEN")
+                    if replaced == "setup":
+                        events = [
+                            {"type": "system", "subtype": "init"},
+                            {
+                                "type": "user",
+                                "message": {
+                                    "content": [
+                                        {
+                                            "type": "tool_result",
+                                            "is_error": True,
+                                            "content": "screen_recording_permission_denied",
+                                        }
+                                    ]
+                                },
+                            },
+                            {"type": "result", "result": "DONE"},
+                        ]
+                        args[5].write_text("\n".join(json.dumps(e) for e in events))
                     return {"returncode": 0, "result_seen": True, "wall_s": 0}
 
                 stack.enter_context(mock.patch.object(rb.cxn, "run_codex", side_effect=run_codex))
                 row = rb.run_attempt(ctx, entry, 1)
-                self.assertEqual(row["infra_failure"] == "harness_exception", replaced)
-                if replaced:
+                self.assertIn("infra_pattern", row)
+                if replaced == "setup":
+                    self.assertEqual(row["infra_pattern"], "screen_recording")
+                    self.assertEqual(row["infra_failure"], "tool_setup")
+                    self.assertFalse(row["passed"])
+                    self.assertTrue(row["excluded"])
+                else:
+                    self.assertIsNone(row["infra_pattern"])
+                self.assertEqual(row["infra_failure"] == "harness_exception", replaced is True)
+                if replaced is True:
                     self.assertIn("symlink replaced", row["infra_message"])
                 link = ctx.run_dir / "trials" / entry["trial_id"] / "a1/codex-home/.codex/auth.json"
                 self.assertFalse(link.is_symlink())
@@ -261,8 +289,198 @@ def attempt_row(
     return row
 
 
+class RealCaptureTest(unittest.TestCase):
+    def test_each_family_validates_capture_bytes_and_closes_client(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_ctx(tmp)
+            ffmpeg = Path(tmp) / "ffmpeg"
+            ffmpeg.write_text(
+                '#!/usr/bin/env python3\nimport sys\nfrom pathlib import Path\nsys.stdout.buffer.write(Path(sys.argv[sys.argv.index("-i")+1]).read_bytes())\n'
+            )
+            ffmpeg.chmod(0o755)
+            image = b"P6\n2 1\n255\n" + b"\x00\x01\x02\xff\xfe\xfd"
+            capture_detail = rb.rec.capture_detail
+            families = [
+                "cc-cua-driver",
+                "cc-codex-cu",
+                "cc-claude-cu-helper",
+                "cx-cua-driver",
+                "cx-codex-cu",
+                "cx-claude-cu-helper",
+            ]
+            for arm in families:
+                source = rb.cxn.SOURCE_ARM.get(arm, arm)
+                tools = [
+                    {"name": n}
+                    for n in ["list_apps", "get_desktop_state", "js", "js_reset", "run_script"]
+                    + [f"tool{i}" for i in range(50)]
+                ]
+                if source in rb.ca.CU_HELPER_ARMS:
+                    tools = [{"name": n} for n in rb.ca.load_pins()["claude_cu_helper"]["tools"]]
+                elif (
+                    source in rb.ca.CUA_ARMS
+                    and rb.ca.SCRIPT_FLAG not in rb.ca.CUA_BUILDS[source].daemon_env
+                ):
+                    tools = [t for t in tools if t["name"] != "run_script"]
+                ctx.mcp[arm] = (Path(tmp) / f"{arm}.json", "server")
+                for payload, message in [
+                    (image, None),
+                    ("file", None),
+                    ("legacy", None),
+                    (b"", "no image block"),
+                    (b"garbage", "decode failed"),
+                    (b"P6\n2 1\n255\n" + b"\x00" * 6, "blank image"),
+                    (b"P6\n2 1\n255\n" + b"\xff" * 6, "blank image"),
+                    (None, "no image block"),
+                    ("error", "could not create image from window"),
+                    ("rpc", "permission denied"),
+                    ("windows", "no layer-0 Calculator window"),
+                ]:
+                    if payload == "windows" and source not in rb.ca.CU_HELPER_ARMS:
+                        continue
+                    if payload in ("file", "legacy") and source not in rb.ca.CUA_ARMS:
+                        continue
+                    advertised = [
+                        {
+                            **t,
+                            "inputSchema": {
+                                "properties": {"screenshot_out_file": {"type": "string"}}
+                            },
+                        }
+                        if t["name"] == "get_desktop_state" and payload == "file"
+                        else {"name": "screenshot"}
+                        if t["name"] == "get_desktop_state" and payload == "legacy"
+                        else t
+                        for t in tools
+                    ]
+                    calls = []
+                    client = mock.Mock()
+
+                    def request(method, params, **kwargs):
+                        calls.append((method, params))
+                        if method == "tools/list":
+                            return {"result": {"tools": advertised}}
+                        if params["name"] == "check_permissions":
+                            return {"result": {"content": []}}
+                        if params["name"] == "app_list_windows":
+                            return {
+                                "result": {
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": json.dumps(
+                                                []
+                                                if payload == "windows"
+                                                else [{"app": "Calculator", "window_id": 7}]
+                                            ),
+                                        }
+                                    ]
+                                }
+                            }
+                        if payload == "error":
+                            return {
+                                "result": {
+                                    "isError": True,
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": "could not create image from window",
+                                        }
+                                    ],
+                                }
+                            }
+                        if payload == "rpc":
+                            return {"error": {"message": "permission denied"}}
+                        if payload == "file":
+                            Path(params["arguments"]["screenshot_out_file"]).write_bytes(image)
+                            return {"result": {"content": None}}
+                        return {
+                            "result": {
+                                "content": None
+                                if payload is None
+                                else [
+                                    {
+                                        "type": "image",
+                                        "data": base64.b64encode(
+                                            image if payload == "legacy" else payload
+                                        ).decode(),
+                                    }
+                                ]
+                            }
+                        }
+
+                    client.request.side_effect = request
+                    with (
+                        self.subTest(arm=arm, message=message),
+                        mock.patch.object(rb.rec, "McpStdioClient", return_value=client),
+                        mock.patch.object(rb, "ensure_agent_daemon") as daemon,
+                        mock.patch.object(rb, "mcp_entry", return_value=("mcp", [], {})),
+                        mock.patch.object(
+                            rb.cxn,
+                            "server_entry",
+                            return_value={"command": "native", "args": [], "env": {}},
+                        ) as native,
+                        mock.patch.object(
+                            rb.rec,
+                            "capture_detail",
+                            side_effect=lambda path: capture_detail(path, str(ffmpeg)),
+                        ),
+                    ):
+                        name, status, detail = rb.real_capture_check(ctx, arm)
+                        self.assertEqual(name, f"{arm} real capture")
+                        self.assertEqual(status, "fail" if message else "pass")
+                        self.assertIn(message or "2x1 bytes=", detail)
+                        self.assertLess(len(detail), 500)
+                        client.close.assert_called_once()
+                        if arm in rb.cxn.ARMS:
+                            native.assert_called_once_with(ctx.mcp[arm][0], arm)
+                        if source in rb.ca.CUA_ARMS:
+                            daemon.assert_called_once_with(ctx, source)
+                            self.assertEqual(
+                                [p["name"] for m, p in calls if m == "tools/call"],
+                                [
+                                    "check_permissions",
+                                    "screenshot" if payload == "legacy" else "get_desktop_state",
+                                ],
+                            )
+                        if source == "cc-codex-cu":
+                            code = calls[-1][1]["arguments"]["code"]
+                            self.assertIn('cua.getApp("Calculator")', code)
+                            self.assertIn("await app.getScreenshot()", code)
+                            self.assertNotIn("emitImage", code)
+                            self.assertNotIn(".screenshot()", code)
+            with self.assertRaises(FileNotFoundError):
+                capture_detail(Path(tmp) / "missing.png", str(Path(tmp) / "missing-ffmpeg"))
+
+    def test_stdio_client_answers_calculator_elicitation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "server.py"
+            script.write_text("""import json, sys
+for line in sys.stdin:
+    req = json.loads(line)
+    if req.get("method") == "initialize":
+        assert req["params"]["capabilities"] == {"elicitation": {}}
+        print(json.dumps({"id": req["id"], "result": {}}), flush=True)
+    elif req.get("method") == "tools/call":
+        pending = req["id"]
+        print(json.dumps({"id": "approval", "method": "elicitation/create", "params": {"message": 'Allow Computer Use to use "Calculator"?'}}), flush=True)
+    elif req.get("id") == "approval":
+        print(json.dumps({"id": pending, "result": req["result"]}), flush=True)
+""")
+            client = rb.rec.McpStdioClient(
+                [sys.executable, str(script)],
+                dict(os.environ),
+                elicitation=lambda text: rb.claude_driver.answer_elicitation(text, {"calculator"}),
+            )
+            try:
+                reply = client.request("tools/call", {"name": "js", "arguments": {}}, timeout=3)
+                self.assertEqual(reply["result"]["action"], "accept")
+            finally:
+                client.close()
+
+
 class PreflightTest(unittest.TestCase):
-    def test_native_mcp_is_live_only_online(self) -> None:
+    def test_offline_captures_every_native_arm_without_models(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ctx = make_ctx(tmp, offline=True, allow_non_terminal=True)
             ctx.task_ids = []
@@ -286,6 +504,16 @@ class PreflightTest(unittest.TestCase):
                 mock.patch.object(rb.ca, "check_cu_helper_pins", return_value=[]),
                 mock.patch.object(rb, "cu_helper_live_checks", return_value=[]),
                 mock.patch.object(rb, "native_codex_checks", return_value=[]) as native,
+                mock.patch.object(
+                    rb,
+                    "real_capture_check",
+                    side_effect=lambda ctx, arm: (
+                        f"{arm} real capture",
+                        "fail" if arm == rb.cxn.ARMS[0] else "pass",
+                        "capture",
+                    ),
+                ) as capture,
+                mock.patch.object(rb, "reset_needs_apps") as reset,
                 mock.patch.object(rb, "mcp_list_tools") as probe,
                 mock.patch.object(rb, "ensure_agent_daemon") as daemon,
             ):
@@ -296,20 +524,14 @@ class PreflightTest(unittest.TestCase):
                         ctx.args.offline = True
                         probe.reset_mock()
                         daemon.reset_mock()
-                        probe.side_effect = AssertionError("offline MCP probe")
-                        daemon.side_effect = AssertionError("offline daemon")
+                        capture.reset_mock()
                         rows = rb.preflight(ctx)
                         probe.assert_not_called()
                         daemon.assert_not_called()
                         native.assert_called_with(ctx, arm, False)
-                        self.assertIn(
-                            (
-                                "daemons, MCP servers, recording, model calls",
-                                "warn",
-                                "skipped (--offline)",
-                            ),
-                            rows,
-                        )
+                        capture.assert_called_once_with(ctx, arm)
+                        self.assertTrue(any(name == f"{arm} real capture" for name, _, _ in rows))
+                        reset.assert_called_with(["Calculator"])
                         ctx.args.offline = False
                         probe.side_effect = None
                         probe.return_value = [
@@ -320,23 +542,55 @@ class PreflightTest(unittest.TestCase):
                         ] + rb.ca.load_pins()["claude_cu_helper"]["tools"]
                         daemon.side_effect = None
                         rows = rb.preflight(ctx)
-                        probe.assert_called_once_with("mcp", [], {})
-                        source = rb.cxn.SOURCE_ARM[arm]
-                        if source in rb.ca.CUA_ARMS:
-                            daemon.assert_called_once_with(ctx, source)
-                        else:
-                            daemon.assert_not_called()
-                        self.assertTrue(
-                            any(
-                                name.startswith(f"{arm} ")
-                                and "MCP server lists" in name
-                                and status == "pass"
-                                for name, status, _ in rows
-                            )
-                        )
+                        self.assertEqual(capture.call_count, 2)
+                ctx.arm_names = list(rb.cxn.ARMS)
+                ctx.args.offline = True
+                capture.reset_mock()
+                rows = rb.preflight(ctx)
+                self.assertEqual(capture.call_count, len(ctx.arm_names))
+                self.assertEqual(
+                    len([r for r in rows if r[0].endswith(" real capture")]), len(ctx.arm_names)
+                )
+                ctx.recorder = mock.Mock(name="recording")
+                raw = Path(tmp) / "video.mov"
+                raw.write_bytes(b"video")
+                ctx.recorder.stop.return_value = raw
+                for blank in (True, False):
+                    with (
+                        mock.patch.object(rb.time, "sleep"),
+                        mock.patch.object(rb.rec, "ffprobe_duration", return_value=3),
+                        mock.patch.object(
+                            rb.rec,
+                            "capture_detail",
+                            side_effect=RuntimeError("blank image") if blank else None,
+                            return_value=f"2x1 bytes=5 path={raw}",
+                        ),
+                    ):
+                        rows = rb.preflight(ctx)
+                    recording = next(r for r in rows if r[0].startswith("recorder real capture"))
+                    self.assertEqual(recording[1], "fail" if blank else "pass")
 
 
 class ExecuteTrialTest(unittest.TestCase):
+    def test_daemon_setup_failure_retries_with_restart_then_excludes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_ctx(tmp)
+            rows = [
+                attempt_row(i, "tool_setup", infra_pattern="daemon_not_running") for i in (1, 2)
+            ]
+            with (
+                mock.patch.object(rb.rec, "free_gb", return_value=1000),
+                mock.patch.object(rb, "ensure_agent_daemon") as restart,
+            ):
+                row, pauses, error = self.run_trial(ctx, rows)
+            self.assertIsNone(error)
+            self.assertEqual(row["infra_pattern"], "daemon_not_running")
+            self.assertTrue(row["excluded"])
+            self.assertFalse(row["passed"])
+            self.assertEqual(row["attempt"], 2)
+            self.assertEqual(len(pauses), 1)
+            restart.assert_called_once_with(ctx, ENTRY["arm"])
+
     def run_trial(
         self, ctx: rb.Ctx, rows: list[dict]
     ) -> tuple[dict | None, list[tuple[str, float]], Exception | None]:

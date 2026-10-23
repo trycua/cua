@@ -437,6 +437,38 @@ for line in sys.stdin:
 
 
 class TranslatorTest(unittest.TestCase):
+    def test_completed_mcp_is_error_becomes_setup_failure(self) -> None:
+        tr = cxn.Translator()
+        events = tr.feed("thread/started", {"thread": {"id": "t"}})
+        events += tr.feed(
+            "item/completed",
+            {
+                "item": {
+                    "id": "tool",
+                    "type": "mcpToolCall",
+                    "server": "cua",
+                    "tool": "screenshot",
+                    "status": "completed",
+                    "result": {
+                        "isError": True,
+                        "content": [
+                            {"type": "image", "data": "SECRET"},
+                            {
+                                "type": "text",
+                                "text": "screen_recording_permission_denied" + "!" * 500,
+                            },
+                        ],
+                    },
+                }
+            },
+        )
+        summary = claude_events.summarize(events)
+        self.assertEqual(claude_events.classify_failure(summary)["kind"], "tool_setup")
+        block = events[-1]["message"]["content"][0]
+        self.assertTrue(block["is_error"])
+        self.assertLessEqual(len(block["content"]), 300)
+        self.assertNotIn("SECRET", json.dumps(events))
+
     def run_events(self, events: list[tuple[str, dict]]) -> tuple[list[dict], cxn.Translator]:
         tr = cxn.Translator()
         out: list[dict] = []

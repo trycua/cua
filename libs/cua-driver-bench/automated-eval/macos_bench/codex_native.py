@@ -313,8 +313,19 @@ class Translator:
                     self.started.add(item_id)
                     out.append(self._use(item_id, name, item.get("arguments") or {}))
                 if method == "item/completed":
-                    failed = item.get("status") != "completed" or item.get("error") is not None
-                    text = json.dumps(item.get("error"))[:300] if failed else ""
+                    from claude_events import _text_of
+
+                    result = item.get("result") or {}
+                    failed = (
+                        item.get("status") != "completed"
+                        or item.get("error") is not None
+                        or bool(result.get("isError"))
+                    )
+                    text = (
+                        (_text_of(result.get("content")) or str(item.get("error") or ""))[:300]
+                        if failed
+                        else ""
+                    )
                     out.append(
                         {
                             "type": "user",

@@ -89,20 +89,42 @@ class Sentinel:
         props = xprop("-id", hex(window), "_NET_WM_PID", "WM_CLASS") if window else {}
         pid = props.get("_NET_WM_PID", "")
         names = re.findall(r'"([^"]+)"', props.get("WM_CLASS", ""))
-        return {"bid": names[-1] if names else f"x11:{window}", "pid": int(pid) if pid.isdigit() else -1}
+        return {
+            "bid": names[-1] if names else f"x11:{window}",
+            "pid": int(pid) if pid.isdigit() else -1,
+        }
 
     def snapshot(self) -> dict:
-        root = xprop("-root", "_NET_ACTIVE_WINDOW", "_NET_CLIENT_LIST_STACKING", "_NET_CURRENT_DESKTOP")
+        root = xprop(
+            "-root", "_NET_ACTIVE_WINDOW", "_NET_CLIENT_LIST_STACKING", "_NET_CURRENT_DESKTOP"
+        )
         front = self.identity(xid(root.get("_NET_ACTIVE_WINDOW", "")))
         pointer = Gdk.Display.get_default().get_default_seat().get_pointer().get_position()
         own = xprop("-id", hex(self.own), "_NET_WM_DESKTOP")
         desktop = own.get("_NET_WM_DESKTOP", "")
-        stack = [int(v, 16) for v in re.findall(r"0x[0-9a-fA-F]+", root.get("_NET_CLIENT_LIST_STACKING", ""))]
-        above = [self.identity(w)["bid"] for w in stack[stack.index(self.own) + 1:]] if self.own in stack else []
-        sheet = any(xid(xprop("-id", hex(w), "WM_TRANSIENT_FOR").get("WM_TRANSIENT_FOR", "")) == self.own for w in stack if w != self.own)
-        return {"front": front, "mouse": [pointer.x, pointer.y], "clip": self.clip,
-                "onspace": desktop in ("4294967295", root.get("_NET_CURRENT_DESKTOP")),
-                "sheet": sheet, "above": above, "above_n": len(above)}
+        stack = [
+            int(v, 16)
+            for v in re.findall(r"0x[0-9a-fA-F]+", root.get("_NET_CLIENT_LIST_STACKING", ""))
+        ]
+        above = (
+            [self.identity(w)["bid"] for w in stack[stack.index(self.own) + 1 :]]
+            if self.own in stack
+            else []
+        )
+        sheet = any(
+            xid(xprop("-id", hex(w), "WM_TRANSIENT_FOR").get("WM_TRANSIENT_FOR", "")) == self.own
+            for w in stack
+            if w != self.own
+        )
+        return {
+            "front": front,
+            "mouse": [pointer.x, pointer.y],
+            "clip": self.clip,
+            "onspace": desktop in ("4294967295", root.get("_NET_CURRENT_DESKTOP")),
+            "sheet": sheet,
+            "above": above,
+            "above_n": len(above),
+        }
 
     def emit(self, event: str, **details: object) -> bool:
         if self.armed or event in ("armed", "disarmed", "ready"):

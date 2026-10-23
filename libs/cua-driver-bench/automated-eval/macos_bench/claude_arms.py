@@ -594,8 +594,14 @@ def start_cua_daemon(
     env_extra: dict[str, str] | None = None,
 ) -> subprocess.Popen[bytes]:
     """Private daemon of the release under test: own socket, own HOME, telemetry off."""
-    return desktop.start_driver(binary or CUA_BIN, socket, state_dir, overlay=overlay,
-                                log_name=log_name, env_extra=env_extra)
+    return desktop.start_driver(
+        binary or CUA_BIN,
+        socket,
+        state_dir,
+        overlay=overlay,
+        log_name=log_name,
+        env_extra=env_extra,
+    )
 
 
 # ---------------------------------------------------------------- pins (observed values)

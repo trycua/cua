@@ -393,7 +393,9 @@ def run_task(task: str, rnd: int, out: Path) -> dict[str, Any]:
         clean.append(s2 == initial and len(ev) == 1)
         F.reset(task, d)
         left = subprocess.run(
-            ["pgrep", "-f", F.desktop.bench_app_argv("BenchLab", F.DEFAULT_BUILD)[-1]], capture_output=True, text=True
+            ["pgrep", "-f", F.desktop.bench_app_argv("BenchLab", F.DEFAULT_BUILD)[-1]],
+            capture_output=True,
+            text=True,
         ).stdout.strip()
         clean.append(
             left == "" and not F.paths(d)["state"].exists() and not F.paths(d)["events"].exists()

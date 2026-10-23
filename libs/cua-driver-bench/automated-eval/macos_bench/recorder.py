@@ -215,9 +215,7 @@ def ffprobe_duration(path: Path) -> float | None:
         return None
 
 
-def compress_video(
-    raw: Path, dest_dir: Path, ffmpeg: str | None = None
-) -> dict[str, Any]:
+def compress_video(raw: Path, dest_dir: Path, ffmpeg: str | None = None) -> dict[str, Any]:
     """H.264 (libx264, crf 28, yuv420p, faststart) full-size copy plus a 720p copy; delete the raw
     file only when both copies exist and decode to a plausible duration."""
     ffmpeg = ffmpeg or tool("ffmpeg")

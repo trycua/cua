@@ -46,8 +46,17 @@ class Lab:
 
     def emit(self, event: str, **details: object) -> None:
         self.state["seq"] += 1
-        self.events.write(json.dumps({"seq": self.state["seq"], "t": time.time() * 1000,
-                                      "type": event, "details": details}) + "\n")
+        self.events.write(
+            json.dumps(
+                {
+                    "seq": self.state["seq"],
+                    "t": time.time() * 1000,
+                    "type": event,
+                    "details": details,
+                }
+            )
+            + "\n"
+        )
         self.args.state.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.args.state.with_suffix(".tmp")
         tmp.write_text(json.dumps(self.state))
@@ -81,8 +90,14 @@ class Lab:
         return widget
 
     def values(self) -> dict:
-        return {key: widget.get_active_text() if isinstance(widget, Gtk.ComboBoxText) else widget.get_active() if isinstance(widget, Gtk.CheckButton) else widget.get_text()
-                for key, widget in self.fields.items()}
+        return {
+            key: widget.get_active_text()
+            if isinstance(widget, Gtk.ComboBoxText)
+            else widget.get_active()
+            if isinstance(widget, Gtk.CheckButton)
+            else widget.get_text()
+            for key, widget in self.fields.items()
+        }
 
     def edit(self, name: str) -> None:
         if self.loading:
@@ -105,15 +120,23 @@ class Lab:
         dialog.get_content_area().add(Gtk.Label(label=title, margin=24))
         for index, (text, _) in enumerate(buttons):
             dialog.add_button(text, index)
+
         def response(widget, code):
             widget.destroy()
             if 0 <= code < len(buttons):
                 callback(buttons[code][1])
+
         dialog.connect("response", response)
         dialog.show_all()
 
     def listdrag(self) -> None:
-        self.state.update(order=list(self.params["initial"]), move_count=0, drag_begins=0, done=False, done_count=0)
+        self.state.update(
+            order=list(self.params["initial"]),
+            move_count=0,
+            drag_begins=0,
+            done=False,
+            done_count=0,
+        )
         self.label("Drag the rows to reorder them, then press Done")
         self.rows = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.box.pack_start(self.rows, True, True, 0)
@@ -128,10 +151,16 @@ class Lab:
         for index, item in enumerate(self.state["order"]):
             row = Gtk.EventBox()
             row.add(Gtk.Label(label=item, margin=12))
-            row.drag_source_set(Gdk.ModifierType.BUTTON1_MASK, targets, Gdk.DragAction.COPY | Gdk.DragAction.MOVE)
-            row.drag_dest_set(Gtk.DestDefaults.ALL, targets, Gdk.DragAction.COPY | Gdk.DragAction.MOVE)
+            row.drag_source_set(
+                Gdk.ModifierType.BUTTON1_MASK, targets, Gdk.DragAction.COPY | Gdk.DragAction.MOVE
+            )
+            row.drag_dest_set(
+                Gtk.DestDefaults.ALL, targets, Gdk.DragAction.COPY | Gdk.DragAction.MOVE
+            )
             row.connect("drag-begin", self.drag_begin, item)
-            row.connect("drag-data-get", lambda w, ctx, data, *_: data.set_text(self.drag_item or "", -1))
+            row.connect(
+                "drag-data-get", lambda w, ctx, data, *_: data.set_text(self.drag_item or "", -1)
+            )
             row.connect("drag-data-received", self.drop, index)
             self.rows.pack_start(row, True, True, 0)
         self.rows.show_all()
@@ -157,11 +186,15 @@ class Lab:
         GLib.idle_add(self.draw_rows)
 
     def list_done(self) -> None:
-        self.state.update(done=True, done_count=self.state["done_count"] + 1, done_order=list(self.state["order"]))
+        self.state.update(
+            done=True, done_count=self.state["done_count"] + 1, done_order=list(self.state["order"])
+        )
         self.emit("done_click", order=self.state["done_order"])
 
     def hover(self) -> None:
-        self.state.update(overlay_names=self.params["names"], clicks=[], hover_enter_count=0, hover_exit_count=0)
+        self.state.update(
+            overlay_names=self.params["names"], clicks=[], hover_enter_count=0, hover_exit_count=0
+        )
         zone = Gtk.EventBox()
         zone.add_events(Gdk.EventMask.ENTER_NOTIFY_MASK | Gdk.EventMask.LEAVE_NOTIFY_MASK)
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -173,16 +206,20 @@ class Lab:
             self.button(name, lambda n=name: self.hover_click(n), actions)
         self.hidden = [actions]
         self.visible = False
+
         def crossing(widget, event, entered):
             if event.detail == Gdk.NotifyType.INFERIOR:
                 return False
             self.state["hover_enter_count" if entered else "hover_exit_count"] += 1
-            self.emit("mouse", region="hot_zone", phase="mouseEntered" if entered else "mouseExited")
+            self.emit(
+                "mouse", region="hot_zone", phase="mouseEntered" if entered else "mouseExited"
+            )
             self.visible = entered
             actions.set_visible(entered)
             if entered:
                 self.emit("overlay_shown")
             return False
+
         zone.connect("enter-notify-event", crossing, True)
         zone.connect("leave-notify-event", crossing, False)
         self.box.pack_start(zone, True, True, 0)
@@ -213,11 +250,15 @@ class Lab:
 
     def tooltip_submit(self) -> None:
         value = self.values()["code"]
-        self.state.update(submit_count=self.state["submit_count"] + 1, status="Submitted", submitted_value=value)
+        self.state.update(
+            submit_count=self.state["submit_count"] + 1, status="Submitted", submitted_value=value
+        )
         self.emit("submit", value=value)
 
     def irmodal(self) -> None:
-        self.state.update(prompt_answers=[], submit_count=0, page=1, prompt_state="not_shown", next_count=0)
+        self.state.update(
+            prompt_answers=[], submit_count=0, page=1, prompt_state="not_shown", next_count=0
+        )
         self.field("name")
         self.field("email")
         self.step1 = list(self.box.get_children())
@@ -233,7 +274,11 @@ class Lab:
         self.emit("next", count=self.state["next_count"], values=self.values())
         self.state["prompt_state"] = "open"
         self.emit("permission_prompt_shown", resource=self.params["resource"])
-        self.dialog(f"Allow BenchLab to access {self.params['resource']}?", [("Don’t Allow", "deny"), ("Allow", "allow")], self.permission_answer)
+        self.dialog(
+            f"Allow BenchLab to access {self.params['resource']}?",
+            [("Don’t Allow", "deny"), ("Allow", "allow")],
+            self.permission_answer,
+        )
 
     def permission_answer(self, answer: str) -> None:
         self.state["prompt_answers"].append(answer)
@@ -252,7 +297,9 @@ class Lab:
         self.emit("submit", values=values)
 
     def irbanner(self) -> None:
-        self.state.update(banner_shown=False, banner_actions=[], banner_body_clicks=0, apply_count=0)
+        self.state.update(
+            banner_shown=False, banner_actions=[], banner_body_clicks=0, apply_count=0
+        )
         self.label(self.params["item"])
         self.field("quantity", value="1")
         self.field("priority", C.PRIORITIES)
@@ -264,7 +311,11 @@ class Lab:
         content = Gtk.Box(spacing=8)
         self.banner.add(content)
         self.label("Update available", content)
-        for label, action in (("Restart Now", "restart"), ("Later", "later"), ("Dismiss", "dismiss")):
+        for label, action in (
+            ("Restart Now", "restart"),
+            ("Later", "later"),
+            ("Dismiss", "dismiss"),
+        ):
             self.button(label, lambda a=action: self.banner_action(a), content)
         self.banner.connect("button-press-event", self.banner_body_click)
         overlay.add_overlay(self.banner)
@@ -295,7 +346,19 @@ class Lab:
         self.emit("apply", values=self.values())
 
     def irunsaved(self) -> None:
-        self.state.update(saved=[{"title": title, "status": C.IR_INITIAL_STATUS, "body": f"Working notes for {title}."} for title in self.params["titles"]], dirty=False, answers=[], done_count=0)
+        self.state.update(
+            saved=[
+                {
+                    "title": title,
+                    "status": C.IR_INITIAL_STATUS,
+                    "body": f"Working notes for {title}.",
+                }
+                for title in self.params["titles"]
+            ],
+            dirty=False,
+            answers=[],
+            done_count=0,
+        )
         self.selected = 0
         for index, title in enumerate(self.params["titles"]):
             self.button(title, lambda i=index: self.navigate(i))
@@ -307,7 +370,11 @@ class Lab:
     def navigate(self, index: int | None) -> None:
         if self.state["dirty"]:
             self.emit("save_prompt_shown")
-            self.dialog("Save changes before leaving?", [("Save", "save"), ("Don’t Save", "dont_save"), ("Cancel", "cancel")], lambda answer: self.save_answer(answer, index))
+            self.dialog(
+                "Save changes before leaving?",
+                [("Save", "save"), ("Don’t Save", "dont_save"), ("Cancel", "cancel")],
+                lambda answer: self.save_answer(answer, index),
+            )
         else:
             self.visit(index)
 
@@ -341,7 +408,9 @@ class Lab:
         self.emit("note_selected", index=index)
 
     def irconsent(self) -> None:
-        self.state.update(consent_shown=False, consent_answers=[], submit_count=0, submits_blocked=0)
+        self.state.update(
+            consent_shown=False, consent_answers=[], submit_count=0, submits_blocked=0
+        )
         self.field("email")
         self.field("plan", C.IR_PLANS)
         digest = Gtk.CheckButton(label="Email digest")
@@ -352,7 +421,11 @@ class Lab:
 
     def show_consent(self) -> bool:
         self.emit("consent_shown")
-        self.dialog("Cookie preferences", [("Reject optional", "reject"), ("Accept all", "accept")], self.consent_answer)
+        self.dialog(
+            "Cookie preferences",
+            [("Reject optional", "reject"), ("Accept all", "accept")],
+            self.consent_answer,
+        )
         return False
 
     def consent_answer(self, answer: str) -> None:

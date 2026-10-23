@@ -966,7 +966,10 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
     finally:
         if desktop.detect_platform() == "linux":
             try:
-                desktop.capture_screenshot(os.environ.get("DISPLAY", ""), artifacts / ("failure.png" if failure.get("kind") else "final.png"))
+                desktop.capture_screenshot(
+                    os.environ.get("DISPLAY", ""),
+                    artifacts / ("failure.png" if failure.get("kind") else "final.png"),
+                )
             except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                 (artifacts / "screenshot-error.txt").write_text(str(error))
             logs = {"recorder": ca.RECORDER_STATE / "daemon.log"}
@@ -1126,8 +1129,12 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                 "pointer_deviation_episodes": summary_sentinel.get("pointer_deviation_episodes", 0),
                 "pointer_moved": deviation > pilot_deviation_px(),
                 "frontmost_changed": bool(summary_sentinel.get("front_changes", 0)),
-                "hid_events": (hid or {"move": 0, "down": 0, "key": 0, "scroll": 0}) if desktop.detect_platform() == "macos" else None,
-                "human_input_suspected": bool(hid_total and idle_start < 900) if desktop.detect_platform() == "macos" else None,
+                "hid_events": (hid or {"move": 0, "down": 0, "key": 0, "scroll": 0})
+                if desktop.detect_platform() == "macos"
+                else None,
+                "human_input_suspected": bool(hid_total and idle_start < 900)
+                if desktop.detect_platform() == "macos"
+                else None,
                 "windows_raised": summary_sentinel.get("windows_raised"),
                 "raised_by": summary_sentinel.get("raised_by", []),
                 "overlay_owners": summary_sentinel.get("overlay_owners", []),
@@ -1444,12 +1451,19 @@ def frontmost_bundle() -> str | None:
     """Bundle id of the frontmost app through lsappinfo (no TCC permission needed)."""
     if desktop.detect_platform() == "linux":
         try:
-            window = subprocess.check_output(["xdotool", "getactivewindow"], text=True, timeout=3).strip()
-            props = subprocess.check_output(["xprop", "-id", window, "WM_CLASS"], text=True, timeout=3)
+            window = subprocess.check_output(
+                ["xdotool", "getactivewindow"], text=True, timeout=3
+            ).strip()
+            props = subprocess.check_output(
+                ["xprop", "-id", window, "WM_CLASS"], text=True, timeout=3
+            )
             names = re.findall(r'"([^\"]+)"', props)
             if not names:
                 return None
-            return next((name for name in v2.LINUX_TERMINALS if name.casefold() == names[-1].casefold()), names[-1])
+            return next(
+                (name for name in v2.LINUX_TERMINALS if name.casefold() == names[-1].casefold()),
+                names[-1],
+            )
         except (OSError, subprocess.SubprocessError):
             return None
     try:
@@ -1967,7 +1981,11 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
     )
     add(
         "terminal.app ancestor",
-        "skip" if desktop.detect_platform() == "linux" else "pass" if terminal_ancestor() else ("warn" if args.allow_non_terminal else "fail"),
+        "skip"
+        if desktop.detect_platform() == "linux"
+        else "pass"
+        if terminal_ancestor()
+        else ("warn" if args.allow_non_terminal else "fail"),
         "runner started from Terminal.app"
         if terminal_ancestor()
         else "not started from Terminal.app (required for arm cc-codex-cu)",
@@ -2120,14 +2138,28 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
                 add(f"CDB pack {tid}", "fail", f"{type(error).__name__}: {error}")
         if desktop.detect_platform() == "macos":
             for app in ("Google Chrome", "LibreOffice", "Gnucash"):
-                add(f"CDB app installed: {app}", "pass" if Path(f"/Applications/{app}.app").is_dir() else "fail", f"/Applications/{app}.app")
+                add(
+                    f"CDB app installed: {app}",
+                    "pass" if Path(f"/Applications/{app}.app").is_dir() else "fail",
+                    f"/Applications/{app}.app",
+                )
         else:
             for tid in cdb_ids:
                 probe = cdb_adapter.CdbTask(task_spec(ctx.tasks[tid]), ctx.run_dir)
                 for prerequisite in probe.descriptor.get("prerequisites", []):
                     try:
-                        done = subprocess.run([probe.sub(p) for p in prerequisite["check"]], cwd=probe.sub(prerequisite.get("cwd", str(probe.bundle))), env=desktop.desktop_env(Path.home()), capture_output=True, timeout=30)
-                        add(f"CDB {tid} prerequisite {prerequisite['id']}", "pass" if done.returncode == 0 else "fail", str(prerequisite["check"]))
+                        done = subprocess.run(
+                            [probe.sub(p) for p in prerequisite["check"]],
+                            cwd=probe.sub(prerequisite.get("cwd", str(probe.bundle))),
+                            env=desktop.desktop_env(Path.home()),
+                            capture_output=True,
+                            timeout=30,
+                        )
+                        add(
+                            f"CDB {tid} prerequisite {prerequisite['id']}",
+                            "pass" if done.returncode == 0 else "fail",
+                            str(prerequisite["check"]),
+                        )
                     except (OSError, subprocess.TimeoutExpired) as error:
                         add(f"CDB {tid} prerequisite {prerequisite['id']}", "fail", str(error))
         electron = list(cdb_adapter.pack_tasks_root().glob("*/*/apps/*/node_modules/electron/dist"))
@@ -2402,7 +2434,9 @@ def make_ctx(args: argparse.Namespace) -> Ctx:
     arm_names = [args.only_arm] if args.only_arm else list(args.arms)
     unsupported = []
     if desktop.detect_platform() == "linux":
-        unsupported = [f"unsupported-platform: {a} requires macOS" for a in arm_names if a not in ca.CUA_ARMS]
+        unsupported = [
+            f"unsupported-platform: {a} requires macOS" for a in arm_names if a not in ca.CUA_ARMS
+        ]
         for reason in unsupported:
             print(reason, file=sys.stderr)
         arm_names = [a for a in arm_names if a in ca.CUA_ARMS]
@@ -2445,13 +2479,19 @@ def make_ctx(args: argparse.Namespace) -> Ctx:
 
 
 def setup_arms(ctx: Ctx) -> None:
-    if desktop.detect_platform() == "linux" and not (ctx.args.cua_bin and ctx.args.cua_skills and ctx.args.pins):
-        raise SystemExit("Linux requires explicit --cua-bin, --cua-skills and --pins; macOS build identities cannot be reused")
+    if desktop.detect_platform() == "linux" and not (
+        ctx.args.cua_bin and ctx.args.cua_skills and ctx.args.pins
+    ):
+        raise SystemExit(
+            "Linux requires explicit --cua-bin, --cua-skills and --pins; macOS build identities cannot be reused"
+        )
     pins = ca.load_pins()
     if desktop.detect_platform() == "linux":
         required = ("cua_driver_version", "cua_driver_binary_sha256", "cua_skills_tree_sha256")
         if pins.get("platform") != "linux" or not all(pins.get(k) for k in required):
-            raise SystemExit("Linux pins require platform=linux and driver version, binary and skills hashes")
+            raise SystemExit(
+                "Linux pins require platform=linux and driver version, binary and skills hashes"
+            )
     observed = ca.observed_pins(
         include_codex=any(a in ca.CODEX_ARMS or a in cxn.ARMS for a in ctx.arm_names),
         include_cua="cc-cua-driver" in ctx.arm_names,

@@ -294,7 +294,9 @@ class SelectionTest(unittest.TestCase):
     def ctx(self, *argv: str) -> rb.Ctx:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        args = rb.build_parser().parse_args(["dry-run", "--ledger", str(Path(tmp.name) / "ledger.jsonl"), *argv])
+        args = rb.build_parser().parse_args(
+            ["dry-run", "--ledger", str(Path(tmp.name) / "ledger.jsonl"), *argv]
+        )
         return rb.make_ctx(args)
 
     def test_v2_selects_the_registered_list_in_order(self) -> None:

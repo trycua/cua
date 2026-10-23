@@ -212,16 +212,40 @@ class LinuxAdapterTest(unittest.TestCase):
             (bundle / "platform").mkdir(parents=True)
             descriptor = {
                 "workspace_root": str(root / "workspace"),
-                "semantics": {"reset": {
-                    "setup": [sys.executable, "-c", "import os; assert os.environ['DISPLAY'] == ':unit-display'; assert os.environ['DBUS_SESSION_BUS_ADDRESS'] == 'unix:path=/unit-bus'"],
-                    "verify": [sys.executable, "-c", "pass"],
-                }},
-                "apps": [{"id": "desk", "kind": "electron",
-                    "command": [sys.executable, "-c", "import json, os; print(json.dumps(dict(os.environ)))"],
-                    "env": {"ELECTRON_RUN_AS_NODE": "1"}, "unset_env": ["ELECTRON_RUN_AS_NODE"]}],
+                "semantics": {
+                    "reset": {
+                        "setup": [
+                            sys.executable,
+                            "-c",
+                            "import os; assert os.environ['DISPLAY'] == ':unit-display'; assert os.environ['DBUS_SESSION_BUS_ADDRESS'] == 'unix:path=/unit-bus'",
+                        ],
+                        "verify": [sys.executable, "-c", "pass"],
+                    }
+                },
+                "apps": [
+                    {
+                        "id": "desk",
+                        "kind": "electron",
+                        "command": [
+                            sys.executable,
+                            "-c",
+                            "import json, os; print(json.dumps(dict(os.environ)))",
+                        ],
+                        "env": {"ELECTRON_RUN_AS_NODE": "1"},
+                        "unset_env": ["ELECTRON_RUN_AS_NODE"],
+                    }
+                ],
             }
             (bundle / "platform/launch.linux.json").write_text(json.dumps(descriptor))
-            with mock.patch.dict(os.environ, {"CDB_TASKPACK": str(root), "CDB_BENCH_DISPOSABLE": "0", "DISPLAY": ":unit-display", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/unit-bus"}):
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "CDB_TASKPACK": str(root),
+                    "CDB_BENCH_DISPOSABLE": "0",
+                    "DISPLAY": ":unit-display",
+                    "DBUS_SESSION_BUS_ADDRESS": "unix:path=/unit-bus",
+                },
+            ):
                 task = cdb_adapter.CdbTask({"pack_task": "shared/syn"}, root)
                 task.reset()
                 try:
@@ -233,7 +257,12 @@ class LinuxAdapterTest(unittest.TestCase):
                     self.assertNotIn("ELECTRON_RUN_AS_NODE", observed)
                 finally:
                     task.stop_apps()
-        self.assertEqual(cdb_adapter.with_force_accessibility(["chromium", "https://example.invalid"], "browser"), ["chromium", ca.FORCE_ACCESSIBILITY_FLAG, "https://example.invalid"])
+        self.assertEqual(
+            cdb_adapter.with_force_accessibility(
+                ["chromium", "https://example.invalid"], "browser"
+            ),
+            ["chromium", ca.FORCE_ACCESSIBILITY_FLAG, "https://example.invalid"],
+        )
 
 
 class ArgvAndScanTest(unittest.TestCase):

@@ -5,6 +5,25 @@ import Testing
 import Foundation
 import SwiftUI
 @testable import CuaBotsCore
+@testable import CuaBotsCua
+
+@MainActor
+struct EngineEventTests {
+    @Test func testExitIsTerminalWithoutInventingAnError() {
+        var text: [String: (turn: UInt32, text: String)] = ["ada": (1, "partial")]
+        let updates = CuaEngine.decode([
+            ["kind": "error", "text": "Authentication required"],
+            ["kind": "exited", "text": "task stopped"],
+        ], botID: "ada", turnText: &text)
+        #expect(updates == [.failed("Authentication required"), .exited])
+        #expect(text.isEmpty)
+    }
+
+    @Test func testCleanExitHasNoFailureUpdate() {
+        var text: [String: (turn: UInt32, text: String)] = [:]
+        #expect(CuaEngine.decode([["kind": "exited"]], botID: "ada", turnText: &text) == [.exited])
+    }
+}
 
 struct DirectiveTests {
     @Test func testParsesAndStripsMarkers() {
@@ -158,6 +177,10 @@ final class ScriptedEngine: BotEngine {
     var replies: [String] = []
     var paused = false
     var resetCount = 0
+    var pollError: Error?
+    var scriptedUpdates: [EngineUpdate]?
+    var replay = false
+    var polledCursors: [UInt64] = []
     private var queue: [EngineUpdate] = []
     private var turn: UInt32 = 0
     private var seq: UInt64 = 0
@@ -177,12 +200,24 @@ final class ScriptedEngine: BotEngine {
         sent.append(text)
         turn += 1
         let reply = replies.isEmpty ? "Okay." : replies.removeFirst()
+        queue.append(.turnStarted)
         queue.append(.tool(turn: turn, title: "Reading files"))
         queue.append(.assistant(turn: turn, text: reply))
         queue.append(.turnEnded(turn: turn))
     }
 
     func poll(_ bot: Bot, cursor: UInt64) async throws -> (updates: [EngineUpdate], cursor: UInt64) {
+        polledCursors.append(cursor)
+        if let pollError { throw pollError }
+        if let scriptedUpdates {
+            if replay {
+                return cursor >= UInt64(scriptedUpdates.count) ? ([], cursor)
+                    : (scriptedUpdates, UInt64(scriptedUpdates.count))
+            }
+            self.scriptedUpdates = nil
+            seq += UInt64(scriptedUpdates.count)
+            return (scriptedUpdates, seq)
+        }
         let out = queue
         queue = []
         seq += UInt64(out.count)
@@ -205,6 +240,76 @@ struct StoreTests {
     func makeStore(_ engine: ScriptedEngine) -> BotStore {
         BotStore(volume: LocalVolume(root: root.appendingPathComponent("volume")),
                  dataDirectory: root.appendingPathComponent("data"), engine: engine)
+    }
+
+    @Test func testFailureEndsTurnAndKeepsFirstCause() async {
+        let engine = ScriptedEngine()
+        let store = makeStore(engine)
+        let bot = await store.createBot(name: "Ada", avatar: .default(for: "Ada"), harness: .hermes, placement: .local)
+        engine.scriptedUpdates = [.failed("Authentication required"), .failed("task stopped"), .turnEnded(turn: 1), .exited]
+        await store.pollOnce(bot.id)
+        #expect(!store.isBusy(bot.id))
+        #expect(store.bot(bot.id)?.status == "Needs a look")
+        #expect(store.notifications.count == 1)
+        #expect(store.messages(for: bot.id).filter { $0.text == "task stopped" }.isEmpty)
+        engine.scriptedUpdates = [.exited]
+        await store.send(bot.id, "retry")
+        engine.scriptedUpdates = nil
+        await store.pollOnce(bot.id)
+        #expect(store.bot(bot.id)?.status == "Ready")
+        engine.scriptedUpdates = [.failed("Authentication required")]
+        await store.send(bot.id, "again")
+        await store.pollOnce(bot.id)
+        #expect(store.notifications.count == 2)
+    }
+
+    @Test func testFirstErrorIsDeduplicatedPerTurn() async {
+        let engine = ScriptedEngine()
+        let store = makeStore(engine)
+        let bot = await store.createBot(name: "Ada", avatar: .default(for: "Ada"), harness: .hermes, placement: .local)
+        engine.scriptedUpdates = [.failed("cause"), .failed("consequence"), .turnEnded(turn: 1),
+                                  .turnStarted, .failed("cause"), .turnEnded(turn: 2)]
+        await store.pollOnce(bot.id)
+        #expect(store.notifications.count == 2)
+        #expect(store.notifications.allSatisfy { $0.body == "cause" })
+        #expect(store.bot(bot.id)?.status == "Needs a look")
+        #expect(!store.isBusy(bot.id))
+    }
+
+    @Test func testFailureIsNotReplayedAfterReload() async {
+        let engine = ScriptedEngine()
+        engine.scriptedUpdates = [.failed("agent missing")]
+        engine.replay = true
+        let store = makeStore(engine)
+        let bot = await store.createBot(name: "Ada", avatar: .default(for: "Ada"), harness: .hermes, placement: .local)
+        await store.pollOnce(bot.id)
+        store.save()
+        let again = makeStore(engine)
+        await again.pollOnce(bot.id)
+        #expect(again.notifications.count == 1)
+        #expect(engine.polledCursors.last == 1)
+    }
+
+    @Test func testRepeatedPollFailureStopsThinking() async {
+        let engine = ScriptedEngine()
+        let store = makeStore(engine)
+        let bot = await store.createBot(name: "Ada", avatar: .default(for: "Ada"), harness: .hermes, placement: .local)
+        engine.pollError = NSError(domain: "Space unavailable", code: 404)
+        for _ in 0..<3 { await store.pollOnce(bot.id) }
+        #expect(!store.isBusy(bot.id))
+        #expect(store.bot(bot.id)?.status == "Needs a look")
+        #expect(store.notifications.count == 1)
+    }
+
+    @Test func testCleanExitIsNotAnError() async {
+        let engine = ScriptedEngine()
+        let store = makeStore(engine)
+        let bot = await store.createBot(name: "Ada", avatar: .default(for: "Ada"), harness: .hermes, placement: .local)
+        engine.scriptedUpdates = [.exited]
+        await store.pollOnce(bot.id)
+        #expect(!store.isBusy(bot.id))
+        #expect(store.bot(bot.id)?.status == "Ready")
+        #expect(store.notifications.isEmpty)
     }
 
     @Test func testCreateWritesTheHomeAndIntroduces() async throws {

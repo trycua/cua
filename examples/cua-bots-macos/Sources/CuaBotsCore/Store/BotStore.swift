@@ -50,6 +50,8 @@ public final class BotStore: ObservableObject {
     private var pollers: [String: Task<Void, Never>] = [:]
     private var currentTask: [String: String] = [:]
     private var busy: Set<String> = []
+    private var failedTurns: Set<String> = []
+    private var pollFailures: [String: Int] = [:]
 
     public init(volume: VolumeStore, dataDirectory: URL, engine: BotEngine? = nil) {
         self.volume = volume
@@ -186,6 +188,9 @@ public final class BotStore: ObservableObject {
 
     private func deliver(_ id: String, _ text: String) async {
         guard let engine, let bot = bot(id) else { return }
+        if failedTurns.contains(id) { await pollOnce(id) }
+        failedTurns.remove(id)
+        pollFailures[id] = 0
         do {
             if bot.runID == nil {
                 await bringUp(id, firstPrompt: text)
@@ -368,15 +373,26 @@ public final class BotStore: ObservableObject {
         do {
             let (updates, cursor) = try await engine.poll(bot, cursor: cursors[id] ?? 0)
             cursors[id] = cursor
+            pollFailures[id] = 0
             for u in updates { handle(id, u) }
+            save()
         } catch {
             // A poll that fails once is not news; the next one retries.
+            pollFailures[id, default: 0] += 1
+            if pollFailures[id, default: 0] >= 3 {
+                fail(id, "Couldn't read the agent's updates: \(error.localizedDescription). Send a message to retry.")
+                save()
+            }
         }
         return !busy.contains(id)
     }
 
     func handle(_ id: String, _ update: EngineUpdate) {
         switch update {
+        case .turnStarted:
+            failedTurns.remove(id)
+            busy.insert(id)
+            self.update(id) { $0.mood = .thinking; $0.status = "Thinking" }
         case .assistant(let turn, let text):
             turnText[id] = (turn, text)
             // Live status from the markers seen so far.
@@ -388,6 +404,7 @@ public final class BotStore: ObservableObject {
             if !t.isEmpty { self.update(id) { $0.status = String(t.prefix(40)); $0.mood = .working } }
         case .turnEnded(let turn):
             busy.remove(id)
+            guard !failedTurns.contains(id) else { turnText[id] = nil; return }
             let text = turnText[id].flatMap { $0.turn == turn ? $0.text : nil } ?? turnText[id]?.text ?? ""
             turnText[id] = nil
             finishTurn(id, text)
@@ -395,8 +412,13 @@ public final class BotStore: ObservableObject {
                 Task { try? await engine.checkpoint(b, volume: self.volume) }
             }
         case .failed(let reason):
-            busy.remove(id)
             fail(id, reason)
+        case .exited:
+            busy.remove(id)
+            turnText[id] = nil
+            pollers[id]?.cancel()
+            pollers[id] = nil
+            if !failedTurns.contains(id) { finishTurn(id, "") }
         }
         save()
     }
@@ -494,6 +516,11 @@ public final class BotStore: ObservableObject {
     }
 
     private func fail(_ id: String, _ reason: String) {
+        busy.remove(id)
+        turnText[id] = nil
+        pollers[id]?.cancel()
+        pollers[id] = nil
+        guard failedTurns.insert(id).inserted else { return }
         update(id) { $0.mood = .error; $0.status = "Needs a look" }
         append(ChatMessage(botID: id, role: .system, text: reason, kind: .notice))
         if let bot = bot(id) { notify(bot, .problem, "\(bot.name) hit a problem", reason) }
@@ -595,6 +622,7 @@ public final class BotStore: ObservableObject {
         var approvals: [ApprovalRequest]
         var notifications: [BotNotification]
         var bots: [Bot]
+        var cursors: [String: UInt64]?
     }
 
     var stateURL: URL { dataDirectory.appendingPathComponent("state.json") }
@@ -602,7 +630,7 @@ public final class BotStore: ObservableObject {
     public func save() {
         let e = JSONEncoder()
         e.dateEncodingStrategy = .iso8601
-        let saved = Saved(messages: messages, approvals: approvals, notifications: notifications, bots: bots)
+        let saved = Saved(messages: messages, approvals: approvals, notifications: notifications, bots: bots, cursors: cursors)
         if let data = try? e.encode(saved) { try? data.write(to: stateURL, options: .atomic) }
         for bot in bots { try? volume.writeJSON(bot, VolumeLayout.identity(bot.id)) }
     }
@@ -615,6 +643,7 @@ public final class BotStore: ObservableObject {
             messages = saved.messages
             approvals = saved.approvals
             notifications = saved.notifications
+            cursors = saved.cursors ?? [:]
             for b in saved.bots { runtime[b.id] = b }
         }
         // The Volume is the source of truth for which bots exist.
@@ -626,6 +655,7 @@ public final class BotStore: ObservableObject {
             return bot
         }.sorted { $0.createdAt < $1.createdAt }
         for bot in bots {
+            if bot.mood == .error { failedTurns.insert(bot.id) }
             rules[bot.id] = (try? volume.readJSON([CustomRule].self, "agents/\(bot.id)/identity/rules.json"))
                 ?? CustomRule.defaults
             tasks[bot.id] = (try? volume.readJSON([BotTask].self, VolumeLayout.tasks(bot.id))) ?? []

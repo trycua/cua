@@ -959,6 +959,7 @@ impl Agents {
             "exitWhenIdle": opts.exit_when_idle,
             "idleExitSecs": opts.idle_exit_secs.unwrap_or(1800),
             "authMethod": h.auth_method,
+            "authHint": h.auth_hint(),
             "keyCheck": harness::key_check(h, &opts.env, endpoint.is_some()),
             "mcpBridge": format!("{}/.cua/bin/mcp-remote", self.home),
             "modeKinds": h.mode_kinds,
@@ -1162,9 +1163,15 @@ impl Agents {
         if before.alive == Some(false) {
             // Restart: installs are cached, the runner resumes the session.
             if before.status == RunStatus::Failed {
+                let mut state = self
+                    .json_file(&format!("{rdir}/state.json"))
+                    .await?
+                    .unwrap_or_else(|| json!({}));
+                state["status"] = json!("starting");
+                state["error"] = Value::Null;
                 self.write(
                     &format!("{rdir}/state.json"),
-                    br#"{"status":"starting","error":null}"#.to_vec(),
+                    serde_json::to_vec(&state)?,
                     0o600,
                 )
                 .await?;
@@ -1391,7 +1398,8 @@ mod tests {
                 "{e}"
             );
             assert!(
-                e.contains("Authentication required") && e.contains("`claude`"),
+                e.contains("Authentication required")
+                    && e.contains("`~/.cua/bin/claude` inside the Space"),
                 "{e}"
             );
             assert!(

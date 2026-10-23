@@ -28,6 +28,99 @@ function stubSdk(root) {
   );
 }
 
+async function failureRun(t, { request = "return new Promise(() => {});", config = {}, agent = "setInterval(() => {}, 1000)", previous = {}, log = "", sdk = null } = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cua-failure-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  stubSdk(root);
+  const sdkDir = path.join(root, "node_modules/@agentclientprotocol/sdk");
+  if (sdk) {
+    fs.rmSync(sdkDir, { recursive: true });
+    fs.symlinkSync(sdk, sdkDir);
+  } else {
+    fs.writeFileSync(path.join(sdkDir, "index.js"), `
+      export const PROTOCOL_VERSION = 1;
+      export const methods = {agent: {initialize: 'initialize', authenticate: 'authenticate', session: {new: 'new', load: 'load', resume: 'resume', prompt: 'prompt'}}, client: {session: {requestPermission: 'permission', update: 'update'}}};
+      export const ndJsonStream = () => null;
+      export function client() { return {onRequest() {return this}, onNotification() {return this}, connectWith: async (_, callback) => callback({request: async (method, params) => {${request}}})}; }
+    `);
+  }
+  fs.copyFileSync(path.join(here, "..", "acp-runner.mjs"), path.join(root, "runner.mjs"));
+  const run = path.join(root, "run");
+  fs.mkdirSync(run);
+  fs.writeFileSync(path.join(run, "run.json"), JSON.stringify({ cwd: run, agent: {command: process.execPath, args: ["-e", agent]}, startupTimeoutMs: 1000, ...config }));
+  fs.writeFileSync(path.join(run, "state.json"), JSON.stringify(previous));
+  fs.writeFileSync(path.join(run, "agent.log"), log);
+  fs.writeFileSync(path.join(run, "secrets.json"), JSON.stringify({ TOKEN: "secret-12345678" }));
+  const child = spawn(process.execPath, [path.join(root, "runner.mjs"), run], {stdio: ["ignore", "ignore", "pipe"], detached: true});
+  const kill = () => { try { process.kill(-child.pid, "SIGKILL"); } catch {} };
+  t.after(kill);
+  let stderr = "";
+  child.stderr.on("data", (data) => stderr += data);
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { kill(); reject(new Error(`runner hung: ${stderr}`)); }, 4000);
+    child.on("exit", () => {clearTimeout(timer); resolve();});
+  });
+  return {events: fs.readFileSync(path.join(run, "events.jsonl"), "utf8").trim().split("\n").map(JSON.parse), state: JSON.parse(fs.readFileSync(path.join(run, "state.json"), "utf8"))};
+}
+
+for (const [name, options, expected] of [
+  ["missing executable", {config: {agent: {command: "/missing/cua-agent"}}}, /\/missing\/cua-agent.*ENOENT[\s\S]*PATH/],
+  ["missing interpreter with restricted PATH", {config: {agent: {command: "/usr/bin/env", args: ["cua-missing-interpreter"]}, env: {PATH: "/empty"}}}, /cua-missing-interpreter[\s\S]*PATH.*\/empty/],
+  ["adapter installation failure", {agent: "console.error('agent not installed'); process.exit(1)", log: "old launch\n"}, /agent not installed/],
+  ["initialize timeout", {config: {startupTimeoutMs: 100}}, /initialize.*timed out/],
+  ["session timeout", {request: "if (method === 'initialize') return {}; return new Promise(() => {});", config: {startupTimeoutMs: 100}}, /session.*timed out/],
+  ["authentication timeout", {request: "if (method === 'initialize') return {authMethods: [{id: 'login'}]}; return new Promise(() => {});", config: {authMethod: "login", startupTimeoutMs: 100}}, /authenticate.*timed out/],
+  ["ACP structured error", {request: "while (!(await import('node:fs')).readFileSync(process.argv[2] + '/agent.log', 'utf8').includes('current launch')) await new Promise(r => setTimeout(r, 10)); throw Object.assign(new Error('internal error secret-12345678'), {code: -32603, data: {cause: 'adapter unavailable'}});", agent: "console.error('discarded prefix' + 'x'.repeat(10000) + 'current launch'); setInterval(() => {}, 1000)", config: {startupTimeoutMs: 1000}, log: "old launch\n"}, /-32603[\s\S]*adapter unavailable[\s\S]*current launch/],
+  ["authentication required", {request: "if (method === 'initialize') return {agentCapabilities: {mcpCapabilities: {http: true}}}; throw Object.assign(new Error('Authentication required'), {code: -32000});", config: {authHint: "Run ~/.cua/bin/claude inside this bot's Space", mcpServers: [{type: "http", name: "test", url: "http://localhost"}]}}, /Authentication required[\s\S]*~\/\.cua\/bin\/claude.*Space/],
+]) {
+  test(name + " is diagnostic and terminal", {timeout: 6000}, async (t) => {
+    const {events, state} = await failureRun(t, options);
+    const errors = events.filter(e => e.type === "error");
+    assert.equal(errors.length, 1);
+    assert.match(errors[0].message, expected);
+    assert.equal(events.filter(e => e.type === "run_exited").length, 1);
+    assert.equal(state.status, "failed");
+    assert.equal(JSON.stringify({events, state}).includes("secret-12345678"), false);
+    assert.equal(errors[0].message.includes("old launch"), false);
+    assert.equal(errors[0].message.includes("discarded prefix"), false);
+    assert.ok(errors[0].message.length < 6000);
+    if (name === "authentication required") assert.equal(events.some(e => e.type === "notice"), false);
+  });
+}
+
+test("transport exit ends a pending prompt exactly once", {timeout: 6000}, async (t) => {
+  const {events, state} = await failureRun(t, {config: {prompt: "hello"}, request: "if (method === 'initialize') return {}; if (method === 'new') return {sessionId: 's'}; return new Promise(() => {});", agent: "setTimeout(() => process.exit(1), 300)"});
+  assert.equal(events.filter(e => e.type === "turn_ended").length, 1);
+  assert.equal(state.status, "failed");
+});
+
+for (const [name, agent, prompt] of [
+  ["stdout closure", "setTimeout(() => process.stdout.end(), 300); setInterval(() => {}, 1000)", "return new Promise(() => {});"],
+  ["late prompt rejection", "setTimeout(() => process.exit(1), 300)", "await new Promise(r => setTimeout(r, 400)); throw new Error('transport lost');"],
+  ["late prompt success", "setTimeout(() => process.exit(1), 300)", "await new Promise(r => setTimeout(r, 400)); return {stopReason: 'end_turn'};"],
+]) {
+  test(name + " cannot duplicate or overwrite the terminal turn", {timeout: 6000}, async (t) => {
+    const {events, state} = await failureRun(t, {agent, config: {prompt: "hello"}, request: `if (method === 'initialize') return {}; if (method === 'new') return {sessionId: 's'}; ${prompt}`});
+    assert.equal(events.filter(e => e.type === "error").length, 1);
+    assert.equal(events.filter(e => e.type === "turn_ended").length, 1);
+    assert.equal(state.status, "failed");
+    assert.equal(state.stopReason, "error");
+  });
+}
+
+test("real SDK disconnect ends a pending prompt", {timeout: 6000}, async (t) => {
+  if (!process.env.CUA_ACP_SDK_DIR) return t.skip("Set CUA_ACP_SDK_DIR to the installed @agentclientprotocol/sdk directory");
+  const agent = `require('node:readline').createInterface({input: process.stdin}).on('line', line => {
+    const m = JSON.parse(line);
+    if (m.method === 'session/prompt') return setTimeout(() => process.exit(1), 30);
+    const result = m.method === 'initialize' ? {protocolVersion: 1, agentCapabilities: {}} : {sessionId: 's'};
+    process.stdout.write(JSON.stringify({jsonrpc: '2.0', id: m.id, result}) + '\\n');
+  });`;
+  const {events, state} = await failureRun(t, {sdk: process.env.CUA_ACP_SDK_DIR, agent, config: {prompt: "hello", startupTimeoutMs: 1000}});
+  assert.equal(events.filter(e => e.type === "turn_ended").length, 1);
+  assert.equal(state.status, "failed");
+});
+
 test("run end sends DELETE /mcp with the run's agent session", async () => {
   const seen = [];
   const server = http.createServer((req, res) => {

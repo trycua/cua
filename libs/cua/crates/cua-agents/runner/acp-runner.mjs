@@ -166,6 +166,24 @@ async function checkKey(spec) {
 const keyCheck = checkKey(cfg.keyCheck).catch(() => null);
 
 const agentLog = fs.openSync(P("agent.log"), "a");
+const logStart = fs.fstatSync(agentLog).size;
+
+function diagnostic(error, phase) {
+  const size = fs.fstatSync(agentLog).size;
+  const tail = Buffer.alloc(Math.min(4096, size - logStart));
+  const fd = fs.openSync(P("agent.log"), "r");
+  try {
+    fs.readSync(fd, tail, 0, tail.length, size - tail.length);
+  } finally {
+    fs.closeSync(fd);
+  }
+  return redact(`${phase}: ${cfg.agent.command}: ${error?.message ?? error}`
+    + (error?.code != null ? ` (code ${error.code})` : "")
+    + (error?.data != null ? ` ${JSON.stringify(error.data)}` : "")
+    + (error?.code === -32000 && cfg.authHint ? `\n${cfg.authHint}` : "")
+    + (tail.length ? `\n${tail.toString("utf8").trim()}` : "")
+    + `\nPATH=${env.PATH ?? ""}\nAgent log: ${P("agent.log")}`);
+}
 // Resolve ~/.cua/bin links: some agents (Antigravity's .par) find their
 // sibling files relative to argv[0].
 let command = cfg.agent.command;
@@ -180,15 +198,16 @@ const child = spawn(command, cfg.agent.args ?? [], {
 save({ agentPid: child.pid ?? null });
 let exiting = false;
 child.on("error", (e) => {
-  emit("error", { message: `could not start the agent: ${e.message}` });
-  finish(127, `could not start the agent: ${e.message}`);
+  finish(127, "could not start the agent", diagnostic(e, "spawn"));
 });
 child.on("exit", (code, signal) => {
   if (!exiting) {
-    flush();
-    emit("error", { message: `the agent exited unexpectedly (code ${code}, signal ${signal})` });
-    finish(code ?? 1, "agent exited");
+    finish(code || 1, "agent exited", diagnostic(new Error(`the agent exited unexpectedly (code ${code}, signal ${signal})`), "transport"));
   }
+});
+
+child.stdout.on("end", () => {
+  finish(1, "ACP stdout closed", diagnostic(new Error("agent stdout closed"), "transport"));
 });
 
 // End this run's cua-driver session on the guest MCP (cua-spacesd keys it by
@@ -209,13 +228,22 @@ function endAgentSessions() {
   return Promise.allSettled(ends);
 }
 
-function finish(code, why) {
-  if (exiting) return;
-  exiting = true;
+function endTurn(stopReason, usage = null) {
+  if (exiting || state.status !== "running") return;
   flush();
+  save({ status: "idle", stopReason, queued: queue.length });
+  emit("turn_ended", { stopReason, usage });
+}
+
+function finish(code, why, message = null) {
+  if (exiting) return;
+  flush();
+  if (message) emit("error", { message });
+  endTurn(code !== 0 ? "error" : why);
+  exiting = true;
   const failed = code !== 0;
   emit("run_exited", { code, reason: why, resumable: Boolean(state.sessionId && state.loadSession) });
-  save({ status: failed ? "failed" : "exited", error: failed ? why : null });
+  save({ status: failed ? "failed" : "exited", error: failed ? redact(message ?? why) : null });
   try {
     child.kill("SIGTERM");
   } catch {}
@@ -284,11 +312,31 @@ function blocks(text, files) {
 
 await client
   .connectWith(stream, async (ctx) => {
-    const init = await ctx.request(acp.methods.agent.initialize, {
+    const requestStartup = async (method, params, phase) => {
+      let timer;
+      try {
+        return await Promise.race([
+          ctx.request(method, params),
+          new Promise((_, reject) => {
+            timer = setTimeout(() => {
+              const error = new Error(`${phase} timed out`);
+              finish(1, error.message, diagnostic(error, phase));
+              reject(error);
+            }, cfg.startupTimeoutMs ?? 180000);
+          }),
+        ]);
+      } catch (error) {
+        error.phase = phase;
+        throw error;
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    const init = await requestStartup(acp.methods.agent.initialize, {
       protocolVersion: acp.PROTOCOL_VERSION,
       clientCapabilities: {},
       clientInfo: { name: "cua", version: "1" },
-    });
+    }, "initialize");
     const caps = init.agentCapabilities ?? {};
     const loadSession = Boolean(caps.loadSession || caps.sessionCapabilities?.resume);
     save({ loadSession });
@@ -298,7 +346,7 @@ await client
     // need none.
     const method = (init.authMethods ?? []).find((m) => m.id === cfg.authMethod);
     if (method) {
-      await ctx.request(acp.methods.agent.authenticate, { methodId: method.id });
+      await requestStartup(acp.methods.agent.authenticate, { methodId: method.id }, "authenticate");
       emit("authenticated", { methodId: method.id });
     }
     // HTTP MCP servers only for agents that declare mcpCapabilities.http
@@ -335,14 +383,15 @@ await client
     if (prev.sessionId && loadSession) {
       try {
         if (caps.sessionCapabilities?.resume) {
-          await ctx.request(acp.methods.agent.session.resume, { sessionId: prev.sessionId, ...request });
+          await requestStartup(acp.methods.agent.session.resume, { sessionId: prev.sessionId, ...request }, "session resume");
         } else {
           replaying = true;
-          await ctx.request(acp.methods.agent.session.load, { sessionId: prev.sessionId, ...request });
+          await requestStartup(acp.methods.agent.session.load, { sessionId: prev.sessionId, ...request }, "session load");
         }
         sessionId = prev.sessionId;
         resumed = true;
       } catch (e) {
+        if (exiting || e?.code === -32000) throw e;
         emit("notice", { message: `could not resume session ${prev.sessionId}: ${e?.message ?? e}; starting a new one` });
       } finally {
         replaying = false;
@@ -351,20 +400,21 @@ await client
     if (!sessionId) {
       let res;
       try {
-        res = await ctx.request(acp.methods.agent.session.new, request);
+        res = await requestStartup(acp.methods.agent.session.new, request, "session");
       } catch (e) {
         // Some agents reject session MCP servers they cannot start; keep
         // the run and say so rather than failing it.
-        if (!request.mcpServers.length) throw e;
+        if (exiting || e?.code === -32000 || !request.mcpServers.length) throw e;
         emit("notice", {
           message: `the agent refused the run's MCP servers (${e?.message ?? e}${e?.data ? ": " + JSON.stringify(e.data) : ""}); continuing without them`,
         });
         request.mcpServers = [];
-        res = await ctx.request(acp.methods.agent.session.new, request);
+        res = await requestStartup(acp.methods.agent.session.new, request, "session");
       }
       sessionId = res.sessionId;
       modes = res.modes ?? null;
     }
+    if (exiting) return;
     save({ sessionId, status: "idle" });
     emit("session", { sessionId, resumed, modes });
     // The sandbox is the boundary: pick the agent's own "full access" mode
@@ -386,27 +436,25 @@ await client
       save({ status: "running", queued: queue.length });
       emit("turn_started", { prompt: msg.text, files: msg.files ?? [] });
       const rejected = await keyCheck;
+      if (exiting) return;
       if (rejected) {
         // The same record a failed prompt leaves, without the harness's
         // retries: one error, the turn ends, the supervisor notifies once.
         emit("error", { message: rejected.message, data: { errorKind: "authentication_failed", status: rejected.status, source: "key_check" } });
-        save({ status: "idle", stopReason: "error", queued: queue.length });
-        emit("turn_ended", { stopReason: "error" });
+        endTurn("error");
         return;
       }
       let res;
       try {
         res = await ctx.request(acp.methods.agent.session.prompt, { sessionId, prompt: blocks(msg.text, msg.files) });
       } catch (e) {
+        if (exiting) return;
         flush();
-        emit("error", { message: e?.message ?? String(e), data: e?.data ?? null });
-        save({ status: "idle", stopReason: "error" });
-        emit("turn_ended", { stopReason: "error" });
+        emit("error", { message: diagnostic(e, "prompt"), data: e?.data ?? null });
+        endTurn("error");
         return;
       }
-      flush();
-      save({ status: "idle", stopReason: res?.stopReason ?? null, queued: queue.length });
-      emit("turn_ended", { stopReason: res?.stopReason ?? null, usage: res?.usage ?? null });
+      endTurn(res?.stopReason ?? null, res?.usage ?? null);
     };
 
     let idleSince = Date.now();
@@ -450,6 +498,5 @@ await client
     }
   })
   .catch((e) => {
-    emit("error", { message: `ACP connection failed: ${e?.message ?? e}`, data: e?.data ?? null });
-    finish(1, `ACP connection failed: ${e?.message ?? e}`);
+    finish(1, "ACP connection failed", diagnostic(e, e?.phase ?? "ACP connection"));
   });

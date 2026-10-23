@@ -54,6 +54,10 @@ For cua-driver, `--prefix DIR` becomes `--bin-dir DIR/bin`, `--require-signature
 
 Pass install.sh options through the pipe with `sh -s --`, for example `curl -fsSL https://cua.ai/install.sh | sh -s -- --cli-only --yes`. `--only` and `--select` cannot be combined, nor can `--cli-only` with other items. Set `CUA_INSTALL_NONINTERACTIVE=1` to never prompt.
 
+## Partial releases
+
+A Cua Spaces patch can ship one platform only (a macOS fix does not rebuild Windows or Linux). The release manifest (`release-artifacts.json`, also the rolling `cua-install-latest` copy) then holds a different version per platform: the release builds its own platforms and `release_manifest.py --carry-forward-platforms` keeps the earlier entries for the others, each with its own `version` and download URL. `install.sh` and `install.ps1` read only the entries for their own platform, so each installs the newest build that exists for it. `tests/test_mixed_versions.py` and the `mixed versions` Pester tests cover this.
+
 ## Telemetry
 
 Both installers send three anonymous events about their own run (`cua_installer_step`: `installer_started`, then `installer_completed` or `installer_failed` with the stage and a fixed reason word), and print a two-line notice before the first one. They follow the switches every Cua program uses: `DO_NOT_TRACK=1`, `CUA_TELEMETRY=0`, `[telemetry] enabled = "off"` in `$CUA_HOME/config.toml`, and off in CI unless `CUA_TELEMETRY=1`. `--dry-run` sends nothing. They create or reuse `$CUA_HOME/telemetry/install_id`, the anonymous id the CLI and app send with, and never send a name, path, URL or error message. The tests set `CUA_TELEMETRY_FORBID_NETWORK=1`, which allows only a loopback `CUA_TELEMETRY_ENDPOINT`. See [Telemetry and privacy](https://cua.ai/docs/cua-sdk/concepts/telemetry).

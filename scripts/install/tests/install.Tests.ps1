@@ -423,6 +423,48 @@ Describe 'install.ps1' {
     }
 }
 
+# Partial releases (CUA-2068): cua-install-latest can hold one version per
+# platform. Built with the real release_manifest.py, as cd-cua-spaces.yml does:
+# 1.2.3 ships every platform, 1.2.4 only macOS, then 1.2.5 only Windows.
+Describe 'mixed versions' {
+    BeforeAll {
+        $mix = Join-Path $env:CUA_TEST_ROOT 'mixed'
+        function Build-Release([string]$Version, [string[]]$Names, [string]$Merge) {
+            $dir = Join-Path $mix "v$Version"
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            foreach ($n in $Names) { Set-Content -LiteralPath (Join-Path $dir ($n -replace 'VER', $Version)) -Value $n }
+            $out = Join-Path $mix "manifest-$Version.json"
+            $toolArgs = @('--component', 'app', '--version', $Version, '--dir', $dir,
+                '--base-url', "https://example.invalid/cua-spaces-v$Version", '--out', $out)
+            if ($Merge) { $toolArgs += @('--merge', $Merge, '--carry-forward-platforms') }
+            & $Python.Source $Tool @toolArgs
+            return $out
+        }
+        $m123 = Build-Release '1.2.3' @('cua-spaces-VER-darwin-universal.dmg', 'cua-spaces-VER-windows-x64-setup.exe', 'cua-spaces-VER-windows-arm64-setup.exe', 'cua-spaces-VER-linux-x64.AppImage', 'cua-spaces-VER-linux-arm64.AppImage') ''
+        $m124 = Build-Release '1.2.4' @('cua-spaces-VER-darwin-universal.dmg') $m123
+        $m125 = Build-Release '1.2.5' @('cua-spaces-VER-windows-x64-setup.exe', 'cua-spaces-VER-windows-arm64-setup.exe') $m124
+        $url124 = ConvertTo-FileUrl $m124
+        $url125 = ConvertTo-FileUrl $m125
+    }
+
+    It 'a macOS-only release leaves Windows on its own build' {
+        foreach ($arch in 'AMD64', 'ARM64') {
+            $out = Invoke-Installer @{ DryRun = $true; Yes = $true; AppOnly = $true } @{ CUA_INSTALL_MANIFEST_URL = $url124; CUA_INSTALL_ARCH = $arch }
+            $out | Should -Match 'cua-spaces-v1\.2\.3/cua-spaces-1\.2\.3-windows-'
+            $out | Should -Not -Match '1\.2\.4'
+        }
+    }
+
+    It 'a later Windows-only release installs the newest Windows build' {
+        $arch = @{ AMD64 = 'x64'; ARM64 = 'arm64' }
+        foreach ($a in 'AMD64', 'ARM64') {
+            $out = Invoke-Installer @{ DryRun = $true; Yes = $true; AppOnly = $true } @{ CUA_INSTALL_MANIFEST_URL = $url125; CUA_INSTALL_ARCH = $a }
+            $out | Should -Match "cua-spaces-v1\.2\.5/cua-spaces-1\.2\.5-windows-$($arch[$a])-setup\.exe"
+            $out | Should -Not -Match '1\.2\.3'
+        }
+    }
+}
+
 Describe 'install telemetry' {
     BeforeAll {
         $env:CUA_INSTALL_NO_RUN = '1'

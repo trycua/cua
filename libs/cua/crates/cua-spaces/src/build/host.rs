@@ -45,26 +45,7 @@ impl BuildHost for Spaces {
     }
 
     async fn start_base(&self, spec: &BuilderSpec) -> Result<String> {
-        let kind = match spec.kind.as_str() {
-            "container" => Kind::Container,
-            "microvm" => Kind::MicroVm,
-            _ => Kind::Vm,
-        };
-        let created = self
-            .create(SpaceCreate {
-                image: Some(spec.image.clone()),
-                on: Some(On::Local),
-                kind,
-                runtime: Runtime::Auto,
-                name: Some(spec.name.clone()),
-                cpus: Some(spec.cpus),
-                memory_mb: Some(spec.memory_mb),
-                wait: Some(true),
-                headless: spec.headless,
-                forkable: true,
-                ..Default::default()
-            })
-            .await?;
+        let created = self.create(builder_create(spec)).await?;
         match created {
             SpaceCreated::Ready { info, .. } => Ok(info.id),
             SpaceCreated::Starting(p) => Ok(p.id),
@@ -526,5 +507,54 @@ impl Spaces {
             }
         }
         Ok(deleted)
+    }
+}
+
+/// The create request of a builder Space. A build runs every step through
+/// cua-spacesd, so the create always waits for it: an image that is not a
+/// canonical reference (a local disk, a registry tag) would otherwise get one
+/// short probe, and a guest still booting would read as "runs no cua-spacesd".
+fn builder_create(spec: &BuilderSpec) -> SpaceCreate {
+    let kind = match spec.kind.as_str() {
+        "container" => Kind::Container,
+        "microvm" => Kind::MicroVm,
+        _ => Kind::Vm,
+    };
+    SpaceCreate {
+        image: Some(spec.image.clone()),
+        on: Some(On::Local),
+        kind,
+        runtime: Runtime::Auto,
+        name: Some(spec.name.clone()),
+        cpus: Some(spec.cpus),
+        memory_mb: Some(spec.memory_mb),
+        wait: Some(true),
+        headless: spec.headless,
+        forkable: true,
+        spacesd: Some(true),
+        ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod builder_create_tests {
+    use super::*;
+
+    #[test]
+    fn the_builder_waits_for_spacesd_whatever_its_image() {
+        let spec = BuilderSpec {
+            image: "/tmp/a/local/disk.img".into(),
+            kind: "vm".into(),
+            name: "build-x".into(),
+            cpus: 2,
+            memory_mb: 2048,
+            headless: true,
+        };
+        let c = builder_create(&spec);
+        assert_eq!(c.spacesd, Some(true));
+        assert!(crate::spaces::expects_spacesd(
+            c.image.as_deref(),
+            c.spacesd
+        ));
     }
 }

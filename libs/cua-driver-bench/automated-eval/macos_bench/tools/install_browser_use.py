@@ -1,6 +1,3 @@
-# SPDX-License-Identifier: FSL-1.1-MIT
-# Copyright (c) 2026 Cua AI, Inc.
-
 from __future__ import annotations
 
 import argparse

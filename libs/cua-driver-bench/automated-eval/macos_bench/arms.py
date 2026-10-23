@@ -49,6 +49,7 @@ NATIVE_CODEX_ARMS = (
     "cx-codex-cu",
     "cx-cua-driver",
     "cx-claude-cu-helper",
+    "cx-browser-use-cli",
 )  # the last two: Amendment 23
 ALL_ARMS = CLAUDE_ARMS + CODEX_FALLBACK_ARMS + NATIVE_CODEX_ARMS
 

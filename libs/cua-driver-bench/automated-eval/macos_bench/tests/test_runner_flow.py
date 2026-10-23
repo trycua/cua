@@ -69,6 +69,65 @@ def make_ctx(tmp: str, **overrides: object) -> rb.Ctx:
     return ctx
 
 
+def test_browser_cli_auth_rejected_before_provisioning(tmp_path):
+    import pytest
+
+    args = rb.build_parser().parse_args(["run", "--only-arm", "cx-browser-use-cli"])
+    args.runs_dir = tmp_path
+    args.ledger = tmp_path / "ledger.jsonl"
+    with (
+        mock.patch.dict("os.environ", {"CDB_CODEX_AUTH": "gateway"}),
+        mock.patch.object(rb.subprocess, "run", side_effect=AssertionError("subprocess")),
+        mock.patch.object(
+            rb.arms, "link_chatgpt_auth", side_effect=AssertionError("credential link")
+        ),
+    ):
+        with pytest.raises((ValueError, SystemExit), match="chatgpt"):
+            rb.make_ctx(args)
+
+
+def test_browser_cli_run_fails_closed(tmp_path):
+    with tempfile.TemporaryDirectory() as tmp:
+        ctx = make_ctx(tmp, no_model_preflight=True, build_dir=None)
+        ctx.args = rb.build_parser().parse_args(["run", "--only-arm", "cx-browser-use-cli"])
+        ctx.arm_names = ["cx-browser-use-cli"]
+        with (
+            mock.patch.object(rb.ca, "observed_pins", return_value={}),
+            mock.patch.object(rb.ca, "cua_version_string", return_value=None),
+            mock.patch.object(rb.ca, "CUA_BUILDS", {}),
+        ):
+            rb.setup_arms(ctx)
+        assert ctx.mcp == {}
+        for offline in (False, True):
+            for smoke in (False, True):
+                ctx.args.offline, ctx.args.smoke = offline, smoke
+                assert any(
+                    status == "fail" and "not yet implemented" in detail
+                    for _, status, detail in rb.preflight(ctx, with_models=False)
+                )
+        args = ctx.args
+        args.no_model_preflight = True
+        with contextlib.ExitStack() as stack:
+            for name, value in (
+                ("cmd_gate_check", 0),
+                ("make_ctx", ctx),
+                ("setup_arms", None),
+                ("start_heartbeat", mock.Mock()),
+                ("unregister_stale_copies", []),
+                ("stop_agent_daemons", None),
+                ("start_recorder", None),
+                ("shutdown", None),
+            ):
+                stack.enter_context(mock.patch.object(rb, name, return_value=value))
+            stack.enter_context(mock.patch.object(rb.ca, "stop_cua_daemon"))
+            loop = stack.enter_context(
+                mock.patch.object(rb, "run_loop", side_effect=AssertionError("trial started"))
+            )
+            assert rb.cmd_run(args) == 2
+            assert (ctx.run_dir / "PREFLIGHT_FAILED").is_file()
+            loop.assert_not_called()
+
+
 class CodexAuthPreflightTest(unittest.TestCase):
     def test_chatgpt_checks_metadata_not_gateway_or_model_and_skips_offline(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -289,7 +348,7 @@ class PreflightTest(unittest.TestCase):
                 mock.patch.object(rb, "mcp_list_tools") as probe,
                 mock.patch.object(rb, "ensure_agent_daemon") as daemon,
             ):
-                for arm in rb.cxn.ARMS:
+                for arm in rb.cxn.MCP_ARMS:
                     with self.subTest(arm=arm):
                         ctx.arm_names = [arm]
                         ctx.mcp[arm] = (Path(tmp) / "mcp.json", rb.cxn.SERVER_OF[arm])

@@ -1,5 +1,10 @@
 # Bench v2 harness (macOS)
 
+`cx-browser-use-cli` is staged and unavailable for scored execution: preflight always fails.
+It requires `CDB_CODEX_AUTH=chatgpt` and browser-only tasks. Codex driving the CLI is not
+like-for-like with Browser Use's own Agent loop. Its planned GUI-only exception covers
+only recognized Browser Use CLI invocations, not general Bash or arbitrary Python.
+
 The runner, test apps, BenchLab tasks and analysis of Cua Driver Bench v2. Start
 with [`../../README.md`](../../README.md) for what the benchmark measures and
 how to reproduce it, and [`../../METHOD.md`](../../METHOD.md) for the method.

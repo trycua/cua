@@ -2236,14 +2236,34 @@ async fn phased_relay_kill_reattach() {
 // Users, disk-full, shutdown
 // ---------------------------------------------------------------------------
 
-/// When the driver runs as root, `ProcessConfig.user` switches users and a
-/// non-root driver refuses a different user.
+/// When the driver can switch users (it is root, or it holds
+/// `CAP_SETUID`/`CAP_SETGID`, as the Linux images run it), `ProcessConfig.user`
+/// switches users; a driver that can do neither refuses a different user.
 #[tokio::test]
 async fn process_user_switching() {
     let t = target().await;
     let c = t.client(TransportPreference::Native).await;
     let (_, uid) = run_sh(&c, "id -u").await;
     let root = String::from_utf8_lossy(&uid).trim() == "0";
+    let caps = c
+        .system()
+        .get_capabilities(GetCapabilitiesRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    let mode = caps
+        .features
+        .iter()
+        .find(|f| f.name == "process.run_as")
+        .and_then(|f| f.attributes.get("mode").cloned())
+        .unwrap_or_default();
+    if root && !cfg!(windows) {
+        assert_eq!(
+            mode, "root",
+            "a root driver reports process.run_as mode root"
+        );
+    }
+    let can_switch = mode == "root" || mode == "capabilities";
     let started = c
         .process()
         .start_process(StartProcessRequest {
@@ -2263,9 +2283,9 @@ async fn process_user_switching() {
         assert_eq!(error.code(), Code::InvalidArgument);
         return;
     }
-    if !root {
+    if !can_switch {
         let Err(error) = started else {
-            panic!("non-root driver refuses to switch users");
+            panic!("a driver without root or CAP_SETUID/CAP_SETGID refuses to switch users (mode {mode:?})");
         };
         assert_eq!(error.code(), Code::PermissionDenied);
         return;

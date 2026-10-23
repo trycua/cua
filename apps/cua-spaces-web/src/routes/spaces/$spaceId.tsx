@@ -270,7 +270,19 @@ function SpaceDetailPage() {
         // One of your machines that keeps its desktop private: why, in place
         // of the desktop, then the Spaces it provides (no New Space button
         // beside the note).
-        <MachineSpaces note={detail.desktopNote} listSpaces={Boolean(detail.newSpace)} spaces={hostedSpaces(spaces ?? [], space.id)} />
+        <MachineSpaces
+          note={detail.desktopNote}
+          listSpaces={Boolean(detail.newSpace)}
+          spaces={hostedSpaces(spaces ?? [], space.id)}
+          // This machine's own screen: its switches live on its Computers page.
+          action={
+            detail.isHost ? (
+              <Button variant="outline" size="sm" data-host-desktop-action="" render={<Link to="/machines" />}>
+                Open Computers
+              </Button>
+            ) : null
+          }
+        />
       ) : (
         <StreamSurface
           spaceId={space.id}
@@ -376,12 +388,16 @@ function hostedSpaces(spaces: readonly Space[], machineSpaceId: string): Space[]
   return spaces.filter((s) => s.host === machine);
 }
 
-/** A machine that does not share its desktop: the core's line, then the
- * Spaces it provides when it provides any. */
-function MachineSpaces({ note, listSpaces, spaces }: { note: string; listSpaces: boolean; spaces: Space[] }) {
+/** A machine that does not share its desktop, or this machine's own
+ * screen (never streamed here): the core's line and its one action, then
+ * the Spaces it provides when it provides any. */
+function MachineSpaces({ note, listSpaces, spaces, action }: { note: string; listSpaces: boolean; spaces: Space[]; action?: ReactNode }) {
   return (
     <section data-machine-desktop-note="">
-      <p className="rounded-xl border px-4 py-3 text-[13px] text-muted-foreground">{note}</p>
+      <div className="flex items-center justify-between gap-4 rounded-xl border px-4 py-3">
+        <p className="text-[13px] text-muted-foreground">{note}</p>
+        {action}
+      </div>
       {listSpaces ? (
         <div data-machine-spaces="" className="mt-6">
           <h2 className="mb-2 px-1 text-[13px] font-semibold">Spaces</h2>

@@ -59,6 +59,25 @@ export interface StreamSurfaceProps {
   className?: string;
 }
 
+/** How long the desktop may take to send its first picture. After that the
+ * cover says it didn't, why, and offers Try again: the viewer never waits
+ * silently. */
+export const CONNECT_TIMEOUT_MS = 20_000;
+/** Why, when it timed out. */
+export const CONNECT_TIMEOUT_REASON = "No picture arrived from the desktop within 20 seconds.";
+
+/** True once `waiting` has held for `ms` without a break; a new `key` (another
+ * Space, or Try again) starts the wait over. */
+function useTimedOut(waiting: boolean, ms: number, key: string): boolean {
+  const [over, setOver] = useState<string | null>(null);
+  useEffect(() => {
+    if (!waiting) return;
+    const t = setTimeout(() => setOver(key), ms);
+    return () => clearTimeout(t);
+  }, [waiting, ms, key]);
+  return waiting && over === key;
+}
+
 /** The root's radius (`rounded-xl`) and border, for the native layer's clip. */
 const SURFACE_RADIUS = 12;
 const SURFACE_BORDER = 1;
@@ -89,7 +108,10 @@ export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, p
     inset: SURFACE_BORDER,
     os,
   });
-  const phase: StreamPhase = !slot ? "nosession" : slot.phase === "live" ? "streaming" : slot.phase === "failed" ? "failed" : "connecting";
+  // Still no picture after CONNECT_TIMEOUT_MS: failed, with the reason and
+  // Try again (a picture that arrives later still shows).
+  const timedOut = useTimedOut(slot?.phase === "connecting", CONNECT_TIMEOUT_MS, `${spaceId}:${attempt}`);
+  const phase: StreamPhase = !slot ? "nosession" : slot.phase === "live" ? "streaming" : slot.phase === "failed" || timedOut ? "failed" : "connecting";
   const cover = useDesktopCover({ canStream, previewText, autoConnect, connectRequested: requested, stream: phase, access });
   const thumbnail = useSpaceThumbnail(spaceId, videoHere && canStream && !replaced && !access);
   const press = () => setPressed({ spaceId, attempt: attempt + (cover.kind === "status" ? 1 : 0) });
@@ -116,7 +138,9 @@ export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, p
   // cua, sample data), so the placeholder after all.
   const noVideoHere = wanted && slot === null;
   const covered = !replaced && (Boolean(access) || (videoHere && !noVideoHere));
-  const state = slot ? slot.phase : covered && cover.kind === "connecting" ? "connecting" : "placeholder";
+  const state = slot ? (timedOut ? "failed" : slot.phase) : covered && cover.kind === "connecting" ? "connecting" : "placeholder";
+  // Why the cover says it could not connect, on the cover itself.
+  const reason = timedOut ? CONNECT_TIMEOUT_REASON : slot?.phase === "failed" ? (slot.reason ?? null) : null;
   const dark = covered && (Boolean(thumbnail) || cover.kind !== "status");
   return (
     <>
@@ -133,6 +157,7 @@ export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, p
               os={os}
               cover={cover}
               thumbnail={access ? null : thumbnail}
+              reason={cover.kind === "status" ? reason : null}
               onButton={press}
               onAction={onAccessAction}
               onOpen={slot?.phase === "failed" ? () => void open() : undefined}
@@ -210,6 +235,7 @@ function DesktopCoverView({
   os,
   cover,
   thumbnail,
+  reason,
   onButton,
   onAction,
   onOpen,
@@ -217,6 +243,8 @@ function DesktopCoverView({
   os: SpaceOs;
   cover: DesktopCover;
   thumbnail: string | null;
+  /** Why it could not connect, under the line. */
+  reason?: string | null;
   onButton: () => void;
   onAction?: () => void;
   /** The stream failed here: its own window instead. */
@@ -240,6 +268,11 @@ function DesktopCoverView({
             className={cn("max-w-md", cover.kind === "status" ? "text-[13px]" : "text-[15px]", dark ? "text-white/70" : "text-muted-foreground")}
           >
             {cover.text}
+          </p>
+        ) : null}
+        {reason ? (
+          <p data-cover-reason="" className={cn("mt-1 max-w-md text-xs", dark ? "text-white/60" : "text-muted-foreground")}>
+            {reason}
           </p>
         ) : null}
         {cover.action ? (

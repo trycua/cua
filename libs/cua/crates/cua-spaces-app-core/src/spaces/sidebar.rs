@@ -574,6 +574,17 @@ pub fn desktop_note(space: &Space) -> Option<String> {
     })
 }
 
+/// The line in place of this machine's own desktop on its page: it is
+/// the screen in front of you, so it is never streamed here, and it is
+/// seen from your other devices.
+pub fn host_desktop_note(os: crate::model::SpaceOs) -> String {
+    format!(
+        "This is {}\u{2019}s own screen, so it isn\u{2019}t shown here. \
+         Your other devices see and control it while Share this desktop is on.",
+        os.this_machine_lower()
+    )
+}
+
 /// The roster without this machine's own relay entry
 /// (`relay:<this_machine_id>`, listed once it shares its desktop or
 /// provides Spaces): this machine has its own place ("This machine"), not
@@ -997,6 +1008,10 @@ pub fn detail_live(
         _ => status_text(space),
     };
     let preview_text = match (creating, &failed) {
+        // This machine's own screen is never streamed here: a stream of
+        // the screen you are looking at only mirrors itself. Its page says
+        // so instead of waiting for a desktop that never comes.
+        _ if is_host => host_desktop_note(space.os),
         _ if deleting => status_text(space),
         (_, Some(e)) => e.clone(),
         (Some(p), None) => p.label.clone(),
@@ -1106,7 +1121,8 @@ pub fn detail_live(
             can_stream,
         ));
     }
-    let show_sections = space.sdk.is_some() && reachable && !deleting;
+    // This machine is not a Space: no windows or agents to ask it for.
+    let show_sections = !is_host && space.sdk.is_some() && reachable && !deleting;
     SpaceDetail {
         id: space.id.clone(),
         title: space.name.clone(),
@@ -1132,7 +1148,7 @@ pub fn detail_live(
         remove_only,
         power_error: power_error(space),
         access: None,
-        desktop_note: None,
+        desktop_note: is_host.then(|| host_desktop_note(space.os)),
         new_space: None,
         actions,
         confirm: delete_confirm(space, remove_only, delete_label),
@@ -1258,6 +1274,95 @@ mod tests {
             effective_selection(&both, "this-mac").map(|s| s.id.as_str()),
             Some("this-mac")
         );
+    }
+
+    /// This machine's own desktop, opened as a Space page (the Computers
+    /// page's "This computer · Desktop" row) while the host shares it: the
+    /// shell's roster marks it reachable, yet nothing ever streams it here.
+    /// Its page says why instead of "Loading the desktop…" forever, and
+    /// asks it for no windows or agents ("window host is not up", "Could
+    /// not read this Space's agents").
+    #[test]
+    fn this_machines_desktop_says_why_instead_of_loading_forever() {
+        use crate::experiments::Experiments;
+        use crate::host::{HostSummaryInput, this_machine_space};
+        use crate::model::{SpaceOs, SpaceSdkRef};
+        let sharing = HostSummaryInput {
+            configured: true,
+            service_running: true,
+            sharing: true,
+            online: Some(true),
+            mode: Some("relay".into()),
+            ..Default::default()
+        };
+        for os in [SpaceOs::Macos, SpaceOs::Windows, SpaceOs::Linux] {
+            let mut host = this_machine_space(Some(&sharing), 0, os);
+            host.sdk = Some(SpaceSdkRef {
+                features: vec![],
+                spacesd_version: String::new(),
+                reachable: true,
+                error: None,
+            });
+            for d in [
+                detail(&host),
+                detail_for(&host, None, None, &Experiments::default(), None),
+            ] {
+                assert!(d.is_host);
+                assert!(!d.can_stream);
+                assert!(!d.show_sections, "no Stream or Agents for {os:?}");
+                assert!(d.sections.is_empty());
+                assert_eq!(d.preview_text, host_desktop_note(os));
+                assert_eq!(d.desktop_note.as_deref(), Some(d.preview_text.as_str()));
+                assert!(d.preview_text.contains(os.this_machine_lower()));
+            }
+        }
+    }
+
+    /// Drift guard: "Loading the desktop…" is a wait for a stream, so it
+    /// only ever shows where a stream can open. A page that cannot stream
+    /// says why (or what it waits for) in its own words.
+    #[test]
+    fn loading_the_desktop_only_shows_where_a_stream_can_open() {
+        use crate::host::{HostSummaryInput, this_machine_space};
+        use crate::model::{SpaceOs, SpaceSdkRef, SpaceStatus};
+        let sdk = |reachable| SpaceSdkRef {
+            features: vec![],
+            spacesd_version: String::new(),
+            reachable,
+            error: None,
+        };
+        let mut spaces = vec![];
+        for status in [None, Some(HostSummaryInput::default())] {
+            let mut host = this_machine_space(status.as_ref(), 0, SpaceOs::Macos);
+            spaces.push(host.clone());
+            host.sdk = Some(sdk(true));
+            spaces.push(host);
+        }
+        let base = super::super::row_to_space(&local_row("local:a", None, None, None), 0);
+        for st in [
+            SpaceStatus::Running,
+            SpaceStatus::Local,
+            SpaceStatus::Suspended,
+            SpaceStatus::Provisioning,
+            SpaceStatus::Deleting,
+        ] {
+            for reachable in [true, false] {
+                let mut s = base.clone();
+                s.status = st;
+                s.sdk = Some(sdk(reachable));
+                spaces.push(s);
+            }
+        }
+        for s in &spaces {
+            let d = detail(s);
+            if !d.can_stream {
+                assert_ne!(
+                    d.preview_text, "Loading the desktop\u{2026}",
+                    "{} ({:?}) cannot stream but says it is loading",
+                    s.id, s.status
+                );
+            }
+        }
     }
 
     /// Sharing on (the default): Share, between

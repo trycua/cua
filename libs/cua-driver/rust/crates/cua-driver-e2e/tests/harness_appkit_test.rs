@@ -2237,10 +2237,12 @@ fn harness_appkit_slider_drag_px_background() {
     });
 }
 
-/// popup_select: a background AXPress opens the NSPopUpButton's menu. The menu
-/// steals key focus from the front app, so the background oracles (the
-/// foreground sentinel must not blur) check that the driver hands it back.
-/// The menu stays open and its item is chosen through accessibility.
+/// popup_select: a background AXPress opens the NSPopUpButton's menu only to
+/// read its options and closes it in the same call; left open, AppKit draws it
+/// over the user's front app until a later call. While open, the menu steals
+/// key focus from the front app, so the background oracles (the foreground
+/// sentinel must not blur) check that the driver hands it back. The option is
+/// then chosen with set_value, which opens, presses and closes the menu.
 #[test]
 #[ignore]
 fn harness_appkit_popup_click_keeps_front_key_focus_background() {
@@ -2264,24 +2266,42 @@ fn harness_appkit_popup_click_keeps_front_key_focus_background() {
                 }),
             );
             assert!(!opened.is_error(), "popup click failed: {}", opened.text());
+            assert!(
+                opened.text().contains("\"Research\""),
+                "background popup click did not list the Research option: {}",
+                opened.text()
+            );
 
-            let open = snapshot_elements(driver, pid, wid);
-            let item = element_index_containing(open.tree_text(), "AXMenuItem \"Research\"")
-                .unwrap_or_else(|| {
-                    panic!("open popup lists no Research item:\n{}", open.tree_text())
-                });
+            let closed = snapshot_elements(driver, pid, wid);
+            for option in ["Choose a team", "Design", "Research", "Finance"] {
+                assert!(
+                    element_index_containing(
+                        closed.tree_text(),
+                        &format!("AXMenuItem \"{option}\"")
+                    )
+                    .is_none(),
+                    "background popup click left its menu open:\n{}",
+                    closed.tree_text()
+                );
+            }
+            assert!(
+                closed.tree_text().contains("popup_value=Choose a team"),
+                "listing the popup options chose one:\n{}",
+                closed.tree_text()
+            );
+
             let chosen = driver.call(
-                "click",
+                "set_value",
                 serde_json::json!({
                     "pid": pid as i64,
                     "window_id": wid,
-                    "element_token": open.element_token(item),
-                    "delivery_mode": "background"
+                    "element_token": element_token_by_id(&closed, "pop-team"),
+                    "value": "Research"
                 }),
             );
             assert!(
                 !chosen.is_error(),
-                "menu item click failed: {}",
+                "popup set_value failed: {}",
                 chosen.text()
             );
 

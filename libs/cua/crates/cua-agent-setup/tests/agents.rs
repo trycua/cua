@@ -55,6 +55,78 @@ impl T {
     }
 }
 
+#[test]
+fn windows_gui_finds_claude_in_user_install_dirs_without_path() {
+    use cua_agent_setup::Os;
+    let mut t = T::new();
+    t.env.os = Os::Windows;
+    assert!(t.env.path.is_empty());
+    let exe = t.write(".local/bin/claude.exe", "MZ");
+    for suffix in ["exe", "cmd", "bat"] {
+        let p = t.write(&format!(".local/bin/claude.{suffix}"), "MZ");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        assert!(p.is_file());
+    }
+    assert_eq!(
+        t.env.well_known_bin_dirs(),
+        vec![
+            t.home.join(".local/bin"),
+            t.home.join("AppData/Roaming/npm"),
+            t.home.join(".bun/bin"),
+            t.home.join(".cargo/bin"),
+        ]
+    );
+    let roaming = t.home.join("roaming");
+    t.env
+        .vars
+        .insert("APPDATA".into(), roaming.to_string_lossy().into_owned());
+    assert_eq!(t.env.well_known_bin_dirs()[1], roaming.join("npm"));
+    t.env.path.extend(t.env.well_known_bin_dirs());
+    let claude = t
+        .setup()
+        .detect()
+        .into_iter()
+        .find(|a| a.id == "claude-code")
+        .unwrap();
+    assert!(claude.evidence.contains(&format!("bin:{}", exe.display())));
+    assert_eq!(t.env.which("claude"), Some(exe.clone()));
+    std::fs::remove_file(exe).unwrap();
+    assert_eq!(
+        t.env.which("claude"),
+        Some(t.home.join(".local/bin/claude.cmd"))
+    );
+    std::fs::remove_file(t.home.join(".local/bin/claude.cmd")).unwrap();
+    assert_eq!(
+        t.env.which("claude"),
+        Some(t.home.join(".local/bin/claude.bat"))
+    );
+    t.env.path.insert(0, t.home.join("inherited"));
+    let inherited = t.write("inherited/claude.exe", "MZ");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&inherited, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    assert_eq!(t.env.which("claude"), Some(inherited));
+    t.env.os = Os::Linux;
+    assert_eq!(
+        t.env.well_known_bin_dirs(),
+        vec![
+            t.home.join(".local/bin"),
+            t.home.join(".claude/local"),
+            t.home.join(".npm-global/bin"),
+            t.home.join(".bun/bin"),
+            t.home.join(".cargo/bin"),
+            PathBuf::from("/opt/homebrew/bin"),
+            PathBuf::from("/usr/local/bin"),
+        ]
+    );
+}
+
 fn server() -> McpServer {
     McpServer::new("/opt/cua/bin/cua")
 }

@@ -137,19 +137,6 @@ pub struct HostEnv {
     pub run_agent_clis: bool,
 }
 
-/// Where coding-agent CLIs usually install, searched after `$PATH`.
-fn well_known_bin_dirs(home: &Path) -> Vec<PathBuf> {
-    vec![
-        home.join(".local/bin"),
-        home.join(".claude/local"),
-        home.join(".npm-global/bin"),
-        home.join(".bun/bin"),
-        home.join(".cargo/bin"),
-        PathBuf::from("/opt/homebrew/bin"),
-        PathBuf::from("/usr/local/bin"),
-    ]
-}
-
 const VARS: &[&str] = &[
     "XDG_CONFIG_HOME",
     "APPDATA",
@@ -167,6 +154,32 @@ const VARS: &[&str] = &[
 ];
 
 impl HostEnv {
+    /// Ordered fallback binary directories for this environment's OS, searched after PATH.
+    pub fn well_known_bin_dirs(&self) -> Vec<PathBuf> {
+        if self.os == Os::Windows {
+            let appdata = self
+                .var("APPDATA")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| self.home.join("AppData/Roaming"));
+            vec![
+                self.home.join(".local/bin"),
+                appdata.join("npm"),
+                self.home.join(".bun/bin"),
+                self.home.join(".cargo/bin"),
+            ]
+        } else {
+            vec![
+                self.home.join(".local/bin"),
+                self.home.join(".claude/local"),
+                self.home.join(".npm-global/bin"),
+                self.home.join(".bun/bin"),
+                self.home.join(".cargo/bin"),
+                PathBuf::from("/opt/homebrew/bin"),
+                PathBuf::from("/usr/local/bin"),
+            ]
+        }
+    }
+
     /// The real environment: `$HOME` (or `%USERPROFILE%`), `$PATH`, the
     /// agent override variables, `/Applications` and `~/Applications`
     /// (or `$CUA_AGENT_APP_DIRS`).
@@ -180,19 +193,9 @@ impl HostEnv {
             .filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v)))
             .collect();
         let os = Os::current();
-        let mut path: Vec<PathBuf> = std::env::var_os("PATH")
+        let path: Vec<PathBuf> = std::env::var_os("PATH")
             .map(|p| std::env::split_paths(&p).collect())
             .unwrap_or_default();
-        // A GUI app (Cua Spaces from the Dock) runs without the user's
-        // shell PATH, so an agent installed under a user bin dir would look
-        // missing. Search the usual install dirs after the real PATH.
-        if os != Os::Windows {
-            for d in well_known_bin_dirs(&home) {
-                if !path.contains(&d) {
-                    path.push(d);
-                }
-            }
-        }
         // `CUA_AGENT_APP_DIRS` (a path list, empty for none) replaces the
         // app folders, so hermetic runs do not see the host's apps.
         let app_dirs = match std::env::var_os("CUA_AGENT_APP_DIRS") {
@@ -204,14 +207,23 @@ impl HostEnv {
             }
             None => vec![],
         };
-        HostEnv {
+        let mut env = HostEnv {
             home,
             vars,
             path,
             app_dirs,
             os,
             run_agent_clis: true,
+        };
+        // A GUI app (Cua Spaces from the Dock) runs without the user's
+        // shell PATH, so an agent installed under a user bin dir would look
+        // missing. Search the usual install dirs after the real PATH.
+        for dir in env.well_known_bin_dirs() {
+            if !env.path.contains(&dir) {
+                env.path.push(dir);
+            }
         }
+        env
     }
 
     /// A hermetic environment rooted at `home`: no variables, no PATH, apps
@@ -1418,7 +1430,7 @@ fn run_cli(bin: &Path, args: &[String]) -> Result<()> {
 
 #[cfg(test)]
 mod cmd_shim_tests {
-    use super::{HostEnv, Os, cmd_shim_target};
+    use super::{HostEnv, cmd_shim_target};
 
     /// What `npm i -g @anthropic-ai/claude-code` writes (cmd-shim).
     const NATIVE_SHIM: &str = "@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n\"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe\"   %*\r\n";
@@ -1439,13 +1451,8 @@ mod cmd_shim_tests {
     #[test]
     fn the_current_env_also_searches_the_usual_install_dirs() {
         let env = HostEnv::current();
-        if env.os != Os::Windows {
-            let home = env.home.clone();
-            assert!(env.path.contains(&home.join(".local/bin")));
-            assert!(
-                env.path
-                    .contains(&std::path::PathBuf::from("/opt/homebrew/bin"))
-            );
+        for dir in env.well_known_bin_dirs() {
+            assert!(env.path.contains(&dir), "{}", dir.display());
         }
     }
 

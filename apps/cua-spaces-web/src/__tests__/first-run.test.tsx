@@ -7,14 +7,16 @@
 // it is ready; a fix left turns Done into Finish later and Home keeps the
 // to-do list.
 
-import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { testCore, wasmBuilt } from "@/bridge/__tests__/testCore";
+import { BridgeProvider } from "@/bridge";
+import { createDemoAdapter } from "@/bridge/adapters/demo";
+import { noCore, testCore, wasmBuilt } from "@/bridge/__tests__/testCore";
 import type { AgentSetupRow } from "@/bridge/contracts/agents";
 import type { HostStatus } from "@/bridge/contracts/host";
 import type { NewSpaceOptions } from "@/bridge/contracts/new-space";
-import { readFirstRun, resetFirstRunCache, writeFirstRun } from "@/bridge/first-run";
+import { readFirstRun, resetFirstRunCache, useFirstRun, writeFirstRun } from "@/bridge/first-run";
 import { CLOSED_NEW_SPACE, updateNewSpaceSession } from "@/bridge/new-space";
 import { resetSavedOnboardingCache } from "@/bridge/onboarding";
 import { mountApp, stubBrowserApis } from "./app-harness";
@@ -58,6 +60,42 @@ async function mount(opts: { host?: (h: HostStatus) => HostStatus; local?: (l: N
 
 const heading = () => document.querySelector("[data-onboarding-heading]")?.textContent ?? "";
 const primary = () => document.querySelector<HTMLButtonElement>("[data-first-run-primary]");
+
+describe("first-run detection on window focus", () => {
+  it("refreshes connected agents without waiting for polling and stops after unmount", async () => {
+    writeFirstRun({ step: "setup", agent: "claude-code" });
+    const demo = createDemoAdapter({ latencyMs: 0 });
+    let reads = 0;
+    let latest: AgentSetupRow[] = [];
+    const adapter: typeof demo = {
+      ...demo,
+      call: (async (op, args) => {
+        if (op === "agents.setup") {
+          reads++;
+          return [{ agent: "claude-code", name: "Claude Code", installed: reads < 3, configured: true, detail: "MCP configured", skillsInstalled: 1, skillsTotal: 1, mcpConfig: ".claude.json", skillsDir: ".claude/skills" }];
+        }
+        return demo.call(op, args);
+      }) as typeof demo.call,
+    };
+    function Probe() {
+      latest = useFirstRun(true, 60_000).agents;
+      return null;
+    }
+    const mounted = render(<BridgeProvider adapter={adapter} core={noCore}><Probe /></BridgeProvider>);
+    await waitFor(() => expect(latest[0]?.installed).toBe(true));
+    const before = reads;
+    fireEvent.focus(window);
+    await waitFor(() => expect(reads).toBe(before + 1));
+    fireEvent.focus(window);
+    await waitFor(() => expect(reads).toBe(before + 2));
+    await waitFor(() => expect(latest[0]?.installed).toBe(false));
+    mounted.unmount();
+    const stopped = reads;
+    await act(async () => { fireEvent.focus(window); });
+    expect(reads).toBe(stopped);
+    demo.dispose?.();
+  });
+});
 
 describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
   it("connects the ticked agents, then says they can use this computer, with Done on", async () => {

@@ -677,13 +677,19 @@ mod tests {
     #[cfg(target_os = "macos")]
     fn run_proxy_child(socket: &std::path::Path) -> String {
         let out = std::process::Command::new(std::env::current_exe().unwrap())
-            .args(["macos_proxy_child", "--exact", "--ignored", "--nocapture"])
+            .args([
+                "mcp::tests::macos_proxy_child",
+                "--exact",
+                "--ignored",
+                "--nocapture",
+            ])
             .env(PROXY_CHILD_ENV, "1")
             .env("CUA_E2E_MACOS_DAEMON_SOCKET", socket)
             .env("CUA_TEST_DRIVER_BIN", socket.with_extension("missing-bin"))
             .output()
             .unwrap();
         assert!(out.status.success());
+        assert!(String::from_utf8_lossy(&out.stdout).contains("running 1 test"));
         String::from_utf8_lossy(&out.stderr).into_owned()
     }
 

@@ -3,21 +3,22 @@
 
 import { useCallback, useState } from "react";
 
-import { useAddSpaceWhenReady, useRiskyNudge, useSecondAgentNudge, type Nudge } from "@/bridge/nudges";
+import { useAddSpaceWhenReady, useRiskyNudge, useSecondAgentNudge, useSignInNudge, type Nudge } from "@/bridge/nudges";
 import { CuaKey } from "@/components/cua-key";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
 
 /**
- * The two This Mac prompts, in the top-right corner over whatever page is
- * open: a second agent started on this Mac's desktop, or an agent is about
- * to do something risky there. One main button and one way out; neither
+ * The prompts in the top-right corner over whatever page is open: a second
+ * agent started on this Mac's desktop, an agent is about to do something
+ * risky there, or (once) a Space is ready and the user is not signed in. One main button and one way out; neither
  * stops an agent. The moments and words are the app core's
  * (`bridge/nudges.ts`).
  */
 export function ThisMacNudges() {
   const second = useSecondAgentNudge();
   const risky = useRiskyNudge();
+  const signIn = useSignInNudge(Boolean(risky.nudge || second.nudge));
   const [wantSpace, setWantSpace] = useState(false);
   const started = useCallback((os: "macos" | "linux" | null) => {
     setWantSpace(false);
@@ -45,6 +46,8 @@ export function ThisMacNudges() {
       onSecondary={second.keepSharing}
       onNever={second.dontAskAgain}
     />
+  ) : signIn.nudge ? (
+    <NudgeCard nudge={signIn.nudge} onPrimary={signIn.signIn} onSecondary={signIn.notNow} />
   ) : null;
 
   return (

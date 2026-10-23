@@ -38,7 +38,7 @@ describe.skipIf(!wasmBuilt)("first-run usage events (wasm core)", () => {
     ]);
     expect(frames).toEqual([
       [],
-      ["onboarding_shown", "welcome shown"],
+      ["onboarding_shown", "welcome shown", "signin_shown"],
       ["welcome completed", "signin shown"],
       ["signin back", "welcome shown"],
       [],
@@ -52,7 +52,7 @@ describe.skipIf(!wasmBuilt)("first-run usage events (wasm core)", () => {
       { type: "welcome-shown" },
       { type: "start" },
     ]);
-    expect(frames).toEqual([[], [], ["onboarding_shown", "welcome shown", "welcome completed", "signin shown"]]);
+    expect(frames).toEqual([[], [], ["onboarding_shown", "welcome shown", "signin_shown", "welcome completed", "signin shown"]]);
   });
 
   it("says on app_launched whether the first run is due", async () => {

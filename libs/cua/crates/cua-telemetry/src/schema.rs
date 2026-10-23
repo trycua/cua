@@ -347,6 +347,15 @@ pub const ONBOARDING_STEPS: &[&str] = &[
     "checklist_completed",
     "checklist_dismissed",
     "checklist_reopened",
+    // The Cua sign-in on the first run (`signin_shown` when it starts
+    // signed out; `signin_completed` or `signin_skipped` when it is left),
+    // and the prompt to sign in once the first Space is ready (CUA-2062).
+    "signin_shown",
+    "signin_completed",
+    "signin_skipped",
+    "signin_prompt_shown",
+    "signin_prompt_accepted",
+    "signin_prompt_dismissed",
 ];
 /// What `install.sh` and `install.ps1` report about their own run
 /// (`cua_installer_step`): started, finished, or stopped by an error.

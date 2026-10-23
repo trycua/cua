@@ -45,6 +45,11 @@
           "type": "onboarding-page"
         },
         {
+          "ok": true,
+          "step": "signin_shown",
+          "type": "step"
+        },
+        {
           "action": "completed",
           "choice": "none",
           "page": "welcome",
@@ -259,6 +264,11 @@
         },
         {
           "ok": true,
+          "step": "signin_completed",
+          "type": "step"
+        },
+        {
+          "ok": true,
           "step": "onboarding_completed",
           "type": "step"
         }
@@ -291,6 +301,11 @@
           "choice": "none",
           "page": "welcome",
           "type": "onboarding-page"
+        },
+        {
+          "ok": true,
+          "step": "signin_shown",
+          "type": "step"
         }
       ]
     },
@@ -473,6 +488,11 @@
           "choice": "none",
           "page": "done",
           "type": "onboarding-page"
+        },
+        {
+          "ok": true,
+          "step": "signin_completed",
+          "type": "step"
         },
         {
           "ok": true,

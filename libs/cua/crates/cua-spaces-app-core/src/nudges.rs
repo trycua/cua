@@ -21,6 +21,13 @@
 //!   on`; off by default): "Run this in a separate Space instead?" The app
 //!   draws the question; no answer in time means "Run it here".
 //!
+//! * **Sign in, once a Space is ready** ([`sign_in`]). The first run lets
+//!   people go on without a Cua account, and without one a Space can't be
+//!   shared. When the user's first Space is ready and they are still signed
+//!   out, ask once: "Sign in to share this Space with your team". One
+//!   click starts the same browser sign-in as everywhere else; "Not now"
+//!   closes it for good on this computer ([`SignInMemory`]).
+//!
 //! What this can't see: an agent that drives the desktop with its own Cua
 //! Driver (not through Cua Spaces) writes no access line, and the agent's
 //! name and session are its own claim (the account before the tag is
@@ -238,6 +245,64 @@ pub fn risky_action(request: &RiskyRequest, now_ms: i64) -> Option<Nudge> {
         )),
         primary: "Use a separate Space".into(),
         secondary: "Run it here".into(),
+        never: None,
+    })
+}
+
+/// What an app remembers about the sign-in prompt, for one computer.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SignInMemory {
+    /// It was shown once already (whatever the answer).
+    pub shown: bool,
+}
+
+/// What the sign-in prompt needs to know.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SignInNudgeInput {
+    /// Signed in to a Cua account.
+    pub signed_in: bool,
+    /// A sign-in is in progress (the browser is open).
+    pub signing_in: bool,
+    /// This app can start a sign-in.
+    pub can_sign_in: bool,
+    /// A Space the user made is ready (running).
+    pub space_ready: bool,
+    /// The ready Space's name, when known.
+    pub space_name: Option<String>,
+    pub memory: SignInMemory,
+}
+
+/// The sign-in prompt, once the user's first Space is ready and they are
+/// still signed out. Shown once per computer.
+pub fn sign_in(input: &SignInNudgeInput) -> Option<Nudge> {
+    if input.signed_in
+        || input.signing_in
+        || !input.can_sign_in
+        || !input.space_ready
+        || input.memory.shown
+    {
+        return None;
+    }
+    let name = input
+        .space_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty());
+    Some(Nudge {
+        kind: "sign-in".into(),
+        key: "first-space".into(),
+        eyebrow: match name {
+            Some(n) => format!("{n} is ready"),
+            None => "Your Space is ready".into(),
+        },
+        title: "Sign in to share this Space with your team.".into(),
+        body: "With a Cua account, the people you invite can open it and work in it with you."
+            .into(),
+        note: Some("It opens your browser.".into()),
+        primary: "Sign in".into(),
+        secondary: "Not now".into(),
         never: None,
     })
 }
@@ -538,6 +603,73 @@ mod tests {
                 .unwrap()
                 .eyebrow
                 .starts_with("An agent wants to")
+        );
+    }
+
+    fn ready() -> SignInNudgeInput {
+        SignInNudgeInput {
+            can_sign_in: true,
+            space_ready: true,
+            space_name: Some("dev-mac".into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_ready_space_while_signed_out_asks_to_sign_in() {
+        let n = sign_in(&ready()).unwrap();
+        assert_eq!(n.kind, "sign-in");
+        assert_eq!(n.eyebrow, "dev-mac is ready");
+        assert_eq!(n.title, "Sign in to share this Space with your team.");
+        assert_eq!(
+            (n.primary.as_str(), n.secondary.as_str()),
+            ("Sign in", "Not now")
+        );
+        assert_eq!(n.never, None);
+        let unnamed = sign_in(&SignInNudgeInput {
+            space_name: Some(" ".into()),
+            ..ready()
+        })
+        .unwrap();
+        assert_eq!(unnamed.eyebrow, "Your Space is ready");
+    }
+
+    #[test]
+    fn the_sign_in_prompt_waits_for_a_space_and_asks_once() {
+        assert!(
+            sign_in(&SignInNudgeInput {
+                space_ready: false,
+                ..ready()
+            })
+            .is_none()
+        );
+        assert!(
+            sign_in(&SignInNudgeInput {
+                signed_in: true,
+                ..ready()
+            })
+            .is_none()
+        );
+        assert!(
+            sign_in(&SignInNudgeInput {
+                signing_in: true,
+                ..ready()
+            })
+            .is_none()
+        );
+        assert!(
+            sign_in(&SignInNudgeInput {
+                can_sign_in: false,
+                ..ready()
+            })
+            .is_none()
+        );
+        assert!(
+            sign_in(&SignInNudgeInput {
+                memory: SignInMemory { shown: true },
+                ..ready()
+            })
+            .is_none()
         );
     }
 }

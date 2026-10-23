@@ -167,8 +167,9 @@ def test_spaces_electron_builds_only_for_prereleases_and_dry_runs() -> None:
     assert mac.index("xcrun stapler staple") < mac.index("refresh-update-info.mjs") < mac.index("spctl -a -vv -t install")
     assert "com.trycua.spaces.macos" in mac
     windows = "\n".join(s.get("run", "") for s in steps("cd-cua-spaces.yml", "electron-windows-pkg"))
-    targets = {m["target"] for m in jobs["electron-native"]["strategy"]["matrix"]["include"]}
-    assert {"x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"} <= targets
+    # The native matrix comes from the plan step, one entry per platform built.
+    assert jobs["electron-native"]["strategy"]["matrix"]["include"] == "${{ fromJSON(needs.electron-plan.outputs.native_matrix) }}"
+    assert "x86_64-pc-windows-msvc" in plan and "aarch64-pc-windows-msvc" in plan
     assert 'AZURE_SIGNING_ENDPOINT="$ENDPOINT"' in windows
     assert jobs["electron-windows-pkg"]["environment"] == "cua-driver-release-signing"
     for name in ("electron-mac", "electron-windows-pkg"):

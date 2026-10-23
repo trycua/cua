@@ -375,13 +375,25 @@ impl QemuRuntime {
             return Ok(Firmware::Bios);
         }
         let bin = self.binary(arch).await?;
-        let fw = firmware::find_uefi(arch, &bin).ok_or_else(|| {
+        let windows_arm = os == GuestOs::Windows && arch == Arch::Aarch64;
+        let fw = (if windows_arm {
+            firmware::find_windows_arm(&bin, |p| p.is_file())
+        } else {
+            firmware::find_uefi(arch, &bin)
+        })
+        .ok_or_else(|| {
             VmmError::missing(
                 format!("UEFI firmware for {arch}"),
-                format!(
-                    "install edk2 (Homebrew qemu ships it; {})",
-                    QemuPackageManager::linux_hint()
-                ),
+                if windows_arm {
+                    "Windows ARM requires a Secure Boot firmware pair: AAVMF_CODE.secboot.fd + \
+                     AAVMF_VARS.ms.fd in <qemu prefix>/share/AAVMF or /usr/share/AAVMF"
+                        .into()
+                } else {
+                    format!(
+                        "install edk2 (Homebrew qemu ships it; {})",
+                        QemuPackageManager::linux_hint()
+                    )
+                },
             )
         })?;
         match fw.vars_template {
@@ -503,6 +515,7 @@ impl QemuRuntime {
             }
             r => r,
         }
+        .inspect_err(|_| self.stop_tpm(st))
     }
 
     async fn launch_once(
@@ -514,6 +527,24 @@ impl QemuRuntime {
     ) -> Result<()> {
         let bin = self.binary(st.arch).await?;
         let dir = self.dir(&st.name);
+        let tpm_dir = dir.join("tpm");
+        let swtpm: Option<PathBuf> = if spec.tpm || tpm_dir.exists() {
+            #[cfg(not(unix))]
+            return Err(VmmError::invalid("TPM requires a Unix host"));
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let bin = host::which("swtpm").ok_or(VmmError::invalid(
+                    "swtpm is not available: install swtpm with TPM 2.0 support and add it to PATH",
+                ))?;
+                self.stop_tpm(st);
+                std::fs::create_dir_all(&tpm_dir)?;
+                std::fs::set_permissions(&tpm_dir, std::fs::Permissions::from_mode(0o700))?;
+                Some(bin)
+            }
+        } else {
+            None
+        };
         let mut guest_ports: Vec<u16> = spec.ports.clone();
         if st.ssh.is_some() && !guest_ports.contains(&22) {
             guest_ports.push(22);
@@ -572,6 +603,7 @@ impl QemuRuntime {
             disk_format: st.disk_format.clone(),
             seed_iso: st.seed_iso.clone(),
             install_iso: st.install_iso.clone(),
+            tpm_socket: swtpm.as_ref().map(|_| tpm_dir.join("swtpm.sock")),
             firmware: st.firmware.clone(),
             forwards: st.ports.iter().map(|(g, h)| (*h, *g)).collect(),
             restrict_network: st.restrict_network,
@@ -598,9 +630,20 @@ impl QemuRuntime {
         let log_path = dir.join("qemu.log");
         #[cfg(unix)]
         {
-            let out = tokio::process::Command::new("/bin/sh")
+            let tpm_log = swtpm.as_ref().map_or(String::new(), |_| {
+                format!("; see {}", dir.join("swtpm.log").display())
+            });
+            let mut command = tokio::process::Command::new("/bin/sh");
+            if let Some(swtpm) = &swtpm {
+                command.env("CUA_SWTPM", swtpm).env("CUA_TPM_DIR", &tpm_dir);
+            }
+            let out = command
                 .arg("-c")
-                .arg("\"$0\" \"$@\" </dev/null >>\"$CUA_QEMU_LOG\" 2>&1 & echo $!")
+                .arg(if swtpm.is_some() {
+                    TPM_LAUNCH
+                } else {
+                    "\"$0\" \"$@\" </dev/null >>\"$CUA_QEMU_LOG\" 2>&1 & echo $!"
+                })
                 .arg(&bin)
                 .args(&argv)
                 .env("CUA_QEMU_LOG", &log_path)
@@ -609,7 +652,9 @@ impl QemuRuntime {
             let pid = String::from_utf8_lossy(&out.stdout)
                 .trim()
                 .parse::<u32>()
-                .map_err(|e| VmmError::other(format!("could not launch {}: {e}", bin.display())))?;
+                .map_err(|e| {
+                    VmmError::other(format!("could not launch {}: {e}{tpm_log}", bin.display()))
+                })?;
             st.pid = Some(pid);
         }
         #[cfg(not(unix))]
@@ -808,9 +853,20 @@ impl QemuRuntime {
         !host::pid_alive(pid)
     }
 
+    fn stop_tpm(&self, st: &QemuState) {
+        let pidfile = self.dir(&st.name).join("swtpm.pid");
+        if let Ok(pid) = std::fs::read_to_string(&pidfile)
+            && let Ok(pid) = pid.trim().parse()
+        {
+            host::signal(pid, "TERM");
+        }
+        let _ = std::fs::remove_file(pidfile);
+    }
+
     async fn force_stop(&self, st: &mut QemuState, graceful: Duration) -> Result<()> {
         let Some(pid) = st.pid.filter(|p| host::pid_alive(*p)) else {
             st.pid = None;
+            self.stop_tpm(st);
             return Ok(());
         };
         if !graceful.is_zero() {
@@ -819,6 +875,7 @@ impl QemuRuntime {
             }
             if Self::wait_exit(pid, graceful).await {
                 st.pid = None;
+                self.stop_tpm(st);
                 return Ok(());
             }
         }
@@ -830,6 +887,7 @@ impl QemuRuntime {
             Self::wait_exit(pid, Duration::from_secs(5)).await;
         }
         st.pid = None;
+        self.stop_tpm(st);
         Ok(())
     }
 }
@@ -1505,6 +1563,13 @@ impl Runtime for QemuRuntime {
             .map(|s| Arc::new(SshExec::from_endpoint(s)) as Arc<dyn GuestExec>))
     }
 }
+
+#[cfg(unix)]
+const TPM_LAUNCH: &str = r#""$CUA_SWTPM" socket --daemon --tpm2 --terminate --tpmstate "dir=$CUA_TPM_DIR" --ctrl "type=unixio,path=$CUA_TPM_DIR/swtpm.sock" --pid "file=$CUA_TPM_DIR/../swtpm.pid" </dev/null >>"$CUA_TPM_DIR/../swtpm.log" 2>&1 || exit 1
+"$0" "$@" </dev/null >>"$CUA_QEMU_LOG" 2>&1 & echo $!"#;
+
+#[cfg(all(test, unix))]
+mod tpm_tests;
 
 #[cfg(test)]
 mod tests {

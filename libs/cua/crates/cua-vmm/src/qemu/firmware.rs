@@ -126,6 +126,21 @@ pub fn find_uefi_with(arch: Arch, qemu_bin: &Path, exists: impl Fn(&Path) -> boo
     None
 }
 
+pub fn find_windows_arm(qemu_bin: &Path, exists: impl Fn(&Path) -> bool) -> Option<Uefi> {
+    let real = std::fs::canonicalize(qemu_bin).unwrap_or_else(|_| qemu_bin.into());
+    let prefix = real.parent()?.parent()?;
+    ["share/AAVMF", "/usr/share/AAVMF"]
+        .into_iter()
+        .find_map(|dir| {
+            let code = prefix.join(dir).join("AAVMF_CODE.secboot.fd");
+            let vars = prefix.join(dir).join("AAVMF_VARS.ms.fd");
+            (exists(&code) && exists(&vars)).then_some(Uefi {
+                code,
+                vars_template: Some(vars),
+            })
+        })
+}
+
 /// Find UEFI firmware on the real filesystem.
 pub fn find_uefi(arch: Arch, qemu_bin: &Path) -> Option<Uefi> {
     // Resolve symlinks: Homebrew's /opt/homebrew/bin/qemu-system-* links into
@@ -171,6 +186,29 @@ mod tests {
     fn fs(paths: &[&str]) -> impl Fn(&Path) -> bool {
         let set: HashSet<PathBuf> = paths.iter().map(PathBuf::from).collect();
         move |p: &Path| set.contains(p)
+    }
+
+    #[test]
+    fn windows_arm_requires_matching_secure_boot_pair() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("share/AAVMF");
+        std::fs::create_dir_all(&dir).unwrap();
+        let code = dir.join("AAVMF_CODE.secboot.fd");
+        let vars = dir.join("AAVMF_VARS.ms.fd");
+        std::fs::write(&code, []).unwrap();
+        std::fs::write(&vars, []).unwrap();
+        let bin = tmp.path().join("bin/qemu-system-aarch64");
+        // Exclude system firmware so the missing-pair check is host independent.
+        let find = || find_windows_arm(&bin, |p| p.starts_with(tmp.path()) && p.is_file());
+        assert_eq!(
+            find(),
+            Some(Uefi {
+                code,
+                vars_template: Some(vars.clone())
+            })
+        );
+        std::fs::remove_file(vars).unwrap();
+        assert!(find().is_none());
     }
 
     #[test]

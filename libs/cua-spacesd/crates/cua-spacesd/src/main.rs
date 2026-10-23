@@ -888,6 +888,64 @@ fn write_private_file(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<(
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn fallback_platform_tools_install_recording_support() {
+        if std::env::var_os("CUA_TEST_RECORDING_WIRING").is_none() {
+            let home = tempfile::tempdir().unwrap();
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "tests::fallback_platform_tools_install_recording_support",
+                    "--nocapture",
+                ])
+                .env("CUA_TEST_RECORDING_WIRING", "1")
+                .env("HOME", home.path())
+                .env_remove("DISPLAY")
+                .env_remove("WAYLAND_DISPLAY")
+                .env_remove("CUA_WAYLAND_NEST")
+                .status()
+                .unwrap();
+            assert!(status.success());
+            return;
+        }
+        let tools = platform_tools().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let video_error =
+            match cua_driver_core::video::start_video(&directory.path().join("probe.mp4")) {
+                Ok(video) => {
+                    let _ = video.stop();
+                    String::new()
+                }
+                Err(error) => error.to_string(),
+            };
+        for (name, args) in [
+            (
+                "start_recording",
+                serde_json::json!({"output_dir": directory.path()}),
+            ),
+            ("set_config", serde_json::json!({"max_image_dimension": 0})),
+            ("stop_recording", serde_json::json!({})),
+        ] {
+            let result = tools.invoke_tool(name, args).await.unwrap();
+            assert_ne!(result["isError"], true, "{result}");
+        }
+        let evidence: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(directory.path().join("turn-00001/evidence.json")).unwrap(),
+        )
+        .unwrap();
+        for phase in ["before", "after"] {
+            assert_ne!(
+                evidence[phase]["screenshot"]["classification"], "capture_hook_unavailable",
+                "{evidence}"
+            );
+        }
+        assert!(
+            !video_error.contains("no video backend registered"),
+            "{video_error}"
+        );
+    }
+
     /// The WireGuard library's retry/expiry messages stay out of the log
     /// (also when a service was installed with `CUA_ENV_LOG=info`), unless
     /// the filter names them.

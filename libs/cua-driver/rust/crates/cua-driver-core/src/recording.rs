@@ -23,7 +23,7 @@ use crate::video::{self, VideoBackend, VideoMetadata};
 
 // ── Platform screenshot callback ─────────────────────────────────────────────
 //
-// Registered once at startup by each platform crate. Takes (window_id, pid)
+// Installed during tool registration by each platform crate. Takes (window_id, pid)
 // and returns raw PNG bytes, or None if capture fails. The callback is called
 // synchronously from write_turn (a blocking context).
 

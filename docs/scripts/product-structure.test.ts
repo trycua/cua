@@ -11,25 +11,29 @@ const docs = path.resolve(__dirname, '..');
 const repo = path.resolve(docs, '..');
 const content = path.join(docs, 'content/docs');
 
-// In sidebar order: Cua Spaces (the product), Cua Driver, then one More tools
-// group (the CLI, the SDK, Lume and Cua Bench).
+// In sidebar order: Cua Spaces, Cua Driver, Lume and Agents, then a Developers
+// group (the SDK, the CLI and Cua Bench).
 const PRODUCTS: Array<[string, string]> = [
   ['spaces', 'Cua Spaces'],
   ['cua-driver', 'Cua Driver'],
-  ['cua-cli', 'Cua CLI'],
-  ['cua-sdk', 'Cua SDK'],
   ['lume', 'Lume'],
+  ['cua-sdk', 'Cua SDK'],
+  ['cua-cli', 'Cua CLI'],
   ['cua-bench', 'Cua Bench'],
 ];
-// The root meta.json: the products in order, with the More tools separator.
+// Agents is a top-level section of its own: one flat list of pages, no
+// quickstart or guides, because each page is one agent.
+const AGENTS = 'agents';
+// The root meta.json: the products in order, with the Developers separator.
 const ROOT_ORDER = [
   'index',
   'spaces',
   'cua-driver',
-  '---More tools---',
-  'cua-cli',
-  'cua-sdk',
   'lume',
+  AGENTS,
+  '---Developers---',
+  'cua-sdk',
+  'cua-cli',
   'cua-bench',
 ];
 // Sections in their only allowed order; `examples` and `concepts` are optional.
@@ -76,11 +80,11 @@ function slugs(): Set<string> {
   );
 }
 
-test('the root lists the products in order, with the CLI, SDK, Lume and Bench under More tools', () => {
+test('the root lists Spaces, Cua Driver, Lume and Agents, with the SDK, CLI and Bench under Developers', () => {
   assert.deepEqual(meta('').pages, ROOT_ORDER);
   assert.deepEqual(
-    ROOT_ORDER.filter((page) => page !== 'index' && !page.startsWith('---')),
-    PRODUCTS.map(([dir]) => dir)
+    ROOT_ORDER.filter((page) => page !== 'index' && page !== AGENTS && !page.startsWith('---')).sort(),
+    PRODUCTS.map(([dir]) => dir).sort()
   );
   const stray = readdirSync(content).filter(
     (name) =>
@@ -90,7 +94,7 @@ test('the root lists the products in order, with the CLI, SDK, Lume and Bench un
   const dirs = readdirSync(content).filter((name) =>
     statSync(path.join(content, name)).isDirectory()
   );
-  assert.deepEqual(dirs.sort(), PRODUCTS.map(([dir]) => dir).sort());
+  assert.deepEqual(dirs.sort(), [...PRODUCTS.map(([dir]) => dir), AGENTS].sort());
 });
 
 test('the docs home features its examples with real pages and media', () => {
@@ -124,6 +128,23 @@ test('the docs home features its examples with real pages and media', () => {
       assert.ok(existsSync(path.join(docs, 'public', src)), `example media ${src} is missing`);
     }
   }
+});
+
+test('Agents is a flat top-level section, one page per agent', () => {
+  const m = meta(AGENTS);
+  assert.equal(m.title, 'Agents');
+  assert.equal(m.root, true);
+  const pages = m.pages ?? [];
+  assert.equal(pages[0], 'index');
+  const files = readdirSync(path.join(content, AGENTS))
+    .filter((name) => name.endsWith('.mdx'))
+    .map((name) => name.replace(/\.mdx$/, ''));
+  assert.deepEqual([...pages].sort(), [...files].sort(), 'agents/meta.json lists every page');
+  assert.equal(
+    readdirSync(path.join(content, AGENTS)).filter((name) => statSync(path.join(content, AGENTS, name)).isDirectory()).length,
+    0,
+    'Agents has no folders'
+  );
 });
 
 for (const [dir, title] of PRODUCTS) {
@@ -181,5 +202,6 @@ test('redirects point at pages that exist', () => {
     let target = to;
     for (let hop = 0; hop < 8 && Object.hasOwn(redirects, target); hop++) target = redirects[target];
     assert.ok(live.has(target.replace(/#.*$/, '')), `redirect ${from} -> ${to} does not reach a page`);
+    assert.ok(!Object.hasOwn(redirects, to.replace(/#.*$/, '')), `redirect ${from} -> ${to} is a chain: point it at the final page`);
   }
 });

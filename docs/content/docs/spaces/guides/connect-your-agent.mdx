@@ -67,7 +67,7 @@ cua agents status          # what Cua configured for each agent
 cua agents remove          # removes only what Cua added
 ```
 
-The [supported agents](/cua-cli/guides/mcp-server#supported-agents) include
+The [supported agents](/agents/spaces-mcp#supported-agents) include
 Claude Code, Codex, Cursor, Gemini CLI, Hermes, OpenClaw and more. If yours is
 not on the list, add the server by hand:
 
@@ -131,7 +131,7 @@ Give an agent that only needs to look read-only access:
 claude mcp add cua -- cua daemon mcp --permissions spaces:readonly
 ```
 
-See [permissions](/cua-cli/guides/mcp-server#permissions) for the full list.
+See [permissions](/agents/spaces-mcp#permissions) for the full list.
 
 <Callout type="warn">
   `space_bash`, `send_file`, `teleport_app` and `hotspot_start` act with your

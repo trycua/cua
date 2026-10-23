@@ -1232,7 +1232,7 @@ async fn preflight_refusal(os: cua_vmm::GuestOs, backend: BackendKind) -> Runtim
     let req = cua_vmm::preflight::request(cua_vmm::preflight::guest_of(os), runs, None);
     let mut facts = cua_vmm::preflight::gather(&req).await;
     facts.free_bytes = None;
-    match cua_create_failure::preflight::evaluate(&req, &facts)
+    match cua_vmm::preflight::evaluate(&req, &facts)
         .into_iter()
         .next()
     {

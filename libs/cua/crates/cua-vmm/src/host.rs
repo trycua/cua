@@ -67,9 +67,25 @@ pub fn which(name: &str) -> Option<PathBuf> {
     }
     dirs.push(home_dir().join(".local/bin"));
     dirs.push(cua_home().join("bin"));
+    dirs.extend(windows_install_dirs());
     dirs.into_iter()
         .map(|d| d.join(&exe))
         .find(|p| is_executable(p))
+}
+
+/// Where Windows installers put tools without adding them to `PATH`. The
+/// QEMU installer is one: it installs to `C:\Program Files\qemu` and
+/// leaves `PATH` alone, so a PC that has QEMU would still look as if it
+/// did not.
+fn windows_install_dirs() -> Vec<PathBuf> {
+    if !cfg!(windows) {
+        return Vec::new();
+    }
+    ["ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"]
+        .iter()
+        .filter_map(std::env::var_os)
+        .map(|d| PathBuf::from(d).join("qemu"))
+        .collect()
 }
 
 fn is_executable(p: &Path) -> bool {

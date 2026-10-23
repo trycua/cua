@@ -585,7 +585,14 @@ pub fn select(req: &SelectRequest, report: &DoctorReport) -> Result<Selection> {
                         provisioning: l.provisioning,
                     });
                 }
-                Err(VmmError::missing("QEMU", q.missing.join(", ")))
+                Err(VmmError::missing(
+                    "QEMU",
+                    if host.os == HostOs::Windows {
+                        crate::preflight::QEMU_MISSING_WINDOWS.to_string()
+                    } else {
+                        q.missing.join(", ")
+                    },
+                ))
             }
         },
     }

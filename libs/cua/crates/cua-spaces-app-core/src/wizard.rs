@@ -834,6 +834,12 @@ fn local_engine_detail(image: &SandboxImage, env: &WizardEnv) -> Option<String> 
     })
 }
 
+/// What a Windows PC without QEMU is told (the same words as the daemon's
+/// preflight, `cua_vmm::preflight::QEMU_MISSING_WINDOWS`).
+const WINDOWS_QEMU_MISSING: &str = "Virtual computers on Windows need a free program called QEMU, \
+    and it isn't installed on this PC. Install it from qemu.org (the Windows download), then try \
+    again.";
+
 /// This Mac can run `image` now: a local runtime answers, and one of the
 /// image's engines is among the doctor's ready ones. While that list is not
 /// known, every engine counts as ready except QEMU: the app never installs
@@ -3066,9 +3072,22 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
                     Some(LocalEngine::Qemu) => "QEMU",
                     _ => "container",
                 };
-                match local_engine_detail(&image, env) {
-                    Some(why) => format!("{} cannot run {what} Spaces: {why}.", os.this_machine()),
-                    None => format!("{} cannot run {what} Spaces.", os.this_machine()),
+                let why = local_engine_detail(&image, env);
+                if image.local == Some(LocalEngine::Qemu)
+                    && os == SpaceOs::Windows
+                    && why
+                        .as_deref()
+                        .is_none_or(|w| w.starts_with("QEMU not found"))
+                {
+                    // Cua never installs QEMU on Windows: say what to get.
+                    WINDOWS_QEMU_MISSING.to_string()
+                } else {
+                    match why {
+                        Some(why) => {
+                            format!("{} cannot run {what} Spaces: {why}.", os.this_machine())
+                        }
+                        None => format!("{} cannot run {what} Spaces.", os.this_machine()),
+                    }
                 }
             } else {
                 env.local_reason
@@ -3667,10 +3686,7 @@ mod tests {
             local_backends: None,
             ..env()
         };
-        assert_eq!(
-            blocked(&unknown).as_deref(),
-            Some("This PC cannot run QEMU Spaces.")
-        );
+        assert_eq!(blocked(&unknown).as_deref(), Some(WINDOWS_QEMU_MISSING));
         // Docker Desktop is up, QEMU is not: the doctor's reason.
         let docker_only = WizardEnv {
             local_backends: Some(vec!["container".into()]),
@@ -3683,13 +3699,7 @@ mod tests {
             ),
             ..env()
         };
-        assert_eq!(
-            blocked(&docker_only).as_deref(),
-            Some(
-                "This PC cannot run QEMU Spaces: QEMU not found; missing: qemu-system-x86_64 \
-                 / qemu-img."
-            )
-        );
+        assert_eq!(blocked(&docker_only).as_deref(), Some(WINDOWS_QEMU_MISSING));
         // A Linux container is still offered with the same env.
         let linux = reduce(
             &initial(&unknown),

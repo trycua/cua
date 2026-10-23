@@ -1,31 +1,51 @@
 # Linux sandbox execution
 
-Status: **blocked before driver build; not an end-to-end verification proof**.
+Status: **release driver built; blocked staging Electron; not an end-to-end verification proof**.
 
-The generated instructions were attempted from the repository root:
+The skill was retried from the repository root with the dependency-cache environment from `checks.out`:
 
 ```bash
-export PATH="$HOME/.cargo/bin:$PATH" CARGO_NET_OFFLINE=true
+export CARGO_HOME=/home/box/sand-data/onigiri/v01/cache/cargo
+export RUSTUP_HOME=/home/box/.rustup
+export npm_config_store_dir=/home/box/sand-data/onigiri/v01/cache/pnpm
+export COREPACK_HOME=/home/box/sand-data/onigiri/v01/cache/corepack
+export PNPM_HOME=/home/box/sand-data/onigiri/v01/cache/pnpm-home
+export PATH=/home/box/.cargo/bin:$PATH
+unset CARGO_TARGET_DIR CARGO_NET_OFFLINE
 timeout 1260 .cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11
 ```
 
-The helper launched Xvfb, a private D-Bus session, openbox and picom. The WM probe passed and D-Bus activated `org.a11y.Bus`; its address was captured. The canonical runner then failed with exit 101 because the offline Cargo registry lacks `cap-fs-ext`. An earlier focused Cargo test attempted online resolution and failed because `index.crates.io` could not resolve. There was no source-built binary or staged fixture available to reuse.
+Xvfb, the private D-Bus session, openbox and picom launched. The WM probe passed and D-Bus activated `org.a11y.Bus`; its address was captured. Cargo compiled `cap-fs-ext` and the release driver successfully in 2m 42s at `libs/cua-driver/rust/target/release/cua-driver`. The previous claim that missing Cargo dependencies prevented the build was incorrect with these caches.
 
-The wrapper performed cleanup and confirmed evidence remained at:
+The next step failed with exit 1: `tests/fixtures/build/linux.sh --only electron` invoked `apps/cross-platform/electron/build.sh`, which printed `[INSTALL] npm install (first run)...` and exited during `npm install --silent`. To expose the suppressed error, the same Electron directory was checked with `timeout 120 npm install --loglevel verbose` under the same npm cache environment. That command also exited 1, reporting repeated package-download DNS failures, for example:
 
 ```text
-artifacts/cua-driver/verify/run-1LZFNB3J/
-  launch.log
-  openbox.log
-  picom.log
+npm http fetch GET https://registry.npmjs.org/@types/node/-/node-22.20.1.tgz attempt 3 failed with EAI_AGAIN
+npm error Exit handler never called!
+npm error This is an error with npm itself. Please report this error at:
+npm error   <https://github.com/npm/cli/issues>
+npm error Log files were not written due to an error writing to the directory: /home/box/.npm/_logs
+```
+
+The wrapper completed cleanup and printed:
+
+```text
+Evidence retained after cleanup: /home/box/sand-data/onigiri/cua/.git/onigiri/lanes/task-mvjsffom/artifacts/cua-driver/verify/run-hngSON71
+```
+
+A post-cleanup file listing confirmed these retained files:
+
+```text
+artifacts/cua-driver/verify/run-hngSON71/
   at-spi-address.txt
   cases.jsonl
   environment.jsonl
+  launch.log
+  openbox.log
+  picom.log
   results.jsonl
 ```
 
-The three JSONL result files are empty: no daemon readiness, doctor, click delivery, screenshot, sentinel observation or video was proved. Desktop setup logs are not substitutes for those artifacts. Dconf also warned that the sandbox's home cache was read-only. Retry the documented invocation with dependencies available; do not call this attempt a passing verification.
+The `recordings/` directory and all three result JSONL files are empty. Doctor and preflight were not reached: there is no `doctor.json`, `version.txt`, `health_report.json`, `check_permissions.json` or `daemon.json`. Neither background AX click cell ran; there are no transcripts, sentinel/native observations, fixture-state snapshots, screenshots, videos or delivered summary rows. Desktop setup and a successful build are not substitutes for those artifacts. Retry once Electron dependencies can be staged; this attempt does not prove delivery or daemon/fixture teardown.
 
-The two new focused Rust tests could not execute because dependency resolution fails before compilation. Rust formatting, shell syntax and whitespace checks are separate from behavioral verification. Prettier invocation was also unavailable: the repository's pnpm shim needed an uncached package-manager download, and offline npm had no Prettier package.
-
-Sandbox-only setup used the installed Rust toolchain on PATH and offline Cargo mode to fail promptly after the observed DNS failure. No fixture result was forged, no external prebuilt driver was substituted and no test-only setter was used. A successful future X11 run still uses the stand-ins listed in SKILL.md: virtual desktop, fixture app, disposable state and authorization bypass. macOS, Windows and Wayland remain unverified.
+No prebuilt driver, forged fixture result or test-only target setter was substituted. The documented Linux stand-ins remain Xvfb, a real fixture app, disposable state and testkit authorization bypass; the fixture never launched in this attempt. macOS, Windows and Wayland remain unverified. This round changes only the execution documentation, not production code or tests.

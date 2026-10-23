@@ -7,6 +7,15 @@ invocation, isolation, schedule, gates and output. The method is in
 
 ## Arms
 
+`cx-browser-use-cli` (Amendment 24.2a) is staged: operational preflight always fails,
+including offline, smoke and no-model modes. No execution policy or trial home is written.
+It requires `CDB_CODEX_AUTH=chatgpt` and a nonempty selection of `browser: true` tasks;
+no existing task is flagged here. This is not like-for-like with Browser Use's own Agent loop.
+The planned GUI-only exception is recognized CLI invocations, not general Bash or arbitrary Python.
+Install an already downloaded, pinned wheel with `python tools/install_browser_use.py /path/to/browser_use-0.13.11-py3-none-any.whl`.
+Heredocs, skill discovery/provisioning, matcher-derived execution rules, browser lifecycle,
+observed-pin comparison and doctor/CDP/page-info/deny probes remain prerequisites to enabling it.
+
 | Arm | Public setup | Tools Claude Code gets |
 | --- | --- | --- |
 | `cc-cua-driver-script` | Cua Driver | Cua Driver built from the pinned main commit, MCP server `cua`, `run_script` on, the skill of that commit in the working directory, and a short `run_script` addendum in the system prompt |

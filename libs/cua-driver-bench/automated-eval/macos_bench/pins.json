@@ -115,6 +115,16 @@
       "type"
     ]
   },
+  "browser_use_cli": {
+    "version": "0.13.11",
+    "python": "3.12",
+    "wheel_sha256": "50b0d16efc44215f99ed1c9197f05e2519bb79fa1501eed7371aff450cc56045",
+    "skill_path": "browser_use/skills/browser-use/SKILL.md",
+    "skill_sha256": "fee8f320d0bdcad3695393663b5defa6e5fc1e22ff7ac6ffb6f04f6997b93c36",
+    "_requires_python": ">=3.11,<4.0",
+    "_wheel": "browser_use-0.13.11-py3-none-any.whl",
+    "_url": "https://files.pythonhosted.org/packages/cd/e6/8fb8ce81894afcc7626837232a4d284843d1c1fb4fd757aa00c54ce40d8e/browser_use-0.13.11-py3-none-any.whl"
+  },
   "codex_native": {
     "_note": "Amendment 20 (CUA-1347): the Codex CLI bundled in ChatGPT 26.930.51102 (codex-cli/CodexCLI.app, Developer ID OpenAI OpCo, LLC, 2DC432GLL2), host protocol `codex app-server`, model gpt-6.1-sol (Amendment 23) at its catalog default effort (low); A20's smoke used gpt-6-astra (medium). Pinned from the host's identical app version; the smoke checks the VM copy.",
     "codex_cli_version": "codex-cli 0.160.0",

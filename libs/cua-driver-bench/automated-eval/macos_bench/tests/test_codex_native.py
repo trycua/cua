@@ -24,6 +24,114 @@ import bench_v2 as v2  # noqa: E402
 import claude_events  # noqa: E402
 import codex_native as cxn  # noqa: E402
 
+
+def test_browser_cli_translation_and_rejections():
+    import browser_use_cli as bu
+
+    assert bu.ARM in arms.ALL_ARMS and bu.ARM in cxn.ARMS
+    assert bu.ARM in cxn.LABELS and bu.ARM not in cxn.MCP_ARMS
+    command = "browser-use open 'https://example.test/a b'"
+    wrapped = "/bin/zsh -lc " + __import__("shlex").quote(command)
+    for text in (command, wrapped, f"{bu.EXECUTABLE} open 'https://example.test/a b'"):
+        tr = cxn.Translator(command_matcher=bu.match)
+        item = {"id": "cli1", "type": "commandExecution", "command": text}
+        events = tr.feed("item/started", {"item": item})
+        assert tr.feed("item/started", {"item": item}) == []
+        events += tr.feed(
+            "item/completed",
+            {
+                "item": {
+                    **item,
+                    "status": "completed",
+                    "exitCode": 0,
+                    "aggregatedOutput": "OUTPUT" * 1000,
+                }
+            },
+        )
+        uses = [use for event in events for use in v2.tool_uses(event)]
+        assert uses == [
+            (
+                "mcp__browser_use_cli__invoke",
+                {"argv": [str(bu.EXECUTABLE), "open", "https://example.test/a b"], "python": None},
+            )
+        ]
+        result = events[-1]["message"]["content"][0]
+        assert result["tool_use_id"] == "cli1" and not result["is_error"]
+        assert result["content"].startswith("OUTPUT") and len(result["content"]) == 2000
+        assert tr.non_gui == []
+    for text in (
+        "browser-use open x; curl x",
+        "browser-use open $(whoami)",
+        "browser-use open `id`",
+        "browser-use open x | cat",
+        "browser-use open x > out",
+        "browser-use open $HOME",
+        "browser-use open x\necho y",
+        "/tmp/browser-use open x",
+        "curl x",
+        "wget x",
+        "browser-use python <<'PY'\nprint(1)\nPY",
+        "browser-use open 'unterminated",
+    ):
+        assert bu.match(text) is None
+        events = cxn.Translator(command_matcher=bu.match).feed(
+            "item/started", {"item": {"id": "bad", "type": "commandExecution", "command": text}}
+        )
+        name, tool_input = v2.tool_uses(events[0])[0]
+        assert v2.scan_tool_use(name, tool_input)[0] == ["builtin:Bash"]
+
+
+def test_browser_cli_python_and_argv_remain_scanned():
+    import browser_use_cli as bu
+    import run_bench as rb
+
+    for argv, python in (
+        (("browser-use", "subprocess"), None),
+        (("browser-use", "python"), "subprocess evaluator-secret"),
+    ):
+        tr = cxn.Translator(command_matcher=lambda _: bu.Invocation(argv, python))
+        events = tr.feed(
+            "item/completed",
+            {
+                "item": {
+                    "id": "py",
+                    "type": "commandExecution",
+                    "command": "injected",
+                    "status": "completed",
+                    "exitCode": 1,
+                    "aggregatedOutput": "failure",
+                }
+            },
+        )
+        name, tool_input = v2.tool_uses(events[0])[0]
+        assert v2.scan_tool_use(name, tool_input)[0]
+        assert events[-1]["message"]["content"][0]["is_error"]
+        if python:
+            assert rb.evaluator_peeks(events, ["evaluator-secret"]) == [
+                "mcp__browser_use_cli__invoke:evaluator-secret"
+            ]
+
+
+def test_browser_cli_offline_installer(tmp_path):
+    import hashlib
+    import pytest
+    import browser_use_cli as bu
+    from tools import install_browser_use as installer
+
+    pins = json.loads((HERE / "pins.json").read_text())["browser_use_cli"]
+    wheel = tmp_path / "browser_use-0.13.11-py3-none-any.whl"
+    wheel.write_bytes(b"test wheel")
+    with mock.patch.object(installer.subprocess, "run") as run:
+        with pytest.raises(ValueError):
+            installer.install(wheel)
+        run.assert_not_called()
+        installer.install(wheel, expected_sha=hashlib.sha256(wheel.read_bytes()).hexdigest())
+        cmd = run.call_args.args[0]
+        assert cmd == ["uv", "tool", "install", "--python", "3.12", str(wheel)]
+        assert run.call_args.kwargs["env"]["UV_TOOL_BIN_DIR"] == str(bu.EXECUTABLE.parent)
+        assert pins["version"] == "0.13.11"
+
+
 ARM_B = {
     "mcpServers": {
         "codex-cu": {
@@ -60,7 +168,7 @@ class HomeTest(unittest.TestCase):
             source.chmod(0o000)
             before = source.stat().st_mtime_ns
             mcp = write_arm_b(root)
-            for arm in cxn.ARMS:
+            for arm in cxn.MCP_ARMS:
                 configs = {}
                 texts = {}
                 for mode in ("gateway", "chatgpt"):

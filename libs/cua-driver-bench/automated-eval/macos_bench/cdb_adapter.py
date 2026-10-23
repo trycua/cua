@@ -273,8 +273,9 @@ def clear_leftovers(spec: dict[str, Any]) -> None:
 class CdbTask:
     """One task of the pack, driven by its launch descriptor."""
 
-    def __init__(self, spec: dict[str, Any], artifacts: Path) -> None:
+    def __init__(self, spec: dict[str, Any], artifacts: Path, seed: int | None = None) -> None:
         self.spec = spec
+        self.seed = seed
         self.bundle = pack_tasks_root() / spec["pack_task"]
         self.descriptor = json.loads(
             (self.bundle / "platform/launch.macos.json").read_text("utf-8")
@@ -291,6 +292,7 @@ class CdbTask:
     def sub(self, text: str, **extra: str) -> str:
         values = {
             "python": sys.executable,
+            "seed": str(self.seed),
             "workspace": str(self.workspace),
             "workspace_uri": self.workspace.as_uri(),
             "bundle": str(self.bundle),
@@ -324,7 +326,8 @@ class CdbTask:
                 raise RuntimeError(f"reset {step} failed: {(done.stderr or done.stdout)[-400:]}")
 
     def brief(self) -> str:
-        text = (self.bundle / "brief.md").read_text("utf-8")
+        brief = self.sub(self.descriptor["semantics"].get("brief", "brief.md"))
+        text = (self.bundle / brief).read_text("utf-8")
         text = text.replace("configured `cua` MCP server", "configured computer-use MCP server")
         return text.strip() + f"\n\nYour workspace directory is `{self.workspace}`.\n"
 
@@ -438,7 +441,13 @@ class CdbTask:
             for name, c in checks_raw.items()
         }
         passed = data.get("passed")
+        if self.seed is not None and any(
+            "${seed}" in arg for arg in self.descriptor["semantics"]["reset"]["setup"]
+        ):
+            checks["seed_identity"] = type(data.get("seed")) is int and data["seed"] == self.seed
+            passed = passed and checks["seed_identity"]
         return {
+            "seed": data.get("seed"),
             "passed": bool(passed),
             "score": data.get("score"),
             "checks": checks,

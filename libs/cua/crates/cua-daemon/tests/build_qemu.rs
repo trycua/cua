@@ -10,6 +10,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use cua_daemon::local::VmmLocal;
 use cua_spaces::Spaces;
 use cua_spaces::build::{BuildEvent, BuildOptions};
 
@@ -63,7 +64,10 @@ async fn builds_caches_forks_and_fails_cleanly() {
     std::fs::write(ctx.path().join("hello.txt"), "hello\n").unwrap();
     // SAFETY: set before any other thread in this test reads it.
     unsafe { std::env::set_var("CUA_HOME", home.path()) };
-    let spaces = Spaces::builder().home(home.path()).build();
+    let spaces = Spaces::builder()
+        .home(home.path())
+        .local_runtime(Arc::new(VmmLocal::default()))
+        .build();
     let tag = format!("e2e-{}", std::process::id());
     let events = Arc::new(Mutex::new(Vec::new()));
 

@@ -1,7 +1,7 @@
 name: "Nightly: Spaces.build on QEMU"
 
 # A three-step Dockerfile built in a real QEMU Linux Space
-# (libs/cua/crates/cua-spaces/tests/build_qemu.rs): the layers are pinned
+# (libs/cua/crates/cua-daemon/tests/build_qemu.rs): the layers are pinned
 # checkpoints, a rebuild is a cache hit that runs nothing, a changed context
 # file rebuilds from its COPY, a Space made from the tag has the image's
 # files, owners, environment, working directory and user, and a failing step
@@ -21,7 +21,7 @@ on:
   pull_request:
     paths:
       - "libs/cua/crates/cua-spaces/src/build/**"
-      - "libs/cua/crates/cua-spaces/tests/build_qemu.rs"
+      - "libs/cua/crates/cua-daemon/tests/build_qemu.rs"
       - "libs/cua/crates/cua-image/src/dockerfile.rs"
       - ".github/workflows/nightly-build.yml"
 
@@ -79,7 +79,7 @@ jobs:
           CUA_BUILD_E2E: "1"
           CUA_BUILD_E2E_BASE: linux
           CUA_IMAGE_LINUX: ${{ runner.temp }}/disk/disk/disk.img
-        run: cargo test -p cua-spaces --test build_qemu -- --nocapture --test-threads=1
+        run: cargo test -p cua-daemon --test build_qemu -- --nocapture --test-threads=1
 
   macos-hvf:
     name: macos-hvf (self-hosted)
@@ -106,4 +106,4 @@ jobs:
           CUA_BUILD_E2E: "1"
           CUA_BUILD_E2E_BASE: linux
           CUA_IMAGE_LINUX: ${{ runner.temp }}/disk/disk/disk.img
-        run: cargo test -p cua-spaces --test build_qemu -- --nocapture --test-threads=1
+        run: cargo test -p cua-daemon --test build_qemu -- --nocapture --test-threads=1

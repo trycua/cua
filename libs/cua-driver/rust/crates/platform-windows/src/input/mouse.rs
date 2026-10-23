@@ -507,7 +507,15 @@ pub fn send_click_synthesized_mods(
     button: &str,
     modifiers: &[&str],
 ) -> Result<()> {
-    send_click_synthesized_mods_impl(target, sx, sy, count, button, modifiers, false)
+    send_click_synthesized_mods_impl(
+        target,
+        sx,
+        sy,
+        count,
+        button,
+        modifiers,
+        ClickMode::NonActivating,
+    )
 }
 
 /// SendInput click for an explicit foreground request. Unlike the historical
@@ -522,7 +530,26 @@ pub fn send_click_synthesized_active_mods(
     button: &str,
     modifiers: &[&str],
 ) -> Result<()> {
-    send_click_synthesized_mods_impl(target, sx, sy, count, button, modifiers, true)
+    send_click_synthesized_mods_impl(target, sx, sy, count, button, modifiers, ClickMode::Window)
+}
+
+/// Explicit desktop clicks leave the hardware cursor at the requested point.
+pub fn send_click_synthesized_desktop_mods(
+    target: u64,
+    sx: i32,
+    sy: i32,
+    count: usize,
+    button: &str,
+    modifiers: &[&str],
+) -> Result<()> {
+    send_click_synthesized_mods_impl(target, sx, sy, count, button, modifiers, ClickMode::Desktop)
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum ClickMode {
+    NonActivating,
+    Window,
+    Desktop,
 }
 
 fn send_click_synthesized_mods_impl(
@@ -532,8 +559,9 @@ fn send_click_synthesized_mods_impl(
     count: usize,
     button: &str,
     modifiers: &[&str],
-    activate: bool,
+    mode: ClickMode,
 ) -> Result<()> {
+    let activate = mode != ClickMode::NonActivating;
     let target = HWND(target as *mut _);
     if target.0.is_null() {
         bail!("invalid target hwnd");
@@ -747,7 +775,7 @@ fn send_click_synthesized_mods_impl(
             if prev_cursor_valid {
                 let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
             }
-        } else if prev_cursor_valid {
+        } else if mode == ClickMode::Window && prev_cursor_valid {
             // Restore our injected movement, but leave a later user/app move alone.
             let mut current_cursor = POINT::default();
             if GetCursorPos(&mut current_cursor).is_ok()

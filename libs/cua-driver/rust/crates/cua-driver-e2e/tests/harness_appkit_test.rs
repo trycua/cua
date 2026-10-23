@@ -1242,16 +1242,19 @@ fn harness_appkit_element_foreground_press_key_commits_edit() {
         |pid, wid, driver| {
             let first = snapshot_elements(driver, pid, wid);
             let field = element_token_by_id(&first, "txt-input");
-            let set = driver.call(
-                "set_value",
+            // Type the edit rather than set_value it: set_value ends a text
+            // field's edit with Tab, which commits it before Return.
+            let typed = driver.call(
+                "type_text",
                 serde_json::json!({
                     "pid": pid as i64,
                     "window_id": wid,
                     "element_token": field,
-                    "value": "inline-cua"
+                    "text": "inline-cua",
+                    "delivery_mode": "foreground"
                 }),
             );
-            assert!(!set.is_error(), "set_value failed: {}", set.text());
+            assert!(!typed.is_error(), "type_text failed: {}", typed.text());
 
             let second = snapshot_elements(driver, pid, wid);
             assert!(
@@ -1393,16 +1396,24 @@ fn harness_appkit_px_background_press_key_reports_honest_delivery_truth() {
             |driver| {
                 let first = snapshot_elements(driver, harness.pid, wid);
                 let field = element_token_by_id(&first, "txt-input");
-                let set = driver.call(
-                    "set_value",
+                // Type the command rather than set_value it: set_value ends a
+                // text field's edit with Tab, and that commit would run the
+                // command before Return is pressed.
+                let typed = driver.call(
+                    "type_text",
                     serde_json::json!({
                         "pid": harness.pid as i64,
                         "window_id": wid,
                         "element_token": field,
-                        "value": "printf cua-press-key"
+                        "text": "printf cua-press-key",
+                        "delivery_mode": "background"
                     }),
                 );
-                assert!(!set.is_error(), "set command failed: {}", set.text());
+                assert!(!typed.is_error(), "type command failed: {}", typed.text());
+                assert!(
+                    std::fs::metadata(&oracle_path).is_err(),
+                    "the command ran before Return was pressed"
+                );
 
                 let focused = snapshot_elements(driver, harness.pid, wid);
                 let (x, y, width, height) = element_pixel_frame(&focused, "txt-input");

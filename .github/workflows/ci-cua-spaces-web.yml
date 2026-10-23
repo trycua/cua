@@ -40,6 +40,7 @@ env:
 
 jobs:
   test:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: typecheck, tests, bridge contract, build
     runs-on: ubuntu-24.04
     steps:

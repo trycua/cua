@@ -138,7 +138,7 @@ env:
 
 jobs:
   meta:
-    if: inputs.promote_run == '' && inputs.doctor_children == ''
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') && (inputs.promote_run == '' && inputs.doctor_children == '') }}
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
@@ -230,7 +230,7 @@ jobs:
           retention-days: 7
 
   cli:
-    if: inputs.promote_run == '' && inputs.doctor_children == ''
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') && (inputs.promote_run == '' && inputs.doctor_children == '') }}
     strategy:
       fail-fast: false
       matrix:

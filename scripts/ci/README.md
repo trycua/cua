@@ -421,7 +421,7 @@ The stable tag run certifies the exact tag commit with the desktop E2E lanes. `E
 | Trigger | When | Result |
 | --- | --- | --- |
 | Nightly, 06:00 UTC | main's HEAD | A failure opens or updates one issue, "Cua Driver release gate failing on main (nightly)". The failed run also posts to #releases through the GitHub Slack app workflow-run subscription. The first fully clean nightly closes the issue. |
-| Pull request | The `e2e-gate` label is present, or the PR touches the cursor overlay, focus, background input or browser routing paths (globs in `.github/scripts/cua_driver_e2e_gate_paths.py`), or it is the release-please PR for cua-driver-rs | The four lanes run on the PR merge commit. |
+| Pull request | The `e2e-gate` label is present, or the PR touches the cursor overlay, focus, background input or browser routing paths (globs in `.github/scripts/cua_driver_e2e_gate_paths.py`). release-please PRs skip the lanes (the tag gate runs them on the release commit) unless labelled | The four lanes run on the PR merge commit. |
 | Other pull requests | Everything else | The lanes are skipped and `E2E gate / result` passes at once. |
 
 **Retry once.** Inside each lane a failed case is rerun once (`lib/e2e-retry-once.sh`, and `Invoke-CargoTest` in the Windows runner). A pass on the retry is flaky: it is listed under "Flaky cases" in the job summary and in the tracking issue, and does not fail the gate. Two failures are a real failure. The first attempt's rows, videos and log are kept under `retried-attempts/` in the lane artifact.

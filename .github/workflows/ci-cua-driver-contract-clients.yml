@@ -79,6 +79,7 @@ env:
 
 jobs:
   changes:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: "contract clients / changes"
     runs-on: ubuntu-latest
     timeout-minutes: 5

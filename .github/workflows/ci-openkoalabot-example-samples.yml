@@ -39,6 +39,7 @@ env:
 
 jobs:
   typescript:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: openkoalabot-example-ts (npm test)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -85,6 +86,7 @@ jobs:
           npm run build:web
 
   swift:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: openkoalabot-example-swift (swift test)
     runs-on: macos-26
     timeout-minutes: 60

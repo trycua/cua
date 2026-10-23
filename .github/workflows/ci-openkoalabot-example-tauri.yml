@@ -37,6 +37,7 @@ env:
 
 jobs:
   check:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: cargo check + core tests + vitest
     runs-on: ubuntu-22.04
     timeout-minutes: 60

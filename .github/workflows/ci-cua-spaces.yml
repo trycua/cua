@@ -135,6 +135,7 @@ jobs:
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked --test host_commands --test commands --test installer_commands --test app_core_parity --lib -- --test-threads=4
 
   frontend:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: vitest + typecheck
     runs-on: ubuntu-24.04
     steps:

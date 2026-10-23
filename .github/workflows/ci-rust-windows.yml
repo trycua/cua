@@ -60,6 +60,7 @@ env:
 
 jobs:
   unit:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Rust Windows unit and compile
     runs-on: windows-latest
     # The suite below has been running within a hair of this budget for months:

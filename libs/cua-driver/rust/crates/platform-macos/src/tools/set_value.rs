@@ -258,9 +258,7 @@ impl Tool for SetValueTool {
                 if let Some(edited) = outcome.document_edited {
                     structured["document_key_edit_sent"] = serde_json::json!(edited);
                 }
-                if let Some(committed) = outcome.committed {
-                    structured["committed"] = serde_json::json!(committed);
-                }
+                add_commit_field(&mut structured, outcome.committed);
                 if ax_echo_surface {
                     structured["escalation"] = serde_json::json!({
                         "recommended": "px",
@@ -572,24 +570,15 @@ fn set_value_blocking(
             // AppKit hands a text field's value to the app's model when an
             // editing session ends (`controlTextDidEndEditing`, bindings), and
             // an AXValue write never starts one, so a dialog's commit button
-            // would still see the old value. End one the way Tab does.
-            let committed =
-                (role == "AXTextField" && !secure && changed == Some(true)).then(|| unsafe {
-                    commit_text_field(pid, window_id, element, before.as_deref(), value)
-                });
-            let commit_note = match committed {
-                Some(true) => {
-                    " Re-entered the value in the field and ended editing with Tab, as typing \
-                     would; check a result that depends on it (a dialog's output) from fresh \
-                     state."
-                }
-                Some(false) => {
-                    " Could not re-enter the value and press Tab in the field; an app that takes \
-                     a field's value only when editing ends may still use the old one. Enter it \
-                     with type_text and press_key tab."
-                }
-                None => "",
-            };
+            // would still see the old value. End one the way Tab does, in a
+            // native app's own field only (see `text_field_host`).
+            let committed = retypes_to_commit(&role, secure, changed, || {
+                text_field_host(pid, window_id, element)
+            })
+            .then(|| unsafe {
+                commit_text_field(pid, window_id, element, before.as_deref(), value)
+            });
+            let commit_note = commit_note(committed);
             Ok(SetValueOutcome {
                 detail: format!(
                     "✅ Set AXValue on [{element_index}] {role}.{suffix}{commit_note}{}",
@@ -636,6 +625,71 @@ const NOT_APPLIED_REREADS: usize = 3;
 /// the accessibility write (LibreOffice Calc cells do) but did not apply it.
 fn write_not_applied(verified: Option<bool>, changed: Option<bool>) -> bool {
     verified == Some(false) && changed == Some(false)
+}
+
+/// Where a single-line text field lives, for the commit step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TextFieldHost {
+    /// A native app's own field (AppKit, including SwiftUI's AppKit-backed
+    /// fields), outside any web content.
+    NativeApp,
+    /// Any field of a web browser, its address bar included.
+    Browser,
+    /// A field in web content (Chromium, Electron, WebKit), or one not proven
+    /// to be outside it.
+    WebContent,
+}
+
+/// Classify `field` for the commit step. Web content is recognized by an
+/// `AXWebArea` ancestor, the check type_text uses for every engine. A
+/// browser's own address bar sits outside its web area, so the web-area walk
+/// would call it native; the driver's browser identity check catches it, and
+/// typing there opens the browser's suggestion list.
+fn text_field_host(pid: i32, window_id: u32, field: AXUIElementRef) -> TextFieldHost {
+    if super::type_text::is_browser_pid(pid) {
+        TextFieldHost::Browser
+    } else if super::type_text::element_outside_web_content(pid, field, window_id) {
+        TextFieldHost::NativeApp
+    } else {
+        TextFieldHost::WebContent
+    }
+}
+
+/// Whether a written value is re-entered as typed keys and committed with Tab:
+/// only after a write that changed a single-line, non-secure text field of a
+/// native app. Everything else keeps the plain AXValue write. `host` is read
+/// only when the field qualifies otherwise.
+fn retypes_to_commit(
+    role: &str,
+    secure: bool,
+    changed: Option<bool>,
+    host: impl FnOnce() -> TextFieldHost,
+) -> bool {
+    role == "AXTextField" && !secure && changed == Some(true) && host() == TextFieldHost::NativeApp
+}
+
+/// The result note for the commit step; empty when it was not attempted.
+fn commit_note(committed: Option<bool>) -> &'static str {
+    match committed {
+        Some(true) => {
+            " Re-entered the value in the field and ended editing with Tab, as typing \
+             would; check a result that depends on it (a dialog's output) from fresh \
+             state."
+        }
+        Some(false) => {
+            " Could not re-enter the value and press Tab in the field; an app that takes \
+             a field's value only when editing ends may still use the old one. Enter it \
+             with type_text and press_key tab."
+        }
+        None => "",
+    }
+}
+
+/// `committed` in structured output, present only when the commit step ran.
+fn add_commit_field(structured: &mut Value, committed: Option<bool>) {
+    if let Some(committed) = committed {
+        structured["committed"] = serde_json::json!(committed);
+    }
 }
 
 /// Settle between the steps that re-enter a text field's value.
@@ -1437,10 +1491,56 @@ fn hex_digit(n: u8) -> char {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_surface_trust, apply_verification_label, classify_write, file_name_needs_rename,
-        is_file_name_cell, is_get_info_name_field, not_applied_result, write_not_applied,
-        SetValueOutcome, GET_INFO_RENAME_ROUTE, LIST_RENAME_ROUTE,
+        add_commit_field, apply_surface_trust, apply_verification_label, classify_write,
+        commit_note, file_name_needs_rename, is_file_name_cell, is_get_info_name_field,
+        not_applied_result, retypes_to_commit, write_not_applied, SetValueOutcome, TextFieldHost,
+        GET_INFO_RENAME_ROUTE, LIST_RENAME_ROUTE,
     };
+
+    #[test]
+    fn a_native_app_text_field_is_committed_after_a_changed_write() {
+        assert!(retypes_to_commit("AXTextField", false, Some(true), || {
+            TextFieldHost::NativeApp
+        }));
+    }
+
+    #[test]
+    fn browser_and_web_content_fields_keep_the_plain_write() {
+        for host in [TextFieldHost::Browser, TextFieldHost::WebContent] {
+            let committed =
+                retypes_to_commit("AXTextField", false, Some(true), || host).then_some(true);
+            assert_eq!(committed, None, "{host:?} must not be retyped");
+            // Not attempted: no note in the text, no `committed` in structured output.
+            assert_eq!(commit_note(committed), "");
+            let mut structured = serde_json::json!({"path": "ax"});
+            add_commit_field(&mut structured, committed);
+            assert!(structured.get("committed").is_none());
+        }
+    }
+
+    #[test]
+    fn only_a_changed_single_line_text_field_is_considered() {
+        let unread = || -> TextFieldHost { panic!("host must not be read") };
+        assert!(!retypes_to_commit("AXTextField", true, Some(true), unread));
+        assert!(!retypes_to_commit(
+            "AXTextField",
+            false,
+            Some(false),
+            unread
+        ));
+        assert!(!retypes_to_commit("AXTextField", false, None, unread));
+        assert!(!retypes_to_commit("AXTextArea", false, Some(true), unread));
+        assert!(!retypes_to_commit("AXComboBox", false, Some(true), unread));
+    }
+
+    #[test]
+    fn an_attempted_commit_is_reported() {
+        let mut structured = serde_json::json!({"path": "ax"});
+        add_commit_field(&mut structured, Some(false));
+        assert_eq!(structured["committed"], false);
+        assert!(commit_note(Some(true)).contains("ended editing with Tab"));
+        assert!(commit_note(Some(false)).contains("type_text"));
+    }
 
     #[test]
     fn a_listed_file_name_is_a_file_name_cell() {

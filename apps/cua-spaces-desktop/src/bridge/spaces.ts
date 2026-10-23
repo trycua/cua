@@ -8,7 +8,7 @@
 import type { Native } from "../native/load";
 import type { AppCreateSpaceArgs, AppRuntime, AppSpace, AppWizardEnv, SpaceCreateProgress } from "../native/generated/index";
 import { AppModel } from "../model/app-model";
-import type { RuntimeFix } from "../model/windows-runtime";
+import { RUNTIME_FIX_ACTIONS, type RuntimeFix, type RuntimeFixAction } from "../model/windows-runtime";
 import { kindOf, osOf } from "../model/backend";
 import { isCancelled } from "../model/errors";
 import { bool, string } from "./args";
@@ -122,9 +122,9 @@ export function spacesMethods(ctx: BridgeContext): Handlers {
     },
     "spaces.fixRuntime": (args) => {
       const action = string(args, "action");
-      if (action !== "install-docker" && action !== "start-docker" && action !== "restart-app") throw Failure.badArgs("action: install-docker | start-docker | restart-app");
+      if (!(RUNTIME_FIX_ACTIONS as readonly string[]).includes(action)) throw Failure.badArgs(`action: ${RUNTIME_FIX_ACTIONS.join(" | ")}`);
       if (!model.windowsRuntime && !model.linuxRuntime) throw Failure.unsupported("no runtime fix on this system");
-      model.fixRuntime(action);
+      model.fixRuntime(action as RuntimeFixAction);
       return null;
     },
     // `{config, pendingId, os?, notifyWhenReady?}`. The create belongs to the app, not to the window:

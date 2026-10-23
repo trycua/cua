@@ -56,7 +56,7 @@ export interface LocalStatus {
 }
 
 /** `spaces.fixRuntime`'s actions. */
-export type RuntimeFixAction = "install-docker" | "start-docker" | "restart-app";
+export type RuntimeFixAction = "install-docker" | "start-docker" | "restart-app" | "open-windows-features";
 
 /** A step the host offers next to "no local runtime" (`LocalStatus.fix`). */
 export interface RuntimeFix {

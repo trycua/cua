@@ -1,0 +1,55 @@
+---
+title: Run Hermes Agent on Cua Spaces
+description: 'Let Hermes Agent (Nous Research) run its terminal, file and code tools inside a Cua Space with one plugin, or give it the Cua tools, or run Hermes itself inside a Space.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+[Hermes Agent](https://hermes-agent.nousresearch.com/) can use a Space as the machine it works on. There are three ways. Pick the one that matches what you want.
+
+| You want | Use |
+|---|---|
+| Hermes on your computer, but its commands and files in a Space | The plugin (below) |
+| Hermes to create and drive Spaces as tools | `cua mcp` in Hermes's `config.yaml` |
+| Hermes itself, its keys and its tools all inside a Space | `cua agent create --harness hermes` |
+
+## The plugin: terminal, files and code in a Space
+
+[`trycua/hermes-cua-spaces`](https://github.com/trycua/hermes-cua-spaces) is a Hermes terminal backend. Hermes looks and works the same. Its terminal, file and code tools run in a Space instead of on your computer. The Space is the sandbox, so Hermes skips its risky-command prompts for Spaces the plugin creates.
+
+```bash
+hermes plugins install https://github.com/trycua/hermes-cua-spaces
+hermes config set terminal.backend cua
+```
+
+Sign in with `cua auth login` first if the Space is on your cua.ai account. A local Space needs no sign-in. The plugin never stores a token.
+
+Start Hermes and ask it to run `hostname`. You get the Space's name, not your computer's. Open the Space in Cua Spaces to watch it work.
+
+Choose an existing Space with `hermes config set plugins.entries.cua-spaces.settings.space my-box`. Choose where new Spaces go with the `on` setting, and the image with `image`. To run several Hermes at once, give each its own Space, or set `terminal.container_persistent false` so every session gets a throwaway one. The [README](https://github.com/trycua/hermes-cua-spaces#readme) lists every setting.
+
+<Callout type="info">
+Hermes's browser tools, `computer_use` and Bot Desktop still use your own machine with the plugin. They follow only Hermes's built-in Docker, SSH and Singularity backends today. To have the desktop live in the Space, use the third way below.
+</Callout>
+
+## Give Hermes the Cua tools
+
+Hermes can create Spaces, run commands in them, drive their desktops and delete them as tools it calls itself. Add the Cua MCP server to `~/.hermes/config.yaml`:
+
+```yaml
+mcp_servers:
+  cua:
+    command: cua
+    args: ["mcp"]
+```
+
+Limit what Hermes may do with `--permissions` (for example `["mcp", "--permissions", "spaces:readonly"]`) and with `tools.include` in the same block. See [Connect your agent](/spaces/guides/connect-your-agent).
+
+## Run Hermes inside a Space
+
+```bash
+cua agent create ada --harness hermes --in local:dev --env-from-host OPENAI_API_KEY
+cua agent tell ada "Summarize the repo in /home/cua/project"
+```
+
+The agent, its keys and its tools all stay in the Space, and Hermes keeps its memory in your Cua Volume. See [Persistent agents](/spaces/guides/persistent-agents).

@@ -176,16 +176,15 @@ export function transferText(
 }
 
 /** The step a create is on, in its kind of Space's words (`creating::stage_label`). */
-function stageLabel(p: Pick<PendingCreate, "os" | "provider" | "kind" | "phase">): string {
-  const here = p.provider !== "cloud";
+function stageLabel(p: Pick<PendingCreate, "os" | "kind" | "phase">): string {
   const vm = p.os === "macos" || p.os === "windows" || p.kind === "vm";
   const container = !vm && p.kind === "container";
   const os = p.os === "macos" ? "macOS" : p.os === "windows" ? "Windows" : p.os === "linux" ? "Linux" : "";
   if (p.phase === "pulling" && p.os === "macos") return "Downloading macOS (first time only)…";
-  if (p.phase === "creating" && here && vm) return "Preparing the disk…";
-  if (p.phase === "creating" && here && container) return "Creating the container…";
-  if (p.phase === "booting" && here && vm && os) return `Booting ${os}…`;
-  if (p.phase === "booting" && here && container) return "Starting the container…";
+  if (p.phase === "creating" && vm) return "Preparing the disk…";
+  if (p.phase === "creating" && container) return "Creating the container…";
+  if (p.phase === "booting" && vm && os) return `Booting ${os}…`;
+  if (p.phase === "booting" && container) return "Starting the container…";
   return PHASE_LABEL[p.phase] ?? "Starting…";
 }
 
@@ -288,7 +287,7 @@ function fallbackCompose(spaces: Space[], state: CreatesState): Space[] {
       lastUsedAt: p.startedAt,
       startedAt: p.startedAt,
       scene: SCENES[p.os],
-      provider: p.provider === "relay" ? "relay" : p.provider,
+      provider: p.provider,
       progress: {
         phase: p.phase,
         permille: p.permille,
@@ -660,15 +659,12 @@ export function settingsPage(
   /** Settings, AI agents: the coding agents read from the host (null: not yet, an empty section). */
   agents?: Pick<SettingsInput, "agents" | "agentsBusy" | "agentsPending">,
 ): SettingsPage | null {
-  const loc = settings.values.defaultLocation;
   const input: SettingsInput = {
-    identity: session?.fleet.identity ?? null,
-    apiKeyClient: session?.fleet.authMode === "client-credentials" ? (session.fleet.clientId ?? null) : null,
+    identity: session?.account.identity ?? null,
+    apiKeyClient: session?.account.authMode === "client-credentials" ? (session.account.clientId ?? null) : null,
     signIn: signIn ?? { kind: "idle" },
-    canSignOut: session?.fleet.authMode === "user",
+    canSignOut: session?.account.authMode === "user",
     menuBar: settings.values.menuBar,
-    defaultLocation: loc === "cloud" || loc === "local" ? "local" : loc.startsWith("host:") ? "host" : "yours",
-    locationLockedBy: settings.defaultLocation?.source === "env" ? (settings.defaultLocation.env ?? null) : null,
     telemetry: settings.telemetry
       ? {
           enabled: settings.telemetry.enabled,

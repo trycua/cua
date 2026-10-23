@@ -82,14 +82,9 @@ public protocol SpacesBackend: AnyObject, Sendable {
     /// Free space where local Spaces are written and which images are
     /// pulled (`local().storage()`), when known.
     func localStorage() async -> LocalStorage?
-    /// Cua Cloud can be used (signed in or client credentials).
-    func cloudAvailable() async -> Bool
     /// macOS VMs running on this Mac now (Lume's, Spaces or not: Apple's
     /// license counts every one), when Lume says.
     func runningMacosVms() async -> Int?
-    /// This account's Cua Cloud rates, when known: the New Space estimate.
-    /// `nil` shows none (the live backend has no source for them).
-    func cloudPricing() async -> AppCloudPricing?
     /// The SDK's teleport handle and the Space handle, for "Teleport an app".
     func teleportContext(id: String) async throws -> (CuaSpacesFFI.Teleport, CuaSDK.Space)?
     /// The SDK's teleport handle, for drops (no Space needed).
@@ -188,7 +183,6 @@ public extension SpacesBackend {
     func appIcons(id: String, requests: [SpaceAppIconRequest]) async -> [Data?] { requests.map { _ in nil } }
     func primaryDisplay(id: String) async -> AppStreamDisplay? { nil }
     func usage(id: String) async -> AppSpaceUsage? { nil }
-    func cloudPricing() async -> AppCloudPricing? { nil }
     func gpuChoices() async -> [AppGpuChoice]? { nil }
     func hosts() async -> [AppSpaceHost] { [] }
     func reportedHostname(id: String) -> String? { nil }
@@ -512,12 +506,6 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
     /// How long a probe the New Space sheet waits for may take.
     static let probeSeconds: Double = 10
 
-    /// Bounded: the session read can wait on the credential vault.
-    public func cloudAvailable() async -> Bool {
-        let status = await withTimeout(seconds: Self.probeSeconds) { [cua] in try cua.auth().status().loggedIn }
-        return (try? status.get()) ?? false
-    }
-
     /// From `lume serve` (`$LUME_API`, else its default address), bounded.
     /// Its list reads every VM's disk, so it can take seconds on a busy Mac.
     public func runningMacosVms() async -> Int? {
@@ -536,10 +524,6 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
             ($0["os"] as? String)?.lowercased() == "macos" && ($0["status"] as? String)?.lowercased() == "running"
         }.count
     }
-
-    /// No estimate: the rates came from the Cua Cloud API, which has ended,
-    /// and the app does not offer new cloud Spaces. New Space never waits on it.
-    public func cloudPricing() async -> AppCloudPricing? { nil }
 
     public func teleportContext(id: String) async throws -> (CuaSpacesFFI.Teleport, CuaSDK.Space)? {
         (cua.teleport(), try await cua.spaces().space(space: id))
@@ -764,7 +748,6 @@ extension AppSpaceOs {
 extension AppLocation {
     var word: String {
         switch self {
-        case .cloud: "cloud"
         case .local: "local"
         case .yours: "yours"
         case .host: "host"
@@ -792,7 +775,6 @@ extension AppRuntime {
         case .runc: return "runc"
         case .qemu: return "qemu"
         case .lume: return "lume"
-        case .kubevirt: return "kubevirt"
         case .other(let name): return name
         }
     }
@@ -874,7 +856,7 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
                     imageDigest: "sha256:4f1c2a9d8e7b6c5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a",
                     kind: .container, arch: "arm64", reachable: true, error: nil, host: nil, hostName: nil,
                     power: "suspend", powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil),
-        AppSpaceRow(id: "cloud:builder", name: "builder", provider: "cloud", spacesdVersion: "0.4.0",
+        AppSpaceRow(id: "direct:builder", name: "builder", provider: "direct", spacesdVersion: "0.4.0",
                     features: ["desktop_stream"], addedAt: "2026-09-24T08:00:00Z",
                     os: .linux, osName: "Arch Linux", osPrettyName: nil, image: nil, imageDigest: nil,
                     kind: nil, arch: nil, reachable: false, error: "timed out", host: nil, hostName: nil,
@@ -1104,15 +1086,9 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
     /// shows no room lines).
     public var fixtureStorage: LocalStorage?
     public func localStorage() async -> LocalStorage? { await MainActor.run { fixtureStorage } }
-    /// Signed in to Cua Cloud (off: the fixture account is local only).
-    public var fixtureCloud = false
-    public func cloudAvailable() async -> Bool { await MainActor.run { fixtureCloud } }
     /// macOS VMs running on the fixture Mac outside its Spaces (none known).
     public var fixtureMacosVms: Int?
     public func runningMacosVms() async -> Int? { await MainActor.run { fixtureMacosVms } }
-    /// The fixture account's Cua Cloud rates (none: no estimate).
-    public var fixturePricing: AppCloudPricing?
-    public func cloudPricing() async -> AppCloudPricing? { await MainActor.run { fixturePricing } }
     public func teleportContext(id: String) async throws -> (CuaSpacesFFI.Teleport, CuaSDK.Space)? { nil }
     public func teleportHandle() -> CuaSpacesFFI.Teleport? { nil }
     /// Run records (`agent_list` JSON), per Space id.

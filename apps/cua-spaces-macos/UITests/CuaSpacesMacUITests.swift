@@ -27,7 +27,6 @@ final class CuaSpacesMacUITests: XCTestCase {
         let app = launch()
         // Names show as typed (the core no longer title-cases them).
         XCTAssertTrue(app.staticTexts["aurora"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["Cua Cloud"].exists)
         XCTAssertTrue(app.staticTexts["Connected"].exists)
         XCTAssertTrue(app.staticTexts["All Items"].exists, "the Keyvault categories are in the sidebar")
     }

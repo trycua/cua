@@ -28,7 +28,7 @@ import type {
   CancelOutcome,
   DaemonStatus,
   DefaultLocation,
-  FleetStatus,
+  AccountStatus,
   HostStatus,
   MachineRow,
   OnboardingState,
@@ -39,7 +39,6 @@ import type {
 import type { KeyvaultOverview, KvGrant } from "./keyvault";
 import type {
   CloudCheckWire,
-  CloudPricing,
   CloudProviderWire,
   CloudTestWire,
   ConnectedCloud,
@@ -154,7 +153,7 @@ const SpaceRowShape = ref(
     id: str,
     hostProgress: opt(SpaceProgressShape),
     name: str,
-    provider: oneOf("cloud", "local", "direct", "relay"),
+    provider: oneOf("local", "direct", "relay"),
     spacesdVersion: str,
     features: strings,
     addedAt: opt(str),
@@ -252,15 +251,11 @@ const MachineRowShape = ref(
 const SessionShape = ref(
   "SessionSnapshot",
   obj<SessionSnapshot>()({
-    fleet: obj<FleetStatus>()({
+    account: obj<AccountStatus>()({
       configured: bool,
       authMode: oneOf("user", "client-credentials", "static-token", "none"),
-      baseUrl: str,
-      tokenUrl: str,
       clientId: opt(str),
       identity: opt(str),
-      namespaces: opt(strings),
-      probeError: opt(str),
     }),
     onboarding: obj<OnboardingState>()({
       completed: bool,
@@ -505,7 +500,6 @@ const GpuShape = ref(
   "GpuChoice",
   obj<GpuChoice>()({ runtime: str, id: str, label: str, experimental: bool, supported: bool, reason: optNull(str), learnMore: optNull(str) }),
 );
-const PricingShape = ref("CloudPricing", obj<CloudPricing>()({ vcpuHourUsd: num, memoryGibHourUsd: num }));
 const LocalStatusShape = ref(
   "LocalStatus",
   obj<LocalStatus>()({
@@ -527,15 +521,13 @@ const LocalStatusShape = ref(
 const WizardEnvShape = ref(
   "WizardEnv",
   obj<WizardEnv>()({
-    defaultLocation: oneOf("cloud", "local", "yours", "host"),
-    cloudAvailable: bool,
+    defaultLocation: oneOf("local", "yours", "host"),
     localAvailable: bool,
     localReason: optNull(str),
     localBackends: optNull(strings),
     maxCpus: num,
     hostArch: optNull(str),
     storage: optNull(LocalStorageShape),
-    cloudPricing: optNull(PricingShape),
     clouds: opt(
       list(
         obj<ConnectedCloud>()({
@@ -558,7 +550,6 @@ const createOptions = (strict: boolean) =>
   obj<NewSpaceOptions>()({
     local: strict ? LocalStatusShape : nullable(LocalStatusShape),
     gpus: nullable(list(GpuShape)),
-    cloudPricing: nullable(PricingShape),
     experiments: ExperimentsShape,
     maxCpus: nullable(num),
     // The SwiftUI host's wizard runs on its env: there it is required.
@@ -1181,7 +1172,7 @@ const WkSpaceShape = ref(
     detail: str,
     lastUsedAt: num,
     startedAt: optNull(num),
-    provider: optNull(oneOf("cloud", "local", "direct", "relay")),
+    provider: optNull(oneOf("local", "direct", "relay")),
     sdk: optNull(object({ features: strings, spacesdVersion: str, reachable: bool, error: optNull(str) })),
     osName: optNull(str),
     osPrettyName: optNull(str),

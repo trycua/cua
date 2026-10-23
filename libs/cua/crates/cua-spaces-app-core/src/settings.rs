@@ -30,6 +30,11 @@ pub enum SwitcherTheme {
     Glass,
 }
 
+fn location_or_local<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Location, D::Error> {
+    let word = String::deserialize(d)?;
+    Ok(serde_json::from_value(serde_json::Value::String(word)).unwrap_or(Location::Local))
+}
+
 /// Settings.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -40,7 +45,10 @@ pub struct AppSettings {
     pub menu_bar: bool,
     /// Switcher theme.
     pub theme: SwitcherTheme,
-    /// Where New Space starts.
+    /// Where New Space starts. A word this build does not know (the
+    /// retired `cloud`) reads as this Mac, so an old file keeps its other
+    /// settings.
+    #[serde(deserialize_with = "location_or_local")]
     pub default_location: Location,
     /// Hide the notch over full-screen apps.
     pub hide_in_full_screen: bool,
@@ -371,7 +379,7 @@ pub struct TelemetryInput {
 pub struct SettingsInput {
     /// The signed-in account.
     pub identity: Option<String>,
-    /// Cua Cloud through client credentials (an API key): its client id.
+    /// The Cua account through client credentials (an API key): its client id.
     pub api_key_client: Option<String>,
     /// The sign-in in progress.
     pub sign_in: SignInPhase,
@@ -380,10 +388,6 @@ pub struct SettingsInput {
     /// The Spaces tab is hidden from the notch (the menu bar item is the
     /// entry point).
     pub menu_bar: bool,
-    /// Where New Space starts.
-    pub default_location: Location,
-    /// The environment sets the default location: which variable.
-    pub location_locked_by: Option<String>,
     /// The telemetry switch (none until read).
     pub telemetry: Option<TelemetryInput>,
     /// Coding agents (none while detecting).
@@ -397,8 +401,6 @@ pub struct SettingsInput {
     /// app's links only.
     #[serde(default)]
     pub teams: Option<crate::teams::TeamsInput>,
-    /// The account's Cua Cloud billing, once read (signed in).
-    pub billing: Option<crate::billing::BillingStatus>,
     /// Launch at login, once the system was asked (none: no rows).
     pub login_item: Option<crate::login_item::LoginItemInput>,
     /// Settings, Experiments (what the page mentions follows them).
@@ -442,14 +444,11 @@ impl Default for SettingsInput {
             sign_in: SignInPhase::Idle,
             can_sign_out: false,
             menu_bar: false,
-            default_location: Location::Local,
-            location_locked_by: None,
             telemetry: None,
             agents: None,
             agents_busy: false,
             agents_pending: vec![],
             teams: None,
-            billing: None,
             login_item: None,
             experiments: Experiments::default(),
             keyvault_auto_wipe: None,
@@ -729,21 +728,6 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
             r.button = Some("Sign out".into());
         }
         account.push(r);
-        // Billing: the credit left, and the website's billing page (the
-        // apps take no payment details). Row id `billing`; the button
-        // opens `link_url`. Not shown while the apps do not offer Cua Cloud.
-        if let Some(b) = input
-            .billing
-            .as_ref()
-            .filter(|b| b.billing_enabled && crate::billing::BILLING_SHOWN)
-        {
-            let mut r = row("billing", Text, "Billing");
-            r.value = Some(crate::billing::billing_line(b));
-            r.button = Some(crate::billing::MANAGE_BILLING.into());
-            r.link_url = Some(crate::billing::BILLING_URL.into());
-            r.enabled = true;
-            account.push(r);
-        }
     } else if let SignInPhase::Waiting { user_code, .. } = &input.sign_in {
         let mut r = row(
             "sign-in-code",
@@ -795,27 +779,6 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
     }
     if let Some(on) = input.overflow {
         general.push(overflow_row(on));
-    }
-    // Where New Space starts: only a choice while the apps offer Cua Cloud.
-    if crate::model::CLOUD_SPACES_OFFERED {
-        let mut location = row("default-location", Choice, "New Spaces run on");
-        location.options = vec![
-            opt(
-                "local",
-                Location::Local.label(),
-                input.default_location == Location::Local,
-            ),
-            opt(
-                "cloud",
-                Location::Cloud.label(),
-                input.default_location == Location::Cloud,
-            ),
-        ];
-        if let Some(var) = input.location_locked_by.clone().filter(|v| !v.is_empty()) {
-            location.enabled = false;
-            location.help = Some(format!("Set by {var}"));
-        }
-        general.push(location);
     }
     let mut welcome = row("welcome", Text, "Welcome");
     welcome.button = Some("Show again".into());
@@ -1112,7 +1075,7 @@ mod tests {
         let path = dir.join("settings.json");
         let s = AppSettings {
             menu_bar: true,
-            default_location: Location::Cloud,
+            default_location: Location::Yours,
             last_seen_version: Some("0.2.0 (0.2.0.1)".into()),
             update_channel: UpdateChannel::Beta,
             launch_at_login: Some(false),
@@ -1127,6 +1090,11 @@ mod tests {
         assert_eq!(old.last_seen_version, None);
         assert_eq!(old.update_channel, UpdateChannel::Stable);
         assert_eq!(old.launch_at_login, None, "never chosen");
+        // The retired `cloud` default reads as this Mac; the rest is kept.
+        std::fs::write(&path, r#"{"menuBar":true,"defaultLocation":"cloud"}"#).unwrap();
+        let retired = load(&path);
+        assert!(retired.menu_bar);
+        assert_eq!(retired.default_location, Location::Local);
         std::fs::write(&path, "{nope").unwrap();
         assert_eq!(load(&path), AppSettings::default());
         let _ = std::fs::remove_dir_all(dir);

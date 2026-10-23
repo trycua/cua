@@ -112,9 +112,8 @@ export class PendingSpacesBackend implements SpacesBackend {
   linuxSource = async () => (await this.b()).linuxSource();
   setLinuxSource = async (value: string) => (await this.b()).setLinuxSource(value);
   localStorage = async () => (await this.b()).localStorage();
-  cloudAvailable = async () => (await this.b()).cloudAvailable();
+  loggedIn = async () => (await this.b()).loggedIn();
   runningMacosVms = async () => (await this.b()).runningMacosVms();
-  cloudPricing = async () => (await this.b()).cloudPricing();
   usage = async (id: string) => (await this.b()).usage(id);
   agentRuns = async (id: string) => (await this.b()).agentRuns(id);
   windows = async (id: string) => (await this.b()).windows(id);

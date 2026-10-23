@@ -63,17 +63,6 @@ describe("SettingsPanel account section", () => {
   });
 });
 
-describe("SettingsPanel default location", () => {
-  it("offers no default-location choice while the apps do not offer Cua Cloud", () => {
-    renderPanel({
-      defaultLocation: { value: "cloud", source: "env", env: "CUA_DEFAULT_ON", path: "/tmp/cua/config.toml" },
-      onDefaultLocation: vi.fn(),
-    });
-    expect(screen.queryByRole("radiogroup", { name: "New Spaces run on" })).toBeNull();
-    expect(screen.queryByText(/Cua Cloud/)).toBeNull();
-  });
-});
-
 describe("SettingsPanel device-flow sign-in", () => {
   /** A mock `AccountAuth` whose event handlers can be fired by the test. */
   function mockAuth() {
@@ -453,8 +442,8 @@ describe("SettingsPanel Experiments", () => {
   });
 });
 
-describe("SettingsPanel billing and Teams", () => {
-  it("hides Cua Cloud billing and opens the account app for Teams", async () => {
+describe("SettingsPanel Teams", () => {
+  it("opens the account app for Teams", async () => {
     const auth = {
       beginSignIn: vi.fn(),
       signOut: vi.fn(),
@@ -465,16 +454,8 @@ describe("SettingsPanel billing and Teams", () => {
     const props = renderPanel({
       signedInIdentity: "you@example.com",
       auth,
-      billingStatus: async () => ({
-        billingEnabled: true,
-        card: null,
-        credit: { balanceUsdCents: 742 },
-        billingUrl: "https://example.com/billing",
-      }),
     });
     expect(await screen.findByRole("region", { name: "Teams" })).toBeInTheDocument();
-    expect(screen.queryByText("$7.42 credit left")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Manage billing" })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Manage team" }));
     expect(props.onOpenExternal).toHaveBeenCalledWith("https://app.cua.ai/team");
   });

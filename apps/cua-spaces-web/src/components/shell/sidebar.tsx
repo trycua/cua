@@ -131,7 +131,7 @@ export function AccountFooter() {
   const footer = session
     ? signInFooter(core, {
         identity: session.signedIn ? (session.identity ?? "") : null,
-        cloudConfigured: session.fleet.configured,
+        cloudConfigured: session.account.configured,
         canSignIn: true,
         signIn: session.signIn,
         hasUrl: Boolean(session.signInUrl),
@@ -197,7 +197,7 @@ export function AccountFooter() {
               </button>
             ) : null}
           </div>
-          {session.fleet.authMode === "user" ? (
+          {session.account.authMode === "user" ? (
             <Tooltip content="Sign out" side="top">
               <Button variant="ghost" size="icon-sm" aria-label="Sign out" onClick={() => void run(signOut, "Couldn't sign out")}>
                 <LogOutIcon className="size-3.5 text-muted-foreground" />

@@ -21,10 +21,10 @@ import {
 import { createFileSendBridge, type FileSendBridge } from '../../native/fileSend';
 import {
   type GpuChoice,
-  createFleetBridge,
-  type FleetBridge,
+  createSpacesBridge,
+  type SpacesBridge,
   type ViewerWindowRequest,
-} from '../../native/fleet';
+} from '../../native/spacesBridge';
 import { createTeleportBridge, type TeleportBridge } from '../../native/teleport';
 import {
   createHostBridge,
@@ -45,7 +45,7 @@ import { hasFeature } from '../../model/spaces';
 import { canRunContainer, canRunMacos, type LocalStatus } from '../../native/local';
 import { createWindowDragBridge, type WindowDragBridge } from '../../native/windowDrag';
 import type { PortalAction } from '../../state/portal';
-import { useFleetSync } from '../../state/cloud';
+import { useSpacesSync } from '../../state/cloud';
 import { createFromPlan } from '../../state/createSpace';
 import { RadialProgress } from '../RadialProgress';
 import { InstallerFlow } from '../InstallerFlow';
@@ -80,7 +80,7 @@ import { Sym } from './Sym';
 import { tMsg, useT } from "../../i18n";
 
 export interface MainWindowProps {
-  fleet?: FleetBridge;
+  bridge?: SpacesBridge;
   host?: HostBridge;
   installer?: InstallerBridge;
   teleport?: TeleportBridge;
@@ -134,7 +134,7 @@ function detailOf(
  * it works whether or not the notch portal is open.
  */
 export function MainWindow({
-  fleet: fleetProp,
+  bridge: bridgeProp,
   host: hostProp,
   installer: installerProp,
   teleport: teleportProp,
@@ -152,7 +152,7 @@ export function MainWindow({
 }: MainWindowProps) {
   const t = useT("spaces");
   const tc = useT("common");
-  const fleet = useMemo(() => fleetProp ?? createFleetBridge(), [fleetProp]);
+  const bridge = useMemo(() => bridgeProp ?? createSpacesBridge(), [bridgeProp]);
   const host = useMemo(() => hostProp ?? createHostBridge(), [hostProp]);
   const installer = useMemo(() => installerProp ?? createInstallerBridge(), [installerProp]);
   const teleport = useMemo(() => teleportProp ?? createTeleportBridge(), [teleportProp]);
@@ -173,13 +173,13 @@ export function MainWindow({
   const postNotification = useCallback((title: string, body: string) => devicesBridge.notify(title, body), [devicesBridge]);
   const feed = useAgentNotifications(agentsBridge, postNotification);
   const [sharing, setSharing] = useState<Space | null>(null);
-  const live = fleet.isNative;
+  const live = bridge.isNative;
 
   const [spaces, setSpaces] = useState<Space[]>(live ? [] : FIXTURE_SPACES);
   const dispatch = useCallback((action: PortalAction) => {
     if (action.type === 'sync-spaces') setSpaces(action.spaces);
   }, []);
-  const sync = useFleetSync(fleet, dispatch, now);
+  const sync = useSpacesSync(bridge, dispatch, now);
   // Devices: read quietly while signed in; a device asking for approval
   // posts a notification and opens the approval sheet.
   const devices = useDevices(devicesBridge, Boolean(sync.identity), now);
@@ -208,13 +208,13 @@ export function MainWindow({
           for (const off of offs) off();
           fn();
         };
-        void fleet.onSignedIn(() => done(resolve)).then((off) => offs.push(off));
-        void fleet
+        void bridge.onSignedIn(() => done(resolve)).then((off) => offs.push(off));
+        void bridge
           .onSignInFailed((reason) => done(() => reject(new Error(reason))))
           .then((off) => offs.push(off));
-        fleet.beginSignIn().catch((e: unknown) => done(() => reject(e)));
+        bridge.beginSignIn().catch((e: unknown) => done(() => reject(e)));
       }),
-    [fleet]
+    [bridge]
   );
 
   const [onboarding, setOnboarding] = useState<OnboardingState | null>(
@@ -336,41 +336,41 @@ export function MainWindow({
   useEffect(() => {
     if (!live) return;
     let cancelled = false;
-    void fleet
+    void bridge
       .localStatus()
       .then((next) => !cancelled && setLocal(next))
       .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, [fleet, live, wizard]);
+  }, [bridge, live, wizard]);
 
   // The GPU option of each local runtime, each time New Space opens.
   useEffect(() => {
-    if (!live || !wizard || !fleet.gpuSupport) return;
+    if (!live || !wizard || !bridge.gpuSupport) return;
     let cancelled = false;
-    void fleet
+    void bridge
       .gpuSupport()
       .then((next) => !cancelled && setGpus(next))
       .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, [fleet, live, wizard]);
+  }, [bridge, live, wizard]);
 
   // Your machines that provide Spaces (the Run on menu), each time New
   // Space opens.
   useEffect(() => {
-    if (!live || !wizard || !fleet.listHosts) return;
+    if (!live || !wizard || !bridge.listHosts) return;
     let cancelled = false;
-    void fleet
+    void bridge
       .listHosts()
       .then((next) => !cancelled && setHosts(next))
       .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, [fleet, live, wizard]);
+  }, [bridge, live, wizard]);
 
   // The shell (the notch's list button, the Dock) can ask for a Space or the
   // New Space sheet.
@@ -437,8 +437,6 @@ export function MainWindow({
   // experiment on (the core's `volumeLabel`); off, it shows the Spaces.
   const volumeShown = Boolean(chrome.volumeLabel);
 
-  // Cua Cloud has ended: it is never an available location.
-  const cloudAvailable = false;
   const localAvailable = live ? canRunContainer(local) || canRunMacos(local) : true;
 
   const startCreate = useCallback(
@@ -452,7 +450,7 @@ export function MainWindow({
         .then((id) => {
           setSelectedId((current) => (current === pendingId ? id : current));
           if (plan.openDesktop) {
-            void fleet.openSpaceWindow({
+            void bridge.openSpaceWindow({
               id,
               name: plan.name || plan.image.name,
               controller: 'you',
@@ -464,7 +462,7 @@ export function MainWindow({
           // The row says why (the core's pending row keeps the error).
         });
     },
-    [fleet, sync, openSpace]
+    [bridge, sync, openSpace]
   );
 
   // The power button: the row says Suspending (and the like) at once; a
@@ -494,13 +492,13 @@ export function MainWindow({
   );
 
   const signIn = useCallback(() => {
-    fleet.beginSignIn().catch((error: unknown) => {
+    bridge.beginSignIn().catch((error: unknown) => {
       setBanner({
         tone: 'error',
         text: `Sign-in failed: ${error instanceof Error ? error.message : String(error)}`,
       });
     });
-  }, [fleet]);
+  }, [bridge]);
 
   if (onboarding && !onboarding.completed) {
     return (
@@ -513,17 +511,17 @@ export function MainWindow({
             drive={driveBridge}
             loginItem={loginItem}
             auth={
-              fleet.isNative
+              bridge.isNative
                 ? {
-                    beginSignIn: fleet.beginSignIn,
-                    onSignedIn: fleet.onSignedIn,
-                    onSignInFailed: fleet.onSignInFailed,
+                    beginSignIn: bridge.beginSignIn,
+                    onSignedIn: bridge.onSignedIn,
+                    onSignInFailed: bridge.onSignInFailed,
                   }
                 : undefined
             }
             installerMode={onboarding.installerMode}
             identity={sync.identity}
-            onOpenExternal={(url) => void fleet.openExternal(url).catch(() => {})}
+            onOpenExternal={(url) => void bridge.openExternal(url).catch(() => {})}
             initialStep={
               startView === 'onboarding-done'
                 ? 'done'
@@ -558,10 +556,10 @@ export function MainWindow({
   const runAction = (id: DetailActionId, space: Space) => {
     switch (id) {
       case 'teleport':
-        void fleet.openTeleportPicker(viewerRequest(space));
+        void bridge.openTeleportPicker(viewerRequest(space));
         break;
       case 'pip':
-        void fleet.pinSpacePip(viewerRequest(space));
+        void bridge.pinSpacePip(viewerRequest(space));
         break;
       case 'share':
         setSharing(space);
@@ -575,7 +573,7 @@ export function MainWindow({
         setConfirmDelete(space.id);
         break;
       case 'open':
-        void fleet.openSpaceWindow(viewerRequest(space));
+        void bridge.openSpaceWindow(viewerRequest(space));
         break;
       case 'cancel':
         // The row shows Cancelling, then goes (or says why the cancel failed).
@@ -783,14 +781,14 @@ export function MainWindow({
                 signedIn={Boolean(sync.identity)}
                 shareable={sharing.id.startsWith('relay:') || hasFeature(sharing, 'relay_attach')}
                 onClose={() => setSharing(null)}
-                onOpenExternal={(url) => void fleet.openExternal(url).catch(() => {})}
+                onOpenExternal={(url) => void bridge.openExternal(url).catch(() => {})}
               />
             )}
 
             <ShareRemovalBanner
               bridge={shareBridge}
               signedIn={Boolean(sync.identity)}
-              onOpenExternal={(url) => void fleet.openExternal(url).catch(() => {})}
+              onOpenExternal={(url) => void bridge.openExternal(url).catch(() => {})}
             />
 
             {sync.rosterError && (
@@ -831,20 +829,17 @@ export function MainWindow({
                     }}
                     signedInIdentity={sync.identity}
                     auth={
-                      fleet.isNative
+                      bridge.isNative
                         ? {
-                            beginSignIn: () => fleet.beginSignIn(),
-                            signOut: () => fleet.signOut(),
-                            onSignedIn: (h) => fleet.onSignedIn(h),
-                            onSignInFailed: (h) => fleet.onSignInFailed(h),
-                            onSignedOut: (h) => fleet.onSignedOut(h),
+                            beginSignIn: () => bridge.beginSignIn(),
+                            signOut: () => bridge.signOut(),
+                            onSignedIn: (h) => bridge.onSignedIn(h),
+                            onSignInFailed: (h) => bridge.onSignInFailed(h),
+                            onSignedOut: (h) => bridge.onSignedOut(h),
                           }
                         : undefined
                     }
-                    onOpenExternal={(url) => void fleet.openExternal(url).catch(() => {})}
-                    defaultLocation={live ? sync.defaultLocation : undefined}
-                    onDefaultLocation={sync.setDefaultLocation}
-                    billingStatus={fleet.billingStatus}
+                    onOpenExternal={(url) => void bridge.openExternal(url).catch(() => {})}
                     drive={driveBridge}
                     loginItem={loginItem}
                     serves={serves}
@@ -910,7 +905,7 @@ export function MainWindow({
                   key={selected.id}
                   space={selected}
                   detail={detail!}
-                  fleet={fleet}
+                  bridge={bridge}
                   teleport={teleport}
                   fileSend={fileSend}
                   windowDrag={windowDrag}
@@ -941,14 +936,13 @@ export function MainWindow({
             hosts={hosts}
             experiments={experiments}
             onConnectCloud={() => setConnectingCloud(true)}
-            cloudAvailable={cloudAvailable}
             localAvailable={localAvailable}
             localReason={local?.error ?? undefined}
             localBackends={live ? (local?.backends ?? []) : undefined}
             hostArch={sync.hostArch ?? local?.hostArch}
             storage={live ? local?.storage : undefined}
             gpus={live ? gpus : null}
-            onOpenExternal={(url) => void fleet.openExternal(url).catch(() => {})}
+            onOpenExternal={(url) => void bridge.openExternal(url).catch(() => {})}
             startActions={startActions}
             quick={typeof wizard === 'string' ? wizard : undefined}
             onCreate={startCreate}
@@ -1128,7 +1122,7 @@ function SpaceRowItem({
 function SpaceDetail({
   space,
   detail,
-  fleet,
+  bridge,
   teleport,
   fileSend,
   windowDrag,
@@ -1136,7 +1130,7 @@ function SpaceDetail({
 }: {
   space: Space;
   detail: SpaceDetailView;
-  fleet: FleetBridge;
+  bridge: SpacesBridge;
   teleport: TeleportBridge;
   fileSend: FileSendBridge;
   windowDrag: WindowDragBridge;
@@ -1151,7 +1145,7 @@ function SpaceDetail({
     alive.current = true;
     if (!space.sdk || !reachable) return;
     const grab = () =>
-      fleet
+      bridge
         .screenshot(space.id, 1280)
         .then((url) => alive.current && setShot(url))
         .catch(() => {});
@@ -1161,7 +1155,7 @@ function SpaceDetail({
       alive.current = false;
       window.clearInterval(timer);
     };
-  }, [fleet, space.id, space.sdk, reachable]);
+  }, [bridge, space.id, space.sdk, reachable]);
 
   const section = (title: string) => {
     switch (title) {
@@ -1171,8 +1165,8 @@ function SpaceDetail({
             <SpaceWindowList
               space={space}
               teleport={teleport}
-              onPipDesktop={() => void fleet.pinSpacePip(viewerRequest(space))}
-              onClosePipDesktop={() => void fleet.unpinSpacePip(space.id).catch(() => {})}
+              onPipDesktop={() => void bridge.pinSpacePip(viewerRequest(space))}
+              onClosePipDesktop={() => void bridge.unpinSpacePip(space.id).catch(() => {})}
               onPipWindow={(win, options) =>
                 void teleport
                   .streamRemoteWindow(
@@ -1201,7 +1195,7 @@ function SpaceDetail({
             spaceName={space.name}
             fileSend={fileSend}
             windowDrag={windowDrag}
-            onTeleportApp={() => void fleet.openTeleportPicker(viewerRequest(space))}
+            onTeleportApp={() => void bridge.openTeleportPicker(viewerRequest(space))}
           />
         );
       default:
@@ -1218,17 +1212,6 @@ function SpaceDetail({
           <div className="dw-preview-empty">
             <Sym name="desktopcomputer" />
             <span>{detail.previewText}</span>
-          </div>
-        ) : detail.creditNotice ? (
-          <div className="dw-preview-empty" role="alert">
-            <span>{detail.creditNotice.text}</span>
-            <button
-              type="button"
-              className="dw-btn dw-btn-primary"
-              onClick={() => void fleet.openExternal(detail.creditNotice!.url).catch(() => {})}
-            >
-              {detail.creditNotice.button}
-            </button>
           </div>
         ) : space.progress?.error ? (
           <div className="dw-preview-empty">

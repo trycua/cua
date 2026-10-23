@@ -15,7 +15,6 @@ import type {
   AppCreatesState,
   AppCreateSpaceArgs,
   AppGpuChoice,
-  AppCloudPricing,
   AppLocalStorage,
   AppMachinePageRow,
   AppMachinesPageInput,
@@ -148,7 +147,7 @@ export class AppModel {
   bannerIsError = false;
   /** The signed-in account. */
   identity: string | null;
-  /** Cua Cloud can be used. */
+  /** A Cua account is signed in (or client credentials are set). */
   cloudConfigured = false;
   signIn: AppSignInPhase;
   /** The page a waiting sign-in finishes on. */
@@ -558,7 +557,7 @@ export class AppModel {
       }
     });
     const cloudRead = this.backend
-      .cloudAvailable()
+      .loggedIn()
       .catch(() => false)
       .then((cloud) => {
         if (cloud !== this.cloudConfigured) {
@@ -635,13 +634,11 @@ export class AppModel {
   /** What New Space knows, freshly probed; every probe runs at once and each is bounded. */
   async newSpaceEnv(): Promise<AppWizardEnv> {
     const b = this.backend;
-    const [runtimes, storage, pricing, gpus, hosts, cloud, lume, linux, vms] = await Promise.all([
+    const [runtimes, storage, gpus, hosts, lume, linux, vms] = await Promise.all([
       b.localRuntimes(),
       b.localStorage(),
-      b.cloudPricing(),
       b.gpuChoices(),
       b.hosts(),
-      b.cloudAvailable(),
       b.lumeSource(),
       b.linuxSource(),
       b.runningMacosVms(),
@@ -653,7 +650,7 @@ export class AppModel {
     // Lume did not answer this time: keep what it said last.
     this.runningMacosVms = vms ?? this.runningMacosVms;
     await this.readRuntimeAdvice(runtimes);
-    return this.wizardEnv(cloud, runtimes, storage, pricing, gpus);
+    return this.wizardEnv(runtimes, storage, gpus);
   }
 
   /** Windows: what is missing for local Spaces and what the app can do about it. */
@@ -687,20 +684,13 @@ export class AppModel {
 
   /** What New Space knows without asking anything: the env while the live services are still starting. */
   knownNewSpaceEnv(): AppWizardEnv {
-    return this.wizardEnv(false, null, null, null, null);
+    return this.wizardEnv(null, null, null);
   }
 
-  private wizardEnv(
-    available: boolean,
-    runtimes: LocalRuntimes | null,
-    storage: LocalStorage | null,
-    pricing: AppCloudPricing | null,
-    gpus: AppGpuChoice[] | null,
-  ): AppWizardEnv {
+  private wizardEnv(runtimes: LocalRuntimes | null, storage: LocalStorage | null, gpus: AppGpuChoice[] | null): AppWizardEnv {
     const backends = runtimes?.ready;
     const env: AppWizardEnv = {
       defaultLocation: this.settings.defaultLocation,
-      cloudAvailable: available,
       localAvailable: backends ? backends.length > 0 : true,
       localReason:
         backends && backends.length === 0
@@ -713,7 +703,6 @@ export class AppModel {
       lumeSource: this.lumeSource ?? undefined,
       linuxSource: this.linuxSource ?? undefined,
       storage: storage ? wizardStorage(storage) : undefined,
-      cloudPricing: available ? (pricing ?? undefined) : undefined,
       clouds: this.cloud.clouds,
       hosts: this.hosts,
       experiments: this.settings.experiments,
@@ -765,7 +754,7 @@ export class AppModel {
     // on vmnet): ask now, while the person who pressed Create is here.
     if (args.on === "local") this.host.requestLocalNetwork();
     const machine = args.on.startsWith("host:") ? args.on.slice("host:".length) : undefined;
-    const provider = args.on === "cloud" ? this.native.AppSpaceProvider.Cloud : args.on === "local" ? this.native.AppSpaceProvider.Local : this.native.AppSpaceProvider.Relay;
+    const provider = args.on === "local" ? this.native.AppSpaceProvider.Local : this.native.AppSpaceProvider.Relay;
     this.sendCreate(
       new this.native.AppCreateAction.Start({
         id: pendingId,

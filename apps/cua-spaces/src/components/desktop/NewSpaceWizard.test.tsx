@@ -18,7 +18,6 @@ import {
 
 function renderWizard(overrides: Partial<NewSpaceWizardProps> = {}) {
   const props: NewSpaceWizardProps = {
-    cloudAvailable: true,
     localAvailable: true,
     onCreate: vi.fn(),
     onAddByAddress: vi.fn(async () => {}),
@@ -494,7 +493,6 @@ describe("QEMU VMs", () => {
 describe("default placement", () => {
   it("starts on This Mac when not signed in but a local runtime is ready, even if that is known late", () => {
     const props: NewSpaceWizardProps = {
-      cloudAvailable: false,
       localAvailable: false,
       onCreate: vi.fn(),
       onAddByAddress: vi.fn(async () => {}),

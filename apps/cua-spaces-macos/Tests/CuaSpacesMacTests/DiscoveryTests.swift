@@ -24,7 +24,6 @@ private final class DiscoveryBackend: SpacesBackend, @unchecked Sendable {
     }
     func localBackends() async -> [String]? { nil }
     func localStorage() async -> LocalStorage? { nil }
-    func cloudAvailable() async -> Bool { false }
     func teleportContext(id: String) async throws -> (CuaSpacesFFI.Teleport, CuaSDK.Space)? { nil }
     func teleportHandle() -> CuaSpacesFFI.Teleport? { nil }
     func sendFiles(id: String, paths: [String]) async throws -> [AppSentFileInfo] { [] }
@@ -62,7 +61,7 @@ struct DiscoveryTests {
         #expect(model.rosterError == "Could not refresh Spaces. Previously loaded rows may be out of date.")
         backend.result = .success([])
         await model.refresh()
-        #expect(!model.spaces.contains { $0.id == "local:aurora" || $0.id == "cloud:builder" })
+        #expect(!model.spaces.contains { $0.id == "local:aurora" || $0.id == "direct:builder" })
         #expect(model.rosterError == nil)
     }
 

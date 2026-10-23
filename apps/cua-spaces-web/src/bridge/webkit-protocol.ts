@@ -243,7 +243,7 @@ export interface WkSpace {
   detail: string;
   lastUsedAt: number;
   startedAt?: number | null;
-  provider?: "cloud" | "local" | "direct" | "relay" | null;
+  provider?: "local" | "direct" | "relay" | null;
   sdk?: { features: string[]; spacesdVersion: string; reachable: boolean; error?: string | null } | null;
   osName?: string | null;
   osPrettyName?: string | null;

@@ -8,6 +8,9 @@
 //! everything in the guest. `local_qemu_canonical_disk_gets_an_env_token`
 //! goes through `Sandboxes.create(local)` instead, where the SDK mints and
 //! delivers the token itself. Limits: one VM at a time, <= 4 GiB.
+// The test futures nest deeply enough that computing their layout passes
+// the default query depth of 128.
+#![recursion_limit = "256"]
 
 use std::sync::Arc;
 use std::time::Duration;

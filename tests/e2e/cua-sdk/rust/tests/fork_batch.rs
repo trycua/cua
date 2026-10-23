@@ -4,6 +4,9 @@
 //! becomes ready, at most `max_parallel_per_host` start at once, and each
 //! fork's cua-spacesd answers with its own token. Everything it makes is
 //! deleted.
+// The test futures nest deeply enough that computing their layout passes
+// the default query depth of 128.
+#![recursion_limit = "256"]
 
 use std::collections::HashMap;
 use std::time::Duration;

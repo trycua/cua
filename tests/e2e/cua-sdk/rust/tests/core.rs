@@ -1,5 +1,8 @@
 //! direct-connect, daemon-agnostic and daemon-vs-embedded (Rust). Scenario
 //! definitions: ../python/test_{direct_connect,daemon_agnostic,daemon_vs_embedded}.py.
+// The test futures nest deeply enough that computing their layout passes
+// the default query depth of 128.
+#![recursion_limit = "256"]
 
 use std::collections::HashMap;
 use std::sync::Arc;

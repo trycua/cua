@@ -80,6 +80,26 @@ class CheckoutTest(WebTest, unittest.TestCase):
         self.assertEqual(len(self.request("/__state")[1]["orders"]), 2)
         self.assertFalse(self.verdict()["passed"])
 
+    def test_dotted_fields_and_numbers_produce_nested_json(self):
+        fields = [
+            {"name": name, "value": value, "type": kind, "dataset": {}}
+            for name, value, kind in [
+                ("items.tea", "2", "number"),
+                ("items.cup", "0", "number"),
+                ("address.street", "14 Fern Lane", "text"),
+                ("address.postal", "00123", "text"),
+                ("delivery.window.hour", "9", "number"),
+            ]
+        ]
+        self.assertEqual(
+            self.client_submit(fields)["payload"],
+            {
+                "items": {"tea": 2, "cup": 0},
+                "address": {"street": "14 Fern Lane", "postal": "00123"},
+                "delivery": {"window": {"hour": 9}},
+            },
+        )
+
     def test_manifest_and_isolated_evaluator(self):
         self.check_integrity_and_hidden_layout()
 

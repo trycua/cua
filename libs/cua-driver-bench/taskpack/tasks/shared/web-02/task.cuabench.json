@@ -24,7 +24,7 @@
         },
         {
           "path": "fixture/app.js",
-          "sha256": "da59a07e333d2bc3104245e2c08f4022d27fcf43b9774dc0844c9e53d14bd1b5"
+          "sha256": "ac51b5bb0e272b172201f972dce783019ce56d0a7003be023c05ae57226743af"
         },
         {
           "path": "fixture/scenario.json",
@@ -48,7 +48,7 @@
         },
         {
           "path": "../web-common/client.js",
-          "sha256": "065fd1c987070753c6e7cb1cf9f759152c78846bf37f784c9f8b7a64f6b5a1e3"
+          "sha256": "315369819c13698195f4cb89b49fff31fe8e2c25197e2409890a48a1bc1b97b9"
         },
         {
           "path": "../web-common/common.py",

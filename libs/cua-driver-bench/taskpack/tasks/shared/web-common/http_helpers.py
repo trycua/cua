@@ -94,6 +94,49 @@ class WebTest:
         with response:
             return response.status, json.load(response)
 
+    def client_submit(self, fields):
+        done = subprocess.run(
+            [
+                "node",
+                "-e",
+                """
+const fs = require('node:fs');
+const vm = require('node:vm');
+const fields = JSON.parse(process.argv[1]);
+const errors = { textContent: '' };
+let submit;
+let payload = null;
+const form = {
+  dataset: {}, action: '/submit',
+  elements: { namedItem: (name) => fields.find((field) => field.name === name) },
+  querySelector: (selector) => selector === '[role=alert]' ? errors : {},
+  querySelectorAll: () => fields.filter((field) => field.dataset.confirm),
+  addEventListener: (_, handler) => { submit = handler; },
+};
+vm.runInNewContext(fs.readFileSync(process.argv[2], 'utf8'), {
+  document: { querySelectorAll: () => [form] },
+  FormData: class {
+    constructor() { return fields.map(({ name, value }) => [name, value]); }
+  },
+  fetch: async (_, options) => {
+    payload = JSON.parse(options.body);
+    return { ok: true, json: async () => ({}) };
+  },
+});
+submit({ preventDefault() {} }).then(() => {
+  console.log(JSON.stringify({ payload, error: errors.textContent }));
+});
+""",
+                json.dumps(fields),
+                str(self.bundle.parent / "web-common/client.js"),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
     def verdict(self, bundle=None, cwd=None):
         output = Path(self.tmp.name) / "result.json"
         self.run_script(

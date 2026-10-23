@@ -64,6 +64,22 @@ class SignupTest(WebTest, unittest.TestCase):
         self.assertEqual(len(self.request("/__state")[1]["accounts"]), 2)
         self.assertFalse(self.verdict()["passed"])
 
+    def test_generic_confirmation_is_checked_and_not_sent(self):
+        fields = [
+            {"name": "secret", "value": "FernTrail42", "type": "password", "dataset": {}},
+            {
+                "name": "repeat",
+                "value": "different",
+                "type": "password",
+                "dataset": {"confirm": "secret"},
+            },
+        ]
+        result = self.client_submit(fields)
+        self.assertIsNone(result["payload"])
+        self.assertIn("repeat", result["error"])
+        fields[1]["value"] = "FernTrail42"
+        self.assertEqual(self.client_submit(fields)["payload"], {"secret": "FernTrail42"})
+
     def test_manifest_and_isolated_evaluator(self):
         self.check_integrity_and_hidden_layout()
 

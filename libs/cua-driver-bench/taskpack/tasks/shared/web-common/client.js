@@ -3,25 +3,25 @@ document.querySelectorAll('form').forEach((form) => {
     event.preventDefault();
     const errors = form.querySelector('[role=alert]');
     errors.textContent = '';
-    const data = Object.fromEntries(new FormData(form));
-    if (form.dataset.shape === 'cart') {
-      data.items = Object.fromEntries(
-        Object.entries(data).map(([key, value]) => [key, Number(value)])
-      );
-      for (const key of Object.keys(data)) if (key !== 'items') delete data[key];
-    }
-    if (form.dataset.shape === 'address') {
-      data.address = {};
-      for (const key of ['name', 'street', 'city', 'postal']) {
-        data.address[key] = data[key];
-        delete data[key];
+    for (const input of form.querySelectorAll('[data-confirm]')) {
+      if (input.value !== form.elements.namedItem(input.dataset.confirm).value) {
+        errors.textContent = `${input.name}: Values must match`;
+        return;
       }
     }
-    if (data.confirmation !== undefined && data.password !== data.confirmation) {
-      errors.textContent = 'confirmation: Passwords must match';
-      return;
+    const data = Object.create(null);
+    for (const [name, value] of new FormData(form)) {
+      const input = form.elements.namedItem(name);
+      if (input.dataset.confirm) continue;
+      const path = name.split('.');
+      const key = path.pop();
+      let target = data;
+      for (const part of path) {
+        target[part] ??= Object.create(null);
+        target = target[part];
+      }
+      target[key] = input.type === 'number' ? Number(value) : value;
     }
-    delete data.confirmation;
     try {
       const response = await fetch(form.action, {
         method: 'POST',

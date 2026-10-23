@@ -10,7 +10,7 @@ module.exports = (state, values) => {
       <label>Name <input name="name" value="${initial.name}" required></label>
       <label>Email <input type="email" name="email" value="${initial.email}" required></label></fieldset>
       <fieldset><legend>Security</legend><label>Password <input type="password" name="password" minlength="8" required></label>
-      <label>Confirm password <input type="password" name="confirmation" required></label></fieldset>
+      <label>Confirm password <input type="password" name="confirmation" data-confirm="password" required></label></fieldset>
       <fieldset><legend>Membership</legend><label>Plan <select name="plan"><option>basic</option><option>plus</option></select></label>
       <label>Invitation code <input name="invite" value="${initial.invite}" required></label></fieldset>
       <p role="alert" aria-live="polite"></p><button type="submit">Create account</button></form>

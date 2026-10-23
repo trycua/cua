@@ -819,8 +819,16 @@ async fn sandboxes_do_not_leak_file_descriptors() {
         assert_eq!(up.status(), 200);
         kill(&g, &sb).await;
     }
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    let after = open_fds();
+    // The count is for the whole process, and the other tests in this binary
+    // run at the same time and hold descriptors of their own. Wait until it
+    // settles: their descriptors go away when they finish, but a leak of one
+    // or more descriptors per sandbox (60 or more here) never does.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let mut after = open_fds();
+    while after > before + 8 && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        after = open_fds();
+    }
     assert!(
         after <= before + 8,
         "descriptors grew from {before} to {after} over 60 sandboxes"

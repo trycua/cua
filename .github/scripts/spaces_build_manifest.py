@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: FSL-1.1-MIT
-# Copyright (c) 2026 Cua AI, Inc.
 """Write build-manifest.json for a Cua Spaces shadow build (CUA-2066).
 
 Lists every file in DIR (except the manifest itself) with its sha256, size,

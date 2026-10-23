@@ -48,7 +48,7 @@ for the full list.
 | This computer can't run virtual machines (`virtualization_unavailable`) | macOS Spaces need an Apple silicon Mac. On Linux and Windows, turn on hardware virtualization in the firmware settings. Or create a Linux container Space instead. |
 | Two macOS VMs already run (`vm_limit`) | Apple allows two macOS VMs at a time on one Mac. Stop or delete one, then try again. |
 | The VM started but never answered (`vm_boot_timeout`, `services_unreachable`) | The first macOS Space unpacks a large image and can run out of time. Try again: the image is already downloaded, so it is much faster. |
-| macOS blocked the connection to the new VM (`local_network`) | Open **System Settings, Privacy & Security, Local Network**, turn on Cua Spaces, then try again. |
+| macOS blocked the connection to the new VM (`local_network`) | Open **System Settings, Privacy & Security, Local Network**, turn on Cua Spaces, then try again. If nobody sits at the Mac (you use it over SSH or from another computer), macOS can't ask: run the three commands in [Add a computer](/spaces/guides/add-a-computer#over-ssh-or-tailscale) once on it. |
 | "The Cua daemon isn't running. Start Cua, or run `cua daemon start`." | Open Cua Spaces, or run `cua daemon start`. |
 
 ### Creating on another computer

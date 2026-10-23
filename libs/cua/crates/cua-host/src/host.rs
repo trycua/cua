@@ -399,9 +399,13 @@ pub fn local_network_hint(os: &str, provide_spaces: bool, driver: &Path) -> Opti
              macOS asks \"Allow {short} to find devices on local networks?\" on this Mac's \
              screen, click Allow; or turn on {short} in System Settings → Privacy & \
              Security → Local Network. If the cua daemon was started from Terminal or over SSH, \
-             run `cua daemon stop` so the host service starts it at the next create (over SSH \
-             nothing can grant it). Without it, macOS Space creates fail with \"No route to \
-             host\"; Linux Spaces don't need it."
+             run `cua daemon stop` so the host service starts it at the next create. If nobody sits \
+             at this Mac (it is used over SSH), nothing can click Allow: run `sudo defaults write \
+             com.apple.network.local-network AllowedEthernetLocalNetworkAddresses -array \
+             192.168.64.0/24`, the same with `AllowedWiFiLocalNetworkAddresses`, then `sudo \
+             shutdown -r now` (every app on this Mac can then reach its virtual computers). \
+             Without it, macOS Space creates fail with \"No route to host\"; Linux Spaces don't \
+             need it."
         ),
     })
 }

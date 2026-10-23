@@ -263,6 +263,21 @@ setup. An existing account session is reused.
   Privacy & Security. Setup can't grant these for you.
 </Callout>
 
+<Callout type="warn">
+  A macOS Space also needs **Local Network** access, and macOS asks for it only
+  on the mini's own screen. With nobody at the screen, the create stops within
+  seconds and says so. Allow it once from the SSH session instead (Apple
+  documents this in [TN3179](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy),
+  macOS 15.5 and later). It lets every app on that Mac reach its virtual
+  computers, and it needs a restart:
+
+  ```sh
+  sudo defaults write com.apple.network.local-network AllowedEthernetLocalNetworkAddresses -array 192.168.64.0/24
+  sudo defaults write com.apple.network.local-network AllowedWiFiLocalNetworkAddresses -array 192.168.64.0/24
+  sudo shutdown -r now
+  ```
+</Callout>
+
 ### Create Spaces on it from your laptop
 
 Your laptop must be [enrolled](#reach-it-from-your-other-devices) for your

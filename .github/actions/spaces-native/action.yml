@@ -73,9 +73,9 @@ runs:
       with:
         workspaces: libs/cua -> target
         shared-key: spaces-native-${{ inputs.label }}
-        # The repository's 10 GB Actions cache evicts oldest-first; a GB-sized
-        # dependency cache per job pushed the small compiled-output caches out
-        # within the hour. Only the default branch saves it.
+        # The Actions cache limit is 50 GB (raised from 10 GB on 23 Oct 2026) and
+        # evicts oldest-first. PR merge refs cannot restore main's entries, so
+        # only the default branch saves the GB-sized dependency cache.
         save-if: ${{ github.ref == 'refs/heads/main' }}
         cache-on-failure: true
     - if: steps.cache.outputs.cache-hit != 'true'

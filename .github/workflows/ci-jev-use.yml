@@ -110,7 +110,7 @@ jobs:
   mock-e2e-linux:
     name: Linux mock E2E
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     env:
       CUA_DRIVER_BIN: ${{ github.workspace }}/libs/cua-driver/rust/target/release/cua-driver
       CUA_DRIVER_PERMISSION_MODE: unrestricted
@@ -138,15 +138,17 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: libs/cua-driver/examples/jev-use/package-lock.json
+      - name: Install Linux desktop packages
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            xvfb dbus-x11 at-spi2-core openbox picom clang pkg-config
+            libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libei-dev
+            libx11-dev libxi-dev libxtst-dev libxext-dev libssl-dev
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
       - name: Install Linux desktop dependencies
         working-directory: ${{ github.workspace }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            xvfb dbus-x11 at-spi2-core openbox picom clang pkg-config \
-            libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libei-dev \
-            libx11-dev libxi-dev libxtst-dev libxext-dev libssl-dev \
-            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
           chromium_source="$(readlink -f "$(command -v chromium)")"
           "$chromium_source" --version
           test ! -e /usr/lib/chromium-browser

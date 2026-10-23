@@ -47,7 +47,7 @@ jobs:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: infinite-canvas-swift (swift test)
     runs-on: macos-26
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:

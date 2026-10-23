@@ -464,7 +464,7 @@ jobs:
         run: node scripts/stage-uniffi-library.mjs --only=python
       - name: Build the platform wheel
         working-directory: libs/cua/python
-        run: uv run --no-project --python 3.12 --with build python build_wheel.py --cli ../target/debug/cua --out-dir dist
+        run: uv run --no-project --python 3.12 --with build python build_wheel.py --cli ../target/debug/cua --no-spacesd --out-dir dist
       - name: Smoke-test the installed wheel
         working-directory: libs/cua/python
         run: |

@@ -381,7 +381,13 @@ jobs:
           python -m pip install --upgrade pip build hatchling
           DIR="../../../native/native-${{ matrix.native }}"
           EXE=cua; [ "${{ matrix.platform }}" = windows ] && EXE=cua.exe
-          python build_wheel.py --library "$DIR/${{ matrix.lib }}" --cli "$DIR/$EXE" --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
+          # Linux wheels carry the static cua-spacesd the native job bundled.
+          SPACESD=()
+          if [ "${{ matrix.platform }}" = linux ]; then
+            A=x86_64; [ "${{ matrix.arch }}" = arm64 ] && A=aarch64
+            SPACESD=(--spacesd "$DIR/cua-spacesd-linux-$A")
+          fi
+          python build_wheel.py --library "$DIR/${{ matrix.lib }}" --cli "$DIR/$EXE" "${SPACESD[@]}" --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
       - name: Import the wheel
         working-directory: libs/cua/python
         run: |

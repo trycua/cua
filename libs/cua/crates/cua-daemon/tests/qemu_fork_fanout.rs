@@ -387,22 +387,14 @@ async fn run(
         .await
         .map_err(|e| format!("checkpoint: {e}"))?;
     let ck_ms = t.elapsed().as_secs_f64() * 1000.0;
-    if forkable && !info.shared_memory {
+    if !info.shared_memory {
         return Err("the checkpoint's forks would not share its memory".into());
     }
     rt.pin_checkpoint("ff-ck", true)
         .await
         .map_err(|e| format!("pin: {e}"))?;
     let ck_dir = root.join("ff-ck");
-    // A forkable world's RAM is its own file, cloned into the checkpoint; any
-    // other world's RAM is inside the stream, which a fork loads into a file
-    // once (the per-fork memory check below proves the sharing).
-    let files: &[&str] = if forkable {
-        &["mem.ram", "state.mig"]
-    } else {
-        &["state.mig"]
-    };
-    for f in files.iter().copied() {
+    for f in ["mem.ram", "state.mig"] {
         if !ck_dir.join(f).is_file() {
             return Err(format!("the checkpoint has no {f}"));
         }

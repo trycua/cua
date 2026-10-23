@@ -128,6 +128,12 @@ jobs:
           EXPECT_WARM: ${{ matrix.disk == 'source' && '1' || '0' }}
           MEMORY_MB: "1024"
           DIRTY_MB: "200"
+          # A Linux VM runs with free page reporting by default, and the RAM
+          # of such a VM stays in its checkpoint's stream, loaded privately
+          # by each fork. The loaded-stream path this lane measures (the
+          # stream loaded once into a file the forks share) is the one for a
+          # VM without it.
+          CUA_QEMU_FREE_PAGE_REPORTING: ${{ matrix.forkable == '0' && '0' || '' }}
         run: libs/cua/bench/fork-fanout/run.sh "$RUNNER_TEMP/fork-fanout.json"
       - name: Perf guard
         run: >

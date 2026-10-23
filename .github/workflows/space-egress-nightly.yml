@@ -124,6 +124,8 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends \
             qemu-utils qemu-system-x86 ovmf passt musl-tools e2fsprogs squashfs-tools
+          # Installing QEMU re-applies the udev rules to /dev/kvm; open it again.
+          sudo chmod 666 /dev/kvm
           # Ubuntu 24.04 lets only profiled programs create user namespaces.
           printf 'abi <abi/4.0>,\ninclude <tunables/global>\nprofile cua-pasta /usr/bin/pasta flags=(unconfined) {\n  userns,\n}\n' \
             | sudo tee /etc/apparmor.d/cua-pasta >/dev/null

@@ -29,8 +29,8 @@ signature when available), installs `cua` to %LOCALAPPDATA%\Programs\cua\bin
 skips it), then runs `cua auth login` when a user is at the console (not
 with -CliOnly, -Pair or -NoOnboarding).
 -AppOnly, -Mode and the `spaces` item install the Cua Spaces app: its signed
-setup.exe for this machine's architecture, run silently (/S) after the sha256
-(and cosign, when available) check.
+setup.exe for this machine's architecture, run silently (/S) after checking sha256,
+cosign (when available) and its Authenticode signature (signer Cua AI, Inc.).
 
 .PARAMETER Select
 Preselect items (comma list: spaces, cua-driver, host); the list still shows.
@@ -603,6 +603,21 @@ function Install-App($Manifest, [string]$ManifestUrl, [string]$Platform, [string
     if ($DryRun) {
         Write-Host "[dry-run] $($cmd.FilePath) $($cmd.ArgumentList -join ' ')"
         return
+    }
+    if ($kind -eq 'nsis') {
+        try {
+            $sig = Get-AuthenticodeSignature -LiteralPath $file -ErrorAction Stop
+        } catch {
+            Stop-Install "Cua Spaces Authenticode signature verification failed: $($_.Exception.Message); refusing to run installer."
+        }
+        if ($sig.Status -ne 'Valid') {
+            Stop-Install "Cua Spaces Authenticode signature is not valid ($($sig.Status): $($sig.StatusMessage)); refusing to run installer."
+        }
+        if (-not $sig.SignerCertificate -or
+            $sig.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) -cne 'Cua AI, Inc.') {
+            Stop-Install 'Cua Spaces Authenticode signature signer is not Cua AI, Inc.; refusing to run installer.'
+        }
+        Write-Info "verified the Authenticode signature of $(Split-Path -Leaf $file) (Cua AI, Inc.)"
     }
     Write-Info "installing Cua Spaces ($kind, silent)"
     $proc = Start-Process -FilePath $cmd.FilePath -ArgumentList $cmd.ArgumentList -Wait -PassThru

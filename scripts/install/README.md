@@ -72,7 +72,7 @@ Questions read from the terminal, never from the script on stdin, so they work u
 |---|---|---|
 | macOS | `~/.local/bin/cua` (`/usr/local/bin` as root) | `/Applications` if writable, else `~/Applications` (from the .dmg; the SwiftUI app, macOS 26 or later, skipped on older macOS) |
 | Linux | same as macOS | The Electron app: on Debian/Ubuntu (x64, arm64) the .deb via apt-get when run as root or with passwordless sudo; otherwise the AppImage at `~/.local/bin/cua-spaces` plus a desktop entry |
-| Windows | `%LOCALAPPDATA%\Programs\cua\bin\cua.exe` | The Electron app's NSIS `setup.exe` for the machine's architecture (sha256 and cosign checked), run silently (`/S /MODE=`); a silent MSI (`CUA_SPACES_MODE=`) only if a release has one |
+| Windows | `%LOCALAPPDATA%\Programs\cua\bin\cua.exe` | The Electron app's NSIS `setup.exe` for the machine's architecture (sha256 and cosign checked, plus a mandatory Authenticode signature check for signer Cua AI, Inc.), run silently (`/S /MODE=`); a silent MSI (`CUA_SPACES_MODE=`) only if a release has one |
 
 cua-driver lands where its own installer puts it: `~/.local/bin/cua-driver` (or `DIR/bin` with `--prefix`), `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin` on Windows.
 

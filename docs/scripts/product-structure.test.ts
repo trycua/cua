@@ -11,8 +11,8 @@ const docs = path.resolve(__dirname, '..');
 const repo = path.resolve(docs, '..');
 const content = path.join(docs, 'content/docs');
 
-// In sidebar order: Cua Spaces, Cua Driver and Lume, then a Developers group
-// (the SDK, the CLI and Cua Bench).
+// In sidebar order. The product switcher shows Cua Spaces and Cua Driver; the
+// renderer lists the rest (Lume, SDK, CLI, Bench) under "More docs".
 const PRODUCTS: Array<[string, string]> = [
   ['spaces', 'Cua Spaces'],
   ['cua-driver', 'Cua Driver'],
@@ -21,13 +21,12 @@ const PRODUCTS: Array<[string, string]> = [
   ['cua-cli', 'Cua CLI'],
   ['cua-bench', 'Cua Bench'],
 ];
-// The root meta.json: the products in order, with the Developers separator.
+// The root meta.json: the products in order, no group headings.
 const ROOT_ORDER = [
   'index',
   'spaces',
   'cua-driver',
   'lume',
-  '---Developers---',
   'cua-sdk',
   'cua-cli',
   'cua-bench',
@@ -35,7 +34,9 @@ const ROOT_ORDER = [
 // Sections in their only allowed order; `examples` is optional. "How X works"
 // pages from `concepts/` are listed by path right after the Overview and
 // Quickstart (no Concepts group in the sidebar); Cua Driver also opens with
-// its "What is computer use" explainer.
+// its "What is computer use" explainer. A product whose guides fall into
+// groups lists them inline instead of `guides` (`---Get started---`,
+// `guides/install`, ...), so each group is a sidebar section of its own.
 const SECTIONS = ['index', 'quickstart', 'guides', 'examples', 'reference'];
 const OPTIONAL = new Set(['examples']);
 const INTRO_PAGES = new Set(['what-is-computer-use']);
@@ -80,7 +81,7 @@ function slugs(): Set<string> {
   );
 }
 
-test('the root lists Spaces, Cua Driver and Lume, with the SDK, CLI and Bench under Developers', () => {
+test('the root lists every product in order, with no group headings', () => {
   assert.deepEqual(meta('').pages, ROOT_ORDER);
   assert.deepEqual(
     ROOT_ORDER.filter((page) => page !== 'index' && !page.startsWith('---')),
@@ -135,7 +136,22 @@ for (const [dir, title] of PRODUCTS) {
     const m = meta(dir);
     assert.equal(m.title, title);
     assert.equal(m.root, true, `${dir}/meta.json must be a root folder (its own sidebar tab)`);
-    const all = m.pages ?? [];
+    const authored = m.pages ?? [];
+    const inline = authored.filter((p) => p.startsWith('guides/'));
+    // Inline guides stand in for the `guides` folder, at its place.
+    const all = authored.flatMap((p, i) =>
+      p.startsWith('guides/') || p.startsWith('---')
+        ? authored.slice(0, i).some((q) => q.startsWith('guides/') || q.startsWith('---'))
+          ? []
+          : ['guides']
+        : [p]
+    );
+    if (inline.length) {
+      assert.ok(!existsSync(path.join(content, dir, 'guides/meta.json')), `${dir}: list guides inline or in guides/meta.json, not both`);
+      const files = readdirSync(path.join(content, dir, 'guides')).filter((f) => f.endsWith('.mdx')).map((f) => `guides/${f.replace(/\.mdx$/, '')}`);
+      assert.deepEqual([...inline].sort(), files.sort(), `${dir}: every guide is listed once`);
+      assert.ok(authored.indexOf(inline[0]) > 0 && authored[authored.indexOf(inline[0]) - 1].startsWith('---'), `${dir}: inline guides start under a ---Section--- heading`);
+    }
     const concepts = all.filter((p) => p.startsWith('concepts/'));
     const pages = all.filter((p) => !p.startsWith('concepts/') && !INTRO_PAGES.has(p));
     const expected = SECTIONS.filter(
@@ -157,7 +173,7 @@ for (const [dir, title] of PRODUCTS) {
     for (const page of all.filter((p) => INTRO_PAGES.has(p))) {
       assert.ok(existsSync(path.join(content, dir, `${page}.mdx`)), `${dir}/${page}.mdx`);
     }
-    for (const section of pages.filter((p) => SECTION_TITLES[p])) {
+    for (const section of pages.filter((p) => SECTION_TITLES[p] && !(p === 'guides' && inline.length))) {
       assert.equal(meta(path.join(dir, section)).title, SECTION_TITLES[section]);
     }
     const extra = readdirSync(path.join(content, dir)).filter(

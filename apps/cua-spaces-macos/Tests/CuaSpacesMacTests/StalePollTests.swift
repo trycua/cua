@@ -300,6 +300,12 @@ import Testing
         #expect(model.reconnects == 1)
         #expect(id == "local:e2e-1005-linux")
         #expect(second.createCalls == 1)
+        // The first attempt's cancel went to its own (hung) connection,
+        // never to the new one, where it would cancel the retry.
+        #expect(second.inner.cancelRequests.isEmpty)
+        // Listed, by the create's own read or (a loaded run) the poll's.
+        let poll = model.startListPoll(every: .milliseconds(50))
+        defer { poll.cancel() }
         #expect(await eventually { model.spaces.contains { $0.id == id } })
     }
 

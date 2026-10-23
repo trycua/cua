@@ -1227,7 +1227,11 @@ public final class AppModel {
             let accepted = CreateAcceptance()
             let backend = self.backend
             let create = Task {
-                try await backend.create(args, createId: pendingId) { p in
+                // The connection it goes over, so a cancel of this attempt
+                // goes there too, never to the next connection's retry.
+                let connection = await (backend as? PendingSpacesBackend)?.connection() ?? backend
+                accepted.sent(on: connection)
+                return try await connection.create(args, createId: pendingId) { p in
                     accepted.mark()
                     Task { @MainActor [weak self] in
                         self?.sendCreate(.progress(id: pendingId, phase: p.phase,
@@ -1242,9 +1246,12 @@ public final class AppModel {
             sendCreate(.finish(id: pendingId, spaceId: id))
             await refresh(fresh: true)
             if selectedSpaceId == pendingId { select(id) }
-            // The registry lists it now; the pending row is gone from
-            // the list already, so drop it from the state too.
-            sendCreate(.dismiss(id: pendingId))
+            // Listed: the pending row is gone from the list already, so
+            // drop it from the state too. Not listed yet (a slow read): the
+            // finished row stays until a read lists the Space.
+            if registrySpaces.contains(where: { $0.id == id }) {
+                sendCreate(.dismiss(id: pendingId))
+            }
             return id
         } catch where isCancelled(error) {
             // Cancelled, here or elsewhere: the row goes; it did not fail.
@@ -1269,10 +1276,14 @@ public final class AppModel {
         case .success(let id): return id
         case .failure(TimeoutError.timedOut) where !accepted.done:
             NSLog("Cua Spaces: the cua daemon did not take create %@ within %d s", pendingId, Int(limit))
-            let backend = self.backend
             // Best effort: it may still reach the daemon over the old
-            // connection; never wait on it.
-            Task.detached { _ = await withTimeout(seconds: 30) { try await backend.cancelCreate(createId: pendingId) } }
+            // connection; never wait on it. Only that connection: the
+            // retry goes over the new one under the same create id.
+            if let connection = accepted.connection {
+                Task.detached {
+                    _ = await withTimeout(seconds: 30) { try await connection.cancelCreate(createId: pendingId) }
+                }
+            }
             Task { @MainActor [weak self] in await self?.reconnectNow(reason: "a create was not taken") }
             throw CreateNotAccepted(seconds: Int(limit.rounded(.up)))
         case .failure(TimeoutError.timedOut):
@@ -1866,6 +1877,10 @@ public final class AppModel {
 final class CreateAcceptance: @unchecked Sendable {
     private let lock = NSLock()
     private var reported = false
+    private var sentOn: SpacesBackend?
     func mark() { lock.withLock { reported = true } }
     var done: Bool { lock.withLock { reported } }
+    /// The daemon connection the create was sent over (nil until it was).
+    func sent(on connection: SpacesBackend) { lock.withLock { sentOn = connection } }
+    var connection: SpacesBackend? { lock.withLock { sentOn } }
 }

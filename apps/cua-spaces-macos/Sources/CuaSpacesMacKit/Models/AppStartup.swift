@@ -595,6 +595,9 @@ public final class PendingSpacesBackend: SpacesBackend, AgentsToolRunning, Cloud
     /// The backend calls go to now (nil until the SDK is in).
     public var current: SpacesBackend? { lock.withLock { replaced } ?? gate.current?.backend }
 
+    /// The connection calls go to now, once the SDK is in.
+    public func connection() async -> SpacesBackend { await b() }
+
     private func b() async -> SpacesBackend {
         if let now = lock.withLock({ replaced }) { return now }
         return await gate.wait().backend

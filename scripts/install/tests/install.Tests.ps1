@@ -432,7 +432,7 @@ Describe 'mixed versions' {
         function Build-Release([string]$Version, [string[]]$Names, [string]$Merge) {
             $dir = Join-Path $mix "v$Version"
             New-Item -ItemType Directory -Force -Path $dir | Out-Null
-            foreach ($n in $Names) { Set-Content -LiteralPath (Join-Path $dir ($n -replace 'VER', $Version)) -Value $n }
+            foreach ($n in $Names) { Set-Content -LiteralPath (Join-Path $dir ($n -creplace 'VER', $Version)) -Value $n }
             $out = Join-Path $mix "manifest-$Version.json"
             $toolArgs = @('--component', 'app', '--version', $Version, '--dir', $dir,
                 '--base-url', "https://example.invalid/cua-spaces-v$Version", '--out', $out)

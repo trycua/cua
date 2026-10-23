@@ -345,15 +345,13 @@ class Translator:
                         or bool(invocation and item.get("exitCode") != 0)
                     )
                     text = (
-                        (
-                            str(item.get("aggregatedOutput") or "")[:2000]
-                            if invocation
-                            else (_text_of(result.get("content")) or str(item.get("error") or ""))[
-                                :300
-                            ]
+                        str(item.get("aggregatedOutput") or "")[:2000]
+                        if invocation
+                        else (
+                            (_text_of(result.get("content")) or str(item.get("error") or ""))[:300]
+                            if failed
+                            else ""
                         )
-                        if failed
-                        else ""
                     )
                     out.append(
                         {

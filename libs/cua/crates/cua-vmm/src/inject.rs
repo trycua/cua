@@ -65,9 +65,8 @@ pub fn check_static_elf(elf: &[u8], arch: Arch) -> std::result::Result<(), Strin
 }
 
 /// The host's static cua-spacesd for guests of `arch`: `$CUA_SPACESD_STATIC`
-/// (host architecture only), else `cua-spacesd-linux-<arch>` next to the
-/// running executable (or in an app bundle's `Contents/Resources`), in
-/// `~/.cua/bin`, or on `PATH`.
+/// (host architecture only), else the first `cua-spacesd-linux-<arch>` of
+/// [`search_paths`] that is a file, else the one on `PATH`.
 pub fn find_binary(arch: Arch) -> Option<PathBuf> {
     if arch == Arch::host()
         && let Some(p) = std::env::var_os(ENV_BINARY)
@@ -78,21 +77,105 @@ pub fn find_binary(arch: Arch) -> Option<PathBuf> {
         return Some(p);
     }
     let name = file_name(arch);
-    if let Some(dir) = std::env::current_exe()
+    let exe_dir = std::env::current_exe()
         .ok()
-        .and_then(|e| e.parent().map(Path::to_path_buf))
-    {
-        for p in [dir.join(&name), dir.join("../Resources").join(&name)] {
-            if p.is_file() {
-                return Some(p);
-            }
+        .and_then(|e| e.parent().map(Path::to_path_buf));
+    search_paths(
+        &name,
+        exe_dir.as_deref(),
+        module_dir().as_deref(),
+        &host::cua_home(),
+    )
+    .into_iter()
+    .find(|p| p.is_file())
+    .or_else(|| host::which(&name))
+}
+
+/// Where [`find_binary`] looks for `name`, in order:
+///
+/// 1. next to the running executable (`cua`, the daemon, an app's sidecar),
+///    and in an app bundle's `Contents/Resources` beside `Contents/MacOS`;
+/// 2. next to the module this code is linked into (`module_dir`), and in
+///    its `bin/`: when Node or Python loads the SDK library in-process the
+///    executable is `node` or `python`, and the binary ships with the
+///    library instead. The npm native package keeps it beside the library
+///    and `cua`; the wheel keeps the library at `cua/` and the binary next
+///    to `cua/bin/cua`;
+/// 3. `$CUA_HOME/bin` (`~/.cua/bin`).
+pub fn search_paths(
+    name: &str,
+    exe_dir: Option<&Path>,
+    module_dir: Option<&Path>,
+    cua_home: &Path,
+) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Some(d) = exe_dir {
+        out.push(d.join(name));
+        out.push(d.join("../Resources").join(name));
+    }
+    if let Some(d) = module_dir.filter(|d| Some(*d) != exe_dir) {
+        out.push(d.join(name));
+        out.push(d.join("bin").join(name));
+    }
+    out.push(cua_home.join("bin").join(name));
+    out
+}
+
+/// The directory of the executable or shared library this code is linked
+/// into: the SDK library (`libcua_sdk.so`, `libcua_sdk.dylib`) when a
+/// language binding loaded it, else the executable itself.
+#[cfg(unix)]
+pub fn module_dir() -> Option<PathBuf> {
+    use std::ffi::CStr;
+    use std::os::unix::ffi::OsStrExt;
+    // SAFETY: dladdr only reads the loader's tables for an address in this
+    // module; `dli_fname` is a NUL-terminated string the loader owns.
+    let fname = unsafe {
+        let mut info: libc::Dl_info = std::mem::zeroed();
+        let addr = module_dir as *const () as *const libc::c_void;
+        if libc::dladdr(addr, &mut info) == 0 || info.dli_fname.is_null() {
+            return None;
         }
+        CStr::from_ptr(info.dli_fname).to_bytes().to_vec()
+    };
+    let p = Path::new(std::ffi::OsStr::from_bytes(&fname));
+    // glibc names the main program by its argv[0], which can be relative
+    // or bare; current_exe covers that case.
+    if !p.is_absolute() {
+        return None;
     }
-    let own = host::cua_home().join("bin").join(&name);
-    if own.is_file() {
-        return Some(own);
-    }
-    host::which(&name)
+    let p = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    p.parent().map(Path::to_path_buf)
+}
+
+/// The directory of the executable or DLL this code is linked into.
+#[cfg(windows)]
+pub fn module_dir() -> Option<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::System::LibraryLoader::{
+        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        GetModuleFileNameW, GetModuleHandleExW,
+    };
+    let mut module = std::ptr::null_mut();
+    // SAFETY: the address is a function of this module; the handle is not
+    // reference-counted and the buffer is sized for the call.
+    let path = unsafe {
+        if GetModuleHandleExW(
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            module_dir as *const () as *const u16,
+            &mut module,
+        ) == 0
+        {
+            return None;
+        }
+        let mut buf = vec![0u16; 32768];
+        let n = GetModuleFileNameW(module, buf.as_mut_ptr(), buf.len() as u32) as usize;
+        if n == 0 || n >= buf.len() {
+            return None;
+        }
+        PathBuf::from(std::ffi::OsString::from_wide(&buf[..n]))
+    };
+    path.parent().map(Path::to_path_buf)
 }
 
 /// [`find_binary`], checked: the file must be a static Linux executable
@@ -364,6 +447,90 @@ mod tests {
         unsafe { std::env::remove_var(ENV_BINARY) };
         assert_eq!(file_name(Arch::Aarch64), "cua-spacesd-linux-aarch64");
         assert_eq!(file_name(Arch::X86_64), "cua-spacesd-linux-x86_64");
+    }
+
+    #[test]
+    fn the_search_goes_exe_then_library_then_cua_home() {
+        let n = "cua-spacesd-linux-x86_64";
+        let p = search_paths(
+            n,
+            Some(Path::new("/app/MacOS")),
+            Some(Path::new("/py/cua")),
+            Path::new("/home/u/.cua"),
+        );
+        assert_eq!(
+            p,
+            [
+                PathBuf::from("/app/MacOS").join(n),
+                PathBuf::from("/app/MacOS/../Resources").join(n),
+                PathBuf::from("/py/cua").join(n),
+                PathBuf::from("/py/cua/bin").join(n),
+                PathBuf::from("/home/u/.cua/bin").join(n),
+            ]
+        );
+        // `cua` itself: the module is the executable, looked in once.
+        let same = search_paths(
+            n,
+            Some(Path::new("/x")),
+            Some(Path::new("/x")),
+            Path::new("/h"),
+        );
+        assert_eq!(same.len(), 3);
+    }
+
+    fn first(name: &str, module: &Path, home: &Path) -> Option<PathBuf> {
+        search_paths(
+            name,
+            Some(Path::new("/nonexistent-exe-dir")),
+            Some(module),
+            home,
+        )
+        .into_iter()
+        .find(|p| p.is_file())
+    }
+
+    #[test]
+    fn the_npm_and_wheel_layouts_resolve_from_the_library() {
+        let n = file_name(Arch::X86_64);
+        let home = tempfile::tempdir().unwrap();
+        // npm: @trycua/cua-linux-x64-gnu/{libcua_sdk.so,cua,cua-spacesd-linux-*}
+        let npm = tempfile::tempdir().unwrap();
+        std::fs::write(npm.path().join("libcua_sdk.so"), b"").unwrap();
+        std::fs::write(npm.path().join("cua"), b"").unwrap();
+        std::fs::write(npm.path().join(&n), b"").unwrap();
+        assert_eq!(
+            first(&n, npm.path(), home.path()),
+            Some(npm.path().join(&n))
+        );
+        // wheel: cua/libcua_sdk.so and cua/bin/{cua,cua-spacesd-linux-*}
+        let whl = tempfile::tempdir().unwrap();
+        std::fs::create_dir(whl.path().join("bin")).unwrap();
+        std::fs::write(whl.path().join("libcua_sdk.so"), b"").unwrap();
+        std::fs::write(whl.path().join("bin/cua"), b"").unwrap();
+        std::fs::write(whl.path().join("bin").join(&n), b"").unwrap();
+        assert_eq!(
+            first(&n, whl.path(), home.path()),
+            Some(whl.path().join("bin").join(&n))
+        );
+        // Neither: ~/.cua/bin.
+        let empty = tempfile::tempdir().unwrap();
+        assert_eq!(first(&n, empty.path(), home.path()), None);
+        std::fs::create_dir(home.path().join("bin")).unwrap();
+        std::fs::write(home.path().join("bin").join(&n), b"").unwrap();
+        assert_eq!(
+            first(&n, empty.path(), home.path()),
+            Some(home.path().join("bin").join(&n))
+        );
+    }
+
+    #[test]
+    fn the_module_dir_is_the_file_this_code_is_linked_into() {
+        // In a test binary the module is the test executable; in the SDK
+        // it is libcua_sdk, which this cannot load, so the check is that
+        // the lookup names a real module and not the process's cwd.
+        let got = module_dir().expect("dladdr names this module");
+        let exe = std::fs::canonicalize(std::env::current_exe().unwrap()).unwrap();
+        assert_eq!(got, exe.parent().unwrap());
     }
 
     #[cfg(any(feature = "container", feature = "microvm"))]

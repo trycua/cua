@@ -96,10 +96,21 @@ through the app's scripting interface instead, still in the background, and the
 result says so; TextEdit disables Save whenever it is behind the user's window.
 A Save is verified on disk. A background `hotkey` whose combo is a menu item's
 key equivalent (⌘S, ⌘W, ⌘C, ...) in a native app takes the same route, because
-background key events never reach an app's menus; no keys are sent. macOS asks
-the user once to allow Cua Driver to control the app (Automation) the first
-time a scripting route runs; when that is off, the call refuses and nothing is
-saved.
+background key events never reach an app's menus; no keys are sent. By default,
+macOS may prompt for Automation consent on first use; unanswered prompts can
+recur. Denied consent refuses the scripting action.
+
+For unattended use, start `cua-driver serve --no-automation-prompts` before
+connecting `cua-driver mcp --socket <path>`. MCP's auto-started daemon does not
+enable this protection, and the flag is serve-only. Only explicitly granted
+Automation targets may receive scripting actions: background Save (including
+hotkeys), Finder rename, browser Apple Events JavaScript and browser quit for
+JavaScript setup, and Safari select updates. Ungranted or unknown consent
+refuses immediately with `automation_consent_required`, naming the app and
+System Settings > Privacy & Security > Automation; no scripting action or
+keyboard fallback is sent. Grant consent with the user's authorization before
+retrying. This does not suppress Accessibility/Screen Recording onboarding or
+other unrelated OS prompts. Omit the flag to preserve prompt-on-first-use behavior.
 With the app already in front it resolves every AX level live. Prefer an in-window
 element action when the same command has an ordinary control, and prefer
 `set_window_frame` for exact geometry. Full rationale is in “Navigating native
@@ -959,6 +970,7 @@ starting point for new browser workflows.
 | `Accessibility permission not granted`                        | TCC not granted                                                                                                   | Stop. Follow [Install and approve permissions](#install-and-approve-permissions): approve it yourself only when the owner authorized that for this task, otherwise tell the user to grant it in System Settings                       |
 | `Screen Recording permission not granted`                     | TCC not granted for capture                                                                                       | Screenshots and pixel actions are unavailable. If the task is AX-completable, use `get_window_state({include_screenshot:false})` and `element_token` actions; otherwise stop and ask the user to run `cua-driver permissions grant` (see [Install and approve permissions](#install-and-approve-permissions)) |
 | `AX action failed: ... returned -25200` (or -25205, -25206)   | The app may have acted anyway: some AppKit controls return these after a press they performed                     | Re-read with `get_window_state` before retrying; a second press on a checkbox toggles it back. A radio button or checkbox whose AXValue settles on the pressed state is reported as performed, naming the error                     |
+| `automation_consent_required` | With `serve --no-automation-prompts`, Automation consent is not explicitly granted for the named app; no scripting action was sent | With the user's authorization, grant access in System Settings > Privacy & Security > Automation |
 | `set_value refused (file_name_needs_rename)`                  | A file's name in Finder's Get Info window (AXIdentifier `Name`): an AXValue write changes only the field          | `set_value` the full new name on the file's name cell in a Finder window that lists it (renamed through Finder in the background and read back from disk) |
 | `Background input refused (no_focused_text_input)`           | Untargeted background `type_text` while the window's focused element is not a text input or an editing surface (spreadsheet grid, document canvas: `AXLayoutArea`, `AXScrollArea`, `AXTable`, `AXCell`, `AXGroup`; not in Finder/Dock); keys would drive the view (Finder type-to-select) | pass the field's `element_token`, or `x,y` to pixel-focus it first; to rename a Finder file, `set_value` its name cell |
 

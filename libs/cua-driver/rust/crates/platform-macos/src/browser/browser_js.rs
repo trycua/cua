@@ -44,6 +44,9 @@ impl BrowserJs {
         let app_name = app_name_for_bundle(bundle_id)
             .ok_or_else(|| anyhow::anyhow!("Unsupported browser bundle: {bundle_id}"))?;
 
+        crate::apple_events::ensure_permitted(bundle_id, app_name)
+            .map_err(|r| anyhow::anyhow!("{}: {}", r.code, r.reason))?;
+
         // Resolve the WindowServer CGWindowID to stable properties that can be
         // matched against the browser's AppleScript window model.
         let target = {
@@ -90,6 +93,9 @@ end tell"#
     pub async fn enable_javascript_apple_events(bundle_id: &str) -> anyhow::Result<()> {
         let app_name = app_name_for_bundle(bundle_id)
             .ok_or_else(|| anyhow::anyhow!("Unsupported browser bundle: {bundle_id}"))?;
+
+        crate::apple_events::ensure_permitted(bundle_id, app_name)
+            .map_err(|r| anyhow::anyhow!("{}: {}", r.code, r.reason))?;
 
         // Quit the browser.
         let quit_script = format!("tell application \"{app_name}\" to quit");

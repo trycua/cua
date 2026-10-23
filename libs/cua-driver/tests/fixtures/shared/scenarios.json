@@ -381,6 +381,15 @@
     }
    },
    {
+    "id": "disabled_control",
+    "kind": "toggle",
+    "description": "Opt-in (CUA_APPKIT_DISABLED_CONTROL=1): a disabled NSButton checkbox. Tests that get_window_state publishes it with enabled: false and that pressing it is refused without changing it (#3949). disabled_checked= label.",
+    "controls": {
+     "checkbox_aid": "chk-disabled",
+     "state_label_aid": "lbl-disabled-state"
+    }
+   },
+   {
     "id": "context_menu",
     "kind": "context_menu",
     "description": "NSButton with an attached NSMenu (Cut/Copy/Paste). Right-click opens the native context menu; selecting an item sets menu_action=. menu_action= label.",

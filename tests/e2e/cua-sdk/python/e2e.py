@@ -603,6 +603,7 @@ async def window_origin(env: "cua.SpacesdClient", title: str) -> tuple[int, int]
         'n=$(xwininfo -id "$wid" | awk "/Absolute upper-left X/{x=\\$4} /Absolute upper-left Y/{y=\\$4} END{print x, y}"); '
         '[ "$n" = "$o" ] && break; o=$n; done; echo "$n"'
     )
+
     async def origin():
         # The result object is always truthy, and the script prints nothing
         # (or a blank origin) while the window is not mapped yet: only accept

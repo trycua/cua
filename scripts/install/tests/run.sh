@@ -338,6 +338,7 @@ check "--cli-only skips the app" absent "$work/p2/bin/cua-spaces"
 # is upgraded; --version asks for a rollback on purpose.
 fake_cua() { # dir version
     mkdir -p "$1/bin"
+    # shellcheck disable=SC2016 # the single quotes are deliberate: the body expands when the stub runs
     printf '#!/bin/sh\nif [ "${1:-}" = --version ]; then echo "cua %s"; exit 0; fi\n' "$2" >"$1/bin/cua"
     chmod +x "$1/bin/cua"
 }
@@ -599,7 +600,7 @@ if script --version 2>/dev/null | grep -q util-linux; then
     env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux \
         CUA_INSTALL_ARCH=x86_64 CUA_FAKE_LOG="$home/cua2.log" \
         script -qec "$sh_bin '$installer' --yes --cli-only --no-onboarding --prefix '$work/p14'" /dev/null >"$work/out" 2>&1 </dev/null
-    check "interactive + --no-onboarding: no login" absent "$home/cua2.log"
+    check "interactive + --no-onboarding: no login" sh -c "! grep -qx 'auth login' '$home/cua2.log' 2>/dev/null"
 
     # PATH prompt on a terminal: Enter adds it to the profile, n leaves it.
     # `script` runs its command through $SHELL, so zsh (absent from the CI

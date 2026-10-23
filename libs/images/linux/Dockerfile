@@ -136,7 +136,7 @@ RUN install -d -m 0755 /etc/apt/keyrings
 ARG CHROMIUM_VERSION=
 ARG CHROMIUM_MAJOR=
 ARG CHROMIUM_MAJOR_AMD64=156
-ARG CHROMIUM_MAJOR_ARM64=155
+ARG CHROMIUM_MAJOR_ARM64=156
 ARG CHROMIUM_PPA_KEY=5301FA4FD93244FBC6F6149982BB6851C64F6880
 RUN --mount=type=bind,source=common/apt-keys/xtradeb-apps.asc,target=/tmp/xtradeb-apps.asc \
     gpg --dearmor </tmp/xtradeb-apps.asc >/etc/apt/keyrings/xtradeb-apps.gpg \

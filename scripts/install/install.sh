@@ -1096,7 +1096,7 @@ install_cli() {
         have="$("$target" --version 2>/dev/null | sed -n '1s/^cua  *\([^ ]*\).*/\1/p')"
         want="$(json_field "$(manifest_entry cli tar.gz)" version)"
         if [ -n "$have" ] && [ -n "$want" ] && version_gt "$have" "$want"; then
-            info "kept $target (cua $have is newer than the release's $want; use --version $want to go back)"
+            say "kept $target (cua $have is newer than the release's $want; use --version $want to go back)"
             cua_bin="$target"
             ensure_path "$bindir"
             return

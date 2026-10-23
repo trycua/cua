@@ -1557,7 +1557,16 @@ mod tests {
                 "",
                 "vm_limit",
             ),
-            ("something else at /Users/alice", "Runtime", "Runtime"),
+            (
+                "something else at /Users/alice",
+                "Runtime",
+                "runtime.unclassified",
+            ),
+            (
+                "lume VM 'a' stopped while booting",
+                "Runtime",
+                "runtime.vm_stopped_early",
+            ),
             (
                 "container engine: pull ghcr.io/trycua/linux:24.04: manifest unknown",
                 "",

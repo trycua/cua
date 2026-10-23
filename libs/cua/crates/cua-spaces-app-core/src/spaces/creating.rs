@@ -984,7 +984,22 @@ pub fn failure_text_on(
         Some(FailureCause::PullTimeout) => "The image download did not finish in the time \
              allowed. Check your internet connection, then try again."
             .into(),
-        Some(FailureCause::RuntimeMissing) | None => plain,
+        Some(FailureCause::RuntimeMissing) => plain,
+        // No cause the app explains itself: a plain sentence for the kind
+        // the shared classifier reads from the text. A `runtime` error
+        // nothing names keeps the SDK's own text, the only clue there is.
+        None => {
+            let kind = cua_create_failure::create_failure_kind(
+                &plain,
+                phase.unwrap_or(""),
+                "Runtime",
+                provider != Some(SpaceProvider::Cloud),
+            );
+            match cua_create_failure::user_text(kind) {
+                Some(text) if kind != "runtime.unclassified" => text.to_string(),
+                _ => plain,
+            }
+        }
     }
 }
 
@@ -1521,6 +1536,44 @@ mod tests {
         assert_eq!(
             failure_variant(raw, Some("preparing"), false, "Runtime", None),
             "runtime_missing"
+        );
+    }
+
+    #[test]
+    fn a_runtime_failure_gets_a_sub_kind_and_plain_words() {
+        let raw = "the built-in Linux runtime did not start: fatal: vz driver failed";
+        assert_eq!(
+            failure_variant(raw, Some("preparing"), false, "Runtime", None),
+            "runtime.linux_runtime_start_failed"
+        );
+        let text = failure_text(raw, Some("preparing"), None, false);
+        assert!(
+            text.starts_with("The Linux engine that Cua sets up"),
+            "{text}"
+        );
+        assert!(!text.contains("vz driver"), "{text}");
+        // Another shell case keeps its own word.
+        assert_eq!(
+            failure_variant(raw, Some("preparing"), false, "Other", None),
+            "Other"
+        );
+        // Nothing names it: the SDK's text stays.
+        let odd = "something nobody has seen";
+        assert_eq!(
+            failure_variant(odd, Some("preparing"), false, "Runtime", None),
+            "runtime.unclassified"
+        );
+        assert_eq!(failure_text(odd, Some("preparing"), None, false), odd);
+        // Docker not running and a busy port read plainly too.
+        let docker = "Docker is not running: start Docker Desktop";
+        assert_eq!(
+            failure_text(docker, Some("preparing"), None, false),
+            "Docker is not running. Open Docker, wait until it says it is running, then try again."
+        );
+        let port = "Bind for 0.0.0.0:8080 failed: port is already allocated";
+        assert!(
+            failure_text(port, Some("booting"), None, false)
+                .starts_with("Another app is already using a port")
         );
     }
 

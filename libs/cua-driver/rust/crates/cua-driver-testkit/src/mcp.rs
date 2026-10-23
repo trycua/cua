@@ -101,7 +101,7 @@ impl McpDriver {
     /// source-tree daemon.
     pub fn spawn_daemon_proxy_named(socket: &str, recording_label: &str) -> Option<Self> {
         if !daemon_socket_is_reachable(socket) {
-            eprintln!("[testkit] CuaDriver daemon not listening at {socket} — skipping");
+            report_daemon_unreachable(socket);
             return None;
         }
         Self::spawn_internal(
@@ -118,7 +118,7 @@ impl McpDriver {
     /// already been captured by the same test case.
     pub fn spawn_daemon_proxy_unrecorded(socket: &str) -> Option<Self> {
         if !daemon_socket_is_reachable(socket) {
-            eprintln!("[testkit] CuaDriver daemon not listening at {socket} — skipping");
+            report_daemon_unreachable(socket);
             return None;
         }
         Self::spawn_internal(&[], &["mcp", "--socket", socket], None, false, false)
@@ -270,35 +270,11 @@ impl McpDriver {
     /// daemon is the product path agents use, so ignored GUI tests proxy through an
     /// already-running daemon and skip with a clear note when it is absent.
     #[cfg(target_os = "macos")]
-    pub fn spawn_macos_daemon_proxy() -> Option<Self> {
-        Self::spawn_macos_daemon_proxy_internal(None)
-    }
-
-    /// macOS daemon-proxy variant with a stable recording artifact label.
-    #[cfg(target_os = "macos")]
     pub fn spawn_macos_daemon_proxy_named(recording_label: &str) -> Option<Self> {
-        Self::spawn_macos_daemon_proxy_internal(Some(recording_label))
-    }
-
-    #[cfg(target_os = "macos")]
-    fn spawn_macos_daemon_proxy_internal(recording_label: Option<&str>) -> Option<Self> {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
         let socket = std::env::var("CUA_E2E_MACOS_DAEMON_SOCKET")
             .unwrap_or_else(|_| format!("{home}/Library/Caches/cua-driver/cua-driver.sock"));
-        if !daemon_socket_is_reachable(&socket) {
-            eprintln!(
-                "[testkit] CuaDriver daemon not listening at {socket} — \
-                 run `./scripts/install-local.sh` and `cua-driver permissions grant`; skipping"
-            );
-            return None;
-        }
-        Self::spawn_internal(
-            &[],
-            &["mcp", "--socket", &socket],
-            recording_label,
-            false,
-            true,
-        )
+        Self::spawn_daemon_proxy_named(&socket, recording_label)
     }
 
     /// Isolated per-user state root (`HOME`, XDG/AppData directories) given to
@@ -500,6 +476,15 @@ impl McpDriver {
             }),
         }
     }
+}
+
+fn report_daemon_unreachable(socket: &str) {
+    let hint = if cfg!(target_os = "macos") {
+        " — run `./scripts/install-local.sh` and `cua-driver permissions grant`;"
+    } else {
+        " —"
+    };
+    eprintln!("[testkit] CuaDriver daemon not listening at {socket}{hint} skipping");
 }
 
 #[cfg(unix)]

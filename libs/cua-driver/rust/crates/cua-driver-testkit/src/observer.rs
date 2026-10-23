@@ -149,11 +149,6 @@ impl<B: ObserverBackend> DesktopObserver<B> {
         }
     }
 
-    pub fn with_settle(mut self, settle: Duration) -> Self {
-        self.settle = settle;
-        self
-    }
-
     pub fn snapshot(&self) -> Result<DesktopSnapshot, ObserverError> {
         self.backend.snapshot(self.target)
     }

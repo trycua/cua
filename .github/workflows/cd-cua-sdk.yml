@@ -388,6 +388,9 @@ jobs:
             SPACESD=(--spacesd "$DIR/cua-spacesd-linux-$A")
           fi
           python build_wheel.py --library "$DIR/${{ matrix.lib }}" --cli "$DIR/$EXE" "${SPACESD[@]}" --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
+      - name: Check the wheel ships the static cua-spacesd next to cua
+        if: matrix.platform == 'linux'
+        run: .github/scripts/check_static_spacesd_packaged.sh libs/cua/python/dist
       - name: Import the wheel
         working-directory: libs/cua/python
         run: |
@@ -444,6 +447,12 @@ jobs:
             --native-dir "$RUNNER_TEMP/native" \
             --output-dir "$RUNNER_TEMP/npm"
           ls -lh "$RUNNER_TEMP/npm"
+      - name: Check the Linux packages ship the static cua-spacesd next to cua
+        run: |
+          set -o pipefail
+          .github/scripts/check_static_spacesd_packaged.sh "$RUNNER_TEMP/npm" | tee "$RUNNER_TEMP/spacesd-check.txt"
+          # Both Linux native packages, not just whichever was packed.
+          test "$(grep -c '^ok    npm trycua-cua-linux-' "$RUNNER_TEMP/spacesd-check.txt")" = 2
       - uses: actions/upload-artifact@v4
         with:
           name: npm

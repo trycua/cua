@@ -7768,7 +7768,10 @@ impl Tool for DragTool {
                           covers the start point. After a zoom call, pass from_zoom=true. \
                           Drags that start on a window caption / title bar or resize border (i.e. moving or resizing the \
                           window itself) cannot be delivered in the background — the OS move/resize loop needs real pointer \
-                          input — so they return background_unavailable; re-issue those with delivery_mode:\"foreground\".".into(),
+                          input — so they return background_unavailable; re-issue those with delivery_mode:\"foreground\". \
+                          `modifier` holds keys from press to release in delivery_mode:\"foreground\" and scope:\"desktop\" via \
+                          SendInput. Background drags with modifiers return background_unavailable because posted messages and \
+                          pen injection cannot carry live modifier-key state.".into(),
             input_schema: json!({"type":"object","required":["from_x","from_y","to_x","to_y"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
                 "scope":{"type":"string","enum":["window","desktop"],"description":"Use desktop with no pid/window_id for screen-absolute coordinates."},
@@ -7807,11 +7810,13 @@ impl Tool for DragTool {
             let duration_ms = input.duration_ms.unwrap_or(500);
             let steps = input.steps.unwrap_or(20) as usize;
             let button = input.button.unwrap_or(ClickButton::Left).as_str();
+            let modifiers = input.modifier.unwrap_or_default();
             let hwnd = match crate::input::mouse::foreground_window() {
                 Ok(hwnd) => hwnd,
                 Err(error) => return ToolResult::error(error.to_string()),
             };
             let native_drag = tokio::task::spawn_blocking(move || {
+                let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
                 crate::input::mouse::send_drag_synthesized(
                     hwnd,
                     from_x,
@@ -7821,6 +7826,7 @@ impl Tool for DragTool {
                     duration_ms,
                     steps,
                     &button,
+                    &modifier_refs,
                 )
             });
             let visual_drag = track_overlay_drag(
@@ -7851,6 +7857,21 @@ impl Tool for DragTool {
         };
         let pid = raw_pid as u32;
         let delivery = DeliveryMode::from_args(&args);
+        let modifiers: Vec<String> = args.str_array("modifier");
+        if !modifiers.is_empty() && delivery != DeliveryMode::Foreground {
+            return ToolResult::error(
+                "drag modifiers require delivery_mode:\"foreground\" on Windows; posted \
+                 messages and pen injection cannot carry live modifier-key state",
+            )
+            .with_structured(json!({
+                "code": "background_unavailable",
+                "effect": "refused",
+                "escalation": {
+                    "recommended": "foreground",
+                    "reason": "Windows modifier drags require SendInput so the target observes live modifier state"
+                }
+            }));
+        }
 
         // Accepts numeric JSON as either float or integer — coerce both to f64.
         let coerce = |key: &str| -> Option<f64> {
@@ -8004,6 +8025,7 @@ impl Tool for DragTool {
                 windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
             };
             let send_result = tokio::task::spawn_blocking(move || {
+                let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
                 crate::input::mouse::send_drag_synthesized_active(
                     hwnd,
                     sx_from,
@@ -8013,6 +8035,7 @@ impl Tool for DragTool {
                     duration_ms,
                     steps,
                     &btn_fg,
+                    &modifier_refs,
                 )
             });
             let visual_drag = track_overlay_drag(
@@ -10640,6 +10663,9 @@ mod set_window_frame_geometry_tests;
 
 #[cfg(test)]
 mod desktop_scope_tests;
+
+#[cfg(test)]
+mod drag_modifier_tests;
 
 #[cfg(test)]
 mod pid_window_target_tests;

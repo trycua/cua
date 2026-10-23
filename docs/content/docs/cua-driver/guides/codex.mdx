@@ -1,0 +1,24 @@
+---
+title: Codex
+description: Give Codex Cua Driver to use the apps on your computer, and Cua Spaces to work in computers you can watch.
+---
+
+Codex (CLI, IDE and app) can use both Cua products: Cua Driver for the apps on the computer it runs on, and Cua Spaces for other computers.
+
+## Cua Driver
+
+`cua-driver mcp-config --client codex` prints the command to register Cua Driver, `codex mcp add cua-driver -- <path> mcp`. Run it, then restart Codex. Codex's own approval policy also applies. See [Connect your agent](/cua-driver/guides/connect-your-agent) for the skill, permissions and the other clients.
+
+## Cua Spaces
+
+`cua agents setup --agents codex --yes` adds the `cua` skills and MCP server to Codex, and the Cua Spaces app does the same on first run. To add it by hand:
+
+```bash skip="third-party-cli"
+codex mcp add cua -- cua daemon mcp
+```
+
+Codex signs in with your ChatGPT account on its own, with `codex login`. Cua never reads or copies that sign-in. See [Connect your agent to Cua Spaces](/spaces/guides/connect-your-agent) and [Give your agent Spaces](/cua-cli/guides/mcp-server).
+
+## Run Codex in a Space
+
+[Coding agents in a Space](/spaces/guides/coding-agents-in-a-space) covers starting Codex inside a Space so it works on a computer you can watch.

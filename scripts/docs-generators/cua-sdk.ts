@@ -803,6 +803,9 @@ export const MAX_BYTES = 60_000;
 export const MAX_FENCES = 150;
 export const MAX_TABS = 30;
 
+/** Concept pages listed at the end of the reference sidebar; they live outside the generated folder, so the index page does not list them. */
+const TELEMETRY_CONCEPTS = ['../concepts/telemetry', '../concepts/telemetry-events', '../concepts/telemetry-counting', '../concepts/telemetry-error-kinds'];
+
 /** Groups of the reference sidebar; folders other generators own are listed by name. */
 const NAV: Array<[label: string, pages: string[]]> = [
   ['Sandboxes', ['cua', 'sandbox', 'image', 'os-image-catalog', 'image-software', 'services', 'runtime-support']],
@@ -2030,6 +2033,7 @@ function navFiles(pages: PageSpec[], outputDir: string): Map<string, string> {
   // `index` is left out: each folder's index is the folder's own link, not a child.
   const root: string[] = [];
   for (const [label, slugs] of navGroups(pages)) root.push(`---${label}---`, ...slugs);
+  root.push('---Telemetry---', ...TELEMETRY_CONCEPTS);
   files.set(path.join(outputDir, 'meta.json'), metaJson('Reference', root));
   for (const folder of pageFolders(pages)) {
     const home = pages.find((p) => p.slug === folder);

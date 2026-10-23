@@ -25,7 +25,7 @@
     "concepts/sandbox-lifecycle": "cua-sdk/guides/lifecycle",
     "concepts/sdk-mcp-and-hosting": "cua-driver/concepts/how-cua-driver-works",
     "concepts/the-no-foreground-contract": "cua-driver/concepts/how-cua-driver-works",
-    "concepts/what-is-computer-use": "cua-driver/concepts/how-cua-driver-works",
+    "concepts/what-is-computer-use": "cua-driver/what-is-computer-use",
     "concepts/what-is-cua-bench": "cua-bench",
     "cua-bench/benchmarks": "cua-bench/guides/benchmarks",
     "cua-bench/benchmarks/cua-bench-basic": "cua-bench/guides/benchmarks",
@@ -64,7 +64,7 @@
     "cua-driver/concepts/sdk-reference": "cua-driver/guides/use-the-sdk",
     "cua-driver/concepts/telemetry": "cua-driver/guides/operate",
     "cua-driver/concepts/the-no-foreground-contract": "cua-driver/concepts/how-cua-driver-works",
-    "cua-driver/concepts/what-is-computer-use": "cua-driver/concepts/how-cua-driver-works",
+    "cua-driver/concepts/what-is-computer-use": "cua-driver/what-is-computer-use",
     "cua-driver/guides/drive-a-web-page": "cua-driver/guides/browsers",
     "cua-driver/guides/expose-mcp-from-desktop-app": "cua-driver/guides/use-the-sdk",
     "cua-driver/guides/install": "cua-driver/quickstart",
@@ -452,7 +452,6 @@
     "start-here/run-in-github-actions": "cua-sdk/guides/test-in-ci",
     "start-here/create-a-local-macos-sandbox": "cua-cli/quickstart#macos-sandbox",
     "start-here/your-first-cua-bench-task": "cua-bench/quickstart#create-your-own-task",
-    "cua-driver/guides/gemini": "cua-driver/guides/connect-your-agent#gemini",
     "cua-driver/guides/trajectories": "cua-driver/guides/operate#record-a-trajectory",
     "cua-driver/guides/test-in-a-sandbox": "cua-driver/guides/vms-and-remote#test-a-driver-build-in-a-sandbox",
     "cua-driver/guides/cursor-motion": "cua-driver/guides/recipes#design-a-cursor-motion",
@@ -636,6 +635,10 @@
     "spaces/reference/sharing": "spaces/reference/spaces#sharing",
     "spaces/reference/streams-and-display": "spaces/reference/spaces#streams-and-display",
     "spaces/reference/teleport": "spaces/reference/agents#session-teleport",
-    "spaces/reference/volume": "spaces/reference/agents#cua-volume"
+    "spaces/reference/volume": "spaces/reference/agents#cua-volume",
+    "explanation/the-no-foreground-contract": "cua-driver/concepts/how-cua-driver-works",
+    "how-to-guides/sandbox/create-pool-with-typescript": "cua-sdk/guides/cua-cloud-ended",
+    "use-cua-with/grok-bot": "cua-driver/guides/connect-your-agent",
+    "agents": "cua-driver/guides/connect-your-agent"
   }
 }

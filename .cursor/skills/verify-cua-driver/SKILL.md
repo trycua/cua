@@ -18,9 +18,9 @@ sudo apt-get install -y --no-install-recommends \
   libgtk-3-dev clang pkg-config libdbus-1-dev libpipewire-0.3-dev \
   libspa-0.2-dev libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev \
   libwebkit2gtk-4.1-dev libssl-dev libxdo-dev \
-  libayatana-appindicator3-dev librsvg2-dev ffmpeg gnome-keyring jq x11-utils
+  libayatana-appindicator3-dev librsvg2-dev ffmpeg jq x11-utils
 
-timeout 1260 .cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11
+CUA_E2E_RETRY_ONCE=0 .cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11
 ```
 
 The helper prints an absolute `Evidence:` directory under `artifacts/cua-driver/verify/run-XXXXXXXX`. Each invocation creates a new directory; never reuse an older canonical artifact directory. The canonical runner builds the release driver once and stages only Electron using `tests/fixtures/build/linux.sh --only electron`. Reuse that build with:
@@ -83,7 +83,7 @@ The runner uses `cua-e2e-report --require-video` and ffprobe validation. A passi
 
 Testkit's child reaper owns daemon/fixture groups; the sentinel owns its own group. Scope exit reaps them. The X11 wrapper traps exit and kills/waits only the openbox and picom PIDs it captured with `$!`; xvfb-run and dbus-run-session own their sessions. The Wayland wrapper owns its compositor and bus PIDs. Never use process-name matching or kill another desktop.
 
-After session teardown, the helper checks `kill -0` against recorded daemon PIDs and discovered `CuaTestHarness` window PIDs, without killing them, then confirms `launch.log` is still readable. Any surviving PID is a failed cleanup check, not permission to kill by name. Do not delete the evidence directory. A timeout or crash may leave incomplete evidence; inspect the launch log and recorded PIDs before retrying.
+After session teardown, the helper invokes `scripts/check-evidence.sh` on the printed directory, even if the desktop command failed. The checker requires complete current-attempt evidence and checks `kill -0` against recorded daemon PIDs and discovered `CuaTestHarness` window PIDs, without killing them. Malformed extraction, zero recorded PIDs or any surviving PID fails verification, not permission to kill by name. Do not delete the evidence directory. A timeout or crash may leave incomplete evidence; inspect the launch log and recorded PIDs before retrying.
 
 ## Helpers
 
@@ -103,6 +103,6 @@ macOS needs the installed TCC-authorized daemon (`libs/cua-driver/scripts/instal
 
 ## Execution status and maintenance
 
-Linux X11 end-to-end verification remains blocked by fixture dependency availability. See [the execution outcome and stand-ins](execution.md). Claim proof only after both click cells deliver and all required evidence survives cleanup; setup logs alone do not prove delivery or owned-process teardown.
+Linux X11 CI proof is pending in `.github/workflows/e2e-rust-linux.yml`, job `verify-skill`. It runs on relevant skill/driver pull requests or `workflow_dispatch` with `lane=verify`, with retries disabled and a 25-minute job bound. The helper owns Electron staging and desktop setup; `check-evidence.sh` gates success after cleanup. The `verify-cua-driver-evidence` artifact retains the printed evidence directory even on failure. No successful CI run is claimed. See [execution instructions, historical attempts and remaining stand-ins](execution.md), including the same command for a networked local host. Claim proof only after both click cells deliver and all required evidence survives cleanup; setup logs alone do not prove delivery or owned-process teardown.
 
 Use `/maintain-verification-skill` when tools, fixture markers, CI lanes or supported input routes change.

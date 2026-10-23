@@ -38,19 +38,7 @@ else
 fi 2>&1 | tee "$CUA_E2E_ARTIFACT_DIR/launch.log"
 status=${PIPESTATUS[0]}
 set -e
-mapfile -t owned < <(
-  find "$CUA_E2E_ARTIFACT_DIR" -name trajectory.json -exec jq -r '.daemon_pid // empty' {} +
-  find "$CUA_E2E_ARTIFACT_DIR" -name tool-calls.jsonl -exec jq -r '
-    select(.request.params.name == "list_windows") |
-    .response.result.structuredContent.windows[]? |
-    select(.title | startswith("CuaTestHarness")) | .pid' {} +
-)
-for pid in "${owned[@]}"; do
-  if kill -0 "$pid" 2>/dev/null; then
-    echo "Owned PID still exists after cleanup: $pid" >&2
-    status=1
-  fi
-done
+"$ROOT/.cursor/skills/verify-cua-driver/scripts/check-evidence.sh" "$CUA_E2E_ARTIFACT_DIR" || { [[ "$status" != 0 ]] || status=1; }
 test -r "$CUA_E2E_ARTIFACT_DIR/launch.log"
 echo "Evidence retained after cleanup: $CUA_E2E_ARTIFACT_DIR"
 exit "$status"

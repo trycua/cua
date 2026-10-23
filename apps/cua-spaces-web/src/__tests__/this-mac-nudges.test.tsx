@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import type { HostAccess } from "@/bridge/contracts/host";
-import { localDay, resetNudgeMemory } from "@/bridge/nudges";
+import { localDay, resetNudgeMemory, resetSignInNudge } from "@/bridge/nudges";
 import type { RiskyRequest } from "@/bridge/ops/nudges";
 import { mountApp, stubBrowserApis, type TestHost } from "./app-harness";
 
@@ -19,6 +19,7 @@ afterEach(() => {
   cleanup();
   localStorage.clear();
   resetNudgeMemory("This Mac");
+  resetSignInNudge();
 });
 stubBrowserApis();
 
@@ -139,5 +140,53 @@ describe.skipIf(!wasmBuilt)("This Mac prompts (real routes, wasm core)", () => {
     fireEvent.click(next.querySelector("[data-nudge-primary]")!);
     expect(calls.answers[1]).toEqual({ id: "risky-4242-2", choice: "separate" });
     await waitFor(() => expect(calls.creates.length).toBe(1), { timeout: 4_000 });
+  });
+
+  it("signed out with a Space ready: asks once to sign in; Sign in starts the browser sign-in (CUA-2062)", async () => {
+    const signIns: unknown[] = [];
+    const tracked: string[] = [];
+    const signedOut = (): TestHost => ({
+      failsCreates: false,
+      listsGhost: false,
+      answer: (op, out) => {
+        if (op !== "session.get") return out;
+        const o = out as { fleet: Record<string, unknown> };
+        return { ...o, fleet: { ...o.fleet, configured: false, authMode: "none", identity: undefined, namespaces: [] } };
+      },
+      intercept: (op, args) => {
+        if (op === "session.signIn") {
+          signIns.push(args);
+          return { method: "browser", verificationUri: "https://cua.ai/signin" };
+        }
+        if (op === "telemetry.track") {
+          for (const s of (args as { signals: { type: string; step?: string }[] }).signals) if (s.type === "step" && s.step?.startsWith("signin_prompt")) tracked.push(s.step);
+          return null;
+        }
+        return undefined;
+      },
+    });
+    const first = await mountApp("/spaces", signedOut());
+    await first.router.load();
+    const el = await card("sign-in");
+    expect(el.textContent).toContain("Sign in to share this Space with your team.");
+    expect(el.querySelector("[data-nudge-secondary]")?.textContent).toBe("Not now");
+    fireEvent.click(el.querySelector("[data-nudge-primary]")!);
+    expect(document.querySelector("[data-nudge=sign-in]")).toBeNull();
+    await waitFor(() => expect(signIns.length).toBe(1));
+    await waitFor(() => expect(tracked).toEqual(["signin_prompt_shown", "signin_prompt_accepted"]));
+    cleanup();
+    // Once per computer.
+    const again = await mountApp("/spaces", signedOut());
+    await again.router.load();
+    await settle();
+    expect(document.querySelector("[data-nudge=sign-in]")).toBeNull();
+  });
+
+  it("no sign-in prompt when signed in", async () => {
+    const calls: Calls = { creates: [], answers: [] };
+    const { router } = await mountApp("/spaces", host(calls));
+    await router.load();
+    await settle();
+    expect(document.querySelector("[data-nudge=sign-in]")).toBeNull();
   });
 });

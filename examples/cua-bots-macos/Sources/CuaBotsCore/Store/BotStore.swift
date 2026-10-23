@@ -375,7 +375,6 @@ public final class BotStore: ObservableObject {
             cursors[id] = cursor
             pollFailures[id] = 0
             for u in updates { handle(id, u) }
-            save()
         } catch {
             // A poll that fails once is not news; the next one retries.
             pollFailures[id, default: 0] += 1
@@ -404,12 +403,15 @@ public final class BotStore: ObservableObject {
             if !t.isEmpty { self.update(id) { $0.status = String(t.prefix(40)); $0.mood = .working } }
         case .turnEnded(let turn):
             busy.remove(id)
-            guard !failedTurns.contains(id) else { turnText[id] = nil; return }
-            let text = turnText[id].flatMap { $0.turn == turn ? $0.text : nil } ?? turnText[id]?.text ?? ""
-            turnText[id] = nil
-            finishTurn(id, text)
-            if let b = bot(id), let engine {
-                Task { try? await engine.checkpoint(b, volume: self.volume) }
+            if failedTurns.contains(id) {
+                turnText[id] = nil
+            } else {
+                let text = turnText[id].flatMap { $0.turn == turn ? $0.text : nil } ?? turnText[id]?.text ?? ""
+                turnText[id] = nil
+                finishTurn(id, text)
+                if let b = bot(id), let engine {
+                    Task { try? await engine.checkpoint(b, volume: self.volume) }
+                }
             }
         case .failed(let reason):
             fail(id, reason)

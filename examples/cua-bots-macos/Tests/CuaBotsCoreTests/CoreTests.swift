@@ -290,6 +290,19 @@ struct StoreTests {
         #expect(engine.polledCursors.last == 1)
     }
 
+    @Test func testIdlePollDoesNotRewriteState() async throws {
+        let engine = ScriptedEngine()
+        let store = makeStore(engine)
+        let bot = await store.createBot(name: "Ada", avatar: .default(for: "Ada"), harness: .hermes, placement: .local)
+        await store.pollOnce(bot.id)
+        let state = root.appendingPathComponent("data/state.json")
+        let timestamp = Date(timeIntervalSince1970: 1_000)
+        try FileManager.default.setAttributes([.modificationDate: timestamp], ofItemAtPath: state.path)
+        await store.pollOnce(bot.id)
+        let attributes = try FileManager.default.attributesOfItem(atPath: state.path)
+        #expect(attributes[.modificationDate] as? Date == timestamp)
+    }
+
     @Test func testRepeatedPollFailureStopsThinking() async {
         let engine = ScriptedEngine()
         let store = makeStore(engine)

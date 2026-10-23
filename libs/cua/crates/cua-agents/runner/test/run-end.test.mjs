@@ -64,12 +64,12 @@ async function failureRun(t, { request = "return new Promise(() => {});", config
 }
 
 for (const [name, options, expected] of [
-  ["missing executable", {config: {agent: {command: "/missing/cua-agent"}}}, /\/missing\/cua-agent.*ENOENT[\s\S]*PATH/],
-  ["missing interpreter with restricted PATH", {config: {agent: {command: "/usr/bin/env", args: ["cua-missing-interpreter"]}, env: {PATH: "/empty"}}}, /cua-missing-interpreter[\s\S]*PATH.*\/empty/],
+  ["missing executable", {config: {agent: {command: "/missing/cua-agent"}}}, /ENOENT.*spawn: \/missing\/cua-agent[\s\S]*PATH/],
+  ["missing interpreter with restricted PATH", {config: {agent: {command: "/usr/bin/env", args: ["cua-missing-interpreter"]}, env: {PATH: "/empty"}}}, /cua-missing-interpreter/],
   ["adapter installation failure", {agent: "console.error('agent not installed'); process.exit(1)", log: "old launch\n"}, /agent not installed/],
-  ["initialize timeout", {config: {startupTimeoutMs: 100}}, /initialize.*timed out/],
-  ["session timeout", {request: "if (method === 'initialize') return {}; return new Promise(() => {});", config: {startupTimeoutMs: 100}}, /session.*timed out/],
-  ["authentication timeout", {request: "if (method === 'initialize') return {authMethods: [{id: 'login'}]}; return new Promise(() => {});", config: {authMethod: "login", startupTimeoutMs: 100}}, /authenticate.*timed out/],
+  ["initialize timeout", {config: {startupTimeoutMs: 100}}, /timed out.*initialize/],
+  ["session timeout", {request: "if (method === 'initialize') return {}; return new Promise(() => {});", config: {startupTimeoutMs: 100}}, /timed out.*session/],
+  ["authentication timeout", {request: "if (method === 'initialize') return {authMethods: [{id: 'login'}]}; return new Promise(() => {});", config: {authMethod: "login", startupTimeoutMs: 100}}, /timed out.*authenticate/],
   ["ACP structured error", {request: "while (!(await import('node:fs')).readFileSync(process.argv[2] + '/agent.log', 'utf8').includes('current launch')) await new Promise(r => setTimeout(r, 10)); throw Object.assign(new Error('internal error secret-12345678'), {code: -32603, data: {cause: 'adapter unavailable'}});", agent: "console.error('discarded prefix' + 'x'.repeat(10000) + 'current launch'); setInterval(() => {}, 1000)", config: {startupTimeoutMs: 1000}, log: "old launch\n"}, /-32603[\s\S]*adapter unavailable[\s\S]*current launch/],
   ["authentication required", {request: "if (method === 'initialize') return {agentCapabilities: {mcpCapabilities: {http: true}}}; throw Object.assign(new Error('Authentication required'), {code: -32000});", config: {authHint: "Run ~/.cua/bin/claude inside this bot's Space", mcpServers: [{type: "http", name: "test", url: "http://localhost"}]}}, /Authentication required[\s\S]*~\/\.cua\/bin\/claude.*Space/],
 ]) {
@@ -84,9 +84,29 @@ for (const [name, options, expected] of [
     assert.equal(errors[0].message.includes("old launch"), false);
     assert.equal(errors[0].message.includes("discarded prefix"), false);
     assert.ok(errors[0].message.length < 6000);
+    assert.equal(errors[0].message.includes("PATH="), name === "missing executable");
     if (name === "authentication required") assert.equal(events.some(e => e.type === "notice"), false);
   });
 }
+
+test("prompt errors retain the provider reason without launch diagnostics", {timeout: 6000}, async (t) => {
+  const {events} = await failureRun(t, {
+    config: {prompt: "hello", idleExitSecs: 0.01},
+    request: `if (method === 'initialize') return {};
+      if (method === 'new') return {sessionId: 's'};
+      while (!(await import('node:fs')).readFileSync(process.argv[2] + '/agent.log', 'utf8').includes('earlier turn stderr')) await new Promise(r => setTimeout(r, 10));
+      throw Object.assign(new Error('Provider quota exceeded'), {code: -32001, data: {retryAfter: 60}});`,
+    agent: "console.error('earlier turn stderr'); setInterval(() => {}, 1000)",
+  });
+  const errors = events.filter(e => e.type === "error");
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0].message, "Provider quota exceeded");
+  assert.equal(errors[0].code, -32001);
+  assert.deepEqual(errors[0].data, {retryAfter: 60});
+  assert.equal(errors[0].message.includes("PATH="), false);
+  assert.equal(errors[0].message.includes("earlier turn stderr"), false);
+  assert.equal(events.filter(e => e.type === "turn_ended").length, 1);
+});
 
 test("transport exit ends a pending prompt exactly once", {timeout: 6000}, async (t) => {
   const {events, state} = await failureRun(t, {config: {prompt: "hello"}, request: "if (method === 'initialize') return {}; if (method === 'new') return {sessionId: 's'}; return new Promise(() => {});", agent: "setTimeout(() => process.exit(1), 300)"});

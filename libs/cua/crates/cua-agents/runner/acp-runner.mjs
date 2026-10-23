@@ -177,12 +177,14 @@ function diagnostic(error, phase) {
   } finally {
     fs.closeSync(fd);
   }
-  return redact(`${phase}: ${cfg.agent.command}: ${error?.message ?? error}`
+  return redact(`${error?.message ?? error}`
     + (error?.code != null ? ` (code ${error.code})` : "")
     + (error?.data != null ? ` ${JSON.stringify(error.data)}` : "")
+    + ` (${phase}: ${cfg.agent.command})`
     + (error?.code === -32000 && cfg.authHint ? `\n${cfg.authHint}` : "")
     + (tail.length ? `\n${tail.toString("utf8").trim()}` : "")
-    + `\nPATH=${env.PATH ?? ""}\nAgent log: ${P("agent.log")}`);
+    + (phase === "spawn" ? `\nPATH=${env.PATH ?? ""}` : "")
+    + `\nAgent log: ${P("agent.log")}`);
 }
 // Resolve ~/.cua/bin links: some agents (Antigravity's .par) find their
 // sibling files relative to argv[0].
@@ -450,7 +452,7 @@ await client
       } catch (e) {
         if (exiting) return;
         flush();
-        emit("error", { message: diagnostic(e, "prompt"), data: e?.data ?? null });
+        emit("error", { message: e?.message ?? String(e), code: e?.code ?? null, data: e?.data ?? null });
         endTurn("error");
         return;
       }

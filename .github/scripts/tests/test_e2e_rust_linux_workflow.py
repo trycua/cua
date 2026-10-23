@@ -285,6 +285,11 @@ class VerifySkillTests(unittest.TestCase):
                     )
                     if scenario in ("complete", "null-window-title"):
                         self.assertEqual(result.returncode, 0, result.stderr)
+                        if scenario == "complete":
+                            self.assertIn(
+                                "Evidence complete; owned PIDs checked after cleanup:", result.stdout
+                            )
+                            self.assertIn(str(dead.pid), result.stdout)
                     else:
                         self.assertNotEqual(result.returncode, 0, scenario)
                         self.assertTrue(result.stderr.strip(), scenario)

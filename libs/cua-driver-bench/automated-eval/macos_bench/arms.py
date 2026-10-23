@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -124,8 +125,10 @@ def link_chatgpt_auth(codex_home: Path) -> None:
     source = (
         Path(os.environ.get("CDB_CODEX_AUTH_FILE") or "~/.codex/auth.json").expanduser().absolute()
     )
-    if not source.is_file():
-        raise FileNotFoundError("ChatGPT auth file is missing")
+    try:
+        source.lstat()
+    except OSError:
+        raise FileNotFoundError("ChatGPT auth file is missing") from None
     link = codex_home / "auth.json"
     if link.is_symlink() and link.readlink() == source:
         return
@@ -133,6 +136,19 @@ def link_chatgpt_auth(codex_home: Path) -> None:
         link.symlink_to(source)
     except OSError as error:
         raise type(error)("cannot provision shared ChatGPT authentication") from None
+
+
+def unlink_chatgpt_auth(codex_home: Path) -> None:
+    if codex_auth() == "gateway":
+        return
+    link = codex_home / "auth.json"
+    try:
+        mode = link.lstat().st_mode
+    except FileNotFoundError:
+        raise RuntimeError("shared ChatGPT credential symlink missing") from None
+    if not stat.S_ISLNK(mode):
+        raise RuntimeError("shared ChatGPT credential symlink replaced")
+    link.unlink()
 
 
 def provider_block(url: str = "http://127.0.0.1:4000/v1") -> str:
@@ -154,8 +170,11 @@ def provider_block(url: str = "http://127.0.0.1:4000/v1") -> str:
 def common_config(model: str, effort: str) -> str:
     return (
         f"model = {_q(model)}\n"
-        + ('model_provider = "litellm"\n' if codex_auth() == "gateway" else "")
-        + 'cli_auth_credentials_store = "file"\n'
+        + (
+            'model_provider = "litellm"\n'
+            if codex_auth() == "gateway"
+            else 'cli_auth_credentials_store = "file"\n'
+        )
         + f"model_reasoning_effort = {_q(effort)}\n"
         'approval_policy = "never"\n'
         'sandbox_mode = "workspace-write"\n'

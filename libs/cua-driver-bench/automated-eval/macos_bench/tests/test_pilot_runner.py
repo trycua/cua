@@ -172,6 +172,20 @@ class CodexEventsTest(unittest.TestCase):
 
 
 class ArmsTest(unittest.TestCase):
+    def test_gateway_common_config_matches_original_text(self) -> None:
+        with mock.patch.dict(os.environ, {"CDB_CODEX_AUTH": "gateway"}):
+            self.assertEqual(
+                arms.common_config("m", "high"),
+                """model = "m"
+model_provider = "litellm"
+model_reasoning_effort = "high"
+approval_policy = "never"
+sandbox_mode = "workspace-write"
+mcp_optional_startup_grace_ms = 30000
+
+""",
+            )
+
     def test_arm_homes_differ_only_in_tool_layer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -215,8 +229,9 @@ class ArmsTest(unittest.TestCase):
                     gateway = configs["gateway"]
                     self.assertEqual(gateway.pop("model_provider"), "litellm")
                     gateway.pop("model_providers")
+                    self.assertNotIn("cli_auth_credentials_store", gateway)
+                    self.assertEqual(configs["chatgpt"].pop("cli_auth_credentials_store"), "file")
                     self.assertEqual(gateway, configs["chatgpt"])
-                    self.assertEqual(gateway["cli_auth_credentials_store"], "file")
                     if arm == "codex-native-cu":
                         self.assertIn("notify", gateway)
                 with mock.patch.dict(
@@ -253,18 +268,34 @@ class ScheduleTest(unittest.TestCase):
             model="m", effort="high", idle_min=0, max_idle_wait_h=1, no_sentinel=True
         )
         task = argparse.Namespace(id="T", group="bench", tags=[], timeout_s=60)
-        for mode in ("gateway", "chatgpt"):
+        for mode, replaced in (("gateway", False), ("chatgpt", False), ("chatgpt", True)):
+
+            def fail_setup(compare, task, trial_dir, workspace):
+                home = trial_dir / "home/.codex"
+                home.mkdir(parents=True)
+                arms.link_chatgpt_auth(home)
+                if replaced:
+                    (home / "auth.json").unlink()
+                    (home / "auth.json").write_text("FAKE_TOKEN")
+                raise RuntimeError("unavailable fixture")
+
             with (
                 tempfile.TemporaryDirectory() as tmp,
-                mock.patch.dict(os.environ, {"CDB_CODEX_AUTH": mode}),
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "CDB_CODEX_AUTH": mode,
+                        "CDB_CODEX_AUTH_FILE": str(Path(tmp) / "shared-auth.json"),
+                    },
+                ),
                 mock.patch.object(run_pilot, "wait_for_idle", return_value=1000),
                 mock.patch.object(run_pilot, "Sentinel") as sentinel,
-                mock.patch.object(
-                    run_pilot, "prepare_bench", side_effect=RuntimeError("unavailable fixture")
-                ),
+                mock.patch.object(run_pilot, "prepare_bench", side_effect=fail_setup),
                 mock.patch.object(run_pilot, "sweep_processes"),
                 mock.patch.object(run_pilot.subprocess, "run") as command,
             ):
+                source = Path(tmp) / "shared-auth.json"
+                source.write_text("FAKE_TOKEN")
                 sentinel.return_value.enabled = False
                 sentinel.return_value.summary.return_value = {}
                 command.return_value.stdout = "version"
@@ -272,10 +303,14 @@ class ScheduleTest(unittest.TestCase):
                     args, None, task, "codex-native-cu", 1, 0, Path(tmp), None
                 )
                 manifest = run_pilot.environment_manifest(args)
-                self.assertEqual(row["codex_auth_path"], mode)
-                self.assertEqual(manifest["codex_auth_path"], mode)
+                self.assertEqual(row["codex_auth"], mode)
+                self.assertEqual(manifest["codex_auth"], mode)
                 saved = json.loads(next((Path(tmp) / "trials").glob("*/trial.json")).read_text())
-                self.assertEqual(saved["codex_auth_path"], mode)
+                self.assertEqual(saved["codex_auth"], mode)
+                if replaced:
+                    self.assertIn("symlink replaced", row["notes"])
+                for secret in (str(source), "FAKE_TOKEN", "http://127.0.0.1:4000/v1"):
+                    self.assertNotIn(secret, json.dumps([row, manifest, saved]))
 
     def test_schedule_is_deterministic_and_balanced(self) -> None:
         sys.path.insert(0, str(HERE.parent))

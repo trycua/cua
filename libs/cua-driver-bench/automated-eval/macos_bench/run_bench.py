@@ -956,6 +956,13 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         failure = {"kind": "harness_exception", "message": f"{type(error).__name__}: {error}"}
         note = failure["message"]
     finally:
+        codex_home = trial_dir / "codex-home" / ".codex"
+        if arm in cxn.ARMS and codex_home.is_dir():
+            try:
+                arms.unlink_chatgpt_auth(codex_home)
+            except RuntimeError as error:
+                failure = {"kind": "harness_exception", "message": str(error)}
+                note = str(error)
         try:
             sentinel.stop()
         except Exception:  # noqa: BLE001
@@ -992,7 +999,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
     if entry["arm"] in cxn.ARMS:
         cost, cost_source = (
             None,
-            "not priced (gpt-6-astra via the subscription gateway; tokens reported)",
+            "not priced (Codex subscription; tokens reported)",
         )
     elif cost is None:
         cost = estimate_cost(tokens)
@@ -1712,9 +1719,7 @@ def quota_probe(ctx: Ctx) -> tuple[bool, str]:
     )
 
 
-def native_codex_checks(
-    ctx: Ctx, arm: str, with_models: bool, offline: bool = False
-) -> list[tuple[str, str, str]]:
+def native_codex_checks(ctx: Ctx, arm: str, with_models: bool) -> list[tuple[str, str, str]]:
     """Check CLI pins and authentication; only gateway mode optionally makes a model call."""
     out: list[tuple[str, str, str]] = []
     observed = ctx.versions.get("codex_native") or cxn.observed()
@@ -1732,8 +1737,10 @@ def native_codex_checks(
         )
     chatgpt = arms.codex_auth() == "chatgpt"
     if chatgpt:
-        if offline:
+        if ctx.args.offline:
             return out
+        if "codex_auth_checks" in ctx.versions:
+            return out + ctx.versions["codex_auth_checks"]
     else:
         try:
             import urllib.request
@@ -1756,11 +1763,22 @@ def native_codex_checks(
     mcp_path, _server = ctx.mcp[arm]
     home = ctx.run_dir / f"preflight-{arm}-home"
     shutil.rmtree(home, ignore_errors=True)
-    env = cxn.render_home(
-        home, mcp_path, cxn.MODEL, cxn.EFFORT, ca.system_prompt_for(cxn.SOURCE_ARM[arm]), arm
-    )
+    checks: list[tuple[str, str, str]] = []
+    try:
+        env = cxn.render_home(
+            home, mcp_path, cxn.MODEL, cxn.EFFORT, ca.system_prompt_for(cxn.SOURCE_ARM[arm]), arm
+        )
+        if chatgpt:
+            checks.extend(cxn.chatgpt_checks(cxn.CODEX_CLI, env, cxn.MODEL))
+    finally:
+        if chatgpt:
+            try:
+                arms.unlink_chatgpt_auth(home / ".codex")
+            except RuntimeError as error:
+                checks.append(("codex shared auth symlink", "fail", str(error)))
     if chatgpt:
-        return out + cxn.chatgpt_checks(cxn.CODEX_CLI, env, cxn.MODEL)
+        ctx.versions["codex_auth_checks"] = checks
+        return out + checks
     cwd = ca.prepare_cwd(arm)
     stream = ctx.run_dir / f"preflight-init-{arm}.tsv"
     result = cxn.run_codex(
@@ -2070,7 +2088,7 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
             except Exception as error:  # noqa: BLE001
                 add(f"{native_arm} MCP server", "fail", f"{type(error).__name__}: {error}")
         for name, status, detail in native_codex_checks(
-            ctx, native_arm, with_models and not offline, offline=offline
+            ctx, native_arm, with_models and not offline
         ):
             add(name, status, detail)
     helper_sources = {

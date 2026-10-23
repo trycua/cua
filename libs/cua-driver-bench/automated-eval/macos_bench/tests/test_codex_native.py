@@ -5,7 +5,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
+import shutil
 import os
 import sys
 import tempfile
@@ -60,6 +62,7 @@ class HomeTest(unittest.TestCase):
             mcp = write_arm_b(root)
             for arm in cxn.ARMS:
                 configs = {}
+                texts = {}
                 for mode in ("gateway", "chatgpt"):
                     with mock.patch.dict(
                         os.environ, {"CDB_CODEX_AUTH": mode, "HOME": tmp}, clear=True
@@ -68,7 +71,8 @@ class HomeTest(unittest.TestCase):
                             root / f"{arm}-{mode}", mcp, cxn.MODEL, cxn.EFFORT, "SYSTEM", arm
                         )
                         home = Path(env["CODEX_HOME"])
-                        configs[mode] = tomllib.loads((home / "config.toml").read_text())
+                        texts[mode] = (home / "config.toml").read_text()
+                        configs[mode] = tomllib.loads(texts[mode])
                         link = home / "auth.json"
                         self.assertEqual(link.is_symlink(), mode == "chatgpt")
                         if mode == "chatgpt":
@@ -83,11 +87,18 @@ class HomeTest(unittest.TestCase):
                             with self.assertRaises(FileExistsError) as conflict:
                                 arms.link_chatgpt_auth(home)
                             self.assertNotIn(str(source), str(conflict.exception))
+                expected = texts["gateway"].replace(
+                    'model_provider = "litellm"', 'cli_auth_credentials_store = "file"'
+                )
+                start = expected.index("[model_providers.litellm]")
+                end = expected.index("\n\n", start)
+                self.assertEqual(texts["chatgpt"], expected[:start] + expected[end + 1 :])
                 gateway = configs["gateway"]
                 self.assertEqual(gateway.pop("model_provider"), "litellm")
                 self.assertIn("litellm", gateway.pop("model_providers"))
+                self.assertNotIn("cli_auth_credentials_store", gateway)
+                self.assertEqual(configs["chatgpt"].pop("cli_auth_credentials_store"), "file")
                 self.assertEqual(gateway, configs["chatgpt"])
-                self.assertEqual(gateway["cli_auth_credentials_store"], "file")
                 self.assertEqual(gateway["model"], "gpt-6.1-sol")
                 self.assertEqual(gateway["model_reasoning_effort"], "low")
             with mock.patch.dict(
@@ -105,12 +116,138 @@ class HomeTest(unittest.TestCase):
     def test_auth_identity_does_not_record_gateway_in_chatgpt_mode(self) -> None:
         with mock.patch.dict(os.environ, {"CDB_CODEX_AUTH": "chatgpt"}):
             identity = cxn.observed(Path("/nonexistent"))
-        self.assertEqual(identity["auth_path"], "chatgpt")
+        self.assertEqual(identity["codex_auth"], "chatgpt")
         self.assertNotIn("gateway", identity)
         with mock.patch.dict(os.environ, {"CDB_CODEX_AUTH": "gateway"}):
             identity = cxn.observed(Path("/nonexistent"))
-        self.assertEqual(identity["auth_path"], "gateway")
+        self.assertEqual(identity["codex_auth"], "gateway")
         self.assertEqual(identity["gateway"], cxn.gateway())
+
+    def test_credentials_are_never_read_copied_or_stat_followed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "shared-auth.json"
+            source.write_text("FAKE_REFRESH_TOKEN")
+            mcp = write_arm_b(root)
+            skill = root / "skill"
+            skill.mkdir()
+            (skill / "SKILL.md").write_text("skill")
+
+            def protect(function):
+                def guarded(path, *args, **kwargs):
+                    if Path(path) == source and kwargs.get("follow_symlinks", True):
+                        raise AssertionError("credential content accessed")
+                    return function(path, *args, **kwargs)
+
+                return guarded
+
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(
+                    mock.patch.dict(
+                        os.environ,
+                        {
+                            "CDB_CODEX_AUTH": "chatgpt",
+                            "CDB_CODEX_AUTH_FILE": str(source),
+                            "LITELLM_MASTER_KEY": "FAKE_GATEWAY_KEY",
+                            "CDB_PILOT_PASS_GATEWAY_KEY": "1",
+                        },
+                    )
+                )
+                stack.enter_context(mock.patch.object(arms, "CUA_DRIVER_SKILL", skill))
+                for owner, name in (
+                    (__import__("builtins"), "open"),
+                    (Path, "read_text"),
+                    (Path, "read_bytes"),
+                    (Path, "stat"),
+                    (os, "open"),
+                    *(
+                        (shutil, name)
+                        for name in (
+                            "copy",
+                            "copy2",
+                            "copyfile",
+                            "copytree",
+                            "copymode",
+                            "copystat",
+                        )
+                    ),
+                ):
+                    stack.enter_context(
+                        mock.patch.object(owner, name, protect(getattr(owner, name)))
+                    )
+                for env in (
+                    cxn.render_home(root / "native", mcp, cxn.MODEL, cxn.EFFORT, "SYSTEM"),
+                    arms.render_home("codex-cua-driver", root / "fallback", "m", "high"),
+                ):
+                    self.assertNotIn("LITELLM_MASTER_KEY", env)
+                    self.assertEqual((Path(env["CODEX_HOME"]) / "auth.json").readlink(), source)
+                identity = json.dumps(cxn.observed(Path("/nonexistent")))
+                for secret in (
+                    str(source),
+                    "FAKE_REFRESH_TOKEN",
+                    "FAKE_GATEWAY_KEY",
+                    cxn.gateway(),
+                ):
+                    self.assertNotIn(secret, identity)
+
+    def test_gateway_config_matches_original_text(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {"CDB_CODEX_AUTH": "gateway", "CDB_CODEX_GATEWAY": "http://127.0.0.1:4000/v1"},
+        ):
+            text = cxn.config_toml(
+                {"command": "node", "args": [], "env": {}},
+                "gpt-6.1-sol",
+                "low",
+                "SYSTEM",
+                Path("/trial"),
+            )
+        self.assertEqual(
+            text,
+            """model = "gpt-6.1-sol"
+model_provider = "litellm"
+model_reasoning_effort = "low"
+approval_policy = "on-request"
+sandbox_mode = "read-only"
+web_search = "disabled"
+mcp_optional_startup_grace_ms = 30000
+developer_instructions = "SYSTEM"
+
+[features]
+shell_tool = false
+unified_exec = false
+apps = false
+browser_use = false
+browser_use_external = false
+in_app_browser = false
+image_generation = false
+multi_agent = false
+multi_agent_v2 = false
+goals = false
+view_image = false
+plugins = false
+tool_suggest = false
+skill_search = false
+
+[model_providers.litellm]
+name = "LiteLLM"
+base_url = "http://127.0.0.1:4000/v1"
+wire_api = "responses"
+requires_openai_auth = false
+request_max_retries = 2
+stream_max_retries = 2
+stream_idle_timeout_ms = 120000
+
+[mcp_servers.cua_repl]
+command = "node"
+args = []
+startup_timeout_sec = 120
+default_tools_approval_mode = "approve"
+enabled_tools = ["js", "js_reset"]
+
+[mcp_servers.cua_repl.env]
+""",
+        )
 
     def test_invalid_auth_mode_is_rejected(self) -> None:
         with mock.patch.dict(os.environ, {"CDB_CODEX_AUTH": "invalid"}):
@@ -272,7 +409,7 @@ for line in sys.stdin:
         if not msg['params'].get('cursor'):
             result = {{'data': [], 'nextCursor': 'page2'}}
         else:
-            result = {{'data': [{{'id': 'other' if scenario == 'model' else 'gpt-6.1-sol'}}], 'nextCursor': None}}
+            result = {{'data': [{{'model': 'other' if scenario == 'model' else 'gpt-6.1-sol', 'id': 'catalog-id'}}], 'nextCursor': None}}
         if scenario == 'replace':
             link = Path({str(home / "auth.json")!r})
             link.unlink()

@@ -76,7 +76,7 @@ ENABLED_TOOLS = (
 CODEX_CLI = Path(
     "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"
 )
-# Amendment 23: GPT-6.1 Sol (`gpt-6.1-sol`, served through the gateway), at its catalog default effort
+# Amendment 23: GPT-6.1 Sol (`gpt-6.1-sol`), at its catalog default effort
 # (`low`), as the Claude arms use Claude's default. A20's smoke used gpt-6-astra (`medium`). The model and effort are
 # recorded in every row and named in the setup's label.
 MODEL_DEFAULT_EFFORT = {"gpt-6-astra": "medium", "gpt-6.1-sol": "low"}
@@ -172,8 +172,11 @@ def config_toml(
     )  # unchanged from arm B: Sky's service and pipe live under the user's own home
     lines = [
         f"model = {_q(model)}",
-        *(['model_provider = "litellm"'] if arms.codex_auth() == "gateway" else []),
-        'cli_auth_credentials_store = "file"',
+        (
+            'model_provider = "litellm"'
+            if arms.codex_auth() == "gateway"
+            else 'cli_auth_credentials_store = "file"'
+        ),
         f"model_reasoning_effort = {_q(effort)}",
         'approval_policy = "on-request"',  # elicitations reach the host only with on-request
         'sandbox_mode = "read-only"',
@@ -436,7 +439,7 @@ def chatgpt_checks(cli: Path, env: dict[str, str], model: str) -> list[tuple[str
             cursor = None
             while True:
                 page = request("model/list", {"cursor": cursor})
-                if any(item.get("id") == model for item in page["data"]):
+                if any(item.get("model") == model for item in page["data"]):
                     break
                 cursor = page.get("nextCursor")
                 if not cursor:
@@ -665,7 +668,7 @@ def observed(cli: Path = CODEX_CLI) -> dict[str, Any]:
         "codex_cli_sha256": sha,
         "model": MODEL,
         "effort": EFFORT,
-        "auth_path": arms.codex_auth(),
+        "codex_auth": arms.codex_auth(),
         **({"gateway": gateway()} if arms.codex_auth() == "gateway" else {}),
         "host": "codex app-server",
     }

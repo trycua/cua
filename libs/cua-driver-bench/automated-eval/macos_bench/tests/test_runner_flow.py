@@ -8,6 +8,7 @@ finalize. No GUI, no model."""
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 import tempfile
@@ -50,6 +51,7 @@ def make_ctx(tmp: str, **overrides: object) -> rb.Ctx:
         phase2_runs=0,
         schedule_seed=1,
         build_dir=None,
+        offline=False,
     )
     for key, value in overrides.items():
         setattr(args, key, value)
@@ -105,15 +107,113 @@ class CodexAuthPreflightTest(unittest.TestCase):
                 checks = rb.native_codex_checks(ctx, arm, with_models=True)
                 self.assertIn(("metadata", "pass", "ok"), checks)
                 env = probe.call_args.args[1]
-                self.assertTrue((Path(env["CODEX_HOME"]) / "auth.json").is_symlink())
+                self.assertFalse((Path(env["CODEX_HOME"]) / "auth.json").is_symlink())
                 probe.reset_mock()
+                rb.native_codex_checks(ctx, "cx-cua-driver", with_models=False)
+                probe.assert_not_called()
+                ctx.versions.pop("codex_auth_checks")
                 rb.native_codex_checks(ctx, arm, with_models=False)
                 probe.assert_called_once()
                 probe.reset_mock()
-                rb.native_codex_checks(ctx, arm, with_models=False, offline=True)
+                ctx.args.offline = True
+                rb.native_codex_checks(ctx, arm, with_models=False)
                 probe.assert_not_called()
                 gateway.assert_not_called()
                 model.assert_not_called()
+                ctx.args.offline = False
+                ctx.versions.pop("codex_auth_checks")
+
+                def replace_credentials(cli, env, model):
+                    link = Path(env["CODEX_HOME"]) / "auth.json"
+                    link.unlink()
+                    link.write_text("FAKE_TOKEN")
+                    return [("metadata", "pass", "ok")]
+
+                probe.side_effect = replace_credentials
+                checks = rb.native_codex_checks(ctx, arm, with_models=False)
+                self.assertTrue(any(status == "fail" for _, status, _ in checks))
+                for secret in (str(source), "FAKE_TOKEN", rb.cxn.gateway()):
+                    self.assertNotIn(secret, json.dumps(checks))
+
+    def test_native_trial_removes_auth_link_and_flags_replacement(self) -> None:
+        for replaced in (False, True):
+            with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
+                ctx = make_ctx(
+                    tmp,
+                    timeout_s=60,
+                    max_turns=3,
+                    effort="low",
+                    idle_min=0,
+                    no_sentinel=True,
+                    build_dir=tmp,
+                    check_occlusion=False,
+                    tell_budget=False,
+                )
+                ctx.tasks["MB-01"] = argparse.Namespace(id="MB-01", tags=[], timeout_s=60)
+                arm = "cx-codex-cu"
+                entry = {**ENTRY, "arm": arm}
+                source = Path(tmp) / "shared-auth.json"
+                source.write_text("FAKE_TOKEN")
+                mcp = Path(tmp) / "mcp.json"
+                mcp.write_text(
+                    json.dumps(
+                        {
+                            "mcpServers": {
+                                "sky": {
+                                    "command": "node",
+                                    "env": {"CUA_REPL_ENABLED_SURFACES": "computer"},
+                                }
+                            }
+                        }
+                    )
+                )
+                ctx.mcp[arm] = (mcp, "cua_repl")
+                stack.enter_context(
+                    mock.patch.dict(
+                        "os.environ",
+                        {"CDB_CODEX_AUTH": "chatgpt", "CDB_CODEX_AUTH_FILE": str(source)},
+                    )
+                )
+                ctx.versions["codex_native"] = rb.cxn.observed(Path("/nonexistent"))
+                for owner, name, result in (
+                    (rb, "task_spec", {}),
+                    (rb, "kill_bench_apps", None),
+                    (rb, "reset_needs_apps", None),
+                    (rb.subprocess, "run", None),
+                    (rb.pilot, "hid_idle_seconds", 1000),
+                    (rb.pilot, "sweep_processes", 0),
+                    (rb.pilot, "prepare_probe", ("BRIEF", {})),
+                    (rb.pilot, "launch_lab", None),
+                    (rb.ca, "prepare_cwd", Path(tmp)),
+                    (rb, "apps_running", {}),
+                    (rb, "evaluate_probe", {"passed": True}),
+                    (rb, "FrontWatcher", None),
+                ):
+                    stack.enter_context(mock.patch.object(owner, name, return_value=result))
+                sentinel = stack.enter_context(mock.patch.object(rb.pilot, "Sentinel"))
+                sentinel.return_value.enabled = False
+                sentinel.return_value.summary.return_value = {}
+                stack.enter_context(mock.patch.object(rb.pilot, "IdleSampler"))
+
+                def run_codex(cmd, env, *args, **kwargs):
+                    link = Path(env["CODEX_HOME"]) / "auth.json"
+                    self.assertTrue(link.is_symlink())
+                    if replaced:
+                        link.unlink()
+                        link.write_text("FAKE_TOKEN")
+                    return {"returncode": 0, "result_seen": True, "wall_s": 0}
+
+                stack.enter_context(mock.patch.object(rb.cxn, "run_codex", side_effect=run_codex))
+                row = rb.run_attempt(ctx, entry, 1)
+                self.assertEqual(row["infra_failure"] == "harness_exception", replaced)
+                if replaced:
+                    self.assertIn("symlink replaced", row["infra_message"])
+                link = ctx.run_dir / "trials" / entry["trial_id"] / "a1/codex-home/.codex/auth.json"
+                self.assertFalse(link.is_symlink())
+                self.assertEqual(row["codex_native"]["codex_auth"], "chatgpt")
+                saved = link.parents[2] / "trial.json"
+                for secret in (str(source), "FAKE_TOKEN", rb.cxn.gateway()):
+                    self.assertNotIn(secret, saved.read_text())
 
     def test_gateway_retains_model_listing_even_offline(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -125,7 +225,8 @@ class CodexAuthPreflightTest(unittest.TestCase):
                 fetch.return_value.__enter__.return_value.read.return_value = json.dumps(
                     {"data": [{"id": rb.cxn.MODEL}]}
                 ).encode()
-                checks = rb.native_codex_checks(ctx, "cx-codex-cu", with_models=False, offline=True)
+                ctx.args.offline = True
+                checks = rb.native_codex_checks(ctx, "cx-codex-cu", with_models=False)
                 self.assertIn(
                     "gateway lists the model",
                     [label for label, status, _ in checks if status == "pass"],

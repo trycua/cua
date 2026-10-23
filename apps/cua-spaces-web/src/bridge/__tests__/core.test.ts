@@ -142,7 +142,7 @@ describe.skipIf(!wasmBuilt)("with the wasm core", () => {
       core,
       { values: DEFAULT_SETTINGS, defaultLocation: null, telemetry: null },
       {
-        fleet: { configured: true, authMode: "user", baseUrl: "", tokenUrl: "", identity: "ada@example.com" },
+        account: { configured: true, authMode: "user", identity: "ada@example.com" },
         onboarding: { completed: true },
         daemon: null,
       },
@@ -236,7 +236,7 @@ describe.skipIf(!wasmBuilt)("with the wasm core", () => {
       ["dev_lap", "Laptop", false, true],
     ]);
     expect(machines[1]).toMatchObject({ detail: "macOS · Enrolled", lastSeen: 1791044974 });
-    const env = wizardEnv(core, { options: null, clouds: null, defaultLocation: "local", cloudAvailable: false, machines });
+    const env = wizardEnv(core, { options: null, clouds: null, defaultLocation: "local", machines });
     expect(env.hosts?.map((h) => [h.id, h.online])).toEqual([["96fedb7e", true]]);
   });
 

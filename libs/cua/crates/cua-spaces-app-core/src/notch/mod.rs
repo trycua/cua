@@ -422,9 +422,8 @@ pub fn location(space: &Space, spaces: &[Space]) -> String {
     if space.id == THIS_MACHINE_ID {
         return "This Mac".into();
     }
-    match space.provider.unwrap_or(SpaceProvider::Cloud) {
+    match space.provider.unwrap_or(SpaceProvider::Direct) {
         SpaceProvider::Local => "This Mac".into(),
-        SpaceProvider::Cloud => crate::spaces::sidebar::location_text(space).into(),
         SpaceProvider::Direct => text(&space.host_name).unwrap_or_else(|| {
             space
                 .id
@@ -470,7 +469,6 @@ pub fn matches(space: &Space, query: &str) -> bool {
         space.status.label(),
         &format!("{:?}", space.status),
         space.detail.as_str(),
-        space.fleet_id.as_deref().unwrap_or_default(),
         crate::spaces::sidebar::location_text(space),
         space.host_name.as_deref().unwrap_or_default(),
     ]
@@ -1342,6 +1340,7 @@ mod tests {
         s.id = id.into();
         s.name = name.into();
         s.status = status;
+        s.provider = Some(crate::model::SpaceProvider::Local);
         s
     }
 
@@ -1399,7 +1398,7 @@ mod tests {
         assert_eq!(by("b").symbol, "os-windows");
         assert_eq!(by("c").symbol, "os-macos");
         assert_eq!(by("d").symbol, "os-linux", "no distro reported: Tux");
-        assert_eq!(by("b").label, "Lab PC, Windows, Cua Cloud, Suspended");
+        assert_eq!(by("b").label, "Lab PC, Windows, This Mac, Suspended");
         assert!(by("b").targeted && by("b").dim);
     }
 
@@ -1944,7 +1943,7 @@ mod tests {
             (t.progress, t.progress_label.as_deref()),
             (None, Some("Deleting\u{2026}"))
         );
-        assert_eq!(t.label, "Gone, Linux, Cua Cloud, Deleting\u{2026}");
+        assert_eq!(t.label, "Gone, Linux, This Mac, Deleting\u{2026}");
     }
 
     #[test]

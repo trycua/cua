@@ -462,7 +462,6 @@ public struct NewSpaceWizardView: View {
         case "runc": return .runc
         case "qemu": return .qemu
         case "lume": return .lume
-        case "kubevirt": return .kubevirt
         default: return .auto
         }
     }

@@ -7,7 +7,6 @@
 // data. Bounded where the app waits on it.
 import type { Native } from "../native/load";
 import type {
-  AppCloudPricing,
   AppCreateSpaceArgs,
   AppGpuChoice,
   AppSpaceAgentRun,
@@ -65,9 +64,9 @@ export interface SpacesBackend {
   linuxSource(): Promise<string | null>;
   setLinuxSource(value: string): Promise<void>;
   localStorage(): Promise<LocalStorage | null>;
-  cloudAvailable(): Promise<boolean>;
+  /** A Cua account is signed in (or client credentials are set). */
+  loggedIn(): Promise<boolean>;
   runningMacosVms(): Promise<number | null>;
-  cloudPricing(): Promise<AppCloudPricing | null>;
   usage(id: string): Promise<AppSpaceUsage | null>;
   /** The Space's coding-agent runs as rows (the core's mapping of the runs, attention first). */
   agentRuns(id: string): Promise<AppSpaceAgentRun[]>;
@@ -403,7 +402,7 @@ export class LiveSpacesBackend implements SpacesBackend {
     return bounded(PROBE_SECONDS, () => this.cua.local().storage());
   }
 
-  async cloudAvailable(): Promise<boolean> {
+  async loggedIn(): Promise<boolean> {
     return (await bounded(PROBE_SECONDS, () => this.cua.auth().status().loggedIn)) ?? false;
   }
 
@@ -416,14 +415,6 @@ export class LiveSpacesBackend implements SpacesBackend {
       return r.ok ? ((await r.json()) as unknown) : null;
     });
     return runningMacosVms(answer);
-  }
-
-  /**
-   * No estimate: the rates came from the Cua Cloud API, which has ended, and
-   * the app does not offer new cloud Spaces. New Space never waits on it.
-   */
-  async cloudPricing(): Promise<AppCloudPricing | null> {
-    return null;
   }
 
   async usage(id: string): Promise<AppSpaceUsage | null> {

@@ -127,7 +127,6 @@ struct ParityTests {
 
     func location(_ w: String) -> AppLocation {
         switch w {
-        case "cloud": .cloud
         case "yours": .yours
         case "host": .host
         default: .local
@@ -310,7 +309,6 @@ struct ParityTests {
     /// A flow's provider word (a create on another machine is `relay`).
     func provider(_ word: String) -> AppSpaceProvider {
         switch word {
-        case "cloud": return .cloud
         case "relay": return .relay
         case "direct": return .direct
         default: return .local
@@ -374,7 +372,6 @@ struct ParityTests {
                 "progress": d.progress.map { Int($0) as Any } ?? NSNull(), "canStream": d.canStream,
                 "progressText": opt(d.progressText),
                 "actions": d.actions.map { "\($0.label)\($0.enabled ? "" : " (off)")" },
-                "creditNotice": d.creditNotice.map { "\($0.text) [\($0.button) -> \($0.url)]" } as Any? ?? NSNull(),
             ]
             // Why turning it off or on failed, when it did.
             if let e = d.powerError { detail["powerError"] = e }
@@ -1857,7 +1854,7 @@ struct ParityTests {
 
     func os(_ w: String) -> AppSpaceOs { w == "macos" ? .macos : w == "windows" ? .windows : .linux }
     func runtime(_ w: String) -> AppRuntime {
-        [.auto, .gvisor, .runc, .qemu, .lume, .kubevirt].first { word($0) == w } ?? .auto
+        [.auto, .gvisor, .runc, .qemu, .lume].first { word($0) == w } ?? .auto
     }
     func move(_ w: String) -> AppTeleportMove {
         [.appOnly, .appWithFiles, .appWithState].first { word($0) == w }!
@@ -1865,7 +1862,13 @@ struct ParityTests {
     func runPhase(_ w: String) -> AppTeleportRunPhase {
         [.started, .progress, .finished, .failed, .done].first { word($0) == w }!
     }
-    func word(_ v: AppLocation) -> String { v == .cloud ? "cloud" : "local" }
+    func word(_ v: AppLocation) -> String {
+        switch v {
+        case .local: "local"
+        case .yours: "yours"
+        case .host: "host"
+        }
+    }
     func word(_ v: AppRuntime) -> String {
         switch v {
         case .auto: "auto"
@@ -1873,7 +1876,6 @@ struct ParityTests {
         case .runc: "runc"
         case .qemu: "qemu"
         case .lume: "lume"
-        case .kubevirt: "kubevirt"
         }
     }
     func word(_ v: AppWindowMode) -> String {
@@ -1881,7 +1883,7 @@ struct ParityTests {
         case .ambient: "ambient"
         case .ambientTeleport: "ambient-teleport"
         case .switcher: "switcher"
-        case .createFleet: "create-fleet"
+        case .createSpace: "create-space"
         }
     }
     func word(_ v: AppPickerStep) -> String { "\(v)" }
@@ -2360,7 +2362,7 @@ struct ParityTests {
         }
         for step in f["settings"] as! [[String: Any]] {
             let input = try appSettingsInputFromJson(json: text([
-                "signIn": ["kind": "idle"], "canSignOut": false, "menuBar": false, "defaultLocation": "local",
+                "signIn": ["kind": "idle"], "canSignOut": false, "menuBar": false,
                 "agentsBusy": false, "agentsPending": [], "loginItem": step["loginItem"] as Any,
             ] as [String: Any]))
             let general = appSettingsPage(input: input).sections.filter { $0.id == "general" }.flatMap(\.rows)

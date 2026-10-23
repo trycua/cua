@@ -43,8 +43,8 @@ openclaw mcp list
 - **Cua Spaces app running** for the host-side windows. It owns the loopback
   control server that draws picture-in-picture, viewer and streamed windows
   (`~/.cua/spaces-control.json`).
-- **Cua Cloud credentials** (`cua auth login`) for cloud Spaces. Local Spaces do
-  not need them.
+- **Your cloud account** (connected in the app) for Spaces on your own cloud.
+  Local Spaces do not need it.
 - **For local macOS Spaces, a golden VM** (see `scripts/golden/`).
 - **Unity licensing**: a Space that runs the Unity Editor consumes a seat from
   your account's per-machine Personal seat pool. `delete_space` returns the

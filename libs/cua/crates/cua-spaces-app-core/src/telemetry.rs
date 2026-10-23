@@ -544,11 +544,7 @@ pub fn creates(before: &CreatesState, action: &CreateAction, now_ms: i64) -> Vec
                     gpu: p.gpu,
                 }
             });
-            [feature(if provider.as_str() == "cloud" {
-                "space_create_cloud"
-            } else {
-                "space_create_local"
-            })]
+            [feature("space_create_local")]
             .into_iter()
             .chain(started)
             .chain([step("first_space_created", true)])
@@ -579,7 +575,6 @@ pub fn creates(before: &CreatesState, action: &CreateAction, now_ms: i64) -> Vec
                     Some(&p.phase),
                     p.gpu,
                     error_variant,
-                    Some(p.provider),
                 );
                 vec![create_event(p, "error", stalled(p), variant, now_ms)]
             }

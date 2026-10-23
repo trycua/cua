@@ -554,9 +554,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
 
     /// `spaces.createOptions`: the env the native New Space sheet opens
     /// with (`AppModel.newSpaceEnv`: this Mac's runtimes, storage and GPUs,
-    /// your machines that provide Spaces, your clouds, pricing), which the
+    /// your machines that provide Spaces, your clouds), which the
     /// page's wizard runs on as it is, in the shape of the web bridge's
-    /// `NewSpaceOptions` (`local`, `gpus` and `cloudPricing` from the same
+    /// `NewSpaceOptions` (`local` and `gpus` from the same
     /// env, for readers that don't take `env`), and the macOS VMs running
     /// on this Mac (`macosVmsRunning`: Apple's limit of two counts every
     /// one, Spaces or not).
@@ -584,7 +584,6 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
                 "storage": BridgeValue.encode(env.storage),
             ] as [String: Any],
             "gpus": BridgeValue.encode(env.gpus),
-            "cloudPricing": BridgeValue.encode(env.cloudPricing),
             "experiments": BridgeValue.encode(env.experiments),
             "maxCpus": NSNumber(value: env.maxCpus),
             "env": BridgeValue.encode(env),
@@ -652,8 +651,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         case "runc": runtime = .runc
         case "qemu": runtime = .qemu
         case "lume": runtime = .lume
-        case "kubevirt": runtime = .kubevirt
-        default: throw Failure.badArgs("config.runtime: auto | gvisor | runc | qemu | lume | kubevirt")
+        default: throw Failure.badArgs("config.runtime: auto | gvisor | runc | qemu | lume")
         }
         func count(_ key: String) -> UInt32? { (c[key] as? NSNumber).map { $0.uint32Value } }
         let text = { (key: String) in (c[key] as? String).flatMap { $0.isEmpty ? nil : $0 } }

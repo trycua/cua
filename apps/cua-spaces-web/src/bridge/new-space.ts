@@ -100,15 +100,13 @@ const CONTAINER_BACKENDS = ["container", "managed", "docker", "runsc"];
 export interface EnvInput {
   options: NewSpaceOptions | null;
   clouds: CloudStatusWire | null;
-  /** Settings' `defaultLocation`: `local`, `cloud`, `host:<id>` or a cloud word. */
+  /** Settings' `defaultLocation`: `local`, `host:<id>` or a cloud word. */
   defaultLocation: string | undefined;
-  cloudAvailable: boolean;
   machines: readonly (Pick<Machine, "id" | "name" | "via" | "online" | "os" | "limits" | "current"> & Pick<Partial<Machine>, "device" | "notSharing">)[] | undefined;
 }
 
 function location(core: CoreClient, on: string | undefined): WizardLocation {
   if (!on || on === "local") return "local";
-  if (on === "cloud") return "local"; // Cua Cloud has ended
   if (on.startsWith("host:")) return "host";
   return isCloudWord(core, on) ? "yours" : "local";
 }
@@ -123,14 +121,12 @@ export function wizardEnv(core: CoreClient, input: EnvInput): WizardEnv {
   const cores = globalThis.navigator?.hardwareConcurrency || 8;
   return {
     defaultLocation: location(core, input.defaultLocation),
-    cloudAvailable: input.cloudAvailable,
     localAvailable: local ? canContainer || canMacos : true,
     localReason: local?.error ?? null,
     localBackends: local ? [...local.backends] : null,
     maxCpus: input.options?.maxCpus ?? Math.max(2, Math.min(16, cores)),
     hostArch: local?.hostArch ?? null,
     storage: local?.storage ?? null,
-    cloudPricing: input.options?.cloudPricing ?? null,
     clouds: input.clouds ? connectedClouds(core, input.clouds) : [],
     // Only machines `on="host:<id>"` resolves: never a device of its own.
     // One that is online but not shared says so, as the SDK's hosts do.

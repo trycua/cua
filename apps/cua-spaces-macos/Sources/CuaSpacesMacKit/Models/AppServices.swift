@@ -372,41 +372,6 @@ public final class FixtureAccount: AccountRunning, @unchecked Sendable {
     public func signOut() async throws { current = nil }
 }
 
-// MARK: - Cua Cloud billing
-
-/// The account's Cua Cloud billing: the credit left and the account app's
-/// billing page. The app takes no payment details; the account app does.
-public protocol BillingRunning: AnyObject, Sendable {
-    /// The status as the app core takes it.
-    func status() async throws -> AppBillingStatus
-}
-
-/// Billing has no service behind it: Cua Cloud has ended. It reports "billing
-/// not enabled" with no network call, so Settings hides the row and a refused
-/// cloud Space offers no Add credit.
-public final class LiveBilling: BillingRunning, @unchecked Sendable {
-    let cua: Cua
-    public init(cua: Cua) { self.cua = cua }
-
-    public func status() async throws -> AppBillingStatus {
-        AppBillingStatus(billingEnabled: false, card: nil, credit: nil, billingUrl: nil)
-    }
-}
-
-/// A fixture account's billing (captures, tests): $10 of credit.
-public final class FixtureBilling: BillingRunning, @unchecked Sendable {
-    public var current: AppBillingStatus
-
-    public init(balanceCents: Int64 = 1000, enabled: Bool = true) {
-        current = AppBillingStatus(
-            billingEnabled: enabled, card: nil,
-            credit: AppBillingCredit(balanceUsdCents: balanceCents),
-            billingUrl: "https://app.cua.ai/billing")
-    }
-
-    public func status() async throws -> AppBillingStatus { current }
-}
-
 // MARK: - Teams
 
 /// The account's Teams from the Spaces API (api.cua.ai, api.staging.cua.ai
@@ -472,8 +437,7 @@ public final class FixtureTeams: TeamsReading, @unchecked Sendable {
     public func ackShareRemovals() async throws { removals = [] }
 }
 
-/// Opens the website billing page (Settings' Manage billing, a refused
-/// cloud Space's Add credit). In debug builds `CUA_SPACES_BROWSER` names
+/// Opens an account-app page (Teams, Teams billing). In debug builds `CUA_SPACES_BROWSER` names
 /// another app to open it with (captures use their own window, never the
 /// person's browser).
 @MainActor

@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.13.1",
   "license": "FSL-1.1-MIT",
-  "description": "Cua Spaces notch fleet portal - Tauri 2 prototype with synthetic data",
+  "description": "Cua Spaces notch portal - Tauri 2 prototype with synthetic data",
   "type": "module",
   "scripts": {
     "dev": "node scripts/build-core-wasm.mjs && vite",

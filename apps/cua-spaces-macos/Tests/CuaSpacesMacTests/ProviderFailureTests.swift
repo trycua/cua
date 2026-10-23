@@ -32,7 +32,6 @@ private final class ProviderFailureBackend: SpacesBackend, @unchecked Sendable {
     }
     func localBackends() async -> [String]? { nil }
     func localStorage() async -> LocalStorage? { nil }
-    func cloudAvailable() async -> Bool { false }
     func teleportContext(id: String) async throws -> (CuaSpacesFFI.Teleport, CuaSDK.Space)? { nil }
     func teleportHandle() -> CuaSpacesFFI.Teleport? { nil }
     func sendFiles(id: String, paths: [String]) async throws -> [AppSentFileInfo] { [] }

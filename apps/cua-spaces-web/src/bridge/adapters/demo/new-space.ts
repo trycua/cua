@@ -3,8 +3,8 @@
 
 /**
  * The demo host's New Space and "Connect a cloud" answers: this Mac with
- * Docker and Lume, the GPU option Lume offers, Cua Cloud rates, the Your
- * cloud experiment on, and an account where AWS and Google Cloud have a
+ * Docker and Lume, the GPU option Lume offers, the Your cloud
+ * experiment on, and an account where AWS and Google Cloud have a
  * sign-in on this machine and nothing is connected yet. Test passes;
  * Connect connects. All synthetic.
  */
@@ -47,7 +47,6 @@ export const DEMO_NEW_SPACE_OPTIONS: NewSpaceOptions = {
       learnMore: "https://cua.ai/docs/lume/guides/gpu-passthrough",
     },
   ],
-  cloudPricing: { vcpuHourUsd: 0.044625, memoryGibHourUsd: 0.0223125 },
   experiments: { ...NO_EXPERIMENTS, yourCloud: true },
   maxCpus: 10,
 };
@@ -69,7 +68,6 @@ export function demoMacHostOptions(_defaultLocation: string, vmsRunning: number,
   const hd = { availableBytes: 212 * GB, totalBytes: 494 * GB, name: "Macintosh HD" };
   const env: WizardEnv & { localDetails: Record<string, string> | null; lumeSource: string | null; linuxSource: string | null } = {
     defaultLocation: "local",
-    cloudAvailable: !pending,
     localAvailable: true,
     localReason: null,
     localBackends: pending ? null : ["lume", "qemu", "container"],
@@ -79,7 +77,6 @@ export function demoMacHostOptions(_defaultLocation: string, vmsRunning: number,
     lumeSource: pending ? null : "auto",
     linuxSource: pending ? null : "auto",
     storage: pending ? null : { reserveBytes: 5 * GB, lume: hd, qemu: hd, container: hd, pulled: ["ghcr.io/trycua/linux:24.04"] },
-    cloudPricing: pending ? null : d.cloudPricing,
     clouds: [],
     hosts: [],
     experiments: d.experiments,
@@ -88,7 +85,6 @@ export function demoMacHostOptions(_defaultLocation: string, vmsRunning: number,
   return {
     local: { available: env.localAvailable, backends: env.localBackends ?? [], error: null, hostArch: "arm64", storage: env.storage },
     gpus: env.gpus ?? null,
-    cloudPricing: env.cloudPricing ?? null,
     experiments: d.experiments,
     maxCpus: 10,
     env,

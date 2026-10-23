@@ -28,7 +28,7 @@ const SIZES: Record<WindowMode, { w: number; h: number }> = {
   ambient: { w: 420, h: 38 },
   "ambient-teleport": { w: 420, h: 96 },
   switcher: { w: 760, h: 320 },
-  "create-fleet": { w: 600, h: 700 },
+  "create-space": { w: 600, h: 700 },
 };
 
 function geom(mode: WindowMode): PortalGeometry {

@@ -472,21 +472,6 @@
         "json"
       ]
     },
-    "CloudPricing": {
-      "type": "object",
-      "properties": {
-        "vcpuHourUsd": {
-          "type": "number"
-        },
-        "memoryGibHourUsd": {
-          "type": "number"
-        }
-      },
-      "required": [
-        "vcpuHourUsd",
-        "memoryGibHourUsd"
-      ]
-    },
     "CloudProviderWire": {
       "type": "object",
       "properties": {
@@ -2318,16 +2303,6 @@
             "$ref": "#/$defs/GpuChoice"
           }
         },
-        "cloudPricing": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/CloudPricing"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "experiments": {
           "$ref": "#/$defs/Experiments"
         },
@@ -2360,7 +2335,6 @@
       "required": [
         "local",
         "gpus",
-        "cloudPricing",
         "experiments",
         "maxCpus"
       ]
@@ -2646,7 +2620,7 @@
     "SessionSnapshot": {
       "type": "object",
       "properties": {
-        "fleet": {
+        "account": {
           "type": "object",
           "properties": {
             "configured": {
@@ -2660,33 +2634,16 @@
                 "none"
               ]
             },
-            "baseUrl": {
-              "type": "string"
-            },
-            "tokenUrl": {
-              "type": "string"
-            },
             "clientId": {
               "type": "string"
             },
             "identity": {
               "type": "string"
-            },
-            "namespaces": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "probeError": {
-              "type": "string"
             }
           },
           "required": [
             "configured",
-            "authMode",
-            "baseUrl",
-            "tokenUrl"
+            "authMode"
           ]
         },
         "onboarding": {
@@ -2794,7 +2751,7 @@
         }
       },
       "required": [
-        "fleet",
+        "account",
         "onboarding",
         "daemon"
       ]
@@ -3190,7 +3147,6 @@
         },
         "provider": {
           "enum": [
-            "cloud",
             "local",
             "direct",
             "relay"
@@ -3635,14 +3591,10 @@
       "properties": {
         "defaultLocation": {
           "enum": [
-            "cloud",
             "local",
             "yours",
             "host"
           ]
-        },
-        "cloudAvailable": {
-          "type": "boolean"
         },
         "localAvailable": {
           "type": "boolean"
@@ -3675,16 +3627,6 @@
           "anyOf": [
             {
               "$ref": "#/$defs/LocalStorage"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "cloudPricing": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/CloudPricing"
             },
             {
               "type": "null"
@@ -3822,7 +3764,6 @@
       },
       "required": [
         "defaultLocation",
-        "cloudAvailable",
         "localAvailable",
         "maxCpus"
       ]
@@ -3961,16 +3902,6 @@
             "$ref": "#/$defs/GpuChoice"
           }
         },
-        "cloudPricing": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/CloudPricing"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "experiments": {
           "$ref": "#/$defs/Experiments"
         },
@@ -3996,7 +3927,6 @@
       "required": [
         "local",
         "gpus",
-        "cloudPricing",
         "experiments",
         "maxCpus",
         "env"
@@ -4725,7 +4655,6 @@
         },
         "provider": {
           "enum": [
-            "cloud",
             "local",
             "direct",
             "relay",

@@ -31,13 +31,13 @@ export const FALLBACK_SIZES: Record<DisplayStyle, Record<WindowMode, { width: nu
     ambient: { width: 420, height: 38 },
     "ambient-teleport": { width: 420, height: 96 },
     switcher: { width: 760, height: 320 },
-    "create-fleet": { width: 600, height: 700 },
+    "create-space": { width: 600, height: 700 },
   },
   "no-notch": {
     ambient: { width: 180, height: 34 },
     "ambient-teleport": { width: 240, height: 96 },
     switcher: { width: 760, height: 300 },
-    "create-fleet": { width: 600, height: 680 },
+    "create-space": { width: 600, height: 680 },
   },
 };
 

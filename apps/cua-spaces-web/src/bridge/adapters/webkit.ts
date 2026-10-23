@@ -31,7 +31,7 @@ import { Emitter, HostError, type DataAdapter } from "../adapter";
 import { hostOs, THIS_MACHINE, type HostOs } from "../host-os";
 import { electronTransport, webkitTransport, type HostTransport } from "../transport";
 import type { AgentEventsPage, AgentSetupRow, PersistentAgent, SpaceAgentRun } from "../contracts/agents";
-import type { CancelOutcome, DefaultLocation, HostActionId, HostStatus, MachinePageRow, MachineRow, MachinesView, SpacePowerReport } from "../contracts/host";
+import type { CancelOutcome, HostActionId, HostStatus, MachinePageRow, MachineRow, MachinesView, SpacePowerReport } from "../contracts/host";
 import type { HostWindow } from "../detect";
 import {
   DEFAULT_SETTINGS,
@@ -107,7 +107,7 @@ export function spaceToRow(s: WkSpace): SpaceRow {
   return {
     id: s.id,
     name: s.name,
-    provider: s.provider ?? (here ? "local" : "cloud"),
+    provider: s.provider ?? (here ? "local" : "direct"),
     spacesdVersion: s.sdk?.spacesdVersion ?? "",
     features: s.sdk?.features ?? [],
     addedAt: added ? new Date(added).toISOString() : undefined,
@@ -265,13 +265,8 @@ const lockedBy = (r: WkSettingsRow | undefined) => (r && !r.enabled && r.help?.s
 /** The core's Settings page back to the values `useSettings` reads. */
 export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "theme" | "hotkey">): SettingsSnapshot {
   const rows = rowsById(s);
-  const location = rows.get("default-location");
   const telemetry = rows.get("telemetry");
   const loginRow = rows.get("launch-at-login");
-  const env = lockedBy(location);
-  const defaultLocation: DefaultLocation | null = location
-    ? { value: active(location) ?? "local", source: env ? "env" : "config", env, path: "" }
-    : null;
   const telemetryOn = telemetry ? active(telemetry) === "on" : DEFAULT_SETTINGS.telemetry;
   // The rows only this host lays out: what they show now, so the core lays
   // them out again on the page (null: the host has none).
@@ -286,14 +281,14 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
       hotkey: page.hotkey,
       menuBar: active(rows.get("notch")) === "hide",
       telemetry: telemetryOn,
-      defaultLocation: defaultLocation?.value ?? DEFAULT_SETTINGS.defaultLocation,
+      defaultLocation: DEFAULT_SETTINGS.defaultLocation,
       // The core lays out `launch-at-login` once the host read the login item.
       launchAtLogin: loginRow && loginRow.enabled ? active(loginRow) === "on" : null,
       updateChannel: s.updateChannel === "beta" || s.updateChannel === "stable" ? s.updateChannel : null,
       // The core's General row (`settings::auto_connect_row`), when the host lays it out.
       ...(rows.has("auto-connect") ? { autoConnect: active(rows.get("auto-connect")) === "on" } : {}),
     },
-    defaultLocation,
+    defaultLocation: null,
     telemetry: telemetry
       ? {
           enabled: telemetryOn,
@@ -320,11 +315,9 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
 
 export function toSessionSnapshot(s: WkSession, onboarding: WkOnboarding | null = null): SessionSnapshot {
   return {
-    fleet: {
+    account: {
       configured: s.cloudConfigured || s.signedIn,
       authMode: s.signedIn ? "user" : "none",
-      baseUrl: "",
-      tokenUrl: "",
       identity: opt(s.identity),
     },
     // The SwiftUI app's first run is its own window; Electron's is the page's.
@@ -593,7 +586,6 @@ export function createWebkitAdapter(
           break;
         case "defaultLocation":
           if (value !== "local") throw new HostError("New Spaces can start on This Mac here", "unsupported");
-          await choose("default-location", value);
           break;
         case "launchAtLogin":
           await choose("launch-at-login", value ? "on" : "off");

@@ -98,8 +98,8 @@ export function machineName(machines: readonly Machine[], space: Pick<Space, "id
   const machine = machines.find((m) => m.spaceIds.includes(space.id));
   if (machine) return machine.name;
   if (space.hostName) return space.hostName;
-  if (space.provider === "direct") return "a computer added by address";
-  return space.provider === "cloud" || space.provider === undefined ? "Cua Cloud" : "Unknown computer";
+  if (space.provider === "direct" || space.provider === undefined) return "a computer added by address";
+  return "Unknown computer";
 }
 
 /** What a Space's ⌘K entries also match: its OS, state, detail and the machine it runs on. */
@@ -211,13 +211,12 @@ export function canDelete(space: Pick<Space, "id" | "status" | "cloudDelete">): 
 const PROVIDER: Record<Exclude<NonNullable<Space["provider"]>, "local">, string> = {
   relay: "Your computer, through the Cua relay",
   direct: "A computer added by address",
-  cloud: "Cua Cloud",
 };
 
 /** Where it runs, in words. */
 export function locationLabel(space: Pick<Space, "provider" | "cloudPlace">): string {
   if (space.cloudPlace) return space.cloudPlace;
-  const provider = space.provider ?? "cloud";
+  const provider = space.provider ?? "direct";
   return provider === "local" ? thisComputerLabel() : PROVIDER[provider];
 }
 

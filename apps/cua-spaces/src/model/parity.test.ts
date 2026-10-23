@@ -108,14 +108,8 @@ type Args = Record<string, any>; // eslint-disable-line @typescript-eslint/no-ex
 /** Core methods as the app's model layer answers them. */
 const MODEL: Record<string, (a: Args) => unknown> = {
   'spaces.rowsToSpaces': (a) => (a.rows as SpaceRow[]).map((r) => rowToSpace(r, a.now)),
-  'roster.initial': (a) => {
-    const { fleets: _f, ...s } = initialState(a.spaces);
-    return s;
-  },
-  'roster.reduce': (a) => {
-    const { fleets: _f, ...s } = reduce({ ...a.state, fleets: [] }, a.action);
-    return s;
-  },
+  'roster.initial': (a) => initialState(a.spaces),
+  'roster.reduce': (a) => reduce(a.state, a.action),
   'creates.reduce': (a) => reduceCreates(a.state, a.action),
   'creates.compose': (a) => composeCreates(a.spaces, a.state),
   'creates.isPending': (a) => isPendingCreate(a.id),

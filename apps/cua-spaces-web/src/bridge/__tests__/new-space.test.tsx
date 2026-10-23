@@ -62,12 +62,12 @@ describe.skipIf(!wasmBuilt)("New Space (wasm core)", () => {
       { id: "this-mac", name: "This Mac", via: "local", online: true, os: "macos", current: true, limits: [] },
       { id: "mac-mini", name: "Mac mini", via: "relay", online: true, os: "macos", current: false, limits: [] },
     ];
-    const env = wizardEnv(core, { options: DEMO_NEW_SPACE_OPTIONS, clouds: null, defaultLocation: "host:mac-mini", cloudAvailable: true, machines });
-    expect(env).toMatchObject({ defaultLocation: "host", cloudAvailable: true, localAvailable: true, localBackends: ["docker", "lume"], maxCpus: 10, hostArch: "arm64" });
+    const env = wizardEnv(core, { options: DEMO_NEW_SPACE_OPTIONS, clouds: null, defaultLocation: "host:mac-mini", machines });
+    expect(env).toMatchObject({ defaultLocation: "host", localAvailable: true, localBackends: ["docker", "lume"], maxCpus: 10, hostArch: "arm64" });
     expect(env.hosts!.map((h) => h.id)).toEqual(["mac-mini"]);
     expect(env.clouds).toEqual([]);
 
-    const none = wizardEnv(core, { options: { ...DEMO_NEW_SPACE_OPTIONS, local: { available: false, backends: [], error: "no runtime", macosImage: null } }, clouds: null, defaultLocation: "local", cloudAvailable: false, machines: [] });
+    const none = wizardEnv(core, { options: { ...DEMO_NEW_SPACE_OPTIONS, local: { available: false, backends: [], error: "no runtime", macosImage: null } }, clouds: null, defaultLocation: "local", machines: [] });
     expect(none).toMatchObject({ localAvailable: false, localReason: "no runtime" });
   });
 
@@ -79,7 +79,7 @@ describe.skipIf(!wasmBuilt)("New Space (wasm core)", () => {
     expect(connectedClouds(core, status).map((c) => [c.name, c.label])).toEqual([["aws", "AWS · us-west-2"]]);
     const settings = await adapter.call("settings.get", {});
     expect(settings.values.defaultLocation).toBe("aws");
-    const env = wizardEnv(core, { options: DEMO_NEW_SPACE_OPTIONS, clouds: status, defaultLocation: "aws", cloudAvailable: true, machines: [] });
+    const env = wizardEnv(core, { options: DEMO_NEW_SPACE_OPTIONS, clouds: status, defaultLocation: "aws", machines: [] });
     expect(env.defaultLocation).toBe("yours");
     adapter.dispose?.();
   });
@@ -186,7 +186,7 @@ describe.skipIf(!wasmBuilt)("New Space (wasm core)", () => {
 
 describe.skipIf(!wasmBuilt)("First Space in one click (wasm core)", () => {
   const env = (core: CoreClient, options = DEMO_NEW_SPACE_OPTIONS) =>
-    wizardEnv(core, { options, clouds: null, defaultLocation: "cloud", cloudAvailable: true, machines: [] });
+    wizardEnv(core, { options, clouds: null, defaultLocation: "local", machines: [] });
 
   it("offers Linux first with its size and time, then macOS with its real download", async () => {
     const core = await testCore();
@@ -249,7 +249,7 @@ describe.skipIf(!wasmBuilt)("First Space in one click (wasm core)", () => {
 
 describe.skipIf(!wasmBuilt)("On the SwiftUI host's answer (wasm core)", () => {
   const env = (core: CoreClient, options = demoMacHostOptions("local", 2, false)) =>
-    wizardEnv(core, { options, clouds: null, defaultLocation: "cloud", cloudAvailable: true, machines: [] });
+    wizardEnv(core, { options, clouds: null, defaultLocation: "local", machines: [] });
 
   it("offers both first Spaces, and the Resources step says what is free", async () => {
     const core = await testCore();

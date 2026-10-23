@@ -38,16 +38,12 @@ export function settingsPage(model: AppModel, parts: HostParts) {
     signIn: model.signIn,
     canSignOut: model.account !== null && model.identity !== null,
     menuBar: model.settings.menuBar,
-    defaultLocation: model.settings.defaultLocation,
-    locationLockedBy: undefined,
     telemetry: telemetryInput(model),
     agents: coding.rows ?? undefined,
     agentsBusy: coding.busy,
     agentsPending: coding.pending,
     // Teams from the Spaces API (read by `settings.get`).
     teams: model.teams.input(),
-    // No Cua Cloud billing in the apps (the row stays hidden).
-    billing: undefined,
     loginItem:
       login.status === null
         ? undefined
@@ -145,9 +141,6 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
         await model.backend.setLinuxSource(option);
         model.linuxSource = (await model.backend.linuxSource()) ?? option;
         model.changed("settings");
-        return;
-      case "default-location":
-        save({ defaultLocation: model.native.AppLocation.Local }); // Cua Cloud has ended
         return;
       case "auto-connect":
         save({ autoConnect: option === "on" });

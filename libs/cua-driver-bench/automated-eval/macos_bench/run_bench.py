@@ -25,6 +25,7 @@ clients whose responsible app cannot show the macOS Automation prompt.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -59,6 +60,7 @@ import recorder as rec  # noqa: E402
 import run_pilot as pilot  # noqa: E402
 
 SCHEMA = "cdb-bench-trial/1"
+WEB_TASKS = ("WEB-01", "WEB-02")
 WORK = ca.WORK
 DEFAULT_LEDGER = WORK / "ledger" / "spend.jsonl"
 DEFAULT_RUNS = WORK / "runs"
@@ -538,6 +540,93 @@ def mcp_list_tools(command: str, args: list[str], env: dict[str, str]) -> list[s
         client.close()
 
 
+def real_capture_check(ctx: "Ctx", arm: str) -> tuple[str, str, str]:
+    client = None
+    try:
+        source = cxn.SOURCE_ARM.get(arm, arm)
+        path, _ = ctx.mcp[arm]
+        if source in ca.CUA_ARMS:
+            ensure_agent_daemon(ctx, source)
+        if arm in cxn.ARMS:
+            entry = cxn.server_entry(path, arm)
+            command, args, env = entry["command"], entry["args"], entry["env"]
+        else:
+            command, args, env = mcp_entry(path)
+        client = rec.McpStdioClient(
+            [command, *args],
+            env,
+            elicitation=lambda text: claude_driver.answer_elicitation(text, {"calculator"}),
+        )
+
+        def call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+            reply = client.request("tools/call", {"name": name, "arguments": arguments}, timeout=60)
+            result = reply.get("result") or {}
+            if reply.get("error") or result.get("isError"):
+                raise RuntimeError(
+                    claude_events._text_of(result.get("content"))[:300]
+                    or str(reply.get("error"))[:300]
+                )
+            return result
+
+        listed = client.request("tools/list", {}, timeout=60)
+        if listed.get("error"):
+            raise RuntimeError(str(listed["error"])[:300])
+        tools = {t["name"]: t for t in (listed.get("result") or {}).get("tools", [])}
+        dest = ctx.run_dir / "preflight-capture" / arm / "capture.png"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.unlink(missing_ok=True)
+        if source in ca.CUA_ARMS:
+            if (
+                "list_apps" not in tools
+                or len(tools) < 50
+                or ("run_script" in tools) != (ca.SCRIPT_FLAG in ca.CUA_BUILDS[source].daemon_env)
+            ):
+                raise RuntimeError("unexpected Cua Driver tools/list")
+            call("check_permissions", {})
+            tool = next((t for t in ("get_desktop_state", "screenshot") if t in tools), None)
+            if tool is None:
+                raise RuntimeError("no desktop capture tool")
+            arguments = (
+                {"screenshot_out_file": str(dest)}
+                if "screenshot_out_file" in tools[tool].get("inputSchema", {}).get("properties", {})
+                else {}
+            )
+            result = call(tool, arguments)
+        elif source in ca.CU_HELPER_ARMS:
+            if set(tools) != set(ca.load_pins()["claude_cu_helper"]["tools"]):
+                raise RuntimeError("unexpected helper tools/list")
+            windows = json.loads(
+                claude_events._text_of(
+                    call("app_list_windows", {"app": "Calculator"}).get("content")
+                )
+            )
+            window = next((w for w in windows if w.get("app") == "Calculator"), None)
+            if window is None:
+                raise RuntimeError("no layer-0 Calculator window")
+            result = call("app_screenshot", {"app": "Calculator", "window_id": window["window_id"]})
+        else:
+            if not {"js", "js_reset"} <= tools.keys():
+                raise RuntimeError("missing Codex tools")
+            result = call(
+                "js",
+                {"code": 'const app = await cua.getApp("Calculator"); await app.getScreenshot();'},
+            )
+        image = next(
+            (b for b in result.get("content") or [] if b.get("type") == "image" and b.get("data")),
+            None,
+        )
+        if image is not None:
+            dest.write_bytes(base64.b64decode(image["data"], validate=True))
+        elif not dest.is_file():
+            raise RuntimeError("no image block")
+        return f"{arm} real capture", "pass", rec.capture_detail(dest)
+    except Exception as error:
+        return f"{arm} real capture", "fail", f"{type(error).__name__}: {error}"[:400]
+    finally:
+        if client is not None:
+            client.close()
+
+
 def cu_helper_probe(
     helper: Path, launcher: Path | None = None, timeout: float = 20.0
 ) -> dict[str, Any]:
@@ -581,9 +670,14 @@ def cu_helper_live_checks(ctx: "Ctx", arm: str) -> list[tuple[str, str, str]]:
             json.dumps(probe)[:400] + (f" missing {missing}" if missing else ""),
         )
     )
-    path, _server = ctx.mcp[arm]
-    command, cargs, env = mcp_entry(path)
     try:
+        selected = next(a for a in ctx.arm_names if cxn.SOURCE_ARM.get(a, a) == arm)
+        path, _server = ctx.mcp[selected]
+        if selected in cxn.ARMS:
+            entry = cxn.server_entry(path, selected)
+            command, cargs, env = entry["command"], entry["args"], entry["env"]
+        else:
+            command, cargs, env = mcp_entry(path)
         tools = sorted(mcp_list_tools(command, cargs, env))
         want = sorted(pins.get("tools") or [])
         out.append(
@@ -670,6 +764,9 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
     max_turns = int(args.max_turns or spec.get("max_turns") or 30)
     run_index = entry["run_index"]
     seed = core.probe_seed(task.id, run_index)
+    system_prompt = ca.system_prompt_for(
+        cxn.SOURCE_ARM.get(arm, arm), browser=bool(spec.get("browser"))
+    )
     bench_v2 = bool(getattr(args, "bench_v2", False))  # Amendment 14
     sentinel_front = True if bench_v2 else bool(spec.get("sentinel_frontmost", True))
     condition = getattr(args, "condition", "foreground") if bench_v2 else None  # Amendment 15
@@ -686,6 +783,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
     idle_start = pilot.hid_idle_seconds()
     row: dict[str, Any] = {
         "schema": SCHEMA,
+        "infra_pattern": None,
         "trial_id": entry["trial_id"],
         "attempt": attempt,
         "final": False,
@@ -727,9 +825,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         "macos": ctx.versions.get("macos"),
         "bench_repo_commit": ctx.versions.get("bench_repo_commit"),
         "bench_src_sha256": ctx.versions.get("bench_src_sha256"),
-        "system_prompt_sha256": hashlib.sha256(
-            ca.system_prompt_for(cxn.SOURCE_ARM.get(arm, arm)).encode()
-        ).hexdigest(),
+        "system_prompt_sha256": hashlib.sha256(system_prompt.encode()).hexdigest(),
         "skill_in_prompt": bool(getattr(ca.CUA_BUILDS.get(arm), "skill_in_prompt", False)),
         "electron_named_bundles": spec.get("kind") == "cdb"
         and os.environ.get("CDB_ELECTRON_SHARED") != "1",
@@ -771,7 +867,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
     stderr_path = trial_dir / "claude.stderr"
     stream_path = trial_dir / "claude-stream.tsv"
     needs = list(spec.get("needs_apps", []))
-    cdb = cdb_adapter.CdbTask(spec, artifacts) if spec.get("kind") == "cdb" else None
+    cdb = cdb_adapter.CdbTask(spec, artifacts, seed=seed) if spec.get("kind") == "cdb" else None
     running_at_end: dict[str, bool] = {}
     peeks: list[str] = []
     front_seen: list[str] = []
@@ -840,7 +936,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                 tool_search=args.tool_search == "default",
                 effort=args.effort,
                 coding_tools=bool(spec.get("coding_tools")) and not bench_v2,
-                system_prompt=ca.system_prompt_for(arm),
+                system_prompt=system_prompt,
             )
         )
         prompt = (v2.brief_for(brief.strip(), condition) if bench_v2 else brief.strip()) + "\n"
@@ -879,7 +975,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                         mcp_path,
                         cxn.MODEL,
                         cxn.EFFORT,
-                        ca.system_prompt_for(cxn.SOURCE_ARM[arm]),
+                        system_prompt,
                         arm,
                     ),
                     cwd,
@@ -1033,6 +1129,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             "status": status,
             "infra_failure": infra,
             "infra_message": failure.get("message", "")[:300] if infra else "",
+            "infra_pattern": failure.get("pattern") if infra else None,
             "infra_reset_epoch": failure.get("reset_epoch") if infra else None,
             "excluded": bool(infra),
             "excluded_reason": f"infra_failure:{infra}" if infra else None,
@@ -1206,6 +1303,7 @@ DEFAULT_PEEK_PATTERNS = (
     "cdbeval",
     "cdb-eval",
     ".cdb-secrets",
+    "/__state",
 )
 
 
@@ -1647,9 +1745,12 @@ def execute_trial(ctx: Ctx, entry: dict[str, Any]) -> dict[str, Any]:
                 trial_started_mono=None,
             )
             return row
-        if kind == "mcp_start" and entry["arm"] in ca.CUA_ARMS:
+        if (
+            kind in ("mcp_start", "tool_setup")
+            and cxn.SOURCE_ARM.get(entry["arm"], entry["arm"]) in ca.CUA_ARMS
+        ):
             try:
-                ensure_agent_daemon(ctx, entry["arm"])
+                ensure_agent_daemon(ctx, cxn.SOURCE_ARM.get(entry["arm"], entry["arm"]))
             except Exception as error:  # noqa: BLE001
                 ctx.log(f"daemon restart failed: {error}")
         log_pause(ctx, f"retry_{kind}", wait_s, row.get("infra_message", ""), entry["trial_id"])
@@ -2023,7 +2124,7 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
             "pass" if got_skills and got_skills == main.get("skills_tree_sha256") else "fail",
             str(got_skills),
         )
-    for cua_arm in [a for a in ca.CUA_ARMS if a in ctx.arm_names and not offline]:
+    for cua_arm in [a for a in ca.CUA_ARMS if a in ctx.arm_names]:
         spec = ca.CUA_BUILDS[cua_arm]
         try:
             ensure_agent_daemon(ctx, cua_arm)
@@ -2035,63 +2136,12 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
             )
             if cua_arm == "cc-cua-driver":
                 ctx.versions["cua_daemon_version"] = health.get("build", {}).get("version")
-            tools = mcp_list_tools(
-                str(spec.bin), ["--socket", spec.socket, "mcp"], ca.build_env(cua_arm, spec.home)
-            )
-            add(
-                f"{cua_arm} MCP server starts and lists tools",
-                "pass" if "list_apps" in tools and len(tools) >= 50 else "fail",
-                f"{len(tools)} tools",
-            )
-            # Amendment 6: run_script is listed exactly in the arms whose daemon has the script flag
-            want_script = ca.SCRIPT_FLAG in spec.daemon_env
-            add(
-                f"{cua_arm} run_script {'listed' if want_script else 'not listed'}",
-                "pass" if ("run_script" in tools) == want_script else "fail",
-                f"run_script in tools/list: {'run_script' in tools}",
-            )
         except Exception as error:  # noqa: BLE001
             add(f"{cua_arm} daemon/MCP", "fail", f"{type(error).__name__}: {error}")
-    for codex_arm in [a for a in ctx.arm_names if a in ca.CODEX_ARMS and not offline]:
-        try:
-            path, server = ctx.mcp[codex_arm]
-            command, cargs, env = mcp_entry(path)
-            tools = mcp_list_tools(command, cargs, env)
-            add(
-                "arm B MCP server starts and lists tools",
-                "pass" if {"js", "js_reset"} <= set(tools) else "fail",
-                f"server {server}: {tools}",
-            )
-        except Exception as error:  # noqa: BLE001
-            add("arm B MCP server", "fail", f"{type(error).__name__}: {error}")
     for native_arm in [a for a in cxn.MCP_ARMS if a in ctx.arm_names]:
         if not cxn.CODEX_CLI.is_file():
             add("Codex CLI in the ChatGPT app", "fail", str(cxn.CODEX_CLI))
             continue
-        if not offline:
-            try:
-                path, server = ctx.mcp[native_arm]
-                entry = cxn.server_entry(path, native_arm)
-                source = cxn.SOURCE_ARM[native_arm]
-                if source in ca.CUA_ARMS:  # A23: Cua Driver under Codex uses that build's daemon
-                    ensure_agent_daemon(ctx, source)
-                tools = mcp_list_tools(entry["command"], entry["args"], entry["env"])
-                want = (
-                    {"js", "js_reset"}
-                    if server == cxn.SERVER
-                    else set(
-                        ca.load_pins().get("claude_cu_helper", {}).get("tools") or ["app_click"]
-                    )
-                    if server == ca.CU_HELPER_SERVER
-                    else {"list_apps", "run_script"}
-                )
-                add(
-                    f"{native_arm} {server} MCP server lists {sorted(want)}",
-                    "pass" if want <= set(tools) else "fail",
-                    f"{len(tools)} tools",
-                )
-            except Exception as error:  # noqa: BLE001
-                add(f"{native_arm} MCP server", "fail", f"{type(error).__name__}: {error}")
         for name, status, detail in native_codex_checks(
             ctx, native_arm, with_models and not offline
         ):
@@ -2104,8 +2154,6 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
         ctx.versions.setdefault("claude_cu_helper", {}).update(observed)
         for name, status, detail in ca.check_cu_helper_pins(pins, observed):
             add(name, status, detail)
-        if offline:
-            continue
         for name, status, detail in cu_helper_live_checks(ctx, helper_arm):
             add(name, status, detail)
     cdb_ids = [t for t in ctx.task_ids if task_spec(ctx.tasks[t]).get("kind") == "cdb"]
@@ -2158,6 +2206,15 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
         "pass" if ok_copies else "fail",
         json.dumps(per_name) if not ok_copies else f"{[v[0] for v in per_name.values()]}",
     )
+    try:
+        subprocess.run(["/usr/bin/open", "-a", "Calculator"], check=True, timeout=30)
+        for arm in ctx.arm_names:
+            add(*real_capture_check(ctx, arm))
+    except (OSError, subprocess.SubprocessError) as error:
+        for arm in ctx.arm_names:
+            add(f"{arm} real capture", "fail", str(error)[:300])
+    finally:
+        reset_needs_apps(["Calculator"])
     ps = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True).stdout
     leftovers = [
         ln.split(None, 1)[1][:80]
@@ -2176,20 +2233,21 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
         "pass" if not leftovers else "warn",
         f"{leftovers}",
     )
-    if offline:
-        add("daemons, MCP servers, recording, model calls", "warn", "skipped (--offline)")
-    elif ctx.recorder is not None and ctx.recorder.name != "none":
+    if ctx.recorder is not None and ctx.recorder.name != "none":
         test = ctx.run_dir / "preflight-rec"
         shutil.rmtree(test, ignore_errors=True)
         started = ctx.recorder.start(test)
         time.sleep(3.0)
         raw = ctx.recorder.stop() if started else None
         dur = rec.ffprobe_duration(raw) if raw else None
-        add(
-            "screen recording (3 s test)",
-            "pass" if raw and dur and dur > 0.5 else "fail",
-            f"{raw} duration={dur} err={getattr(ctx.recorder, 'last_error', None)}",
-        )
+        try:
+            if not raw or not dur or dur <= 0.5:
+                raise RuntimeError(
+                    f"{raw} duration={dur} err={getattr(ctx.recorder, 'last_error', None)}"
+                )
+            add("recorder real capture (3 s test)", "pass", rec.capture_detail(raw))
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            add("recorder real capture (3 s test)", "fail", str(error)[:300])
     else:
         add("screen recording", "warn", "disabled (--no-recorder)")
     gate = core.gate_decision(
@@ -2339,7 +2397,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--offline",
         action="store_true",
-        help="preflight only: static checks, no daemon, no recording, no GUI, no model call",
+        help="preflight only: skip model calls; still start daemons, GUI captures and recording",
     )
     p.add_argument(
         "--allow-unknown-quota",
@@ -2555,7 +2613,14 @@ def write_manifest(ctx: Ctx, first_schedule: list[dict[str, Any]]) -> None:
         "tool_search": args.tool_search,
         "system_prompt": ca.SYSTEM_PROMPT,
         "system_prompt_sha256_by_arm": {
-            a: hashlib.sha256(ca.system_prompt_for(a).encode()).hexdigest() for a in ctx.arm_names
+            a: hashlib.sha256(ca.system_prompt_for(cxn.SOURCE_ARM.get(a, a)).encode()).hexdigest()
+            for a in ctx.arm_names
+        },
+        "system_prompt_sha256_by_arm_browser": {
+            a: hashlib.sha256(
+                ca.system_prompt_for(cxn.SOURCE_ARM.get(a, a), browser=True).encode()
+            ).hexdigest()
+            for a in ctx.arm_names
         },
         "builtin_tools": ca.builtin_tools(args.tool_search == "default"),
         "claude_env_allowlist": list(ca.CLAUDE_ENV_ALLOW),
@@ -2580,6 +2645,7 @@ def write_manifest(ctx: Ctx, first_schedule: list[dict[str, Any]]) -> None:
         if getattr(args, "bench_v2", False)
         else None,
         "price_fallback_usd_per_mtok_ASSUMED": PRICE_FALLBACK,
+        "example_argv_task": ctx.task_ids[0],
         "example_argv": {
             a: ca.claude_argv(
                 mcp_config=ctx.mcp[a][0],
@@ -2589,7 +2655,10 @@ def write_manifest(ctx: Ctx, first_schedule: list[dict[str, Any]]) -> None:
                 max_budget_usd=args.max_budget_usd,
                 tool_search=args.tool_search == "default",
                 effort=args.effort,
-                system_prompt=ca.system_prompt_for(a),
+                system_prompt=ca.system_prompt_for(
+                    cxn.SOURCE_ARM.get(a, a),
+                    browser=bool(task_spec(ctx.tasks[ctx.task_ids[0]]).get("browser")),
+                ),
             )
             for a in ctx.arm_names
             if a in ctx.mcp
@@ -2794,8 +2863,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     ctx = make_ctx(args)
     setup_arms(ctx)
     try:
-        if not args.offline:
-            start_recorder(ctx)
+        start_recorder(ctx)
         checks = preflight(ctx, with_models=not args.no_model_preflight)
         (ctx.run_dir / "preflight.json").write_text(json.dumps(checks, indent=2) + "\n", "utf-8")
         write_manifest(
@@ -2828,7 +2896,7 @@ def cmd_dry_run(args: argparse.Namespace) -> int:
         f"{len(schedule)} trials in {len(ctx.blocks())} block(s); tasks={ctx.task_ids}; arms={ctx.arm_names}; "
         f"phase1_runs={args.phase1_runs} phase2_runs={args.phase2_runs}"
     )
-    for arm in ctx.arm_names:
+    for task_id, arm in ((t, a) for t in ctx.task_ids for a in ctx.arm_names):
         if arm in arms.CLAUDE_ARMS:
             try:
                 path, server = ca.mcp_config_for(arm, ctx.run_dir, args.codex_cu_mcp)
@@ -2840,9 +2908,15 @@ def cmd_dry_run(args: argparse.Namespace) -> int:
                     max_budget_usd=args.max_budget_usd,
                     tool_search=args.tool_search == "default",
                     effort=args.effort,
-                    system_prompt=ca.system_prompt_for(arm),
+                    system_prompt=ca.system_prompt_for(
+                        cxn.SOURCE_ARM.get(arm, arm),
+                        browser=bool(task_spec(ctx.tasks[task_id]).get("browser")),
+                    ),
                 )
-                print(f"\n{arm}:\n  " + " ".join(json.dumps(a) if " " in a else a for a in argv))
+                print(
+                    f"\n{task_id} {arm}:\n  "
+                    + " ".join(json.dumps(a) if " " in a else a for a in argv)
+                )
             except (FileNotFoundError, ValueError) as error:
                 print(f"\n{arm}: UNAVAILABLE ({error})")
     return 0

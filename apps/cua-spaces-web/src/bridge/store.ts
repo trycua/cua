@@ -49,7 +49,7 @@ import {
 import type { HostEvent, HostSignIn, HostSignInFailure, SessionSnapshot, SettingKey, SettingsSnapshot, SettingsValues } from "./protocol";
 import { signInFailedFromError, signInFailedPhase, type FailedPhase } from "./sign-in";
 import { createSettingsFeature, type SettingsFeature } from "./settings-feature";
-import { SpaceDetailStore } from "./space-detail";
+import { SpaceDetailStore, THIS_MACHINE_ID } from "./space-detail";
 import {
   HOST_RECORDS_LAUNCH,
   TelemetryForwarder,
@@ -1094,9 +1094,11 @@ export class BridgeStore {
     const spaces = (this.resources.spaces.data as Space[] | undefined) ?? [];
     // A machine that does not share its desktop (a spare Mac that only
     // provides Spaces) refuses the processes a run list starts: not asked.
+    // Nor is this machine's own entry: it is not a Space with runs.
     const live = spaces.filter(
       (s) =>
         !s.id.startsWith("pending:") &&
+        s.id !== THIS_MACHINE_ID &&
         (s.status === "running" || s.status === "approval" || s.status === "local") &&
         !s.power?.off &&
         sharesDesktop(this.core, s) !== false,

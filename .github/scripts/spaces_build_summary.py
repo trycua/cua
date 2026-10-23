@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: FSL-1.1-MIT
-# Copyright (c) 2026 Cua AI, Inc.
 """Cost summary of a workflow run (CUA-2066, phase 1 of CUA-1991).
 
 Reads the run's jobs and artifacts through `gh api` and prints Markdown: wall

@@ -187,7 +187,7 @@
           "System: macOS"
         ],
         "isHost": true,
-        "previewText": "Not reachable",
+        "previewText": "This is this Mac’s own screen, so it isn’t shown here. Your other devices see and control it while Share this desktop is on.",
         "sections": [],
         "title": "This computer"
       }

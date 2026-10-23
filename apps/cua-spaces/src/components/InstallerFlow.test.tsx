@@ -248,7 +248,13 @@ describe("InstallerFlow", () => {
       "done shown none",
       "done completed none",
     ]);
-    expect(telemetry.steps()).toEqual(["onboarding_shown", "signed_in", "onboarding_completed"]);
+    expect(telemetry.steps()).toEqual([
+      "onboarding_shown",
+      "signin_shown",
+      "signed_in",
+      "signin_completed",
+      "onboarding_completed",
+    ]);
     expect(JSON.stringify(telemetry.signals)).not.toContain("ada");
   });
 

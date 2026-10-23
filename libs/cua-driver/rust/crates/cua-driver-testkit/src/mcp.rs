@@ -100,9 +100,13 @@ impl McpDriver {
     /// tests therefore use this constructor instead of the testkit's ephemeral
     /// source-tree daemon.
     pub fn spawn_daemon_proxy_named(socket: &str, recording_label: &str) -> Option<Self> {
-        let mut message = String::new();
-        if !daemon_proxy_available(socket, daemon_socket_is_reachable, &mut message) {
-            eprintln!("{message}");
+        if !daemon_socket_is_reachable(socket) {
+            let hint = if cfg!(target_os = "macos") {
+                " — run `./scripts/install-local.sh` and `cua-driver permissions grant`;"
+            } else {
+                " —"
+            };
+            eprintln!("[testkit] CuaDriver daemon not listening at {socket}{hint} skipping");
             return None;
         }
         Self::spawn_internal(
@@ -479,23 +483,6 @@ impl McpDriver {
     }
 }
 
-fn daemon_proxy_available(
-    socket: &str,
-    probe: impl FnOnce(&str) -> bool,
-    message: &mut String,
-) -> bool {
-    if probe(socket) {
-        return true;
-    }
-    let hint = if cfg!(target_os = "macos") {
-        " — run `./scripts/install-local.sh` and `cua-driver permissions grant`;"
-    } else {
-        " —"
-    };
-    *message = format!("[testkit] CuaDriver daemon not listening at {socket}{hint} skipping");
-    false
-}
-
 #[cfg(unix)]
 fn daemon_socket_is_reachable(socket: &str) -> bool {
     std::os::unix::net::UnixStream::connect(socket).is_ok()
@@ -675,35 +662,59 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "macos")]
+    const PROXY_CHILD_ENV: &str = "CUA_TESTKIT_PROXY_CHILD";
+
+    #[cfg(target_os = "macos")]
     #[test]
-    fn missing_daemon_message_names_the_socket_and_macos_install_hint() {
-        let mut message = String::new();
-        assert!(!super::daemon_proxy_available(
-            "/x/y.sock",
-            |_| false,
-            &mut message
-        ));
-        assert!(message.contains("not listening at /x/y.sock"));
-        assert_eq!(
-            message.contains("./scripts/install-local.sh"),
-            cfg!(target_os = "macos")
-        );
+    #[ignore]
+    fn macos_proxy_child() {
+        if std::env::var_os(PROXY_CHILD_ENV).is_some() {
+            assert!(super::McpDriver::spawn_macos_daemon_proxy_named("child").is_none());
+        }
     }
 
+    #[cfg(target_os = "macos")]
+    fn run_proxy_child(socket: &std::path::Path) -> String {
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["macos_proxy_child", "--exact", "--ignored", "--nocapture"])
+            .env(PROXY_CHILD_ENV, "1")
+            .env("CUA_E2E_MACOS_DAEMON_SOCKET", socket)
+            .env("CUA_TEST_DRIVER_BIN", socket.with_extension("missing-bin"))
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        String::from_utf8_lossy(&out.stderr).into_owned()
+    }
+
+    #[cfg(target_os = "macos")]
     #[test]
-    fn reachable_daemon_is_probed_once_without_a_message() {
-        let probes = std::cell::Cell::new(0);
-        let mut message = String::new();
-        let ok = super::daemon_proxy_available(
-            "/x/y.sock",
-            |_| {
-                probes.set(probes.get() + 1);
-                true
-            },
-            &mut message,
-        );
-        assert!(ok);
-        assert_eq!(probes.get(), 1);
-        assert!(message.is_empty());
+    fn macos_proxy_with_missing_socket_prints_install_hint() {
+        let dir = std::env::temp_dir().join(format!("cua-proxy-miss-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let socket = dir.join("d.sock");
+        let stderr = run_proxy_child(&socket);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(stderr.contains(&format!("not listening at {}", socket.display())));
+        assert!(stderr.contains("./scripts/install-local.sh"));
+        assert!(stderr.contains("cua-driver permissions grant"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_proxy_with_reachable_socket_probes_once() {
+        let dir = std::env::temp_dir().join(format!("cua-proxy-ok-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let socket = dir.join("d.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let stderr = run_proxy_child(&socket);
+        let mut probes = 0;
+        while listener.accept().is_ok() {
+            probes += 1;
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(probes, 1);
+        assert!(!stderr.contains("not listening"));
     }
 }

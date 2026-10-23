@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { BotIcon, XIcon } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
+import { XIcon } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { useAgents, useFeatureRecorder, type AgentSetupRow, type Space } from "@/bridge";
+import { CuaKey } from "@/components/cua-key";
+import { suggestedTask, type SuggestedTask } from "@/components/first-run-guide";
 import { Button } from "@/components/ui/button";
 
 const KEY = "cua.agentOffer";
@@ -66,12 +69,16 @@ export function listNames(names: string[]): string {
 }
 
 /**
- * The moment a user's first Space is ready: let an agent use it. Shows the
- * agents found on this computer and one action. Add computer and Share stay
- * in the checklist below it.
+ * The moment a user's first Space is ready (the guided first run's success
+ * state, CUA-2062): it says so, names the agents found on this computer, and
+ * offers one real task to try (`suggestedTask`). "Try this task" opens the
+ * run dialog with that request (which connects an agent first if needed);
+ * "Open" goes to the Space. Add computer and Share stay in the checklist
+ * below it, and a sign-in prompt may sit under it.
  */
-export function SpaceReadyCard({ space, onRun, onDismiss }: { space: Space; onRun: () => void; onDismiss?: () => void }) {
+export function SpaceReadyCard({ space, onRun, onDismiss }: { space: Space; onRun: (task: SuggestedTask) => void; onDismiss?: () => void }) {
   const { agentSetup } = useAgents();
+  const navigate = useNavigate();
   const [rows, setRows] = useState<AgentSetupRow[] | null>(null);
   useEffect(() => {
     let live = true;
@@ -85,32 +92,43 @@ export function SpaceReadyCard({ space, onRun, onDismiss }: { space: Space; onRu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const task = suggestedTask(space);
   const found = (rows ?? []).filter((r) => r.installed);
-  const first = found.find((r) => r.configured) ?? found[0];
-  const action = !first ? "Show me how" : first.configured ? `Start with ${first.name}` : `Connect ${first.name}`;
   const line = found.length
-    ? `We found ${listNames(found.map((r) => r.name))} on this computer. Let one work in ${space.name} while you watch.`
-    : "Connect an agent such as Claude Code or Codex, give it a task, and watch it work on this computer.";
+    ? `We found ${listNames(found.map((r) => r.name))} on this computer. Give one a task and watch it work in ${space.name}.`
+    : "Connect an agent such as Claude Code or Codex, give it a task, and watch it work in this Space.";
 
   return (
-    <section data-space-ready="" aria-labelledby="space-ready-title" className="mb-6 flex items-center gap-4 rounded-xl border bg-card px-5 py-4 shadow-xs">
-      <span aria-hidden className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-brand/10 text-brand">
-        <BotIcon className="size-5" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <h2 id="space-ready-title" className="text-[14px] font-semibold">
-          Let an agent use this Space
-        </h2>
-        <p className="mt-0.5 text-xs text-muted-foreground">{rows === null ? "Looking for your agents…" : line}</p>
+    <section data-space-ready="" aria-labelledby="space-ready-title" className="mb-6 rounded-xl border bg-card px-5 py-4 shadow-xs">
+      <div className="flex items-start gap-4">
+        <CuaKey size={40} className="size-10" />
+        <div className="min-w-0 flex-1">
+          <h2 id="space-ready-title" className="text-[14px] font-semibold">
+            Your first Space is ready
+          </h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {space.name} is a fresh computer, set up and running. {rows === null ? "Looking for your agents…" : line}
+          </p>
+        </div>
+        {onDismiss ? (
+          <Button data-space-ready-dismiss="" size="icon-sm" variant="ghost" aria-label="Not now" onClick={onDismiss}>
+            <XIcon className="size-3.5" />
+          </Button>
+        ) : null}
       </div>
-      <Button data-space-ready-run="" disabled={rows === null} onClick={onRun}>
-        {action}
-      </Button>
-      {onDismiss ? (
-        <Button data-space-ready-dismiss="" size="icon-sm" variant="ghost" aria-label="Not now" onClick={onDismiss}>
-          <XIcon className="size-3.5" />
+      <div data-suggested-task="" className="mt-4 flex items-center gap-4 rounded-lg border bg-muted/40 px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-2xs font-medium text-muted-foreground">Try this first</p>
+          <p className="mt-0.5 text-[13px] font-medium">{task.title}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{task.why}</p>
+        </div>
+        <Button variant="outline" data-space-ready-open="" onClick={() => void navigate({ to: "/spaces/$spaceId", params: { spaceId: space.id } })}>
+          Open {space.name}
         </Button>
-      ) : null}
+        <Button data-space-ready-run="" disabled={rows === null} onClick={() => onRun(task)}>
+          Try this task
+        </Button>
+      </div>
     </section>
   );
 }

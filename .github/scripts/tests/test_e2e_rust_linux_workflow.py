@@ -49,6 +49,8 @@ class VerifySkillTests(unittest.TestCase):
             "timeout-minutes: 25",
             'CUA_E2E_RETRY_ONCE: "0"',
             "key: e2e-shared",
+            "cache-on-failure: true",
+            "libglib2.0-bin",
             "CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}",
             "run: .cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11",
             "name: verify-cua-driver-evidence",

@@ -17,9 +17,9 @@ Use MCP `type_text` with text and a window/element target, then `press_key` with
 
 Preconditions: [Launch and Doctor](../SKILL.md) succeed and the fixture has `txt-input`, `keyboard-input` and `number-input`.
 
-- **Type:** run `CUA_E2E_CELL_FILTER=linux-electron-type-text-ax-foreground timeout 1260 .cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11 --no-build`. The harness uses a fresh `txt-input` token and `text: "cua-ax-foreground"`. Require `mirror=cua-ax-foreground` and `number-input` still `42` in fixture evidence.
-- **Submit:** run `CUA_E2E_CELL_FILTER=linux-electron-type-submit-ax-foreground timeout 1260 .cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11 --no-build`. Require `key_state=submitted:cua-submit-ax-foreground`, with a new snapshot/token between typing and Return.
-- **Refusal:** run `CUA_E2E_CELL_FILTER=linux-electron-type-text-ax-background timeout 1260 .cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11 --no-build`. Require `BackgroundUnavailable`, unchanged fixture state and stable sentinel/native observations. This is not a delivered-text proof.
+- **Type:** run `CUA_E2E_INTERNAL_LANE=verify CUA_E2E_HARNESS_FILTER=electron CUA_E2E_CELL_FILTER=linux-electron-type-text-ax-foreground timeout 1260 scripts/ci/linux/run-rust-e2e.sh --no-build`. The harness uses a fresh `txt-input` token and `text: "cua-ax-foreground"`. Require `mirror=cua-ax-foreground` and `number-input` still `42` in fixture evidence.
+- **Submit:** run `CUA_E2E_INTERNAL_LANE=verify CUA_E2E_HARNESS_FILTER=electron CUA_E2E_CELL_FILTER=linux-electron-type-submit-ax-foreground timeout 1260 scripts/ci/linux/run-rust-e2e.sh --no-build`. Require `key_state=submitted:cua-submit-ax-foreground`, with a new snapshot/token between typing and Return.
+- **Refusal:** run `CUA_E2E_INTERNAL_LANE=verify CUA_E2E_HARNESS_FILTER=electron CUA_E2E_CELL_FILTER=linux-electron-type-text-ax-background timeout 1260 scripts/ci/linux/run-rust-e2e.sh --no-build`. Require `BackgroundUnavailable`, unchanged fixture state and stable sentinel/native observations. This is not a delivered-text proof.
 - **Proof:** retain the type/submit requests and responses, before/after captures and independent fixture values. CLI entry remains unverified by the MCP harness.
 
 ## Gotchas

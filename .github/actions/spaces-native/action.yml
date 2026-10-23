@@ -101,3 +101,14 @@ runs:
         pnpm install --frozen-lockfile
         pnpm native -- --target "$TARGET"
         test -d "native/$LABEL" || { echo "::error::pnpm native wrote no native/$LABEL"; exit 1; }
+    # Linux: the static cua-spacesd the bundled cua injects into images that
+    # lack one, next to cua (inject.rs looks there), from the cua-spacesd
+    # release libs/cua-spacesd/VERSION pins. Fetched on a cache hit too: the
+    # cache key covers the pin, but older entries predate this file.
+    - if: runner.os == 'Linux' && startsWith(inputs.label, 'linux-')
+      name: Bundle the static cua-spacesd
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        LABEL: ${{ inputs.label }}
+      run: .github/scripts/fetch_static_spacesd.sh "${CUA_RELEASE_REPOSITORY:-$GITHUB_REPOSITORY}" "$LABEL" "apps/cua-spaces-desktop/native/$LABEL"

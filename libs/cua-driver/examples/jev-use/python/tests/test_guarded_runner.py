@@ -32,11 +32,13 @@ async def transport(_params):
 class FixtureSession:
     """In-memory MCP transport; the HTTP fixture remains the outcome oracle."""
 
-    def __init__(self, url, token):
+    def __init__(self, url, token, *, duplicate_submit_once=False):
         self.url = url
         self.token = token
         self.value = ""
         self.mutations = []
+        self.semantic_observations = 0
+        self.duplicate_submit_once = duplicate_submit_once
 
     async def __aenter__(self):
         return self
@@ -60,19 +62,24 @@ class FixtureSession:
                 ]
             }
         elif name == "get_browser_state":
+            if args.get("snapshot_format") == "semantic_v2":
+                self.semantic_observations += 1
+            refs = [
+                {
+                    "role": "textbox",
+                    "name": "verification value",
+                    "ref": "p2:0",
+                    "value": self.value,
+                },
+                {"role": "button", "name": "Submit", "ref": "p2:1" if self.value else "p1:1"},
+            ]
+            if self.duplicate_submit_once and self.semantic_observations == 2:
+                refs.append({"role": "button", "name": "Submit", "ref": "p2:2"})
             data = {
                 "target_id": "target",
                 "tabs": [{"tab_id": "tab"}],
                 "tab_id": "tab",
-                "refs": [
-                    {
-                        "role": "textbox",
-                        "name": "verification value",
-                        "ref": "p2:0",
-                        "value": self.value,
-                    },
-                    {"role": "button", "name": "Submit", "ref": "p2:1" if self.value else "p1:1"},
-                ],
+                "refs": refs,
             }
         elif name == "browser_type":
             self.value = args["text"]
@@ -102,6 +109,7 @@ class GuardedRunnerTest(unittest.TestCase):
         *,
         guarded=True,
         tamper=False,
+        duplicate_submit_once=False,
         provider_failure=False,
         no_choice=False,
         reobserve=False,
@@ -110,7 +118,7 @@ class GuardedRunnerTest(unittest.TestCase):
     ):
         token = "private-field-canary-4316"
         with tempfile.TemporaryDirectory() as directory, fixture() as url:
-            session = FixtureSession(url, token)
+            session = FixtureSession(url, token, duplicate_submit_once=duplicate_submit_once)
             args = argparse.Namespace(
                 token=token,
                 fixture_url=url,
@@ -204,6 +212,21 @@ class GuardedRunnerTest(unittest.TestCase):
         )
         self.assertIsInstance(steps[1]["confidence"], float)
         self.assertIsInstance(steps[1]["probabilities"], dict)
+
+    def test_duplicate_submit_declines_and_ordinary_provider_still_verifies(self):
+        events, calls, mutations = self.execute(duplicate_submit_once=True)
+        steps = [event for event in events if event["event"] == "step"]
+        self.assertEqual(calls, 2)
+        self.assertEqual(mutations, ["browser_type", "browser_click"])
+        self.assertEqual([step["decision_route"] for step in steps], ["provider", "provider"])
+        self.assertNotIn("guarded_completion", steps[0])
+        self.assertEqual(
+            steps[1]["guarded_completion"],
+            {"status": "declined", "reason": "submit_not_unique"},
+        )
+        self.assertEqual(steps[1]["candidate"], "submit-form")
+        self.assertIsInstance(steps[1]["probabilities"], dict)
+        self.assertEqual(events[-1], {"event": "outcome", "outcome": "verified"})
 
     def test_provider_failure_keeps_declined_proof_visible(self):
         events, calls, _ = self.execute(tamper=True, provider_failure=True, expected="unknown")

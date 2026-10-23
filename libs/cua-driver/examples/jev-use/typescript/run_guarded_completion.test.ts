@@ -22,6 +22,7 @@ type Scenario = {
     | 'abstain'
     | 'no-choice'
     | 'ref-reused'
+    | 'duplicate-submit'
     | 'visual-refusal';
   actionError?: boolean;
   providerError?: boolean;
@@ -115,6 +116,9 @@ async function runFixture(scenario: Scenario, log: string) {
             refs: [
               { role: 'textbox', name: 'verification value', ref: `p${observations}:0`, value },
               ...(noSubmit ? [] : [{ role: 'button', name: 'Submit', ref: submitRef }]),
+              ...(scenario.mode === 'duplicate-submit' && observations === 2
+                ? [{ role: 'button', name: 'Submit', ref: 'p2:2' }]
+                : []),
             ],
           };
         }
@@ -305,6 +309,26 @@ if (process.argv[2] === '--fixture-run') {
       assert.equal(jsonl.includes(TOKEN), false);
     });
   }
+
+  test('runner declines duplicate Submit and verifies with ordinary provider fallback', () => {
+    const { events, receipt, status, jsonl, stderr } = runScenario({ mode: 'duplicate-submit' });
+    assert.equal(status, 0, stderr);
+    const steps = events.filter((event) => event.event === 'step');
+    assert.deepEqual(steps.map((step) => step.decision_route), ['provider', 'provider']);
+    assert.equal(Object.hasOwn(steps[0], 'guarded_completion'), false);
+    assert.deepEqual(steps[1].guarded_completion, {
+      status: 'declined',
+      reason: 'submit_not_unique',
+    });
+    assert.equal(steps[1].candidate, 'submit-form');
+    assert.deepEqual(steps[1].probabilities, { 'submit-form': 1, reobserve: 0, abstain: 0 });
+    assert.deepEqual(
+      receipt.actions.map((action: Record<string, unknown>) => [action.tool, action.ref]),
+      [['browser_type', 'p1:0'], ['browser_click', 'p2:1']]
+    );
+    assert.equal(events.at(-1)?.outcome, 'verified');
+    assert.equal(jsonl.includes(TOKEN), false);
+  });
 
   test('runner retains declined telemetry on a normal provider action', () => {
     const { events, status } = runScenario({ mode: 'ref-reused' });

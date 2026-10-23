@@ -52,17 +52,19 @@ from pathlib import Path
 from typing import Any, Callable
 
 import arms
+from browser_use_cli import Invocation
 
 ARM = "cx-codex-cu"
 # cx-cua-driver and cx-claude-cu-helper: Amendment 23, Cua Driver's MCP server and Cua's helper adapter under the
 # same Codex host
-ARMS = (ARM, "cx-cua-driver", "cx-claude-cu-helper")
+ARMS = (ARM, "cx-cua-driver", "cx-claude-cu-helper", "cx-browser-use-cli")
 SERVER = "cua_repl"  # the server name of the unified-computer-use plugin
 SERVER_OF = {
     "cx-codex-cu": SERVER,
     "cx-cua-driver": "cua",
     "cx-claude-cu-helper": "claude-cu-helper",
 }
+MCP_ARMS = tuple(SERVER_OF)
 # The Claude Code arm whose MCP config (and, for Cua Driver, whose daemon, build and system prompt) the Codex arm uses.
 SOURCE_ARM = {
     "cx-codex-cu": "cc-codex-cu",
@@ -89,6 +91,7 @@ GATEWAY_ENV = "CDB_CODEX_GATEWAY"
 DEFAULT_GATEWAY = "http://127.0.0.1:4000/v1"
 CLOSED_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
 LABELS = {
+    "cx-browser-use-cli": "Browser Use CLI, driven by Codex CLI + GPT-6.1 Sol (staged)",
     "cx-codex-cu": f"Codex Computer-Use (Sky), driven by Codex CLI + {MODEL_DISPLAY.get(MODEL, MODEL)}",
     "cx-cua-driver": f"Cua Driver, driven by Codex CLI + {MODEL_DISPLAY.get(MODEL, MODEL)}",
     "cx-claude-cu-helper": "Claude Computer-Use (Desktop helper), driven by Codex CLI + "
@@ -248,7 +251,12 @@ class Translator:
     result), so `bench_v2.GuiOnlyGuard`, `bench_v2.scan_events` and `claude_events.summarize` read this arm the
     same way as the Claude arms."""
 
-    def __init__(self, server: str = SERVER) -> None:
+    def __init__(
+        self,
+        server: str = SERVER,
+        command_matcher: Callable[[str], Invocation | None] | None = None,
+    ) -> None:
+        self.command_matcher = command_matcher
         self.server = server
         self.final_text = ""
         self.errors: list[str] = []
@@ -305,16 +313,37 @@ class Translator:
             item = params.get("item") or {}
             itype = str(item.get("type"))
             item_id = str(item.get("id"))
+            invocation = (
+                self.command_matcher(str(item.get("command") or ""))
+                if itype == "commandExecution" and self.command_matcher
+                else None
+            )
             if itype == "agentMessage" and method == "item/completed":
                 self.final_text = str(item.get("text") or "")
-            elif itype == "mcpToolCall":
-                name = f"mcp__{item.get('server')}__{item.get('tool')}"
+            elif itype == "mcpToolCall" or invocation:
+                name = (
+                    "mcp__browser_use_cli__invoke"
+                    if invocation
+                    else f"mcp__{item.get('server')}__{item.get('tool')}"
+                )
+                tool_input = (
+                    {"argv": list(invocation.argv), "python": invocation.python}
+                    if invocation
+                    else item.get("arguments") or {}
+                )
                 if item_id not in self.started:
                     self.started.add(item_id)
-                    out.append(self._use(item_id, name, item.get("arguments") or {}))
+                    out.append(self._use(item_id, name, tool_input))
                 if method == "item/completed":
                     failed = item.get("status") != "completed" or item.get("error") is not None
-                    text = json.dumps(item.get("error"))[:300] if failed else ""
+                    failed = failed or bool(invocation and item.get("exitCode") != 0)
+                    text = (
+                        str(item.get("aggregatedOutput") or "")[:2000]
+                        if invocation
+                        else json.dumps(item.get("error"))[:300]
+                        if failed
+                        else ""
+                    )
                     out.append(
                         {
                             "type": "user",

@@ -52,6 +52,7 @@ import bench_core as core  # noqa: E402
 import claude_arms as ca  # noqa: E402
 import cdb_adapter  # noqa: E402
 import codex_native as cxn  # noqa: E402
+import browser_use_cli as bu
 import claude_driver  # noqa: E402
 import claude_events  # noqa: E402
 import recorder as rec  # noqa: E402
@@ -826,7 +827,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             row["lab_unoccluded"] = row["lab_occlusion"].get("unoccluded")
         cwd = ca.prepare_cwd(arm)
         mcp_path, server = ctx.mcp[arm]
-        native = arm in cxn.ARMS
+        native = arm in cxn.MCP_ARMS
         argv = (
             cxn.argv()
             if native
@@ -1915,7 +1916,9 @@ def v2_static_checks(ctx: Ctx) -> list[tuple[str, str, str]]:
     """Amendment 14: every task has one known category and is GUI-only, and no arm's argv offers a
     shell or file tool (the same surface for every setup)."""
     out: list[tuple[str, str, str]] = []
-    problems = v2.validate_tasks({t: task_spec(ctx.tasks[t]) for t in ctx.tasks}, ctx.task_ids)
+    problems = v2.validate_tasks(
+        {t: task_spec(ctx.tasks[t]) for t in ctx.tasks}, ctx.task_ids, ctx.arm_names
+    )
     cats = {t: task_spec(ctx.tasks[t]).get("category") for t in ctx.task_ids}
     out.append(
         (
@@ -1951,6 +1954,8 @@ def v2_static_checks(ctx: Ctx) -> list[tuple[str, str, str]]:
 
 def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
     args = ctx.args
+    if bu.ARM in ctx.arm_names:
+        return bu.preflight()
     checks: list[tuple[str, str, str]] = []
 
     def add(name: str, status: str, detail: str) -> None:
@@ -2059,7 +2064,7 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
             )
         except Exception as error:  # noqa: BLE001
             add("arm B MCP server", "fail", f"{type(error).__name__}: {error}")
-    for native_arm in [a for a in cxn.ARMS if a in ctx.arm_names]:
+    for native_arm in [a for a in cxn.MCP_ARMS if a in ctx.arm_names]:
         if not cxn.CODEX_CLI.is_file():
             add("Codex CLI in the ChatGPT app", "fail", str(cxn.CODEX_CLI))
             continue
@@ -2363,6 +2368,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def make_ctx(args: argparse.Namespace) -> Ctx:
+    arm_names = [args.only_arm] if args.only_arm else list(args.arms)
+    if bu.ARM in arm_names:
+        bu.require_chatgpt()
     run_id = args.run_id or datetime.now(timezone.utc).strftime("run-%Y%m%dT%H%M%SZ")
     run_dir = (args.runs_dir / run_id).resolve()
     if args.command == "dry-run":
@@ -2378,14 +2386,13 @@ def make_ctx(args: argparse.Namespace) -> Ctx:
     unknown = [t for t in selected if t not in tasks]
     if unknown:
         raise SystemExit(f"unknown tasks {unknown}; known {sorted(tasks)}")
-    if bench_v2:
-        problems = v2.validate_tasks({t: task_spec(tasks[t]) for t in tasks}, selected)
+    if bench_v2 or bu.ARM in arm_names:
+        problems = v2.validate_tasks({t: task_spec(tasks[t]) for t in tasks}, selected, arm_names)
         if problems:
             raise SystemExit("bench v2: " + "; ".join(problems))
     explicit = bool(args.tasks) or bench_v2  # v2 keeps the registered order (A14.6)
     task_ids = core.order_tasks(selected, explicit=explicit)
     full_ids = task_ids if args.tasks else core.order_tasks(defaults, explicit=bench_v2)
-    arm_names = [args.only_arm] if args.only_arm else list(args.arms)
     codex = [a for a in arm_names if a in arms.CODEX_FALLBACK_ARMS]
     if codex and not args.allow_codex_arms:
         raise SystemExit(f"arms {codex} are fallback arms; pass --allow-codex-arms")
@@ -2453,7 +2460,7 @@ def setup_arms(ctx: Ctx) -> None:
             except (FileNotFoundError, ValueError) as error:
                 raise SystemExit(f"arm {arm} unavailable: {error}")
         elif (
-            arm in cxn.ARMS
+            arm in cxn.MCP_ARMS
         ):  # A20/A23: the source Claude arm's MCP entry, copied unmodified, driven by Codex CLI
             try:
                 path, _server = ca.mcp_config_for(

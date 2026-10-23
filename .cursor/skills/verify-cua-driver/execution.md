@@ -1,51 +1,15 @@
-# Linux sandbox execution
+# Linux execution outcome
 
-Status: **release driver built; blocked staging Electron; not an end-to-end verification proof**.
+The documented `timeout 1260 .cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11` invocation was retried. X11 session setup and the release driver build succeeded, but Electron dependency staging failed. A fresh-lockfile installation retry also failed; the npm registry was unreachable and no cached Electron runtime was available.
 
-The skill was retried from the repository root with the dependency-cache environment from `checks.out`:
+Setup logs survived cleanup. Doctor, preflight and both click cells did not run: there are no delivered summary rows, daemon diagnostics, transcripts, fixture-state snapshots, sentinel/native observations, screenshots or videos. No surviving-owned-PID warning was printed, but there were no recorded daemon/fixture PIDs to check. The transcript PID extraction, live-process cleanup check and fixture snapshot-on-drop paths remain unverified on real output. This is not an end-to-end proof; retry on a host with registry access or a complete fixture dependency/runtime cache.
 
-```bash
-export CARGO_HOME=/home/box/sand-data/onigiri/v01/cache/cargo
-export RUSTUP_HOME=/home/box/.rustup
-export npm_config_store_dir=/home/box/sand-data/onigiri/v01/cache/pnpm
-export COREPACK_HOME=/home/box/sand-data/onigiri/v01/cache/corepack
-export PNPM_HOME=/home/box/sand-data/onigiri/v01/cache/pnpm-home
-export PATH=/home/box/.cargo/bin:$PATH
-unset CARGO_TARGET_DIR CARGO_NET_OFFLINE
-timeout 1260 .cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11
-```
+## Stand-ins
 
-Xvfb, the private D-Bus session, openbox and picom launched. The WM probe passed and D-Bus activated `org.a11y.Bus`; its address was captured. Cargo compiled `cap-fs-ext` and the release driver successfully in 2m 42s at `libs/cua-driver/rust/target/release/cua-driver`. The previous claim that missing Cargo dependencies prevented the build was incorrect with these caches.
+- Xvfb instead of a physical desktop session.
+- The real Electron fixture instead of a user's application; it did not launch in these attempts.
+- Electron sandbox/GPU disabled, forced accessibility and a fixture CDP port.
+- Disposable driver HOME/XDG state, disabled overlay/permissions gate and testkit unrestricted GUI authorization/approval bypass.
+- Fixture control only establishes sentinel posture; it does not set the target action result.
 
-The next step failed with exit 1: `tests/fixtures/build/linux.sh --only electron` invoked `apps/cross-platform/electron/build.sh`, which printed `[INSTALL] npm install (first run)...` and exited during `npm install --silent`. To expose the suppressed error, the same Electron directory was checked with `timeout 120 npm install --loglevel verbose` under the same npm cache environment. That command also exited 1, reporting repeated package-download DNS failures, for example:
-
-```text
-npm http fetch GET https://registry.npmjs.org/@types/node/-/node-22.20.1.tgz attempt 3 failed with EAI_AGAIN
-npm error Exit handler never called!
-npm error This is an error with npm itself. Please report this error at:
-npm error   <https://github.com/npm/cli/issues>
-npm error Log files were not written due to an error writing to the directory: /home/box/.npm/_logs
-```
-
-The wrapper completed cleanup and printed:
-
-```text
-Evidence retained after cleanup: /home/box/sand-data/onigiri/cua/.git/onigiri/lanes/task-mvjsffom/artifacts/cua-driver/verify/run-hngSON71
-```
-
-A post-cleanup file listing confirmed these retained files:
-
-```text
-artifacts/cua-driver/verify/run-hngSON71/
-  at-spi-address.txt
-  cases.jsonl
-  environment.jsonl
-  launch.log
-  openbox.log
-  picom.log
-  results.jsonl
-```
-
-The `recordings/` directory and all three result JSONL files are empty. Doctor and preflight were not reached: there is no `doctor.json`, `version.txt`, `health_report.json`, `check_permissions.json` or `daemon.json`. Neither background AX click cell ran; there are no transcripts, sentinel/native observations, fixture-state snapshots, screenshots, videos or delivered summary rows. Desktop setup and a successful build are not substitutes for those artifacts. Retry once Electron dependencies can be staged; this attempt does not prove delivery or daemon/fixture teardown.
-
-No prebuilt driver, forged fixture result or test-only target setter was substituted. The documented Linux stand-ins remain Xvfb, a real fixture app, disposable state and testkit authorization bypass; the fixture never launched in this attempt. macOS, Windows and Wayland remain unverified. This round changes only the execution documentation, not production code or tests.
+These do not certify production admission, interactive consent, physical GPU capture or arbitrary app compatibility. Wayland, macOS and Windows remain unverified.

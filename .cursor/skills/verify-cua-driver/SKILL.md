@@ -103,8 +103,6 @@ macOS needs the installed TCC-authorized daemon (`libs/cua-driver/scripts/instal
 
 ## Execution status and maintenance
 
-This checkout's X11 retry with the shared dependency caches is recorded in [the execution note](execution.md). The release driver built successfully; Electron fixture staging then failed during npm installation, with a verbose retry reporting registry DNS errors (`EAI_AGAIN`). Doctor, preflight and both click cells were not reached. Cleanup retained the setup evidence, but this is not an end-to-end proof. Do not report this skill as proven until the documented invocation completes with delivered results and retained screenshots, observer evidence and video.
-
-Stand-ins on Linux are an Xvfb desktop instead of a physical session, the real Electron fixture instead of a user's application, Electron `--no-sandbox`/disabled GPU/forced accessibility and a fixture CDP port, disposable driver HOME/XDG state, no overlay/permissions gate, and testkit unrestricted GUI authorization/approval bypass. None certify installed-product admission, interactive consent, physical GPU capture or arbitrary app compatibility. Fixture control is used only to establish sentinel posture, not to set the target's action result.
+Linux X11 end-to-end verification remains blocked by fixture dependency availability. See [the execution outcome and stand-ins](execution.md). Claim proof only after both click cells deliver and all required evidence survives cleanup; setup logs alone do not prove delivery or owned-process teardown.
 
 Use `/maintain-verification-skill` when tools, fixture markers, CI lanes or supported input routes change.

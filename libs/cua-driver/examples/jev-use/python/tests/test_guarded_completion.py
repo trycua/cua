@@ -59,6 +59,7 @@ class GuardedCompletionTest(unittest.TestCase):
                 "session": "session-a",
             },
         )
+        self.assertNotIn(self.task.token, str(result.telemetry))
         completion = result.candidate
         self.assertIsNotNone(completion)
         assert completion is not None

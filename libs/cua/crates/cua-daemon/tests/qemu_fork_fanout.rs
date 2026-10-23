@@ -387,7 +387,7 @@ async fn run(
         .await
         .map_err(|e| format!("checkpoint: {e}"))?;
     let ck_ms = t.elapsed().as_secs_f64() * 1000.0;
-    if !info.shared_memory {
+    if forkable && !info.shared_memory {
         return Err("the checkpoint's forks would not share its memory".into());
     }
     rt.pin_checkpoint("ff-ck", true)

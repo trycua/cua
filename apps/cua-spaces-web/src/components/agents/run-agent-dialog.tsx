@@ -41,7 +41,7 @@ export function RunAgentDialog({ open, space, onOpenChange, onManual, onConnecte
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const ready = (rows ?? []).filter((r) => r.installed && r.configured);
+  const ready = (rows ?? []).filter((r) => r.configured);
   const pending = (rows ?? []).filter((r) => r.installed && !r.configured);
   const prompt = asked ?? runAgentPrompt(space.name);
   const first = ready[0];
@@ -52,7 +52,7 @@ export function RunAgentDialog({ open, space, onOpenChange, onManual, onConnecte
     configureAgents()
       .then((r) => {
         setRows(r);
-        if (r.some((x) => x.installed && x.configured)) onConnected?.();
+        if (r.some((x) => x.configured)) onConnected?.();
       })
       .catch((e: unknown) => toast("Couldn't connect your agent", { description: e instanceof Error ? e.message : String(e) }))
       .finally(() => setBusy(false));

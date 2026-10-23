@@ -1491,6 +1491,47 @@ mod tests {
     }
 
     #[test]
+    fn configured_claude_is_ready_without_binary_evidence_but_folders_are_not() {
+        use crate::agents::{AgentSetupStatus, agent_settings_row};
+        for configured in [true, false] {
+            let row = agent_settings_row(
+                &AgentSetupStatus {
+                    id: "claude-code".into(),
+                    name: "Claude Code".into(),
+                    cua_configured: configured,
+                    mcp_config: Some(".claude.json".into()),
+                    skills_dir: Some(".claude/skills".into()),
+                    skills_installed: vec!["cua".into()],
+                    ..Default::default()
+                },
+                1,
+            );
+            let agent = FirstRunAgent {
+                agent: row.agent,
+                name: row.name,
+                installed: row.installed,
+                configured: row.configured,
+                ..Default::default()
+            };
+            let c = connect(vec![agent.clone()], None);
+            let pick = c.agents.iter().find(|a| a.agent == "claude-code").unwrap();
+            assert_eq!(pick.checked, configured);
+            assert_eq!(pick.locked, configured);
+            if configured {
+                let v = view(&FirstRunInput {
+                    agents: Some(vec![agent]),
+                    ..setup()
+                });
+                let row = s(&v).rows.iter().find(|r| r.id == "agent").unwrap();
+                assert_eq!(row.state, RowState::Ok);
+                assert_eq!(row.title, "Claude Code can use Cua");
+            } else {
+                assert_eq!(pick.note.as_deref(), Some("Not found on this Mac"));
+            }
+        }
+    }
+
+    #[test]
     fn every_agent_is_listed_once_and_installed_ones_are_ticked() {
         let all = vec![
             claude(false),

@@ -349,13 +349,13 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
     if (!active || !adapter) return;
     let live = true;
     let n = 0;
-    const read = () => {
+    const read = (forceAgents = false) => {
       // The agent setup runs a command on the host: once connected, it's read now and then
       // (every time while an agent's own sign-in waits for the browser).
       const saved = readFirstRun();
       const want = saved.picked ?? (saved.agent ? [saved.agent] : []);
       const connected = saved.step === "setup" && Boolean(agentsRef.current) && want.every((id) => agentsRef.current!.some((a) => a.agent === id && a.configured));
-      if (signingRef.current || !connected || n++ % 6 === 0) {
+      if (forceAgents || signingRef.current || !connected || n++ % 6 === 0) {
         void adapter
           .call("agents.setup", {})
           .then((rows) => live && setAgents(rows))
@@ -369,10 +369,13 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
       }
     };
     read();
-    const timer = setInterval(read, pollMs);
+    const focus = () => read(true);
+    window.addEventListener("focus", focus);
+    const timer = setInterval(() => read(), pollMs);
     return () => {
       live = false;
       clearInterval(timer);
+      window.removeEventListener("focus", focus);
     };
   }, [active, adapter, s.step, s.finishedLater, tick, pollMs]);
 

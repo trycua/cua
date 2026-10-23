@@ -520,8 +520,6 @@ public final class BotStore: ObservableObject {
     private func fail(_ id: String, _ reason: String) {
         busy.remove(id)
         turnText[id] = nil
-        pollers[id]?.cancel()
-        pollers[id] = nil
         guard failedTurns.insert(id).inserted else { return }
         update(id) { $0.mood = .error; $0.status = "Needs a look" }
         append(ChatMessage(botID: id, role: .system, text: reason, kind: .notice))

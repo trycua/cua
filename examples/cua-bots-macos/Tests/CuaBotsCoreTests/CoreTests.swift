@@ -263,6 +263,27 @@ struct StoreTests {
         #expect(store.notifications.count == 2)
     }
 
+    @Test func testRecoverableFailureKeepsPollingQueuedTurn() async throws {
+        let engine = ScriptedEngine()
+        let store = makeStore(engine)
+        let bot = await store.createBot(name: "Ada", avatar: .default(for: "Ada"), harness: .hermes, placement: .local)
+        engine.scriptedUpdates = [.failed("quota"), .turnEnded(turn: 1), .turnStarted]
+        await store.pollOnce(bot.id)
+        #expect(store.isBusy(bot.id))
+        #expect(store.bot(bot.id)?.status == "Thinking")
+
+        engine.scriptedUpdates = [.assistant(turn: 2, text: "ok"), .turnEnded(turn: 2)]
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while store.isBusy(bot.id) && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(store.messages(for: bot.id).last?.text == "ok")
+        #expect(store.bot(bot.id)?.status == "Ready")
+        #expect(!store.isBusy(bot.id))
+        #expect(store.notifications.count == 1)
+        store.handle(bot.id, .exited)
+    }
+
     @Test func testFirstErrorIsDeduplicatedPerTurn() async {
         let engine = ScriptedEngine()
         let store = makeStore(engine)

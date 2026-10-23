@@ -781,6 +781,34 @@ fn update_refreshes_outdated_copies_cua_wrote() {
     );
 }
 
+#[test]
+fn copies_cua_did_not_write_or_the_user_edited_are_never_outdated() {
+    let t = T::new();
+    let s = t.setup();
+    // Another installer's copy (cua-driver's own skill pack, say), newer or
+    // older than the bundled one: setup skips it, so it is not outdated.
+    t.write(
+        ".cline/skills/cua-driver/SKILL.md",
+        "---\nname: cua-driver\ndescription: from the driver installer\n---\n",
+    );
+    // A copy cua wrote that the user edited since: also left alone.
+    s.install_skills(&ids(&["cline"]), &ids(&["cua-sandboxes"]), false)
+        .unwrap();
+    let edited = t.home.join(".cline/skills/cua-sandboxes/SKILL.md");
+    std::fs::write(&edited, format!("{}\nmy notes\n", t.read(&edited))).unwrap();
+
+    let st = s.detect().into_iter().find(|a| a.id == "cline").unwrap();
+    assert!(st.skills_installed.iter().any(|n| n == "cua-driver"));
+    assert!(st.skills_installed.iter().any(|n| n == "cua-sandboxes"));
+    assert!(st.skills_outdated.is_empty(), "{:?}", st.skills_outdated);
+
+    // Neither is replaced by update, which matches the status.
+    for o in s.update(None).unwrap() {
+        assert_ne!(o.change, Change::Updated, "{o:#?}");
+    }
+    assert!(t.read(&edited).contains("my notes"));
+}
+
 #[cfg(unix)]
 #[test]
 fn claude_code_is_configured_through_its_own_cli_when_present() {

@@ -74,8 +74,9 @@ describe("the empty home's words", () => {
 
   it("draws each tile as a button named by its system and figures, and no New Space of its own", () => {
     mount(stubCore(), emptyHome(stubCore(), "arm64", "macos")!);
-    expect(screen.getByRole("heading", { name: "No Spaces yet" })).toBeTruthy();
-    expect(screen.getByText("Choose a system for your first Space.")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Create your first Space" })).toBeTruthy();
+    expect(screen.getByText(/A Space is a fresh computer for you and your agents\. Choose a system for your first Space\./)).toBeTruthy();
+    expect(screen.getByText("3. Try a task with an agent")).toBeTruthy();
     const linux = screen.getByRole("button", { name: "Linux, About 4 minutes · 1.0–2.0 GB of disk" });
     const macos = screen.getByRole("button", { name: "macOS, About 19 GB download" });
     // Focusable buttons with visible hover and focus states.
@@ -98,7 +99,7 @@ describe("a Spaces list that could not be read", () => {
       </BridgeProvider>,
     );
     expect(screen.getByRole("heading", { name: "Spaces could not be loaded" })).toBeTruthy();
-    expect(screen.queryByText("Choose a system for your first Space.")).toBeNull();
+    expect(screen.queryByText(/Choose a system for your first Space/)).toBeNull();
     expect(screen.queryAllByRole("button")).toHaveLength(0);
   });
 });

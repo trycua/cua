@@ -9,6 +9,7 @@ import type { ReactNode } from "react";
 import type { AgentSetupRow, Space } from "@/bridge";
 import { BridgeContext, type BridgeContextValue } from "@/bridge/BridgeProvider";
 import { RunAgentDialog, runAgentPrompt } from "@/components/agents/run-agent-dialog";
+import { suggestedTask, useFirstRunStep, useFirstSpaceMilestones } from "@/components/first-run-guide";
 import { SpaceReadyCard, useAgentOffer } from "@/components/space-ready-card";
 import { EXPLAINED_KEY, needsExplainer, TeleportExplainer } from "@/components/teleport/explainer";
 
@@ -33,29 +34,74 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("SpaceReadyCard", () => {
-  it("lists the agents it found and has one action", async () => {
+  it("says the first Space is ready, names the agents found, and offers one real task", async () => {
     rows = [row({}), row({ agent: "codex", name: "Codex", configured: true }), row({ agent: "hermes", name: "Hermes", installed: false })];
     const onRun = vi.fn();
     render(<SpaceReadyCard space={space} onRun={onRun} />);
+    expect(screen.getByRole("heading", { name: "Your first Space is ready" })).toBeTruthy();
     expect(await screen.findByText(/We found Claude Code and Codex on this computer/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Start with Codex" }));
+    expect(screen.getByText("Run a project's tests on a clean Linux computer")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Try this task" }));
     expect(onRun).toHaveBeenCalledOnce();
-    expect(document.body.textContent).not.toMatch(/relay|MCP|\bhost\b/i);
+    expect(onRun.mock.calls[0]![0].prompt).toMatch(/run its tests/);
+    expect(document.body.textContent).not.toMatch(/relay|MCP|\bhost\b|weather|flight|pizza/i);
   });
 
-  it("offers to connect an agent that is installed but not connected", async () => {
-    rows = [row({})];
+  it("opens the Space", async () => {
+    rows = [];
     render(<SpaceReadyCard space={space} onRun={() => {}} />);
-    expect(await screen.findByRole("button", { name: "Connect Claude Code" })).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "Open Research" }));
+    expect(nav).toHaveBeenCalledWith({ to: "/spaces/$spaceId", params: { spaceId: "s1" } });
   });
 
-  it("says how when no agent is found, and can be closed", async () => {
+  it("says how to connect when no agent is found, and can be closed", async () => {
     rows = [];
     const onDismiss = vi.fn();
     render(<SpaceReadyCard space={space} onRun={() => {}} onDismiss={onDismiss} />);
-    expect(await screen.findByRole("button", { name: "Show me how" })).toBeTruthy();
+    expect(await screen.findByText(/Connect an agent such as Claude Code or Codex/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Not now" }));
     expect(onDismiss).toHaveBeenCalledOnce();
+  });
+});
+
+describe("the guided first run's events", () => {
+  const track = vi.fn();
+  const wrapper = ({ children }: { children?: ReactNode }) => {
+    const store = { telemetry: { track } };
+    const value = { mode: "electron", core: {}, adapter: null, store, ready: Promise.resolve(store) } as unknown as BridgeContextValue;
+    return <BridgeContext.Provider value={value}>{children}</BridgeContext.Provider>;
+  };
+  const events = () => track.mock.calls.map((c) => (c[0] as { feature: string }[])[0]!.feature);
+  const s = (status: string) => ({ id: "s1", name: "Research", os: "linux", status }) as unknown as Space;
+  beforeEach(() => track.mockClear());
+
+  it("counts shown, created, ready and task started once each", async () => {
+    const step = renderHook(() => useFirstRunStep(), { wrapper }).result.current;
+    act(() => step("guide_shown"));
+    const m = renderHook(({ list }) => useFirstSpaceMilestones(list), { wrapper, initialProps: { list: [s("provisioning")] } });
+    m.rerender({ list: [s("running")] });
+    m.rerender({ list: [s("running")] });
+    act(() => step("task_started"));
+    act(() => step("task_started"));
+    await waitFor(() => expect(events()).toEqual(["first_run_guide_shown", "first_space_created", "first_space_ready", "suggested_task_started"]));
+  });
+
+  it("does not count created or ready on an install that never showed the guide", async () => {
+    renderHook(() => useFirstSpaceMilestones([s("running")]), { wrapper });
+    await Promise.resolve();
+    expect(track).not.toHaveBeenCalled();
+  });
+
+  it("suggests real work on a clean computer, for the Space's system", () => {
+    expect(suggestedTask({ ...s("running"), os: "macos" } as Space).title).toBe("Run a project's tests on a clean Mac");
+    expect(suggestedTask(s("running")).prompt).toContain('"Research"');
+  });
+
+  it("the run dialog shows the suggested request", async () => {
+    rows = [row({ configured: true })];
+    const { prompt } = suggestedTask(s("running"));
+    render(<RunAgentDialog open space={space} onOpenChange={() => {}} prompt={prompt} />);
+    expect(await screen.findByText(prompt)).toBeTruthy();
   });
 });
 

@@ -57,8 +57,9 @@ if (( ${#transcripts[@]} > 0 )); then
   pids+=$'\n'"$fixture_pids"
 fi
 pids=$(printf '%s\n' "$pids" | sort -nu | grep -v '^$') || fail 'no owned PIDs recorded'
-[[ -n "$pids" ]] || fail 'no owned PIDs recorded'
 while IFS= read -r pid; do
-  kill -0 "$pid" 2>/dev/null && fail "owned PID still alive after cleanup: $pid"
+  if kill -0 "$pid" 2>/dev/null; then
+    fail "owned PID still alive after cleanup: $pid"
+  fi
 done <<< "$pids"
 echo "Evidence complete; owned PIDs checked after cleanup: $(tr '\n' ' ' <<< "$pids")"

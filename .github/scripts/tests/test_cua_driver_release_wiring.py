@@ -718,7 +718,7 @@ fi
     def test_clients_without_an_mcp_config_preset_are_documented(self) -> None:
         # Muse Code and GitHub Copilot CLI have no `mcp-config --client` preset;
         # their snippets moved out of the installer output into the docs.
-        docs = self.read("docs/content/docs/agents/index.mdx")
+        docs = self.read("docs/content/docs/cua-driver/guides/connect-your-agent.mdx")
 
         self.assertIn("Muse Code (macOS, Linux)", docs)
         self.assertIn("$XDG_CONFIG_HOME/muse/settings.json", docs)

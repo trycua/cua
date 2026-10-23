@@ -63,7 +63,7 @@ Questions: [GitHub issues](https://github.com/trycua/cua/issues) or
 | `cuabot` | npm | 1.0.14 | [Cua Driver](/cua-driver) over MCP, or a sandbox from the [`cua` CLI](/cua-sdk/quickstart) or [Cua Spaces](/spaces) |
 | `cua-computer` | PyPI | 0.5.19 | The [`cua` SDK](/cua-sdk/quickstart) (`cua-sandbox`) for sandboxes, [Cua Driver](/cua-driver) for the machine you are on |
 | `cua-computer-server` | PyPI | 0.3.46 | Images that ship [cua-spacesd](/cua-sdk/guides/spacesd), or [Cua Driver](/cua-driver) on a host |
-| `cua-agent` | PyPI | 0.9.0 | A coding agent with the [Cua Driver MCP](/agents), or [`sandbox.agents()`](/cua-sdk/guides/run-a-coding-agent) |
+| `cua-agent` | PyPI | 0.9.0 | A coding agent with the [Cua Driver MCP](/cua-driver/guides/connect-your-agent), or [`sandbox.agents()`](/cua-sdk/guides/run-a-coding-agent) |
 
 ### cuabot
 
@@ -81,7 +81,7 @@ rm -rf ~/.cuabot
 Instead:
 
 - To let Claude Code, Codex, Cursor or another agent operate apps on your
-  machine, [connect it to Cua Driver](/agents).
+  machine, [connect it to Cua Driver](/cua-driver/guides/connect-your-agent).
 - To give an agent its own computer that you can watch,
   [create a Space](/spaces/guides/add-a-space) or a sandbox with the
   [`cua` CLI](/cua-sdk/quickstart), then
@@ -115,7 +115,7 @@ To drive a desktop directly, install [Cua Driver](/cua-driver/quickstart) on it.
 agent instead:
 
 - Connect Claude Code, Codex, Cursor, OpenClaw or another agent to the
-  [Cua Driver MCP server](/agents).
+  [Cua Driver MCP server](/cua-driver/guides/connect-your-agent).
 - Run a coding agent inside a sandbox with
   [`sandbox.agents()` or `cua agent run`](/cua-sdk/guides/run-a-coding-agent).
 - Score agents on tasks with [Cua Bench](/cua-bench).

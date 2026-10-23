@@ -3,9 +3,11 @@
   "root": true,
   "pages": [
     "index",
+    "what-is-computer-use",
     "quickstart",
+    "concepts/platform-support",
+    "concepts/how-cua-driver-works",
     "guides",
-    "concepts",
     "reference"
   ]
 }

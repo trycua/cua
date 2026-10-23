@@ -1110,14 +1110,14 @@ fn hermes_gets_its_own_skill_copies() {
 fn the_docs_and_readme_list_every_agent() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let docs = std::fs::read_to_string(
-        root.join("../../../../docs/content/docs/agents/spaces-mcp.mdx"),
+        root.join("../../../../docs/content/docs/cua-cli/guides/mcp-server.mdx"),
     )
     .unwrap();
     let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
     for a in AGENTS {
         assert!(
             docs.contains(&format!(" | `{}` | ", a.id)),
-            "docs/content/docs/agents/spaces-mcp.mdx misses {}",
+            "docs/content/docs/cua-cli/guides/mcp-server.mdx misses {}",
             a.id
         );
         assert!(

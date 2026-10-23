@@ -11,8 +11,8 @@ const docs = path.resolve(__dirname, '..');
 const repo = path.resolve(docs, '..');
 const content = path.join(docs, 'content/docs');
 
-// In sidebar order: Cua Spaces, Cua Driver, Lume and Agents, then a Developers
-// group (the SDK, the CLI and Cua Bench).
+// In sidebar order: Cua Spaces, Cua Driver and Lume, then a Developers group
+// (the SDK, the CLI and Cua Bench).
 const PRODUCTS: Array<[string, string]> = [
   ['spaces', 'Cua Spaces'],
   ['cua-driver', 'Cua Driver'],
@@ -21,24 +21,24 @@ const PRODUCTS: Array<[string, string]> = [
   ['cua-cli', 'Cua CLI'],
   ['cua-bench', 'Cua Bench'],
 ];
-// Agents is a top-level section of its own: one flat list of pages, no
-// quickstart or guides, because each page is one agent.
-const AGENTS = 'agents';
 // The root meta.json: the products in order, with the Developers separator.
 const ROOT_ORDER = [
   'index',
   'spaces',
   'cua-driver',
   'lume',
-  AGENTS,
   '---Developers---',
   'cua-sdk',
   'cua-cli',
   'cua-bench',
 ];
-// Sections in their only allowed order; `examples` and `concepts` are optional.
-const SECTIONS = ['index', 'quickstart', 'guides', 'examples', 'concepts', 'reference'];
-const OPTIONAL = new Set(['examples', 'concepts']);
+// Sections in their only allowed order; `examples` is optional. "How X works"
+// pages from `concepts/` are listed by path right after the Overview and
+// Quickstart (no Concepts group in the sidebar); Cua Driver also opens with
+// its "What is computer use" explainer.
+const SECTIONS = ['index', 'quickstart', 'guides', 'examples', 'reference'];
+const OPTIONAL = new Set(['examples']);
+const INTRO_PAGES = new Set(['what-is-computer-use']);
 const SECTION_TITLES: Record<string, string> = {
   guides: 'Guides',
   examples: 'Examples',
@@ -80,11 +80,11 @@ function slugs(): Set<string> {
   );
 }
 
-test('the root lists Spaces, Cua Driver, Lume and Agents, with the SDK, CLI and Bench under Developers', () => {
+test('the root lists Spaces, Cua Driver and Lume, with the SDK, CLI and Bench under Developers', () => {
   assert.deepEqual(meta('').pages, ROOT_ORDER);
   assert.deepEqual(
-    ROOT_ORDER.filter((page) => page !== 'index' && page !== AGENTS && !page.startsWith('---')).sort(),
-    PRODUCTS.map(([dir]) => dir).sort()
+    ROOT_ORDER.filter((page) => page !== 'index' && !page.startsWith('---')),
+    PRODUCTS.map(([dir]) => dir)
   );
   const stray = readdirSync(content).filter(
     (name) =>
@@ -94,7 +94,7 @@ test('the root lists Spaces, Cua Driver, Lume and Agents, with the SDK, CLI and 
   const dirs = readdirSync(content).filter((name) =>
     statSync(path.join(content, name)).isDirectory()
   );
-  assert.deepEqual(dirs.sort(), [...PRODUCTS.map(([dir]) => dir), AGENTS].sort());
+  assert.deepEqual(dirs.sort(), PRODUCTS.map(([dir]) => dir).sort());
 });
 
 test('the docs home features its examples with real pages and media', () => {
@@ -130,42 +130,41 @@ test('the docs home features its examples with real pages and media', () => {
   }
 });
 
-test('Agents is a flat top-level section, one page per agent', () => {
-  const m = meta(AGENTS);
-  assert.equal(m.title, 'Agents');
-  assert.equal(m.root, true);
-  const pages = m.pages ?? [];
-  assert.equal(pages[0], 'index');
-  const files = readdirSync(path.join(content, AGENTS))
-    .filter((name) => name.endsWith('.mdx'))
-    .map((name) => name.replace(/\.mdx$/, ''));
-  assert.deepEqual([...pages].sort(), [...files].sort(), 'agents/meta.json lists every page');
-  assert.equal(
-    readdirSync(path.join(content, AGENTS)).filter((name) => statSync(path.join(content, AGENTS, name)).isDirectory()).length,
-    0,
-    'Agents has no folders'
-  );
-});
-
 for (const [dir, title] of PRODUCTS) {
   test(`${title} has the standard sections`, () => {
     const m = meta(dir);
     assert.equal(m.title, title);
     assert.equal(m.root, true, `${dir}/meta.json must be a root folder (its own sidebar tab)`);
-    const pages = m.pages ?? [];
+    const all = m.pages ?? [];
+    const concepts = all.filter((p) => p.startsWith('concepts/'));
+    const pages = all.filter((p) => !p.startsWith('concepts/') && !INTRO_PAGES.has(p));
     const expected = SECTIONS.filter(
       (section) => !OPTIONAL.has(section) || pages.includes(section)
     );
     assert.deepEqual(pages, expected, `${dir}/meta.json pages must be ${expected.join(', ')}`);
+    // Concept pages sit between the Quickstart and the Guides, and no page is left out.
+    assert.deepEqual(all.slice(all.indexOf('quickstart') + 1, all.indexOf('guides')).filter((p) => !p.startsWith('concepts/')), []);
+    assert.ok(all.indexOf('quickstart') < all.indexOf('guides'));
+    const listed = new Set([...concepts, ...(existsSync(path.join(content, dir, 'reference/meta.json')) ? (meta(path.join(dir, 'reference')).pages ?? []).filter((p) => p.startsWith('../concepts/')).map((p) => p.slice(3)) : [])]);
+    const conceptDir = path.join(content, dir, 'concepts');
+    if (existsSync(conceptDir)) {
+      for (const file of readdirSync(conceptDir).filter((f) => f.endsWith('.mdx'))) {
+        assert.ok(listed.has(`concepts/${file.replace(/\.mdx$/, '')}`), `${dir}/concepts/${file} is not in the sidebar`);
+      }
+    }
     assert.ok(existsSync(path.join(content, dir, 'index.mdx')), `${dir}/index.mdx (Overview)`);
     assert.ok(existsSync(path.join(content, dir, 'quickstart.mdx')), `${dir}/quickstart.mdx`);
+    for (const page of all.filter((p) => INTRO_PAGES.has(p))) {
+      assert.ok(existsSync(path.join(content, dir, `${page}.mdx`)), `${dir}/${page}.mdx`);
+    }
     for (const section of pages.filter((p) => SECTION_TITLES[p])) {
       assert.equal(meta(path.join(dir, section)).title, SECTION_TITLES[section]);
     }
     const extra = readdirSync(path.join(content, dir)).filter(
       (name) =>
         name !== 'meta.json' &&
-        !pages.includes(name.replace(/\.mdx$/, ''))
+        name !== 'concepts' &&
+        !all.includes(name.replace(/\.mdx$/, ''))
     );
     assert.deepEqual(extra, [], `${dir} has files outside its sections`);
   });

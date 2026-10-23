@@ -1,6 +1,15 @@
 {
   "title": "Guides",
   "pages": [
+    "---Use with your agent---",
+    "connect-your-agent",
+    "claude-code",
+    "codex",
+    "cursor",
+    "gemini",
+    "hermes",
+    "openclaw",
+    "local-models",
     "---Set up---",
     "permissions",
     "use-the-sdk",

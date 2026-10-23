@@ -4,9 +4,9 @@
   "pages": [
     "index",
     "quickstart",
+    "concepts/how-spaces-works",
     "guides",
     "examples",
-    "concepts",
     "reference"
   ]
 }

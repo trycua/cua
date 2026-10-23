@@ -92,7 +92,7 @@ sessions and browser connections.
 
 | You are building                                    | Use                                                                          | Runtime owner                                        |
 | --------------------------------------------------- | ---------------------------------------------------------------------------- | ---------------------------------------------------- |
-| An agent or harness (Claude Code, Codex, Cursor, …) | [MCP](/agents): `cua-driver mcp`               | The MCP process; on macOS, the `CuaDriver.app` daemon |
+| An agent or harness (Claude Code, Codex, Cursor, …) | [MCP](/cua-driver/guides/connect-your-agent): `cua-driver mcp`               | The MCP process; on macOS, the `CuaDriver.app` daemon |
 | An agent that can only run shell commands           | [CLI](/cua-driver/reference/cli): `cua-driver call <tool>`                   | The `cua-driver serve` daemon                        |
 | An app with built-in computer use                   | [SDK](/cua-driver/guides/use-the-sdk): `CuaDriver.create()`                  | On macOS, the `CuaDriver.app` daemon; elsewhere your app process |
 | A signed desktop app that serves an external agent  | [App-hosted service](/cua-driver/guides/use-the-sdk#expose-mcp-from-a-desktop-app) | The permission-owning desktop app               |

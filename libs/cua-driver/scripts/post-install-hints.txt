@@ -17,4 +17,4 @@ Next steps:
 
 More: {{BINARY}} skills install (agent skill pack), {{BINARY}} doctor
 (diagnose this install). Permission modes: see the docs.
-Docs: https://cua.ai/docs/agents
+Docs: https://cua.ai/docs/cua-driver/guides/connect-your-agent

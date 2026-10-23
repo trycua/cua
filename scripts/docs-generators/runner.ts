@@ -328,7 +328,7 @@ function assertSelection(
 function testGeneratorRouting(config: Config): void {
   const tsxVersion = requireDocsTsx();
 
-  assertSelection(config, ['docs/content/docs/agents/index.mdx'], []);
+  assertSelection(config, ['docs/content/docs/cua-driver/guides/connect-your-agent.mdx'], []);
   assertSelection(
     config,
     [
@@ -392,7 +392,7 @@ function testGeneratorRouting(config: Config): void {
     ['cua-cli', 'spaces']
   );
   assertSelection(config, ['libs/cua/crates/cua-sandbox-core/src/lib.rs'], ['cua-rust']);
-  assertSelection(config, ['docs/content/docs/agents/spaces-mcp.mdx'], []);
+  assertSelection(config, ['docs/content/docs/cua-cli/guides/mcp-server.mdx'], []);
   assertSelection(config, ['docs/content/docs/lume/reference/cli.mdx'], ['lume']);
   assertSelection(
     config,

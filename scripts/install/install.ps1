@@ -810,7 +810,7 @@ function Invoke-CuaInstallSteps($sel) {
             if ($manifest.schema -ne 1) { Stop-Install "unsupported release manifest at $manifestUrl" }
             Write-Info "platform $platform, manifest $manifestUrl"
             # A per-platform release may carry no cli artifact; StrictMode rejects .version on $null.
-            $cliArtifact = @($manifest.artifacts | Where-Object { $_.component -eq 'cli' } | Select-Object -First 1)[0]
+            $cliArtifact = $manifest.artifacts | Where-Object { $_.component -eq 'cli' } | Select-Object -First 1
             $script:TelVersion = if ($cliArtifact) { "$($cliArtifact.version)" } else { '' }
         }
         $script:TelStage = 'cli'

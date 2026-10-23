@@ -3,7 +3,7 @@
 //! CLI; `sandboxes().bake(...)` in every SDK language).
 //!
 //! create (a local `vm` Space, by default of the docker tier,
-//! `ghcr.io/trycua/linux:24.04-docker-disk`) -> dockerd ready -> upload the
+//! the Linux image with Docker) -> dockerd ready -> upload the
 //! project (and `docker save` tarballs) -> `docker compose up --wait` -> the
 //! stack check (+ `health` commands) -> `run` commands -> live memory
 //! checkpoint -> (`verify_fork`: fork it once and check the stack is still
@@ -33,7 +33,7 @@ pub struct BakeOptions {
     /// from it).
     pub checkpoint: String,
     /// The image: a reference or a local disk path. `None`: the docker tier
-    /// (`Image.linux(tier="docker")`, ghcr.io/trycua/linux:24.04-docker-disk).
+    /// (`Image.linux(tier="docker")`, a Linux image with Docker).
     #[uniffi(default = None)]
     pub image: Option<String>,
     /// The bake Space's name. `None`: `bake-<checkpoint>`.

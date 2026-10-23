@@ -287,7 +287,7 @@ export const PAGES: PageSpec[] = [
     title: 'Bake a Compose stack',
     description: 'Save a running Docker Compose stack as a checkpoint that forks start from with their containers already up.',
     intro:
-      'The call behind `cua sb bake`: a local VM (by default the docker tier, `ghcr.io/trycua/linux:24.04-docker-disk`), the project uploaded, `docker compose up --wait`, the stack checked, then a live memory checkpoint. Fork it with `Sandboxes.fork`. See [Run Docker Compose stacks in a VM](/cua-sdk/guides/docker-vm).',
+      'The call behind `cua sb bake`: a local VM (by default the docker tier, a Linux image with Docker), the project uploaded, `docker compose up --wait`, the stack checked, then a live memory checkpoint. Fork it with `Sandboxes.fork`. See [Run Docker Compose stacks in a VM](/cua-sdk/guides/docker-vm).',
     members: [
       {
         object: 'Sandboxes',

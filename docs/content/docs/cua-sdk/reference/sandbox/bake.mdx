@@ -12,7 +12,7 @@ description: "Save a running Docker Compose stack as a checkpoint that forks sta
 
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-The call behind `cua sb bake`: a local VM (by default the docker tier, `ghcr.io/trycua/linux:24.04-docker-disk`), the project uploaded, `docker compose up --wait`, the stack checked, then a live memory checkpoint. Fork it with `Sandboxes.fork`. See [Run Docker Compose stacks in a VM](/cua-sdk/guides/docker-vm).
+The call behind `cua sb bake`: a local VM (by default the docker tier, a Linux image with Docker), the project uploaded, `docker compose up --wait`, the stack checked, then a live memory checkpoint. Fork it with `Sandboxes.fork`. See [Run Docker Compose stacks in a VM](/cua-sdk/guides/docker-vm).
 
 ## Bake
 
@@ -81,7 +81,7 @@ Options for `Sandboxes.bake`.
 | --- | --- | --- | --- |
 | `project_dir` / `projectDir` | `String` |  | The Docker Compose project directory on this machine (holds compose.yaml or docker-compose.yml, and whatever it builds or mounts). |
 | `checkpoint` | `String` |  | The checkpoint to save (`Sandboxes.fork(checkpoint, name)` starts from it). |
-| `image` | `Option<String>` | `None` | The image: a reference or a local disk path. `None`: the docker tier (`Image.linux(tier="docker")`, ghcr.io/trycua/linux:24.04-docker-disk). |
+| `image` | `Option<String>` | `None` | The image: a reference or a local disk path. `None`: the docker tier (`Image.linux(tier="docker")`, a Linux image with Docker). |
 | `name` | `Option<String>` | `None` | The bake Space's name. `None`: `bake-<checkpoint>`. |
 | `cpus` | `Option<u32>` | `None` | vCPUs of the bake Space (forks get the same). |
 | `memory_mb` / `memoryMb` | `Option<u64>` | `None` | Memory of the bake Space in MiB (forks get the same). |

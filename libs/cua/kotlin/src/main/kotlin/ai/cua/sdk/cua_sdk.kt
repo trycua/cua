@@ -27943,7 +27943,7 @@ data class BakeOptions (
     ,
     /**
      * The image: a reference or a local disk path. `None`: the docker tier
-     * (`Image.linux(tier="docker")`, ghcr.io/trycua/linux:24.04-docker-disk).
+     * (`Image.linux(tier="docker")`, a Linux image with Docker).
      */
     var `image`: kotlin.String? = null
     ,

@@ -435,7 +435,7 @@ cua sandbox bake [OPTIONS] --checkpoint <CHECKPOINT> <PROJECT>
 | Flag | Short | Type | Default | Description |
 | --- | --- | --- | --- | --- |
 | <span id="cua-sandbox-bake--checkpoint"></span>`--checkpoint` |  | string | required | The checkpoint to save (`cua sb fork CHECKPOINT NAME` starts from it). |
-| <span id="cua-sandbox-bake--image"></span>`--image` |  | string |  | The image: an alias, a reference or a local disk path. Default: the docker tier, `linux --tier docker` (ghcr.io/trycua/linux:24.04-docker-disk). |
+| <span id="cua-sandbox-bake--image"></span>`--image` |  | string |  | The image: an alias, a reference or a local disk path. Default: the docker tier, `linux --tier docker` (a Linux image with Docker). |
 | <span id="cua-sandbox-bake--tier"></span>`--tier` |  | string |  | Tier for an alias IMAGE (`docker` for a Docker-ready Linux VM). |
 | <span id="cua-sandbox-bake--name"></span>`--name` |  | string |  | The bake Space's name (default `bake-<checkpoint>`). |
 | <span id="cua-sandbox-bake--cpu"></span>`--cpu` |  | integer |  | vCPUs of the bake Space (forks get the same). Alias: `--cpus`. |

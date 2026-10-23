@@ -20,7 +20,7 @@ pub struct BakeArgs {
     #[arg(long)]
     pub checkpoint: String,
     /// The image: an alias, a reference or a local disk path. Default: the
-    /// docker tier, `linux --tier docker` (ghcr.io/trycua/linux:24.04-docker-disk).
+    /// docker tier, `linux --tier docker` (a Linux image with Docker).
     #[arg(long)]
     pub image: Option<String>,
     /// Tier for an alias IMAGE (`docker` for a Docker-ready Linux VM).

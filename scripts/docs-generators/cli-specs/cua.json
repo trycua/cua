@@ -4148,7 +4148,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "The image: an alias, a reference or a local disk path. Default: the docker tier, `linux --tier docker` (ghcr.io/trycua/linux:24.04-docker-disk)",
+       "help": "The image: an alias, a reference or a local disk path. Default: the docker tier, `linux --tier docker` (a Linux image with Docker)",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,

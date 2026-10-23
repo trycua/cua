@@ -127,7 +127,14 @@ def hid_idle_seconds() -> float:
         import ctypes.util
 
         class Info(ctypes.Structure):
-            _fields_ = [("window", ctypes.c_ulong), ("state", ctypes.c_int), ("kind", ctypes.c_int), ("til_or_since", ctypes.c_ulong), ("idle", ctypes.c_ulong), ("mask", ctypes.c_ulong)]
+            _fields_ = [
+                ("window", ctypes.c_ulong),
+                ("state", ctypes.c_int),
+                ("kind", ctypes.c_int),
+                ("til_or_since", ctypes.c_ulong),
+                ("idle", ctypes.c_ulong),
+                ("mask", ctypes.c_ulong),
+            ]
 
         x11 = ctypes.CDLL(ctypes.util.find_library("X11"))
         x11.XOpenDisplay.restype = ctypes.c_void_p
@@ -140,7 +147,9 @@ def hid_idle_seconds() -> float:
         xss.XScreenSaverQueryInfo.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(Info)]
         info = Info()
         try:
-            if not xss.XScreenSaverQueryInfo(display, x11.XDefaultRootWindow(display), ctypes.byref(info)):
+            if not xss.XScreenSaverQueryInfo(
+                display, x11.XDefaultRootWindow(display), ctypes.byref(info)
+            ):
                 raise RuntimeError("XScreenSaver idle query failed")
             return info.idle / 1000
         finally:
@@ -213,7 +222,12 @@ def hid_drops(path: Path) -> int:
 
 
 def clean_app_env(home: Path) -> dict[str, str]:
-    return desktop.desktop_env(home)
+    extra = (
+        {"PATH": f"/opt/homebrew/bin:{arms.CLOSED_PATH}"}
+        if desktop.detect_platform() == "macos"
+        else None
+    )
+    return desktop.desktop_env(home, extra)
 
 
 def sweep_processes(needle: str) -> int:
@@ -247,14 +261,22 @@ class Sentinel:
 
     @property
     def enabled(self) -> bool:
-        return self.app is not None and (desktop.detect_platform() == "linux" or (self.app / "Contents/MacOS").is_dir())
+        return self.app is not None and (
+            desktop.detect_platform() == "linux" or (self.app / "Contents/MacOS").is_dir()
+        )
 
     def start(self) -> None:
         if not self.enabled:
             return
         self.proc = desktop.start_app(
-            [*desktop.bench_app_argv("BenchSentinel", self.app.parent), "--log", str(self.log), *self.args],
-            self.log.parent / "sentinel-home", self.log.with_suffix(".stderr"),
+            [
+                *desktop.bench_app_argv("BenchSentinel", self.app.parent),
+                "--log",
+                str(self.log),
+                *self.args,
+            ],
+            self.log.parent / "sentinel-home",
+            self.log.with_suffix(".stderr"),
         )
         if desktop.detect_platform() == "linux":
             deadline = time.monotonic() + 10
@@ -527,7 +549,9 @@ def launch_lab(
         "--events",
         str(paths["events"]),
     ]
-    proc = desktop.start_app(args, Path(app_env["HOME"]), paths["state"].parent / "lab.log", env=app_env)
+    proc = desktop.start_app(
+        args, Path(app_env["HOME"]), paths["state"].parent / "lab.log", env=app_env
+    )
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline and not paths["state"].exists() and proc.poll() is None:
         time.sleep(0.3)

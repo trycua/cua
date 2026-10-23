@@ -445,7 +445,9 @@ def validate_row(row: Any, where: str) -> None:
             )
         if dist["available"]:
             unmeasured_hid = row.get("platform") == "linux" and dist.get("hid_events") is None
-            if not isinstance(dist.get("human_input_suspected"), bool) and not (unmeasured_hid and dist.get("human_input_suspected") is None):
+            if not isinstance(dist.get("human_input_suspected"), bool) and not (
+                unmeasured_hid and dist.get("human_input_suspected") is None
+            ):
                 raise TrialFormatError(
                     f"{where}: field 'disturbance.human_input_suspected' must be true or false when "
                     f"disturbance.available is true, got {_short(dist.get('human_input_suspected'))}"
@@ -896,19 +898,25 @@ def _disturbance(trials: list[Trial], arms: Sequence[str]) -> dict[str, Any]:
             "key_loss": series(lambda d: d["key_loss"]),
             "keystrokes_leaked": series(lambda d: d["keystrokes_leaked"]),
             "clicks_leaked": series(lambda d: d["clicks_leaked"]),
-            "hid_events_total": series(lambda d: sum(d["hid_events"][k] for k in HID_KEYS) if d["hid_events"] is not None else None),
+            "hid_events_total": series(
+                lambda d: sum(d["hid_events"][k] for k in HID_KEYS)
+                if d["hid_events"] is not None
+                else None
+            ),
             "pointer_max_deviation_px": series(lambda d: d["pointer_max_deviation_px"]),
             "pointer_deviation_episodes": series(lambda d: d["pointer_deviation_episodes"]),
         }
         for key in HID_KEYS:
-            fields[f"hid_events_{key}"] = series(lambda d, key=key: d["hid_events"][key] if d["hid_events"] is not None else None)
+            fields[f"hid_events_{key}"] = series(
+                lambda d, key=key: d["hid_events"][key] if d["hid_events"] is not None else None
+            )
         if all(_is_num(t.disturbance.get("scrolls_leaked")) for t in used) and used:
             fields["scrolls_leaked"] = series(lambda d: d["scrolls_leaked"])
 
-        observed = [_any_disturbance(t.disturbance) for t in used]
-        measured = [value for value in observed if value is not None]
-        any_count = sum(measured)
-        interval = wilson_interval(any_count, len(measured))
+        measured = all(t.disturbance["hid_events"] is not None for t in used)
+        any_count = sum(_any_disturbance(t.disturbance) for t in used) if measured else None
+        any_n = len(used) if measured else None
+        interval = wilson_interval(any_count, any_n) if measured else None
         out[arm] = {
             "n_non_excluded": len(kept),
             "n_available": len(available),
@@ -924,9 +932,10 @@ def _disturbance(trials: list[Trial], arms: Sequence[str]) -> dict[str, Any]:
                 for name, vals in fields.items()
             },
             "any_disturbance": {
+                "measured": measured,
                 "count": any_count,
-                "n": len(measured),
-                "fraction": any_count / len(measured) if measured else None,
+                "n": any_n,
+                "fraction": any_count / any_n if any_n else None,
                 "wilson_low": interval[0] if interval else None,
                 "wilson_high": interval[1] if interval else None,
             },

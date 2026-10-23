@@ -28,7 +28,6 @@ import json
 import os
 import re
 import shutil
-import signal
 import subprocess
 import sys
 import time
@@ -79,7 +78,9 @@ def node_facts(node: str = "/usr/local/bin/node") -> dict[str, str]:
 
 
 def _descriptor(spec: dict[str, Any]) -> dict[str, Any]:
-    path = pack_tasks_root() / spec["pack_task"] / f"platform/launch.{desktop.detect_platform()}.json"
+    path = (
+        pack_tasks_root() / spec["pack_task"] / f"platform/launch.{desktop.detect_platform()}.json"
+    )
     return json.loads(path.read_text("utf-8"))
 
 
@@ -223,7 +224,12 @@ def with_force_accessibility(
     if kind == "electron":
         return [*argv, flag]
     if kind == "browser":
-        if desktop.detect_platform() == "linux" and Path(argv[0]).name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
+        if desktop.detect_platform() == "linux" and Path(argv[0]).name in (
+            "google-chrome",
+            "google-chrome-stable",
+            "chromium",
+            "chromium-browser",
+        ):
             return [argv[0], flag, *argv[1:]]
         for i, part in enumerate(argv):
             if part.endswith(CHROME_EXE):
@@ -239,7 +245,9 @@ def kill_policy(spec: dict[str, Any]) -> tuple[list[str], list[int]]:
         names.append("Electron" if desktop.detect_platform() == "macos" else "electron")
     if "Google Chrome" in text:
         names.append("Google Chrome")
-    if desktop.detect_platform() == "linux" and any(name in text for name in ("google-chrome", "chromium")):
+    if desktop.detect_platform() == "linux" and any(
+        name in text for name in ("google-chrome", "chromium")
+    ):
         names += ["chrome", "chromium"]
     if "soffice" in text:
         names += ["soffice", "soffice.bin"]
@@ -259,7 +267,9 @@ def clear_leftovers(spec: dict[str, Any]) -> None:
         subprocess.run(["pkill", "-x", name], capture_output=True)
     for port in ports:
         pids = subprocess.run(
-            [desktop.tool("lsof"), "-ti", f"tcp:{port}", "-sTCP:LISTEN"], capture_output=True, text=True
+            [desktop.tool("lsof"), "-ti", f"tcp:{port}", "-sTCP:LISTEN"],
+            capture_output=True,
+            text=True,
         ).stdout.split()
         for pid in pids:
             subprocess.run(["kill", "-9", pid], capture_output=True)
@@ -301,7 +311,9 @@ class CdbTask:
         self, command: list[str], timeout: int = 300, **extra: str
     ) -> subprocess.CompletedProcess[str]:
         argv = [self.sub(part, **extra) for part in command]
-        env = desktop.desktop_env(Path.home())
+        env = desktop.desktop_env(
+            Path.home(), {"PATH": APP_PATH} if desktop.detect_platform() == "macos" else None
+        )
         return subprocess.run(
             argv, cwd=str(self.bundle), env=env, capture_output=True, text=True, timeout=timeout
         )
@@ -327,13 +339,19 @@ class CdbTask:
 
     def start_apps(self, windows: Any = None, force_accessibility: bool = False) -> None:
         for app in self.apps():
-            env = desktop.desktop_env(Path.home())
+            env = desktop.desktop_env(
+                Path.home(), {"PATH": APP_PATH} if desktop.detect_platform() == "macos" else None
+            )
             env.update({k: self.sub(v) for k, v in (app.get("env") or {}).items()})
             cwd = self.sub(app["cwd"]) if app.get("cwd") else str(self.bundle)
             argv = [self.sub(p) for p in app["command"]]
             for key in app.get("unset_env", []):
                 env.pop(key, None)
-            if desktop.detect_platform() == "macos" and app.get("kind") == "electron" and os.environ.get("CDB_ELECTRON_SHARED") != "1":
+            if (
+                desktop.detect_platform() == "macos"
+                and app.get("kind") == "electron"
+                and os.environ.get("CDB_ELECTRON_SHARED") != "1"
+            ):
                 argv = electron_argv(argv, cwd, app_display_name(app))
                 self.log.append(
                     f"electron {app['id']} as {electron_bundle_id(app_display_name(app))}"

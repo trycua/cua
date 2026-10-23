@@ -96,6 +96,19 @@ def run(rows, **kw):
 
 
 class LinuxDisturbanceTest(unittest.TestCase):
+    def test_any_disturbance_is_unmeasured_when_hid_is_unmeasured(self):
+        rows = [make_row(A, "MB-09", i, False, platform="linux") for i in (1, 2)]
+        for row in rows:
+            row["disturbance"].update(hid_events=None, human_input_suspected=None)
+        rows[0]["disturbance"]["front_changes"] = 1
+        summary = run(rows)["disturbance"][A]
+        self.assertEqual(summary["n_used"], 2)
+        self.assertEqual(summary["fields"]["front_changes"]["sum"], 1)
+        any_disturbance = summary["any_disturbance"]
+        for field in ("count", "n", "fraction", "wilson_low", "wilson_high"):
+            self.assertIsNone(any_disturbance[field], field)
+        self.assertFalse(any_disturbance["measured"])
+
     def test_unmeasured_hid_is_valid_only_with_linux_provenance(self):
         row = make_row(A, "MB-09", 1, False, platform="linux")
         row["disturbance"].update(hid_events=None, human_input_suspected=None)

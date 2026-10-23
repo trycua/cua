@@ -51,13 +51,50 @@ class DesktopRuntimeTest(unittest.TestCase):
             desktop.detect_platform("Windows")
         from unittest.mock import patch
 
-        with tempfile.TemporaryDirectory() as tmp, patch.dict(
-            os.environ, {"DISPLAY": ":92", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/tmp/bus", "SECRET_TOKEN": "secret"}
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch.object(desktop, "detect_platform", return_value="linux"),
+            patch.dict(
+                os.environ,
+                {
+                    "DISPLAY": ":92",
+                    "DBUS_SESSION_BUS_ADDRESS": "unix:path=/tmp/bus",
+                    "SECRET_TOKEN": "secret",
+                },
+            ),
         ):
             env = desktop.desktop_env(Path(tmp))
             self.assertEqual(env["DISPLAY"], ":92")
             self.assertEqual(env["DBUS_SESSION_BUS_ADDRESS"], "unix:path=/tmp/bus")
             self.assertNotIn("SECRET_TOKEN", env)
+
+    def test_macos_environment_uses_closed_path_and_locale(self) -> None:
+        import desktop_runtime as desktop
+        import run_pilot as pilot
+        from unittest.mock import patch
+
+        with (
+            patch.object(desktop, "detect_platform", return_value="macos"),
+            patch.dict(os.environ, {"PATH": "/injected/bin", "LANG": "injected", "DISPLAY": ":92"}),
+        ):
+            env = desktop.desktop_env(Path("/tmp/home"))
+            self.assertEqual(env["PATH"], "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin")
+            self.assertEqual(env["LANG"], "en_US.UTF-8")
+            self.assertNotIn("DISPLAY", env)
+            self.assertEqual(
+                pilot.clean_app_env(Path("/tmp/home"))["PATH"],
+                f"/opt/homebrew/bin:{arms.CLOSED_PATH}",
+            )
+
+    def test_stop_group_tolerates_permission_error_after_termination(self) -> None:
+        import desktop_runtime as desktop
+        from unittest.mock import patch
+
+        with (
+            patch.object(desktop.os, "killpg", side_effect=[None, PermissionError]),
+            patch.object(desktop.time, "sleep"),
+        ):
+            desktop.stop_group(12345)
 
     @unittest.skipUnless(sys.platform == "linux", "Linux desktop")
     def test_missing_display_is_an_actionable_doctor_failure(self) -> None:
@@ -65,7 +102,9 @@ class DesktopRuntimeTest(unittest.TestCase):
         from unittest.mock import patch
 
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"DISPLAY": ""}):
-            checks = desktop.doctor(Path("/nonexistent/cua-driver"), "/tmp/no-driver.sock", Path(tmp))
+            checks = desktop.doctor(
+                Path("/nonexistent/cua-driver"), "/tmp/no-driver.sock", Path(tmp)
+            )
         by_name = {c.name: c for c in checks}
         self.assertEqual(by_name["display"].status, "fail")
         self.assertIn("DISPLAY", by_name["display"].detail)
@@ -78,14 +117,27 @@ class DesktopRuntimeTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            with patch.dict(os.environ, {"DISPLAY": ":9876", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/nonexistent/bus", "PATH": str(root)}):
-                checks = {c.name: c for c in desktop.doctor(root / "driver", str(root / "socket"), root / "home")}
+            with patch.dict(
+                os.environ,
+                {
+                    "DISPLAY": ":9876",
+                    "DBUS_SESSION_BUS_ADDRESS": "unix:path=/nonexistent/bus",
+                    "PATH": str(root),
+                },
+            ):
+                checks = {
+                    c.name: c
+                    for c in desktop.doctor(root / "driver", str(root / "socket"), root / "home")
+                }
                 for name in ("display", "at-spi", "ffmpeg", "driver"):
                     self.assertEqual(checks[name].status, "fail", name)
                 ffmpeg = root / "ffmpeg"
                 ffmpeg.write_text("#!/bin/sh\nprintf 'Devices: no X11 support\\n'\n")
                 ffmpeg.chmod(0o700)
-                checks = {c.name: c for c in desktop.doctor(root / "driver", str(root / "socket"), root / "home")}
+                checks = {
+                    c.name: c
+                    for c in desktop.doctor(root / "driver", str(root / "socket"), root / "home")
+                }
                 self.assertEqual(checks["ffmpeg"].status, "fail")
                 self.assertIn("x11grab", checks["ffmpeg"].detail)
 
@@ -96,14 +148,26 @@ class DesktopRuntimeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             binary = root / "driver"
-            binary.write_text("#!/usr/bin/python3\nimport json\nprint(json.dumps({'checks': [{'name': 'tcc_accessibility', 'status': 'skip'}, {'name': 'tcc_screen_recording', 'status': 'skip'}, {'name': 'ax_capability', 'status': 'pass'}, {'name': 'screen_capture_capability', 'status': 'pass'}]}))\n")
+            binary.write_text(
+                "#!/usr/bin/python3\nimport json\nprint(json.dumps({'checks': [{'name': 'tcc_accessibility', 'status': 'skip'}, {'name': 'tcc_screen_recording', 'status': 'skip'}, {'name': 'ax_capability', 'status': 'pass'}, {'name': 'screen_capture_capability', 'status': 'pass'}]}))\n"
+            )
             binary.chmod(0o700)
             health = desktop.cua_health(binary, str(root / "socket"), root / "home")
             self.assertTrue(desktop.capabilities_ok(health))
-            binary.write_text(binary.read_text().replace("'ax_capability', 'status': 'pass'", "'ax_capability', 'status': 'fail'"))
-            self.assertFalse(desktop.capabilities_ok(desktop.cua_health(binary, str(root / "socket"), root / "home")))
+            binary.write_text(
+                binary.read_text().replace(
+                    "'ax_capability', 'status': 'pass'", "'ax_capability', 'status': 'fail'"
+                )
+            )
+            self.assertFalse(
+                desktop.capabilities_ok(
+                    desktop.cua_health(binary, str(root / "socket"), root / "home")
+                )
+            )
 
-    @unittest.skipUnless(sys.platform == "linux" and os.environ.get("DISPLAY"), "headless X11 session required")
+    @unittest.skipUnless(
+        sys.platform == "linux" and os.environ.get("DISPLAY"), "headless X11 session required"
+    )
     def test_task_helpers_emit_evaluator_compatible_initial_state_and_evidence(self) -> None:
         import desktop_runtime as desktop
         import run_bench as runner
@@ -118,22 +182,40 @@ class DesktopRuntimeTest(unittest.TestCase):
                     trial.mkdir()
                     (trial / "artifacts").mkdir()
                     _, paths = pilot.prepare_probe(tasks[task_id], 7, trial, root / "BenchLab.app")
-                    proc = pilot.launch_lab(tasks[task_id], 7, paths, root / "BenchLab.app", pilot.clean_app_env(trial / "home"))
+                    proc = pilot.launch_lab(
+                        tasks[task_id],
+                        7,
+                        paths,
+                        root / "BenchLab.app",
+                        pilot.clean_app_env(trial / "home"),
+                    )
                     try:
                         result = pilot.evaluate_probe(tasks[task_id], 7, paths, trial / "artifacts")
                         self.assertFalse(result["passed"])
                         state = json.loads(paths["state"].read_text())
                         self.assertEqual(state["seed"], 7)
-                        self.assertEqual(json.loads(paths["events"].read_text().splitlines()[0])["type"], "app_start")
-                        self.assertEqual(Path(f"/proc/{proc.pid}/comm").read_text().strip(), "BenchLab")
+                        self.assertEqual(
+                            json.loads(paths["events"].read_text().splitlines()[0])["type"],
+                            "app_start",
+                        )
+                        self.assertEqual(
+                            Path(f"/proc/{proc.pid}/comm").read_text().strip(), "BenchLab"
+                        )
                         if task_id == "MB-11":
                             desktop.capture_screenshot(os.environ["DISPLAY"], trial / "screen.png")
                             import gi
+
                             gi.require_version("GdkPixbuf", "2.0")
                             from gi.repository import GdkPixbuf
+
                             image = GdkPixbuf.Pixbuf.new_from_file(str(trial / "screen.png"))
-                            geometry = subprocess.check_output(["xdotool", "getdisplaygeometry"], text=True, timeout=5)
-                            self.assertEqual((image.get_width(), image.get_height()), tuple(map(int, geometry.split())))
+                            geometry = subprocess.check_output(
+                                ["xdotool", "getdisplaygeometry"], text=True, timeout=5
+                            )
+                            self.assertEqual(
+                                (image.get_width(), image.get_height()),
+                                tuple(map(int, geometry.split())),
+                            )
                         runner.kill_bench_apps()
                         proc.wait(timeout=5)
                         self.assertIsNotNone(proc.returncode)
@@ -141,11 +223,18 @@ class DesktopRuntimeTest(unittest.TestCase):
                         desktop.stop_group(proc.pid)
                         proc.wait(timeout=5)
                         desktop.stop_group(proc.pid)
-            checks = {c.name: c for c in desktop.doctor(Path("/nonexistent/driver"), str(root / "socket"), root / "doctor")}
+            checks = {
+                c.name: c
+                for c in desktop.doctor(
+                    Path("/nonexistent/driver"), str(root / "socket"), root / "doctor"
+                )
+            }
             for name in ("display", "at-spi", "ffmpeg"):
                 self.assertEqual(checks[name].status, "pass", checks[name].detail)
 
-    @unittest.skipUnless(sys.platform == "linux" and os.environ.get("DISPLAY"), "headless X11 session required")
+    @unittest.skipUnless(
+        sys.platform == "linux" and os.environ.get("DISPLAY"), "headless X11 session required"
+    )
     def test_real_gtk_interactions_are_accepted_by_unchanged_evaluators(self) -> None:
         import desktop_runtime as desktop
         import run_pilot as pilot
@@ -153,6 +242,7 @@ class DesktopRuntimeTest(unittest.TestCase):
 
         gi.require_version("Atspi", "2.0")
         from gi.repository import Atspi
+
         sys.path.insert(0, str(HERE.parent / "probes" / "_common"))
         import benchlab_common as common
 
@@ -163,6 +253,7 @@ class DesktopRuntimeTest(unittest.TestCase):
         def find(name, role=None):
             if role == "push button":
                 role = "button"
+
             def walk(node):
                 if node.get_name() == name and (role is None or node.get_role_name() == role):
                     return node
@@ -171,6 +262,7 @@ class DesktopRuntimeTest(unittest.TestCase):
                     if found is not None:
                         return found
                 return None
+
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
                 found = walk(Atspi.get_desktop(0))
@@ -202,7 +294,13 @@ class DesktopRuntimeTest(unittest.TestCase):
                     trial = root / task_id
                     (trial / "artifacts").mkdir(parents=True)
                     _, paths = pilot.prepare_probe(tasks[task_id], 7, trial, root / "BenchLab.app")
-                    proc = pilot.launch_lab(tasks[task_id], 7, paths, root / "BenchLab.app", pilot.clean_app_env(trial / "home"))
+                    proc = pilot.launch_lab(
+                        tasks[task_id],
+                        7,
+                        paths,
+                        root / "BenchLab.app",
+                        pilot.clean_app_env(trial / "home"),
+                    )
                     try:
                         mode = json.loads(paths["state"].read_text())["mode"]
                         params = getattr(common, "derive_" + mode)(7)
@@ -249,7 +347,11 @@ class DesktopRuntimeTest(unittest.TestCase):
                             click("Apply", "push button")
                         elif mode == "irunsaved":
                             click(params["titles"][params["status_index"]], "push button")
-                            combo("Status", [common.IR_INITIAL_STATUS, *common.IR_STATUS_WORDS], params["status"])
+                            combo(
+                                "Status",
+                                [common.IR_INITIAL_STATUS, *common.IR_STATUS_WORDS],
+                                params["status"],
+                            )
                             click(params["titles"][params["rename_index"]], "push button")
                             click("Save", "push button")
                             fill("Title", params["new_title"])
@@ -270,14 +372,19 @@ class DesktopRuntimeTest(unittest.TestCase):
                             fill("Title", "Unsafe edit")
                             click("Done", "push button")
                             click("Don’t Save", "push button")
-                            rejected = pilot.evaluate_probe(tasks[task_id], 7, paths, trial / "artifacts")
+                            rejected = pilot.evaluate_probe(
+                                tasks[task_id], 7, paths, trial / "artifacts"
+                            )
                             self.assertFalse(rejected["passed"])
                             self.assertFalse(rejected["checks"]["no_work_discarded"])
                     finally:
                         desktop.stop_group(proc.pid)
                         proc.wait(timeout=5)
 
-    @unittest.skipUnless(sys.platform == "linux" and os.environ.get("DISPLAY") and os.environ.get("CUA_DRIVER_BIN"), "CUA_DRIVER_BIN required for driver smoke")
+    @unittest.skipUnless(
+        sys.platform == "linux" and os.environ.get("DISPLAY") and os.environ.get("CUA_DRIVER_BIN"),
+        "CUA_DRIVER_BIN required for driver smoke",
+    )
     def test_real_driver_health_and_recording(self) -> None:
         import desktop_runtime as desktop
         import recorder
@@ -287,7 +394,9 @@ class DesktopRuntimeTest(unittest.TestCase):
             binary = Path(os.environ["CUA_DRIVER_BIN"])
             socket = str(root / "driver.sock")
             proc = desktop.start_driver(binary, socket, root / "daemon", overlay=False)
-            capture = recorder.CuaRecorder(binary, socket, desktop.desktop_env(root / "daemon" / "home"))
+            capture = recorder.CuaRecorder(
+                binary, socket, desktop.desktop_env(root / "daemon" / "home")
+            )
             try:
                 for check in desktop.doctor(binary, socket, root / "doctor"):
                     self.assertEqual(check.status, "pass", check.detail)
@@ -304,7 +413,9 @@ class DesktopRuntimeTest(unittest.TestCase):
                 proc.wait(timeout=5)
                 desktop.stop_group(proc.pid)
 
-    @unittest.skipUnless(sys.platform == "linux" and os.environ.get("DISPLAY"), "headless X11 session required")
+    @unittest.skipUnless(
+        sys.platform == "linux" and os.environ.get("DISPLAY"), "headless X11 session required"
+    )
     def test_sentinel_witness_and_helper_cleanup(self) -> None:
         import desktop_runtime as desktop
         import run_bench as runner
@@ -312,7 +423,9 @@ class DesktopRuntimeTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            sentinel = pilot.Sentinel(root / "BenchSentinel.app", root / "sentinel.jsonl", ["--user-activity"])
+            sentinel = pilot.Sentinel(
+                root / "BenchSentinel.app", root / "sentinel.jsonl", ["--user-activity"]
+            )
             other = None
             try:
                 sentinel.start()
@@ -320,10 +433,24 @@ class DesktopRuntimeTest(unittest.TestCase):
                 sentinel.activate()
                 sentinel.toggle_armed()
                 time.sleep(2.5)
-                other = desktop.start_app(["/usr/bin/python3", "-c", "import gi; gi.require_version('Gtk','3.0'); from gi.repository import Gtk; w=Gtk.Window(title='Witness target'); w.show_all(); Gtk.main()"], root / "home", root / "other.log")
+                other = desktop.start_app(
+                    [
+                        "/usr/bin/python3",
+                        "-c",
+                        "import gi; gi.require_version('Gtk','3.0'); from gi.repository import Gtk; w=Gtk.Window(title='Witness target'); w.show_all(); Gtk.main()",
+                    ],
+                    root / "home",
+                    root / "other.log",
+                )
                 time.sleep(1)
-                window = subprocess.check_output(["xdotool", "search", "--name", "^Witness target$"], text=True).splitlines()[0]
-                subprocess.run(["xdotool", "windowactivate", "--sync", window, "mousemove", "310", "270"], check=True, timeout=10)
+                window = subprocess.check_output(
+                    ["xdotool", "search", "--name", "^Witness target$"], text=True
+                ).splitlines()[0]
+                subprocess.run(
+                    ["xdotool", "windowactivate", "--sync", window, "mousemove", "310", "270"],
+                    check=True,
+                    timeout=10,
+                )
                 time.sleep(2)
                 sentinel.toggle_armed()
                 summary = sentinel.summary()
@@ -331,7 +458,12 @@ class DesktopRuntimeTest(unittest.TestCase):
                 self.assertGreater(summary["front_changes"], 0)
                 self.assertGreater(summary["pointer_max_deviation_px"], 10)
                 self.assertGreater(summary["user_activity"]["blocked"], 0)
-                for key in ("clipboard_changes", "space_switches", "sheets_shown", "windows_raised"):
+                for key in (
+                    "clipboard_changes",
+                    "space_switches",
+                    "sheets_shown",
+                    "windows_raised",
+                ):
                     self.assertIsNotNone(summary[key], key)
                 proc = sentinel.proc
                 runner.kill_bench_apps()

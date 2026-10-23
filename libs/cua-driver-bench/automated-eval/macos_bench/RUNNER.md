@@ -19,6 +19,42 @@ invocation, isolation, schedule, gates and output. The method is in
 Arms `codex-native-cu` and `codex-cua-driver` (`codex exec --json`, from
 `run_pilot.py`) exist behind `--allow-codex-arms` and are not part of Bench v2.
 
+## Codex authentication
+
+`CDB_CODEX_AUTH=gateway` is the default and retains the LiteLLM route.
+Set `CDB_CODEX_AUTH=chatgpt` for direct ChatGPT-login authentication on the
+three `cx-*` arms and the Codex fallback/pilot arms; no gateway or gateway key
+is needed. Other values are rejected.
+
+```bash
+export CDB_CODEX_AUTH=chatgpt
+# Optional; defaults to the runner user's ~/.codex/auth.json:
+export CDB_CODEX_AUTH_FILE="$HOME/.codex/auth.json"
+python3 run_bench.py preflight --only-arm cx-cua-driver
+```
+
+Log in to Codex with ChatGPT beforehand. Each trial's `CODEX_HOME/auth.json`
+is a symlink to that existing file, never a credential copy. The harness does
+not read or log its contents or perform login. ChatGPT mode sets
+`cli_auth_credentials_store = "file"`; gateway configuration is unchanged.
+**The ChatGPT auth file is shared with the host and its clones; refresh-token
+rotation can sign out the other copies.**
+The harness removes each trial/preflight symlink after use and flags a symlink
+replaced with a regular file as an infrastructure failure. Gateway key
+forwarding (`CDB_PILOT_PASS_GATEWAY_KEY=1`) applies only in gateway mode.
+
+ChatGPT preflight uses only app-server metadata (`initialize`, `account/read`
+with refresh disabled, and paginated `model/list`), not a model call. It requires
+a ChatGPT account and the configured model, checks the credential link remains
+a symlink, and is skipped offline. The metadata probe runs once per run, even
+with `--no-model-preflight`. Gateway preflight is unchanged; the pilot does not
+add a live authentication probe.
+Model and effort are unchanged: native arms retain `gpt-6.1-sol` at its catalog
+default `low` effort; pilot defaults remain independent. Native rows/manifests
+record `codex_native.codex_auth` and omit the gateway URL in ChatGPT mode; pilot
+rows/manifests record `codex_auth`. The fallback native-CU `notify` setting
+is now root-level TOML in both modes, rather than inside the provider table.
+
 ## Files
 
 | File | What it does |

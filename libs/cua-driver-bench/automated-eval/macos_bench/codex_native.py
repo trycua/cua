@@ -34,21 +34,24 @@ Claude Code's assistant turns; the 45-turn cap stops the turn when the cap-th re
 list price is pinned for ``gpt-6-astra`` through the subscription gateway, so cost is not reported for this arm
 (tokens are).
 
-Nothing here reads credentials. The model is reached through the LiteLLM gateway at ``CDB_CODEX_GATEWAY``
-(default ``http://127.0.0.1:4000/v1``), which in the bench VM is a local port forwarded to the owner's gateway for
-the run only; no key is placed in the VM.
+Nothing here reads credentials. CDB_CODEX_AUTH selects the LiteLLM gateway at
+``CDB_CODEX_GATEWAY`` (default ``http://127.0.0.1:4000/v1``) or built-in ChatGPT login
+through a shared auth.json symlink.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import selectors
 import signal
 import subprocess
 import threading
 import time
 from pathlib import Path
 from typing import Any, Callable
+
+import arms
 
 ARM = "cx-codex-cu"
 # cx-cua-driver and cx-claude-cu-helper: Amendment 23, Cua Driver's MCP server and Cua's helper adapter under the
@@ -73,7 +76,7 @@ ENABLED_TOOLS = (
 CODEX_CLI = Path(
     "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"
 )
-# Amendment 23: GPT-6.1 Sol (`gpt-6.1-sol`, served through the gateway), at its catalog default effort
+# Amendment 23: GPT-6.1 Sol (`gpt-6.1-sol`), at its catalog default effort
 # (`low`), as the Claude arms use Claude's default. A20's smoke used gpt-6-astra (`medium`). The model and effort are
 # recorded in every row and named in the setup's label.
 MODEL_DEFAULT_EFFORT = {"gpt-6-astra": "medium", "gpt-6.1-sol": "low"}
@@ -169,7 +172,11 @@ def config_toml(
     )  # unchanged from arm B: Sky's service and pipe live under the user's own home
     lines = [
         f"model = {_q(model)}",
-        'model_provider = "litellm"',
+        (
+            'model_provider = "litellm"'
+            if arms.codex_auth() == "gateway"
+            else 'cli_auth_credentials_store = "file"'
+        ),
         f"model_reasoning_effort = {_q(effort)}",
         'approval_policy = "on-request"',  # elicitations reach the host only with on-request
         'sandbox_mode = "read-only"',
@@ -180,14 +187,7 @@ def config_toml(
         "[features]",
         *[f"{name} = false" for name in DISABLED_FEATURES],
         "",
-        "[model_providers.litellm]",
-        'name = "LiteLLM"',
-        f"base_url = {_q(gateway())}",
-        'wire_api = "responses"',
-        "requires_openai_auth = false",
-        "request_max_retries = 2",
-        "stream_max_retries = 2",
-        "stream_idle_timeout_ms = 120000",
+        *([arms.provider_block(gateway()).rstrip()] if arms.codex_auth() == "gateway" else []),
         "",
         f"[mcp_servers.{server}]",
         f"command = {_q(entry['command'])}",
@@ -212,6 +212,7 @@ def render_home(
     """Write a fresh CODEX_HOME for one trial; return the closed environment for `codex exec`."""
     codex_home = home / ".codex"
     codex_home.mkdir(parents=True, exist_ok=True)
+    arms.link_chatgpt_auth(codex_home)
     (home / "tmp").mkdir(exist_ok=True)
     (codex_home / "config.toml").write_text(
         config_toml(server_entry(mcp_json, arm), model, effort, instructions, codex_home, arm),
@@ -375,6 +376,86 @@ def _kill_group(pid: int, grace: float = 1.0) -> None:
         except OSError:
             return
         time.sleep(grace)
+
+
+CHATGPT_CHECK_TIMEOUT = 30.0
+
+
+def chatgpt_checks(cli: Path, env: dict[str, str], model: str) -> list[tuple[str, str, str]]:
+    checks: list[tuple[str, str, str]] = []
+    label = "codex app-server initialize"
+    proc = None
+    deadline = time.monotonic() + CHATGPT_CHECK_TIMEOUT
+    try:
+        with selectors.DefaultSelector() as selector:
+            proc = subprocess.Popen(
+                argv(cli),
+                env=env,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            assert proc.stdin is not None and proc.stdout is not None
+            selector.register(proc.stdout, selectors.EVENT_READ)
+            pending = b""
+            rid = 0
+
+            def send(message: dict[str, Any]) -> None:
+                proc.stdin.write((json.dumps(message) + "\n").encode())
+                proc.stdin.flush()
+
+            def request(method: str, params: dict[str, Any]) -> dict[str, Any]:
+                nonlocal pending, rid
+                rid += 1
+                send({"id": rid, "method": method, "params": params})
+                while time.monotonic() < deadline:
+                    if b"\n" not in pending:
+                        if not selector.select(max(0, deadline - time.monotonic())):
+                            break
+                        chunk = os.read(proc.stdout.fileno(), 65536)
+                        if not chunk:
+                            raise RuntimeError
+                        pending += chunk
+                        continue
+                    line, pending = pending.split(b"\n", 1)
+                    reply = json.loads(line)
+                    if reply.get("id") != rid:
+                        continue
+                    if "error" in reply:
+                        raise RuntimeError
+                    return reply["result"]
+                raise TimeoutError
+
+            request("initialize", {"clientInfo": {"name": "cdb_preflight", "version": "1"}})
+            send({"method": "initialized", "params": {}})
+            checks.append((label, "pass", "initialized"))
+            label = "codex ChatGPT account"
+            account = request("account/read", {"refreshToken": False}).get("account")
+            if not account or account.get("type") != "chatgpt":
+                raise RuntimeError
+            checks.append((label, "pass", "ChatGPT login present"))
+            label = "codex lists the model"
+            cursor = None
+            while True:
+                page = request("model/list", {"cursor": cursor})
+                if any(item.get("model") == model for item in page["data"]):
+                    break
+                cursor = page.get("nextCursor")
+                if not cursor:
+                    raise RuntimeError
+            checks.append((label, "pass", "configured model available"))
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, RuntimeError):
+        checks.append((label, "fail", "metadata check failed"))
+    finally:
+        if proc is not None:
+            _kill_group(proc.pid, grace=0.05)
+            proc.wait(timeout=5)
+            if proc.stdin:
+                proc.stdin.close()
+            if proc.stdout:
+                proc.stdout.close()
+    return checks
 
 
 def run_codex(
@@ -585,6 +666,7 @@ def observed(cli: Path = CODEX_CLI) -> dict[str, Any]:
         "codex_cli_sha256": sha,
         "model": MODEL,
         "effort": EFFORT,
-        "gateway": gateway(),
+        "codex_auth": arms.codex_auth(),
+        **({"gateway": gateway()} if arms.codex_auth() == "gateway" else {}),
         "host": "codex app-server",
     }

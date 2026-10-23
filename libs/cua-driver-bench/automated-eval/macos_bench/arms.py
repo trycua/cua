@@ -13,8 +13,8 @@ Only the computer-use tool layer differs:
   ChatGPT/Codex app with the `@oai/sky` service) plus the computer-use skill and
   API reference that ship in the same app bundle.
 
-Nothing here reads credentials. The model route is the local LiteLLM gateway
-already configured for Codex (see `provider_block`).
+Nothing here reads credentials. CDB_CODEX_AUTH selects the local LiteLLM gateway
+(default) or ChatGPT login through a shared auth.json symlink.
 """
 
 from __future__ import annotations
@@ -22,8 +22,10 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 ARMS = ("cua-driver-mcp", "codex-native-cu")  # the Codex-CLI pilot arms (run_pilot.py)
 # Claude Code arms (run_bench.py): same model, same harness, only the MCP tools differ.
@@ -105,12 +107,58 @@ def _sh(value: str) -> str:
     return "'" + value.replace("'", "'\\''") + "'"
 
 
-def provider_block() -> str:
-    """The LiteLLM provider block used for every arm (identical text)."""
+CodexAuth = Literal["gateway", "chatgpt"]
+
+
+def codex_auth() -> CodexAuth:
+    mode = os.environ.get("CDB_CODEX_AUTH", "gateway")
+    if mode == "gateway":
+        return "gateway"
+    if mode == "chatgpt":
+        return "chatgpt"
+    raise ValueError("CDB_CODEX_AUTH must be gateway or chatgpt")
+
+
+def link_chatgpt_auth(codex_home: Path) -> None:
+    if codex_auth() == "gateway":
+        return
+    source = (
+        Path(os.environ.get("CDB_CODEX_AUTH_FILE") or "~/.codex/auth.json").expanduser().absolute()
+    )
+    try:
+        source.lstat()
+    except OSError:
+        raise FileNotFoundError("ChatGPT auth file is missing") from None
+    link = codex_home / "auth.json"
+    if link.is_symlink() and link.readlink() == source:
+        return
+    try:
+        link.symlink_to(source)
+    except OSError as error:
+        raise type(error)("cannot provision shared ChatGPT authentication") from None
+
+
+def unlink_chatgpt_auth(codex_home: Path) -> None:
+    if codex_auth() == "gateway":
+        return
+    link = codex_home / "auth.json"
+    try:
+        mode = link.lstat().st_mode
+    except FileNotFoundError:
+        raise RuntimeError("shared ChatGPT credential symlink missing") from None
+    if not stat.S_ISLNK(mode):
+        raise RuntimeError("shared ChatGPT credential symlink replaced")
+    link.unlink()
+
+
+def provider_block(url: str = "http://127.0.0.1:4000/v1") -> str:
+    """The LiteLLM provider block, omitted for built-in ChatGPT authentication."""
+    if codex_auth() == "chatgpt":
+        return ""
     return (
         "[model_providers.litellm]\n"
         'name = "LiteLLM"\n'
-        'base_url = "http://127.0.0.1:4000/v1"\n'
+        f"base_url = {_q(url)}\n"
         'wire_api = "responses"\n'
         "requires_openai_auth = false\n"
         "request_max_retries = 2\n"
@@ -122,15 +170,16 @@ def provider_block() -> str:
 def common_config(model: str, effort: str) -> str:
     return (
         f"model = {_q(model)}\n"
-        'model_provider = "litellm"\n'
-        f"model_reasoning_effort = {_q(effort)}\n"
+        + (
+            'model_provider = "litellm"\n'
+            if codex_auth() == "gateway"
+            else 'cli_auth_credentials_store = "file"\n'
+        )
+        + f"model_reasoning_effort = {_q(effort)}\n"
         'approval_policy = "never"\n'
         'sandbox_mode = "workspace-write"\n'
         "mcp_optional_startup_grace_ms = 30000\n"
         "\n"
-        "[sandbox_workspace_write]\n"
-        "network_access = true\n"
-        "\n" + provider_block()
     )
 
 
@@ -156,8 +205,6 @@ def codex_cu_config() -> str:
     }
     lines = [
         "",
-        f'notify = [{_q(str(CODEX_CU_CLIENT))}, "turn-ended"]',
-        "",
         "[mcp_servers.node_repl]",
         f"command = {_q(str(node_dir / 'bin/node_repl'))}",
         "args = []",
@@ -177,7 +224,11 @@ def render_home(arm: str, home: Path, model: str, effort: str) -> dict[str, str]
         raise ValueError(f"unknown arm: {arm}")
     codex_home = home / ".codex"
     codex_home.mkdir(parents=True, exist_ok=True)
+    link_chatgpt_auth(codex_home)
     config = common_config(model, effort)
+    if arm == "codex-native-cu":
+        config += f'notify = [{_q(str(CODEX_CU_CLIENT))}, "turn-ended"]\n'
+    config += "\n[sandbox_workspace_write]\nnetwork_access = true\n\n" + provider_block()
     skills = home / ".agents" / "skills"
     path = CLOSED_PATH
     if arm == "cua-driver-mcp":
@@ -213,7 +264,11 @@ def render_home(arm: str, home: Path, model: str, effort: str) -> dict[str, str]
     }
     (home / "tmp").mkdir(exist_ok=True)
     gateway_key = os.environ.get("LITELLM_MASTER_KEY")
-    if gateway_key and os.environ.get("CDB_PILOT_PASS_GATEWAY_KEY") == "1":
+    if (
+        codex_auth() == "gateway"
+        and gateway_key
+        and os.environ.get("CDB_PILOT_PASS_GATEWAY_KEY") == "1"
+    ):
         env["LITELLM_MASTER_KEY"] = gateway_key
     return env
 

@@ -5,12 +5,16 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
+import shutil
+import os
 import sys
 import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HERE))
@@ -47,6 +51,215 @@ def write_arm_b(folder: Path, surfaces: str = "computer") -> Path:
 
 
 class HomeTest(unittest.TestCase):
+    def test_auth_modes_preserve_config_and_share_credentials(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / ".codex/auth.json"
+            source.parent.mkdir()
+            source.write_bytes(b"private")
+            source.chmod(0o000)
+            before = source.stat().st_mtime_ns
+            mcp = write_arm_b(root)
+            for arm in cxn.ARMS:
+                configs = {}
+                texts = {}
+                for mode in ("gateway", "chatgpt"):
+                    with mock.patch.dict(
+                        os.environ, {"CDB_CODEX_AUTH": mode, "HOME": tmp}, clear=True
+                    ):
+                        env = cxn.render_home(
+                            root / f"{arm}-{mode}", mcp, cxn.MODEL, cxn.EFFORT, "SYSTEM", arm
+                        )
+                        home = Path(env["CODEX_HOME"])
+                        texts[mode] = (home / "config.toml").read_text()
+                        configs[mode] = tomllib.loads(texts[mode])
+                        link = home / "auth.json"
+                        self.assertEqual(link.is_symlink(), mode == "chatgpt")
+                        if mode == "chatgpt":
+                            self.assertEqual(os.readlink(link), str(source))
+                            arms.link_chatgpt_auth(home)
+                            link.unlink()
+                            link.symlink_to(root / "other")
+                            with self.assertRaises(FileExistsError):
+                                arms.link_chatgpt_auth(home)
+                            link.unlink()
+                            link.write_text("conflict")
+                            with self.assertRaises(FileExistsError) as conflict:
+                                arms.link_chatgpt_auth(home)
+                            self.assertNotIn(str(source), str(conflict.exception))
+                expected = texts["gateway"].replace(
+                    'model_provider = "litellm"', 'cli_auth_credentials_store = "file"'
+                )
+                start = expected.index("[model_providers.litellm]")
+                end = expected.index("\n\n", start)
+                self.assertEqual(texts["chatgpt"], expected[:start] + expected[end + 1 :])
+                gateway = configs["gateway"]
+                self.assertEqual(gateway.pop("model_provider"), "litellm")
+                self.assertIn("litellm", gateway.pop("model_providers"))
+                self.assertNotIn("cli_auth_credentials_store", gateway)
+                self.assertEqual(configs["chatgpt"].pop("cli_auth_credentials_store"), "file")
+                self.assertEqual(gateway, configs["chatgpt"])
+                self.assertEqual(gateway["model"], "gpt-6.1-sol")
+                self.assertEqual(gateway["model_reasoning_effort"], "low")
+            with mock.patch.dict(
+                os.environ, {"CDB_CODEX_AUTH": "chatgpt", "CDB_CODEX_AUTH_FILE": str(source)}
+            ):
+                env = cxn.render_home(root / "override", mcp, cxn.MODEL, cxn.EFFORT, "SYSTEM")
+                self.assertEqual(os.readlink(Path(env["CODEX_HOME"]) / "auth.json"), str(source))
+                self.assertEqual(source.stat().st_mtime_ns, before)
+                source.chmod(0o600)
+                self.assertEqual(source.read_bytes(), b"private")
+                source.unlink()
+                with self.assertRaises(FileNotFoundError):
+                    cxn.render_home(root / "missing", mcp, cxn.MODEL, cxn.EFFORT, "SYSTEM")
+
+    def test_auth_identity_does_not_record_gateway_in_chatgpt_mode(self) -> None:
+        with mock.patch.dict(os.environ, {"CDB_CODEX_AUTH": "chatgpt"}):
+            identity = cxn.observed(Path("/nonexistent"))
+        self.assertEqual(identity["codex_auth"], "chatgpt")
+        self.assertNotIn("gateway", identity)
+        with mock.patch.dict(os.environ, {"CDB_CODEX_AUTH": "gateway"}):
+            identity = cxn.observed(Path("/nonexistent"))
+        self.assertEqual(identity["codex_auth"], "gateway")
+        self.assertEqual(identity["gateway"], cxn.gateway())
+
+    def test_credentials_are_never_read_copied_or_stat_followed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "shared-auth.json"
+            source.write_text("FAKE_REFRESH_TOKEN")
+            mcp = write_arm_b(root)
+            skill = root / "skill"
+            skill.mkdir()
+            (skill / "SKILL.md").write_text("skill")
+
+            def protect(function):
+                def guarded(path, *args, **kwargs):
+                    if Path(path) == source and kwargs.get("follow_symlinks", True):
+                        raise AssertionError("credential content accessed")
+                    return function(path, *args, **kwargs)
+
+                return guarded
+
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(
+                    mock.patch.dict(
+                        os.environ,
+                        {
+                            "CDB_CODEX_AUTH": "chatgpt",
+                            "CDB_CODEX_AUTH_FILE": str(source),
+                            "LITELLM_MASTER_KEY": "FAKE_GATEWAY_KEY",
+                            "CDB_PILOT_PASS_GATEWAY_KEY": "1",
+                        },
+                    )
+                )
+                stack.enter_context(mock.patch.object(arms, "CUA_DRIVER_SKILL", skill))
+                for owner, name in (
+                    (__import__("builtins"), "open"),
+                    (Path, "read_text"),
+                    (Path, "read_bytes"),
+                    (Path, "stat"),
+                    (os, "open"),
+                    *(
+                        (shutil, name)
+                        for name in (
+                            "copy",
+                            "copy2",
+                            "copyfile",
+                            "copytree",
+                            "copymode",
+                            "copystat",
+                        )
+                    ),
+                ):
+                    stack.enter_context(
+                        mock.patch.object(owner, name, protect(getattr(owner, name)))
+                    )
+                for env in (
+                    cxn.render_home(root / "native", mcp, cxn.MODEL, cxn.EFFORT, "SYSTEM"),
+                    arms.render_home("codex-cua-driver", root / "fallback", "m", "high"),
+                ):
+                    self.assertNotIn("LITELLM_MASTER_KEY", env)
+                    self.assertEqual((Path(env["CODEX_HOME"]) / "auth.json").readlink(), source)
+                identity = json.dumps(cxn.observed(Path("/nonexistent")))
+                for secret in (
+                    str(source),
+                    "FAKE_REFRESH_TOKEN",
+                    "FAKE_GATEWAY_KEY",
+                    cxn.gateway(),
+                ):
+                    self.assertNotIn(secret, identity)
+
+    def test_gateway_config_matches_original_text(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {"CDB_CODEX_AUTH": "gateway", "CDB_CODEX_GATEWAY": "http://127.0.0.1:4000/v1"},
+        ):
+            text = cxn.config_toml(
+                {"command": "node", "args": [], "env": {}},
+                "gpt-6.1-sol",
+                "low",
+                "SYSTEM",
+                Path("/trial"),
+            )
+        self.assertEqual(
+            text,
+            """model = "gpt-6.1-sol"
+model_provider = "litellm"
+model_reasoning_effort = "low"
+approval_policy = "on-request"
+sandbox_mode = "read-only"
+web_search = "disabled"
+mcp_optional_startup_grace_ms = 30000
+developer_instructions = "SYSTEM"
+
+[features]
+shell_tool = false
+unified_exec = false
+apps = false
+browser_use = false
+browser_use_external = false
+in_app_browser = false
+image_generation = false
+multi_agent = false
+multi_agent_v2 = false
+goals = false
+view_image = false
+plugins = false
+tool_suggest = false
+skill_search = false
+
+[model_providers.litellm]
+name = "LiteLLM"
+base_url = "http://127.0.0.1:4000/v1"
+wire_api = "responses"
+requires_openai_auth = false
+request_max_retries = 2
+stream_max_retries = 2
+stream_idle_timeout_ms = 120000
+
+[mcp_servers.cua_repl]
+command = "node"
+args = []
+startup_timeout_sec = 120
+default_tools_approval_mode = "approve"
+enabled_tools = ["js", "js_reset"]
+
+[mcp_servers.cua_repl.env]
+""",
+        )
+
+    def test_invalid_auth_mode_is_rejected(self) -> None:
+        with mock.patch.dict(os.environ, {"CDB_CODEX_AUTH": "invalid"}):
+            with self.assertRaises(ValueError):
+                cxn.config_toml(
+                    {"command": "node", "args": [], "env": {}},
+                    cxn.MODEL,
+                    cxn.EFFORT,
+                    "",
+                    Path("/tmp/home"),
+                )
+
     def test_config_uses_arm_b_launcher_and_switches_routes_off(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -144,6 +357,83 @@ class CuaDriverUnderCodexTest(unittest.TestCase):
     def test_translator_names_the_cua_server(self) -> None:
         out = cxn.Translator("cua").feed("thread/started", {"thread": {"id": "t"}})
         self.assertEqual(out[0]["mcp_servers"], [{"name": "cua", "status": "connected"}])
+
+
+class ChatGPTPreflightTest(unittest.TestCase):
+    def test_metadata_only_probe_handles_notifications_pages_and_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "auth.json"
+            source.touch()
+            home = root / "home"
+            home.mkdir()
+            (home / "auth.json").symlink_to(source)
+            cli = root / "codex"
+            requests = root / "requests"
+            pid_file = root / "pid"
+            for scenario in (
+                "ok",
+                "apiKey",
+                "missing",
+                "model",
+                "rpc",
+                "exit",
+                "timeout",
+                "malformed",
+            ):
+                cli.write_text(f"""#!{sys.executable}
+import json, os, sys, time
+from pathlib import Path
+Path({str(pid_file)!r}).write_text(str(os.getpid()))
+scenario = {scenario!r}
+for line in sys.stdin:
+    msg = json.loads(line)
+    with open({str(requests)!r}, 'a') as log:
+        log.write(line)
+    if 'id' not in msg:
+        continue
+    method = msg['method']
+    if scenario == 'exit':
+        sys.exit(0)
+    if scenario == 'malformed':
+        print('[]', flush=True)
+        continue
+    if scenario == 'timeout':
+        time.sleep(10)
+    result = {{}}
+    if method == 'account/read':
+        assert msg['params']['refreshToken'] is False
+        result = {{'account': None if scenario == 'missing' else {{'type': 'apiKey' if scenario == 'apiKey' else 'chatgpt', 'email': 'SECRET'}}}}
+    if method == 'model/list':
+        if not msg['params'].get('cursor'):
+            result = {{'data': [], 'nextCursor': 'page2'}}
+        else:
+            result = {{'data': [{{'model': 'other' if scenario == 'model' else 'gpt-6.1-sol', 'id': 'catalog-id'}}], 'nextCursor': None}}
+    print(json.dumps({{'method': 'notification', 'params': {{'private': 'SECRET'}}}}), flush=True)
+    reply = {{'id': msg['id'], 'result': result}}
+    if scenario == 'rpc':
+        reply = {{'id': msg['id'], 'error': {{'message': 'SECRET'}}}}
+    print(json.dumps(reply), flush=True)
+""")
+                cli.chmod(0o755)
+                requests.write_text("")
+                with mock.patch.object(cxn, "CHATGPT_CHECK_TIMEOUT", 0.3):
+                    checks = cxn.chatgpt_checks(cli, {"CODEX_HOME": str(home)}, cxn.MODEL)
+                self.assertEqual(
+                    all(status == "pass" for _, status, _ in checks), scenario == "ok", scenario
+                )
+                self.assertNotIn("SECRET", str(checks))
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(int(pid_file.read_text()), 0)
+                methods = [json.loads(line)["method"] for line in requests.read_text().splitlines()]
+                self.assertTrue(
+                    set(methods) <= {"initialize", "initialized", "account/read", "model/list"}
+                )
+                if scenario == "ok":
+                    self.assertEqual(
+                        methods,
+                        ["initialize", "initialized", "account/read", "model/list", "model/list"],
+                    )
 
 
 class TranslatorTest(unittest.TestCase):

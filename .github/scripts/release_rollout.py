@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: FSL-1.1-MIT
-# Copyright (c) 2026 Cua AI, Inc.
 """Staged rollout of a Cua Spaces build: edit the updater feeds, nothing else.
 
 Reads the feed files from --feed-dir (a copy of the assets on the rolling

@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: FSL-1.1-MIT
-# Copyright (c) 2026 Cua AI, Inc.
 """Run: python3 .github/scripts/tests/test_release_rollout.py"""
 
 import contextlib

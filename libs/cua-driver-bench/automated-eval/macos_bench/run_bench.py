@@ -1712,9 +1712,10 @@ def quota_probe(ctx: Ctx) -> tuple[bool, str]:
     )
 
 
-def native_codex_checks(ctx: Ctx, arm: str, with_models: bool) -> list[tuple[str, str, str]]:
-    """Amendment 20: the Codex CLI build is the pinned one, the gateway serves the model, and one trivial
-    `codex exec` through the trial's own home answers without any tool call."""
+def native_codex_checks(
+    ctx: Ctx, arm: str, with_models: bool, offline: bool = False
+) -> list[tuple[str, str, str]]:
+    """Check CLI pins and authentication; only gateway mode optionally makes a model call."""
     out: list[tuple[str, str, str]] = []
     observed = ctx.versions.get("codex_native") or cxn.observed()
     want = ca.load_pins().get("codex_native") or {}
@@ -1729,30 +1730,37 @@ def native_codex_checks(ctx: Ctx, arm: str, with_models: bool) -> list[tuple[str
                 else f"observed {observed.get(key)!r}, pinned {want.get(key)!r}",
             )
         )
-    try:
-        import urllib.request
+    chatgpt = arms.codex_auth() == "chatgpt"
+    if chatgpt:
+        if offline:
+            return out
+    else:
+        try:
+            import urllib.request
 
-        with urllib.request.urlopen(cxn.gateway().rstrip("/") + "/models", timeout=10) as resp:
-            listed = [m.get("id") for m in json.load(resp).get("data", [])]
-        out.append(
-            (
-                "gateway lists the model",
-                "pass" if cxn.MODEL in listed else "fail",
-                f"{cxn.gateway()} {cxn.MODEL}",
+            with urllib.request.urlopen(cxn.gateway().rstrip("/") + "/models", timeout=10) as resp:
+                listed = [m.get("id") for m in json.load(resp).get("data", [])]
+            out.append(
+                (
+                    "gateway lists the model",
+                    "pass" if cxn.MODEL in listed else "fail",
+                    f"{cxn.gateway()} {cxn.MODEL}",
+                )
             )
-        )
-    except Exception as error:  # noqa: BLE001
-        out.append(
-            ("gateway reachable", "fail", f"{cxn.gateway()}: {type(error).__name__}: {error}")
-        )
-    if not with_models:
-        return out
+        except Exception as error:  # noqa: BLE001
+            out.append(
+                ("gateway reachable", "fail", f"{cxn.gateway()}: {type(error).__name__}: {error}")
+            )
+        if not with_models:
+            return out
     mcp_path, _server = ctx.mcp[arm]
     home = ctx.run_dir / f"preflight-{arm}-home"
     shutil.rmtree(home, ignore_errors=True)
     env = cxn.render_home(
         home, mcp_path, cxn.MODEL, cxn.EFFORT, ca.system_prompt_for(cxn.SOURCE_ARM[arm]), arm
     )
+    if chatgpt:
+        return out + cxn.chatgpt_checks(cxn.CODEX_CLI, env, cxn.MODEL)
     cwd = ca.prepare_cwd(arm)
     stream = ctx.run_dir / f"preflight-init-{arm}.tsv"
     result = cxn.run_codex(
@@ -2062,7 +2070,7 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
             except Exception as error:  # noqa: BLE001
                 add(f"{native_arm} MCP server", "fail", f"{type(error).__name__}: {error}")
         for name, status, detail in native_codex_checks(
-            ctx, native_arm, with_models and not offline
+            ctx, native_arm, with_models and not offline, offline=offline
         ):
             add(name, status, detail)
     helper_sources = {

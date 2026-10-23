@@ -594,6 +594,7 @@ def run_trial(
         "seed": seed,
         "order_index": order_index,
         "started_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "codex_auth_path": arms.codex_auth(),
         "model": args.model,
         "reasoning_effort": args.effort,
     }
@@ -798,6 +799,7 @@ def environment_manifest(args: argparse.Namespace) -> dict[str, Any]:
             "CFBundleShortVersionString",
         ),
         "bench_repo_commit": run("git", "-C", str(REPO), "rev-parse", "HEAD"),
+        "codex_auth_path": arms.codex_auth(),
         "model": args.model,
         "reasoning_effort": args.effort,
         "price_assumed_usd_per_mtok": PRICE,

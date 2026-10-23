@@ -67,6 +67,65 @@ def make_ctx(tmp: str, **overrides: object) -> rb.Ctx:
     return ctx
 
 
+class CodexAuthPreflightTest(unittest.TestCase):
+    def test_chatgpt_checks_metadata_not_gateway_or_model_and_skips_offline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_ctx(tmp)
+            arm = "cx-codex-cu"
+            mcp = Path(tmp) / "mcp.json"
+            mcp.write_text(json.dumps({
+                "mcpServers": {
+                    "sky": {"command": "node", "env": {"CUA_REPL_ENABLED_SURFACES": "computer"}}
+                }
+            }))
+            ctx.mcp[arm] = (mcp, "cua_repl")
+            source = Path(tmp) / "auth.json"
+            source.touch()
+            with (
+                mock.patch.dict(
+                    "os.environ", {"CDB_CODEX_AUTH": "chatgpt", "CDB_CODEX_AUTH_FILE": str(source)}
+                ),
+                mock.patch(
+                    "urllib.request.urlopen", side_effect=AssertionError("gateway called")
+                ) as gateway,
+                mock.patch.object(
+                    rb.cxn, "run_codex", side_effect=AssertionError("model called")
+                ) as model,
+                mock.patch.object(
+                    rb.cxn, "chatgpt_checks", return_value=[("metadata", "pass", "ok")]
+                ) as probe,
+            ):
+                checks = rb.native_codex_checks(ctx, arm, with_models=True)
+                self.assertIn(("metadata", "pass", "ok"), checks)
+                env = probe.call_args.args[1]
+                self.assertTrue((Path(env["CODEX_HOME"]) / "auth.json").is_symlink())
+                probe.reset_mock()
+                rb.native_codex_checks(ctx, arm, with_models=False)
+                probe.assert_called_once()
+                probe.reset_mock()
+                rb.native_codex_checks(ctx, arm, with_models=False, offline=True)
+                probe.assert_not_called()
+                gateway.assert_not_called()
+                model.assert_not_called()
+
+    def test_gateway_retains_model_listing_even_offline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_ctx(tmp)
+            with (
+                mock.patch.dict("os.environ", {"CDB_CODEX_AUTH": "gateway"}),
+                mock.patch("urllib.request.urlopen") as fetch,
+            ):
+                fetch.return_value.__enter__.return_value.read.return_value = json.dumps(
+                    {"data": [{"id": rb.cxn.MODEL}]}
+                ).encode()
+                checks = rb.native_codex_checks(ctx, "cx-codex-cu", with_models=False, offline=True)
+                self.assertIn(
+                    "gateway lists the model",
+                    [label for label, status, _ in checks if status == "pass"],
+                )
+                fetch.assert_called_once()
+
+
 def attempt_row(
     attempt: int,
     infra: str | None = None,

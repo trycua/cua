@@ -60,6 +60,7 @@ import recorder as rec  # noqa: E402
 import run_pilot as pilot  # noqa: E402
 
 SCHEMA = "cdb-bench-trial/1"
+WEB_TASKS = ("WEB-01", "WEB-02")
 WORK = ca.WORK
 DEFAULT_LEDGER = WORK / "ledger" / "spend.jsonl"
 DEFAULT_RUNS = WORK / "runs"
@@ -763,6 +764,9 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
     max_turns = int(args.max_turns or spec.get("max_turns") or 30)
     run_index = entry["run_index"]
     seed = core.probe_seed(task.id, run_index)
+    system_prompt = ca.system_prompt_for(
+        cxn.SOURCE_ARM.get(arm, arm), browser=bool(spec.get("browser"))
+    )
     bench_v2 = bool(getattr(args, "bench_v2", False))  # Amendment 14
     sentinel_front = True if bench_v2 else bool(spec.get("sentinel_frontmost", True))
     condition = getattr(args, "condition", "foreground") if bench_v2 else None  # Amendment 15
@@ -821,9 +825,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         "macos": ctx.versions.get("macos"),
         "bench_repo_commit": ctx.versions.get("bench_repo_commit"),
         "bench_src_sha256": ctx.versions.get("bench_src_sha256"),
-        "system_prompt_sha256": hashlib.sha256(
-            ca.system_prompt_for(cxn.SOURCE_ARM.get(arm, arm)).encode()
-        ).hexdigest(),
+        "system_prompt_sha256": hashlib.sha256(system_prompt.encode()).hexdigest(),
         "skill_in_prompt": bool(getattr(ca.CUA_BUILDS.get(arm), "skill_in_prompt", False)),
         "electron_named_bundles": spec.get("kind") == "cdb"
         and os.environ.get("CDB_ELECTRON_SHARED") != "1",
@@ -865,7 +867,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
     stderr_path = trial_dir / "claude.stderr"
     stream_path = trial_dir / "claude-stream.tsv"
     needs = list(spec.get("needs_apps", []))
-    cdb = cdb_adapter.CdbTask(spec, artifacts) if spec.get("kind") == "cdb" else None
+    cdb = cdb_adapter.CdbTask(spec, artifacts, seed=seed) if spec.get("kind") == "cdb" else None
     running_at_end: dict[str, bool] = {}
     peeks: list[str] = []
     front_seen: list[str] = []
@@ -934,7 +936,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                 tool_search=args.tool_search == "default",
                 effort=args.effort,
                 coding_tools=bool(spec.get("coding_tools")) and not bench_v2,
-                system_prompt=ca.system_prompt_for(arm),
+                system_prompt=system_prompt,
             )
         )
         prompt = (v2.brief_for(brief.strip(), condition) if bench_v2 else brief.strip()) + "\n"
@@ -973,7 +975,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                         mcp_path,
                         cxn.MODEL,
                         cxn.EFFORT,
-                        ca.system_prompt_for(cxn.SOURCE_ARM[arm]),
+                        system_prompt,
                         arm,
                     ),
                     cwd,
@@ -1301,6 +1303,7 @@ DEFAULT_PEEK_PATTERNS = (
     "cdbeval",
     "cdb-eval",
     ".cdb-secrets",
+    "/__state",
 )
 
 
@@ -2610,7 +2613,14 @@ def write_manifest(ctx: Ctx, first_schedule: list[dict[str, Any]]) -> None:
         "tool_search": args.tool_search,
         "system_prompt": ca.SYSTEM_PROMPT,
         "system_prompt_sha256_by_arm": {
-            a: hashlib.sha256(ca.system_prompt_for(a).encode()).hexdigest() for a in ctx.arm_names
+            a: hashlib.sha256(ca.system_prompt_for(cxn.SOURCE_ARM.get(a, a)).encode()).hexdigest()
+            for a in ctx.arm_names
+        },
+        "system_prompt_sha256_by_arm_browser": {
+            a: hashlib.sha256(
+                ca.system_prompt_for(cxn.SOURCE_ARM.get(a, a), browser=True).encode()
+            ).hexdigest()
+            for a in ctx.arm_names
         },
         "builtin_tools": ca.builtin_tools(args.tool_search == "default"),
         "claude_env_allowlist": list(ca.CLAUDE_ENV_ALLOW),
@@ -2635,6 +2645,7 @@ def write_manifest(ctx: Ctx, first_schedule: list[dict[str, Any]]) -> None:
         if getattr(args, "bench_v2", False)
         else None,
         "price_fallback_usd_per_mtok_ASSUMED": PRICE_FALLBACK,
+        "example_argv_task": ctx.task_ids[0],
         "example_argv": {
             a: ca.claude_argv(
                 mcp_config=ctx.mcp[a][0],
@@ -2644,7 +2655,10 @@ def write_manifest(ctx: Ctx, first_schedule: list[dict[str, Any]]) -> None:
                 max_budget_usd=args.max_budget_usd,
                 tool_search=args.tool_search == "default",
                 effort=args.effort,
-                system_prompt=ca.system_prompt_for(a),
+                system_prompt=ca.system_prompt_for(
+                    cxn.SOURCE_ARM.get(a, a),
+                    browser=bool(task_spec(ctx.tasks[ctx.task_ids[0]]).get("browser")),
+                ),
             )
             for a in ctx.arm_names
             if a in ctx.mcp
@@ -2882,7 +2896,7 @@ def cmd_dry_run(args: argparse.Namespace) -> int:
         f"{len(schedule)} trials in {len(ctx.blocks())} block(s); tasks={ctx.task_ids}; arms={ctx.arm_names}; "
         f"phase1_runs={args.phase1_runs} phase2_runs={args.phase2_runs}"
     )
-    for arm in ctx.arm_names:
+    for task_id, arm in ((t, a) for t in ctx.task_ids for a in ctx.arm_names):
         if arm in arms.CLAUDE_ARMS:
             try:
                 path, server = ca.mcp_config_for(arm, ctx.run_dir, args.codex_cu_mcp)
@@ -2894,9 +2908,15 @@ def cmd_dry_run(args: argparse.Namespace) -> int:
                     max_budget_usd=args.max_budget_usd,
                     tool_search=args.tool_search == "default",
                     effort=args.effort,
-                    system_prompt=ca.system_prompt_for(arm),
+                    system_prompt=ca.system_prompt_for(
+                        cxn.SOURCE_ARM.get(arm, arm),
+                        browser=bool(task_spec(ctx.tasks[task_id]).get("browser")),
+                    ),
                 )
-                print(f"\n{arm}:\n  " + " ".join(json.dumps(a) if " " in a else a for a in argv))
+                print(
+                    f"\n{task_id} {arm}:\n  "
+                    + " ".join(json.dumps(a) if " " in a else a for a in argv)
+                )
             except (FileNotFoundError, ValueError) as error:
                 print(f"\n{arm}: UNAVAILABLE ({error})")
     return 0

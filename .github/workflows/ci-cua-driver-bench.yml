@@ -67,6 +67,7 @@ jobs:
         run: |
           set -euo pipefail
           for task in */; do
+            [ -f "$task/task.cuabench.json" ] || continue
             echo "::group::${task%/}"
             (cd "$task" && uv run --no-project --python 3.12 python -m unittest discover -s tests)
             (cd "$task" && python3 tools/refresh_manifest_digests.py --check)

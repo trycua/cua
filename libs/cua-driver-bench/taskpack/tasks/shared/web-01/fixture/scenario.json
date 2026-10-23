@@ -1,0 +1,24 @@
+{
+  "port": 4191,
+  "initial": {
+    "name": "Draft Person",
+    "email": "unfinished",
+    "invite": "OLD-CODE"
+  },
+  "variants": [
+    {
+      "name": "Mira Vale",
+      "email": "mira@example.test",
+      "password": "FernTrail42",
+      "plan": "plus",
+      "invite": "FERN-41"
+    },
+    {
+      "name": "Oren Brook",
+      "email": "oren@example.test",
+      "password": "BrookPath73",
+      "plan": "basic",
+      "invite": "FERN-73"
+    }
+  ]
+}

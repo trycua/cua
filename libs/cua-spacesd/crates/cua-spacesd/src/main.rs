@@ -892,6 +892,7 @@ mod tests {
     #[tokio::test]
     async fn fallback_platform_tools_install_recording_support() {
         if std::env::var_os("CUA_TEST_RECORDING_WIRING").is_none() {
+            let home = tempfile::tempdir().unwrap();
             let status = std::process::Command::new(std::env::current_exe().unwrap())
                 .args([
                     "--exact",
@@ -899,6 +900,7 @@ mod tests {
                     "--nocapture",
                 ])
                 .env("CUA_TEST_RECORDING_WIRING", "1")
+                .env("HOME", home.path())
                 .env_remove("DISPLAY")
                 .env_remove("WAYLAND_DISPLAY")
                 .env_remove("CUA_WAYLAND_NEST")
@@ -922,7 +924,7 @@ mod tests {
                 "start_recording",
                 serde_json::json!({"output_dir": directory.path()}),
             ),
-            ("set_config", serde_json::json!({})),
+            ("set_config", serde_json::json!({"max_image_dimension": 0})),
             ("stop_recording", serde_json::json!({})),
         ] {
             let result = tools.invoke_tool(name, args).await.unwrap();

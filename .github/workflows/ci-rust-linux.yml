@@ -124,7 +124,9 @@ jobs:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Rust Linux unit and compile
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 10 to 14 minutes warm. The headroom covers a run with neither the
+    # sccache nor the apt package cache warm while the Ubuntu mirror is slow.
+    timeout-minutes: 45
     env:
       # Dozens of debug test binaries: line tables keep backtraces useful
       # without full debug info filling the runner disk at link time.
@@ -145,11 +147,11 @@ jobs:
           workspaces: "libs/cua-driver/rust -> target"
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install Linux build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
-            libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev \
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev
+            libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
             imagemagick xvfb xauth x11-utils ffmpeg dbus-daemon
       - name: Prove the AT-SPI connection graph excludes peer-to-peer
         working-directory: libs/cua-driver/rust

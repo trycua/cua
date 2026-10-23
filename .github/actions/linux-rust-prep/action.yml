@@ -58,12 +58,11 @@ runs:
         disown
     - name: Install Linux build dependencies
       if: runner.os == 'Linux' && inputs.install-deps == 'true'
-      shell: bash
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y --no-install-recommends \
-          build-essential cmake clang pkg-config \
-          libx11-dev libx11-xcb-dev libxcb1-dev libxext-dev libxi-dev \
-          libxtst-dev libxrandr-dev libxkbcommon-dev libxkbcommon-x11-dev \
-          libwayland-dev libdbus-1-dev libudev-dev \
+      uses: ./.github/actions/apt-install
+      with:
+        packages: >-
+          build-essential cmake clang pkg-config
+          libx11-dev libx11-xcb-dev libxcb1-dev libxext-dev libxi-dev
+          libxtst-dev libxrandr-dev libxkbcommon-dev libxkbcommon-x11-dev
+          libwayland-dev libdbus-1-dev libudev-dev
           libpipewire-0.3-dev libspa-0.2-dev libei-dev

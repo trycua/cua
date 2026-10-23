@@ -15,7 +15,9 @@ pub async fn assert_recording_wired(registry: ToolRegistry) {
         .invoke("start_recording", json!({"output_dir": directory.path()}))
         .await;
     assert_ne!(started.is_error, Some(true), "{started:?}");
-    let result = registry.invoke("set_config", json!({})).await;
+    let result = registry
+        .invoke("set_config", json!({"max_image_dimension": 0}))
+        .await;
     assert_ne!(result.is_error, Some(true), "{result:?}");
     let stopped = registry.invoke("stop_recording", json!({})).await;
     assert_ne!(stopped.is_error, Some(true), "{stopped:?}");

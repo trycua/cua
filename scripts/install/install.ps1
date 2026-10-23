@@ -824,7 +824,9 @@ function Invoke-CuaInstallSteps($sel) {
             $manifest = Get-Content -Raw -LiteralPath $manifestFile | ConvertFrom-Json
             if ($manifest.schema -ne 1) { Stop-Install "unsupported release manifest at $manifestUrl" }
             Write-Info "platform $platform, manifest $manifestUrl"
-            $script:TelVersion = "$(@($manifest.artifacts | Where-Object { $_.component -eq 'cli' } | Select-Object -First 1).version)"
+            # A per-platform release may carry no cli artifact; StrictMode rejects .version on $null.
+            $cliArtifact = $manifest.artifacts | Where-Object { $_.component -eq 'cli' } | Select-Object -First 1
+            $script:TelVersion = if ($cliArtifact) { "$($cliArtifact.version)" } else { '' }
         }
         $script:TelStage = 'cli'
         if ($sel.cli) { $cua = Install-Cli $manifest $manifestUrl $platform $tmp }

@@ -101,7 +101,12 @@ impl McpDriver {
     /// source-tree daemon.
     pub fn spawn_daemon_proxy_named(socket: &str, recording_label: &str) -> Option<Self> {
         if !daemon_socket_is_reachable(socket) {
-            report_daemon_unreachable(socket);
+            let hint = if cfg!(target_os = "macos") {
+                " — run `./scripts/install-local.sh` and `cua-driver permissions grant`;"
+            } else {
+                " —"
+            };
+            eprintln!("[testkit] CuaDriver daemon not listening at {socket}{hint} skipping");
             return None;
         }
         Self::spawn_internal(
@@ -118,7 +123,7 @@ impl McpDriver {
     /// already been captured by the same test case.
     pub fn spawn_daemon_proxy_unrecorded(socket: &str) -> Option<Self> {
         if !daemon_socket_is_reachable(socket) {
-            report_daemon_unreachable(socket);
+            eprintln!("[testkit] CuaDriver daemon not listening at {socket} — skipping");
             return None;
         }
         Self::spawn_internal(&[], &["mcp", "--socket", socket], None, false, false)
@@ -478,15 +483,6 @@ impl McpDriver {
     }
 }
 
-fn report_daemon_unreachable(socket: &str) {
-    let hint = if cfg!(target_os = "macos") {
-        " — run `./scripts/install-local.sh` and `cua-driver permissions grant`;"
-    } else {
-        " —"
-    };
-    eprintln!("[testkit] CuaDriver daemon not listening at {socket}{hint} skipping");
-}
-
 #[cfg(unix)]
 fn daemon_socket_is_reachable(socket: &str) -> bool {
     std::os::unix::net::UnixStream::connect(socket).is_ok()
@@ -664,5 +660,16 @@ mod tests {
             timeout_error_message("click", MACOS_RECORDED_CALL_TIMEOUT),
             "TIMEOUT (>75s) on click"
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_proxy_skips_when_socket_is_missing() {
+        let dir = std::env::temp_dir().join(format!("cua-testkit-{}", std::process::id()));
+        let socket = dir.join("missing.sock");
+        std::env::set_var("CUA_E2E_MACOS_DAEMON_SOCKET", &socket);
+        let driver = super::McpDriver::spawn_macos_daemon_proxy_named("missing-socket");
+        std::env::remove_var("CUA_E2E_MACOS_DAEMON_SOCKET");
+        assert!(driver.is_none());
     }
 }

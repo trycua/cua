@@ -9,7 +9,7 @@ package cua.daemon.v1;
 
 import "cua/daemon/v1/checkpoints.proto";
 import "cua/daemon/v1/resize.proto";
-import "cua/daemon/v1/spaces_create.proto";
+import "cua/daemon/v1/spaces.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 

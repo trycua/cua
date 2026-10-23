@@ -40,10 +40,10 @@ without touching it.
 | [`ResolveSpace`](#spaceserviceresolvespace) | [`ResolveSpaceRequest`](#resolvespacerequest) | [`ResolveSpaceResponse`](#resolvespaceresponse) | unary |
 | [`ProvisionLocalSpace`](#spaceserviceprovisionlocalspace) | [`ProvisionLocalSpaceRequest`](#provisionlocalspacerequest) | [`ProvisionLocalSpaceResponse`](#provisionlocalspaceresponse) | unary |
 | [`ReleaseSpace`](#spaceservicereleasespace) | [`ReleaseSpaceRequest`](#releasespacerequest) | [`ReleaseSpaceResponse`](#releasespaceresponse) | unary |
-| [`CreateSpace`](#spaceservicecreatespace) | [`CreateSpaceRequest`](/cua-sdk/reference/protocol/daemon-spaces-create#createspacerequest) | [`CreateSpaceResponse`](#createspaceresponse) | unary |
-| [`CreateSpaceStream`](#spaceservicecreatespacestream) | [`CreateSpaceStreamRequest`](/cua-sdk/reference/protocol/daemon-spaces-create#createspacestreamrequest) | [`CreateSpaceStreamResponse`](#createspacestreamresponse) | server stream |
+| [`CreateSpace`](#spaceservicecreatespace) | [`CreateSpaceRequest`](#createspacerequest) | [`CreateSpaceResponse`](#createspaceresponse) | unary |
+| [`CreateSpaceStream`](#spaceservicecreatespacestream) | [`CreateSpaceStreamRequest`](#createspacestreamrequest) | [`CreateSpaceStreamResponse`](#createspacestreamresponse) | server stream |
 | [`CancelCreateSpace`](#spaceservicecancelcreatespace) | [`CancelCreateSpaceRequest`](#cancelcreatespacerequest) | [`CancelCreateSpaceResponse`](#cancelcreatespaceresponse) | unary |
-| [`GetGpuSupport`](#spaceservicegetgpusupport) | [`GetGpuSupportRequest`](/cua-sdk/reference/protocol/daemon-gpu#getgpusupportrequest) | [`GetGpuSupportResponse`](/cua-sdk/reference/protocol/daemon-gpu#getgpusupportresponse) | unary |
+| [`GetGpuSupport`](#spaceservicegetgpusupport) | [`GetGpuSupportRequest`](#getgpusupportrequest) | [`GetGpuSupportResponse`](#getgpusupportresponse) | unary |
 | [`DeleteSpace`](#spaceservicedeletespace) | [`DeleteSpaceRequest`](#deletespacerequest) | [`DeleteSpaceResponse`](#deletespaceresponse) | unary |
 | [`ForkSpace`](#spaceserviceforkspace) | [`ForkSpaceRequest`](#forkspacerequest) | [`ForkSpaceResponse`](#forkspaceresponse) | unary |
 | [`BuildSpace`](#spaceservicebuildspace) | [`BuildSpaceRequest`](/cua-sdk/reference/protocol/daemon-builds#buildspacerequest) | [`BuildSpaceResponse`](/cua-sdk/reference/protocol/daemon-builds#buildspaceresponse) | server stream |
@@ -123,7 +123,7 @@ Deprecated: use `DeleteSpace`.
 
 ### SpaceService.CreateSpace
 
-`/cua.daemon.v1.SpaceService/CreateSpace`, unary: [`CreateSpaceRequest`](/cua-sdk/reference/protocol/daemon-spaces-create#createspacerequest) to [`CreateSpaceResponse`](#createspaceresponse).
+`/cua.daemon.v1.SpaceService/CreateSpace`, unary: [`CreateSpaceRequest`](#createspacerequest) to [`CreateSpaceResponse`](#createspaceresponse).
 
 Creates a Space (a sandbox, registered as a Space) where `location`
 says, with the same location / kind / runtime model as
@@ -131,7 +131,7 @@ says, with the same location / kind / runtime model as
 
 ### SpaceService.CreateSpaceStream
 
-`/cua.daemon.v1.SpaceService/CreateSpaceStream`, server stream: [`CreateSpaceStreamRequest`](/cua-sdk/reference/protocol/daemon-spaces-create#createspacestreamrequest) to [`CreateSpaceStreamResponse`](#createspacestreamresponse).
+`/cua.daemon.v1.SpaceService/CreateSpaceStream`, server stream: [`CreateSpaceStreamRequest`](#createspacestreamrequest) to [`CreateSpaceStreamResponse`](#createspacestreamresponse).
 
 `CreateSpace`, streaming what the create is doing: progress events
 (pulling the image, booting, waiting for cua-spacesd, connecting) in
@@ -155,7 +155,7 @@ another process runs or one a daemon restart cut off.
 
 ### SpaceService.GetGpuSupport
 
-`/cua.daemon.v1.SpaceService/GetGpuSupport`, unary: [`GetGpuSupportRequest`](/cua-sdk/reference/protocol/daemon-gpu#getgpusupportrequest) to [`GetGpuSupportResponse`](/cua-sdk/reference/protocol/daemon-gpu#getgpusupportresponse).
+`/cua.daemon.v1.SpaceService/GetGpuSupport`, unary: [`GetGpuSupportRequest`](#getgpusupportrequest) to [`GetGpuSupportResponse`](#getgpusupportresponse).
 
 The GPU options each runtime of a location offers on this host (the
 wizard's GPU row; `gpu` of `CreateSpace`).
@@ -629,7 +629,7 @@ One message of `SpaceService.CreateSpaceStream`.
 
 | Field | # | Type | Description |
 | --- | --- | --- | --- |
-| `progress` | 1 | [`CreateSpaceProgress`](/cua-sdk/reference/protocol/daemon-spaces-create#createspaceprogress) (oneof `event`) | What the create is doing now. |
+| `progress` | 1 | [`CreateSpaceProgress`](#createspaceprogress) (oneof `event`) | What the create is doing now. |
 | `result` | 2 | [`CreateSpaceResponse`](#createspaceresponse) (oneof `event`) | The created Space (the last message). |
 
 ### CancelCreateSpaceRequest
@@ -793,6 +793,101 @@ Response for `SpaceService.ForkSpace`.
 | Field | # | Type | Description |
 | --- | --- | --- | --- |
 | `space` | 1 | [`Space`](#space) | The fork, connected. |
+
+### CreateSpaceRequest
+
+Request for `SpaceService.CreateSpace`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `image` | 1 | `string` | Image. Empty uses the canonical Linux image. |
+| `location` | 2 | `string` | Where it runs: "local" or a registered provider. Empty uses the default (`default.on` in the config, `CUA_DEFAULT_ON`, else "local"); clients resolve the default on their side. |
+| `kind` | 3 | `string` | What kind of machine: "auto" (empty), "container" or "vm". |
+| `runtime` | 4 | `string` | Which engine: "auto" (empty), or one the location offers for the kind ("gvisor", "runc", "qemu", "lume" locally). |
+| `name` | 5 | `string` | Name. Empty generates `space-<hex>`. |
+| `cpus` | 6 | `uint32` | vCPUs (0 = the default, 2). |
+| `memory_mb` | 7 | `uint64` | Memory in MiB (0 = the default, 4096). |
+| `timeout` | 8 | `google.protobuf.Duration` | Readiness budget (default 600 s). |
+| `wait` | 9 | optional `bool` | Wait until the Space is ready (default true when unset). With false the response carries only its id and phase "starting". |
+| `reuse` | 10 | `bool` | Return a reachable registered Space with the same image, location, kind and runtime instead of creating one (get-or-create). |
+| `command` | 11 | repeated `string` | Entrypoint override. Empty keeps the image's. |
+| `env` | 12 | map of `string` to `string` | Guest environment. |
+| `services` | 13 | map of `string` to `uint32` | Named services (name -&gt; guest port), for example &#123;"mcp": 8765&#125;. |
+| `spacesd` | 14 | optional `bool` | Whether the image runs cua-spacesd. Unset: yes for the canonical images and, injected, for any image on a local container or microVM. False runs the image as it is. |
+| `disk_gb` | 15 | `uint32` | Grow the VM's disk to this many GiB (local VMs only; 0 keeps the image's size). Lume grows the macOS APFS container before the first boot; Linux images grow their root partition at boot (cloud-init growpart). |
+| `gpu` | 16 | `string` | A GPU option of the runtime the Space runs on (`GetGpuSupport`): "paravirtual" (a macOS VM on Lume: GPU acceleration, experimental), "virgl", "nvidia", a provider's GPU type; "auto" picks the runtime's own. Empty: no GPU. Kept with the Space. |
+| `create_id` | 17 | `string` | The caller's own key for this create (an app's pending row id), for `CancelCreateSpace` before the Space's id is known. |
+| `durable` | 18 | `bool` | Keep the Space running on your machines (`on` "auto"): when its machine goes away it is created again on another one, with the same name. It needs the cua daemon of Cua Spaces and an account with machines that provide Spaces. |
+| `forkable` | 19 | `bool` | A fork source (a "bake" Space): a local QEMU VM's guest RAM is a shared file, so its checkpoints take milliseconds and forks of them share its pages. Other kinds ignore it. |
+| `network` | 20 | `string` | Guest network: empty or `default` gives outbound network; `none` gives none (QEMU VMs only; published ports still reach the guest). |
+| `labels` | 21 | map of `string` to `string` | Labels kept with the Space (`Space.labels`): up to 64 pairs, keys up to 63 bytes, values up to 256, none empty. Not with `durable` or `reuse`. |
+| `egress` | 22 | [`EgressPolicy`](/cua-sdk/reference/protocol/daemon-egress#egresspolicy) | Egress policy, from the first instruction. Not with `durable`, `reuse` or `wait = false`. |
+| `headless` | 23 | `bool` | No desktop: only cua-spacesd runs (exec, files, processes, MCP), with no display, window manager or audio; a local VM gets no display hardware. The same switch as `CreateSandboxRequest.headless`. |
+| `volumes` | 25 | repeated [`VolumeMount`](/cua-sdk/reference/protocol/env-stream#volumemount) | Named volumes of Cua Volume to mount in the Space. |
+| `instance_type` | 26 | `string` | Cloud host machine type (a pin). |
+| `region` | 27 | `string` | Cloud host region (a pin). |
+
+### CreateSpaceStreamRequest
+
+Request for `SpaceService.CreateSpaceStream`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `create` | 1 | [`CreateSpaceRequest`](#createspacerequest) | The create, as for `CreateSpace`. `wait` is ignored: the stream always runs until the Space is ready or the create fails. |
+
+### CreateSpaceProgress
+
+What a create is doing.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `phase` | 1 | `string` | "preparing", "pulling", "creating", "booting", "waiting_for_services", "connecting" or "ready", in that order. |
+| `fraction` | 2 | optional `double` | How far through the phase, 0.0 to 1.0, when its size is known (an image pull). |
+| `detail` | 3 | `string` | One short line, for example the image being pulled. |
+| `bytes_done` | 4 | optional `uint64` | Bytes downloaded so far, when the step counts them (an image pull). |
+| `bytes_total` | 5 | optional `uint64` | Bytes the download has in all. |
+| `bytes_per_second` | 6 | optional `double` | Smoothed download rate, bytes per second. |
+| `space` | 7 | `string` | The id the Space will have (`local:<name>`), for `CancelCreateSpace`. |
+
+### GetGpuSupportRequest
+
+Request for `SpaceService.GetGpuSupport`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `location` | 1 | `string` | "local" (empty) or a registered provider. |
+
+### GpuOption
+
+One GPU option of a runtime.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `id` | 1 | `string` | What to pass as `gpu`. |
+| `label` | 2 | `string` | How a person names it ("GPU acceleration"). |
+| `experimental` | 3 | `bool` | Experimental. |
+| `supported` | 4 | `bool` | Works on this host (and account) now. |
+| `reason` | 5 | `string` | Why not, one short line. |
+| `learn_more` | 6 | `string` | A page that explains it. |
+| `usd_per_hour` | 7 | optional `double` | Estimated cost per hour while it runs (a provider's GPU types). |
+
+### GpuSupport
+
+The GPU options of one runtime.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `runtime` | 1 | `string` | "lume", "qemu", "container", "gvisor", a provider's name. |
+| `options` | 2 | repeated [`GpuOption`](#gpuoption) | Its options; empty: none. |
+| `reason` | 3 | `string` | Why it has none. |
+
+### GetGpuSupportResponse
+
+Response for `SpaceService.GetGpuSupport`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `runtimes` | 1 | repeated [`GpuSupport`](#gpusupport) | One entry per runtime of the location. |
 
 ## Types in `cua/daemon/v1/daemon.proto`
 

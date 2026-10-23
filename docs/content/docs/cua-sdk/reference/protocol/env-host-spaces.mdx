@@ -265,9 +265,9 @@ Response for `HostSpacesService.GetHostSpaces`.
 | `settings` | 3 | [`HostSpacesSettings`](#hostspacessettings) | Settings and limits. |
 | `capacity` | 4 | repeated [`HostSpacesCapacity`](#hostspacescapacity) | Current use of each limit. |
 | `spaces` | 5 | repeated [`HostSpace`](#hostspace) | Spaces this host provides: every one for the owner, the caller's own otherwise. |
-| `audit` | 6 | repeated [`HostSpacesAuditEvent`](/cua-sdk/reference/protocol/env-host-records#hostspacesauditevent) | The most recent audit events, newest first (the owner only). |
+| `audit` | 6 | repeated [`HostSpacesAuditEvent`](#hostspacesauditevent) | The most recent audit events, newest first (the owner only). |
 | `images` | 7 | repeated `string` | Image aliases this host resolves (`macos`, `linux`, ...), for clients to offer. |
-| `creating` | 8 | repeated [`HostSpaceCreating`](/cua-sdk/reference/protocol/env-host-records#hostspacecreating) | The creates this host is running now (`CreateHostSpace` calls that have not returned), each with what it is doing: every one for the owner, the caller's own otherwise. A client polls this while its create runs, to show the download and the boot. Empty from a host that predates it. |
+| `creating` | 8 | repeated [`HostSpaceCreating`](#hostspacecreating) | The creates this host is running now (`CreateHostSpace` calls that have not returned), each with what it is doing: every one for the owner, the caller's own otherwise. A client polls this while its create runs, to show the download and the boot. Empty from a host that predates it. |
 | `node` | 9 | [`HostNodeStatus`](/cua-sdk/reference/protocol/env-host-capacity#hostnodestatus) | What a scheduler needs to place work here: capacity, what runs, the host's epoch and clock. Unset from hosts that predate it. |
 
 ### CreateHostSpaceRequest
@@ -530,3 +530,30 @@ Response for `HostJobsService.CancelHostJob`.
 | Field | # | Type | Description |
 | --- | --- | --- | --- |
 | `job` | 1 | [`HostJob`](#hostjob) | The job's record after the cancel. |
+
+### HostSpacesAuditEvent
+
+One line of the host's Spaces audit log.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `ts_ms` | 1 | `int64` | Unix milliseconds. |
+| `action` | 2 | `string` | `create`, `delete`, `refused`, or `config`. |
+| `who` | 3 | `string` | Who: an account (`name <email> (id)`), or `local` for this machine. |
+| `space` | 4 | `string` | The relay machine or Space the event is about. |
+| `detail` | 5 | `string` | Detail for people. |
+
+### HostSpaceCreating
+
+A create a host is running, and what it is doing now. The progress
+fields are those of `cua.daemon.v1.CreateSpaceProgress`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `key` | 1 | `string` | The create's key: `CreateHostSpaceRequest.create_key`, else the relay machine it attaches to (`attach.machine_id`). |
+| `phase` | 2 | `string` | "preparing", "pulling", "creating", "booting", "waiting_for_services", "connecting" or "ready", in that order. |
+| `fraction` | 3 | optional `double` | How far through the phase, 0.0 to 1.0, when its size is known (an image pull). |
+| `detail` | 4 | `string` | One short line, for example the image being pulled. |
+| `bytes_done` | 5 | optional `uint64` | Bytes downloaded so far, when the step counts them (an image pull). |
+| `bytes_total` | 6 | optional `uint64` | Bytes the download has in all. |
+| `bytes_per_second` | 7 | optional `double` | Smoothed download rate, bytes per second. |

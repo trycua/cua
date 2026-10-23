@@ -182,13 +182,6 @@ export const PAGES: PageSpec[] = [
     files: ['cua/env/v1/host.proto'],
   },
   {
-    slug: 'env-host-records',
-    title: 'Host Spaces: records',
-    description: 'cua.env.v1 host records: the Spaces audit and the running creates a host reports in GetHostSpaces.',
-    intro: 'What `HostSpacesService.GetHostSpaces` (on the Host Spaces page) reports besides its Spaces: the audit and the creates it is running.',
-    files: ['cua/env/v1/host_records.proto'],
-  },
-  {
     slug: 'env-host-capacity',
     title: 'Host capacity',
     description:
@@ -242,25 +235,11 @@ export const PAGES: PageSpec[] = [
     files: ['cua/daemon/v1/shares.proto'],
   },
   {
-    slug: 'daemon-spaces-create',
-    title: 'Daemon: creating Spaces',
-    description: 'cua.daemon.v1 CreateSpaceRequest: what to create, and the progress of a streaming create.',
-    intro: 'The request of `SpaceService.CreateSpace` and `CreateSpaceStream` (image, kind, runtime, size, network, headless, fork source, GPU) and the progress events a streaming create reports.',
-    files: ['cua/daemon/v1/spaces_create.proto'],
-  },
-  {
     slug: 'daemon-builds',
     title: 'Daemon: builds',
     description: 'cua.daemon.v1 builds: the messages of SpaceService.BuildSpace, ListBuilds and DeleteBuild.',
     intro: 'Building an image from a Dockerfile or steps into pinned checkpoints, its progress, result and listing.',
     files: ['cua/daemon/v1/builds.proto'],
-  },
-  {
-    slug: 'daemon-gpu',
-    title: 'Daemon: GPU support',
-    description: 'cua.daemon.v1 GetGpuSupport: the GPU acceleration each runtime of a location offers.',
-    intro: 'What `SpaceService.GetGpuSupport` returns: the GPU options of each runtime, whether they work here, and why not.',
-    files: ['cua/daemon/v1/gpu.proto'],
   },
   {
     slug: 'daemon-egress',

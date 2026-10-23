@@ -5,7 +5,6 @@ package cua.env.v1;
 import "cua/env/v1/capacity.proto";
 import "cua/env/v1/diagnose.proto";
 import "cua/env/v1/host_egress.proto";
-import "cua/env/v1/host_records.proto";
 import "cua/env/v1/system.proto";
 import "cua/env/v1/warm.proto";
 
@@ -555,4 +554,40 @@ message CancelHostJobRequest {
 message CancelHostJobResponse {
   // The job's record after the cancel.
   HostJob job = 1;
+}
+
+// One line of the host's Spaces audit log.
+message HostSpacesAuditEvent {
+  // Unix milliseconds.
+  int64 ts_ms = 1;
+  // `create`, `delete`, `refused`, or `config`.
+  string action = 2;
+  // Who: an account (`name <email> (id)`), or `local` for this machine.
+  string who = 3;
+  // The relay machine or Space the event is about.
+  string space = 4;
+  // Detail for people.
+  string detail = 5;
+}
+
+// A create a host is running, and what it is doing now. The progress
+// fields are those of `cua.daemon.v1.CreateSpaceProgress`.
+message HostSpaceCreating {
+  // The create's key: `CreateHostSpaceRequest.create_key`, else the relay
+  // machine it attaches to (`attach.machine_id`).
+  string key = 1;
+  // "preparing", "pulling", "creating", "booting", "waiting_for_services",
+  // "connecting" or "ready", in that order.
+  string phase = 2;
+  // How far through the phase, 0.0 to 1.0, when its size is known (an
+  // image pull).
+  optional double fraction = 3;
+  // One short line, for example the image being pulled.
+  string detail = 4;
+  // Bytes downloaded so far, when the step counts them (an image pull).
+  optional uint64 bytes_done = 5;
+  // Bytes the download has in all.
+  optional uint64 bytes_total = 6;
+  // Smoothed download rate, bytes per second.
+  optional double bytes_per_second = 7;
 }

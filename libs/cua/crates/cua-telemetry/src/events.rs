@@ -90,6 +90,10 @@ impl Outcome {
 /// A `CuaError` variant name (`InvalidArgument`) or snake name as an
 /// error kind; anything else is `other`. Never pass the message.
 pub fn error_kind(variant: &str) -> &'static str {
+    // `runtime.<sub-kind>` (cua-create-failure): the parent class.
+    if variant.trim().starts_with("runtime.") {
+        return "runtime";
+    }
     let snake: String = {
         let mut out = String::new();
         for (i, c) in variant.trim().chars().enumerate() {
@@ -105,6 +109,27 @@ pub fn error_kind(variant: &str) -> &'static str {
         out
     };
     pick(schema::ERROR_KINDS, &snake, "other")
+}
+
+/// The `runtime_kind` of a failure: the sub-kind in a `runtime.<sub-kind>`
+/// variant, `unclassified` for a bare `Runtime` (or an unknown sub-kind),
+/// `none` for every other error kind. Never pass the message.
+pub fn runtime_kind(variant: &str) -> &'static str {
+    let v = variant.trim();
+    match v.strip_prefix("runtime.") {
+        Some(sub) => match pick(schema::RUNTIME_KINDS, sub, "unclassified") {
+            // `none` is for non-runtime failures.
+            "none" => "unclassified",
+            k => k,
+        },
+        None if error_kind(v) == "runtime" => "unclassified",
+        None => "none",
+    }
+}
+
+/// [`runtime_kind`] of an optional variant (`none` when it did not fail).
+fn runtime_kind_opt(variant: Option<&str>) -> &'static str {
+    variant.map(runtime_kind).unwrap_or("none")
 }
 
 /// Duration bucket.
@@ -482,6 +507,7 @@ pub fn sandbox_created(
             "error_kind",
             error_variant.map(error_kind).unwrap_or("none"),
         )
+        .s("runtime_kind", runtime_kind_opt(error_variant))
         .s("duration_bucket", duration_bucket(elapsed))
         .b("with_overlays", s.with_overlays)
         .b("with_build", s.with_build)
@@ -965,12 +991,19 @@ pub fn space_create(s: &SpaceCreate<'_>, outcome: Outcome, elapsed: Duration) ->
         },
         _ => "none",
     };
+    // Only a `runtime` failure has a sub-kind; a stalled create with no
+    // variant is `timeout`, not `runtime`.
+    let runtime_kind = match outcome {
+        Outcome::Error if error_kind == "runtime" => self::runtime_kind(s.error_variant),
+        _ => "none",
+    };
     Event::new(event::SPACE_CREATE)
         .s("location", location(s.on))
         .s("guest_os", guest_os(s.guest_os))
         .s("kind", sandbox_kind(s.kind))
         .s("outcome", outcome.as_str())
         .s("error_kind", error_kind)
+        .s("runtime_kind", runtime_kind)
         .s("failed_phase", failed_phase)
         .b("stalled", s.stalled && outcome == Outcome::Error)
         .s("time_bucket", create_time_bucket(elapsed))
@@ -1119,6 +1152,7 @@ pub fn host_space_provided(
                 (_, k) => k.unwrap_or("none"),
             },
         )
+        .s("runtime_kind", runtime_kind_opt(error_variant))
 }
 
 /// A Keyvault action.

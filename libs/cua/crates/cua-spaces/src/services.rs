@@ -5,7 +5,7 @@
 //!   runs cua-spacesd;
 //! - any service the Space declares (`mcp`, `blender`, ...): the official
 //!   Rust MCP client (rmcp) over the service pipe (loopback locally, the
-//!   Fleet gateway on Fleet, the URL of a Space added by its MCP endpoint).
+//!   URL of a Space added by its MCP endpoint).
 //!   Results are forwarded as the server sent them (every content block,
 //!   `structuredContent`, `_meta`). No spacesd needed.
 
@@ -22,7 +22,7 @@ use std::time::Duration;
 pub const DRIVER_SERVICE: &str = "driver";
 
 /// Names that mean "the Space's own cua-driver" unless the Space declares a
-/// service by that name: `mcp` (Fleet), `cua-driver` (the guest registry),
+/// service by that name: `mcp`, `cua-driver` (the guest registry),
 /// `computer-server` (the Python server's default), and the default (empty).
 pub const DRIVER_ALIASES: [&str; 5] = ["driver", "mcp", "cua-driver", "computer-server", ""];
 

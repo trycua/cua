@@ -23,6 +23,9 @@ public protocol AgentSetupRunning: AnyObject, Sendable {
     func setUpCuaDriver(agents: [String]) async throws -> [AppAgentSetupOutcomeInput]
     /// Removes what cua added.
     func remove(agents: [String]) async throws -> [AppAgentSetupOutcomeInput]
+    /// Starts the agent's own sign-in on this Mac (`codex login` opens the
+    /// browser); returns once it runs. The sign-in stays the agent's own.
+    func signIn(agent: String) async throws
 }
 
 /// The SDK's `AgentSetup`, registering the app's own `cua` as the MCP
@@ -54,6 +57,8 @@ public final class LiveAgentSetup: AgentSetupRunning, @unchecked Sendable {
     public func remove(agents: [String]) async throws -> [AppAgentSetupOutcomeInput] {
         try await inner.remove(agents: agents, skills: true, mcp: true).map { appAgentSetupOutcome(outcome: $0) }
     }
+
+    public func signIn(agent: String) async throws { try inner.signIn(agent: agent) }
 }
 
 /// In-memory agents for fixtures and tests: nothing on disk is read or written.
@@ -65,12 +70,14 @@ public final class FixtureAgentSetup: AgentSetupRunning, @unchecked Sendable {
         current = statuses ?? [
             AppAgentSetupStatus(id: "claude-code", name: "Claude Code", installed: true, skillsDir: "~/.claude/skills",
                                 mcpConfig: "~/.claude.json", cuaConfigured: false, skillsInstalled: [],
-                                skillsOutdated: [], error: nil),
+                                skillsOutdated: [], error: nil, signIn: nil, signedIn: false),
             AppAgentSetupStatus(id: "codex", name: "Codex", installed: true, skillsDir: "~/.agents/skills",
                                 mcpConfig: "~/.codex/config.toml", cuaConfigured: true,
-                                skillsInstalled: ["cua-spaces", "cua-sandbox"], skillsOutdated: [], error: nil),
+                                skillsInstalled: ["cua-spaces", "cua-sandbox"], skillsOutdated: [], error: nil,
+                                signIn: "ChatGPT", signedIn: false),
             AppAgentSetupStatus(id: "cursor", name: "Cursor", installed: false, skillsDir: nil, mcpConfig: nil,
-                                cuaConfigured: false, skillsInstalled: [], skillsOutdated: [], error: nil),
+                                cuaConfigured: false, skillsInstalled: [], skillsOutdated: [], error: nil,
+                                signIn: nil, signedIn: false),
         ]
     }
 
@@ -109,6 +116,16 @@ public final class FixtureAgentSetup: AgentSetupRunning, @unchecked Sendable {
             }
         }
         return out
+    }
+
+    /// The sign-in finishes at once (no browser in a fixture).
+    public func signIn(agent: String) async throws {
+        calls.append("sign-in:\(agent)")
+        guard let i = current.firstIndex(where: { $0.id == agent }), current[i].signIn != nil else {
+            throw NSError(domain: "FixtureAgentSetup", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "\(agent) has no sign-in cua can start"])
+        }
+        current[i].signedIn = true
     }
 
     public func remove(agents: [String]) async throws -> [AppAgentSetupOutcomeInput] {
@@ -247,11 +264,16 @@ public struct SignInAttempt: Sendable {
     public var userCode: String?
     /// The page the sign-in finishes on (to open it again).
     public var url: URL?
+    /// A browser opened on this Mac (false: the page is to be opened by
+    /// hand, here or on another device).
+    public var opened: Bool
     public var wait: @Sendable () async throws -> String?
 
-    public init(userCode: String?, url: URL? = nil, wait: @escaping @Sendable () async throws -> String?) {
+    public init(userCode: String?, url: URL? = nil, opened: Bool = true,
+                wait: @escaping @Sendable () async throws -> String?) {
         self.userCode = userCode
         self.url = url
+        self.opened = opened
         self.wait = wait
     }
 }
@@ -312,14 +334,24 @@ public final class LiveAccount: AccountRunning, @unchecked Sendable {
     public func beginSignIn() async throws -> SignInAttempt {
         // The browser's sign-in page says where to go back to (the SDK reads it).
         setenv("CUA_AUTH_RETURN_TO", "Cua Spaces", 0)
-        let attempt = try await auth.beginLogin(flow: nil)
-        let url = URL(string: attempt.url())
-        if let url {
-            await MainActor.run { _ = NSWorkspace.shared.open(url) }
+        var attempt = try await auth.beginLogin(flow: nil)
+        var opened = await Self.open(attempt.url())
+        // No browser opened: the loopback redirect would never come back,
+        // so use a code that can be confirmed on any device instead.
+        if !opened, attempt.method() == .browser {
+            attempt = try await auth.beginLogin(flow: "device")
+            opened = await Self.open(attempt.url())
         }
-        return SignInAttempt(userCode: attempt.userCode(), url: url) {
-            Self.display(try await attempt.wait())
+        let started = attempt
+        return SignInAttempt(userCode: started.userCode(), url: URL(string: started.url()), opened: opened) {
+            Self.display(try await started.wait())
         }
+    }
+
+    /// Opens `link` in the default browser; false when nothing opened it.
+    static func open(_ link: String) async -> Bool {
+        guard let url = URL(string: link), !link.isEmpty else { return false }
+        return await MainActor.run { NSWorkspace.shared.open(url) }
     }
 
     public func signOut() async throws { _ = try await auth.logout() }
@@ -383,6 +415,16 @@ public final class FixtureBilling: BillingRunning, @unchecked Sendable {
 /// roles and billing are the account app's (app.cua.ai).
 public protocol TeamsReading: AnyObject, Sendable {
     func teams() async throws -> AppTeamsInput
+    /// People removed from the account's shared computers because sharing is
+    /// for teams now, until acknowledged (none from a server that predates it).
+    func shareRemovals() async throws -> [AppShareRemovalInput]
+    /// The owner has seen the removal note.
+    func ackShareRemovals() async throws
+}
+
+public extension TeamsReading {
+    func shareRemovals() async throws -> [AppShareRemovalInput] { [] }
+    func ackShareRemovals() async throws {}
 }
 
 /// Reads Teams with the account's access token (`force`: refresh it).
@@ -396,23 +438,38 @@ public final class LiveTeams: TeamsReading, @unchecked Sendable {
         }
         return try await appTeams(accountToken: token)
     }
+
+    public func shareRemovals() async throws -> [AppShareRemovalInput] {
+        guard let token = try await token(false) else { return [] }
+        return try await appShareRemovals(accountToken: token)
+    }
+
+    public func ackShareRemovals() async throws {
+        guard let token = try await token(false) else { return }
+        try await appAckShareRemovals(accountToken: token)
+    }
 }
 
 /// A fixture account's team (captures, tests).
 public final class FixtureTeams: TeamsReading, @unchecked Sendable {
     public var current: AppTeamsInput
+    /// Who the fixture's owner has not been told was removed yet.
+    public var removals: [AppShareRemovalInput]
 
-    public init(_ teams: [AppTeamInput]? = nil) {
+    public init(_ teams: [AppTeamInput]? = nil, removals: [AppShareRemovalInput] = []) {
+        self.removals = removals
         current = AppTeamsInput(accountAppUrl: "https://app.cua.ai", state: .ready(teams: teams ?? [
             AppTeamInput(
                 id: "o1", alias: "acme", name: "Acme Inc", role: "owner", plan: "teams", seats: 3,
                 members: [AppTeamPersonInput(email: "ada@example.com", role: "owner"),
                           AppTeamPersonInput(email: "grace@example.com", role: "member")],
-                invites: ["linus@example.com"]),
+                invites: ["linus@example.com"], paymentFailed: false, paymentFailedUntil: nil),
         ]), currentTeamId: nil)
     }
 
     public func teams() async throws -> AppTeamsInput { current }
+    public func shareRemovals() async throws -> [AppShareRemovalInput] { removals }
+    public func ackShareRemovals() async throws { removals = [] }
 }
 
 /// Opens the website billing page (Settings' Manage billing, a refused

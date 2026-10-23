@@ -65,6 +65,7 @@ env:
 
 jobs:
   pacman:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Arch native pacman updates
     runs-on: ubuntu-latest
     container: archlinux:base-devel
@@ -120,6 +121,7 @@ jobs:
             libs/cua-driver/rust/pacman-build.jsonl
 
   unit:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Rust Linux unit and compile
     runs-on: ubuntu-latest
     timeout-minutes: 30

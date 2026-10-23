@@ -20,9 +20,16 @@ on:
       - "libs/cua/crates/cua-media-codec/**"
       - "libs/cua/crates/cua-logging/**"
       - "libs/cua/crates/cua-volume/**"
+      - "libs/cua/crates/cua-home/**"
+      - "libs/cua/crates/cua-hotspot/**"
+      - "libs/cua/crates/cua-machine-seal/**"
+      - "libs/cua/crates/cua-mesh/**"
+      - "libs/cua/crates/cua-spacesd-html5/**"
+      - "libs/cua/crates/cua-telemetry/**"
       - "libs/images/windows-2022/enable-volume.ps1"
       - "libs/images/windows-2022/volume-diagnostics.ps1"
       - ".github/workflows/ci-cua-spacesd.yml"
+      - ".github/scripts/ci_component_scope.py"
   push:
     branches: [main]
     paths:
@@ -39,9 +46,16 @@ on:
       - "libs/cua/crates/cua-media-codec/**"
       - "libs/cua/crates/cua-logging/**"
       - "libs/cua/crates/cua-volume/**"
+      - "libs/cua/crates/cua-home/**"
+      - "libs/cua/crates/cua-hotspot/**"
+      - "libs/cua/crates/cua-machine-seal/**"
+      - "libs/cua/crates/cua-mesh/**"
+      - "libs/cua/crates/cua-spacesd-html5/**"
+      - "libs/cua/crates/cua-telemetry/**"
       - "libs/images/windows-2022/enable-volume.ps1"
       - "libs/images/windows-2022/volume-diagnostics.ps1"
       - ".github/workflows/ci-cua-spacesd.yml"
+      - ".github/scripts/ci_component_scope.py"
   workflow_dispatch:
 
 permissions:
@@ -67,14 +81,49 @@ env:
   CUA_ENV_TEST_SANDBOX: "1"
 
 jobs:
+  changes:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    name: "cua-spacesd / changes"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      run: ${{ steps.scope.outputs.run }}
+      matrix: ${{ steps.scope.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          sparse-checkout: .github/scripts
+      # CUA-1910: pull requests run only the OS lanes the changed paths can
+      # reach (explicit dependency map in ci_component_scope.py). Pushes,
+      # manual runs and release PRs run everything.
+      - id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          files=""
+          if [[ "$EVENT" == pull_request ]]; then
+            files=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --jq '.[].filename')
+          fi
+          python3 .github/scripts/ci_component_scope.py spacesd <<< "$files" | tee -a "$GITHUB_STEP_SUMMARY"
+
   test:
     name: fmt, clippy, test (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     strategy:
       fail-fast: false
       matrix:
         # macOS 26: the ScreenCaptureKit dependency compiles Metal bindings for
         # macOS 26 APIs and needs that SDK.
-        os: [ubuntu-latest, macos-26, windows-latest]
+        os: ${{ fromJSON(needs.changes.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     defaults:
@@ -201,6 +250,8 @@ jobs:
   # 1 GiB transfers, relay killed mid-stream).
   relay-e2e:
     name: relay e2e (docker)
+    needs: changes
+    if: needs.changes.outputs.run == 'true' && contains(needs.changes.outputs.matrix, 'ubuntu')
     runs-on: ubuntu-latest
     timeout-minutes: 90
     defaults:
@@ -216,3 +267,19 @@ jobs:
         run: scripts/ci/linux-core-tests.sh
       - name: Relay lane
         run: scripts/ci/relay-e2e.sh
+
+  # Always-run aggregator: skipped lanes pass, so this is the one check to
+  # require if branch protection ever needs one.
+  result:
+    name: "cua-spacesd / result"
+    if: always()
+    needs: [changes, test, relay-e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          LANES: ${{ toJSON(needs) }}
+        run: |
+          bad=$(jq -r 'to_entries[] | select(.value.result != "success" and .value.result != "skipped") | "\(.key)=\(.value.result)"' <<< "$LANES")
+          if [[ -n "$bad" ]]; then echo "::error::lanes not green: $bad"; exit 1; fi
+          echo "All applicable lanes passed." | tee -a "$GITHUB_STEP_SUMMARY"

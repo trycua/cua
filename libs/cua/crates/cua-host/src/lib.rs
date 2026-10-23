@@ -35,6 +35,9 @@ pub mod access;
 pub mod device;
 pub mod direct;
 pub mod driver;
+pub mod helper_migration;
+#[cfg(test)]
+mod helper_migration_tests;
 mod host;
 pub mod machine;
 pub mod pairing;
@@ -51,6 +54,7 @@ pub mod testing;
 mod tests;
 
 pub use device::{DeviceAuth, DeviceKey, FileKeySlot, KeySlot, MemoryKeySlot, PendingCode};
+pub use helper_migration::{ServiceMigration, VerifyTiming};
 pub use host::SetupStage;
 pub use host::{
     DirectHosting, Host, HostConfig, HostMode, HostPaths, HostPolicy, HostSettingsChange,
@@ -137,6 +141,11 @@ pub enum Error {
     /// Relay unreachable or failed.
     #[error("relay: {0}")]
     Relay(String),
+    /// The relay refused a new live session over the plan's cap (HTTP 429,
+    /// `x-cua-relay-error: plan_limit_*`). The text is the plain sentence
+    /// ([`cua_home::plan_limit::PlanLimit::sentence`]); never retried.
+    #[error("{0}")]
+    PlanLimit(String),
     /// Driver download failed.
     #[error("download: {0}")]
     Download(String),
@@ -162,6 +171,7 @@ impl Error {
             Error::PermissionDenied(m) if m.starts_with("relay: ") => Some(403),
             Error::NotFound(m) if m.starts_with("relay: ") => Some(404),
             Error::Conflict(m) if m.starts_with("relay: ") => Some(409),
+            Error::PlanLimit(_) => Some(429),
             Error::Relay(m) | Error::Download(m) => status_in(m),
             _ => None,
         }

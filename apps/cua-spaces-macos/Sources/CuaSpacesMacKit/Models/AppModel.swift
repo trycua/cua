@@ -114,6 +114,8 @@ public final class AppModel {
     public private(set) var signIn: AppSignInPhase = .idle
     /// The page a waiting sign-in finishes on ("Open the browser again").
     public private(set) var signInURL: URL?
+    /// A failed sign-in's toast (the classic window shows it for a while).
+    public var signInToast: AppSignInToast?
     /// A sign-in still waiting after this fails (a device code lives
     /// about this long).
     public var signInTimeout: Duration = .seconds(600)
@@ -129,6 +131,9 @@ public final class AppModel {
     public var teamsReader: TeamsReading?
     /// Where Settings' Teams stand: not read yet, read, or failed.
     public private(set) var teamsState: AppTeamsState = .signedOut
+    /// The owner's one-line note that sharing is for teams now and some
+    /// people can no longer open a shared computer; shown once.
+    public private(set) var shareRemovalNote: AppShareRemovalNote?
     /// This app as a login item (nil: no Launch at login row).
     let loginItem: LoginItemControlling?
     /// What the system reports for it (nil until read).
@@ -352,14 +357,144 @@ public final class AppModel {
     /// the web UI lists too): This machine, the machines the Spaces list
     /// shows (one sharing its desktop, one that provides Spaces), then
     /// the account's devices that are none of them; each computer once.
-    public var machinePageRows: [AppMachinePageRow] {
+    public var machinePageRows: [AppMachinePageRow] { appMachinesPageRows(input: machinesPageInput) }
+
+    /// What the Machines page is listed from: the Spaces list, the
+    /// account's devices, the hostnames and who the relay sees connected.
+    var machinesPageInput: AppMachinesPageInput {
         let devices = self.devices.snapshot == nil ? [] : self.devices.input.devices.map {
             AppDeviceIn(id: $0.id, name: $0.name, platform: $0.platform ?? "", lastSeen: $0.lastSeen,
                         current: $0.current, state: $0.state)
         }
-        return appMachinesPageRows(input: AppMachinesPageInput(
+        return AppMachinesPageInput(
             hostOs: .macos, spaces: spaces, devices: devices, hostnames: relayHostnames,
-            presence: self.devices.relayOnline, now: self.devices.nowSecs))
+            presence: self.devices.relayOnline, now: self.devices.nowSecs)
+    }
+
+    /// The Machines page as every UI draws it (the core's
+    /// `machines_view::view`, which the New UI draws too): the list in
+    /// groups with one line each, and each machine's page.
+    public var machinesView: AppMachinesView {
+        let relay = (devices.snapshot?.machines ?? []).map {
+            AppMachinesViewRelay(id: $0.id, role: $0.role, team: $0.team, ownerEmail: $0.ownerEmail,
+                                 providesSpaces: $0.providesSpaces)
+        }
+        // The Cua Spaces update this app found: a peer on a newer Cua is
+        // fixed by it (this app bundles its Cua), and by nothing else.
+        let update = updates.updateState
+        let found = [.available, .downloading, .downloaded].contains(update.status) ? update.version ?? "" : ""
+        return appMachinesView(input: AppMachinesViewInput(
+            page: machinesPageInput, relay: relay, host: host.state, about: Self.machinesAbout, rows: nil,
+            health: machineHealth.keys.sorted().compactMap { machineHealth[$0] },
+            appUpdate: found, appUpdateReady: !found.isEmpty && update.status == .downloaded))
+    }
+
+    /// What each machine's own daemon last reported of its health, by
+    /// Machines page row id (`checkMachineHealth`): the view's issues.
+    public var machineHealth: [String: AppMachinesViewHealth] = [:]
+    @ObservationIgnored private var healthCheck: Task<Void, Never>?
+
+    /// At most this many machines are checked at once.
+    static let healthConcurrency = 3
+    /// One machine's check may take this long.
+    static let healthTimeout: Double = 35
+
+    /// Checks the health of every machine the Machines page can check
+    /// (`healthTarget`: This Mac through its daemon, another of your
+    /// machines that is online through its own daemon over the relay or
+    /// mesh), a few at once, and keeps what each said. A machine that is
+    /// no longer checkable (offline, removed) loses its old result, so no
+    /// stale issue shows. One check at a time; a call during one waits for
+    /// it.
+    public func checkMachineHealth() async {
+        if let running = healthCheck {
+            await running.value
+            return
+        }
+        let task = Task { await self.runHealthChecks() }
+        healthCheck = task
+        await task.value
+        healthCheck = nil
+    }
+
+    private func runHealthChecks() async {
+        let targets = machinesView.machines.compactMap { m in m.healthTarget.map { (id: m.id, target: $0) } }
+        let wanted = Set(targets.map(\.id))
+        machineHealth = machineHealth.filter { wanted.contains($0.key) }
+        let backend = self.backend
+        var pending = targets[...]
+        while !pending.isEmpty {
+            let batch = pending.prefix(Self.healthConcurrency)
+            pending = pending.dropFirst(batch.count)
+            let results = await withTaskGroup(of: (String, AppMachinesViewHealth).self) { group in
+                for t in batch {
+                    group.addTask {
+                        let machine = t.target.isEmpty ? nil : t.target
+                        let r = await withTimeout(seconds: Self.healthTimeout) {
+                            try await backend.machineHealth(machine: machine)
+                        }
+                        switch r {
+                        case .success(var h):
+                            h.id = t.id
+                            return (t.id, h)
+                        case .failure(let error):
+                            let why = (error as? TimeoutError) != nil
+                                ? "it didn\u{2019}t answer within \(Int(Self.healthTimeout)) s"
+                                : LiveSpacesBackend.words(error)
+                            return (t.id, AppMachinesViewHealth(id: t.id, checks: [], cuaVersion: "", error: why))
+                        }
+                    }
+                }
+                var out: [(String, AppMachinesViewHealth)] = []
+                for await r in group { out.append(r) }
+                return out
+            }
+            for (id, h) in results where wanted.contains(id) { machineHealth[id] = h }
+        }
+    }
+
+    /// This Mac as the Machines page names it: its name, the app's
+    /// version and macOS's.
+    static let machinesAbout: AppMachinesViewAbout = {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let v = ProcessInfo.processInfo.operatingSystemVersion
+        let os = v.patchVersion == 0 ? "macOS \(v.majorVersion).\(v.minorVersion)"
+            : "macOS \(v.majorVersion).\(v.minorVersion).\(v.patchVersion)"
+        return AppMachinesViewAbout(
+            computerName: Foundation.Host.current().localizedName ?? "",
+            appVersion: info["CuaVersion"] as? String ?? info["CFBundleShortVersionString"] as? String ?? "",
+            osVersion: os)
+    }()
+
+    /// Renames a machine from the Machines page: `this-mac` is this Mac's
+    /// own relay registration (its host setup takes the name too).
+    public func renameMachine(id: String, name: String) async throws {
+        guard let clean = appDevicesCleanName(name: name) else {
+            throw CuaError.InvalidArgument(message: "A machine needs a name")
+        }
+        let machine = id == "this-mac" ? host.machineId : id
+        guard let machine, let relay = devices.devices else {
+            throw CuaError.InvalidArgument(message: "Renaming a machine needs a signed-in, enrolled Mac")
+        }
+        try await relay.renameMachine(id: machine, name: clean)
+        await host.refresh()
+        await devices.refresh()
+        await refresh()
+    }
+
+    /// Remove from account: `machine` leaves the relay directory, then
+    /// `device` is revoked. This Mac's own host setup is the host's
+    /// `remove` instead.
+    public func removeMachine(machine: String?, device: String?) async throws {
+        if let machine { try await backend.relayUnregister(id: "relay:\(machine)") }
+        if let device {
+            guard let relay = devices.devices else {
+                throw CuaError.InvalidArgument(message: "Revoking a device needs a signed-in Cua account")
+            }
+            try await relay.revoke(id: device)
+        }
+        await devices.refresh()
+        await refresh()
     }
 
     /// What each machine sharing its desktop (`relay:<machine>`) reported
@@ -996,6 +1131,7 @@ public final class AppModel {
             sendCreate(.cancelDone(id: pendingId))
             throw error
         } catch {
+            devices.noteRefusal(LiveSpacesBackend.words(error))
             sendCreate(.fail(id: pendingId, error: LiveSpacesBackend.words(error),
                              errorVariant: (error as? CuaError).flatMap { Mirror(reflecting: $0).children.first?.label } ?? ""))
             throw error
@@ -1104,6 +1240,7 @@ public final class AppModel {
                 sendCreate(.powerDone(id: space.id))
                 await refresh()
             } catch {
+                devices.noteRefusal(LiveSpacesBackend.words(error))
                 sendCreate(.powerFail(id: space.id, error: LiveSpacesBackend.words(error)))
             }
         }
@@ -1116,6 +1253,7 @@ public final class AppModel {
     }
 
     public func show(error: String) {
+        devices.noteRefusal(error)
         banner = error
         bannerIsError = true
     }
@@ -1154,24 +1292,44 @@ public final class AppModel {
 
     /// "Sign in" / "Sign in to Cua": the browser flow, the code while it waits.
     public func beginSignIn() async {
-        guard let account, signIn != .starting else { return }
+        guard let current = startSignIn() else { return }
+        await runSignIn(current)
+    }
+
+    /// Marks a sign-in as starting, now (the web page reads it at once), and
+    /// returns its attempt; nil when one is already starting.
+    @discardableResult
+    public func startSignIn() -> Int? {
+        guard account != nil, signIn != .starting else { return nil }
         signIn = .starting
+        signInURL = nil
         signInAttempt += 1
-        let current = signInAttempt
+        return signInAttempt
+    }
+
+    /// Runs attempt `current`: every way it ends is shown (`signIn`), never
+    /// a silent stop.
+    func runSignIn(_ current: Int) async {
+        guard let account else { return }
         do {
             let attempt = try await account.beginSignIn()
-            // Cancelled while it started.
+            // Cancelled, retried or signed in while it started.
             guard signInAttempt == current, signIn == .starting else { return }
-            signIn = .waiting(userCode: attempt.userCode)
+            signIn = .waiting(userCode: attempt.userCode, opened: attempt.opened)
             signInURL = attempt.url
             let timeout = signInTimeout
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: timeout)
                 guard let self, self.signInAttempt == current, case .waiting = self.signIn else { return }
-                self.signInFailed("The sign-in timed out. Try again.")
+                self.signInFailed(appSignInFailed(reason: .notConfirmed, detail: nil))
             }
             let who = try await attempt.wait()
-            guard signInAttempt == current, case .waiting = signIn else { return }
+            // Whichever attempt the browser finished stored the session:
+            // take it, even when a retry or Cancel superseded this one (an
+            // earlier tab confirmed after all). Only a sign-out since then
+            // leaves it.
+            guard signInAttempt == current || identity == nil else { return }
+            signInAttempt += 1
             let previous = identity
             identity = who ?? account.identity()
             host.identity = identity
@@ -1188,18 +1346,24 @@ public final class AppModel {
             // owner (another account is asked to set it up again).
             await host.reconcileAccount()
             await reloadTeams()
+            await reloadShareRemovals()
         } catch {
+            // A superseded attempt (a retry, Cancel) ends quietly; the one
+            // shown fails with its reason.
             guard signInAttempt == current, signIn != .idle else { return }
-            signInFailed(LiveSpacesBackend.words(error))
+            let variant = (error as? CuaError).flatMap { Mirror(reflecting: $0).children.first?.label } ?? ""
+            signInFailed(appSignInFailedFromError(variant: variant, message: LiveSpacesBackend.words(error)))
         }
     }
 
-    /// Shown where the sign-in was started; counted by its kind only (the
-    /// core keeps the words).
-    private func signInFailed(_ message: String) {
-        signIn = .failed(message: message)
+    /// Shown where the sign-in was started and in the sidebar's foot, with
+    /// a toast; counted by its kind only (the core keeps the words).
+    private func signInFailed(_ phase: AppSignInPhase) {
+        signIn = phase
         signInURL = nil
-        telemetry?.record(appTelemetrySignInFailed(message: message))
+        guard case let .failed(reason, _, _) = phase else { return }
+        signInToast = signInFooter.toast
+        telemetry?.record(appTelemetrySignInFailure(reason: reason))
     }
 
     /// Stops waiting for the browser (the page can start again).
@@ -1207,11 +1371,24 @@ public final class AppModel {
         switch signIn {
         case .starting, .waiting:
             signInAttempt += 1
-            telemetry?.record(appTelemetrySignInFailed(message: nil))
+            telemetry?.record(appTelemetrySignInFailure(reason: nil))
         default: break
         }
         signIn = .idle
         signInURL = nil
+    }
+
+    /// Opens the sign-in page again (the tab was closed).
+    public func reopenSignIn() {
+        guard let signInURL else { return }
+        NSWorkspace.shared.open(signInURL)
+    }
+
+    /// The sidebar's foot: every sign-in state in one place.
+    public var signInFooter: AppSignInFooter {
+        appSignInFooter(input: AppSignInFooterInput(identity: identity, cloudConfigured: cloudConfigured,
+                                                    canSignIn: account != nil, signIn: signIn,
+                                                    hasUrl: signInURL != nil))
     }
 
     public func signOut() async {
@@ -1246,6 +1423,31 @@ public final class AppModel {
     var teamsSettingsInput: AppTeamsInput {
         AppTeamsInput(accountAppUrl: appAccountAppUrl(), state: identity == nil ? .signedOut : teamsState,
                       currentTeamId: settings.currentTeamId)
+    }
+
+    /// The account is in a team on the Teams plan, which sharing needs: nil
+    /// until Teams are read, so the server decides.
+    public var hasSharingTeam: Bool? {
+        if case .ready(let list) = teamsState { return list.contains { $0.plan == "teams" } }
+        return nil
+    }
+
+    /// Reads who lost access to a shared computer (sharing is for teams) and
+    /// words the one-line note. Nothing when signed out or when there is no one.
+    public func reloadShareRemovals() async {
+        guard identity != nil, let teamsReader else {
+            shareRemovalNote = nil
+            return
+        }
+        let removals = (try? await teamsReader.shareRemovals()) ?? []
+        shareRemovalNote = appShareRemovalNote(removals: removals)
+    }
+
+    /// Closes the note and tells the account it was seen, so it shows once.
+    public func dismissShareRemovalNote() {
+        shareRemovalNote = nil
+        guard let teamsReader else { return }
+        Task { try? await teamsReader.ackShareRemovals() }
     }
 
     /// Reads the account's Teams (Settings, Teams). A failure says so in the
@@ -1503,6 +1705,14 @@ public final class AppModel {
         agentsBusy = true
         await agentAction(ids, remove: false)
         agentsBusy = false
+    }
+
+    /// Starts the agent's own sign-in on this Mac (`codex login`); the rows
+    /// show `signedIn` once the agent wrote it.
+    func agentSignIn(_ agent: String) async throws {
+        guard let agentSetup else { return }
+        try await agentSetup.signIn(agent: agent)
+        await reloadAgents()
     }
 
     func agentAction(_ ids: [String], remove: Bool) async {

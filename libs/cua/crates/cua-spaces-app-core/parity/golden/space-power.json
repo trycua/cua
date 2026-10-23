@@ -103,10 +103,10 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [Running] - -",
-          "os-linux box [Running] - - <power Suspend>",
-          "os-macos mac [Running] - - <power Turn off>",
-          "os-linux studio [Running] - - <power Turn off>"
+          "os-linux pool-c [spaces.status.running] - -",
+          "os-linux box [spaces.status.running] - - <power spaces.power.suspend>",
+          "os-macos mac [spaces.status.running] - - <power spaces.power.turn_off>",
+          "os-linux studio [spaces.status.running] - - <power spaces.power.turn_off>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Running - -",
@@ -220,10 +220,10 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [Running] - -",
-          "os-linux box [Suspending…] - - <power Suspending… busy>",
-          "os-macos mac [Running] - - <power Turn off>",
-          "os-linux studio [Running] - - <power Turn off>"
+          "os-linux pool-c [spaces.status.running] - -",
+          "os-linux box [spaces.status.suspending] - - <power spaces.status.suspending busy>",
+          "os-macos mac [spaces.status.running] - - <power spaces.power.turn_off>",
+          "os-linux studio [spaces.status.running] - - <power spaces.power.turn_off>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Suspending… - -",
@@ -339,10 +339,10 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [Running] - -",
-          "os-linux box [Suspending…] - - <power Suspending… busy>",
-          "os-macos mac [Running] - - <power Turn off>",
-          "os-linux studio [Running] - - <power Turn off>"
+          "os-linux pool-c [spaces.status.running] - -",
+          "os-linux box [spaces.status.suspending] - - <power spaces.status.suspending busy>",
+          "os-macos mac [spaces.status.running] - - <power spaces.power.turn_off>",
+          "os-linux studio [spaces.status.running] - - <power spaces.power.turn_off>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Suspending… - -",
@@ -458,10 +458,10 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [Running] - -",
-          "os-linux box [Suspending…] - - <power Suspending… busy>",
-          "os-macos mac [Running] - - <power Turn off>",
-          "os-linux studio [Running] - - <power Turn off>"
+          "os-linux pool-c [spaces.status.running] - -",
+          "os-linux box [spaces.status.suspending] - - <power spaces.status.suspending busy>",
+          "os-macos mac [spaces.status.running] - - <power spaces.power.turn_off>",
+          "os-linux studio [spaces.status.running] - - <power spaces.power.turn_off>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Suspending… - -",
@@ -577,10 +577,10 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [Running] - -",
-          "os-linux box [Suspending…] - - <power Suspending… busy>",
-          "os-macos mac [Running] - - <power Turn off>",
-          "os-linux studio [Running] - - <power Turn off>"
+          "os-linux pool-c [spaces.status.running] - -",
+          "os-linux box [spaces.status.suspending] - - <power spaces.status.suspending busy>",
+          "os-macos mac [spaces.status.running] - - <power spaces.power.turn_off>",
+          "os-linux studio [spaces.status.running] - - <power spaces.power.turn_off>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Suspending… - -",
@@ -696,10 +696,10 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [Running] - -",
-          "os-linux box [Stopped] - - <power Resume on>",
-          "os-macos mac [Running] - - <power Turn off>",
-          "os-linux studio [Running] - - <power Turn off>"
+          "os-linux pool-c [spaces.status.running] - -",
+          "os-linux box [spaces.status.stopped] - - <power spaces.power.resume on>",
+          "os-macos mac [spaces.status.running] - - <power spaces.power.turn_off>",
+          "os-linux studio [spaces.status.running] - - <power spaces.power.turn_off>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Stopped - -",
@@ -813,10 +813,10 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [Running] - -",
-          "os-linux box [Resuming…] - - <power Resuming… on busy>",
-          "os-macos mac [Running] - - <power Turn off>",
-          "os-linux studio [Running] - - <power Turn off>"
+          "os-linux pool-c [spaces.status.running] - -",
+          "os-linux box [spaces.status.resuming] - - <power spaces.status.resuming on busy>",
+          "os-macos mac [spaces.status.running] - - <power spaces.power.turn_off>",
+          "os-linux studio [spaces.status.running] - - <power spaces.power.turn_off>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Resuming… - -",
@@ -933,10 +933,10 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [Running] - -",
-          "os-linux box [Stopped] - Could not turn it on: Docker is not running <power Resume on>",
-          "os-macos mac [Running] - - <power Turn off>",
-          "os-linux studio [Running] - - <power Turn off>"
+          "os-linux pool-c [spaces.status.running] - -",
+          "os-linux box [spaces.status.stopped] - Could not turn it on: Docker is not running <power spaces.power.resume on>",
+          "os-macos mac [spaces.status.running] - - <power spaces.power.turn_off>",
+          "os-linux studio [spaces.status.running] - - <power spaces.power.turn_off>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Stopped - -",
@@ -1053,10 +1053,10 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [Running] - -",
-          "os-linux box [Stopped] - Could not turn it on: Docker is not running <power Resume on>",
-          "os-macos mac [Turning off…] - - <power Turning off… busy>",
-          "os-linux studio [Running] - - <power Turn off>"
+          "os-linux pool-c [spaces.status.running] - -",
+          "os-linux box [spaces.status.stopped] - Could not turn it on: Docker is not running <power spaces.power.resume on>",
+          "os-macos mac [spaces.status.turning_off] - - <power spaces.status.turning_off busy>",
+          "os-linux studio [spaces.status.running] - - <power spaces.power.turn_off>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Stopped - -",
@@ -1174,10 +1174,10 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [Running] - -",
-          "os-linux box [Stopped] - Could not turn it on: Docker is not running <power Resume on>",
-          "os-macos mac [Turning off…] - - <power Turning off… busy>",
-          "os-linux studio [Running] - - <power Turn off>"
+          "os-linux pool-c [spaces.status.running] - -",
+          "os-linux box [spaces.status.stopped] - Could not turn it on: Docker is not running <power spaces.power.resume on>",
+          "os-macos mac [spaces.status.turning_off] - - <power spaces.status.turning_off busy>",
+          "os-linux studio [spaces.status.running] - - <power spaces.power.turn_off>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Stopped - -",
@@ -1295,10 +1295,10 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [Running] - -",
-          "os-linux box [Stopped] - Could not turn it on: Docker is not running <power Resume on>",
-          "os-macos mac [Stopped] - - <power Turn on on>",
-          "os-linux studio [Running] - - <power Turn off>"
+          "os-linux pool-c [spaces.status.running] - -",
+          "os-linux box [spaces.status.stopped] - Could not turn it on: Docker is not running <power spaces.power.resume on>",
+          "os-macos mac [spaces.status.stopped] - - <power spaces.power.turn_on on>",
+          "os-linux studio [spaces.status.running] - - <power spaces.power.turn_off>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Stopped - -",
@@ -1415,10 +1415,10 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [Running] - -",
-          "os-linux box [Stopped] - Could not turn it on: Docker is not running <power Resume on>",
-          "os-macos mac [Stopped] - - <power Turn on on>",
-          "os-linux studio [Turning off…] - - <power Turning off… busy>"
+          "os-linux pool-c [spaces.status.running] - -",
+          "os-linux box [spaces.status.stopped] - Could not turn it on: Docker is not running <power spaces.power.resume on>",
+          "os-macos mac [spaces.status.stopped] - - <power spaces.power.turn_on on>",
+          "os-linux studio [spaces.status.turning_off] - - <power spaces.status.turning_off busy>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Stopped - -",
@@ -1536,10 +1536,10 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [Running] - -",
-          "os-linux box [Stopped] - Could not turn it on: Docker is not running <power Resume on>",
-          "os-macos mac [Stopped] - - <power Turn on on>",
-          "os-linux studio [Turning off…] - - <power Turning off… busy>"
+          "os-linux pool-c [spaces.status.running] - -",
+          "os-linux box [spaces.status.stopped] - Could not turn it on: Docker is not running <power spaces.power.resume on>",
+          "os-macos mac [spaces.status.stopped] - - <power spaces.power.turn_on on>",
+          "os-linux studio [spaces.status.turning_off] - - <power spaces.status.turning_off busy>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Stopped - -",
@@ -1657,10 +1657,10 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [Running] - -",
-          "os-linux box [Stopped] - Could not turn it on: Docker is not running <power Resume on>",
-          "os-macos mac [Stopped] - - <power Turn on on>",
-          "os-linux studio [Stopped] - - <power Turn on on>"
+          "os-linux pool-c [spaces.status.running] - -",
+          "os-linux box [spaces.status.stopped] - Could not turn it on: Docker is not running <power spaces.power.resume on>",
+          "os-macos mac [spaces.status.stopped] - - <power spaces.power.turn_on on>",
+          "os-linux studio [spaces.status.stopped] - - <power spaces.power.turn_on on>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Stopped - -",
@@ -1777,10 +1777,10 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [Running] - -",
-          "os-linux box [Stopped] - Could not turn it on: Docker is not running <power Resume on>",
-          "os-macos mac [Turning on…] - - <power Turning on… on busy>",
-          "os-linux studio [Stopped] - - <power Turn on on>"
+          "os-linux pool-c [spaces.status.running] - -",
+          "os-linux box [spaces.status.stopped] - Could not turn it on: Docker is not running <power spaces.power.resume on>",
+          "os-macos mac [spaces.status.turning_on] - - <power spaces.status.turning_on on busy>",
+          "os-linux studio [spaces.status.stopped] - - <power spaces.power.turn_on on>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Stopped - -",
@@ -1897,10 +1897,10 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [Running] - -",
-          "os-linux box [Stopped] - Could not turn it on: Docker is not running <power Resume on>",
-          "os-macos mac [Deleting…] - -",
-          "os-linux studio [Stopped] - - <power Turn on on>"
+          "os-linux pool-c [spaces.status.running] - -",
+          "os-linux box [spaces.status.stopped] - Could not turn it on: Docker is not running <power spaces.power.resume on>",
+          "os-macos mac [spaces.status.deleting] - -",
+          "os-linux studio [spaces.status.stopped] - - <power spaces.power.turn_on on>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Stopped - -",
@@ -1995,9 +1995,9 @@
         ],
         "pending": true,
         "rows": [
-          "os-linux pool-c [Running] - -",
-          "os-linux box [Stopped] - Could not turn it on: Docker is not running <power Resume on>",
-          "os-linux studio [Stopped] - - <power Turn on on>"
+          "os-linux pool-c [spaces.status.running] - -",
+          "os-linux box [spaces.status.stopped] - Could not turn it on: Docker is not running <power spaces.power.resume on>",
+          "os-linux studio [spaces.status.stopped] - - <power spaces.power.turn_on on>"
         ],
         "tiles": [
           "os-linux box, Linux, This Mac, Stopped - -",

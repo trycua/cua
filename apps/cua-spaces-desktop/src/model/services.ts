@@ -12,6 +12,8 @@ export interface SignInAttempt {
   userCode: string | null;
   /** The page the sign-in finishes on (to open it again). */
   url: string | null;
+  /** A browser opened on this machine (false: the page is to be opened by hand, on any device). */
+  opened?: boolean;
   wait(): Promise<string | null>;
 }
 
@@ -75,6 +77,7 @@ export class LiveAccount implements AccountRunning {
     return {
       userCode: attempt.userCode() ?? null,
       url: url || null,
+      opened,
       wait: async () => display(await attempt.wait()),
     };
   }

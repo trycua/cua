@@ -185,7 +185,10 @@ pub fn guest_relay_url(relay_url: &str, kind: &str) -> String {
 fn resolve_image(image: &str) -> (String, String) {
     let word = image.trim();
     if word.is_empty() {
-        return (cua_fleet::canonical_image("linux"), "linux".into());
+        return (
+            cua_image::canonical::canonical_image_or_linux("linux"),
+            "linux".into(),
+        );
     }
     if let Some((reference, os)) =
         cua_image::canonical::alias_with(word, &|n| std::env::var(n).ok())
@@ -2093,6 +2096,54 @@ impl Spaces {
             .await
             .map(tonic::Response::into_inner)
             .map_err(|e| from_host(cua_spacesd_client::Error::from(e)))
+    }
+
+    /// Another of your machines' health as its own cua daemon checks it
+    /// (`HostSpacesService.DiagnoseHost`): Local Network access, disk,
+    /// virtualization, memory, permissions. `machine` is an id or a name,
+    /// as [`Spaces::resolve_host`] takes it; reached over the relay (or the
+    /// mesh), or at its direct address. Fails plainly when it is offline,
+    /// not yours, or runs a Cua that predates the check. Bounded (30 s).
+    pub async fn machine_health(&self, machine: &str) -> Result<pb::DiagnoseHostResponse> {
+        let (space, name) = match self.resolve_host(machine).await? {
+            ResolvedHost::Relay(m) => {
+                let name = if m.name.is_empty() {
+                    m.id.clone()
+                } else {
+                    m.name.clone()
+                };
+                if !m.online {
+                    return Err(Error::host(
+                        "machine health",
+                        format!("{name} is offline, so it can't be checked now"),
+                    ));
+                }
+                if m.role != "owner" {
+                    return Err(Error::Relay(cua_host::Error::PermissionDenied(format!(
+                        "{name} is not yours: only its owner can check its health"
+                    ))));
+                }
+                (self.space(&format!("relay:{}", m.id)).await?, name)
+            }
+            ResolvedHost::Direct(h) => {
+                let name = h.name.clone();
+                (self.direct_host_space(&h).await?, name)
+            }
+        };
+        let mut client = space.spacesd()?.host_spaces();
+        let call = client.diagnose_host(pb::DiagnoseHostRequest::default());
+        match tokio::time::timeout(Duration::from_secs(30), call).await {
+            Ok(Ok(r)) => Ok(r.into_inner()),
+            Ok(Err(status)) if status.code() == tonic::Code::Unimplemented => Err(Error::host(
+                "machine health",
+                format!("{name} runs an older Cua that can't be checked; update Cua on it"),
+            )),
+            Ok(Err(status)) => Err(from_host(cua_spacesd_client::Error::from(status))),
+            Err(_) => Err(Error::host(
+                "machine health",
+                format!("{name} did not answer within 30 s"),
+            )),
+        }
     }
 
     async fn host_space(&self, m: &crate::relay::RelayMachine) -> Result<crate::Space> {

@@ -381,6 +381,11 @@ void uniffi_cua_sdk_fn_method_agentsetup_set_onboarding_declined(uint64_t ptr, i
 uint64_t uniffi_cua_sdk_fn_method_agentsetup_setup_cua_driver(uint64_t ptr, RustBuffer agents, RustBuffer command, int8_t skills, int8_t mcp
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_SIGN_IN
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_SIGN_IN
+void uniffi_cua_sdk_fn_method_agentsetup_sign_in(uint64_t ptr, RustBuffer agent, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_SKILLS
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_AGENTSETUP_SKILLS
 RustBuffer uniffi_cua_sdk_fn_method_agentsetup_skills(uint64_t ptr, RustCallStatus *_Nonnull out_status
@@ -647,11 +652,6 @@ uint64_t uniffi_cua_sdk_fn_method_cua_agent_setup(uint64_t ptr, RustCallStatus *
 uint64_t uniffi_cua_sdk_fn_method_cua_auth(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_CUA_FLEET
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_CUA_FLEET
-uint64_t uniffi_cua_sdk_fn_method_cua_fleet(uint64_t ptr, RustCallStatus *_Nonnull out_status
-);
-#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_CUA_INFO
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_CUA_INFO
 uint64_t uniffi_cua_sdk_fn_method_cua_info(uint64_t ptr
@@ -685,191 +685,6 @@ uint64_t uniffi_cua_sdk_fn_method_cua_spaces(uint64_t ptr, RustCallStatus *_Nonn
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_CUA_SPACESD
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_CUA_SPACESD
 uint64_t uniffi_cua_sdk_fn_method_cua_spacesd(uint64_t ptr, RustBuffer url, RustBuffer token
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_CLONE_FLEET
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_CLONE_FLEET
-uint64_t uniffi_cua_sdk_fn_clone_fleet(uint64_t handle, RustCallStatus *_Nonnull out_status
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FREE_FLEET
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FREE_FLEET
-void uniffi_cua_sdk_fn_free_fleet(uint64_t handle, RustCallStatus *_Nonnull out_status
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_ACQUIRE
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_ACQUIRE
-uint64_t uniffi_cua_sdk_fn_method_fleet_acquire(uint64_t ptr, RustBuffer pool, RustBuffer name, RustBuffer ttl_seconds
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_ACQUIRE_WITH
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_ACQUIRE_WITH
-uint64_t uniffi_cua_sdk_fn_method_fleet_acquire_with(uint64_t ptr, RustBuffer pool, RustBuffer options
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_APPLY
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_APPLY
-uint64_t uniffi_cua_sdk_fn_method_fleet_apply(uint64_t ptr, RustBuffer name, RustBuffer spec, RustBuffer options
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_APPLY_POOL
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_APPLY_POOL
-uint64_t uniffi_cua_sdk_fn_method_fleet_apply_pool(uint64_t ptr, RustBuffer spec
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_APPLY_POOL_TEMPLATE
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_APPLY_POOL_TEMPLATE
-uint64_t uniffi_cua_sdk_fn_method_fleet_apply_pool_template(uint64_t ptr, RustBuffer pool, RustBuffer spec
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_ATTACH_CLAIM
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_ATTACH_CLAIM
-uint64_t uniffi_cua_sdk_fn_method_fleet_attach_claim(uint64_t ptr, RustBuffer namespace, RustBuffer name
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_BASE_URL
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_BASE_URL
-RustBuffer uniffi_cua_sdk_fn_method_fleet_base_url(uint64_t ptr, RustCallStatus *_Nonnull out_status
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_BILLING_STATUS
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_BILLING_STATUS
-uint64_t uniffi_cua_sdk_fn_method_fleet_billing_status(uint64_t ptr
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_CHECK_POOL_SPEC
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_CHECK_POOL_SPEC
-uint64_t uniffi_cua_sdk_fn_method_fleet_check_pool_spec(uint64_t ptr, RustBuffer pool, RustBuffer spec
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_CLAIM
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_CLAIM
-uint64_t uniffi_cua_sdk_fn_method_fleet_claim(uint64_t ptr, RustBuffer pool, RustBuffer name, RustBuffer ttl_seconds
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_CREATE_IMAGE
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_CREATE_IMAGE
-uint64_t uniffi_cua_sdk_fn_method_fleet_create_image(uint64_t ptr, RustBuffer namespace, RustBuffer manifest_json
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_CREATE_SIGNED_SERVICE_URL
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_CREATE_SIGNED_SERVICE_URL
-uint64_t uniffi_cua_sdk_fn_method_fleet_create_signed_service_url(uint64_t ptr, RustBuffer sandbox, RustBuffer service, RustBuffer label, uint32_t expires_in_seconds
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_DELETE_IMAGE
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_DELETE_IMAGE
-uint64_t uniffi_cua_sdk_fn_method_fleet_delete_image(uint64_t ptr, RustBuffer namespace, RustBuffer name
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_DELETE_POOL
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_DELETE_POOL
-uint64_t uniffi_cua_sdk_fn_method_fleet_delete_pool(uint64_t ptr, RustBuffer name
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_EPHEMERAL_POOL_NAME
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_EPHEMERAL_POOL_NAME
-RustBuffer uniffi_cua_sdk_fn_method_fleet_ephemeral_pool_name(uint64_t ptr, RustCallStatus *_Nonnull out_status
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_EXPORT_POOL
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_EXPORT_POOL
-uint64_t uniffi_cua_sdk_fn_method_fleet_export_pool(uint64_t ptr, RustBuffer name
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_GET_IMAGE
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_GET_IMAGE
-uint64_t uniffi_cua_sdk_fn_method_fleet_get_image(uint64_t ptr, RustBuffer namespace, RustBuffer name
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_GET_POOL
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_GET_POOL
-uint64_t uniffi_cua_sdk_fn_method_fleet_get_pool(uint64_t ptr, RustBuffer name
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_KEEP_ALIVE
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_KEEP_ALIVE
-uint64_t uniffi_cua_sdk_fn_method_fleet_keep_alive(uint64_t ptr, RustBuffer namespace, RustBuffer name, uint32_t seconds
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_LIST_CLAIMS
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_LIST_CLAIMS
-uint64_t uniffi_cua_sdk_fn_method_fleet_list_claims(uint64_t ptr, RustBuffer namespace
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_LIST_IMAGES
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_LIST_IMAGES
-uint64_t uniffi_cua_sdk_fn_method_fleet_list_images(uint64_t ptr, RustBuffer namespace
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_LIST_POOLS
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_LIST_POOLS
-uint64_t uniffi_cua_sdk_fn_method_fleet_list_pools(uint64_t ptr, RustBuffer namespace
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_LIST_TEMPLATES
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_LIST_TEMPLATES
-uint64_t uniffi_cua_sdk_fn_method_fleet_list_templates(uint64_t ptr, RustBuffer namespace
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_POOL_IMAGE_INFO
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_POOL_IMAGE_INFO
-uint64_t uniffi_cua_sdk_fn_method_fleet_pool_image_info(uint64_t ptr, RustBuffer name
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_POOLS
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_POOLS
-uint64_t uniffi_cua_sdk_fn_method_fleet_pools(uint64_t ptr, RustCallStatus *_Nonnull out_status
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_RELEASE
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_RELEASE
-uint64_t uniffi_cua_sdk_fn_method_fleet_release(uint64_t ptr, RustBuffer namespace, RustBuffer name
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_SERVICE_URL
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_SERVICE_URL
-RustBuffer uniffi_cua_sdk_fn_method_fleet_service_url(uint64_t ptr, RustBuffer sandbox, RustBuffer service, RustCallStatus *_Nonnull out_status
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_SET_POOL_REPLICAS
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_SET_POOL_REPLICAS
-uint64_t uniffi_cua_sdk_fn_method_fleet_set_pool_replicas(uint64_t ptr, RustBuffer name, uint32_t replicas
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_USAGE_PRICING
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_USAGE_PRICING
-uint64_t uniffi_cua_sdk_fn_method_fleet_usage_pricing(uint64_t ptr
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_WAIT_POOL_READY
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEET_WAIT_POOL_READY
-uint64_t uniffi_cua_sdk_fn_method_fleet_wait_pool_ready(uint64_t ptr, RustBuffer name, uint32_t timeout_ms
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_CLONE_FLEETPOOLS
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_CLONE_FLEETPOOLS
-uint64_t uniffi_cua_sdk_fn_clone_fleetpools(uint64_t handle, RustCallStatus *_Nonnull out_status
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FREE_FLEETPOOLS
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FREE_FLEETPOOLS
-void uniffi_cua_sdk_fn_free_fleetpools(uint64_t handle, RustCallStatus *_Nonnull out_status
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEETPOOLS_GC
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEETPOOLS_GC
-uint64_t uniffi_cua_sdk_fn_method_fleetpools_gc(uint64_t ptr, RustBuffer idle_seconds
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEETPOOLS_GC_POOLS
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEETPOOLS_GC_POOLS
-uint64_t uniffi_cua_sdk_fn_method_fleetpools_gc_pools(uint64_t ptr, RustBuffer names, RustBuffer idle_seconds
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEETPOOLS_LIST
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_FLEETPOOLS_LIST
-uint64_t uniffi_cua_sdk_fn_method_fleetpools_list(uint64_t ptr
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_CLONE_DEVICES
@@ -927,6 +742,11 @@ RustBuffer uniffi_cua_sdk_fn_method_devices_relay_url(uint64_t ptr, RustCallStat
 uint64_t uniffi_cua_sdk_fn_method_devices_rename(uint64_t ptr, RustBuffer id, RustBuffer name
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_RENAME_MACHINE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_RENAME_MACHINE
+uint64_t uniffi_cua_sdk_fn_method_devices_rename_machine(uint64_t ptr, RustBuffer machine_id, RustBuffer name
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_REVOKE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_REVOKE
 uint64_t uniffi_cua_sdk_fn_method_devices_revoke(uint64_t ptr, RustBuffer id
@@ -960,6 +780,11 @@ uint64_t uniffi_cua_sdk_fn_constructor_host_new(RustBuffer cua_home, RustCallSta
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_HOST_CONFIGURE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_HOST_CONFIGURE
 uint64_t uniffi_cua_sdk_fn_method_host_configure(uint64_t ptr, RustBuffer change
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_HOST_MIGRATE_SERVICE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_HOST_MIGRATE_SERVICE
+uint64_t uniffi_cua_sdk_fn_method_host_migrate_service(uint64_t ptr, int8_t force, RustBuffer app_version
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_HOST_PAUSE_SIGNED_OUT
@@ -1325,11 +1150,6 @@ uint64_t uniffi_cua_sdk_fn_method_sandbox_agents(uint64_t ptr
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SANDBOX_DELETE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SANDBOX_DELETE
 uint64_t uniffi_cua_sdk_fn_method_sandbox_delete(uint64_t ptr
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SANDBOX_DETACH
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SANDBOX_DETACH
-void uniffi_cua_sdk_fn_method_sandbox_detach(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SANDBOX_FORWARD
@@ -2197,6 +2017,11 @@ uint64_t uniffi_cua_sdk_fn_method_spaces_list(uint64_t ptr
 uint64_t uniffi_cua_sdk_fn_method_spaces_list_tools_json(uint64_t ptr
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_MACHINE_HEALTH
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_MACHINE_HEALTH
+uint64_t uniffi_cua_sdk_fn_method_spaces_machine_health(uint64_t ptr, RustBuffer machine
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_RELAY_REGISTER
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_RELAY_REGISTER
 uint64_t uniffi_cua_sdk_fn_method_spaces_relay_register(uint64_t ptr, RustBuffer space
@@ -2649,7 +2474,7 @@ uint64_t uniffi_cua_sdk_fn_method_spacesdprocess_resize(uint64_t ptr, uint32_t c
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACESDPROCESS_SIGNAL
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACESDPROCESS_SIGNAL
-uint64_t uniffi_cua_sdk_fn_method_spacesdprocess_signal(uint64_t ptr, RustBuffer signal
+uint64_t uniffi_cua_sdk_fn_method_spacesdprocess_signal(uint64_t ptr, RustBuffer signal, int8_t process_group
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACESDPROCESS_TAG
@@ -2694,9 +2519,9 @@ RustBuffer uniffi_cua_sdk_fn_func_agent_harnesses(RustCallStatus *_Nonnull out_s
 
 );
 #endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_MAY_HAVE_FLEET_SESSION
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_MAY_HAVE_FLEET_SESSION
-int8_t uniffi_cua_sdk_fn_func_may_have_fleet_session(RustCallStatus *_Nonnull out_status
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_MAY_HAVE_SESSION
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_MAY_HAVE_SESSION
+int8_t uniffi_cua_sdk_fn_func_may_have_session(RustCallStatus *_Nonnull out_status
 
 );
 #endif
@@ -2735,33 +2560,6 @@ RustBuffer uniffi_cua_sdk_fn_func_config_unset(RustBuffer key, RustCallStatus *_
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_LOCATIONS
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_LOCATIONS
 RustBuffer uniffi_cua_sdk_fn_func_locations(RustCallStatus *_Nonnull out_status
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_FLEET_CHECK_RUNTIME
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_FLEET_CHECK_RUNTIME
-RustBuffer uniffi_cua_sdk_fn_func_fleet_check_runtime(RustBuffer runtime, RustBuffer image, RustBuffer variant, RustCallStatus *_Nonnull out_status
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_FLEET_GENERATE_CLAIM_TOKEN
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_FLEET_GENERATE_CLAIM_TOKEN
-RustBuffer uniffi_cua_sdk_fn_func_fleet_generate_claim_token(RustCallStatus *_Nonnull out_status
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_FLEET_IMAGE_VARIANT
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_FLEET_IMAGE_VARIANT
-RustBuffer uniffi_cua_sdk_fn_func_fleet_image_variant(RustBuffer manifest, RustBuffer config, RustCallStatus *_Nonnull out_status
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_FLEET_RESOLVE_RUNTIME
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_FLEET_RESOLVE_RUNTIME
-RustBuffer uniffi_cua_sdk_fn_func_fleet_resolve_runtime(RustBuffer runtime, RustBuffer image, RustCallStatus *_Nonnull out_status
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_FLEET_SIZE_LIMITS
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_FUNC_FLEET_SIZE_LIMITS
-RustBuffer uniffi_cua_sdk_fn_func_fleet_size_limits(RustCallStatus *_Nonnull out_status
 
 );
 #endif
@@ -3271,9 +3069,9 @@ uint16_t uniffi_cua_sdk_checksum_func_agent_harnesses(void
 
 );
 #endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_MAY_HAVE_FLEET_SESSION
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_MAY_HAVE_FLEET_SESSION
-uint16_t uniffi_cua_sdk_checksum_func_may_have_fleet_session(void
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_MAY_HAVE_SESSION
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_MAY_HAVE_SESSION
+uint16_t uniffi_cua_sdk_checksum_func_may_have_session(void
 
 );
 #endif
@@ -3316,36 +3114,6 @@ uint16_t uniffi_cua_sdk_checksum_func_config_unset(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_LOCATIONS
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_LOCATIONS
 uint16_t uniffi_cua_sdk_checksum_func_locations(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_FLEET_CHECK_RUNTIME
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_FLEET_CHECK_RUNTIME
-uint16_t uniffi_cua_sdk_checksum_func_fleet_check_runtime(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_FLEET_GENERATE_CLAIM_TOKEN
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_FLEET_GENERATE_CLAIM_TOKEN
-uint16_t uniffi_cua_sdk_checksum_func_fleet_generate_claim_token(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_FLEET_IMAGE_VARIANT
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_FLEET_IMAGE_VARIANT
-uint16_t uniffi_cua_sdk_checksum_func_fleet_image_variant(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_FLEET_RESOLVE_RUNTIME
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_FLEET_RESOLVE_RUNTIME
-uint16_t uniffi_cua_sdk_checksum_func_fleet_resolve_runtime(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_FLEET_SIZE_LIMITS
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_FUNC_FLEET_SIZE_LIMITS
-uint16_t uniffi_cua_sdk_checksum_func_fleet_size_limits(void
 
 );
 #endif
@@ -3643,6 +3411,12 @@ uint16_t uniffi_cua_sdk_checksum_method_agentsetup_setup_cua_driver(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_AGENTSETUP_SIGN_IN
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_AGENTSETUP_SIGN_IN
+uint16_t uniffi_cua_sdk_checksum_method_agentsetup_sign_in(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_AGENTSETUP_SKILLS
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_AGENTSETUP_SKILLS
 uint16_t uniffi_cua_sdk_checksum_method_agentsetup_skills(void
@@ -3865,12 +3639,6 @@ uint16_t uniffi_cua_sdk_checksum_method_cua_auth(void
 
 );
 #endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_CUA_FLEET
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_CUA_FLEET
-uint16_t uniffi_cua_sdk_checksum_method_cua_fleet(void
-
-);
-#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_CUA_INFO
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_CUA_INFO
 uint16_t uniffi_cua_sdk_checksum_method_cua_info(void
@@ -3910,204 +3678,6 @@ uint16_t uniffi_cua_sdk_checksum_method_cua_spaces(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_CUA_SPACESD
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_CUA_SPACESD
 uint16_t uniffi_cua_sdk_checksum_method_cua_spacesd(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_ACQUIRE
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_ACQUIRE
-uint16_t uniffi_cua_sdk_checksum_method_fleet_acquire(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_ACQUIRE_WITH
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_ACQUIRE_WITH
-uint16_t uniffi_cua_sdk_checksum_method_fleet_acquire_with(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_APPLY
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_APPLY
-uint16_t uniffi_cua_sdk_checksum_method_fleet_apply(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_APPLY_POOL
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_APPLY_POOL
-uint16_t uniffi_cua_sdk_checksum_method_fleet_apply_pool(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_APPLY_POOL_TEMPLATE
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_APPLY_POOL_TEMPLATE
-uint16_t uniffi_cua_sdk_checksum_method_fleet_apply_pool_template(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_ATTACH_CLAIM
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_ATTACH_CLAIM
-uint16_t uniffi_cua_sdk_checksum_method_fleet_attach_claim(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_BASE_URL
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_BASE_URL
-uint16_t uniffi_cua_sdk_checksum_method_fleet_base_url(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_BILLING_STATUS
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_BILLING_STATUS
-uint16_t uniffi_cua_sdk_checksum_method_fleet_billing_status(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_CHECK_POOL_SPEC
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_CHECK_POOL_SPEC
-uint16_t uniffi_cua_sdk_checksum_method_fleet_check_pool_spec(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_CLAIM
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_CLAIM
-uint16_t uniffi_cua_sdk_checksum_method_fleet_claim(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_CREATE_IMAGE
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_CREATE_IMAGE
-uint16_t uniffi_cua_sdk_checksum_method_fleet_create_image(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_CREATE_SIGNED_SERVICE_URL
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_CREATE_SIGNED_SERVICE_URL
-uint16_t uniffi_cua_sdk_checksum_method_fleet_create_signed_service_url(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_DELETE_IMAGE
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_DELETE_IMAGE
-uint16_t uniffi_cua_sdk_checksum_method_fleet_delete_image(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_DELETE_POOL
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_DELETE_POOL
-uint16_t uniffi_cua_sdk_checksum_method_fleet_delete_pool(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_EPHEMERAL_POOL_NAME
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_EPHEMERAL_POOL_NAME
-uint16_t uniffi_cua_sdk_checksum_method_fleet_ephemeral_pool_name(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_EXPORT_POOL
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_EXPORT_POOL
-uint16_t uniffi_cua_sdk_checksum_method_fleet_export_pool(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_GET_IMAGE
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_GET_IMAGE
-uint16_t uniffi_cua_sdk_checksum_method_fleet_get_image(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_GET_POOL
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_GET_POOL
-uint16_t uniffi_cua_sdk_checksum_method_fleet_get_pool(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_KEEP_ALIVE
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_KEEP_ALIVE
-uint16_t uniffi_cua_sdk_checksum_method_fleet_keep_alive(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_LIST_CLAIMS
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_LIST_CLAIMS
-uint16_t uniffi_cua_sdk_checksum_method_fleet_list_claims(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_LIST_IMAGES
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_LIST_IMAGES
-uint16_t uniffi_cua_sdk_checksum_method_fleet_list_images(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_LIST_POOLS
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_LIST_POOLS
-uint16_t uniffi_cua_sdk_checksum_method_fleet_list_pools(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_LIST_TEMPLATES
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_LIST_TEMPLATES
-uint16_t uniffi_cua_sdk_checksum_method_fleet_list_templates(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_POOL_IMAGE_INFO
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_POOL_IMAGE_INFO
-uint16_t uniffi_cua_sdk_checksum_method_fleet_pool_image_info(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_POOLS
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_POOLS
-uint16_t uniffi_cua_sdk_checksum_method_fleet_pools(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_RELEASE
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_RELEASE
-uint16_t uniffi_cua_sdk_checksum_method_fleet_release(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_SERVICE_URL
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_SERVICE_URL
-uint16_t uniffi_cua_sdk_checksum_method_fleet_service_url(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_SET_POOL_REPLICAS
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_SET_POOL_REPLICAS
-uint16_t uniffi_cua_sdk_checksum_method_fleet_set_pool_replicas(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_USAGE_PRICING
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_USAGE_PRICING
-uint16_t uniffi_cua_sdk_checksum_method_fleet_usage_pricing(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_WAIT_POOL_READY
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEET_WAIT_POOL_READY
-uint16_t uniffi_cua_sdk_checksum_method_fleet_wait_pool_ready(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEETPOOLS_GC
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEETPOOLS_GC
-uint16_t uniffi_cua_sdk_checksum_method_fleetpools_gc(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEETPOOLS_GC_POOLS
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEETPOOLS_GC_POOLS
-uint16_t uniffi_cua_sdk_checksum_method_fleetpools_gc_pools(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEETPOOLS_LIST
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_FLEETPOOLS_LIST
-uint16_t uniffi_cua_sdk_checksum_method_fleetpools_list(void
 
 );
 #endif
@@ -4165,6 +3735,12 @@ uint16_t uniffi_cua_sdk_checksum_method_devices_rename(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_RENAME_MACHINE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_RENAME_MACHINE
+uint16_t uniffi_cua_sdk_checksum_method_devices_rename_machine(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_REVOKE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_REVOKE
 uint16_t uniffi_cua_sdk_checksum_method_devices_revoke(void
@@ -4186,6 +3762,12 @@ uint16_t uniffi_cua_sdk_checksum_method_devices_snapshot(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_HOST_CONFIGURE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_HOST_CONFIGURE
 uint16_t uniffi_cua_sdk_checksum_method_host_configure(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_HOST_MIGRATE_SERVICE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_HOST_MIGRATE_SERVICE
+uint16_t uniffi_cua_sdk_checksum_method_host_migrate_service(void
 
 );
 #endif
@@ -4498,12 +4080,6 @@ uint16_t uniffi_cua_sdk_checksum_method_sandbox_agents(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SANDBOX_DELETE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SANDBOX_DELETE
 uint16_t uniffi_cua_sdk_checksum_method_sandbox_delete(void
-
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SANDBOX_DETACH
-#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SANDBOX_DETACH
-uint16_t uniffi_cua_sdk_checksum_method_sandbox_detach(void
 
 );
 #endif
@@ -5404,6 +4980,12 @@ uint16_t uniffi_cua_sdk_checksum_method_spaces_list(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_LIST_TOOLS_JSON
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_LIST_TOOLS_JSON
 uint16_t uniffi_cua_sdk_checksum_method_spaces_list_tools_json(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_MACHINE_HEALTH
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_MACHINE_HEALTH
+uint16_t uniffi_cua_sdk_checksum_method_spaces_machine_health(void
 
 );
 #endif

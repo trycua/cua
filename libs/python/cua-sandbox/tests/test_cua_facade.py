@@ -12,11 +12,10 @@ import cua
 
 
 def test_meta_package_names_resolve_to_cua_sandbox():
-    from cua import Image, Pool, Sandbox
+    from cua import Image, Sandbox
 
     assert Sandbox is cua_sandbox.Sandbox
     assert Image is cua_sandbox.Image
-    assert Pool is cua_sandbox.Pool
     assert cua.QEMURuntime is QEMURuntime
     assert cua.configure is cua_sandbox.configure
 

@@ -340,8 +340,9 @@ pub struct SpaceCreateOptions {
     /// Image (default: the canonical Linux image).
     #[uniffi(default = None)]
     pub image: Option<String>,
-    /// Where: `local` (free) or `cloud` (metered). `None`: the user default
-    /// (`default.on`, `CUA_DEFAULT_ON`, else `local`).
+    /// Where: `local` (free), a connected cloud account (`aws`, `gcp`,
+    /// `modal`) or `host:<name>`. `None`: the user default (`default.on`,
+    /// `CUA_DEFAULT_ON`, else `local`).
     #[uniffi(default = None)]
     pub on: Option<String>,
     /// `auto` (default), `container` or `vm`.
@@ -1840,9 +1841,6 @@ fn tag_error(kind: &str, message: String) -> CuaError {
         "timeout" => CuaError::Timeout(message),
         "cancelled" => CuaError::Cancelled(message),
         "unauthenticated" => CuaError::Unauthenticated(message),
-        "fleet" => CuaError::Fleet(message),
-        "fleet_admission_denied" => CuaError::FleetAdmissionDenied(message),
-        "cloud_credit_exhausted" => CuaError::CloudCreditExhausted(message),
         "cloud" => CuaError::Cloud(message),
         "sandbox" => CuaError::Runtime(message),
         // Cua Volume: refusals by the access rules or a declined presence
@@ -1864,7 +1862,6 @@ impl From<cua_spaces::Error> for CuaError {
         let message = e.to_string();
         match e {
             cua_spaces::Error::Env(env) => env.into(),
-            cua_spaces::Error::Fleet(f) => f.into(),
             // The refusal's own words: `CuaError::TeleportRefused` says
             // "teleport refused:" itself (not twice).
             cua_spaces::Error::TeleportRefused(why) => CuaError::TeleportRefused(why),
@@ -2217,6 +2214,60 @@ impl SpacesToolCaller {
     /// The tool's JSON result, or its error.
     pub(super) async fn tool_value(&self, name: &str, arguments: Value) -> Result<Value> {
         self.0.tool_value(name, arguments).await
+    }
+}
+
+// ------------------------------------------------------------ Machine health
+
+/// One check of a machine's health ([`Spaces::machine_health`]).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MachineHealthCheck {
+    /// `machine.local_network`, `machine.disk`, `machine.virtualization`,
+    /// `machine.memory`, `machine.permissions.<id>`.
+    pub id: String,
+    /// `pass`, `warn`, `fail` or `skip`.
+    pub status: String,
+    /// What it found, in one line.
+    pub message: String,
+    /// What to do about a warning or failure.
+    pub remediation: String,
+    /// What a UI needs to word it and offer its fix (`app`, `settings_url`,
+    /// `free_gb`, ...).
+    pub facts: std::collections::HashMap<String, String>,
+}
+
+/// A machine's health as its own cua daemon checks it.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MachineHealth {
+    /// The Cua version of the daemon that checked.
+    pub cua_version: String,
+    /// `macos`, `linux`, `windows`.
+    pub os: String,
+    /// Every check, in order.
+    pub checks: Vec<MachineHealthCheck>,
+    /// The whole report as JSON (the schema `cua doctor --json` writes).
+    pub report_json: String,
+}
+
+impl From<cua_proto::env::v1::DiagnoseHostResponse> for MachineHealth {
+    fn from(r: cua_proto::env::v1::DiagnoseHostResponse) -> Self {
+        let report = cua_spacesd_client::diagnose::Report::from_pb(r.report.unwrap_or_default());
+        Self {
+            cua_version: r.cua_version,
+            os: r.os,
+            checks: report
+                .checks
+                .iter()
+                .map(|c| MachineHealthCheck {
+                    id: c.id.clone(),
+                    status: c.status.as_str().to_string(),
+                    message: c.message.clone(),
+                    remediation: c.remediation.clone(),
+                    facts: c.facts.clone().into_iter().collect(),
+                })
+                .collect(),
+            report_json: report.to_json(),
+        }
     }
 }
 
@@ -2583,9 +2634,9 @@ impl Spaces {
     /// Cancels a create that is still running: `space` is the create's
     /// `create_id`, the id the Space will have (`local:<name>`, carried by
     /// every progress report) or its name. The work in flight stops (an
-    /// image download, a boot, a claim, a relay registration) and what the
-    /// create made is removed (its VM or container and disks, its cloud
-    /// claim, its relay machine); nothing that existed before is touched.
+    /// image download, a boot, a relay registration) and what the
+    /// create made is removed (its VM or container and disks, its relay
+    /// machine); nothing that existed before is touched.
     /// Finished image downloads stay cached, so the next create resumes.
     /// Returns once the clean-up is done; the create itself fails with
     /// `Cancelled`. Idempotent: a second call says `not_creating`. Works
@@ -2677,6 +2728,27 @@ impl Spaces {
                     .map(Into::into)
                     .collect(),
             })
+        })
+        .await
+    }
+
+    /// A machine's health as its own cua daemon checks it: Local Network
+    /// access (and which app macOS holds responsible), free disk,
+    /// virtualization, memory left by running Spaces, the permissions
+    /// sharing its desktop needs. `machine`: another of your machines, by
+    /// id or name (asked over the relay, the mesh or its direct address);
+    /// `None` for this one. Read-only; fails plainly when that machine is
+    /// offline, not yours, or runs a Cua that predates the check.
+    pub async fn machine_health(&self, machine: Option<String>) -> Result<MachineHealth> {
+        let host = self.host.clone();
+        run(async move {
+            let machine = machine.filter(|m| !m.trim().is_empty());
+            let r = match (&host, machine) {
+                (Host::Embedded(_), None) => cua_daemon::machine_doctor::response().await,
+                (Host::Embedded(s), Some(m)) => s.machine_health(&m).await?,
+                (Host::Daemon(d), m) => d.diagnose_host(m.unwrap_or_default()).await?,
+            };
+            Ok(r.into())
         })
         .await
     }

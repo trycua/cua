@@ -27,6 +27,8 @@ pub enum HostCmd {
   # Add this computer with a one-time code from the Cua Spaces app
   # (Add a computer) or `cua host pair`: no sign-in needed here
   cua host setup --pair K7QM-4XPB-2RHD
+  # Keep this computer off the end-to-end encrypted mesh (relay HTTPS only):
+  # run setup with CUA_MESH=off in the environment
   # Self-hosting teams: cua help advanced")]
     Setup {
         /// Relay URL (default $CUA_RELAY_URL, else the CUA_ENV relay, https://relay.cua.ai in production).
@@ -55,7 +57,9 @@ pub enum HostCmd {
         /// one, or the release download).
         #[arg(long)]
         driver_bin: Option<PathBuf>,
-        /// auto | systemd | launchd | windows-task | process.
+        /// auto | systemd | launchd | app-helper | windows-task | process.
+        /// On a Mac with the Cua Spaces app, auto is app-helper: the
+        /// service runs as the app's own login item ("Cua Spaces").
         #[arg(long, default_value = "auto")]
         runner: String,
         /// What this computer is for: `desktop` (share this desktop; the
@@ -157,8 +161,8 @@ pub enum HostCmd {
     #[command(after_help = "Examples:
   cua host start")]
     Start,
-    /// Share a relay computer (this one, or `--machine`) with other cua.ai
-    /// accounts (id or verified email). Run from an enrolled device; every
+    /// Share a relay computer (this one, or `--machine`) with people in your
+    /// team (id or verified email). Run from an enrolled device; every
     /// change is in the owner's audit log (`cua devices audit`).
     #[command(after_help = "Examples:
   cua host share friend@example.com
@@ -192,6 +196,21 @@ pub enum HostCmd {
         /// Relay URL.
         #[arg(long, hide = true)]
         relay: Option<String>,
+    },
+    /// macOS: move the host service into the Cua Spaces app, as its "Cua
+    /// Spaces Helper" login item, from the LaunchAgent that older versions
+    /// installed. This machine keeps its id, registration and Spaces; if
+    /// the helper does not take over, the old service is put back. macOS
+    /// then asks once for Screen Recording and Accessibility for Cua Spaces
+    /// Helper.
+    #[command(after_help = "Examples:
+  cua host migrate
+  # Try again after a move that was rolled back
+  cua host migrate --force")]
+    Migrate {
+        /// Try again even if a move failed before with this version.
+        #[arg(long)]
+        force: bool,
     },
     /// Unregister from the relay, uninstall the service and delete the host
     /// configuration (asks first).
@@ -377,18 +396,23 @@ Examples:
         /// Space id, address or display name (as `cua spaces ls` shows).
         space: String,
     },
-    /// Let another cua.ai account watch (viewer) or use (editor) a Space,
-    /// through the relay. They open it as `relay:<computer>`.
+    /// Let someone in your team watch (viewer) or use (editor) a Space,
+    /// through the relay. They open it as `relay:<computer>`. Sharing is for
+    /// teams: you need a team, and they must be in it (or share with the
+    /// whole team as `team:<id>`).
     #[command(after_help = "Examples:
   cua spaces share local:studio bob@example.com
   cua spaces share local:studio bob@example.com --role editor
   cua spaces share relay:0123abcd4567ef89 acct-42 --role viewer
+  # The whole team, to watch
+  cua spaces share local:studio team:acme --role viewer
   # From a script or agent: confirm with Touch ID or your password here
   cua spaces share local:studio bob@example.com --yes")]
     Share {
         /// Space id, address or display name.
         space: String,
-        /// Their email (verified by cua.ai) or account id.
+        /// Their email (verified by cua.ai) or account id, in your team; or
+        /// `team:<id>` for the whole team.
         who: String,
         /// `viewer`: presence and a view-only stream. `editor`: full use.
         #[arg(long, default_value = "viewer", value_parser = ["viewer", "editor"])]
@@ -1028,6 +1052,15 @@ fn host_error(e: cua_host::Error, m: String) -> CuaError {
         E::PermissionDenied(_) => CuaError::PermissionDenied(m),
         E::NotFound(_) => CuaError::NotFound(m),
         E::Relay(_) | E::Download(_) => CuaError::Http(m),
+        // The plain sentence, then where to upgrade.
+        E::PlanLimit(_) => {
+            let url = cua_home::plan_limit::PlanLimit::parse(&m)
+                .map(|l| l.upgrade_url(&cua_home::env::account_app_url()));
+            CuaError::Http(match url {
+                Some(url) => format!("{m} Upgrade: {url}"),
+                None => m,
+            })
+        }
         E::Service(_) => CuaError::Runtime(m),
         E::Io(_) | E::Internal(_) => CuaError::Internal(m),
     }
@@ -1086,6 +1119,17 @@ fn render(s: &HostStatus, out: &mut dyn Write) {
             }
         ),
     );
+    if s.service.kind == "app-helper" && s.legacy_service {
+        line(
+            out,
+            "  the old LaunchAgent (com.trycua.spacesd.host) is still there: run `cua host migrate` to remove it",
+        );
+    } else if s.service.kind == "launchd" && s.helper_available {
+        line(
+            out,
+            "  tip: `cua host migrate` moves this service into the Cua Spaces app (its login item)",
+        );
+    }
     line(
         out,
         format!(
@@ -1437,6 +1481,36 @@ pub async fn run_host(
             )
             .await
             .map_err(crate::team_cmd::err)?;
+        }
+        HostCmd::Migrate { force } => {
+            let m = host
+                .migrate_service(force, env!("CARGO_PKG_VERSION"))
+                .await
+                .map_err(host_err)?;
+            if json {
+                writeln!(
+                    out,
+                    "{}",
+                    serde_json::to_string_pretty(&m)
+                        .map_err(|e| CuaError::Internal(e.to_string()))?
+                )
+                .map_err(|e| CuaError::Internal(e.to_string()))?;
+            } else {
+                line(out, format!("{}: {}", m.outcome, m.detail));
+                if m.permissions_needed {
+                    line(
+                        out,
+                        "macOS will ask you once more for Screen Recording and Accessibility, \
+                         now for Cua Spaces: allow both in System Settings > Privacy & \
+                         Security (`cua host status` lists them). The old \"cua-spacesd\" \
+                         entries there can be removed with the minus button.",
+                    );
+                }
+            }
+            return Ok(match m.outcome.as_str() {
+                "rolled-back" | "kept" => 1,
+                _ => 0,
+            });
         }
         HostCmd::Status => {
             let s = host.status().await.map_err(host_err)?;
@@ -3133,9 +3207,6 @@ mod tests {
         let cua = cua_sdk::Cua::embedded(cua_sdk::CuaConfig {
             state_dir: Some(dir.path().join("sandboxes").display().to_string()),
             spaces_home: Some(dir.path().join("cua").display().to_string()),
-            fleet_pool_home: Some(dir.path().join("pools").display().to_string()),
-            fleet_from_env: false,
-            fleet_from_session: false,
             ..Default::default()
         })
         .unwrap();

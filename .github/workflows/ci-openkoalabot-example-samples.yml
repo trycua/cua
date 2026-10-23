@@ -10,8 +10,8 @@ name: "CI: openkoalabot-example (TypeScript and Swift)"
 on:
   pull_request:
     paths:
-      - "samples/openkoalabot-example-ts/**"
-      - "samples/openkoalabot-example-swift/**"
+      - "examples/openkoalabot-example-ts/**"
+      - "examples/openkoalabot-example-swift/**"
       - "libs/cua/**"
       - "libs/spaces-sdk-swift/**"
       - "libs/spaces-app-swift/**"
@@ -39,6 +39,7 @@ env:
 
 jobs:
   typescript:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: openkoalabot-example-ts (npm test)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -77,7 +78,7 @@ jobs:
           command -v wasm-bindgen >/dev/null || cargo install --locked wasm-bindgen-cli --version 0.2.126
           npm run build:browser
       - name: Test the sample
-        working-directory: samples/openkoalabot-example-ts
+        working-directory: examples/openkoalabot-example-ts
         run: |
           npm ci
           npm test
@@ -85,6 +86,7 @@ jobs:
           npm run build:web
 
   swift:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: openkoalabot-example-swift (swift test)
     runs-on: macos-26
     timeout-minutes: 60
@@ -105,4 +107,4 @@ jobs:
           (cd libs/cua && cargo build --locked --release -p cua-sdk)
           node libs/cua/scripts/stage-uniffi-library.mjs --only=swift
       - name: Test the sample
-        run: samples/openkoalabot-example-swift/scripts/test.sh
+        run: examples/openkoalabot-example-swift/scripts/test.sh

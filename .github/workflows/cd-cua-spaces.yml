@@ -180,6 +180,14 @@ on:
         description: "Sparkle cutover (once, see apps/cua-spaces-desktop/docs/sparkle-cutover.md): this release's Sparkle item is the Electron app"
         type: boolean
         default: false
+      skip_staging_gate:
+        description: "BREAK-GLASS: publish without a green staging smoke for this commit (needs skip_staging_reason; logged loudly)"
+        type: boolean
+        default: false
+      skip_staging_reason:
+        description: "Why the staging gate is skipped (required with skip_staging_gate)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -231,8 +239,10 @@ jobs:
   # job per architecture so the two build in parallel, as
   # build-release.sh would build them (same command and environment). The
   # compiled slices are kept in the Actions cache by the content of their
-  # inputs: a rerun, or a release of the commit a test build already
-  # compiled, restores them; a miss builds.
+  # inputs (.github/actions/spaces-rust-slice). The main branch builds them
+  # on every change to those inputs (ci-cua-spaces-rust-slice.yml), and a tag
+  # run reads the default branch's cache, so a release restores them; a miss
+  # builds.
   macos-rust:
     name: SwiftUI Rust (${{ matrix.arch }})
     needs: spacesd-published
@@ -248,56 +258,13 @@ jobs:
         include:
           - { arch: arm64, triple: aarch64-apple-darwin }
           - { arch: x86_64, triple: x86_64-apple-darwin }
-    env:
-      CARGO_BUILD_JOBS: 4
-      # build-release.sh's stable channel (--channel is not passed).
-      CUA_DEFAULT_ENV: ""
     steps:
       - uses: actions/checkout@v4
-      - name: Cache key
-        id: key
-        env:
-          TRIPLE: ${{ matrix.triple }}
-        run: |
-          set -euo pipefail
-          inputs_hash="$(git rev-parse HEAD:libs/cua HEAD:libs/cua-spacesd/VERSION | git hash-object --stdin)"
-          repo="${CUA_RELEASE_REPOSITORY//\//-}"
-          echo "key=swiftui-rust-v1-${TRIPLE}-rust1.97.1-${repo}-${inputs_hash}" >> "$GITHUB_OUTPUT"
-      - name: Restore the compiled slice
-        id: cache
-        uses: actions/cache@v4
+      # One definition with the main-branch producer
+      # (ci-cua-spaces-rust-slice.yml): same key, restore or build.
+      - uses: ./.github/actions/spaces-rust-slice
         with:
-          path: |
-            libs/cua/target/${{ matrix.triple }}/release/libcua_spaces_ffi.dylib
-            libs/cua/target/${{ matrix.triple }}/release/cua-spaces-cli
-          key: ${{ steps.key.outputs.key }}
-      - if: steps.cache.outputs.cache-hit != 'true'
-        uses: dtolnay/rust-toolchain@1.97.1
-        with:
-          targets: ${{ matrix.triple }}
-      - if: steps.cache.outputs.cache-hit != 'true'
-        name: Install protoc
-        uses: ./.github/actions/setup-protoc
-      - if: steps.cache.outputs.cache-hit != 'true'
-        uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
-        with:
-          workspaces: libs/cua -> target
-          shared-key: swiftui-rust-${{ matrix.triple }}
-          # The repository's 10 GB Actions cache evicts oldest-first; a GB-sized
-          # dependency cache per job pushed the small compiled-output caches out
-          # within the hour. Only the default branch saves it.
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          cache-on-failure: true
-      - if: steps.cache.outputs.cache-hit != 'true'
-        name: Build the slice
-        working-directory: libs/cua
-        run: cargo build --locked --release -p cua-spaces-ffi -p cua-spaces-cli --target "${{ matrix.triple }}"
-      - name: Check the slice
-        run: |
-          set -euo pipefail
-          for f in libcua_spaces_ffi.dylib cua-spaces-cli; do
-            test -f "libs/cua/target/${{ matrix.triple }}/release/$f" || { echo "::error::missing $f"; exit 1; }
-          done
+          triple: ${{ matrix.triple }}
       - uses: actions/upload-artifact@v4
         with:
           name: macos-rust-${{ matrix.arch }}
@@ -481,6 +448,16 @@ jobs:
             --build-number "$GITHUB_RUN_NUMBER" --arch universal --skip-cargo \
             --sign "$identity" --out "$RUNNER_TEMP/spaces-app" \
             --feed-url "https://github.com/$GITHUB_REPOSITORY/releases/download/cua-spaces-latest/cua-spaces-appcast.xml"
+
+      # The symbols build-app.sh strips out of the shipped binaries, for
+      # symbolicating crash reports. Not a release asset.
+      - name: Keep the macOS dSYMs
+        uses: actions/upload-artifact@v4
+        with:
+          name: cua-spaces-darwin-universal-dSYMs
+          path: ${{ runner.temp }}/spaces-app/cua-spaces-*-dSYMs.zip
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Notarize and staple the app
         if: steps.signing.outputs.apple == 'true'
@@ -1687,6 +1664,64 @@ jobs:
   # version, this repository, the files' sha512). installer-manifest publishes
   # only after it passes; a manual run from a branch runs it on the build.
   # Unsigned parts (allowed off trycua/cua) are skipped with a warning.
+  # Start the staging smoke for this tag (CUA-1993): trycua/cloud's
+  # spaces-staging-smoke workflow runs it and posts the commit status that
+  # `staging-gate` waits for. Needs the release app installed on trycua/cloud
+  # (RELEASE_APP_ID / RELEASE_APP_PRIVATE_KEY). Never fails the run: without it
+  # the gate times out and the smoke is started by hand as before.
+  request-staging-smoke:
+    name: Request the staging smoke
+    if: startsWith(github.ref, 'refs/tags/cua-spaces-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: .
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mint a token to dispatch on trycua/cloud
+        id: app-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: trycua
+          repositories: cloud
+          permission-contents: write
+      - name: Send the cua-release-candidate dispatch
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: .github/scripts/request_staging_smoke.sh cua-spaces "$GITHUB_SHA"
+
+  # Staging first (CUA-1907): customers get nothing unless the staging smoke
+  # (cloud scripts/spaces-staging/smoke.py) is recorded green for this exact
+  # commit as the commit status "staging-smoke/cua-spaces". Only a release
+  # tag publishes, so only a tag run is gated. Break-glass: skip_staging_gate.
+  staging-gate:
+    name: Staging smoke is green
+    if: startsWith(github.ref, 'refs/tags/cua-spaces-v')
+    runs-on: ubuntu-latest
+    # Waits up to 30 minutes for the smoke that request-staging-smoke starts.
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: .
+    permissions:
+      contents: read
+      statuses: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require a green staging smoke for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SKIP_STAGING_GATE: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_staging_gate }}
+          SKIP_REASON: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_staging_reason || '' }}
+          WAIT_MINUTES: "30"
+        run: .github/scripts/require_staging_smoke.sh cua-spaces "$GITHUB_SHA"
+
   verify-release:
     name: Verify the signed release
     needs: [build-macos, electron-plan, electron-mac, electron-windows, electron-publish]
@@ -1745,6 +1780,12 @@ jobs:
         run: |
           set -euo pipefail
           expect=()
+          # Production never skips verification: an unsigned artifact on the
+          # canonical repository's release tag is a failure, not a warning.
+          if [ "$REQUIRE_SIGNING" = true ] && [ "$SWIFT_SIGNED" != true ]; then
+            echo "::error::trycua/cua release tag with an unsigned SwiftUI build: refusing to verify-skip"
+            exit 1
+          fi
           if [ "$SWIFT_SIGNED" = true ]; then
             expect+=(swift)
           else
@@ -1766,6 +1807,10 @@ jobs:
           fi
           [ "$APPCAST" = true ] && expect+=(appcast)
           if [ ${#expect[@]} -eq 0 ]; then
+            if [ "$REQUIRE_SIGNING" = true ]; then
+              echo "::error::nothing signed on a trycua/cua release tag"
+              exit 1
+            fi
             echo "::warning::nothing in this build is signed: no release verification"
             exit 0
           fi
@@ -1776,7 +1821,7 @@ jobs:
 
   installer-manifest:
     name: release-artifacts.json, latest.json, publish
-    needs: [build-macos, build-linux-windows, electron-plan, electron-mac, electron-publish, verify-release]
+    needs: [build-macos, build-linux-windows, electron-plan, electron-mac, electron-publish, verify-release, staging-gate]
     # Only a release tag publishes: the Sigstore identity the installers and
     # the updater feed trust is cd-cua-spaces.yml at refs/tags/cua-spaces-v*.
     # A manual run from a tag re-publishes; from a branch it only builds.
@@ -1788,6 +1833,7 @@ jobs:
       !cancelled() && startsWith(github.ref, 'refs/tags/cua-spaces-v')
       && needs.build-macos.result == 'success'
       && needs.verify-release.result == 'success'
+      && needs.staging-gate.result == 'success'
       && (needs.build-linux-windows.result == 'success' || needs.build-linux-windows.result == 'skipped')
       && (needs.electron-plan.outputs.publish != 'true' || needs.electron-publish.result == 'success')
     runs-on: ubuntu-latest

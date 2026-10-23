@@ -12,17 +12,19 @@ name: Fleet Mirror Guard
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+  merge_group:
 
 permissions:
   contents: read
   pull-requests: write
 
 concurrency:
-  group: fleet-mirror-guard-${{ github.event.pull_request.number }}
+  group: fleet-mirror-guard-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   fleet-mirror-guard:
+    if: github.event_name != 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

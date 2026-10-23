@@ -7,7 +7,11 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-publish = false
+documentation = "https://docs.rs/cua-spacesd-client"
+homepage = "https://cua.ai/docs/cua-sdk"
+readme = "README.md"
+keywords = ["cua", "computer-use", "sandbox", "grpc", "automation"]
+categories = ["api-bindings", "network-programming", "asynchronous"]
 
 [features]
 # In-process mock spacesd (`cua_spacesd_client::testing`) for this crate's tests and
@@ -51,3 +55,8 @@ rcgen = { version = "0.14", default-features = false, features = ["crypto", "rin
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 cua-spacesd-client = { path = ".", features = ["testing"] }
 tempfile.workspace = true
+# tests/emudhra_distrust.rs: prove the verifier refuses the compromised eMudhra
+# intermediates (rustls-webpki >= 0.103.16) for both webpki-roots lines in use.
+rustls-webpki = { version = "0.103.16", default-features = false, features = ["std", "ring"] }
+rustls-pki-types = { version = "1", features = ["std"] }
+webpki-roots-026 = { package = "webpki-roots", version = "0.26.11" }

@@ -1,6 +1,6 @@
 # Typed Driver envelopes over MCP
 
-This opt-in candidate implements the [accepted RFC 2512 transport addendum](../../../rfcs/2512-mcp-envelope-carrier.md).
+This opt-in candidate implements the [accepted RFC 2512 transport addendum](../../../docs/rfcs/2512-mcp-envelope-carrier.md).
 It is not a released SDK feature or a qualification of an existing guest image.
 The extension carries the canonical Driver envelopes through an existing MCP
 transport. It does not replace cua-spacesd, add agent tools, or open a port.

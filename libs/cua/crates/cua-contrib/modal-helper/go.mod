@@ -2,6 +2,8 @@ module github.com/trycua/cua/libs/cua/crates/cua-contrib/modal-helper
 
 go 1.25.0
 
+toolchain go1.26.10
+
 require (
 	github.com/modal-labs/modal-client/go v0.11.0
 	google.golang.org/grpc v1.83.2

@@ -26,6 +26,8 @@ export function demoShareHandlers({ wait, stepMs }: { wait(ms: number): Promise<
       shares.set(spaceId, [...rest, { who, role, connected: was?.connected ?? false }]);
       return list(spaceId);
     },
+    "sharing.removals": async () => [],
+    "sharing.ackRemovals": async () => null,
     "sharing.unshare": async ({ spaceId, who }) => {
       shares.set(
         spaceId,

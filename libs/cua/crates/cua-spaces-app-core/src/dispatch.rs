@@ -17,8 +17,8 @@ use crate::{
     CoreError, about, agent_keys, agents, checklist, cloud_connect, devices, diagnostics,
     drive_mount_preview, drive_page, drive_settings, driver_preview, experiments, host, login_item,
     machines, notch, notifications, nudges, onboarding, onboarding_preview, palette, paths,
-    persistent, presence, relay_usage, resources, settings, share, telemetry, upsell, window,
-    wizard,
+    persistent, presence, relay_usage, resources, settings, share, sign_in, telemetry, upsell,
+    window, wizard,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -159,6 +159,11 @@ pub const METHODS: &[&str] = &[
     "onboarding.copy",
     "onboarding.signedInText",
     "onboarding.signInCodeText",
+    "signIn.footer",
+    "signIn.failed",
+    "signIn.failedFromError",
+    "signIn.failureOf",
+    "signIn.reasonText",
     "onboarding.replacesText",
     "onboarding.installedAtText",
     "onboarding.preview",
@@ -232,6 +237,7 @@ pub const METHODS: &[&str] = &[
     "devices.view",
     "machines.merge",
     "machines.pageRows",
+    "machines.view",
     "devices.activityText",
     "devices.labels",
     "devices.platformName",
@@ -252,6 +258,9 @@ pub const METHODS: &[&str] = &[
     "share.initial",
     "share.reduce",
     "share.view",
+    "share.gate",
+    "share.errorWords",
+    "share.removalNote",
     "agents.pageInitial",
     "agents.pageReduce",
     "agents.pageView",
@@ -273,6 +282,7 @@ pub const METHODS: &[&str] = &[
     "telemetry.onboardingFinished",
     "telemetry.onboardingSkipped",
     "telemetry.signInFailed",
+    "telemetry.signInFailure",
     "telemetry.creates",
     "telemetry.storage",
     "telemetry.share",
@@ -290,6 +300,7 @@ pub const METHODS: &[&str] = &[
     "experiments.choose",
     "wizard.placementOptions",
     "relayUsage.view",
+    "relayUsage.planLimit",
     "resources.view",
     "resources.thisMac",
     "resources.space",
@@ -491,6 +502,13 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
                 Some(app) if app.starts_with("https://") => relay_usage::view_for(&usage, &app),
                 _ => relay_usage::view(&usage),
             })
+        }
+        // An error's text that is the relay refusing a new session over the
+        // plan's cap: the sentence and Upgrade (null for any other error).
+        "relayUsage.planLimit" => {
+            let error: String = a.get("error")?;
+            let app = a.get::<Option<String>>("accountApp")?.unwrap_or_default();
+            out(relay_usage::plan_limit_notice(&error, &app))
         }
         // Processor, memory and disk: the rows, bars and warning the apps
         // draw from the runtime's snapshot (`Spaces.resources`).
@@ -768,6 +786,20 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "onboarding.signInCodeText" => out(onboarding::sign_in_code_text(
             a.get::<Option<String>>("userCode")?.as_deref(),
         )),
+        "signIn.footer" => out(sign_in::footer(&a.get("input")?)),
+        "signIn.failed" => out(sign_in::failed(
+            a.get("reason")?,
+            a.get::<Option<String>>("detail")?.as_deref(),
+        )),
+        "signIn.failedFromError" => out(sign_in::failed_from_error(
+            &a.get::<Option<String>>("variant")?.unwrap_or_default(),
+            &a.get::<String>("message")?,
+        )),
+        "signIn.failureOf" => out(sign_in::failure_of(
+            &a.get::<Option<String>>("variant")?.unwrap_or_default(),
+            &a.get::<String>("message")?,
+        )),
+        "signIn.reasonText" => out(sign_in::reason_text(a.get("reason")?)),
         "onboarding.replacesText" => out(onboarding::replaces_text(
             a.get::<Option<String>>("installedVersion")?.as_deref(),
         )),
@@ -927,6 +959,10 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<Option<machines::MachinesPageInput>>("input")?
                 .unwrap_or_default(),
         )),
+        "machines.view" => out(crate::machines_view::view(
+            &a.get::<Option<crate::machines_view::MachinesViewInput>>("input")?
+                .unwrap_or_default(),
+        )),
         "devices.view" => out(devices::devices_view(
             &a.get::<Option<devices::DevicesInput>>("input")?
                 .unwrap_or_default(),
@@ -1047,6 +1083,14 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<share::ShareInput>("input")?,
             &a.get::<share::ShareSheetState>("state")?,
         )),
+        "share.gate" => out(share::share_gate(a.get::<Option<bool>>("hasTeam")?)),
+        "share.errorWords" => out(share::share_error_words(
+            &a.get::<String>("error")?,
+            &a.get::<String>("who")?,
+        )),
+        "share.removalNote" => out(share::share_removal_note(
+            &a.get::<Vec<share::ShareRemovalInput>>("removals")?,
+        )),
         "host.clientLabel" => out(host::client_label(
             &a.get::<String>("id")?,
             a.get::<Option<String>>("email")?.as_deref(),
@@ -1119,6 +1163,7 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "telemetry.signInFailed" => out(telemetry::sign_in_failed(
             a.get::<Option<String>>("message")?.as_deref(),
         )),
+        "telemetry.signInFailure" => out(telemetry::sign_in_failure(a.get("reason")?)),
         "telemetry.creates" => out(telemetry::creates(
             &a.get::<Option<creating::CreatesState>>("state")?
                 .unwrap_or_default(),

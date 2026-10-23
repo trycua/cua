@@ -9,6 +9,8 @@
 //! the same cause the same way. Callers pass the result through
 //! `cua_telemetry::events::error_kind`, which keeps only schema words.
 
+pub mod preflight;
+
 /// Enum cases that say little on their own (compared lowercase, without
 /// underscores): the error text decides instead.
 const GENERIC: &[&str] = &[
@@ -36,6 +38,12 @@ pub fn create_failure_kind<'v>(
     let phase = phase.trim();
     let variant = variant.trim();
     let flat = flatten(variant);
+    // Cua Cloud has ended: every cloud create is refused, whatever the error
+    // case that carries it (`Unsupported`, `CloudEnded`). Its own word keeps a
+    // known refusal out of the failures that need a fix.
+    if flat == "cloudended" || message.to_ascii_lowercase().contains("cua cloud has ended") {
+        return "cloud_ended";
+    }
     match flat.as_str() {
         "cloudcreditexhausted" | "creditexhausted" | "limitexceeded" => return "quota_exceeded",
         // A specific case from the caller stays; a timeout is refined by
@@ -92,6 +100,10 @@ fn from_text(message: &str, phase: &str, local: bool) -> Option<&'static str> {
         ],
     ) {
         return Some("cancelled");
+    }
+    // A preflight sentence (`preflight::evaluate`) a create carried on.
+    if let Some(kind) = preflight::IssueKind::of_text(&l) {
+        return Some(kind.error_kind());
     }
     if has(
         &l,
@@ -182,6 +194,62 @@ fn from_text(message: &str, phase: &str, local: bool) -> Option<&'static str> {
     }
     if l.contains("unauthenticated") {
         return Some("unauthenticated");
+    }
+    // Causes that used to land in `other`: they name the problem but not
+    // the runtime, so they apply to every phase.
+    if has(
+        &l,
+        &[
+            "not enough memory",
+            "out of memory",
+            "cannot allocate memory",
+            "failed to allocate memory",
+        ],
+    ) {
+        return Some("out_of_memory");
+    }
+    if has(
+        &l,
+        &[
+            "address already in use",
+            "port is already allocated",
+            "port is already in use",
+            "only one usage of each socket address",
+        ],
+    ) {
+        return Some("port_in_use");
+    }
+    if has(
+        &l,
+        &[
+            "access is denied",
+            "os error 5)",
+            "being used by another process",
+            "path too long",
+            "file name too long",
+            "filename too long",
+            "read-only file system",
+        ],
+    ) {
+        return Some("file_access");
+    }
+    if has(
+        &l,
+        &[
+            "could not resolve host",
+            "dns error",
+            "name or service not known",
+            "no such host",
+            "temporary failure in name resolution",
+            "network is unreachable",
+            "no internet",
+            "tls handshake",
+            "certificate verify failed",
+            "proxyconnect",
+            "failed to lookup address",
+        ],
+    ) {
+        return Some("network");
     }
     // The Space booted but its service (cua-spacesd, the computer server)
     // did not answer.
@@ -323,6 +391,10 @@ pub const TEXT_KINDS: &[&str] = &[
     "runtime_not_running",
     "runtime_missing",
     "unauthenticated",
+    "out_of_memory",
+    "port_in_use",
+    "file_access",
+    "network",
     "services_unreachable",
     "vm_boot_timeout",
     "timeout",
@@ -338,12 +410,49 @@ mod tests {
 
     #[test]
     fn every_cause_word_is_in_the_telemetry_schema() {
-        for k in TEXT_KINDS.iter().chain(&["quota_exceeded", "other"]) {
+        for k in TEXT_KINDS
+            .iter()
+            .chain(&["quota_exceeded", "cloud_ended", "other"])
+        {
             assert!(
                 cua_telemetry::schema::ERROR_KINDS.contains(k),
                 "{k} missing from ERROR_KINDS"
             );
         }
+    }
+
+    #[test]
+    fn former_other_texts_get_a_kind() {
+        fn k(m: &str) -> &str {
+            kind(m, "preparing", "Runtime")
+        }
+        assert_eq!(k("Cannot allocate memory (os error 12)"), "out_of_memory");
+        assert_eq!(k("QEMU: not enough memory for the guest"), "out_of_memory");
+        assert_eq!(
+            k("bind: address already in use on 127.0.0.1:5900"),
+            "port_in_use"
+        );
+        assert_eq!(
+            k("Bind for 0.0.0.0:8080 failed: port is already allocated"),
+            "port_in_use"
+        );
+        assert_eq!(k("Access is denied. (os error 5)"), "file_access");
+        assert_eq!(
+            k("the file is being used by another process"),
+            "file_access"
+        );
+        assert_eq!(
+            k("error sending request: dns error: failed to lookup address information"),
+            "network"
+        );
+        assert_eq!(k("x509: certificate verify failed"), "network");
+        // A pull keeps its own, finer kinds.
+        assert_eq!(
+            kind("dns error: no such host", "pulling", "Runtime"),
+            "image_pull_network"
+        );
+        assert_eq!(k("something nobody has seen"), "Runtime");
+        assert_eq!(kind("something nobody has seen", "", ""), "other");
     }
 
     #[test]
@@ -436,6 +545,28 @@ mod tests {
             "quota_exceeded"
         );
         assert_eq!(kind("", "", "cloud_credit_exhausted"), "quota_exceeded");
+    }
+
+    /// Cua Cloud ended: a cloud create is refused with its own word, not the
+    /// generic `unsupported` that hid a known refusal among real failures.
+    #[test]
+    fn a_cloud_create_after_the_end_of_cua_cloud_is_cloud_ended() {
+        let msg = "unsupported: Cua Cloud has ended; use a local sandbox or your own computer. \
+                   See https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended";
+        assert_eq!(
+            create_failure_kind(msg, "", "Unsupported", false),
+            "cloud_ended"
+        );
+        assert_eq!(create_failure_kind(msg, "", "", false), "cloud_ended");
+        assert_eq!(
+            create_failure_kind("", "", "CloudEnded", false),
+            "cloud_ended"
+        );
+        // Other unsupported errors keep their case.
+        assert_eq!(
+            create_failure_kind("no such feature", "", "Unsupported", true),
+            "Unsupported"
+        );
     }
 
     #[test]

@@ -28,6 +28,7 @@ concurrency:
 
 jobs:
   test:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Test ${{ matrix.package }}
     runs-on: ubuntu-latest
 
@@ -93,10 +94,11 @@ jobs:
         continue-on-error: true
 
   cua-sandbox:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     # cua-sandbox drives sandboxes through the cua SDK (UniFFI over cua-sdk),
     # so the native library and the MockServer fixture are built first. The
     # hermetic suite never touches the host or a cloud;
-    # the live runtime/Fleet suites are excluded (they are gated separately).
+    # the live runtime suites are excluded (they are gated separately).
     name: Test cua-sandbox (hermetic, on the cua SDK)
     runs-on: ubuntu-latest
     timeout-minutes: 60

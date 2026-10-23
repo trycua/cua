@@ -42,6 +42,7 @@ import { STREAM_COVERAGE } from "./ops/stream";
 import { RELAY_USAGE_COVERAGE } from "./ops/relay-usage";
 import { NUDGES_COVERAGE } from "./ops/nudges";
 import { RESOURCES_COVERAGE } from "./ops/resources";
+import { MACHINES_COVERAGE } from "./ops/machines";
 import { CHECKLIST_COVERAGE } from "./ops/checklist";
 import { PRESENCE_COVERAGE } from "./ops/presence";
 import { RUNTIME_FIX_COVERAGE } from "./ops/runtime-fix";
@@ -123,6 +124,7 @@ export const HOST_COVERAGE = {
   "agents.resume": { webkit: { methods: ["agents.resume"] }, tauri: ["agents_tool"] },
   "agents.setup": { webkit: { methods: ["agents.setup"] }, tauri: ["agent_setup_detect"] },
   "agents.configure": { webkit: { methods: ["agents.configure"] }, tauri: ["agent_setup_configure"] },
+  "agents.signIn": { webkit: { methods: ["agents.signIn"] }, tauri: [], unsupported: { tauri: "no command starts an agent's own sign-in" } },
   ...AGENT_DETAIL_COVERAGE,
   ...NEW_SPACE_COVERAGE,
   ...TELEPORT_COVERAGE,
@@ -168,6 +170,7 @@ export const HOST_COVERAGE = {
   ...RELAY_USAGE_COVERAGE,
   ...NUDGES_COVERAGE,
   ...RESOURCES_COVERAGE,
+  ...MACHINES_COVERAGE,
   ...CHECKLIST_COVERAGE,
   ...PRESENCE_COVERAGE,
   ...RUNTIME_FIX_COVERAGE,

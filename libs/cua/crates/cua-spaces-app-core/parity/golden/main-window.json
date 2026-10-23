@@ -16,18 +16,18 @@
       "sidebar": {
         "emptyText": null,
         "sections": [
-          "# Cua Cloud",
-          "<os-linux> builder | Suspended | Unreachable · timed out (dim)",
-          "# This Mac",
-          "<os-linux> aurora | Running | This Mac",
-          "# Connected",
-          "<os-windows> 10.0.0.5:3211 | Running | 10.0.0.5:3211 (selected)",
-          "# My computers",
-          "<os-linux> research-box @ AWS · us-west-2 | Running | AWS · us-west-2",
-          "<os-linux> their-box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
+          "# spaces.sidebar.section.cloud",
+          "<os-linux> builder | spaces.status.suspended | Unreachable · timed out (dim)",
+          "# spaces.sidebar.section.this_mac",
+          "<os-linux> aurora | spaces.status.running | This Mac",
+          "# spaces.sidebar.section.connected",
+          "<os-windows> 10.0.0.5:3211 | spaces.status.running | 10.0.0.5:3211 (selected)",
+          "# spaces.sidebar.section.my_computers",
+          "<os-linux> research-box @ AWS · us-west-2 | spaces.status.running | AWS · us-west-2",
+          "<os-linux> their-box @ Google Cloud · us-central1 | spaces.status.suspended | Unreachable · offline (dim)"
         ],
         "selectedId": "direct:10.0.0.5:3211",
-        "thisMachine": "<os-macos> This computer | This Mac | Set up for access"
+        "thisMachine": "<os-macos> This computer | spaces.status.this_mac | Set up for access"
       }
     },
     {
@@ -47,18 +47,18 @@
       "sidebar": {
         "emptyText": null,
         "sections": [
-          "# Cua Cloud",
-          "<os-linux> builder | Suspended | Unreachable · timed out (dim)",
-          "# This Mac",
-          "<os-linux> aurora | Running | This Mac",
-          "# Connected",
-          "<os-windows> 10.0.0.5:3211 | Running | 10.0.0.5:3211 (selected)",
-          "# My computers",
-          "<os-linux> research-box @ AWS · us-west-2 | Running | AWS · us-west-2",
-          "<os-linux> their-box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
+          "# spaces.sidebar.section.cloud",
+          "<os-linux> builder | spaces.status.suspended | Unreachable · timed out (dim)",
+          "# spaces.sidebar.section.this_mac",
+          "<os-linux> aurora | spaces.status.running | This Mac",
+          "# spaces.sidebar.section.connected",
+          "<os-windows> 10.0.0.5:3211 | spaces.status.running | 10.0.0.5:3211 (selected)",
+          "# spaces.sidebar.section.my_computers",
+          "<os-linux> research-box @ AWS · us-west-2 | spaces.status.running | AWS · us-west-2",
+          "<os-linux> their-box @ Google Cloud · us-central1 | spaces.status.suspended | Unreachable · offline (dim)"
         ],
         "selectedId": "direct:10.0.0.5:3211",
-        "thisMachine": "<os-macos> This computer | This Mac | Set up for access"
+        "thisMachine": "<os-macos> This computer | spaces.status.this_mac | Set up for access"
       }
     },
     {
@@ -86,18 +86,18 @@
       "sidebar": {
         "emptyText": null,
         "sections": [
-          "# Cua Cloud",
-          "<os-linux> builder | Suspended | Unreachable · timed out (dim)",
-          "# This Mac",
-          "<os-linux> aurora | Running | This Mac",
-          "# Connected",
-          "<os-windows> 10.0.0.5:3211 | Running | 10.0.0.5:3211 (selected)",
-          "# My computers",
-          "<os-linux> research-box @ AWS · us-west-2 | Running | AWS · us-west-2",
-          "<os-linux> their-box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
+          "# spaces.sidebar.section.cloud",
+          "<os-linux> builder | spaces.status.suspended | Unreachable · timed out (dim)",
+          "# spaces.sidebar.section.this_mac",
+          "<os-linux> aurora | spaces.status.running | This Mac",
+          "# spaces.sidebar.section.connected",
+          "<os-windows> 10.0.0.5:3211 | spaces.status.running | 10.0.0.5:3211 (selected)",
+          "# spaces.sidebar.section.my_computers",
+          "<os-linux> research-box @ AWS · us-west-2 | spaces.status.running | AWS · us-west-2",
+          "<os-linux> their-box @ Google Cloud · us-central1 | spaces.status.suspended | Unreachable · offline (dim)"
         ],
         "selectedId": "direct:10.0.0.5:3211",
-        "thisMachine": "<os-macos> This computer | This Mac | Sharing · 2 connected"
+        "thisMachine": "<os-macos> This computer | spaces.status.this_mac | Sharing · 2 connected"
       }
     },
     {
@@ -122,18 +122,18 @@
       "sidebar": {
         "emptyText": null,
         "sections": [
-          "# Cua Cloud",
-          "<os-linux> builder | Suspended | Unreachable · timed out (dim)",
-          "# This Mac",
-          "<os-linux> aurora | Running | This Mac",
-          "# Connected",
-          "<os-windows> 10.0.0.5:3211 | Running | 10.0.0.5:3211 (selected)",
-          "# My computers",
-          "<os-linux> research-box @ AWS · us-west-2 | Running | AWS · us-west-2",
-          "<os-linux> their-box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
+          "# spaces.sidebar.section.cloud",
+          "<os-linux> builder | spaces.status.suspended | Unreachable · timed out (dim)",
+          "# spaces.sidebar.section.this_mac",
+          "<os-linux> aurora | spaces.status.running | This Mac",
+          "# spaces.sidebar.section.connected",
+          "<os-windows> 10.0.0.5:3211 | spaces.status.running | 10.0.0.5:3211 (selected)",
+          "# spaces.sidebar.section.my_computers",
+          "<os-linux> research-box @ AWS · us-west-2 | spaces.status.running | AWS · us-west-2",
+          "<os-linux> their-box @ Google Cloud · us-central1 | spaces.status.suspended | Unreachable · offline (dim)"
         ],
         "selectedId": "direct:10.0.0.5:3211",
-        "thisMachine": "<os-macos> This computer | This Mac | Host service stopped"
+        "thisMachine": "<os-macos> This computer | spaces.status.this_mac | Host service stopped"
       }
     },
     {
@@ -141,8 +141,8 @@
       "sidebar": {
         "emptyText": null,
         "sections": [
-          "# This Mac",
-          "<os-linux> aurora | Running | This Mac"
+          "# spaces.sidebar.section.this_mac",
+          "<os-linux> aurora | spaces.status.running | This Mac"
         ],
         "selectedId": "this-mac",
         "thisMachine": null
@@ -187,7 +187,7 @@
           "System: macOS"
         ],
         "isHost": true,
-        "previewText": "Not reachable",
+        "previewText": "This is this Mac’s own screen, so it isn’t shown here. Your other devices see and control it while Share this desktop is on.",
         "sections": [],
         "title": "This computer"
       }
@@ -581,7 +581,7 @@
         "account: Not signed in",
         "signIn: Sign in",
         "settings: Settings ⌘,",
-        "empty: No Spaces yet / Choose a system for your first Space. / Linux (About 1 minute · 3.2–7.1 GB of disk) / macOS (About 22 GB download)",
+        "empty: No Spaces yet / Choose a system for your first Space. / Linux (About 1 minute · 3.2–7.1 GB of disk) / macOS (About 23 GB download)",
         "volume: Volume"
       ]
     },
@@ -594,7 +594,7 @@
         "account: API key",
         "signIn: -",
         "settings: Settings ⌘,",
-        "empty: No Spaces yet / Choose a system for your first Space. / Linux (About 1 minute · 3.2–7.1 GB of disk) / macOS (About 22 GB download)",
+        "empty: No Spaces yet / Choose a system for your first Space. / Linux (About 1 minute · 3.2–7.1 GB of disk) / macOS (About 23 GB download)",
         "volume: Volume"
       ]
     },
@@ -607,7 +607,7 @@
         "account: ada@example.com",
         "signIn: -",
         "settings: Settings ⌘,",
-        "empty: No Spaces yet / Choose a system for your first Space. / Linux (About 1 minute · 3.2–7.1 GB of disk) / macOS (About 22 GB download)",
+        "empty: No Spaces yet / Choose a system for your first Space. / Linux (About 1 minute · 3.2–7.1 GB of disk) / macOS (About 23 GB download)",
         "volume: Volume"
       ]
     },
@@ -755,7 +755,7 @@
         "dots": "*Welcome,Sign in,AI agents,Menu bar,This computer,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "Computers for you and your agents.",
+        "lede": "Computers for you and your AI agents. Setup takes about a minute.",
         "notice": "Cua collects usage data, like which features you use and when something goes wrong. When you're signed in, it's linked to your account through a random ID. Never your files, what you type or your screen. Change this here or in Settings, Privacy.",
         "noticeLink": "What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry",
         "presentations": [],
@@ -778,7 +778,7 @@
         "dots": "*Welcome,Sign in,AI agents,Menu bar,This computer,Done",
         "drive": null,
         "driveStorage": null,
-        "lede": "Computers for you and your agents.",
+        "lede": "Computers for you and your AI agents. Setup takes about a minute.",
         "notice": "Cua collects usage data, like which features you use and when something goes wrong. When you're signed in, it's linked to your account through a random ID. Never your files, what you type or your screen. Change this here or in Settings, Privacy.",
         "noticeLink": "What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry",
         "presentations": [],

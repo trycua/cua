@@ -8,7 +8,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// Provider → wire.
 pub fn provider_to_pb(p: ProviderKind) -> pb::SandboxProvider {
     match p {
-        ProviderKind::Fleet => pb::SandboxProvider::Fleet,
         ProviderKind::Local => pb::SandboxProvider::Local,
         ProviderKind::Direct => pb::SandboxProvider::Direct,
         ProviderKind::Contrib => pb::SandboxProvider::Contrib,
@@ -18,7 +17,6 @@ pub fn provider_to_pb(p: ProviderKind) -> pb::SandboxProvider {
 /// Wire → provider (`None` for unspecified).
 pub fn provider_from_pb(p: i32) -> Option<ProviderKind> {
     match pb::SandboxProvider::try_from(p).unwrap_or_default() {
-        pb::SandboxProvider::Fleet => Some(ProviderKind::Fleet),
         pb::SandboxProvider::Local => Some(ProviderKind::Local),
         pb::SandboxProvider::Direct => Some(ProviderKind::Direct),
         pb::SandboxProvider::Contrib => Some(ProviderKind::Contrib),
@@ -206,10 +204,10 @@ mod tests {
     #[test]
     fn record_roundtrips() {
         let r = SandboxRecord {
-            id: "cloud:dev".into(),
+            id: "local:dev".into(),
             name: "dev".into(),
-            provider: ProviderKind::Fleet,
-            runtime_type: "fleet".into(),
+            provider: ProviderKind::Local,
+            runtime_type: "qemu".into(),
             status: Status::Running,
             ephemeral: true,
             services: [("env".to_string(), 3211u16)].into(),
@@ -217,11 +215,11 @@ mod tests {
             labels: BTreeMap::new(),
             endpoints: [("env".to_string(), "https://x".to_string())].into(),
             created_at: Some(UNIX_EPOCH + Duration::from_secs(5)),
-            location: "cloud".into(),
+            location: "local".into(),
             kind: "vm".into(),
-            runtime: "kubevirt".into(),
+            runtime: "qemu".into(),
             expires_at: Some(UNIX_EPOCH + Duration::from_secs(905)),
-            provider_details: [("claim".to_string(), "c-1".to_string())].into(),
+            provider_details: [("backend".to_string(), "qemu".to_string())].into(),
             image_info: None,
             stop_reason: Some("out of memory".into()),
         };
@@ -229,7 +227,7 @@ mod tests {
         // An older daemon sends no id: it is derived from the location.
         let mut old = info_to_pb(&r);
         old.id.clear();
-        assert_eq!(info_from_pb(&old).id, "cloud:dev");
+        assert_eq!(info_from_pb(&old).id, "local:dev");
     }
 
     #[test]

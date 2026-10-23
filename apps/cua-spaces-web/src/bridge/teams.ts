@@ -29,7 +29,15 @@ export function teamName(t: Pick<TeamChoice, "name" | "alias" | "id">): string {
   return t.name || t.alias || t.id;
 }
 
+/** The account is in a team on the Teams plan, which is what sharing needs
+ * (any role: a member shares with teammates). `null` until the list is read. */
+export function hasSharingTeam(list: TeamsList | null | undefined): boolean | null {
+  return list ? list.teams.some((t) => t.plan === "teams") : null;
+}
+
 export interface TeamChoices {
+  /** In a team that can share; null until read, or when the host cannot say. */
+  hasTeam: boolean | null;
   /** The teams offered (current team first). */
   teams: TeamChoice[];
   /** The current team, when it is offered. */
@@ -38,7 +46,7 @@ export interface TeamChoices {
   all: TeamChoice[];
 }
 
-const NONE: TeamChoices = { teams: [], current: null, all: [] };
+const NONE: TeamChoices = { hasTeam: null, teams: [], current: null, all: [] };
 
 /** The teams to offer, read once while `enabled` (none on a host without Teams). */
 export function useTeamChoices(enabled: boolean): TeamChoices {
@@ -52,7 +60,7 @@ export function useTeamChoices(enabled: boolean): TeamChoices {
         if (stopped) return;
         const current = defaultTeam(list);
         const teams = eligibleTeams(list).sort((a, b) => Number(b.id === current) - Number(a.id === current));
-        setChoices({ teams, current, all: list.teams });
+        setChoices({ hasTeam: hasSharingTeam(list), teams, current, all: list.teams });
       },
       () => {
         if (!stopped) setChoices(NONE);

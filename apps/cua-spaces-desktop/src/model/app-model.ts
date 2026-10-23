@@ -17,6 +17,10 @@ import type {
   AppCloudPricing,
   AppLocalStorage,
   AppMachinePageRow,
+  AppMachinesPageInput,
+  AppMachinesView,
+  AppMachinesViewAbout,
+  AppMachinesViewHealth,
   AppMainChrome,
   AppRosterAction,
   AppRosterState,
@@ -39,12 +43,12 @@ import type { CloudModel } from "./cloud";
 import type { DevicesModel } from "./devices";
 import { TeamsModel } from "./teams";
 import { NotchActivity } from "./activity";
-import { createErrorVariant, daemonAnswered, isCancelled, words } from "./errors";
+import { createErrorVariant, daemonAnswered, isCancelled, sdkErrorKind, words } from "./errors";
 import type { HostModel } from "./host";
 import { KeyvaultModel } from "./keyvault";
 import type { AccountRunning, TelemetryRunning } from "./services";
 import type { StartupModel } from "./startup";
-import { SignInRuns } from "./sign-in";
+import { SignInRuns, type SignInEnd } from "./sign-in";
 import { SpaceThumbnails } from "./thumbnails";
 import { noLocalRuntimeReason } from "./local-runtime";
 import type { LinuxRuntime } from "./linux-runtime";
@@ -84,6 +88,8 @@ export interface AppModelDeps {
   windowsRuntime?: WindowsRuntime | null;
   /** Linux: restarts the app under the docker group when a new install needs it (null elsewhere). */
   linuxRuntime?: LinuxRuntime | null;
+  /** This computer's name, the app's version and the system's (This machine's Details on the Machines page). */
+  about?: () => AppMachinesViewAbout;
 }
 
 /** The create the daemon never took. */
@@ -116,6 +122,8 @@ export class AppModel {
   readonly checklist: ChecklistModel;
   /** Agent runs seen in any Space (the page's Agents page): "Run an agent". */
   agentRunsSeen = 0;
+  /** This computer, for This machine's Details (`AppModelDeps.about`). */
+  readonly about: (() => AppMachinesViewAbout) | undefined;
   readonly hostOs: AppSpaceOs;
   readonly settingsPath: string;
   settings: AppSettings;
@@ -219,6 +227,7 @@ export class AppModel {
     };
     this.keyvault = d.keyvault ?? new KeyvaultModel(d.native, null);
     this.hostOs = d.hostOs ?? d.native.AppSpaceOs.Macos;
+    this.about = d.about;
     this.checklist = new ChecklistModel(d.native, d.checklistPath ?? null, d.checklistSeedPath ?? null);
     this.checklist.telemetry = d.telemetry;
     this.checklist.onChange = () => this.changed("checklist");
@@ -247,10 +256,10 @@ export class AppModel {
       starting: () => this.setSignIn(new this.native.AppSignInPhase.Starting()),
       waiting: (attempt) => {
         this.signInUrl = attempt.url;
-        this.setSignIn(new this.native.AppSignInPhase.Waiting({ userCode: attempt.userCode ?? undefined }));
+        this.setSignIn(new this.native.AppSignInPhase.Waiting({ userCode: attempt.userCode ?? undefined, opened: attempt.opened !== false }));
       },
       signedIn: (who) => this.signedIn(who),
-      failed: (message) => this.signInFailed(message),
+      failed: (end) => this.signInFailed(end),
     });
     this.identity = d.account?.identity() ?? null;
     this.host.identity = this.identity;
@@ -296,8 +305,8 @@ export class AppModel {
     return out;
   }
 
-  /** The Machines page's rows (the core's `machines::page_rows`, as the SwiftUI app lists them). */
-  get machinePageRows(): AppMachinePageRow[] {
+  /** What the Machines page is listed from (`machines::MachinesPageInput`), the same for its rows and its view. */
+  get machinesPageInput(): AppMachinesPageInput {
     const devices = this.devices.snapshot === null ? [] : this.devices.input.devices.map((d) => ({
       id: d.id,
       name: d.name,
@@ -306,13 +315,49 @@ export class AppModel {
       current: d.current,
       state: d.state,
     }));
-    return this.native.appMachinesPageRows({
+    return {
       hostOs: this.hostOs,
       spaces: this.spaces,
       devices,
       hostnames: new Map(Object.entries(this.relayHostnames)),
       presence: new Map(Object.entries(this.devices.relayOnline)),
       now: BigInt(Math.floor(Date.now() / 1000)),
+    };
+  }
+
+  /** The Machines page's rows (the core's `machines::page_rows`, as the SwiftUI app lists them). */
+  get machinePageRows(): AppMachinePageRow[] {
+    return this.native.appMachinesPageRows(this.machinesPageInput);
+  }
+
+  /**
+   * The Machines page as every UI draws it (the core's `machines_view::view`,
+   * as the SwiftUI page draws it): the rows in groups with one line each,
+   * and each machine's page, from the rows, what the relay says of each
+   * machine (whose it is, its team, whether it provides Spaces), This
+   * machine's host state and this computer.
+   */
+  /** What each machine's daemon last said of its health, by row id (`machines.checkHealth`). */
+  readonly machineHealth = new Map<string, AppMachinesViewHealth>();
+
+  get machinesView(): AppMachinesView {
+    const relay = (this.devices.snapshot?.machines ?? []).map((m) => ({
+      id: m.id,
+      role: m.role,
+      team: m.team,
+      ownerEmail: m.ownerEmail,
+      providesSpaces: m.providesSpaces,
+    }));
+    return this.native.appMachinesView({
+      page: this.machinesPageInput,
+      relay,
+      host: this.host.state ?? undefined,
+      about: this.about?.() ?? { computerName: "", appVersion: "", osVersion: "" },
+      rows: undefined,
+      health: [...this.machineHealth.values()],
+      // The Electron app has no in-app Mac update to offer on this page.
+      appUpdate: "",
+      appUpdateReady: false,
     });
   }
 
@@ -870,18 +915,25 @@ export class AppModel {
     this.changed("session");
   }
 
-  /** Shown where the sign-in was started; counted by its kind only. */
-  private signInFailed(message: string): void {
+  /** Shown with its reason in the sidebar's foot (and a toast there);
+   * counted by its kind only (the core keeps the words). */
+  private signInFailed(end: SignInEnd): void {
+    const n = this.native;
+    const phase =
+      "timedOut" in end
+        ? n.appSignInFailed(n.AppSignInFailure.NotConfirmed, undefined)
+        : n.appSignInFailedFromError(sdkErrorKind(end.error) ?? "", words(end.error));
     this.signInUrl = null;
-    this.setSignIn(new this.native.AppSignInPhase.Failed({ message }));
-    this.telemetry?.record(this.native.appTelemetrySignInFailed(message));
+    this.setSignIn(phase);
+    const reason = phase.tag === "Failed" ? phase.inner.reason : n.AppSignInFailure.Unknown;
+    this.telemetry?.record(n.appTelemetrySignInFailure(reason));
   }
 
   /** Stops waiting for the browser (the page can start again). */
   cancelSignIn(): void {
     if (this.signInPhase() === "Starting" || this.signInPhase() === "Waiting") {
       this.signIns.cancel();
-      this.telemetry?.record(this.native.appTelemetrySignInFailed(undefined));
+      this.telemetry?.record(this.native.appTelemetrySignInFailure(undefined));
     }
     this.signInUrl = null;
     this.setSignIn(new this.native.AppSignInPhase.Idle());

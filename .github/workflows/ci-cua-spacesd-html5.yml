@@ -37,6 +37,7 @@ env:
 
 jobs:
   web:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: vitest + typecheck + drift
     runs-on: ubuntu-24.04
     defaults:
@@ -59,6 +60,7 @@ jobs:
       - run: pnpm check
 
   rust:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: cargo test
     runs-on: ubuntu-24.04
     defaults:

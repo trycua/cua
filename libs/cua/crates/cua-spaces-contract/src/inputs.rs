@@ -1037,14 +1037,15 @@ pub struct DriveCacheSet {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct NoArgs {}
 
-/// `share_space`: let an account watch or edit the Space.
+/// `share_space`: let someone in your team watch or edit the Space.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ShareSpace {
     /// Space id or name.
     pub space: SpaceArg,
-    /// Who: an email address (verified by cua.ai) or an account id, or
-    /// `team:<id>` for a whole team. A team always gets `editor` and needs
-    /// the Teams plan; the sharer is a team owner or admin who owns the Space.
+    /// Who: the email address (verified by cua.ai) or account id of someone
+    /// in your own team, or `team:<id>` for the whole team (as `viewer` or
+    /// `editor`). Sharing is for teams: it needs a team on the Teams plan,
+    /// and a whole-team share needs a team owner or admin who owns the Space.
     pub who: String,
     /// `viewer` (presence with their own cursor and a view-only stream) or
     /// `editor` (full use; their input is a human session). Default

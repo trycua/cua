@@ -47,6 +47,7 @@ import { STREAM_OPERATIONS, type StreamOps } from "./ops/stream";
 import { RELAY_USAGE_OPERATIONS, type RelayUsageOps } from "./ops/relay-usage";
 import { NUDGES_OPERATIONS, type NudgesOps } from "./ops/nudges";
 import { RESOURCES_OPERATIONS, type ResourcesOps } from "./ops/resources";
+import { MACHINES_OPERATIONS, type MachinesOps } from "./ops/machines";
 import { CHECKLIST_OPERATIONS, type ChecklistOps } from "./ops/checklist";
 import { PRESENCE_OPERATIONS, type PresenceOps } from "./ops/presence";
 import { RUNTIME_FIX_OPERATIONS, type RuntimeFixOps } from "./ops/runtime-fix";
@@ -162,12 +163,25 @@ export interface SessionSnapshot {
   /** A native host's sign-in waiting for the browser (it runs the flow
    * itself): the code to confirm and the page it finishes on. */
   hostSignIn?: HostSignIn | null;
+  /** A native host's sign-in that failed (its reason, the core's line and
+   * the error's words for Details): the page shows it, never a wait that
+   * goes on. Absent from an older host. */
+  hostSignInFailure?: HostSignInFailure | null;
 }
 
 /** A sign-in the host waits on (`SessionSnapshot.hostSignIn`). */
 export interface HostSignIn {
   userCode: string | null;
   url: string | null;
+  /** A browser opened on the host (false: open the page by hand). */
+  opened?: boolean;
+}
+
+/** A host sign-in that failed (`SessionSnapshot.hostSignInFailure`). */
+export interface HostSignInFailure {
+  reason: string;
+  message: string;
+  detail: string | null;
 }
 
 /* ---- Operations ---------------------------------------------------------- */
@@ -190,6 +204,7 @@ export interface HostOperations
     RelayUsageOps,
     NudgesOps,
     ResourcesOps,
+    MachinesOps,
     ChecklistOps,
     PresenceOps,
     RuntimeFixOps {
@@ -246,6 +261,8 @@ export interface HostOperations
   "agents.setup": { args: Record<string, never>; result: AgentSetupRow[] };
   /** Adds the cua skills and MCP server to `agents`, or every installed one (`agent_setup_configure`). */
   "agents.configure": { args: { agents: string[] | null }; result: AgentSetupRow[] };
+  /** Starts `agent`'s own sign-in on this computer (`codex login` opens the browser); the rows after. */
+  "agents.signIn": { args: { agent: string }; result: AgentSetupRow[] };
 }
 
 export type OpName = keyof HostOperations;
@@ -284,6 +301,7 @@ export const OPERATIONS = [
   "agents.resume",
   "agents.setup",
   "agents.configure",
+  "agents.signIn",
   ...AGENT_DETAIL_OPERATIONS,
   ...NEW_SPACE_OPERATIONS,
   ...TELEPORT_OPERATIONS,
@@ -296,6 +314,7 @@ export const OPERATIONS = [
   ...RELAY_USAGE_OPERATIONS,
   ...NUDGES_OPERATIONS,
   ...RESOURCES_OPERATIONS,
+  ...MACHINES_OPERATIONS,
   ...CHECKLIST_OPERATIONS,
   ...PRESENCE_OPERATIONS,
   ...RUNTIME_FIX_OPERATIONS,

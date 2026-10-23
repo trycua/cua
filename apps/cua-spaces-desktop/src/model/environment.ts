@@ -14,7 +14,7 @@ import * as path from "node:path";
 import type { Native } from "../native/load";
 import { appCoreStatePaths, swiftSupportDir } from "../migrate-swift";
 import { nativeFiles } from "../native/location";
-import type { CuaLike } from "../native/generated/index";
+import type { AppMachinesViewAbout, CuaLike } from "../native/generated/index";
 import { PendingAgentSetup, LiveAgentSetup } from "./agents";
 import { AppModel } from "./app-model";
 import { LiveSpacesBackend } from "./backend";
@@ -31,6 +31,7 @@ import { BundledCuaKeychain, StartupModel } from "./startup";
 import { withTimeout } from "./time";
 import { LinuxRuntime, nodeLinuxSystem, type RelaunchSpec } from "./linux-runtime";
 import { WindowsRuntime, nodeWindowsSystem } from "./windows-runtime";
+import { osLine } from "./updates";
 
 /** Whether the first run finished (`onboarding.json`'s `completed`); null when unknown. */
 export function readOnboardingCompleted(file: string): boolean | null {
@@ -133,6 +134,7 @@ export function makeModel(o: EnvironmentOptions): Environment {
     hostOs: platform === "win32" ? native.AppSpaceOs.Windows : platform === "linux" ? native.AppSpaceOs.Linux : native.AppSpaceOs.Macos,
     windowsRuntime: platform === "win32" ? new WindowsRuntime(nodeWindowsSystem(), path.join(os.tmpdir(), "cua-spaces")) : null,
     linuxRuntime: platform === "linux" && o.relaunch ? new LinuxRuntime(nodeLinuxSystem(o.relaunch, env), env) : null,
+    about: thisComputer(o.version, platform),
   });
 
   // Signed out is null (setup signs in first); anything else is the error itself.
@@ -187,7 +189,7 @@ export async function makeLiveServices(native: Native, supervisor: DaemonSupervi
  * replaces it. The signed-in session drives the relay account.
  */
 async function makeCua(native: Native, supervisor: DaemonSupervisor | null): Promise<CuaLike> {
-  const config = native.CuaConfig.create({ fleetFromEnv: true, fleetFromSession: true });
+  const config = native.CuaConfig.create({ accountFromSession: true });
   try {
     return native.Cua.auto(config);
   } catch (error) {
@@ -305,4 +307,19 @@ export async function installCliSilently(native: Native, cua: string, platform: 
   } catch (error) {
     console.warn(`[cua-spaces] could not install the cua command: ${words(error)}`);
   }
+}
+
+/** This computer as the Machines page's Details names it: its name, the
+ * app's version and its system ("macOS 26.5.2"), read once. */
+export function thisComputer(version: string, platform: NodeJS.Platform = process.platform): () => AppMachinesViewAbout {
+  let about: AppMachinesViewAbout | null = null;
+  return () => {
+    about ??= {
+      computerName: computerName(platform),
+      appVersion: version,
+      // Electron's own read of the system version (`26.5.2`); the Darwin release otherwise.
+      osVersion: osLine(platform, os.release(), process.arch, (process as { getSystemVersion?: () => string }).getSystemVersion?.()).replace(/ \([^)]*\)$/, ""),
+    };
+    return about;
+  };
 }

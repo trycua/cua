@@ -35,6 +35,7 @@ impl SpacesdCommand {
         if let Some(p) = self.pty {
             c = c.pty(p.cols, p.rows);
         }
+        c.kill_on_disconnect = self.kill_on_disconnect;
         c
     }
 }
@@ -219,8 +220,11 @@ impl SpacesdProcess {
         .await
     }
 
-    /// Sends a signal by name (`term`, `kill`, `SIGINT`, ...).
-    pub async fn signal(&self, signal: String) -> Result<()> {
+    /// Sends a signal by name (`term`, `kill`, `SIGINT`, ...). With
+    /// `process_group`, to the process's whole group (everything it started),
+    /// as a terminal's Ctrl-C does; by default to the process alone.
+    #[uniffi::method(default(process_group = false))]
+    pub async fn signal(&self, signal: String, process_group: bool) -> Result<()> {
         let sig = parse_signal(&signal)?;
         let (client, process) = (self.client.clone(), Some(self.selector()));
         run(async move {
@@ -229,7 +233,7 @@ impl SpacesdProcess {
                 .signal_process(pb::SignalProcessRequest {
                     process,
                     signal: sig as i32,
-                    process_group: false,
+                    process_group,
                 })
                 .await?;
             Ok(())
@@ -239,7 +243,7 @@ impl SpacesdProcess {
 
     /// SIGKILL.
     pub async fn kill(&self) -> Result<()> {
-        self.signal("kill".into()).await
+        self.signal("kill".into(), false).await
     }
 
     /// Resizes the PTY.
@@ -759,8 +763,8 @@ impl SpacesdClient {
     // --------------------------------------------------------------- http
 
     /// Sends one plain-HTTP request to the spacesd port with this
-    /// client's endpoint and credentials (through the Fleet gateway when the
-    /// endpoint is a Fleet service). Used for streamable-HTTP MCP at `/mcp`,
+    /// client's endpoint and credentials (through a gateway when the
+    /// endpoint is behind one). Used for streamable-HTTP MCP at `/mcp`,
     /// for example by typed cua-driver clients. Not retried.
     pub async fn http(&self, request: SpacesdHttpRequest) -> Result<SpacesdHttpResponse> {
         let call = cua_spacesd_client::HttpCall {
@@ -955,12 +959,7 @@ mod tests {
         let counter = minted.clone();
         let refresh: WsHeaderRefresh = Arc::new(move || {
             let n = counter.fetch_add(1, Ordering::SeqCst) + 1;
-            Box::pin(async move {
-                Ok(vec![
-                    ("authorization".into(), format!("Bearer fresh-{n}")),
-                    ("x-cua-fleet-claim".into(), "claim-1".into()),
-                ])
-            })
+            Box::pin(async move { Ok(vec![("authorization".into(), format!("Bearer fresh-{n}"))]) })
         });
         let stale = vec![("authorization".to_string(), "Bearer stale".to_string())];
         let client = SpacesdClient::new(inner, stale.clone()).with_ws_refresh(refresh);
@@ -981,17 +980,15 @@ mod tests {
             }
             let log = env.media.lock().unwrap();
             assert!(log.attaches > before, "media socket never attached");
-            seen.lock()
-                .unwrap()
-                .push((log.last_authorization.clone(), log.last_claim.clone()));
+            seen.lock().unwrap().push(log.last_authorization.clone());
             drop(log);
             drop(session);
         }
         assert_eq!(
             *seen.lock().unwrap(),
             vec![
-                (Some("Bearer fresh-1".into()), Some("claim-1".into())),
-                (Some("Bearer fresh-2".into()), Some("claim-1".into())),
+                Some("Bearer fresh-1".to_string()),
+                Some("Bearer fresh-2".to_string()),
             ]
         );
         assert_eq!(minted.load(Ordering::SeqCst), 2, "one refresh per socket");

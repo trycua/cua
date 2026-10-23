@@ -41,19 +41,6 @@ os.environ["CUA_E2E_RUN"] = RUN
 
 HOST_ARCH = "arm64" if platform.machine().lower() in ("arm64", "aarch64") else "amd64"
 
-# The legacy public Fleet image the guides use (computer-server on 8000, no
-# spacesd). Pinned by digest exactly as in the guides.
-LEGACY_FLEET_IMAGE = os.environ.get(
-    "CUA_E2E_FLEET_IMAGE",
-    "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04"
-    "@sha256:82702ebdd32d1f8fc05f2ea409a7c67d0ba9f8f8e4e9f1a89ce40989d5f4475d",
-)
-# Same image, gVisor rootfs tag (cheap and fast on Fleet).
-LEGACY_FLEET_ROOTFS = os.environ.get(
-    "CUA_E2E_FLEET_ROOTFS",
-    "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:docker-main-809e3f81",
-)
-
 
 def desktop_image() -> str:
     return os.environ.get("CUA_E2E_DESKTOP_IMAGE", f"cua-e2e-local/linux:docker-local-{HOST_ARCH}")
@@ -84,41 +71,16 @@ def name(what: str) -> str:
 # ---------------------------------------------------------------- lanes
 
 
-# Fleet pools have no env/secret field yet, so the spacesd token reaches a
-# gVisor pod through an entrypoint override (the image reads
-# /etc/cua/env-token). KubeVirt containerDisk guests have no such hook.
-KUBEVIRT_ENV_SKIP = (
-    "KubeVirt spacesd lane needs a per-claim secret field (cloud PR): no way to "
-    "deliver the env token to a containerDisk guest yet"
-)
-
-
-def env_token_command(token: str) -> list[str]:
-    """Pod command for a gVisor pool of the spacesd image that installs
-    ``token`` as the driver's token before the normal entrypoint."""
-    return [
-        "/bin/sh",
-        "-c",
-        f"mkdir -p /etc/cua && printf %s {token} >/etc/cua/env-token && "
-        "exec /opt/cua/desktop/entrypoint.sh",
-    ]
-
-
-# Cua Cloud has ended: `Cua.fleet()` and every cloud create fail with this
-# message (`CLOUD_ENDED` in cua-sandbox-core). The live Fleet lanes skip with
-# CLOUD_ENDED_SKIP, which run.py allows under --strict.
+# Cua Cloud has ended: a cloud create fails with this message
+# (`CLOUD_ENDED` in cua-sandbox-core).
 CLOUD_ENDED = "Cua Cloud has ended"
-CLOUD_ENDED_SKIP = "Cua Cloud has ended (CUA-1854): there is no live Fleet lane"
 
 
 async def assert_cloud_ended(c: "cua.Cua", **create: Any) -> None:
-    """``c.fleet()`` and a cloud create (``on="cloud"``, plus ``create``'s
-    options) fail with the one `Unsupported` message, even when ``c`` holds
-    Fleet credentials; nothing is created."""
+    """A cloud create (``on="cloud"``, plus ``create``'s options) fails with
+    the one `Unsupported` message; nothing is created."""
     import pytest
 
-    with pytest.raises(cua.CuaError.Unsupported, match=CLOUD_ENDED):
-        c.fleet()
     options = cua.SandboxCreateOptions(on="cloud", image="registry.test/cua-e2e:fake", **create)
     with pytest.raises(cua.CuaError.Unsupported, match=CLOUD_ENDED):
         await c.sandboxes().create(options)
@@ -138,9 +100,6 @@ def lane_enabled(lane: str) -> Optional[str]:
         return None if flag("CUA_E2E_QEMU") else "set CUA_E2E_QEMU=1 for the QEMU lane"
     if lane == "lume":
         return None if flag("CUA_E2E_LUME") else "set CUA_E2E_LUME=1 for the Lume lane"
-    if lane in ("fleet", "fleet-env"):
-        # Cua Cloud has ended (CUA-1854): there is no live Fleet to run on.
-        return CLOUD_ENDED_SKIP
     if lane == "docs":
         return None
     if lane == "contrib":
@@ -364,6 +323,15 @@ async def env_smoke(env: "cua.SpacesdClient", *, desktop: bool, mock: bool = Fal
     await proc.close_stdin()
     assert (await proc.wait()).stdout == b"xyz"
 
+    # kill_on_disconnect: letting go of the starting stream ends the process.
+    tag = f"kod-py-{RUN}"
+    proc = await env.spawn(
+        cua.SpacesdCommand(program="cat", args=[], stdin=True, tag=tag, kill_on_disconnect=True)
+    )
+    await proc.detach()
+    ended = await (await env.attach(None, tag, cua.ReplayMode.NONE())).wait()
+    assert not ended.exit.success, ended.exit
+
     blob = bytes(i % 251 for i in range(1 << 20))
     path = f"/tmp/cua-e2e-{RUN}/blob.bin"
     up = await env.upload(path, blob, None)
@@ -413,32 +381,6 @@ async def env_smoke(env: "cua.SpacesdClient", *, desktop: bool, mock: bool = Fal
             cursor=(round(pos.x), round(pos.y)),
         )
     return summary
-
-
-# ---------------------------------------------------------------- legacy computer-server (/cmd)
-
-
-def parse_cmd_sse(body: bytes) -> dict:
-    """computer-server's ``POST /cmd`` answers with one SSE ``data:`` frame."""
-    for line in body.decode(errors="replace").splitlines():
-        if line.startswith("data: "):
-            return json.loads(line[6:])
-    raise AssertionError(f"no data frame in /cmd response: {body[:200]!r}")
-
-
-async def legacy_cmd(
-    sb: "cua.Sandbox", service: str, command: str, params: Optional[dict] = None
-) -> dict:
-    body = json.dumps({"command": command, "params": params or {}}).encode()
-    resp = await sb.service(service).request("POST", "/cmd", body, 120_000)
-    assert 200 <= resp.status < 300, (resp.status, resp.body[:300])
-    payload = parse_cmd_sse(resp.body)
-    assert payload.get("success", True), payload
-    return payload
-
-
-def fleet_client(tmp: Path) -> "cua.Cua":
-    return cua.embedded(state_dir=str(tmp))
 
 
 @contextlib.contextmanager
@@ -545,13 +487,15 @@ async def window_origin(env: "cua.SpacesdClient", title: str) -> tuple[int, int]
         'n=$(xwininfo -id "$wid" | awk "/Absolute upper-left X/{x=\\$4} /Absolute upper-left Y/{y=\\$4} END{print x, y}"); '
         '[ "$n" = "$o" ] && break; o=$n; done; echo "$n"'
     )
-    out = await poll(
-        f"window {title!r}",
-        lambda: env.sh(f"desktop-env bash -c '{script}'", 20_000),
-        attempts=30,
-        delay=1,
-    )
-    x, y = out.stdout.decode().split()
+    async def origin():
+        # The result object is always truthy, and the script prints nothing
+        # (or a blank origin) while the window is not mapped yet: only accept
+        # an actual "x y" pair so poll() retries instead of unpacking nothing.
+        out = await env.sh(f"desktop-env bash -c '{script}'", 20_000)
+        parts = out.stdout.decode().split()
+        return parts if len(parts) == 2 else None
+
+    x, y = await poll(f"window {title!r}", origin, attempts=30, delay=1)
     return int(x), int(y)
 
 

@@ -14,12 +14,11 @@
 //!
 //! A bare, `vm:` or `container:` OCI ref is resolved first by the one
 //! resolver ([`cua_image::resolve`]: the variant the backend runs, pinned by
-//! digest), so any Fleet or canonical image ref runs on the right backend:
+//! digest), so any canonical image ref runs on the right backend:
 //! a KubeVirt containerDisk boots under QEMU for the architecture the image
 //! offers (the host's when it has one), a Lume image under Lume, a rootfs as
 //! a container, and an image no local backend runs fails with
-//! [`RuntimeError::UnsupportedImage`]. `fleet:<pool-or-template>` images are
-//! resolved one layer up, in `cua_sandbox_core::fleet_local`.
+//! [`RuntimeError::UnsupportedImage`].
 //!
 //! Operations on an existing instance find its backend by asking each one
 //! (container, QEMU, Lume) for the instance's status.
@@ -649,8 +648,8 @@ impl LocalRuntime for VmmLocal {
 
     async fn build_image(
         &self,
-        spec: &cua_fleet::BuildSpec,
-        creds: Option<&cua_fleet::RegistryCredentials>,
+        spec: &cua_image::build::BuildSpec,
+        creds: Option<&cua_image::RegistryCredentials>,
     ) -> RuntimeResult<String> {
         let from = spec.from.trim();
         let (prefix, rest) = match from.split_once(':') {
@@ -672,11 +671,11 @@ impl LocalRuntime for VmmLocal {
         let files = spec
             .files
             .iter()
-            .map(cua_fleet::builds::local_build_file)
+            .map(cua_image::build::local_build_file)
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| RuntimeError::Other(e.to_string()))?;
-        let recipe = cua_fleet::builds::build_recipe(spec, &pinned, files, None);
-        let tag = cua_fleet::builds::build_name(&recipe);
+        let recipe = cua_image::build::build_recipe(spec, &pinned, files, None);
+        let tag = cua_image::build::build_name(&recipe);
         let reference = format!("{LOCAL_BUILD_REPO}:{tag}");
         let ledger = cua_vmm::container::ledger::PullLedger::default();
         if rt.docker().inspect_image(&reference).await.is_ok() {
@@ -724,7 +723,7 @@ impl LocalRuntime for VmmLocal {
         );
         let budget = spec
             .timeout
-            .unwrap_or(cua_fleet::builds::DEFAULT_BUILD_TIMEOUT);
+            .unwrap_or(cua_image::build::DEFAULT_BUILD_TIMEOUT);
         let built = tokio::time::timeout(budget, build).await;
         // The build directory is scratch either way.
         let _ = std::fs::remove_dir_all(&out);
@@ -854,6 +853,7 @@ impl LocalRuntime for VmmLocal {
             });
         }
         refuse_gpu(&spec.image, spec.gpu.is_some(), &r)?;
+        preflight_refusal(os_of(&spec.os), p.backend).await?;
         let rt = self.runtime(p.backend).await.map_err(rt_err)?;
         let mut s = StartSpec::new(&spec.name, p.image)
             .os(os_of(&spec.os))
@@ -919,8 +919,7 @@ impl LocalRuntime for VmmLocal {
             return Err(RuntimeError::Unsupported {
                 backend: "local".into(),
                 op: format!(
-                    "sidecar {:?} args/cpu/memory (cloud pool templates only; fold args into \
-                     command)",
+                    "sidecar {:?} args/cpu/memory (fold args into command)",
                     c.name
                 ),
             });
@@ -1217,6 +1216,31 @@ impl VmmLocal {
     }
 }
 
+// ------------------------------------------------------------------ preflight
+
+/// Refuses a create the machine cannot run, in plain words (the first
+/// failed check of [`cua_vmm::preflight`]), before anything is pulled. The
+/// disk is left to the guards of the create itself, which know the image's
+/// real size.
+async fn preflight_refusal(os: cua_vmm::GuestOs, backend: BackendKind) -> RuntimeResult<()> {
+    use cua_create_failure::preflight::Runs;
+    let runs = if backend == BackendKind::Container {
+        Runs::Container
+    } else {
+        Runs::Vm
+    };
+    let req = cua_vmm::preflight::request(cua_vmm::preflight::guest_of(os), runs, None);
+    let mut facts = cua_vmm::preflight::gather(&req).await;
+    facts.free_bytes = None;
+    match cua_create_failure::preflight::evaluate(&req, &facts)
+        .into_iter()
+        .next()
+    {
+        Some(issue) => Err(RuntimeError::Other(issue.message)),
+        None => Ok(()),
+    }
+}
+
 // ------------------------------------------------------------------ doctor
 
 /// `cua runtime doctor`: the `cua-vmm` report (read-only).
@@ -1239,6 +1263,14 @@ pub async fn doctor_response() -> cua_proto::daemon::v1::DoctorResponse {
         map.insert(
             "local_network".into(),
             serde_json::to_value(ln).unwrap_or_default(),
+        );
+    }
+    if let Some(map) = json.as_object_mut() {
+        // What would stop a create here, per Space the host can run, in
+        // words the apps and the CLI show as they are.
+        map.insert(
+            "preflight".into(),
+            serde_json::to_value(cua_vmm::preflight::report().await).unwrap_or_default(),
         );
     }
     cua_proto::daemon::v1::DoctorResponse {
@@ -1393,6 +1425,13 @@ async fn kvm_step(dry_run: bool) -> Option<cua_proto::daemon::v1::SetupStep> {
     }
     let denied = cua_vmm::host::kvm_usable()
         .is_err_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied);
+    if denied && !dry_run && !cua_vmm::host::sudo_available() {
+        return Some(SetupStep {
+            name: "kvm".into(),
+            status: CheckStatus::Ok as i32,
+            detail: "KVM access denied; using slow TCG emulation (sudo unavailable)".into(),
+        });
+    }
     let user = std::env::var("USER").ok();
     let run = async |program: &str, args: &[&str]| cua_vmm::host::run(program, args).await;
     let (status, detail) =
@@ -1957,6 +1996,21 @@ mod tests {
             lume: Default::default(),
             container: Default::default(),
         }
+    }
+
+    #[test]
+    fn doctor_preserves_backend_contract() {
+        use cua_proto::daemon::v1::CheckStatus;
+        let mut report = qemu_report(false);
+        assert_eq!(
+            super::doctor_checks(&report)[0].status,
+            CheckStatus::Installable as i32
+        );
+        report.backends[0].provisionable = false;
+        assert_eq!(
+            super::doctor_checks(&report)[0].status,
+            CheckStatus::Error as i32
+        );
     }
 
     fn kvm_step() -> Option<cua_proto::daemon::v1::SetupStep> {

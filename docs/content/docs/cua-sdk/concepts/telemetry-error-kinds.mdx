@@ -22,7 +22,12 @@ error text.
 | `vm_boot_timeout` | The VM did not finish booting in time. |
 | `services_unreachable` | The Space booted but its services never answered. |
 | `local_network` | macOS Local Network privacy blocked the connection to the new VM. |
+| `out_of_memory` | The machine ran out of memory for the guest. |
+| `port_in_use` | A port the Space needs is already taken. |
+| `file_access` | A file or folder could not be written (access denied, in use, path too long). |
+| `network` | The machine could not reach the network (DNS, proxy, certificate) outside the image download. |
 | `quota_exceeded` | The account's quota, plan limit or credits ran out. |
+| `cloud_ended` | The create asked for Cua Cloud, which has ended. The create is refused up front; it is not a failure to fix. |
 | `cancelled` | You cancelled the create. |
 
 Otherwise it is the error's type (for example `unauthenticated`, `timeout`,

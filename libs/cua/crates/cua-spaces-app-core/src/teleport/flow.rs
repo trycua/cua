@@ -15,6 +15,7 @@ use super::review::{
     VaultSource,
 };
 use crate::keyvault::wire::KvInventory;
+use crate::message::Msg;
 use crate::util::{contains_word, to_fixed};
 use serde::{Deserialize, Serialize};
 
@@ -81,24 +82,22 @@ pub enum SensitiveGroup {
 }
 
 impl SensitiveGroup {
-    /// The checkbox label.
-    pub fn label(self) -> &'static str {
-        match self {
-            SensitiveGroup::SignIns => "Keep me signed in",
-            SensitiveGroup::Passwords => "Saved passwords",
-            SensitiveGroup::History => "Browsing history",
-        }
+    /// The checkbox label (`teleport.sensitive.<group>.label`).
+    pub fn label(self) -> Msg {
+        Msg::new(match self {
+            SensitiveGroup::SignIns => "teleport.sensitive.sign_ins.label",
+            SensitiveGroup::Passwords => "teleport.sensitive.passwords.label",
+            SensitiveGroup::History => "teleport.sensitive.history.label",
+        })
     }
 
-    /// The line under it.
-    pub fn detail(self) -> &'static str {
-        match self {
-            SensitiveGroup::SignIns => "Sends the session cookies.",
-            SensitiveGroup::Passwords => "Sends the passwords saved in the app.",
-            SensitiveGroup::History => {
-                "Sends the history of pages visited, and the bookmarks where the browser keeps them together."
-            }
-        }
+    /// The line under it (`teleport.sensitive.<group>.detail`).
+    pub fn detail(self) -> Msg {
+        Msg::new(match self {
+            SensitiveGroup::SignIns => "teleport.sensitive.sign_ins.detail",
+            SensitiveGroup::Passwords => "teleport.sensitive.passwords.detail",
+            SensitiveGroup::History => "teleport.sensitive.history.detail",
+        })
     }
 }
 
@@ -109,9 +108,9 @@ pub struct SensitiveOption {
     /// The group.
     pub group: SensitiveGroup,
     /// Label.
-    pub label: String,
+    pub label: Msg,
     /// The line under the label.
-    pub detail: String,
+    pub detail: Msg,
     /// Checked.
     pub checked: bool,
 }
@@ -772,8 +771,8 @@ pub fn sensitive_options(s: &PickerState) -> Vec<SensitiveOption> {
         .flat_map(|e| e.sensitive_groups.iter())
         .map(|&group| SensitiveOption {
             group,
-            label: group.label().into(),
-            detail: group.detail().into(),
+            label: group.label(),
+            detail: group.detail(),
             checked: s.sensitive.contains(&group),
         })
         .collect()
@@ -1688,14 +1687,16 @@ mod tests {
             },
         );
         let opts = sensitive_options(&s);
-        let labels: Vec<(&str, bool)> =
-            opts.iter().map(|o| (o.label.as_str(), o.checked)).collect();
+        let labels: Vec<(&str, bool)> = opts
+            .iter()
+            .map(|o| (o.label.code.as_str(), o.checked))
+            .collect();
         assert_eq!(
             labels,
             [
-                ("Keep me signed in", true),
-                ("Saved passwords", false),
-                ("Browsing history", false)
+                ("teleport.sensitive.sign_ins.label", true),
+                ("teleport.sensitive.passwords.label", false),
+                ("teleport.sensitive.history.label", false)
             ]
         );
         assert_eq!(plan_sensitive(&s), [SensitiveGroup::SignIns]);

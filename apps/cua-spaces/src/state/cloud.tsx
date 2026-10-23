@@ -13,6 +13,7 @@
  * also what keeps the existing tests hermetic.
  */
 
+import { t } from "../i18n";
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 
 import {
@@ -189,8 +190,8 @@ export function useFleetSync(
     } catch {
       // Do not display server bodies or credential-bearing URLs.
       const message = rosterLoaded.current
-        ? "Could not refresh Spaces. Previously loaded rows may be out of date."
-        : "Could not load Spaces. Try refreshing again.";
+        ? t("errors:errors.spaces.refresh_failed")
+        : t("errors:errors.spaces.load_failed");
       setRosterError(message);
       throw new Error(message);
     } finally {

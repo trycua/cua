@@ -178,8 +178,8 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     for (const [method, args] of cases) problems.push(...shapeProblems(method, await call(method, args)));
     expect(problems).toEqual([]);
     // Every ported method has its case (or is checked below).
-    // (Teleport and the Keyvault: vault-native.test.ts; This machine, Devices, Settings and the rest: host-bridge.test.ts; the relay allowance: relay-usage.test.ts; resource numbers: resources.test.ts; presence: presence-bridge.test.ts; the Windows runtime fix: below.)
-    const elsewhere = new Set(["session.signIn", "spaces.create", "spaces.delete", "spaces.openStream", "relay.usage", "resources.get", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", ...AGENT_METHODS, ...VAULT_METHODS, ...HOST_METHODS]);
+    // (Teleport and the Keyvault: vault-native.test.ts; This machine, Devices, Settings and the rest: host-bridge.test.ts; the relay allowance: relay-usage.test.ts; resource numbers: resources.test.ts; presence: presence-bridge.test.ts; the Machines page's rename, remove and health checks: machines-view.test.ts; the Windows runtime fix: below.)
+    const elsewhere = new Set(["session.signIn", "spaces.create", "spaces.delete", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "machines.rename", "machines.remove", "machines.checkHealth", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", ...AGENT_METHODS, ...VAULT_METHODS, ...HOST_METHODS]);
     const ported = bridge.registry.methods.filter((m) => !NOT_YET.includes(m) && !elsewhere.has(m));
     expect(ported.filter((m) => !cases.some(([c]) => c === m))).toEqual([]);
   });
@@ -317,6 +317,25 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     expect(await call("session.get")).toMatchObject({ identity: "ada@example.com", signedIn: true, signIn: "idle" });
     await tick(5);
     expect(sessionEvents()).toBe(2);
+  });
+
+  it("says why a sign-in failed, typed, so the page never keeps waiting", async () => {
+    await call("session.signOut");
+    await call("session.signIn");
+    await until(() => model.signIn.tag === "Waiting");
+    account.failSignIn(new Error("could not reach the sign-in service: error sending request"));
+    await until(() => model.signIn.tag === "Failed");
+    expect(await call("session.get")).toMatchObject({
+      signIn: {
+        type: "failed",
+        reason: "offline",
+        message: "Sign-in didn't finish. Can't reach Cua. Check your connection.",
+        detail: "could not reach the sign-in service: error sending request",
+      },
+      signInUrl: null,
+    });
+    const kinds = telemetry.recorded.flatMap((s) => (s.tag === "SignInFailed" ? [s.inner.errorKind] : []));
+    expect(kinds.at(-1)).toBe("transport");
   });
 
   it("answers the Machines page from the host and the relay's devices", async () => {
@@ -562,8 +581,8 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       "clouds.connect": { target: { provider: "aws", region: "us-west-2" }, makeDefault: false },
       "checklist.send": { action: { type: "done", step: "teleport" } },
     };
-    // This machine, Devices, Settings and the rest: host-bridge.test.ts reads them with their arguments.
-    const skip = new Set<OpName>(["spaces.create", "spaces.delete", "session.signIn", "session.signOut", "session.openExternal", "spaces.openStream", "relay.usage", "resources.get", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", ...VAULT_OPS, ...(HOST_OPS as OpName[])]);
+    // This machine, Devices, Settings and the rest: host-bridge.test.ts reads them with their arguments (the Machines page's rename and remove: machines-view.test.ts).
+    const skip = new Set<OpName>(["spaces.create", "spaces.delete", "session.signIn", "session.signOut", "session.openExternal", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "machines.rename", "machines.remove", "machines.checkHealth", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", ...VAULT_OPS, ...(HOST_OPS as OpName[])]);
     const problems: string[] = [];
     const checked: string[] = [];
     for (const op of OPERATIONS) {

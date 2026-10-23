@@ -31,7 +31,7 @@ import { Emitter, HostError, type DataAdapter } from "../adapter";
 import { hostOs, THIS_MACHINE, type HostOs } from "../host-os";
 import { electronTransport, webkitTransport, type HostTransport } from "../transport";
 import type { AgentEventsPage, AgentSetupRow, PersistentAgent, SpaceAgentRun } from "../contracts/agents";
-import type { CancelOutcome, DefaultLocation, HostStatus, MachinePageRow, MachineRow, SpacePowerReport } from "../contracts/host";
+import type { CancelOutcome, DefaultLocation, HostActionId, HostStatus, MachinePageRow, MachineRow, MachinesView, SpacePowerReport } from "../contracts/host";
 import type { HostWindow } from "../detect";
 import {
   DEFAULT_SETTINGS,
@@ -201,6 +201,24 @@ export function toMachineRows(spaces: WkSpaces, machines: WkMachines | null, os:
   return rows;
 }
 
+/** A host action as the bridge names it: the hosts encode the core's enum
+ * by its case (`provideSpaces`), the bridge by its wire word
+ * (`provide-spaces`). */
+const actionId = (a: string): HostActionId => a.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`) as HostActionId;
+
+/** The host's Machines view with its switches' actions as the bridge names them. */
+export function fromHostView(v: MachinesView): MachinesView {
+  return {
+    ...v,
+    machines: v.machines.map((m) => ({
+      ...m,
+      toggles: m.toggles.map((t) => ({ ...t, actions: t.actions.map(actionId) })),
+      noticeAction: m.noticeAction ? { ...m.noticeAction, id: actionId(m.noticeAction.id) } : m.noticeAction,
+      issues: m.issues?.map((i) => (i.action?.hostAction ? { ...i, action: { ...i.action, hostAction: actionId(i.action.hostAction) } } : i)),
+    })),
+  };
+}
+
 /** The host's rows from the core (`machines.pageRows`, as the SwiftUI
  * Machines page lists them), with what the page draws beside them: this
  * machine's host status and summary, a device's state and detail, and why
@@ -312,8 +330,16 @@ export function toSessionSnapshot(s: WkSession, onboarding: WkOnboarding | null 
     // The SwiftUI app's first run is its own window; Electron's is the page's.
     onboarding: onboarding ? { completed: onboarding.completed, mode: onboarding.mode } : { completed: true, mode: "client" },
     daemon: null,
-    // The host runs the sign-in: while it waits, its code and page.
-    hostSignIn: typeof s.signIn === "object" && s.signIn.type === "waiting" ? { userCode: opt(s.signIn.userCode) ?? null, url: opt(s.signInUrl) ?? null } : null,
+    // The host runs the sign-in: while it waits, its code and page; when
+    // it failed, why (the page shows it instead of waiting on).
+    hostSignIn:
+      typeof s.signIn === "object" && s.signIn.type === "waiting"
+        ? { userCode: opt(s.signIn.userCode) ?? null, url: opt(s.signInUrl) ?? null, opened: s.signIn.opened !== false }
+        : null,
+    hostSignInFailure:
+      typeof s.signIn === "object" && s.signIn.type === "failed"
+        ? { reason: s.signIn.reason ?? "unknown", message: s.signIn.message ?? "", detail: opt(s.signIn.detail) ?? null }
+        : null,
   };
 }
 
@@ -506,6 +532,8 @@ export function createWebkitAdapter(
   let rosterError: string | null = null;
   // The host's standing notice (`hostNotice`).
   let daemonNotice: string | null = null;
+  // The Machines page the host's core drew (`machinesView`).
+  let machinesView: MachinesView | null = null;
   const listSpaces = async () => {
     const answer = await request<WkSpaces>("spaces.list");
     rosterError = answer.rosterError ?? null;
@@ -536,6 +564,7 @@ export function createWebkitAdapter(
     },
     "machines.list": async () => {
       const [spaces, machines] = await Promise.all([listSpaces(), request<WkMachines>("machines.list").catch(() => null)]);
+      machinesView = machines?.view ? fromHostView(machines.view) : null;
       return toMachineRows(spaces, machines, os);
     },
     "host.status": async () => {
@@ -629,6 +658,7 @@ export function createWebkitAdapter(
     },
     "agents.setup": async () => list(await request("agents.setup")) as AgentSetupRow[],
     "agents.configure": async ({ agents }) => list(await request("agents.configure", { agents: agents ?? null })) as AgentSetupRow[],
+    "agents.signIn": async ({ agent }) => list(await request("agents.signIn", { agent })) as AgentSetupRow[],
     "session.openExternal": async ({ url }) => {
       win.open?.(url, "_blank", "noopener");
       return null;
@@ -650,6 +680,18 @@ export function createWebkitAdapter(
     "nudges.pending": () => request<RiskyRequest[]>("nudges.pending"),
     "nudges.answer": ({ id, choice }) => request<null>("nudges.answer", { id, choice }),
     "resources.get": ({ visible }) => request<ResourcesSnapshot | null>("resources.get", { visible }),
+    "machines.rename": async ({ id, name }) => {
+      await request("machines.rename", { id, name });
+      return null;
+    },
+    "machines.checkHealth": async () => {
+      await request("machines.checkHealth");
+      return null;
+    },
+    "machines.remove": async ({ machine, device }) => {
+      await request("machines.remove", { machine: machine ?? null, device: device ?? null });
+      return null;
+    },
     "checklist.get": () => request<{ state: HostChecklistState }>("checklist.get"),
     "checklist.send": ({ action }) => request<{ state: HostChecklistState }>("checklist.send", { action }),
     // Presence over the page's own video: the Mac app draws it natively.
@@ -724,6 +766,7 @@ export function createWebkitAdapter(
     subscribe: (l) => events.subscribe(l),
     listNotice: () => rosterError,
     hostNotice: () => daemonNotice,
+    machinesView: () => machinesView,
     dispose() {
       for (const fail of [...pending]) fail(new HostError("the bridge was closed", "closed"));
       events.clear();

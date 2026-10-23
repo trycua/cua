@@ -449,14 +449,14 @@ pub mod frame {
         json!({
             "thisMachine": v["thisMachine"]["name"],
             "sections": v["sections"].as_array().map(|a| a.iter().map(|sec| {
-                Value::String(format!("{}: {}", sec["title"].as_str().unwrap_or(""),
+                Value::String(format!("{}: {}", sec["title"]["code"].as_str().unwrap_or(""),
                     sec["rows"].as_array().map(|r| r.iter().map(|row| format!("{}{}{}",
                         row["name"].as_str().unwrap_or(""),
                         if row["dim"] == true { " (dim)" } else { "" },
                         if row["selected"] == true { " (selected)" } else { "" })).collect::<Vec<_>>().join(", ")).unwrap_or_default()))
             }).collect::<Vec<_>>()).unwrap_or_default(),
             "selectedId": v["selectedId"],
-            "emptyText": v["emptyText"],
+            "emptyText": v["emptyText"]["code"],
         })
     }
 
@@ -485,7 +485,7 @@ pub mod frame {
         format!(
             " <{} {}{}{}>",
             str_of(&b["symbol"]),
-            str_of(&b["help"]),
+            str_of(&b["help"]["code"]),
             if b["turnOn"] == true { " on" } else { "" },
             if b["busy"] == true { " busy" } else { "" },
         )
@@ -512,7 +512,7 @@ pub mod frame {
                 .as_str()
                 .map(|p| format!(" @ {p}"))
                 .unwrap_or_default(),
-            str_of(&r["statusText"]),
+            str_of(&r["statusText"]["code"]),
             str_of(&r["detail"]),
             if r["dim"] == true { " (dim)" } else { "" },
             if r["selected"] == true {
@@ -528,13 +528,13 @@ pub mod frame {
         json!({
             "thisMachine": if v["thisMachine"].is_null() { Value::Null } else { Value::String(sidebar_row(&v["thisMachine"])) },
             "sections": v["sections"].as_array().map(|a| a.iter().flat_map(|sec| {
-                let title = str_of(&sec["title"]).to_string();
+                let title = str_of(&sec["title"]["code"]).to_string();
                 std::iter::once(Value::String(format!("# {title}"))).chain(
                     sec["rows"].as_array().cloned().unwrap_or_default().into_iter()
                         .map(|r| Value::String(sidebar_row(&r))))
             }).collect::<Vec<_>>()).unwrap_or_default(),
             "selectedId": v["selectedId"],
-            "emptyText": v["emptyText"],
+            "emptyText": v["emptyText"]["code"],
         })
     }
 
@@ -1234,8 +1234,8 @@ pub mod frame {
             "error": state["error"],
             "report": state["report"]["appId"],
             "sensitive": sensitive.as_array().map(|a| a.iter().map(|o| Value::String(format!("{}:{}:{}:{}",
-                o["group"].as_str().unwrap_or(""), o["label"].as_str().unwrap_or(""),
-                o["detail"].as_str().unwrap_or(""), if o["checked"] == true { "on" } else { "off" }))).collect::<Vec<_>>()).unwrap_or_default(),
+                o["group"].as_str().unwrap_or(""), o["label"]["code"].as_str().unwrap_or(""),
+                o["detail"]["code"].as_str().unwrap_or(""), if o["checked"] == true { "on" } else { "off" }))).collect::<Vec<_>>()).unwrap_or_default(),
             "planSensitive": plan_sensitive,
         });
         // Saved passwords, while the review offers them: the box's label
@@ -2212,7 +2212,7 @@ fn provisioning_frame(
                 "{} {} [{}] {} {}{}",
                 r["osIcon"].as_str().unwrap_or(""),
                 r["name"].as_str().unwrap_or(""),
-                r["statusText"].as_str().unwrap_or(""),
+                r["statusText"]["code"].as_str().unwrap_or(""),
                 r["progress"]
                     .as_u64()
                     .map(|p| p.to_string())
@@ -3005,7 +3005,181 @@ fn run_machines(f: &Value, h: &dyn Host) -> Result<Value, String> {
         let rows = c(h, "machines.pageRows", json!({ "input": page["input"] }))?;
         frames.push(json!({ "page": page["name"], "rows": page_lines(&rows) }));
     }
+    for v in f["views"].as_array().into_iter().flatten() {
+        let view = c(h, "machines.view", json!({ "input": v["input"] }))?;
+        frames.push(view_frame(&v["name"], &view));
+    }
     Ok(json!({ "flow": "machines", "frames": frames }))
+}
+
+/// The Machines page as drawn (`machines.view`): the header, each group
+/// with its rows' one line, and each machine's page in words (status,
+/// switches, Spaces, New Space here, Details, Remove from account).
+fn view_frame(name: &Value, v: &Value) -> Value {
+    let machines = v["machines"].as_array().cloned().unwrap_or_default();
+    let by_id = |id: &str| machines.iter().find(|m| str_of(&m["id"]) == id);
+    let groups: Vec<Value> = v["groups"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|g| {
+            let rows: Vec<String> = g["ids"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|id| by_id(str_of(id)))
+                .map(|m| {
+                    let dot = if m["online"].as_bool() == Some(true) {
+                        "\u{25cf}"
+                    } else {
+                        "\u{25cb}"
+                    };
+                    let badge = m["badge"]
+                        .as_str()
+                        .map(|b| format!(" [{b}]"))
+                        .unwrap_or_default();
+                    // The dot's tint for the machine's issues.
+                    let health = m["health"]
+                        .as_str()
+                        .filter(|h| !h.is_empty())
+                        .map(|h| format!(" [{h}]"))
+                        .unwrap_or_default();
+                    format!(
+                        "{dot} {}{badge} \u{2014} {}{health}",
+                        str_of(&m["name"]),
+                        str_of(&m["line"])
+                    )
+                })
+                .collect();
+            let mut title = str_of(&g["title"]).to_string();
+            if g["collapsed"].as_bool() == Some(true) {
+                title.push_str(" (collapsed)");
+            }
+            if let Some(all) = g["removeAll"].as_object() {
+                title.push_str(&format!(" \u{b7} {}", str_of(&all["label"])));
+            }
+            json!({ "group": title, "rows": rows })
+        })
+        .collect();
+    let pages: Vec<Value> = machines
+        .iter()
+        .map(|m| {
+            let mut lines = vec![];
+            let mut head = format!("{} \u{2014} {}", str_of(&m["name"]), str_of(&m["status"]));
+            if let Some(by) = m["sharedBy"].as_str() {
+                head.push_str(&format!(" \u{b7} {by}"));
+            }
+            if let Some(r) = m["rename"].as_object() {
+                head.push_str(&format!(" (rename: {})", str_of(&r["target"])));
+            }
+            lines.push(head);
+            for i in m["issues"].as_array().into_iter().flatten() {
+                let action = i["action"]["label"]
+                    .as_str()
+                    .map(|l| format!(" [{l}]"))
+                    .unwrap_or_default();
+                lines.push(format!(
+                    "{} {}: {}{action}",
+                    str_of(&m["issuesTitle"]).to_lowercase(),
+                    str_of(&i["level"]),
+                    str_of(&i["text"])
+                ));
+            }
+            if let Some(n) = m["notice"].as_str() {
+                let action = m["noticeAction"]["label"]
+                    .as_str()
+                    .map(|l| format!(" [{l}]"))
+                    .unwrap_or_default();
+                lines.push(format!("notice: {n}{action}"));
+            }
+            for t in m["toggles"].as_array().into_iter().flatten() {
+                let on = if t["on"].as_bool() == Some(true) {
+                    "on"
+                } else {
+                    "off"
+                };
+                let how = if t["editable"].as_bool() != Some(true) {
+                    "read-only".to_string()
+                } else if t["enabled"].as_bool() != Some(true) {
+                    "disabled".to_string()
+                } else if let Some(p) = t["setup"].as_str() {
+                    format!("sets up: {p}")
+                } else {
+                    let a: Vec<&str> = t["actions"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .map(str_of)
+                        .collect();
+                    format!("runs: {}", a.join(", "))
+                };
+                lines.push(format!("{}: {on} ({how})", str_of(&t["label"])));
+            }
+            if let Some(n) = m["togglesNote"].as_str() {
+                lines.push(format!("note: {n}"));
+            }
+            if let Some(d) = m["desktop"].as_object() {
+                let d = |k: &str| d.get(k).and_then(Value::as_str).unwrap_or("");
+                lines.push(format!(
+                    "desktop {} \u{b7} {} \u{b7} {} [{}] -> {}",
+                    d("name"),
+                    d("os"),
+                    d("status"),
+                    d("label"),
+                    d("id")
+                ));
+            }
+            for s in m["spaces"].as_array().into_iter().flatten() {
+                lines.push(format!(
+                    "space {} \u{b7} {} \u{b7} {} -> {}",
+                    str_of(&s["name"]),
+                    str_of(&s["os"]),
+                    str_of(&s["status"]),
+                    str_of(&s["id"])
+                ));
+            }
+            if let Some(e) = m["spacesEmpty"].as_str() {
+                lines.push(format!("spaces: {e}"));
+            }
+            let ns = &m["newSpace"];
+            lines.push(format!(
+                "{} on {}{}",
+                str_of(&ns["label"]),
+                str_of(&ns["on"]),
+                if ns["enabled"].as_bool() == Some(true) {
+                    String::new()
+                } else {
+                    format!(" (disabled: {})", str_of(&ns["help"]))
+                }
+            ));
+            let facts: Vec<String> = m["details"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|f| format!("{}: {}", str_of(&f["label"]), str_of(&f["value"])))
+                .collect();
+            lines.push(format!("details: {}", facts.join("; ")));
+            if let Some(r) = m["remove"].as_object() {
+                let what = if r["host"].as_bool() == Some(true) {
+                    "host setup".to_string()
+                } else {
+                    [r.get("machine"), r.get("device")]
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|x| x.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" + ")
+                };
+                let state = match r.get("help").and_then(|h| h.as_str()) {
+                    Some(h) if r["enabled"].as_bool() != Some(true) => format!(" (disabled: {h})"),
+                    _ => String::new(),
+                };
+                lines.push(format!("{} -> {what}{state}", str_of(&r["label"])));
+            }
+            json!(lines)
+        })
+        .collect();
+    json!({ "view": name, "summary": v["summary"], "groups": groups, "pages": pages })
 }
 
 /// The Machines page's rows (`machines.pageRows`), one line each: name,
@@ -3155,18 +3329,75 @@ fn run_first_run(f: &Value, h: &dyn Host) -> Result<Value, String> {
         });
         if v["connect"].is_object() {
             let k = &v["connect"];
-            let others: Vec<String> = k["others"]
+            // "[x] Claude Code", "[ ] Cursor (Not found on this Mac)", "[=] ..." locked.
+            let picks = |key: &str| -> Vec<String> {
+                k[key]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|p| {
+                        let mark = if p["locked"].as_bool() == Some(true) {
+                            "="
+                        } else if p["checked"].as_bool() == Some(true) {
+                            "x"
+                        } else {
+                            " "
+                        };
+                        let note = if p["note"].is_string() {
+                            format!(" ({})", s(&p["note"]))
+                        } else {
+                            String::new()
+                        };
+                        format!("[{mark}] {}{note}", s(&p["name"]))
+                    })
+                    .collect()
+            };
+            let creds: Vec<String> = k["credentials"]
                 .as_array()
                 .into_iter()
                 .flatten()
-                .map(|o| s(&o["name"]))
+                .map(|r| {
+                    format!(
+                        "{} — {}{}{}{}",
+                        s(&r["title"]),
+                        s(&r["note"]),
+                        if r["status"].is_string() {
+                            format!(" [{}]", s(&r["status"]))
+                        } else {
+                            String::new()
+                        },
+                        if r["action"].is_object() {
+                            format!(" ({})", btn(&r["action"]))
+                        } else {
+                            String::new()
+                        },
+                        if r["error"].is_string() {
+                            format!(" !{}", s(&r["error"]))
+                        } else {
+                            String::new()
+                        },
+                    )
+                })
+                .collect();
+            let connects: Vec<String> = k["connects"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(&s)
                 .collect();
             frame["connect"] = json!({
                 "title": k["title"],
                 "lede": k["lede"],
+                "intro": k["intro"],
+                "agents": format!("{}: {}", s(&k["agentsLabel"]), picks("agents").join(", ")),
+                "more": format!("{}: {}", s(&k["moreLabel"]), picks("more").join(", ")),
+                "agentsNote": k["agentsNote"],
+                "credentials": if creds.is_empty() { Value::Null } else {
+                    json!(format!("{} ({}): {}", s(&k["credentialsLabel"]), s(&k["credentialsNote"]), creds.join(" / ")))
+                },
                 "primary": btn(&k["primary"]),
-                "note": format!("{} {}", s(&k["note"]), s(&k["noteMore"])),
-                "others": others.join(", "),
+                "connects": connects.join(", "),
+                "busy": k["busy"],
             });
         }
         if v["setup"].is_object() {
@@ -3210,7 +3441,9 @@ fn run_first_run(f: &Value, h: &dyn Host) -> Result<Value, String> {
             frame["setup"] = json!({
                 "title": k["title"],
                 "rows": rows,
-                "prompt": format!("{}: {} / {}", s(&k["prompt"]["heading"]), s(&k["prompt"]["text"]), s(&k["prompt"]["note"])),
+                "prompt": if k["prompt"].is_object() {
+                    json!(format!("{}: {} / {}", s(&k["prompt"]["heading"]), s(&k["prompt"]["text"]), s(&k["prompt"]["note"])))
+                } else { Value::Null },
                 "extra": {
                     "phase": x["phase"],
                     "title": x["title"],

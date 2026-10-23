@@ -12,8 +12,16 @@
 # (the app installs it onto PATH on first launch, like the Tauri app's
 # sidecar), Sparkle.framework (the updater, from the pinned SwiftPM
 # artifact, with its XPC services) in Contents/Frameworks and the
-# third-party notices (Settings, About, Acknowledgements), then signs it
-# ad hoc as com.trycua.spaces.macos.
+# third-party notices (Settings, About, Acknowledgements), the host
+# service (the pinned cua-spacesd from scripts/fetch-spacesd.sh, or
+# $CUA_SPACESD_BIN, in Contents/MacOS; the app's own executable runs it as
+# its login item, whose SMAppService plist is in
+# Contents/Library/LaunchAgents), then signs it ad hoc as
+# com.trycua.spaces.macos.
+#
+# A release build strips every binary it ships (local symbols from the SDK
+# dylib, all but the dynamic ones from the executables) after writing their
+# dSYMs to <out-dir>/dSYMs, which crash reports symbolicate against.
 #
 #   scripts/build-app.sh [debug|release] [out-dir]
 #
@@ -109,8 +117,42 @@ for rp in $(otool -l "$app/Contents/MacOS/CuaSpacesMac" | awk '/LC_RPATH/ {getli
 done
 install_name_tool -add_rpath "@executable_path/../Frameworks" "$app/Contents/MacOS/CuaSpacesMac" 2>/dev/null || true
 
+# The host service: cua-spacesd next to the app's executable, which runs it
+# as the app's login item (SMAppService.agent; `CuaSpacesMac
+# --service-helper run`), so macOS asks for and keeps its permissions under
+# the app's own name, "Cua Spaces".
+mkdir -p "$app/Contents/Library/LaunchAgents"
+# shellcheck disable=SC2086 # one word per architecture
+spacesd="$("$here/scripts/fetch-spacesd.sh" ${archs:-$(uname -m)})"
+cp "$spacesd" "$app/Contents/MacOS/cua-spacesd"
+chmod 0755 "$app/Contents/MacOS/cua-spacesd"
+cp "$here/Support/Helper/com.trycua.spaces.helper.plist" "$app/Contents/Library/LaunchAgents/com.trycua.spaces.helper.plist"
+[ -x "$cli" ] && cp "$cli" "$app/Contents/MacOS/cua"
+
+# Release: symbols go to dSYMs, not into the download (about 40% of each
+# binary). Executables keep only what dynamic linking needs; the dylib keeps
+# its exported (global) symbols, which the app links against.
+if [ "$config" = release ]; then
+  syms="$out/dSYMs"
+  rm -rf "$syms"
+  mkdir -p "$syms"
+  for f in "$app/Contents/MacOS/CuaSpacesMac" "$app/Contents/MacOS/cua" "$app/Contents/MacOS/cua-spacesd" \
+    "$app/Contents/Frameworks/libcua_sdk.dylib"; do
+    [ -f "$f" ] || continue
+    # A prebuilt binary (cua-spacesd) has no debug map: its dSYM still
+    # carries the symbol table, which is what symbolication needs.
+    dsymutil "$f" -o "$syms/$(basename "$f").dSYM" 2>/dev/null
+    case "$f" in
+      *.dylib) strip -x "$f" 2>/dev/null ;;
+      *) strip "$f" 2>/dev/null ;;
+    esac
+  done
+fi
+# The daemon keeps a signature of its own (ad hoc here; build-release.sh
+# signs it with the release identity).
+codesign -s - -f -i com.trycua.cua-env-driver "$app/Contents/MacOS/cua-spacesd"
+
 if [ -x "$cli" ]; then
-  cp "$cli" "$app/Contents/MacOS/cua"
   codesign -s - -f -i com.trycua.cua "$app/Contents/MacOS/cua"
 else
   echo "note: no cua CLI at $cli (cargo build --release -p cua-spaces-cli); the app will not install one" >&2
@@ -143,7 +185,7 @@ fi
 # only fail on the other kind of Mac).
 if [ -n "$archs" ]; then
   for f in "$app/Contents/MacOS/CuaSpacesMac" "$app/Contents/Frameworks/libcua_sdk.dylib" "$app/Contents/MacOS/cua" \
-    "$app/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle"; do
+    "$app/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle" "$app/Contents/MacOS/cua-spacesd"; do
     [ -e "$f" ] || continue
     for arch in $archs; do
       lipo "$f" -verify_arch "$arch" || { echo "$f has no $arch slice ($(lipo -archs "$f"))" >&2; exit 1; }

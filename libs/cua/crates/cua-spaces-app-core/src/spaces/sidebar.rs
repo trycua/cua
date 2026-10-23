@@ -6,69 +6,118 @@
 //! detail (facts, whether it streams, what Delete means).
 
 use crate::host::THIS_MACHINE_ID;
+use crate::message::Msg;
 use crate::model::{
     PowerControl, Space, SpaceProvider, SpaceStatus, arch_label, emulation_warning, normalize_arch,
 };
 use serde::{Deserialize, Serialize};
 
-/// Section titles, in order.
-pub const SECTION_ORDER: [&str; 4] = ["Cua Cloud", "This Mac", "Connected", "My computers"];
+/// Section title codes, in order: "Cua Cloud", "This Mac", "Connected",
+/// "My computers".
+pub const SECTION_ORDER: [&str; 4] = [
+    "spaces.sidebar.section.cloud",
+    "spaces.sidebar.section.this_mac",
+    "spaces.sidebar.section.connected",
+    "spaces.sidebar.section.my_computers",
+];
 
 fn section_of(p: Option<SpaceProvider>) -> &'static str {
     match p.unwrap_or(SpaceProvider::Cloud) {
-        SpaceProvider::Cloud => "Cua Cloud",
-        SpaceProvider::Local => "This Mac",
-        SpaceProvider::Direct => "Connected",
-        SpaceProvider::Relay => "My computers",
+        SpaceProvider::Cloud => SECTION_ORDER[0],
+        SpaceProvider::Local => SECTION_ORDER[1],
+        SpaceProvider::Direct => SECTION_ORDER[2],
+        SpaceProvider::Relay => SECTION_ORDER[3],
     }
 }
 
-/// The status word for a Space row and its detail.
-pub fn status_text(space: &Space) -> String {
+/// The English of the status and power codes below, for the notch labels
+/// and the detail's facts and toolbar, which still carry text (they move to
+/// codes with their own surfaces). The shells' catalogs hold the same text
+/// under the same keys.
+fn english(m: &Msg) -> String {
+    let text = match m.code.as_str() {
+        "spaces.status.failed" => "Failed",
+        "spaces.status.cancelling" => "Cancelling\u{2026}",
+        "spaces.status.this_mac" => "This Mac",
+        "spaces.status.running" => "Running",
+        "spaces.status.local" => "Local",
+        "spaces.status.approval" => "Needs approval",
+        "spaces.status.suspended" => "Suspended",
+        "spaces.status.starting" => "Starting",
+        "spaces.status.deleting" => "Deleting\u{2026}",
+        "spaces.status.stopped" => "Stopped",
+        "spaces.status.stopped_reason" => {
+            return format!(
+                "Stopped: {}",
+                m.vars.get("reason").map_or("", String::as_str)
+            );
+        }
+        "spaces.status.suspending" => "Suspending\u{2026}",
+        "spaces.status.resuming" => "Resuming\u{2026}",
+        "spaces.status.turning_off" => "Turning off\u{2026}",
+        "spaces.status.turning_on" => "Turning on\u{2026}",
+        "spaces.power.suspend" => "Suspend",
+        "spaces.power.resume" => "Resume",
+        "spaces.power.turn_off" => "Turn off",
+        "spaces.power.turn_on" => "Turn on",
+        other => other,
+    };
+    text.into()
+}
+
+fn status_code(status: SpaceStatus) -> &'static str {
+    match status {
+        SpaceStatus::Local => "spaces.status.local",
+        SpaceStatus::Running => "spaces.status.running",
+        SpaceStatus::Approval => "spaces.status.approval",
+        SpaceStatus::Suspended => "spaces.status.suspended",
+        SpaceStatus::Provisioning => "spaces.status.starting",
+        SpaceStatus::Deleting => "spaces.status.deleting",
+    }
+}
+
+/// The status word for a Space row (`spaces.status.*`).
+pub fn status_msg(space: &Space) -> Msg {
     if space.progress.as_ref().is_some_and(|p| p.error.is_some()) {
-        return "Failed".into();
+        return Msg::new("spaces.status.failed");
     }
     if space.progress.as_ref().is_some_and(|p| p.cancelling) {
-        return "Cancelling\u{2026}".into();
+        return Msg::new("spaces.status.cancelling");
     }
     // This machine is always usable here; its dot says whether it is
     // shared for access, its detail line says how.
     if space.id == THIS_MACHINE_ID {
-        return "This Mac".into();
+        return Msg::new("spaces.status.this_mac");
     }
     if space.status != SpaceStatus::Deleting
         && let Some(power) = &space.power
     {
         if let Some(on) = power.turning_on {
-            return power_verb(power.control, on).into();
+            return power_verb(power.control, on);
         }
         if power.off && space.status == SpaceStatus::Suspended {
-            return super::off_text(power);
+            return super::off_msg(power);
         }
     }
-    match space.status {
-        SpaceStatus::Running | SpaceStatus::Local => {
-            if space.id == THIS_MACHINE_ID {
-                "This Mac".into()
-            } else {
-                "Running".into()
-            }
-        }
-        s => s.label().into(),
-    }
+    Msg::new(status_code(space.status))
+}
+
+/// [`status_msg`] as English, for the surfaces that still carry text.
+pub fn status_text(space: &Space) -> String {
+    english(&status_msg(space))
 }
 
 /// The power button's SF Symbol.
 pub const POWER_SYMBOL: &str = "power";
 
 /// "Suspending…", "Resuming…", "Turning off…", "Turning on…".
-pub fn power_verb(control: PowerControl, on: bool) -> &'static str {
-    match (control, on) {
-        (PowerControl::Suspend, false) => "Suspending\u{2026}",
-        (PowerControl::Suspend, true) => "Resuming\u{2026}",
-        (PowerControl::Stop, false) => "Turning off\u{2026}",
-        (PowerControl::Stop, true) => "Turning on\u{2026}",
-    }
+pub fn power_verb(control: PowerControl, on: bool) -> Msg {
+    Msg::new(match (control, on) {
+        (PowerControl::Suspend, false) => "spaces.status.suspending",
+        (PowerControl::Suspend, true) => "spaces.status.resuming",
+        (PowerControl::Stop, false) => "spaces.status.turning_off",
+        (PowerControl::Stop, true) => "spaces.status.turning_on",
+    })
 }
 
 /// The power button next to Delete, on every Space row and in the Space's
@@ -79,8 +128,9 @@ pub struct PowerButton {
     /// SF Symbol ([`POWER_SYMBOL`]).
     pub symbol: String,
     /// Tooltip and accessibility label: "Suspend", "Resume", "Turn off" or
-    /// "Turn on"; while it runs, "Suspending…" and the like.
-    pub help: String,
+    /// "Turn on" (`spaces.power.*`); while it runs, "Suspending…" and the
+    /// like (`spaces.status.*`).
+    pub help: Msg,
     /// A press turns it on (else off): the shell's SDK call.
     pub turn_on: bool,
     /// It can be pressed (not while an action runs).
@@ -104,16 +154,16 @@ pub fn power_button(space: &Space) -> Option<PowerButton> {
     let help = if busy {
         power_verb(power.control, turn_on)
     } else {
-        match (power.control, turn_on) {
-            (PowerControl::Suspend, false) => "Suspend",
-            (PowerControl::Suspend, true) => "Resume",
-            (PowerControl::Stop, false) => "Turn off",
-            (PowerControl::Stop, true) => "Turn on",
-        }
+        Msg::new(match (power.control, turn_on) {
+            (PowerControl::Suspend, false) => "spaces.power.suspend",
+            (PowerControl::Suspend, true) => "spaces.power.resume",
+            (PowerControl::Stop, false) => "spaces.power.turn_off",
+            (PowerControl::Stop, true) => "spaces.power.turn_on",
+        })
     };
     Some(PowerButton {
         symbol: POWER_SYMBOL.into(),
-        help: help.into(),
+        help,
         turn_on,
         enabled: !busy,
         busy,
@@ -174,7 +224,7 @@ pub struct SidebarRow {
     /// Status (the dot).
     pub status: SpaceStatus,
     /// Status word (the dot's accessibility label).
-    pub status_text: String,
+    pub status_text: Msg,
     /// Tooltip.
     pub detail: String,
     /// Drawn at reduced opacity.
@@ -203,8 +253,9 @@ pub struct SidebarRow {
 /// A titled group of rows.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SidebarSection {
-    /// "Cua Cloud", "This Mac", "Connected", "My machines".
-    pub title: String,
+    /// "Cua Cloud", "This Mac", "Connected", "My computers"
+    /// (`spaces.sidebar.section.*`).
+    pub title: Msg,
     /// Rows.
     pub rows: Vec<SidebarRow>,
 }
@@ -219,8 +270,9 @@ pub struct SidebarView {
     pub sections: Vec<SidebarSection>,
     /// The effective selection (falls back to the first Space).
     pub selected_id: Option<String>,
-    /// "No matches" / "No Spaces yet" when nothing is listed.
-    pub empty_text: Option<String>,
+    /// "No matches" / "No Spaces yet" when nothing is listed
+    /// (`spaces.sidebar.*`).
+    pub empty_text: Option<Msg>,
 }
 
 fn row(space: &Space, selected: Option<&str>) -> SidebarRow {
@@ -229,7 +281,7 @@ fn row(space: &Space, selected: Option<&str>) -> SidebarRow {
         name: space.name.clone(),
         os_icon: crate::notch::os_icon(space.os, space.os_name.as_deref()).into(),
         status: space.status,
-        status_text: status_text(space),
+        status_text: status_msg(space),
         detail: space.detail.clone(),
         dim: space.id != THIS_MACHINE_ID && !space.status.is_live(),
         selected: selected == Some(space.id.as_str()),
@@ -333,17 +385,17 @@ pub fn sidebar(spaces: &[Space], query: &str, selected_id: &str) -> SidebarView 
                 sel,
             );
             (!rows.is_empty()).then(|| SidebarSection {
-                title: (*title).to_string(),
+                title: Msg::new(title),
                 rows,
             })
         })
         .collect();
     let empty_text = sections.is_empty().then(|| {
-        if query.trim().is_empty() {
-            "No Spaces yet".to_string()
+        Msg::new(if query.trim().is_empty() {
+            "spaces.sidebar.empty"
         } else {
-            "No matches".to_string()
-        }
+            "spaces.sidebar.no_matches"
+        })
     });
     SidebarView {
         this_machine,
@@ -520,6 +572,17 @@ pub fn desktop_note(space: &Space) -> Option<String> {
     } else {
         format!("{name} isn\u{2019}t sharing its desktop or Spaces.")
     })
+}
+
+/// The line in place of this machine's own desktop on its page: it is
+/// the screen in front of you, so it is never streamed here, and it is
+/// seen from your other devices.
+pub fn host_desktop_note(os: crate::model::SpaceOs) -> String {
+    format!(
+        "This is {}\u{2019}s own screen, so it isn\u{2019}t shown here. \
+         Your other devices see and control it while Share this desktop is on.",
+        os.this_machine_lower()
+    )
 }
 
 /// The roster without this machine's own relay entry
@@ -945,6 +1008,10 @@ pub fn detail_live(
         _ => status_text(space),
     };
     let preview_text = match (creating, &failed) {
+        // This machine's own screen is never streamed here: a stream of
+        // the screen you are looking at only mirrors itself. Its page says
+        // so instead of waiting for a desktop that never comes.
+        _ if is_host => host_desktop_note(space.os),
         _ if deleting => status_text(space),
         (_, Some(e)) => e.clone(),
         (Some(p), None) => p.label.clone(),
@@ -1018,9 +1085,9 @@ pub fn detail_live(
         if let Some(b) = power_button(space) {
             actions.push(DetailAction {
                 id: DetailActionId::Power,
-                label: b.help.clone(),
+                label: english(&b.help),
                 symbol: Some(b.symbol),
-                help: b.help,
+                help: english(&b.help),
                 enabled: b.enabled,
                 destructive: false,
                 primary: false,
@@ -1054,7 +1121,8 @@ pub fn detail_live(
             can_stream,
         ));
     }
-    let show_sections = space.sdk.is_some() && reachable && !deleting;
+    // This machine is not a Space: no windows or agents to ask it for.
+    let show_sections = !is_host && space.sdk.is_some() && reachable && !deleting;
     SpaceDetail {
         id: space.id.clone(),
         title: space.name.clone(),
@@ -1080,7 +1148,7 @@ pub fn detail_live(
         remove_only,
         power_error: power_error(space),
         access: None,
-        desktop_note: None,
+        desktop_note: is_host.then(|| host_desktop_note(space.os)),
         new_space: None,
         actions,
         confirm: delete_confirm(space, remove_only, delete_label),
@@ -1206,6 +1274,95 @@ mod tests {
             effective_selection(&both, "this-mac").map(|s| s.id.as_str()),
             Some("this-mac")
         );
+    }
+
+    /// This machine's own desktop, opened as a Space page (the Computers
+    /// page's "This computer · Desktop" row) while the host shares it: the
+    /// shell's roster marks it reachable, yet nothing ever streams it here.
+    /// Its page says why instead of "Loading the desktop…" forever, and
+    /// asks it for no windows or agents ("window host is not up", "Could
+    /// not read this Space's agents").
+    #[test]
+    fn this_machines_desktop_says_why_instead_of_loading_forever() {
+        use crate::experiments::Experiments;
+        use crate::host::{HostSummaryInput, this_machine_space};
+        use crate::model::{SpaceOs, SpaceSdkRef};
+        let sharing = HostSummaryInput {
+            configured: true,
+            service_running: true,
+            sharing: true,
+            online: Some(true),
+            mode: Some("relay".into()),
+            ..Default::default()
+        };
+        for os in [SpaceOs::Macos, SpaceOs::Windows, SpaceOs::Linux] {
+            let mut host = this_machine_space(Some(&sharing), 0, os);
+            host.sdk = Some(SpaceSdkRef {
+                features: vec![],
+                spacesd_version: String::new(),
+                reachable: true,
+                error: None,
+            });
+            for d in [
+                detail(&host),
+                detail_for(&host, None, None, &Experiments::default(), None),
+            ] {
+                assert!(d.is_host);
+                assert!(!d.can_stream);
+                assert!(!d.show_sections, "no Stream or Agents for {os:?}");
+                assert!(d.sections.is_empty());
+                assert_eq!(d.preview_text, host_desktop_note(os));
+                assert_eq!(d.desktop_note.as_deref(), Some(d.preview_text.as_str()));
+                assert!(d.preview_text.contains(os.this_machine_lower()));
+            }
+        }
+    }
+
+    /// Drift guard: "Loading the desktop…" is a wait for a stream, so it
+    /// only ever shows where a stream can open. A page that cannot stream
+    /// says why (or what it waits for) in its own words.
+    #[test]
+    fn loading_the_desktop_only_shows_where_a_stream_can_open() {
+        use crate::host::{HostSummaryInput, this_machine_space};
+        use crate::model::{SpaceOs, SpaceSdkRef, SpaceStatus};
+        let sdk = |reachable| SpaceSdkRef {
+            features: vec![],
+            spacesd_version: String::new(),
+            reachable,
+            error: None,
+        };
+        let mut spaces = vec![];
+        for status in [None, Some(HostSummaryInput::default())] {
+            let mut host = this_machine_space(status.as_ref(), 0, SpaceOs::Macos);
+            spaces.push(host.clone());
+            host.sdk = Some(sdk(true));
+            spaces.push(host);
+        }
+        let base = super::super::row_to_space(&local_row("local:a", None, None, None), 0);
+        for st in [
+            SpaceStatus::Running,
+            SpaceStatus::Local,
+            SpaceStatus::Suspended,
+            SpaceStatus::Provisioning,
+            SpaceStatus::Deleting,
+        ] {
+            for reachable in [true, false] {
+                let mut s = base.clone();
+                s.status = st;
+                s.sdk = Some(sdk(reachable));
+                spaces.push(s);
+            }
+        }
+        for s in &spaces {
+            let d = detail(s);
+            if !d.can_stream {
+                assert_ne!(
+                    d.preview_text, "Loading the desktop\u{2026}",
+                    "{} ({:?}) cannot stream but says it is loading",
+                    s.id, s.status
+                );
+            }
+        }
     }
 
     /// Sharing on (the default): Share, between
@@ -1494,15 +1651,19 @@ mod tests {
             let mine = view
                 .sections
                 .iter()
-                .find(|s| s.title == "My computers")
+                .find(|s| s.title.code == "spaces.sidebar.section.my_computers")
                 .unwrap_or_else(|| panic!("no My computers for {features:?} {error:?}: {view:?}"));
             assert_eq!(
                 mine.rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
                 [other.as_str()],
                 "{features:?} {error:?}"
             );
-            assert!(view.sections.iter().any(|s| s.title == "This Mac"
-                && s.rows.iter().any(|r| r.id == "local:space-753034eaaf")));
+            assert!(
+                view.sections
+                    .iter()
+                    .any(|s| s.title.code == "spaces.sidebar.section.this_mac"
+                        && s.rows.iter().any(|r| r.id == "local:space-753034eaaf"))
+            );
         }
         // Desktop not shared but providing Spaces: its detail says so, with
         // Spaces still offered (not hidden as "shares nothing").
@@ -1754,7 +1915,10 @@ mod tests {
         assert!(d.actions.iter().all(|a| !a.enabled));
         let sb = sidebar(std::slice::from_ref(&space), "", "");
         let r = &sb.sections[0].rows[0];
-        assert_eq!((r.status_text.as_str(), r.dim), ("Deleting\u{2026}", true));
+        assert_eq!(
+            (r.status_text.code.as_str(), r.dim),
+            ("spaces.status.deleting", true)
+        );
         assert_eq!((r.progress, r.trailing.as_deref()), (None, None));
     }
 
@@ -1785,7 +1949,7 @@ mod tests {
         let mine = v
             .sections
             .iter()
-            .find(|s| s.title == "My computers")
+            .find(|s| s.title.code == "spaces.sidebar.section.my_computers")
             .unwrap();
         let rows: Vec<(&str, bool)> = mine
             .rows
@@ -1844,7 +2008,7 @@ mod tests {
     }
 
     fn help(s: &Space) -> Option<(String, bool, bool)> {
-        power_button(s).map(|b| (b.help, b.turn_on, b.enabled))
+        power_button(s).map(|b| (english(&b.help), b.turn_on, b.enabled))
     }
 
     #[test]
@@ -1990,10 +2154,10 @@ mod tests {
         };
         let b = row(&st).power.unwrap();
         assert_eq!(
-            (b.help.as_str(), b.busy, b.enabled),
+            (english(&b.help).as_str(), b.busy, b.enabled),
             ("Suspending\u{2026}", true, false)
         );
-        assert_eq!(row(&st).status_text, "Suspending\u{2026}");
+        assert_eq!(row(&st).status_text.code, "spaces.status.suspending");
         // A second press, or one on a Space being deleted, does nothing.
         assert_eq!(reduce(&st, &start(true)), st);
         let deleting = reduce(

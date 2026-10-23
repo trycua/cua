@@ -30,7 +30,7 @@
  */
 
 import type { MachineAccessNotice } from "./contracts/devices";
-import type { MachinePageRow } from "./contracts/host";
+import type { MachinePageRow, MachinesView } from "./contracts/host";
 import { AGENT_DETAIL_WEBKIT_METHODS } from "./ops/agent-detail";
 import { AGENT_KEYS_WEBKIT_METHODS } from "./ops/agent-keys";
 import { KEYVAULT_MANAGE_WEBKIT_METHODS } from "./ops/keyvault-manage";
@@ -68,6 +68,7 @@ export const WEBKIT_METHODS = [
   "agents.resume",
   "agents.setup",
   "agents.configure",
+  "agents.signIn",
   ...AGENT_DETAIL_WEBKIT_METHODS,
   ...AGENT_KEYS_WEBKIT_METHODS,
   ...KEYVAULT_SETUP_WEBKIT_METHODS,
@@ -91,6 +92,8 @@ export const WEBKIT_METHODS = [
   "sharing.list",
   "sharing.share",
   "sharing.unshare",
+  "sharing.removals",
+  "sharing.ackRemovals",
   "volume.overview",
   "volume.storage",
   "volume.storageSet",
@@ -159,6 +162,9 @@ export const WEBKIT_METHODS = [
   "nudges.pending",
   "nudges.answer",
   "resources.get",
+  "machines.rename",
+  "machines.remove",
+  "machines.checkHealth",
   "checklist.get",
   "checklist.send",
 ] as const;
@@ -291,6 +297,9 @@ export interface WkMachines {
   /** The page's rows as the core lists them (`machines::page_rows`, what
    * the SwiftUI Machines page shows); absent from an older host. */
   rows?: MachinePageRow[] | null;
+  /** The Machines page as the core draws it (`machines_view::view`, what
+   * the SwiftUI Machines page shows); absent from an older host. */
+  view?: MachinesView | null;
 }
 
 /** `session.get`, `session.signIn`, `session.signOut`. */
@@ -298,8 +307,8 @@ export interface WkSession {
   identity: string | null;
   signedIn: boolean;
   cloudConfigured: boolean;
-  /** `idle`, `starting`, `{type: "waiting", userCode}`, `{type: "failed", message}`. */
-  signIn: string | { type: string; userCode?: string | null; message?: string };
+  /** `idle`, `starting`, `{type: "waiting", userCode, opened}`, `{type: "failed", reason, message, detail}`. */
+  signIn: string | { type: string; userCode?: string | null; opened?: boolean; reason?: string; message?: string; detail?: string | null };
   /** The page a waiting sign-in finishes on (null otherwise), to show and copy. */
   signInUrl?: string | null;
 }

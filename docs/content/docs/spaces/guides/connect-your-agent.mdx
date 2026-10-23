@@ -20,10 +20,34 @@ desktop and share a Space whenever you ask.
 
 ## Connect from the app
 
-On first run, the first screen offers **Connect Claude Code**, then Codex,
-Hermes, OpenClaw and **Other**. Press the one you use. The app adds Cua to that
-agent's settings and checks that the agent can use it. If the agent was already
-open, close it and open it again.
+On first run, the first screen says **Pick any, or none**. Tick the agents you
+use on this computer (the ones installed here are ticked already; the rest are
+under **More agents**) and press **Continue**. The app adds the Cua skills and
+MCP server to each ticked agent's settings and checks that it can use them. If
+an agent was already open, close it and open it again. Ticking none is fine:
+connect agents later in **Settings, AI agents**.
+
+### Per computer
+
+Everything on this screen belongs to this computer only:
+
+- The Cua skills and MCP server go into each agent's settings on this
+  computer. On another computer, install Cua Spaces there and pick its agents.
+- **Sign-ins and keys** stay on this computer too. Another computer keeps its
+  own.
+
+### Codex and ChatGPT
+
+Codex signs in with your ChatGPT account on its own, with `codex login`. When
+Codex is ticked, the first screen shows **ChatGPT sign-in**: press **Sign in**
+and finish in the browser that opens. Codex keeps the sign-in on this computer,
+and Cua never reads or copies it. On another computer, sign in to Codex there
+(press **Sign in** in its first run, or run `codex login`).
+
+An agent that Cua runs in a Space uses the provider keys saved on the computer
+that hosts the Space: the **OpenAI key** for Codex and the **Anthropic key** for
+Claude Code. Add them on the first screen or in **Settings, Agents**. They stay
+in this computer's Keychain (Credential Manager on Windows).
 
 To connect an agent later, or to remove one, open **Settings, AI agents**:
 
@@ -158,12 +182,12 @@ and the Swift tab is from [Cua Bots](/spaces/examples/cua-bots).
 
 <Tabs items={['TypeScript', 'Rust', 'Swift']}>
   <Tab value="TypeScript">
-    ```ts test="excerpt" id="ts-agent-start" source="samples/openkoalabot-example-ts/src/core/app.ts#ts-agent-start"
+    ```ts test="excerpt" id="ts-agent-start" source="examples/openkoalabot-example-ts/src/core/app.ts#ts-agent-start"
     const report = await space.agentStart(bot.agent, prompt, false, options)
     const t = new BotThread(bot, report.runId, space)
     ```
 
-    ```ts test="excerpt" id="ts-agent-message" source="samples/openkoalabot-example-ts/src/core/app.ts#ts-agent-message"
+    ```ts test="excerpt" id="ts-agent-message" source="examples/openkoalabot-example-ts/src/core/app.ts#ts-agent-message"
     const r = await this.space.agentMessage(this.runId, message, false)
     if (!r.ok) {
       this.fold.note(this.turns.length, `Refused: ${r.reason}`)
@@ -172,7 +196,7 @@ and the Swift tab is from [Cua Bots](/spaces/examples/cua-bots).
     ```
   </Tab>
   <Tab value="Rust">
-    ```rust test="excerpt" id="rs-agent" source="samples/openkoalabot-example-tauri/src-tauri/core/src/thread.rs#rs-agent"
+    ```rust test="excerpt" id="rs-agent" source="examples/openkoalabot-example-tauri/src-tauri/core/src/thread.rs#rs-agent"
     let r = self
         .agents
         .start(&self.agent, text, self.options.clone())
@@ -180,7 +204,7 @@ and the Swift tab is from [Cua Bots](/spaces/examples/cua-bots).
         .map_err(agents_err)?;
     ```
 
-    ```rust test="excerpt" id="rs-agent-message" source="samples/openkoalabot-example-tauri/src-tauri/core/src/thread.rs#rs-agent-message"
+    ```rust test="excerpt" id="rs-agent-message" source="examples/openkoalabot-example-tauri/src-tauri/core/src/thread.rs#rs-agent-message"
     let r = self
         .agents
         .send(run, text, vec![])
@@ -192,7 +216,7 @@ and the Swift tab is from [Cua Bots](/spaces/examples/cua-bots).
     ```
   </Tab>
   <Tab value="Swift">
-    ```swift test="excerpt" id="sw-agent-start" source="samples/cua-bots-macos/Sources/CuaBotsCua/CuaEngine.swift#sw-agent-start"
+    ```swift test="excerpt" id="sw-agent-start" source="examples/cua-bots-macos/Sources/CuaBotsCua/CuaEngine.swift#sw-agent-start"
     let options = SpaceAgentOptions(
         envFromHost: endpoint?.keyVariables ?? Self.defaultKeyVariables(bot.harness),
         repo: nil, branch: nil, cwd: home, model: endpoint?.model, baseUrl: endpoint?.baseURL,
@@ -201,7 +225,7 @@ and the Swift tab is from [Cua Bots](/spaces/examples/cua-bots).
                                             options: options)
     ```
 
-    ```swift test="excerpt" id="sw-agent-message" source="samples/cua-bots-macos/Sources/CuaBotsCua/CuaEngine.swift#sw-agent-message"
+    ```swift test="excerpt" id="sw-agent-message" source="examples/cua-bots-macos/Sources/CuaBotsCua/CuaEngine.swift#sw-agent-message"
     let report = try await space(bot).agentMessage(runId: run, text: text, force: false)
     if !report.ok { throw EngineError.refused(report.reason) }
     ```

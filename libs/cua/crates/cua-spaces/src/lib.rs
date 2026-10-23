@@ -68,7 +68,6 @@ pub mod cloud;
 pub mod creating;
 pub mod error;
 pub mod exec;
-pub mod fleet_runtime;
 pub mod groups;
 pub mod host_spaces;
 pub mod id;
@@ -126,7 +125,7 @@ pub use space::{SPACESD_FEATURE, ServiceSource, Space, SpaceInfo, SpacePower, Sp
 pub use spaces::{
     CreatePhase, CreateProgress, DEFAULT_PROBE_TIMEOUT, PendingSpace, ProgressSink,
     RecoveredCreate, RecoveryOutcome, SpaceCreate, SpaceCreated, Spaces, SpacesBuilder,
-    expects_spacesd, is_generated_name, pool_key, sanitize_label, sized_pool_key,
+    expects_spacesd, is_generated_name, sanitize_label,
 };
 
 /// The Spaces tool contract (manifest, input types).

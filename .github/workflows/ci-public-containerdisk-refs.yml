@@ -5,7 +5,6 @@ on:
     paths:
       - ".github/workflows/ci-public-containerdisk-refs.yml"
       - "docs/content/docs/how-to-guides/sandbox/**"
-      - "libs/fleet/backend/auth/**"
       - "tests/test_public_containerdisk_refs.py"
 
 permissions:

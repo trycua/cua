@@ -59,6 +59,7 @@ import { STREAM_OPERATIONS } from "../ops/stream";
 import { RELAY_USAGE_OPERATIONS } from "../ops/relay-usage";
 import { NUDGES_OPERATIONS } from "../ops/nudges";
 import { RESOURCES_OPERATIONS } from "../ops/resources";
+import { MACHINES_OPERATIONS } from "../ops/machines";
 import { CHECKLIST_OPERATIONS } from "../ops/checklist";
 import { PRESENCE_OPERATIONS } from "../ops/presence";
 import { RUNTIME_FIX_OPERATIONS } from "../ops/runtime-fix";
@@ -87,6 +88,7 @@ export const TAURI_UNSUPPORTED: readonly OpName[] = [
   "settings.choose",
   "agents.events",
   "agents.setupDriver",
+  "agents.signIn",
   "host.joinWithCode",
   ...TELEPORT_TAURI_UNSUPPORTED,
   ...KEYVAULT_MANAGE_TAURI_UNSUPPORTED,
@@ -96,6 +98,7 @@ export const TAURI_UNSUPPORTED: readonly OpName[] = [
   ...RELAY_USAGE_OPERATIONS,
   ...NUDGES_OPERATIONS,
   ...RESOURCES_OPERATIONS,
+  ...MACHINES_OPERATIONS,
   ...CHECKLIST_OPERATIONS,
   ...PRESENCE_OPERATIONS,
   ...RUNTIME_FIX_OPERATIONS,

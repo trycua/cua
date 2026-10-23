@@ -1,13 +1,12 @@
 [package]
 name = "cua-sdk"
-description = "The cua SDK: the MIT #[uniffi::export] crate. One Cua object (embedded or connected to `cua daemon`) exposing env, fleet, sandboxes, local and spaces modules to Python, TypeScript, Swift and Kotlin."
+description = "The cua SDK: the MIT #[uniffi::export] crate. One Cua object (embedded or connected to `cua daemon`) exposing env, sandboxes, local and spaces modules to Python, TypeScript, Swift and Kotlin."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-publish = false
 
 [lib]
 name = "cua_sdk"
@@ -38,17 +37,16 @@ contrib-daytona = ["cua-daemon/contrib-daytona"]
 contrib-modal = ["cua-daemon/contrib-modal"]
 # The browser API on the host (UBRN reads its metadata to generate the
 # browser bindings); wasm32 builds always use it.
-web = ["dep:tonic-web-wasm-client", "dep:cyclops-sdk"]
+web = ["dep:tonic-web-wasm-client"]
 
 [dependencies]
 # Contract types (both targets). The server half never builds for wasm32.
-cua-proto = { path = "../cua-proto", default-features = false, features = ["client", "serde"] }
+cua-proto = { path = "../cua-proto", version = "0.7.0", default-features = false, features = ["client", "serde"] } # x-release-please-version
 uniffi.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tonic-web-wasm-client = { version = "0.9", optional = true }
-cyclops-sdk = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # `Cua.agent_setup()`: coding-agent detection, skills and MCP config.
@@ -58,7 +56,6 @@ cua-agents.workspace = true
 # `Cua.auth()`: sign-in and the shared credential store.
 cua-auth.workspace = true
 cua-spacesd-client.workspace = true
-cua-fleet.workspace = true
 # `resolve_image` / `canonical_image`: the one image resolver.
 cua-image.workspace = true
 # Anonymous usage telemetry.
@@ -68,7 +65,8 @@ cua-sandbox-core.workspace = true
 async-trait.workspace = true
 cua-host = { workspace = true, optional = true }
 cua-daemon = { workspace = true, features = ["client"] }
-cua-spaces = { path = "../cua-spaces", optional = true }
+cua-home.workspace = true
+cua-spaces = { workspace = true, optional = true }
 pbjson-types = { workspace = true, optional = true }
 tokio = { workspace = true }
 tonic = { workspace = true, default-features = false, features = ["codegen"] }
@@ -87,7 +85,7 @@ hex.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 http-body-util.workspace = true
 cua-sandbox-core = { workspace = true, features = ["testing"] }
-cua-spaces = { path = "../cua-spaces" }
+cua-spaces.workspace = true
 cua-host = { workspace = true, features = ["testing"] }
 serde_json.workspace = true
 cua-spacesd-client = { workspace = true, features = ["testing"] }
@@ -98,12 +96,13 @@ tokio = { workspace = true, features = ["test-util"] }
 prost-types.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+# The browser runs one thread: futures need not be `Send`.
+uniffi = { workspace = true, features = ["wasm-unstable-single-threaded"] }
 tonic = { workspace = true, default-features = false, features = ["codegen"] }
 tonic-prost.workspace = true
 tonic-web-wasm-client = "0.9"
 prost.workspace = true
 http.workspace = true
-cyclops-sdk.workspace = true
 
 [dev-dependencies]
 cua-icon-cache.workspace = true

@@ -457,7 +457,14 @@ struct ViewModelTests {
         let model = makeModel(account: account, telemetry: telemetry)
         let first = Task { await model.beginSignIn() }
         try await waitUntil { if case .waiting = model.signIn { true } else { false } }
-        #expect(model.signIn == .waiting(userCode: "ABCD-EFGH"))
+        #expect(model.signIn == .waiting(userCode: "ABCD-EFGH", opened: true))
+        // The sidebar's foot: the spinner line, the code, Open again, Cancel.
+        let waiting = model.signInFooter
+        #expect(waiting.state == .waiting)
+        #expect(waiting.text == "Waiting for your browser\u{2026}")
+        #expect(waiting.code == "ABCD-EFGH")
+        #expect(waiting.reopenLabel == "Open again")
+        #expect(waiting.cancelLabel == "Cancel")
         #expect(model.signInURL?.absoluteString == "https://cua.ai/device")
         model.cancelSignIn()
         #expect(model.signIn == .idle)
@@ -467,13 +474,87 @@ struct ViewModelTests {
         model.signInTimeout = .milliseconds(50)
         let second = Task { await model.beginSignIn() }
         try await waitUntil { if case .failed = model.signIn { true } else { false } }
-        #expect(model.signIn == .failed(message: "The sign-in timed out. Try again."))
+        #expect(model.signIn == .failed(reason: .notConfirmed,
+                                        message: "Sign-in didn't finish. The browser didn't confirm in time.",
+                                        detail: nil))
+        #expect(model.signInFooter.actionLabel == "Try again")
+        #expect(model.signInToast?.title == "Sign-in didn't finish")
         second.cancel()
         let kinds = telemetry.recorded.compactMap { s -> String? in
             if case let .signInFailed(kind) = s { return kind }
             return nil
         }
         #expect(kinds == ["cancelled", "timeout"])
+    }
+
+    /// Every way the account's sign-in fails is shown in the sidebar's
+    /// foot with its reason, Try again and a toast; never a silent stop.
+    @Test func everySignInFailureIsShownWithItsReason() async throws {
+        let cases: [(Error, AppSignInFailure, String)] = [
+            (CuaError.Http(message: "could not reach the sign-in service: error sending request"), .offline, "transport"),
+            (CuaError.Timeout(message: "device authorization expired before it was completed"), .notConfirmed, "timeout"),
+            (CuaError.Unauthenticated(message: "sign-in was declined in the browser: access_denied"), .declined, "permission_denied"),
+            (CuaError.Unauthenticated(message: "Code not valid"), .codeRejected, "unauthenticated"),
+            (CuaError.Http(message: "the sign-in service answered HTTP 503: down"), .serviceUnavailable, "http"),
+            (CuaError.Internal(message: "credential store: User interaction is not allowed."), .couldNotSave, "internal"),
+        ]
+        for (error, reason, kind) in cases {
+            for whileStarting in [true, false] {
+                let telemetry = FixtureTelemetry()
+                let account = FailingAccount(error: error, whileStarting: whileStarting)
+                let model = makeModel(account: account, telemetry: telemetry)
+                await model.beginSignIn()
+                guard case let .failed(got, message, detail) = model.signIn else {
+                    Issue.record("\(error): \(model.signIn)")
+                    continue
+                }
+                #expect(got == reason, "\(error)")
+                #expect(message.hasPrefix("Sign-in didn't finish. "))
+                #expect(detail == LiveSpacesBackend.words(error), "the words stay behind Details")
+                let footer = model.signInFooter
+                #expect(footer.state == .failed)
+                #expect(footer.actionLabel == "Try again")
+                #expect(footer.detail == detail)
+                #expect(model.signInToast != nil, "a failure toasts")
+                let kinds = telemetry.recorded.compactMap { s -> String? in
+                    if case let .signInFailed(kind) = s { return kind }
+                    return nil
+                }
+                #expect(kinds == [kind])
+            }
+        }
+    }
+
+    /// Open again or Try again starts a new attempt; when the person then
+    /// confirms the first tab, the app is signed in all the same.
+    @Test func anEarlierTabThatConfirmsStillSignsIn() async throws {
+        let account = TwoTabAccount()
+        let model = makeModel(account: account)
+        let first = Task { await model.beginSignIn() }
+        try await waitUntil { model.signIn == .waiting(userCode: "TAB-1", opened: true) }
+        model.cancelSignIn()
+        let second = Task { await model.beginSignIn() }
+        try await waitUntil { model.signIn == .waiting(userCode: "TAB-2", opened: true) }
+        account.confirm(tab: 1)
+        await first.value
+        #expect(model.identity == "ellie@example.com")
+        #expect(model.signIn == .idle)
+        #expect(model.signInFooter.text == "Signed in as ellie@example.com")
+        // The second attempt's own end is no longer shown.
+        account.fail(tab: 2)
+        await second.value
+        #expect(model.signIn == .idle)
+    }
+
+    /// No browser opened: the foot says to open the page instead of
+    /// waiting on a browser that is not there.
+    @Test func noBrowserSaysToOpenThePage() async throws {
+        let model = makeModel(account: StuckAccount(opened: false))
+        let task = Task { await model.beginSignIn() }
+        try await waitUntil { if case .waiting = model.signIn { true } else { false } }
+        #expect(model.signInFooter.text == "Open the sign-in page to continue.")
+        #expect(model.signInFooter.code == "ABCD-EFGH")
+        task.cancel()
     }
 
     func waitUntil(_ done: @MainActor () -> Bool) async throws {
@@ -575,8 +656,8 @@ struct ViewModelTests {
     @Test func refreshBuildsTheSidebarFromTheCore() async {
         let model = makeModel()
         await model.refresh()
-        let titles = model.sidebar.sections.map(\.title)
-        #expect(titles == ["Cua Cloud", "This Mac", "Connected"])
+        let titles = model.sidebar.sections.map(\.title.code)
+        #expect(titles == ["spaces.sidebar.section.cloud", "spaces.sidebar.section.this_mac", "spaces.sidebar.section.connected"])
         // The container hostname defers to the name in the id.
         #expect(model.spaces.contains { $0.name == "aurora" })
         // An unreachable Space is dimmed and cannot stream.
@@ -591,7 +672,7 @@ struct ViewModelTests {
         model.query = "auro"
         #expect(model.sidebar.sections.flatMap(\.rows).map(\.name) == ["aurora"])
         model.query = "zzz"
-        #expect(model.sidebar.emptyText == "No matches")
+        #expect(model.sidebar.emptyText?.code == "spaces.sidebar.no_matches")
     }
 
     @Test func wizardWalksToALocalPlanAndCreates() async {
@@ -836,7 +917,7 @@ struct ViewModelTests {
         }
         let failed = try #require(row)
         #expect(failed.trailing == "no local runtime found" && failed.progress == nil)
-        #expect(failed.statusText == "Failed" && failed.dim)
+        #expect(failed.statusText.code == "spaces.status.failed" && failed.dim)
         #expect(model.banner == nil, "the error is on the row, not a banner")
         let space = try #require(model.spaces.first { $0.id == failed.id })
         let detail = model.detail(space)
@@ -925,7 +1006,7 @@ struct ViewModelTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(!model.spaces.contains { $0.id == id })
-        #expect(!model.sidebar.sections.flatMap(\.rows).contains { $0.statusText == "Failed" })
+        #expect(!model.sidebar.sections.flatMap(\.rows).contains { $0.statusText.code == "spaces.status.failed" })
         #expect(backend.cancelRequests.isEmpty)
     }
 
@@ -989,7 +1070,7 @@ struct ViewModelTests {
         model.delete(space)
         // Synchronously, before the SDK has done anything.
         let row = try #require(model.sidebar.sections.flatMap(\.rows).first { $0.id == space.id })
-        #expect(row.status == .deleting && row.statusText == "Deleting\u{2026}" && row.dim)
+        #expect(row.status == .deleting && row.statusText.code == "spaces.status.deleting" && row.dim)
         #expect(model.notch.view.activity?.kind == .deleting)
         let deleting = try #require(model.spaces.first { $0.id == space.id })
         let detail = model.detail(deleting)
@@ -1076,7 +1157,7 @@ struct ViewModelTests {
         let row = { (id: String) in model.sidebar.sections.flatMap(\.rows).first { $0.id == id } }
         #expect(row("cloud:builder")?.power == nil, "a cloud Space cannot be turned off")
         let aurora = try #require(model.spaces.first { $0.id == "local:aurora" })
-        #expect(row(aurora.id)?.power?.help == "Suspend")
+        #expect(row(aurora.id)?.power?.help.code == "spaces.power.suspend")
         // Share before power (Sharing is on by default); none with Sharing turned off.
         #expect(model.detail(aurora).actions.map(\.id) == [.teleport, .pip, .share, .power, .delete, .open])
         model.chooseExperiment(row: "experiment:sharing", option: "off")
@@ -1086,27 +1167,27 @@ struct ViewModelTests {
         model.setPower(aurora, on: false)
         // Synchronously, before the SDK has done anything.
         let busy = try #require(row(aurora.id)?.power)
-        #expect(busy.busy && !busy.enabled && busy.help == "Suspending\u{2026}")
-        #expect(row(aurora.id)?.statusText == "Suspending\u{2026}")
+        #expect(busy.busy && !busy.enabled && busy.help.code == "spaces.status.suspending")
+        #expect(row(aurora.id)?.statusText.code == "spaces.status.suspending")
         let auroraNow = try #require(model.spaces.first { $0.id == aurora.id })
         let action = try #require(model.detail(auroraNow).actions.first { $0.id == .power })
         #expect(action.busy && !action.enabled)
         model.setPower(aurora, on: false)
         backend.releasePower()
-        for _ in 0..<200 where row(aurora.id)?.power?.help != "Resume" {
+        for _ in 0..<200 where row(aurora.id)?.power?.help.code != "spaces.power.resume" {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(backend.powerRequests.map(\.id) == [aurora.id], "one press")
-        #expect(row(aurora.id)?.statusText == "Stopped")
+        #expect(row(aurora.id)?.statusText.code == "spaces.status.stopped")
         #expect(model.creates.powering.isEmpty, "settled once the registry showed it off")
 
         let off = try #require(model.spaces.first { $0.id == aurora.id })
         model.setPower(off, on: true)
-        for _ in 0..<200 where row(aurora.id)?.power?.help != "Suspend" {
+        for _ in 0..<200 where row(aurora.id)?.power?.help.code != "spaces.power.suspend" {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(backend.powerRequests.map(\.on) == [false, true])
-        #expect(row(aurora.id)?.statusText == "Running")
+        #expect(row(aurora.id)?.statusText.code == "spaces.status.running")
     }
 
     /// A failed power action shows why on the row and the detail, and the
@@ -1334,6 +1415,40 @@ struct ViewModelTests {
         #expect(notch.view.phase == .closed)
     }
 
+    /// Sharing is for teams (CUA-1883): the owner sees one line, once, naming
+    /// who can no longer open a shared computer, and closing it acknowledges it.
+    @Test func ownerSeesTheRemovalNoteOnceAndItIsAcknowledged() async throws {
+        let model = makeModel(account: FixtureAccount(identity: "you@example.com"))
+        let teams = FixtureTeams(removals: [
+            AppShareRemovalInput(who: "alex@x.test", machineName: "Design"),
+            AppShareRemovalInput(who: "sam@x.test", machineName: "Design"),
+        ])
+        model.teamsReader = teams
+        await model.reloadShareRemovals()
+        let note = try #require(model.shareRemovalNote)
+        #expect(note.text == "alex@x.test and sam@x.test can no longer open \u{201c}Design\u{201d}, because they're not in your team.")
+        #expect(note.action.label == "Invite to your team")
+        model.dismissShareRemovalNote()
+        #expect(model.shareRemovalNote == nil)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(teams.removals.isEmpty, "acknowledged, so it does not come back")
+        await model.reloadShareRemovals()
+        #expect(model.shareRemovalNote == nil)
+    }
+
+    /// The Share sheet explains and links to Teams for an account in no team;
+    /// it stays open in a team, and when it cannot tell (the server decides).
+    @Test func shareSheetIsClosedOnlyWhenKnownToBeInNoTeam() {
+        let model = ShareModel(backend: FixtureSpacesBackend(), spaceId: "local:studio", spaceName: "studio",
+                               signedIn: true, shareable: true)
+        #expect(model.gate == nil, "unknown: the server decides")
+        model.hasTeam = true
+        #expect(model.gate == nil)
+        model.hasTeam = false
+        #expect(model.gate?.reason == "Sharing is for teams. Start a team to share this Space.")
+        #expect(model.gate?.action.label == "See Teams")
+    }
+
     /// Settings hides Cua Cloud billing and shows the real Teams section
     /// (the Spaces API: name with alias fallback, members, pending invites
     /// marked "(Invited)", the account app for invites and billing); a cloud
@@ -1347,7 +1462,7 @@ struct ViewModelTests {
             AppTeamInput(id: "o1", alias: "acme", name: "", role: "owner", plan: "teams", seats: 3,
                          members: [AppTeamPersonInput(email: "you@example.com", role: "owner"),
                                    AppTeamPersonInput(email: "grace@example.com", role: "member")],
-                         invites: ["linus@example.com"]),
+                         invites: ["linus@example.com"], paymentFailed: false, paymentFailedUntil: nil),
         ])
         await model.loadSettings()
         let rows = model.settingsPage.sections.flatMap(\.rows)
@@ -1378,12 +1493,57 @@ struct ViewModelTests {
 
 /// An account whose browser sign-in never finishes.
 final class StuckAccount: AccountRunning, @unchecked Sendable {
+    let opened: Bool
+    init(opened: Bool = true) { self.opened = opened }
     func identity() -> String? { nil }
     func beginSignIn() async throws -> SignInAttempt {
-        SignInAttempt(userCode: "ABCD-EFGH", url: URL(string: "https://cua.ai/device")) {
+        SignInAttempt(userCode: "ABCD-EFGH", url: URL(string: "https://cua.ai/device"), opened: opened) {
             try await Task.sleep(for: .seconds(3600))
             return nil
         }
+    }
+    func signOut() async throws {}
+}
+
+/// An account whose sign-in fails with `error`, while starting or while
+/// waiting for the browser.
+final class FailingAccount: AccountRunning, @unchecked Sendable {
+    let error: Error
+    let whileStarting: Bool
+    init(error: Error, whileStarting: Bool) {
+        self.error = error
+        self.whileStarting = whileStarting
+    }
+    func identity() -> String? { nil }
+    func beginSignIn() async throws -> SignInAttempt {
+        if whileStarting { throw error }
+        let error = error
+        return SignInAttempt(userCode: "ABCD-EFGH", url: URL(string: "https://cua.ai/device")) { throw error }
+    }
+    func signOut() async throws {}
+}
+
+/// An account with two browser tabs (two attempts) the test confirms or
+/// fails by hand.
+final class TwoTabAccount: AccountRunning, @unchecked Sendable {
+    private let lock = NSLock()
+    private var tabs: [Int: CheckedContinuation<String?, Error>] = [:]
+    private var started = 0
+    private var signedIn: String?
+
+    func identity() -> String? { lock.withLock { signedIn } }
+    func beginSignIn() async throws -> SignInAttempt {
+        let tab = lock.withLock { started += 1; return started }
+        return SignInAttempt(userCode: "TAB-\(tab)", url: URL(string: "https://cua.ai/device")) { [self] in
+            try await withCheckedThrowingContinuation { c in lock.withLock { tabs[tab] = c } }
+        }
+    }
+    func confirm(tab: Int) {
+        let c = lock.withLock { signedIn = "ellie@example.com"; return tabs.removeValue(forKey: tab) }
+        c?.resume(returning: "ellie@example.com")
+    }
+    func fail(tab: Int) {
+        lock.withLock { tabs.removeValue(forKey: tab) }?.resume(throwing: CuaError.Timeout(message: "expired"))
     }
     func signOut() async throws {}
 }

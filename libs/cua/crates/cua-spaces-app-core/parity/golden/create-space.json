@@ -2271,8 +2271,8 @@
       "frame": {
         "emptyText": null,
         "sections": [
-          "This Mac: demo (selected)",
-          "Connected: 10.0.0.5:3211 (dim)"
+          "spaces.sidebar.section.this_mac: demo (selected)",
+          "spaces.sidebar.section.connected: 10.0.0.5:3211 (dim)"
         ],
         "selectedId": "local:demo",
         "thisMachine": null
@@ -2283,7 +2283,7 @@
       "frame": {
         "emptyText": null,
         "sections": [
-          "This Mac: demo (selected)"
+          "spaces.sidebar.section.this_mac: demo (selected)"
         ],
         "selectedId": "local:demo",
         "thisMachine": null

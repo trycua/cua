@@ -19,6 +19,7 @@ OUT = ROOT / "crates/cua-spaces-ffi/src/app_core_types.rs"
 
 # (source file, module path, [types]) in FFI order.
 TYPES = [
+    ("message.rs", "message", ["Msg"]),
     ("model.rs", "model", ["SpaceOs", "SpaceStatus", "ThumbnailScene", "SpaceProvider", "SpaceSdkRef", "SpaceProgress", "PowerControl", "SpacePower", "Space", "SpaceRow", "Location", "SpaceKind", "Runtime"]),
     ("spaces/mod.rs", "spaces", ["AmbientDots"]),
     ("spaces/roster.rs", "spaces::roster", ["NoticeKind", "Notice", "RosterState", "RosterAction"]),
@@ -54,18 +55,21 @@ TYPES = [
     ("login_item.rs", "login_item", ["LoginItemStatus", "LoginItemInput", "LoginItemPlan"]),
     ("experiments.rs", "experiments", ["Experiments"]),
     ("settings.rs", "settings", ["SwitcherTheme", "AppSettings", "KeyCombo", "SignInPhase", "TelemetryInput", "SettingsInput", "SettingsRowKind", "SettingsOption", "SettingsRow", "SettingsSection", "SettingsPage"]),
+    ("sign_in.rs", "sign_in", ["SignInFailure", "SignInFooterState", "SignInFooterInput", "SignInToast", "SignInFooter"]),
     ("window.rs", "window", ["ChromeInput", "MainChrome", "MenuItemId", "MenuItem", "MenuInput"]),
     ("host.rs", "host", ["HostSummaryInput", "HostSetupRequest", "HostClient", "HostAccess", "HostPermissionInput", "HostProvidedSpace", "HostSpacesAudit", "HostState", "HostAccount", "HostAccountStep", "HostActionId", "HostSettingChange", "HostToggle", "HostConfirm", "HostAction", "HostAccessRow", "PermissionRow", "HostSetupChoice", "HostPanelView", "HostFormState", "HostFormAction", "HostFormChoice", "HostFormField", "HostFormView"]),
     ("installer.rs", "installer", ["InstallMethod", "CliInstallPlan", "CliInstallRequest"]),
     ("agents.rs", "agents", ["AgentStatus", "SpaceAgentRun", "AgentSetupStatus", "AgentSettingsRow", "AgentSetupOutcomeInput", "AgentSetupSummary"]),
     ("devices.rs", "devices", ["DeviceInput", "MachineInput", "AuditInput", "DevicesInput", "BannerTone", "DeviceAction", "DeviceBanner", "DeviceConfirm", "UnconfirmedMachine", "DeviceRow", "ApprovalPrompt", "ActivityRow", "EnrollmentKind", "MachineAccessNotice", "ThisDevice", "DevicesLabels", "DevicesView", "EnrollMethod", "EnrollPhase", "EnrollState", "EnrollAction", "EnrollOption", "EnrollView", "ApproveSheetState", "ApproveSheetAction", "ApproveRequest", "ApproveSheetView"]),
     ("cloud_connect.rs", "cloud_connect", ["CloudProviderInput", "CloudConnectInput", "CloudCheckInput", "CloudConnectPhase", "CloudConnectState", "CloudConnectAction", "CloudTargetArgs", "CloudConnectRequest", "CloudProviderRow", "CloudField", "CloudCheckRow", "CloudConnectView"]),
-    ("share.rs", "share", ["ShareEntryInput", "ShareInput", "ShareRequest", "ShareSheetState", "ShareSheetAction", "RoleOption", "ShareRowView", "ShareSheetView"]),
+    ("share.rs", "share", ["ShareEntryInput", "ShareInput", "ShareRequest", "ShareSheetState", "ShareSheetAction", "RoleOption", "ShareRowView", "ShareActionView", "ShareSheetView", "ShareGate", "ShareRemovalInput", "ShareRemovalNote"]),
     ("persistent.rs", "persistent", ["PersistentAgentInput", "DriveEntryInput", "FileVersionInput", "OpenFileInput", "RoutineInput", "ComputerGrantInput", "AccessAuditInput", "AgentsInput", "AgentTab", "RoutineScheduleKind", "RoutineForm", "AgentsRequest", "AgentsState", "AgentsAction", "AgentRowView", "LineView", "TabView", "FileView", "AgentDetailView", "AgentsView"]),
     ("drive_page.rs", "drive_page", ["DriveRequestInput", "DriveGrantInput", "DriveDeviceInput", "DriveConflictInput", "DriveSyncInput", "DriveInput", "DriveRequest", "DriveState", "DriveAction", "ConflictView", "DriveView"]),
     ("notifications.rs", "notifications", ["NotificationInput", "SystemNote", "NotificationsPlan", "NotificationsView"]),
     ("telemetry.rs", "telemetry", ["TelemetrySignal"]),
     ("machines.rs", "machines", ["DeviceIn", "MachinesPageInput", "MachinePageRow"]),
+    ("machines_health.rs", "machines_health", ["MachinesViewCheck", "MachinesViewHealth", "MachinesViewIssueAction", "MachinesViewIssue"]),
+    ("machines_view.rs", "machines_view", ["MachinesViewRelay", "MachinesViewAbout", "MachinesViewInput", "MachinesViewToggle", "MachinesViewSpace", "MachinesViewDesktop", "MachinesViewNewSpace", "MachinesViewRename", "MachinesViewRemove", "MachinesViewFact", "MachinesViewMachine", "MachinesViewRemoveAll", "MachinesViewGroup", "MachinesView"]),
     ("checklist.rs", "checklist", ["ChecklistStep", "ChecklistState", "ChecklistAction", "ChecklistSeen", "ChecklistTransition", "ChecklistRow", "ChecklistView"]),
     ("palette.rs", "palette", ["Keybinding", "PaletteEntry"]),
     ("teams.rs", "teams", ["TeamPersonInput", "TeamInput", "TeamsState", "TeamsInput"]),
@@ -159,7 +163,7 @@ def block(src, name):
 
 
 out = [
-    # cua-spaces-ffi is FSL-1.1-MIT (see LICENSING.md and scripts/spdx-headers.py).
+    # cua-spaces-ffi is FSL-1.1-MIT (see legal/LICENSING.md and scripts/spdx-headers.py).
     "// SPDX-License-Identifier: FSL-1.1-MIT",
     "// Copyright (c) 2026 Cua AI, Inc.",
     "",

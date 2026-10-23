@@ -749,6 +749,61 @@ pub fn app_share_view(input: AppShareInput, state: AppShareSheetState) -> AppSha
     core::share::share_view(&input, &state)
 }
 
+/// Why the Share sheet is closed, from whether the account is in a team
+/// that can share (`None`: the host could not say, so the sheet stays open
+/// and the server decides). Sharing is for teams (CUA-1883).
+#[uniffi::export]
+pub fn app_share_gate(has_team: Option<bool>) -> Option<AppShareGate> {
+    core::share::share_gate(has_team)
+}
+
+/// A refused share in plain words (`share_outside_team`,
+/// `sharing_needs_team`); `None` for any other error.
+#[uniffi::export]
+pub fn app_share_error_words(error: String, who: String) -> Option<String> {
+    core::share::share_error_words(&error, &who)
+}
+
+/// The owner's one-line note about people removed from shared computers.
+#[uniffi::export]
+pub fn app_share_removal_note(removals: Vec<AppShareRemovalInput>) -> Option<AppShareRemovalNote> {
+    core::share::share_removal_note(&removals)
+}
+
+/// People removed from the account's shared computers because sharing is
+/// for teams now, until [`app_ack_share_removals`]. Empty on a server that
+/// predates it.
+#[uniffi::export]
+pub async fn app_share_removals(account_token: String) -> Result<Vec<AppShareRemovalInput>> {
+    cua_sdk::support::run(async move {
+        let api = cua_host::spaces_api::SpacesApiClient::current()?;
+        match api.share_removals(&account_token).await {
+            Err(e) if cua_host::spaces_api::is_teams_unavailable(&e) => Ok(vec![]),
+            other => Ok(other?
+                .into_iter()
+                .map(|r| core::share::ShareRemovalInput {
+                    who: r.who,
+                    machine_name: r.machine_name,
+                })
+                .collect()),
+        }
+    })
+    .await
+}
+
+/// The owner has seen the note: it is not shown again.
+#[uniffi::export]
+pub async fn app_ack_share_removals(account_token: String) -> Result<()> {
+    cua_sdk::support::run(async move {
+        let api = cua_host::spaces_api::SpacesApiClient::current()?;
+        match api.ack_share_removals(&account_token).await {
+            Err(e) if cua_host::spaces_api::is_teams_unavailable(&e) => Ok(()),
+            other => Ok(other?),
+        }
+    })
+    .await
+}
+
 /// Share sheet input from JSON (fixtures, parity flows).
 #[uniffi::export]
 pub fn app_share_input_from_json(json: String) -> Result<AppShareInput> {
@@ -1865,23 +1920,6 @@ pub fn app_onboarding_view(state: AppOnboardingState) -> AppOnboardingView {
     core::onboarding::view(&state)
 }
 
-/// The SDK's billing status as the app core takes it (Settings' Billing
-/// row).
-#[uniffi::export]
-pub fn app_billing_status(status: cua_sdk::FleetBillingStatus) -> AppBillingStatus {
-    core::billing::BillingStatus {
-        billing_enabled: status.billing_enabled,
-        card: status.card.map(|c| core::billing::BillingCard {
-            brand: c.brand,
-            last4: c.last4,
-        }),
-        credit: status.credit.map(|c| core::billing::BillingCredit {
-            balance_usd_cents: c.balance_usd_cents,
-        }),
-        billing_url: status.billing_url,
-    }
-}
-
 /// The account's relay allowance this month (`GET /v1/usage` on the relay
 /// `devices` uses, as `cua usage` reads it) with `account_token`; none
 /// from a relay that meters nothing. Both Spaces apps read it here.
@@ -1901,6 +1939,8 @@ pub async fn app_relay_usage(
 }
 
 fn relay_usage(u: cua_host::RelayUsage) -> AppRelayUsage {
+    let (soft_limit_reached, reasons) =
+        core::relay_usage::with_warnings(u.soft_limit_reached, u.reasons, &u.warnings);
     core::relay_usage::checked(core::relay_usage::RelayUsage {
         metered: u.metered,
         period: u.period,
@@ -1914,8 +1954,8 @@ fn relay_usage(u: cua_host::RelayUsage) -> AppRelayUsage {
         hours_used: u.hours_used,
         hours_limit: u.hours_limit,
         my_hours_used: u.my_hours_used,
-        soft_limit_reached: u.soft_limit_reached,
-        reasons: u.reasons,
+        soft_limit_reached,
+        reasons,
         upgrade_url: u.upgrade_url,
     })
 }
@@ -1948,7 +1988,12 @@ fn teams_input(s: cua_host::spaces_api::TeamsSnapshot, account_app_url: String) 
                     alias: t.org.alias,
                     name: t.org.name,
                     role: t.org.role,
-                    plan: t.org.plan,
+                    // STOPGAP (CUA-1710): the generated record has no field for
+                    // the end date yet, so it rides on the plan as `teams@<RFC 3339>`.
+                    plan: match t.org.plan_ends_at.as_deref().filter(|e| !e.is_empty()) {
+                        Some(ends) => format!("{}@{ends}", t.org.plan),
+                        None => t.org.plan,
+                    },
                     seats: t.org.seats,
                     members: t
                         .members
@@ -1959,6 +2004,8 @@ fn teams_input(s: cua_host::spaces_api::TeamsSnapshot, account_app_url: String) 
                         })
                         .collect(),
                     invites: t.invites.into_iter().map(|i| i.email).collect(),
+                    payment_failed: t.org.status == "grace",
+                    payment_failed_until: t.org.grace_until,
                 })
                 .collect(),
         },
@@ -1981,6 +2028,16 @@ pub fn app_account_app_url() -> String {
 #[uniffi::export]
 pub fn app_relay_usage_view(usage: AppRelayUsage) -> Option<AppRelayUsageView> {
     core::relay_usage::view(&usage)
+}
+
+/// The relay refusing a new session over the plan's cap, from the error's
+/// text: the sentence and Upgrade. None for any other error.
+#[uniffi::export]
+pub fn app_plan_limit_notice(
+    error: String,
+    account_app: String,
+) -> Option<AppRelayAllowanceNotice> {
+    core::relay_usage::plan_limit_notice(&error, &account_app)
 }
 
 /// An SDK record as the app core's (the same JSON, the same names).
@@ -2318,6 +2375,8 @@ pub fn app_agent_setup_status(info: cua_sdk::AgentInfo) -> AppAgentSetupStatus {
         skills_installed: info.skills_installed,
         skills_outdated: info.skills_outdated,
         error: info.error,
+        sign_in: info.sign_in,
+        signed_in: info.signed_in,
     }
 }
 
@@ -2537,6 +2596,31 @@ pub fn app_telemetry_sign_in_failed(message: Option<String>) -> Vec<AppTelemetry
     core::telemetry::sign_in_failed(message.as_deref())
 }
 
+/// A sign-in failed for `reason` or was cancelled (none): its kind only.
+#[uniffi::export]
+pub fn app_telemetry_sign_in_failure(reason: Option<AppSignInFailure>) -> Vec<AppTelemetrySignal> {
+    core::telemetry::sign_in_failure(reason)
+}
+
+/// The sidebar's foot: every sign-in state in one place.
+#[uniffi::export]
+pub fn app_sign_in_footer(input: AppSignInFooterInput) -> AppSignInFooter {
+    core::sign_in::footer(&input)
+}
+
+/// The failed phase for a known reason, with the error's words for Details.
+#[uniffi::export]
+pub fn app_sign_in_failed(reason: AppSignInFailure, detail: Option<String>) -> AppSignInPhase {
+    core::sign_in::failed(reason, detail.as_deref())
+}
+
+/// The failed phase for an error the shell caught: the SDK error's case
+/// (`Timeout`, `Http`, ...; empty for another error) and its words.
+#[uniffi::export]
+pub fn app_sign_in_failed_from_error(variant: String, message: String) -> AppSignInPhase {
+    core::sign_in::failed_from_error(&variant, &message)
+}
+
 /// "Start using Cua Spaces".
 #[uniffi::export]
 pub fn app_telemetry_onboarding_finished(state: AppOnboardingState) -> Vec<AppTelemetrySignal> {
@@ -2639,6 +2723,19 @@ pub fn app_checklist_observe_from(seen: AppChecklistSeen) -> AppChecklistAction 
 #[uniffi::export]
 pub fn app_machines_page_rows(input: AppMachinesPageInput) -> Vec<AppMachinePageRow> {
     core::machines::page_rows(&input)
+}
+
+/// The Machines page as every UI draws it: the list in groups, one line
+/// per row, and each machine's page.
+#[uniffi::export]
+pub fn app_machines_view(input: AppMachinesViewInput) -> AppMachinesView {
+    core::machines_view::view(&input)
+}
+
+/// Machines view input from JSON (fixtures, parity flows).
+#[uniffi::export]
+pub fn app_machines_view_input_from_json(json: String) -> Result<AppMachinesViewInput> {
+    from_json("machines view input", &json)
 }
 
 /// Machines page input from JSON (fixtures, parity flows).
@@ -2839,38 +2936,6 @@ mod host_setup_tests {
 }
 
 #[cfg(test)]
-mod size_limit_tests {
-    use cua_spaces_app_core::wizard::{CLOUD_CPU_RANGE, CLOUD_MEMORY_GB_RANGE};
-
-    /// The wizard's cloud sliders offer the everyday range
-    /// (`cua_fleet::CLOUD_DEFAULT_RANGE_*`, what `fleet_size_limits`
-    /// returns), which sits inside what the SDK accepts
-    /// (`cua_fleet::FLEET_ABSOLUTE_*`).
-    #[test]
-    fn the_wizard_offers_the_everyday_cloud_sizes() {
-        let (cpus, mem) = (
-            cua_fleet::CLOUD_DEFAULT_RANGE_CPUS,
-            cua_fleet::CLOUD_DEFAULT_RANGE_MEMORY_MB,
-        );
-        assert_eq!(CLOUD_CPU_RANGE, (*cpus.start(), *cpus.end()));
-        assert!(CLOUD_MEMORY_GB_RANGE.0 * 1024 >= *mem.start());
-        assert_eq!(CLOUD_MEMORY_GB_RANGE.1 * 1024, *mem.end());
-        let l = cua_sdk::fleet_size_limits();
-        assert_eq!((l.min_cpus, l.max_cpus), (*cpus.start(), *cpus.end()));
-        assert_eq!(
-            (l.min_memory_mb, l.max_memory_mb),
-            (*mem.start(), *mem.end())
-        );
-        let (abs_cpus, abs_mem) = (
-            cua_fleet::FLEET_ABSOLUTE_CPUS,
-            cua_fleet::FLEET_ABSOLUTE_MEMORY_MB,
-        );
-        assert!(abs_cpus.contains(cpus.start()) && abs_cpus.contains(cpus.end()));
-        assert!(abs_mem.contains(mem.start()) && abs_mem.contains(mem.end()));
-    }
-}
-
-#[cfg(test)]
 mod keyvault_home_tests {
     use super::*;
     use std::ffi::OsString;
@@ -2943,7 +3008,9 @@ mod teams_tests {
                     name: "".into(),
                     role: "admin".into(),
                     plan: "teams".into(),
-                    status: "active".into(),
+                    plan_ends_at: None,
+                    status: "grace".into(),
+                    grace_until: Some("2026-11-03T10:00:00Z".into()),
                     seats: 3,
                     features: vec!["team_machines".into()],
                 },
@@ -2960,9 +3027,12 @@ mod teams_tests {
         };
         let input = teams_input(snapshot, "https://app.cua.ai".into());
         let rows = core::teams::rows(&input);
-        assert_eq!(rows[0].label, "acme");
-        assert_eq!(rows[2].label, "cy@example.com");
-        assert_eq!(rows[2].value.as_deref(), Some("(Invited)"));
+        // The grace notice (this account is an admin, not the owner) comes first.
+        assert_eq!(rows[0].id, "payment-failed");
+        assert!(rows[0].value.as_deref().unwrap().contains("by 3 Nov 2026"));
+        assert_eq!(rows[1].label, "acme");
+        assert_eq!(rows[3].label, "cy@example.com");
+        assert_eq!(rows[3].value.as_deref(), Some("(Invited)"));
     }
 }
 
@@ -2996,7 +3066,8 @@ mod relay_usage_tests {
             notice.upgrade_url.as_deref(),
             Some("https://app.cua.ai/buy/pro?from=app_meter")
         );
-        assert_eq!(notice.dismiss_key, "2026-10:hours");
+        // Free at 2 of 2 live sessions is at the sessions limit too (CUA-1745).
+        assert_eq!(notice.dismiss_key, "2026-10:hours,sessions");
 
         let plain = relay_usage(cua_host::RelayUsage {
             upgrade_url: Some("http://cua.ai/pricing".into()),
@@ -3026,6 +3097,8 @@ mod agent_detection_tests {
             skills_outdated: vec![],
             error: None,
             unverified: None,
+            sign_in: None,
+            signed_in: false,
         }
     }
 

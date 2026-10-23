@@ -3,6 +3,7 @@
 
 import AppKit
 @testable import CuaSpacesMacKit
+import CuaSDK
 import CuaSpacesFFI
 import Foundation
 import Testing
@@ -40,9 +41,40 @@ struct WebUIHostTests {
         #expect(BridgeValue.encode(Optional<String>.none) is NSNull)
         #expect(BridgeValue.encode([1, 2]) as? [Int] == [1, 2])
         #expect(BridgeValue.encode(AppSignInPhase.idle) as? String == "idle")
-        let waiting = BridgeValue.encode(AppSignInPhase.waiting(userCode: "AB-12")) as? [String: Any]
+        let waiting = BridgeValue.encode(AppSignInPhase.waiting(userCode: "AB-12", opened: true)) as? [String: Any]
         #expect(waiting?["type"] as? String == "waiting")
         #expect(waiting?["userCode"] as? String == "AB-12")
+        #expect(waiting?["opened"] as? Bool == true)
+        // A failure reaches the page typed (its reason, the line, Details).
+        let failed = BridgeValue.encode(appSignInFailed(reason: .offline, detail: "dns")) as? [String: Any]
+        #expect(failed?["type"] as? String == "failed")
+        #expect(failed?["reason"] as? String == "offline")
+        #expect(failed?["message"] as? String == "Sign-in didn't finish. Can't reach Cua. Check your connection.")
+        #expect(failed?["detail"] as? String == "dns")
+    }
+
+    /// `session.signIn` answers "starting" at once: an earlier attempt's
+    /// failure never reads as this one's, and the page then follows the
+    /// host to its end (`session.changed`), failure included.
+    @Test func signInAnswersStartingThenTheFailureReachesThePage() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cua-webui-\(UUID().uuidString)")
+        let model = AppModel(backend: FixtureSpacesBackend(), keyvault: KeyvaultModel(client: nil),
+                             onboarding: OnboardingModel(statePath: dir.appendingPathComponent("onboarding.json").path),
+                             settingsPath: dir.appendingPathComponent("settings.json").path,
+                             account: FailingAccount(error: CuaError.Http(message: "could not reach the sign-in service: x"),
+                                                     whileStarting: false),
+                             telemetry: FixtureTelemetry())
+        let bridge = WebUIBridge(model: model, allowedOrigins: [])
+        let started = try await bridge.handle("session.signIn", [:]) as? [String: Any]
+        #expect(started?["signIn"] as? String == "starting")
+        for _ in 0..<200 {
+            if case .failed = model.signIn { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let after = try await bridge.handle("session.get", [:]) as? [String: Any]
+        let failed = after?["signIn"] as? [String: Any]
+        #expect(failed?["type"] as? String == "failed")
+        #expect(failed?["reason"] as? String == "offline")
     }
 
     @Test func anUnknownMethodIsUnimplemented() async {
@@ -144,7 +176,7 @@ struct WebUIHostTests {
     @Test func theContractsOperationsAreRouted() {
         for m in ["spaces.cancelCreate", "host.status", "keyvault.approve", "keyvault.deny", "keyvault.revokeGrant",
                   "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
-                  "agents.setup", "agents.configure"] {
+                  "agents.setup", "agents.configure", "agents.signIn"] {
             #expect(WebUIBridge.methods.contains(m), "\(m)")
         }
     }
@@ -277,6 +309,12 @@ struct WebUIHostTests {
         #expect(rows?.first?["skillsTotal"] != nil)
         let configured = try await bridge.handle("agents.configure", ["agents": ["claude-code"]]) as? [[String: Any]]
         #expect(configured?.first { $0["agent"] as? String == "claude-code" }?["configured"] as? Bool == true)
+        // Codex's own ChatGPT sign-in: started on this Mac, and the row says when it is there.
+        #expect(rows?.first { $0["agent"] as? String == "codex" }?["signIn"] as? String == "ChatGPT")
+        #expect(rows?.first { $0["agent"] as? String == "codex" }?["signedIn"] as? Bool == false)
+        let signedIn = try await bridge.handle("agents.signIn", ["agent": "codex"]) as? [[String: Any]]
+        #expect(setup.calls.contains("sign-in:codex"))
+        #expect(signedIn?.first { $0["agent"] as? String == "codex" }?["signedIn"] as? Bool == true)
         // A Settings row's button, as the native one: Remove on a configured agent.
         _ = try await bridge.handle("settings.choose", ["row": "agent:claude-code", "option": "press"])
         let removed = try await bridge.handle("agents.setup", [:]) as? [[String: Any]]

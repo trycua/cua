@@ -236,14 +236,40 @@ extension FixtureSpacesBackend {
     /// sample Spaces plus `n` running Linux Spaces on this Mac, for the video
     /// harness's grid of tiles.
     static func rows(environment: [String: String]) -> [AppSpaceRow] {
+        var base = sample
+        // `CUA_SPACES_FIXTURE_PEER_CUA=<version>`: one of your Linux machines (relay machine
+        // `m1`) shares its desktop and runs that Cua (see `peerHealth`).
+        if environment["CUA_SPACES_FIXTURE_PEER_CUA"] != nil {
+            base.append(AppSpaceRow(
+                id: "relay:m1", name: "ellieln", provider: "relay", spacesdVersion: "0.7.0",
+                features: ["desktop_stream", "window_stream", "host_spaces"], addedAt: nil,
+                os: .linux, osName: "Ubuntu", osPrettyName: "Ubuntu 24.04.3 LTS", image: nil, imageDigest: nil,
+                kind: nil, arch: nil, reachable: true, error: nil, host: nil, hostName: nil,
+                power: nil, powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil))
+            // A Space it provides, for comparison with its desktop row.
+            base.append(AppSpaceRow(
+                id: "relay:m1/xm1", name: "0123456789ab", provider: "relay", spacesdVersion: "0.7.0",
+                features: ["desktop_stream"], addedAt: nil,
+                os: .linux, osName: "Ubuntu", osPrettyName: "Ubuntu 24.04.3 LTS", image: nil, imageDigest: nil,
+                kind: nil, arch: nil, reachable: true, error: nil, host: "m1", hostName: "ellieln",
+                power: nil, powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil))
+        }
         guard let n = environment["CUA_SPACES_FIXTURE_SPACES"].flatMap(Int.init), n > 0,
-              let template = sample.first else { return sample }
+              let template = base.first else { return base }
         let extra = (1...min(n, 32)).map { i -> AppSpaceRow in
             var row = template
             row.id = "local:bench-\(i)"
             row.name = "bench-\(i)"
             return row
         }
-        return extra + sample
+        return extra + base
+    }
+
+    /// What `machineHealth` answers under `CUA_SPACES_FIXTURE_PEER_CUA=<version>`: This Mac runs
+    /// Cua 0.6.0 and the peer runs `<version>`.
+    static func peerHealth(environment: [String: String]) -> [String: AppMachinesViewHealth] {
+        guard let peer = environment["CUA_SPACES_FIXTURE_PEER_CUA"] else { return [:] }
+        return ["": AppMachinesViewHealth(id: "", checks: [], cuaVersion: "0.6.0", error: nil),
+                "m1": AppMachinesViewHealth(id: "m1", checks: [], cuaVersion: peer, error: nil)]
     }
 }

@@ -74,7 +74,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "spaces.setPower", "spaces.delete", "spaces.cancelCreate",
         "machines.list", "host.status",
         "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
-        "agents.setup", "agents.configure",
+        "agents.setup", "agents.configure", "agents.signIn",
         // A persistent agent's Memory, Routines and Access (`PersistentModel`).
         "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine",
         "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer",
@@ -85,7 +85,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "spaces.add", "clouds.status", "clouds.test", "clouds.connect",
         "teleport.catalog", "teleport.entryForPath", "teleport.windows", "teleport.remoteWindows",
         "teleport.icon", "teleport.thumbnail", "teleport.plan", "teleport.run", "teleport.sites",
-        "teleport.remembered", "teleport.streamWindow", "sharing.list", "sharing.share", "sharing.unshare",
+        "teleport.remembered", "teleport.streamWindow", "sharing.list", "sharing.share", "sharing.unshare", "sharing.removals", "sharing.ackRemovals",
         "volume.overview", "volume.storage", "volume.storageSet", "volume.mount", "volume.unmount",
         "volume.approve", "volume.deny", "volume.revoke", "volume.resolve", "volume.reveal",
         "agents.setupDriver",
@@ -116,6 +116,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "nudges.pending", "nudges.answer",
         // Processor, memory and disk (WebUIBridge+Pages.swift).
         "resources.get",
+        // The Machines page's rename, Remove from account and each machine's
+        // health checks (WebUIBridge+Pages.swift).
+        "machines.rename", "machines.remove", "machines.checkHealth",
         // The getting-started checklist: the app's one copy (`ChecklistModel`).
         "checklist.get", "checklist.send",
     ]
@@ -248,9 +251,12 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
 
         case "session.get": return session()
         case "session.signIn":
-            // The browser flow can take minutes: answer now, and
-            // `session.changed` follows when it ends.
-            Task { @MainActor in await model.beginSignIn() }
+            // The browser flow can take minutes: answer now (already
+            // "starting", so an earlier failure never reads as this one's),
+            // and `session.changed` follows each step until it ends.
+            if let current = model.startSignIn() {
+                Task { @MainActor in await model.runSignIn(current) }
+            }
             return session()
         case "session.signOut":
             await model.signOut()
@@ -292,7 +298,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             return hostStatus()
 
         case "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
-             "agents.setup", "agents.configure":
+             "agents.setup", "agents.configure", "agents.signIn":
             return try await agents(method, args)
 
         case "checklist.get": return ["state": model.checklist.stored]
@@ -466,7 +472,12 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     func machines() -> [String: Any] {
         let sidebar = model.sidebar
         return [
-            "thisMachine": BridgeValue.encode(sidebar.thisMachine),
+            // The web page reads the status as text.
+            "thisMachine": sidebar.thisMachine.map { row -> Any in
+                var out = BridgeValue.encode(row) as? [String: Any] ?? [:]
+                out["statusText"] = CoreMessages.text(row.statusText)
+                return out
+            } ?? NSNull(),
             "sections": BridgeValue.encode(sidebar.sections),
             "devices": model.devices.snapshot == nil ? NSNull() : BridgeValue.encode(model.devices.view),
             "accessNotice": BridgeValue.encode(model.devices.accessNotice),
@@ -483,6 +494,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             // The page's rows as the core lists them (`machines::page_rows`,
             // what the native Machines page shows).
             "rows": BridgeValue.encode(model.machinePageRows),
+            // The page as the core draws it (`machines_view::view`, what the
+            // native Machines page shows).
+            "view": BridgeValue.encode(model.machinesView),
         ]
     }
 
@@ -693,6 +707,12 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             } else {
                 await model.agentAction(try strings(args, "agents"), remove: false)
             }
+            return BridgeValue.encode(model.agentRows ?? [])
+        case "agents.signIn":
+            guard model.agentSetup != nil else { throw Failure.unsupported("Agent setup is not available in this build") }
+            do { try await model.agentSignIn(try string(args, "agent")) }
+            catch let f as Failure { throw f }
+            catch { throw Failure(code: "failed", message: LiveSpacesBackend.words(error)) }
             return BridgeValue.encode(model.agentRows ?? [])
         default:
             throw Failure.unimplemented(method)
@@ -1003,7 +1023,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         // only when what the page shows differs.
         followChanges("machines.changed") { [weak self] in
             guard let self else { return "" }
-            return Self.signature([self.hostStatus(), BridgeValue.encode(self.model.devices.view)])
+            return Self.signature([self.hostStatus(), BridgeValue.encode(self.model.devices.view), self.model.updates.updateState.json])
         }
         followChanges("update.changed") { [model] in Self.signature(model.updates.updateState.json) }
         followChanges("checklist.changed") { [model] in Self.signature(model.checklist.stored) }

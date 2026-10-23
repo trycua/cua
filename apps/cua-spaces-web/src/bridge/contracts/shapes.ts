@@ -53,7 +53,7 @@ import type {
 } from "./new-space";
 import type { NotificationInput } from "./notifications";
 import type { AboutInput, DriveCheckInput, DriveStorageInput, LoginItemReport, StorageInput, UpdateState } from "./settings";
-import type { ShareEntry } from "./share";
+import type { ShareEntry, ShareRemoval } from "./share";
 import type { SpaceProgress, SpaceRow } from "./spaces";
 import type { CatalogEntry, ConsentItem, KvDomainCount, KvInventory, OpenWindow, PlanStep, RemoteWindow, RunReport, TeleportPlan } from "./teleport";
 import type { AgentSetupOutcome, DriveGrantInput, DriveMountInput, DriveRequestInput, Experiments, VolumeOverview } from "./volume";
@@ -67,7 +67,7 @@ import type { HostChecklistState } from "../ops/checklist";
 import type { PresenceCursorWire, PresenceJoinInfo, PresenceParticipantWire } from "../ops/presence";
 import type { StartupState } from "../ops/startup";
 import type { StreamTicket } from "../ops/stream";
-import type { GlobalShortcut, HostSettings, HostSignIn, OpName, SessionSnapshot, SettingsSnapshot, SettingsValues } from "../protocol";
+import type { GlobalShortcut, HostSettings, HostSignIn, HostSignInFailure, OpName, SessionSnapshot, SettingsSnapshot, SettingsValues } from "../protocol";
 import type { WebkitMethod, WkHostState, WkMachines, WkOnboarding, WkSession, WkSettings, WkSettingsRow, WkSpace, WkSpaces } from "../webkit-protocol";
 import { Defs, any, bool, dict, list, nul, nullable, num, obj, object, oneOf, opt, optNull, str, union, type Schema } from "./schema";
 
@@ -233,7 +233,8 @@ const SessionShape = ref(
     daemon: nullable(
       obj<DaemonStatus>()({ connected: bool, version: opt(str), socketPath: opt(str), loopbackUrl: opt(str), error: opt(str) }),
     ),
-    hostSignIn: optNull(obj<HostSignIn>()({ userCode: nullable(str), url: nullable(str) })),
+    hostSignIn: optNull(obj<HostSignIn>()({ userCode: nullable(str), url: nullable(str), opened: opt(bool) })),
+    hostSignInFailure: optNull(obj<HostSignInFailure>()({ reason: str, message: str, detail: nullable(str) })),
   }),
 );
 
@@ -603,6 +604,8 @@ const AgentSetupRowShape = ref(
     skillsTotal: num,
     mcpConfig: nullable(str),
     skillsDir: nullable(str),
+    signIn: nullable(str),
+    signedIn: bool,
   }),
 );
 
@@ -670,6 +673,8 @@ const AgentOpenFileShape = ref(
   }),
 );
 const shares = list(ShareShape);
+const ShareRemovalShape = ref("ShareRemoval", obj<ShareRemoval>()({ who: str, machineName: str }));
+const shareRemovals = list(ShareRemovalShape);
 const PresenceParticipantShape = ref(
   "PresenceParticipant",
   obj<PresenceParticipantWire>()({ participantId: str, principalId: str, displayName: str, color: str, kind: str }),
@@ -713,6 +718,92 @@ const MachinePageRowShape = ref(
     status: str,
     spaces: num,
     spacesLabel: str,
+  }),
+);
+
+const HostConfirmShape = object({ title: str, message: str, confirmLabel: str, cancelLabel: str });
+
+/** A machine's remove (`machines_view::MachinesViewRemove`). */
+const MachinesViewRemoveShape = ref(
+  "MachinesViewRemove",
+  object({
+    label: str,
+    enabled: bool,
+    help: optNull(str),
+    host: bool,
+    machine: optNull(str),
+    device: optNull(str),
+    confirm: HostConfirmShape,
+  }),
+);
+
+/** The Machines page as the core draws it (`machines_view::MachinesView`). */
+const MachinesViewShape = ref(
+  "MachinesView",
+  object({
+    summary: str,
+    groups: list(
+      object({
+        id: str,
+        title: str,
+        collapsed: bool,
+        ids: strings,
+        removeAll: optNull(object({ label: str, confirm: HostConfirmShape, removes: list(MachinesViewRemoveShape) })),
+      }),
+    ),
+    machines: list(
+      object({
+        id: str,
+        name: str,
+        badge: optNull(str),
+        line: str,
+        online: bool,
+        // The machine's issues (`machines_health`): a host that predates
+        // them sends none.
+        health: opt(str),
+        healthTarget: optNull(str),
+        issuesTitle: opt(str),
+        issues: opt(
+          list(
+            object({
+              id: str,
+              level: str,
+              text: str,
+              action: optNull(object({ label: str, url: optNull(str), hostAction: optNull(str), appUpdate: opt(bool) })),
+            }),
+          ),
+        ),
+        os: str,
+        current: bool,
+        team: bool,
+        status: str,
+        sharedBy: optNull(str),
+        rename: optNull(object({ target: str, id: str, title: str, confirmLabel: str })),
+        notice: optNull(str),
+        noticeAction: optNull(object({ id: str, label: str, destructive: bool })),
+        toggles: list(
+          object({
+            id: str,
+            label: str,
+            help: str,
+            on: bool,
+            editable: bool,
+            enabled: bool,
+            actions: strings,
+            setup: optNull(str),
+          }),
+        ),
+        togglesNote: optNull(str),
+        spacesTitle: str,
+        spaces: list(object({ id: str, name: str, os: str, status: str, running: bool })),
+        desktop: optNull(object({ id: str, name: str, os: str, status: str, running: bool, label: str })),
+        spacesEmpty: optNull(str),
+        newSpace: object({ label: str, on: str, enabled: bool, help: optNull(str) }),
+        detailsTitle: str,
+        details: list(object({ label: str, value: str })),
+        remove: optNull(MachinesViewRemoveShape),
+      }),
+    ),
   }),
 );
 
@@ -781,6 +872,7 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "agents.resume": nul,
   "agents.setup": agentSetupRows,
   "agents.configure": agentSetupRows,
+  "agents.signIn": agentSetupRows,
   "agents.detail": AgentDetailShape,
   "agents.readFile": AgentOpenFileShape,
   "agents.restoreFile": nul,
@@ -849,6 +941,8 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "sharing.list": shares,
   "sharing.share": shares,
   "sharing.unshare": shares,
+  "sharing.removals": shareRemovals,
+  "sharing.ackRemovals": nul,
 
   "agentKeys.list": AgentKeysShape,
   "agentKeys.set": AgentKeysShape,
@@ -866,6 +960,9 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "volume.reveal": nul,
   "agents.setupDriver": list(obj<AgentSetupOutcome>()({ agents: strings, target: str, item: str, change: str, detail: str })),
 
+  "machines.rename": nul,
+  "machines.remove": nul,
+  "machines.checkHealth": nul,
   "spaces.openStream": obj<StreamTicket>()({ wsUrl: str, expiresAt: nullable(str) }),
   "nudges.pending": list(obj<RiskyRequest>()({ id: str, agent: str, action: str, atMs: num, expiresMs: num })),
   "nudges.answer": nul,
@@ -1055,7 +1152,10 @@ const WkSessionShape = ref(
     identity: nullable(str),
     signedIn: bool,
     cloudConfigured: bool,
-    signIn: union(oneOf("idle", "starting"), object({ type: str, userCode: optNull(str), message: opt(str) })),
+    signIn: union(
+      oneOf("idle", "starting"),
+      object({ type: str, userCode: optNull(str), opened: opt(bool), reason: opt(str), message: opt(str), detail: optNull(str) }),
+    ),
     signInUrl: optNull(str),
   }),
 );
@@ -1115,6 +1215,7 @@ const WkMachinesShape = ref(
     deviceStates: optNull(dict(str)),
     accessNotice: optNull(MachineAccessNoticeShape),
     rows: opt(list(MachinePageRowShape)),
+    view: optNull(MachinesViewShape),
   }),
 );
 
@@ -1214,6 +1315,7 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "agents.resume": any,
   "agents.setup": agentSetupRows,
   "agents.configure": agentSetupRows,
+  "agents.signIn": agentSetupRows,
   "agents.setupDriver": OP_SHAPES["agents.setupDriver"],
   "agents.detail": AgentDetailShape,
   "agents.readFile": AgentOpenFileShape,
@@ -1243,6 +1345,8 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "sharing.list": shares,
   "sharing.share": shares,
   "sharing.unshare": shares,
+  "sharing.removals": shareRemovals,
+  "sharing.ackRemovals": nul,
   "volume.overview": VolumeShape,
   "volume.storage": nullable(DriveStorageShape),
   "volume.storageSet": DriveCheckShape,
@@ -1312,6 +1416,9 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "nudges.pending": OP_SHAPES["nudges.pending"],
   "nudges.answer": nul,
   "resources.get": OP_SHAPES["resources.get"],
+  "machines.rename": nul,
+  "machines.remove": nul,
+  "machines.checkHealth": nul,
   "checklist.get": OP_SHAPES["checklist.get"],
   "checklist.send": OP_SHAPES["checklist.send"],
 };

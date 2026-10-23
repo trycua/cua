@@ -11,7 +11,6 @@ which Microsoft's license does not let us publish: build it yourself (see
 README.md), push it to a registry as a VM image and point the adapter at it::
 
     CUA_BENCH_WAA_IMAGE=<registry>/waa-win11@sha256:... cb run tasks/winarena_adapter
-    cb run tasks/winarena_adapter --on cloud          # Fleet KubeVirt
     CUA_BENCH_WAA_DIFFICULTY=hard cb run ...          # examples_noctxt
 
 Without CUA_BENCH_WAA_IMAGE the canonical Windows image runs, which lacks
@@ -46,7 +45,7 @@ class WAAAdapter(BenchAdapter):
     os_type = "windows"
     kinds = ("vm",)
     requires = frozenset({"kvm"})
-    reset = "fresh-claim"
+    reset = "fresh-sandbox"
     action_mode = "driver"
     width, height = 1920, 1080
 

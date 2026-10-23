@@ -16,7 +16,7 @@ export const METHODS = [
   "spaces.setPower", "spaces.delete", "spaces.cancelCreate",
   "machines.list", "host.status",
   "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
-  "agents.setup", "agents.configure",
+  "agents.setup", "agents.configure", "agents.signIn",
   "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine",
   "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer",
   "agentKeys.list", "agentKeys.set", "agentKeys.remove",
@@ -24,6 +24,7 @@ export const METHODS = [
   "teleport.catalog", "teleport.entryForPath", "teleport.windows", "teleport.remoteWindows",
   "teleport.icon", "teleport.thumbnail", "teleport.plan", "teleport.run", "teleport.sites",
   "teleport.remembered", "teleport.streamWindow", "sharing.list", "sharing.share", "sharing.unshare",
+  "sharing.removals", "sharing.ackRemovals",
   "volume.overview", "volume.storage", "volume.storageSet", "volume.mount", "volume.unmount",
   "volume.approve", "volume.deny", "volume.revoke", "volume.resolve", "volume.reveal",
   "agents.setupDriver",
@@ -46,6 +47,7 @@ export const METHODS = [
   "relay.usage",
   "nudges.pending", "nudges.answer",
   "resources.get",
+  "machines.rename", "machines.remove", "machines.checkHealth",
   "checklist.get", "checklist.send",
 ] as const;
 

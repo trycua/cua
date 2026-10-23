@@ -5,9 +5,13 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowDownCircleIcon, KeyRoundIcon, LoaderCircleIcon, MonitorIcon, PlusIcon, PowerIcon, SearchIcon } from "lucide-react";
 import { useEffect, useRef, useState, type DragEvent } from "react";
 
-import { emptyHome, spaceResources, useBridge, useResources, useFirstSpaceOffers, useMachines, useNewSpaceWizard, useSpaceAccess, useSpaceFiles, useSpaces, useSpaceThumbnail, useWindowDropTarget, type Space, type SpaceResources } from "@/bridge";
+import { emptyHome, spaceResources, useAgents, useBridge, useChecklist, useResources, useFirstSpaceOffers, useMachines, useNewSpaceWizard, useSpaceAccess, useSpaceFiles, useSpaces, useSpaceThumbnail, useWindowDropTarget, type Space, type SpaceResources } from "@/bridge";
 import { EmptyHome } from "@/components/empty-home";
+import { ConnectAgentDialog } from "@/components/agents/connect-dialog";
+import { RunAgentDialog } from "@/components/agents/run-agent-dialog";
 import { GettingStarted } from "@/components/getting-started";
+import { SpaceReadyCard, useAgentOffer } from "@/components/space-ready-card";
+import { useFirstRunStep, useFirstSpaceMilestones } from "@/components/first-run-guide";
 import { FirstRunTodosCard, useFirstRunTodosShown } from "@/components/first-run-todos";
 import { OsIcon } from "@/components/os-icon";
 import { EmptyState, Page, PageHeader } from "@/components/page";
@@ -17,6 +21,7 @@ import { SpaceCanvas } from "@/components/space-canvas";
 import { StateLabel } from "@/components/state-dot";
 import { useTileVideo } from "@/components/video/tile-video";
 import { useNewSpace } from "@/hooks/use-new-space";
+import { useQuiet } from "@/hooks/use-quiet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/segmented";
@@ -63,6 +68,28 @@ function SpacesPage() {
   const running = spaces.filter((s) => spaceState(s) === "running").length;
   // After the first run's Finish later, its to-do list stands in for the checklist.
   const firstRunTodos = useFirstRunTodosShown();
+  // The first Space is ready and no agent has worked in it yet: one action, "Run an agent here".
+  const { state: checklist } = useChecklist();
+  const { data: agents, isLoading: agentsLoading } = useAgents();
+  const readySpace = spaces.find((s) => spaceState(s) === "running");
+  const agentRan = checklist.done.run_agent || (agents?.runs.length ?? 0) > 0 || (agents?.agents.length ?? 0) > 0;
+  // Only once the agents are read: before that "no agent ran" isn't known, and the offer would show (and be
+  // counted as shown) for a moment on a computer whose agents already work.
+  const offer = useAgentOffer(Boolean(readySpace) && !agentsLoading && !agentRan);
+  const runHere = readySpace && !agentRan && offer.visible ? readySpace : undefined;
+  const [runOpen, setRunOpen] = useState(false);
+  // No Spaces yet (or the list could not be read): the SwiftUI app's empty home, as the first-run guide.
+  const guide = !error && !isLoading && spaces.length === 0 && home && home.tiles.length > 0 ? home : null;
+  // The suggested task's request, while the run dialog was opened from it.
+  const [runPrompt, setRunPrompt] = useState<string | undefined>();
+  const firstRunStep = useFirstRunStep();
+  useFirstSpaceMilestones(spaces);
+  const [connectOpen, setConnectOpen] = useState(false);
+  // The cards above the list (ready, checklist, computers) and the list come from separate host reads. Draw them
+  // together once those have answered, not one by one with the page jumping at each (CUA-1951).
+  const settled = useQuiet(
+    [isLoading, all.length, machines.length, Object.keys(checklist.done).length, checklist.dismissed, agents?.runs.length, agents?.agents.length, resources ? 1 : 0].join("|"),
+  );
 
   return (
     <Page>
@@ -75,8 +102,28 @@ function SpacesPage() {
           </Button>
         }
       />
+      {settled ? (
+        <>
+      {/* No Spaces yet: the guided first run comes first, above the checklist and computers (CUA-2062). */}
+      {guide ? <EmptyHome home={guide} unread={Boolean(listNotice)} /> : null}
       <FirstRunTodosCard />
-      {firstRunTodos ? null : <GettingStarted />}
+      {runHere ? <SpaceReadyCard
+          space={runHere}
+          onRun={(task) => {
+            offer.clicked();
+            firstRunStep("task_started");
+            setRunPrompt(task.prompt);
+            setRunOpen(true);
+          }}
+          onDismiss={offer.dismiss}
+        /> : null}
+      {firstRunTodos ? null : <GettingStarted onRunAgent={runHere ? () => { setRunPrompt(undefined); setRunOpen(true); } : undefined} />}
+      {readySpace ? (
+        <>
+          <RunAgentDialog open={runOpen} space={readySpace} prompt={runPrompt} onOpenChange={setRunOpen} onManual={() => setConnectOpen(true)} onConnected={offer.completed} />
+          <ConnectAgentDialog open={connectOpen} onOpenChange={setConnectOpen} />
+        </>
+      ) : null}
       <ComputersResources snapshot={resources} machines={machines} />
       {sort === "size" ? (
         <p data-sorted-by-size="" className="mb-3 flex items-center gap-2 px-1 text-xs text-muted-foreground">
@@ -112,11 +159,7 @@ function SpacesPage() {
         <EmptyState icon={<MonitorIcon />} title="Couldn't load Spaces">
           {error.message}
         </EmptyState>
-      ) : isLoading ? null : spaces.length === 0 && home && home.tiles.length > 0 ? (
-        // No Spaces yet (or the list could not be read): the SwiftUI app's
-        // empty home, under the header.
-        <EmptyHome home={home} unread={Boolean(listNotice)} />
-      ) : spaces.length === 0 ? (
+      ) : isLoading || guide ? null : spaces.length === 0 ? (
         <EmptyState
           icon={<MonitorIcon />}
           title="No Spaces yet"
@@ -145,6 +188,8 @@ function SpacesPage() {
           ))}
         </ul>
       )}
+        </>
+      ) : null}
     </Page>
   );
 }

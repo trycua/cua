@@ -497,7 +497,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_config_path() != 14727:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_func_config_set() != 13213:
+    if lib.uniffi_cua_sdk_checksum_func_config_set() != 33388:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_config_unset() != 24761:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -507,21 +507,11 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_error_doc_url() != 10839:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_func_fleet_check_runtime() != 18168:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_func_fleet_generate_claim_token() != 46314:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_func_fleet_image_variant() != 30093:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_func_fleet_resolve_runtime() != 15632:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_func_fleet_size_limits() != 53900:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_image_alias() != 25551:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_locations() != 62174:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_func_may_have_fleet_session() != 10680:
+    if lib.uniffi_cua_sdk_checksum_func_may_have_session() != 35927:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_mcp_connect() != 26472:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -531,7 +521,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_omarchy_image() != 9950:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_func_parse_sandbox_ref() != 45182:
+    if lib.uniffi_cua_sdk_checksum_func_parse_sandbox_ref() != 7299:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_presence_color() != 238:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -549,7 +539,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_qualify_sandbox_ref() != 59566:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_func_resolve_image() != 51943:
+    if lib.uniffi_cua_sdk_checksum_func_resolve_image() != 56346:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_resolve_image_with_secret() != 48984:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -633,6 +623,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_agentsetup_setup_cua_driver() != 33764:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_agentsetup_sign_in() != 10179:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_agentsetup_skills() != 53692:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_agentsetup_status() != 46185:
@@ -679,13 +671,11 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_constructor_cua_connect() != 19646:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_constructor_cua_embedded() != 26623:
+    if lib.uniffi_cua_sdk_checksum_constructor_cua_embedded() != 54998:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_cua_agent_setup() != 50422:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_cua_auth() != 19106:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_cua_fleet() != 45933:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_cua_info() != 11159:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -719,77 +709,13 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_devices_rename() != 59535:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_devices_rename_machine() != 63088:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_devices_revoke() != 27802:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_devices_revoke_pairing_code() != 3143:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_devices_snapshot() != 26132:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_acquire() != 16535:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_acquire_with() != 8432:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_apply() != 23134:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_apply_pool() != 43781:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_apply_pool_template() != 43651:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_attach_claim() != 27491:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_base_url() != 7166:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_billing_status() != 50128:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_check_pool_spec() != 58799:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_claim() != 33116:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_create_image() != 53686:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_create_signed_service_url() != 1809:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_delete_image() != 54232:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_delete_pool() != 41031:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_ephemeral_pool_name() != 51788:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_export_pool() != 36800:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_get_image() != 26535:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_get_pool() != 27007:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_keep_alive() != 21850:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_list_claims() != 30494:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_list_images() != 5380:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_list_pools() != 19148:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_list_templates() != 27819:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_pool_image_info() != 2800:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_pools() != 34094:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_release() != 34855:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_service_url() != 49169:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_set_pool_replicas() != 32806:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_usage_pricing() != 25347:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_wait_pool_ready() != 64422:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleetpools_gc() != 4829:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleetpools_gc_pools() != 3481:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleetpools_list() != 61403:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_framesink_on_frame() != 56500:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -806,6 +732,8 @@ def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cua_sdk_checksum_constructor_host_new() != 62533:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_host_configure() != 36828:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_host_migrate_service() != 36386:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_host_pause_signed_out() != 3338:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -931,8 +859,6 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandbox_delete() != 17492:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_sandbox_detach() != 26534:
-        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandbox_forward() != 19019:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandbox_guest_display() != 23945:
@@ -943,7 +869,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandbox_id() != 11596:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_sandbox_image_info() != 19322:
+    if lib.uniffi_cua_sdk_checksum_method_sandbox_image_info() != 9393:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandbox_info() != 9231:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -993,7 +919,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandbox_wait_ready() != 17033:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_sandboxes_cancel_create() != 32419:
+    if lib.uniffi_cua_sdk_checksum_method_sandboxes_cancel_create() != 52079:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandboxes_connect() != 12250:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -1005,11 +931,11 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandboxes_get() != 32181:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_sandboxes_list() != 6497:
+    if lib.uniffi_cua_sdk_checksum_method_sandboxes_list() != 11890:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_sandboxes_list_all() != 9098:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_sandboxes_list_with_warnings() != 39432:
+    if lib.uniffi_cua_sdk_checksum_method_sandboxes_list_with_warnings() != 59684:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_service_endpoint() != 13535:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -1023,7 +949,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_service_request() != 31558:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_service_url() != 25888:
+    if lib.uniffi_cua_sdk_checksum_method_service_url() != 22228:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_agent_events() != 25540:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -1157,7 +1083,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_call_tool_json() != 63270:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_spaces_cancel_create() != 53246:
+    if lib.uniffi_cua_sdk_checksum_method_spaces_cancel_create() != 14647:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_cloud_connect() != 30460:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -1188,6 +1114,8 @@ def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cua_sdk_checksum_method_spaces_list() != 27182:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_list_tools_json() != 19259:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_spaces_machine_health() != 35352:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_notifications() != 10964:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -1317,7 +1245,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spacesdclient_hotkey() != 58197:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_spacesdclient_http() != 43966:
+    if lib.uniffi_cua_sdk_checksum_method_spacesdclient_http() != 51813:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spacesdclient_json_methods() != 32263:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -1377,7 +1305,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spacesdprocess_resize() != 46607:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_spacesdprocess_signal() != 61925:
+    if lib.uniffi_cua_sdk_checksum_method_spacesdprocess_signal() != 44588:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spacesdprocess_tag() != 24315:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -1732,26 +1660,6 @@ _UniffiLib.uniffi_cua_sdk_fn_free_devices.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_sdk_fn_free_devices.restype = None
-_UniffiLib.uniffi_cua_sdk_fn_clone_fleet.argtypes = (
-    ctypes.c_uint64,
-    ctypes.POINTER(_UniffiRustCallStatus),
-)
-_UniffiLib.uniffi_cua_sdk_fn_clone_fleet.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_free_fleet.argtypes = (
-    ctypes.c_uint64,
-    ctypes.POINTER(_UniffiRustCallStatus),
-)
-_UniffiLib.uniffi_cua_sdk_fn_free_fleet.restype = None
-_UniffiLib.uniffi_cua_sdk_fn_clone_fleetpools.argtypes = (
-    ctypes.c_uint64,
-    ctypes.POINTER(_UniffiRustCallStatus),
-)
-_UniffiLib.uniffi_cua_sdk_fn_clone_fleetpools.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_free_fleetpools.argtypes = (
-    ctypes.c_uint64,
-    ctypes.POINTER(_UniffiRustCallStatus),
-)
-_UniffiLib.uniffi_cua_sdk_fn_free_fleetpools.restype = None
 _UniffiLib.uniffi_cua_sdk_fn_clone_framesink.argtypes = (
     ctypes.c_uint64,
     ctypes.POINTER(_UniffiRustCallStatus),
@@ -2142,33 +2050,6 @@ _UniffiLib.uniffi_cua_sdk_fn_func_error_doc_url.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_sdk_fn_func_error_doc_url.restype = _UniffiRustBuffer
-_UniffiLib.uniffi_cua_sdk_fn_func_fleet_check_runtime.argtypes = (
-    _UniffiRustBuffer,
-    _UniffiRustBuffer,
-    _UniffiRustBuffer,
-    ctypes.POINTER(_UniffiRustCallStatus),
-)
-_UniffiLib.uniffi_cua_sdk_fn_func_fleet_check_runtime.restype = _UniffiRustBuffer
-_UniffiLib.uniffi_cua_sdk_fn_func_fleet_generate_claim_token.argtypes = (
-    ctypes.POINTER(_UniffiRustCallStatus),
-)
-_UniffiLib.uniffi_cua_sdk_fn_func_fleet_generate_claim_token.restype = _UniffiRustBuffer
-_UniffiLib.uniffi_cua_sdk_fn_func_fleet_image_variant.argtypes = (
-    _UniffiRustBuffer,
-    _UniffiRustBuffer,
-    ctypes.POINTER(_UniffiRustCallStatus),
-)
-_UniffiLib.uniffi_cua_sdk_fn_func_fleet_image_variant.restype = _UniffiRustBuffer
-_UniffiLib.uniffi_cua_sdk_fn_func_fleet_resolve_runtime.argtypes = (
-    _UniffiRustBuffer,
-    _UniffiRustBuffer,
-    ctypes.POINTER(_UniffiRustCallStatus),
-)
-_UniffiLib.uniffi_cua_sdk_fn_func_fleet_resolve_runtime.restype = _UniffiRustBuffer
-_UniffiLib.uniffi_cua_sdk_fn_func_fleet_size_limits.argtypes = (
-    ctypes.POINTER(_UniffiRustCallStatus),
-)
-_UniffiLib.uniffi_cua_sdk_fn_func_fleet_size_limits.restype = _UniffiRustBuffer
 _UniffiLib.uniffi_cua_sdk_fn_func_image_alias.argtypes = (
     _UniffiRustBuffer,
     ctypes.POINTER(_UniffiRustCallStatus),
@@ -2178,10 +2059,10 @@ _UniffiLib.uniffi_cua_sdk_fn_func_locations.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_sdk_fn_func_locations.restype = _UniffiRustBuffer
-_UniffiLib.uniffi_cua_sdk_fn_func_may_have_fleet_session.argtypes = (
+_UniffiLib.uniffi_cua_sdk_fn_func_may_have_session.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
-_UniffiLib.uniffi_cua_sdk_fn_func_may_have_fleet_session.restype = ctypes.c_int8
+_UniffiLib.uniffi_cua_sdk_fn_func_may_have_session.restype = ctypes.c_int8
 _UniffiLib.uniffi_cua_sdk_fn_func_mcp_connect.argtypes = (
     _UniffiRustBuffer,
 )
@@ -2458,6 +2339,12 @@ _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_setup_cua_driver.argtypes = (
     ctypes.c_int8,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_setup_cua_driver.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_sign_in.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_sign_in.restype = None
 _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_skills.argtypes = (
     ctypes.c_uint64,
     ctypes.POINTER(_UniffiRustCallStatus),
@@ -2595,11 +2482,6 @@ _UniffiLib.uniffi_cua_sdk_fn_method_cua_auth.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_cua_auth.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_cua_fleet.argtypes = (
-    ctypes.c_uint64,
-    ctypes.POINTER(_UniffiRustCallStatus),
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_cua_fleet.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_cua_info.argtypes = (
     ctypes.c_uint64,
 )
@@ -2679,6 +2561,12 @@ _UniffiLib.uniffi_cua_sdk_fn_method_devices_rename.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_devices_rename.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_devices_rename_machine.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_devices_rename_machine.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_devices_revoke.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -2694,192 +2582,6 @@ _UniffiLib.uniffi_cua_sdk_fn_method_devices_snapshot.argtypes = (
     ctypes.c_uint32,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_devices_snapshot.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_acquire.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-    _UniffiRustBuffer,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_acquire.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_acquire_with.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_acquire_with.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_apply.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-    _UniffiRustBuffer,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_apply.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_apply_pool.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_apply_pool.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_apply_pool_template.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_apply_pool_template.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_attach_claim.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_attach_claim.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_base_url.argtypes = (
-    ctypes.c_uint64,
-    ctypes.POINTER(_UniffiRustCallStatus),
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_base_url.restype = _UniffiRustBuffer
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_billing_status.argtypes = (
-    ctypes.c_uint64,
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_billing_status.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_check_pool_spec.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_check_pool_spec.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_claim.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-    _UniffiRustBuffer,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_claim.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_create_image.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_create_image.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_create_signed_service_url.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-    _UniffiRustBuffer,
-    _UniffiRustBuffer,
-    ctypes.c_uint32,
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_create_signed_service_url.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_delete_image.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_delete_image.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_delete_pool.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_delete_pool.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_ephemeral_pool_name.argtypes = (
-    ctypes.c_uint64,
-    ctypes.POINTER(_UniffiRustCallStatus),
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_ephemeral_pool_name.restype = _UniffiRustBuffer
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_export_pool.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_export_pool.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_get_image.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_get_image.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_get_pool.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_get_pool.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_keep_alive.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-    _UniffiRustBuffer,
-    ctypes.c_uint32,
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_keep_alive.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_list_claims.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_list_claims.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_list_images.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_list_images.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_list_pools.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_list_pools.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_list_templates.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_list_templates.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_pool_image_info.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_pool_image_info.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_pools.argtypes = (
-    ctypes.c_uint64,
-    ctypes.POINTER(_UniffiRustCallStatus),
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_pools.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_release.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_release.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_service_url.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-    _UniffiRustBuffer,
-    ctypes.POINTER(_UniffiRustCallStatus),
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_service_url.restype = _UniffiRustBuffer
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_set_pool_replicas.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-    ctypes.c_uint32,
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_set_pool_replicas.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_usage_pricing.argtypes = (
-    ctypes.c_uint64,
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_usage_pricing.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_wait_pool_ready.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-    ctypes.c_uint32,
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleet_wait_pool_ready.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_fleetpools_gc.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleetpools_gc.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_fleetpools_gc_pools.argtypes = (
-    ctypes.c_uint64,
-    _UniffiRustBuffer,
-    _UniffiRustBuffer,
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleetpools_gc_pools.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_fleetpools_list.argtypes = (
-    ctypes.c_uint64,
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_fleetpools_list.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_framesink_on_frame.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -2922,6 +2624,12 @@ _UniffiLib.uniffi_cua_sdk_fn_method_host_configure.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_host_configure.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_host_migrate_service.argtypes = (
+    ctypes.c_uint64,
+    ctypes.c_int8,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_host_migrate_service.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_host_pause_signed_out.argtypes = (
     ctypes.c_uint64,
 )
@@ -3235,11 +2943,6 @@ _UniffiLib.uniffi_cua_sdk_fn_method_sandbox_delete.argtypes = (
     ctypes.c_uint64,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_sandbox_delete.restype = ctypes.c_uint64
-_UniffiLib.uniffi_cua_sdk_fn_method_sandbox_detach.argtypes = (
-    ctypes.c_uint64,
-    ctypes.POINTER(_UniffiRustCallStatus),
-)
-_UniffiLib.uniffi_cua_sdk_fn_method_sandbox_detach.restype = None
 _UniffiLib.uniffi_cua_sdk_fn_method_sandbox_forward.argtypes = (
     ctypes.c_uint64,
     ctypes.c_uint16,
@@ -3920,6 +3623,11 @@ _UniffiLib.uniffi_cua_sdk_fn_method_spaces_list_tools_json.argtypes = (
     ctypes.c_uint64,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_list_tools_json.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_machine_health.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_machine_health.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_notifications.argtypes = (
     ctypes.c_uint64,
     ctypes.c_int8,
@@ -4437,6 +4145,7 @@ _UniffiLib.uniffi_cua_sdk_fn_method_spacesdprocess_resize.restype = ctypes.c_uin
 _UniffiLib.uniffi_cua_sdk_fn_method_spacesdprocess_signal.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
+    ctypes.c_int8,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_spacesdprocess_signal.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_spacesdprocess_tag.argtypes = (
@@ -4509,30 +4218,15 @@ _UniffiLib.uniffi_cua_sdk_checksum_func_cua_sdk_version.restype = ctypes.c_uint1
 _UniffiLib.uniffi_cua_sdk_checksum_func_error_doc_url.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_func_error_doc_url.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_func_fleet_check_runtime.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_func_fleet_check_runtime.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_func_fleet_generate_claim_token.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_func_fleet_generate_claim_token.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_func_fleet_image_variant.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_func_fleet_image_variant.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_func_fleet_resolve_runtime.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_func_fleet_resolve_runtime.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_func_fleet_size_limits.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_func_fleet_size_limits.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_func_image_alias.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_func_image_alias.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_func_locations.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_func_locations.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_func_may_have_fleet_session.argtypes = (
+_UniffiLib.uniffi_cua_sdk_checksum_func_may_have_session.argtypes = (
 )
-_UniffiLib.uniffi_cua_sdk_checksum_func_may_have_fleet_session.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_func_may_have_session.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_func_mcp_connect.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_func_mcp_connect.restype = ctypes.c_uint16
@@ -4698,6 +4392,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_set_onboarding_declined.res
 _UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_setup_cua_driver.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_setup_cua_driver.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_sign_in.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_sign_in.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_skills.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_agentsetup_skills.restype = ctypes.c_uint16
@@ -4776,9 +4473,6 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_cua_agent_setup.restype = ctypes.c_uin
 _UniffiLib.uniffi_cua_sdk_checksum_method_cua_auth.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_cua_auth.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_cua_fleet.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_cua_fleet.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_cua_info.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_cua_info.restype = ctypes.c_uint16
@@ -4827,6 +4521,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_devices_relay_url.restype = ctypes.c_u
 _UniffiLib.uniffi_cua_sdk_checksum_method_devices_rename.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_devices_rename.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_devices_rename_machine.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_devices_rename_machine.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_devices_revoke.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_devices_revoke.restype = ctypes.c_uint16
@@ -4836,105 +4533,6 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_devices_revoke_pairing_code.restype = 
 _UniffiLib.uniffi_cua_sdk_checksum_method_devices_snapshot.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_devices_snapshot.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_acquire.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_acquire.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_acquire_with.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_acquire_with.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_apply.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_apply.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_apply_pool.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_apply_pool.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_apply_pool_template.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_apply_pool_template.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_attach_claim.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_attach_claim.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_base_url.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_base_url.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_billing_status.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_billing_status.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_check_pool_spec.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_check_pool_spec.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_claim.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_claim.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_create_image.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_create_image.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_create_signed_service_url.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_create_signed_service_url.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_delete_image.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_delete_image.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_delete_pool.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_delete_pool.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_ephemeral_pool_name.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_ephemeral_pool_name.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_export_pool.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_export_pool.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_get_image.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_get_image.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_get_pool.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_get_pool.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_keep_alive.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_keep_alive.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_list_claims.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_list_claims.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_list_images.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_list_images.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_list_pools.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_list_pools.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_list_templates.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_list_templates.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_pool_image_info.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_pool_image_info.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_pools.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_pools.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_release.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_release.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_service_url.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_service_url.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_set_pool_replicas.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_set_pool_replicas.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_usage_pricing.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_usage_pricing.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_wait_pool_ready.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleet_wait_pool_ready.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleetpools_gc.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleetpools_gc.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleetpools_gc_pools.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleetpools_gc_pools.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleetpools_list.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_fleetpools_list.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_framesink_on_frame.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_framesink_on_frame.restype = ctypes.c_uint16
@@ -4959,6 +4557,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_constructor_host_new.restype = ctypes.c_uint1
 _UniffiLib.uniffi_cua_sdk_checksum_method_host_configure.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_host_configure.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_host_migrate_service.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_host_migrate_service.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_host_pause_signed_out.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_host_pause_signed_out.restype = ctypes.c_uint16
@@ -5145,9 +4746,6 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_sandbox_agents.restype = ctypes.c_uint
 _UniffiLib.uniffi_cua_sdk_checksum_method_sandbox_delete.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_sandbox_delete.restype = ctypes.c_uint16
-_UniffiLib.uniffi_cua_sdk_checksum_method_sandbox_detach.argtypes = (
-)
-_UniffiLib.uniffi_cua_sdk_checksum_method_sandbox_detach.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_sandbox_forward.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_sandbox_forward.restype = ctypes.c_uint16
@@ -5532,6 +5130,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_list.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_list_tools_json.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_list_tools_json.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_machine_health.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_machine_health.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_notifications.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_notifications.restype = ctypes.c_uint16
@@ -6502,7 +6103,7 @@ class AgentInfo:
     """
     One AI coding agent and what cua configured for it.
 """
-    def __init__(self, *, id:str, name:str, installed:bool, evidence:typing.List[str], skills_dir:typing.Optional[str], mcp_config:typing.Optional[str], mcp_format:typing.Optional[str], cua_configured:bool, cua_managed:bool, cua_driver_configured:bool, skills_installed:typing.List[str], skills_outdated:typing.List[str], error:typing.Optional[str], unverified:typing.Optional[str]):
+    def __init__(self, *, id:str, name:str, installed:bool, evidence:typing.List[str], skills_dir:typing.Optional[str], mcp_config:typing.Optional[str], mcp_format:typing.Optional[str], cua_configured:bool, cua_managed:bool, cua_driver_configured:bool, skills_installed:typing.List[str], skills_outdated:typing.List[str], error:typing.Optional[str], unverified:typing.Optional[str], sign_in:typing.Optional[str] = _DEFAULT, signed_in:bool = False):
         self.id = id
         self.name = name
         self.installed = installed
@@ -6517,12 +6118,17 @@ class AgentInfo:
         self.skills_outdated = skills_outdated
         self.error = error
         self.unverified = unverified
+        if sign_in is _DEFAULT:
+            self.sign_in = None
+        else:
+            self.sign_in = sign_in
+        self.signed_in = signed_in
 
 
 
 
     def __str__(self):
-        return "AgentInfo(id={}, name={}, installed={}, evidence={}, skills_dir={}, mcp_config={}, mcp_format={}, cua_configured={}, cua_managed={}, cua_driver_configured={}, skills_installed={}, skills_outdated={}, error={}, unverified={})".format(self.id, self.name, self.installed, self.evidence, self.skills_dir, self.mcp_config, self.mcp_format, self.cua_configured, self.cua_managed, self.cua_driver_configured, self.skills_installed, self.skills_outdated, self.error, self.unverified)
+        return "AgentInfo(id={}, name={}, installed={}, evidence={}, skills_dir={}, mcp_config={}, mcp_format={}, cua_configured={}, cua_managed={}, cua_driver_configured={}, skills_installed={}, skills_outdated={}, error={}, unverified={}, sign_in={}, signed_in={})".format(self.id, self.name, self.installed, self.evidence, self.skills_dir, self.mcp_config, self.mcp_format, self.cua_configured, self.cua_managed, self.cua_driver_configured, self.skills_installed, self.skills_outdated, self.error, self.unverified, self.sign_in, self.signed_in)
     def __eq__(self, other):
         if self.id != other.id:
             return False
@@ -6552,6 +6158,10 @@ class AgentInfo:
             return False
         if self.unverified != other.unverified:
             return False
+        if self.sign_in != other.sign_in:
+            return False
+        if self.signed_in != other.signed_in:
+            return False
         return True
 
 class _UniffiFfiConverterTypeAgentInfo(_UniffiConverterRustBuffer):
@@ -6572,6 +6182,8 @@ class _UniffiFfiConverterTypeAgentInfo(_UniffiConverterRustBuffer):
             skills_outdated=_UniffiFfiConverterSequenceString.read(buf),
             error=_UniffiFfiConverterOptionalString.read(buf),
             unverified=_UniffiFfiConverterOptionalString.read(buf),
+            sign_in=_UniffiFfiConverterOptionalString.read(buf),
+            signed_in=_UniffiFfiConverterBoolean.read(buf),
         )
 
     @staticmethod
@@ -6590,6 +6202,8 @@ class _UniffiFfiConverterTypeAgentInfo(_UniffiConverterRustBuffer):
         _UniffiFfiConverterSequenceString.check_lower(value.skills_outdated)
         _UniffiFfiConverterOptionalString.check_lower(value.error)
         _UniffiFfiConverterOptionalString.check_lower(value.unverified)
+        _UniffiFfiConverterOptionalString.check_lower(value.sign_in)
+        _UniffiFfiConverterBoolean.check_lower(value.signed_in)
 
     @staticmethod
     def write(value, buf):
@@ -6607,6 +6221,8 @@ class _UniffiFfiConverterTypeAgentInfo(_UniffiConverterRustBuffer):
         _UniffiFfiConverterSequenceString.write(value.skills_outdated, buf)
         _UniffiFfiConverterOptionalString.write(value.error, buf)
         _UniffiFfiConverterOptionalString.write(value.unverified, buf)
+        _UniffiFfiConverterOptionalString.write(value.sign_in, buf)
+        _UniffiFfiConverterBoolean.write(value.signed_in, buf)
 
 class _UniffiFfiConverterMapStringString(_UniffiConverterRustBuffer):
     @classmethod
@@ -8550,102 +8166,6 @@ class _UniffiFfiConverterTypeCloudDisconnected(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.write(value.disconnected, buf)
         _UniffiFfiConverterSequenceTypeCloudResource.write(value.left, buf)
 
-class _UniffiFfiConverterOptionalUInt32(_UniffiConverterRustBuffer):
-    @classmethod
-    def check_lower(cls, value):
-        if value is not None:
-            _UniffiFfiConverterUInt32.check_lower(value)
-
-    @classmethod
-    def write(cls, value, buf):
-        if value is None:
-            buf.write_u8(0)
-            return
-
-        buf.write_u8(1)
-        _UniffiFfiConverterUInt32.write(value, buf)
-
-    @classmethod
-    def read(cls, buf):
-        flag = buf.read_u8()
-        if flag == 0:
-            return None
-        elif flag == 1:
-            return _UniffiFfiConverterUInt32.read(buf)
-        else:
-            raise InternalError("Unexpected flag byte for optional type")
-
-@dataclass
-class CloudOptions:
-    """
-    Advanced options for cloud sandboxes (warm capacity, limits, TTL, a
-    dedicated pool). Leave unset for the defaults. Setting them with `on`
-    unset means the cloud; with `on = "local"` they are an error.
-"""
-    def __init__(self, *, warm:typing.Optional[bool] = _DEFAULT, max_pool_size:typing.Optional[int] = _DEFAULT, claim_ttl_seconds:typing.Optional[int] = _DEFAULT, pool:typing.Optional[str] = _DEFAULT, apply:bool = False):
-        if warm is _DEFAULT:
-            self.warm = None
-        else:
-            self.warm = warm
-        if max_pool_size is _DEFAULT:
-            self.max_pool_size = None
-        else:
-            self.max_pool_size = max_pool_size
-        if claim_ttl_seconds is _DEFAULT:
-            self.claim_ttl_seconds = None
-        else:
-            self.claim_ttl_seconds = claim_ttl_seconds
-        if pool is _DEFAULT:
-            self.pool = None
-        else:
-            self.pool = pool
-        self.apply = apply
-
-
-
-
-    def __str__(self):
-        return "CloudOptions(warm={}, max_pool_size={}, claim_ttl_seconds={}, pool={}, apply={})".format(self.warm, self.max_pool_size, self.claim_ttl_seconds, self.pool, self.apply)
-    def __eq__(self, other):
-        if self.warm != other.warm:
-            return False
-        if self.max_pool_size != other.max_pool_size:
-            return False
-        if self.claim_ttl_seconds != other.claim_ttl_seconds:
-            return False
-        if self.pool != other.pool:
-            return False
-        if self.apply != other.apply:
-            return False
-        return True
-
-class _UniffiFfiConverterTypeCloudOptions(_UniffiConverterRustBuffer):
-    @staticmethod
-    def read(buf):
-        return CloudOptions(
-            warm=_UniffiFfiConverterOptionalBoolean.read(buf),
-            max_pool_size=_UniffiFfiConverterOptionalUInt32.read(buf),
-            claim_ttl_seconds=_UniffiFfiConverterOptionalUInt32.read(buf),
-            pool=_UniffiFfiConverterOptionalString.read(buf),
-            apply=_UniffiFfiConverterBoolean.read(buf),
-        )
-
-    @staticmethod
-    def check_lower(value):
-        _UniffiFfiConverterOptionalBoolean.check_lower(value.warm)
-        _UniffiFfiConverterOptionalUInt32.check_lower(value.max_pool_size)
-        _UniffiFfiConverterOptionalUInt32.check_lower(value.claim_ttl_seconds)
-        _UniffiFfiConverterOptionalString.check_lower(value.pool)
-        _UniffiFfiConverterBoolean.check_lower(value.apply)
-
-    @staticmethod
-    def write(value, buf):
-        _UniffiFfiConverterOptionalBoolean.write(value.warm, buf)
-        _UniffiFfiConverterOptionalUInt32.write(value.max_pool_size, buf)
-        _UniffiFfiConverterOptionalUInt32.write(value.claim_ttl_seconds, buf)
-        _UniffiFfiConverterOptionalString.write(value.pool, buf)
-        _UniffiFfiConverterBoolean.write(value.apply, buf)
-
 class _UniffiFfiConverterSequenceTypeCloudProvider(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -9418,9 +8938,7 @@ class Container:
     `name` (on its `ports`), it reaches the sandbox at `main`, and
     `services` may name its ports (`{"db": 5432}`). Local containers run it
     in the sandbox's network namespace (`localhost` works too; needs
-    `runtime="runc"`); cloud gVisor sandboxes run it in the same pod; cloud
-    VM (KubeVirt) sandboxes run it in a companion pod named in the guest's
-    `/etc/hosts`. Local VM sandboxes refuse sidecars. With sidecars the
+    `runtime="runc"`). Local VM sandboxes refuse sidecars. With sidecars the
     service names `main`, `sidecars` and `sc` are reserved.
 """
     def __init__(self, *, image:str, command:typing.Optional[typing.List[str]] = _DEFAULT, env:dict[str, str] = _DEFAULT, ports:typing.List[int] = _DEFAULT, name:typing.Optional[str] = _DEFAULT):
@@ -9487,84 +9005,11 @@ class _UniffiFfiConverterTypeContainer(_UniffiConverterRustBuffer):
         _UniffiFfiConverterSequenceUInt16.write(value.ports, buf)
         _UniffiFfiConverterOptionalString.write(value.name, buf)
 
-@dataclass
-class FleetSettings:
-    """
-    Fleet credentials and endpoints. Ignored: Cua Cloud has ended, so nothing
-    reads them any more. Kept so existing callers still compile.
-"""
-    def __init__(self, *, base_url:typing.Optional[str] = _DEFAULT, token_url:typing.Optional[str] = _DEFAULT, client_id:typing.Optional[str] = _DEFAULT, client_secret:typing.Optional[str] = _DEFAULT, token:typing.Optional[str] = _DEFAULT):
-        if base_url is _DEFAULT:
-            self.base_url = None
-        else:
-            self.base_url = base_url
-        if token_url is _DEFAULT:
-            self.token_url = None
-        else:
-            self.token_url = token_url
-        if client_id is _DEFAULT:
-            self.client_id = None
-        else:
-            self.client_id = client_id
-        if client_secret is _DEFAULT:
-            self.client_secret = None
-        else:
-            self.client_secret = client_secret
-        if token is _DEFAULT:
-            self.token = None
-        else:
-            self.token = token
-
-
-
-
-    def __str__(self):
-        return "FleetSettings(base_url={}, token_url={}, client_id={}, client_secret={}, token={})".format(self.base_url, self.token_url, self.client_id, self.client_secret, self.token)
-    def __eq__(self, other):
-        if self.base_url != other.base_url:
-            return False
-        if self.token_url != other.token_url:
-            return False
-        if self.client_id != other.client_id:
-            return False
-        if self.client_secret != other.client_secret:
-            return False
-        if self.token != other.token:
-            return False
-        return True
-
-class _UniffiFfiConverterTypeFleetSettings(_UniffiConverterRustBuffer):
-    @staticmethod
-    def read(buf):
-        return FleetSettings(
-            base_url=_UniffiFfiConverterOptionalString.read(buf),
-            token_url=_UniffiFfiConverterOptionalString.read(buf),
-            client_id=_UniffiFfiConverterOptionalString.read(buf),
-            client_secret=_UniffiFfiConverterOptionalString.read(buf),
-            token=_UniffiFfiConverterOptionalString.read(buf),
-        )
-
-    @staticmethod
-    def check_lower(value):
-        _UniffiFfiConverterOptionalString.check_lower(value.base_url)
-        _UniffiFfiConverterOptionalString.check_lower(value.token_url)
-        _UniffiFfiConverterOptionalString.check_lower(value.client_id)
-        _UniffiFfiConverterOptionalString.check_lower(value.client_secret)
-        _UniffiFfiConverterOptionalString.check_lower(value.token)
-
-    @staticmethod
-    def write(value, buf):
-        _UniffiFfiConverterOptionalString.write(value.base_url, buf)
-        _UniffiFfiConverterOptionalString.write(value.token_url, buf)
-        _UniffiFfiConverterOptionalString.write(value.client_id, buf)
-        _UniffiFfiConverterOptionalString.write(value.client_secret, buf)
-        _UniffiFfiConverterOptionalString.write(value.token, buf)
-
-class _UniffiFfiConverterOptionalTypeFleetSettings(_UniffiConverterRustBuffer):
+class _UniffiFfiConverterOptionalUInt32(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
         if value is not None:
-            _UniffiFfiConverterTypeFleetSettings.check_lower(value)
+            _UniffiFfiConverterUInt32.check_lower(value)
 
     @classmethod
     def write(cls, value, buf):
@@ -9573,7 +9018,7 @@ class _UniffiFfiConverterOptionalTypeFleetSettings(_UniffiConverterRustBuffer):
             return
 
         buf.write_u8(1)
-        _UniffiFfiConverterTypeFleetSettings.write(value, buf)
+        _UniffiFfiConverterUInt32.write(value, buf)
 
     @classmethod
     def read(cls, buf):
@@ -9581,7 +9026,7 @@ class _UniffiFfiConverterOptionalTypeFleetSettings(_UniffiConverterRustBuffer):
         if flag == 0:
             return None
         elif flag == 1:
-            return _UniffiFfiConverterTypeFleetSettings.read(buf)
+            return _UniffiFfiConverterUInt32.read(buf)
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
@@ -9590,16 +9035,11 @@ class CuaConfig:
     """
     Configuration of an embedded SDK runtime.
 """
-    def __init__(self, *, state_dir:typing.Optional[str] = _DEFAULT, fleet:typing.Optional[FleetSettings] = _DEFAULT, fleet_from_env:bool = True, env_probe_timeout_ms:typing.Optional[int] = _DEFAULT, spaces_home:typing.Optional[str] = _DEFAULT, teleport_home:typing.Optional[str] = _DEFAULT, fleet_from_session:bool = False, fleet_pool_home:typing.Optional[str] = _DEFAULT):
+    def __init__(self, *, state_dir:typing.Optional[str] = _DEFAULT, env_probe_timeout_ms:typing.Optional[int] = _DEFAULT, spaces_home:typing.Optional[str] = _DEFAULT, teleport_home:typing.Optional[str] = _DEFAULT, account_from_session:bool = False):
         if state_dir is _DEFAULT:
             self.state_dir = None
         else:
             self.state_dir = state_dir
-        if fleet is _DEFAULT:
-            self.fleet = None
-        else:
-            self.fleet = fleet
-        self.fleet_from_env = fleet_from_env
         if env_probe_timeout_ms is _DEFAULT:
             self.env_probe_timeout_ms = None
         else:
@@ -9612,23 +9052,15 @@ class CuaConfig:
             self.teleport_home = None
         else:
             self.teleport_home = teleport_home
-        self.fleet_from_session = fleet_from_session
-        if fleet_pool_home is _DEFAULT:
-            self.fleet_pool_home = None
-        else:
-            self.fleet_pool_home = fleet_pool_home
+        self.account_from_session = account_from_session
 
 
 
 
     def __str__(self):
-        return "CuaConfig(state_dir={}, fleet={}, fleet_from_env={}, env_probe_timeout_ms={}, spaces_home={}, teleport_home={}, fleet_from_session={}, fleet_pool_home={})".format(self.state_dir, self.fleet, self.fleet_from_env, self.env_probe_timeout_ms, self.spaces_home, self.teleport_home, self.fleet_from_session, self.fleet_pool_home)
+        return "CuaConfig(state_dir={}, env_probe_timeout_ms={}, spaces_home={}, teleport_home={}, account_from_session={})".format(self.state_dir, self.env_probe_timeout_ms, self.spaces_home, self.teleport_home, self.account_from_session)
     def __eq__(self, other):
         if self.state_dir != other.state_dir:
-            return False
-        if self.fleet != other.fleet:
-            return False
-        if self.fleet_from_env != other.fleet_from_env:
             return False
         if self.env_probe_timeout_ms != other.env_probe_timeout_ms:
             return False
@@ -9636,9 +9068,7 @@ class CuaConfig:
             return False
         if self.teleport_home != other.teleport_home:
             return False
-        if self.fleet_from_session != other.fleet_from_session:
-            return False
-        if self.fleet_pool_home != other.fleet_pool_home:
+        if self.account_from_session != other.account_from_session:
             return False
         return True
 
@@ -9647,36 +9077,27 @@ class _UniffiFfiConverterTypeCuaConfig(_UniffiConverterRustBuffer):
     def read(buf):
         return CuaConfig(
             state_dir=_UniffiFfiConverterOptionalString.read(buf),
-            fleet=_UniffiFfiConverterOptionalTypeFleetSettings.read(buf),
-            fleet_from_env=_UniffiFfiConverterBoolean.read(buf),
             env_probe_timeout_ms=_UniffiFfiConverterOptionalUInt32.read(buf),
             spaces_home=_UniffiFfiConverterOptionalString.read(buf),
             teleport_home=_UniffiFfiConverterOptionalString.read(buf),
-            fleet_from_session=_UniffiFfiConverterBoolean.read(buf),
-            fleet_pool_home=_UniffiFfiConverterOptionalString.read(buf),
+            account_from_session=_UniffiFfiConverterBoolean.read(buf),
         )
 
     @staticmethod
     def check_lower(value):
         _UniffiFfiConverterOptionalString.check_lower(value.state_dir)
-        _UniffiFfiConverterOptionalTypeFleetSettings.check_lower(value.fleet)
-        _UniffiFfiConverterBoolean.check_lower(value.fleet_from_env)
         _UniffiFfiConverterOptionalUInt32.check_lower(value.env_probe_timeout_ms)
         _UniffiFfiConverterOptionalString.check_lower(value.spaces_home)
         _UniffiFfiConverterOptionalString.check_lower(value.teleport_home)
-        _UniffiFfiConverterBoolean.check_lower(value.fleet_from_session)
-        _UniffiFfiConverterOptionalString.check_lower(value.fleet_pool_home)
+        _UniffiFfiConverterBoolean.check_lower(value.account_from_session)
 
     @staticmethod
     def write(value, buf):
         _UniffiFfiConverterOptionalString.write(value.state_dir, buf)
-        _UniffiFfiConverterOptionalTypeFleetSettings.write(value.fleet, buf)
-        _UniffiFfiConverterBoolean.write(value.fleet_from_env, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.env_probe_timeout_ms, buf)
         _UniffiFfiConverterOptionalString.write(value.spaces_home, buf)
         _UniffiFfiConverterOptionalString.write(value.teleport_home, buf)
-        _UniffiFfiConverterBoolean.write(value.fleet_from_session, buf)
-        _UniffiFfiConverterOptionalString.write(value.fleet_pool_home, buf)
+        _UniffiFfiConverterBoolean.write(value.account_from_session, buf)
 
 
 
@@ -10180,7 +9601,7 @@ class RelayMachine:
     """
     A machine of the account's relay directory (`relay:<id>`).
 """
-    def __init__(self, *, id:str, space_id:str, name:str, owner_id:str, owner_email:typing.Optional[str], role:str, online:bool, sharing:bool, version:str, url:str, allow:typing.List[str], clients:typing.List[RelayClientInfo], confirmed:bool):
+    def __init__(self, *, id:str, space_id:str, name:str, owner_id:str, owner_email:typing.Optional[str], role:str, online:bool, sharing:bool, version:str, url:str, allow:typing.List[str], clients:typing.List[RelayClientInfo], confirmed:bool, team:typing.Optional[str], provides_spaces:typing.Optional[bool]):
         self.id = id
         self.space_id = space_id
         self.name = name
@@ -10194,12 +9615,14 @@ class RelayMachine:
         self.allow = allow
         self.clients = clients
         self.confirmed = confirmed
+        self.team = team
+        self.provides_spaces = provides_spaces
 
 
 
 
     def __str__(self):
-        return "RelayMachine(id={}, space_id={}, name={}, owner_id={}, owner_email={}, role={}, online={}, sharing={}, version={}, url={}, allow={}, clients={}, confirmed={})".format(self.id, self.space_id, self.name, self.owner_id, self.owner_email, self.role, self.online, self.sharing, self.version, self.url, self.allow, self.clients, self.confirmed)
+        return "RelayMachine(id={}, space_id={}, name={}, owner_id={}, owner_email={}, role={}, online={}, sharing={}, version={}, url={}, allow={}, clients={}, confirmed={}, team={}, provides_spaces={})".format(self.id, self.space_id, self.name, self.owner_id, self.owner_email, self.role, self.online, self.sharing, self.version, self.url, self.allow, self.clients, self.confirmed, self.team, self.provides_spaces)
     def __eq__(self, other):
         if self.id != other.id:
             return False
@@ -10227,6 +9650,10 @@ class RelayMachine:
             return False
         if self.confirmed != other.confirmed:
             return False
+        if self.team != other.team:
+            return False
+        if self.provides_spaces != other.provides_spaces:
+            return False
         return True
 
 class _UniffiFfiConverterTypeRelayMachine(_UniffiConverterRustBuffer):
@@ -10246,6 +9673,8 @@ class _UniffiFfiConverterTypeRelayMachine(_UniffiConverterRustBuffer):
             allow=_UniffiFfiConverterSequenceString.read(buf),
             clients=_UniffiFfiConverterSequenceTypeRelayClientInfo.read(buf),
             confirmed=_UniffiFfiConverterBoolean.read(buf),
+            team=_UniffiFfiConverterOptionalString.read(buf),
+            provides_spaces=_UniffiFfiConverterOptionalBoolean.read(buf),
         )
 
     @staticmethod
@@ -10263,6 +9692,8 @@ class _UniffiFfiConverterTypeRelayMachine(_UniffiConverterRustBuffer):
         _UniffiFfiConverterSequenceString.check_lower(value.allow)
         _UniffiFfiConverterSequenceTypeRelayClientInfo.check_lower(value.clients)
         _UniffiFfiConverterBoolean.check_lower(value.confirmed)
+        _UniffiFfiConverterOptionalString.check_lower(value.team)
+        _UniffiFfiConverterOptionalBoolean.check_lower(value.provides_spaces)
 
     @staticmethod
     def write(value, buf):
@@ -10279,6 +9710,8 @@ class _UniffiFfiConverterTypeRelayMachine(_UniffiConverterRustBuffer):
         _UniffiFfiConverterSequenceString.write(value.allow, buf)
         _UniffiFfiConverterSequenceTypeRelayClientInfo.write(value.clients, buf)
         _UniffiFfiConverterBoolean.write(value.confirmed, buf)
+        _UniffiFfiConverterOptionalString.write(value.team, buf)
+        _UniffiFfiConverterOptionalBoolean.write(value.provides_spaces, buf)
 
 class _UniffiFfiConverterSequenceTypeRelayMachine(_UniffiConverterRustBuffer):
     @classmethod
@@ -12541,1561 +11974,6 @@ class _UniffiFfiConverterTypeFileEntry(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.write(value.symlink_target, buf)
 
 @dataclass
-class FleetBillingCard:
-    """
-    The saved card ([`Fleet::billing_status`]): never its number.
-"""
-    def __init__(self, *, brand:str, last4:str, exp_month:int, exp_year:int):
-        self.brand = brand
-        self.last4 = last4
-        self.exp_month = exp_month
-        self.exp_year = exp_year
-
-
-
-
-    def __str__(self):
-        return "FleetBillingCard(brand={}, last4={}, exp_month={}, exp_year={})".format(self.brand, self.last4, self.exp_month, self.exp_year)
-    def __eq__(self, other):
-        if self.brand != other.brand:
-            return False
-        if self.last4 != other.last4:
-            return False
-        if self.exp_month != other.exp_month:
-            return False
-        if self.exp_year != other.exp_year:
-            return False
-        return True
-
-class _UniffiFfiConverterTypeFleetBillingCard(_UniffiConverterRustBuffer):
-    @staticmethod
-    def read(buf):
-        return FleetBillingCard(
-            brand=_UniffiFfiConverterString.read(buf),
-            last4=_UniffiFfiConverterString.read(buf),
-            exp_month=_UniffiFfiConverterUInt32.read(buf),
-            exp_year=_UniffiFfiConverterUInt32.read(buf),
-        )
-
-    @staticmethod
-    def check_lower(value):
-        _UniffiFfiConverterString.check_lower(value.brand)
-        _UniffiFfiConverterString.check_lower(value.last4)
-        _UniffiFfiConverterUInt32.check_lower(value.exp_month)
-        _UniffiFfiConverterUInt32.check_lower(value.exp_year)
-
-    @staticmethod
-    def write(value, buf):
-        _UniffiFfiConverterString.write(value.brand, buf)
-        _UniffiFfiConverterString.write(value.last4, buf)
-        _UniffiFfiConverterUInt32.write(value.exp_month, buf)
-        _UniffiFfiConverterUInt32.write(value.exp_year, buf)
-
-@dataclass
-class FleetBillingCredit:
-    """
-    The account's Cua Cloud credit.
-"""
-    def __init__(self, *, balance_usd_cents:int, signup_grant_usd_cents:int, signup_grant_unused:bool):
-        self.balance_usd_cents = balance_usd_cents
-        self.signup_grant_usd_cents = signup_grant_usd_cents
-        self.signup_grant_unused = signup_grant_unused
-
-
-
-
-    def __str__(self):
-        return "FleetBillingCredit(balance_usd_cents={}, signup_grant_usd_cents={}, signup_grant_unused={})".format(self.balance_usd_cents, self.signup_grant_usd_cents, self.signup_grant_unused)
-    def __eq__(self, other):
-        if self.balance_usd_cents != other.balance_usd_cents:
-            return False
-        if self.signup_grant_usd_cents != other.signup_grant_usd_cents:
-            return False
-        if self.signup_grant_unused != other.signup_grant_unused:
-            return False
-        return True
-
-class _UniffiFfiConverterTypeFleetBillingCredit(_UniffiConverterRustBuffer):
-    @staticmethod
-    def read(buf):
-        return FleetBillingCredit(
-            balance_usd_cents=_UniffiFfiConverterInt64.read(buf),
-            signup_grant_usd_cents=_UniffiFfiConverterInt64.read(buf),
-            signup_grant_unused=_UniffiFfiConverterBoolean.read(buf),
-        )
-
-    @staticmethod
-    def check_lower(value):
-        _UniffiFfiConverterInt64.check_lower(value.balance_usd_cents)
-        _UniffiFfiConverterInt64.check_lower(value.signup_grant_usd_cents)
-        _UniffiFfiConverterBoolean.check_lower(value.signup_grant_unused)
-
-    @staticmethod
-    def write(value, buf):
-        _UniffiFfiConverterInt64.write(value.balance_usd_cents, buf)
-        _UniffiFfiConverterInt64.write(value.signup_grant_usd_cents, buf)
-        _UniffiFfiConverterBoolean.write(value.signup_grant_unused, buf)
-
-class _UniffiFfiConverterOptionalTypeFleetBillingCard(_UniffiConverterRustBuffer):
-    @classmethod
-    def check_lower(cls, value):
-        if value is not None:
-            _UniffiFfiConverterTypeFleetBillingCard.check_lower(value)
-
-    @classmethod
-    def write(cls, value, buf):
-        if value is None:
-            buf.write_u8(0)
-            return
-
-        buf.write_u8(1)
-        _UniffiFfiConverterTypeFleetBillingCard.write(value, buf)
-
-    @classmethod
-    def read(cls, buf):
-        flag = buf.read_u8()
-        if flag == 0:
-            return None
-        elif flag == 1:
-            return _UniffiFfiConverterTypeFleetBillingCard.read(buf)
-        else:
-            raise InternalError("Unexpected flag byte for optional type")
-
-class _UniffiFfiConverterOptionalTypeFleetBillingCredit(_UniffiConverterRustBuffer):
-    @classmethod
-    def check_lower(cls, value):
-        if value is not None:
-            _UniffiFfiConverterTypeFleetBillingCredit.check_lower(value)
-
-    @classmethod
-    def write(cls, value, buf):
-        if value is None:
-            buf.write_u8(0)
-            return
-
-        buf.write_u8(1)
-        _UniffiFfiConverterTypeFleetBillingCredit.write(value, buf)
-
-    @classmethod
-    def read(cls, buf):
-        flag = buf.read_u8()
-        if flag == 0:
-            return None
-        elif flag == 1:
-            return _UniffiFfiConverterTypeFleetBillingCredit.read(buf)
-        else:
-            raise InternalError("Unexpected flag byte for optional type")
-
-@dataclass
-class FleetBillingStatus:
-    """
-    The account's Cua Cloud billing (`GET /api/billing/status`).
-"""
-    def __init__(self, *, billing_enabled:bool, payment_method_present:bool, card:typing.Optional[FleetBillingCard], plan:str, payg_available:bool, credit:typing.Optional[FleetBillingCredit], billing_url:typing.Optional[str]):
-        self.billing_enabled = billing_enabled
-        self.payment_method_present = payment_method_present
-        self.card = card
-        self.plan = plan
-        self.payg_available = payg_available
-        self.credit = credit
-        self.billing_url = billing_url
-
-
-
-
-    def __str__(self):
-        return "FleetBillingStatus(billing_enabled={}, payment_method_present={}, card={}, plan={}, payg_available={}, credit={}, billing_url={})".format(self.billing_enabled, self.payment_method_present, self.card, self.plan, self.payg_available, self.credit, self.billing_url)
-    def __eq__(self, other):
-        if self.billing_enabled != other.billing_enabled:
-            return False
-        if self.payment_method_present != other.payment_method_present:
-            return False
-        if self.card != other.card:
-            return False
-        if self.plan != other.plan:
-            return False
-        if self.payg_available != other.payg_available:
-            return False
-        if self.credit != other.credit:
-            return False
-        if self.billing_url != other.billing_url:
-            return False
-        return True
-
-class _UniffiFfiConverterTypeFleetBillingStatus(_UniffiConverterRustBuffer):
-    @staticmethod
-    def read(buf):
-        return FleetBillingStatus(
-            billing_enabled=_UniffiFfiConverterBoolean.read(buf),
-            payment_method_present=_UniffiFfiConverterBoolean.read(buf),
-            card=_UniffiFfiConverterOptionalTypeFleetBillingCard.read(buf),
-            plan=_UniffiFfiConverterString.read(buf),
-            payg_available=_UniffiFfiConverterBoolean.read(buf),
-            credit=_UniffiFfiConverterOptionalTypeFleetBillingCredit.read(buf),
-            billing_url=_UniffiFfiConverterOptionalString.read(buf),
-        )
-
-    @staticmethod
-    def check_lower(value):
-        _UniffiFfiConverterBoolean.check_lower(value.billing_enabled)
-        _UniffiFfiConverterBoolean.check_lower(value.payment_method_present)
-        _UniffiFfiConverterOptionalTypeFleetBillingCard.check_lower(value.card)
-        _UniffiFfiConverterString.check_lower(value.plan)
-        _UniffiFfiConverterBoolean.check_lower(value.payg_available)
-        _UniffiFfiConverterOptionalTypeFleetBillingCredit.check_lower(value.credit)
-        _UniffiFfiConverterOptionalString.check_lower(value.billing_url)
-
-    @staticmethod
-    def write(value, buf):
-        _UniffiFfiConverterBoolean.write(value.billing_enabled, buf)
-        _UniffiFfiConverterBoolean.write(value.payment_method_present, buf)
-        _UniffiFfiConverterOptionalTypeFleetBillingCard.write(value.card, buf)
-        _UniffiFfiConverterString.write(value.plan, buf)
-        _UniffiFfiConverterBoolean.write(value.payg_available, buf)
-        _UniffiFfiConverterOptionalTypeFleetBillingCredit.write(value.credit, buf)
-        _UniffiFfiConverterOptionalString.write(value.billing_url, buf)
-
-@dataclass
-class FleetClaim:
-    """
-    A claim.
-"""
-    def __init__(self, *, name:str, namespace:str, json:str):
-        self.name = name
-        self.namespace = namespace
-        self.json = json
-
-
-
-
-    def __str__(self):
-        return "FleetClaim(name={}, namespace={}, json={})".format(self.name, self.namespace, self.json)
-    def __eq__(self, other):
-        if self.name != other.name:
-            return False
-        if self.namespace != other.namespace:
-            return False
-        if self.json != other.json:
-            return False
-        return True
-
-class _UniffiFfiConverterTypeFleetClaim(_UniffiConverterRustBuffer):
-    @staticmethod
-    def read(buf):
-        return FleetClaim(
-            name=_UniffiFfiConverterString.read(buf),
-            namespace=_UniffiFfiConverterString.read(buf),
-            json=_UniffiFfiConverterString.read(buf),
-        )
-
-    @staticmethod
-    def check_lower(value):
-        _UniffiFfiConverterString.check_lower(value.name)
-        _UniffiFfiConverterString.check_lower(value.namespace)
-        _UniffiFfiConverterString.check_lower(value.json)
-
-    @staticmethod
-    def write(value, buf):
-        _UniffiFfiConverterString.write(value.name, buf)
-        _UniffiFfiConverterString.write(value.namespace, buf)
-        _UniffiFfiConverterString.write(value.json, buf)
-
-@dataclass
-class FleetClaimOptions:
-    """
-    Claim options for [`Fleet::acquire_with`].
-"""
-    def __init__(self, *, name:typing.Optional[str] = _DEFAULT, ttl_seconds:typing.Optional[int] = _DEFAULT, claim_token:typing.Optional[str] = _DEFAULT):
-        if name is _DEFAULT:
-            self.name = None
-        else:
-            self.name = name
-        if ttl_seconds is _DEFAULT:
-            self.ttl_seconds = None
-        else:
-            self.ttl_seconds = ttl_seconds
-        if claim_token is _DEFAULT:
-            self.claim_token = None
-        else:
-            self.claim_token = claim_token
-
-
-
-
-    def __str__(self):
-        return "FleetClaimOptions(name={}, ttl_seconds={}, claim_token={})".format(self.name, self.ttl_seconds, self.claim_token)
-    def __eq__(self, other):
-        if self.name != other.name:
-            return False
-        if self.ttl_seconds != other.ttl_seconds:
-            return False
-        if self.claim_token != other.claim_token:
-            return False
-        return True
-
-class _UniffiFfiConverterTypeFleetClaimOptions(_UniffiConverterRustBuffer):
-    @staticmethod
-    def read(buf):
-        return FleetClaimOptions(
-            name=_UniffiFfiConverterOptionalString.read(buf),
-            ttl_seconds=_UniffiFfiConverterOptionalUInt32.read(buf),
-            claim_token=_UniffiFfiConverterOptionalString.read(buf),
-        )
-
-    @staticmethod
-    def check_lower(value):
-        _UniffiFfiConverterOptionalString.check_lower(value.name)
-        _UniffiFfiConverterOptionalUInt32.check_lower(value.ttl_seconds)
-        _UniffiFfiConverterOptionalString.check_lower(value.claim_token)
-
-    @staticmethod
-    def write(value, buf):
-        _UniffiFfiConverterOptionalString.write(value.name, buf)
-        _UniffiFfiConverterOptionalUInt32.write(value.ttl_seconds, buf)
-        _UniffiFfiConverterOptionalString.write(value.claim_token, buf)
-
-@dataclass
-class FleetGcReport:
-    """
-    What a pool GC did.
-"""
-    def __init__(self, *, deleted_pools:typing.List[str], deleted_namespaces:typing.List[str], deleted_claims:typing.List[str], kept:typing.List[str], errors:typing.List[str]):
-        self.deleted_pools = deleted_pools
-        self.deleted_namespaces = deleted_namespaces
-        self.deleted_claims = deleted_claims
-        self.kept = kept
-        self.errors = errors
-
-
-
-
-    def __str__(self):
-        return "FleetGcReport(deleted_pools={}, deleted_namespaces={}, deleted_claims={}, kept={}, errors={})".format(self.deleted_pools, self.deleted_namespaces, self.deleted_claims, self.kept, self.errors)
-    def __eq__(self, other):
-        if self.deleted_pools != other.deleted_pools:
-            return False
-        if self.deleted_namespaces != other.deleted_namespaces:
-            return False
-        if self.deleted_claims != other.deleted_claims:
-            return False
-        if self.kept != other.kept:
-            return False
-        if self.errors != other.errors:
-            return False
-        return True
-
-class _UniffiFfiConverterTypeFleetGcReport(_UniffiConverterRustBuffer):
-    @staticmethod
-    def read(buf):
-        return FleetGcReport(
-            deleted_pools=_UniffiFfiConverterSequenceString.read(buf),
-            deleted_namespaces=_UniffiFfiConverterSequenceString.read(buf),
-            deleted_claims=_UniffiFfiConverterSequenceString.read(buf),
-            kept=_UniffiFfiConverterSequenceString.read(buf),
-            errors=_UniffiFfiConverterSequenceString.read(buf),
-        )
-
-    @staticmethod
-    def check_lower(value):
-        _UniffiFfiConverterSequenceString.check_lower(value.deleted_pools)
-        _UniffiFfiConverterSequenceString.check_lower(value.deleted_namespaces)
-        _UniffiFfiConverterSequenceString.check_lower(value.deleted_claims)
-        _UniffiFfiConverterSequenceString.check_lower(value.kept)
-        _UniffiFfiConverterSequenceString.check_lower(value.errors)
-
-    @staticmethod
-    def write(value, buf):
-        _UniffiFfiConverterSequenceString.write(value.deleted_pools, buf)
-        _UniffiFfiConverterSequenceString.write(value.deleted_namespaces, buf)
-        _UniffiFfiConverterSequenceString.write(value.deleted_claims, buf)
-        _UniffiFfiConverterSequenceString.write(value.kept, buf)
-        _UniffiFfiConverterSequenceString.write(value.errors, buf)
-
-@dataclass
-class FleetManagedPool:
-    """
-    A managed pool (`cua-auto-*`, or a legacy `cua-eph-*`).
-"""
-    def __init__(self, *, name:str, managed:bool, spec_hash:typing.Optional[str], image:typing.Optional[str], replicas:int, ready_replicas:typing.Optional[int], max_pool_size:typing.Optional[int], claims:int, bound_claims:int, last_used_unix:typing.Optional[int], created_unix:typing.Optional[int], expires_unix:typing.Optional[int], terminating:bool):
-        self.name = name
-        self.managed = managed
-        self.spec_hash = spec_hash
-        self.image = image
-        self.replicas = replicas
-        self.ready_replicas = ready_replicas
-        self.max_pool_size = max_pool_size
-        self.claims = claims
-        self.bound_claims = bound_claims
-        self.last_used_unix = last_used_unix
-        self.created_unix = created_unix
-        self.expires_unix = expires_unix
-        self.terminating = terminating
-
-
-
-
-    def __str__(self):
-        return "FleetManagedPool(name={}, managed={}, spec_hash={}, image={}, replicas={}, ready_replicas={}, max_pool_size={}, claims={}, bound_claims={}, last_used_unix={}, created_unix={}, expires_unix={}, terminating={})".format(self.name, self.managed, self.spec_hash, self.image, self.replicas, self.ready_replicas, self.max_pool_size, self.claims, self.bound_claims, self.last_used_unix, self.created_unix, self.expires_unix, self.terminating)
-    def __eq__(self, other):
-        if self.name != other.name:
-            return False
-        if self.managed != other.managed:
-            return False
-        if self.spec_hash != other.spec_hash:
-            return False
-        if self.image != other.image:
-            return False
-        if self.replicas != other.replicas:
-            return False
-        if self.ready_replicas != other.ready_replicas:
-            return False
-        if self.max_pool_size != other.max_pool_size:
-            return False
-        if self.claims != other.claims:
-            return False
-        if self.bound_claims != other.bound_claims:
-            return False
-        if self.last_used_unix != other.last_used_unix:
-            return False
-        if self.created_unix != other.created_unix:
-            return False
-        if self.expires_unix != other.expires_unix:
-            return False
-        if self.terminating != other.terminating:
-            return False
-        return True
-
-class _UniffiFfiConverterTypeFleetManagedPool(_UniffiConverterRustBuffer):
-    @staticmethod
-    def read(buf):
-        return FleetManagedPool(
-            name=_UniffiFfiConverterString.read(buf),
-            managed=_UniffiFfiConverterBoolean.read(buf),
-            spec_hash=_UniffiFfiConverterOptionalString.read(buf),
-            image=_UniffiFfiConverterOptionalString.read(buf),
-            replicas=_UniffiFfiConverterUInt32.read(buf),
-            ready_replicas=_UniffiFfiConverterOptionalUInt32.read(buf),
-            max_pool_size=_UniffiFfiConverterOptionalUInt32.read(buf),
-            claims=_UniffiFfiConverterUInt32.read(buf),
-            bound_claims=_UniffiFfiConverterUInt32.read(buf),
-            last_used_unix=_UniffiFfiConverterOptionalInt64.read(buf),
-            created_unix=_UniffiFfiConverterOptionalInt64.read(buf),
-            expires_unix=_UniffiFfiConverterOptionalInt64.read(buf),
-            terminating=_UniffiFfiConverterBoolean.read(buf),
-        )
-
-    @staticmethod
-    def check_lower(value):
-        _UniffiFfiConverterString.check_lower(value.name)
-        _UniffiFfiConverterBoolean.check_lower(value.managed)
-        _UniffiFfiConverterOptionalString.check_lower(value.spec_hash)
-        _UniffiFfiConverterOptionalString.check_lower(value.image)
-        _UniffiFfiConverterUInt32.check_lower(value.replicas)
-        _UniffiFfiConverterOptionalUInt32.check_lower(value.ready_replicas)
-        _UniffiFfiConverterOptionalUInt32.check_lower(value.max_pool_size)
-        _UniffiFfiConverterUInt32.check_lower(value.claims)
-        _UniffiFfiConverterUInt32.check_lower(value.bound_claims)
-        _UniffiFfiConverterOptionalInt64.check_lower(value.last_used_unix)
-        _UniffiFfiConverterOptionalInt64.check_lower(value.created_unix)
-        _UniffiFfiConverterOptionalInt64.check_lower(value.expires_unix)
-        _UniffiFfiConverterBoolean.check_lower(value.terminating)
-
-    @staticmethod
-    def write(value, buf):
-        _UniffiFfiConverterString.write(value.name, buf)
-        _UniffiFfiConverterBoolean.write(value.managed, buf)
-        _UniffiFfiConverterOptionalString.write(value.spec_hash, buf)
-        _UniffiFfiConverterOptionalString.write(value.image, buf)
-        _UniffiFfiConverterUInt32.write(value.replicas, buf)
-        _UniffiFfiConverterOptionalUInt32.write(value.ready_replicas, buf)
-        _UniffiFfiConverterOptionalUInt32.write(value.max_pool_size, buf)
-        _UniffiFfiConverterUInt32.write(value.claims, buf)
-        _UniffiFfiConverterUInt32.write(value.bound_claims, buf)
-        _UniffiFfiConverterOptionalInt64.write(value.last_used_unix, buf)
-        _UniffiFfiConverterOptionalInt64.write(value.created_unix, buf)
-        _UniffiFfiConverterOptionalInt64.write(value.expires_unix, buf)
-        _UniffiFfiConverterBoolean.write(value.terminating, buf)
-
-@dataclass
-class FleetPool:
-    """
-    A pool.
-"""
-    def __init__(self, *, name:str, namespace:str, replicas:int, ready_replicas:typing.Optional[int], json:str):
-        self.name = name
-        self.namespace = namespace
-        self.replicas = replicas
-        self.ready_replicas = ready_replicas
-        self.json = json
-
-
-
-
-    def __str__(self):
-        return "FleetPool(name={}, namespace={}, replicas={}, ready_replicas={}, json={})".format(self.name, self.namespace, self.replicas, self.ready_replicas, self.json)
-    def __eq__(self, other):
-        if self.name != other.name:
-            return False
-        if self.namespace != other.namespace:
-            return False
-        if self.replicas != other.replicas:
-            return False
-        if self.ready_replicas != other.ready_replicas:
-            return False
-        if self.json != other.json:
-            return False
-        return True
-
-class _UniffiFfiConverterTypeFleetPool(_UniffiConverterRustBuffer):
-    @staticmethod
-    def read(buf):
-        return FleetPool(
-            name=_UniffiFfiConverterString.read(buf),
-            namespace=_UniffiFfiConverterString.read(buf),
-            replicas=_UniffiFfiConverterUInt32.read(buf),
-            ready_replicas=_UniffiFfiConverterOptionalUInt32.read(buf),
-            json=_UniffiFfiConverterString.read(buf),
-        )
-
-    @staticmethod
-    def check_lower(value):
-        _UniffiFfiConverterString.check_lower(value.name)
-        _UniffiFfiConverterString.check_lower(value.namespace)
-        _UniffiFfiConverterUInt32.check_lower(value.replicas)
-        _UniffiFfiConverterOptionalUInt32.check_lower(value.ready_replicas)
-        _UniffiFfiConverterString.check_lower(value.json)
-
-    @staticmethod
-    def write(value, buf):
-        _UniffiFfiConverterString.write(value.name, buf)
-        _UniffiFfiConverterString.write(value.namespace, buf)
-        _UniffiFfiConverterUInt32.write(value.replicas, buf)
-        _UniffiFfiConverterOptionalUInt32.write(value.ready_replicas, buf)
-        _UniffiFfiConverterString.write(value.json, buf)
-
-class _UniffiFfiConverterMapStringUInt16(_UniffiConverterRustBuffer):
-    @classmethod
-    def check_lower(cls, items):
-        for (key, value) in items.items():
-            _UniffiFfiConverterString.check_lower(key)
-            _UniffiFfiConverterUInt16.check_lower(value)
-
-    @classmethod
-    def write(cls, items, buf):
-        buf.write_i32(len(items))
-        for (key, value) in items.items():
-            _UniffiFfiConverterString.write(key, buf)
-            _UniffiFfiConverterUInt16.write(value, buf)
-
-    @classmethod
-    def read(cls, buf):
-        count = buf.read_i32()
-        if count < 0:
-            raise InternalError("Unexpected negative map size")
-
-        # It would be nice to use a dict comprehension,
-        # but in Python 3.7 and before the evaluation order is not according to spec,
-        # so we we're reading the value before the key.
-        # This loop makes the order explicit: first reading the key, then the value.
-        d = {}
-        for i in range(count):
-            key = _UniffiFfiConverterString.read(buf)
-            val = _UniffiFfiConverterUInt16.read(buf)
-            d[key] = val
-        return d
-
-class _UniffiFfiConverterOptionalUInt16(_UniffiConverterRustBuffer):
-    @classmethod
-    def check_lower(cls, value):
-        if value is not None:
-            _UniffiFfiConverterUInt16.check_lower(value)
-
-    @classmethod
-    def write(cls, value, buf):
-        if value is None:
-            buf.write_u8(0)
-            return
-
-        buf.write_u8(1)
-        _UniffiFfiConverterUInt16.write(value, buf)
-
-    @classmethod
-    def read(cls, buf):
-        flag = buf.read_u8()
-        if flag == 0:
-            return None
-        elif flag == 1:
-            return _UniffiFfiConverterUInt16.read(buf)
-        else:
-            raise InternalError("Unexpected flag byte for optional type")
-
-@dataclass
-class ReadinessProbe:
-    """
-    A user-declared readiness probe. With no probes a sandbox is ready as
-    soon as its provider reports it running; nothing assumes a guest daemon.
-
-    Name a declared service (`service = "mcp"`) or a guest port.
-"""
-    def __init__(self, *, port:int = 0, http_path:typing.Optional[str] = _DEFAULT, http_status:typing.Optional[int] = _DEFAULT, service:typing.Optional[str] = _DEFAULT):
-        self.port = port
-        if http_path is _DEFAULT:
-            self.http_path = None
-        else:
-            self.http_path = http_path
-        if http_status is _DEFAULT:
-            self.http_status = None
-        else:
-            self.http_status = http_status
-        if service is _DEFAULT:
-            self.service = None
-        else:
-            self.service = service
-
-
-
-
-    def __str__(self):
-        return "ReadinessProbe(port={}, http_path={}, http_status={}, service={})".format(self.port, self.http_path, self.http_status, self.service)
-    def __eq__(self, other):
-        if self.port != other.port:
-            return False
-        if self.http_path != other.http_path:
-            return False
-        if self.http_status != other.http_status:
-            return False
-        if self.service != other.service:
-            return False
-        return True
-
-class _UniffiFfiConverterTypeReadinessProbe(_UniffiConverterRustBuffer):
-    @staticmethod
-    def read(buf):
-        return ReadinessProbe(
-            port=_UniffiFfiConverterUInt16.read(buf),
-            http_path=_UniffiFfiConverterOptionalString.read(buf),
-            http_status=_UniffiFfiConverterOptionalUInt16.read(buf),
-            service=_UniffiFfiConverterOptionalString.read(buf),
-        )
-
-    @staticmethod
-    def check_lower(value):
-        _UniffiFfiConverterUInt16.check_lower(value.port)
-        _UniffiFfiConverterOptionalString.check_lower(value.http_path)
-        _UniffiFfiConverterOptionalUInt16.check_lower(value.http_status)
-        _UniffiFfiConverterOptionalString.check_lower(value.service)
-
-    @staticmethod
-    def write(value, buf):
-        _UniffiFfiConverterUInt16.write(value.port, buf)
-        _UniffiFfiConverterOptionalString.write(value.http_path, buf)
-        _UniffiFfiConverterOptionalUInt16.write(value.http_status, buf)
-        _UniffiFfiConverterOptionalString.write(value.service, buf)
-
-class _UniffiFfiConverterOptionalTypeReadinessProbe(_UniffiConverterRustBuffer):
-    @classmethod
-    def check_lower(cls, value):
-        if value is not None:
-            _UniffiFfiConverterTypeReadinessProbe.check_lower(value)
-
-    @classmethod
-    def write(cls, value, buf):
-        if value is None:
-            buf.write_u8(0)
-            return
-
-        buf.write_u8(1)
-        _UniffiFfiConverterTypeReadinessProbe.write(value, buf)
-
-    @classmethod
-    def read(cls, buf):
-        flag = buf.read_u8()
-        if flag == 0:
-            return None
-        elif flag == 1:
-            return _UniffiFfiConverterTypeReadinessProbe.read(buf)
-        else:
-            raise InternalError("Unexpected flag byte for optional type")
-
-class _UniffiFfiConverterSequenceTypeContainer(_UniffiConverterRustBuffer):
-    @classmethod
-    def check_lower(cls, value):
-        for item in value:
-            _UniffiFfiConverterTypeContainer.check_lower(item)
-
-    @classmethod
-    def write(cls, value, buf):
-        items = len(value)
-        buf.write_i32(items)
-        for item in value:
-            _UniffiFfiConverterTypeContainer.write(item, buf)
-
-    @classmethod
-    def read(cls, buf):
-        count = buf.read_i32()
-        if count < 0:
-            raise InternalError("Unexpected negative sequence length")
-
-        return [
-            _UniffiFfiConverterTypeContainer.read(buf) for i in range(count)
-        ]
-
-
-
-
-
-
-class RegistrySecret:
-    """
-    Credentials for a private registry image. Local sandboxes pull with
-    them; cloud sandboxes store them as the sandbox's registry pull Secret.
-    Never logged or persisted.
-"""
-    def __init__(self):
-        raise RuntimeError("RegistrySecret cannot be instantiated directly")
-
-    # Each enum variant is a nested class of the enum itself.
-    @dataclass
-    class BASIC:
-        """
-        A user name and password (or access token).
-"""
-
-        def __init__(self, username:str, password:str, registry:typing.Optional[str]):
-            self.username = username
-
-            """
-        User name.
-"""
-
-            self.password = password
-
-            """
-        Password or token.
-"""
-
-            self.registry = registry
-
-            """
-        Registry host; `None` means the image's.
-"""
-
-            pass
-
-
-
-
-
-        def __str__(self):
-            return "RegistrySecret.BASIC(username={}, password={}, registry={})".format(self.username, self.password, self.registry)
-        def __eq__(self, other):
-            if not isinstance(other, RegistrySecret):
-                return NotImplemented
-            if not other.is_BASIC():
-                return False
-            if self.username != other.username:
-                return False
-            if self.password != other.password:
-                return False
-            if self.registry != other.registry:
-                return False
-            return True
-
-    @dataclass
-    class FROM_ENV:
-        """
-        Read from environment variables of this process at create time.
-"""
-
-        def __init__(self, username_var:str, password_var:str, registry:typing.Optional[str]):
-            self.username_var = username_var
-
-            """
-        Variable holding the user name.
-"""
-
-            self.password_var = password_var
-
-            """
-        Variable holding the password or token.
-"""
-
-            self.registry = registry
-
-            """
-        Registry host; `None` means the image's.
-"""
-
-            pass
-
-
-
-
-
-        def __str__(self):
-            return "RegistrySecret.FROM_ENV(username_var={}, password_var={}, registry={})".format(self.username_var, self.password_var, self.registry)
-        def __eq__(self, other):
-            if not isinstance(other, RegistrySecret):
-                return NotImplemented
-            if not other.is_FROM_ENV():
-                return False
-            if self.username_var != other.username_var:
-                return False
-            if self.password_var != other.password_var:
-                return False
-            if self.registry != other.registry:
-                return False
-            return True
-
-    @dataclass
-    class AWS_ECR:
-        """
-        A private Amazon ECR image: a login token from the AWS CLI
-        (`aws ecr get-login-password`) with the caller's AWS credentials.
-"""
-
-        def __init__(self, region:typing.Optional[str]):
-            self.region = region
-
-            """
-        Region; `None` takes it from the image's ECR host.
-"""
-
-            pass
-
-
-
-
-
-        def __str__(self):
-            return "RegistrySecret.AWS_ECR(region={})".format(self.region)
-        def __eq__(self, other):
-            if not isinstance(other, RegistrySecret):
-                return NotImplemented
-            if not other.is_AWS_ECR():
-                return False
-            if self.region != other.region:
-                return False
-            return True
-
-
-
-    # For each variant, we have `is_NAME` and `is_name` methods for easily checking
-    # whether an instance is that variant.
-    def is_BASIC(self) -> bool:
-        return isinstance(self, RegistrySecret.BASIC)
-    def is_basic(self) -> bool:
-        return isinstance(self, RegistrySecret.BASIC)
-    def is_FROM_ENV(self) -> bool:
-        return isinstance(self, RegistrySecret.FROM_ENV)
-    def is_from_env(self) -> bool:
-        return isinstance(self, RegistrySecret.FROM_ENV)
-    def is_AWS_ECR(self) -> bool:
-        return isinstance(self, RegistrySecret.AWS_ECR)
-    def is_aws_ecr(self) -> bool:
-        return isinstance(self, RegistrySecret.AWS_ECR)
-
-
-# Now, a little trick - we make each nested variant class be a subclass of the main
-# enum class, so that method calls and instance checks etc will work intuitively.
-# We might be able to do this a little more neatly with a metaclass, but this'll do.
-RegistrySecret.BASIC = type("RegistrySecret.BASIC", (RegistrySecret.BASIC, RegistrySecret,), {})  # type: ignore
-RegistrySecret.FROM_ENV = type("RegistrySecret.FROM_ENV", (RegistrySecret.FROM_ENV, RegistrySecret,), {})  # type: ignore
-RegistrySecret.AWS_ECR = type("RegistrySecret.AWS_ECR", (RegistrySecret.AWS_ECR, RegistrySecret,), {})  # type: ignore
-
-
-
-
-class _UniffiFfiConverterTypeRegistrySecret(_UniffiConverterRustBuffer):
-    @staticmethod
-    def read(buf):
-        variant = buf.read_i32()
-        if variant == 1:
-            return RegistrySecret.BASIC(
-                _UniffiFfiConverterString.read(buf),
-                _UniffiFfiConverterString.read(buf),
-                _UniffiFfiConverterOptionalString.read(buf),
-            )
-        if variant == 2:
-            return RegistrySecret.FROM_ENV(
-                _UniffiFfiConverterString.read(buf),
-                _UniffiFfiConverterString.read(buf),
-                _UniffiFfiConverterOptionalString.read(buf),
-            )
-        if variant == 3:
-            return RegistrySecret.AWS_ECR(
-                _UniffiFfiConverterOptionalString.read(buf),
-            )
-        raise InternalError("Raw enum value doesn't match any cases")
-
-    @staticmethod
-    def check_lower(value):
-        if value.is_BASIC():
-            _UniffiFfiConverterString.check_lower(value.username)
-            _UniffiFfiConverterString.check_lower(value.password)
-            _UniffiFfiConverterOptionalString.check_lower(value.registry)
-            return
-        if value.is_FROM_ENV():
-            _UniffiFfiConverterString.check_lower(value.username_var)
-            _UniffiFfiConverterString.check_lower(value.password_var)
-            _UniffiFfiConverterOptionalString.check_lower(value.registry)
-            return
-        if value.is_AWS_ECR():
-            _UniffiFfiConverterOptionalString.check_lower(value.region)
-            return
-        raise ValueError(value)
-
-    @staticmethod
-    def write(value, buf):
-        if value.is_BASIC():
-            buf.write_i32(1)
-            _UniffiFfiConverterString.write(value.username, buf)
-            _UniffiFfiConverterString.write(value.password, buf)
-            _UniffiFfiConverterOptionalString.write(value.registry, buf)
-        if value.is_FROM_ENV():
-            buf.write_i32(2)
-            _UniffiFfiConverterString.write(value.username_var, buf)
-            _UniffiFfiConverterString.write(value.password_var, buf)
-            _UniffiFfiConverterOptionalString.write(value.registry, buf)
-        if value.is_AWS_ECR():
-            buf.write_i32(3)
-            _UniffiFfiConverterOptionalString.write(value.region, buf)
-
-
-
-class _UniffiFfiConverterOptionalTypeRegistrySecret(_UniffiConverterRustBuffer):
-    @classmethod
-    def check_lower(cls, value):
-        if value is not None:
-            _UniffiFfiConverterTypeRegistrySecret.check_lower(value)
-
-    @classmethod
-    def write(cls, value, buf):
-        if value is None:
-            buf.write_u8(0)
-            return
-
-        buf.write_u8(1)
-        _UniffiFfiConverterTypeRegistrySecret.write(value, buf)
-
-    @classmethod
-    def read(cls, buf):
-        flag = buf.read_u8()
-        if flag == 0:
-            return None
-        elif flag == 1:
-            return _UniffiFfiConverterTypeRegistrySecret.read(buf)
-        else:
-            raise InternalError("Unexpected flag byte for optional type")
-
-@dataclass
-class SandboxSpec:
-    """
-    What a sandbox runs: the one model behind `Sandbox.create`, managed
-    pools and [`Fleet::apply`]. Unset fields keep Fleet's defaults (and are
-    not compared by [`Fleet::check_pool_spec`]).
-"""
-    def __init__(self, *, image:str = "", command:typing.Optional[typing.List[str]] = _DEFAULT, args:typing.Optional[typing.List[str]] = _DEFAULT, env:dict[str, str] = _DEFAULT, services:dict[str, int] = _DEFAULT, readiness:typing.Optional[ReadinessProbe] = _DEFAULT, cpu:typing.Optional[int] = _DEFAULT, memory_mb:typing.Optional[int] = _DEFAULT, efi:bool = False, sidecars:typing.List[Container] = _DEFAULT, registry_secret:typing.Optional[RegistrySecret] = _DEFAULT, registry_secret_name:typing.Optional[str] = _DEFAULT, process_mode:typing.Optional[str] = _DEFAULT, claim_secrets:bool = False):
-        self.image = image
-        if command is _DEFAULT:
-            self.command = None
-        else:
-            self.command = command
-        if args is _DEFAULT:
-            self.args = None
-        else:
-            self.args = args
-        if env is _DEFAULT:
-            self.env = {}
-        else:
-            self.env = env
-        if services is _DEFAULT:
-            self.services = {}
-        else:
-            self.services = services
-        if readiness is _DEFAULT:
-            self.readiness = None
-        else:
-            self.readiness = readiness
-        if cpu is _DEFAULT:
-            self.cpu = None
-        else:
-            self.cpu = cpu
-        if memory_mb is _DEFAULT:
-            self.memory_mb = None
-        else:
-            self.memory_mb = memory_mb
-        self.efi = efi
-        if sidecars is _DEFAULT:
-            self.sidecars = []
-        else:
-            self.sidecars = sidecars
-        if registry_secret is _DEFAULT:
-            self.registry_secret = None
-        else:
-            self.registry_secret = registry_secret
-        if registry_secret_name is _DEFAULT:
-            self.registry_secret_name = None
-        else:
-            self.registry_secret_name = registry_secret_name
-        if process_mode is _DEFAULT:
-            self.process_mode = None
-        else:
-            self.process_mode = process_mode
-        self.claim_secrets = claim_secrets
-
-
-
-
-    def __str__(self):
-        return "SandboxSpec(image={}, command={}, args={}, env={}, services={}, readiness={}, cpu={}, memory_mb={}, efi={}, sidecars={}, registry_secret={}, registry_secret_name={}, process_mode={}, claim_secrets={})".format(self.image, self.command, self.args, self.env, self.services, self.readiness, self.cpu, self.memory_mb, self.efi, self.sidecars, self.registry_secret, self.registry_secret_name, self.process_mode, self.claim_secrets)
-    def __eq__(self, other):
-        if self.image != other.image:
-            return False
-        if self.command != other.command:
-            return False
-        if self.args != other.args:
-            return False
-        if self.env != other.env:
-            return False
-        if self.services != other.services:
-            return False
-        if self.readiness != other.readiness:
-            return False
-        if self.cpu != other.cpu:
-            return False
-        if self.memory_mb != other.memory_mb:
-            return False
-        if self.efi != other.efi:
-            return False
-        if self.sidecars != other.sidecars:
-            return False
-        if self.registry_secret != other.registry_secret:
-            return False
-        if self.registry_secret_name != other.registry_secret_name:
-            return False
-        if self.process_mode != other.process_mode:
-            return False
-        if self.claim_secrets != other.claim_secrets:
-            return False
-        return True
-
-class _UniffiFfiConverterTypeSandboxSpec(_UniffiConverterRustBuffer):
-    @staticmethod
-    def read(buf):
-        return SandboxSpec(
-            image=_UniffiFfiConverterString.read(buf),
-            command=_UniffiFfiConverterOptionalSequenceString.read(buf),
-            args=_UniffiFfiConverterOptionalSequenceString.read(buf),
-            env=_UniffiFfiConverterMapStringString.read(buf),
-            services=_UniffiFfiConverterMapStringUInt16.read(buf),
-            readiness=_UniffiFfiConverterOptionalTypeReadinessProbe.read(buf),
-            cpu=_UniffiFfiConverterOptionalUInt32.read(buf),
-            memory_mb=_UniffiFfiConverterOptionalUInt32.read(buf),
-            efi=_UniffiFfiConverterBoolean.read(buf),
-            sidecars=_UniffiFfiConverterSequenceTypeContainer.read(buf),
-            registry_secret=_UniffiFfiConverterOptionalTypeRegistrySecret.read(buf),
-            registry_secret_name=_UniffiFfiConverterOptionalString.read(buf),
-            process_mode=_UniffiFfiConverterOptionalString.read(buf),
-            claim_secrets=_UniffiFfiConverterBoolean.read(buf),
-        )
-
-    @staticmethod
-    def check_lower(value):
-        _UniffiFfiConverterString.check_lower(value.image)
-        _UniffiFfiConverterOptionalSequenceString.check_lower(value.command)
-        _UniffiFfiConverterOptionalSequenceString.check_lower(value.args)
-        _UniffiFfiConverterMapStringString.check_lower(value.env)
-        _UniffiFfiConverterMapStringUInt16.check_lower(value.services)
-        _UniffiFfiConverterOptionalTypeReadinessProbe.check_lower(value.readiness)
-        _UniffiFfiConverterOptionalUInt32.check_lower(value.cpu)
-        _UniffiFfiConverterOptionalUInt32.check_lower(value.memory_mb)
-        _UniffiFfiConverterBoolean.check_lower(value.efi)
-        _UniffiFfiConverterSequenceTypeContainer.check_lower(value.sidecars)
-        _UniffiFfiConverterOptionalTypeRegistrySecret.check_lower(value.registry_secret)
-        _UniffiFfiConverterOptionalString.check_lower(value.registry_secret_name)
-        _UniffiFfiConverterOptionalString.check_lower(value.process_mode)
-        _UniffiFfiConverterBoolean.check_lower(value.claim_secrets)
-
-    @staticmethod
-    def write(value, buf):
-        _UniffiFfiConverterString.write(value.image, buf)
-        _UniffiFfiConverterOptionalSequenceString.write(value.command, buf)
-        _UniffiFfiConverterOptionalSequenceString.write(value.args, buf)
-        _UniffiFfiConverterMapStringString.write(value.env, buf)
-        _UniffiFfiConverterMapStringUInt16.write(value.services, buf)
-        _UniffiFfiConverterOptionalTypeReadinessProbe.write(value.readiness, buf)
-        _UniffiFfiConverterOptionalUInt32.write(value.cpu, buf)
-        _UniffiFfiConverterOptionalUInt32.write(value.memory_mb, buf)
-        _UniffiFfiConverterBoolean.write(value.efi, buf)
-        _UniffiFfiConverterSequenceTypeContainer.write(value.sidecars, buf)
-        _UniffiFfiConverterOptionalTypeRegistrySecret.write(value.registry_secret, buf)
-        _UniffiFfiConverterOptionalString.write(value.registry_secret_name, buf)
-        _UniffiFfiConverterOptionalString.write(value.process_mode, buf)
-        _UniffiFfiConverterBoolean.write(value.claim_secrets, buf)
-
-@dataclass
-class PoolOptions:
-    """
-    How a pool keeps capacity for a [`SandboxSpec`].
-"""
-    def __init__(self, *, runtime:typing.Optional[str] = _DEFAULT, replicas:typing.Optional[int] = _DEFAULT, warm:typing.Optional[bool] = _DEFAULT, min_pool_size:typing.Optional[int] = _DEFAULT, max_pool_size:typing.Optional[int] = _DEFAULT, idle_ttl_seconds:typing.Optional[int] = _DEFAULT, ttl_policy:typing.Optional[str] = _DEFAULT, pool_ttl_seconds:typing.Optional[int] = _DEFAULT, claim_ttl_seconds:typing.Optional[int] = _DEFAULT):
-        if runtime is _DEFAULT:
-            self.runtime = None
-        else:
-            self.runtime = runtime
-        if replicas is _DEFAULT:
-            self.replicas = None
-        else:
-            self.replicas = replicas
-        if warm is _DEFAULT:
-            self.warm = None
-        else:
-            self.warm = warm
-        if min_pool_size is _DEFAULT:
-            self.min_pool_size = None
-        else:
-            self.min_pool_size = min_pool_size
-        if max_pool_size is _DEFAULT:
-            self.max_pool_size = None
-        else:
-            self.max_pool_size = max_pool_size
-        if idle_ttl_seconds is _DEFAULT:
-            self.idle_ttl_seconds = None
-        else:
-            self.idle_ttl_seconds = idle_ttl_seconds
-        if ttl_policy is _DEFAULT:
-            self.ttl_policy = None
-        else:
-            self.ttl_policy = ttl_policy
-        if pool_ttl_seconds is _DEFAULT:
-            self.pool_ttl_seconds = None
-        else:
-            self.pool_ttl_seconds = pool_ttl_seconds
-        if claim_ttl_seconds is _DEFAULT:
-            self.claim_ttl_seconds = None
-        else:
-            self.claim_ttl_seconds = claim_ttl_seconds
-
-
-
-
-    def __str__(self):
-        return "PoolOptions(runtime={}, replicas={}, warm={}, min_pool_size={}, max_pool_size={}, idle_ttl_seconds={}, ttl_policy={}, pool_ttl_seconds={}, claim_ttl_seconds={})".format(self.runtime, self.replicas, self.warm, self.min_pool_size, self.max_pool_size, self.idle_ttl_seconds, self.ttl_policy, self.pool_ttl_seconds, self.claim_ttl_seconds)
-    def __eq__(self, other):
-        if self.runtime != other.runtime:
-            return False
-        if self.replicas != other.replicas:
-            return False
-        if self.warm != other.warm:
-            return False
-        if self.min_pool_size != other.min_pool_size:
-            return False
-        if self.max_pool_size != other.max_pool_size:
-            return False
-        if self.idle_ttl_seconds != other.idle_ttl_seconds:
-            return False
-        if self.ttl_policy != other.ttl_policy:
-            return False
-        if self.pool_ttl_seconds != other.pool_ttl_seconds:
-            return False
-        if self.claim_ttl_seconds != other.claim_ttl_seconds:
-            return False
-        return True
-
-class _UniffiFfiConverterTypePoolOptions(_UniffiConverterRustBuffer):
-    @staticmethod
-    def read(buf):
-        return PoolOptions(
-            runtime=_UniffiFfiConverterOptionalString.read(buf),
-            replicas=_UniffiFfiConverterOptionalUInt32.read(buf),
-            warm=_UniffiFfiConverterOptionalBoolean.read(buf),
-            min_pool_size=_UniffiFfiConverterOptionalUInt32.read(buf),
-            max_pool_size=_UniffiFfiConverterOptionalUInt32.read(buf),
-            idle_ttl_seconds=_UniffiFfiConverterOptionalUInt32.read(buf),
-            ttl_policy=_UniffiFfiConverterOptionalString.read(buf),
-            pool_ttl_seconds=_UniffiFfiConverterOptionalUInt32.read(buf),
-            claim_ttl_seconds=_UniffiFfiConverterOptionalUInt32.read(buf),
-        )
-
-    @staticmethod
-    def check_lower(value):
-        _UniffiFfiConverterOptionalString.check_lower(value.runtime)
-        _UniffiFfiConverterOptionalUInt32.check_lower(value.replicas)
-        _UniffiFfiConverterOptionalBoolean.check_lower(value.warm)
-        _UniffiFfiConverterOptionalUInt32.check_lower(value.min_pool_size)
-        _UniffiFfiConverterOptionalUInt32.check_lower(value.max_pool_size)
-        _UniffiFfiConverterOptionalUInt32.check_lower(value.idle_ttl_seconds)
-        _UniffiFfiConverterOptionalString.check_lower(value.ttl_policy)
-        _UniffiFfiConverterOptionalUInt32.check_lower(value.pool_ttl_seconds)
-        _UniffiFfiConverterOptionalUInt32.check_lower(value.claim_ttl_seconds)
-
-    @staticmethod
-    def write(value, buf):
-        _UniffiFfiConverterOptionalString.write(value.runtime, buf)
-        _UniffiFfiConverterOptionalUInt32.write(value.replicas, buf)
-        _UniffiFfiConverterOptionalBoolean.write(value.warm, buf)
-        _UniffiFfiConverterOptionalUInt32.write(value.min_pool_size, buf)
-        _UniffiFfiConverterOptionalUInt32.write(value.max_pool_size, buf)
-        _UniffiFfiConverterOptionalUInt32.write(value.idle_ttl_seconds, buf)
-        _UniffiFfiConverterOptionalString.write(value.ttl_policy, buf)
-        _UniffiFfiConverterOptionalUInt32.write(value.pool_ttl_seconds, buf)
-        _UniffiFfiConverterOptionalUInt32.write(value.claim_ttl_seconds, buf)
-
-@dataclass
-class FleetPoolExport:
-    """
-    A pool read back as the shared model, plus its Terraform block.
-"""
-    def __init__(self, *, spec:SandboxSpec, options:PoolOptions, runtime:str, terraform:str):
-        self.spec = spec
-        self.options = options
-        self.runtime = runtime
-        self.terraform = terraform
-
-
-
-
-    def __str__(self):
-        return "FleetPoolExport(spec={}, options={}, runtime={}, terraform={})".format(self.spec, self.options, self.runtime, self.terraform)
-    def __eq__(self, other):
-        if self.spec != other.spec:
-            return False
-        if self.options != other.options:
-            return False
-        if self.runtime != other.runtime:
-            return False
-        if self.terraform != other.terraform:
-            return False
-        return True
-
-class _UniffiFfiConverterTypeFleetPoolExport(_UniffiConverterRustBuffer):
-    @staticmethod
-    def read(buf):
-        return FleetPoolExport(
-            spec=_UniffiFfiConverterTypeSandboxSpec.read(buf),
-            options=_UniffiFfiConverterTypePoolOptions.read(buf),
-            runtime=_UniffiFfiConverterString.read(buf),
-            terraform=_UniffiFfiConverterString.read(buf),
-        )
-
-    @staticmethod
-    def check_lower(value):
-        _UniffiFfiConverterTypeSandboxSpec.check_lower(value.spec)
-        _UniffiFfiConverterTypePoolOptions.check_lower(value.options)
-        _UniffiFfiConverterString.check_lower(value.runtime)
-        _UniffiFfiConverterString.check_lower(value.terraform)
-
-    @staticmethod
-    def write(value, buf):
-        _UniffiFfiConverterTypeSandboxSpec.write(value.spec, buf)
-        _UniffiFfiConverterTypePoolOptions.write(value.options, buf)
-        _UniffiFfiConverterString.write(value.runtime, buf)
-        _UniffiFfiConverterString.write(value.terraform, buf)
-
-@dataclass
-class FleetPoolSpec:
-    """
-    A warm pool spec (`Pool.apply` semantics: pool, namespace and template
-    share `name`). Deprecated: use [`SandboxSpec`] + [`PoolOptions`] with
-    [`Fleet::apply`].
-"""
-    def __init__(self, *, name:str, image:str, runtime:typing.Optional[str] = _DEFAULT, replicas:typing.Optional[int] = _DEFAULT, cpu:typing.Optional[int] = _DEFAULT, memory_mb:typing.Optional[int] = _DEFAULT, services:dict[str, int] = _DEFAULT, readiness_tcp_port:typing.Optional[int] = _DEFAULT, efi:bool = False, command:typing.Optional[typing.List[str]] = _DEFAULT, ttl_seconds_after_created:typing.Optional[int] = _DEFAULT):
-        self.name = name
-        self.image = image
-        if runtime is _DEFAULT:
-            self.runtime = None
-        else:
-            self.runtime = runtime
-        if replicas is _DEFAULT:
-            self.replicas = None
-        else:
-            self.replicas = replicas
-        if cpu is _DEFAULT:
-            self.cpu = None
-        else:
-            self.cpu = cpu
-        if memory_mb is _DEFAULT:
-            self.memory_mb = None
-        else:
-            self.memory_mb = memory_mb
-        if services is _DEFAULT:
-            self.services = {}
-        else:
-            self.services = services
-        if readiness_tcp_port is _DEFAULT:
-            self.readiness_tcp_port = None
-        else:
-            self.readiness_tcp_port = readiness_tcp_port
-        self.efi = efi
-        if command is _DEFAULT:
-            self.command = None
-        else:
-            self.command = command
-        if ttl_seconds_after_created is _DEFAULT:
-            self.ttl_seconds_after_created = None
-        else:
-            self.ttl_seconds_after_created = ttl_seconds_after_created
-
-
-
-
-    def __str__(self):
-        return "FleetPoolSpec(name={}, image={}, runtime={}, replicas={}, cpu={}, memory_mb={}, services={}, readiness_tcp_port={}, efi={}, command={}, ttl_seconds_after_created={})".format(self.name, self.image, self.runtime, self.replicas, self.cpu, self.memory_mb, self.services, self.readiness_tcp_port, self.efi, self.command, self.ttl_seconds_after_created)
-    def __eq__(self, other):
-        if self.name != other.name:
-            return False
-        if self.image != other.image:
-            return False
-        if self.runtime != other.runtime:
-            return False
-        if self.replicas != other.replicas:
-            return False
-        if self.cpu != other.cpu:
-            return False
-        if self.memory_mb != other.memory_mb:
-            return False
-        if self.services != other.services:
-            return False
-        if self.readiness_tcp_port != other.readiness_tcp_port:
-            return False
-        if self.efi != other.efi:
-            return False
-        if self.command != other.command:
-            return False
-        if self.ttl_seconds_after_created != other.ttl_seconds_after_created:
-            return False
-        return True
-
-class _UniffiFfiConverterTypeFleetPoolSpec(_UniffiConverterRustBuffer):
-    @staticmethod
-    def read(buf):
-        return FleetPoolSpec(
-            name=_UniffiFfiConverterString.read(buf),
-            image=_UniffiFfiConverterString.read(buf),
-            runtime=_UniffiFfiConverterOptionalString.read(buf),
-            replicas=_UniffiFfiConverterOptionalUInt32.read(buf),
-            cpu=_UniffiFfiConverterOptionalUInt32.read(buf),
-            memory_mb=_UniffiFfiConverterOptionalUInt32.read(buf),
-            services=_UniffiFfiConverterMapStringUInt16.read(buf),
-            readiness_tcp_port=_UniffiFfiConverterOptionalUInt16.read(buf),
-            efi=_UniffiFfiConverterBoolean.read(buf),
-            command=_UniffiFfiConverterOptionalSequenceString.read(buf),
-            ttl_seconds_after_created=_UniffiFfiConverterOptionalUInt32.read(buf),
-        )
-
-    @staticmethod
-    def check_lower(value):
-        _UniffiFfiConverterString.check_lower(value.name)
-        _UniffiFfiConverterString.check_lower(value.image)
-        _UniffiFfiConverterOptionalString.check_lower(value.runtime)
-        _UniffiFfiConverterOptionalUInt32.check_lower(value.replicas)
-        _UniffiFfiConverterOptionalUInt32.check_lower(value.cpu)
-        _UniffiFfiConverterOptionalUInt32.check_lower(value.memory_mb)
-        _UniffiFfiConverterMapStringUInt16.check_lower(value.services)
-        _UniffiFfiConverterOptionalUInt16.check_lower(value.readiness_tcp_port)
-        _UniffiFfiConverterBoolean.check_lower(value.efi)
-        _UniffiFfiConverterOptionalSequenceString.check_lower(value.command)
-        _UniffiFfiConverterOptionalUInt32.check_lower(value.ttl_seconds_after_created)
-
-    @staticmethod
-    def write(value, buf):
-        _UniffiFfiConverterString.write(value.name, buf)
-        _UniffiFfiConverterString.write(value.image, buf)
-        _UniffiFfiConverterOptionalString.write(value.runtime, buf)
-        _UniffiFfiConverterOptionalUInt32.write(value.replicas, buf)
-        _UniffiFfiConverterOptionalUInt32.write(value.cpu, buf)
-        _UniffiFfiConverterOptionalUInt32.write(value.memory_mb, buf)
-        _UniffiFfiConverterMapStringUInt16.write(value.services, buf)
-        _UniffiFfiConverterOptionalUInt16.write(value.readiness_tcp_port, buf)
-        _UniffiFfiConverterBoolean.write(value.efi, buf)
-        _UniffiFfiConverterOptionalSequenceString.write(value.command, buf)
-        _UniffiFfiConverterOptionalUInt32.write(value.ttl_seconds_after_created, buf)
-
-@dataclass
-class FleetSandbox:
-    """
-    A bound sandbox.
-"""
-    def __init__(self, *, name:str, namespace:str, claim:str, services:typing.List[str]):
-        self.name = name
-        self.namespace = namespace
-        self.claim = claim
-        self.services = services
-
-
-
-
-    def __str__(self):
-        return "FleetSandbox(name={}, namespace={}, claim={}, services={})".format(self.name, self.namespace, self.claim, self.services)
-    def __eq__(self, other):
-        if self.name != other.name:
-            return False
-        if self.namespace != other.namespace:
-            return False
-        if self.claim != other.claim:
-            return False
-        if self.services != other.services:
-            return False
-        return True
-
-class _UniffiFfiConverterTypeFleetSandbox(_UniffiConverterRustBuffer):
-    @staticmethod
-    def read(buf):
-        return FleetSandbox(
-            name=_UniffiFfiConverterString.read(buf),
-            namespace=_UniffiFfiConverterString.read(buf),
-            claim=_UniffiFfiConverterString.read(buf),
-            services=_UniffiFfiConverterSequenceString.read(buf),
-        )
-
-    @staticmethod
-    def check_lower(value):
-        _UniffiFfiConverterString.check_lower(value.name)
-        _UniffiFfiConverterString.check_lower(value.namespace)
-        _UniffiFfiConverterString.check_lower(value.claim)
-        _UniffiFfiConverterSequenceString.check_lower(value.services)
-
-    @staticmethod
-    def write(value, buf):
-        _UniffiFfiConverterString.write(value.name, buf)
-        _UniffiFfiConverterString.write(value.namespace, buf)
-        _UniffiFfiConverterString.write(value.claim, buf)
-        _UniffiFfiConverterSequenceString.write(value.services, buf)
-
-@dataclass
-class FleetSignedUrl:
-    """
-    A signed, shareable service URL.
-"""
-    def __init__(self, *, url:str, json:str):
-        self.url = url
-        self.json = json
-
-
-
-
-    def __str__(self):
-        return "FleetSignedUrl(url={}, json={})".format(self.url, self.json)
-    def __eq__(self, other):
-        if self.url != other.url:
-            return False
-        if self.json != other.json:
-            return False
-        return True
-
-class _UniffiFfiConverterTypeFleetSignedUrl(_UniffiConverterRustBuffer):
-    @staticmethod
-    def read(buf):
-        return FleetSignedUrl(
-            url=_UniffiFfiConverterString.read(buf),
-            json=_UniffiFfiConverterString.read(buf),
-        )
-
-    @staticmethod
-    def check_lower(value):
-        _UniffiFfiConverterString.check_lower(value.url)
-        _UniffiFfiConverterString.check_lower(value.json)
-
-    @staticmethod
-    def write(value, buf):
-        _UniffiFfiConverterString.write(value.url, buf)
-        _UniffiFfiConverterString.write(value.json, buf)
-
-@dataclass
-class FleetSizeLimits:
-    """
-    The everyday sizes of a cloud sandbox, which the Cua apps offer
-    (`cua_fleet::CLOUD_DEFAULT_RANGE_CPUS`,
-    `cua_fleet::CLOUD_DEFAULT_RANGE_MEMORY_MB`).
-"""
-    def __init__(self, *, min_cpus:int, max_cpus:int, min_memory_mb:int, max_memory_mb:int):
-        self.min_cpus = min_cpus
-        self.max_cpus = max_cpus
-        self.min_memory_mb = min_memory_mb
-        self.max_memory_mb = max_memory_mb
-
-
-
-
-    def __str__(self):
-        return "FleetSizeLimits(min_cpus={}, max_cpus={}, min_memory_mb={}, max_memory_mb={})".format(self.min_cpus, self.max_cpus, self.min_memory_mb, self.max_memory_mb)
-    def __eq__(self, other):
-        if self.min_cpus != other.min_cpus:
-            return False
-        if self.max_cpus != other.max_cpus:
-            return False
-        if self.min_memory_mb != other.min_memory_mb:
-            return False
-        if self.max_memory_mb != other.max_memory_mb:
-            return False
-        return True
-
-class _UniffiFfiConverterTypeFleetSizeLimits(_UniffiConverterRustBuffer):
-    @staticmethod
-    def read(buf):
-        return FleetSizeLimits(
-            min_cpus=_UniffiFfiConverterUInt32.read(buf),
-            max_cpus=_UniffiFfiConverterUInt32.read(buf),
-            min_memory_mb=_UniffiFfiConverterUInt32.read(buf),
-            max_memory_mb=_UniffiFfiConverterUInt32.read(buf),
-        )
-
-    @staticmethod
-    def check_lower(value):
-        _UniffiFfiConverterUInt32.check_lower(value.min_cpus)
-        _UniffiFfiConverterUInt32.check_lower(value.max_cpus)
-        _UniffiFfiConverterUInt32.check_lower(value.min_memory_mb)
-        _UniffiFfiConverterUInt32.check_lower(value.max_memory_mb)
-
-    @staticmethod
-    def write(value, buf):
-        _UniffiFfiConverterUInt32.write(value.min_cpus, buf)
-        _UniffiFfiConverterUInt32.write(value.max_cpus, buf)
-        _UniffiFfiConverterUInt32.write(value.min_memory_mb, buf)
-        _UniffiFfiConverterUInt32.write(value.max_memory_mb, buf)
-
-@dataclass
-class FleetUsagePricing:
-    """
-    This account's Cua Cloud rates ([`Fleet::usage_pricing`]). Fleet bills
-    the vCPUs and memory a sandbox reserves, per hour; disk is not metered.
-"""
-    def __init__(self, *, vcpu_hour_usd:float, memory_gib_hour_usd:float):
-        self.vcpu_hour_usd = vcpu_hour_usd
-        self.memory_gib_hour_usd = memory_gib_hour_usd
-
-
-
-
-    def __str__(self):
-        return "FleetUsagePricing(vcpu_hour_usd={}, memory_gib_hour_usd={})".format(self.vcpu_hour_usd, self.memory_gib_hour_usd)
-    def __eq__(self, other):
-        if self.vcpu_hour_usd != other.vcpu_hour_usd:
-            return False
-        if self.memory_gib_hour_usd != other.memory_gib_hour_usd:
-            return False
-        return True
-
-class _UniffiFfiConverterTypeFleetUsagePricing(_UniffiConverterRustBuffer):
-    @staticmethod
-    def read(buf):
-        return FleetUsagePricing(
-            vcpu_hour_usd=_UniffiFfiConverterFloat64.read(buf),
-            memory_gib_hour_usd=_UniffiFfiConverterFloat64.read(buf),
-        )
-
-    @staticmethod
-    def check_lower(value):
-        _UniffiFfiConverterFloat64.check_lower(value.vcpu_hour_usd)
-        _UniffiFfiConverterFloat64.check_lower(value.memory_gib_hour_usd)
-
-    @staticmethod
-    def write(value, buf):
-        _UniffiFfiConverterFloat64.write(value.vcpu_hour_usd, buf)
-        _UniffiFfiConverterFloat64.write(value.memory_gib_hour_usd, buf)
-
-@dataclass
 class GpuOption:
     """
     One GPU option of a runtime (see [`Spaces::gpu_support`]).
@@ -14492,6 +12370,51 @@ class _UniffiFfiConverterTypeHostProvidedSpace(_UniffiConverterRustBuffer):
         _UniffiFfiConverterInt64.write(value.created_at_ms, buf)
 
 @dataclass
+class HostServiceMigration:
+    """
+    What [`Host::migrate_service`] did.
+"""
+    def __init__(self, *, outcome:str, detail:str, permissions_needed:bool):
+        self.outcome = outcome
+        self.detail = detail
+        self.permissions_needed = permissions_needed
+
+
+
+
+    def __str__(self):
+        return "HostServiceMigration(outcome={}, detail={}, permissions_needed={})".format(self.outcome, self.detail, self.permissions_needed)
+    def __eq__(self, other):
+        if self.outcome != other.outcome:
+            return False
+        if self.detail != other.detail:
+            return False
+        if self.permissions_needed != other.permissions_needed:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeHostServiceMigration(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return HostServiceMigration(
+            outcome=_UniffiFfiConverterString.read(buf),
+            detail=_UniffiFfiConverterString.read(buf),
+            permissions_needed=_UniffiFfiConverterBoolean.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.outcome)
+        _UniffiFfiConverterString.check_lower(value.detail)
+        _UniffiFfiConverterBoolean.check_lower(value.permissions_needed)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.outcome, buf)
+        _UniffiFfiConverterString.write(value.detail, buf)
+        _UniffiFfiConverterBoolean.write(value.permissions_needed, buf)
+
+@dataclass
 class HostSettingsChange:
     """
     A change to this machine's Spaces settings (`None` keeps a value).
@@ -14805,7 +12728,7 @@ class HostStatus:
     """
     Host status.
 """
-    def __init__(self, *, configured:bool, mode:typing.Optional[str], relay_url:typing.Optional[str], direct_url:typing.Optional[str], env_token_path:typing.Optional[str], machine_id:typing.Optional[str], name:typing.Optional[str], sharing:bool, service_installed:bool, service_running:bool, service_kind:str, online:typing.Optional[bool], clients:typing.List[RelayClientInfo], allow:typing.List[str], permissions:typing.List[HostPermission], error:typing.Optional[str], recent_access:typing.List[HostAccessRecord] = _DEFAULT, access_log_error:typing.Optional[str] = _DEFAULT, share_desktop:bool = True, provide_spaces:bool = False, max_spaces:int = 0, max_macos_vms:int = 0, provided_spaces:typing.List[HostProvidedSpace] = _DEFAULT, spaces_audit:typing.List[HostSpacesAuditRecord] = _DEFAULT, spaces_audit_error:typing.Optional[str] = _DEFAULT, paused_signed_out:bool = False, owner:typing.Optional[str] = _DEFAULT, owner_email:typing.Optional[str] = _DEFAULT):
+    def __init__(self, *, configured:bool, mode:typing.Optional[str], relay_url:typing.Optional[str], direct_url:typing.Optional[str], env_token_path:typing.Optional[str], machine_id:typing.Optional[str], name:typing.Optional[str], sharing:bool, service_installed:bool, service_running:bool, service_kind:str, online:typing.Optional[bool], clients:typing.List[RelayClientInfo], allow:typing.List[str], permissions:typing.List[HostPermission], error:typing.Optional[str], recent_access:typing.List[HostAccessRecord] = _DEFAULT, access_log_error:typing.Optional[str] = _DEFAULT, share_desktop:bool = True, provide_spaces:bool = False, max_spaces:int = 0, max_macos_vms:int = 0, provided_spaces:typing.List[HostProvidedSpace] = _DEFAULT, spaces_audit:typing.List[HostSpacesAuditRecord] = _DEFAULT, spaces_audit_error:typing.Optional[str] = _DEFAULT, paused_signed_out:bool = False, owner:typing.Optional[str] = _DEFAULT, owner_email:typing.Optional[str] = _DEFAULT, helper_available:bool = False, legacy_service:bool = False):
         self.configured = configured
         self.mode = mode
         self.relay_url = relay_url
@@ -14855,12 +12778,14 @@ class HostStatus:
             self.owner_email = None
         else:
             self.owner_email = owner_email
+        self.helper_available = helper_available
+        self.legacy_service = legacy_service
 
 
 
 
     def __str__(self):
-        return "HostStatus(configured={}, mode={}, relay_url={}, direct_url={}, env_token_path={}, machine_id={}, name={}, sharing={}, service_installed={}, service_running={}, service_kind={}, online={}, clients={}, allow={}, permissions={}, error={}, recent_access={}, access_log_error={}, share_desktop={}, provide_spaces={}, max_spaces={}, max_macos_vms={}, provided_spaces={}, spaces_audit={}, spaces_audit_error={}, paused_signed_out={}, owner={}, owner_email={})".format(self.configured, self.mode, self.relay_url, self.direct_url, self.env_token_path, self.machine_id, self.name, self.sharing, self.service_installed, self.service_running, self.service_kind, self.online, self.clients, self.allow, self.permissions, self.error, self.recent_access, self.access_log_error, self.share_desktop, self.provide_spaces, self.max_spaces, self.max_macos_vms, self.provided_spaces, self.spaces_audit, self.spaces_audit_error, self.paused_signed_out, self.owner, self.owner_email)
+        return "HostStatus(configured={}, mode={}, relay_url={}, direct_url={}, env_token_path={}, machine_id={}, name={}, sharing={}, service_installed={}, service_running={}, service_kind={}, online={}, clients={}, allow={}, permissions={}, error={}, recent_access={}, access_log_error={}, share_desktop={}, provide_spaces={}, max_spaces={}, max_macos_vms={}, provided_spaces={}, spaces_audit={}, spaces_audit_error={}, paused_signed_out={}, owner={}, owner_email={}, helper_available={}, legacy_service={})".format(self.configured, self.mode, self.relay_url, self.direct_url, self.env_token_path, self.machine_id, self.name, self.sharing, self.service_installed, self.service_running, self.service_kind, self.online, self.clients, self.allow, self.permissions, self.error, self.recent_access, self.access_log_error, self.share_desktop, self.provide_spaces, self.max_spaces, self.max_macos_vms, self.provided_spaces, self.spaces_audit, self.spaces_audit_error, self.paused_signed_out, self.owner, self.owner_email, self.helper_available, self.legacy_service)
     def __eq__(self, other):
         if self.configured != other.configured:
             return False
@@ -14918,6 +12843,10 @@ class HostStatus:
             return False
         if self.owner_email != other.owner_email:
             return False
+        if self.helper_available != other.helper_available:
+            return False
+        if self.legacy_service != other.legacy_service:
+            return False
         return True
 
 class _UniffiFfiConverterTypeHostStatus(_UniffiConverterRustBuffer):
@@ -14952,6 +12881,8 @@ class _UniffiFfiConverterTypeHostStatus(_UniffiConverterRustBuffer):
             paused_signed_out=_UniffiFfiConverterBoolean.read(buf),
             owner=_UniffiFfiConverterOptionalString.read(buf),
             owner_email=_UniffiFfiConverterOptionalString.read(buf),
+            helper_available=_UniffiFfiConverterBoolean.read(buf),
+            legacy_service=_UniffiFfiConverterBoolean.read(buf),
         )
 
     @staticmethod
@@ -14984,6 +12915,8 @@ class _UniffiFfiConverterTypeHostStatus(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.check_lower(value.paused_signed_out)
         _UniffiFfiConverterOptionalString.check_lower(value.owner)
         _UniffiFfiConverterOptionalString.check_lower(value.owner_email)
+        _UniffiFfiConverterBoolean.check_lower(value.helper_available)
+        _UniffiFfiConverterBoolean.check_lower(value.legacy_service)
 
     @staticmethod
     def write(value, buf):
@@ -15015,6 +12948,8 @@ class _UniffiFfiConverterTypeHostStatus(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.write(value.paused_signed_out, buf)
         _UniffiFfiConverterOptionalString.write(value.owner, buf)
         _UniffiFfiConverterOptionalString.write(value.owner_email, buf)
+        _UniffiFfiConverterBoolean.write(value.helper_available, buf)
+        _UniffiFfiConverterBoolean.write(value.legacy_service, buf)
 
 @dataclass
 class HttpHeader:
@@ -15441,7 +13376,7 @@ class ImageBuild:
     Image layers built on top of a sandbox's image. Local: a build into the
     container engine (container images only; VM images take no layers here),
     cached by a content hash (`cua-b-<hash>`), so an identical spec never
-    rebuilds. (Cua Cloud's remote build has ended.)
+    rebuilds.
 """
     def __init__(self, *, layers:typing.List[ImageLayer] = _DEFAULT, env:dict[str, str] = _DEFAULT, ports:typing.List[int] = _DEFAULT, files:typing.List[BuildFile] = _DEFAULT, timeout_ms:typing.Optional[int] = _DEFAULT):
         if layers is _DEFAULT:
@@ -15812,7 +13747,7 @@ class _UniffiFfiConverterMapStringSequenceString(_UniffiConverterRustBuffer):
 @dataclass
 class LocationInfo:
     """
-    The locations `on` accepts: `local`, `cloud`, then registered providers.
+    The locations `on` accepts: `local`, then registered providers.
 """
     def __init__(self, *, name:str, description:str, kinds:typing.List[str], runtimes:dict[str, typing.List[str]]):
         self.name = name
@@ -15861,12 +13796,143 @@ class _UniffiFfiConverterTypeLocationInfo(_UniffiConverterRustBuffer):
         _UniffiFfiConverterMapStringSequenceString.write(value.runtimes, buf)
 
 @dataclass
+class MachineHealthCheck:
+    """
+    One check of a machine's health ([`Spaces::machine_health`]).
+"""
+    def __init__(self, *, id:str, status:str, message:str, remediation:str, facts:dict[str, str]):
+        self.id = id
+        self.status = status
+        self.message = message
+        self.remediation = remediation
+        self.facts = facts
+
+
+
+
+    def __str__(self):
+        return "MachineHealthCheck(id={}, status={}, message={}, remediation={}, facts={})".format(self.id, self.status, self.message, self.remediation, self.facts)
+    def __eq__(self, other):
+        if self.id != other.id:
+            return False
+        if self.status != other.status:
+            return False
+        if self.message != other.message:
+            return False
+        if self.remediation != other.remediation:
+            return False
+        if self.facts != other.facts:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeMachineHealthCheck(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return MachineHealthCheck(
+            id=_UniffiFfiConverterString.read(buf),
+            status=_UniffiFfiConverterString.read(buf),
+            message=_UniffiFfiConverterString.read(buf),
+            remediation=_UniffiFfiConverterString.read(buf),
+            facts=_UniffiFfiConverterMapStringString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.id)
+        _UniffiFfiConverterString.check_lower(value.status)
+        _UniffiFfiConverterString.check_lower(value.message)
+        _UniffiFfiConverterString.check_lower(value.remediation)
+        _UniffiFfiConverterMapStringString.check_lower(value.facts)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.id, buf)
+        _UniffiFfiConverterString.write(value.status, buf)
+        _UniffiFfiConverterString.write(value.message, buf)
+        _UniffiFfiConverterString.write(value.remediation, buf)
+        _UniffiFfiConverterMapStringString.write(value.facts, buf)
+
+class _UniffiFfiConverterSequenceTypeMachineHealthCheck(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeMachineHealthCheck.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeMachineHealthCheck.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeMachineHealthCheck.read(buf) for i in range(count)
+        ]
+
+@dataclass
+class MachineHealth:
+    """
+    A machine's health as its own cua daemon checks it.
+"""
+    def __init__(self, *, cua_version:str, os:str, checks:typing.List[MachineHealthCheck], report_json:str):
+        self.cua_version = cua_version
+        self.os = os
+        self.checks = checks
+        self.report_json = report_json
+
+
+
+
+    def __str__(self):
+        return "MachineHealth(cua_version={}, os={}, checks={}, report_json={})".format(self.cua_version, self.os, self.checks, self.report_json)
+    def __eq__(self, other):
+        if self.cua_version != other.cua_version:
+            return False
+        if self.os != other.os:
+            return False
+        if self.checks != other.checks:
+            return False
+        if self.report_json != other.report_json:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeMachineHealth(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return MachineHealth(
+            cua_version=_UniffiFfiConverterString.read(buf),
+            os=_UniffiFfiConverterString.read(buf),
+            checks=_UniffiFfiConverterSequenceTypeMachineHealthCheck.read(buf),
+            report_json=_UniffiFfiConverterString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.cua_version)
+        _UniffiFfiConverterString.check_lower(value.os)
+        _UniffiFfiConverterSequenceTypeMachineHealthCheck.check_lower(value.checks)
+        _UniffiFfiConverterString.check_lower(value.report_json)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.cua_version, buf)
+        _UniffiFfiConverterString.write(value.os, buf)
+        _UniffiFfiConverterSequenceTypeMachineHealthCheck.write(value.checks, buf)
+        _UniffiFfiConverterString.write(value.report_json, buf)
+
+@dataclass
 class McpConfig:
     """
     Where an MCP endpoint is and what every request needs. Hand it to any
-    MCP client (Claude Code, Cursor, the Python or TypeScript SDKs). On
-    Fleet the headers carry a short-lived gateway bearer: fetch a fresh
-    config per connection.
+    MCP client (Claude Code, Cursor, the Python or TypeScript SDKs). A
+    provider's headers may be short-lived: fetch a fresh config per
+    connection.
 """
     def __init__(self, *, url:str, headers:typing.List[HttpHeader]):
         self.url = url
@@ -17426,6 +15492,94 @@ class _UniffiFfiConverterTypePublicUrl(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.write(value.service, buf)
         _UniffiFfiConverterMapStringString.write(value.provider_details, buf)
 
+class _UniffiFfiConverterOptionalUInt16(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterUInt16.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterUInt16.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterUInt16.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+@dataclass
+class ReadinessProbe:
+    """
+    A user-declared readiness probe. With no probes a sandbox is ready as
+    soon as its provider reports it running; nothing assumes a guest daemon.
+
+    Name a declared service (`service = "mcp"`) or a guest port.
+"""
+    def __init__(self, *, port:int = 0, http_path:typing.Optional[str] = _DEFAULT, http_status:typing.Optional[int] = _DEFAULT, service:typing.Optional[str] = _DEFAULT):
+        self.port = port
+        if http_path is _DEFAULT:
+            self.http_path = None
+        else:
+            self.http_path = http_path
+        if http_status is _DEFAULT:
+            self.http_status = None
+        else:
+            self.http_status = http_status
+        if service is _DEFAULT:
+            self.service = None
+        else:
+            self.service = service
+
+
+
+
+    def __str__(self):
+        return "ReadinessProbe(port={}, http_path={}, http_status={}, service={})".format(self.port, self.http_path, self.http_status, self.service)
+    def __eq__(self, other):
+        if self.port != other.port:
+            return False
+        if self.http_path != other.http_path:
+            return False
+        if self.http_status != other.http_status:
+            return False
+        if self.service != other.service:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeReadinessProbe(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return ReadinessProbe(
+            port=_UniffiFfiConverterUInt16.read(buf),
+            http_path=_UniffiFfiConverterOptionalString.read(buf),
+            http_status=_UniffiFfiConverterOptionalUInt16.read(buf),
+            service=_UniffiFfiConverterOptionalString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterUInt16.check_lower(value.port)
+        _UniffiFfiConverterOptionalString.check_lower(value.http_path)
+        _UniffiFfiConverterOptionalUInt16.check_lower(value.http_status)
+        _UniffiFfiConverterOptionalString.check_lower(value.service)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterUInt16.write(value.port, buf)
+        _UniffiFfiConverterOptionalString.write(value.http_path, buf)
+        _UniffiFfiConverterOptionalUInt16.write(value.http_status, buf)
+        _UniffiFfiConverterOptionalString.write(value.service, buf)
+
 @dataclass
 class ResolvedImage:
     """
@@ -17917,6 +16071,37 @@ class _UniffiFfiConverterTypeRoutineInfo(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.write(value.last_outcome, buf)
         _UniffiFfiConverterOptionalString.write(value.last_run_id, buf)
 
+class _UniffiFfiConverterMapStringUInt16(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, items):
+        for (key, value) in items.items():
+            _UniffiFfiConverterString.check_lower(key)
+            _UniffiFfiConverterUInt16.check_lower(value)
+
+    @classmethod
+    def write(cls, items, buf):
+        buf.write_i32(len(items))
+        for (key, value) in items.items():
+            _UniffiFfiConverterString.write(key, buf)
+            _UniffiFfiConverterUInt16.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative map size")
+
+        # It would be nice to use a dict comprehension,
+        # but in Python 3.7 and before the evaluation order is not according to spec,
+        # so we we're reading the value before the key.
+        # This loop makes the order explicit: first reading the key, then the value.
+        d = {}
+        for i in range(count):
+            key = _UniffiFfiConverterString.read(buf)
+            val = _UniffiFfiConverterUInt16.read(buf)
+            d[key] = val
+        return d
+
 class _UniffiFfiConverterSequenceTypeReadinessProbe(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -17940,11 +16125,256 @@ class _UniffiFfiConverterSequenceTypeReadinessProbe(_UniffiConverterRustBuffer):
             _UniffiFfiConverterTypeReadinessProbe.read(buf) for i in range(count)
         ]
 
-class _UniffiFfiConverterOptionalTypeCloudOptions(_UniffiConverterRustBuffer):
+class _UniffiFfiConverterSequenceTypeContainer(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeContainer.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeContainer.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeContainer.read(buf) for i in range(count)
+        ]
+
+
+
+
+
+
+class RegistrySecret:
+    """
+    Credentials for a private registry image, used for the pull. Never
+    logged or persisted.
+"""
+    def __init__(self):
+        raise RuntimeError("RegistrySecret cannot be instantiated directly")
+
+    # Each enum variant is a nested class of the enum itself.
+    @dataclass
+    class BASIC:
+        """
+        A user name and password (or access token).
+"""
+
+        def __init__(self, username:str, password:str, registry:typing.Optional[str]):
+            self.username = username
+
+            """
+        User name.
+"""
+
+            self.password = password
+
+            """
+        Password or token.
+"""
+
+            self.registry = registry
+
+            """
+        Registry host; `None` means the image's.
+"""
+
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "RegistrySecret.BASIC(username={}, password={}, registry={})".format(self.username, self.password, self.registry)
+        def __eq__(self, other):
+            if not isinstance(other, RegistrySecret):
+                return NotImplemented
+            if not other.is_BASIC():
+                return False
+            if self.username != other.username:
+                return False
+            if self.password != other.password:
+                return False
+            if self.registry != other.registry:
+                return False
+            return True
+
+    @dataclass
+    class FROM_ENV:
+        """
+        Read from environment variables of this process at create time.
+"""
+
+        def __init__(self, username_var:str, password_var:str, registry:typing.Optional[str]):
+            self.username_var = username_var
+
+            """
+        Variable holding the user name.
+"""
+
+            self.password_var = password_var
+
+            """
+        Variable holding the password or token.
+"""
+
+            self.registry = registry
+
+            """
+        Registry host; `None` means the image's.
+"""
+
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "RegistrySecret.FROM_ENV(username_var={}, password_var={}, registry={})".format(self.username_var, self.password_var, self.registry)
+        def __eq__(self, other):
+            if not isinstance(other, RegistrySecret):
+                return NotImplemented
+            if not other.is_FROM_ENV():
+                return False
+            if self.username_var != other.username_var:
+                return False
+            if self.password_var != other.password_var:
+                return False
+            if self.registry != other.registry:
+                return False
+            return True
+
+    @dataclass
+    class AWS_ECR:
+        """
+        A private Amazon ECR image: a login token from the AWS CLI
+        (`aws ecr get-login-password`) with the caller's AWS credentials.
+"""
+
+        def __init__(self, region:typing.Optional[str]):
+            self.region = region
+
+            """
+        Region; `None` takes it from the image's ECR host.
+"""
+
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "RegistrySecret.AWS_ECR(region={})".format(self.region)
+        def __eq__(self, other):
+            if not isinstance(other, RegistrySecret):
+                return NotImplemented
+            if not other.is_AWS_ECR():
+                return False
+            if self.region != other.region:
+                return False
+            return True
+
+
+
+    # For each variant, we have `is_NAME` and `is_name` methods for easily checking
+    # whether an instance is that variant.
+    def is_BASIC(self) -> bool:
+        return isinstance(self, RegistrySecret.BASIC)
+    def is_basic(self) -> bool:
+        return isinstance(self, RegistrySecret.BASIC)
+    def is_FROM_ENV(self) -> bool:
+        return isinstance(self, RegistrySecret.FROM_ENV)
+    def is_from_env(self) -> bool:
+        return isinstance(self, RegistrySecret.FROM_ENV)
+    def is_AWS_ECR(self) -> bool:
+        return isinstance(self, RegistrySecret.AWS_ECR)
+    def is_aws_ecr(self) -> bool:
+        return isinstance(self, RegistrySecret.AWS_ECR)
+
+
+# Now, a little trick - we make each nested variant class be a subclass of the main
+# enum class, so that method calls and instance checks etc will work intuitively.
+# We might be able to do this a little more neatly with a metaclass, but this'll do.
+RegistrySecret.BASIC = type("RegistrySecret.BASIC", (RegistrySecret.BASIC, RegistrySecret,), {})  # type: ignore
+RegistrySecret.FROM_ENV = type("RegistrySecret.FROM_ENV", (RegistrySecret.FROM_ENV, RegistrySecret,), {})  # type: ignore
+RegistrySecret.AWS_ECR = type("RegistrySecret.AWS_ECR", (RegistrySecret.AWS_ECR, RegistrySecret,), {})  # type: ignore
+
+
+
+
+class _UniffiFfiConverterTypeRegistrySecret(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return RegistrySecret.BASIC(
+                _UniffiFfiConverterString.read(buf),
+                _UniffiFfiConverterString.read(buf),
+                _UniffiFfiConverterOptionalString.read(buf),
+            )
+        if variant == 2:
+            return RegistrySecret.FROM_ENV(
+                _UniffiFfiConverterString.read(buf),
+                _UniffiFfiConverterString.read(buf),
+                _UniffiFfiConverterOptionalString.read(buf),
+            )
+        if variant == 3:
+            return RegistrySecret.AWS_ECR(
+                _UniffiFfiConverterOptionalString.read(buf),
+            )
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value.is_BASIC():
+            _UniffiFfiConverterString.check_lower(value.username)
+            _UniffiFfiConverterString.check_lower(value.password)
+            _UniffiFfiConverterOptionalString.check_lower(value.registry)
+            return
+        if value.is_FROM_ENV():
+            _UniffiFfiConverterString.check_lower(value.username_var)
+            _UniffiFfiConverterString.check_lower(value.password_var)
+            _UniffiFfiConverterOptionalString.check_lower(value.registry)
+            return
+        if value.is_AWS_ECR():
+            _UniffiFfiConverterOptionalString.check_lower(value.region)
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value.is_BASIC():
+            buf.write_i32(1)
+            _UniffiFfiConverterString.write(value.username, buf)
+            _UniffiFfiConverterString.write(value.password, buf)
+            _UniffiFfiConverterOptionalString.write(value.registry, buf)
+        if value.is_FROM_ENV():
+            buf.write_i32(2)
+            _UniffiFfiConverterString.write(value.username_var, buf)
+            _UniffiFfiConverterString.write(value.password_var, buf)
+            _UniffiFfiConverterOptionalString.write(value.registry, buf)
+        if value.is_AWS_ECR():
+            buf.write_i32(3)
+            _UniffiFfiConverterOptionalString.write(value.region, buf)
+
+
+
+class _UniffiFfiConverterOptionalTypeRegistrySecret(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
         if value is not None:
-            _UniffiFfiConverterTypeCloudOptions.check_lower(value)
+            _UniffiFfiConverterTypeRegistrySecret.check_lower(value)
 
     @classmethod
     def write(cls, value, buf):
@@ -17953,7 +16383,7 @@ class _UniffiFfiConverterOptionalTypeCloudOptions(_UniffiConverterRustBuffer):
             return
 
         buf.write_u8(1)
-        _UniffiFfiConverterTypeCloudOptions.write(value, buf)
+        _UniffiFfiConverterTypeRegistrySecret.write(value, buf)
 
     @classmethod
     def read(cls, buf):
@@ -17961,7 +16391,7 @@ class _UniffiFfiConverterOptionalTypeCloudOptions(_UniffiConverterRustBuffer):
         if flag == 0:
             return None
         elif flag == 1:
-            return _UniffiFfiConverterTypeCloudOptions.read(buf)
+            return _UniffiFfiConverterTypeRegistrySecret.read(buf)
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
@@ -18018,7 +16448,7 @@ class SandboxCreateOptions:
     """
     Options for [`Sandboxes::create`].
 """
-    def __init__(self, *, on:typing.Optional[str] = _DEFAULT, kind:typing.Optional[str] = _DEFAULT, runtime:typing.Optional[str] = _DEFAULT, image:str = "", name:typing.Optional[str] = _DEFAULT, token:typing.Optional[str] = _DEFAULT, pool:typing.Optional[str] = _DEFAULT, os:typing.Optional[str] = _DEFAULT, cpus:typing.Optional[int] = _DEFAULT, memory_mb:typing.Optional[int] = _DEFAULT, ports:typing.List[int] = _DEFAULT, services:dict[str, int] = _DEFAULT, wait_for:typing.List[ReadinessProbe] = _DEFAULT, ready_timeout_ms:typing.Optional[int] = _DEFAULT, env:dict[str, str] = _DEFAULT, fleet_replicas:typing.Optional[int] = _DEFAULT, fleet_ttl_seconds:typing.Optional[int] = _DEFAULT, warm:typing.Optional[bool] = _DEFAULT, max_pool_size:typing.Optional[int] = _DEFAULT, command:typing.Optional[typing.List[str]] = _DEFAULT, cloud:typing.Optional[CloudOptions] = _DEFAULT, sidecars:typing.List[Container] = _DEFAULT, registry_secret:typing.Optional[RegistrySecret] = _DEFAULT, build:typing.Optional[ImageBuild] = _DEFAULT, network:typing.Optional[str] = _DEFAULT, overlays:typing.List[Overlay] = _DEFAULT, keep_on_failure:bool = False, gpu:typing.Optional[str] = _DEFAULT):
+    def __init__(self, *, on:typing.Optional[str] = _DEFAULT, kind:typing.Optional[str] = _DEFAULT, runtime:typing.Optional[str] = _DEFAULT, image:str = "", name:typing.Optional[str] = _DEFAULT, token:typing.Optional[str] = _DEFAULT, os:typing.Optional[str] = _DEFAULT, cpus:typing.Optional[int] = _DEFAULT, memory_mb:typing.Optional[int] = _DEFAULT, ports:typing.List[int] = _DEFAULT, services:dict[str, int] = _DEFAULT, wait_for:typing.List[ReadinessProbe] = _DEFAULT, ready_timeout_ms:typing.Optional[int] = _DEFAULT, env:dict[str, str] = _DEFAULT, command:typing.Optional[typing.List[str]] = _DEFAULT, sidecars:typing.List[Container] = _DEFAULT, registry_secret:typing.Optional[RegistrySecret] = _DEFAULT, build:typing.Optional[ImageBuild] = _DEFAULT, network:typing.Optional[str] = _DEFAULT, overlays:typing.List[Overlay] = _DEFAULT, keep_on_failure:bool = False, gpu:typing.Optional[str] = _DEFAULT):
         if on is _DEFAULT:
             self.on = None
         else:
@@ -18040,10 +16470,6 @@ class SandboxCreateOptions:
             self.token = None
         else:
             self.token = token
-        if pool is _DEFAULT:
-            self.pool = None
-        else:
-            self.pool = pool
         if os is _DEFAULT:
             self.os = None
         else:
@@ -18076,30 +16502,10 @@ class SandboxCreateOptions:
             self.env = {}
         else:
             self.env = env
-        if fleet_replicas is _DEFAULT:
-            self.fleet_replicas = None
-        else:
-            self.fleet_replicas = fleet_replicas
-        if fleet_ttl_seconds is _DEFAULT:
-            self.fleet_ttl_seconds = None
-        else:
-            self.fleet_ttl_seconds = fleet_ttl_seconds
-        if warm is _DEFAULT:
-            self.warm = None
-        else:
-            self.warm = warm
-        if max_pool_size is _DEFAULT:
-            self.max_pool_size = None
-        else:
-            self.max_pool_size = max_pool_size
         if command is _DEFAULT:
             self.command = None
         else:
             self.command = command
-        if cloud is _DEFAULT:
-            self.cloud = None
-        else:
-            self.cloud = cloud
         if sidecars is _DEFAULT:
             self.sidecars = []
         else:
@@ -18130,7 +16536,7 @@ class SandboxCreateOptions:
 
 
     def __str__(self):
-        return "SandboxCreateOptions(on={}, kind={}, runtime={}, image={}, name={}, token={}, pool={}, os={}, cpus={}, memory_mb={}, ports={}, services={}, wait_for={}, ready_timeout_ms={}, env={}, fleet_replicas={}, fleet_ttl_seconds={}, warm={}, max_pool_size={}, command={}, cloud={}, sidecars={}, registry_secret={}, build={}, network={}, overlays={}, keep_on_failure={}, gpu={})".format(self.on, self.kind, self.runtime, self.image, self.name, self.token, self.pool, self.os, self.cpus, self.memory_mb, self.ports, self.services, self.wait_for, self.ready_timeout_ms, self.env, self.fleet_replicas, self.fleet_ttl_seconds, self.warm, self.max_pool_size, self.command, self.cloud, self.sidecars, self.registry_secret, self.build, self.network, self.overlays, self.keep_on_failure, self.gpu)
+        return "SandboxCreateOptions(on={}, kind={}, runtime={}, image={}, name={}, token={}, os={}, cpus={}, memory_mb={}, ports={}, services={}, wait_for={}, ready_timeout_ms={}, env={}, command={}, sidecars={}, registry_secret={}, build={}, network={}, overlays={}, keep_on_failure={}, gpu={})".format(self.on, self.kind, self.runtime, self.image, self.name, self.token, self.os, self.cpus, self.memory_mb, self.ports, self.services, self.wait_for, self.ready_timeout_ms, self.env, self.command, self.sidecars, self.registry_secret, self.build, self.network, self.overlays, self.keep_on_failure, self.gpu)
     def __eq__(self, other):
         if self.on != other.on:
             return False
@@ -18143,8 +16549,6 @@ class SandboxCreateOptions:
         if self.name != other.name:
             return False
         if self.token != other.token:
-            return False
-        if self.pool != other.pool:
             return False
         if self.os != other.os:
             return False
@@ -18162,17 +16566,7 @@ class SandboxCreateOptions:
             return False
         if self.env != other.env:
             return False
-        if self.fleet_replicas != other.fleet_replicas:
-            return False
-        if self.fleet_ttl_seconds != other.fleet_ttl_seconds:
-            return False
-        if self.warm != other.warm:
-            return False
-        if self.max_pool_size != other.max_pool_size:
-            return False
         if self.command != other.command:
-            return False
-        if self.cloud != other.cloud:
             return False
         if self.sidecars != other.sidecars:
             return False
@@ -18200,7 +16594,6 @@ class _UniffiFfiConverterTypeSandboxCreateOptions(_UniffiConverterRustBuffer):
             image=_UniffiFfiConverterString.read(buf),
             name=_UniffiFfiConverterOptionalString.read(buf),
             token=_UniffiFfiConverterOptionalString.read(buf),
-            pool=_UniffiFfiConverterOptionalString.read(buf),
             os=_UniffiFfiConverterOptionalString.read(buf),
             cpus=_UniffiFfiConverterOptionalUInt32.read(buf),
             memory_mb=_UniffiFfiConverterOptionalUInt64.read(buf),
@@ -18209,12 +16602,7 @@ class _UniffiFfiConverterTypeSandboxCreateOptions(_UniffiConverterRustBuffer):
             wait_for=_UniffiFfiConverterSequenceTypeReadinessProbe.read(buf),
             ready_timeout_ms=_UniffiFfiConverterOptionalUInt32.read(buf),
             env=_UniffiFfiConverterMapStringString.read(buf),
-            fleet_replicas=_UniffiFfiConverterOptionalUInt32.read(buf),
-            fleet_ttl_seconds=_UniffiFfiConverterOptionalUInt32.read(buf),
-            warm=_UniffiFfiConverterOptionalBoolean.read(buf),
-            max_pool_size=_UniffiFfiConverterOptionalUInt32.read(buf),
             command=_UniffiFfiConverterOptionalSequenceString.read(buf),
-            cloud=_UniffiFfiConverterOptionalTypeCloudOptions.read(buf),
             sidecars=_UniffiFfiConverterSequenceTypeContainer.read(buf),
             registry_secret=_UniffiFfiConverterOptionalTypeRegistrySecret.read(buf),
             build=_UniffiFfiConverterOptionalTypeImageBuild.read(buf),
@@ -18232,7 +16620,6 @@ class _UniffiFfiConverterTypeSandboxCreateOptions(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.check_lower(value.image)
         _UniffiFfiConverterOptionalString.check_lower(value.name)
         _UniffiFfiConverterOptionalString.check_lower(value.token)
-        _UniffiFfiConverterOptionalString.check_lower(value.pool)
         _UniffiFfiConverterOptionalString.check_lower(value.os)
         _UniffiFfiConverterOptionalUInt32.check_lower(value.cpus)
         _UniffiFfiConverterOptionalUInt64.check_lower(value.memory_mb)
@@ -18241,12 +16628,7 @@ class _UniffiFfiConverterTypeSandboxCreateOptions(_UniffiConverterRustBuffer):
         _UniffiFfiConverterSequenceTypeReadinessProbe.check_lower(value.wait_for)
         _UniffiFfiConverterOptionalUInt32.check_lower(value.ready_timeout_ms)
         _UniffiFfiConverterMapStringString.check_lower(value.env)
-        _UniffiFfiConverterOptionalUInt32.check_lower(value.fleet_replicas)
-        _UniffiFfiConverterOptionalUInt32.check_lower(value.fleet_ttl_seconds)
-        _UniffiFfiConverterOptionalBoolean.check_lower(value.warm)
-        _UniffiFfiConverterOptionalUInt32.check_lower(value.max_pool_size)
         _UniffiFfiConverterOptionalSequenceString.check_lower(value.command)
-        _UniffiFfiConverterOptionalTypeCloudOptions.check_lower(value.cloud)
         _UniffiFfiConverterSequenceTypeContainer.check_lower(value.sidecars)
         _UniffiFfiConverterOptionalTypeRegistrySecret.check_lower(value.registry_secret)
         _UniffiFfiConverterOptionalTypeImageBuild.check_lower(value.build)
@@ -18263,7 +16645,6 @@ class _UniffiFfiConverterTypeSandboxCreateOptions(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.write(value.image, buf)
         _UniffiFfiConverterOptionalString.write(value.name, buf)
         _UniffiFfiConverterOptionalString.write(value.token, buf)
-        _UniffiFfiConverterOptionalString.write(value.pool, buf)
         _UniffiFfiConverterOptionalString.write(value.os, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.cpus, buf)
         _UniffiFfiConverterOptionalUInt64.write(value.memory_mb, buf)
@@ -18272,12 +16653,7 @@ class _UniffiFfiConverterTypeSandboxCreateOptions(_UniffiConverterRustBuffer):
         _UniffiFfiConverterSequenceTypeReadinessProbe.write(value.wait_for, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.ready_timeout_ms, buf)
         _UniffiFfiConverterMapStringString.write(value.env, buf)
-        _UniffiFfiConverterOptionalUInt32.write(value.fleet_replicas, buf)
-        _UniffiFfiConverterOptionalUInt32.write(value.fleet_ttl_seconds, buf)
-        _UniffiFfiConverterOptionalBoolean.write(value.warm, buf)
-        _UniffiFfiConverterOptionalUInt32.write(value.max_pool_size, buf)
         _UniffiFfiConverterOptionalSequenceString.write(value.command, buf)
-        _UniffiFfiConverterOptionalTypeCloudOptions.write(value.cloud, buf)
         _UniffiFfiConverterSequenceTypeContainer.write(value.sidecars, buf)
         _UniffiFfiConverterOptionalTypeRegistrySecret.write(value.registry_secret, buf)
         _UniffiFfiConverterOptionalTypeImageBuild.write(value.build, buf)
@@ -18375,12 +16751,12 @@ class _UniffiFfiConverterTypeSandboxStatus(_UniffiConverterRustBuffer):
 
 class SandboxPhase(enum.Enum):
     """
-    Portable lifecycle phase, the same words local and in the cloud.
+    Portable lifecycle phase, the same words on every provider.
 """
 
     PROVISIONING = 0
     """
-    Being created (cloud: capacity is being provisioned).
+    Being created.
 """
 
     STARTING = 1
@@ -21690,7 +20066,7 @@ class SpacesdCommand:
     """
     A command to run in the guest.
 """
-    def __init__(self, *, program:str, args:typing.List[str] = _DEFAULT, env:dict[str, str] = _DEFAULT, cwd:typing.Optional[str] = _DEFAULT, user:typing.Optional[str] = _DEFAULT, timeout_ms:typing.Optional[int] = _DEFAULT, tag:typing.Optional[str] = _DEFAULT, stdin:bool = False, pty:typing.Optional[PtySize] = _DEFAULT):
+    def __init__(self, *, program:str, args:typing.List[str] = _DEFAULT, env:dict[str, str] = _DEFAULT, cwd:typing.Optional[str] = _DEFAULT, user:typing.Optional[str] = _DEFAULT, timeout_ms:typing.Optional[int] = _DEFAULT, tag:typing.Optional[str] = _DEFAULT, stdin:bool = False, pty:typing.Optional[PtySize] = _DEFAULT, kill_on_disconnect:bool = False):
         self.program = program
         if args is _DEFAULT:
             self.args = []
@@ -21721,12 +20097,13 @@ class SpacesdCommand:
             self.pty = None
         else:
             self.pty = pty
+        self.kill_on_disconnect = kill_on_disconnect
 
 
 
 
     def __str__(self):
-        return "SpacesdCommand(program={}, args={}, env={}, cwd={}, user={}, timeout_ms={}, tag={}, stdin={}, pty={})".format(self.program, self.args, self.env, self.cwd, self.user, self.timeout_ms, self.tag, self.stdin, self.pty)
+        return "SpacesdCommand(program={}, args={}, env={}, cwd={}, user={}, timeout_ms={}, tag={}, stdin={}, pty={}, kill_on_disconnect={})".format(self.program, self.args, self.env, self.cwd, self.user, self.timeout_ms, self.tag, self.stdin, self.pty, self.kill_on_disconnect)
     def __eq__(self, other):
         if self.program != other.program:
             return False
@@ -21746,6 +20123,8 @@ class SpacesdCommand:
             return False
         if self.pty != other.pty:
             return False
+        if self.kill_on_disconnect != other.kill_on_disconnect:
+            return False
         return True
 
 class _UniffiFfiConverterTypeSpacesdCommand(_UniffiConverterRustBuffer):
@@ -21761,6 +20140,7 @@ class _UniffiFfiConverterTypeSpacesdCommand(_UniffiConverterRustBuffer):
             tag=_UniffiFfiConverterOptionalString.read(buf),
             stdin=_UniffiFfiConverterBoolean.read(buf),
             pty=_UniffiFfiConverterOptionalTypePtySize.read(buf),
+            kill_on_disconnect=_UniffiFfiConverterBoolean.read(buf),
         )
 
     @staticmethod
@@ -21774,6 +20154,7 @@ class _UniffiFfiConverterTypeSpacesdCommand(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.check_lower(value.tag)
         _UniffiFfiConverterBoolean.check_lower(value.stdin)
         _UniffiFfiConverterOptionalTypePtySize.check_lower(value.pty)
+        _UniffiFfiConverterBoolean.check_lower(value.kill_on_disconnect)
 
     @staticmethod
     def write(value, buf):
@@ -21786,6 +20167,7 @@ class _UniffiFfiConverterTypeSpacesdCommand(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.write(value.tag, buf)
         _UniffiFfiConverterBoolean.write(value.stdin, buf)
         _UniffiFfiConverterOptionalTypePtySize.write(value.pty, buf)
+        _UniffiFfiConverterBoolean.write(value.kill_on_disconnect, buf)
 
 @dataclass
 class SpacesdHttpHeader:
@@ -22862,41 +21244,6 @@ class CuaError:  # type: ignore
         def __repr__(self):
             return "CuaError.Timeout({})".format(repr(str(self)))
     _UniffiTempCuaError.Timeout = Timeout # type: ignore
-    class Fleet(_UniffiTempCuaError):
-        """
-        Fleet API failure. Cua Cloud has ended, so the SDK no longer raises
-        this.
-
-        Fix: Use a local sandbox or your own computer; see the Cua Cloud has
-        ended guide.
-"""
-        def __repr__(self):
-            return "CuaError.Fleet({})".format(repr(str(self)))
-    _UniffiTempCuaError.Fleet = Fleet # type: ignore
-    class FleetAdmissionDenied(_UniffiTempCuaError):
-        """
-        Fleet's admission refused the request. Cua Cloud has ended, so the SDK
-        no longer raises this.
-
-        Fix: Use a local sandbox or your own computer; see the Cua Cloud has
-        ended guide.
-"""
-        def __repr__(self):
-            return "CuaError.FleetAdmissionDenied({})".format(repr(str(self)))
-    _UniffiTempCuaError.FleetAdmissionDenied = FleetAdmissionDenied # type: ignore
-    class CloudCreditExhausted(_UniffiTempCuaError):
-        """
-        The account is out of Cua Cloud credit: no credit left, and no card
-        or plan. New cloud sandboxes and Spaces are refused; running ones
-        keep running, and local ones are never affected. The message ends
-        with the website billing page's URL.
-
-        Fix: Add credit on that page (a plan, or a card for pay as you go),
-        or run the sandbox locally.
-"""
-        def __repr__(self):
-            return "CuaError.CloudCreditExhausted({})".format(repr(str(self)))
-    _UniffiTempCuaError.CloudCreditExhausted = CloudCreditExhausted # type: ignore
     class Runtime(_UniffiTempCuaError):
         """
         Local runtime failure.
@@ -23010,29 +21357,6 @@ class CuaError:  # type: ignore
         def __repr__(self):
             return "CuaError.TeleportRefused({})".format(repr(str(self)))
     _UniffiTempCuaError.TeleportRefused = TeleportRefused # type: ignore
-    class PoolSpecMismatch(_UniffiTempCuaError):
-        """
-        A named cloud pool's template differs from the requested sandbox
-        fields. Cua Cloud has ended, so the SDK no longer raises this.
-
-        Fix: Use a local sandbox or your own computer; see the Cua Cloud has
-        ended guide.
-"""
-        def __repr__(self):
-            return "CuaError.PoolSpecMismatch({})".format(repr(str(self)))
-    _UniffiTempCuaError.PoolSpecMismatch = PoolSpecMismatch # type: ignore
-    class ClaimSecretsNotDelivered(_UniffiTempCuaError):
-        """
-        A claim bound but its per-claim secrets (the env token) never
-        reached the sandbox. Cua Cloud has ended, so the SDK no longer raises
-        this.
-
-        Fix: Use a local sandbox or your own computer; see the Cua Cloud has
-        ended guide.
-"""
-        def __repr__(self):
-            return "CuaError.ClaimSecretsNotDelivered({})".format(repr(str(self)))
-    _UniffiTempCuaError.ClaimSecretsNotDelivered = ClaimSecretsNotDelivered # type: ignore
     class Internal(_UniffiTempCuaError):
         """
         Bug or I/O failure.
@@ -23142,90 +21466,70 @@ class _UniffiFfiConverterTypeCuaError(_UniffiConverterRustBuffer):
                 _UniffiFfiConverterString.read(buf),
             )
         if variant == 8:
-            return CuaError.Fleet(
-                _UniffiFfiConverterString.read(buf),
-            )
-        if variant == 9:
-            return CuaError.FleetAdmissionDenied(
-                _UniffiFfiConverterString.read(buf),
-            )
-        if variant == 10:
-            return CuaError.CloudCreditExhausted(
-                _UniffiFfiConverterString.read(buf),
-            )
-        if variant == 11:
             return CuaError.Runtime(
                 _UniffiFfiConverterString.read(buf),
             )
-        if variant == 12:
+        if variant == 9:
             return CuaError.Env(
                 _UniffiFfiConverterString.read(buf),
             )
-        if variant == 13:
+        if variant == 10:
             return CuaError.Http(
                 _UniffiFfiConverterString.read(buf),
             )
-        if variant == 14:
+        if variant == 11:
             return CuaError.Unauthenticated(
                 _UniffiFfiConverterString.read(buf),
             )
-        if variant == 15:
+        if variant == 12:
             return CuaError.PermissionDenied(
                 _UniffiFfiConverterString.read(buf),
             )
-        if variant == 16:
+        if variant == 13:
             return CuaError.Transport(
                 _UniffiFfiConverterString.read(buf),
             )
-        if variant == 17:
+        if variant == 14:
             return CuaError.DaemonNotRunning(
                 _UniffiFfiConverterString.read(buf),
             )
-        if variant == 18:
+        if variant == 15:
             return CuaError.Closed(
                 _UniffiFfiConverterString.read(buf),
             )
-        if variant == 19:
+        if variant == 16:
             return CuaError.CapabilityMissing(
                 _UniffiFfiConverterString.read(buf),
             )
-        if variant == 20:
+        if variant == 17:
             return CuaError.HostCapabilityMissing(
                 _UniffiFfiConverterString.read(buf),
             )
-        if variant == 21:
+        if variant == 18:
             return CuaError.TeleportRefused(
                 _UniffiFfiConverterString.read(buf),
             )
-        if variant == 22:
-            return CuaError.PoolSpecMismatch(
-                _UniffiFfiConverterString.read(buf),
-            )
-        if variant == 23:
-            return CuaError.ClaimSecretsNotDelivered(
-                _UniffiFfiConverterString.read(buf),
-            )
-        if variant == 24:
+        if variant == 19:
             return CuaError.Internal(
                 _UniffiFfiConverterString.read(buf),
             )
-        if variant == 25:
+        if variant == 20:
             return CuaError.AmbiguousSandbox(
                 _UniffiFfiConverterString.read(buf),
             )
-        if variant == 26:
+        if variant == 21:
             return CuaError.InsufficientDisk(
                 _UniffiFfiConverterString.read(buf),
             )
-        if variant == 27:
+        if variant == 22:
             return CuaError.ImageNotPublished(
                 _UniffiFfiConverterString.read(buf),
             )
-        if variant == 28:
+        if variant == 23:
             return CuaError.Cancelled(
                 _UniffiFfiConverterString.read(buf),
             )
-        if variant == 29:
+        if variant == 24:
             return CuaError.Cloud(
                 _UniffiFfiConverterString.read(buf),
             )
@@ -23246,12 +21550,6 @@ class _UniffiFfiConverterTypeCuaError(_UniffiConverterRustBuffer):
         if isinstance(value, CuaError.SpacesdNotAvailable):
             return
         if isinstance(value, CuaError.Timeout):
-            return
-        if isinstance(value, CuaError.Fleet):
-            return
-        if isinstance(value, CuaError.FleetAdmissionDenied):
-            return
-        if isinstance(value, CuaError.CloudCreditExhausted):
             return
         if isinstance(value, CuaError.Runtime):
             return
@@ -23274,10 +21572,6 @@ class _UniffiFfiConverterTypeCuaError(_UniffiConverterRustBuffer):
         if isinstance(value, CuaError.HostCapabilityMissing):
             return
         if isinstance(value, CuaError.TeleportRefused):
-            return
-        if isinstance(value, CuaError.PoolSpecMismatch):
-            return
-        if isinstance(value, CuaError.ClaimSecretsNotDelivered):
             return
         if isinstance(value, CuaError.Internal):
             return
@@ -23308,50 +21602,40 @@ class _UniffiFfiConverterTypeCuaError(_UniffiConverterRustBuffer):
             buf.write_i32(6)
         if isinstance(value, CuaError.Timeout):
             buf.write_i32(7)
-        if isinstance(value, CuaError.Fleet):
-            buf.write_i32(8)
-        if isinstance(value, CuaError.FleetAdmissionDenied):
-            buf.write_i32(9)
-        if isinstance(value, CuaError.CloudCreditExhausted):
-            buf.write_i32(10)
         if isinstance(value, CuaError.Runtime):
-            buf.write_i32(11)
+            buf.write_i32(8)
         if isinstance(value, CuaError.Env):
-            buf.write_i32(12)
+            buf.write_i32(9)
         if isinstance(value, CuaError.Http):
-            buf.write_i32(13)
+            buf.write_i32(10)
         if isinstance(value, CuaError.Unauthenticated):
-            buf.write_i32(14)
+            buf.write_i32(11)
         if isinstance(value, CuaError.PermissionDenied):
-            buf.write_i32(15)
+            buf.write_i32(12)
         if isinstance(value, CuaError.Transport):
-            buf.write_i32(16)
+            buf.write_i32(13)
         if isinstance(value, CuaError.DaemonNotRunning):
-            buf.write_i32(17)
+            buf.write_i32(14)
         if isinstance(value, CuaError.Closed):
-            buf.write_i32(18)
+            buf.write_i32(15)
         if isinstance(value, CuaError.CapabilityMissing):
-            buf.write_i32(19)
+            buf.write_i32(16)
         if isinstance(value, CuaError.HostCapabilityMissing):
-            buf.write_i32(20)
+            buf.write_i32(17)
         if isinstance(value, CuaError.TeleportRefused):
-            buf.write_i32(21)
-        if isinstance(value, CuaError.PoolSpecMismatch):
-            buf.write_i32(22)
-        if isinstance(value, CuaError.ClaimSecretsNotDelivered):
-            buf.write_i32(23)
+            buf.write_i32(18)
         if isinstance(value, CuaError.Internal):
-            buf.write_i32(24)
+            buf.write_i32(19)
         if isinstance(value, CuaError.AmbiguousSandbox):
-            buf.write_i32(25)
+            buf.write_i32(20)
         if isinstance(value, CuaError.InsufficientDisk):
-            buf.write_i32(26)
+            buf.write_i32(21)
         if isinstance(value, CuaError.ImageNotPublished):
-            buf.write_i32(27)
+            buf.write_i32(22)
         if isinstance(value, CuaError.Cancelled):
-            buf.write_i32(28)
+            buf.write_i32(23)
         if isinstance(value, CuaError.Cloud):
-            buf.write_i32(29)
+            buf.write_i32(24)
 
 
 
@@ -24278,6 +22562,13 @@ class AgentSetupProtocol(typing.Protocol):
         `cua agents setup --cua-driver` and the installers' `cua-driver` item.
 """
         raise NotImplementedError
+    def sign_in(self, agent: str) -> None:
+        """
+        Starts `agent`'s own sign-in on this computer (`codex login`: the
+        browser opens). Returns once it is running; `detect` reports
+        `signed_in` when it is done. cua never reads or copies the sign-in.
+"""
+        raise NotImplementedError
     def skills(self, ) -> typing.List[BundledSkill]:
         """
         The skills bundled with this SDK.
@@ -24503,6 +22794,26 @@ class AgentSetup(AgentSetupProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    def sign_in(self, agent: str) -> None:
+        """
+        Starts `agent`'s own sign-in on this computer (`codex login`: the
+        browser opens). Returns once it is running; `detect` reports
+        `signed_in` when it is done. cua never reads or copies the sign-in.
+"""
+
+        _UniffiFfiConverterString.check_lower(agent)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(agent),
+        )
+        _uniffi_lift_return = lambda val: None
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_sdk_fn_method_agentsetup_sign_in,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
     def skills(self, ) -> typing.List[BundledSkill]:
         """
         The skills bundled with this SDK.
@@ -25503,6 +23814,13 @@ class DevicesProtocol(typing.Protocol):
         Renames a device (from this enrolled device).
 """
         raise NotImplementedError
+    async def rename_machine(self, machine_id: str,name: str) -> RelayMachine:
+        """
+        Renames `machine_id`, a machine the account owns, on the relay (from
+        this enrolled device). When it is this machine's own registration,
+        its host setup takes the new name too.
+"""
+        raise NotImplementedError
     async def revoke(self, id: str) -> RelayDevice:
         """
         Revokes a device (from this enrolled device). Revoking this device
@@ -25733,6 +24051,31 @@ class Devices(DevicesProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_sdk_fn_method_devices_rename(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def rename_machine(self, machine_id: str,name: str) -> RelayMachine:
+        """
+        Renames `machine_id`, a machine the account owns, on the relay (from
+        this enrolled device). When it is this machine's own registration,
+        its host setup takes the new name too.
+"""
+
+        _UniffiFfiConverterString.check_lower(machine_id)
+
+        _UniffiFfiConverterString.check_lower(name)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(machine_id),
+            _UniffiFfiConverterString.lower(name),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeRelayMachine.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_devices_rename_machine(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
@@ -26031,1156 +24374,6 @@ class _UniffiFfiConverterTypeAuth:
 
     @classmethod
     def write(cls, value: Auth, buf: _UniffiRustBuffer):
-        buf.write_u64(cls.lower(value))
-
-class _UniffiFfiConverterSequenceTypeFleetClaim(_UniffiConverterRustBuffer):
-    @classmethod
-    def check_lower(cls, value):
-        for item in value:
-            _UniffiFfiConverterTypeFleetClaim.check_lower(item)
-
-    @classmethod
-    def write(cls, value, buf):
-        items = len(value)
-        buf.write_i32(items)
-        for item in value:
-            _UniffiFfiConverterTypeFleetClaim.write(item, buf)
-
-    @classmethod
-    def read(cls, buf):
-        count = buf.read_i32()
-        if count < 0:
-            raise InternalError("Unexpected negative sequence length")
-
-        return [
-            _UniffiFfiConverterTypeFleetClaim.read(buf) for i in range(count)
-        ]
-
-class _UniffiFfiConverterSequenceTypeFleetPool(_UniffiConverterRustBuffer):
-    @classmethod
-    def check_lower(cls, value):
-        for item in value:
-            _UniffiFfiConverterTypeFleetPool.check_lower(item)
-
-    @classmethod
-    def write(cls, value, buf):
-        items = len(value)
-        buf.write_i32(items)
-        for item in value:
-            _UniffiFfiConverterTypeFleetPool.write(item, buf)
-
-    @classmethod
-    def read(cls, buf):
-        count = buf.read_i32()
-        if count < 0:
-            raise InternalError("Unexpected negative sequence length")
-
-        return [
-            _UniffiFfiConverterTypeFleetPool.read(buf) for i in range(count)
-        ]
-
-class _UniffiFfiConverterSequenceTypeFleetManagedPool(_UniffiConverterRustBuffer):
-    @classmethod
-    def check_lower(cls, value):
-        for item in value:
-            _UniffiFfiConverterTypeFleetManagedPool.check_lower(item)
-
-    @classmethod
-    def write(cls, value, buf):
-        items = len(value)
-        buf.write_i32(items)
-        for item in value:
-            _UniffiFfiConverterTypeFleetManagedPool.write(item, buf)
-
-    @classmethod
-    def read(cls, buf):
-        count = buf.read_i32()
-        if count < 0:
-            raise InternalError("Unexpected negative sequence length")
-
-        return [
-            _UniffiFfiConverterTypeFleetManagedPool.read(buf) for i in range(count)
-        ]
-
-
-class FleetPoolsProtocol(typing.Protocol):
-    """
-    Managed pools: what `Sandboxes.create` without a pool uses.
-"""
-
-    async def gc(self, idle_seconds: typing.Optional[int]) -> FleetGcReport:
-        """
-        Deletes managed pools idle for `idle_seconds` (default 1800) and
-        stuck Pending/Failed managed claims past their TTL.
-"""
-        raise NotImplementedError
-    async def gc_pools(self, names: typing.List[str],idle_seconds: typing.Optional[int]) -> FleetGcReport:
-        """
-        [`FleetPools::gc`] restricted to the named managed pools: each is
-        deleted (with its namespace) once it has no claims and has been idle
-        for `idle_seconds` (default 0, i.e. now). Pools with live claims are
-        kept, so a pool another process is using survives. Tests use this to
-        remove the pools they created.
-"""
-        raise NotImplementedError
-    async def list(self, ) -> typing.List[FleetManagedPool]:
-        """
-        This account's managed pools.
-"""
-        raise NotImplementedError
-
-class FleetPools(FleetPoolsProtocol):
-    """
-    Managed pools: what `Sandboxes.create` without a pool uses.
-"""
-
-    _handle: ctypes.c_uint64
-
-    def __init__(self, *args, **kwargs):
-        raise ValueError("This class has no default constructor")
-
-    def __del__(
-            self,
-            _uniffi_free=_UniffiLib.uniffi_cua_sdk_fn_free_fleetpools,
-            _uniffi_call=_uniffi_rust_call,
-            _uniffi_finalizing=sys.is_finalizing,
-    ):
-        # In case of partial initialization of instances.
-        handle = getattr(self, "_handle", None)
-        # At interpreter exit the module globals are gone: skip the free (cua
-        # post-process, libs/cua/scripts/uniffi-python-postprocess.mjs).
-        if handle is not None and not _uniffi_finalizing():
-            _uniffi_call(_uniffi_free, handle)
-
-    def _uniffi_clone_handle(self):
-        return _uniffi_rust_call(_UniffiLib.uniffi_cua_sdk_fn_clone_fleetpools, self._handle)
-
-    # Used by alternative constructors or any methods which return this type.
-    @classmethod
-    def _uniffi_make_instance(cls, handle):
-        # Lightly yucky way to bypass the usual __init__ logic
-        # and just create a new instance with the required handle.
-        inst = cls.__new__(cls)
-        inst._handle = handle
-        return inst
-    async def gc(self, idle_seconds: typing.Optional[int]) -> FleetGcReport:
-        """
-        Deletes managed pools idle for `idle_seconds` (default 1800) and
-        stuck Pending/Failed managed claims past their TTL.
-"""
-
-        _UniffiFfiConverterOptionalUInt32.check_lower(idle_seconds)
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-            _UniffiFfiConverterOptionalUInt32.lower(idle_seconds),
-        )
-        _uniffi_lift_return = _UniffiFfiConverterTypeFleetGcReport.lift
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        return await _uniffi_rust_call_async(
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleetpools_gc(*_uniffi_lowered_args),
-            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
-            _uniffi_lift_return,
-            _uniffi_error_converter,
-        )
-    async def gc_pools(self, names: typing.List[str],idle_seconds: typing.Optional[int]) -> FleetGcReport:
-        """
-        [`FleetPools::gc`] restricted to the named managed pools: each is
-        deleted (with its namespace) once it has no claims and has been idle
-        for `idle_seconds` (default 0, i.e. now). Pools with live claims are
-        kept, so a pool another process is using survives. Tests use this to
-        remove the pools they created.
-"""
-
-        _UniffiFfiConverterSequenceString.check_lower(names)
-
-        _UniffiFfiConverterOptionalUInt32.check_lower(idle_seconds)
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-            _UniffiFfiConverterSequenceString.lower(names),
-            _UniffiFfiConverterOptionalUInt32.lower(idle_seconds),
-        )
-        _uniffi_lift_return = _UniffiFfiConverterTypeFleetGcReport.lift
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        return await _uniffi_rust_call_async(
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleetpools_gc_pools(*_uniffi_lowered_args),
-            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
-            _uniffi_lift_return,
-            _uniffi_error_converter,
-        )
-    async def list(self, ) -> typing.List[FleetManagedPool]:
-        """
-        This account's managed pools.
-"""
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-        )
-        _uniffi_lift_return = _UniffiFfiConverterSequenceTypeFleetManagedPool.lift
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        return await _uniffi_rust_call_async(
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleetpools_list(*_uniffi_lowered_args),
-            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
-            _uniffi_lift_return,
-            _uniffi_error_converter,
-        )
-
-
-
-
-
-class _UniffiFfiConverterTypeFleetPools:
-    @staticmethod
-    def lift(value: int) -> FleetPools:
-        return FleetPools._uniffi_make_instance(value)
-
-    @staticmethod
-    def check_lower(value: FleetPools):
-        if not isinstance(value, FleetPools):
-            raise TypeError("Expected FleetPools instance, {} found".format(type(value).__name__))
-
-    @staticmethod
-    def lower(value: FleetPools) -> ctypes.c_uint64:
-        return value._uniffi_clone_handle()
-
-    @classmethod
-    def read(cls, buf: _UniffiRustBuffer) -> FleetPools:
-        ptr = buf.read_u64()
-        if ptr == 0:
-            raise InternalError("Raw handle value was null")
-        return cls.lift(ptr)
-
-    @classmethod
-    def write(cls, value: FleetPools, buf: _UniffiRustBuffer):
-        buf.write_u64(cls.lower(value))
-
-class _UniffiFfiConverterOptionalTypeFleetUsagePricing(_UniffiConverterRustBuffer):
-    @classmethod
-    def check_lower(cls, value):
-        if value is not None:
-            _UniffiFfiConverterTypeFleetUsagePricing.check_lower(value)
-
-    @classmethod
-    def write(cls, value, buf):
-        if value is None:
-            buf.write_u8(0)
-            return
-
-        buf.write_u8(1)
-        _UniffiFfiConverterTypeFleetUsagePricing.write(value, buf)
-
-    @classmethod
-    def read(cls, buf):
-        flag = buf.read_u8()
-        if flag == 0:
-            return None
-        elif flag == 1:
-            return _UniffiFfiConverterTypeFleetUsagePricing.read(buf)
-        else:
-            raise InternalError("Unexpected flag byte for optional type")
-
-
-class FleetProtocol(typing.Protocol):
-    """
-    Fleet control plane. Cua Cloud has ended: `Cua.fleet()` never returns
-    one, so none of its methods can be called.
-"""
-
-    async def acquire(self, pool: str,name: typing.Optional[str],ttl_seconds: typing.Optional[int]) -> FleetSandbox:
-        """
-        Claims a sandbox from a pool and waits for it to bind. A claim named
-        `name` that already exists is reattached.
-"""
-        raise NotImplementedError
-    async def acquire_with(self, pool: str,options: FleetClaimOptions) -> FleetSandbox:
-        """
-        [`Fleet::acquire`] with claim options, including a per-claim env
-        token (bounded wait for its delivery; `ClaimSecretsNotDelivered`
-        releases the claim).
-"""
-        raise NotImplementedError
-    async def apply(self, name: str,spec: SandboxSpec,options: PoolOptions) -> FleetPool:
-        """
-        Reconciles pool `name` (= namespace = template) to run `spec` with
-        `options`: the one pool writer (rolls a new pool back if the
-        template fails). The image is pinned to the variant the runtime
-        runs; `spec.registry_secret` is written as the pool's pull Secret.
-"""
-        raise NotImplementedError
-    async def apply_pool(self, spec: FleetPoolSpec) -> FleetPool:
-        """
-        Deprecated: use [`Fleet::apply`]. Reconciles a pool and its template
-        from the flat spec (converted to [`SandboxSpec`] + [`PoolOptions`]).
-"""
-        raise NotImplementedError
-    async def apply_pool_template(self, pool: str,spec: SandboxSpec) -> None:
-        """
-        Lays the set fields of `spec` over pool `pool`'s template and writes
-        it (the pool's capacity is kept; a no-op when nothing differs).
-"""
-        raise NotImplementedError
-    async def attach_claim(self, namespace: str,name: str) -> FleetSandbox:
-        """
-        Waits for a named claim to bind.
-"""
-        raise NotImplementedError
-    def base_url(self, ) -> str:
-        """
-        Fleet API base URL.
-"""
-        raise NotImplementedError
-    async def billing_status(self, ) -> FleetBillingStatus:
-        """
-        The account's Cua Cloud billing: its credit, card and the website
-        billing page. A Fleet without billing answers `billing_enabled:
-        false`.
-"""
-        raise NotImplementedError
-    async def check_pool_spec(self, pool: str,spec: SandboxSpec) -> None:
-        """
-        Compares the set fields of `spec` with pool `pool`'s template:
-        `PoolSpecMismatch` (with a readable diff) when they differ.
-"""
-        raise NotImplementedError
-    async def claim(self, pool: str,name: typing.Optional[str],ttl_seconds: typing.Optional[int]) -> FleetClaim:
-        """
-        Creates a claim without waiting.
-"""
-        raise NotImplementedError
-    async def create_image(self, namespace: str,manifest_json: str) -> str:
-        """
-        Creates an image resource (remote build) from a JSON manifest.
-"""
-        raise NotImplementedError
-    async def create_signed_service_url(self, sandbox: FleetSandbox,service: str,label: typing.Optional[str],expires_in_seconds: int) -> FleetSignedUrl:
-        """
-        Mints a signed, shareable service URL.
-"""
-        raise NotImplementedError
-    async def delete_image(self, namespace: str,name: str) -> None:
-        """
-        Deletes an image resource.
-"""
-        raise NotImplementedError
-    async def delete_pool(self, name: str) -> None:
-        """
-        Deletes a pool, its namespace and its same-named template.
-"""
-        raise NotImplementedError
-    def ephemeral_pool_name(self, ) -> str:
-        """
-        A random ephemeral pool name (`cua-eph-<hex>`).
-"""
-        raise NotImplementedError
-    async def export_pool(self, name: str) -> FleetPoolExport:
-        """
-        Reads pool `name` back as the shared model, with its `fleets_pool`
-        Terraform block.
-"""
-        raise NotImplementedError
-    async def get_image(self, namespace: str,name: str) -> str:
-        """
-        Gets an image resource (JSON).
-"""
-        raise NotImplementedError
-    async def get_pool(self, name: str) -> FleetPool:
-        """
-        Looks up a pool.
-"""
-        raise NotImplementedError
-    async def keep_alive(self, namespace: str,name: str,seconds: int) -> str:
-        """
-        Extends a claim's lease; returns the RFC 3339 shutdown time.
-"""
-        raise NotImplementedError
-    async def list_claims(self, namespace: str) -> typing.List[FleetClaim]:
-        """
-        Lists claims in a namespace.
-"""
-        raise NotImplementedError
-    async def list_images(self, namespace: str) -> typing.List[str]:
-        """
-        Lists image resources (JSON) in a namespace.
-"""
-        raise NotImplementedError
-    async def list_pools(self, namespace: str) -> typing.List[FleetPool]:
-        """
-        Lists pools in a namespace.
-"""
-        raise NotImplementedError
-    async def list_templates(self, namespace: str) -> typing.List[str]:
-        """
-        Lists templates in a namespace as JSON resources.
-"""
-        raise NotImplementedError
-    async def pool_image_info(self, name: str) -> typing.Optional[ImageInfo]:
-        """
-        The image pool `name`'s template runs, as a claim on it reports it
-        (`Sandbox.image_info`): pinned by the resolver (cached per pool), or
-        the template reference with empty `pinned_ref`/`digest` when the
-        registry cannot be read. `None` when the template names no image.
-"""
-        raise NotImplementedError
-    def pools(self, ) -> FleetPools:
-        """
-        Managed pools (list, gc).
-"""
-        raise NotImplementedError
-    async def release(self, namespace: str,name: str) -> None:
-        """
-        Releases a claim (missing claims are fine).
-"""
-        raise NotImplementedError
-    def service_url(self, sandbox: FleetSandbox,service: str) -> str:
-        """
-        The gateway URL of a sandbox service (needs the Fleet bearer).
-"""
-        raise NotImplementedError
-    async def set_pool_replicas(self, name: str,replicas: int) -> FleetPool:
-        """
-        Sets warm replicas (0 suspends).
-"""
-        raise NotImplementedError
-    async def usage_pricing(self, ) -> typing.Optional[FleetUsagePricing]:
-        """
-        This account's Cua Cloud rates (`GET /api/config`), reused for five
-        minutes. `None` when Fleet answers without rates: show no price
-        rather than a guess.
-"""
-        raise NotImplementedError
-    async def wait_pool_ready(self, name: str,timeout_ms: int) -> FleetPool:
-        """
-        Waits for at least one ready replica.
-"""
-        raise NotImplementedError
-
-class Fleet(FleetProtocol):
-    """
-    Fleet control plane. Cua Cloud has ended: `Cua.fleet()` never returns
-    one, so none of its methods can be called.
-"""
-
-    _handle: ctypes.c_uint64
-
-    def __init__(self, *args, **kwargs):
-        raise ValueError("This class has no default constructor")
-
-    def __del__(
-            self,
-            _uniffi_free=_UniffiLib.uniffi_cua_sdk_fn_free_fleet,
-            _uniffi_call=_uniffi_rust_call,
-            _uniffi_finalizing=sys.is_finalizing,
-    ):
-        # In case of partial initialization of instances.
-        handle = getattr(self, "_handle", None)
-        # At interpreter exit the module globals are gone: skip the free (cua
-        # post-process, libs/cua/scripts/uniffi-python-postprocess.mjs).
-        if handle is not None and not _uniffi_finalizing():
-            _uniffi_call(_uniffi_free, handle)
-
-    def _uniffi_clone_handle(self):
-        return _uniffi_rust_call(_UniffiLib.uniffi_cua_sdk_fn_clone_fleet, self._handle)
-
-    # Used by alternative constructors or any methods which return this type.
-    @classmethod
-    def _uniffi_make_instance(cls, handle):
-        # Lightly yucky way to bypass the usual __init__ logic
-        # and just create a new instance with the required handle.
-        inst = cls.__new__(cls)
-        inst._handle = handle
-        return inst
-    async def acquire(self, pool: str,name: typing.Optional[str],ttl_seconds: typing.Optional[int]) -> FleetSandbox:
-        """
-        Claims a sandbox from a pool and waits for it to bind. A claim named
-        `name` that already exists is reattached.
-"""
-
-        _UniffiFfiConverterString.check_lower(pool)
-
-        _UniffiFfiConverterOptionalString.check_lower(name)
-
-        _UniffiFfiConverterOptionalUInt32.check_lower(ttl_seconds)
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-            _UniffiFfiConverterString.lower(pool),
-            _UniffiFfiConverterOptionalString.lower(name),
-            _UniffiFfiConverterOptionalUInt32.lower(ttl_seconds),
-        )
-        _uniffi_lift_return = _UniffiFfiConverterTypeFleetSandbox.lift
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        return await _uniffi_rust_call_async(
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleet_acquire(*_uniffi_lowered_args),
-            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
-            _uniffi_lift_return,
-            _uniffi_error_converter,
-        )
-    async def acquire_with(self, pool: str,options: FleetClaimOptions) -> FleetSandbox:
-        """
-        [`Fleet::acquire`] with claim options, including a per-claim env
-        token (bounded wait for its delivery; `ClaimSecretsNotDelivered`
-        releases the claim).
-"""
-
-        _UniffiFfiConverterString.check_lower(pool)
-
-        _UniffiFfiConverterTypeFleetClaimOptions.check_lower(options)
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-            _UniffiFfiConverterString.lower(pool),
-            _UniffiFfiConverterTypeFleetClaimOptions.lower(options),
-        )
-        _uniffi_lift_return = _UniffiFfiConverterTypeFleetSandbox.lift
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        return await _uniffi_rust_call_async(
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleet_acquire_with(*_uniffi_lowered_args),
-            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
-            _uniffi_lift_return,
-            _uniffi_error_converter,
-        )
-    async def apply(self, name: str,spec: SandboxSpec,options: PoolOptions) -> FleetPool:
-        """
-        Reconciles pool `name` (= namespace = template) to run `spec` with
-        `options`: the one pool writer (rolls a new pool back if the
-        template fails). The image is pinned to the variant the runtime
-        runs; `spec.registry_secret` is written as the pool's pull Secret.
-"""
-
-        _UniffiFfiConverterString.check_lower(name)
-
-        _UniffiFfiConverterTypeSandboxSpec.check_lower(spec)
-
-        _UniffiFfiConverterTypePoolOptions.check_lower(options)
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-            _UniffiFfiConverterString.lower(name),
-            _UniffiFfiConverterTypeSandboxSpec.lower(spec),
-            _UniffiFfiConverterTypePoolOptions.lower(options),
-        )
-        _uniffi_lift_return = _UniffiFfiConverterTypeFleetPool.lift
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        return await _uniffi_rust_call_async(
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleet_apply(*_uniffi_lowered_args),
-            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
-            _uniffi_lift_return,
-            _uniffi_error_converter,
-        )
-    async def apply_pool(self, spec: FleetPoolSpec) -> FleetPool:
-        """
-        Deprecated: use [`Fleet::apply`]. Reconciles a pool and its template
-        from the flat spec (converted to [`SandboxSpec`] + [`PoolOptions`]).
-"""
-
-        _UniffiFfiConverterTypeFleetPoolSpec.check_lower(spec)
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-            _UniffiFfiConverterTypeFleetPoolSpec.lower(spec),
-        )
-        _uniffi_lift_return = _UniffiFfiConverterTypeFleetPool.lift
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        return await _uniffi_rust_call_async(
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleet_apply_pool(*_uniffi_lowered_args),
-            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
-            _uniffi_lift_return,
-            _uniffi_error_converter,
-        )
-    async def apply_pool_template(self, pool: str,spec: SandboxSpec) -> None:
-        """
-        Lays the set fields of `spec` over pool `pool`'s template and writes
-        it (the pool's capacity is kept; a no-op when nothing differs).
-"""
-
-        _UniffiFfiConverterString.check_lower(pool)
-
-        _UniffiFfiConverterTypeSandboxSpec.check_lower(spec)
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-            _UniffiFfiConverterString.lower(pool),
-            _UniffiFfiConverterTypeSandboxSpec.lower(spec),
-        )
-        _uniffi_lift_return = lambda val: None
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        return await _uniffi_rust_call_async(
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleet_apply_pool_template(*_uniffi_lowered_args),
-            _UniffiLib.ffi_cua_sdk_rust_future_poll_void,
-            _UniffiLib.ffi_cua_sdk_rust_future_complete_void,
-            _UniffiLib.ffi_cua_sdk_rust_future_free_void,
-            _uniffi_lift_return,
-            _uniffi_error_converter,
-        )
-    async def attach_claim(self, namespace: str,name: str) -> FleetSandbox:
-        """
-        Waits for a named claim to bind.
-"""
-
-        _UniffiFfiConverterString.check_lower(namespace)
-
-        _UniffiFfiConverterString.check_lower(name)
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-            _UniffiFfiConverterString.lower(namespace),
-            _UniffiFfiConverterString.lower(name),
-        )
-        _uniffi_lift_return = _UniffiFfiConverterTypeFleetSandbox.lift
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        return await _uniffi_rust_call_async(
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleet_attach_claim(*_uniffi_lowered_args),
-            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
-            _uniffi_lift_return,
-            _uniffi_error_converter,
-        )
-    def base_url(self, ) -> str:
-        """
-        Fleet API base URL.
-"""
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-        )
-        _uniffi_lift_return = _UniffiFfiConverterString.lift
-        _uniffi_error_converter = None
-        _uniffi_ffi_result = _uniffi_rust_call_with_error(
-            _uniffi_error_converter,
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleet_base_url,
-            *_uniffi_lowered_args,
-        )
-        return _uniffi_lift_return(_uniffi_ffi_result)
-    async def billing_status(self, ) -> FleetBillingStatus:
-        """
-        The account's Cua Cloud billing: its credit, card and the website
-        billing page. A Fleet without billing answers `billing_enabled:
-        false`.
-"""
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-        )
-        _uniffi_lift_return = _UniffiFfiConverterTypeFleetBillingStatus.lift
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        return await _uniffi_rust_call_async(
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleet_billing_status(*_uniffi_lowered_args),
-            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
-            _uniffi_lift_return,
-            _uniffi_error_converter,
-        )
-    async def check_pool_spec(self, pool: str,spec: SandboxSpec) -> None:
-        """
-        Compares the set fields of `spec` with pool `pool`'s template:
-        `PoolSpecMismatch` (with a readable diff) when they differ.
-"""
-
-        _UniffiFfiConverterString.check_lower(pool)
-
-        _UniffiFfiConverterTypeSandboxSpec.check_lower(spec)
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-            _UniffiFfiConverterString.lower(pool),
-            _UniffiFfiConverterTypeSandboxSpec.lower(spec),
-        )
-        _uniffi_lift_return = lambda val: None
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        return await _uniffi_rust_call_async(
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleet_check_pool_spec(*_uniffi_lowered_args),
-            _UniffiLib.ffi_cua_sdk_rust_future_poll_void,
-            _UniffiLib.ffi_cua_sdk_rust_future_complete_void,
-            _UniffiLib.ffi_cua_sdk_rust_future_free_void,
-            _uniffi_lift_return,
-            _uniffi_error_converter,
-        )
-    async def claim(self, pool: str,name: typing.Optional[str],ttl_seconds: typing.Optional[int]) -> FleetClaim:
-        """
-        Creates a claim without waiting.
-"""
-
-        _UniffiFfiConverterString.check_lower(pool)
-
-        _UniffiFfiConverterOptionalString.check_lower(name)
-
-        _UniffiFfiConverterOptionalUInt32.check_lower(ttl_seconds)
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-            _UniffiFfiConverterString.lower(pool),
-            _UniffiFfiConverterOptionalString.lower(name),
-            _UniffiFfiConverterOptionalUInt32.lower(ttl_seconds),
-        )
-        _uniffi_lift_return = _UniffiFfiConverterTypeFleetClaim.lift
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        return await _uniffi_rust_call_async(
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleet_claim(*_uniffi_lowered_args),
-            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
-            _uniffi_lift_return,
-            _uniffi_error_converter,
-        )
-    async def create_image(self, namespace: str,manifest_json: str) -> str:
-        """
-        Creates an image resource (remote build) from a JSON manifest.
-"""
-
-        _UniffiFfiConverterString.check_lower(namespace)
-
-        _UniffiFfiConverterString.check_lower(manifest_json)
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-            _UniffiFfiConverterString.lower(namespace),
-            _UniffiFfiConverterString.lower(manifest_json),
-        )
-        _uniffi_lift_return = _UniffiFfiConverterString.lift
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        return await _uniffi_rust_call_async(
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleet_create_image(*_uniffi_lowered_args),
-            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
-            _uniffi_lift_return,
-            _uniffi_error_converter,
-        )
-    async def create_signed_service_url(self, sandbox: FleetSandbox,service: str,label: typing.Optional[str],expires_in_seconds: int) -> FleetSignedUrl:
-        """
-        Mints a signed, shareable service URL.
-"""
-
-        _UniffiFfiConverterTypeFleetSandbox.check_lower(sandbox)
-
-        _UniffiFfiConverterString.check_lower(service)
-
-        _UniffiFfiConverterOptionalString.check_lower(label)
-
-        _UniffiFfiConverterUInt32.check_lower(expires_in_seconds)
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-            _UniffiFfiConverterTypeFleetSandbox.lower(sandbox),
-            _UniffiFfiConverterString.lower(service),
-            _UniffiFfiConverterOptionalString.lower(label),
-            _UniffiFfiConverterUInt32.lower(expires_in_seconds),
-        )
-        _uniffi_lift_return = _UniffiFfiConverterTypeFleetSignedUrl.lift
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        return await _uniffi_rust_call_async(
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleet_create_signed_service_url(*_uniffi_lowered_args),
-            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
-            _uniffi_lift_return,
-            _uniffi_error_converter,
-        )
-    async def delete_image(self, namespace: str,name: str) -> None:
-        """
-        Deletes an image resource.
-"""
-
-        _UniffiFfiConverterString.check_lower(namespace)
-
-        _UniffiFfiConverterString.check_lower(name)
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-            _UniffiFfiConverterString.lower(namespace),
-            _UniffiFfiConverterString.lower(name),
-        )
-        _uniffi_lift_return = lambda val: None
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        return await _uniffi_rust_call_async(
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleet_delete_image(*_uniffi_lowered_args),
-            _UniffiLib.ffi_cua_sdk_rust_future_poll_void,
-            _UniffiLib.ffi_cua_sdk_rust_future_complete_void,
-            _UniffiLib.ffi_cua_sdk_rust_future_free_void,
-            _uniffi_lift_return,
-            _uniffi_error_converter,
-        )
-    async def delete_pool(self, name: str) -> None:
-        """
-        Deletes a pool, its namespace and its same-named template.
-"""
-
-        _UniffiFfiConverterString.check_lower(name)
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-            _UniffiFfiConverterString.lower(name),
-        )
-        _uniffi_lift_return = lambda val: None
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        return await _uniffi_rust_call_async(
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleet_delete_pool(*_uniffi_lowered_args),
-            _UniffiLib.ffi_cua_sdk_rust_future_poll_void,
-            _UniffiLib.ffi_cua_sdk_rust_future_complete_void,
-            _UniffiLib.ffi_cua_sdk_rust_future_free_void,
-            _uniffi_lift_return,
-            _uniffi_error_converter,
-        )
-    def ephemeral_pool_name(self, ) -> str:
-        """
-        A random ephemeral pool name (`cua-eph-<hex>`).
-"""
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-        )
-        _uniffi_lift_return = _UniffiFfiConverterString.lift
-        _uniffi_error_converter = None
-        _uniffi_ffi_result = _uniffi_rust_call_with_error(
-            _uniffi_error_converter,
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleet_ephemeral_pool_name,
-            *_uniffi_lowered_args,
-        )
-        return _uniffi_lift_return(_uniffi_ffi_result)
-    async def export_pool(self, name: str) -> FleetPoolExport:
-        """
-        Reads pool `name` back as the shared model, with its `fleets_pool`
-        Terraform block.
-"""
-
-        _UniffiFfiConverterString.check_lower(name)
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-            _UniffiFfiConverterString.lower(name),
-        )
-        _uniffi_lift_return = _UniffiFfiConverterTypeFleetPoolExport.lift
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        return await _uniffi_rust_call_async(
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleet_export_pool(*_uniffi_lowered_args),
-            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
-            _uniffi_lift_return,
-            _uniffi_error_converter,
-        )
-    async def get_image(self, namespace: str,name: str) -> str:
-        """
-        Gets an image resource (JSON).
-"""
-
-        _UniffiFfiConverterString.check_lower(namespace)
-
-        _UniffiFfiConverterString.check_lower(name)
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-            _UniffiFfiConverterString.lower(namespace),
-            _UniffiFfiConverterString.lower(name),
-        )
-        _uniffi_lift_return = _UniffiFfiConverterString.lift
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        return await _uniffi_rust_call_async(
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleet_get_image(*_uniffi_lowered_args),
-            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
-            _uniffi_lift_return,
-            _uniffi_error_converter,
-        )
-    async def get_pool(self, name: str) -> FleetPool:
-        """
-        Looks up a pool.
-"""
-
-        _UniffiFfiConverterString.check_lower(name)
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-            _UniffiFfiConverterString.lower(name),
-        )
-        _uniffi_lift_return = _UniffiFfiConverterTypeFleetPool.lift
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        return await _uniffi_rust_call_async(
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleet_get_pool(*_uniffi_lowered_args),
-            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
-            _uniffi_lift_return,
-            _uniffi_error_converter,
-        )
-    async def keep_alive(self, namespace: str,name: str,seconds: int) -> str:
-        """
-        Extends a claim's lease; returns the RFC 3339 shutdown time.
-"""
-
-        _UniffiFfiConverterString.check_lower(namespace)
-
-        _UniffiFfiConverterString.check_lower(name)
-
-        _UniffiFfiConverterUInt32.check_lower(seconds)
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-            _UniffiFfiConverterString.lower(namespace),
-            _UniffiFfiConverterString.lower(name),
-            _UniffiFfiConverterUInt32.lower(seconds),
-        )
-        _uniffi_lift_return = _UniffiFfiConverterString.lift
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        return await _uniffi_rust_call_async(
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleet_keep_alive(*_uniffi_lowered_args),
-            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
-            _uniffi_lift_return,
-            _uniffi_error_converter,
-        )
-    async def list_claims(self, namespace: str) -> typing.List[FleetClaim]:
-        """
-        Lists claims in a namespace.
-"""
-
-        _UniffiFfiConverterString.check_lower(namespace)
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-            _UniffiFfiConverterString.lower(namespace),
-        )
-        _uniffi_lift_return = _UniffiFfiConverterSequenceTypeFleetClaim.lift
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        return await _uniffi_rust_call_async(
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleet_list_claims(*_uniffi_lowered_args),
-            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
-            _uniffi_lift_return,
-            _uniffi_error_converter,
-        )
-    async def list_images(self, namespace: str) -> typing.List[str]:
-        """
-        Lists image resources (JSON) in a namespace.
-"""
-
-        _UniffiFfiConverterString.check_lower(namespace)
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-            _UniffiFfiConverterString.lower(namespace),
-        )
-        _uniffi_lift_return = _UniffiFfiConverterSequenceString.lift
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        return await _uniffi_rust_call_async(
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleet_list_images(*_uniffi_lowered_args),
-            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
-            _uniffi_lift_return,
-            _uniffi_error_converter,
-        )
-    async def list_pools(self, namespace: str) -> typing.List[FleetPool]:
-        """
-        Lists pools in a namespace.
-"""
-
-        _UniffiFfiConverterString.check_lower(namespace)
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-            _UniffiFfiConverterString.lower(namespace),
-        )
-        _uniffi_lift_return = _UniffiFfiConverterSequenceTypeFleetPool.lift
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        return await _uniffi_rust_call_async(
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleet_list_pools(*_uniffi_lowered_args),
-            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
-            _uniffi_lift_return,
-            _uniffi_error_converter,
-        )
-    async def list_templates(self, namespace: str) -> typing.List[str]:
-        """
-        Lists templates in a namespace as JSON resources.
-"""
-
-        _UniffiFfiConverterString.check_lower(namespace)
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-            _UniffiFfiConverterString.lower(namespace),
-        )
-        _uniffi_lift_return = _UniffiFfiConverterSequenceString.lift
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        return await _uniffi_rust_call_async(
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleet_list_templates(*_uniffi_lowered_args),
-            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
-            _uniffi_lift_return,
-            _uniffi_error_converter,
-        )
-    async def pool_image_info(self, name: str) -> typing.Optional[ImageInfo]:
-        """
-        The image pool `name`'s template runs, as a claim on it reports it
-        (`Sandbox.image_info`): pinned by the resolver (cached per pool), or
-        the template reference with empty `pinned_ref`/`digest` when the
-        registry cannot be read. `None` when the template names no image.
-"""
-
-        _UniffiFfiConverterString.check_lower(name)
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-            _UniffiFfiConverterString.lower(name),
-        )
-        _uniffi_lift_return = _UniffiFfiConverterOptionalTypeImageInfo.lift
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        return await _uniffi_rust_call_async(
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleet_pool_image_info(*_uniffi_lowered_args),
-            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
-            _uniffi_lift_return,
-            _uniffi_error_converter,
-        )
-    def pools(self, ) -> FleetPools:
-        """
-        Managed pools (list, gc).
-"""
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-        )
-        _uniffi_lift_return = _UniffiFfiConverterTypeFleetPools.lift
-        _uniffi_error_converter = None
-        _uniffi_ffi_result = _uniffi_rust_call_with_error(
-            _uniffi_error_converter,
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleet_pools,
-            *_uniffi_lowered_args,
-        )
-        return _uniffi_lift_return(_uniffi_ffi_result)
-    async def release(self, namespace: str,name: str) -> None:
-        """
-        Releases a claim (missing claims are fine).
-"""
-
-        _UniffiFfiConverterString.check_lower(namespace)
-
-        _UniffiFfiConverterString.check_lower(name)
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-            _UniffiFfiConverterString.lower(namespace),
-            _UniffiFfiConverterString.lower(name),
-        )
-        _uniffi_lift_return = lambda val: None
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        return await _uniffi_rust_call_async(
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleet_release(*_uniffi_lowered_args),
-            _UniffiLib.ffi_cua_sdk_rust_future_poll_void,
-            _UniffiLib.ffi_cua_sdk_rust_future_complete_void,
-            _UniffiLib.ffi_cua_sdk_rust_future_free_void,
-            _uniffi_lift_return,
-            _uniffi_error_converter,
-        )
-    def service_url(self, sandbox: FleetSandbox,service: str) -> str:
-        """
-        The gateway URL of a sandbox service (needs the Fleet bearer).
-"""
-
-        _UniffiFfiConverterTypeFleetSandbox.check_lower(sandbox)
-
-        _UniffiFfiConverterString.check_lower(service)
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-            _UniffiFfiConverterTypeFleetSandbox.lower(sandbox),
-            _UniffiFfiConverterString.lower(service),
-        )
-        _uniffi_lift_return = _UniffiFfiConverterString.lift
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        _uniffi_ffi_result = _uniffi_rust_call_with_error(
-            _uniffi_error_converter,
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleet_service_url,
-            *_uniffi_lowered_args,
-        )
-        return _uniffi_lift_return(_uniffi_ffi_result)
-    async def set_pool_replicas(self, name: str,replicas: int) -> FleetPool:
-        """
-        Sets warm replicas (0 suspends).
-"""
-
-        _UniffiFfiConverterString.check_lower(name)
-
-        _UniffiFfiConverterUInt32.check_lower(replicas)
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-            _UniffiFfiConverterString.lower(name),
-            _UniffiFfiConverterUInt32.lower(replicas),
-        )
-        _uniffi_lift_return = _UniffiFfiConverterTypeFleetPool.lift
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        return await _uniffi_rust_call_async(
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleet_set_pool_replicas(*_uniffi_lowered_args),
-            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
-            _uniffi_lift_return,
-            _uniffi_error_converter,
-        )
-    async def usage_pricing(self, ) -> typing.Optional[FleetUsagePricing]:
-        """
-        This account's Cua Cloud rates (`GET /api/config`), reused for five
-        minutes. `None` when Fleet answers without rates: show no price
-        rather than a guess.
-"""
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-        )
-        _uniffi_lift_return = _UniffiFfiConverterOptionalTypeFleetUsagePricing.lift
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        return await _uniffi_rust_call_async(
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleet_usage_pricing(*_uniffi_lowered_args),
-            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
-            _uniffi_lift_return,
-            _uniffi_error_converter,
-        )
-    async def wait_pool_ready(self, name: str,timeout_ms: int) -> FleetPool:
-        """
-        Waits for at least one ready replica.
-"""
-
-        _UniffiFfiConverterString.check_lower(name)
-
-        _UniffiFfiConverterUInt32.check_lower(timeout_ms)
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-            _UniffiFfiConverterString.lower(name),
-            _UniffiFfiConverterUInt32.lower(timeout_ms),
-        )
-        _uniffi_lift_return = _UniffiFfiConverterTypeFleetPool.lift
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        return await _uniffi_rust_call_async(
-            _UniffiLib.uniffi_cua_sdk_fn_method_fleet_wait_pool_ready(*_uniffi_lowered_args),
-            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
-            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
-            _uniffi_lift_return,
-            _uniffi_error_converter,
-        )
-
-
-
-
-
-class _UniffiFfiConverterTypeFleet:
-    @staticmethod
-    def lift(value: int) -> Fleet:
-        return Fleet._uniffi_make_instance(value)
-
-    @staticmethod
-    def check_lower(value: Fleet):
-        if not isinstance(value, Fleet):
-            raise TypeError("Expected Fleet instance, {} found".format(type(value).__name__))
-
-    @staticmethod
-    def lower(value: Fleet) -> ctypes.c_uint64:
-        return value._uniffi_clone_handle()
-
-    @classmethod
-    def read(cls, buf: _UniffiRustBuffer) -> Fleet:
-        ptr = buf.read_u64()
-        if ptr == 0:
-            raise InternalError("Raw handle value was null")
-        return cls.lift(ptr)
-
-    @classmethod
-    def write(cls, value: Fleet, buf: _UniffiRustBuffer):
         buf.write_u64(cls.lower(value))
 
 class _UniffiFfiConverterSequenceTypeSetupStep(_UniffiConverterRustBuffer):
@@ -28209,8 +25402,7 @@ class ServiceProtocol(typing.Protocol):
     async def url(self, ) -> str:
         """
         A URL for the service usable from this machine with no credentials
-        (no trailing slash): the published loopback port locally, a signed
-        service URL (1 h, renewed on later calls) in the cloud.
+        (no trailing slash): the published loopback port locally.
 """
         raise NotImplementedError
 
@@ -28396,8 +25588,7 @@ class Service(ServiceProtocol):
     async def url(self, ) -> str:
         """
         A URL for the service usable from this machine with no credentials
-        (no trailing slash): the published loopback port locally, a signed
-        service URL (1 h, renewed on later calls) in the cloud.
+        (no trailing slash): the published loopback port locally.
 """
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
@@ -28504,9 +25695,11 @@ class SpacesdProcessProtocol(typing.Protocol):
         Resizes the PTY.
 """
         raise NotImplementedError
-    async def signal(self, signal: str) -> None:
+    async def signal(self, signal: str,process_group: bool = False) -> None:
         """
-        Sends a signal by name (`term`, `kill`, `SIGINT`, ...).
+        Sends a signal by name (`term`, `kill`, `SIGINT`, ...). With
+        `process_group`, to the process's whole group (everything it started),
+        as a terminal's Ctrl-C does; by default to the process alone.
 """
         raise NotImplementedError
     def tag(self, ) -> typing.Optional[str]:
@@ -28672,15 +25865,20 @@ class SpacesdProcess(SpacesdProcessProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
-    async def signal(self, signal: str) -> None:
+    async def signal(self, signal: str,process_group: bool = False) -> None:
         """
-        Sends a signal by name (`term`, `kill`, `SIGINT`, ...).
+        Sends a signal by name (`term`, `kill`, `SIGINT`, ...). With
+        `process_group`, to the process's whole group (everything it started),
+        as a terminal's Ctrl-C does; by default to the process alone.
 """
 
         _UniffiFfiConverterString.check_lower(signal)
+
+        _UniffiFfiConverterBoolean.check_lower(process_group)
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
             _UniffiFfiConverterString.lower(signal),
+            _UniffiFfiConverterBoolean.lower(process_group),
         )
         _uniffi_lift_return = lambda val: None
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
@@ -29436,8 +26634,8 @@ class SpacesdClientProtocol(typing.Protocol):
     async def http(self, request: SpacesdHttpRequest) -> SpacesdHttpResponse:
         """
         Sends one plain-HTTP request to the spacesd port with this
-        client's endpoint and credentials (through the Fleet gateway when the
-        endpoint is a Fleet service). Used for streamable-HTTP MCP at `/mcp`,
+        client's endpoint and credentials (through a gateway when the
+        endpoint is behind one). Used for streamable-HTTP MCP at `/mcp`,
         for example by typed cua-driver clients. Not retried.
 """
         raise NotImplementedError
@@ -29982,8 +27180,8 @@ class SpacesdClient(SpacesdClientProtocol):
     async def http(self, request: SpacesdHttpRequest) -> SpacesdHttpResponse:
         """
         Sends one plain-HTTP request to the spacesd port with this
-        client's endpoint and credentials (through the Fleet gateway when the
-        endpoint is a Fleet service). Used for streamable-HTTP MCP at `/mcp`,
+        client's endpoint and credentials (through a gateway when the
+        endpoint is behind one). Used for streamable-HTTP MCP at `/mcp`,
         for example by typed cua-driver clients. Not retried.
 """
 
@@ -30570,12 +27768,6 @@ class SandboxProtocol(typing.Protocol):
         the machine).
 """
         raise NotImplementedError
-    def detach(self, ) -> None:
-        """
-        Forgets the handle this runtime holds (a Cua Cloud claim used to
-        stop renewing; Cua Cloud has ended). Embedded runtime only.
-"""
-        raise NotImplementedError
     async def forward(self, port: int) -> PortForward:
         """
         Forwards a loopback port to guest `port`: a TCP forward locally (and
@@ -30615,8 +27807,8 @@ class SandboxProtocol(typing.Protocol):
         """
         The image this sandbox runs, as resolved and pinned at create time:
         the digest and variant that actually ran. `None` for direct (URL)
-        connections, claims on a named pool, images not resolved from a
-        registry, and the daemon topology.
+        connections, images not resolved from a registry, and the daemon
+        topology.
 """
         raise NotImplementedError
     def info(self, ) -> SandboxInfo:
@@ -30834,22 +28026,6 @@ class Sandbox(SandboxProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
-    def detach(self, ) -> None:
-        """
-        Forgets the handle this runtime holds (a Cua Cloud claim used to
-        stop renewing; Cua Cloud has ended). Embedded runtime only.
-"""
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-        )
-        _uniffi_lift_return = lambda val: None
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        _uniffi_ffi_result = _uniffi_rust_call_with_error(
-            _uniffi_error_converter,
-            _UniffiLib.uniffi_cua_sdk_fn_method_sandbox_detach,
-            *_uniffi_lowered_args,
-        )
-        return _uniffi_lift_return(_uniffi_ffi_result)
     async def forward(self, port: int) -> PortForward:
         """
         Forwards a loopback port to guest `port`: a TCP forward locally (and
@@ -30958,8 +28134,8 @@ class Sandbox(SandboxProtocol):
         """
         The image this sandbox runs, as resolved and pinned at create time:
         the digest and variant that actually ran. `None` for direct (URL)
-        connections, claims on a named pool, images not resolved from a
-        registry, and the daemon topology.
+        connections, images not resolved from a registry, and the daemon
+        topology.
 """
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
@@ -31486,7 +28662,7 @@ class SandboxesProtocol(typing.Protocol):
         """
         Cancels the create of the named sandbox `name` that is still
         running (in this process or the daemon): the work in flight stops
-        (an image download, a boot, a claim) and what the create made is
+        (an image download, a boot) and what the create made is
         deleted; a sandbox of that name that existed before is never
         touched. Finished image downloads stay cached. Returns what was
         removed, or `None` when no create of that name was running. The
@@ -31526,11 +28702,9 @@ class SandboxesProtocol(typing.Protocol):
     async def list(self, location: typing.Optional[str]) -> typing.List[SandboxInfo]:
         """
         Sandboxes, each tagged with its `location`. `None` (the default):
-        all of them, local, direct and the account's live cloud sandboxes,
-        whatever the default location is. `"local"`, `"cloud"` or
-        `"direct"`: only those.
-        Cua Cloud has ended: its sandboxes are never listed, and listing
-        never asks Fleet.
+        all of them, local and direct, whatever the default location is.
+        `"local"` or `"direct"`: only those. Cua Cloud has ended, so
+        `"cloud"` lists none.
 """
         raise NotImplementedError
     async def list_all(self, ) -> typing.List[SandboxInfo]:
@@ -31540,8 +28714,7 @@ class SandboxesProtocol(typing.Protocol):
         raise NotImplementedError
     async def list_with_warnings(self, location: typing.Optional[str]) -> SandboxListing:
         """
-        [`Sandboxes::list`] with what the listing left out (for example
-        "cloud sandboxes not listed: <reason>").
+        [`Sandboxes::list`] with what the listing left out.
 """
         raise NotImplementedError
 
@@ -31583,7 +28756,7 @@ class Sandboxes(SandboxesProtocol):
         """
         Cancels the create of the named sandbox `name` that is still
         running (in this process or the daemon): the work in flight stops
-        (an image download, a boot, a claim) and what the create made is
+        (an image download, a boot) and what the create made is
         deleted; a sandbox of that name that existed before is never
         touched. Finished image downloads stay cached. Returns what was
         removed, or `None` when no create of that name was running. The
@@ -31719,11 +28892,9 @@ class Sandboxes(SandboxesProtocol):
     async def list(self, location: typing.Optional[str]) -> typing.List[SandboxInfo]:
         """
         Sandboxes, each tagged with its `location`. `None` (the default):
-        all of them, local, direct and the account's live cloud sandboxes,
-        whatever the default location is. `"local"`, `"cloud"` or
-        `"direct"`: only those.
-        Cua Cloud has ended: its sandboxes are never listed, and listing
-        never asks Fleet.
+        all of them, local and direct, whatever the default location is.
+        `"local"` or `"direct"`: only those. Cua Cloud has ended, so
+        `"cloud"` lists none.
 """
 
         _UniffiFfiConverterOptionalString.check_lower(location)
@@ -31760,8 +28931,7 @@ class Sandboxes(SandboxesProtocol):
         )
     async def list_with_warnings(self, location: typing.Optional[str]) -> SandboxListing:
         """
-        [`Sandboxes::list`] with what the listing left out (for example
-        "cloud sandboxes not listed: <reason>").
+        [`Sandboxes::list`] with what the listing left out.
 """
 
         _UniffiFfiConverterOptionalString.check_lower(location)
@@ -35225,9 +32395,9 @@ class SpacesProtocol(typing.Protocol):
         Cancels a create that is still running: `space` is the create's
         `create_id`, the id the Space will have (`local:<name>`, carried by
         every progress report) or its name. The work in flight stops (an
-        image download, a boot, a claim, a relay registration) and what the
-        create made is removed (its VM or container and disks, its cloud
-        claim, its relay machine); nothing that existed before is touched.
+        image download, a boot, a relay registration) and what the
+        create made is removed (its VM or container and disks, its relay
+        machine); nothing that existed before is touched.
         Finished image downloads stay cached, so the next create resumes.
         Returns once the clean-up is done; the create itself fails with
         `Cancelled`. Idempotent: a second call says `not_creating`. Works
@@ -35329,6 +32499,17 @@ class SpacesProtocol(typing.Protocol):
     async def list_tools_json(self, ) -> str:
         """
         The Spaces MCP `tools/list` result as JSON (the contract).
+"""
+        raise NotImplementedError
+    async def machine_health(self, machine: typing.Optional[str]) -> MachineHealth:
+        """
+        A machine's health as its own cua daemon checks it: Local Network
+        access (and which app macOS holds responsible), free disk,
+        virtualization, memory left by running Spaces, the permissions
+        sharing its desktop needs. `machine`: another of your machines, by
+        id or name (asked over the relay, the mesh or its direct address);
+        `None` for this one. Read-only; fails plainly when that machine is
+        offline, not yours, or runs a Cua that predates the check.
 """
         raise NotImplementedError
     async def notifications(self, unread_only: bool,since_ms: typing.Optional[int]) -> typing.List[NotificationInfo]:
@@ -35774,9 +32955,9 @@ class Spaces(SpacesProtocol):
         Cancels a create that is still running: `space` is the create's
         `create_id`, the id the Space will have (`local:<name>`, carried by
         every progress report) or its name. The work in flight stops (an
-        image download, a boot, a claim, a relay registration) and what the
-        create made is removed (its VM or container and disks, its cloud
-        claim, its relay machine); nothing that existed before is touched.
+        image download, a boot, a relay registration) and what the
+        create made is removed (its VM or container and disks, its relay
+        machine); nothing that existed before is touched.
         Finished image downloads stay cached, so the next create resumes.
         Returns once the clean-up is done; the create itself fails with
         `Cancelled`. Idempotent: a second call says `not_creating`. Works
@@ -36129,6 +33310,32 @@ class Spaces(SpacesProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_sdk_fn_method_spaces_list_tools_json(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def machine_health(self, machine: typing.Optional[str]) -> MachineHealth:
+        """
+        A machine's health as its own cua daemon checks it: Local Network
+        access (and which app macOS holds responsible), free disk,
+        virtualization, memory left by running Spaces, the permissions
+        sharing its desktop needs. `machine`: another of your machines, by
+        id or name (asked over the relay, the mesh or its direct address);
+        `None` for this one. Read-only; fails plainly when that machine is
+        offline, not yours, or runs a Cua that predates the check.
+"""
+
+        _UniffiFfiConverterOptionalString.check_lower(machine)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterOptionalString.lower(machine),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeMachineHealth.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_spaces_machine_health(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
@@ -37212,12 +34419,6 @@ class CuaProtocol(typing.Protocol):
         `CUA_CREDENTIAL_STORE`, `CUA_HOME` apply).
 """
         raise NotImplementedError
-    def fleet(self, ) -> Fleet:
-        """
-        Fleet pools, templates, claims and images. Cua Cloud has ended: this
-        always fails with the "Cua Cloud has ended" error and never connects.
-"""
-        raise NotImplementedError
     async def info(self, ) -> CuaInfo:
         """
         SDK (and daemon) identity. In daemon mode this is the connectivity
@@ -37326,9 +34527,8 @@ class Cua(CuaProtocol):
     def embedded(cls, config: CuaConfig) -> Cua:
         """
         Runs the SDK runtime in this process. Performs no I/O beyond
-        reading the credential store when `fleet_from_session` is set (for
-        the relay account). It never builds a Fleet client: Cua Cloud has
-        ended.
+        reading the credential store when `account_from_session` is set (for
+        the relay account).
 """
 
         _UniffiFfiConverterTypeCuaConfig.check_lower(config)
@@ -37400,22 +34600,6 @@ class Cua(CuaProtocol):
         _uniffi_ffi_result = _uniffi_rust_call_with_error(
             _uniffi_error_converter,
             _UniffiLib.uniffi_cua_sdk_fn_method_cua_auth,
-            *_uniffi_lowered_args,
-        )
-        return _uniffi_lift_return(_uniffi_ffi_result)
-    def fleet(self, ) -> Fleet:
-        """
-        Fleet pools, templates, claims and images. Cua Cloud has ended: this
-        always fails with the "Cua Cloud has ended" error and never connects.
-"""
-        _uniffi_lowered_args = (
-            self._uniffi_clone_handle(),
-        )
-        _uniffi_lift_return = _UniffiFfiConverterTypeFleet.lift
-        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-        _uniffi_ffi_result = _uniffi_rust_call_with_error(
-            _uniffi_error_converter,
-            _UniffiLib.uniffi_cua_sdk_fn_method_cua_fleet,
             *_uniffi_lowered_args,
         )
         return _uniffi_lift_return(_uniffi_ffi_result)
@@ -37581,6 +34765,16 @@ class HostProtocol(typing.Protocol):
         the desktop on or off restarts the host service.
 """
         raise NotImplementedError
+    async def migrate_service(self, force: bool,app_version: str) -> HostServiceMigration:
+        """
+        macOS: moves the host service from the old LaunchAgent to the Cua
+        Spaces app (its own login item, "Cua Spaces"), keeping this machine's
+        registration, id and Spaces; puts the old one back if the helper
+        does not take over (the outcome says so). `app_version`: a failed
+        move is not tried again by itself with the same version; `force`
+        tries anyway.
+"""
+        raise NotImplementedError
     async def pause_signed_out(self, ) -> HostStatus:
         """
         Pause relay sharing while nobody is signed in to the owner's
@@ -37686,6 +34880,34 @@ class Host(HostProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_sdk_fn_method_host_configure(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def migrate_service(self, force: bool,app_version: str) -> HostServiceMigration:
+        """
+        macOS: moves the host service from the old LaunchAgent to the Cua
+        Spaces app (its own login item, "Cua Spaces"), keeping this machine's
+        registration, id and Spaces; puts the old one back if the helper
+        does not take over (the outcome says so). `app_version`: a failed
+        move is not tried again by itself with the same version; `force`
+        tries anyway.
+"""
+
+        _UniffiFfiConverterBoolean.check_lower(force)
+
+        _UniffiFfiConverterString.check_lower(app_version)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterBoolean.lower(force),
+            _UniffiFfiConverterString.lower(app_version),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeHostServiceMigration.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_host_migrate_service(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
@@ -38359,7 +35581,7 @@ def config_path() -> str:
 def config_set(key: str,value: str) -> ConfigEntry:
     """
     Writes a setting to the config file (checked and normalised: `default.on`
-    takes `local`, `cloud` or a provider). Returns its effective value, which
+    takes `local` or a provider). Returns its effective value, which
     an environment variable may still override.
 """
 
@@ -38444,118 +35666,6 @@ def error_doc_url(variant: str) -> str:
         *_uniffi_lowered_args,
     )
     return _uniffi_lift_return(_uniffi_ffi_result)
-def fleet_check_runtime(runtime: typing.Optional[str],image: str,variant: typing.Optional[str]) -> str:
-    """
-    [`fleet_resolve_runtime`] with the image variant already known
-    (`variant` as [`fleet_image_variant`] returns it); `None` means the
-    manifest could not be read (an unset runtime then falls back to the
-    reference). Pure (no registry read).
-"""
-
-    _UniffiFfiConverterOptionalString.check_lower(runtime)
-
-    _UniffiFfiConverterString.check_lower(image)
-
-    _UniffiFfiConverterOptionalString.check_lower(variant)
-    _uniffi_lowered_args = (
-        _UniffiFfiConverterOptionalString.lower(runtime),
-        _UniffiFfiConverterString.lower(image),
-        _UniffiFfiConverterOptionalString.lower(variant),
-    )
-    _uniffi_lift_return = _UniffiFfiConverterString.lift
-    _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-    _uniffi_ffi_result = _uniffi_rust_call_with_error(
-        _uniffi_error_converter,
-        _UniffiLib.uniffi_cua_sdk_fn_func_fleet_check_runtime,
-        *_uniffi_lowered_args,
-    )
-    return _uniffi_lift_return(_uniffi_ffi_result)
-def fleet_generate_claim_token() -> str:
-    """
-    A fresh per-claim env token (64 hex characters).
-"""
-    _uniffi_lowered_args = (
-    )
-    _uniffi_lift_return = _UniffiFfiConverterString.lift
-    _uniffi_error_converter = None
-    _uniffi_ffi_result = _uniffi_rust_call_with_error(
-        _uniffi_error_converter,
-        _UniffiLib.uniffi_cua_sdk_fn_func_fleet_generate_claim_token,
-        *_uniffi_lowered_args,
-    )
-    return _uniffi_lift_return(_uniffi_ffi_result)
-def fleet_image_variant(manifest: str,config: typing.Optional[str]) -> str:
-    """
-    The variant of an image from its registry documents (`manifest`: an
-    image manifest or index, `config`: the platform manifest's config blob):
-    `container-disk`, `rootfs` or `other`. Pure (no registry read). A macOS
-    image raises `Unsupported`.
-"""
-
-    _UniffiFfiConverterString.check_lower(manifest)
-
-    _UniffiFfiConverterOptionalString.check_lower(config)
-    _uniffi_lowered_args = (
-        _UniffiFfiConverterString.lower(manifest),
-        _UniffiFfiConverterOptionalString.lower(config),
-    )
-    _uniffi_lift_return = _UniffiFfiConverterString.lift
-    _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-    _uniffi_ffi_result = _uniffi_rust_call_with_error(
-        _uniffi_error_converter,
-        _UniffiLib.uniffi_cua_sdk_fn_func_fleet_image_variant,
-        *_uniffi_lowered_args,
-    )
-    return _uniffi_lift_return(_uniffi_ffi_result)
-def fleet_resolve_runtime(runtime: typing.Optional[str],image: str) -> str:
-    """
-    The Fleet runtime for `image`: `runtime` (`kubevirt`, `gvisor`) when
-    given, else the one the image needs. What the image is
-    comes from its registry manifest (read with docker, ghcr and ECR
-    credentials): a KubeVirt containerDisk (a `/disk/disk.img` layer or
-    trycua containerDisk media types) runs on `kubevirt`, a container rootfs
-    on `gvisor`. When the manifest cannot be read and no runtime is given,
-    the runtime is guessed from the reference with a warning (a `docker-`
-    tag runs on `gvisor`, anything else on `kubevirt`). Raises
-    `InvalidArgument` only for a runtime the image cannot run on, and
-    `Unsupported` for a macOS image or runtime `macos` (Fleet does not offer
-    macOS in this SDK). Blocks
-    while the registry is read (at most 20 s; `CUA_FLEET_IMAGE_INSPECT=0`
-    skips it). The one copy of this rule; cua-sandbox calls it.
-"""
-
-    _UniffiFfiConverterOptionalString.check_lower(runtime)
-
-    _UniffiFfiConverterString.check_lower(image)
-    _uniffi_lowered_args = (
-        _UniffiFfiConverterOptionalString.lower(runtime),
-        _UniffiFfiConverterString.lower(image),
-    )
-    _uniffi_lift_return = _UniffiFfiConverterString.lift
-    _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
-    _uniffi_ffi_result = _uniffi_rust_call_with_error(
-        _uniffi_error_converter,
-        _UniffiLib.uniffi_cua_sdk_fn_func_fleet_resolve_runtime,
-        *_uniffi_lowered_args,
-    )
-    return _uniffi_lift_return(_uniffi_ffi_result)
-def fleet_size_limits() -> FleetSizeLimits:
-    """
-    The everyday sizes of a cloud sandbox (1-8 vCPUs, 1-32 GiB), which the
-    Cua apps offer. The SDK does not enforce them: it accepts up to 64 vCPUs
-    and 512 MiB to 512 GiB, and Fleet decides what an account may run (a
-    size over the account's limits fails with `FleetAdmissionDenied`).
-"""
-    _uniffi_lowered_args = (
-    )
-    _uniffi_lift_return = _UniffiFfiConverterTypeFleetSizeLimits.lift
-    _uniffi_error_converter = None
-    _uniffi_ffi_result = _uniffi_rust_call_with_error(
-        _uniffi_error_converter,
-        _UniffiLib.uniffi_cua_sdk_fn_func_fleet_size_limits,
-        *_uniffi_lowered_args,
-    )
-    return _uniffi_lift_return(_uniffi_ffi_result)
 def image_alias(name: str) -> typing.Optional[str]:
     """
     The canonical image a CLI alias (`linux`, `windows`, `macos[:version]`,
@@ -38590,7 +35700,7 @@ def locations() -> typing.List[LocationInfo]:
         *_uniffi_lowered_args,
     )
     return _uniffi_lift_return(_uniffi_ffi_result)
-def may_have_fleet_session() -> bool:
+def may_have_session() -> bool:
     """
     Whether a `cua auth login` session may be stored, decided without
     reading the OS credential vault (the non-secret session marker, or the
@@ -38604,7 +35714,7 @@ def may_have_fleet_session() -> bool:
     _uniffi_error_converter = None
     _uniffi_ffi_result = _uniffi_rust_call_with_error(
         _uniffi_error_converter,
-        _UniffiLib.uniffi_cua_sdk_fn_func_may_have_fleet_session,
+        _UniffiLib.uniffi_cua_sdk_fn_func_may_have_session,
         *_uniffi_lowered_args,
     )
     return _uniffi_lift_return(_uniffi_ffi_result)
@@ -38693,8 +35803,7 @@ def parse_sandbox_ref(input: str) -> SandboxRefParts:
     """
     Parses a sandbox ref: `local:<name>`, `cloud:<name>`,
     `direct:<host:port>`, `relay:<machine-id>`, a legacy spelling
-    (`space://fleet/<ns>/<claim>`, `fleet:<ns>:<claim>`, `url:<addr>`, a
-    URL), or a bare name.
+    (`space://cloud/<name>`, `url:<addr>`, a URL), or a bare name.
 """
 
     _UniffiFfiConverterString.check_lower(input)
@@ -38856,14 +35965,14 @@ def qualify_sandbox_ref(name: str,local: typing.Union[object, typing.Optional[bo
     return _uniffi_lift_return(_uniffi_ffi_result)
 def resolve_image(reference: str,backend: str,arch: typing.Optional[str]) -> ResolvedImage:
     """
-    Resolves `reference` for `backend` (`auto`, `local`, `fleet`,
+    Resolves `reference` for `backend` (`auto`, `local`, `provider`,
     `container`/`docker`/`gvisor`, `vm`/`qemu`/`kubevirt`, `lume`)
-    on `arch` (`amd64`/`arm64`; `None` = this host, or amd64 for `fleet`).
+    on `arch` (`amd64`/`arm64`; `None` = this host).
     `reference` is literal (`ubuntu:24.04` is Docker Hub's image): no
     alias applies here; use [`image_alias`] or [`canonical_image`] first.
     Raises `NotFound` (no such image: e.g. a tag only the local engine has),
     `Unauthenticated` (the registry refused the credentials), `Unsupported`
-    (no variant the backend runs, e.g. a macOS image on Fleet).
+    (no variant the backend runs, e.g. a macOS image on a cloud provider).
     Blocks while the registry is read (cached for five minutes).
 """
 
@@ -39280,9 +36389,9 @@ __all__ = [
     "DiskLevel",
     "CuaMode",
     "RuntimeCheckStatus",
-    "RegistrySecret",
     "ImageLayer",
     "ProcessEventKind",
+    "RegistrySecret",
     "SandboxStatus",
     "SandboxPhase",
     "ImageFormat",
@@ -39321,7 +36430,6 @@ __all__ = [
     "CloudConnected",
     "CloudResource",
     "CloudDisconnected",
-    "CloudOptions",
     "CloudStatus",
     "CloudSweepItem",
     "CloudSweepReport",
@@ -39332,7 +36440,6 @@ __all__ = [
     "ComputerResources",
     "ConfigEntry",
     "Container",
-    "FleetSettings",
     "CuaConfig",
     "CuaInfo",
     "CursorArt",
@@ -39371,29 +36478,13 @@ __all__ = [
     "DriveView",
     "ExitInfo",
     "FileEntry",
-    "FleetBillingCard",
-    "FleetBillingCredit",
-    "FleetBillingStatus",
-    "FleetClaim",
-    "FleetClaimOptions",
-    "FleetGcReport",
-    "FleetManagedPool",
-    "FleetPool",
-    "ReadinessProbe",
-    "SandboxSpec",
-    "PoolOptions",
-    "FleetPoolExport",
-    "FleetPoolSpec",
-    "FleetSandbox",
-    "FleetSignedUrl",
-    "FleetSizeLimits",
-    "FleetUsagePricing",
     "GpuOption",
     "GpuSupport",
     "GuestUsage",
     "HostAccessRecord",
     "HostPermission",
     "HostProvidedSpace",
+    "HostServiceMigration",
     "HostSettingsChange",
     "HostSetupOptions",
     "HostSpacesAuditRecord",
@@ -39406,6 +36497,8 @@ __all__ = [
     "StorageVolume",
     "LocalStorage",
     "LocationInfo",
+    "MachineHealthCheck",
+    "MachineHealth",
     "McpConfig",
     "MediaBridge",
     "MediaEvent",
@@ -39429,6 +36522,7 @@ __all__ = [
     "ProcessOutput",
     "PtySize",
     "PublicUrl",
+    "ReadinessProbe",
     "ResolvedImage",
     "SpaceResources",
     "ResourcesSnapshot",
@@ -39507,14 +36601,9 @@ __all__ = [
     "contrib_providers_built",
     "cua_sdk_version",
     "error_doc_url",
-    "fleet_check_runtime",
-    "fleet_generate_claim_token",
-    "fleet_image_variant",
-    "fleet_resolve_runtime",
-    "fleet_size_limits",
     "image_alias",
     "locations",
-    "may_have_fleet_session",
+    "may_have_session",
     "mcp_connect",
     "mcp_connect_url",
     "normalize_image",
@@ -39567,10 +36656,6 @@ __all__ = [
     "DevicesProtocol",
     "Auth",
     "AuthProtocol",
-    "FleetPools",
-    "FleetPoolsProtocol",
-    "Fleet",
-    "FleetProtocol",
     "Local",
     "LocalProtocol",
     "PortForward",

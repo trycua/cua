@@ -311,6 +311,20 @@ pub fn off_text(power: &SpacePower) -> String {
     }
 }
 
+/// [`off_text`] as a message: `spaces.status.stopped`, or
+/// `spaces.status.stopped_reason` with the `reason`.
+pub fn off_msg(power: &SpacePower) -> crate::message::Msg {
+    use crate::message::Msg;
+    match power
+        .stop_reason
+        .as_deref()
+        .filter(|r| !r.trim().is_empty())
+    {
+        Some(why) => Msg::new("spaces.status.stopped_reason").with("reason", why),
+        None => Msg::new("spaces.status.stopped"),
+    }
+}
+
 /// How a stopped Space is off, for the Status fact's tooltip.
 pub fn off_hint(control: PowerControl) -> &'static str {
     match control {

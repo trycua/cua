@@ -223,7 +223,7 @@ export function configPath(): string {
 
 /**
  * Writes a setting to the config file (checked and normalised: `default.on`
- * takes `local`, `cloud` or a provider). Returns its effective value, which
+ * takes `local` or a provider). Returns its effective value, which
  * an environment variable may still override.
  */
 export function configSet(key: string, value: string): ConfigEntry /*throws*/ {
@@ -329,132 +329,6 @@ export function errorDocUrl(variant: string): string {
     }
 
 /**
- * [`fleet_resolve_runtime`] with the image variant already known
- * (`variant` as [`fleet_image_variant`] returns it); `None` means the
- * manifest could not be read (an unset runtime then falls back to the
- * reference). Pure (no registry read).
- */
-export function fleetCheckRuntime(runtime: string | undefined, image: string, variant: string | undefined): string /*throws*/ {
-    return ((__rb: Uint8Array) => {
-        try {
-            return FfiConverterString.lift(__rb);
-        } finally {
-            nativeModule().rustbuffer_free(__rb);
-        }
-    })(uniffiCaller.rustCallWithError(
-            /*liftError:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError),
-            /*caller:*/ (callStatus) => {
-                return nativeModule().uniffi_cua_sdk_fn_func_fleet_check_runtime(
-        FfiConverterOptionalString.lower(runtime, nativeModule().rustbuffer_alloc),
-        FfiConverterString.lower(image, nativeModule().rustbuffer_alloc),
-        FfiConverterOptionalString.lower(variant, nativeModule().rustbuffer_alloc),
-                callStatus);
-            },
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-    ));
-    }
-
-/**
- * A fresh per-claim env token (64 hex characters).
- */
-export function fleetGenerateClaimToken(): string {
-    return ((__rb: Uint8Array) => {
-        try {
-            return FfiConverterString.lift(__rb);
-        } finally {
-            nativeModule().rustbuffer_free(__rb);
-        }
-    })(uniffiCaller.rustCall(
-            /*caller:*/ (callStatus) => {
-                return nativeModule().uniffi_cua_sdk_fn_func_fleet_generate_claim_token(
-                callStatus);
-            },
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-    ));
-    }
-
-/**
- * The variant of an image from its registry documents (`manifest`: an
- * image manifest or index, `config`: the platform manifest's config blob):
- * `container-disk`, `rootfs` or `other`. Pure (no registry read). A macOS
- * image raises `Unsupported`.
- */
-export function fleetImageVariant(manifest: string, config: string | undefined): string /*throws*/ {
-    return ((__rb: Uint8Array) => {
-        try {
-            return FfiConverterString.lift(__rb);
-        } finally {
-            nativeModule().rustbuffer_free(__rb);
-        }
-    })(uniffiCaller.rustCallWithError(
-            /*liftError:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError),
-            /*caller:*/ (callStatus) => {
-                return nativeModule().uniffi_cua_sdk_fn_func_fleet_image_variant(
-        FfiConverterString.lower(manifest, nativeModule().rustbuffer_alloc),
-        FfiConverterOptionalString.lower(config, nativeModule().rustbuffer_alloc),
-                callStatus);
-            },
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-    ));
-    }
-
-/**
- * The Fleet runtime for `image`: `runtime` (`kubevirt`, `gvisor`) when
- * given, else the one the image needs. What the image is
- * comes from its registry manifest (read with docker, ghcr and ECR
- * credentials): a KubeVirt containerDisk (a `/disk/disk.img` layer or
- * trycua containerDisk media types) runs on `kubevirt`, a container rootfs
- * on `gvisor`. When the manifest cannot be read and no runtime is given,
- * the runtime is guessed from the reference with a warning (a `docker-`
- * tag runs on `gvisor`, anything else on `kubevirt`). Raises
- * `InvalidArgument` only for a runtime the image cannot run on, and
- * `Unsupported` for a macOS image or runtime `macos` (Fleet does not offer
- * macOS in this SDK). Blocks
- * while the registry is read (at most 20 s; `CUA_FLEET_IMAGE_INSPECT=0`
- * skips it). The one copy of this rule; cua-sandbox calls it.
- */
-export function fleetResolveRuntime(runtime: string | undefined, image: string): string /*throws*/ {
-    return ((__rb: Uint8Array) => {
-        try {
-            return FfiConverterString.lift(__rb);
-        } finally {
-            nativeModule().rustbuffer_free(__rb);
-        }
-    })(uniffiCaller.rustCallWithError(
-            /*liftError:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError),
-            /*caller:*/ (callStatus) => {
-                return nativeModule().uniffi_cua_sdk_fn_func_fleet_resolve_runtime(
-        FfiConverterOptionalString.lower(runtime, nativeModule().rustbuffer_alloc),
-        FfiConverterString.lower(image, nativeModule().rustbuffer_alloc),
-                callStatus);
-            },
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-    ));
-    }
-
-/**
- * The everyday sizes of a cloud sandbox (1-8 vCPUs, 1-32 GiB), which the
- * Cua apps offer. The SDK does not enforce them: it accepts up to 64 vCPUs
- * and 512 MiB to 512 GiB, and Fleet decides what an account may run (a
- * size over the account's limits fails with `FleetAdmissionDenied`).
- */
-export function fleetSizeLimits(): FleetSizeLimits {
-    return ((__rb: Uint8Array) => {
-        try {
-            return FfiConverterTypeFleetSizeLimits.lift(__rb);
-        } finally {
-            nativeModule().rustbuffer_free(__rb);
-        }
-    })(uniffiCaller.rustCall(
-            /*caller:*/ (callStatus) => {
-                return nativeModule().uniffi_cua_sdk_fn_func_fleet_size_limits(
-                callStatus);
-            },
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-    ));
-    }
-
-/**
  * The canonical image a CLI alias (`linux`, `windows`, `macos[:version]`,
  * bare `ubuntu`) names, or `None` for a plain reference (`ubuntu:24.04`
  * is Docker Hub's image).
@@ -503,10 +377,10 @@ export function locations(): Array<LocationInfo> {
  * this before reading the session; an explicit read of a session stored
  * before markers existed writes the marker.
  */
-export function mayHaveFleetSession(): boolean {
+export function mayHaveSession(): boolean {
     return FfiConverterBool.lift(uniffiCaller.rustCall(
             /*caller:*/ (callStatus) => {
-                return nativeModule().uniffi_cua_sdk_fn_func_may_have_fleet_session(
+                return nativeModule().uniffi_cua_sdk_fn_func_may_have_session(
                 callStatus);
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
@@ -632,8 +506,7 @@ export function omarchyImage(channel: string | undefined): string /*throws*/ {
 /**
  * Parses a sandbox ref: `local:<name>`, `cloud:<name>`,
  * `direct:<host:port>`, `relay:<machine-id>`, a legacy spelling
- * (`space://fleet/<ns>/<claim>`, `fleet:<ns>:<claim>`, `url:<addr>`, a
- * URL), or a bare name.
+ * (`space://cloud/<name>`, `url:<addr>`, a URL), or a bare name.
  */
 export function parseSandboxRef(input: string): SandboxRefParts /*throws*/ {
     return ((__rb: Uint8Array) => {
@@ -816,14 +689,14 @@ export function qualifySandboxRef(name: string, local: boolean | undefined = und
     }
 
 /**
- * Resolves `reference` for `backend` (`auto`, `local`, `fleet`,
+ * Resolves `reference` for `backend` (`auto`, `local`, `provider`,
  * `container`/`docker`/`gvisor`, `vm`/`qemu`/`kubevirt`, `lume`)
- * on `arch` (`amd64`/`arm64`; `None` = this host, or amd64 for `fleet`).
+ * on `arch` (`amd64`/`arm64`; `None` = this host).
  * `reference` is literal (`ubuntu:24.04` is Docker Hub's image): no
  * alias applies here; use [`image_alias`] or [`canonical_image`] first.
  * Raises `NotFound` (no such image: e.g. a tag only the local engine has),
  * `Unauthenticated` (the registry refused the credentials), `Unsupported`
- * (no variant the backend runs, e.g. a macOS image on Fleet).
+ * (no variant the backend runs, e.g. a macOS image on a cloud provider).
  * Blocks while the registry is read (cached for five minutes).
  */
 export function resolveImage(reference: string, backend: string, arch: string | undefined): ResolvedImage /*throws*/ {
@@ -1780,7 +1653,16 @@ export type AgentInfo = {
     /**
      * What could not be verified from the agent's official docs.
      */
-    unverified?: string
+    unverified?: string,
+    /**
+     * The account the agent signs in with on its own (`ChatGPT` for
+     * Codex), when cua can see that sign-in.
+     */
+    signIn?: string,
+    /**
+     * That sign-in is on this computer.
+     */
+    signedIn: boolean
 }
 
 /**
@@ -1788,6 +1670,8 @@ export type AgentInfo = {
  */
 export const AgentInfo = (() => {
     const defaults = () => ({
+        signIn: undefined,
+        signedIn: false
     });
     const create = (() => {
         return uniffiCreateRecord<AgentInfo, ReturnType<typeof defaults>>(defaults);
@@ -1817,7 +1701,9 @@ const FfiConverterTypeAgentInfo = (() => {
                 skillsInstalled: FfiConverterSequenceString.read(from),
                 skillsOutdated: FfiConverterSequenceString.read(from),
                 error: FfiConverterOptionalString.read(from),
-                unverified: FfiConverterOptionalString.read(from)
+                unverified: FfiConverterOptionalString.read(from),
+                signIn: FfiConverterOptionalString.read(from),
+                signedIn: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -1835,6 +1721,8 @@ const FfiConverterTypeAgentInfo = (() => {
             FfiConverterSequenceString.write(value.skillsOutdated, into);
             FfiConverterOptionalString.write(value.error, into);
             FfiConverterOptionalString.write(value.unverified, into);
+            FfiConverterOptionalString.write(value.signIn, into);
+            FfiConverterBool.write(value.signedIn, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
@@ -1850,7 +1738,9 @@ const FfiConverterTypeAgentInfo = (() => {
              FfiConverterSequenceString.allocationSize(value.skillsInstalled) +
              FfiConverterSequenceString.allocationSize(value.skillsOutdated) +
              FfiConverterOptionalString.allocationSize(value.error) +
-             FfiConverterOptionalString.allocationSize(value.unverified);
+             FfiConverterOptionalString.allocationSize(value.unverified) +
+             FfiConverterOptionalString.allocationSize(value.signIn) +
+             FfiConverterBool.allocationSize(value.signedIn);
 
         }
     };
@@ -3717,91 +3607,6 @@ const FfiConverterTypeCloudDisconnected = (() => {
 })();
 
 /**
- * Advanced options for cloud sandboxes (warm capacity, limits, TTL, a
- * dedicated pool). Leave unset for the defaults. Setting them with `on`
- * unset means the cloud; with `on = "local"` they are an error.
- */
-export type CloudOptions = {
-    /**
-     * Keep one warm replica of this image ready (faster next start).
-     */
-    warm?: boolean,
-    /**
-     * Most sandboxes of this image at once (default 10).
-     */
-    maxPoolSize?: number,
-    /**
-     * Seconds the sandbox outlives this process without a keep-alive
-     * (renewed while held; default 15 min).
-     */
-    claimTtlSeconds?: number,
-    /**
-     * Dedicated capacity: claim from this existing pool. The sandbox
-     * fields given alongside (image, command, env, services, sidecars,
-     * cpus, memory) must match its template, or creation fails with
-     * `PoolSpecMismatch` and a diff.
-     */
-    pool?: string,
-    /**
-     * With `pool`: update the pool's template to the given fields instead
-     * of failing on a mismatch. Cua Cloud has ended: ignored.
-     */
-    apply: boolean
-}
-
-/**
- * Generated factory for {@link CloudOptions} record objects.
- */
-export const CloudOptions = (() => {
-    const defaults = () => ({
-        warm: undefined,
-        maxPoolSize: undefined,
-        claimTtlSeconds: undefined,
-        pool: undefined,
-        apply: false
-    });
-    const create = (() => {
-        return uniffiCreateRecord<CloudOptions, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<CloudOptions>,
-    });
-})();
-
-const FfiConverterTypeCloudOptions = (() => {
-    type TypeName = CloudOptions;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        read(from: RustBuffer): TypeName {
-            return {
-                warm: FfiConverterOptionalBoolean.read(from),
-                maxPoolSize: FfiConverterOptionalUInt32.read(from),
-                claimTtlSeconds: FfiConverterOptionalUInt32.read(from),
-                pool: FfiConverterOptionalString.read(from),
-                apply: FfiConverterBool.read(from)
-            };
-        }
-        write(value: TypeName, into: RustBuffer): void {
-            FfiConverterOptionalBoolean.write(value.warm, into);
-            FfiConverterOptionalUInt32.write(value.maxPoolSize, into);
-            FfiConverterOptionalUInt32.write(value.claimTtlSeconds, into);
-            FfiConverterOptionalString.write(value.pool, into);
-            FfiConverterBool.write(value.apply, into);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterOptionalBoolean.allocationSize(value.warm) +
-             FfiConverterOptionalUInt32.allocationSize(value.maxPoolSize) +
-             FfiConverterOptionalUInt32.allocationSize(value.claimTtlSeconds) +
-             FfiConverterOptionalString.allocationSize(value.pool) +
-             FfiConverterBool.allocationSize(value.apply);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
-/**
  * `cloud_status`.
  */
 export type CloudStatus = {
@@ -4444,8 +4249,8 @@ const FfiConverterTypeComputerResources = (() => {
  */
 export type ConfigEntry = {
     /**
-     * `default.on`, `default.kind`, `default.runtime`, `cloud.warm`,
-     * `cloud.max_pool_size` or `cloud.claim_ttl`.
+     * `default.on`, `default.kind`, `default.runtime`, `runtime.lume`,
+     * `runtime.linux` or `telemetry.enabled`.
      */
     key: string,
     /**
@@ -4534,9 +4339,7 @@ const FfiConverterTypeConfigEntry = (() => {
  * `name` (on its `ports`), it reaches the sandbox at `main`, and
  * `services` may name its ports (`{"db": 5432}`). Local containers run it
  * in the sandbox's network namespace (`localhost` works too; needs
- * `runtime="runc"`); cloud gVisor sandboxes run it in the same pod; cloud
- * VM (KubeVirt) sandboxes run it in a companion pod named in the guest's
- * `/etc/hosts`. Local VM sandboxes refuse sidecars. With sidecars the
+ * `runtime="runc"`). Local VM sandboxes refuse sidecars. With sidecars the
  * service names `main`, `sidecars` and `sc` are reserved.
  */
 export type Container = {
@@ -4615,85 +4418,6 @@ const FfiConverterTypeContainer = (() => {
 })();
 
 /**
- * Fleet credentials and endpoints. Ignored: Cua Cloud has ended, so nothing
- * reads them any more. Kept so existing callers still compile.
- */
-export type FleetSettings = {
-    /**
-     * Ignored.
-     */
-    baseUrl?: string,
-    /**
-     * Ignored.
-     */
-    tokenUrl?: string,
-    /**
-     * Ignored.
-     */
-    clientId?: string,
-    /**
-     * Ignored.
-     */
-    clientSecret?: string,
-    /**
-     * Ignored.
-     */
-    token?: string
-}
-
-/**
- * Generated factory for {@link FleetSettings} record objects.
- */
-export const FleetSettings = (() => {
-    const defaults = () => ({
-        baseUrl: undefined,
-        tokenUrl: undefined,
-        clientId: undefined,
-        clientSecret: undefined,
-        token: undefined
-    });
-    const create = (() => {
-        return uniffiCreateRecord<FleetSettings, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<FleetSettings>,
-    });
-})();
-
-const FfiConverterTypeFleetSettings = (() => {
-    type TypeName = FleetSettings;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        read(from: RustBuffer): TypeName {
-            return {
-                baseUrl: FfiConverterOptionalString.read(from),
-                tokenUrl: FfiConverterOptionalString.read(from),
-                clientId: FfiConverterOptionalString.read(from),
-                clientSecret: FfiConverterOptionalString.read(from),
-                token: FfiConverterOptionalString.read(from)
-            };
-        }
-        write(value: TypeName, into: RustBuffer): void {
-            FfiConverterOptionalString.write(value.baseUrl, into);
-            FfiConverterOptionalString.write(value.tokenUrl, into);
-            FfiConverterOptionalString.write(value.clientId, into);
-            FfiConverterOptionalString.write(value.clientSecret, into);
-            FfiConverterOptionalString.write(value.token, into);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterOptionalString.allocationSize(value.baseUrl) +
-             FfiConverterOptionalString.allocationSize(value.tokenUrl) +
-             FfiConverterOptionalString.allocationSize(value.clientId) +
-             FfiConverterOptionalString.allocationSize(value.clientSecret) +
-             FfiConverterOptionalString.allocationSize(value.token);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
-/**
  * Configuration of an embedded SDK runtime.
  */
 export type CuaConfig = {
@@ -4701,14 +4425,6 @@ export type CuaConfig = {
      * State directory for sandbox state files (default `~/.cua/sandboxes`).
      */
     stateDir?: string,
-    /**
-     * Ignored: Cua Cloud has ended.
-     */
-    fleet?: FleetSettings,
-    /**
-     * Ignored: Cua Cloud has ended.
-     */
-    fleetFromEnv: boolean,
     /**
      * spacesd probe timeout (default 15 s).
      */
@@ -4725,15 +4441,9 @@ export type CuaConfig = {
     /**
      * Use the signed-in session (`Cua.auth()`, `cua auth login`) from the
      * shared credential store, refreshed as needed, for the relay account
-     * the runtime lists the account's machines with ("My machines"). The
-     * name is historical: it no longer builds a Fleet client, because Cua
-     * Cloud has ended.
+     * the runtime lists the account's machines with ("My machines").
      */
-    fleetFromSession: boolean,
-    /**
-     * Ignored: Cua Cloud has ended, so there are no managed pools.
-     */
-    fleetPoolHome?: string
+    accountFromSession: boolean
 }
 
 /**
@@ -4742,13 +4452,10 @@ export type CuaConfig = {
 export const CuaConfig = (() => {
     const defaults = () => ({
         stateDir: undefined,
-        fleet: undefined,
-        fleetFromEnv: true,
         envProbeTimeoutMs: undefined,
         spacesHome: undefined,
         teleportHome: undefined,
-        fleetFromSession: false,
-        fleetPoolHome: undefined
+        accountFromSession: false
     });
     const create = (() => {
         return uniffiCreateRecord<CuaConfig, ReturnType<typeof defaults>>(defaults);
@@ -4766,34 +4473,25 @@ const FfiConverterTypeCuaConfig = (() => {
         read(from: RustBuffer): TypeName {
             return {
                 stateDir: FfiConverterOptionalString.read(from),
-                fleet: FfiConverterOptionalTypeFleetSettings.read(from),
-                fleetFromEnv: FfiConverterBool.read(from),
                 envProbeTimeoutMs: FfiConverterOptionalUInt32.read(from),
                 spacesHome: FfiConverterOptionalString.read(from),
                 teleportHome: FfiConverterOptionalString.read(from),
-                fleetFromSession: FfiConverterBool.read(from),
-                fleetPoolHome: FfiConverterOptionalString.read(from)
+                accountFromSession: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterOptionalString.write(value.stateDir, into);
-            FfiConverterOptionalTypeFleetSettings.write(value.fleet, into);
-            FfiConverterBool.write(value.fleetFromEnv, into);
             FfiConverterOptionalUInt32.write(value.envProbeTimeoutMs, into);
             FfiConverterOptionalString.write(value.spacesHome, into);
             FfiConverterOptionalString.write(value.teleportHome, into);
-            FfiConverterBool.write(value.fleetFromSession, into);
-            FfiConverterOptionalString.write(value.fleetPoolHome, into);
+            FfiConverterBool.write(value.accountFromSession, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterOptionalString.allocationSize(value.stateDir) +
-             FfiConverterOptionalTypeFleetSettings.allocationSize(value.fleet) +
-             FfiConverterBool.allocationSize(value.fleetFromEnv) +
              FfiConverterOptionalUInt32.allocationSize(value.envProbeTimeoutMs) +
              FfiConverterOptionalString.allocationSize(value.spacesHome) +
              FfiConverterOptionalString.allocationSize(value.teleportHome) +
-             FfiConverterBool.allocationSize(value.fleetFromSession) +
-             FfiConverterOptionalString.allocationSize(value.fleetPoolHome);
+             FfiConverterBool.allocationSize(value.accountFromSession);
 
         }
     };
@@ -5378,7 +5076,17 @@ export type RelayMachine = {
      * check existed. `false` shows the machine as "new" until an enrolled
      * device confirms it ([`Devices::confirm_machine`]) (S5).
      */
-    confirmed: boolean
+    confirmed: boolean,
+    /**
+     * The team you reach it through, for a team machine not shared with
+     * you directly.
+     */
+    team?: string,
+    /**
+     * It creates Spaces for its owner's devices, when it said so at
+     * registration (`None` from a host or relay that predates it).
+     */
+    providesSpaces?: boolean
 }
 
 /**
@@ -5414,7 +5122,9 @@ const FfiConverterTypeRelayMachine = (() => {
                 url: FfiConverterString.read(from),
                 allow: FfiConverterSequenceString.read(from),
                 clients: FfiConverterSequenceTypeRelayClientInfo.read(from),
-                confirmed: FfiConverterBool.read(from)
+                confirmed: FfiConverterBool.read(from),
+                team: FfiConverterOptionalString.read(from),
+                providesSpaces: FfiConverterOptionalBoolean.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -5431,6 +5141,8 @@ const FfiConverterTypeRelayMachine = (() => {
             FfiConverterSequenceString.write(value.allow, into);
             FfiConverterSequenceTypeRelayClientInfo.write(value.clients, into);
             FfiConverterBool.write(value.confirmed, into);
+            FfiConverterOptionalString.write(value.team, into);
+            FfiConverterOptionalBoolean.write(value.providesSpaces, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
@@ -5445,7 +5157,9 @@ const FfiConverterTypeRelayMachine = (() => {
              FfiConverterString.allocationSize(value.url) +
              FfiConverterSequenceString.allocationSize(value.allow) +
              FfiConverterSequenceTypeRelayClientInfo.allocationSize(value.clients) +
-             FfiConverterBool.allocationSize(value.confirmed);
+             FfiConverterBool.allocationSize(value.confirmed) +
+             FfiConverterOptionalString.allocationSize(value.team) +
+             FfiConverterOptionalBoolean.allocationSize(value.providesSpaces);
 
         }
     };
@@ -7533,1600 +7247,6 @@ const FfiConverterTypeFileEntry = (() => {
 })();
 
 /**
- * The saved card ([`Fleet::billing_status`]): never its number.
- */
-export type FleetBillingCard = {
-    /**
-     * `visa`, `mastercard`, ...
-     */
-    brand: string,
-    /**
-     * Last four digits.
-     */
-    last4: string,
-    /**
-     * Expiry month.
-     */
-    expMonth: number,
-    /**
-     * Expiry year.
-     */
-    expYear: number
-}
-
-/**
- * Generated factory for {@link FleetBillingCard} record objects.
- */
-export const FleetBillingCard = (() => {
-    const defaults = () => ({
-    });
-    const create = (() => {
-        return uniffiCreateRecord<FleetBillingCard, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<FleetBillingCard>,
-    });
-})();
-
-const FfiConverterTypeFleetBillingCard = (() => {
-    type TypeName = FleetBillingCard;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        read(from: RustBuffer): TypeName {
-            return {
-                brand: FfiConverterString.read(from),
-                last4: FfiConverterString.read(from),
-                expMonth: FfiConverterUInt32.read(from),
-                expYear: FfiConverterUInt32.read(from)
-            };
-        }
-        write(value: TypeName, into: RustBuffer): void {
-            FfiConverterString.write(value.brand, into);
-            FfiConverterString.write(value.last4, into);
-            FfiConverterUInt32.write(value.expMonth, into);
-            FfiConverterUInt32.write(value.expYear, into);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterString.allocationSize(value.brand) +
-             FfiConverterString.allocationSize(value.last4) +
-             FfiConverterUInt32.allocationSize(value.expMonth) +
-             FfiConverterUInt32.allocationSize(value.expYear);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
-/**
- * The account's Cua Cloud credit.
- */
-export type FleetBillingCredit = {
-    /**
-     * What is left, US cents.
-     */
-    balanceUsdCents: bigint,
-    /**
-     * The signup grant's amount, US cents (0: none).
-     */
-    signupGrantUsdCents: bigint,
-    /**
-     * A signup grant exists and none of it has been used.
-     */
-    signupGrantUnused: boolean
-}
-
-/**
- * Generated factory for {@link FleetBillingCredit} record objects.
- */
-export const FleetBillingCredit = (() => {
-    const defaults = () => ({
-    });
-    const create = (() => {
-        return uniffiCreateRecord<FleetBillingCredit, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<FleetBillingCredit>,
-    });
-})();
-
-const FfiConverterTypeFleetBillingCredit = (() => {
-    type TypeName = FleetBillingCredit;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        read(from: RustBuffer): TypeName {
-            return {
-                balanceUsdCents: FfiConverterInt64.read(from),
-                signupGrantUsdCents: FfiConverterInt64.read(from),
-                signupGrantUnused: FfiConverterBool.read(from)
-            };
-        }
-        write(value: TypeName, into: RustBuffer): void {
-            FfiConverterInt64.write(value.balanceUsdCents, into);
-            FfiConverterInt64.write(value.signupGrantUsdCents, into);
-            FfiConverterBool.write(value.signupGrantUnused, into);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterInt64.allocationSize(value.balanceUsdCents) +
-             FfiConverterInt64.allocationSize(value.signupGrantUsdCents) +
-             FfiConverterBool.allocationSize(value.signupGrantUnused);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
-/**
- * The account's Cua Cloud billing (`GET /api/billing/status`).
- */
-export type FleetBillingStatus = {
-    /**
-     * Billing is on for this account.
-     */
-    billingEnabled: boolean,
-    /**
-     * A default card is saved.
-     */
-    paymentMethodPresent: boolean,
-    /**
-     * That card.
-     */
-    card?: FleetBillingCard,
-    /**
-     * `none`, `payg`, or a plan key.
-     */
-    plan: string,
-    /**
-     * A card can be added for pay as you go.
-     */
-    paygAvailable: boolean,
-    /**
-     * The account's credit, when Fleet has credit for it.
-     */
-    credit?: FleetBillingCredit,
-    /**
-     * The website billing page (credit, cards, plans).
-     */
-    billingUrl?: string
-}
-
-/**
- * Generated factory for {@link FleetBillingStatus} record objects.
- */
-export const FleetBillingStatus = (() => {
-    const defaults = () => ({
-    });
-    const create = (() => {
-        return uniffiCreateRecord<FleetBillingStatus, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<FleetBillingStatus>,
-    });
-})();
-
-const FfiConverterTypeFleetBillingStatus = (() => {
-    type TypeName = FleetBillingStatus;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        read(from: RustBuffer): TypeName {
-            return {
-                billingEnabled: FfiConverterBool.read(from),
-                paymentMethodPresent: FfiConverterBool.read(from),
-                card: FfiConverterOptionalTypeFleetBillingCard.read(from),
-                plan: FfiConverterString.read(from),
-                paygAvailable: FfiConverterBool.read(from),
-                credit: FfiConverterOptionalTypeFleetBillingCredit.read(from),
-                billingUrl: FfiConverterOptionalString.read(from)
-            };
-        }
-        write(value: TypeName, into: RustBuffer): void {
-            FfiConverterBool.write(value.billingEnabled, into);
-            FfiConverterBool.write(value.paymentMethodPresent, into);
-            FfiConverterOptionalTypeFleetBillingCard.write(value.card, into);
-            FfiConverterString.write(value.plan, into);
-            FfiConverterBool.write(value.paygAvailable, into);
-            FfiConverterOptionalTypeFleetBillingCredit.write(value.credit, into);
-            FfiConverterOptionalString.write(value.billingUrl, into);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterBool.allocationSize(value.billingEnabled) +
-             FfiConverterBool.allocationSize(value.paymentMethodPresent) +
-             FfiConverterOptionalTypeFleetBillingCard.allocationSize(value.card) +
-             FfiConverterString.allocationSize(value.plan) +
-             FfiConverterBool.allocationSize(value.paygAvailable) +
-             FfiConverterOptionalTypeFleetBillingCredit.allocationSize(value.credit) +
-             FfiConverterOptionalString.allocationSize(value.billingUrl);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
-/**
- * A claim.
- */
-export type FleetClaim = {
-    /**
-     * Claim name.
-     */
-    name: string,
-    /**
-     * Namespace (the pool's).
-     */
-    namespace: string,
-    /**
-     * The resource as JSON.
-     */
-    json: string
-}
-
-/**
- * Generated factory for {@link FleetClaim} record objects.
- */
-export const FleetClaim = (() => {
-    const defaults = () => ({
-    });
-    const create = (() => {
-        return uniffiCreateRecord<FleetClaim, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<FleetClaim>,
-    });
-})();
-
-const FfiConverterTypeFleetClaim = (() => {
-    type TypeName = FleetClaim;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        read(from: RustBuffer): TypeName {
-            return {
-                name: FfiConverterString.read(from),
-                namespace: FfiConverterString.read(from),
-                json: FfiConverterString.read(from)
-            };
-        }
-        write(value: TypeName, into: RustBuffer): void {
-            FfiConverterString.write(value.name, into);
-            FfiConverterString.write(value.namespace, into);
-            FfiConverterString.write(value.json, into);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterString.allocationSize(value.name) +
-             FfiConverterString.allocationSize(value.namespace) +
-             FfiConverterString.allocationSize(value.json);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
-/**
- * Claim options for [`Fleet::acquire_with`].
- */
-export type FleetClaimOptions = {
-    /**
-     * Claim name; an existing claim with it is reattached.
-     */
-    name?: string,
-    /**
-     * Claim TTL (seconds).
-     */
-    ttlSeconds?: number,
-    /**
-     * Per-claim env token (see [`fleet_generate_claim_token`]); the pool's
-     * spec must set `claim_secrets`. Acquire waits (at most 90 s) until
-     * the sandbox has it, else releases the claim and raises
-     * `ClaimSecretsNotDelivered`.
-     */
-    claimToken?: string
-}
-
-/**
- * Generated factory for {@link FleetClaimOptions} record objects.
- */
-export const FleetClaimOptions = (() => {
-    const defaults = () => ({
-        name: undefined,
-        ttlSeconds: undefined,
-        claimToken: undefined
-    });
-    const create = (() => {
-        return uniffiCreateRecord<FleetClaimOptions, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<FleetClaimOptions>,
-    });
-})();
-
-const FfiConverterTypeFleetClaimOptions = (() => {
-    type TypeName = FleetClaimOptions;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        read(from: RustBuffer): TypeName {
-            return {
-                name: FfiConverterOptionalString.read(from),
-                ttlSeconds: FfiConverterOptionalUInt32.read(from),
-                claimToken: FfiConverterOptionalString.read(from)
-            };
-        }
-        write(value: TypeName, into: RustBuffer): void {
-            FfiConverterOptionalString.write(value.name, into);
-            FfiConverterOptionalUInt32.write(value.ttlSeconds, into);
-            FfiConverterOptionalString.write(value.claimToken, into);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterOptionalString.allocationSize(value.name) +
-             FfiConverterOptionalUInt32.allocationSize(value.ttlSeconds) +
-             FfiConverterOptionalString.allocationSize(value.claimToken);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
-/**
- * What a pool GC did.
- */
-export type FleetGcReport = {
-    /**
-     * Deleted pools.
-     */
-    deletedPools: Array<string>,
-    /**
-     * Deleted leftover namespaces.
-     */
-    deletedNamespaces: Array<string>,
-    /**
-     * Deleted stuck claims (`namespace/name`).
-     */
-    deletedClaims: Array<string>,
-    /**
-     * Kept pools.
-     */
-    kept: Array<string>,
-    /**
-     * Non-fatal errors.
-     */
-    errors: Array<string>
-}
-
-/**
- * Generated factory for {@link FleetGcReport} record objects.
- */
-export const FleetGcReport = (() => {
-    const defaults = () => ({
-    });
-    const create = (() => {
-        return uniffiCreateRecord<FleetGcReport, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<FleetGcReport>,
-    });
-})();
-
-const FfiConverterTypeFleetGcReport = (() => {
-    type TypeName = FleetGcReport;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        read(from: RustBuffer): TypeName {
-            return {
-                deletedPools: FfiConverterSequenceString.read(from),
-                deletedNamespaces: FfiConverterSequenceString.read(from),
-                deletedClaims: FfiConverterSequenceString.read(from),
-                kept: FfiConverterSequenceString.read(from),
-                errors: FfiConverterSequenceString.read(from)
-            };
-        }
-        write(value: TypeName, into: RustBuffer): void {
-            FfiConverterSequenceString.write(value.deletedPools, into);
-            FfiConverterSequenceString.write(value.deletedNamespaces, into);
-            FfiConverterSequenceString.write(value.deletedClaims, into);
-            FfiConverterSequenceString.write(value.kept, into);
-            FfiConverterSequenceString.write(value.errors, into);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterSequenceString.allocationSize(value.deletedPools) +
-             FfiConverterSequenceString.allocationSize(value.deletedNamespaces) +
-             FfiConverterSequenceString.allocationSize(value.deletedClaims) +
-             FfiConverterSequenceString.allocationSize(value.kept) +
-             FfiConverterSequenceString.allocationSize(value.errors);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
-/**
- * A managed pool (`cua-auto-*`, or a legacy `cua-eph-*`).
- */
-export type FleetManagedPool = {
-    /**
-     * Pool (= namespace = template) name.
-     */
-    name: string,
-    /**
-     * Created by the SDK (labeled), not only matching the prefix.
-     */
-    managed: boolean,
-    /**
-     * Spec hash label (first 32 hex digits).
-     */
-    specHash?: string,
-    /**
-     * Template image.
-     */
-    image?: string,
-    /**
-     * Current replicas (KEDA-owned).
-     */
-    replicas: number,
-    /**
-     * Ready replicas.
-     */
-    readyReplicas?: number,
-    /**
-     * Autoscaling ceiling.
-     */
-    maxPoolSize?: number,
-    /**
-     * Claims in the pool.
-     */
-    claims: number,
-    /**
-     * Bound claims.
-     */
-    boundClaims: number,
-    /**
-     * Last use (unix seconds).
-     */
-    lastUsedUnix?: bigint,
-    /**
-     * Creation (unix seconds).
-     */
-    createdUnix?: bigint,
-    /**
-     * Backstop expiry (unix seconds).
-     */
-    expiresUnix?: bigint,
-    /**
-     * Being deleted.
-     */
-    terminating: boolean
-}
-
-/**
- * Generated factory for {@link FleetManagedPool} record objects.
- */
-export const FleetManagedPool = (() => {
-    const defaults = () => ({
-    });
-    const create = (() => {
-        return uniffiCreateRecord<FleetManagedPool, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<FleetManagedPool>,
-    });
-})();
-
-const FfiConverterTypeFleetManagedPool = (() => {
-    type TypeName = FleetManagedPool;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        read(from: RustBuffer): TypeName {
-            return {
-                name: FfiConverterString.read(from),
-                managed: FfiConverterBool.read(from),
-                specHash: FfiConverterOptionalString.read(from),
-                image: FfiConverterOptionalString.read(from),
-                replicas: FfiConverterUInt32.read(from),
-                readyReplicas: FfiConverterOptionalUInt32.read(from),
-                maxPoolSize: FfiConverterOptionalUInt32.read(from),
-                claims: FfiConverterUInt32.read(from),
-                boundClaims: FfiConverterUInt32.read(from),
-                lastUsedUnix: FfiConverterOptionalInt64.read(from),
-                createdUnix: FfiConverterOptionalInt64.read(from),
-                expiresUnix: FfiConverterOptionalInt64.read(from),
-                terminating: FfiConverterBool.read(from)
-            };
-        }
-        write(value: TypeName, into: RustBuffer): void {
-            FfiConverterString.write(value.name, into);
-            FfiConverterBool.write(value.managed, into);
-            FfiConverterOptionalString.write(value.specHash, into);
-            FfiConverterOptionalString.write(value.image, into);
-            FfiConverterUInt32.write(value.replicas, into);
-            FfiConverterOptionalUInt32.write(value.readyReplicas, into);
-            FfiConverterOptionalUInt32.write(value.maxPoolSize, into);
-            FfiConverterUInt32.write(value.claims, into);
-            FfiConverterUInt32.write(value.boundClaims, into);
-            FfiConverterOptionalInt64.write(value.lastUsedUnix, into);
-            FfiConverterOptionalInt64.write(value.createdUnix, into);
-            FfiConverterOptionalInt64.write(value.expiresUnix, into);
-            FfiConverterBool.write(value.terminating, into);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterString.allocationSize(value.name) +
-             FfiConverterBool.allocationSize(value.managed) +
-             FfiConverterOptionalString.allocationSize(value.specHash) +
-             FfiConverterOptionalString.allocationSize(value.image) +
-             FfiConverterUInt32.allocationSize(value.replicas) +
-             FfiConverterOptionalUInt32.allocationSize(value.readyReplicas) +
-             FfiConverterOptionalUInt32.allocationSize(value.maxPoolSize) +
-             FfiConverterUInt32.allocationSize(value.claims) +
-             FfiConverterUInt32.allocationSize(value.boundClaims) +
-             FfiConverterOptionalInt64.allocationSize(value.lastUsedUnix) +
-             FfiConverterOptionalInt64.allocationSize(value.createdUnix) +
-             FfiConverterOptionalInt64.allocationSize(value.expiresUnix) +
-             FfiConverterBool.allocationSize(value.terminating);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
-/**
- * A pool.
- */
-export type FleetPool = {
-    /**
-     * Name.
-     */
-    name: string,
-    /**
-     * Namespace.
-     */
-    namespace: string,
-    /**
-     * Desired replicas.
-     */
-    replicas: number,
-    /**
-     * Ready replicas, when reported.
-     */
-    readyReplicas?: number,
-    /**
-     * The resource as JSON.
-     */
-    json: string
-}
-
-/**
- * Generated factory for {@link FleetPool} record objects.
- */
-export const FleetPool = (() => {
-    const defaults = () => ({
-    });
-    const create = (() => {
-        return uniffiCreateRecord<FleetPool, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<FleetPool>,
-    });
-})();
-
-const FfiConverterTypeFleetPool = (() => {
-    type TypeName = FleetPool;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        read(from: RustBuffer): TypeName {
-            return {
-                name: FfiConverterString.read(from),
-                namespace: FfiConverterString.read(from),
-                replicas: FfiConverterUInt32.read(from),
-                readyReplicas: FfiConverterOptionalUInt32.read(from),
-                json: FfiConverterString.read(from)
-            };
-        }
-        write(value: TypeName, into: RustBuffer): void {
-            FfiConverterString.write(value.name, into);
-            FfiConverterString.write(value.namespace, into);
-            FfiConverterUInt32.write(value.replicas, into);
-            FfiConverterOptionalUInt32.write(value.readyReplicas, into);
-            FfiConverterString.write(value.json, into);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterString.allocationSize(value.name) +
-             FfiConverterString.allocationSize(value.namespace) +
-             FfiConverterUInt32.allocationSize(value.replicas) +
-             FfiConverterOptionalUInt32.allocationSize(value.readyReplicas) +
-             FfiConverterString.allocationSize(value.json);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
-/**
- * A user-declared readiness probe. With no probes a sandbox is ready as
- * soon as its provider reports it running; nothing assumes a guest daemon.
- *
- * Name a declared service (`service = "mcp"`) or a guest port.
- */
-export type ReadinessProbe = {
-    /**
-     * Guest port (0 with `service`).
-     */
-    port: number,
-    /**
-     * HTTP path; `None` is a TCP connect probe.
-     */
-    httpPath?: string,
-    /**
-     * Exact HTTP status to wait for; `None` accepts any 2xx.
-     */
-    httpStatus?: number,
-    /**
-     * A declared service whose guest port to probe (instead of `port`).
-     */
-    service?: string
-}
-
-/**
- * Generated factory for {@link ReadinessProbe} record objects.
- */
-export const ReadinessProbe = (() => {
-    const defaults = () => ({
-        port: 0,
-        httpPath: undefined,
-        httpStatus: undefined,
-        service: undefined
-    });
-    const create = (() => {
-        return uniffiCreateRecord<ReadinessProbe, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<ReadinessProbe>,
-    });
-})();
-
-const FfiConverterTypeReadinessProbe = (() => {
-    type TypeName = ReadinessProbe;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        read(from: RustBuffer): TypeName {
-            return {
-                port: FfiConverterUInt16.read(from),
-                httpPath: FfiConverterOptionalString.read(from),
-                httpStatus: FfiConverterOptionalUInt16.read(from),
-                service: FfiConverterOptionalString.read(from)
-            };
-        }
-        write(value: TypeName, into: RustBuffer): void {
-            FfiConverterUInt16.write(value.port, into);
-            FfiConverterOptionalString.write(value.httpPath, into);
-            FfiConverterOptionalUInt16.write(value.httpStatus, into);
-            FfiConverterOptionalString.write(value.service, into);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterUInt16.allocationSize(value.port) +
-             FfiConverterOptionalString.allocationSize(value.httpPath) +
-             FfiConverterOptionalUInt16.allocationSize(value.httpStatus) +
-             FfiConverterOptionalString.allocationSize(value.service);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
-
-// Enum: RegistrySecret
-export enum RegistrySecret_Tags {
-    Basic = "Basic",
-    FromEnv = "FromEnv",
-    AwsEcr = "AwsEcr"
-}
-/**
- * Credentials for a private registry image. Local sandboxes pull with
- * them; cloud sandboxes store them as the sandbox's registry pull Secret.
- * Never logged or persisted.
- */
-export const RegistrySecret = (() => {
-
-    type Basic__interface = {
-        tag: RegistrySecret_Tags.Basic;
-        inner:
-Readonly<{username: string; password: string; registry?: string}>
-    };
-    /**
-     * A user name and password (or access token).
-     */
-    class Basic_ extends UniffiEnum implements Basic__interface {
-        /**
-         * @private
-         * This field is private and should not be used, use `tag` instead.
-         */
-        readonly [uniffiTypeNameSymbol] = "RegistrySecret";
-        readonly tag = RegistrySecret_Tags.Basic;
-        readonly inner:
-Readonly<{username: string; password: string; registry?: string}>;
-        constructor(
-inner: {username: string; password: string; registry?: string }) {
-            super("RegistrySecret", "Basic");
-
-            this.inner = Object.freeze(inner);
-        }
-        static new(
-inner: {username: string; password: string; registry?: string }): Basic_ {
-            return new Basic_(inner);
-        }
-
-        static instanceOf(obj: any): obj is Basic_ {
-            return obj.tag === RegistrySecret_Tags.Basic;
-        }
-
-    }
-
-    type FromEnv__interface = {
-        tag: RegistrySecret_Tags.FromEnv;
-        inner:
-Readonly<{usernameVar: string; passwordVar: string; registry?: string}>
-    };
-    /**
-     * Read from environment variables of this process at create time.
-     */
-    class FromEnv_ extends UniffiEnum implements FromEnv__interface {
-        /**
-         * @private
-         * This field is private and should not be used, use `tag` instead.
-         */
-        readonly [uniffiTypeNameSymbol] = "RegistrySecret";
-        readonly tag = RegistrySecret_Tags.FromEnv;
-        readonly inner:
-Readonly<{usernameVar: string; passwordVar: string; registry?: string}>;
-        constructor(
-inner: {usernameVar: string; passwordVar: string; registry?: string }) {
-            super("RegistrySecret", "FromEnv");
-
-            this.inner = Object.freeze(inner);
-        }
-        static new(
-inner: {usernameVar: string; passwordVar: string; registry?: string }): FromEnv_ {
-            return new FromEnv_(inner);
-        }
-
-        static instanceOf(obj: any): obj is FromEnv_ {
-            return obj.tag === RegistrySecret_Tags.FromEnv;
-        }
-
-    }
-
-    type AwsEcr__interface = {
-        tag: RegistrySecret_Tags.AwsEcr;
-        inner:
-Readonly<{region?: string}>
-    };
-    /**
-     * A private Amazon ECR image: a login token from the AWS CLI
-     * (`aws ecr get-login-password`) with the caller's AWS credentials.
-     */
-    class AwsEcr_ extends UniffiEnum implements AwsEcr__interface {
-        /**
-         * @private
-         * This field is private and should not be used, use `tag` instead.
-         */
-        readonly [uniffiTypeNameSymbol] = "RegistrySecret";
-        readonly tag = RegistrySecret_Tags.AwsEcr;
-        readonly inner:
-Readonly<{region?: string}>;
-        constructor(
-inner: {region?: string }) {
-            super("RegistrySecret", "AwsEcr");
-
-            this.inner = Object.freeze(inner);
-        }
-        static new(
-inner: {region?: string }): AwsEcr_ {
-            return new AwsEcr_(inner);
-        }
-
-        static instanceOf(obj: any): obj is AwsEcr_ {
-            return obj.tag === RegistrySecret_Tags.AwsEcr;
-        }
-
-    }
-
-    function instanceOf(obj: any): obj is RegistrySecret {
-        return obj[uniffiTypeNameSymbol] === "RegistrySecret";
-    }
-
-    return Object.freeze({
-        instanceOf,
-  Basic: Basic_,
-  FromEnv: FromEnv_,
-  AwsEcr: AwsEcr_
-    });
-
-})();
-/**
- * Credentials for a private registry image. Local sandboxes pull with
- * them; cloud sandboxes store them as the sandbox's registry pull Secret.
- * Never logged or persisted.
- */
-export type RegistrySecret = InstanceType<
-    typeof RegistrySecret['Basic' | 'FromEnv' | 'AwsEcr']
->;
-
-// FfiConverter for enum RegistrySecret
-const FfiConverterTypeRegistrySecret = (() => {
-    const ordinalConverter = FfiConverterInt32;
-    type TypeName = RegistrySecret;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        read(from: RustBuffer): TypeName {
-            switch (ordinalConverter.read(from)) {
-                case 1: return new RegistrySecret.Basic({username: FfiConverterString.read(from), password: FfiConverterString.read(from), registry: FfiConverterOptionalString.read(from) });
-                case 2: return new RegistrySecret.FromEnv({usernameVar: FfiConverterString.read(from), passwordVar: FfiConverterString.read(from), registry: FfiConverterOptionalString.read(from) });
-                case 3: return new RegistrySecret.AwsEcr({region: FfiConverterOptionalString.read(from) });
-                default: throw new UniffiInternalError.UnexpectedEnumCase();
-            }
-        }
-        write(value: TypeName, into: RustBuffer): void {
-            switch (value.tag) {
-                case RegistrySecret_Tags.Basic: {
-                    ordinalConverter.write(1, into);
-                    const inner = value.inner;
-                    FfiConverterString.write(inner.username, into);
-                    FfiConverterString.write(inner.password, into);
-                    FfiConverterOptionalString.write(inner.registry, into);
-                    return;
-                }
-                case RegistrySecret_Tags.FromEnv: {
-                    ordinalConverter.write(2, into);
-                    const inner = value.inner;
-                    FfiConverterString.write(inner.usernameVar, into);
-                    FfiConverterString.write(inner.passwordVar, into);
-                    FfiConverterOptionalString.write(inner.registry, into);
-                    return;
-                }
-                case RegistrySecret_Tags.AwsEcr: {
-                    ordinalConverter.write(3, into);
-                    const inner = value.inner;
-                    FfiConverterOptionalString.write(inner.region, into);
-                    return;
-                }
-                default:
-                    // Throwing from here means that RegistrySecret_Tags hasn't matched an ordinal.
-                    throw new UniffiInternalError.UnexpectedEnumCase();
-            }
-        }
-        allocationSize(value: TypeName): number {
-            switch (value.tag) {
-                case RegistrySecret_Tags.Basic: {
-                    const inner = value.inner;
-                    let size = ordinalConverter.allocationSize(1);
-                    size += FfiConverterString.allocationSize(inner.username);
-                    size += FfiConverterString.allocationSize(inner.password);
-                    size += FfiConverterOptionalString.allocationSize(inner.registry);
-                    return size;
-                }
-                case RegistrySecret_Tags.FromEnv: {
-                    const inner = value.inner;
-                    let size = ordinalConverter.allocationSize(2);
-                    size += FfiConverterString.allocationSize(inner.usernameVar);
-                    size += FfiConverterString.allocationSize(inner.passwordVar);
-                    size += FfiConverterOptionalString.allocationSize(inner.registry);
-                    return size;
-                }
-                case RegistrySecret_Tags.AwsEcr: {
-                    const inner = value.inner;
-                    let size = ordinalConverter.allocationSize(3);
-                    size += FfiConverterOptionalString.allocationSize(inner.region);
-                    return size;
-                }
-                default: throw new UniffiInternalError.UnexpectedEnumCase();
-            }
-        }
-    }
-    return new FFIConverter();
-})();
-
-/**
- * What a sandbox runs: the one model behind `Sandbox.create`, managed
- * pools and [`Fleet::apply`]. Unset fields keep Fleet's defaults (and are
- * not compared by [`Fleet::check_pool_spec`]).
- */
-export type SandboxSpec = {
-    /**
-     * Image (a container image runs on gVisor, a containerDisk on
-     * KubeVirt).
-     */
-    image: string,
-    /**
-     * argv replacing the image ENTRYPOINT.
-     */
-    command?: Array<string>,
-    /**
-     * Arguments replacing the image CMD.
-     */
-    args?: Array<string>,
-    /**
-     * Plain environment variables (not secrets).
-     */
-    env: Map<string, string>,
-    /**
-     * Named services (name → guest port).
-     */
-    services: Map<string, number>,
-    /**
-     * Readiness probe (`port`, or a declared `service`; `http_path` for
-     * HTTP). A replica binds a claim only once it passes.
-     */
-    readiness?: ReadinessProbe,
-    /**
-     * vCPUs.
-     */
-    cpu?: number,
-    /**
-     * Memory (MiB).
-     */
-    memoryMb?: number,
-    /**
-     * UEFI firmware (Windows images).
-     */
-    efi: boolean,
-    /**
-     * Extra containers sharing the sandbox's network namespace.
-     */
-    sidecars: Array<Container>,
-    /**
-     * Credentials for a private image: stored as the pool's
-     * `cua-registry-*` pull Secret.
-     */
-    registrySecret?: RegistrySecret,
-    /**
-     * An existing `cua-registry-*` pull Secret in the pool namespace
-     * (instead of `registry_secret`).
-     */
-    registrySecretName?: string,
-    /**
-     * `Legacy` or `Run` (`vmTemplate.processMode`).
-     */
-    processMode?: string,
-    /**
-     * Per-claim secrets: claims may carry a token delivered at
-     * `/run/cua/env-token`.
-     */
-    claimSecrets: boolean
-}
-
-/**
- * Generated factory for {@link SandboxSpec} record objects.
- */
-export const SandboxSpec = (() => {
-    const defaults = () => ({
-        image: "",
-        command: undefined,
-        args: undefined,
-        env: new Map(),
-        services: new Map(),
-        readiness: undefined,
-        cpu: undefined,
-        memoryMb: undefined,
-        efi: false,
-        sidecars: [],
-        registrySecret: undefined,
-        registrySecretName: undefined,
-        processMode: undefined,
-        claimSecrets: false
-    });
-    const create = (() => {
-        return uniffiCreateRecord<SandboxSpec, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<SandboxSpec>,
-    });
-})();
-
-const FfiConverterTypeSandboxSpec = (() => {
-    type TypeName = SandboxSpec;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        read(from: RustBuffer): TypeName {
-            return {
-                image: FfiConverterString.read(from),
-                command: FfiConverterOptionalSequenceString.read(from),
-                args: FfiConverterOptionalSequenceString.read(from),
-                env: FfiConverterMapStringString.read(from),
-                services: FfiConverterMapStringUInt16.read(from),
-                readiness: FfiConverterOptionalTypeReadinessProbe.read(from),
-                cpu: FfiConverterOptionalUInt32.read(from),
-                memoryMb: FfiConverterOptionalUInt32.read(from),
-                efi: FfiConverterBool.read(from),
-                sidecars: FfiConverterSequenceTypeContainer.read(from),
-                registrySecret: FfiConverterOptionalTypeRegistrySecret.read(from),
-                registrySecretName: FfiConverterOptionalString.read(from),
-                processMode: FfiConverterOptionalString.read(from),
-                claimSecrets: FfiConverterBool.read(from)
-            };
-        }
-        write(value: TypeName, into: RustBuffer): void {
-            FfiConverterString.write(value.image, into);
-            FfiConverterOptionalSequenceString.write(value.command, into);
-            FfiConverterOptionalSequenceString.write(value.args, into);
-            FfiConverterMapStringString.write(value.env, into);
-            FfiConverterMapStringUInt16.write(value.services, into);
-            FfiConverterOptionalTypeReadinessProbe.write(value.readiness, into);
-            FfiConverterOptionalUInt32.write(value.cpu, into);
-            FfiConverterOptionalUInt32.write(value.memoryMb, into);
-            FfiConverterBool.write(value.efi, into);
-            FfiConverterSequenceTypeContainer.write(value.sidecars, into);
-            FfiConverterOptionalTypeRegistrySecret.write(value.registrySecret, into);
-            FfiConverterOptionalString.write(value.registrySecretName, into);
-            FfiConverterOptionalString.write(value.processMode, into);
-            FfiConverterBool.write(value.claimSecrets, into);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterString.allocationSize(value.image) +
-             FfiConverterOptionalSequenceString.allocationSize(value.command) +
-             FfiConverterOptionalSequenceString.allocationSize(value.args) +
-             FfiConverterMapStringString.allocationSize(value.env) +
-             FfiConverterMapStringUInt16.allocationSize(value.services) +
-             FfiConverterOptionalTypeReadinessProbe.allocationSize(value.readiness) +
-             FfiConverterOptionalUInt32.allocationSize(value.cpu) +
-             FfiConverterOptionalUInt32.allocationSize(value.memoryMb) +
-             FfiConverterBool.allocationSize(value.efi) +
-             FfiConverterSequenceTypeContainer.allocationSize(value.sidecars) +
-             FfiConverterOptionalTypeRegistrySecret.allocationSize(value.registrySecret) +
-             FfiConverterOptionalString.allocationSize(value.registrySecretName) +
-             FfiConverterOptionalString.allocationSize(value.processMode) +
-             FfiConverterBool.allocationSize(value.claimSecrets);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
-/**
- * How a pool keeps capacity for a [`SandboxSpec`].
- */
-export type PoolOptions = {
-    /**
-     * `kubevirt` or `gvisor`. Unset: from the image.
-     */
-    runtime?: string,
-    /**
-     * Replicas of a pool without autoscaling (default 1).
-     */
-    replicas?: number,
-    /**
-     * Keep one sandbox warm (`minPoolSize: 1`).
-     */
-    warm?: boolean,
-    /**
-     * Autoscaling floor.
-     */
-    minPoolSize?: number,
-    /**
-     * Autoscaling ceiling.
-     */
-    maxPoolSize?: number,
-    /**
-     * Delete the pool after this many seconds without claims.
-     */
-    idleTtlSeconds?: number,
-    /**
-     * `Retain` or `Cascade`: what TTL expiry deletes.
-     */
-    ttlPolicy?: string,
-    /**
-     * Pool creation-age TTL (seconds).
-     */
-    poolTtlSeconds?: number,
-    /**
-     * Default TTL (seconds) of claims made on the pool through this SDK.
-     */
-    claimTtlSeconds?: number
-}
-
-/**
- * Generated factory for {@link PoolOptions} record objects.
- */
-export const PoolOptions = (() => {
-    const defaults = () => ({
-        runtime: undefined,
-        replicas: undefined,
-        warm: undefined,
-        minPoolSize: undefined,
-        maxPoolSize: undefined,
-        idleTtlSeconds: undefined,
-        ttlPolicy: undefined,
-        poolTtlSeconds: undefined,
-        claimTtlSeconds: undefined
-    });
-    const create = (() => {
-        return uniffiCreateRecord<PoolOptions, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<PoolOptions>,
-    });
-})();
-
-const FfiConverterTypePoolOptions = (() => {
-    type TypeName = PoolOptions;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        read(from: RustBuffer): TypeName {
-            return {
-                runtime: FfiConverterOptionalString.read(from),
-                replicas: FfiConverterOptionalUInt32.read(from),
-                warm: FfiConverterOptionalBoolean.read(from),
-                minPoolSize: FfiConverterOptionalUInt32.read(from),
-                maxPoolSize: FfiConverterOptionalUInt32.read(from),
-                idleTtlSeconds: FfiConverterOptionalUInt32.read(from),
-                ttlPolicy: FfiConverterOptionalString.read(from),
-                poolTtlSeconds: FfiConverterOptionalUInt32.read(from),
-                claimTtlSeconds: FfiConverterOptionalUInt32.read(from)
-            };
-        }
-        write(value: TypeName, into: RustBuffer): void {
-            FfiConverterOptionalString.write(value.runtime, into);
-            FfiConverterOptionalUInt32.write(value.replicas, into);
-            FfiConverterOptionalBoolean.write(value.warm, into);
-            FfiConverterOptionalUInt32.write(value.minPoolSize, into);
-            FfiConverterOptionalUInt32.write(value.maxPoolSize, into);
-            FfiConverterOptionalUInt32.write(value.idleTtlSeconds, into);
-            FfiConverterOptionalString.write(value.ttlPolicy, into);
-            FfiConverterOptionalUInt32.write(value.poolTtlSeconds, into);
-            FfiConverterOptionalUInt32.write(value.claimTtlSeconds, into);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterOptionalString.allocationSize(value.runtime) +
-             FfiConverterOptionalUInt32.allocationSize(value.replicas) +
-             FfiConverterOptionalBoolean.allocationSize(value.warm) +
-             FfiConverterOptionalUInt32.allocationSize(value.minPoolSize) +
-             FfiConverterOptionalUInt32.allocationSize(value.maxPoolSize) +
-             FfiConverterOptionalUInt32.allocationSize(value.idleTtlSeconds) +
-             FfiConverterOptionalString.allocationSize(value.ttlPolicy) +
-             FfiConverterOptionalUInt32.allocationSize(value.poolTtlSeconds) +
-             FfiConverterOptionalUInt32.allocationSize(value.claimTtlSeconds);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
-/**
- * A pool read back as the shared model, plus its Terraform block.
- */
-export type FleetPoolExport = {
-    /**
-     * What the pool's sandboxes run.
-     */
-    spec: SandboxSpec,
-    /**
-     * The pool's capacity settings.
-     */
-    options: PoolOptions,
-    /**
-     * The runtime.
-     */
-    runtime: string,
-    /**
-     * A `fleets_pool` resource block (attributes the provider lacks yet
-     * are commented).
-     */
-    terraform: string
-}
-
-/**
- * Generated factory for {@link FleetPoolExport} record objects.
- */
-export const FleetPoolExport = (() => {
-    const defaults = () => ({
-    });
-    const create = (() => {
-        return uniffiCreateRecord<FleetPoolExport, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<FleetPoolExport>,
-    });
-})();
-
-const FfiConverterTypeFleetPoolExport = (() => {
-    type TypeName = FleetPoolExport;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        read(from: RustBuffer): TypeName {
-            return {
-                spec: FfiConverterTypeSandboxSpec.read(from),
-                options: FfiConverterTypePoolOptions.read(from),
-                runtime: FfiConverterString.read(from),
-                terraform: FfiConverterString.read(from)
-            };
-        }
-        write(value: TypeName, into: RustBuffer): void {
-            FfiConverterTypeSandboxSpec.write(value.spec, into);
-            FfiConverterTypePoolOptions.write(value.options, into);
-            FfiConverterString.write(value.runtime, into);
-            FfiConverterString.write(value.terraform, into);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterTypeSandboxSpec.allocationSize(value.spec) +
-             FfiConverterTypePoolOptions.allocationSize(value.options) +
-             FfiConverterString.allocationSize(value.runtime) +
-             FfiConverterString.allocationSize(value.terraform);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
-/**
- * A warm pool spec (`Pool.apply` semantics: pool, namespace and template
- * share `name`). Deprecated: use [`SandboxSpec`] + [`PoolOptions`] with
- * [`Fleet::apply`].
- */
-export type FleetPoolSpec = {
-    /**
-     * Pool name (globally unique on Fleet).
-     */
-    name: string,
-    /**
-     * containerDisk (kubevirt) or pod image (gvisor).
-     */
-    image: string,
-    /**
-     * `kubevirt` (default) or `gvisor`.
-     */
-    runtime?: string,
-    /**
-     * Warm replicas (default 1).
-     */
-    replicas?: number,
-    /**
-     * vCPUs.
-     */
-    cpu?: number,
-    /**
-     * Memory (MiB).
-     */
-    memoryMb?: number,
-    /**
-     * Services (name → port). Default `{"env": 3211}`.
-     */
-    services: Map<string, number>,
-    /**
-     * Optional TCP readiness probe port.
-     */
-    readinessTcpPort?: number,
-    /**
-     * UEFI firmware (Windows images).
-     */
-    efi: boolean,
-    /**
-     * Pod runtimes: entrypoint override.
-     */
-    command?: Array<string>,
-    /**
-     * Pool TTL after creation (seconds).
-     */
-    ttlSecondsAfterCreated?: number
-}
-
-/**
- * Generated factory for {@link FleetPoolSpec} record objects.
- */
-export const FleetPoolSpec = (() => {
-    const defaults = () => ({
-        runtime: undefined,
-        replicas: undefined,
-        cpu: undefined,
-        memoryMb: undefined,
-        services: new Map(),
-        readinessTcpPort: undefined,
-        efi: false,
-        command: undefined,
-        ttlSecondsAfterCreated: undefined
-    });
-    const create = (() => {
-        return uniffiCreateRecord<FleetPoolSpec, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<FleetPoolSpec>,
-    });
-})();
-
-const FfiConverterTypeFleetPoolSpec = (() => {
-    type TypeName = FleetPoolSpec;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        read(from: RustBuffer): TypeName {
-            return {
-                name: FfiConverterString.read(from),
-                image: FfiConverterString.read(from),
-                runtime: FfiConverterOptionalString.read(from),
-                replicas: FfiConverterOptionalUInt32.read(from),
-                cpu: FfiConverterOptionalUInt32.read(from),
-                memoryMb: FfiConverterOptionalUInt32.read(from),
-                services: FfiConverterMapStringUInt16.read(from),
-                readinessTcpPort: FfiConverterOptionalUInt16.read(from),
-                efi: FfiConverterBool.read(from),
-                command: FfiConverterOptionalSequenceString.read(from),
-                ttlSecondsAfterCreated: FfiConverterOptionalUInt32.read(from)
-            };
-        }
-        write(value: TypeName, into: RustBuffer): void {
-            FfiConverterString.write(value.name, into);
-            FfiConverterString.write(value.image, into);
-            FfiConverterOptionalString.write(value.runtime, into);
-            FfiConverterOptionalUInt32.write(value.replicas, into);
-            FfiConverterOptionalUInt32.write(value.cpu, into);
-            FfiConverterOptionalUInt32.write(value.memoryMb, into);
-            FfiConverterMapStringUInt16.write(value.services, into);
-            FfiConverterOptionalUInt16.write(value.readinessTcpPort, into);
-            FfiConverterBool.write(value.efi, into);
-            FfiConverterOptionalSequenceString.write(value.command, into);
-            FfiConverterOptionalUInt32.write(value.ttlSecondsAfterCreated, into);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterString.allocationSize(value.name) +
-             FfiConverterString.allocationSize(value.image) +
-             FfiConverterOptionalString.allocationSize(value.runtime) +
-             FfiConverterOptionalUInt32.allocationSize(value.replicas) +
-             FfiConverterOptionalUInt32.allocationSize(value.cpu) +
-             FfiConverterOptionalUInt32.allocationSize(value.memoryMb) +
-             FfiConverterMapStringUInt16.allocationSize(value.services) +
-             FfiConverterOptionalUInt16.allocationSize(value.readinessTcpPort) +
-             FfiConverterBool.allocationSize(value.efi) +
-             FfiConverterOptionalSequenceString.allocationSize(value.command) +
-             FfiConverterOptionalUInt32.allocationSize(value.ttlSecondsAfterCreated);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
-/**
- * A bound sandbox.
- */
-export type FleetSandbox = {
-    /**
-     * Sandbox name.
-     */
-    name: string,
-    /**
-     * Namespace.
-     */
-    namespace: string,
-    /**
-     * Claim name.
-     */
-    claim: string,
-    /**
-     * Declared service names.
-     */
-    services: Array<string>
-}
-
-/**
- * Generated factory for {@link FleetSandbox} record objects.
- */
-export const FleetSandbox = (() => {
-    const defaults = () => ({
-    });
-    const create = (() => {
-        return uniffiCreateRecord<FleetSandbox, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<FleetSandbox>,
-    });
-})();
-
-const FfiConverterTypeFleetSandbox = (() => {
-    type TypeName = FleetSandbox;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        read(from: RustBuffer): TypeName {
-            return {
-                name: FfiConverterString.read(from),
-                namespace: FfiConverterString.read(from),
-                claim: FfiConverterString.read(from),
-                services: FfiConverterSequenceString.read(from)
-            };
-        }
-        write(value: TypeName, into: RustBuffer): void {
-            FfiConverterString.write(value.name, into);
-            FfiConverterString.write(value.namespace, into);
-            FfiConverterString.write(value.claim, into);
-            FfiConverterSequenceString.write(value.services, into);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterString.allocationSize(value.name) +
-             FfiConverterString.allocationSize(value.namespace) +
-             FfiConverterString.allocationSize(value.claim) +
-             FfiConverterSequenceString.allocationSize(value.services);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
-/**
- * A signed, shareable service URL.
- */
-export type FleetSignedUrl = {
-    /**
-     * The URL.
-     */
-    url: string,
-    /**
-     * The resource as JSON (for `revoke_signed_service_url`).
-     */
-    json: string
-}
-
-/**
- * Generated factory for {@link FleetSignedUrl} record objects.
- */
-export const FleetSignedUrl = (() => {
-    const defaults = () => ({
-    });
-    const create = (() => {
-        return uniffiCreateRecord<FleetSignedUrl, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<FleetSignedUrl>,
-    });
-})();
-
-const FfiConverterTypeFleetSignedUrl = (() => {
-    type TypeName = FleetSignedUrl;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        read(from: RustBuffer): TypeName {
-            return {
-                url: FfiConverterString.read(from),
-                json: FfiConverterString.read(from)
-            };
-        }
-        write(value: TypeName, into: RustBuffer): void {
-            FfiConverterString.write(value.url, into);
-            FfiConverterString.write(value.json, into);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterString.allocationSize(value.url) +
-             FfiConverterString.allocationSize(value.json);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
-/**
- * The everyday sizes of a cloud sandbox, which the Cua apps offer
- * (`cua_fleet::CLOUD_DEFAULT_RANGE_CPUS`,
- * `cua_fleet::CLOUD_DEFAULT_RANGE_MEMORY_MB`).
- */
-export type FleetSizeLimits = {
-    /**
-     * Fewest vCPUs.
-     */
-    minCpus: number,
-    /**
-     * Most vCPUs.
-     */
-    maxCpus: number,
-    /**
-     * Least memory, MiB.
-     */
-    minMemoryMb: number,
-    /**
-     * Most memory, MiB.
-     */
-    maxMemoryMb: number
-}
-
-/**
- * Generated factory for {@link FleetSizeLimits} record objects.
- */
-export const FleetSizeLimits = (() => {
-    const defaults = () => ({
-    });
-    const create = (() => {
-        return uniffiCreateRecord<FleetSizeLimits, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<FleetSizeLimits>,
-    });
-})();
-
-const FfiConverterTypeFleetSizeLimits = (() => {
-    type TypeName = FleetSizeLimits;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        read(from: RustBuffer): TypeName {
-            return {
-                minCpus: FfiConverterUInt32.read(from),
-                maxCpus: FfiConverterUInt32.read(from),
-                minMemoryMb: FfiConverterUInt32.read(from),
-                maxMemoryMb: FfiConverterUInt32.read(from)
-            };
-        }
-        write(value: TypeName, into: RustBuffer): void {
-            FfiConverterUInt32.write(value.minCpus, into);
-            FfiConverterUInt32.write(value.maxCpus, into);
-            FfiConverterUInt32.write(value.minMemoryMb, into);
-            FfiConverterUInt32.write(value.maxMemoryMb, into);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterUInt32.allocationSize(value.minCpus) +
-             FfiConverterUInt32.allocationSize(value.maxCpus) +
-             FfiConverterUInt32.allocationSize(value.minMemoryMb) +
-             FfiConverterUInt32.allocationSize(value.maxMemoryMb);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
-/**
- * This account's Cua Cloud rates ([`Fleet::usage_pricing`]). Fleet bills
- * the vCPUs and memory a sandbox reserves, per hour; disk is not metered.
- */
-export type FleetUsagePricing = {
-    /**
-     * USD per reserved vCPU per hour.
-     */
-    vcpuHourUsd: number,
-    /**
-     * USD per reserved GiB of memory per hour.
-     */
-    memoryGibHourUsd: number
-}
-
-/**
- * Generated factory for {@link FleetUsagePricing} record objects.
- */
-export const FleetUsagePricing = (() => {
-    const defaults = () => ({
-    });
-    const create = (() => {
-        return uniffiCreateRecord<FleetUsagePricing, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<FleetUsagePricing>,
-    });
-})();
-
-const FfiConverterTypeFleetUsagePricing = (() => {
-    type TypeName = FleetUsagePricing;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        read(from: RustBuffer): TypeName {
-            return {
-                vcpuHourUsd: FfiConverterFloat64.read(from),
-                memoryGibHourUsd: FfiConverterFloat64.read(from)
-            };
-        }
-        write(value: TypeName, into: RustBuffer): void {
-            FfiConverterFloat64.write(value.vcpuHourUsd, into);
-            FfiConverterFloat64.write(value.memoryGibHourUsd, into);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterFloat64.allocationSize(value.vcpuHourUsd) +
-             FfiConverterFloat64.allocationSize(value.memoryGibHourUsd);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
-/**
  * One GPU option of a runtime (see [`Spaces::gpu_support`]).
  */
 export type GpuOption = {
@@ -9601,6 +7721,67 @@ const FfiConverterTypeHostProvidedSpace = (() => {
 })();
 
 /**
+ * What [`Host::migrate_service`] did.
+ */
+export type HostServiceMigration = {
+    /**
+     * `migrated`, `switched`, `cleaned-up`, `rolled-back`, `kept` or
+     * `not-needed`.
+     */
+    outcome: string,
+    /**
+     * In words.
+     */
+    detail: string,
+    /**
+     * macOS will ask for Screen Recording and Accessibility for Cua Spaces
+     * Helper.
+     */
+    permissionsNeeded: boolean
+}
+
+/**
+ * Generated factory for {@link HostServiceMigration} record objects.
+ */
+export const HostServiceMigration = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<HostServiceMigration, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<HostServiceMigration>,
+    });
+})();
+
+const FfiConverterTypeHostServiceMigration = (() => {
+    type TypeName = HostServiceMigration;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                outcome: FfiConverterString.read(from),
+                detail: FfiConverterString.read(from),
+                permissionsNeeded: FfiConverterBool.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.outcome, into);
+            FfiConverterString.write(value.detail, into);
+            FfiConverterBool.write(value.permissionsNeeded, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.outcome) +
+             FfiConverterString.allocationSize(value.detail) +
+             FfiConverterBool.allocationSize(value.permissionsNeeded);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
  * A change to this machine's Spaces settings (`None` keeps a value).
  */
 export type HostSettingsChange = {
@@ -9975,7 +8156,16 @@ export type HostStatus = {
     /**
      * The owner's email, when the relay gave one.
      */
-    ownerEmail?: string
+    ownerEmail?: string,
+    /**
+     * macOS: a Cua Spaces app that can run the host service is
+     * installed, so the host service can run as it.
+     */
+    helperAvailable: boolean,
+    /**
+     * macOS: the old hand-written LaunchAgent is still there.
+     */
+    legacyService: boolean
 }
 
 /**
@@ -9994,7 +8184,9 @@ export const HostStatus = (() => {
         spacesAuditError: undefined,
         pausedSignedOut: false,
         owner: undefined,
-        ownerEmail: undefined
+        ownerEmail: undefined,
+        helperAvailable: false,
+        legacyService: false
     });
     const create = (() => {
         return uniffiCreateRecord<HostStatus, ReturnType<typeof defaults>>(defaults);
@@ -10038,7 +8230,9 @@ const FfiConverterTypeHostStatus = (() => {
                 spacesAuditError: FfiConverterOptionalString.read(from),
                 pausedSignedOut: FfiConverterBool.read(from),
                 owner: FfiConverterOptionalString.read(from),
-                ownerEmail: FfiConverterOptionalString.read(from)
+                ownerEmail: FfiConverterOptionalString.read(from),
+                helperAvailable: FfiConverterBool.read(from),
+                legacyService: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -10070,6 +8264,8 @@ const FfiConverterTypeHostStatus = (() => {
             FfiConverterBool.write(value.pausedSignedOut, into);
             FfiConverterOptionalString.write(value.owner, into);
             FfiConverterOptionalString.write(value.ownerEmail, into);
+            FfiConverterBool.write(value.helperAvailable, into);
+            FfiConverterBool.write(value.legacyService, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterBool.allocationSize(value.configured) +
@@ -10099,7 +8295,9 @@ const FfiConverterTypeHostStatus = (() => {
              FfiConverterOptionalString.allocationSize(value.spacesAuditError) +
              FfiConverterBool.allocationSize(value.pausedSignedOut) +
              FfiConverterOptionalString.allocationSize(value.owner) +
-             FfiConverterOptionalString.allocationSize(value.ownerEmail);
+             FfiConverterOptionalString.allocationSize(value.ownerEmail) +
+             FfiConverterBool.allocationSize(value.helperAvailable) +
+             FfiConverterBool.allocationSize(value.legacyService);
 
         }
     };
@@ -10517,7 +8715,7 @@ const FfiConverterTypeImageLayer = (() => {
  * Image layers built on top of a sandbox's image. Local: a build into the
  * container engine (container images only; VM images take no layers here),
  * cached by a content hash (`cua-b-<hash>`), so an identical spec never
- * rebuilds. (Cua Cloud's remote build has ended.)
+ * rebuilds.
  */
 export type ImageBuild = {
     /**
@@ -10903,7 +9101,7 @@ const FfiConverterTypeLocalStorage = (() => {
 })();
 
 /**
- * The locations `on` accepts: `local`, `cloud`, then registered providers.
+ * The locations `on` accepts: `local`, then registered providers.
  */
 export type LocationInfo = {
     /**
@@ -10970,10 +9168,151 @@ const FfiConverterTypeLocationInfo = (() => {
 })();
 
 /**
+ * One check of a machine's health ([`Spaces::machine_health`]).
+ */
+export type MachineHealthCheck = {
+    /**
+     * `machine.local_network`, `machine.disk`, `machine.virtualization`,
+     * `machine.memory`, `machine.permissions.<id>`.
+     */
+    id: string,
+    /**
+     * `pass`, `warn`, `fail` or `skip`.
+     */
+    status: string,
+    /**
+     * What it found, in one line.
+     */
+    message: string,
+    /**
+     * What to do about a warning or failure.
+     */
+    remediation: string,
+    /**
+     * What a UI needs to word it and offer its fix (`app`, `settings_url`,
+     * `free_gb`, ...).
+     */
+    facts: Map<string, string>
+}
+
+/**
+ * Generated factory for {@link MachineHealthCheck} record objects.
+ */
+export const MachineHealthCheck = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<MachineHealthCheck, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<MachineHealthCheck>,
+    });
+})();
+
+const FfiConverterTypeMachineHealthCheck = (() => {
+    type TypeName = MachineHealthCheck;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                id: FfiConverterString.read(from),
+                status: FfiConverterString.read(from),
+                message: FfiConverterString.read(from),
+                remediation: FfiConverterString.read(from),
+                facts: FfiConverterMapStringString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.id, into);
+            FfiConverterString.write(value.status, into);
+            FfiConverterString.write(value.message, into);
+            FfiConverterString.write(value.remediation, into);
+            FfiConverterMapStringString.write(value.facts, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.id) +
+             FfiConverterString.allocationSize(value.status) +
+             FfiConverterString.allocationSize(value.message) +
+             FfiConverterString.allocationSize(value.remediation) +
+             FfiConverterMapStringString.allocationSize(value.facts);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * A machine's health as its own cua daemon checks it.
+ */
+export type MachineHealth = {
+    /**
+     * The Cua version of the daemon that checked.
+     */
+    cuaVersion: string,
+    /**
+     * `macos`, `linux`, `windows`.
+     */
+    os: string,
+    /**
+     * Every check, in order.
+     */
+    checks: Array<MachineHealthCheck>,
+    /**
+     * The whole report as JSON (the schema `cua doctor --json` writes).
+     */
+    reportJson: string
+}
+
+/**
+ * Generated factory for {@link MachineHealth} record objects.
+ */
+export const MachineHealth = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<MachineHealth, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<MachineHealth>,
+    });
+})();
+
+const FfiConverterTypeMachineHealth = (() => {
+    type TypeName = MachineHealth;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                cuaVersion: FfiConverterString.read(from),
+                os: FfiConverterString.read(from),
+                checks: FfiConverterSequenceTypeMachineHealthCheck.read(from),
+                reportJson: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.cuaVersion, into);
+            FfiConverterString.write(value.os, into);
+            FfiConverterSequenceTypeMachineHealthCheck.write(value.checks, into);
+            FfiConverterString.write(value.reportJson, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.cuaVersion) +
+             FfiConverterString.allocationSize(value.os) +
+             FfiConverterSequenceTypeMachineHealthCheck.allocationSize(value.checks) +
+             FfiConverterString.allocationSize(value.reportJson);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
  * Where an MCP endpoint is and what every request needs. Hand it to any
- * MCP client (Claude Code, Cursor, the Python or TypeScript SDKs). On
- * Fleet the headers carry a short-lived gateway bearer: fetch a fresh
- * config per connection.
+ * MCP client (Claude Code, Cursor, the Python or TypeScript SDKs). A
+ * provider's headers may be short-lived: fetch a fresh config per
+ * connection.
  */
 export type McpConfig = {
     /**
@@ -12718,7 +11057,7 @@ export type PublicUrl = {
      */
     service: string,
     /**
-     * Provider internals (cloud: namespace, claim; local: upstream).
+     * Provider internals (local: upstream).
      */
     providerDetails: Map<string, string>
 }
@@ -12764,6 +11103,79 @@ const FfiConverterTypePublicUrl = (() => {
              FfiConverterInt64.allocationSize(value.expiresAtUnix) +
              FfiConverterString.allocationSize(value.service) +
              FfiConverterMapStringString.allocationSize(value.providerDetails);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * A user-declared readiness probe. With no probes a sandbox is ready as
+ * soon as its provider reports it running; nothing assumes a guest daemon.
+ *
+ * Name a declared service (`service = "mcp"`) or a guest port.
+ */
+export type ReadinessProbe = {
+    /**
+     * Guest port (0 with `service`).
+     */
+    port: number,
+    /**
+     * HTTP path; `None` is a TCP connect probe.
+     */
+    httpPath?: string,
+    /**
+     * Exact HTTP status to wait for; `None` accepts any 2xx.
+     */
+    httpStatus?: number,
+    /**
+     * A declared service whose guest port to probe (instead of `port`).
+     */
+    service?: string
+}
+
+/**
+ * Generated factory for {@link ReadinessProbe} record objects.
+ */
+export const ReadinessProbe = (() => {
+    const defaults = () => ({
+        port: 0,
+        httpPath: undefined,
+        httpStatus: undefined,
+        service: undefined
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ReadinessProbe, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ReadinessProbe>,
+    });
+})();
+
+const FfiConverterTypeReadinessProbe = (() => {
+    type TypeName = ReadinessProbe;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                port: FfiConverterUInt16.read(from),
+                httpPath: FfiConverterOptionalString.read(from),
+                httpStatus: FfiConverterOptionalUInt16.read(from),
+                service: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterUInt16.write(value.port, into);
+            FfiConverterOptionalString.write(value.httpPath, into);
+            FfiConverterOptionalUInt16.write(value.httpStatus, into);
+            FfiConverterOptionalString.write(value.service, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterUInt16.allocationSize(value.port) +
+             FfiConverterOptionalString.allocationSize(value.httpPath) +
+             FfiConverterOptionalUInt16.allocationSize(value.httpStatus) +
+             FfiConverterOptionalString.allocationSize(value.service);
 
         }
     };
@@ -13210,17 +11622,225 @@ const FfiConverterTypeRoutineInfo = (() => {
     return new FFIConverter();
 })();
 
+
+// Enum: RegistrySecret
+export enum RegistrySecret_Tags {
+    Basic = "Basic",
+    FromEnv = "FromEnv",
+    AwsEcr = "AwsEcr"
+}
+/**
+ * Credentials for a private registry image, used for the pull. Never
+ * logged or persisted.
+ */
+export const RegistrySecret = (() => {
+
+    type Basic__interface = {
+        tag: RegistrySecret_Tags.Basic;
+        inner:
+Readonly<{username: string; password: string; registry?: string}>
+    };
+    /**
+     * A user name and password (or access token).
+     */
+    class Basic_ extends UniffiEnum implements Basic__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RegistrySecret";
+        readonly tag = RegistrySecret_Tags.Basic;
+        readonly inner:
+Readonly<{username: string; password: string; registry?: string}>;
+        constructor(
+inner: {username: string; password: string; registry?: string }) {
+            super("RegistrySecret", "Basic");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {username: string; password: string; registry?: string }): Basic_ {
+            return new Basic_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Basic_ {
+            return obj.tag === RegistrySecret_Tags.Basic;
+        }
+
+    }
+
+    type FromEnv__interface = {
+        tag: RegistrySecret_Tags.FromEnv;
+        inner:
+Readonly<{usernameVar: string; passwordVar: string; registry?: string}>
+    };
+    /**
+     * Read from environment variables of this process at create time.
+     */
+    class FromEnv_ extends UniffiEnum implements FromEnv__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RegistrySecret";
+        readonly tag = RegistrySecret_Tags.FromEnv;
+        readonly inner:
+Readonly<{usernameVar: string; passwordVar: string; registry?: string}>;
+        constructor(
+inner: {usernameVar: string; passwordVar: string; registry?: string }) {
+            super("RegistrySecret", "FromEnv");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {usernameVar: string; passwordVar: string; registry?: string }): FromEnv_ {
+            return new FromEnv_(inner);
+        }
+
+        static instanceOf(obj: any): obj is FromEnv_ {
+            return obj.tag === RegistrySecret_Tags.FromEnv;
+        }
+
+    }
+
+    type AwsEcr__interface = {
+        tag: RegistrySecret_Tags.AwsEcr;
+        inner:
+Readonly<{region?: string}>
+    };
+    /**
+     * A private Amazon ECR image: a login token from the AWS CLI
+     * (`aws ecr get-login-password`) with the caller's AWS credentials.
+     */
+    class AwsEcr_ extends UniffiEnum implements AwsEcr__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RegistrySecret";
+        readonly tag = RegistrySecret_Tags.AwsEcr;
+        readonly inner:
+Readonly<{region?: string}>;
+        constructor(
+inner: {region?: string }) {
+            super("RegistrySecret", "AwsEcr");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {region?: string }): AwsEcr_ {
+            return new AwsEcr_(inner);
+        }
+
+        static instanceOf(obj: any): obj is AwsEcr_ {
+            return obj.tag === RegistrySecret_Tags.AwsEcr;
+        }
+
+    }
+
+    function instanceOf(obj: any): obj is RegistrySecret {
+        return obj[uniffiTypeNameSymbol] === "RegistrySecret";
+    }
+
+    return Object.freeze({
+        instanceOf,
+  Basic: Basic_,
+  FromEnv: FromEnv_,
+  AwsEcr: AwsEcr_
+    });
+
+})();
+/**
+ * Credentials for a private registry image, used for the pull. Never
+ * logged or persisted.
+ */
+export type RegistrySecret = InstanceType<
+    typeof RegistrySecret['Basic' | 'FromEnv' | 'AwsEcr']
+>;
+
+// FfiConverter for enum RegistrySecret
+const FfiConverterTypeRegistrySecret = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = RegistrySecret;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return new RegistrySecret.Basic({username: FfiConverterString.read(from), password: FfiConverterString.read(from), registry: FfiConverterOptionalString.read(from) });
+                case 2: return new RegistrySecret.FromEnv({usernameVar: FfiConverterString.read(from), passwordVar: FfiConverterString.read(from), registry: FfiConverterOptionalString.read(from) });
+                case 3: return new RegistrySecret.AwsEcr({region: FfiConverterOptionalString.read(from) });
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value.tag) {
+                case RegistrySecret_Tags.Basic: {
+                    ordinalConverter.write(1, into);
+                    const inner = value.inner;
+                    FfiConverterString.write(inner.username, into);
+                    FfiConverterString.write(inner.password, into);
+                    FfiConverterOptionalString.write(inner.registry, into);
+                    return;
+                }
+                case RegistrySecret_Tags.FromEnv: {
+                    ordinalConverter.write(2, into);
+                    const inner = value.inner;
+                    FfiConverterString.write(inner.usernameVar, into);
+                    FfiConverterString.write(inner.passwordVar, into);
+                    FfiConverterOptionalString.write(inner.registry, into);
+                    return;
+                }
+                case RegistrySecret_Tags.AwsEcr: {
+                    ordinalConverter.write(3, into);
+                    const inner = value.inner;
+                    FfiConverterOptionalString.write(inner.region, into);
+                    return;
+                }
+                default:
+                    // Throwing from here means that RegistrySecret_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case RegistrySecret_Tags.Basic: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(1);
+                    size += FfiConverterString.allocationSize(inner.username);
+                    size += FfiConverterString.allocationSize(inner.password);
+                    size += FfiConverterOptionalString.allocationSize(inner.registry);
+                    return size;
+                }
+                case RegistrySecret_Tags.FromEnv: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(2);
+                    size += FfiConverterString.allocationSize(inner.usernameVar);
+                    size += FfiConverterString.allocationSize(inner.passwordVar);
+                    size += FfiConverterOptionalString.allocationSize(inner.registry);
+                    return size;
+                }
+                case RegistrySecret_Tags.AwsEcr: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(3);
+                    size += FfiConverterOptionalString.allocationSize(inner.region);
+                    return size;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+    }
+    return new FFIConverter();
+})();
+
 /**
  * Options for [`Sandboxes::create`].
  */
 export type SandboxCreateOptions = {
     /**
-     * Where it runs: `local`, `cloud`, `direct:<addr>` (an existing
-     * machine running cua-spacesd) or a registered provider. `None` (the
-     * default): the cloud when `cloud` options (or the deprecated flat
-     * cloud fields) are set, else the user default (`default.on` in
-     * `~/.cua/config.toml`, `CUA_DEFAULT_ON`, else `local`). `local`
-     * together with `cloud` is an `InvalidArgument`.
+     * Where it runs: `local`, `direct:<addr>` (an existing machine running
+     * cua-spacesd) or a registered provider. `None` (the default): the
+     * user default (`default.on` in `~/.cua/config.toml`,
+     * `CUA_DEFAULT_ON`, else `local`). `cloud` fails with the "Cua Cloud has
+     * ended" error.
      */
     on?: string,
     /**
@@ -13232,7 +11852,7 @@ export type SandboxCreateOptions = {
     kind?: string,
     /**
      * Which engine: `auto` or one the location offers for the kind (local
-     * `gvisor`, `runc`, `qemu`, `lume`; cloud `gvisor`, `kubevirt`). `None`:
+     * `gvisor`, `runc`, `qemu`, `lume`). `None`:
      * the user default (`default.runtime`, else `auto`, the safest
      * available). A local sandbox with sidecars needs `runc` where gVisor
      * would run. A combination that does not exist is `InvalidPlacement`,
@@ -13240,24 +11860,18 @@ export type SandboxCreateOptions = {
      */
     runtime?: string,
     /**
-     * Image reference. Locally, `pool:<name>` runs that cloud pool's
-     * template image.
+     * Image reference. A `pool:<name>` image fails with the "Cua Cloud has
+     * ended" error.
      */
     image: string,
     /**
-     * Name. `None`: ephemeral (cloud: released with the sandbox; the
-     * managed capacity stays for reuse).
+     * Name. `None`: ephemeral (no state file; deleted with the sandbox).
      */
     name?: string,
     /**
      * spacesd token.
      */
     token?: string,
-    /**
-     * Cua Cloud has ended: a pool fails with the "Cua Cloud has ended"
-     * error.
-     */
-    pool?: string,
     /**
      * Guest OS (`linux`, `macos`, `windows`).
      */
@@ -13292,34 +11906,12 @@ export type SandboxCreateOptions = {
      */
     env: Map<string, string>,
     /**
-     * Deprecated, and Cua Cloud has ended: initial replicas of a new
-     * managed pool (> 0 = warm).
-     */
-    fleetReplicas?: number,
-    /**
-     * Deprecated: use `cloud.claim_ttl_seconds`.
-     */
-    fleetTtlSeconds?: number,
-    /**
-     * Deprecated: use `cloud.warm`.
-     */
-    warm?: boolean,
-    /**
-     * Deprecated: use `cloud.max_pool_size`.
-     */
-    maxPoolSize?: number,
-    /**
      * The sandbox's command (argv), replacing the image's entrypoint.
      * Same meaning local (container ENTRYPOINT, or run by cloud-init in a
      * Linux VM) and in the cloud (the template command with
      * `processMode: Run`, on gVisor and KubeVirt).
      */
     command?: Array<string>,
-    /**
-     * Advanced cloud options (warm capacity, limits, TTL, runtime, a
-     * dedicated pool). They win over the deprecated flat fields.
-     */
-    cloud?: CloudOptions,
     /**
      * Sidecar containers, addressed by name (see [`Container`]).
      */
@@ -13330,15 +11922,14 @@ export type SandboxCreateOptions = {
      */
     registrySecret?: RegistrySecret,
     /**
-     * Image layers built on top of `image` (cloud: a remote build; local:
-     * a build into the container engine; both cached by content).
+     * Image layers built on top of `image` (a build into the local
+     * container engine, cached by content).
      */
     build?: ImageBuild,
     /**
      * Guest network: `"default"` (unset) gives outbound network, like a
      * Docker container; `"none"` cuts it while published ports still work.
-     * Only local QEMU VMs honour `"none"`; containers, Lume and cloud
-     * sandboxes reject it.
+     * Only local QEMU VMs honour `"none"`; containers and Lume reject it.
      */
     network?: string,
     /**
@@ -13349,10 +11940,10 @@ export type SandboxCreateOptions = {
      */
     overlays: Array<Overlay>,
     /**
-     * Keep a named sandbox whose readiness check fails (its cloud claim,
-     * VM or container, and its record) to debug it. `false` (the
-     * default): a failed create deletes what it made and releases the
-     * claim. Ephemeral sandboxes are always deleted.
+     * Keep a named sandbox whose readiness check fails (its VM or
+     * container, and its record) to debug it. `false` (the default): a
+     * failed create deletes what it made. Ephemeral sandboxes are always
+     * deleted.
      */
     keepOnFailure: boolean,
     /**
@@ -13376,7 +11967,6 @@ export const SandboxCreateOptions = (() => {
         image: "",
         name: undefined,
         token: undefined,
-        pool: undefined,
         os: undefined,
         cpus: undefined,
         memoryMb: undefined,
@@ -13385,12 +11975,7 @@ export const SandboxCreateOptions = (() => {
         waitFor: [],
         readyTimeoutMs: undefined,
         env: new Map(),
-        fleetReplicas: undefined,
-        fleetTtlSeconds: undefined,
-        warm: undefined,
-        maxPoolSize: undefined,
         command: undefined,
-        cloud: undefined,
         sidecars: [],
         registrySecret: undefined,
         build: undefined,
@@ -13420,7 +12005,6 @@ const FfiConverterTypeSandboxCreateOptions = (() => {
                 image: FfiConverterString.read(from),
                 name: FfiConverterOptionalString.read(from),
                 token: FfiConverterOptionalString.read(from),
-                pool: FfiConverterOptionalString.read(from),
                 os: FfiConverterOptionalString.read(from),
                 cpus: FfiConverterOptionalUInt32.read(from),
                 memoryMb: FfiConverterOptionalUInt64.read(from),
@@ -13429,12 +12013,7 @@ const FfiConverterTypeSandboxCreateOptions = (() => {
                 waitFor: FfiConverterSequenceTypeReadinessProbe.read(from),
                 readyTimeoutMs: FfiConverterOptionalUInt32.read(from),
                 env: FfiConverterMapStringString.read(from),
-                fleetReplicas: FfiConverterOptionalUInt32.read(from),
-                fleetTtlSeconds: FfiConverterOptionalUInt32.read(from),
-                warm: FfiConverterOptionalBoolean.read(from),
-                maxPoolSize: FfiConverterOptionalUInt32.read(from),
                 command: FfiConverterOptionalSequenceString.read(from),
-                cloud: FfiConverterOptionalTypeCloudOptions.read(from),
                 sidecars: FfiConverterSequenceTypeContainer.read(from),
                 registrySecret: FfiConverterOptionalTypeRegistrySecret.read(from),
                 build: FfiConverterOptionalTypeImageBuild.read(from),
@@ -13451,7 +12030,6 @@ const FfiConverterTypeSandboxCreateOptions = (() => {
             FfiConverterString.write(value.image, into);
             FfiConverterOptionalString.write(value.name, into);
             FfiConverterOptionalString.write(value.token, into);
-            FfiConverterOptionalString.write(value.pool, into);
             FfiConverterOptionalString.write(value.os, into);
             FfiConverterOptionalUInt32.write(value.cpus, into);
             FfiConverterOptionalUInt64.write(value.memoryMb, into);
@@ -13460,12 +12038,7 @@ const FfiConverterTypeSandboxCreateOptions = (() => {
             FfiConverterSequenceTypeReadinessProbe.write(value.waitFor, into);
             FfiConverterOptionalUInt32.write(value.readyTimeoutMs, into);
             FfiConverterMapStringString.write(value.env, into);
-            FfiConverterOptionalUInt32.write(value.fleetReplicas, into);
-            FfiConverterOptionalUInt32.write(value.fleetTtlSeconds, into);
-            FfiConverterOptionalBoolean.write(value.warm, into);
-            FfiConverterOptionalUInt32.write(value.maxPoolSize, into);
             FfiConverterOptionalSequenceString.write(value.command, into);
-            FfiConverterOptionalTypeCloudOptions.write(value.cloud, into);
             FfiConverterSequenceTypeContainer.write(value.sidecars, into);
             FfiConverterOptionalTypeRegistrySecret.write(value.registrySecret, into);
             FfiConverterOptionalTypeImageBuild.write(value.build, into);
@@ -13481,7 +12054,6 @@ const FfiConverterTypeSandboxCreateOptions = (() => {
              FfiConverterString.allocationSize(value.image) +
              FfiConverterOptionalString.allocationSize(value.name) +
              FfiConverterOptionalString.allocationSize(value.token) +
-             FfiConverterOptionalString.allocationSize(value.pool) +
              FfiConverterOptionalString.allocationSize(value.os) +
              FfiConverterOptionalUInt32.allocationSize(value.cpus) +
              FfiConverterOptionalUInt64.allocationSize(value.memoryMb) +
@@ -13490,12 +12062,7 @@ const FfiConverterTypeSandboxCreateOptions = (() => {
              FfiConverterSequenceTypeReadinessProbe.allocationSize(value.waitFor) +
              FfiConverterOptionalUInt32.allocationSize(value.readyTimeoutMs) +
              FfiConverterMapStringString.allocationSize(value.env) +
-             FfiConverterOptionalUInt32.allocationSize(value.fleetReplicas) +
-             FfiConverterOptionalUInt32.allocationSize(value.fleetTtlSeconds) +
-             FfiConverterOptionalBoolean.allocationSize(value.warm) +
-             FfiConverterOptionalUInt32.allocationSize(value.maxPoolSize) +
              FfiConverterOptionalSequenceString.allocationSize(value.command) +
-             FfiConverterOptionalTypeCloudOptions.allocationSize(value.cloud) +
              FfiConverterSequenceTypeContainer.allocationSize(value.sidecars) +
              FfiConverterOptionalTypeRegistrySecret.allocationSize(value.registrySecret) +
              FfiConverterOptionalTypeImageBuild.allocationSize(value.build) +
@@ -13566,11 +12133,11 @@ const FfiConverterTypeSandboxStatus = (() => {
 })();
 
 /**
- * Portable lifecycle phase, the same words local and in the cloud.
+ * Portable lifecycle phase, the same words on every provider.
  */
 export enum SandboxPhase {
     /**
-     * Being created (cloud: capacity is being provisioned).
+     * Being created.
      */
     Provisioning = "provisioning",
     /**
@@ -13625,18 +12192,17 @@ export type SandboxInfo = {
     name: string,
     /**
      * What kind of machine: `container` or `vm` (empty when not known:
-     * an existing machine, or a cloud sandbox this client did not create).
+     * an existing machine).
      */
     kind: string,
     /**
-     * The engine that runs it: `gvisor`, `runc`, `qemu`, `lume` or
-     * `kubevirt` (empty when not known).
+     * The engine that runs it: `gvisor`, `runc`, `qemu`, `lume` or a
+     * provider's own (empty when not known).
      */
     runtime: string,
     /**
-     * `runtime_type` as persisted (`direct`, `gvisor`, `qemu`, ...; `fleet`
-     * for a record of the Cua Cloud that has ended); prefer `location`,
-     * `kind` and `runtime`.
+     * `runtime_type` as persisted (`direct`, `gvisor`, `qemu`, ...); prefer
+     * `location`, `kind` and `runtime`.
      */
     runtimeType: string,
     /**
@@ -13664,9 +12230,8 @@ export type SandboxInfo = {
      */
     image?: string,
     /**
-     * Qualified ref, the same kind of value local and in the cloud:
-     * `local:<name>`, `cloud:<name>` or `direct:<host:port>`. Every call
-     * that takes a sandbox name accepts it.
+     * Qualified ref: `local:<name>`, `direct:<host:port>` or
+     * `<provider>:<name>`. Every call that takes a sandbox name accepts it.
      */
     id: string,
     /**
@@ -13674,8 +12239,8 @@ export type SandboxInfo = {
      */
     phase: SandboxPhase,
     /**
-     * Where it runs: `local`, `cloud`, `direct` (a machine by address) or
-     * `relay`.
+     * Where it runs: `local`, `direct` (a machine by address), `relay` or a
+     * provider.
      */
     location: string,
     /**
@@ -13683,14 +12248,14 @@ export type SandboxInfo = {
      */
     expiresAtUnix?: bigint,
     /**
-     * Provider internals (cloud: `pool`, `namespace`, `claim`; local:
-     * `backend`, `container_id`). Not part of the portable API.
+     * Provider internals (local: `backend`, `container_id`). Not part of
+     * the portable API.
      */
     providerDetails: Map<string, string>,
     /**
      * The image as resolved and pinned at create time (digest, variant).
-     * `None` for direct connections, named pools, images not resolved from
-     * a registry, and the daemon topology.
+     * `None` for direct connections, images not resolved from a registry,
+     * and the daemon topology.
      */
     imageInfo?: ImageInfo,
     /**
@@ -13794,7 +12359,7 @@ export type SandboxListing = {
      */
     sandboxes: Array<SandboxInfo>,
     /**
-     * Sources left out, for example "cloud sandboxes not listed: ...".
+     * Sources left out of the listing.
      */
     warnings: Array<string>
 }
@@ -14791,8 +13356,9 @@ export type SpaceCreateOptions = {
      */
     image?: string,
     /**
-     * Where: `local` (free) or `cloud` (metered). `None`: the user default
-     * (`default.on`, `CUA_DEFAULT_ON`, else `local`).
+     * Where: `local` (free), a connected cloud account (`aws`, `gcp`,
+     * `modal`) or `host:<name>`. `None`: the user default (`default.on`,
+     * `CUA_DEFAULT_ON`, else `local`).
      */
     on?: string,
     /**
@@ -17347,7 +15913,14 @@ export type SpacesdCommand = {
     /**
      * Run in a PTY of this size.
      */
-    pty?: PtySize
+    pty?: PtySize,
+    /**
+     * Kill the process (`term`, then `kill`) when this client's connection
+     * to cua-spacesd ends before the process does, including when the
+     * client process dies. Off by default: processes are detached and can be
+     * reattached by tag.
+     */
+    killOnDisconnect: boolean
 }
 
 /**
@@ -17362,7 +15935,8 @@ export const SpacesdCommand = (() => {
         timeoutMs: undefined,
         tag: undefined,
         stdin: false,
-        pty: undefined
+        pty: undefined,
+        killOnDisconnect: false
     });
     const create = (() => {
         return uniffiCreateRecord<SpacesdCommand, ReturnType<typeof defaults>>(defaults);
@@ -17387,7 +15961,8 @@ const FfiConverterTypeSpacesdCommand = (() => {
                 timeoutMs: FfiConverterOptionalUInt32.read(from),
                 tag: FfiConverterOptionalString.read(from),
                 stdin: FfiConverterBool.read(from),
-                pty: FfiConverterOptionalTypePtySize.read(from)
+                pty: FfiConverterOptionalTypePtySize.read(from),
+                killOnDisconnect: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -17400,6 +15975,7 @@ const FfiConverterTypeSpacesdCommand = (() => {
             FfiConverterOptionalString.write(value.tag, into);
             FfiConverterBool.write(value.stdin, into);
             FfiConverterOptionalTypePtySize.write(value.pty, into);
+            FfiConverterBool.write(value.killOnDisconnect, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.program) +
@@ -17410,7 +15986,8 @@ const FfiConverterTypeSpacesdCommand = (() => {
              FfiConverterOptionalUInt32.allocationSize(value.timeoutMs) +
              FfiConverterOptionalString.allocationSize(value.tag) +
              FfiConverterBool.allocationSize(value.stdin) +
-             FfiConverterOptionalTypePtySize.allocationSize(value.pty);
+             FfiConverterOptionalTypePtySize.allocationSize(value.pty) +
+             FfiConverterBool.allocationSize(value.killOnDisconnect);
 
         }
     };
@@ -18595,9 +17172,6 @@ export enum CuaError_Tags {
     Unsupported = "Unsupported",
     SpacesdNotAvailable = "SpacesdNotAvailable",
     Timeout = "Timeout",
-    Fleet = "Fleet",
-    FleetAdmissionDenied = "FleetAdmissionDenied",
-    CloudCreditExhausted = "CloudCreditExhausted",
     Runtime = "Runtime",
     Env = "Env",
     Http = "Http",
@@ -18609,8 +17183,6 @@ export enum CuaError_Tags {
     CapabilityMissing = "CapabilityMissing",
     HostCapabilityMissing = "HostCapabilityMissing",
     TeleportRefused = "TeleportRefused",
-    PoolSpecMismatch = "PoolSpecMismatch",
-    ClaimSecretsNotDelivered = "ClaimSecretsNotDelivered",
     Internal = "Internal",
     AmbiguousSandbox = "AmbiguousSandbox",
     InsufficientDisk = "InsufficientDisk",
@@ -18837,101 +17409,6 @@ export const CuaError = (() => {
         }
     }
     /**
-     * Fleet API failure. Cua Cloud has ended, so the SDK no longer raises
-     * this.
-     *
-     * Fix: Use a local sandbox or your own machine; see the Cua Cloud has
-     * ended guide.
-     */
-    class Fleet extends UniffiError {
-        /**
-         * @private
-         * This field is private and should not be used.
-         */
-        readonly [uniffiTypeNameSymbol]: string = "CuaError";
-        /**
-         * @private
-         * This field is private and should not be used.
-         */
-        readonly [variantOrdinalSymbol] = 8;
-
-        readonly tag = CuaError_Tags.Fleet;
-
-        constructor(message: string) {
-            super("CuaError", "Fleet", message);
-        }
-
-        static instanceOf(e: any): e is Fleet {
-            return (
-                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 8
-            );
-        }
-    }
-    /**
-     * Fleet's admission refused the request. Cua Cloud has ended, so the SDK
-     * no longer raises this.
-     *
-     * Fix: Use a local sandbox or your own machine; see the Cua Cloud has
-     * ended guide.
-     */
-    class FleetAdmissionDenied extends UniffiError {
-        /**
-         * @private
-         * This field is private and should not be used.
-         */
-        readonly [uniffiTypeNameSymbol]: string = "CuaError";
-        /**
-         * @private
-         * This field is private and should not be used.
-         */
-        readonly [variantOrdinalSymbol] = 9;
-
-        readonly tag = CuaError_Tags.FleetAdmissionDenied;
-
-        constructor(message: string) {
-            super("CuaError", "FleetAdmissionDenied", message);
-        }
-
-        static instanceOf(e: any): e is FleetAdmissionDenied {
-            return (
-                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 9
-            );
-        }
-    }
-    /**
-     * The account is out of Cua Cloud credit: no credit left, and no card
-     * or plan. New cloud sandboxes and Spaces are refused; running ones
-     * keep running, and local ones are never affected. The message ends
-     * with the website billing page's URL.
-     *
-     * Fix: Add credit on that page (a plan, or a card for pay as you go),
-     * or run the sandbox locally.
-     */
-    class CloudCreditExhausted extends UniffiError {
-        /**
-         * @private
-         * This field is private and should not be used.
-         */
-        readonly [uniffiTypeNameSymbol]: string = "CuaError";
-        /**
-         * @private
-         * This field is private and should not be used.
-         */
-        readonly [variantOrdinalSymbol] = 10;
-
-        readonly tag = CuaError_Tags.CloudCreditExhausted;
-
-        constructor(message: string) {
-            super("CuaError", "CloudCreditExhausted", message);
-        }
-
-        static instanceOf(e: any): e is CloudCreditExhausted {
-            return (
-                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 10
-            );
-        }
-    }
-    /**
      * Local runtime failure.
      *
      * Fix: Run `cua runtime doctor` (`Local.doctor`) and follow the steps it
@@ -18947,7 +17424,7 @@ export const CuaError = (() => {
          * @private
          * This field is private and should not be used.
          */
-        readonly [variantOrdinalSymbol] = 11;
+        readonly [variantOrdinalSymbol] = 8;
 
         readonly tag = CuaError_Tags.Runtime;
 
@@ -18957,7 +17434,7 @@ export const CuaError = (() => {
 
         static instanceOf(e: any): e is Runtime {
             return (
-                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 11
+                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 8
             );
         }
     }
@@ -18977,7 +17454,7 @@ export const CuaError = (() => {
          * @private
          * This field is private and should not be used.
          */
-        readonly [variantOrdinalSymbol] = 12;
+        readonly [variantOrdinalSymbol] = 9;
 
         readonly tag = CuaError_Tags.Env;
 
@@ -18987,7 +17464,7 @@ export const CuaError = (() => {
 
         static instanceOf(e: any): e is Env {
             return (
-                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 12
+                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 9
             );
         }
     }
@@ -19007,7 +17484,7 @@ export const CuaError = (() => {
          * @private
          * This field is private and should not be used.
          */
-        readonly [variantOrdinalSymbol] = 13;
+        readonly [variantOrdinalSymbol] = 10;
 
         readonly tag = CuaError_Tags.Http;
 
@@ -19017,7 +17494,7 @@ export const CuaError = (() => {
 
         static instanceOf(e: any): e is Http {
             return (
-                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 13
+                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 10
             );
         }
     }
@@ -19036,7 +17513,7 @@ export const CuaError = (() => {
          * @private
          * This field is private and should not be used.
          */
-        readonly [variantOrdinalSymbol] = 14;
+        readonly [variantOrdinalSymbol] = 11;
 
         readonly tag = CuaError_Tags.Unauthenticated;
 
@@ -19046,7 +17523,7 @@ export const CuaError = (() => {
 
         static instanceOf(e: any): e is Unauthenticated {
             return (
-                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 14
+                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 11
             );
         }
     }
@@ -19066,7 +17543,7 @@ export const CuaError = (() => {
          * @private
          * This field is private and should not be used.
          */
-        readonly [variantOrdinalSymbol] = 15;
+        readonly [variantOrdinalSymbol] = 12;
 
         readonly tag = CuaError_Tags.PermissionDenied;
 
@@ -19076,7 +17553,7 @@ export const CuaError = (() => {
 
         static instanceOf(e: any): e is PermissionDenied {
             return (
-                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 15
+                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 12
             );
         }
     }
@@ -19096,7 +17573,7 @@ export const CuaError = (() => {
          * @private
          * This field is private and should not be used.
          */
-        readonly [variantOrdinalSymbol] = 16;
+        readonly [variantOrdinalSymbol] = 13;
 
         readonly tag = CuaError_Tags.Transport;
 
@@ -19106,7 +17583,7 @@ export const CuaError = (() => {
 
         static instanceOf(e: any): e is Transport {
             return (
-                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 16
+                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 13
             );
         }
     }
@@ -19129,7 +17606,7 @@ export const CuaError = (() => {
          * @private
          * This field is private and should not be used.
          */
-        readonly [variantOrdinalSymbol] = 17;
+        readonly [variantOrdinalSymbol] = 14;
 
         readonly tag = CuaError_Tags.DaemonNotRunning;
 
@@ -19139,7 +17616,7 @@ export const CuaError = (() => {
 
         static instanceOf(e: any): e is DaemonNotRunning {
             return (
-                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 17
+                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 14
             );
         }
     }
@@ -19158,7 +17635,7 @@ export const CuaError = (() => {
          * @private
          * This field is private and should not be used.
          */
-        readonly [variantOrdinalSymbol] = 18;
+        readonly [variantOrdinalSymbol] = 15;
 
         readonly tag = CuaError_Tags.Closed;
 
@@ -19168,7 +17645,7 @@ export const CuaError = (() => {
 
         static instanceOf(e: any): e is Closed {
             return (
-                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 18
+                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 15
             );
         }
     }
@@ -19189,7 +17666,7 @@ export const CuaError = (() => {
          * @private
          * This field is private and should not be used.
          */
-        readonly [variantOrdinalSymbol] = 19;
+        readonly [variantOrdinalSymbol] = 16;
 
         readonly tag = CuaError_Tags.CapabilityMissing;
 
@@ -19199,7 +17676,7 @@ export const CuaError = (() => {
 
         static instanceOf(e: any): e is CapabilityMissing {
             return (
-                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 19
+                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 16
             );
         }
     }
@@ -19208,7 +17685,7 @@ export const CuaError = (() => {
      * display, a local runtime) is not available.
      *
      * Fix: Install or start the prerequisite the message names on this
-     * machine.
+     * computer.
      */
     class HostCapabilityMissing extends UniffiError {
         /**
@@ -19220,7 +17697,7 @@ export const CuaError = (() => {
          * @private
          * This field is private and should not be used.
          */
-        readonly [variantOrdinalSymbol] = 20;
+        readonly [variantOrdinalSymbol] = 17;
 
         readonly tag = CuaError_Tags.HostCapabilityMissing;
 
@@ -19230,7 +17707,7 @@ export const CuaError = (() => {
 
         static instanceOf(e: any): e is HostCapabilityMissing {
             return (
-                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 20
+                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 17
             );
         }
     }
@@ -19250,7 +17727,7 @@ export const CuaError = (() => {
          * @private
          * This field is private and should not be used.
          */
-        readonly [variantOrdinalSymbol] = 21;
+        readonly [variantOrdinalSymbol] = 18;
 
         readonly tag = CuaError_Tags.TeleportRefused;
 
@@ -19260,70 +17737,7 @@ export const CuaError = (() => {
 
         static instanceOf(e: any): e is TeleportRefused {
             return (
-                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 21
-            );
-        }
-    }
-    /**
-     * A named cloud pool's template differs from the requested sandbox
-     * fields. Cua Cloud has ended, so the SDK no longer raises this.
-     *
-     * Fix: Use a local sandbox or your own machine; see the Cua Cloud has
-     * ended guide.
-     */
-    class PoolSpecMismatch extends UniffiError {
-        /**
-         * @private
-         * This field is private and should not be used.
-         */
-        readonly [uniffiTypeNameSymbol]: string = "CuaError";
-        /**
-         * @private
-         * This field is private and should not be used.
-         */
-        readonly [variantOrdinalSymbol] = 22;
-
-        readonly tag = CuaError_Tags.PoolSpecMismatch;
-
-        constructor(message: string) {
-            super("CuaError", "PoolSpecMismatch", message);
-        }
-
-        static instanceOf(e: any): e is PoolSpecMismatch {
-            return (
-                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 22
-            );
-        }
-    }
-    /**
-     * A claim bound but its per-claim secrets (the env token) never
-     * reached the sandbox. Cua Cloud has ended, so the SDK no longer raises
-     * this.
-     *
-     * Fix: Use a local sandbox or your own machine; see the Cua Cloud has
-     * ended guide.
-     */
-    class ClaimSecretsNotDelivered extends UniffiError {
-        /**
-         * @private
-         * This field is private and should not be used.
-         */
-        readonly [uniffiTypeNameSymbol]: string = "CuaError";
-        /**
-         * @private
-         * This field is private and should not be used.
-         */
-        readonly [variantOrdinalSymbol] = 23;
-
-        readonly tag = CuaError_Tags.ClaimSecretsNotDelivered;
-
-        constructor(message: string) {
-            super("CuaError", "ClaimSecretsNotDelivered", message);
-        }
-
-        static instanceOf(e: any): e is ClaimSecretsNotDelivered {
-            return (
-                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 23
+                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 18
             );
         }
     }
@@ -19342,7 +17756,7 @@ export const CuaError = (() => {
          * @private
          * This field is private and should not be used.
          */
-        readonly [variantOrdinalSymbol] = 24;
+        readonly [variantOrdinalSymbol] = 19;
 
         readonly tag = CuaError_Tags.Internal;
 
@@ -19352,7 +17766,7 @@ export const CuaError = (() => {
 
         static instanceOf(e: any): e is Internal {
             return (
-                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 24
+                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 19
             );
         }
     }
@@ -19374,7 +17788,7 @@ export const CuaError = (() => {
          * @private
          * This field is private and should not be used.
          */
-        readonly [variantOrdinalSymbol] = 25;
+        readonly [variantOrdinalSymbol] = 20;
 
         readonly tag = CuaError_Tags.AmbiguousSandbox;
 
@@ -19384,7 +17798,7 @@ export const CuaError = (() => {
 
         static instanceOf(e: any): e is AmbiguousSandbox {
             return (
-                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 25
+                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 20
             );
         }
     }
@@ -19405,7 +17819,7 @@ export const CuaError = (() => {
          * @private
          * This field is private and should not be used.
          */
-        readonly [variantOrdinalSymbol] = 26;
+        readonly [variantOrdinalSymbol] = 21;
 
         readonly tag = CuaError_Tags.InsufficientDisk;
 
@@ -19415,7 +17829,7 @@ export const CuaError = (() => {
 
         static instanceOf(e: any): e is InsufficientDisk {
             return (
-                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 26
+                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 21
             );
         }
     }
@@ -19438,7 +17852,7 @@ export const CuaError = (() => {
          * @private
          * This field is private and should not be used.
          */
-        readonly [variantOrdinalSymbol] = 27;
+        readonly [variantOrdinalSymbol] = 22;
 
         readonly tag = CuaError_Tags.ImageNotPublished;
 
@@ -19448,7 +17862,7 @@ export const CuaError = (() => {
 
         static instanceOf(e: any): e is ImageNotPublished {
             return (
-                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 27
+                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 22
             );
         }
     }
@@ -19470,7 +17884,7 @@ export const CuaError = (() => {
          * @private
          * This field is private and should not be used.
          */
-        readonly [variantOrdinalSymbol] = 28;
+        readonly [variantOrdinalSymbol] = 23;
 
         readonly tag = CuaError_Tags.Cancelled;
 
@@ -19480,7 +17894,7 @@ export const CuaError = (() => {
 
         static instanceOf(e: any): e is Cancelled {
             return (
-                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 28
+                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 23
             );
         }
     }
@@ -19504,7 +17918,7 @@ export const CuaError = (() => {
          * @private
          * This field is private and should not be used.
          */
-        readonly [variantOrdinalSymbol] = 29;
+        readonly [variantOrdinalSymbol] = 24;
 
         readonly tag = CuaError_Tags.Cloud;
 
@@ -19514,7 +17928,7 @@ export const CuaError = (() => {
 
         static instanceOf(e: any): e is Cloud {
             return (
-                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 29
+                instanceOf(e) && (e as any)[variantOrdinalSymbol] === 24
             );
         }
     }
@@ -19531,9 +17945,6 @@ export const CuaError = (() => {
         Unsupported,
         SpacesdNotAvailable,
         Timeout,
-        Fleet,
-        FleetAdmissionDenied,
-        CloudCreditExhausted,
         Runtime,
         Env,
         Http,
@@ -19545,8 +17956,6 @@ export const CuaError = (() => {
         CapabilityMissing,
         HostCapabilityMissing,
         TeleportRefused,
-        PoolSpecMismatch,
-        ClaimSecretsNotDelivered,
         Internal,
         AmbiguousSandbox,
         InsufficientDisk,
@@ -19563,7 +17972,7 @@ export const CuaError = (() => {
  * exception/error type with a case per variant and the message.
  */
 export type CuaError = InstanceType<
-    typeof CuaError['InvalidArgument' | 'InvalidPlacement' | 'NotFound' | 'ProviderNotConfigured' | 'Unsupported' | 'SpacesdNotAvailable' | 'Timeout' | 'Fleet' | 'FleetAdmissionDenied' | 'CloudCreditExhausted' | 'Runtime' | 'Env' | 'Http' | 'Unauthenticated' | 'PermissionDenied' | 'Transport' | 'DaemonNotRunning' | 'Closed' | 'CapabilityMissing' | 'HostCapabilityMissing' | 'TeleportRefused' | 'PoolSpecMismatch' | 'ClaimSecretsNotDelivered' | 'Internal' | 'AmbiguousSandbox' | 'InsufficientDisk' | 'ImageNotPublished' | 'Cancelled' | 'Cloud']
+    typeof CuaError['InvalidArgument' | 'InvalidPlacement' | 'NotFound' | 'ProviderNotConfigured' | 'Unsupported' | 'SpacesdNotAvailable' | 'Timeout' | 'Runtime' | 'Env' | 'Http' | 'Unauthenticated' | 'PermissionDenied' | 'Transport' | 'DaemonNotRunning' | 'Closed' | 'CapabilityMissing' | 'HostCapabilityMissing' | 'TeleportRefused' | 'Internal' | 'AmbiguousSandbox' | 'InsufficientDisk' | 'ImageNotPublished' | 'Cancelled' | 'Cloud']
 >;
 
 const FfiConverterTypeCuaError = (() => {
@@ -19600,91 +18009,71 @@ const FfiConverterTypeCuaError = (() => {
                     FfiConverterString.read(from)
                 );
 
-                case 8: return new CuaError.Fleet(
+                case 8: return new CuaError.Runtime(
                     FfiConverterString.read(from)
                 );
 
-                case 9: return new CuaError.FleetAdmissionDenied(
+                case 9: return new CuaError.Env(
                     FfiConverterString.read(from)
                 );
 
-                case 10: return new CuaError.CloudCreditExhausted(
+                case 10: return new CuaError.Http(
                     FfiConverterString.read(from)
                 );
 
-                case 11: return new CuaError.Runtime(
+                case 11: return new CuaError.Unauthenticated(
                     FfiConverterString.read(from)
                 );
 
-                case 12: return new CuaError.Env(
+                case 12: return new CuaError.PermissionDenied(
                     FfiConverterString.read(from)
                 );
 
-                case 13: return new CuaError.Http(
+                case 13: return new CuaError.Transport(
                     FfiConverterString.read(from)
                 );
 
-                case 14: return new CuaError.Unauthenticated(
+                case 14: return new CuaError.DaemonNotRunning(
                     FfiConverterString.read(from)
                 );
 
-                case 15: return new CuaError.PermissionDenied(
+                case 15: return new CuaError.Closed(
                     FfiConverterString.read(from)
                 );
 
-                case 16: return new CuaError.Transport(
+                case 16: return new CuaError.CapabilityMissing(
                     FfiConverterString.read(from)
                 );
 
-                case 17: return new CuaError.DaemonNotRunning(
+                case 17: return new CuaError.HostCapabilityMissing(
                     FfiConverterString.read(from)
                 );
 
-                case 18: return new CuaError.Closed(
+                case 18: return new CuaError.TeleportRefused(
                     FfiConverterString.read(from)
                 );
 
-                case 19: return new CuaError.CapabilityMissing(
+                case 19: return new CuaError.Internal(
                     FfiConverterString.read(from)
                 );
 
-                case 20: return new CuaError.HostCapabilityMissing(
+                case 20: return new CuaError.AmbiguousSandbox(
                     FfiConverterString.read(from)
                 );
 
-                case 21: return new CuaError.TeleportRefused(
+                case 21: return new CuaError.InsufficientDisk(
                     FfiConverterString.read(from)
                 );
 
-                case 22: return new CuaError.PoolSpecMismatch(
+                case 22: return new CuaError.ImageNotPublished(
                     FfiConverterString.read(from)
                 );
 
-                case 23: return new CuaError.ClaimSecretsNotDelivered(
+                case 23: return new CuaError.Cancelled(
                     FfiConverterString.read(from)
                 );
 
-                case 24: return new CuaError.Internal(
-                    FfiConverterString.read(from)
-                );
-
-                case 25: return new CuaError.AmbiguousSandbox(
-                    FfiConverterString.read(from)
-                );
-
-                case 26: return new CuaError.InsufficientDisk(
-                    FfiConverterString.read(from)
-                );
-
-                case 27: return new CuaError.ImageNotPublished(
-                    FfiConverterString.read(from)
-                );
-
-                case 28: return new CuaError.Cancelled(
-                    FfiConverterString.read(from)
-                );
-
-                case 29: return new CuaError.Cloud(
+                case 24: return new CuaError.Cloud(
                     FfiConverterString.read(from)
                 );
 
@@ -20693,6 +19082,12 @@ export interface AgentSetupLike {
  */
     setupCuaDriver(agents: Array<string>, command: string | undefined, skills: boolean, mcp: boolean, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<AgentSetupOutcome>>;
 /**
+ * Starts `agent`'s own sign-in on this computer (`codex login`: the
+ * browser opens). Returns once it is running; `detect` reports
+ * `signed_in` when it is done. cua never reads or copies the sign-in.
+ */
+    signIn(agent: string) /*throws*/: void;
+/**
  * The skills bundled with this SDK.
  */
     skills(): Array<BundledSkill>;
@@ -20942,6 +19337,22 @@ private constructor(pointer: UniffiHandle) {
         }
         throw __error;
     }
+    }
+
+/**
+ * Starts `agent`'s own sign-in on this computer (`codex login`: the
+ * browser opens). Returns once it is running; `detect` reports
+ * `signed_in` when it is done. cua never reads or copies the sign-in.
+ */
+    signIn(agent: string): void /*throws*/ {uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError),
+            /*caller:*/ (callStatus) => { nativeModule().uniffi_cua_sdk_fn_method_agentsetup_sign_in(
+                uniffiTypeAgentSetupObjectFactory.clonePointer(this),
+        FfiConverterString.lower(agent, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    );
     }
 
 /**
@@ -22133,6 +20544,12 @@ export interface DevicesLike {
  */
     rename(id: string, name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<RelayDevice>;
 /**
+ * Renames `machine_id`, a machine the account owns, on the relay (from
+ * this enrolled device). When it is this machine's own registration,
+ * its host setup takes the new name too.
+ */
+    renameMachine(machineId: string, name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<RelayMachine>;
+/**
  * Revokes a device (from this enrolled device). Revoking this device
  * also deletes its key.
  */
@@ -22459,6 +20876,43 @@ private constructor(pointer: UniffiHandle) {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterTypeRelayDevice.lift.bind(FfiConverterTypeRelayDevice),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * Renames `machine_id`, a machine the account owns, on the relay (from
+ * this enrolled device). When it is this machine's own registration,
+ * its host setup takes the new name too.
+ */
+    async renameMachine(machineId: string, name: string, asyncOpts_?: { signal: AbortSignal }): Promise<RelayMachine> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_devices_rename_machine(
+                    uniffiTypeDevicesObjectFactory.clonePointer(this),FfiConverterString.lower(machineId, nativeModule().rustbuffer_alloc),FfiConverterString.lower(name, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeRelayMachine.lift.bind(FfiConverterTypeRelayMachine),
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
@@ -22938,1471 +21392,6 @@ const uniffiTypeAuthObjectFactory: UniffiObjectFactory<AuthLike> = (() => {
     },
 }})();
 const FfiConverterTypeAuth = new FfiConverterObject(uniffiTypeAuthObjectFactory);
-
-/**
- * Managed pools: what `Sandboxes.create` without a pool uses.
- */
-export interface FleetPoolsLike {
-
-/**
- * Deletes managed pools idle for `idle_seconds` (default 1800) and
- * stuck Pending/Failed managed claims past their TTL.
- */
-    gc(idleSeconds: number | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetGcReport>;
-/**
- * [`FleetPools::gc`] restricted to the named managed pools: each is
- * deleted (with its namespace) once it has no claims and has been idle
- * for `idle_seconds` (default 0, i.e. now). Pools with live claims are
- * kept, so a pool another process is using survives. Tests use this to
- * remove the pools they created.
- */
-    gcPools(names: Array<string>, idleSeconds: number | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetGcReport>;
-/**
- * This account's managed pools.
- */
-    list(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<FleetManagedPool>>;
-}
-/**
- * @deprecated Use `FleetPoolsLike` instead.
- */
-export type FleetPoolsInterface = FleetPoolsLike;
-
-
-/**
- * Managed pools: what `Sandboxes.create` without a pool uses.
- */
-export class FleetPools extends UniffiAbstractObject implements FleetPoolsLike {
-
-    readonly [uniffiTypeNameSymbol] = "FleetPools";
-    readonly [destructorGuardSymbol]: UniffiGcObject;
-    readonly [pointerLiteralSymbol]: UniffiHandle;
-    // No primary constructor declared for this class.
-private constructor(pointer: UniffiHandle) {
-    super();
-    this[pointerLiteralSymbol] = pointer;
-    this[destructorGuardSymbol] = uniffiTypeFleetPoolsObjectFactory.bless(pointer);
-}
-
-
-
-
-/**
- * Deletes managed pools idle for `idle_seconds` (default 1800) and
- * stuck Pending/Failed managed claims past their TTL.
- */
-    async gc(idleSeconds: number | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<FleetGcReport> /*throws*/ {
-    const __stack = uniffiIsDebug ? new Error().stack : undefined;
-    try {
-        return await uniffiRustCallAsync(
-            /*rustCaller:*/ uniffiCaller,
-            /*rustFutureFunc:*/ () => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleetpools_gc(
-                    uniffiTypeFleetPoolsObjectFactory.clonePointer(this),FfiConverterOptionalUInt32.lower(idleSeconds, nativeModule().rustbuffer_alloc)
-                );
-            },
-            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
-            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
-            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
-            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
-            // Async returns always go through the JS-side converter: the
-            // FFI symbol returns the future handle (u64), and the user-level
-            // RustBuffer comes back via the shared `rust_future_complete_*`
-            // export. The bytes the runtime hands back must be deserialized
-            // here using the per-callable return-type converter.
-            /*liftFunc:*/ FfiConverterTypeFleetGcReport.lift.bind(FfiConverterTypeFleetGcReport),
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*asyncOpts:*/ asyncOpts_,
-            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
-        );
-    } catch (__error: any) {
-        if (uniffiIsDebug && __error instanceof Error) {
-            __error.stack = __stack;
-        }
-        throw __error;
-    }
-    }
-
-/**
- * [`FleetPools::gc`] restricted to the named managed pools: each is
- * deleted (with its namespace) once it has no claims and has been idle
- * for `idle_seconds` (default 0, i.e. now). Pools with live claims are
- * kept, so a pool another process is using survives. Tests use this to
- * remove the pools they created.
- */
-    async gcPools(names: Array<string>, idleSeconds: number | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<FleetGcReport> /*throws*/ {
-    const __stack = uniffiIsDebug ? new Error().stack : undefined;
-    try {
-        return await uniffiRustCallAsync(
-            /*rustCaller:*/ uniffiCaller,
-            /*rustFutureFunc:*/ () => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleetpools_gc_pools(
-                    uniffiTypeFleetPoolsObjectFactory.clonePointer(this),FfiConverterSequenceString.lower(names, nativeModule().rustbuffer_alloc),FfiConverterOptionalUInt32.lower(idleSeconds, nativeModule().rustbuffer_alloc)
-                );
-            },
-            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
-            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
-            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
-            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
-            // Async returns always go through the JS-side converter: the
-            // FFI symbol returns the future handle (u64), and the user-level
-            // RustBuffer comes back via the shared `rust_future_complete_*`
-            // export. The bytes the runtime hands back must be deserialized
-            // here using the per-callable return-type converter.
-            /*liftFunc:*/ FfiConverterTypeFleetGcReport.lift.bind(FfiConverterTypeFleetGcReport),
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*asyncOpts:*/ asyncOpts_,
-            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
-        );
-    } catch (__error: any) {
-        if (uniffiIsDebug && __error instanceof Error) {
-            __error.stack = __stack;
-        }
-        throw __error;
-    }
-    }
-
-/**
- * This account's managed pools.
- */
-    async list(asyncOpts_?: { signal: AbortSignal }): Promise<Array<FleetManagedPool>> /*throws*/ {
-    const __stack = uniffiIsDebug ? new Error().stack : undefined;
-    try {
-        return await uniffiRustCallAsync(
-            /*rustCaller:*/ uniffiCaller,
-            /*rustFutureFunc:*/ () => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleetpools_list(
-                    uniffiTypeFleetPoolsObjectFactory.clonePointer(this)
-                );
-            },
-            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
-            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
-            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
-            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
-            // Async returns always go through the JS-side converter: the
-            // FFI symbol returns the future handle (u64), and the user-level
-            // RustBuffer comes back via the shared `rust_future_complete_*`
-            // export. The bytes the runtime hands back must be deserialized
-            // here using the per-callable return-type converter.
-            /*liftFunc:*/ FfiConverterSequenceTypeFleetManagedPool.lift.bind(FfiConverterSequenceTypeFleetManagedPool),
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*asyncOpts:*/ asyncOpts_,
-            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
-        );
-    } catch (__error: any) {
-        if (uniffiIsDebug && __error instanceof Error) {
-            __error.stack = __stack;
-        }
-        throw __error;
-    }
-    }
-
-
-    uniffiDestroy(): void {
-        const ptr = (this as any)[destructorGuardSymbol];
-        if (ptr !== undefined) {
-            const pointer = uniffiTypeFleetPoolsObjectFactory.pointer(this);
-            uniffiTypeFleetPoolsObjectFactory.freePointer(pointer);
-            uniffiTypeFleetPoolsObjectFactory.unbless(ptr);
-            delete (this as any)[destructorGuardSymbol];
-        }
-    }
-
-    static instanceOf(obj_: any): obj_ is FleetPools {
-        return uniffiTypeFleetPoolsObjectFactory.isConcreteType(obj_);
-    }
-
-
-}
-
-const uniffiTypeFleetPoolsObjectFactory: UniffiObjectFactory<FleetPoolsLike> = (() => {
-
-    /// <reference lib="es2021" />
-    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
-        uniffiTypeFleetPoolsObjectFactory.freePointer(heldValue);
-    }) : null;
-
-    return {
-    create(pointer: UniffiHandle): FleetPoolsLike {
-        const instance = Object.create(FleetPools.prototype);
-        instance[pointerLiteralSymbol] = pointer;
-        instance[destructorGuardSymbol] = this.bless(pointer);
-        instance[uniffiTypeNameSymbol] = "FleetPools";
-        return instance;
-    },
-
-
-    bless(p: UniffiHandle): UniffiGcObject {
-        const ptr = {
-            p, // make sure this object doesn't get optimized away.
-            markDestroyed: () => undefined,
-        };
-        if (registry) {
-            registry.register(ptr, p, ptr);
-        }
-        return ptr;
-    },
-
-    unbless(ptr_: UniffiGcObject) {
-        if (registry) {
-            registry.unregister(ptr_);
-        }
-    },
-
-    pointer(obj_: FleetPoolsLike): UniffiHandle {
-        if ((obj_ as any)[destructorGuardSymbol] === undefined) {
-            throw new UniffiInternalError.UnexpectedNullPointer();
-        }
-        return (obj_ as any)[pointerLiteralSymbol];
-    },
-
-    clonePointer(obj_: FleetPoolsLike): UniffiHandle {
-        const pointer = this.pointer(obj_);
-        return uniffiCaller.rustCall(
-            /*caller:*/ (callStatus) => nativeModule().uniffi_cua_sdk_fn_clone_fleetpools(pointer, callStatus),
-            /*liftString:*/ FfiConverterString.lift
-        );
-    },
-
-    freePointer(pointer: UniffiHandle): void {
-        uniffiCaller.rustCall(
-            /*caller:*/ (callStatus) => nativeModule().uniffi_cua_sdk_fn_free_fleetpools(pointer, callStatus),
-            /*liftString:*/ FfiConverterString.lift
-        );
-    },
-
-    isConcreteType(obj_: any): obj_ is FleetPoolsLike {
-        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "FleetPools";
-    },
-}})();
-const FfiConverterTypeFleetPools = new FfiConverterObject(uniffiTypeFleetPoolsObjectFactory);
-
-/**
- * Fleet control plane. Cua Cloud has ended: `Cua.fleet()` never returns
- * one, so none of its methods can be called.
- */
-export interface FleetLike {
-
-/**
- * Claims a sandbox from a pool and waits for it to bind. A claim named
- * `name` that already exists is reattached.
- */
-    acquire(pool: string, name: string | undefined, ttlSeconds: number | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetSandbox>;
-/**
- * [`Fleet::acquire`] with claim options, including a per-claim env
- * token (bounded wait for its delivery; `ClaimSecretsNotDelivered`
- * releases the claim).
- */
-    acquireWith(pool: string, options: FleetClaimOptions, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetSandbox>;
-/**
- * Reconciles pool `name` (= namespace = template) to run `spec` with
- * `options`: the one pool writer (rolls a new pool back if the
- * template fails). The image is pinned to the variant the runtime
- * runs; `spec.registry_secret` is written as the pool's pull Secret.
- */
-    apply(name: string, spec: SandboxSpec, options: PoolOptions, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetPool>;
-/**
- * Deprecated: use [`Fleet::apply`]. Reconciles a pool and its template
- * from the flat spec (converted to [`SandboxSpec`] + [`PoolOptions`]).
- */
-    applyPool(spec: FleetPoolSpec, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetPool>;
-/**
- * Lays the set fields of `spec` over pool `pool`'s template and writes
- * it (the pool's capacity is kept; a no-op when nothing differs).
- */
-    applyPoolTemplate(pool: string, spec: SandboxSpec, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
-/**
- * Waits for a named claim to bind.
- */
-    attachClaim(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetSandbox>;
-/**
- * Fleet API base URL.
- */
-    baseUrl(): string;
-/**
- * The account's Cua Cloud billing: its credit, card and the website
- * billing page. A Fleet without billing answers `billing_enabled:
- * false`.
- */
-    billingStatus(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetBillingStatus>;
-/**
- * Compares the set fields of `spec` with pool `pool`'s template:
- * `PoolSpecMismatch` (with a readable diff) when they differ.
- */
-    checkPoolSpec(pool: string, spec: SandboxSpec, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
-/**
- * Creates a claim without waiting.
- */
-    claim(pool: string, name: string | undefined, ttlSeconds: number | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetClaim>;
-/**
- * Creates an image resource (remote build) from a JSON manifest.
- */
-    createImage(namespace: string, manifestJson: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
-/**
- * Mints a signed, shareable service URL.
- */
-    createSignedServiceUrl(sandbox: FleetSandbox, service: string, label: string | undefined, expiresInSeconds: number, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetSignedUrl>;
-/**
- * Deletes an image resource.
- */
-    deleteImage(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
-/**
- * Deletes a pool, its namespace and its same-named template.
- */
-    deletePool(name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
-/**
- * A random ephemeral pool name (`cua-eph-<hex>`).
- */
-    ephemeralPoolName(): string;
-/**
- * Reads pool `name` back as the shared model, with its `fleets_pool`
- * Terraform block.
- */
-    exportPool(name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetPoolExport>;
-/**
- * Gets an image resource (JSON).
- */
-    getImage(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
-/**
- * Looks up a pool.
- */
-    getPool(name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetPool>;
-/**
- * Extends a claim's lease; returns the RFC 3339 shutdown time.
- */
-    keepAlive(namespace: string, name: string, seconds: number, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
-/**
- * Lists claims in a namespace.
- */
-    listClaims(namespace: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<FleetClaim>>;
-/**
- * Lists image resources (JSON) in a namespace.
- */
-    listImages(namespace: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<string>>;
-/**
- * Lists pools in a namespace.
- */
-    listPools(namespace: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<FleetPool>>;
-/**
- * Lists templates in a namespace as JSON resources.
- */
-    listTemplates(namespace: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<string>>;
-/**
- * The image pool `name`'s template runs, as a claim on it reports it
- * (`Sandbox.image_info`): pinned by the resolver (cached per pool), or
- * the template reference with empty `pinned_ref`/`digest` when the
- * registry cannot be read. `None` when the template names no image.
- */
-    poolImageInfo(name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ImageInfo | undefined>;
-/**
- * Managed pools (list, gc).
- */
-    pools(): FleetPoolsLike;
-/**
- * Releases a claim (missing claims are fine).
- */
-    release(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
-/**
- * The gateway URL of a sandbox service (needs the Fleet bearer).
- */
-    serviceUrl(sandbox: FleetSandbox, service: string) /*throws*/: string;
-/**
- * Sets warm replicas (0 suspends).
- */
-    setPoolReplicas(name: string, replicas: number, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetPool>;
-/**
- * This account's Cua Cloud rates (`GET /api/config`), reused for five
- * minutes. `None` when Fleet answers without rates: show no price
- * rather than a guess.
- */
-    usagePricing(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetUsagePricing | undefined>;
-/**
- * Waits for at least one ready replica.
- */
-    waitPoolReady(name: string, timeoutMs: number, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetPool>;
-}
-/**
- * @deprecated Use `FleetLike` instead.
- */
-export type FleetInterface = FleetLike;
-
-
-/**
- * Fleet control plane. Cua Cloud has ended: `Cua.fleet()` never returns
- * one, so none of its methods can be called.
- */
-export class Fleet extends UniffiAbstractObject implements FleetLike {
-
-    readonly [uniffiTypeNameSymbol] = "Fleet";
-    readonly [destructorGuardSymbol]: UniffiGcObject;
-    readonly [pointerLiteralSymbol]: UniffiHandle;
-    // No primary constructor declared for this class.
-private constructor(pointer: UniffiHandle) {
-    super();
-    this[pointerLiteralSymbol] = pointer;
-    this[destructorGuardSymbol] = uniffiTypeFleetObjectFactory.bless(pointer);
-}
-
-
-
-
-/**
- * Claims a sandbox from a pool and waits for it to bind. A claim named
- * `name` that already exists is reattached.
- */
-    async acquire(pool: string, name: string | undefined, ttlSeconds: number | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<FleetSandbox> /*throws*/ {
-    const __stack = uniffiIsDebug ? new Error().stack : undefined;
-    try {
-        return await uniffiRustCallAsync(
-            /*rustCaller:*/ uniffiCaller,
-            /*rustFutureFunc:*/ () => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleet_acquire(
-                    uniffiTypeFleetObjectFactory.clonePointer(this),FfiConverterString.lower(pool, nativeModule().rustbuffer_alloc),FfiConverterOptionalString.lower(name, nativeModule().rustbuffer_alloc),FfiConverterOptionalUInt32.lower(ttlSeconds, nativeModule().rustbuffer_alloc)
-                );
-            },
-            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
-            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
-            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
-            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
-            // Async returns always go through the JS-side converter: the
-            // FFI symbol returns the future handle (u64), and the user-level
-            // RustBuffer comes back via the shared `rust_future_complete_*`
-            // export. The bytes the runtime hands back must be deserialized
-            // here using the per-callable return-type converter.
-            /*liftFunc:*/ FfiConverterTypeFleetSandbox.lift.bind(FfiConverterTypeFleetSandbox),
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*asyncOpts:*/ asyncOpts_,
-            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
-        );
-    } catch (__error: any) {
-        if (uniffiIsDebug && __error instanceof Error) {
-            __error.stack = __stack;
-        }
-        throw __error;
-    }
-    }
-
-/**
- * [`Fleet::acquire`] with claim options, including a per-claim env
- * token (bounded wait for its delivery; `ClaimSecretsNotDelivered`
- * releases the claim).
- */
-    async acquireWith(pool: string, options: FleetClaimOptions, asyncOpts_?: { signal: AbortSignal }): Promise<FleetSandbox> /*throws*/ {
-    const __stack = uniffiIsDebug ? new Error().stack : undefined;
-    try {
-        return await uniffiRustCallAsync(
-            /*rustCaller:*/ uniffiCaller,
-            /*rustFutureFunc:*/ () => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleet_acquire_with(
-                    uniffiTypeFleetObjectFactory.clonePointer(this),FfiConverterString.lower(pool, nativeModule().rustbuffer_alloc),FfiConverterTypeFleetClaimOptions.lower(options, nativeModule().rustbuffer_alloc)
-                );
-            },
-            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
-            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
-            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
-            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
-            // Async returns always go through the JS-side converter: the
-            // FFI symbol returns the future handle (u64), and the user-level
-            // RustBuffer comes back via the shared `rust_future_complete_*`
-            // export. The bytes the runtime hands back must be deserialized
-            // here using the per-callable return-type converter.
-            /*liftFunc:*/ FfiConverterTypeFleetSandbox.lift.bind(FfiConverterTypeFleetSandbox),
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*asyncOpts:*/ asyncOpts_,
-            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
-        );
-    } catch (__error: any) {
-        if (uniffiIsDebug && __error instanceof Error) {
-            __error.stack = __stack;
-        }
-        throw __error;
-    }
-    }
-
-/**
- * Reconciles pool `name` (= namespace = template) to run `spec` with
- * `options`: the one pool writer (rolls a new pool back if the
- * template fails). The image is pinned to the variant the runtime
- * runs; `spec.registry_secret` is written as the pool's pull Secret.
- */
-    async apply(name: string, spec: SandboxSpec, options: PoolOptions, asyncOpts_?: { signal: AbortSignal }): Promise<FleetPool> /*throws*/ {
-    const __stack = uniffiIsDebug ? new Error().stack : undefined;
-    try {
-        return await uniffiRustCallAsync(
-            /*rustCaller:*/ uniffiCaller,
-            /*rustFutureFunc:*/ () => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleet_apply(
-                    uniffiTypeFleetObjectFactory.clonePointer(this),FfiConverterString.lower(name, nativeModule().rustbuffer_alloc),FfiConverterTypeSandboxSpec.lower(spec, nativeModule().rustbuffer_alloc),FfiConverterTypePoolOptions.lower(options, nativeModule().rustbuffer_alloc)
-                );
-            },
-            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
-            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
-            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
-            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
-            // Async returns always go through the JS-side converter: the
-            // FFI symbol returns the future handle (u64), and the user-level
-            // RustBuffer comes back via the shared `rust_future_complete_*`
-            // export. The bytes the runtime hands back must be deserialized
-            // here using the per-callable return-type converter.
-            /*liftFunc:*/ FfiConverterTypeFleetPool.lift.bind(FfiConverterTypeFleetPool),
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*asyncOpts:*/ asyncOpts_,
-            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
-        );
-    } catch (__error: any) {
-        if (uniffiIsDebug && __error instanceof Error) {
-            __error.stack = __stack;
-        }
-        throw __error;
-    }
-    }
-
-/**
- * Deprecated: use [`Fleet::apply`]. Reconciles a pool and its template
- * from the flat spec (converted to [`SandboxSpec`] + [`PoolOptions`]).
- */
-    async applyPool(spec: FleetPoolSpec, asyncOpts_?: { signal: AbortSignal }): Promise<FleetPool> /*throws*/ {
-    const __stack = uniffiIsDebug ? new Error().stack : undefined;
-    try {
-        return await uniffiRustCallAsync(
-            /*rustCaller:*/ uniffiCaller,
-            /*rustFutureFunc:*/ () => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleet_apply_pool(
-                    uniffiTypeFleetObjectFactory.clonePointer(this),FfiConverterTypeFleetPoolSpec.lower(spec, nativeModule().rustbuffer_alloc)
-                );
-            },
-            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
-            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
-            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
-            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
-            // Async returns always go through the JS-side converter: the
-            // FFI symbol returns the future handle (u64), and the user-level
-            // RustBuffer comes back via the shared `rust_future_complete_*`
-            // export. The bytes the runtime hands back must be deserialized
-            // here using the per-callable return-type converter.
-            /*liftFunc:*/ FfiConverterTypeFleetPool.lift.bind(FfiConverterTypeFleetPool),
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*asyncOpts:*/ asyncOpts_,
-            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
-        );
-    } catch (__error: any) {
-        if (uniffiIsDebug && __error instanceof Error) {
-            __error.stack = __stack;
-        }
-        throw __error;
-    }
-    }
-
-/**
- * Lays the set fields of `spec` over pool `pool`'s template and writes
- * it (the pool's capacity is kept; a no-op when nothing differs).
- */
-    async applyPoolTemplate(pool: string, spec: SandboxSpec, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
-    const __stack = uniffiIsDebug ? new Error().stack : undefined;
-    try {
-        return await uniffiRustCallAsync(
-            /*rustCaller:*/ uniffiCaller,
-            /*rustFutureFunc:*/ () => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleet_apply_pool_template(
-                    uniffiTypeFleetObjectFactory.clonePointer(this),FfiConverterString.lower(pool, nativeModule().rustbuffer_alloc),FfiConverterTypeSandboxSpec.lower(spec, nativeModule().rustbuffer_alloc)
-                );
-            },
-            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_void,
-            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_void,
-            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_void,
-            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_void,
-            /*liftFunc:*/ (_v) => {},
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*asyncOpts:*/ asyncOpts_,
-            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
-        );
-    } catch (__error: any) {
-        if (uniffiIsDebug && __error instanceof Error) {
-            __error.stack = __stack;
-        }
-        throw __error;
-    }
-    }
-
-/**
- * Waits for a named claim to bind.
- */
-    async attachClaim(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }): Promise<FleetSandbox> /*throws*/ {
-    const __stack = uniffiIsDebug ? new Error().stack : undefined;
-    try {
-        return await uniffiRustCallAsync(
-            /*rustCaller:*/ uniffiCaller,
-            /*rustFutureFunc:*/ () => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleet_attach_claim(
-                    uniffiTypeFleetObjectFactory.clonePointer(this),FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc),FfiConverterString.lower(name, nativeModule().rustbuffer_alloc)
-                );
-            },
-            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
-            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
-            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
-            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
-            // Async returns always go through the JS-side converter: the
-            // FFI symbol returns the future handle (u64), and the user-level
-            // RustBuffer comes back via the shared `rust_future_complete_*`
-            // export. The bytes the runtime hands back must be deserialized
-            // here using the per-callable return-type converter.
-            /*liftFunc:*/ FfiConverterTypeFleetSandbox.lift.bind(FfiConverterTypeFleetSandbox),
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*asyncOpts:*/ asyncOpts_,
-            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
-        );
-    } catch (__error: any) {
-        if (uniffiIsDebug && __error instanceof Error) {
-            __error.stack = __stack;
-        }
-        throw __error;
-    }
-    }
-
-/**
- * Fleet API base URL.
- */
-    baseUrl(): string {
-    return ((__rb: Uint8Array) => {
-        try {
-            return FfiConverterString.lift(__rb);
-        } finally {
-            nativeModule().rustbuffer_free(__rb);
-        }
-    })(uniffiCaller.rustCall(
-            /*caller:*/ (callStatus) => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleet_base_url(
-                uniffiTypeFleetObjectFactory.clonePointer(this),
-                callStatus);
-            },
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-    ));
-    }
-
-/**
- * The account's Cua Cloud billing: its credit, card and the website
- * billing page. A Fleet without billing answers `billing_enabled:
- * false`.
- */
-    async billingStatus(asyncOpts_?: { signal: AbortSignal }): Promise<FleetBillingStatus> /*throws*/ {
-    const __stack = uniffiIsDebug ? new Error().stack : undefined;
-    try {
-        return await uniffiRustCallAsync(
-            /*rustCaller:*/ uniffiCaller,
-            /*rustFutureFunc:*/ () => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleet_billing_status(
-                    uniffiTypeFleetObjectFactory.clonePointer(this)
-                );
-            },
-            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
-            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
-            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
-            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
-            // Async returns always go through the JS-side converter: the
-            // FFI symbol returns the future handle (u64), and the user-level
-            // RustBuffer comes back via the shared `rust_future_complete_*`
-            // export. The bytes the runtime hands back must be deserialized
-            // here using the per-callable return-type converter.
-            /*liftFunc:*/ FfiConverterTypeFleetBillingStatus.lift.bind(FfiConverterTypeFleetBillingStatus),
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*asyncOpts:*/ asyncOpts_,
-            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
-        );
-    } catch (__error: any) {
-        if (uniffiIsDebug && __error instanceof Error) {
-            __error.stack = __stack;
-        }
-        throw __error;
-    }
-    }
-
-/**
- * Compares the set fields of `spec` with pool `pool`'s template:
- * `PoolSpecMismatch` (with a readable diff) when they differ.
- */
-    async checkPoolSpec(pool: string, spec: SandboxSpec, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
-    const __stack = uniffiIsDebug ? new Error().stack : undefined;
-    try {
-        return await uniffiRustCallAsync(
-            /*rustCaller:*/ uniffiCaller,
-            /*rustFutureFunc:*/ () => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleet_check_pool_spec(
-                    uniffiTypeFleetObjectFactory.clonePointer(this),FfiConverterString.lower(pool, nativeModule().rustbuffer_alloc),FfiConverterTypeSandboxSpec.lower(spec, nativeModule().rustbuffer_alloc)
-                );
-            },
-            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_void,
-            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_void,
-            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_void,
-            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_void,
-            /*liftFunc:*/ (_v) => {},
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*asyncOpts:*/ asyncOpts_,
-            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
-        );
-    } catch (__error: any) {
-        if (uniffiIsDebug && __error instanceof Error) {
-            __error.stack = __stack;
-        }
-        throw __error;
-    }
-    }
-
-/**
- * Creates a claim without waiting.
- */
-    async claim(pool: string, name: string | undefined, ttlSeconds: number | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<FleetClaim> /*throws*/ {
-    const __stack = uniffiIsDebug ? new Error().stack : undefined;
-    try {
-        return await uniffiRustCallAsync(
-            /*rustCaller:*/ uniffiCaller,
-            /*rustFutureFunc:*/ () => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleet_claim(
-                    uniffiTypeFleetObjectFactory.clonePointer(this),FfiConverterString.lower(pool, nativeModule().rustbuffer_alloc),FfiConverterOptionalString.lower(name, nativeModule().rustbuffer_alloc),FfiConverterOptionalUInt32.lower(ttlSeconds, nativeModule().rustbuffer_alloc)
-                );
-            },
-            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
-            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
-            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
-            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
-            // Async returns always go through the JS-side converter: the
-            // FFI symbol returns the future handle (u64), and the user-level
-            // RustBuffer comes back via the shared `rust_future_complete_*`
-            // export. The bytes the runtime hands back must be deserialized
-            // here using the per-callable return-type converter.
-            /*liftFunc:*/ FfiConverterTypeFleetClaim.lift.bind(FfiConverterTypeFleetClaim),
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*asyncOpts:*/ asyncOpts_,
-            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
-        );
-    } catch (__error: any) {
-        if (uniffiIsDebug && __error instanceof Error) {
-            __error.stack = __stack;
-        }
-        throw __error;
-    }
-    }
-
-/**
- * Creates an image resource (remote build) from a JSON manifest.
- */
-    async createImage(namespace: string, manifestJson: string, asyncOpts_?: { signal: AbortSignal }): Promise<string> /*throws*/ {
-    const __stack = uniffiIsDebug ? new Error().stack : undefined;
-    try {
-        return await uniffiRustCallAsync(
-            /*rustCaller:*/ uniffiCaller,
-            /*rustFutureFunc:*/ () => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleet_create_image(
-                    uniffiTypeFleetObjectFactory.clonePointer(this),FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc),FfiConverterString.lower(manifestJson, nativeModule().rustbuffer_alloc)
-                );
-            },
-            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
-            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
-            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
-            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
-            // Async returns always go through the JS-side converter: the
-            // FFI symbol returns the future handle (u64), and the user-level
-            // RustBuffer comes back via the shared `rust_future_complete_*`
-            // export. The bytes the runtime hands back must be deserialized
-            // here using the per-callable return-type converter.
-            /*liftFunc:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*asyncOpts:*/ asyncOpts_,
-            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
-        );
-    } catch (__error: any) {
-        if (uniffiIsDebug && __error instanceof Error) {
-            __error.stack = __stack;
-        }
-        throw __error;
-    }
-    }
-
-/**
- * Mints a signed, shareable service URL.
- */
-    async createSignedServiceUrl(sandbox: FleetSandbox, service: string, label: string | undefined, expiresInSeconds: number, asyncOpts_?: { signal: AbortSignal }): Promise<FleetSignedUrl> /*throws*/ {
-    const __stack = uniffiIsDebug ? new Error().stack : undefined;
-    try {
-        return await uniffiRustCallAsync(
-            /*rustCaller:*/ uniffiCaller,
-            /*rustFutureFunc:*/ () => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleet_create_signed_service_url(
-                    uniffiTypeFleetObjectFactory.clonePointer(this),FfiConverterTypeFleetSandbox.lower(sandbox, nativeModule().rustbuffer_alloc),FfiConverterString.lower(service, nativeModule().rustbuffer_alloc),FfiConverterOptionalString.lower(label, nativeModule().rustbuffer_alloc),FfiConverterUInt32.lower(expiresInSeconds, nativeModule().rustbuffer_alloc)
-                );
-            },
-            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
-            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
-            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
-            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
-            // Async returns always go through the JS-side converter: the
-            // FFI symbol returns the future handle (u64), and the user-level
-            // RustBuffer comes back via the shared `rust_future_complete_*`
-            // export. The bytes the runtime hands back must be deserialized
-            // here using the per-callable return-type converter.
-            /*liftFunc:*/ FfiConverterTypeFleetSignedUrl.lift.bind(FfiConverterTypeFleetSignedUrl),
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*asyncOpts:*/ asyncOpts_,
-            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
-        );
-    } catch (__error: any) {
-        if (uniffiIsDebug && __error instanceof Error) {
-            __error.stack = __stack;
-        }
-        throw __error;
-    }
-    }
-
-/**
- * Deletes an image resource.
- */
-    async deleteImage(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
-    const __stack = uniffiIsDebug ? new Error().stack : undefined;
-    try {
-        return await uniffiRustCallAsync(
-            /*rustCaller:*/ uniffiCaller,
-            /*rustFutureFunc:*/ () => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleet_delete_image(
-                    uniffiTypeFleetObjectFactory.clonePointer(this),FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc),FfiConverterString.lower(name, nativeModule().rustbuffer_alloc)
-                );
-            },
-            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_void,
-            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_void,
-            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_void,
-            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_void,
-            /*liftFunc:*/ (_v) => {},
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*asyncOpts:*/ asyncOpts_,
-            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
-        );
-    } catch (__error: any) {
-        if (uniffiIsDebug && __error instanceof Error) {
-            __error.stack = __stack;
-        }
-        throw __error;
-    }
-    }
-
-/**
- * Deletes a pool, its namespace and its same-named template.
- */
-    async deletePool(name: string, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
-    const __stack = uniffiIsDebug ? new Error().stack : undefined;
-    try {
-        return await uniffiRustCallAsync(
-            /*rustCaller:*/ uniffiCaller,
-            /*rustFutureFunc:*/ () => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleet_delete_pool(
-                    uniffiTypeFleetObjectFactory.clonePointer(this),FfiConverterString.lower(name, nativeModule().rustbuffer_alloc)
-                );
-            },
-            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_void,
-            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_void,
-            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_void,
-            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_void,
-            /*liftFunc:*/ (_v) => {},
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*asyncOpts:*/ asyncOpts_,
-            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
-        );
-    } catch (__error: any) {
-        if (uniffiIsDebug && __error instanceof Error) {
-            __error.stack = __stack;
-        }
-        throw __error;
-    }
-    }
-
-/**
- * A random ephemeral pool name (`cua-eph-<hex>`).
- */
-    ephemeralPoolName(): string {
-    return ((__rb: Uint8Array) => {
-        try {
-            return FfiConverterString.lift(__rb);
-        } finally {
-            nativeModule().rustbuffer_free(__rb);
-        }
-    })(uniffiCaller.rustCall(
-            /*caller:*/ (callStatus) => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleet_ephemeral_pool_name(
-                uniffiTypeFleetObjectFactory.clonePointer(this),
-                callStatus);
-            },
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-    ));
-    }
-
-/**
- * Reads pool `name` back as the shared model, with its `fleets_pool`
- * Terraform block.
- */
-    async exportPool(name: string, asyncOpts_?: { signal: AbortSignal }): Promise<FleetPoolExport> /*throws*/ {
-    const __stack = uniffiIsDebug ? new Error().stack : undefined;
-    try {
-        return await uniffiRustCallAsync(
-            /*rustCaller:*/ uniffiCaller,
-            /*rustFutureFunc:*/ () => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleet_export_pool(
-                    uniffiTypeFleetObjectFactory.clonePointer(this),FfiConverterString.lower(name, nativeModule().rustbuffer_alloc)
-                );
-            },
-            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
-            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
-            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
-            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
-            // Async returns always go through the JS-side converter: the
-            // FFI symbol returns the future handle (u64), and the user-level
-            // RustBuffer comes back via the shared `rust_future_complete_*`
-            // export. The bytes the runtime hands back must be deserialized
-            // here using the per-callable return-type converter.
-            /*liftFunc:*/ FfiConverterTypeFleetPoolExport.lift.bind(FfiConverterTypeFleetPoolExport),
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*asyncOpts:*/ asyncOpts_,
-            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
-        );
-    } catch (__error: any) {
-        if (uniffiIsDebug && __error instanceof Error) {
-            __error.stack = __stack;
-        }
-        throw __error;
-    }
-    }
-
-/**
- * Gets an image resource (JSON).
- */
-    async getImage(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }): Promise<string> /*throws*/ {
-    const __stack = uniffiIsDebug ? new Error().stack : undefined;
-    try {
-        return await uniffiRustCallAsync(
-            /*rustCaller:*/ uniffiCaller,
-            /*rustFutureFunc:*/ () => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleet_get_image(
-                    uniffiTypeFleetObjectFactory.clonePointer(this),FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc),FfiConverterString.lower(name, nativeModule().rustbuffer_alloc)
-                );
-            },
-            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
-            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
-            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
-            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
-            // Async returns always go through the JS-side converter: the
-            // FFI symbol returns the future handle (u64), and the user-level
-            // RustBuffer comes back via the shared `rust_future_complete_*`
-            // export. The bytes the runtime hands back must be deserialized
-            // here using the per-callable return-type converter.
-            /*liftFunc:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*asyncOpts:*/ asyncOpts_,
-            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
-        );
-    } catch (__error: any) {
-        if (uniffiIsDebug && __error instanceof Error) {
-            __error.stack = __stack;
-        }
-        throw __error;
-    }
-    }
-
-/**
- * Looks up a pool.
- */
-    async getPool(name: string, asyncOpts_?: { signal: AbortSignal }): Promise<FleetPool> /*throws*/ {
-    const __stack = uniffiIsDebug ? new Error().stack : undefined;
-    try {
-        return await uniffiRustCallAsync(
-            /*rustCaller:*/ uniffiCaller,
-            /*rustFutureFunc:*/ () => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleet_get_pool(
-                    uniffiTypeFleetObjectFactory.clonePointer(this),FfiConverterString.lower(name, nativeModule().rustbuffer_alloc)
-                );
-            },
-            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
-            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
-            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
-            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
-            // Async returns always go through the JS-side converter: the
-            // FFI symbol returns the future handle (u64), and the user-level
-            // RustBuffer comes back via the shared `rust_future_complete_*`
-            // export. The bytes the runtime hands back must be deserialized
-            // here using the per-callable return-type converter.
-            /*liftFunc:*/ FfiConverterTypeFleetPool.lift.bind(FfiConverterTypeFleetPool),
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*asyncOpts:*/ asyncOpts_,
-            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
-        );
-    } catch (__error: any) {
-        if (uniffiIsDebug && __error instanceof Error) {
-            __error.stack = __stack;
-        }
-        throw __error;
-    }
-    }
-
-/**
- * Extends a claim's lease; returns the RFC 3339 shutdown time.
- */
-    async keepAlive(namespace: string, name: string, seconds: number, asyncOpts_?: { signal: AbortSignal }): Promise<string> /*throws*/ {
-    const __stack = uniffiIsDebug ? new Error().stack : undefined;
-    try {
-        return await uniffiRustCallAsync(
-            /*rustCaller:*/ uniffiCaller,
-            /*rustFutureFunc:*/ () => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleet_keep_alive(
-                    uniffiTypeFleetObjectFactory.clonePointer(this),FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc),FfiConverterString.lower(name, nativeModule().rustbuffer_alloc),FfiConverterUInt32.lower(seconds, nativeModule().rustbuffer_alloc)
-                );
-            },
-            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
-            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
-            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
-            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
-            // Async returns always go through the JS-side converter: the
-            // FFI symbol returns the future handle (u64), and the user-level
-            // RustBuffer comes back via the shared `rust_future_complete_*`
-            // export. The bytes the runtime hands back must be deserialized
-            // here using the per-callable return-type converter.
-            /*liftFunc:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*asyncOpts:*/ asyncOpts_,
-            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
-        );
-    } catch (__error: any) {
-        if (uniffiIsDebug && __error instanceof Error) {
-            __error.stack = __stack;
-        }
-        throw __error;
-    }
-    }
-
-/**
- * Lists claims in a namespace.
- */
-    async listClaims(namespace: string, asyncOpts_?: { signal: AbortSignal }): Promise<Array<FleetClaim>> /*throws*/ {
-    const __stack = uniffiIsDebug ? new Error().stack : undefined;
-    try {
-        return await uniffiRustCallAsync(
-            /*rustCaller:*/ uniffiCaller,
-            /*rustFutureFunc:*/ () => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleet_list_claims(
-                    uniffiTypeFleetObjectFactory.clonePointer(this),FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc)
-                );
-            },
-            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
-            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
-            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
-            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
-            // Async returns always go through the JS-side converter: the
-            // FFI symbol returns the future handle (u64), and the user-level
-            // RustBuffer comes back via the shared `rust_future_complete_*`
-            // export. The bytes the runtime hands back must be deserialized
-            // here using the per-callable return-type converter.
-            /*liftFunc:*/ FfiConverterSequenceTypeFleetClaim.lift.bind(FfiConverterSequenceTypeFleetClaim),
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*asyncOpts:*/ asyncOpts_,
-            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
-        );
-    } catch (__error: any) {
-        if (uniffiIsDebug && __error instanceof Error) {
-            __error.stack = __stack;
-        }
-        throw __error;
-    }
-    }
-
-/**
- * Lists image resources (JSON) in a namespace.
- */
-    async listImages(namespace: string, asyncOpts_?: { signal: AbortSignal }): Promise<Array<string>> /*throws*/ {
-    const __stack = uniffiIsDebug ? new Error().stack : undefined;
-    try {
-        return await uniffiRustCallAsync(
-            /*rustCaller:*/ uniffiCaller,
-            /*rustFutureFunc:*/ () => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleet_list_images(
-                    uniffiTypeFleetObjectFactory.clonePointer(this),FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc)
-                );
-            },
-            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
-            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
-            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
-            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
-            // Async returns always go through the JS-side converter: the
-            // FFI symbol returns the future handle (u64), and the user-level
-            // RustBuffer comes back via the shared `rust_future_complete_*`
-            // export. The bytes the runtime hands back must be deserialized
-            // here using the per-callable return-type converter.
-            /*liftFunc:*/ FfiConverterSequenceString.lift.bind(FfiConverterSequenceString),
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*asyncOpts:*/ asyncOpts_,
-            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
-        );
-    } catch (__error: any) {
-        if (uniffiIsDebug && __error instanceof Error) {
-            __error.stack = __stack;
-        }
-        throw __error;
-    }
-    }
-
-/**
- * Lists pools in a namespace.
- */
-    async listPools(namespace: string, asyncOpts_?: { signal: AbortSignal }): Promise<Array<FleetPool>> /*throws*/ {
-    const __stack = uniffiIsDebug ? new Error().stack : undefined;
-    try {
-        return await uniffiRustCallAsync(
-            /*rustCaller:*/ uniffiCaller,
-            /*rustFutureFunc:*/ () => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleet_list_pools(
-                    uniffiTypeFleetObjectFactory.clonePointer(this),FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc)
-                );
-            },
-            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
-            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
-            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
-            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
-            // Async returns always go through the JS-side converter: the
-            // FFI symbol returns the future handle (u64), and the user-level
-            // RustBuffer comes back via the shared `rust_future_complete_*`
-            // export. The bytes the runtime hands back must be deserialized
-            // here using the per-callable return-type converter.
-            /*liftFunc:*/ FfiConverterSequenceTypeFleetPool.lift.bind(FfiConverterSequenceTypeFleetPool),
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*asyncOpts:*/ asyncOpts_,
-            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
-        );
-    } catch (__error: any) {
-        if (uniffiIsDebug && __error instanceof Error) {
-            __error.stack = __stack;
-        }
-        throw __error;
-    }
-    }
-
-/**
- * Lists templates in a namespace as JSON resources.
- */
-    async listTemplates(namespace: string, asyncOpts_?: { signal: AbortSignal }): Promise<Array<string>> /*throws*/ {
-    const __stack = uniffiIsDebug ? new Error().stack : undefined;
-    try {
-        return await uniffiRustCallAsync(
-            /*rustCaller:*/ uniffiCaller,
-            /*rustFutureFunc:*/ () => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleet_list_templates(
-                    uniffiTypeFleetObjectFactory.clonePointer(this),FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc)
-                );
-            },
-            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
-            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
-            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
-            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
-            // Async returns always go through the JS-side converter: the
-            // FFI symbol returns the future handle (u64), and the user-level
-            // RustBuffer comes back via the shared `rust_future_complete_*`
-            // export. The bytes the runtime hands back must be deserialized
-            // here using the per-callable return-type converter.
-            /*liftFunc:*/ FfiConverterSequenceString.lift.bind(FfiConverterSequenceString),
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*asyncOpts:*/ asyncOpts_,
-            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
-        );
-    } catch (__error: any) {
-        if (uniffiIsDebug && __error instanceof Error) {
-            __error.stack = __stack;
-        }
-        throw __error;
-    }
-    }
-
-/**
- * The image pool `name`'s template runs, as a claim on it reports it
- * (`Sandbox.image_info`): pinned by the resolver (cached per pool), or
- * the template reference with empty `pinned_ref`/`digest` when the
- * registry cannot be read. `None` when the template names no image.
- */
-    async poolImageInfo(name: string, asyncOpts_?: { signal: AbortSignal }): Promise<ImageInfo | undefined> /*throws*/ {
-    const __stack = uniffiIsDebug ? new Error().stack : undefined;
-    try {
-        return await uniffiRustCallAsync(
-            /*rustCaller:*/ uniffiCaller,
-            /*rustFutureFunc:*/ () => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleet_pool_image_info(
-                    uniffiTypeFleetObjectFactory.clonePointer(this),FfiConverterString.lower(name, nativeModule().rustbuffer_alloc)
-                );
-            },
-            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
-            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
-            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
-            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
-            // Async returns always go through the JS-side converter: the
-            // FFI symbol returns the future handle (u64), and the user-level
-            // RustBuffer comes back via the shared `rust_future_complete_*`
-            // export. The bytes the runtime hands back must be deserialized
-            // here using the per-callable return-type converter.
-            /*liftFunc:*/ FfiConverterOptionalTypeImageInfo.lift.bind(FfiConverterOptionalTypeImageInfo),
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*asyncOpts:*/ asyncOpts_,
-            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
-        );
-    } catch (__error: any) {
-        if (uniffiIsDebug && __error instanceof Error) {
-            __error.stack = __stack;
-        }
-        throw __error;
-    }
-    }
-
-/**
- * Managed pools (list, gc).
- */
-    pools(): FleetPoolsLike {
-    return FfiConverterTypeFleetPools.lift(uniffiCaller.rustCall(
-            /*caller:*/ (callStatus) => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleet_pools(
-                uniffiTypeFleetObjectFactory.clonePointer(this),
-                callStatus);
-            },
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-    ));
-    }
-
-/**
- * Releases a claim (missing claims are fine).
- */
-    async release(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
-    const __stack = uniffiIsDebug ? new Error().stack : undefined;
-    try {
-        return await uniffiRustCallAsync(
-            /*rustCaller:*/ uniffiCaller,
-            /*rustFutureFunc:*/ () => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleet_release(
-                    uniffiTypeFleetObjectFactory.clonePointer(this),FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc),FfiConverterString.lower(name, nativeModule().rustbuffer_alloc)
-                );
-            },
-            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_void,
-            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_void,
-            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_void,
-            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_void,
-            /*liftFunc:*/ (_v) => {},
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*asyncOpts:*/ asyncOpts_,
-            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
-        );
-    } catch (__error: any) {
-        if (uniffiIsDebug && __error instanceof Error) {
-            __error.stack = __stack;
-        }
-        throw __error;
-    }
-    }
-
-/**
- * The gateway URL of a sandbox service (needs the Fleet bearer).
- */
-    serviceUrl(sandbox: FleetSandbox, service: string): string /*throws*/ {
-    return ((__rb: Uint8Array) => {
-        try {
-            return FfiConverterString.lift(__rb);
-        } finally {
-            nativeModule().rustbuffer_free(__rb);
-        }
-    })(uniffiCaller.rustCallWithError(
-            /*liftError:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError),
-            /*caller:*/ (callStatus) => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleet_service_url(
-                uniffiTypeFleetObjectFactory.clonePointer(this),
-        FfiConverterTypeFleetSandbox.lower(sandbox, nativeModule().rustbuffer_alloc),
-        FfiConverterString.lower(service, nativeModule().rustbuffer_alloc),
-                callStatus);
-            },
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-    ));
-    }
-
-/**
- * Sets warm replicas (0 suspends).
- */
-    async setPoolReplicas(name: string, replicas: number, asyncOpts_?: { signal: AbortSignal }): Promise<FleetPool> /*throws*/ {
-    const __stack = uniffiIsDebug ? new Error().stack : undefined;
-    try {
-        return await uniffiRustCallAsync(
-            /*rustCaller:*/ uniffiCaller,
-            /*rustFutureFunc:*/ () => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleet_set_pool_replicas(
-                    uniffiTypeFleetObjectFactory.clonePointer(this),FfiConverterString.lower(name, nativeModule().rustbuffer_alloc),FfiConverterUInt32.lower(replicas, nativeModule().rustbuffer_alloc)
-                );
-            },
-            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
-            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
-            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
-            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
-            // Async returns always go through the JS-side converter: the
-            // FFI symbol returns the future handle (u64), and the user-level
-            // RustBuffer comes back via the shared `rust_future_complete_*`
-            // export. The bytes the runtime hands back must be deserialized
-            // here using the per-callable return-type converter.
-            /*liftFunc:*/ FfiConverterTypeFleetPool.lift.bind(FfiConverterTypeFleetPool),
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*asyncOpts:*/ asyncOpts_,
-            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
-        );
-    } catch (__error: any) {
-        if (uniffiIsDebug && __error instanceof Error) {
-            __error.stack = __stack;
-        }
-        throw __error;
-    }
-    }
-
-/**
- * This account's Cua Cloud rates (`GET /api/config`), reused for five
- * minutes. `None` when Fleet answers without rates: show no price
- * rather than a guess.
- */
-    async usagePricing(asyncOpts_?: { signal: AbortSignal }): Promise<FleetUsagePricing | undefined> /*throws*/ {
-    const __stack = uniffiIsDebug ? new Error().stack : undefined;
-    try {
-        return await uniffiRustCallAsync(
-            /*rustCaller:*/ uniffiCaller,
-            /*rustFutureFunc:*/ () => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleet_usage_pricing(
-                    uniffiTypeFleetObjectFactory.clonePointer(this)
-                );
-            },
-            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
-            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
-            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
-            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
-            // Async returns always go through the JS-side converter: the
-            // FFI symbol returns the future handle (u64), and the user-level
-            // RustBuffer comes back via the shared `rust_future_complete_*`
-            // export. The bytes the runtime hands back must be deserialized
-            // here using the per-callable return-type converter.
-            /*liftFunc:*/ FfiConverterOptionalTypeFleetUsagePricing.lift.bind(FfiConverterOptionalTypeFleetUsagePricing),
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*asyncOpts:*/ asyncOpts_,
-            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
-        );
-    } catch (__error: any) {
-        if (uniffiIsDebug && __error instanceof Error) {
-            __error.stack = __stack;
-        }
-        throw __error;
-    }
-    }
-
-/**
- * Waits for at least one ready replica.
- */
-    async waitPoolReady(name: string, timeoutMs: number, asyncOpts_?: { signal: AbortSignal }): Promise<FleetPool> /*throws*/ {
-    const __stack = uniffiIsDebug ? new Error().stack : undefined;
-    try {
-        return await uniffiRustCallAsync(
-            /*rustCaller:*/ uniffiCaller,
-            /*rustFutureFunc:*/ () => {
-                return nativeModule().uniffi_cua_sdk_fn_method_fleet_wait_pool_ready(
-                    uniffiTypeFleetObjectFactory.clonePointer(this),FfiConverterString.lower(name, nativeModule().rustbuffer_alloc),FfiConverterUInt32.lower(timeoutMs, nativeModule().rustbuffer_alloc)
-                );
-            },
-            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
-            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
-            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
-            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
-            // Async returns always go through the JS-side converter: the
-            // FFI symbol returns the future handle (u64), and the user-level
-            // RustBuffer comes back via the shared `rust_future_complete_*`
-            // export. The bytes the runtime hands back must be deserialized
-            // here using the per-callable return-type converter.
-            /*liftFunc:*/ FfiConverterTypeFleetPool.lift.bind(FfiConverterTypeFleetPool),
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-            /*asyncOpts:*/ asyncOpts_,
-            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
-        );
-    } catch (__error: any) {
-        if (uniffiIsDebug && __error instanceof Error) {
-            __error.stack = __stack;
-        }
-        throw __error;
-    }
-    }
-
-
-    uniffiDestroy(): void {
-        const ptr = (this as any)[destructorGuardSymbol];
-        if (ptr !== undefined) {
-            const pointer = uniffiTypeFleetObjectFactory.pointer(this);
-            uniffiTypeFleetObjectFactory.freePointer(pointer);
-            uniffiTypeFleetObjectFactory.unbless(ptr);
-            delete (this as any)[destructorGuardSymbol];
-        }
-    }
-
-    static instanceOf(obj_: any): obj_ is Fleet {
-        return uniffiTypeFleetObjectFactory.isConcreteType(obj_);
-    }
-
-
-}
-
-const uniffiTypeFleetObjectFactory: UniffiObjectFactory<FleetLike> = (() => {
-
-    /// <reference lib="es2021" />
-    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
-        uniffiTypeFleetObjectFactory.freePointer(heldValue);
-    }) : null;
-
-    return {
-    create(pointer: UniffiHandle): FleetLike {
-        const instance = Object.create(Fleet.prototype);
-        instance[pointerLiteralSymbol] = pointer;
-        instance[destructorGuardSymbol] = this.bless(pointer);
-        instance[uniffiTypeNameSymbol] = "Fleet";
-        return instance;
-    },
-
-
-    bless(p: UniffiHandle): UniffiGcObject {
-        const ptr = {
-            p, // make sure this object doesn't get optimized away.
-            markDestroyed: () => undefined,
-        };
-        if (registry) {
-            registry.register(ptr, p, ptr);
-        }
-        return ptr;
-    },
-
-    unbless(ptr_: UniffiGcObject) {
-        if (registry) {
-            registry.unregister(ptr_);
-        }
-    },
-
-    pointer(obj_: FleetLike): UniffiHandle {
-        if ((obj_ as any)[destructorGuardSymbol] === undefined) {
-            throw new UniffiInternalError.UnexpectedNullPointer();
-        }
-        return (obj_ as any)[pointerLiteralSymbol];
-    },
-
-    clonePointer(obj_: FleetLike): UniffiHandle {
-        const pointer = this.pointer(obj_);
-        return uniffiCaller.rustCall(
-            /*caller:*/ (callStatus) => nativeModule().uniffi_cua_sdk_fn_clone_fleet(pointer, callStatus),
-            /*liftString:*/ FfiConverterString.lift
-        );
-    },
-
-    freePointer(pointer: UniffiHandle): void {
-        uniffiCaller.rustCall(
-            /*caller:*/ (callStatus) => nativeModule().uniffi_cua_sdk_fn_free_fleet(pointer, callStatus),
-            /*liftString:*/ FfiConverterString.lift
-        );
-    },
-
-    isConcreteType(obj_: any): obj_ is FleetLike {
-        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "Fleet";
-    },
-}})();
-const FfiConverterTypeFleet = new FfiConverterObject(uniffiTypeFleetObjectFactory);
 
 /**
  * Local runtimes and images.
@@ -25725,8 +22714,7 @@ export interface ServiceLike {
     request(method: string, path: string, body: ArrayBuffer | undefined, timeoutMs: number | undefined, headers: Array<HttpHeader> | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<HttpResponse>;
 /**
  * A URL for the service usable from this machine with no credentials
- * (no trailing slash): the published loopback port locally, a signed
- * service URL (1 h, renewed on later calls) in the cloud.
+ * (no trailing slash): the published loopback port locally.
  */
     url(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
 }
@@ -25959,8 +22947,7 @@ private constructor(pointer: UniffiHandle) {
 
 /**
  * A URL for the service usable from this machine with no credentials
- * (no trailing slash): the published loopback port locally, a signed
- * service URL (1 h, renewed on later calls) in the cloud.
+ * (no trailing slash): the published loopback port locally.
  */
     async url(asyncOpts_?: { signal: AbortSignal }): Promise<string> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -26105,9 +23092,11 @@ export interface SpacesdProcessLike {
  */
     resize(cols: number, rows: number, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
 /**
- * Sends a signal by name (`term`, `kill`, `SIGINT`, ...).
+ * Sends a signal by name (`term`, `kill`, `SIGINT`, ...). With
+ * `process_group`, to the process's whole group (everything it started),
+ * as a terminal's Ctrl-C does; by default to the process alone.
  */
-    signal(signal: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
+    signal(signal: string, processGroup: boolean, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
 /**
  * Tag, when set.
  */
@@ -26321,16 +23310,18 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Sends a signal by name (`term`, `kill`, `SIGINT`, ...).
+ * Sends a signal by name (`term`, `kill`, `SIGINT`, ...). With
+ * `process_group`, to the process's whole group (everything it started),
+ * as a terminal's Ctrl-C does; by default to the process alone.
  */
-    async signal(signal: string, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
+    async signal(signal: string, processGroup: boolean = false, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
     try {
         return await uniffiRustCallAsync(
             /*rustCaller:*/ uniffiCaller,
             /*rustFutureFunc:*/ () => {
                 return nativeModule().uniffi_cua_sdk_fn_method_spacesdprocess_signal(
-                    uniffiTypeSpacesdProcessObjectFactory.clonePointer(this),FfiConverterString.lower(signal, nativeModule().rustbuffer_alloc)
+                    uniffiTypeSpacesdProcessObjectFactory.clonePointer(this),FfiConverterString.lower(signal, nativeModule().rustbuffer_alloc),FfiConverterBool.lower(processGroup, nativeModule().rustbuffer_alloc)
                 );
             },
             /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_void,
@@ -27196,8 +24187,8 @@ export interface SpacesdClientLike {
     hotkey(keys: Array<string>, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
 /**
  * Sends one plain-HTTP request to the spacesd port with this
- * client's endpoint and credentials (through the Fleet gateway when the
- * endpoint is a Fleet service). Used for streamable-HTTP MCP at `/mcp`,
+ * client's endpoint and credentials (through a gateway when the
+ * endpoint is behind one). Used for streamable-HTTP MCP at `/mcp`,
  * for example by typed cua-driver clients. Not retried.
  */
     http(request: SpacesdHttpRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpacesdHttpResponse>;
@@ -27930,8 +24921,8 @@ private constructor(pointer: UniffiHandle) {
 
 /**
  * Sends one plain-HTTP request to the spacesd port with this
- * client's endpoint and credentials (through the Fleet gateway when the
- * endpoint is a Fleet service). Used for streamable-HTTP MCP at `/mcp`,
+ * client's endpoint and credentials (through a gateway when the
+ * endpoint is behind one). Used for streamable-HTTP MCP at `/mcp`,
  * for example by typed cua-driver clients. Not retried.
  */
     async http(request: SpacesdHttpRequest, asyncOpts_?: { signal: AbortSignal }): Promise<SpacesdHttpResponse> /*throws*/ {
@@ -28813,11 +25804,6 @@ export interface SandboxLike {
  */
     delete_(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
 /**
- * Forgets the handle this runtime holds (a Cua Cloud claim used to
- * stop renewing; Cua Cloud has ended). Embedded runtime only.
- */
-    detach() /*throws*/: void;
-/**
  * Forwards a loopback port to guest `port`: a TCP forward locally (and
  * over cua-spacesd's tunnel when the image has it). `url()` is a
  * loopback URL.
@@ -28850,8 +25836,8 @@ export interface SandboxLike {
 /**
  * The image this sandbox runs, as resolved and pinned at create time:
  * the digest and variant that actually ran. `None` for direct (URL)
- * connections, claims on a named pool, images not resolved from a
- * registry, and the daemon topology.
+ * connections, images not resolved from a registry, and the daemon
+ * topology.
  */
     imageInfo(): ImageInfo | undefined;
 /**
@@ -29067,20 +26053,6 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Forgets the handle this runtime holds (a Cua Cloud claim used to
- * stop renewing; Cua Cloud has ended). Embedded runtime only.
- */
-    detach(): void /*throws*/ {uniffiCaller.rustCallWithError(
-            /*liftError:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError),
-            /*caller:*/ (callStatus) => { nativeModule().uniffi_cua_sdk_fn_method_sandbox_detach(
-                uniffiTypeSandboxObjectFactory.clonePointer(this),
-                callStatus);
-            },
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-    );
-    }
-
-/**
  * Forwards a loopback port to guest `port`: a TCP forward locally (and
  * over cua-spacesd's tunnel when the image has it). `url()` is a
  * loopback URL.
@@ -29253,8 +26225,8 @@ private constructor(pointer: UniffiHandle) {
 /**
  * The image this sandbox runs, as resolved and pinned at create time:
  * the digest and variant that actually ran. `None` for direct (URL)
- * connections, claims on a named pool, images not resolved from a
- * registry, and the daemon topology.
+ * connections, images not resolved from a registry, and the daemon
+ * topology.
  */
     imageInfo(): ImageInfo | undefined {
     return ((__rb: Uint8Array) => {
@@ -30028,7 +27000,7 @@ export interface SandboxesLike {
 /**
  * Cancels the create of the named sandbox `name` that is still
  * running (in this process or the daemon): the work in flight stops
- * (an image download, a boot, a claim) and what the create made is
+ * (an image download, a boot) and what the create made is
  * deleted; a sandbox of that name that existed before is never
  * touched. Finished image downloads stay cached. Returns what was
  * removed, or `None` when no create of that name was running. The
@@ -30062,11 +27034,9 @@ export interface SandboxesLike {
     get(name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SandboxInfo>;
 /**
  * Sandboxes, each tagged with its `location`. `None` (the default):
- * all of them, local, direct and the account's live cloud sandboxes,
- * whatever the default location is. `"local"`, `"cloud"` or
- * `"direct"`: only those.
- * Cua Cloud has ended: its sandboxes are never listed, and listing
- * never asks Fleet.
+ * all of them, local and direct, whatever the default location is.
+ * `"local"` or `"direct"`: only those. Cua Cloud has ended, so
+ * `"cloud"` lists none.
  */
     list(location: string | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<SandboxInfo>>;
 /**
@@ -30074,8 +27044,7 @@ export interface SandboxesLike {
  */
     listAll(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<SandboxInfo>>;
 /**
- * [`Sandboxes::list`] with what the listing left out (for example
- * "cloud sandboxes not listed: <reason>").
+ * [`Sandboxes::list`] with what the listing left out.
  */
     listWithWarnings(location: string | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SandboxListing>;
 }
@@ -30106,7 +27075,7 @@ private constructor(pointer: UniffiHandle) {
 /**
  * Cancels the create of the named sandbox `name` that is still
  * running (in this process or the daemon): the work in flight stops
- * (an image download, a boot, a claim) and what the create made is
+ * (an image download, a boot) and what the create made is
  * deleted; a sandbox of that name that existed before is never
  * touched. Finished image downloads stay cached. Returns what was
  * removed, or `None` when no create of that name was running. The
@@ -30321,11 +27290,9 @@ private constructor(pointer: UniffiHandle) {
 
 /**
  * Sandboxes, each tagged with its `location`. `None` (the default):
- * all of them, local, direct and the account's live cloud sandboxes,
- * whatever the default location is. `"local"`, `"cloud"` or
- * `"direct"`: only those.
- * Cua Cloud has ended: its sandboxes are never listed, and listing
- * never asks Fleet.
+ * all of them, local and direct, whatever the default location is.
+ * `"local"` or `"direct"`: only those. Cua Cloud has ended, so
+ * `"cloud"` lists none.
  */
     async list(location: string | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<Array<SandboxInfo>> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -30395,8 +27362,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * [`Sandboxes::list`] with what the listing left out (for example
- * "cloud sandboxes not listed: <reason>").
+ * [`Sandboxes::list`] with what the listing left out.
  */
     async listWithWarnings(location: string | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<SandboxListing> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -34055,9 +31021,9 @@ export interface SpacesLike {
  * Cancels a create that is still running: `space` is the create's
  * `create_id`, the id the Space will have (`local:<name>`, carried by
  * every progress report) or its name. The work in flight stops (an
- * image download, a boot, a claim, a relay registration) and what the
- * create made is removed (its VM or container and disks, its cloud
- * claim, its relay machine); nothing that existed before is touched.
+ * image download, a boot, a relay registration) and what the
+ * create made is removed (its VM or container and disks, its relay
+ * machine); nothing that existed before is touched.
  * Finished image downloads stay cached, so the next create resumes.
  * Returns once the clean-up is done; the create itself fails with
  * `Cancelled`. Idempotent: a second call says `not_creating`. Works
@@ -34146,6 +31112,16 @@ export interface SpacesLike {
  * The Spaces MCP `tools/list` result as JSON (the contract).
  */
     listToolsJson(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
+/**
+ * A machine's health as its own cua daemon checks it: Local Network
+ * access (and which app macOS holds responsible), free disk,
+ * virtualization, memory left by running Spaces, the permissions
+ * sharing its desktop needs. `machine`: another of your machines, by
+ * id or name (asked over the relay, the mesh or its direct address);
+ * `None` for this one. Read-only; fails plainly when that machine is
+ * offline, not yours, or runs a Cua that predates the check.
+ */
+    machineHealth(machine: string | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<MachineHealth>;
 /**
  * The notifications feed, newest first.
  */
@@ -34604,9 +31580,9 @@ private constructor(pointer: UniffiHandle) {
  * Cancels a create that is still running: `space` is the create's
  * `create_id`, the id the Space will have (`local:<name>`, carried by
  * every progress report) or its name. The work in flight stops (an
- * image download, a boot, a claim, a relay registration) and what the
- * create made is removed (its VM or container and disks, its cloud
- * claim, its relay machine); nothing that existed before is touched.
+ * image download, a boot, a relay registration) and what the
+ * create made is removed (its VM or container and disks, its relay
+ * machine); nothing that existed before is touched.
  * Finished image downloads stay cached, so the next create resumes.
  * Returns once the clean-up is done; the create itself fails with
  * `Cancelled`. Idempotent: a second call says `not_creating`. Works
@@ -35179,6 +32155,47 @@ private constructor(pointer: UniffiHandle) {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * A machine's health as its own cua daemon checks it: Local Network
+ * access (and which app macOS holds responsible), free disk,
+ * virtualization, memory left by running Spaces, the permissions
+ * sharing its desktop needs. `machine`: another of your machines, by
+ * id or name (asked over the relay, the mesh or its direct address);
+ * `None` for this one. Read-only; fails plainly when that machine is
+ * offline, not yours, or runs a Cua that predates the check.
+ */
+    async machineHealth(machine: string | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<MachineHealth> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_spaces_machine_health(
+                    uniffiTypeSpacesObjectFactory.clonePointer(this),FfiConverterOptionalString.lower(machine, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeMachineHealth.lift.bind(FfiConverterTypeMachineHealth),
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
@@ -36883,11 +33900,6 @@ export interface CuaLike {
  */
     auth(): AuthLike;
 /**
- * Fleet pools, templates, claims and images. Cua Cloud has ended: this
- * always fails with the "Cua Cloud has ended" error and never connects.
- */
-    fleet() /*throws*/: FleetLike;
-/**
  * SDK (and daemon) identity. In daemon mode this is the connectivity
  * check.
  */
@@ -36994,9 +34006,8 @@ private constructor(pointer: UniffiHandle) {
 
 /**
  * Runs the SDK runtime in this process. Performs no I/O beyond
- * reading the credential store when `fleet_from_session` is set (for
- * the relay account). It never builds a Fleet client: Cua Cloud has
- * ended.
+ * reading the credential store when `account_from_session` is set (for
+ * the relay account).
  */
     static embedded(config: CuaConfig): CuaLike /*throws*/ {
     return FfiConverterTypeCua.lift(uniffiCaller.rustCallWithError(
@@ -37035,22 +34046,6 @@ private constructor(pointer: UniffiHandle) {
     return FfiConverterTypeAuth.lift(uniffiCaller.rustCall(
             /*caller:*/ (callStatus) => {
                 return nativeModule().uniffi_cua_sdk_fn_method_cua_auth(
-                uniffiTypeCuaObjectFactory.clonePointer(this),
-                callStatus);
-            },
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-    ));
-    }
-
-/**
- * Fleet pools, templates, claims and images. Cua Cloud has ended: this
- * always fails with the "Cua Cloud has ended" error and never connects.
- */
-    fleet(): FleetLike /*throws*/ {
-    return FfiConverterTypeFleet.lift(uniffiCaller.rustCallWithError(
-            /*liftError:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError),
-            /*caller:*/ (callStatus) => {
-                return nativeModule().uniffi_cua_sdk_fn_method_cua_fleet(
                 uniffiTypeCuaObjectFactory.clonePointer(this),
                 callStatus);
             },
@@ -37314,6 +34309,15 @@ export interface HostLike {
  */
     configure(change: HostSettingsChange, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<HostStatus>;
 /**
+ * macOS: moves the host service from the old LaunchAgent to the Cua
+ * Spaces app (its own login item, "Cua Spaces"), keeping this machine's
+ * registration, id and Spaces; puts the old one back if the helper
+ * does not take over (the outcome says so). `app_version`: a failed
+ * move is not tried again by itself with the same version; `force`
+ * tries anyway.
+ */
+    migrateService(force: boolean, appVersion: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<HostServiceMigration>;
+/**
  * Pause relay sharing while nobody is signed in to the owner's
  * account: the host leaves the relay and stays off it (also across a
  * restart) with its setup kept. Direct mode is left alone.
@@ -37407,6 +34411,46 @@ export class Host extends UniffiAbstractObject implements HostLike {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterTypeHostStatus.lift.bind(FfiConverterTypeHostStatus),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * macOS: moves the host service from the old LaunchAgent to the Cua
+ * Spaces app (its own login item, "Cua Spaces"), keeping this machine's
+ * registration, id and Spaces; puts the old one back if the helper
+ * does not take over (the outcome says so). `app_version`: a failed
+ * move is not tried again by itself with the same version; `force`
+ * tries anyway.
+ */
+    async migrateService(force: boolean, appVersion: string, asyncOpts_?: { signal: AbortSignal }): Promise<HostServiceMigration> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_host_migrate_service(
+                    uniffiTypeHostObjectFactory.clonePointer(this),FfiConverterBool.lower(force, nativeModule().rustbuffer_alloc),FfiConverterString.lower(appVersion, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeHostServiceMigration.lift.bind(FfiConverterTypeHostServiceMigration),
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
@@ -38129,9 +35173,6 @@ const FfiConverterSequenceTypeCloudCheck = new FfiConverterArray(FfiConverterTyp
 // FfiConverter for Array<CloudResource>
 const FfiConverterSequenceTypeCloudResource = new FfiConverterArray(FfiConverterTypeCloudResource);
 
-// FfiConverter for number | undefined
-const FfiConverterOptionalUInt32 = new FfiConverterOptional(FfiConverterUInt32);
-
 // FfiConverter for Array<CloudProvider>
 const FfiConverterSequenceTypeCloudProvider = new FfiConverterArray(FfiConverterTypeCloudProvider);
 
@@ -38147,8 +35188,8 @@ const FfiConverterOptionalSequenceString = new FfiConverterOptional(FfiConverter
 // FfiConverter for Array<number>
 const FfiConverterSequenceUInt16 = new FfiConverterArray(FfiConverterUInt16);
 
-// FfiConverter for FleetSettings | undefined
-const FfiConverterOptionalTypeFleetSettings = new FfiConverterOptional(FfiConverterTypeFleetSettings);
+// FfiConverter for number | undefined
+const FfiConverterOptionalUInt32 = new FfiConverterOptional(FfiConverterUInt32);
 
 // FfiConverter for Array<RelayDevice>
 const FfiConverterSequenceTypeRelayDevice = new FfiConverterArray(FfiConverterTypeRelayDevice);
@@ -38201,27 +35242,6 @@ const FfiConverterOptionalInt32 = new FfiConverterOptional(FfiConverterInt32);
 // FfiConverter for bigint | undefined
 const FfiConverterOptionalInt64 = new FfiConverterOptional(FfiConverterInt64);
 
-// FfiConverter for FleetBillingCard | undefined
-const FfiConverterOptionalTypeFleetBillingCard = new FfiConverterOptional(FfiConverterTypeFleetBillingCard);
-
-// FfiConverter for FleetBillingCredit | undefined
-const FfiConverterOptionalTypeFleetBillingCredit = new FfiConverterOptional(FfiConverterTypeFleetBillingCredit);
-
-// FfiConverter for Map<string, number>
-const FfiConverterMapStringUInt16 = new FfiConverterMap(FfiConverterString, FfiConverterUInt16);
-
-// FfiConverter for number | undefined
-const FfiConverterOptionalUInt16 = new FfiConverterOptional(FfiConverterUInt16);
-
-// FfiConverter for ReadinessProbe | undefined
-const FfiConverterOptionalTypeReadinessProbe = new FfiConverterOptional(FfiConverterTypeReadinessProbe);
-
-// FfiConverter for Array<Container>
-const FfiConverterSequenceTypeContainer = new FfiConverterArray(FfiConverterTypeContainer);
-
-// FfiConverter for RegistrySecret | undefined
-const FfiConverterOptionalTypeRegistrySecret = new FfiConverterOptional(FfiConverterTypeRegistrySecret);
-
 // FfiConverter for Array<GpuOption>
 const FfiConverterSequenceTypeGpuOption = new FfiConverterArray(FfiConverterTypeGpuOption);
 
@@ -38252,6 +35272,9 @@ const FfiConverterOptionalTypeStorageVolume = new FfiConverterOptional(FfiConver
 // FfiConverter for Map<string, Array<string>>
 const FfiConverterMapStringSequenceString = new FfiConverterMap(FfiConverterString, FfiConverterSequenceString);
 
+// FfiConverter for Array<MachineHealthCheck>
+const FfiConverterSequenceTypeMachineHealthCheck = new FfiConverterArray(FfiConverterTypeMachineHealthCheck);
+
 // FfiConverter for PresenceParticipant | undefined
 const FfiConverterOptionalTypePresenceParticipant = new FfiConverterOptional(FfiConverterTypePresenceParticipant);
 
@@ -38260,6 +35283,9 @@ const FfiConverterOptionalTypePresenceCursor = new FfiConverterOptional(FfiConve
 
 // FfiConverter for ExitInfo | undefined
 const FfiConverterOptionalTypeExitInfo = new FfiConverterOptional(FfiConverterTypeExitInfo);
+
+// FfiConverter for number | undefined
+const FfiConverterOptionalUInt16 = new FfiConverterOptional(FfiConverterUInt16);
 
 // FfiConverter for GuestUsage | undefined
 const FfiConverterOptionalTypeGuestUsage = new FfiConverterOptional(FfiConverterTypeGuestUsage);
@@ -38276,11 +35302,17 @@ const FfiConverterSequenceTypeComputerResources = new FfiConverterArray(FfiConve
 // FfiConverter for ComputerResources | undefined
 const FfiConverterOptionalTypeComputerResources = new FfiConverterOptional(FfiConverterTypeComputerResources);
 
+// FfiConverter for Map<string, number>
+const FfiConverterMapStringUInt16 = new FfiConverterMap(FfiConverterString, FfiConverterUInt16);
+
 // FfiConverter for Array<ReadinessProbe>
 const FfiConverterSequenceTypeReadinessProbe = new FfiConverterArray(FfiConverterTypeReadinessProbe);
 
-// FfiConverter for CloudOptions | undefined
-const FfiConverterOptionalTypeCloudOptions = new FfiConverterOptional(FfiConverterTypeCloudOptions);
+// FfiConverter for Array<Container>
+const FfiConverterSequenceTypeContainer = new FfiConverterArray(FfiConverterTypeContainer);
+
+// FfiConverter for RegistrySecret | undefined
+const FfiConverterOptionalTypeRegistrySecret = new FfiConverterOptional(FfiConverterTypeRegistrySecret);
 
 // FfiConverter for ImageBuild | undefined
 const FfiConverterOptionalTypeImageBuild = new FfiConverterOptional(FfiConverterTypeImageBuild);
@@ -38353,18 +35385,6 @@ const FfiConverterOptionalTypeAgentRunOptions = new FfiConverterOptional(FfiConv
 
 // FfiConverter for Array<PairingCode>
 const FfiConverterSequenceTypePairingCode = new FfiConverterArray(FfiConverterTypePairingCode);
-
-// FfiConverter for Array<FleetClaim>
-const FfiConverterSequenceTypeFleetClaim = new FfiConverterArray(FfiConverterTypeFleetClaim);
-
-// FfiConverter for Array<FleetPool>
-const FfiConverterSequenceTypeFleetPool = new FfiConverterArray(FfiConverterTypeFleetPool);
-
-// FfiConverter for Array<FleetManagedPool>
-const FfiConverterSequenceTypeFleetManagedPool = new FfiConverterArray(FfiConverterTypeFleetManagedPool);
-
-// FfiConverter for FleetUsagePricing | undefined
-const FfiConverterOptionalTypeFleetUsagePricing = new FfiConverterOptional(FfiConverterTypeFleetUsagePricing);
 
 // FfiConverter for Array<SetupStep>
 const FfiConverterSequenceTypeSetupStep = new FfiConverterArray(FfiConverterTypeSetupStep);
@@ -38535,7 +35555,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_func_config_path() !== 14727) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_config_path");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_func_config_set() !== 13213) {
+    if (nativeModule().uniffi_cua_sdk_checksum_func_config_set() !== 33388) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_config_set");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_func_config_unset() !== 24761) {
@@ -38550,29 +35570,14 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_func_error_doc_url() !== 10839) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_error_doc_url");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_func_fleet_check_runtime() !== 18168) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_fleet_check_runtime");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_func_fleet_generate_claim_token() !== 46314) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_fleet_generate_claim_token");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_func_fleet_image_variant() !== 30093) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_fleet_image_variant");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_func_fleet_resolve_runtime() !== 15632) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_fleet_resolve_runtime");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_func_fleet_size_limits() !== 53900) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_fleet_size_limits");
-    }
     if (nativeModule().uniffi_cua_sdk_checksum_func_image_alias() !== 25551) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_image_alias");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_func_locations() !== 62174) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_locations");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_func_may_have_fleet_session() !== 10680) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_may_have_fleet_session");
+    if (nativeModule().uniffi_cua_sdk_checksum_func_may_have_session() !== 35927) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_may_have_session");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_func_mcp_connect() !== 26472) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_mcp_connect");
@@ -38586,7 +35591,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_func_omarchy_image() !== 9950) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_omarchy_image");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_func_parse_sandbox_ref() !== 45182) {
+    if (nativeModule().uniffi_cua_sdk_checksum_func_parse_sandbox_ref() !== 7299) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_parse_sandbox_ref");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_func_presence_color() !== 238) {
@@ -38613,7 +35618,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_func_qualify_sandbox_ref() !== 59566) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_qualify_sandbox_ref");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_func_resolve_image() !== 51943) {
+    if (nativeModule().uniffi_cua_sdk_checksum_func_resolve_image() !== 56346) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_resolve_image");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_func_resolve_image_with_secret() !== 48984) {
@@ -38739,6 +35744,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_setup_cua_driver() !== 33764) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_agentsetup_setup_cua_driver");
     }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_sign_in() !== 10179) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_agentsetup_sign_in");
+    }
     if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_skills() !== 53692) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_agentsetup_skills");
     }
@@ -38808,7 +35816,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_constructor_cua_connect() !== 19646) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_constructor_cua_connect");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_constructor_cua_embedded() !== 26623) {
+    if (nativeModule().uniffi_cua_sdk_checksum_constructor_cua_embedded() !== 54998) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_constructor_cua_embedded");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_cua_agent_setup() !== 50422) {
@@ -38816,9 +35824,6 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_cua_auth() !== 19106) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_auth");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_cua_fleet() !== 45933) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_fleet");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_cua_info() !== 11159) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_info");
@@ -38868,6 +35873,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_devices_rename() !== 59535) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_devices_rename");
     }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_devices_rename_machine() !== 63088) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_devices_rename_machine");
+    }
     if (nativeModule().uniffi_cua_sdk_checksum_method_devices_revoke() !== 27802) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_devices_revoke");
     }
@@ -38876,105 +35884,6 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_devices_snapshot() !== 26132) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_devices_snapshot");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_acquire() !== 16535) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_acquire");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_acquire_with() !== 8432) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_acquire_with");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_apply() !== 23134) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_apply");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_apply_pool() !== 43781) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_apply_pool");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_apply_pool_template() !== 43651) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_apply_pool_template");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_attach_claim() !== 27491) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_attach_claim");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_base_url() !== 7166) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_base_url");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_billing_status() !== 50128) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_billing_status");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_check_pool_spec() !== 58799) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_check_pool_spec");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_claim() !== 33116) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_claim");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_create_image() !== 53686) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_create_image");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_create_signed_service_url() !== 1809) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_create_signed_service_url");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_delete_image() !== 54232) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_delete_image");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_delete_pool() !== 41031) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_delete_pool");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_ephemeral_pool_name() !== 51788) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_ephemeral_pool_name");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_export_pool() !== 36800) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_export_pool");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_get_image() !== 26535) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_get_image");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_get_pool() !== 27007) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_get_pool");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_keep_alive() !== 21850) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_keep_alive");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_list_claims() !== 30494) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_list_claims");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_list_images() !== 5380) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_list_images");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_list_pools() !== 19148) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_list_pools");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_list_templates() !== 27819) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_list_templates");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_pool_image_info() !== 2800) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_pool_image_info");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_pools() !== 34094) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_pools");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_release() !== 34855) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_release");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_service_url() !== 49169) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_service_url");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_set_pool_replicas() !== 32806) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_set_pool_replicas");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_usage_pricing() !== 25347) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_usage_pricing");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_wait_pool_ready() !== 64422) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_wait_pool_ready");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleetpools_gc() !== 4829) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleetpools_gc");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleetpools_gc_pools() !== 3481) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleetpools_gc_pools");
-    }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleetpools_list() !== 61403) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleetpools_list");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_framesink_on_frame() !== 56500) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_framesink_on_frame");
@@ -38999,6 +35908,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_host_configure() !== 36828) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_host_configure");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_host_migrate_service() !== 36386) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_host_migrate_service");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_host_pause_signed_out() !== 3338) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_host_pause_signed_out");
@@ -39186,9 +36098,6 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_delete() !== 17492) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandbox_delete");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_detach() !== 26534) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandbox_detach");
-    }
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_forward() !== 19019) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandbox_forward");
     }
@@ -39204,7 +36113,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_id() !== 11596) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandbox_id");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_image_info() !== 19322) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_image_info() !== 9393) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandbox_image_info");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_info() !== 9231) {
@@ -39279,7 +36188,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandbox_wait_ready() !== 17033) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandbox_wait_ready");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_cancel_create() !== 32419) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_cancel_create() !== 52079) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandboxes_cancel_create");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_connect() !== 12250) {
@@ -39297,13 +36206,13 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_get() !== 32181) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandboxes_get");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_list() !== 6497) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_list() !== 11890) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandboxes_list");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_list_all() !== 9098) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandboxes_list_all");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_list_with_warnings() !== 39432) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_sandboxes_list_with_warnings() !== 59684) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_sandboxes_list_with_warnings");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_service_endpoint() !== 13535) {
@@ -39324,7 +36233,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_service_request() !== 31558) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_service_request");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_service_url() !== 25888) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_service_url() !== 22228) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_service_url");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_space_agent_events() !== 25540) {
@@ -39525,7 +36434,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_call_tool_json() !== 63270) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_call_tool_json");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_cancel_create() !== 53246) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_cancel_create() !== 14647) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_cancel_create");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_cloud_connect() !== 30460) {
@@ -39572,6 +36481,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_list_tools_json() !== 19259) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_list_tools_json");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_machine_health() !== 35352) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_machine_health");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_notifications() !== 10964) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_notifications");
@@ -39765,7 +36677,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_spacesdclient_hotkey() !== 58197) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spacesdclient_hotkey");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_spacesdclient_http() !== 43966) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spacesdclient_http() !== 51813) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spacesdclient_http");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spacesdclient_json_methods() !== 32263) {
@@ -39855,7 +36767,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_spacesdprocess_resize() !== 46607) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spacesdprocess_resize");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_spacesdprocess_signal() !== 61925) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spacesdprocess_signal() !== 44588) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spacesdprocess_signal");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spacesdprocess_tag() !== 24315) {
@@ -39920,7 +36832,6 @@ export default Object.freeze({
     FfiConverterTypeCloudCredentials,
     FfiConverterTypeCloudDisconnected,
     FfiConverterTypeCloudKind,
-    FfiConverterTypeCloudOptions,
     FfiConverterTypeCloudProvider,
     FfiConverterTypeCloudResource,
     FfiConverterTypeCloudStatus,
@@ -39971,23 +36882,6 @@ export default Object.freeze({
     FfiConverterTypeDriveView,
     FfiConverterTypeExitInfo,
     FfiConverterTypeFileEntry,
-    FfiConverterTypeFleet,
-    FfiConverterTypeFleetBillingCard,
-    FfiConverterTypeFleetBillingCredit,
-    FfiConverterTypeFleetBillingStatus,
-    FfiConverterTypeFleetClaim,
-    FfiConverterTypeFleetClaimOptions,
-    FfiConverterTypeFleetGcReport,
-    FfiConverterTypeFleetManagedPool,
-    FfiConverterTypeFleetPool,
-    FfiConverterTypeFleetPoolExport,
-    FfiConverterTypeFleetPoolSpec,
-    FfiConverterTypeFleetPools,
-    FfiConverterTypeFleetSandbox,
-    FfiConverterTypeFleetSettings,
-    FfiConverterTypeFleetSignedUrl,
-    FfiConverterTypeFleetSizeLimits,
-    FfiConverterTypeFleetUsagePricing,
     FfiConverterTypeFrameSink,
     FfiConverterTypeGpuOption,
     FfiConverterTypeGpuSupport,
@@ -39998,6 +36892,7 @@ export default Object.freeze({
     FfiConverterTypeHostAccessRecord,
     FfiConverterTypeHostPermission,
     FfiConverterTypeHostProvidedSpace,
+    FfiConverterTypeHostServiceMigration,
     FfiConverterTypeHostSettingsChange,
     FfiConverterTypeHostSetupOptions,
     FfiConverterTypeHostSpacesAuditRecord,
@@ -40014,6 +36909,8 @@ export default Object.freeze({
     FfiConverterTypeLocationInfo,
     FfiConverterTypeLoginAttempt,
     FfiConverterTypeLoginMethod,
+    FfiConverterTypeMachineHealth,
+    FfiConverterTypeMachineHealthCheck,
     FfiConverterTypeMcpClient,
     FfiConverterTypeMcpConfig,
     FfiConverterTypeMediaBridge,
@@ -40028,7 +36925,6 @@ export default Object.freeze({
     FfiConverterTypePersistentAgentInfo,
     FfiConverterTypePersistentAgentOptions,
     FfiConverterTypePoint,
-    FfiConverterTypePoolOptions,
     FfiConverterTypePortForward,
     FfiConverterTypePresenceCursor,
     FfiConverterTypePresenceDrawable,
@@ -40066,7 +36962,6 @@ export default Object.freeze({
     FfiConverterTypeSandboxListing,
     FfiConverterTypeSandboxPhase,
     FfiConverterTypeSandboxRefParts,
-    FfiConverterTypeSandboxSpec,
     FfiConverterTypeSandboxStatus,
     FfiConverterTypeSandboxes,
     FfiConverterTypeScreenshot,

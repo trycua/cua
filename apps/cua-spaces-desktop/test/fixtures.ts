@@ -21,7 +21,7 @@ import type {
   SpacePresenceLike,
   TeleportLike,
 } from "../src/native/generated/index";
-import type { LocalRuntimes, SpaceThumbnailData, SpacesBackend } from "../src/model/backend";
+import type { LocalRuntimes, MachineHealthReport, SpaceThumbnailData, SpacesBackend } from "../src/model/backend";
 import type { StreamWindow } from "../src/model/streams";
 import type { AccountProfile, AccountRunning, LinkNoticeView, SignInAttempt, TelemetryRunning } from "../src/model/services";
 
@@ -134,6 +134,20 @@ export class FixtureSpacesBackend implements SpacesBackend {
   async remove(id: string, removeOnly: boolean) {
     this.removed.push({ id, removeOnly });
     this.rowsNow = this.rowsNow.filter((r) => r.id !== id);
+  }
+  /** What `machineHealth` answers, by machine (`this` for this one); a string is the error it throws. */
+  health = new Map<string, MachineHealthReport | string>();
+  readonly healthAsked: (string | null)[] = [];
+  async machineHealth(machine: string | null): Promise<MachineHealthReport> {
+    this.healthAsked.push(machine);
+    const h = this.health.get(machine ?? "this");
+    if (typeof h === "string") throw new Error(h);
+    return h ?? { cuaVersion: "0.4.1", checks: [] };
+  }
+  readonly unregistered: string[] = [];
+  async relayUnregister(machineId: string) {
+    this.unregistered.push(machineId);
+    this.rowsNow = this.rowsNow.filter((r) => r.id !== `relay:${machineId}`);
   }
   async setPower(id: string, on: boolean) {
     this.power.push({ id, on });
@@ -291,6 +305,8 @@ export function unconfiguredHost(): HostStatus {
     pausedSignedOut: false,
     owner: undefined,
     ownerEmail: undefined,
+    helperAvailable: false,
+    legacyService: false,
   };
 }
 
@@ -342,6 +358,7 @@ export function fixtureDevices(now = BigInt(Math.floor(Date.now() / 1000))): Dev
 export class FixtureAccount implements AccountRunning {
   current: string | null;
   private finish: ((who: string) => void) | null = null;
+  private fail: ((e: Error) => void) | null = null;
   constructor(identity: string | null = null) {
     this.current = identity;
   }
@@ -352,7 +369,7 @@ export class FixtureAccount implements AccountRunning {
     return this.current ? { email: this.current } : null;
   }
   async beginSignIn(): Promise<SignInAttempt> {
-    const done = new Promise<string>((resolve) => (this.finish = resolve));
+    const done = new Promise<string>((resolve, reject) => ((this.finish = resolve), (this.fail = reject)));
     return {
       userCode: "ABCD-1234",
       url: "https://cua.ai/device",
@@ -364,6 +381,10 @@ export class FixtureAccount implements AccountRunning {
   }
   completeSignIn(who: string) {
     this.finish?.(who);
+  }
+  /** The sign-in fails (the network dropped, the code expired). */
+  failSignIn(error: Error) {
+    this.fail?.(error);
   }
   async signOut() {
     this.current = null;

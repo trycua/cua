@@ -1,7 +1,7 @@
 {
   "name": "@cua/cua-spaces",
   "private": true,
-  "version": "0.10.0",
+  "version": "0.13.1",
   "license": "FSL-1.1-MIT",
   "description": "Cua Spaces notch fleet portal - Tauri 2 prototype with synthetic data",
   "type": "module",
@@ -22,8 +22,12 @@
     "@tauri-apps/api": "^2.5.0",
     "@tauri-apps/plugin-process": "^2.0.0",
     "@tauri-apps/plugin-updater": "^2.0.0",
+    "i18next": "^26.5.2",
+    "i18next-icu": "^2.6.1",
+    "intl-messageformat": "^12.1.3",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "react-i18next": "^17.1.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.5.0",

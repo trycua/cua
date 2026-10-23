@@ -1,6 +1,7 @@
 {
   "title": "Guides",
   "pages": [
+    "own-harness",
     "images",
     "services",
     "lifecycle",

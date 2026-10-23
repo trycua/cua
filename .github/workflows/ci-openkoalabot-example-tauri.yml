@@ -10,7 +10,7 @@ name: "CI: openkoalabot-example (Tauri)"
 on:
   pull_request:
     paths:
-      - "samples/openkoalabot-example-tauri/**"
+      - "examples/openkoalabot-example-tauri/**"
       - "libs/cua/**"
       - "libs/cua-spacesd/**"
       - ".github/workflows/ci-openkoalabot-example-tauri.yml"
@@ -25,7 +25,7 @@ concurrency:
 
 defaults:
   run:
-    working-directory: samples/openkoalabot-example-tauri
+    working-directory: examples/openkoalabot-example-tauri
 
 env:
   CARGO_NET_RETRY: "10"
@@ -37,6 +37,7 @@ env:
 
 jobs:
   check:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: cargo check + core tests + vitest
     runs-on: ubuntu-22.04
     timeout-minutes: 60
@@ -55,9 +56,9 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: samples/openkoalabot-example-tauri/pnpm-lock.yaml
+          cache-dependency-path: examples/openkoalabot-example-tauri/pnpm-lock.yaml
       - name: Install Rust (toolchain from rust-toolchain.toml)
-        working-directory: samples/openkoalabot-example-tauri/src-tauri
+        working-directory: examples/openkoalabot-example-tauri/src-tauri
         run: rustup show active-toolchain || rustup toolchain install
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
@@ -75,14 +76,14 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            samples/openkoalabot-example-tauri/src-tauri/target
-          key: openkoalabot-example-tauri-${{ hashFiles('samples/openkoalabot-example-tauri/src-tauri/Cargo.lock') }}
+            examples/openkoalabot-example-tauri/src-tauri/target
+          key: openkoalabot-example-tauri-${{ hashFiles('examples/openkoalabot-example-tauri/src-tauri/Cargo.lock') }}
           restore-keys: openkoalabot-example-tauri-
       - name: cargo check (core + Tauri shell)
-        working-directory: samples/openkoalabot-example-tauri/src-tauri
+        working-directory: examples/openkoalabot-example-tauri/src-tauri
         run: cargo check --locked --workspace --all-targets
       - name: Core tests (hermetic)
-        working-directory: samples/openkoalabot-example-tauri/src-tauri
+        working-directory: examples/openkoalabot-example-tauri/src-tauri
         run: cargo test --locked -p openkoalabot-example-core -- --test-threads=4
       # The UI links @trycua/cua from the repo (link:../../libs/cua/typescript);
       # its subpath exports (teleport, spaces/presence, ...) resolve to the

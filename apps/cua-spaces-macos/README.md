@@ -17,6 +17,7 @@ render and do platform glue.
 | Launch at login | Settings → General: `SMAppService.mainApp`, showing what macOS reports (on, off, waiting for approval with a button to Login Items, not found); the first run's Done page (the web onboarding's) ticks it. A login launch opens without the main window, and the app's daemon (host Spaces, persistent agents, Cua Volume) starts with it |
 | Join with a code | `host.joinWithCode` runs the bundled `cua host setup --pair <code>` (3 minute limit); `cua://add/<CODE>` opens Machines at `?join=<CODE>` and the page asks before joining |
 | Notch panel | The "N Spaces" tab, Space tiles with live thumbnails, and the Teleport prompt; hover opens it after 300 ms, a dragged window or file drops on a tile. Window drags need Accessibility; the panel says so with an Open Settings button |
+| Teams billing | Settings shows a failed-payment notice for a Teams plan, and adding a team computer without a paid plan fails at once with an Upgrade button (owner) or "Ask the team owner" (member) |
 
 Keyboard in the live desktop (main window and floating viewer): once you
 click the stream it has the keyboard, and Command chords go to the Space
@@ -71,6 +72,7 @@ pressed look; `CUA_SPACES_UPDATER=live` runs Sparkle in a fixtures run (the feed
 Info.plist; use a test bundle identifier and a local feed), `CUA_SPACES_UPDATE_CHECK=background`
 checks at launch, and `CUA_SPACES_REFRESH=1` runs the after-update refresh in a fixtures
 run (with a throwaway `HOME`). State lives under `$HOME/Library/Application Support/com.trycua.spaces.macos`.
+`CUA_SPACES_FIXTURE_PEER_CUA=<version>` (fixtures) signs the fixture account in with one Linux machine, `ellieln`, that shares its desktop, provides a Space and runs that Cua (This Mac reports 0.6.0), and `CUA_SPACES_FIXTURE_UPDATE=<version>` has that Cua Spaces update downloaded; `CUA_SPACES_WEBUI_CAPTURE_SELECT=<machine id>` captures the Machines page with that machine chosen;
 `CUA_SPACES_OFFSCREEN=1` runs with nothing on screen, for captures on a Mac in use (`OffscreenRun`): an accessory app (no Dock icon or menu bar), no menu bar item, notch or global shortcut, no activation, and transparent click-through windows that still paint, so `CUA_SPACES_WEBUI_CAPTURE` works (with fixtures and a throwaway `HOME`, a first run captures `/onboarding`).
 `CuaSpacesMac --check-launch-only` loads the app's libraries, prints its version and exits
 (`scripts/check-launch.sh`; release builds too).
@@ -389,6 +391,14 @@ splits commits by package path and skips a path with no commits (even for a
 targeted bump), so a change only under `libs/spaces-app-swift` does not open
 one on its own: land it with the app change that uses it.
 
+The same holds for the `cua` the app bundles (built from `libs/cua`): a
+cua-sdk release is a chore commit under `libs/cua`, so it opens no app
+release. `BUNDLED_CUA_VERSION` records the cua the app bundles, and the
+`Release: Bundle the new cua in Cua Spaces` workflow opens a
+`fix(spaces-macos)` PR that updates it whenever `libs/cua/VERSION` changes
+on main. Merging that PR makes Release Please open the next `cua-spaces`
+release, so the app never lags the machines running the new cua.
+
 ### Publishing the appcast (runbook)
 
 1. The key: the `CUA_SPACES_SPARKLE_ED_PRIVATE_KEY` secret (base64 Ed25519
@@ -422,4 +432,4 @@ first party to the Keyvault and cannot be notarized.
 
 ## License
 
-Source-available under FSL-1.1-MIT ([LICENSE](LICENSE)). Offering it as a hosted or managed service needs a commercial licence: see [COMMERCIAL.md](../../COMMERCIAL.md).
+Source-available under FSL-1.1-MIT ([LICENSE](LICENSE)). Offering it as a hosted or managed service needs a commercial licence: see [COMMERCIAL.md](../../legal/COMMERCIAL.md).

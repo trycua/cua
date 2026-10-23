@@ -168,6 +168,8 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     agentSetup: demoAgentSetup(),
     platform: options.platform ?? MAC_DEMO_PLATFORM,
     paired: [],
+    renamed: {},
+    removed: [],
     hostSettings: options.macHost ? DEMO_MAC_HOST_SETTINGS : undefined,
     volume: demoVolumeState(now(), options.onboarded !== false, options.platform),
     ...demoTelemetryState(),
@@ -348,7 +350,25 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       return null;
     },
 
-    "machines.list": () => [...demoMachineRows(now(), state.host, state.platform), ...state.paired.map((m) => ({ ...m, limits: [...m.limits] }))],
+    "machines.list": () =>
+      [...demoMachineRows(now(), state.host, state.platform), ...state.paired.map((m) => ({ ...m, limits: [...m.limits] }))]
+        .filter((m) => !state.removed.includes(m.id))
+        .map((m) => (state.renamed[m.id] ? { ...m, name: state.renamed[m.id]! } : m)),
+    "machines.rename": async ({ id, name }) => {
+      await wait(step / 2);
+      state.renamed = { ...state.renamed, [id]: name };
+      emit({ type: "machines.changed" });
+      return null;
+    },
+    // The demo machines are drawn by the core from their rows, with no
+    // daemon to ask: nothing to check.
+    "machines.checkHealth": () => null,
+    "machines.remove": async ({ machine, device }) => {
+      await wait(step / 2);
+      state.removed = [...state.removed, ...[machine, device].filter((x): x is string => Boolean(x))];
+      emit({ type: "machines.changed" });
+      return null;
+    },
     "host.status": () => ({ ...state.host }),
 
     "settings.get": () => settingsSnapshot(),
@@ -499,6 +519,16 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       return null;
     },
     "agents.setup": () => state.agentSetup.map((r) => ({ ...r })),
+    // The demo's browser sign-in finishes a moment later.
+    "agents.signIn": async ({ agent }) => {
+      const row = state.agentSetup.find((r) => r.agent === agent);
+      if (!row?.signIn) throw new Error(`${row?.name ?? agent} has no sign-in Cua can start`);
+      if (!row.installed) throw new Error(`${row.name} isn't installed on this computer`);
+      setTimeout(() => {
+        state.agentSetup = state.agentSetup.map((r) => (r.agent === agent ? { ...r, signedIn: true } : r));
+      }, step * 40);
+      return state.agentSetup.map((r) => ({ ...r }));
+    },
     "agents.configure": async ({ agents }) => {
       await wait(step);
       const wanted = (r: AgentSetupRow) => r.installed && (agents === null || agents.includes(r.agent));
@@ -577,6 +607,10 @@ export interface DemoState extends DemoTelemetryState, DemoRelayUsageState, Demo
   platform: DemoPlatform;
   /** Machines added with a pairing code ("Add a machine"). */
   paired: MachineRow[];
+  /** Machines renamed on the Machines page (`machines.rename`), by id. */
+  renamed: Record<string, string>;
+  /** Machines removed from the account (`machines.remove`). */
+  removed: string[];
   /** `?demo=mac-host`: the Keyvault's switches the SwiftUI host lays out in Settings. */
   hostSettings?: HostSettings;
 }

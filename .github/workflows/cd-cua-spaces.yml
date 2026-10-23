@@ -1696,6 +1696,60 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: .github/scripts/request_staging_smoke.sh cua-spaces "$GITHUB_SHA"
 
+  # Promote check (CUA-2067, phase 2 of CUA-1991). Looks for the signed set the
+  # main build made for this tag's commit and verifies it the way a promotion
+  # would: manifest source SHA and version, every digest, no extra files, and a
+  # GitHub attestation from cd-cua-spaces-build.yml on refs/heads/main. It only
+  # reports (job summary and outputs); nothing consumes it yet, so the tag run
+  # still builds and publishes as before. Off unless the repository variable
+  # CUA_SPACES_PROMOTE_CHECK is "true". Never fails the run.
+  promote-check:
+    name: Promote check (report only)
+    if: startsWith(github.ref, 'refs/tags/cua-spaces-v') && vars.CUA_SPACES_PROMOTE_CHECK == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: .
+    permissions:
+      contents: read
+      actions: read
+      attestations: read
+    outputs:
+      promotable: ${{ steps.verify.outputs.promotable }}
+      manifest_digest: ${{ steps.verify.outputs.manifest_digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Find and verify the main-built set for this commit
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          version="${GITHUB_REF_NAME#cua-spaces-v}"
+          report() { echo "$1" | tee -a "$GITHUB_STEP_SUMMARY"; }
+          echo "promotable=false" >> "$GITHUB_OUTPUT"
+          run_id="$(gh run list --workflow cd-cua-spaces-build.yml --branch main --commit "$GITHUB_SHA" \
+            --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+          if [ -z "$run_id" ]; then report "No successful main build for $GITHUB_SHA: this tag would fall back to the full build."; exit 0; fi
+          if ! gh run download "$run_id" --name "spaces-build-$GITHUB_SHA" --dir set; then
+            report "Main build run $run_id has no spaces-build-$GITHUB_SHA artifact (expired, or the build was a no-op): this tag would fall back to the full build."; exit 0
+          fi
+          out="$(python3 -I .github/scripts/spaces_verify_build_set.py set --tag-version "$version" --tag-sha "$GITHUB_SHA" --repository "$GITHUB_REPOSITORY")"
+          rc=$?
+          report "### Promote check for $GITHUB_REF_NAME (main build run $run_id)"
+          report '```'
+          report "$out"
+          report '```'
+          if [ $rc -eq 0 ]; then
+            echo "promotable=true" >> "$GITHUB_OUTPUT"
+            echo "manifest_digest=$(echo "$out" | sed -n 's/^manifest-digest=//p')" >> "$GITHUB_OUTPUT"
+            report "Promotable: yes. Nothing was promoted."
+          else
+            report "Promotable: no. The tag run builds as usual."
+          fi
+
   # Staging first (CUA-1907): customers get nothing unless the staging smoke
   # (cloud scripts/spaces-staging/smoke.py) is recorded green for this exact
   # commit as the commit status "staging-smoke/cua-spaces". Only a release

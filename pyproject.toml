@@ -54,6 +54,7 @@ test = [
     "pytest>=8.0.0",
 ]
 [tool.uv]
+default-groups = ["dev", "test"]
 package = false
 constraint-dependencies = [
     "fastmcp>=3.2.0,<3.3.0",

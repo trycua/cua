@@ -485,7 +485,7 @@ public final class AppModel {
         try await relay.renameMachine(id: machine, name: clean)
         await host.refresh()
         await devices.refresh()
-        await refresh()
+        await refresh(fresh: true)
     }
 
     /// Remove from account: `machine` leaves the relay directory, then
@@ -500,7 +500,7 @@ public final class AppModel {
             try await relay.revoke(id: device)
         }
         await devices.refresh()
-        await refresh()
+        await refresh(fresh: true)
     }
 
     /// What each machine sharing its desktop (`relay:<machine>`) reported
@@ -716,6 +716,11 @@ public final class AppModel {
     /// The registry read in flight: refreshes share it, so a read that
     /// never returns is asked once, not once a poll.
     private var rowsInFlight: Task<[AppSpaceRow], Error>?
+    /// Registry reads started so far, the one in flight and the newest
+    /// one shown: an older read that answers late is not shown over it.
+    private var rowsReads = 0
+    private var rowsInFlightRead = 0
+    private var rowsShownRead = 0
     private var hostInFlight: Task<Void, Never>?
 
     /// The list poll: a refresh every `interval`, each one bounded, and a
@@ -787,28 +792,41 @@ public final class AppModel {
         if finished, hostInFlight == task { hostInFlight = nil }
     }
 
-    /// The registry, shared and bounded (`TimeoutError` past `listTimeout`).
-    private func readRows() async throws -> [AppSpaceRow] {
-        let task = rowsInFlight ?? Task { [backend] in try await backend.rows() }
-        rowsInFlight = task
+    /// The registry, shared and bounded (`TimeoutError` past `listTimeout`),
+    /// with the number of the read that answered. `fresh`: a new read, not
+    /// one already in flight, which started before the change just made
+    /// and may answer without it.
+    private func readRows(fresh: Bool = false) async throws -> (rows: [AppSpaceRow], read: Int) {
+        if fresh || rowsInFlight == nil {
+            rowsReads += 1
+            rowsInFlightRead = rowsReads
+            rowsInFlight = Task { [backend] in try await backend.rows() }
+        }
+        guard let task = rowsInFlight else { throw CancellationError() }
+        let read = rowsInFlightRead
         let result = await withTimeout(seconds: listTimeout) { try await task.value }
         if case .failure(TimeoutError.timedOut) = result {
             // Still running: the next refresh waits on the same read.
         } else if rowsInFlight == task {
             rowsInFlight = nil
         }
-        return try result.get()
+        return (try result.get(), read)
     }
 
     /// Re-reads the registry (and the host). Bounded: a daemon that stopped
     /// answering leaves the list as it was, and the poll reconnects.
-    public func refresh() async {
+    /// `fresh` after a change this app made (a create, a delete): the list
+    /// is read again from now, so it shows the change.
+    public func refresh(fresh: Bool = false) async {
         await refreshHost()
         cloudConfigured = await backend.cloudAvailable()
         do {
-            let rows = try await readRows()
+            let (rows, read) = try await readRows(fresh: fresh)
             lastListOk = listClock()
             lastListAnswer = lastListOk
+            // A read from before a newer one already shown is out of date.
+            guard read >= rowsShownRead else { return }
+            rowsShownRead = read
             let now = Int64(Date().timeIntervalSince1970 * 1000)
             registrySpaces = appRowsToSpaces(rows: rows, nowMs: now)
             creates = appCreatesSettle(state: creates, spaces: registrySpaces)
@@ -1222,7 +1240,7 @@ public final class AppModel {
             }
             let id = try await awaitAccepted(create, accepted: accepted, pendingId: pendingId)
             sendCreate(.finish(id: pendingId, spaceId: id))
-            await refresh()
+            await refresh(fresh: true)
             if selectedSpaceId == pendingId { select(id) }
             // The registry lists it now; the pending row is gone from
             // the list already, so drop it from the state too.
@@ -1285,7 +1303,7 @@ public final class AppModel {
     public func addByAddress(url: String, token: String?, name: String?) async throws {
         try await backend.add(url: url, token: token, name: name)
         showingNewSpace = false
-        await refresh()
+        await refresh(fresh: true)
     }
 
     /// Whether the Space is being deleted (its row shows Deleting).
@@ -1315,7 +1333,7 @@ public final class AppModel {
             do {
                 try await backend.remove(id: space.id, removeOnly: removeOnly || detail.removeOnly)
                 sendCreate(.deleteDone(id: space.id))
-                await refresh()
+                await refresh(fresh: true)
             } catch {
                 sendCreate(.deleteFail(id: space.id))
                 show(error: appDeleteFailedText(name: space.name, error: LiveSpacesBackend.words(error)))
@@ -1340,7 +1358,7 @@ public final class AppModel {
             do {
                 try await backend.setPower(id: space.id, on: on)
                 sendCreate(.powerDone(id: space.id))
-                await refresh()
+                await refresh(fresh: true)
             } catch {
                 devices.noteRefusal(LiveSpacesBackend.words(error))
                 sendCreate(.powerFail(id: space.id, error: LiveSpacesBackend.words(error)))

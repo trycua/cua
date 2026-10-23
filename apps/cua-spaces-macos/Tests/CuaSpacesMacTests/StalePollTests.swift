@@ -39,11 +39,41 @@ import Testing
             await withCheckedContinuation { c in lock.withLock { hung.append(c) } }
         }
 
+        /// The next list read reads the rows, then answers only on
+        /// `answerHeldRead()` (a read that is slow to come back).
+        private var holdNext = false
+        private var heldRead: CheckedContinuation<Void, Never>?
+        private var answerHeld = false
+        func holdNextRead() { lock.withLock { holdNext = true } }
+        func answerHeldRead() {
+            let c = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+                answerHeld = true
+                defer { heldRead = nil }
+                return heldRead
+            }
+            c?.resume()
+        }
+
         func rows() async throws -> [AppSpaceRow] {
-            lock.withLock { listCalls += 1 }
+            let hold = lock.withLock { () -> Bool in
+                listCalls += 1
+                defer { holdNext = false }
+                return holdNext
+            }
             if wedged { await hang() }
             if let refusal = lock.withLock({ refusal }) { throw refusal }
-            return try await inner.rows()
+            let rows = try await inner.rows()
+            if hold {
+                await withCheckedContinuation { c in
+                    let now = lock.withLock { () -> Bool in
+                        if answerHeld { return true }
+                        heldRead = c
+                        return false
+                    }
+                    if now { c.resume() }
+                }
+            }
+            return rows
         }
 
         func create(_ args: AppCreateSpaceArgs, createId: String,
@@ -271,6 +301,31 @@ import Testing
         #expect(id == "local:e2e-1005-linux")
         #expect(second.createCalls == 1)
         #expect(await eventually { model.spaces.contains { $0.id == id } })
+    }
+
+    /// A list read still in flight when a create finished was read before
+    /// it: the create's own read is a new one (the Space is listed when
+    /// the create returns), and the older answer, coming in later, does
+    /// not take the Space off the list.
+    @Test func theListAfterACreateIsReadAfterIt() async throws {
+        let connection = Connection(rows: [Self.row("local:a")])
+        let gate = LiveGate<LiveServices>()
+        gate.resolve(LiveServices(backend: connection))
+        let model = makeModel(gate: gate) { nil }
+        model.listStaleAfter = 600
+        // The early refresh still waits when its read answers (a minute
+        // only bounds a run where the create's refresh joined that read).
+        model.listTimeout = 60
+        connection.holdNextRead()
+        let early = Task { await model.refresh() }
+        #expect(await eventually { connection.listCalls == 1 })
+
+        let id = try await model.runCreate(args("made"), os: .linux, pendingId: "pending:made")
+        #expect(model.spaces.contains { $0.id == id })
+        connection.answerHeldRead()
+        await early.value
+        #expect(model.spaces.contains { $0.id == id })
+        #expect(model.spaces.contains { $0.id == "local:a" })
     }
 
     @Test func aCreateTheDaemonNeverTakesTwiceFailsWithItsFix() async throws {

@@ -1797,7 +1797,7 @@ mod tests {
                 height: 780.0,
             },
             layer: 0,
-            z_index: 0,
+            z_index: Some(0),
             is_on_screen: true,
             current_space_id: None,
             on_current_space: Some(true),

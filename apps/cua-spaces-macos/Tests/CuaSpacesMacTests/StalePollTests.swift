@@ -65,7 +65,6 @@ import Testing
         func streamProvider(id: String) async throws -> SpaceStreamSourceProviding { try await inner.streamProvider(id: id) }
         func localBackends() async -> [String]? { ["docker"] }
         func localStorage() async -> LocalStorage? { nil }
-        func cloudAvailable() async -> Bool { false }
         func teleportContext(id: String) async throws -> (CuaSpacesFFI.Teleport, CuaSDK.Space)? { nil }
         func teleportHandle() -> CuaSpacesFFI.Teleport? { nil }
         func sendFiles(id: String, paths: [String]) async throws -> [AppSentFileInfo] { [] }

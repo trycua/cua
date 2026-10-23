@@ -591,7 +591,7 @@ export class BridgeStore {
     const os = osOf(req);
     const on = config.on ?? this.settingsSnap?.values.defaultLocation ?? "local";
     // A Space on one of your machines or in your own cloud lists as a relay machine.
-    const provider = on === "local" || on === "cloud" ? on : "relay";
+    const provider = on === "local" ? on : "relay";
     // The machine a create on one of yours runs on: its id lets the core
     // fold that machine's own record of the Space into this row, its name
     // is what the row and a failure call it.
@@ -909,10 +909,10 @@ export class BridgeStore {
 
   private publishSession(): void {
     if (!this.sessionSnap) return;
-    const identity = this.sessionSnap.fleet.identity ?? null;
+    const identity = this.sessionSnap.account.identity ?? null;
     const data: SessionData = {
       ...this.sessionSnap,
-      signedIn: this.sessionSnap.fleet.authMode !== "none" && this.sessionSnap.fleet.configured,
+      signedIn: this.sessionSnap.account.authMode !== "none" && this.sessionSnap.account.configured,
       identity,
       signIn: this.signInPhase,
       signInUrl: this.signInPhase.kind === "waiting" ? this.signInUrl : null,
@@ -928,7 +928,7 @@ export class BridgeStore {
     // A native host signed in, whichever attempt (a retry's, or one before
     // it) finished: the wait is over.
     const snap = this.sessionSnap;
-    if (snap && snap.hostSignIn !== undefined && snap.fleet.authMode === "user" && snap.fleet.identity) {
+    if (snap && snap.hostSignIn !== undefined && snap.account.authMode === "user" && snap.account.identity) {
       this.stopSignInTimer();
       this.signInPhase = { kind: "idle" };
       return;

@@ -131,7 +131,6 @@ pub fn this_machine_space(status: Option<&HostSummaryInput>, now: i64, os: Space
         last_used_at: now,
         started_at: None,
         scene: scene_for_os(os),
-        fleet_id: None,
         size: None,
         region: None,
         provider: None,

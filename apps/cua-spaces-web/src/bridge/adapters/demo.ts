@@ -240,13 +240,10 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     return withDemoCopies(o, state, now());
   };
   const session = (): SessionSnapshot => ({
-    fleet: {
+    account: {
       configured: Boolean(state.identity),
       authMode: state.identity ? "user" : "none",
-      baseUrl: "https://api.cua.ai",
-      tokenUrl: "https://auth.cua.ai/oauth/token",
       identity: state.identity,
-      namespaces: state.identity ? ["ada"] : [],
     },
     onboarding: { ...state.onboarding },
     daemon: { connected: true, version: "0.6.0", socketPath: "~/.cua/daemon.sock" },

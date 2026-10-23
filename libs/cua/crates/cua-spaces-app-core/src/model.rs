@@ -149,8 +149,6 @@ pub enum ThumbnailScene {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SpaceProvider {
-    /// Cua Cloud.
-    Cloud,
     /// This Mac.
     Local,
     /// A machine added by address.
@@ -163,7 +161,6 @@ impl SpaceProvider {
     /// The JSON word.
     pub fn as_str(self) -> &'static str {
         match self {
-            SpaceProvider::Cloud => "cloud",
             SpaceProvider::Local => "local",
             SpaceProvider::Direct => "direct",
             SpaceProvider::Relay => "relay",
@@ -173,7 +170,6 @@ impl SpaceProvider {
     /// A known location word.
     pub fn parse(word: &str) -> Option<Self> {
         match word {
-            "cloud" => Some(SpaceProvider::Cloud),
             "local" => Some(SpaceProvider::Local),
             "direct" => Some(SpaceProvider::Direct),
             "relay" => Some(SpaceProvider::Relay),
@@ -218,9 +214,6 @@ pub struct Space {
     pub started_at: Option<i64>,
     /// Placeholder scene.
     pub scene: ThumbnailScene,
-    /// Group (cloud namespace or location word).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fleet_id: Option<String>,
     /// Fixture machine size.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<String>,
@@ -339,10 +332,6 @@ pub struct SpaceProgress {
     /// Why the create failed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    /// It failed because the account is out of Cua Cloud credit: the
-    /// website billing page "Add credit" opens.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub credit_url: Option<String>,
     /// While it downloads: "4.2 of 22.1 GB · 85 MB/s · about 4 min"
     /// ([`crate::spaces::creating::transfer_text`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -520,19 +509,10 @@ pub fn emulation_warning_on(
     })
 }
 
-/// The apps offer Cua Cloud for new Spaces. Off: the apps create Spaces on
-/// this Mac and on machines added by address, and the New Space wizard
-/// shows "Your cloud" as coming soon. The cua SDK and CLI still create
-/// cloud sandboxes, and cloud Spaces that already exist still list.
-pub const CLOUD_SPACES_OFFERED: bool = false;
-
 /// Where new Spaces can be created.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Location {
-    /// Cua Cloud (the SDK's `on="cloud"`). The apps do not offer it for new
-    /// Spaces ([`CLOUD_SPACES_OFFERED`]); existing cloud Spaces still list.
-    Cloud,
     /// This Mac.
     Local,
     /// The user's own cloud account (AWS, Google Cloud, Modal), connected
@@ -546,7 +526,7 @@ pub enum Location {
 }
 
 impl Location {
-    /// "Cua Cloud" / "This Mac" / "Your cloud" / "Your machine".
+    /// "This Mac" / "Your cloud" / "Your machine".
     pub fn label(self) -> &'static str {
         self.label_on(SpaceOs::Macos)
     }
@@ -555,19 +535,9 @@ impl Location {
     /// "This computer" on Linux.
     pub fn label_on(self, os: SpaceOs) -> &'static str {
         match self {
-            Location::Cloud => "Cua Cloud",
             Location::Local => os.this_machine(),
             Location::Yours => "Your cloud",
             Location::Host => "Your computer",
-        }
-    }
-
-    /// Where an image goes when it cannot run here: this Mac, else Cua
-    /// Cloud.
-    pub fn other(self) -> Self {
-        match self {
-            Location::Cloud | Location::Yours | Location::Host => Location::Local,
-            Location::Local => Location::Cloud,
         }
     }
 
@@ -575,7 +545,6 @@ impl Location {
     /// provider's word and `host:<machine>` are).
     pub fn as_str(self) -> &'static str {
         match self {
-            Location::Cloud => "cloud",
             Location::Local => "local",
             Location::Yours => "yours",
             Location::Host => "host",
@@ -625,8 +594,6 @@ pub enum Runtime {
     Qemu,
     /// Lume.
     Lume,
-    /// KubeVirt.
-    Kubevirt,
 }
 
 impl Runtime {
@@ -638,7 +605,6 @@ impl Runtime {
             Runtime::Runc => "runc",
             Runtime::Qemu => "QEMU",
             Runtime::Lume => "Lume",
-            Runtime::Kubevirt => "KubeVirt",
         }
     }
 
@@ -650,7 +616,6 @@ impl Runtime {
             Runtime::Runc => "runc",
             Runtime::Qemu => "qemu",
             Runtime::Lume => "lume",
-            Runtime::Kubevirt => "kubevirt",
         }
     }
 }

@@ -1560,64 +1560,6 @@
         "cpusText": "2 cores",
         "disk": "20 GB (20-500) ~Uses about 1.7 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
         "fields": [
-          "os: System",
-          "image: Image [ghcr.io/org/app:tag]",
-          "placement: Run on",
-          "kind: Kind (advanced)",
-          "runtime: Runtime (advanced)",
-          "connect-by-address: Connect by address…"
-        ],
-        "gpu": null,
-        "image": "ghcr.io/trycua/omarchy:edge",
-        "imageField": {
-          "custom": false,
-          "error": null,
-          "open": false,
-          "rows": [],
-          "text": "ghcr.io/trycua/omarchy:edge"
-        },
-        "kinds": [
-          "vm"
-        ],
-        "labels": "Cancel | Back | Advanced",
-        "memoryText": "4 GB",
-        "nameInvalid": false,
-        "placement": "local",
-        "placementError": null,
-        "placements": [
-          "local"
-        ],
-        "price": null,
-        "primaryLabel": "Continue",
-        "ranges": "cpus 1-8, memory 2-16",
-        "resourceFacts": [
-          "Kind: Virtual machine",
-          "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Download: 1.7 GB",
-          "Available: 212 GB on Macintosh HD"
-        ],
-        "resourcesError": null,
-        "runtime": "auto",
-        "runtimes": [
-          "auto",
-          "qemu"
-        ],
-        "step": 0
-      },
-      "wizard": "set-placement"
-    },
-    {
-      "frame": {
-        "address": {
-          "canSubmit": false,
-          "error": null,
-          "submit": null,
-          "submitLabel": "Add Space"
-        },
-        "canContinue": true,
-        "cpusText": "2 cores",
-        "disk": "20 GB (20-500) ~Uses about 1.7 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
-        "fields": [
           "cpus: CPU cores",
           "memory: Memory",
           "disk: Disk"

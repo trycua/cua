@@ -11,7 +11,7 @@ import { core } from "../core";
 import type { Msg } from "../i18n";
 import type { DriveSyncInput } from "./persistent";
 import type { RemoteWindow } from "./teleport";
-import type { Location, Space, SpaceOs, SpaceStatus } from "./types";
+import type { Space, SpaceOs, SpaceStatus } from "./types";
 
 export interface SidebarRow {
   id: string;
@@ -118,9 +118,6 @@ export interface SpaceDetailView {
     cancelLabel: string;
   };
   sections: string[];
-  /** A cloud Space refused for want of credit: one line and "Add credit"
-   * (the website billing page). */
-  creditNotice?: { text: string; button: string; url: string } | null;
   /** Why turning it off or on failed, shown inline. */
   powerError?: string | null;
 }
@@ -302,14 +299,10 @@ export interface SettingsInput {
   signIn: SignInPhase;
   canSignOut: boolean;
   menuBar: boolean;
-  defaultLocation: Location;
-  locationLockedBy?: string | null;
   telemetry?: { enabled: boolean; lockedBy?: string | null } | null;
   agents?: AgentSettingsRow[] | null;
   agentsBusy: boolean;
   agentsPending: string[];
-  /** The account's Cua Cloud billing (Settings, Billing), once read. */
-  billing?: import("../native/fleet").BillingStatus | null;
   /** Launch at login, once the system was asked (none: no rows). */
   loginItem?: import("./loginItem").LoginItemInput | null;
   /** Settings, Experiments (what the page mentions follows them). */

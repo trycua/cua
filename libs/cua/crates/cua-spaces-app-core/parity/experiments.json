@@ -19,7 +19,6 @@
     "canSignOut": true,
     "signIn": { "kind": "idle" },
     "menuBar": false,
-    "defaultLocation": "local",
     "telemetry": { "enabled": true },
     "agents": [],
     "loginItem": { "status": "enabled" }
@@ -57,7 +56,6 @@
   },
   "env": {
     "defaultLocation": "local",
-    "cloudAvailable": false,
     "localAvailable": true,
     "localReason": null,
     "localBackends": ["docker"],
@@ -65,7 +63,6 @@
     "maxCpus": 8,
     "hostArch": "arm64",
     "storage": null,
-    "cloudPricing": null,
     "hosts": [
       { "id": "m-mini", "name": "Mac mini", "via": "relay", "online": true, "os": "macos", "limits": [] }
     ],

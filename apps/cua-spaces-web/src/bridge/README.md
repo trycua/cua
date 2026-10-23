@@ -36,7 +36,7 @@ import { BridgeProvider, useSpaces } from "@/bridge";
 | `useJoinWithCode({ onJoined? })` | "Join with a code": `{ phase, error, join(codeOrLink, relay?), reset() }`. `join` reads the code the way `cua host setup --pair` does (`pairing-code.ts`), then asks the host to run the bundled `cua host setup --pair` (`host.joinWithCode`). Opening the app with a `cua://add/<code>` link lands on `/machines?join=<code>`, which fills the dialog and waits for Join. |
 | `useSettings()` | `{ values, telemetry, defaultLocation, page }`, where `page` is the core's Settings layout. Action: `updateSetting(key, value)` for `theme`, `menuBar`, `hotkey`, `telemetry`, `defaultLocation`, `launchAtLogin` or `updateChannel`. The last two are `null` when the host can't offer them, and the Settings page hides their rows. `globalShortcut` is the host's ⌘⇧Space (macOS) with whether the system gave it to the app; absent or `null` where the host has none. |
 | `useKeyvault()` | `{ overview, groups, views, vaultState }`. `views` holds the core's `page`, `sidebar` and `vault` (the list grouped by app, then site). Actions: `unlock(passphrase?)`, `lockItem(id)`, `lockItems(ids)`, `unlockItems(ids)`, `setDisabled`, `approve`, `deny`, `revokeGrant`, `vaultAction(action)` (search, select, open), and `pane(selection)`. |
-| `useSession()` | `{ fleet, onboarding, daemon, signedIn, identity, signIn }`, where `signIn` is the sign-in phase. Actions: `signIn()`, `signOut()`, `completeOnboarding(mode)`, `openExternal(url)`. |
+| `useSession()` | `{ account, onboarding, daemon, signedIn, identity, signIn }`, where `signIn` is the sign-in phase. Actions: `signIn()`, `signOut()`, `completeOnboarding(mode)`, `openExternal(url)`. |
 | `useAgents()` | `{ agents, runs, unread, canList }`: persistent agents (state `running`, `paused` or `idle`, the core's row line and action label, the run the detail opens) and the runs in every running Space, in the core's order. Actions: `pauseAgent(name)`, `resumeAgent(name)`, `agentSetup()`, `configureAgents(agents?)`. |
 | `useAgentDetail(agent)` | A persistent agent's Memory, Routines and Access to this computer (`agent-detail.ts`): `{ view, busy, error, unsupported, thisMachine, act(action) }`. The page runs the core's `agents.pageReduce` / `agents.pageView`, as `PersistentModel` does natively, and the host runs each command (`ops/agent-detail.ts`). |
 | `useAgentTimeline(run)` | One run's conversation while mounted: `{ items, status, phase, caughtUp, isLoading, error, unsupported, lastEventMs }`. It reads `agents.events` with a cursor (every 500 ms while a turn runs, 4 s otherwise) and folds the events like cua-agents' `Transcript` (`transcript.ts`). Items are immutable, so a row memoized by item re-renders only when its item changed. |
@@ -99,7 +99,7 @@ Each is an existing Tauri command under a host-neutral name:
 | `keyvault.unlock` `{passphrase?}` | `keyvault_unlock` / `keyvault_unlock_passphrase` |
 | `keyvault.setUnattended` `{itemIds, unattended}` | `keyvault_set_unattended` |
 | `keyvault.setDisabled`, `.approve`, `.deny`, `.revokeGrant` | `keyvault_set_disabled`, `keyvault_approve`, `keyvault_deny`, `keyvault_revoke_grant` |
-| `session.get` | `fleet_status` + `onboarding_state` + `daemon_status` |
+| `session.get` | `account_status` + `onboarding_state` + `daemon_status` |
 | `session.signIn` / `.signOut` / `.completeOnboarding` / `.openExternal` | `begin_sign_in` / `sign_out` / `complete_onboarding` / `open_external` |
 | `agents.list` | `agents_tool` `persistent_agent_list` (snake_case mapped to `PersistentAgent`) |
 | `agents.runs` `{spaceId}` | `list_space_agents` |
@@ -164,7 +164,7 @@ speaks it as is:
   (camelCase records). `adapters/webkit.ts` maps each operation onto them and
   turns the results back into the wire shapes above, so the store derives
   the same way as for every other host. `AppSpace` becomes `SpaceRow`, the
-  Settings page rows (`notch`, `default-location`, `telemetry`) become
+  Settings page rows (`notch`, `telemetry`) become
   `SettingsValues`, and the Keyvault overview becomes snake_case.
 - Events arrive as `window` `cua:event` CustomEvents (`detail: { event }`):
   `spaces.changed` (it also refreshes machines), `machines.changed` (this
@@ -180,7 +180,7 @@ speaks it as is:
 - New Space is the page's wizard: `spaces.createOptions` answers the env the
   native sheet opens with (`AppModel.newSpaceEnv`: this Mac's runtimes,
   storage and GPUs, your machines that provide Spaces, your clouds), carried
-  as `NewSpaceOptions.env` (with `local`, `gpus` and `cloudPricing` from it,
+  as `NewSpaceOptions.env` (with `local` and `gpus` from it,
   and `macosVmsRunning`: the macOS VMs Lume runs on this Mac, which Apple's
   limit of two counts). While the launch is still starting it answers at
   once with what it knows and `pending: true`; the page asks again on

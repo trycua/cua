@@ -21,9 +21,9 @@ import { entryFromCore, type CatalogEntry } from "@trycua/cua/teleport";
 import type { LocalApp } from "./model/teleport";
 import { handleAppDrop, hasAppPath } from "./native/appDrop";
 import { createTeleportAppsBridge, type TeleportAppsBridge } from "./native/teleportApps";
-import type { FleetDraft, Space } from "./model/types";
+import type { Space } from "./model/types";
 import type { NativeBridge } from "./native/bridge";
-import { createFleetBridge, type FleetBridge, type HotspotStatus } from "./native/fleet";
+import { createSpacesBridge, type SpacesBridge, type HotspotStatus } from "./native/spacesBridge";
 import { createTeleportBridge, type TeleportBridge } from "./native/teleport";
 import {
   createWindowDragBridge,
@@ -42,7 +42,7 @@ import {
 import type { DisplayStyle, PortalEnvironment, WindowMode } from "./native/types";
 import { agentsToolCall, type ToolCall } from "./native/persistent";
 import { createSetTrayMenu, type SetTrayMenu } from "./native/tray";
-import { FleetContext, useFleetSync, viewerRequestFor } from "./state/cloud";
+import { SpacesContext, useSpacesSync, viewerRequestFor } from "./state/cloud";
 import { useTrayMenu } from "./state/trayMenu";
 import { NEW_SPACE_DROP_ID, NEW_TILE_INDEX, initialState, reduce, type PortalState } from "./state/portal";
 import { readMenuBar, type SwitcherTheme } from "./state/settings";
@@ -51,7 +51,7 @@ import { t as tl, useT } from "./i18n";
 export interface AppProps {
   bridge: NativeBridge;
   /** The shell's Spaces bridge; defaults to the environment-appropriate one. */
-  fleet?: FleetBridge;
+  spacesBridge?: SpacesBridge;
   /** App-teleport bridge; defaults to the environment-appropriate one. */
   teleport?: TeleportBridge;
   /** Opens the main window (Spaces list, New Space, Settings). */
@@ -87,7 +87,7 @@ function reportBridgeError(operation: string, error: unknown) {
   console.error(`[Cua Spaces] ${operation} failed`, error);
 }
 
-export function App({ bridge, fleet, teleport, spacesList, windowDrag, teleportApps, host, tray, now = Date.now, collapseDelayMs = SWITCH_COLLAPSE_MS, initial }: AppProps) {
+export function App({ bridge, spacesBridge: spacesBridgeProp, teleport, spacesList, windowDrag, teleportApps, host, tray, now = Date.now, collapseDelayMs = SWITCH_COLLAPSE_MS, initial }: AppProps) {
   const t = useT(["settings", "teleport"]);
   const [state, dispatch] = useReducer(reduce, initial, (preset) => preset ?? initialState());
   const [env, setEnv] = useState<PortalEnvironment | null>(null);
@@ -120,8 +120,8 @@ export function App({ bridge, fleet, teleport, spacesList, windowDrag, teleportA
   const collapseTimer = useRef<number | null>(null);
   const noticeTimer = useRef<number | null>(null);
 
-  const defaultFleet = useMemo(() => createFleetBridge(), []);
-  const fleetBridge = fleet ?? defaultFleet;
+  const defaultSpacesBridge = useMemo(() => createSpacesBridge(), []);
+  const spacesBridge = spacesBridgeProp ?? defaultSpacesBridge;
   const defaultSpacesList = useMemo(() => createSpacesListBridge(), []);
   const spacesListBridge = spacesList ?? defaultSpacesList;
   const defaultTeleport = useMemo(() => createTeleportBridge(), []);
@@ -130,7 +130,7 @@ export function App({ bridge, fleet, teleport, spacesList, windowDrag, teleportA
   const teleportAppsBridge = teleportApps ?? defaultTeleportApps;
   const defaultWindowDrag = useMemo(() => createWindowDragBridge(), []);
   const windowDragBridge = windowDrag ?? defaultWindowDrag;
-  const fleetSync = useFleetSync(fleetBridge, dispatch, now);
+  const spacesSync = useSpacesSync(spacesBridge, dispatch, now);
   const defaultHost = useMemo(() => createHostBridge(), []);
   const hostBridge = host ?? defaultHost;
   // First-run onboarding lives in the main window; the notch only needs the
@@ -149,7 +149,7 @@ export function App({ bridge, fleet, teleport, spacesList, windowDrag, teleportA
       cancelled = true;
     };
   }, [hostBridge]);
-  const { setThisMachine } = fleetSync;
+  const { setThisMachine } = spacesSync;
   useEffect(() => {
     setThisMachine(hostStatus);
   }, [hostStatus, setThisMachine]);
@@ -157,24 +157,24 @@ export function App({ bridge, fleet, teleport, spacesList, windowDrag, teleportA
   // tab's count) and Cua Volume's sync.
   const defaultTray = useMemo(() => ({ call: agentsToolCall(), setMenu: createSetTrayMenu() }), []);
   useTrayMenu(state.spaces, tray ?? defaultTray);
-  const fleetContext = useMemo(
-    () => ({ live: fleetSync.live, bridge: fleetBridge }),
-    [fleetSync.live, fleetBridge],
+  const spacesContext = useMemo(
+    () => ({ live: spacesSync.live, bridge: spacesBridge }),
+    [spacesSync.live, spacesBridge],
   );
 
   // Track the network hotspot: seed from the shell, then follow its change
   // events (so the indicator also clears if the tunnel drops on its own).
   useEffect(() => {
-    if (!fleetBridge.isNative) return;
+    if (!spacesBridge.isNative) return;
     let cancelled = false;
     let unsub: (() => void) | undefined;
-    void fleetBridge
+    void spacesBridge
       .hotspotStatus()
       .then((status) => {
         if (!cancelled) setHotspot(status);
       })
       .catch(() => {});
-    void fleetBridge.onHotspotChanged(setHotspot).then((off) => {
+    void spacesBridge.onHotspotChanged(setHotspot).then((off) => {
       if (cancelled) off();
       else unsub = off;
     });
@@ -182,13 +182,13 @@ export function App({ bridge, fleet, teleport, spacesList, windowDrag, teleportA
       cancelled = true;
       unsub?.();
     };
-  }, [fleetBridge]);
+  }, [spacesBridge]);
   const stopHotspot = useCallback(() => {
-    void fleetBridge
+    void spacesBridge
       .stopHotspot()
       .then(setHotspot)
       .catch((error) => reportBridgeError("stop network sharing", error));
-  }, [fleetBridge]);
+  }, [spacesBridge]);
 
   // Follow the shell's notch-hover signal (global cursor, focus-independent).
   useEffect(() => {
@@ -331,7 +331,7 @@ export function App({ bridge, fleet, teleport, spacesList, windowDrag, teleportA
         dispatch({ type: "notify", text: tl("spaces:spaces.create.creating") });
         // No location: the shell creates it where the default location says,
         // from the default image.
-        const id = await fleetSync.createSpace();
+        const id = await spacesSync.createSpace();
         const name = stateRef.current.spaces.find((s) => s.id === id)?.name ?? "New Space";
         beginTeleportRef.current(id, name, app, entry);
       } catch (error) {
@@ -339,7 +339,7 @@ export function App({ bridge, fleet, teleport, spacesList, windowDrag, teleportA
         dispatch({ type: "notify", text: tl("errors:errors.spaces.create_failed") });
       }
     },
-    [fleetSync],
+    [spacesSync],
   );
   const createSpaceAndTeleportRef = useRef(createSpaceAndTeleport);
   createSpaceAndTeleportRef.current = createSpaceAndTeleport;
@@ -850,7 +850,7 @@ export function App({ bridge, fleet, teleport, spacesList, windowDrag, teleportA
           setTeleportState(null);
           return;
         }
-        if (state.mode === "create-fleet") dispatch({ type: "cancel-create" });
+        if (state.mode === "create-space") dispatch({ type: "cancel-create" });
         else dismiss();
         return;
       }
@@ -905,19 +905,19 @@ export function App({ bridge, fleet, teleport, spacesList, windowDrag, teleportA
         // Switching to a cloud Space focuses (or opens) its desktop window —
         // macOS then handles the actual Space switch when it is fullscreen.
         const space = stateRef.current.spaces.find((s) => s.id === id);
-        if (!space || !fleetBridge.isNative) return;
+        if (!space || !spacesBridge.isNative) return;
         const request = viewerRequestFor(space);
         if (request) {
-          fleetBridge.openSpaceWindow(request).catch((error: unknown) => {
+          spacesBridge.openSpaceWindow(request).catch((error: unknown) => {
             reportBridgeError(`open Space window for ${id}`, error);
           });
         }
       },
       pin: (space: Space) => {
-        if (!fleetBridge.isNative) return;
+        if (!spacesBridge.isNative) return;
         const request = viewerRequestFor(space);
         if (request) {
-          fleetBridge.pinSpacePip(request).catch((error: unknown) => {
+          spacesBridge.pinSpacePip(request).catch((error: unknown) => {
             reportBridgeError(`pin Space ${space.id}`, error);
           });
         }
@@ -926,15 +926,14 @@ export function App({ bridge, fleet, teleport, spacesList, windowDrag, teleportA
         if (space.status === "local") return;
         beginTeleport(space.id, space.name);
       },
-      createFleet: (draft: FleetDraft) => dispatch({ type: "create-fleet", draft, now: now() }),
     }),
-    [now, openCreate, fleetBridge, beginTeleport],
+    [now, openCreate, spacesBridge, beginTeleport],
   );
 
   // The popped-out Spaces list window owns no Spaces state, so its whole-Space
   // actions (stream the desktop, pin as PiP) come back here as events.
   useEffect(() => {
-    if (!fleetBridge.isNative) return;
+    if (!spacesBridge.isNative) return;
     let cancelled = false;
     const stops: Array<() => void> = [];
     void import("@tauri-apps/api/event")
@@ -965,11 +964,11 @@ export function App({ bridge, fleet, teleport, spacesList, windowDrag, teleportA
       cancelled = true;
       for (const stop of stops) stop();
     };
-  }, [fleetBridge, handlers]);
+  }, [spacesBridge, handlers]);
 
 
   return (
-    <FleetContext.Provider value={fleetContext}>
+    <SpacesContext.Provider value={spacesContext}>
       <div
         className="portal"
         data-mode={state.mode}
@@ -1019,10 +1018,10 @@ export function App({ bridge, fleet, teleport, spacesList, windowDrag, teleportA
             onSelect={handlers.select}
             onNew={handlers.openCreate}
             onCollapse={dismiss}
-            onPin={fleetSync.live || fleetBridge.isNative ? handlers.pin : undefined}
+            onPin={spacesSync.live || spacesBridge.isNative ? handlers.pin : undefined}
             onShareApp={handlers.shareApp}
-            onDelete={fleetSync.live ? fleetSync.deleteSpace : undefined}
-            onPower={fleetSync.live ? fleetSync.setPower : undefined}
+            onDelete={spacesSync.live ? spacesSync.deleteSpace : undefined}
+            onPower={spacesSync.live ? spacesSync.setPower : undefined}
             hotspotActive={hotspot.active}
             hotspotSpaceId={hotspot.spaceId}
             onStopHotspot={stopHotspot}
@@ -1061,6 +1060,6 @@ export function App({ bridge, fleet, teleport, spacesList, windowDrag, teleportA
         )}
 
       </div>
-    </FleetContext.Provider>
+    </SpacesContext.Provider>
   );
 }

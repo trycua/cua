@@ -73,8 +73,6 @@ pub enum AppThumbnailScene {
 pub type AppSpaceProvider = core::model::SpaceProvider;
 #[uniffi::remote(Enum)]
 pub enum AppSpaceProvider {
-    /// Cua Cloud.
-    Cloud,
     /// This Mac.
     Local,
     /// A machine added by address.
@@ -109,9 +107,6 @@ pub struct AppSpaceProgress {
     pub label: String,
     /// Why the create failed.
     pub error: Option<String>,
-    /// It failed because the account is out of Cua Cloud credit: the
-    /// website billing page "Add credit" opens.
-    pub credit_url: Option<String>,
     /// While it downloads: "4.2 of 22.1 GB · 85 MB/s · about 4 min"
     /// ([`crate::spaces::creating::transfer_text`]).
     pub transfer: Option<String>,
@@ -171,8 +166,6 @@ pub struct AppSpace {
     pub started_at: Option<i64>,
     /// Placeholder scene.
     pub scene: AppThumbnailScene,
-    /// Group (cloud namespace or location word).
-    pub fleet_id: Option<String>,
     /// Fixture machine size.
     pub size: Option<String>,
     /// Fixture region.
@@ -280,9 +273,6 @@ pub struct AppSpaceRow {
 pub type AppLocation = core::model::Location;
 #[uniffi::remote(Enum)]
 pub enum AppLocation {
-    /// Cua Cloud (the SDK's `on="cloud"`). The apps do not offer it for new
-    /// Spaces ([`CLOUD_SPACES_OFFERED`]); existing cloud Spaces still list.
-    Cloud,
     /// This Mac.
     Local,
     /// The user's own cloud account (AWS, Google Cloud, Modal), connected
@@ -319,8 +309,6 @@ pub enum AppRuntime {
     Qemu,
     /// Lume.
     Lume,
-    /// KubeVirt.
-    Kubevirt,
 }
 
 /// The three ambient status dots.
@@ -449,8 +437,6 @@ pub struct AppPendingCreate {
     pub permille: u32,
     /// Why it failed.
     pub error: Option<String>,
-    /// It failed for want of Cua Cloud credit: the billing page.
-    pub credit_url: Option<String>,
     /// The registered Space's id once it finished; the row goes when the
     /// registry lists it.
     pub space_id: Option<String>,
@@ -730,7 +716,7 @@ pub struct AppSidebarRow {
 pub type AppSidebarSection = core::spaces::sidebar::SidebarSection;
 #[uniffi::remote(Record)]
 pub struct AppSidebarSection {
-    /// "Cua Cloud", "This Mac", "Connected", "My computers"
+    /// "This Mac", "Connected", "My computers"
     /// (`spaces.sidebar.section.*`).
     pub title: AppMsg,
     /// Rows.
@@ -968,9 +954,6 @@ pub struct AppSpaceDetail {
     pub confirm: AppDeleteConfirm,
     /// The sections under the facts, in order (Stream, Agents, Teleport).
     pub sections: Vec<String>,
-    /// A cloud Space refused for want of credit: one line and "Add
-    /// credit" (the website billing page).
-    pub credit_notice: Option<AppCreditNotice>,
     /// Why turning it off or on failed, shown inline under the preview.
     pub power_error: Option<String>,
     /// Signed in, but this device is not enrolled: a machine reached
@@ -1245,7 +1228,7 @@ pub enum AppWindowMode {
     /// has room to hang below the notch. Same top-centre placement as `Ambient`.
     AmbientTeleport,
     Switcher,
-    CreateFleet,
+    CreateSpace,
 }
 
 /// `notch::geometry::LogicalRect`.
@@ -2979,16 +2962,6 @@ pub enum AppLocalEngine {
     Lume,
 }
 
-/// The image list's cloud engine.
-pub type AppCloudEngine = core::wizard::CloudEngine;
-#[uniffi::remote(Enum)]
-pub enum AppCloudEngine {
-    /// gVisor containers.
-    Gvisor,
-    /// KubeVirt VMs.
-    Kubevirt,
-}
-
 /// The catalog's image tier (canonical images only).
 pub type AppImageTier = core::wizard::ImageTier;
 #[uniffi::remote(Enum)]
@@ -3060,8 +3033,6 @@ pub struct AppSandboxImage {
     pub spacesd: bool,
     /// Local engine.
     pub local: Option<AppLocalEngine>,
-    /// Cloud engine.
-    pub cloud: Option<AppCloudEngine>,
     /// `slim`, `full` or `xcode` (canonical images only).
     pub tier: Option<AppImageTier>,
     /// Offered in pickers.
@@ -3126,16 +3097,6 @@ pub struct AppLocalStorage {
     /// Catalog refs already pulled here.
     pub pulled: Vec<String>,
     pub linux_runtime_download_bytes: u64,
-}
-
-/// Cua Cloud rates for this account.
-pub type AppCloudPricing = core::wizard::CloudPricing;
-#[uniffi::remote(Record)]
-pub struct AppCloudPricing {
-    /// USD per reserved vCPU per hour.
-    pub vcpu_hour_usd: f64,
-    /// USD per reserved GB (GiB) of memory per hour.
-    pub memory_gib_hour_usd: f64,
 }
 
 /// What one connected cloud can run for an image family, and at what cost
@@ -3280,7 +3241,6 @@ pub struct AppWizardEnv {
     /// Where "Run on" starts (Settings, `cua config set default.on`).
     pub default_location: AppLocation,
     /// Signed in (or client credentials).
-    pub cloud_available: bool,
     /// A local container backend or Lume exists.
     pub local_available: bool,
     /// Why local is unavailable.
@@ -3304,8 +3264,6 @@ pub struct AppWizardEnv {
     /// Free space and pulled images here (the SDK's `Local.storage()`),
     /// when known.
     pub storage: Option<AppLocalStorage>,
-    /// This account's Cua Cloud rates, when known (no estimate without).
-    pub cloud_pricing: Option<AppCloudPricing>,
     /// The user's connected clouds (`cloud_status`), for "Your cloud"
     /// (offered only while its experiment is on: [`offered_clouds`]).
     pub clouds: Vec<AppConnectedCloud>,
@@ -3634,9 +3592,9 @@ pub struct AppCreatePlan {
     pub runtime: AppRuntime,
     /// Name, when given.
     pub name: Option<String>,
-    /// vCPUs (local and Cua Cloud).
+    /// vCPUs (local and remote).
     pub cpus: Option<u32>,
-    /// Memory MB (local and Cua Cloud).
+    /// Memory MB (local and remote).
     pub memory_mb: Option<u32>,
     /// Local VMs only: grow the disk to this many GB (larger than the
     /// image's).
@@ -5228,51 +5186,6 @@ pub enum KvOutcome {
     },
 }
 
-/// The saved card (never its number).
-pub type AppBillingCard = core::billing::BillingCard;
-#[uniffi::remote(Record)]
-pub struct AppBillingCard {
-    /// `visa`, `mastercard`, ...
-    pub brand: String,
-    /// Last four digits.
-    pub last4: String,
-}
-
-/// The account's Cua Cloud credit.
-pub type AppBillingCredit = core::billing::BillingCredit;
-#[uniffi::remote(Record)]
-pub struct AppBillingCredit {
-    /// What is left, US cents.
-    pub balance_usd_cents: i64,
-}
-
-/// The account's billing, as the apps read it.
-pub type AppBillingStatus = core::billing::BillingStatus;
-#[uniffi::remote(Record)]
-pub struct AppBillingStatus {
-    /// Billing is on for this account (off: Settings shows no Billing row).
-    pub billing_enabled: bool,
-    /// The saved default card.
-    pub card: Option<AppBillingCard>,
-    /// The account's credit, when it has any.
-    pub credit: Option<AppBillingCredit>,
-    /// The website billing page (credit, cards, plans).
-    pub billing_url: Option<String>,
-}
-
-/// A cloud Space refused for want of credit: the line, the button, and the
-/// website billing page it opens.
-pub type AppCreditNotice = core::billing::CreditNotice;
-#[uniffi::remote(Record)]
-pub struct AppCreditNotice {
-    /// [`OUT_OF_CREDIT`].
-    pub text: String,
-    /// [`ADD_CREDIT`].
-    pub button: String,
-    /// The website billing page.
-    pub url: String,
-}
-
 /// `volume_mount_status`.
 pub type AppDriveMountInput = core::drive_settings::DriveMountInput;
 #[uniffi::remote(Record)]
@@ -6734,7 +6647,7 @@ pub type AppSettingsInput = core::settings::SettingsInput;
 pub struct AppSettingsInput {
     /// The signed-in account.
     pub identity: Option<String>,
-    /// Cua Cloud through client credentials (an API key): its client id.
+    /// The Cua account through client credentials (an API key): its client id.
     pub api_key_client: Option<String>,
     /// The sign-in in progress.
     pub sign_in: AppSignInPhase,
@@ -6743,10 +6656,6 @@ pub struct AppSettingsInput {
     /// The Spaces tab is hidden from the notch (the menu bar item is the
     /// entry point).
     pub menu_bar: bool,
-    /// Where New Space starts.
-    pub default_location: AppLocation,
-    /// The environment sets the default location: which variable.
-    pub location_locked_by: Option<String>,
     /// The telemetry switch (none until read).
     pub telemetry: Option<AppTelemetryInput>,
     /// Coding agents (none while detecting).
@@ -6759,8 +6668,6 @@ pub struct AppSettingsInput {
     /// app's URL. None: the Teams section shows the production account
     /// app's links only.
     pub teams: Option<AppTeamsInput>,
-    /// The account's Cua Cloud billing, once read (signed in).
-    pub billing: Option<AppBillingStatus>,
     /// Launch at login, once the system was asked (none: no rows).
     pub login_item: Option<AppLoginItemInput>,
     /// Settings, Experiments (what the page mentions follows them).
@@ -6925,7 +6832,7 @@ pub type AppSignInFooterInput = core::sign_in::SignInFooterInput;
 pub struct AppSignInFooterInput {
     /// The signed-in account.
     pub identity: Option<String>,
-    /// Cua Cloud works through client credentials (an API key).
+    /// The Cua account works through client credentials (an API key).
     pub cloud_configured: bool,
     /// Signing in is possible here.
     pub can_sign_in: bool,
@@ -6982,7 +6889,7 @@ pub type AppChromeInput = core::window::ChromeInput;
 pub struct AppChromeInput {
     /// The signed-in account.
     pub identity: Option<String>,
-    /// Cua Cloud works (signed in, or client credentials).
+    /// The Cua account works (signed in, or client credentials).
     pub cloud_configured: bool,
     /// Signing in is possible here (the native shell).
     pub can_sign_in: bool,

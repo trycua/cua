@@ -98,8 +98,6 @@ function CoreGeneralPage({ page }: { page: CorePage }) {
         return void updateSetting("menuBar", option === "hide").catch(done);
       case "telemetry":
         return void updateSetting("telemetry", option === "on").catch(done);
-      case "default-location":
-        return void updateSetting("defaultLocation", option).catch(done);
       default:
         return void chooseSetting(row.id, option).catch(done);
     }
@@ -116,7 +114,6 @@ function CoreGeneralPage({ page }: { page: CorePage }) {
       // The account app (app.cua.ai): invites, roles and plans, billing.
       case "teams-manage":
       case "teams-billing":
-      case "billing":
         return row.linkUrl ? void openExternal(row.linkUrl) : undefined;
       case "welcome":
         // The SwiftUI app shows its own welcome window; elsewhere it is

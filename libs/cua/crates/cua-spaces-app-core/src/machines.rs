@@ -960,7 +960,6 @@ mod tests {
                 })
                 .collect(),
             default_location: Location::Local,
-            cloud_available: false,
             local_available: true,
             local_reason: None,
             local_backends: Some(vec!["docker".into()]),
@@ -970,7 +969,6 @@ mod tests {
             lume_source: None,
             linux_source: None,
             storage: None,
-            cloud_pricing: None,
             clouds: vec![],
             experiments: crate::experiments::Experiments::default(),
             gpus: None,

@@ -135,9 +135,9 @@
       },
       "rows": [
         {
-          "id": "cloud:aws-ci",
+          "id": "direct:aws-ci",
           "name": "aws-ci",
-          "provider": "cloud",
+          "provider": "direct",
           "spacesdVersion": "0.4.0",
           "features": [
             "desktop_stream"
@@ -192,9 +192,9 @@
           "error": null
         },
         {
-          "id": "cloud:aws-ci",
+          "id": "direct:aws-ci",
           "name": "aws-ci",
-          "provider": "cloud",
+          "provider": "direct",
           "spacesdVersion": "0.4.0",
           "features": [
             "desktop_stream"

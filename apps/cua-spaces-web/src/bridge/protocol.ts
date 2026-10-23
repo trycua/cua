@@ -15,7 +15,7 @@
 import type {
   DaemonStatus,
   DefaultLocation,
-  FleetStatus,
+  AccountStatus,
   HostStatus,
   LoginItemStatus,
   MachineRow,
@@ -68,7 +68,7 @@ export interface SettingsValues {
   hotkey: string;
   /** Usage telemetry (`$CUA_HOME/config.toml`, same as `cua telemetry`). */
   telemetry: boolean;
-  /** Where New Space starts: `local`, `cloud`, `host:<id>`, or a cloud word. */
+  /** Where New Space starts: `local`, `host:<id>`, or a cloud word. */
   defaultLocation: string;
   /** The app opens at login, as the system reports it (`login_item::LoginItemStatus`
    * is `enabled` or `requiresApproval`). Null: this host can't say. */
@@ -157,7 +157,7 @@ export const UI_STORAGE_KEYS = {
 /* ---- Session ------------------------------------------------------------- */
 
 export interface SessionSnapshot {
-  fleet: FleetStatus;
+  account: AccountStatus;
   onboarding: OnboardingState;
   daemon: DaemonStatus | null;
   /** A native host's sign-in waiting for the browser (it runs the flow

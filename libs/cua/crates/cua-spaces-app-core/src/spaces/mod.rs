@@ -6,7 +6,7 @@
 //! and detail ([`sidebar`]) with its Stream section ([`stream`]) and the
 //! cover over its live desktop ([`cover`]).
 //!
-//! Every location (Cua Cloud, this Mac, added by address, relay) arrives
+//! Every location (this Mac, added by address, relay) arrives
 //! through one `list_spaces` roster; the SDK owns lifecycle and the spacesd
 //! handshake, this module only turns its rows into what the shells draw.
 
@@ -71,13 +71,6 @@ pub fn normalize_provider(word: &str) -> SpaceProvider {
     SpaceProvider::parse(word).unwrap_or(SpaceProvider::Direct)
 }
 
-/// The cloud namespace of a legacy `space://cloud/<ns>/<name>` id.
-pub fn cloud_namespace_of(id: &str) -> Option<String> {
-    let rest = id.strip_prefix("space://cloud/")?;
-    let end = rest.find('/')?;
-    (end > 0).then(|| rest[..end].to_string())
-}
-
 /// The placeholder scene for an OS.
 pub fn scene_for_os(os: SpaceOs) -> ThumbnailScene {
     match os {
@@ -129,7 +122,6 @@ pub fn name_of(id: &str, name: &str) -> String {
 
 fn provider_label(p: SpaceProvider) -> &'static str {
     match p {
-        SpaceProvider::Cloud => "Cua Cloud",
         SpaceProvider::Local => "This Mac",
         SpaceProvider::Direct => "Direct",
         SpaceProvider::Relay => "My computers",
@@ -153,8 +145,6 @@ fn detail_for(row: &SpaceRow, status: SpaceStatus) -> String {
         };
     }
     match normalize_provider(&row.provider) {
-        SpaceProvider::Cloud => cloud_namespace_of(&row.id)
-            .unwrap_or_else(|| provider_label(SpaceProvider::Cloud).into()),
         SpaceProvider::Direct => row
             .id
             .strip_prefix("space://direct/")
@@ -210,7 +200,6 @@ pub fn row_to_space(row: &SpaceRow, now: i64) -> Space {
     };
     let added = row.added_at.as_deref().and_then(parse_rfc3339_ms);
     let provider = normalize_provider(&row.provider);
-    let namespace = cloud_namespace_of(&row.id);
     let text = |v: &Option<String>| v.clone().filter(|v| !v.trim().is_empty());
     let (os_name, os_pretty_name, image) = (
         (os != SpaceOs::Unknown)
@@ -238,7 +227,6 @@ pub fn row_to_space(row: &SpaceRow, now: i64) -> Space {
         last_used_at: added.unwrap_or(now),
         started_at: added,
         scene: scene_for_os(os),
-        fleet_id: Some(namespace.unwrap_or_else(|| provider.as_str().to_string())),
         size: None,
         region: None,
         provider: Some(provider),
@@ -348,20 +336,12 @@ pub fn rows_to_spaces(rows: &[SpaceRow], now: i64) -> Vec<Space> {
     rows.iter().map(|r| row_to_space(r, now)).collect()
 }
 
-/// A Space on the Cua Spaces pool (the account's `cua-spaces*` namespace or
-/// the shared `spaces-linux` pool): listed first.
-pub fn is_spaces_pool(space: &Space) -> bool {
-    cloud_namespace_of(&space.id)
-        .is_some_and(|ns| ns.starts_with("cua-spaces") || ns == "spaces-linux")
-}
-
-/// Pool Spaces first, then most recently used, then by name.
+/// Most recently used first, then by name.
 pub fn sort_by_mru(spaces: &[Space]) -> Vec<Space> {
     let mut out = spaces.to_vec();
     out.sort_by(|a, b| {
-        let (pa, pb) = (is_spaces_pool(a), is_spaces_pool(b));
-        pb.cmp(&pa)
-            .then_with(|| b.last_used_at.cmp(&a.last_used_at))
+        b.last_used_at
+            .cmp(&a.last_used_at)
             .then_with(|| collate(&a.name, &b.name))
     });
     out
@@ -476,9 +456,9 @@ mod tests {
 
     fn row() -> SpaceRow {
         SpaceRow {
-            id: "space://cloud/cua-spaces-abc/brave-otter".into(),
+            id: "space://direct/10.0.0.5:3211".into(),
             name: "brave-otter".into(),
-            provider: "cloud".into(),
+            provider: "direct".into(),
             spacesd_version: "0.4.0".into(),
             features: vec!["desktop_stream".into(), "window_stream".into()],
             added_at: Some("2026-08-30T12:00:00Z".into()),
@@ -564,12 +544,11 @@ mod tests {
     }
 
     #[test]
-    fn maps_a_reachable_cloud_row() {
+    fn maps_a_reachable_row() {
         let s = row_to_space(&row(), 1_000);
         assert_eq!(s.name, "brave-otter");
         assert_eq!(s.status, SpaceStatus::Running);
-        assert_eq!(s.fleet_id.as_deref(), Some("cua-spaces-abc"));
-        assert_eq!(s.detail, "cua-spaces-abc");
+        assert_eq!(s.detail, "10.0.0.5:3211");
         assert_eq!(s.last_used_at, 1_788_091_200_000);
         assert!(has_feature(&s, feature::DESKTOP_STREAM));
     }
@@ -605,7 +584,6 @@ mod tests {
         assert_eq!(d.detail, "10.0.0.5:3211");
         assert_eq!(d.name, "10.0.0.5:3211");
         assert_eq!(d.last_used_at, 42);
-        assert_eq!(d.fleet_id.as_deref(), Some("direct"));
         let hex = row_to_space(
             &SpaceRow {
                 id: "local:demo-box".into(),
@@ -621,7 +599,7 @@ mod tests {
 
     #[test]
     fn ids_name_their_provider() {
-        assert_eq!(provider_of_id("cloud:x"), Some(SpaceProvider::Cloud));
+        assert_eq!(provider_of_id("cloud:x"), None, "Cua Cloud has ended");
         assert_eq!(
             provider_of_id("space://relay/abc"),
             Some(SpaceProvider::Relay)
@@ -631,7 +609,7 @@ mod tests {
     }
 
     #[test]
-    fn mru_puts_pool_first_then_recent() {
+    fn mru_puts_the_most_recent_first() {
         let mk = |id: &str, t: i64| Space {
             id: id.into(),
             name: id.into(),
@@ -641,7 +619,6 @@ mod tests {
             last_used_at: t,
             started_at: None,
             scene: ThumbnailScene::LinuxTerminal,
-            fleet_id: None,
             size: None,
             region: None,
             provider: None,
@@ -660,13 +637,9 @@ mod tests {
             cloud_place: None,
             cloud_delete: None,
         };
-        let sorted = sort_by_mru(&[
-            mk("a", 10),
-            mk("space://cloud/cua-spaces-x/p", 1),
-            mk("b", 20),
-        ]);
+        let sorted = sort_by_mru(&[mk("a", 10), mk("c", 1), mk("b", 20)]);
         let ids: Vec<_> = sorted.iter().map(|s| s.id.as_str()).collect();
-        assert_eq!(ids, ["space://cloud/cua-spaces-x/p", "b", "a"]);
+        assert_eq!(ids, ["b", "a", "c"]);
     }
 
     /// The menu bar's count and the notch tab leave out the machines that

@@ -5,7 +5,7 @@
  * Account, daemon, machine, onboarding, telemetry and Settings shapes.
  *
  * Hand-written mirror of the Tauri app's adapters (`apps/cua-spaces/src/
- * native/fleet.ts`, `native/host.ts`, `native/telemetry.ts`,
+ * native/account.ts`, `native/host.ts`, `native/telemetry.ts`,
  * `components/desktop/NewSpaceWizard.tsx`) and of the app core's
  * `settings` module (`libs/cua/crates/cua-spaces-app-core/src/settings.rs`).
  * Rust is the source of truth; these are its JSON (camelCase) shapes.
@@ -15,7 +15,7 @@ import type { AgentSetupRow } from "./agents";
 import type { MachineAccessNotice } from "./devices";
 import type { Location, Runtime, SpaceKind } from "./spaces";
 
-/* ---- Account (fleet_status, begin_sign_in) ------------------------------ */
+/* ---- Account (account_status, begin_sign_in) ------------------------------ */
 
 /** What starting a sign-in returns. `browser`: finish in the tab that just
  * opened. `device`: enter `userCode` at `verificationUri`. */
@@ -25,17 +25,13 @@ export interface SignInStart {
   verificationUri: string;
 }
 
-/** Cua Cloud account status. */
-export interface FleetStatus {
+/** The signed-in account (`account_status`). */
+export interface AccountStatus {
   configured: boolean;
   authMode: "user" | "client-credentials" | "static-token" | "none";
-  baseUrl: string;
-  tokenUrl: string;
   clientId?: string;
   /** Signed-in user identity (email/subject), when a user session is active. */
   identity?: string;
-  namespaces?: string[];
-  probeError?: string;
 }
 
 /** The local `cua daemon` the app shares Spaces with. */
@@ -52,7 +48,7 @@ export interface DaemonStatus {
 /** `create_space`'s config (the SDK's create options). */
 export interface SpaceCreateConfig {
   image?: string;
-  /** `local`, `cloud`, `host:<machine>`, or a connected cloud's word. */
+  /** `local`, `host:<machine>`, or a connected cloud's word. */
   on?: Location | string;
   kind?: SpaceKind | "auto";
   runtime?: Runtime;
@@ -631,8 +627,6 @@ export interface SettingsInput {
   signIn?: SignInPhase;
   canSignOut?: boolean;
   menuBar?: boolean;
-  defaultLocation?: "cloud" | "local" | "yours" | "host";
-  locationLockedBy?: string | null;
   telemetry?: { enabled: boolean; lockedBy?: string | null } | null;
   /** The Keyvault's auto-wipe (none: no Keyvault section). */
   keyvaultAutoWipe?: boolean | null;

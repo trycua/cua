@@ -7,7 +7,7 @@ import { core } from "../../core";
 import { NO_EXPERIMENTS, type Experiments } from "../../model/experiments";
 import type { Placement, SandboxImage } from "../../model/images";
 import type { Runtime } from "../../model/types";
-import type { CloudPricing, GpuChoice } from "../../native/fleet";
+import type { GpuChoice } from "../../native/spacesBridge";
 import type { LocalStorage } from "../../native/local";
 import { telemetryBridge, type TelemetryBridge } from "../../native/telemetry";
 import { hostOs } from "../../model/host";
@@ -44,8 +44,6 @@ export interface NewSpaceWizardProps {
   /** Where "Run on" starts: the configured default location (Settings,
    * `cua config set default.on`). */
   defaultLocation?: Placement;
-  /** Cua Cloud has ended: the app passes `false`. */
-  cloudAvailable: boolean;
   /** Local needs a container backend (docker / runsc) or Lume. */
   localAvailable: boolean;
   /** Why local is unavailable, shown on the disabled tile. */
@@ -67,8 +65,6 @@ export interface NewSpaceWizardProps {
   hostArch?: string;
   /** Free space where local Spaces are written, and what is pulled. */
   storage?: LocalStorage | null;
-  /** Cua Cloud rates (always none: it has ended). */
-  cloudPricing?: CloudPricing | null;
   /** The GPU option of each runtime that has one (`gpu_support`); a
    * runtime not listed gets no GPU row. */
   gpus?: readonly GpuChoice[] | null;
@@ -251,7 +247,6 @@ interface GpuRow {
  */
 export function NewSpaceWizard({
   defaultLocation = "local",
-  cloudAvailable,
   localAvailable,
   localReason,
   localBackends,
@@ -262,7 +257,6 @@ export function NewSpaceWizard({
   maxCpus = Math.max(2, Math.min(16, globalThis.navigator?.hardwareConcurrency || 8)),
   hostArch,
   storage,
-  cloudPricing,
   gpus,
   onOpenExternal,
   startActions,
@@ -276,14 +270,12 @@ export function NewSpaceWizard({
   const env = useMemo(
     () => ({
       defaultLocation,
-      cloudAvailable,
-      localAvailable,
+          localAvailable,
       localReason: localReason ?? null,
       localBackends: localBackends ? [...localBackends] : null,
       maxCpus,
       hostArch: hostArch ?? null,
       storage: storage ?? null,
-      cloudPricing: cloudPricing ?? null,
       clouds: clouds ? [...clouds] : [],
       hosts: hosts ? [...hosts] : [],
       experiments: experiments ?? NO_EXPERIMENTS,
@@ -291,15 +283,13 @@ export function NewSpaceWizard({
     }),
     [
       defaultLocation,
-      cloudAvailable,
-      localAvailable,
+          localAvailable,
       localReason,
       localBackends,
       maxCpus,
       hostArch,
       storage,
-      cloudPricing,
-      clouds,
+          clouds,
       hosts,
       experiments,
       gpus,

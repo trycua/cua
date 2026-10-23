@@ -103,7 +103,6 @@ public enum AppEnvironment {
         let model = AppModel(backend: backend, keyvault: keyvault, onboarding: onboarding,
                              settingsPath: settingsPath,
                              host: host, account: account, telemetry: telemetry, agentSetup: agents,
-                             billing: fixtures ? FixtureBilling() : PendingBilling(gate: gate),
                              devices: devices,
                              presence: fixtures ? FixturePresence() : LivePresence(),
                              loginItem: fixtures ? fixtureLoginItem(env["CUA_SPACES_LOGIN_ITEM"]) : MainAppLoginItem(),
@@ -182,7 +181,7 @@ public enum AppEnvironment {
             return LiveServices(
                 backend: live, live: live, account: LiveAccount(auth: auth),
                 agentSetup: LiveAgentSetup(inner: live.cua.agentSetup(), cuaBinary: bundledCuaPath),
-                billing: LiveBilling(cua: live.cua), devices: LiveDevices.make(auth: auth),
+                devices: LiveDevices.make(auth: auth),
                 host: CuaSDK.Host(cuaHome: nil), daemonError: daemonError)
         } catch {
             // Say so: an empty list (and an empty notch) would look like
@@ -466,8 +465,7 @@ public enum AppEnvironment {
                 await model.openNativeNewSpace()
                 let w = model.wizard
                 if let image = env["CUA_SPACES_WIZARD_IMAGE"] { w.send(.chooseImage(imageRef: image)) }
-                w.send(.setPlacement(placement: env["CUA_SPACES_WIZARD_ON"] == "cloud" ? .cloud
-                                   : env["CUA_SPACES_WIZARD_ON"] == "yours" ? .yours : .local))
+                w.send(.setPlacement(placement: env["CUA_SPACES_WIZARD_ON"] == "yours" ? .yours : .local))
                 w.send(.next)
                 if let disk = env["CUA_SPACES_WIZARD_DISK"].flatMap(UInt32.init) { w.send(.setDisk(diskGb: disk)) }
                 if let cpus = env["CUA_SPACES_WIZARD_CPUS"].flatMap(UInt32.init) { w.send(.setCpus(cpus: cpus)) }
@@ -567,7 +565,7 @@ public enum AppEnvironment {
                 model.notch.setActivity(hotspot: false, transfer: AppNotchTransfer(sent: 600, total: 1000))
             case "notch-activity-provisioning":
                 if var s = model.notch.spaces.first(where: { $0.id != "this-mac" }) {
-                    s.id = "cloud:starter"
+                    s.id = "direct:starter"
                     s.name = "Starter"
                     s.status = .provisioning
                     s.startedAt = Int64(Date().timeIntervalSince1970 * 1000) - 40_000

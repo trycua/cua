@@ -65,33 +65,6 @@ impl LocalEngine {
     }
 }
 
-/// The image list's cloud engine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum CloudEngine {
-    /// gVisor containers.
-    Gvisor,
-    /// KubeVirt VMs.
-    Kubevirt,
-}
-
-impl CloudEngine {
-    /// Tile description.
-    pub fn label(self) -> &'static str {
-        match self {
-            CloudEngine::Gvisor => "gVisor container in Cua Cloud",
-            CloudEngine::Kubevirt => "Virtual machine in Cua Cloud",
-        }
-    }
-
-    fn runtime(self) -> Runtime {
-        match self {
-            CloudEngine::Gvisor => Runtime::Gvisor,
-            CloudEngine::Kubevirt => Runtime::Kubevirt,
-        }
-    }
-}
-
 /// The catalog's image tier (canonical images only).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -124,8 +97,6 @@ pub struct SandboxImage {
     pub spacesd: bool,
     /// Local engine.
     pub local: Option<LocalEngine>,
-    /// Cloud engine.
-    pub cloud: Option<CloudEngine>,
     /// `slim`, `full` or `xcode` (canonical images only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tier: Option<ImageTier>,
@@ -470,7 +441,6 @@ pub fn image_suggestions(query: &str) -> Vec<ImageGroup> {
 /// Whether `image` can run in `on`.
 pub fn can_place(image: &SandboxImage, on: Location) -> bool {
     match on {
-        Location::Cloud => crate::model::CLOUD_SPACES_OFFERED && image.cloud.is_some(),
         Location::Local => image.local.is_some(),
         // Whether the connected cloud runs it is its own answer
         // ([`cloud_offer`]); every image is a candidate. A machine of
@@ -765,7 +735,6 @@ pub fn selected_host<'a>(state: &WizardState, env: &'a WizardEnv) -> Option<&'a 
 /// The engines `image` runs on in `on`, the default first.
 pub fn runtime_options(image: &SandboxImage, on: Location) -> Vec<Runtime> {
     match on {
-        Location::Cloud => image.cloud.map(|c| vec![c.runtime()]).unwrap_or_default(),
         Location::Local => match image.local {
             Some(LocalEngine::Container) => vec![Runtime::Auto, Runtime::Gvisor, Runtime::Runc],
             Some(LocalEngine::Qemu) => vec![Runtime::Auto, Runtime::Qemu],
@@ -1037,47 +1006,18 @@ fn default_memory_gb(image: &SandboxImage) -> u32 {
 pub const STEPS: [&str; 4] = ["System", "Resources", "Options", "Summary"];
 /// Memory slider bounds, GB (local).
 pub const MEMORY_GB_RANGE: (u32, u32) = (2, 16);
-/// vCPU slider bounds for Cua Cloud: the everyday range.
-pub const CLOUD_CPU_RANGE: (u32, u32) = (1, 8);
-/// Memory slider bounds for Cua Cloud, GB: the everyday range (1-32 GB);
-/// desktops start at 2.
-pub const CLOUD_MEMORY_GB_RANGE: (u32, u32) = (2, 32);
-
-/// Cua Cloud rates for this account.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CloudPricing {
-    /// USD per reserved vCPU per hour.
-    pub vcpu_hour_usd: f64,
-    /// USD per reserved GB (GiB) of memory per hour.
-    pub memory_gib_hour_usd: f64,
-}
-
-/// `About $0.18/hour` for `cpus` vCPUs and `memory_gb` GB at `pricing`,
-/// or `None` without usable rates (never a guess).
-pub fn price_text(pricing: Option<&CloudPricing>, cpus: u32, memory_gb: u32) -> Option<String> {
-    let p = pricing.filter(|p| {
-        p.vcpu_hour_usd.is_finite()
-            && p.memory_gib_hour_usd.is_finite()
-            && p.vcpu_hour_usd > 0.0
-            && p.memory_gib_hour_usd > 0.0
-    })?;
-    let usd = f64::from(cpus) * p.vcpu_hour_usd + f64::from(memory_gb) * p.memory_gib_hour_usd;
-    Some(if usd < 0.005 {
-        "Under $0.01/hour".to_string()
-    } else {
-        format!("About ${usd:.2}/hour")
-    })
-}
-
+/// vCPU slider bounds on a machine of yours or in your cloud: the everyday
+/// range.
+pub const REMOTE_CPU_RANGE: (u32, u32) = (1, 8);
+/// Memory slider bounds there, GB: the everyday range (1-32 GB); desktops
+/// start at 2.
+pub const REMOTE_MEMORY_GB_RANGE: (u32, u32) = (2, 32);
 /// The sliders' bounds where the Space runs: `(cpus, memory GB)`.
 fn size_ranges(placement: Location, env: &WizardEnv) -> ((u32, u32), (u32, u32)) {
     match placement {
         // A machine of yours: the everyday range (its own size is not known
         // here; it refuses what it cannot run).
-        Location::Cloud | Location::Yours | Location::Host => {
-            (CLOUD_CPU_RANGE, CLOUD_MEMORY_GB_RANGE)
-        }
+        Location::Yours | Location::Host => (REMOTE_CPU_RANGE, REMOTE_MEMORY_GB_RANGE),
         Location::Local => ((1, env.max_cpus.max(1)), MEMORY_GB_RANGE),
     }
 }
@@ -1094,8 +1034,6 @@ fn effective_size(state: &WizardState, env: &WizardEnv) -> (u32, u32) {
 pub struct WizardEnv {
     /// Where "Run on" starts (Settings, `cua config set default.on`).
     pub default_location: Location,
-    /// Signed in (or client credentials).
-    pub cloud_available: bool,
     /// A local container backend or Lume exists.
     pub local_available: bool,
     /// Why local is unavailable.
@@ -1126,9 +1064,6 @@ pub struct WizardEnv {
     /// when known.
     #[serde(default)]
     pub storage: Option<LocalStorage>,
-    /// This account's Cua Cloud rates, when known (no estimate without).
-    #[serde(default)]
-    pub cloud_pricing: Option<CloudPricing>,
     /// The user's connected clouds (`cloud_status`), for "Your cloud"
     /// (offered only while its experiment is on: [`offered_clouds`]).
     #[serde(default)]
@@ -1506,13 +1441,11 @@ pub enum WizardAction {
     },
 }
 
-/// `location`, or this Mac when the apps do not offer it
-/// ([`crate::model::CLOUD_SPACES_OFFERED`]), no cloud of the user's is
-/// offered ([`offered_clouds`]), or it names no machine (a default is
-/// never one of your machines).
+/// `location`, or this Mac when no cloud of the user's is offered
+/// ([`offered_clouds`]) or it names no machine (a default is never one of
+/// your machines).
 fn offered_location(location: Location, env: &WizardEnv) -> Location {
     match location {
-        Location::Cloud if !crate::model::CLOUD_SPACES_OFFERED => Location::Local,
         Location::Yours if offered_clouds(env).is_empty() => Location::Local,
         Location::Host => Location::Local,
         l => l,
@@ -1653,9 +1586,8 @@ fn rebase(state: &mut WizardState, image_ref: &str) {
     state.disk_gb = None;
     // Follow the image to where it can run (the choice when possible).
     if !can_place(&next, state.placement) {
-        let other = state.placement.other();
-        if can_place(&next, other) {
-            state.placement = other;
+        if can_place(&next, Location::Local) {
+            state.placement = Location::Local;
             state.picked = true;
         }
     }
@@ -1755,8 +1687,6 @@ pub fn reduce(state: &WizardState, action: &WizardAction, env: &WizardEnv) -> Wi
                     s.host = Some(id.to_string());
                 } else if on == "local" {
                     s.placement = Location::Local;
-                } else if on == "cloud" {
-                    s.placement = Location::Cloud;
                 } else {
                     s.placement = Location::Yours;
                     s.cloud = Some(on.clone());
@@ -1982,10 +1912,10 @@ pub struct CreatePlan {
     /// Name, when given.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    /// vCPUs (local and Cua Cloud).
+    /// vCPUs (local and remote).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cpus: Option<u32>,
-    /// Memory MB (local and Cua Cloud).
+    /// Memory MB (local and remote).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_mb: Option<u32>,
     /// Local VMs only: grow the disk to this many GB (larger than the
@@ -2088,7 +2018,6 @@ pub fn create_args(plan: &CreatePlan) -> CreateSpaceArgs {
 /// container's by its runtime), or the cloud's.
 fn gpu_runtime(image: &SandboxImage, placement: Location, runtime: Runtime) -> &'static str {
     match placement {
-        Location::Cloud => "cloud",
         // Your cloud's machine types carry no GPU option (yet): no row.
         Location::Yours => "yours",
         // Nor do your other machines (their runtimes are not this Mac's).
@@ -2836,8 +2765,7 @@ fn via_text(host: &SpaceHost) -> &'static str {
 
 /// The "Run on" menu: This Mac, each machine of yours that provides Spaces
 /// (disabled with why while offline, not sharing or at its limit), then each connected
-/// cloud while the "Your cloud" experiment is on (Cua Cloud first, while
-/// the apps offer it).
+/// cloud while the "Your cloud" experiment is on.
 pub fn placement_options(state: &WizardState, env: &WizardEnv) -> Vec<PlacementOption> {
     placement_options_on(state, env, SpaceOs::Macos)
 }
@@ -2874,23 +2802,6 @@ pub fn placement_options_on(
             detail: why
                 .map(|(_, line)| line)
                 .unwrap_or_else(|| via_text(h).into()),
-        });
-    }
-    if crate::model::CLOUD_SPACES_OFFERED {
-        out.push(PlacementOption {
-            id: "cloud".into(),
-            label: Location::Cloud.label().into(),
-            group: "clouds".into(),
-            selected: placement == Location::Cloud,
-            enabled: can_place(&image, Location::Cloud),
-            detail: if !env.cloud_available {
-                "Sign in to Cua to create cloud Spaces.".to_string()
-            } else {
-                image
-                    .cloud
-                    .map(|c| c.label().to_string())
-                    .unwrap_or_else(|| "Not available for this image yet.".into())
-            },
         });
     }
     let chosen = selected_cloud(state, env).map(|c| c.name.as_str());
@@ -2967,7 +2878,6 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
     })
     .filter(|h| !h.is_empty());
     let placement_ready = match placement {
-        Location::Cloud => env.cloud_available,
         Location::Local => local_ready,
         Location::Yours => offer.is_some(),
         Location::Host => host.is_some() && host_why.is_none(),
@@ -3038,7 +2948,6 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
         .map(|o| o.id.clone())
         .unwrap_or_else(|| "local".into());
     let placement_error = (!placement_ready && placeable).then(|| match placement {
-        Location::Cloud => "Sign in to use Cua Cloud.".to_string(),
         Location::Yours => match cloud {
             Some(c) => cloud_refusal(&image, c)
                 .unwrap_or_else(|| format!("{} does not run this image.", c.title)),
@@ -3094,10 +3003,6 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
         })
         .collect();
     let engine_text = match placement {
-        Location::Cloud => image
-            .cloud
-            .map(|c| c.label().to_string())
-            .unwrap_or_else(|| "Not available in Cua Cloud yet".into()),
         Location::Local => match image.local {
             Some(l) if runtime == Runtime::Auto => l.label_on(os),
             Some(_) => runtime_word(runtime, image.variant, os),
@@ -3120,13 +3025,11 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
     let (cpus, memory_gb) = effective_size(state, env);
     let ((min_cpus, max_cpus), (min_memory_gb, max_memory_gb)) = size_ranges(placement, env);
     // No price on the user's own hardware (this Mac, one of your machines,
-    // or a machine added by address): only placements that bill show one.
+    // or a machine added by address): only a cloud of yours shows one.
     let price = if local || placement == Location::Host || state.mode == WizardMode::Address {
         None
-    } else if yours {
-        offer.and_then(|o| cloud_price_text(o.usd_per_hour))
     } else {
-        price_text(env.cloud_pricing.as_ref(), cpus, memory_gb)
+        offer.and_then(|o| cloud_price_text(o.usd_per_hour))
     };
     // When a Space in your cloud deletes itself.
     let lifetime = cloud.filter(|_| yours).map(|c| ttl_text(c.ttl_hours));
@@ -3429,21 +3332,28 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
 mod tests {
     use super::*;
 
-    /// `s` placed in Cua Cloud, which the apps do not offer
-    /// ([`crate::model::CLOUD_SPACES_OFFERED`]) and `reduce` refuses: the
-    /// cloud paths stay covered for when they do.
+    /// `s` placed in the user's own cloud (no estimate of its own: the
+    /// remote paths of the view).
     fn in_cloud(s: &WizardState) -> WizardState {
         WizardState {
-            placement: Location::Cloud,
+            placement: Location::Yours,
             picked: true,
             ..s.clone()
+        }
+    }
+
+    /// `e` with one connected cloud of the user's, so a placement in it holds.
+    fn with_cloud(e: &WizardEnv) -> WizardEnv {
+        WizardEnv {
+            clouds: vec![aws()],
+            experiments: your_cloud_on(),
+            ..e.clone()
         }
     }
 
     fn env() -> WizardEnv {
         WizardEnv {
             default_location: Location::Local,
-            cloud_available: false,
             local_available: true,
             local_reason: None,
             local_backends: Some(vec!["docker".into()]),
@@ -3453,7 +3363,6 @@ mod tests {
             lume_source: None,
             linux_source: None,
             storage: None,
-            cloud_pricing: None,
             clouds: vec![],
             hosts: vec![],
             experiments: crate::experiments::Experiments::default(),
@@ -3611,7 +3520,6 @@ mod tests {
     /// This Mac: 212 GB free on the startup disk, 40 GB in Colima.
     fn storage_env() -> WizardEnv {
         WizardEnv {
-            cloud_available: true,
             local_backends: None,
             storage: Some(LocalStorage {
                 reserve_bytes: 5 * GIB,
@@ -3858,9 +3766,9 @@ mod tests {
                 .all(|f| f.label != "Download" && f.label != "Disk")
         );
         let mut remote = s;
-        remote.placement = Location::Cloud;
+        remote.placement = Location::Yours;
         assert!(
-            !view(&remote, &e)
+            !view(&remote, &with_cloud(&e))
                 .resource_facts
                 .iter()
                 .any(|f| f.value.contains("one-time Linux runtime download"))
@@ -4044,17 +3952,13 @@ mod tests {
         );
         assert_eq!(other.disk_gb, None);
         let cloud = in_cloud(&s);
-        let v = view(&cloud, &e);
+        let v = view(&cloud, &with_cloud(&e));
         assert!(!v.disk_editable && v.plan.disk_gb.is_none());
         assert_eq!(
             facts(&v),
             [
                 ("Kind".into(), "Virtual machine".into()),
-                ("Architecture".into(), "x64".into()),
-                (
-                    "Disk".into(),
-                    size_text(sizes("ghcr.io/trycua/linux:24.04-disk", "amd64").disk)
-                ),
+                ("Deletes itself".into(), "After 8 hours".into()),
             ]
         );
     }
@@ -4162,10 +4066,10 @@ mod tests {
         .summary;
         let a = summary.iter().find(|f| f.label == "Architecture").unwrap();
         assert_eq!(a.value, "x64 (emulated)");
-        // No warning in the cloud, or on an x64 Mac.
+        // No warning in your cloud, or on an x64 Mac.
         let cloud = in_cloud(&s);
         assert!(
-            view(&cloud, &e)
+            view(&cloud, &with_cloud(&e))
                 .resource_facts
                 .iter()
                 .all(|f| f.symbol.is_none())
@@ -4213,7 +4117,6 @@ mod tests {
             runtime_options(&linux, Location::Local),
             [Runtime::Auto, Runtime::Gvisor, Runtime::Runc]
         );
-        assert_eq!(runtime_options(&linux, Location::Cloud), [Runtime::Gvisor]);
         let kinds = kind_options(&linux, Location::Local);
         assert_eq!(kinds.len(), 2);
         assert_eq!(kinds[1].image.image_ref, "ghcr.io/trycua/linux:24.04-disk");
@@ -4299,30 +4202,9 @@ mod tests {
         }
     }
 
-    /// Cua Cloud's default rates.
-    const RATES: CloudPricing = CloudPricing {
-        vcpu_hour_usd: 0.044625,
-        memory_gib_hour_usd: 0.0223125,
-    };
-
-    fn cloud_env(pricing: Option<CloudPricing>) -> WizardEnv {
-        WizardEnv {
-            default_location: Location::Cloud,
-            cloud_available: true,
-            cloud_pricing: pricing,
-            ..env()
-        }
-    }
-
     #[test]
     fn your_cloud_is_disabled_until_one_is_connected() {
-        // A Cua Cloud default still starts on this Mac, and there is no
-        // Cua Cloud tile while the apps do not offer it.
-        let e = WizardEnv {
-            default_location: Location::Cloud,
-            cloud_available: true,
-            ..env()
-        };
+        let e = env();
         let s = initial(&e);
         assert_eq!(s.placement, Location::Local);
         let v = view(&s, &e);
@@ -4330,7 +4212,7 @@ mod tests {
         assert_eq!(
             ids,
             ["local"],
-            "This Mac only: no Cua Cloud, nothing connected"
+            "This Mac only: nothing connected"
         );
         assert!(v.placements[0].selected && v.placements[0].enabled);
         assert_eq!(v.placement_id, "local");
@@ -4356,14 +4238,6 @@ mod tests {
             &e,
         );
         assert_eq!(picked.placement, Location::Local);
-        let synced = reduce(
-            &s,
-            &WizardAction::SyncDefault {
-                location: Location::Cloud,
-            },
-            &e,
-        );
-        assert_eq!(synced.placement, Location::Local);
         let yours_default = WizardEnv {
             default_location: Location::Yours,
             ..e
@@ -4973,96 +4847,6 @@ mod tests {
             ..e.clone()
         };
         assert_eq!(view(&mini, &gone).placement_id, "local");
-    }
-
-    #[test]
-    fn cloud_spaces_are_sized_within_the_everyday_range_and_priced() {
-        let e = cloud_env(Some(RATES));
-        let mut s = in_cloud(&reduce(&initial(&e), &WizardAction::Next, &e));
-        let v = view(&s, &e);
-        assert_eq!(v.step, 1);
-        let ids: Vec<&str> = v.fields.iter().map(|f| f.id.as_str()).collect();
-        assert_eq!(ids, ["cpus", "memory"], "sliders, no disk in the cloud");
-        assert_eq!((v.min_cpus, v.max_cpus), CLOUD_CPU_RANGE);
-        assert_eq!((v.min_memory_gb, v.max_memory_gb), CLOUD_MEMORY_GB_RANGE);
-        // Linux defaults: 2 vCPUs + 4 GB = $0.08925 + $0.08925.
-        assert_eq!(v.price.as_deref(), Some("About $0.18/hour"));
-        s = reduce(&s, &WizardAction::SetCpus { cpus: 64 }, &e);
-        s = reduce(&s, &WizardAction::SetMemory { memory_gb: 1024 }, &e);
-        let v = view(&s, &e);
-        assert_eq!(
-            (v.cpus, v.memory_gb),
-            (8, 32),
-            "clamped to the everyday cloud range"
-        );
-        assert_eq!(v.price.as_deref(), Some("About $1.07/hour"));
-        s = reduce(&s, &WizardAction::SetCpus { cpus: 0 }, &e);
-        s = reduce(&s, &WizardAction::SetMemory { memory_gb: 0 }, &e);
-        let v = view(&s, &e);
-        assert_eq!((v.cpus, v.memory_gb), (1, 2));
-        assert_eq!(v.price.as_deref(), Some("About $0.09/hour"));
-        // The plan and the SDK call carry the cloud size.
-        let args = create_args(&v.plan);
-        assert_eq!(
-            (args.cpus, args.memory_mb, args.disk_gb),
-            (Some(1), Some(2048), None)
-        );
-        s.step = 3;
-        let v = view(&s, &e);
-        let fact = |l: &str| {
-            v.summary
-                .iter()
-                .find(|f| f.label == l)
-                .map(|f| f.value.clone())
-        };
-        assert_eq!(fact("Resources").as_deref(), Some("1 core, 2 GB memory"));
-        assert_eq!(fact("Cost").as_deref(), Some("About $0.09/hour"));
-    }
-
-    #[test]
-    fn no_cloud_rates_no_estimate_and_no_price_locally() {
-        let e = cloud_env(None);
-        let mut s = in_cloud(&reduce(&initial(&e), &WizardAction::Next, &e));
-        assert_eq!(view(&s, &e).price, None, "never a guessed price");
-        s.step = 3;
-        assert!(view(&s, &e).summary.iter().all(|f| f.label != "Cost"));
-        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
-            let p = CloudPricing {
-                vcpu_hour_usd: bad,
-                ..RATES
-            };
-            assert_eq!(price_text(Some(&p), 2, 4), None, "{bad}");
-        }
-        let e = WizardEnv {
-            cloud_pricing: Some(RATES),
-            ..env()
-        };
-        let s = reduce(&initial(&e), &WizardAction::Next, &e);
-        assert_eq!(view(&s, &e).price, None, "no price on your own hardware");
-        // A machine added by address is your hardware too.
-        let s = reduce(&s, &WizardAction::ShowAddress, &e);
-        assert_eq!(view(&s, &e).price, None);
-    }
-
-    #[test]
-    fn a_size_follows_the_placement_limits() {
-        // 16 GB chosen locally is kept in the cloud; 12 vCPUs fit neither
-        // this 8-core Mac nor the cloud cap.
-        let e = WizardEnv {
-            cloud_available: true,
-            max_cpus: 12,
-            cloud_pricing: Some(RATES),
-            ..env()
-        };
-        let mut s = reduce(&initial(&e), &WizardAction::SetCpus { cpus: 12 }, &e);
-        s = reduce(&s, &WizardAction::SetMemory { memory_gb: 16 }, &e);
-        assert_eq!((view(&s, &e).cpus, view(&s, &e).memory_gb), (12, 16));
-        s = in_cloud(&s);
-        let v = view(&s, &e);
-        assert_eq!((v.cpus, v.memory_gb), (CLOUD_CPU_RANGE.1, 16));
-        assert_eq!(v.plan.cpus, Some(CLOUD_CPU_RANGE.1));
-        // 8 x 0.044625 + 16 x 0.0223125 = 0.714.
-        assert_eq!(v.price.as_deref(), Some("About $0.71/hour"));
     }
 
     #[test]

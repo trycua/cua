@@ -2265,11 +2265,6 @@ fn provisioning_frame(
             "progressText": d["progressText"],
             "canStream": d["canStream"],
             "actions": actions,
-            // `text [button -> url]`, when a cloud create ran out of credit.
-            "creditNotice": if d["creditNotice"].is_null() { Value::Null } else {
-                Value::String(format!("{} [{} -> {}]", d["creditNotice"]["text"].as_str().unwrap_or(""),
-                    d["creditNotice"]["button"].as_str().unwrap_or(""), d["creditNotice"]["url"].as_str().unwrap_or("")))
-            },
         });
         // Why turning it off or on failed, when it did.
         if let Some(e) = d["powerError"].as_str() {
@@ -4193,7 +4188,7 @@ fn run_launch_at_login(f: &Value, h: &dyn Host) -> Result<Value, String> {
             h,
             "settings.page",
             json!({ "input": { "signIn": { "kind": "idle" }, "canSignOut": false, "menuBar": false,
-                "defaultLocation": "local", "agentsBusy": false, "agentsPending": [],
+                "agentsBusy": false, "agentsPending": [],
                 "loginItem": step["loginItem"] } }),
         )?;
         let general: Vec<Value> = v["sections"]

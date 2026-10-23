@@ -142,9 +142,7 @@ struct BridgeContractTests {
         func linuxSource() async -> String? { await inner.linuxSource() }
         func setLinuxSource(_ value: String) async throws { try await inner.setLinuxSource(value) }
         func localStorage() async -> LocalStorage? { await inner.localStorage() }
-        func cloudAvailable() async -> Bool { await inner.cloudAvailable() }
         func runningMacosVms() async -> Int? { await inner.runningMacosVms() }
-        func cloudPricing() async -> AppCloudPricing? { await inner.cloudPricing() }
         func teleportContext(id: String) async throws -> (CuaSpacesFFI.Teleport, CuaSDK.Space)? {
             try await inner.teleportContext(id: id)
         }
@@ -182,7 +180,7 @@ struct BridgeContractTests {
                              settingsPath: dir.appendingPathComponent("settings.json").path,
                              host: FixtureHost(), account: FixtureAccount(identity: "ada@example.com"),
                              telemetry: FixtureTelemetry(), agentSetup: FixtureAgentSetup(),
-                             billing: FixtureBilling(), devices: FixtureDevices(), presence: FixturePresence(),
+                             devices: FixtureDevices(), presence: FixturePresence(),
                              loginItem: FixtureLoginItem(.enabled), startup: startup)
         model.updates = UpdatesModel(updater: FixtureUpdater(lastCheck: fixtureNow), channel: .stable)
         await model.refresh()
@@ -411,7 +409,7 @@ struct BridgeContractTests {
         let ready = try Self.json(WebUIBridge.createOptions(env: await model.newSpaceEnv(), macosVmsRunning: 1, pending: false))
         #expect(JSONShape.validate(schema, ready, defs: defs) == [])
         // Such an answer fails.
-        let broken: [String: Any] = ["local": NSNull(), "gpus": NSNull(), "cloudPricing": NSNull(), "experiments": [:], "maxCpus": 8]
+        let broken: [String: Any] = ["local": NSNull(), "gpus": NSNull(), "experiments": [:], "maxCpus": 8]
         #expect(JSONShape.validate(schema, broken, defs: defs).sorted() == ["$.env: missing", "$.local: expected object, got null"])
     }
 

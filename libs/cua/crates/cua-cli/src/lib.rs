@@ -1762,9 +1762,10 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             description,
             ..
         }) => {
-            let url = sandbox::viewer_link(&cua, &sb, None, false, None)
-                .await?
-                .url;
+            let link = sandbox::viewer_link(&cua, &sb, None, false, None).await?;
+            // Held until the recording ends.
+            let mut proxies = sandbox::Viewers::new();
+            let url = sandbox::on_loopback(link.url, &mut proxies).await?;
             return skills::cmd_record(url, provider, model, api_key, name, description, out).await;
         }
         Command::Spacesd(cmd) => match cmd {

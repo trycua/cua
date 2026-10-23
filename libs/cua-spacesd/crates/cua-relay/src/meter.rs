@@ -1911,7 +1911,7 @@ mod tests {
         }
         assert!(m.erase_user("ada-sub").unwrap());
         let raw = std::fs::read_to_string(&path).unwrap();
-        assert!(!raw.contains("ada") && raw.contains("bob-sub"), "{raw}");
+        assert!(!raw.contains("ada-sub") && raw.contains("bob-sub"), "{raw}");
         let events = m.take_events(false);
         assert_eq!(events.len(), 1);
         assert_ne!(events[0]["distinct_id"], id.as_str());
@@ -1975,8 +1975,12 @@ mod tests {
             .map(|e| e["event"].as_str().unwrap())
             .collect();
         assert_eq!(names, vec!["relay_allowance_soft_limit", "relay_usage"]);
+        // The distinct id is a hash in hex, which can spell "ada" by chance:
+        // look for the name and the email, not the three letters.
         let raw = serde_json::to_string(&events).unwrap();
-        assert!(!raw.contains("ada"), "{raw}");
+        assert!(!raw.contains("ada@example.com"), "{raw}");
+        assert!(!raw.contains("\"ada\""), "{raw}");
+        assert!(!raw.contains("ada@"), "{raw}");
         assert_eq!(events[1]["properties"]["hours_used"], 1.0);
         assert_eq!(events[1]["properties"]["soft_limit_reached"], true);
         // Between reports only new soft-limit events are sent.

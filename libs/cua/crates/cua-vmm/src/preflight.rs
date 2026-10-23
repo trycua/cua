@@ -58,6 +58,15 @@ pub fn request(guest: Guest, runs: Runs, needed_bytes: Option<u64>) -> Request {
 
 /// Finds what `req` needs to know about this machine.
 pub async fn gather(req: &Request) -> Facts {
+    let gap = if req.runs == Runs::Vm {
+        virtualization(req.host).await
+    } else {
+        None
+    };
+    gather_with_virtualization(req, gap).await
+}
+
+async fn gather_with_virtualization(req: &Request, gap: Option<VirtGap>) -> Facts {
     let mut facts = Facts {
         free_bytes: crate::disk::space(&crate::host::cua_home())
             .ok()
@@ -68,7 +77,7 @@ pub async fn gather(req: &Request) -> Facts {
         facts.engine = engine().await;
     }
     if req.runs == Runs::Vm {
-        facts.virtualization = virtualization(req.host);
+        facts.virtualization = gap;
     }
     if req.host == Host::Macos && req.guest == Guest::Macos {
         facts.local_network_blocked = local_network_blocked().await;
@@ -89,6 +98,7 @@ pub async fn check(req: &Request) -> Vec<Issue> {
 /// every app and the CLI read it from one place.
 pub async fn report() -> BTreeMap<String, Vec<Issue>> {
     let mut out = BTreeMap::new();
+    let gap = virtualization(Host::current()).await;
     for (name, guest, runs) in [
         ("linux_container", Guest::Linux, Runs::Container),
         ("linux_vm", Guest::Linux, Runs::Vm),
@@ -102,7 +112,7 @@ pub async fn report() -> BTreeMap<String, Vec<Issue>> {
         // The image's real size is unknown here and it may already be on
         // disk, so a guess must not block a create that would work: the
         // create's own disk guards decide.
-        let mut facts = gather(&req).await;
+        let mut facts = gather_with_virtualization(&req, gap).await;
         facts.free_bytes = None;
         out.insert(name.to_string(), pf::evaluate(&req, &facts));
     }
@@ -132,11 +142,9 @@ async fn engine() -> Engine {
     }
 }
 
-fn virtualization(host: Host) -> Option<VirtGap> {
+async fn virtualization(host: Host) -> Option<VirtGap> {
     match host {
-        Host::Windows => {
-            windows_hypervisor_platform_off().then_some(VirtGap::HypervisorPlatformOff)
-        }
+        Host::Windows => windows_hypervisor_platform().await,
         Host::Linux => match crate::host::kvm_usable() {
             Ok(()) => None,
             Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
@@ -148,17 +156,30 @@ fn virtualization(host: Host) -> Option<VirtGap> {
     }
 }
 
-/// QEMU's `whpx` accelerator needs the Windows Hypervisor Platform feature,
-/// whose library (`WinHvPlatform.dll`) is only in System32 when it is on.
-fn windows_hypervisor_platform_off() -> bool {
+async fn windows_hypervisor_platform() -> Option<VirtGap> {
     if !cfg!(windows) {
-        return false;
+        return None;
     }
-    let root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
-    !std::path::Path::new(&root)
-        .join("System32")
-        .join("WinHvPlatform.dll")
-        .exists()
+    let mut command = tokio::process::Command::new("powershell.exe");
+    command.args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "$ErrorActionPreference = 'Stop'; Get-CimInstance Win32_OptionalFeature -Filter \"Name='HypervisorPlatform'\" | Select-Object -ExpandProperty InstallState | ConvertTo-Json -Compress",
+    ]).kill_on_drop(true);
+    let output = tokio::time::timeout(std::time::Duration::from_secs(5), command.output())
+        .await
+        .ok()?
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_hypervisor_platform(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn parse_hypervisor_platform(stdout: &str) -> Option<VirtGap> {
+    (serde_json::from_str::<u32>(stdout.trim()).ok() == Some(2))
+        .then_some(VirtGap::HypervisorPlatformOff)
 }
 
 async fn local_network_blocked() -> bool {
@@ -178,6 +199,35 @@ async fn local_network_blocked() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn optional_feature_state_only_blocks_vms_when_disabled() {
+        use pf::{FixAction, IssueKind, Pane};
+        let mut req = request(Guest::Windows, Runs::Vm, None);
+        req.host = Host::Windows;
+        for output in ["1", "2", "3", "4", "null", "", "invalid", "\"2\"", "[2]"] {
+            let facts = Facts {
+                virtualization: parse_hypervisor_platform(output),
+                ..Default::default()
+            };
+            let issues = pf::evaluate(&req, &facts);
+            if output == "2" {
+                assert_eq!(issues.len(), 1);
+                assert_eq!(issues[0].kind, IssueKind::VirtualizationUnavailable);
+                assert_eq!(
+                    issues[0].fix.as_ref().unwrap().action,
+                    FixAction::OpenSettings(Pane::WindowsFeatures)
+                );
+                assert!(issues[0].message.contains("restart"));
+            } else {
+                assert!(issues.is_empty(), "{output}");
+            }
+            let mut container = req.clone();
+            container.guest = Guest::Linux;
+            container.runs = Runs::Container;
+            assert!(pf::evaluate(&container, &facts).is_empty());
+        }
+    }
 
     #[test]
     fn estimates_grow_with_the_guest() {

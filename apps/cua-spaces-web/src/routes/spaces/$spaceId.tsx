@@ -5,7 +5,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowDownCircleIcon, ChevronLeftIcon, MonitorIcon, PictureInPicture2Icon, PlayIcon, SquareIcon, Trash2Icon, UserPlusIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import { hostResources, parseDropped, spaceResources, useBridge, useResources, useDevices, useExperiments, useMachines, useSession, useShareSheet, useSpaceDetail, useSpaceFiles, useSpaces, useTeleport, type CreateReport, type Machine, type ResourcesSnapshot, type Space, type StreamRow } from "@/bridge";
+import { hostResources, parseDropped, runCreateFix, spaceResources, useBridge, useResources, useDevices, useExperiments, useMachines, useSession, useShareSheet, useSpaceDetail, useSpaceFiles, useSpaces, useTeleport, type CreateReport, type Machine, type ResourcesSnapshot, type Space, type StreamRow } from "@/bridge";
 import { DiagnosticReportDialog } from "@/components/diagnostic-report-dialog";
 import { OsIcon } from "@/components/os-icon";
 import { EmptyState, Page } from "@/components/page";
@@ -15,6 +15,7 @@ import { FactList } from "@/components/space-detail/facts";
 import { SpaceResourcesPanel } from "@/components/resources/space-resources-panel";
 import { StreamSection } from "@/components/space-detail/stream-section";
 import { StreamSurface } from "@/components/space-detail/stream-surface";
+import { SpacePortLink } from "@/components/links/copy-link";
 import { StateLabel } from "@/components/state-dot";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
@@ -64,7 +65,7 @@ function SpaceDetailPage() {
   const [confirm, setConfirm] = useState<Confirm>(null);
   const teleport = useTeleport();
   const sharing = useShareSheet();
-  const { data: session } = useSession();
+  const { data: session, openExternal } = useSession();
   const { core } = useBridge();
   const space = spaces?.find((s) => s.id === spaceId);
   // Apps and files dropped on this Space's notch tile: the same as a drop on the well (an app opens Teleport at it), once.
@@ -183,6 +184,20 @@ function SpaceDetailPage() {
       setReport(r);
       setReportOpen(true);
     });
+  // It failed the same way twice: the core's fix for that cause (copy a
+  // command, open the help page, or the details) instead of Try again.
+  const createFix = space.progress?.fix;
+  const fix = createFix
+    ? () =>
+        void runCreateFix(createFix, {
+          copy: async (text) => {
+            await navigator.clipboard?.writeText(text);
+            toast(`Copied ${text}`, { description: "Paste it in Terminal.", type: "success" });
+          },
+          openExternal: (url) => openExternal(url),
+          details: openReport,
+        }).catch((e: unknown) => toast("Couldn't do that", { description: message(e), type: "error" }))
+    : undefined;
   // Picture in picture where the host has panels; its own window where it doesn't.
   const onPip = (row: StreamRow) =>
     run("open", async () => {
@@ -294,7 +309,7 @@ function SpaceDetailPage() {
           onAccessAction={enroll}
           className="h-72"
         >
-          {surfaceState(space, pending, turnOn, start, dismiss, retry, openReport) ?? poppedOutState}
+          {surfaceState(space, pending, turnOn, start, dismiss, retry, openReport, fix) ?? poppedOutState}
         </StreamSurface>
       )}
 
@@ -307,6 +322,11 @@ function SpaceDetailPage() {
             <p className="mt-3 px-1 text-[13px] text-muted-foreground" data-volume-note="" title={volumeError}>
               {volumeUnavailableNote(volumeError)}
             </p>
+          ) : null}
+          {!space.id.startsWith("pending:") && !detail.desktopNote ? (
+            <div className="mt-7">
+              <SpacePortLink spaceId={space.id} />
+            </div>
           ) : null}
           {showTeleport ? (
             <div className="mt-7">
@@ -447,21 +467,35 @@ function surfaceState(
   onDismiss: () => void,
   onRetry?: () => void,
   onReport?: () => void,
+  onFix?: () => void,
 ): ReactNode {
   const state = spaceState(space);
   if (state === "failed") {
+    // The same failure twice: its fix replaces a plain Try again.
+    const fix = space.progress?.fix;
     return (
       <>
         <p className="text-[13px] font-medium">Couldn't create this Space</p>
         <p data-create-error="" className="mt-2 max-w-md text-center text-xs text-destructive">
           {createError(space) || "No reason was reported."}
         </p>
+        {fix ? (
+          <p data-create-fix="" className="mt-2 max-w-md text-center text-xs text-muted-foreground">
+            {fix.text}
+          </p>
+        ) : null}
         <div className="mt-4 flex flex-wrap justify-center gap-2">
-          {onRetry ? <Button onClick={onRetry}>Try again</Button> : null}
+          {fix && onFix ? (
+            <Button data-create-fix-button="" onClick={onFix}>
+              {fix.label}
+            </Button>
+          ) : onRetry ? (
+            <Button onClick={onRetry}>Try again</Button>
+          ) : null}
           <Button variant="outline" onClick={onDismiss}>
             Remove from list
           </Button>
-          {onReport ? (
+          {onReport && fix?.action !== "details" ? (
             <Button variant="outline" data-send-report="" onClick={onReport}>
               Send a report…
             </Button>

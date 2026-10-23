@@ -16,6 +16,9 @@ pub fn command_of(argv: &[String]) -> SpacesdCommand {
         tag: None,
         stdin: false,
         pty: None,
+        request_id: None,
+        epoch: None,
+        scrollback_bytes: None,
         kill_on_disconnect: false,
     }
 }

@@ -451,6 +451,32 @@ impl Mesh {
         self.inner.engine.peer(peer).map(|p| p.path())
     }
 
+    /// The round trip of the path to `peer` when it is direct (the last
+    /// disco pong), else `None`.
+    pub fn rtt(&self, peer: &PublicKey) -> Option<Duration> {
+        self.inner
+            .engine
+            .peer(peer)
+            .filter(|p| matches!(p.path(), Path::Direct(_)))
+            .and_then(|p| p.rtt())
+    }
+
+    /// Starts looking for a direct path to `peer` now (before any traffic)
+    /// and waits up to `within` for one: the path then (`None` when the
+    /// peer is not in the map).
+    pub async fn warm(&self, peer: &PublicKey, within: Duration) -> Option<Path> {
+        self.inner.engine.want(peer);
+        let deadline = tokio::time::Instant::now() + within;
+        loop {
+            let path = self.path(peer)?;
+            if matches!(path, Path::Direct(_)) || tokio::time::Instant::now() >= deadline {
+                return Some(path);
+            }
+            self.inner.engine.want(peer);
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
     /// Status for displays and measurements.
     pub fn status(&self) -> Status {
         let state = self.inner.control.state.borrow().clone();
@@ -585,7 +611,21 @@ impl Mesh {
         service: &str,
         session: Option<String>,
     ) -> Result<Forward> {
-        let (tcp, udp) = bind_pair().await?;
+        self.forward_on(peer, service, session, std::net::Ipv4Addr::LOCALHOST.into())
+            .await
+    }
+
+    /// [`Mesh::forward`] on a port of `ip` (an address of this machine)
+    /// instead of loopback: a guest of this machine (a VM on its NAT, a
+    /// container on its bridge) reaches the forward at its gateway address.
+    pub async fn forward_on(
+        &self,
+        peer: PublicKey,
+        service: &str,
+        session: Option<String>,
+        ip: std::net::IpAddr,
+    ) -> Result<Forward> {
+        let (tcp, udp) = bind_pair(ip).await?;
         let local = tcp.local_addr().map_err(|e| Error::Io(e.to_string()))?;
         let me = self.clone();
         let service = service.to_owned();
@@ -766,20 +806,20 @@ impl Drop for Forward {
     }
 }
 
-async fn bind_pair() -> Result<(TcpListener, Option<UdpSocket>)> {
+async fn bind_pair(ip: std::net::IpAddr) -> Result<(TcpListener, Option<UdpSocket>)> {
     for _ in 0..16 {
-        let tcp = TcpListener::bind(("127.0.0.1", 0))
+        let tcp = TcpListener::bind((ip, 0))
             .await
             .map_err(|e| Error::Io(e.to_string()))?;
         let port = tcp
             .local_addr()
             .map_err(|e| Error::Io(e.to_string()))?
             .port();
-        if let Ok(udp) = UdpSocket::bind(("127.0.0.1", port)).await {
+        if let Ok(udp) = UdpSocket::bind((ip, port)).await {
             return Ok((tcp, Some(udp)));
         }
     }
-    let tcp = TcpListener::bind(("127.0.0.1", 0))
+    let tcp = TcpListener::bind((ip, 0))
         .await
         .map_err(|e| Error::Io(e.to_string()))?;
     Ok((tcp, None))

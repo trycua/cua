@@ -49,6 +49,7 @@ export const METHODS = [
   "resources.get",
   "machines.rename", "machines.remove", "machines.checkHealth",
   "checklist.get", "checklist.send",
+  "links.list", "links.create", "links.stop",
 ] as const;
 
 /** A live desktop's media ticket for the page's WebCodecs player,

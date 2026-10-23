@@ -310,7 +310,8 @@ extension Server {
                 name: request.name,
                 newName: request.newName,
                 sourceLocation: request.sourceLocation,
-                destLocation: request.destLocation
+                destLocation: request.destLocation,
+                withSavedState: request.withSavedState ?? false
             )
 
             return HTTPResponse(
@@ -366,6 +367,45 @@ extension Server {
                 statusCode: .ok,
                 headers: ["Content-Type": "application/json"],
                 body: try JSONEncoder().encode(["message": "VM settings updated successfully"])
+            )
+        } catch {
+            return HTTPResponse(
+                statusCode: .badRequest,
+                headers: ["Content-Type": "application/json"],
+                body: try JSONEncoder().encode(APIError(message: error.localizedDescription))
+            )
+        }
+    }
+
+    /// Renames a VM, running or not (`{"newName": "..."}`).
+    func handleRenameVM(name: String, body: Data?) async throws -> HTTPResponse {
+        guard let body, let request = try? JSONDecoder().decode(RenameVMRequest.self, from: body)
+        else {
+            return .badRequest(message: "Invalid request body")
+        }
+        do {
+            try LumeController().renameVM(
+                name: name, newName: request.newName, storage: request.storage)
+            return HTTPResponse(
+                statusCode: .ok,
+                headers: ["Content-Type": "application/json"],
+                body: try JSONEncoder().encode([
+                    "message": "VM renamed", "name": request.newName,
+                ])
+            )
+        } catch {
+            return .badRequest(message: error.localizedDescription)
+        }
+    }
+
+    /// Saves a running VM's state and stops it; its next run resumes it.
+    func handleSuspendVM(name: String) async throws -> HTTPResponse {
+        do {
+            try await LumeController().suspendVM(name: name)
+            return HTTPResponse(
+                statusCode: .ok,
+                headers: ["Content-Type": "application/json"],
+                body: try JSONEncoder().encode(["message": "VM suspended", "name": name])
             )
         } catch {
             return HTTPResponse(

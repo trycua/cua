@@ -121,6 +121,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "machines.rename", "machines.remove", "machines.checkHealth",
         // The getting-started checklist: the app's one copy (`ChecklistModel`).
         "checklist.get", "checklist.send",
+        // Links to things you run (WebUIBridge+Pages.swift).
+        "links.list", "links.create", "links.stop",
     ]
 
     let model: AppModel
@@ -613,9 +615,15 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         let os = (args["os"] as? String).flatMap(AppSpaceOs.init(word:)) ?? .unknown
         let id: String
         do {
-            id = try await model.runCreate(createArgs, os: os, pendingId: pendingId) { [weak self] p in
+            id = try await model.runCreate(createArgs, os: os, pendingId: pendingId, progress: { [weak self] p in
                 self?.host?.emit("spaces.createProgress", payload: Self.progress(p, pendingId: pendingId))
-            }
+            }, retrying: { [weak self] error, variant in
+                // The model runs it once more: the page shows "Retrying…".
+                self?.host?.emit("spaces.createProgress", payload: [
+                    "pendingId": pendingId, "phase": "preparing", "detail": "",
+                    "retry": ["error": error, "errorVariant": variant],
+                ] as [String: Any])
+            })
         } catch where isCancelled(error) {
             throw Failure(code: "cancelled", message: "cancelled")
         }

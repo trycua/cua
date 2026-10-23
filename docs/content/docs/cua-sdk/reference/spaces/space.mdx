@@ -20,7 +20,7 @@ Connected machine primitives; missing spacesd features return `CapabilityMissing
 A connected Space. Every primitive checks the spacesd feature it
 needs first and fails with `CapabilityMissing` naming it.
 
-Returned by [`Spaces.space`](/cua-sdk/reference/spaces#spacesspace).
+Returned by [`Space.fork`](/cua-sdk/reference/sandbox/checkpoints#spacefork), [`Spaces.fork`](/cua-sdk/reference/sandbox/checkpoints#spacesfork), [`Spaces.space`](/cua-sdk/reference/spaces#spacesspace).
 
 | Method | Description |
 | --- | --- |
@@ -43,25 +43,30 @@ Returned by [`Spaces.space`](/cua-sdk/reference/spaces#spacesspace).
 | [`unshare`](#spaceunshare) | Stops sharing this Space with `who` at once, or with everyone when `who` is `None`. |
 | [`upload`](#spaceupload) | Copies a host file or folder to `dest` in the Space (default: the home directory). |
 | [`write`](#spacewrite) | Writes bytes to a guest path (parents created, verified by SHA-256). |
-| [`agent_events`](/cua-sdk/reference/spaces#spaceagent_events) | Normalized events after `cursor` (0: the start), as the `agent_events` JSON (`events`, `cursor`, `caught_up`, `status`). |
-| [`agent_interrupt`](/cua-sdk/reference/spaces#spaceagent_interrupt) | Cancels the run's turn in flight; the session stays open. |
-| [`agent_list`](/cua-sdk/reference/spaces#spaceagent_list) | Every agent run in this Space. |
-| [`agent_message`](/cua-sdk/reference/spaces#spaceagent_message) | Sends a follow-up message to a run. |
-| [`agent_start`](/cua-sdk/reference/spaces#spaceagent_start) | Starts an agent CLI (`claude-code`, `openai-codex`, ...) with a prompt, as a detached spacesd process. |
-| [`agent_status`](/cua-sdk/reference/spaces#spaceagent_status) | A run's status with the last `tail` lines of output. |
-| [`agent_stop`](/cua-sdk/reference/spaces#spaceagent_stop) | Stops a run. |
+| [`agent_events`](/cua-sdk/reference/spaces/agents#spaceagent_events) | Normalized events after `cursor` (0: the start), as the `agent_events` JSON (`events`, `cursor`, `caught_up`, `status`). |
+| [`agent_interrupt`](/cua-sdk/reference/spaces/agents#spaceagent_interrupt) | Cancels the run's turn in flight; the session stays open. |
+| [`agent_list`](/cua-sdk/reference/spaces/agents#spaceagent_list) | Every agent run in this Space. |
+| [`agent_message`](/cua-sdk/reference/spaces/agents#spaceagent_message) | Sends a follow-up message to a run. |
+| [`agent_start`](/cua-sdk/reference/spaces/agents#spaceagent_start) | Starts an agent CLI (`claude-code`, `openai-codex`, ...) with a prompt, as a detached spacesd process. |
+| [`agent_status`](/cua-sdk/reference/spaces/agents#spaceagent_status) | A run's status with the last `tail` lines of output. |
+| [`agent_stop`](/cua-sdk/reference/spaces/agents#spaceagent_stop) | Stops a run. |
 | [`app_icon`](/cua-sdk/reference/spaces/space#spaceapp_icon) | The icon the guest desktop shows for a window's app (pass the window's `app_name`, `app_id` and `pid`), or `None` when the Space has none: show no icon then, not a placeholder. |
 | [`app_icons`](/cua-sdk/reference/spaces/space#spaceapp_icons) | Icons for many windows' apps at once, in request order (`None`: the Space has no icon for that app; show none). |
 | [`attach_stream`](/cua-sdk/reference/spaces/streams#spaceattach_stream) | Attaches to a ticket from `Self.open_stream` and delivers the media socket's encoded frames and audio packets to the sinks as they arrive. |
+| [`checkpoint`](/cua-sdk/reference/sandbox/checkpoints#spacecheckpoint) | Saves this Space's state as checkpoint `checkpoint` (the sandbox API's `Sandboxes.checkpoint`): it keeps running, and `Spaces.fork(checkpoint, name)` (this machine) or `Spaces.create` with image `checkpoint:<name>` (any of your machines) starts new Spaces from it. |
 | [`close_stream`](/cua-sdk/reference/spaces/streams#spaceclose_stream) | Closes a media session opened with `Space.open_stream`. |
 | [`displays`](/cua-sdk/reference/spaces/space#spacedisplays) | The Space's displays, primary first, with their resolution in physical pixels. |
+| [`fork`](/cua-sdk/reference/sandbox/checkpoints#spacefork) | Starts Space `name`, a fork of this one (with its memory when it is running), and returns it connected. |
+| [`forward`](/cua-sdk/reference/spaces/channel#spaceforward) | Forwards a free loopback port on this machine to guest `port` over this Space's own connection (cua-spacesd's tunnel): the same path its calls take, so a Space one of your machines provides on your LAN is reached directly, and never through a port opened on that machine's network. |
 | [`join_presence`](/cua-sdk/reference/spaces/streams#spacejoin_presence) | Joins presence. |
 | [`open_stream`](/cua-sdk/reference/spaces/streams#spaceopen_stream) | Mints a media session (ticket + WebSocket URL) for another client to attach to. |
+| [`route`](/cua-sdk/reference/spaces/channel#spaceroute) | Which way this Space's calls go now (see `super.spacesd.SpacesdClient.route`): `local …`, `direct …`, `relay …`, `mesh direct <ip:port> rtt <ms> ms`, `mesh relayed` or `cloud`; empty when the Space runs no cua-spacesd. |
 | [`spacesd`](/cua-sdk/reference/spacesd#spacespacesd) | The cua-spacesd client over the connection this Space authenticated. |
 | [`stream_session`](/cua-sdk/reference/spaces/streams#spacestream_session) | Opens a media session and delivers keyframe-gated encoded frames and audio to the sinks (one delivery thread; decoding stays with the caller). |
 | [`teleport`](/cua-sdk/reference/spaces/space#spaceteleport) | Teleports `app`'s session into this Space. |
 | [`teleport_manifest`](/cua-sdk/reference/spaces/space#spaceteleport_manifest) | What teleporting `app` (`full` or `tabs`) would move from this host. |
 | [`thumbnail`](/cua-sdk/reference/spaces/space#spacethumbnail) | The Space's latest thumbnail (a small JPEG of its primary display) from the cache every client on this machine shares: returned at once when it is younger than `max_age_ms` (unset: any age), else captured fresh through cua-spacesd and kept for the next caller. |
+| [`transport`](/cua-sdk/reference/spaces/channel#spacetransport) | What carries this Space's calls, for a badge: `mesh` (end to end) or `relay_https` (the relay can read the session in transit; with `fallback_reason` when the mesh was wanted), or `local`, `direct`, `cloud`. |
 | [`usage`](/cua-sdk/reference/spaces/space#spaceusage) | Processor, memory and storage use now (cheap: poll it at a low rate while a detail is visible). |
 | [`websocket_headers`](/cua-sdk/reference/spaces/streams#spacewebsocket_headers) | Headers a media WebSocket to this Space needs besides its ticket. |
 | [`window_thumbnail`](/cua-sdk/reference/spaces/space#spacewindow_thumbnail) | A small JPEG preview of one of the Space's windows (`window_id` and `epoch` from `windows`), at most `max_dimension` px, reused for a few seconds (the SDK's preview cache); `None` when the guest captured nothing. |
@@ -1235,31 +1240,51 @@ Returned by [`Space.share`](#spaceshare), [`Space.shares`](#spaceshares), [`Spac
 | `online` | `bool` |  | The machine is on the relay now. |
 | `shares` | [`Vec<SpaceShareEntry>`](#spaceshareentry-record) |  | The accounts and their roles. |
 
-## `SpacesHost` record
+## `EgressEnforcement` enum
 
-One of your machines that provides Spaces (`Spaces.hosts`).
+Where a Space's egress policy is enforced (`SpaceInfo.egress_enforced`).
 
-Returned by [`Spaces.hosts`](/cua-sdk/reference/spaces#spaceshosts).
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
 
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `id` | `String` |  | What `on="host:<id>"` takes: the relay machine id, or the name a direct host was added as. |
-| `name` | `String` |  | Its name. |
-| `via` | `String` |  | `relay` or `direct`. |
-| `online` | `bool` |  | It answered. |
-| `os` | `String` |  | Its operating system (`macos`, `linux`, `windows`), when it answered. |
-| `limits` | [`Vec<SpacesHostLimit>`](#spaceshostlimit-record) |  | Its limits, when it answered. |
+```python
+EgressEnforcement.HOST
+```
 
-## `SpacesHostLimit` record
+</Tab>
+<Tab value="TypeScript">
 
-One limit of a host that provides Spaces and how much of it is used.
+```ts
+EgressEnforcement.Host
+```
 
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `resource` | `String` |  | `spaces` (every Space it provides) or `macos_vms`. |
-| `used` | `u32` |  | In use now. |
-| `limit` | `u32` |  | The limit (0: none). |
-| `reason` | `String` |  | Why the limit exists, for people. |
+</Tab>
+<Tab value="Swift">
+
+```swift
+.host
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+EgressEnforcement.HOST
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+EgressEnforcement::Host
+```
+
+</Tab>
+</Tabs>
+
+| Variant | Description |
+| --- | --- |
+| `Host` | By the host the Space runs on, outside the guest: nothing in the guest, root included, can change it. |
 
 ## Windows, icons and displays
 

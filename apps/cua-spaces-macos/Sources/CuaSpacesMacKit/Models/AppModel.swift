@@ -98,6 +98,8 @@ public final class AppModel {
     public let agentKeys: AgentKeysModel
     /// The user's own clouds: the "Your cloud" tile and "Connect a cloud".
     public let cloud: CloudModel
+    /// The cloud hosts the elastic pool added (Machines), read-only.
+    public let elastic: ElasticModel
     /// The Settings tab showing.
     public var settingsTab: SettingsTab = .general
     /// A Settings section to scroll to when Settings opens (captures).
@@ -152,7 +154,7 @@ public final class AppModel {
     /// Spaces being created: each shows in the list the moment its create
     /// starts and follows the SDK's progress (`spaces::creating`). Spaces
     /// being deleted, which show Deleting until the delete returns.
-    public private(set) var creates = AppCreatesState(pending: [], deleting: [], powering: [])
+    public private(set) var creates = AppCreatesState(pending: [], deleting: [], powering: [], streaks: [])
     /// Sidebar rows as targets for a dragged real window.
     public let dropTargets = SidebarDropTargets()
     /// The New UI window's Space tiles, the same kind of target.
@@ -183,6 +185,10 @@ public final class AppModel {
         self.storage = StorageModel(tools: backend as? AgentsToolRunning)
         self.agentKeys = AgentKeysModel(tools: backend as? AgentsToolRunning)
         self.cloud = CloudModel(tools: backend as? CloudToolRunning)
+        // Fixtures never read the real cua home's ledger.
+        let fixtures = backend as? FixtureSpacesBackend
+        self.elastic = ElasticModel(tools: backend as? CloudToolRunning,
+                                    ledger: fixtures.map { fx in { fx.fixtureElastic ? FixtureSpacesBackend.fixtureLedger() : nil } })
         self.billing = billing
         self.loginItem = loginItem
         self.host = HostModel(host: host)
@@ -809,6 +815,16 @@ public final class AppModel {
             recompose()
             loaded = true
             rosterError = nil
+            // Your machines' load for their sidebar lines, every so often
+            // (each machine is asked; never holds up the list).
+            if registrySpaces.contains(where: { $0.id.hasPrefix("relay:") }),
+               hostsReadAt.map({ Date().timeIntervalSince($0) >= Self.hostsRefreshInterval }) ?? true {
+                hostsReadAt = Date()
+                Task { await refreshHosts() }
+            }
+            // The pool's cloud hosts, spend and events (it reads no more
+            // than every few seconds, and never holds up the list).
+            Task { await elastic.refresh() }
             // The checklist's "Run an agent": read the persistent agents
             // once (the Agents page reads them again when it opens).
             if !checklistReadAgents, servicesIn, !checklist.state.done.contains(.runAgent) {
@@ -937,13 +953,35 @@ public final class AppModel {
         wizard.update(env: wizardEnv(from: wizard.env))
     }
 
-    /// Your machines that provide Spaces, as New Space last read them.
+    /// Your machines that provide Spaces, as New Space or the sidebar last
+    /// read them.
     var hosts: [AppSpaceHost] = []
+    /// When the sidebar last asked for `hosts`.
+    @ObservationIgnored private var hostsReadAt: Date?
+    /// How often the sidebar asks your machines how busy they are.
+    static let hostsRefreshInterval: TimeInterval = 30
+
+    /// Reads your machines that provide Spaces again (how busy each is).
+    func refreshHosts() async {
+        hostsReadAt = Date()
+        hosts = await backend.hosts()
+    }
+
+    /// The one short line under one of your machines in the sidebar ("3
+    /// running · 40% CPU", "Paused"); `nil` for any other row, or while the
+    /// machine is offline or reports no load.
+    func hostLoadLine(_ rowId: String) -> String? {
+        guard rowId.hasPrefix("relay:") else { return nil }
+        let id = String(rowId.dropFirst("relay:".count))
+        return hosts.first { $0.id == id }.flatMap { appHostLoadText(host: $0) }
+    }
 
     /// Which Lume macOS Spaces run on (`runtime.lume`), once read.
     public private(set) var lumeSource: String?
     /// Which engine local Linux Spaces run on (`runtime.linux`), once read.
     public private(set) var linuxSource: String?
+    /// `placement.overflow` (Settings, General), once read.
+    public private(set) var placementOverflow: Bool?
 
     /// New Space's "Use built-in Lume" / "Use built-in runtime": switches
     /// `runtime.lume` or `runtime.linux`, then the open wizard reads the
@@ -1044,7 +1082,7 @@ public final class AppModel {
         startCreate(args, os: plan.image.os, pendingId: pendingId, select: plan.openDesktop)
         // A failure stays on its row.
         Task {
-            guard let id = try? await followCreate(args, pendingId: pendingId), plan.openDesktop else { return }
+            guard let id = try? await followCreate(args, os: plan.image.os, pendingId: pendingId), plan.openDesktop else { return }
             WebUIWindowController.actions?.openSpace(id)
         }
     }
@@ -1056,11 +1094,19 @@ public final class AppModel {
     /// and hands over to the registry's row when it is ready; returns its
     /// id. A failure stays on its row; a cancelled create (Cancel, or `cua
     /// spaces cancel` elsewhere) only leaves the list. Either way it throws.
+    ///
+    /// A failure that usually passes (the core's `fail_decision`: a runtime
+    /// that did not start this time, a network drop during the download, a
+    /// VM that did not answer in time) runs the create once more by itself,
+    /// the row saying "Retrying…"; `retrying` hears of it first (New UI's
+    /// page applies the same failure). Only the final outcome throws.
     @discardableResult
     public func runCreate(_ args: AppCreateSpaceArgs, os: AppSpaceOs, pendingId: String,
-                          progress: (@MainActor @Sendable (SpaceCreateProgress) -> Void)? = nil) async throws -> String {
+                          progress: (@MainActor @Sendable (SpaceCreateProgress) -> Void)? = nil,
+                          retrying: (@MainActor @Sendable (_ error: String, _ errorVariant: String) -> Void)? = nil)
+        async throws -> String {
         startCreate(args, os: os, pendingId: pendingId, select: false)
-        return try await followCreate(args, pendingId: pendingId, progress: progress)
+        return try await followCreate(args, os: os, pendingId: pendingId, progress: progress, retrying: retrying)
     }
 
     /// The pending row (selected when `open`).
@@ -1086,6 +1132,11 @@ public final class AppModel {
             ?? spaces.first { $0.host == id && $0.hostName != nil }?.hostName
     }
 
+    /// Asks for macOS Local Network access before a macOS Space is created
+    /// on this Mac (the core's steps; nil in fixtures and tests that do not
+    /// set one).
+    public var localNetworkGate: LocalNetworkGate?
+
     /// How long the daemon may take to take a create (its first progress
     /// report, "Preparing", comes as it starts): past it the create fails
     /// at once, with Try again, instead of after the 4 min stall.
@@ -1100,9 +1151,60 @@ public final class AppModel {
         }
     }
 
-    /// The SDK's create, through to the registry's row.
-    private func followCreate(_ args: AppCreateSpaceArgs, pendingId: String,
-                              progress: (@MainActor @Sendable (SpaceCreateProgress) -> Void)? = nil) async throws -> String {
+    /// The SDK's create, through to the registry's row; once more when the
+    /// core says the failure usually passes (`retryPending` on the row).
+    private func followCreate(_ args: AppCreateSpaceArgs, os: AppSpaceOs, pendingId: String,
+                              progress: (@MainActor @Sendable (SpaceCreateProgress) -> Void)? = nil,
+                              retrying: (@MainActor @Sendable (_ error: String, _ errorVariant: String) -> Void)? = nil)
+        async throws -> String {
+        // A macOS Space here needs Local Network access: explained and asked
+        // for now, or the create fails at once with the fix (never retried).
+        if let gate = localNetworkGate,
+           appLocalNetworkApplies(provider: args.on == "local" ? .local : .relay, os: os, hostIsMac: true) {
+            do {
+                try await gate.check()
+            } catch where isCancelled(error) {
+                sendCreate(.cancelDone(id: pendingId))
+                throw error
+            } catch {
+                sendCreate(.fail(id: pendingId, error: LiveSpacesBackend.words(error),
+                                 errorVariant: Self.errorVariant(error), now: Self.nowMs()))
+                throw error
+            }
+        }
+        while true {
+            let reconnectsBefore = reconnects
+            do {
+                return try await attemptCreate(args, pendingId: pendingId, progress: progress)
+            } catch where isCancelled(error) {
+                throw error
+            } catch {
+                guard let row = creates.pending.first(where: { $0.id == pendingId }),
+                      row.retryPending, !row.cancelling else { throw error }
+                retrying?(LiveSpacesBackend.words(error), Self.errorVariant(error))
+                // Cua's service did not take the create: it is being
+                // connected again; the second try goes over the new connection.
+                if row.retriedSubclass == "daemon_unresponsive", reconnect != nil {
+                    var waited = 0
+                    while (reconnects == reconnectsBefore || reconnecting) && waited < 120 {
+                        try? await Task.sleep(for: .milliseconds(250))
+                        waited += 1
+                    }
+                }
+            }
+        }
+    }
+
+    /// The error enum's case name telemetry and the core read (`Runtime`).
+    static func errorVariant(_ error: Error) -> String {
+        (error as? LocalNetworkRefusal)?.variant
+            ?? (error as? CuaError).flatMap { Mirror(reflecting: $0).children.first?.label } ?? ""
+    }
+
+    /// One run of the SDK's create: the row follows it; a failure is put on
+    /// the row (the core may turn it into a retry) and thrown.
+    private func attemptCreate(_ args: AppCreateSpaceArgs, pendingId: String,
+                               progress: (@MainActor @Sendable (SpaceCreateProgress) -> Void)?) async throws -> String {
         do {
             let accepted = CreateAcceptance()
             let backend = self.backend
@@ -1133,7 +1235,7 @@ public final class AppModel {
         } catch {
             devices.noteRefusal(LiveSpacesBackend.words(error))
             sendCreate(.fail(id: pendingId, error: LiveSpacesBackend.words(error),
-                             errorVariant: (error as? CuaError).flatMap { Mirror(reflecting: $0).children.first?.label } ?? ""))
+                             errorVariant: Self.errorVariant(error), now: Self.nowMs()))
             throw error
         }
     }
@@ -1415,7 +1517,8 @@ public final class AppModel {
             experiments: settings.experiments, keyvaultAutoWipe: keyvault.autoWipe,
             keyvaultUnlockPrompt: keyvault.unlockPromptShows,
             keyvaultSiteIcons: settings.keyvaultSiteIcons, keyvaultProtection: keyvault.page.protection,
-            autoConnect: settings.autoConnect, lumeSource: lumeSource, linuxSource: linuxSource))
+            autoConnect: settings.autoConnect, lumeSource: lumeSource, linuxSource: linuxSource,
+            overflow: placementOverflow))
     }
 
     /// Teams for Settings: the account's organizations with their people
@@ -1579,6 +1682,7 @@ public final class AppModel {
     public func loadSettings() async {
         lumeSource = await backend.lumeSource()
         linuxSource = await backend.linuxSource()
+        placementOverflow = await backend.placementOverflow()
         telemetryInput = telemetry?.status()
         readLoginItem()
         await storage.load()
@@ -1638,6 +1742,13 @@ public final class AppModel {
             do {
                 try await backend.setLinuxSource(option)
                 linuxSource = await backend.linuxSource() ?? option
+            } catch {
+                show(error: LiveSpacesBackend.words(error))
+            }
+        case "placement-overflow":
+            do {
+                try await backend.setPlacementOverflow(option == "on")
+                placementOverflow = await backend.placementOverflow() ?? (option == "on")
             } catch {
                 show(error: LiveSpacesBackend.words(error))
             }

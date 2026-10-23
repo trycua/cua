@@ -656,6 +656,32 @@
         "warning"
       ]
     },
+    "CreateFix": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "action": {
+          "enum": [
+            "copy-command",
+            "open-url",
+            "details"
+          ]
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "label",
+        "action"
+      ]
+    },
     "DevicesInput": {
       "type": "object",
       "properties": {
@@ -3063,6 +3089,12 @@
         },
         "cancelling": {
           "type": "boolean"
+        },
+        "retrying": {
+          "type": "boolean"
+        },
+        "fix": {
+          "$ref": "#/$defs/CreateFix"
         }
       },
       "required": [
@@ -5446,6 +5478,143 @@
     "keyvault.unlock": {
       "type": "null"
     },
+    "links.create": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "access": {
+          "enum": [
+            "private",
+            "team",
+            "public"
+          ]
+        },
+        "kind": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "createdAtUnix": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "expiresAtUnix": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "url",
+        "name",
+        "access",
+        "kind",
+        "target",
+        "owner",
+        "createdAtUnix",
+        "expiresAtUnix"
+      ]
+    },
+    "links.list": {
+      "type": "object",
+      "properties": {
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "access": {
+                "enum": [
+                  "private",
+                  "team",
+                  "public"
+                ]
+              },
+              "kind": {
+                "type": "string"
+              },
+              "target": {
+                "type": "string"
+              },
+              "owner": {
+                "type": "string"
+              },
+              "createdAtUnix": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "expiresAtUnix": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "url",
+              "name",
+              "access",
+              "kind",
+              "target",
+              "owner",
+              "createdAtUnix",
+              "expiresAtUnix"
+            ]
+          }
+        }
+      },
+      "required": [
+        "links"
+      ]
+    },
+    "links.stop": {
+      "type": "object",
+      "properties": {
+        "stopped": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "stopped"
+      ]
+    },
     "loginItem.get": {
       "$ref": "#/$defs/LoginItemReport"
     },
@@ -7094,6 +7263,143 @@
       "$ref": "#/$defs/WkKeyvault"
     },
     "keyvault.unlockVault": {},
+    "links.create": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "access": {
+          "enum": [
+            "private",
+            "team",
+            "public"
+          ]
+        },
+        "kind": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "createdAtUnix": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "expiresAtUnix": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "url",
+        "name",
+        "access",
+        "kind",
+        "target",
+        "owner",
+        "createdAtUnix",
+        "expiresAtUnix"
+      ]
+    },
+    "links.list": {
+      "type": "object",
+      "properties": {
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "access": {
+                "enum": [
+                  "private",
+                  "team",
+                  "public"
+                ]
+              },
+              "kind": {
+                "type": "string"
+              },
+              "target": {
+                "type": "string"
+              },
+              "owner": {
+                "type": "string"
+              },
+              "createdAtUnix": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "expiresAtUnix": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "url",
+              "name",
+              "access",
+              "kind",
+              "target",
+              "owner",
+              "createdAtUnix",
+              "expiresAtUnix"
+            ]
+          }
+        }
+      },
+      "required": [
+        "links"
+      ]
+    },
+    "links.stop": {
+      "type": "object",
+      "properties": {
+        "stopped": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "stopped"
+      ]
+    },
     "loginItem.get": {
       "$ref": "#/$defs/LoginItemReport"
     },

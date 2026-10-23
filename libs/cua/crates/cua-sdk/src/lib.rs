@@ -56,6 +56,12 @@ pub mod support {
         crate::native::run(fut).await
     }
 
+    /// Raises this process's soft open-file limit toward 65,536 (see
+    /// `native::raise_open_file_limit`); the daemon calls it at start.
+    pub fn raise_open_file_limit() -> Option<(u64, u64)> {
+        crate::native::raise_open_file_limit()
+    }
+
     /// Spawns `fut` on the SDK runtime.
     pub fn spawn<F>(fut: F)
     where
@@ -240,7 +246,7 @@ pub enum CuaError {
     /// Fix: Nothing to clean up. Create it again when you want it.
     #[error("cancelled: {0}")]
     Cancelled(String),
-    /// Your own cloud account (AWS, Google Cloud, Modal) refused or failed
+    /// Your own cloud account (AWS, Google Cloud, Hetzner, Modal) refused or failed
     /// a call Cua made for a Space there: a missing permission, a quota, a
     /// region without the machine type. The message names the cloud's own
     /// error.
@@ -250,6 +256,16 @@ pub enum CuaError {
     /// region or project.
     #[error("your cloud: {0}")]
     Cloud(String),
+    /// The machine has no room for another Space now: its VMs are at their
+    /// memory limit (shared snapshot memory counted once) or CPU limit, or
+    /// the machine itself is low on memory. Nothing was started. The
+    /// message says which limit, by how much, and what to do.
+    ///
+    /// Fix: Delete a Space, create it smaller (`cpus`, `memory_mb`), create
+    /// it on another machine (`on="auto"`), or raise the limit on this one
+    /// (`CUA_VM_MAX_RSS_FRACTION`, `CUA_VM_VCPU_OVERCOMMIT`).
+    #[error("host capacity: {0}")]
+    HostCapacity(String),
 }
 
 /// Result alias.
@@ -287,6 +303,7 @@ impl CuaError {
             CuaError::ImageNotPublished(_) => "ImageNotPublished",
             CuaError::Cancelled(_) => "Cancelled",
             CuaError::Cloud(_) => "Cloud",
+            CuaError::HostCapacity(_) => "HostCapacity",
         }
     }
 

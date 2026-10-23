@@ -245,7 +245,10 @@ import Testing
 
     // MARK: - Creates
 
-    @Test func aCreateTheDaemonNeverTakesFailsFastAndTryAgainWorks() async throws {
+    /// What the model said it retried (`runCreate`'s `retrying`).
+    final class Retries: @unchecked Sendable { var errors: [String] = [] }
+
+    @Test func aCreateTheDaemonNeverTakesIsRetriedOnceOverTheNewConnection() async throws {
         let first = Connection(rows: [])
         let gate = LiveGate<LiveServices>()
         gate.resolve(LiveServices(backend: first))
@@ -255,27 +258,38 @@ import Testing
         first.wedge()
 
         let started = Date()
+        let retries = Retries()
+        // The daemon never takes it: the create fails fast, the connection
+        // is made again, and the model runs the create once more by itself
+        // (the row says "Retrying…"), over the new connection.
+        let id = try await model.runCreate(args("e2e-1005-linux"), os: .linux, pendingId: "pending:one",
+                                           retrying: { error, _ in retries.errors.append(error) })
+        #expect(Date().timeIntervalSince(started) < 60)
+        #expect(retries.errors.count == 1)
+        #expect(retries.errors.first?.contains("didn't start this create") == true)
+        #expect(model.reconnects == 1)
+        #expect(id == "local:e2e-1005-linux")
+        #expect(second.createCalls == 1)
+        #expect(await eventually { model.spaces.contains { $0.id == id } })
+    }
+
+    @Test func aCreateTheDaemonNeverTakesTwiceFailsWithItsFix() async throws {
+        let connection = Connection(rows: [])
+        let gate = LiveGate<LiveServices>()
+        gate.resolve(LiveServices(backend: connection))
+        // The new connection is wedged too.
+        let model = makeModel(gate: gate) { connection }
+        model.listStaleAfter = 600
+        connection.wedge()
         do {
             _ = try await model.runCreate(args("e2e-1005-linux"), os: .linux, pendingId: "pending:one")
             Issue.record("the create should have failed")
-        } catch let e as AppModel.CreateNotAccepted {
-            #expect(e.seconds == 2)
-        }
-        #expect(Date().timeIntervalSince(started) < 60)
-        let row = model.creates.pending.first { $0.id == "pending:one" }
-        #expect(row?.error?.contains("didn't start this create") == true)
-        #expect(row?.error?.contains("Try again") == true)
-        // The connection is made again for the next try.
-        #expect(await eventually { model.reconnects == 1 })
-
-        model.delete(try #require(model.spaces.first { $0.id == "pending:one" }))
-        // A loaded run must not fail the healthy create or its list read.
-        model.createAcceptTimeout = 60
-        model.listTimeout = 60
-        let id = try await model.runCreate(args("e2e-1005-linux"), os: .linux, pendingId: "pending:two")
-        #expect(id == "local:e2e-1005-linux")
-        #expect(second.createCalls == 1)
-        #expect(model.spaces.contains { $0.id == id })
+        } catch is AppModel.CreateNotAccepted {}
+        let row = try #require(model.creates.pending.first { $0.id == "pending:one" })
+        #expect(row.attempt == 1)
+        #expect(row.error?.contains("didn't start this create") == true)
+        // The same failure twice: its fix, not a plain Try again.
+        #expect(row.fix?.value == "cua doctor")
     }
 
     @Test func aTakenCreateMayRunLongerThanTheWatchdog() async throws {

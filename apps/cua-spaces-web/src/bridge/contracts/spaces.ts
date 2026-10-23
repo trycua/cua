@@ -158,6 +158,23 @@ export interface SpaceProgress {
   cancellable?: boolean;
   /** Cancel was pressed; the create is being cleaned up. */
   cancelling?: boolean;
+  /** The app runs the create a second time by itself after a failure that
+   * usually passes (the label says "Retrying…" while it prepares). */
+  retrying?: boolean;
+  /** It failed the same way twice in a row: the fix to show instead of a
+   * plain Try again. */
+  fix?: CreateFix;
+}
+
+/** The fix for a create that keeps failing the same way (the core's
+ * `model::CreateFix`): one plain sentence and one button. */
+export interface CreateFix {
+  text: string;
+  label: string;
+  /** Copy `value` (a Terminal command), open `value` (a help page), or
+   * open the failed create's details. */
+  action: "copy-command" | "open-url" | "details";
+  value?: string;
 }
 
 export type RegionId = "us-east" | "us-central" | "eu-west";
@@ -236,6 +253,22 @@ export interface PendingCreate {
    * as a record of its own; the core folds it into this row. */
   host?: string | null;
   hostName?: string | null;
+  /** 1 once the app ran the create again by itself. */
+  attempt?: number;
+  /** The create failed and the app runs it again now: the shell starts the
+   * same create (same request, same pending id) once more. */
+  retryPending?: boolean;
+  retriedSubclass?: string | null;
+  fix?: CreateFix | null;
+}
+
+/** Creates of one image on one machine that failed for the same cause in a
+ * row (the core's `creating::FailureStreak`; only the cause word). */
+export interface FailureStreak {
+  kind: string;
+  place: string;
+  image: string;
+  count: number;
 }
 
 /** One delete in flight (or done, until the registry drops the Space). */
@@ -261,6 +294,8 @@ export interface CreatesState {
   pending: PendingCreate[];
   deleting?: PendingDelete[];
   powering?: PendingPower[];
+  /** The same failure in a row, per cause, machine and image. */
+  streaks?: FailureStreak[];
 }
 
 export type CreateAction =
@@ -297,7 +332,9 @@ export type CreateAction =
    * phase without a fraction advances with the time it usually takes. */
   | { type: "tick"; now: number }
   | { type: "finish"; id: string; spaceId: string }
-  | { type: "fail"; id: string; error: string }
+  /** It failed. The core may answer by running it once more
+   * (`retryPending` on its row): a failure that usually passes. */
+  | { type: "fail"; id: string; error: string; errorVariant?: string; now?: number | null }
   | { type: "dismiss"; id: string }
   /** Cancel was pressed (the shell then calls `cancel_create`). */
   | { type: "cancel-start"; id: string }

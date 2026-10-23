@@ -49,6 +49,7 @@ import { NUDGES_OPERATIONS, type NudgesOps } from "./ops/nudges";
 import { RESOURCES_OPERATIONS, type ResourcesOps } from "./ops/resources";
 import { MACHINES_OPERATIONS, type MachinesOps } from "./ops/machines";
 import { CHECKLIST_OPERATIONS, type ChecklistOps } from "./ops/checklist";
+import { LINKS_OPERATIONS, type LinksOps } from "./ops/links";
 import { PRESENCE_OPERATIONS, type PresenceOps } from "./ops/presence";
 import { RUNTIME_FIX_OPERATIONS, type RuntimeFixOps } from "./ops/runtime-fix";
 import { TELEMETRY_OPERATIONS, type TelemetryOps } from "./ops/telemetry";
@@ -206,6 +207,7 @@ export interface HostOperations
     ResourcesOps,
     MachinesOps,
     ChecklistOps,
+    LinksOps,
     PresenceOps,
     RuntimeFixOps {
   "spaces.list": { args: Record<string, never>; result: SpaceRow[] };
@@ -316,6 +318,7 @@ export const OPERATIONS = [
   ...RESOURCES_OPERATIONS,
   ...MACHINES_OPERATIONS,
   ...CHECKLIST_OPERATIONS,
+  ...LINKS_OPERATIONS,
   ...PRESENCE_OPERATIONS,
   ...RUNTIME_FIX_OPERATIONS,
   ...SETTINGS_OPERATIONS,

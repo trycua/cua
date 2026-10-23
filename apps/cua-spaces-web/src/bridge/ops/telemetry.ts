@@ -48,6 +48,11 @@ export type TelemetrySignal =
       elapsedMs: number;
       gpu: boolean;
       errorVariant: string;
+      /** 1 when the app ran the create again by itself, else 0 (absent
+       * from cores before it). */
+      retryAttempt?: number;
+      /** The finer cause (`error_subclass`), or `none`. */
+      errorSubclass?: string;
     }
   | { type: "space-create-started"; location: string; guestOs: string; kind: string; gpu: boolean }
   | { type: "volume-setup"; surface: string; storage: string; addToFinder: boolean; mountMethod: string; outcome: string }
@@ -110,7 +115,7 @@ export function linkNoticeFromHost(raw: unknown): TelemetryLinkNotice | null {
 
 /* ---- What may cross the bridge ------------------------------------------------ */
 
-type Field = "word" | "flag" | "maybe-flag" | "ms" | "words" | "variant";
+type Field = "word" | "flag" | "maybe-flag" | "ms" | "words" | "variant" | "maybe-attempt" | "maybe-word";
 
 /** Every signal's fields and what each may hold. */
 const SHAPES: Record<TelemetrySignal["type"], Record<string, Field>> = {
@@ -130,6 +135,8 @@ const SHAPES: Record<TelemetrySignal["type"], Record<string, Field>> = {
     elapsedMs: "ms",
     gpu: "flag",
     errorVariant: "variant",
+    retryAttempt: "maybe-attempt",
+    errorSubclass: "maybe-word",
   },
   "space-create-started": { location: "word", guestOs: "word", kind: "word", gpu: "flag" },
   "volume-setup": { surface: "word", storage: "word", addToFinder: "flag", mountMethod: "word", outcome: "word" },
@@ -159,6 +166,10 @@ function valid(kind: Field, v: unknown): boolean {
       return Array.isArray(v) && v.length <= 16 && v.every((w) => typeof w === "string" && WORD.test(w));
     case "variant":
       return typeof v === "string" && VARIANT.test(v);
+    case "maybe-attempt":
+      return v === undefined || v === 0 || v === 1;
+    case "maybe-word":
+      return v === undefined || (typeof v === "string" && WORD.test(v));
   }
 }
 
@@ -182,7 +193,7 @@ export function sanitizeSignals(signals: readonly unknown[]): TelemetrySignal[] 
         ok = false;
         break;
       }
-      clean[key] = Array.isArray(v) ? [...v] : v;
+      if (v !== undefined) clean[key] = Array.isArray(v) ? [...v] : v;
     }
     if (ok) out.push(clean as TelemetrySignal);
   }

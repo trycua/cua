@@ -189,7 +189,9 @@ fn plain_http_server() -> String {
             let mut stream = stream;
             let mut buf = [0u8; 1024];
             let _ = stream.read(&mut buf);
-            let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            let _ = stream.write_all(
+                b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            );
         }
     });
     format!("http://{addr}")
@@ -209,7 +211,11 @@ async fn agnostic_cloud_ended_and_direct() {
             // Direct URL where no spacesd answers.
             let d = c
                 .sandboxes()
-                .connect_url(plain_http_server(), Some("t".into()), Some(name("nodriver")))
+                .connect_url(
+                    plain_http_server(),
+                    Some("t".into()),
+                    Some(name("nodriver")),
+                )
                 .await?;
             assert!(matches!(
                 d.spacesd(Some(2000)).await,
@@ -404,7 +410,7 @@ async fn compare(target: Target) -> Res {
     let got = sb
         .spacesd(Some(10_000))
         .await?
-        .download("/tmp/cua-e2e-shared-marker".into())
+        .download("/tmp/cua-e2e-shared-marker".into(), None)
         .await;
     sb.delete().await?;
     assert_eq!(String::from_utf8(got?)?, marker);

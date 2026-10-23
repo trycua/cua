@@ -1,0 +1,65 @@
+name: "E2E: cua-compat Daytona on Spaces"
+
+# The shared Daytona SDK cases (Python sync and async, TypeScript) on real
+# Spaces (QEMU VMs on a KVM runner), including the cases that need a real
+# shell, git, LSP servers, a desktop and recordings.
+
+on:
+  schedule:
+    - cron: "37 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-cua-compat-daytona-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: "4"
+  CUA_TELEMETRY: "0"
+  # a VM restored from the auto pool cannot be checkpointed again (BUGS.md, cua-vmm): the snapshot and fork cases need cold VMs
+  CUA_POOL_AUTO: "off"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  spaces:
+    name: Daytona SDK cases on QEMU Spaces
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: |
+            libs/cua
+            libs/cua-spacesd
+          key: cua-compat-e2e
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Install ffmpeg (recordings)
+        run: sudo apt-get install -y -q ffmpeg
+      - name: Build cua (Cua Spaces build) and the reference images
+        run: |
+          tests/e2e/cua-sdk/ci-setup.sh --images --disks
+          (cd libs/cua && cargo build --locked -p cua-spaces-cli)
+          echo "CUA=$PWD/libs/cua/target/debug/cua" >>"$GITHUB_ENV"
+          arch=$(uname -m); case "$arch" in aarch64|arm64) a=arm64;; *) a=amd64;; esac
+          echo "LINUX_DISK=$HOME/.cache/cua-images-e2e/linux/$a/disk.img" >>"$GITHUB_ENV"
+      - name: Start the daemon
+        run: |
+          "$CUA" daemon start --foreground >"$RUNNER_TEMP/daemon.log" 2>&1 &
+          for i in $(seq 100); do "$CUA" daemon status >/dev/null 2>&1 && break; sleep 0.3; done
+      - name: Daytona SDK cases (pinned) on QEMU Spaces
+        run: OUT="$RUNNER_TEMP/compat-daytona" tests/compat/daytona/run_space.sh --on local --kind vm --image "vm:$LINUX_DISK"

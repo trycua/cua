@@ -99,7 +99,8 @@
     "clipboard.files",
     "clipboard.image",
     "teleport.*",
-    "volume.mount"
+    "volume.mount",
+    "process.exec_ledger"
   ],
   "features_required": [
     "pty",
@@ -119,7 +120,8 @@
     "presence.cursor_shape",
     "audio.desktop",
     "audio.uplink",
-    "audio.opus"
+    "audio.opus",
+    "process.exec_ledger"
   ],
   "fixtures": {
     "apps": [

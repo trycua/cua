@@ -98,7 +98,7 @@ jobs:
         with:
           ref: ${{ needs.source.outputs.sha }}
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-driver/rust -> target"
           key: e2e-shared
@@ -147,7 +147,7 @@ jobs:
         with:
           ref: ${{ needs.source.outputs.sha }}
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-driver/rust -> target"
           key: e2e-native
@@ -197,7 +197,7 @@ jobs:
         with:
           ref: ${{ needs.source.outputs.sha }}
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-driver/rust -> target"
           key: e2e-capture
@@ -247,7 +247,7 @@ jobs:
         with:
           ref: ${{ needs.source.outputs.sha }}
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-driver/rust -> target"
           key: e2e-installer

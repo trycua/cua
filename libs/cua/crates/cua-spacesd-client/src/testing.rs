@@ -89,12 +89,63 @@ pub struct Observed {
     pub upload_chunks: AtomicU64,
     /// WriteFile streams.
     pub write_file_streams: AtomicU64,
+    /// `ReadFile` requests served through a bulk slot.
+    pub bulk_reads: AtomicU64,
+    /// `UploadChunk` requests served from a bulk slot.
+    pub bulk_chunks: AtomicU64,
     /// Window and app actions (`activate w1`, `bounds w1 …`, `open …`).
     pub windows: Mutex<Vec<String>>,
     /// Accessibility actions (`act <element> <action> <value>`).
     pub accessibility: Mutex<Vec<String>>,
     /// Screenshot requests.
     pub screenshots: Mutex<Vec<pb::ScreenshotRequest>>,
+}
+
+/// What the mock records about a file besides its bytes: the user it was
+/// written as and its extended attributes by full namespace.
+#[derive(Default, Clone)]
+struct FileAttrs {
+    owner: String,
+    /// namespace (for example `user.cua.meta.`) to key to value.
+    metadata: HashMap<String, HashMap<String, String>>,
+}
+
+/// Users the mock's guest has. `run_as` of any other user is
+/// `INVALID_ARGUMENT`, like a real guest without that account; `locked` is a
+/// user the agent may not act as (`PERMISSION_DENIED`).
+pub const MOCK_USERS: &[&str] = &["root", "mock", "cua", "alice", "bob"];
+/// The user whose identity the mock's agent refuses to take.
+pub const MOCK_LOCKED_USER: &str = "locked";
+/// The owner the mock reports for files nobody wrote as another user.
+pub const MOCK_DEFAULT_OWNER: &str = "mock";
+
+fn check_run_as(user: &str) -> Result<(), Status> {
+    if user.is_empty() || MOCK_USERS.contains(&user) {
+        return Ok(());
+    }
+    if user == MOCK_LOCKED_USER {
+        return Err(fs_err(
+            pb::ErrorReason::PermissionDenied,
+            tonic::Code::PermissionDenied,
+            &format!("cannot act as {user:?}: the mock agent may not take that identity"),
+            &[],
+        ));
+    }
+    Err(Status::invalid_argument(format!(
+        "run_as user {user:?}: no such user"
+    )))
+}
+
+fn mock_namespace(requested: &str) -> Result<String, Status> {
+    if requested.is_empty() {
+        return Ok("user.cua.meta.".into());
+    }
+    if requested.starts_with("user.") && requested.ends_with('.') && requested.len() <= 64 {
+        return Ok(requested.into());
+    }
+    Err(Status::invalid_argument(format!(
+        "xattr_namespace {requested:?} must start with \"user.\" and end with \".\""
+    )))
 }
 
 #[derive(Default)]
@@ -127,6 +178,14 @@ impl Proc {
 #[derive(Default)]
 pub struct MockState {
     files: Mutex<HashMap<String, Vec<u8>>>,
+    /// Directories made with `MakeDir` (parents of files are implied).
+    dirs: Mutex<std::collections::BTreeSet<String>>,
+    /// The file standing in for the bulk disk ([`MockState::enable_bulk`]).
+    /// The bulk lane is Unix only.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    bulk: Mutex<Option<std::path::PathBuf>>,
+    /// Owner and extended attributes of written files (`run_as`, `metadata`).
+    file_attrs: Mutex<HashMap<String, FileAttrs>>,
     uploads: Mutex<HashMap<String, Upload>>,
     procs: Mutex<HashMap<u32, Proc>>,
     /// `StartProcess` requests received, in order.
@@ -142,6 +201,19 @@ pub struct MockState {
     auth: MockAuth,
     /// Answer `GetCapabilities` with UNIMPLEMENTED (not a spacesd).
     pub refuse_capabilities: AtomicBool,
+    /// Leave `fs.run_as` and `fs.xattr` out of `GetCapabilities`, like a
+    /// spacesd that predates acting as another user and file metadata. The
+    /// mock still honours the fields, as such a server would not.
+    pub older_files: AtomicBool,
+    /// The `mode` attribute of the `process.run_as` feature (`root`,
+    /// `capabilities`, `sudo`, `none`). Empty: the feature is left out, like
+    /// an agent that predates it.
+    pub run_as_mode: Mutex<Option<String>>,
+    /// Refuse a process with a `user` the way an unprivileged agent does
+    /// ("cannot switch"), unless it is a `sudo` wrapper.
+    pub switch_refused: AtomicBool,
+    /// Processes started through `sudo`.
+    pub sudo_runs: AtomicU64,
     /// Report pointer input as delivered in the foreground without moving
     /// the pointer (input that reached nothing).
     pub pointer_not_moved: AtomicBool,
@@ -227,6 +299,12 @@ pub struct TeleportImport {
 }
 
 impl MockState {
+    /// Forgets every process, as a spacesd that restarted has: a later
+    /// `ConnectProcess` for one answers `ProcessNotFound`.
+    pub fn forget_processes(&self) {
+        self.procs.lock().unwrap().clear();
+    }
+
     /// `StartProcess` requests received, in order.
     pub fn started_processes(&self) -> Vec<pb::StartProcessRequest> {
         self.started.lock().unwrap().clone()
@@ -273,9 +351,185 @@ impl MockState {
         self.files.lock().unwrap().get(path).cloned()
     }
 
+    #[cfg(unix)]
+    /// Gives the mock a bulk lane whose disk is `path` (created, sized and
+    /// written with a header the way a guest does). Capabilities then
+    /// advertise it and `ReadFile` / `UploadChunk` honour `bulk_slot`.
+    pub fn enable_bulk(&self, path: &std::path::Path) {
+        let f = std::fs::File::create(path).expect("create the bulk disk");
+        f.set_len(cua_proto::bulk::DISK_BYTES)
+            .expect("size the bulk disk");
+        *self.bulk.lock().unwrap() = Some(path.to_path_buf());
+    }
+
+    #[cfg(unix)]
+    /// The bulk disk's header, written first if the disk is blank.
+    fn bulk_header(&self) -> Option<cua_proto::bulk::Header> {
+        use cua_proto::bulk::{HEADER_BYTES, Header};
+        use std::os::unix::fs::FileExt;
+        let path = self.bulk.lock().unwrap().clone()?;
+        let f = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .ok()?;
+        let mut block = vec![0u8; HEADER_BYTES];
+        f.read_exact_at(&mut block, 0).ok()?;
+        Header::decode(&block).or_else(|| {
+            let h = Header::new(rand::random());
+            f.write_all_at(&h.encode(), 0).ok()?;
+            Some(h)
+        })
+    }
+
+    #[cfg(unix)]
+    /// Stages `data[offset..offset+length]` in slot `slot - 1`.
+    fn bulk_stage(
+        &self,
+        slot: u32,
+        offset: u64,
+        length: u64,
+        data: &[u8],
+    ) -> Result<(u64, String), Status> {
+        use std::os::unix::fs::FileExt;
+        let h = self
+            .bulk_header()
+            .ok_or_else(|| Status::failed_precondition("this guest has no bulk lane"))?;
+        if slot == 0 || slot > h.slots || length == 0 || length > h.slot_bytes {
+            return Err(Status::invalid_argument("bulk slot or length"));
+        }
+        let start = (offset as usize).min(data.len());
+        let end = (start + length as usize).min(data.len());
+        let path = self.bulk.lock().unwrap().clone().unwrap();
+        let f = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+        f.write_all_at(&data[start..end], h.slot_offset(slot - 1))
+            .unwrap();
+        Ok((
+            (end - start) as u64,
+            hex::encode(Sha256::digest(&data[start..end])),
+        ))
+    }
+
+    #[cfg(unix)]
+    /// The `len` bytes of slot `slot - 1`.
+    fn bulk_fetch(&self, slot: u32, len: u64) -> Result<Vec<u8>, Status> {
+        use std::os::unix::fs::FileExt;
+        let h = self
+            .bulk_header()
+            .ok_or_else(|| Status::failed_precondition("this guest has no bulk lane"))?;
+        if slot == 0 || slot > h.slots || len > h.slot_bytes {
+            return Err(Status::invalid_argument("bulk slot or length"));
+        }
+        let path = self.bulk.lock().unwrap().clone().unwrap();
+        let f = std::fs::File::open(path).unwrap();
+        let mut buf = vec![0u8; len as usize];
+        f.read_exact_at(&mut buf, h.slot_offset(slot - 1)).unwrap();
+        Ok(buf)
+    }
+
+    #[cfg(not(unix))]
+    fn bulk_header(&self) -> Option<cua_proto::bulk::Header> {
+        None
+    }
+
+    #[cfg(not(unix))]
+    fn bulk_stage(&self, _: u32, _: u64, _: u64, _: &[u8]) -> Result<(u64, String), Status> {
+        Err(Status::failed_precondition("this guest has no bulk lane"))
+    }
+
+    #[cfg(not(unix))]
+    fn bulk_fetch(&self, _: u32, _: u64) -> Result<Vec<u8>, Status> {
+        Err(Status::failed_precondition("this guest has no bulk lane"))
+    }
+
     /// Puts a file.
     pub fn put_file(&self, path: &str, data: Vec<u8>) {
         self.files.lock().unwrap().insert(path.into(), data);
+        self.file_attrs.lock().unwrap().remove(path);
+    }
+
+    /// Owner the mock recorded for a file (`None` when it never saw a
+    /// `run_as` write).
+    pub fn file_owner(&self, path: &str) -> Option<String> {
+        self.file_attrs
+            .lock()
+            .unwrap()
+            .get(path)
+            .map(|a| a.owner.clone())
+    }
+
+    /// Writes a file as a write header says: `run_as` becomes its owner
+    /// and `metadata` its attributes in the header's namespace.
+    fn write_as(&self, header: &pb::WriteFileHeader, data: Vec<u8>) -> Result<(), Status> {
+        check_run_as(&header.run_as)?;
+        let namespace = mock_namespace(&header.xattr_namespace)?;
+        for (k, v) in &header.metadata {
+            if k.is_empty() || k.len() > 128 || v.len() > 1024 || header.metadata.len() > 32 {
+                return Err(Status::invalid_argument("metadata outside the limits"));
+            }
+        }
+        self.put_file(&header.path, data);
+        let mut attrs = FileAttrs {
+            owner: if header.run_as.is_empty() {
+                MOCK_DEFAULT_OWNER.into()
+            } else {
+                header.run_as.clone()
+            },
+            ..Default::default()
+        };
+        if !header.metadata.is_empty() {
+            attrs
+                .metadata
+                .insert(namespace, header.metadata.clone().into_iter().collect());
+        }
+        self.file_attrs
+            .lock()
+            .unwrap()
+            .insert(header.path.clone(), attrs);
+        Ok(())
+    }
+
+    /// An entry for `path` with the owner and attributes the mock recorded.
+    fn entry_for(&self, path: &str, size: u64, namespace: &str) -> pb::EntryInfo {
+        let mut e = entry(path, size);
+        if let Some(attrs) = self.file_attrs.lock().unwrap().get(path) {
+            e.owner = attrs.owner.clone();
+            e.metadata = attrs.metadata.get(namespace).cloned().unwrap_or_default();
+        } else {
+            e.owner = MOCK_DEFAULT_OWNER.into();
+        }
+        e
+    }
+
+    /// Whether `path` is a directory: made with `MakeDir`, or the parent
+    /// of a stored file.
+    pub fn is_dir(&self, path: &str) -> bool {
+        let path = path.trim_end_matches('/');
+        if self.dirs.lock().unwrap().contains(path) {
+            return true;
+        }
+        let prefix = format!("{path}/");
+        self.files
+            .lock()
+            .unwrap()
+            .keys()
+            .any(|p| p.starts_with(&prefix))
+            || self
+                .dirs
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|d| d.starts_with(&prefix))
+    }
+
+    /// Every stored file (path, content).
+    pub fn files(&self) -> Vec<(String, Vec<u8>)> {
+        self.files
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(p, d)| (p.clone(), d.clone()))
+            .collect()
     }
 
     /// Sets the report `Diagnose` streams (one `check` event per check, then
@@ -421,6 +675,8 @@ impl MockServer {
             auth,
             next_pid: AtomicU32::new(1000),
             windows: Mutex::new(default_windows()),
+            // Like the Linux images' agent: it switches users itself.
+            run_as_mode: Mutex::new(Some("capabilities".into())),
             ..Default::default()
         });
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -441,6 +697,9 @@ impl MockServer {
                     },
                     _ = conn_tx.closed() => return,
                 };
+                // Small replies must not wait for the peer's delayed ACK (a
+                // 40 ms stall per streamed RPC on Linux loopback).
+                let _ = stream.set_nodelay(true);
                 let conn_tx = conn_tx.clone();
                 let state = front_state.clone();
                 tokio::spawn(async move {
@@ -603,6 +862,14 @@ fn fs_err(
     )
 }
 
+fn dir_entry(path: &str) -> pb::EntryInfo {
+    pb::EntryInfo {
+        r#type: pb::FileType::Directory as i32,
+        mode: 0o755,
+        ..entry(path, 0)
+    }
+}
+
 fn entry(path: &str, size: u64) -> pb::EntryInfo {
     pb::EntryInfo {
         name: path.rsplit('/').next().unwrap_or_default().into(),
@@ -630,6 +897,7 @@ impl SystemService for Svc {
         if self.0.refuse_capabilities.load(Ordering::Relaxed) {
             return Err(Status::unimplemented("not a spacesd"));
         }
+        let run_as_mode = self.0.run_as_mode.lock().unwrap().clone();
         Ok(tonic::Response::new(pb::GetCapabilitiesResponse {
             version: self
                 .0
@@ -658,6 +926,38 @@ impl SystemService for Svc {
                 pb::Feature {
                     name: "pty".into(),
                     supported: true,
+                    ..Default::default()
+                },
+                // `run_as` and extended-attribute metadata on file calls
+                // (the mock models both; see `MOCK_USERS`).
+                pb::Feature {
+                    name: "fs.run_as".into(),
+                    supported: !self.0.older_files.load(Ordering::Relaxed),
+                    limitation: if self.0.older_files.load(Ordering::Relaxed) {
+                        "mock: an older spacesd".into()
+                    } else {
+                        String::new()
+                    },
+                    ..Default::default()
+                },
+                // How the mock agent switches users (see `run_as_mode`).
+                pb::Feature {
+                    name: "process.run_as".into(),
+                    supported: run_as_mode.as_deref().is_some_and(|m| m != "none"),
+                    attributes: run_as_mode
+                        .clone()
+                        .map(|m| [("mode".to_owned(), m)].into())
+                        .unwrap_or_default(),
+                    ..Default::default()
+                },
+                pb::Feature {
+                    name: "fs.xattr".into(),
+                    supported: !self.0.older_files.load(Ordering::Relaxed),
+                    limitation: if self.0.older_files.load(Ordering::Relaxed) {
+                        "mock: an older spacesd".into()
+                    } else {
+                        String::new()
+                    },
                     ..Default::default()
                 },
                 pb::Feature {
@@ -702,6 +1002,12 @@ impl SystemService for Svc {
                 default_scrollback_bytes: 1 << 20,
             }),
             machine_seal_public_key: self.0.machine_seal_public_key.lock().unwrap().clone(),
+            bulk: self.0.bulk_header().map(|h| pb::BulkLane {
+                id: h.id.to_vec(),
+                slots: h.slots,
+                slot_bytes: h.slot_bytes,
+                data_offset: h.data_offset,
+            }),
             ..Default::default()
         }))
     }
@@ -876,15 +1182,35 @@ enum Script {
 }
 
 fn parse_script(cfg: &pb::ProcessConfig) -> Script {
-    let mut words: Vec<String> = if (cfg.command.ends_with("sh") || cfg.command.ends_with("bash"))
+    let shell = cfg.command.ends_with("sh") || cfg.command.ends_with("bash");
+    // `sh -c 'umask 000; exec "$@"' sh PROGRAM ARGS...`: the program after
+    // the shell's own name is what runs.
+    if shell
+        && cfg.args.first().is_some_and(|a| a == "-c")
+        && cfg
+            .args
+            .get(1)
+            .is_some_and(|s| s.trim_end().ends_with("exec \"$@\""))
+        && cfg.args.len() > 3
+    {
+        let inner = pb::ProcessConfig {
+            command: cfg.args[3].clone(),
+            args: cfg.args[4..].to_vec(),
+            ..cfg.clone()
+        };
+        return parse_script(&inner);
+    }
+    let mut words: Vec<String> = if shell
         && cfg
             .args
             .first()
             .map(|a| a.starts_with('-'))
             .unwrap_or(false)
     {
+        // `sh -c LINE`, `bash -l -c LINE`: the line follows the last flag.
         cfg.args
-            .get(1)
+            .iter()
+            .find(|a| !a.starts_with('-'))
             .map(|l| l.split_whitespace().map(str::to_string).collect())
             .unwrap_or_default()
     } else {
@@ -904,7 +1230,7 @@ fn parse_script(cfg: &pb::ProcessConfig) -> Script {
                 .trim_matches(|c| c == '"' || c == '\'')
                 .replace("$HOME", "/home/cua"),
         ),
-        "fail" => Script::Fail(num(0, 1) as i32),
+        "fail" | "exit" => Script::Fail(num(0, if prog == "exit" { 0 } else { 1 }) as i32),
         "ticker" => Script::Ticker(num(0, 3) as u32, num(1, 10)),
         "cat" => Script::Cat,
         "sleep" => Script::Sleep(num(0, 10)),
@@ -948,16 +1274,16 @@ impl Svc {
         if let Some(p) = procs.get_mut(&pid)
             && p.end.is_none()
         {
+            let killed = code.is_none() && error.is_empty();
             p.end = Some(pb::ProcessEnd {
                 exit_code: code,
-                signal: if code.is_none() && error.is_empty() {
-                    sig
-                } else {
-                    0
-                },
+                signal: if killed { sig } else { 0 },
                 timed_out,
                 error,
                 ended_at: None,
+                lost: false,
+                signal_number: if killed { 9 } else { 0 },
+                signal_name: if killed { "KILL".into() } else { String::new() },
             });
             p.stdin = None;
             p.changed.notify_waiters();
@@ -1023,6 +1349,8 @@ impl Svc {
                         started_at: None,
                         scrollback_start_offset: p.scrollback_start(),
                         output_end_offset: p.end_offset,
+                        deduplicated: false,
+                        request_id: String::new(),
                     },
                     p.changed.clone(),
                 )
@@ -1102,6 +1430,14 @@ impl ProcessService for Svc {
         let req = req.into_inner();
         self.0.started.lock().unwrap().push(req.clone());
         let cfg = req.config.clone().unwrap_or_default();
+        if cfg.command == "sudo" {
+            self.0.sudo_runs.fetch_add(1, Ordering::Relaxed);
+        } else if !cfg.user.is_empty() && self.0.switch_refused.load(Ordering::Relaxed) {
+            return Err(Status::permission_denied(format!(
+                "the driver runs as \"cua\" and cannot switch to {:?}",
+                cfg.user
+            )));
+        }
         let script = parse_script(&cfg);
         let pid = self.0.next_pid.fetch_add(1, Ordering::Relaxed);
         let (stdin_tx, mut stdin_rx) = mpsc::unbounded_channel::<Option<Vec<u8>>>();
@@ -1395,6 +1731,23 @@ impl ProcessService for Svc {
     ) -> Result<tonic::Response<pb::ResizePtyResponse>, Status> {
         Ok(tonic::Response::new(pb::ResizePtyResponse {}))
     }
+
+    async fn get_exec_record(
+        &self,
+        _: tonic::Request<pb::GetExecRecordRequest>,
+    ) -> Result<tonic::Response<pb::GetExecRecordResponse>, Status> {
+        Ok(tonic::Response::new(pb::GetExecRecordResponse::default()))
+    }
+
+    async fn advance_epoch(
+        &self,
+        req: tonic::Request<pb::AdvanceEpochRequest>,
+    ) -> Result<tonic::Response<pb::AdvanceEpochResponse>, Status> {
+        Ok(tonic::Response::new(pb::AdvanceEpochResponse {
+            epoch: req.into_inner().epoch,
+            killed: 0,
+        }))
+    }
 }
 
 // --------------------------------------------------------------- filesystem
@@ -1408,7 +1761,15 @@ impl FilesystemService for Svc {
         &self,
         req: tonic::Request<pb::StatRequest>,
     ) -> Result<tonic::Response<pb::StatResponse>, Status> {
-        let path = req.into_inner().path;
+        let req = req.into_inner();
+        check_run_as(&req.run_as)?;
+        let namespace = mock_namespace(&req.xattr_namespace)?;
+        let path = req.path;
+        if self.0.is_dir(&path) {
+            return Ok(tonic::Response::new(pb::StatResponse {
+                entry: Some(dir_entry(&path)),
+            }));
+        }
         let files = self.0.files.lock().unwrap();
         let data = files.get(&path).ok_or_else(|| {
             fs_err(
@@ -1418,8 +1779,10 @@ impl FilesystemService for Svc {
                 &[("path", path.clone())],
             )
         })?;
+        let size = data.len() as u64;
+        drop(files);
         Ok(tonic::Response::new(pb::StatResponse {
-            entry: Some(entry(&path, data.len() as u64)),
+            entry: Some(self.0.entry_for(&path, size, &namespace)),
         }))
     }
 
@@ -1427,12 +1790,40 @@ impl FilesystemService for Svc {
         &self,
         req: tonic::Request<pb::ListDirRequest>,
     ) -> Result<tonic::Response<pb::ListDirResponse>, Status> {
-        let dir = req.into_inner().path.trim_end_matches('/').to_string() + "/";
+        let req = req.into_inner();
+        check_run_as(&req.run_as)?;
+        let namespace = mock_namespace(&req.xattr_namespace)?;
+        let dir = req.path.trim_end_matches('/').to_string() + "/";
+        // Entries at most `depth` levels below `dir` (0: no limit, the
+        // mock's original behaviour): files, and directories (made or
+        // implied by a file's path).
+        let within = |p: &str| {
+            p.strip_prefix(&dir).is_some_and(|rest| {
+                !rest.is_empty()
+                    && (req.depth == 0 || rest.split('/').count() <= req.depth as usize)
+            })
+        };
         let files = self.0.files.lock().unwrap();
+        let mut dirs: std::collections::BTreeSet<String> = self.0.dirs.lock().unwrap().clone();
+        for p in files.keys() {
+            let mut cur = p.as_str();
+            while let Some((parent, _)) = cur.rsplit_once('/') {
+                if parent.is_empty() {
+                    break;
+                }
+                dirs.insert(parent.to_string());
+                cur = parent;
+            }
+        }
         let mut entries: Vec<_> = files
             .iter()
-            .filter(|(p, _)| p.starts_with(&dir))
-            .map(|(p, d)| entry(p, d.len() as u64))
+            .filter(|(p, _)| within(p))
+            .map(|(p, d)| self.0.entry_for(p, d.len() as u64, &namespace))
+            .chain(
+                dirs.iter()
+                    .filter(|p| req.depth != 0 && within(p))
+                    .map(|p| dir_entry(p)),
+            )
             .collect();
         entries.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(tonic::Response::new(pb::ListDirResponse {
@@ -1445,13 +1836,32 @@ impl FilesystemService for Svc {
         &self,
         req: tonic::Request<pb::MakeDirRequest>,
     ) -> Result<tonic::Response<pb::MakeDirResponse>, Status> {
-        let path = req.into_inner().path;
+        let req = req.into_inner();
+        check_run_as(&req.run_as)?;
+        let path = req.path.trim_end_matches('/').to_string();
+        let created = !self.0.is_dir(&path);
+        {
+            let mut dirs = self.0.dirs.lock().unwrap();
+            if req.parents {
+                // `mkdir -p`: every missing ancestor exists afterwards.
+                let mut cur = path.as_str();
+                while let Some((parent, _)) = cur.rsplit_once('/') {
+                    if parent.is_empty() {
+                        break;
+                    }
+                    dirs.insert(parent.to_string());
+                    cur = parent;
+                }
+            }
+            dirs.insert(path.clone());
+        }
         Ok(tonic::Response::new(pb::MakeDirResponse {
+            // A directory made as a user belongs to that user.
             entry: Some(pb::EntryInfo {
-                r#type: pb::FileType::Directory as i32,
-                ..entry(&path, 0)
+                owner: req.run_as.clone(),
+                ..dir_entry(&path)
             }),
-            created: true,
+            created,
         }))
     }
 
@@ -1460,6 +1870,7 @@ impl FilesystemService for Svc {
         req: tonic::Request<pb::MoveRequest>,
     ) -> Result<tonic::Response<pb::MoveResponse>, Status> {
         let req = req.into_inner();
+        check_run_as(&req.run_as)?;
         let mut files = self.0.files.lock().unwrap();
         let data = files.remove(&req.source).ok_or_else(|| {
             fs_err(
@@ -1471,8 +1882,14 @@ impl FilesystemService for Svc {
         })?;
         let size = data.len() as u64;
         files.insert(req.destination.clone(), data);
+        drop(files);
+        let mut attrs = self.0.file_attrs.lock().unwrap();
+        if let Some(a) = attrs.remove(&req.source) {
+            attrs.insert(req.destination.clone(), a);
+        }
+        drop(attrs);
         Ok(tonic::Response::new(pb::MoveResponse {
-            entry: Some(entry(&req.destination, size)),
+            entry: Some(self.0.entry_for(&req.destination, size, "user.cua.meta.")),
         }))
     }
 
@@ -1481,7 +1898,30 @@ impl FilesystemService for Svc {
         req: tonic::Request<pb::RemoveRequest>,
     ) -> Result<tonic::Response<pb::RemoveResponse>, Status> {
         let req = req.into_inner();
-        let removed = self.0.files.lock().unwrap().remove(&req.path);
+        check_run_as(&req.run_as)?;
+        let path = req.path.trim_end_matches('/').to_string();
+        self.0.file_attrs.lock().unwrap().remove(&path);
+        let removed = self.0.files.lock().unwrap().remove(&path);
+        // A directory: one made with `make_dir`, or implied by a file.
+        let prefix = format!("{path}/");
+        let is_dir = self.0.is_dir(&path);
+        if removed.is_none() && is_dir {
+            let mut files = self.0.files.lock().unwrap();
+            let mut dirs = self.0.dirs.lock().unwrap();
+            let busy = files.keys().any(|p| p.starts_with(&prefix))
+                || dirs.iter().any(|p| p.starts_with(&prefix));
+            if busy && !req.recursive {
+                return Err(fs_err(
+                    pb::ErrorReason::Unspecified,
+                    tonic::Code::FailedPrecondition,
+                    "directory not empty",
+                    &[],
+                ));
+            }
+            files.retain(|p, _| !p.starts_with(&prefix));
+            dirs.retain(|p| p != &path && !p.starts_with(&prefix));
+            return Ok(tonic::Response::new(pb::RemoveResponse {}));
+        }
         if removed.is_none() && !req.missing_ok {
             return Err(fs_err(
                 pb::ErrorReason::PathNotFound,
@@ -1526,6 +1966,8 @@ impl FilesystemService for Svc {
         req: tonic::Request<pb::ReadFileRequest>,
     ) -> Result<tonic::Response<Self::ReadFileStream>, Status> {
         let req = req.into_inner();
+        check_run_as(&req.run_as)?;
+        let namespace = mock_namespace(&req.xattr_namespace)?;
         let data = self.0.file(&req.path).ok_or_else(|| {
             fs_err(
                 pb::ErrorReason::PathNotFound,
@@ -1534,6 +1976,30 @@ impl FilesystemService for Svc {
                 &[("path", req.path.clone())],
             )
         })?;
+        if req.bulk_slot != 0 {
+            let (n, sha) = self
+                .0
+                .bulk_stage(req.bulk_slot, req.offset, req.length, &data)?;
+            self.0.observed.bulk_reads.fetch_add(1, Ordering::Relaxed);
+            let (tx, rx) = mpsc::channel(2);
+            let _ = tx
+                .send(Ok(pb::ReadFileResponse {
+                    message: Some(pb::read_file_response::Message::Entry(entry(
+                        &req.path,
+                        data.len() as u64,
+                    ))),
+                }))
+                .await;
+            let _ = tx
+                .send(Ok(pb::ReadFileResponse {
+                    message: Some(pb::read_file_response::Message::End(pb::ReadFileEnd {
+                        bytes_read: n,
+                        sha256: sha,
+                    })),
+                }))
+                .await;
+            return Ok(tonic::Response::new(Box::pin(ReceiverStream::new(rx))));
+        }
         let chunk = if req.chunk_size == 0 {
             1 << 20
         } else {
@@ -1546,15 +2012,13 @@ impl FilesystemService for Svc {
             (start + req.length as usize).min(data.len())
         };
         let path = req.path.clone();
+        let first = self.0.entry_for(&path, data.len() as u64, &namespace);
         let (tx, rx) = mpsc::channel(4);
         tokio::spawn(async move {
             let mut hasher = Sha256::new();
             let _ = tx
                 .send(Ok(pb::ReadFileResponse {
-                    message: Some(pb::read_file_response::Message::Entry(entry(
-                        &path,
-                        data.len() as u64,
-                    ))),
+                    message: Some(pb::read_file_response::Message::Entry(first)),
                 }))
                 .await;
             let mut off = start;
@@ -1635,9 +2099,13 @@ impl FilesystemService for Svc {
             }
             _ => data,
         };
-        self.0.put_file(&header.path, data);
+        self.0.write_as(&header, data)?;
         Ok(tonic::Response::new(pb::WriteFileResponse {
-            entry: Some(entry(&header.path, size)),
+            entry: Some(self.0.entry_for(
+                &header.path,
+                size,
+                &mock_namespace(&header.xattr_namespace)?,
+            )),
             sha256: sha,
         }))
     }
@@ -1648,6 +2116,7 @@ impl FilesystemService for Svc {
     ) -> Result<tonic::Response<pb::BeginUploadResponse>, Status> {
         let req = req.into_inner();
         let header = req.header.unwrap_or_default();
+        check_run_as(&header.run_as)?;
         let id = if req.upload_id.is_empty() {
             format!("srv-{}", rand::random::<u64>())
         } else {
@@ -1682,7 +2151,11 @@ impl FilesystemService for Svc {
             .observed
             .upload_chunks
             .fetch_add(1, Ordering::Relaxed);
-        let req = req.into_inner();
+        let mut req = req.into_inner();
+        if req.bulk_slot != 0 {
+            req.data = self.0.bulk_fetch(req.bulk_slot, req.bulk_len)?;
+            self.0.observed.bulk_chunks.fetch_add(1, Ordering::Relaxed);
+        }
         let mut uploads = self.0.uploads.lock().unwrap();
         let up = uploads.get_mut(&req.upload_id).ok_or_else(|| {
             fs_err(
@@ -1748,9 +2221,13 @@ impl FilesystemService for Svc {
             ));
         }
         let size = up.data.len() as u64;
-        self.0.put_file(&up.path, up.data);
+        self.0.write_as(&up.header, up.data)?;
         Ok(tonic::Response::new(pb::CommitUploadResponse {
-            entry: Some(entry(&up.path, size)),
+            entry: Some(self.0.entry_for(
+                &up.path,
+                size,
+                &mock_namespace(&up.header.xattr_namespace)?,
+            )),
             sha256: sha,
         }))
     }
@@ -1946,6 +2423,12 @@ impl ComputerService for Svc {
                 native_size: Some(pb::PixelSize {
                     width: 1280,
                     height: 800,
+                }),
+                bounds: Some(pb::Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 1280.0,
+                    height: 800.0,
                 }),
                 ..Default::default()
             }],

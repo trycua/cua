@@ -1,0 +1,191 @@
+name: "CI: cua-compat Modal SDK conformance"
+
+# The unmodified Modal SDKs (Python pinned and, off pull requests, latest;
+# JavaScript; Go) against the cua-compat gateway: the shared cases over mock
+# Spaces, the coverage matrix check, property tests, and the overhead guard.
+# The weekly run also installs the latest `modal`, diffs its gRPC surface
+# against the pinned descriptors, and runs the suites against it; the
+# nightly lane runs the conformance cases and the Function suite on real
+# Spaces.
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua/crates/cua-compat/**"
+      - "libs/cua/crates/cua-spacesd-client/**"
+      - "tests/compat/modal/**"
+      - "tests/compat/run_hermetic.sh"
+      - ".github/workflows/ci-cua-compat-modal.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua/crates/cua-compat/**"
+      - "tests/compat/modal/**"
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cua-compat-modal-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: "4"
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  conformance:
+    name: shared cases (pinned SDK)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: cua-compat-modal
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - name: The descriptors are the pinned wheel's, and the coverage matrix covers its surface
+        run: |
+          python -m venv /tmp/cov
+          /tmp/cov/bin/pip install -q "modal==$(cat tests/compat/modal/PINNED)" python-dotenv
+          # The committed surface is what the pinned wheel's descriptors say.
+          /tmp/cov/bin/python libs/cua/crates/cua-compat/modal-proto/extract_descriptors.py --version "$(cat tests/compat/modal/PINNED)" --surface-only --out /tmp/descriptors
+          cmp /tmp/descriptors/surface-$(cat tests/compat/modal/PINNED).json libs/cua/crates/cua-compat/modal-proto/surface-$(cat tests/compat/modal/PINNED).json
+          /tmp/cov/bin/python tests/compat/modal/gen_coverage.py --check
+          /tmp/cov/bin/python tests/compat/modal/gen_coverage.py --markdown >/tmp/matrix.md
+          diff -u libs/cua/crates/cua-compat/maps/modal-coverage.md /tmp/matrix.md
+      - name: Wire tests, unit tests and property tests (bounded)
+        working-directory: libs/cua
+        env:
+          PROPTEST_CASES: "64"
+        run: |
+          cargo fmt -p cua-compat -p cua-spacesd-client -- --check
+          cargo clippy --locked -p cua-compat -p cua-spacesd-client --features cua-compat/testing --all-targets -- -D warnings
+          cargo test --locked -p cua-compat -p cua-spacesd-client --features cua-compat/testing
+      - name: Python SDK over mock Spaces, with the overhead guard
+        env:
+          PERF_CHECK: "1"
+        run: tests/compat/run_hermetic.sh modal "modal==$(cat tests/compat/modal/PINNED)"
+      - name: JavaScript and Go SDKs over mock Spaces
+        run: tests/compat/modal/run_js_go.sh
+      - name: Every RPC the JavaScript and Go SDKs call is served or a documented native error
+        run: |
+          mkdir /tmp/js && cp tests/compat/modal/js/package.json /tmp/js/ && (cd /tmp/js && npm install --silent --no-audit --no-fund)
+          go_dir=$(cd tests/compat/modal/go && go list -m -f '{{.Dir}}' github.com/modal-labs/modal-client/go)
+          python tests/compat/modal/sdk_calls.py --check --js /tmp/js/node_modules/modal/dist/index.js --go "$go_dir" >/dev/null
+
+  drift:
+    name: latest SDK (drift)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: cua-compat-modal
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - name: The latest client's gRPC surface against what the gateway serves
+        run: |
+          python -m venv /tmp/latest
+          /tmp/latest/bin/pip install -q -U modal python-dotenv
+          latest=$(/tmp/latest/bin/python -c "import importlib.metadata as m; print(m.version('modal'))")
+          echo "modal $latest (pinned: $(cat tests/compat/modal/PINNED))"
+          /tmp/latest/bin/python libs/cua/crates/cua-compat/modal-proto/extract_descriptors.py --version "$latest" --surface-only --out /tmp/latest-surface
+          /tmp/latest/bin/python libs/cua/crates/cua-compat/modal-proto/drift.py \
+            libs/cua/crates/cua-compat/modal-proto/surface-$(cat tests/compat/modal/PINNED).json \
+            /tmp/latest-surface/surface-$latest.json \
+            --served libs/cua/crates/cua-compat/modal-proto/served-rpcs.txt
+      - name: The latest SDK's public surface is covered
+        run: /tmp/latest/bin/python tests/compat/modal/gen_coverage.py --check
+      - name: Latest Python SDK over mock Spaces
+        run: tests/compat/modal/run_hermetic.sh --latest
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - name: Latest JavaScript and Go SDKs over mock Spaces
+        env:
+          JS_MODAL: latest
+          GO_MODAL: latest
+        run: tests/compat/modal/run_js_go.sh
+      - name: Every RPC the latest JavaScript and Go SDKs call is served or a documented native error
+        run: |
+          mkdir /tmp/jsl && cp tests/compat/modal/js/package.json /tmp/jsl/ && (cd /tmp/jsl && npm install --silent --no-audit --no-fund modal@latest)
+          cp -R tests/compat/modal/go /tmp/gol && (cd /tmp/gol && go get github.com/modal-labs/modal-client/go@latest && go mod tidy)
+          go_dir=$(cd /tmp/gol && go list -m -f '{{.Dir}}' github.com/modal-labs/modal-client/go)
+          python tests/compat/modal/sdk_calls.py --check --js /tmp/jsl/node_modules/modal/dist/index.js --go "$go_dir" >/dev/null
+      - name: Overhead guard (1.5x the committed baseline)
+        run: PERF_CHECK=1 tests/compat/run_hermetic.sh modal "modal==$(cat tests/compat/modal/PINNED)"
+
+  spaces:
+    name: conformance on real Spaces (QEMU)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: |
+            libs/cua
+            libs/cua-spacesd
+          key: cua-compat-e2e
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
+      - name: Build cua (Cua Spaces build), the reference images and disks
+        run: |
+          tests/e2e/cua-sdk/ci-setup.sh --images --disks
+          (cd libs/cua && cargo build --locked -p cua-spaces-cli)
+          echo "CUA=$PWD/libs/cua/target/debug/cua" >>"$GITHUB_ENV"
+          arch=$(uname -m); case "$arch" in aarch64|arm64) a=arm64;; *) a=amd64;; esac
+          echo "LINUX_DISK=$HOME/.cache/cua-images-e2e/linux/$a/disk.img" >>"$GITHUB_ENV"
+      - name: Start the daemon
+        run: |
+          "$CUA" daemon start --foreground >"$RUNNER_TEMP/daemon.log" 2>&1 &
+          for i in $(seq 100); do "$CUA" daemon status >/dev/null 2>&1 && break; sleep 0.3; done
+      - name: Conformance and Functions, pinned SDK
+        run: SDKS="modal==$(cat tests/compat/modal/PINNED)" OUT="$RUNNER_TEMP/modal-space" tests/compat/modal/run_space.sh --on local --kind vm --image "vm:$LINUX_DISK"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: compat-modal-spaces
+          path: |
+            ${{ runner.temp }}/modal-space
+            ${{ runner.temp }}/daemon.log

@@ -1,0 +1,111 @@
+name: "Chaos: cua-compat leak checks"
+
+# Seeded chaos testing of the compat gateways with a leak check after every
+# run: nothing may be left that does not belong to a live wanted Space (no
+# Space, VM, process, port, state record or cloud resource).
+#
+#   pull_request  hermetic and bounded: the cua-chaos tooling tests, and the
+#                 E2B gateway over mock Spaces under a seeded plan (clients
+#                 killed or abandoning mid-request, the gateway SIGKILLed and
+#                 restarted, the Cua daemon down, a partition to it), a few
+#                 seeds. A failure prints its seed; replay with
+#                 CHAOS_SEEDS=<seed>.
+#   nightly       real Spaces: the unmodified E2B SDK through the gateway on
+#                 Linux vm Spaces (QEMU) with the same fault classes plus
+#                 process kills inside Spaces, over many seeds, then the host
+#                 inventory diff (cua-chaos). Longer campaigns on AWS and
+#                 elastic pool hosts are run by tests/compat/chaos/aws-campaign.sh.
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua/crates/cua-chaos/**"
+      - "libs/cua/crates/cua-compat/**"
+      - "tests/compat/chaos/**"
+      - ".github/workflows/chaos-cua-compat.yml"
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      seeds:
+        description: "Seeds for the real-Spaces run (a..b)"
+        default: "0..40"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chaos-cua-compat-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_BUILD_JOBS: "4"
+  CARGO_INCREMENTAL: "0"
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  hermetic:
+    name: hermetic chaos (mock Spaces, bounded seeds)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: chaos-cua-compat
+      - name: cua-chaos tooling (scheduler, inventories, runner)
+        run: cd libs/cua && cargo test --locked -p cua-chaos
+      - name: E2B gateway under seeded chaos, leak check after every seed
+        env:
+          CHAOS_SEEDS: "0..4"
+        run: cd libs/cua && cargo test --locked -p cua-compat --features testing --test chaos -- --nocapture
+
+  spaces:
+    name: real Spaces chaos (QEMU), many seeds
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: |
+            libs/cua
+            libs/cua-spacesd
+          key: chaos-cua-compat-spaces
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - name: Build cua (Cua Spaces build), cua-chaos and the reference images
+        run: |
+          tests/e2e/cua-sdk/ci-setup.sh --images --disks
+          (cd libs/cua && cargo build --locked -p cua-spaces-cli -p cua-chaos)
+          echo "CUA=$PWD/libs/cua/target/debug/cua" >>"$GITHUB_ENV"
+          echo "CHAOS=$PWD/libs/cua/target/debug/cua-chaos" >>"$GITHUB_ENV"
+          arch=$(uname -m); case "$arch" in aarch64|arm64) a=arm64;; *) a=amd64;; esac
+          echo "LINUX_DISK=$HOME/.cache/cua-images-e2e/linux/$a/disk.img" >>"$GITHUB_ENV"
+      - name: Seeded chaos against the E2B gateway on vm Spaces, leak check per seed
+        env:
+          SEEDS: ${{ inputs.seeds || '0..40' }}
+          CHAOS_WORK: ${{ runner.temp }}/chaos
+        run: tests/compat/chaos/run-real.sh e2b "$SEEDS" -- --on local --kind vm --image "vm:$LINUX_DISK"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: cua-compat-chaos
+          path: ${{ runner.temp }}/chaos

@@ -37,6 +37,7 @@ jobs:
   dispatch:
     name: Notify trycua/cloud
     runs-on: ubuntu-latest
+    if: github.repository == 'trycua/cua'  # public repo only: needs its release secrets / AWS OIDC trust
     timeout-minutes: 5
     steps:
       - name: Configure AWS credentials

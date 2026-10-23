@@ -44,6 +44,7 @@ import { NUDGES_COVERAGE } from "./ops/nudges";
 import { RESOURCES_COVERAGE } from "./ops/resources";
 import { MACHINES_COVERAGE } from "./ops/machines";
 import { CHECKLIST_COVERAGE } from "./ops/checklist";
+import { LINKS_COVERAGE } from "./ops/links";
 import { PRESENCE_COVERAGE } from "./ops/presence";
 import { RUNTIME_FIX_COVERAGE } from "./ops/runtime-fix";
 import { TELEMETRY_COVERAGE } from "./ops/telemetry";
@@ -172,6 +173,7 @@ export const HOST_COVERAGE = {
   ...RESOURCES_COVERAGE,
   ...MACHINES_COVERAGE,
   ...CHECKLIST_COVERAGE,
+  ...LINKS_COVERAGE,
   ...PRESENCE_COVERAGE,
   ...RUNTIME_FIX_COVERAGE,
 } as const satisfies Record<OpName, OpCoverage>;

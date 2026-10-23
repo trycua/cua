@@ -205,7 +205,7 @@ pub fn added_by_address(space: &Space) -> bool {
     }
 }
 
-/// A Space in your cloud (AWS, Google Cloud, Modal).
+/// A Space in your cloud (AWS, Google Cloud, Hetzner, Modal).
 pub fn in_your_cloud(space: &Space) -> bool {
     space.cloud.as_deref().is_some_and(|c| !c.is_empty())
 }
@@ -1567,7 +1567,7 @@ mod tests {
         assert_eq!(shares_desktop(&direct), None);
     }
 
-    /// The user's Macs after updating to 0.7.0: cua.local
+    /// The user's Macs after updating to 0.7.0: a spare Mac
     /// (`relay:9e9d…`, "Mac.localdomain") shares, keeps its desktop
     /// private, provides Spaces with none running and runs the cua-spacesd
     /// of an older app (0.2.2); this Mac (`relay:b695…`) is not sharing.
@@ -2107,6 +2107,8 @@ mod tests {
             transfer: None,
             cancellable: true,
             cancelling: false,
+            retrying: false,
+            fix: None,
         });
         assert!(power_button(&s).is_none());
     }
@@ -2125,6 +2127,8 @@ mod tests {
             transfer: transfer.map(str::to_string),
             cancellable: true,
             cancelling: false,
+            retrying: false,
+            fix: None,
         };
         // Bytes known: the bytes line says how far, not a second percentage.
         s.progress = Some(progress(Some("15.2 of 22.2 GB \u{b7} 107 MB/s")));

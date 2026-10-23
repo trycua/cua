@@ -1,0 +1,12 @@
+{
+  "_host": "Mac Studio M2 Max (96 GiB), macOS, built-in Linux runtime VM (12 vCPU / 32 GiB), gVisor, 2026-10-20",
+  "desktop_create_p50_ms": 3470.5,
+  "headless_create_p50_ms": 239.8,
+  "headless_b16_wall_ms": 1646.5,
+  "create_failures": 0,
+  "idle_spacesd_cpu_pct": 0,
+  "rollout_steps_per_sec": 367.7162732583351,
+  "rollout_errors": 0,
+  "pool_claim_batch_p50_ms": 172.6,
+  "rollout_sandboxes": 32
+}

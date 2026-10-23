@@ -514,3 +514,196 @@ async fn a_machine_off_the_mesh_is_reported_without_waiting() {
         .expect("a machine on the mesh is found");
     assert_eq!(found.node_key, machine.node_key());
 }
+
+/// Two machines of one account (CUA-1783): each sees the other with the
+/// machine grant, and one forwards a loopback port to a `port:<n>` service
+/// on the other in both directions at once (a gang's ring), direct and
+/// relayed. Without machine peering they never see each other.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn machines_of_one_account_forward_ports_to_each_other() {
+    let dir = tempfile::tempdir().unwrap();
+    let coord = FakeCoordinator::start(Mode::Account).await;
+    let a = node(&coord, NodeKind::Machine, dir.path(), "a", false).await;
+    let b = node(&coord, NodeKind::Machine, dir.path(), "b", false).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(a.machine("machine-b").is_none(), "no machine peering yet");
+
+    coord.set_machine_peering(true);
+    let b_info = a
+        .wait_machine("machine-b", READY)
+        .await
+        .expect("b in a's map");
+    let grant = b_info.grant.expect("a machine peer carries a grant");
+    assert_eq!(grant.role, cua_mesh::proto::ROLE_MACHINE);
+    let a_info = b
+        .wait_machine("machine-a", READY)
+        .await
+        .expect("a in b's map");
+    assert_eq!(a_info.node_key, a.node_key());
+
+    // Each side serves `port:<n>` streams with an echo.
+    for m in [&a, &b] {
+        let m = m.clone();
+        tokio::spawn(async move {
+            while let Some(i) = m.accept().await {
+                assert_eq!(
+                    cua_mesh::proto::parse_port_service(&i.header.service),
+                    Some(47012)
+                );
+                tokio::spawn(async move {
+                    let (mut r, mut w) = tokio::io::split(i.stream);
+                    let _ = tokio::io::copy(&mut r, &mut w).await;
+                    let _ = w.shutdown().await;
+                });
+            }
+        });
+    }
+    let service = cua_mesh::proto::port_service(47012);
+    let ab = a.forward(b.node_key(), &service, None).await.unwrap();
+    let ba = b.forward(a.node_key(), &service, None).await.unwrap();
+    let echo = |local: std::net::SocketAddr, n: usize| async move {
+        let mut tcp = tokio::net::TcpStream::connect(local).await.unwrap();
+        let data: Vec<u8> = (0..n).map(|i| (i * 13) as u8).collect();
+        let (mut r, mut w) = tcp.split();
+        let mut got = vec![0u8; n];
+        tokio::time::timeout(Duration::from_secs(30), async {
+            tokio::join!(async { w.write_all(&data).await.unwrap() }, async {
+                r.read_exact(&mut got).await.unwrap()
+            })
+        })
+        .await
+        .expect("echo through the forward");
+        assert_eq!(got, data);
+    };
+    tokio::join!(echo(ab.local, 1 << 20), echo(ba.local, 1 << 20));
+    wait_path(&a, &b.node_key(), true, Duration::from_secs(10)).await;
+    wait_path(&b, &a.node_key(), true, Duration::from_secs(10)).await;
+    tokio::join!(echo(ab.local, 4 << 20), echo(ba.local, 4 << 20));
+
+    // Machine peering off again: the peers leave both maps.
+    coord.set_machine_peering(false);
+    for _ in 0..100 {
+        if a.machine("machine-b").is_none() && b.machine("machine-a").is_none() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("machines stayed peers after peering was turned off");
+}
+
+/// The control socket (CUA-1783): a job runner on machine A asks A's
+/// mesh node for a forward to a port on machine B, uses it, and the
+/// forward ends when the runner hangs up. An unknown machine is an error.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_control_socket_makes_forwards_that_live_with_the_connection() {
+    let dir = tempfile::tempdir().unwrap();
+    let coord = FakeCoordinator::start(Mode::Account).await;
+    coord.set_machine_peering(true);
+    let a = node(&coord, NodeKind::Machine, dir.path(), "a", false).await;
+    let b = node(&coord, NodeKind::Machine, dir.path(), "b", false).await;
+    let echo = b.clone();
+    tokio::spawn(async move {
+        while let Some(i) = echo.accept().await {
+            assert_eq!(i.header.service, "port:47012");
+            tokio::spawn(async move {
+                let (mut r, mut w) = tokio::io::split(i.stream);
+                let _ = tokio::io::copy(&mut r, &mut w).await;
+            });
+        }
+    });
+    let sock = dir.path().join("host").join(cua_mesh::gang::CONTROL_SOCKET);
+    let server = cua_mesh::gang::serve_control(a.clone(), &sock).unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = std::fs::metadata(&sock).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+    let mut ctl = cua_mesh::gang::ControlClient::connect(&sock).await.unwrap();
+    let f = ctl.forward("machine-b", 47012).await.unwrap();
+    assert!(f.local.ip().is_loopback());
+    assert_eq!(f.path, "direct", "loopback peers find a direct path");
+    assert_eq!(f.peer, "b");
+    let mut tcp = tokio::net::TcpStream::connect(f.local).await.unwrap();
+    tcp.write_all(b"ring").await.unwrap();
+    let mut got = [0u8; 4];
+    tokio::time::timeout(Duration::from_secs(20), tcp.read_exact(&mut got))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(&got, b"ring");
+    let err = ctl.forward("machine-nope", 47012).await.unwrap_err();
+    assert!(err.contains("not on this machine's mesh"), "{err}");
+
+    // The runner hangs up: its forwards stop listening.
+    drop(ctl);
+    let mut gone = false;
+    for _ in 0..50 {
+        if tokio::net::TcpStream::connect(f.local).await.is_err() {
+            gone = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(gone, "the forward outlived its control connection");
+    server.abort();
+}
+
+/// Bulk rank traffic (CUA-1783): 256 MiB one way through a machine's
+/// loopback forward, spliced on the other machine to a local TCP sink.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_forward_carries_bulk_traffic_to_a_local_port() {
+    let dir = tempfile::tempdir().unwrap();
+    let coord = FakeCoordinator::start(Mode::Account).await;
+    coord.set_machine_peering(true);
+    let a = node(&coord, NodeKind::Machine, dir.path(), "a", false).await;
+    let b = node(&coord, NodeKind::Machine, dir.path(), "b", false).await;
+    // B's "gang member": counts bytes, then answers one byte.
+    let sink = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let sink_addr = sink.local_addr().unwrap();
+    const N: usize = 256 << 20;
+    let counted = tokio::spawn(async move {
+        let (mut s, _) = sink.accept().await.unwrap();
+        let mut buf = vec![0u8; 1 << 20];
+        let mut got = 0usize;
+        while got < N {
+            let n = s.read(&mut buf).await.unwrap();
+            assert!(n > 0, "the stream ended after {got} bytes");
+            got += n;
+        }
+        s.write_all(b"k").await.unwrap();
+        got
+    });
+    let mb = b.clone();
+    tokio::spawn(async move {
+        while let Some(i) = mb.accept().await {
+            tokio::spawn(async move {
+                let mut tcp = tokio::net::TcpStream::connect(sink_addr).await.unwrap();
+                let mut st = i.stream;
+                let _ = tokio::io::copy_bidirectional(&mut st, &mut tcp).await;
+            });
+        }
+    });
+    b.machine("machine-a");
+    let f = a
+        .forward(
+            a.wait_machine("machine-b", READY).await.unwrap().node_key,
+            "port:1",
+            None,
+        )
+        .await
+        .unwrap();
+    let mut tcp = tokio::net::TcpStream::connect(f.local).await.unwrap();
+    let block = vec![0u8; 1 << 20];
+    let t = std::time::Instant::now();
+    for _ in 0..(N >> 20) {
+        tcp.write_all(&block).await.unwrap();
+    }
+    let mut k = [0u8; 1];
+    tokio::time::timeout(Duration::from_secs(120), tcp.read_exact(&mut k))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(counted.await.unwrap(), N);
+    println!("256 MiB in {:?}", t.elapsed());
+}

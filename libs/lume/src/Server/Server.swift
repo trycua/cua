@@ -293,6 +293,28 @@ final class Server: @unchecked Sendable {
                         name: name, storage: storage, force: force, timeout: timeout)
                 }),
             Route(
+                method: "POST", path: "/lume/vms/:name/suspend",
+                handler: { [weak self] request in
+                    guard let self else { throw HTTPError.internalError }
+                    let params = self.extractPathParams(
+                        pattern: "/lume/vms/:name/suspend", from: request)
+                    guard let name = params["name"] else {
+                        return HTTPResponse(statusCode: .badRequest, body: "Missing VM name")
+                    }
+                    return try await self.handleSuspendVM(name: name)
+                }),
+            Route(
+                method: "POST", path: "/lume/vms/:name/rename",
+                handler: { [weak self] request in
+                    guard let self else { throw HTTPError.internalError }
+                    let params = self.extractPathParams(
+                        pattern: "/lume/vms/:name/rename", from: request)
+                    guard let name = params["name"] else {
+                        return HTTPResponse(statusCode: .badRequest, body: "Missing VM name")
+                    }
+                    return try await self.handleRenameVM(name: name, body: request.body)
+                }),
+            Route(
                 method: "POST", path: "/lume/vms/:name/setup",
                 handler: { [weak self] request in
                     guard let self else { throw HTTPError.internalError }

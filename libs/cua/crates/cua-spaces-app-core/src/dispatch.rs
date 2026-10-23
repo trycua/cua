@@ -15,10 +15,10 @@ use crate::spaces::{self, creating, roster, sidebar, stream};
 use crate::teleport::{drag, flow, grid, transfer, windows};
 use crate::{
     CoreError, about, agent_keys, agents, checklist, cloud_connect, devices, diagnostics,
-    drive_mount_preview, drive_page, drive_settings, driver_preview, experiments, host, login_item,
-    machines, notch, notifications, nudges, onboarding, onboarding_preview, palette, paths,
-    persistent, presence, relay_usage, resources, settings, share, sign_in, telemetry, upsell,
-    window, wizard,
+    drive_mount_preview, drive_page, drive_settings, driver_preview, experiments, host,
+    local_network, login_item, machines, notch, notifications, nudges, onboarding,
+    onboarding_preview, palette, paths, persistent, presence, relay_usage, resources, settings,
+    share, sign_in, telemetry, upsell, window, wizard,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -45,6 +45,8 @@ pub const METHODS: &[&str] = &[
     "roster.initial",
     "roster.reduce",
     "creates.reduce",
+    "localNetwork.applies",
+    "localNetwork.step",
     "creates.compose",
     "creates.isPending",
     "creates.settle",
@@ -83,6 +85,7 @@ pub const METHODS: &[&str] = &[
     "wizard.validateImageRef",
     "wizard.creatingText",
     "wizard.createFailedText",
+    "wizard.setExternalRuntimes",
     "windows.filterWindows",
     "windows.appsFromWindows",
     "windows.teleportButtonEnabled",
@@ -379,6 +382,12 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "spaces.statusLine" => out(spaces::status_line(a.get("count")?)),
         "roster.initial" => out(roster::initial(&a.get::<Vec<Space>>("spaces")?)),
         "roster.reduce" => out(roster::reduce(&a.get("state")?, &a.get("action")?)),
+        "localNetwork.applies" => out(local_network::applies(
+            a.get("provider")?,
+            a.get("os")?,
+            a.get("hostIsMac")?,
+        )),
+        "localNetwork.step" => out(local_network::step(&a.get("input")?)),
         "creates.reduce" => out(creating::reduce(
             &a.get::<Option<creating::CreatesState>>("state")?
                 .unwrap_or_default(),
@@ -583,6 +592,11 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             a.get("provider")?,
             a.get::<Option<String>>("hostName")?.as_deref(),
         )),
+        "wizard.setExternalRuntimes" => {
+            let list = wizard::external_runtimes_from_doctor(&a.get::<String>("reportJson")?);
+            wizard::set_external_runtimes(list.clone());
+            out(list)
+        }
         "windows.filterWindows" => out(windows::filter_windows(
             &a.get::<Vec<_>>("windows")?,
             &a.get::<String>("query")?,

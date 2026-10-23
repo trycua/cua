@@ -20,7 +20,7 @@
 # cloud-init: without a datasource cloud-init disables itself and never generates the SSH
 # host keys, so sshd stays down. --ssh adds a throwaway key to the `cua` user
 # (then logs in and lists the cua-* units); --env-token writes
-# /etc/cua/env-token and restarts cua-spacesd if it raced cloud-init.
+# /etc/cua/env-token and restarts cua-spacesd only if it raced cloud-init.
 # --claim-secrets DIR simulates a per-claim Secret share on KubeVirt
 # (virtiofs tag cua-claim-secrets -> /run/cua). QEMU on macOS has no
 # virtiofsd, so DIR is shared over virtio-9p with the same tag, read-only,
@@ -127,7 +127,12 @@ if [ "$SSH" = 1 ]; then ssh-keygen -q -t ed25519 -N "" -f "$SSH_KEY"; fi
             echo "write_files:"
             echo "  - {path: /etc/cua/env-token, permissions: '0640', owner: 'root:root', content: '$ENV_TOKEN'}"
             echo "runcmd:"
-            echo "  - [systemctl, try-restart, cua-spacesd.service]"
+            # Restart cua-spacesd only if it started before cloud-init's files
+            # landed (the unit is ordered after cloud-init.service, so it
+            # normally did not). runcmd runs in cloud-final, seconds after
+            # spacesd first answers: an unconditional restart aborts every
+            # call in flight. Same rule as cua-vmm's cloudinit.rs.
+            echo "  - [sh, -c, 'ts() { systemctl show -p ActiveEnterTimestampMonotonic \"\$1\" 2>/dev/null | cut -d= -f2; }; ci=\$(ts cloud-init.service); up=\$(ts cua-spacesd.service); if [ \"\${ci:-0}\" -gt 0 ] 2>/dev/null && [ \"\${up:-0}\" -gt \"\${ci:-0}\" ] 2>/dev/null; then exit 0; fi; systemctl try-restart cua-spacesd.service >/dev/null 2>&1 || true']"
         fi
         if [ -n "$CLAIM_DIR" ] && [ -z "$VIRTIOFSD_PLANNED" ]; then
             # 9p only (no virtiofsd): runs in cloud-init.service, before

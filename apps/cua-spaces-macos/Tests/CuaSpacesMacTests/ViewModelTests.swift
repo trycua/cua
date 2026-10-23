@@ -399,8 +399,8 @@ struct ViewModelTests {
         #expect(model.host.formView?.canSubmit == true)
     }
 
-    /// Settings, Experiments: every switch off except Sharing (on by
-    /// default); Cua Volume on shows Storage after General, is saved,
+    /// Settings, Experiments: every switch off except Sharing and Your cloud
+    /// (on by default); Cua Volume on shows Storage after General, is saved,
     /// recorded, and reaches the first run.
     @Test func experimentsAreOffAndCuaVolumeShowsStorage() async {
         let telemetry = FixtureTelemetry()
@@ -409,8 +409,8 @@ struct ViewModelTests {
         #expect(toggles.map(\.id) == ["experiment:cua_volume", "experiment:your_cloud", "experiment:sharing",
                                     "experiment:classic_ui"])
         // Off, the New UI shows as "Use classic UI" on (tests run with no app version: no default).
-        // Sharing is on unless turned off.
-        let onByDefault: Set<String> = ["experiment:classic_ui", "experiment:sharing"]
+        // Sharing and Your cloud are on unless turned off.
+        let onByDefault: Set<String> = ["experiment:classic_ui", "experiment:sharing", "experiment:your_cloud"]
         #expect(toggles.allSatisfy { r in
             r.options.first { $0.id == (onByDefault.contains(r.id) ? "on" : "off") }?.active == true
         })
@@ -730,16 +730,17 @@ struct ViewModelTests {
         _ = try? await create.value
         let failed = model.spaces.filter { $0.name == name }
         #expect(failed.map(\.id) == ["pending:gamma"])
-        #expect(failed.first?.detail.hasPrefix("gamma-4 Mac Studio can't reach its new VM because") == true)
+        #expect(failed.first?.detail.hasPrefix("gamma-4 Mac Studio can't connect to its new macOS Space") == true)
 
         // Removed from the list: the machine's record is what is left.
         model.delete(try #require(failed.first))
         #expect(model.spaces.filter { $0.name == name }.map(\.id) == [record.id])
     }
 
-    /// Run on lists this Mac only while no cloud is connected (and without
-    /// the Your cloud experiment, no cloud at all); Cua Cloud is never
-    /// offered, and New Space creates on this Mac.
+    /// Run on lists this Mac only while no cloud is connected (and with Your
+    /// cloud turned off, no cloud at all); Cua Cloud is never offered, and
+    /// New Space creates on this Mac. Your cloud is on by default, so
+    /// "Connect a cloud" is there until it is turned off.
     @Test func runOnIsThisMacUntilACloudIsConnected() async {
         let backend = FixtureSpacesBackend()
         backend.fixtureCloud = true
@@ -749,7 +750,7 @@ struct ViewModelTests {
         let w = model.wizard
         #expect(w.view.placements.map(\.id) == ["local"])
         #expect(w.view.placementId == "local")
-        #expect(!w.view.fields.contains { $0.id == "connect-cloud" }, "Connect a cloud needs Your cloud")
+        #expect(w.view.fields.contains { $0.id == "connect-cloud" }, "Your cloud is on by default")
         w.send(.setPlacement(placement: .cloud))
         w.send(.setPlacement(placement: .yours))
         #expect(w.view.plan.placement == .local)
@@ -764,6 +765,51 @@ struct ViewModelTests {
         w.send(.setPlacement(placement: .local))
         w.send(.next)
         #expect(w.view.price == nil, "no price on your own hardware")
+
+        model.chooseExperiment(row: "experiment:your_cloud", option: "off")
+        await model.openNewSpace()
+        #expect(!model.wizard.view.fields.contains { $0.id == "connect-cloud" }, "Connect a cloud needs Your cloud")
+    }
+
+    /// Hetzner takes one masked API token: it is sent on Test and Connect
+    /// as the call's `token`, never held in the sheet's state, and dropped
+    /// when Connect finishes or the sheet closes.
+    @Test func hetznerTokenIsSentOnTestAndDroppedAfterConnect() async {
+        final class Recorder: CloudToolRunning, @unchecked Sendable {
+            var calls: [(String, [String: Any])] = []
+            func cloudTool(_ tool: String, _ args: [String: Any]) async throws -> Any {
+                calls.append((tool, args))
+                switch tool {
+                case "cloud_status":
+                    return ["default_on": "local", "providers": [
+                        ["name": "hetzner", "title": "Hetzner", "connected": false, "credentials": ["found": false]]]]
+                case "cloud_test": return ["ok": true, "account": "p", "checks": []]
+                default: return ["label": "Hetzner \u{00B7} fsn1"]
+                }
+            }
+        }
+        let rec = Recorder()
+        let cloud = CloudModel(tools: rec)
+        cloud.open()
+        await cloud.refresh()
+        #expect(cloud.view.rows.first?.detail == "Needs an API token")
+        #expect(cloud.view.tokenField?.label == "API token")
+        #expect(!cloud.view.canTest, "nothing to test without a token")
+        let secret = "tok-" + String(repeating: "x", count: 12)
+        cloud.setToken(secret)
+        #expect(cloud.view.canTest && cloud.view.canConnect)
+        #expect(!"\(cloud.state)".contains(secret) && !"\(cloud.view)".contains(secret))
+        await cloud.send(.test)
+        let test = rec.calls.last { $0.0 == "cloud_test" }
+        #expect(test?.1["token"] as? String == secret)
+        #expect(test?.1["provider"] as? String == "hetzner")
+        await cloud.send(.connect)
+        #expect(rec.calls.last { $0.0 == "cloud_connect" }?.1["token"] as? String == secret)
+        #expect(cloud.token.isEmpty, "dropped once Connect finished")
+        cloud.open()
+        cloud.setToken(secret)
+        cloud.showing = false
+        #expect(cloud.token.isEmpty, "dropped when the sheet closes")
     }
 
     /// "Connect a cloud" tests (creating nothing), connects, and the open
@@ -1478,13 +1524,13 @@ struct ViewModelTests {
         await model.press(row: "teams-billing")
         #expect(opened.map(\.absoluteString) == ["https://app.cua.ai/team", "https://app.cua.ai/billing"])
 
-        var creates = appCreatesReduce(state: AppCreatesState(pending: [], deleting: [], powering: []),
+        var creates = appCreatesReduce(state: AppCreatesState(pending: [], deleting: [], powering: [], streaks: []),
                                        action: .start(id: "pending:1", name: "cloud", os: .linux, provider: .cloud,
                                                       now: 0, image: nil, kind: nil, hostArch: nil, gpu: false,
                                                       host: nil, hostName: nil))
         creates = appCreatesReduce(state: creates, action: .fail(
             id: "pending:1", error: "You're out of Cua Cloud credit. Add credit at https://app.cua.ai/billing",
-            errorVariant: ""))
+            errorVariant: "", now: nil))
         let space = appCreatesCompose(spaces: [], state: creates)[0]
         #expect(space.detail == "You're out of Cua Cloud credit.")
         #expect(appSpaceDetail(space: space).creditNotice == nil)

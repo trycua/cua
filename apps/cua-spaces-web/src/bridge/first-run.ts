@@ -52,8 +52,29 @@ import { useRelayUsage } from "./relay-usage";
 import { useAgentKeys } from "./agent-keys";
 import { newPendingId } from "./store";
 import { extraName, spokenName } from "./space-names";
+import { runCreateFix } from "./create-retry";
+import type { CreateFix } from "./contracts/spaces";
 
 export { extraName, spokenName };
+
+/** The troubleshooting page (`creating::TROUBLESHOOT_URL`). */
+const TROUBLESHOOT_URL = "https://cua.ai/docs/spaces/guides/troubleshoot#find-your-reason";
+
+/** The card's input without the page-only `fix` (the core's first-run
+ * input has no such field). */
+function withoutFix(extra: FirstRunExtra & { fix?: CreateFix | null }): FirstRunExtra {
+  const { fix: _fix, ...rest } = extra;
+  return rest;
+}
+
+/** The extra Space failed the same way twice: the card shows the core's fix
+ * for that cause (its sentence, and its button as `fix`) instead of a plain
+ * Try again, as the Space's own page does. */
+function withExtraFix(view: FirstRunView, fix: CreateFix | null): FirstRunView {
+  const card = view.setup?.extra;
+  if (!fix || !view.setup || card?.phase !== "failed") return view;
+  return { ...view, setup: { ...view.setup, extra: { ...card, note: `${card.note} ${fix.text}`, action: { id: "fix", label: fix.label } } } };
+}
 import { spaceState } from "../lib/spaces";
 
 
@@ -404,7 +425,7 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
   }, [usedMs, s.usedAtMs]);
 
   // The extra Space, as the Spaces list shows its create.
-  const extra = useMemo<FirstRunExtra>(() => {
+  const extra = useMemo<FirstRunExtra & { fix?: CreateFix | null }>(() => {
     if (s.extraPendingId) {
       const id = store?.createdId(s.extraPendingId) ?? null;
       const row = spaces.data?.find((x) => x.id === (id ?? s.extraPendingId));
@@ -419,7 +440,7 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
             fraction: row.progress ? row.progress.permille / 1000 : null,
           };
         }
-        if (state === "failed") return { phase: "failed", name: spokenName(row.name), os: row.os, error: row.progress?.error ?? null };
+        if (state === "failed") return { phase: "failed", name: spokenName(row.name), os: row.os, error: row.progress?.error ?? null, fix: row.progress?.fix ?? null };
         return { phase: "ready", name: spokenName(row.name), os: row.os };
       }
       // Asked for, not listed yet.
@@ -472,7 +493,7 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
     extra,
     plan,
   };
-  const view = firstRunView(core, input);
+  const view = withExtraFix(firstRunView(core, { ...input, extra: withoutFix(extra) }), extra.fix ?? null);
 
   const welcome = settings.data?.telemetry
     ? onboardingView(core, { ...onboardingInitial(core, null), step: "welcome", telemetry: onboardingTelemetry(settings.data.telemetry) })
@@ -594,6 +615,14 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
       } else if (id === "retry" && s.extraPendingId) {
         const next = spaces.retryCreate(s.extraPendingId);
         writeFirstRun({ extraPendingId: next ?? null });
+      } else if (id === "fix" && extra.fix) {
+        // It failed the same way twice: that cause's fix (the core's).
+        await runCreateFix(extra.fix, {
+          copy: (text) => navigator.clipboard?.writeText(text),
+          openExternal: (url) => session.openExternal(url),
+          // No review sheet here: the help page says what each reason means.
+          details: () => void session.openExternal(TROUBLESHOOT_URL).catch(() => {}),
+        }).catch(() => {});
       }
   };
 

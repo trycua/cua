@@ -8,7 +8,19 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+# Optional hosted-relay features, on for the hosted relay (cua.ai): plan
+# metering and allowances (`meter`, `plan_source`), Teams (`teams`,
+# `team_api`, `team_sharing`, `org_access`), account erasure and the
+# internal routes the hosted Spaces API calls (`hosted`,
+# `account_erase`). Off, the relay runs every account as Free with no
+# allowance metering, and the Teams routes answer 410 "not available on
+# this relay" (src/free.rs).
+hosted = []
+
 [dependencies]
+# The WireGuard®-based mesh protocol and node (MIT).
+cua-mesh = { path = "../../../cua/crates/cua-mesh" }
 axum = { version = "0.8", features = ["ws"] }
 base64.workspace = true
 bytes.workspace = true
@@ -37,6 +49,10 @@ tracing-subscriber.workspace = true
 url.workspace = true
 uuid.workspace = true
 yamux.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+# statvfs: the state volume's free space (pool write budget, /readyz).
+libc = "0.2"
 
 [dev-dependencies]
 native-tls.workspace = true

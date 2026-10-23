@@ -231,9 +231,9 @@ struct MachineAccessTests {
     }
 
     /// The user's Macs after updating to 0.7.0: this Mac (relay
-    /// `b695…`, not sharing) and cua.local ("Mac.localdomain", relay
+    /// `b695…`, not sharing) and a spare Mac ("Mac.localdomain", relay
     /// `9e9d…`: sharing, desktop not shared, Spaces on with none running,
-    /// the cua-spacesd 0.2.2 of an older app). cua.local is listed under
+    /// the cua-spacesd 0.2.2 of an older app). The spare Mac is listed under
     /// My machines however its probe went; this Mac only as This machine.
     @Test func anOlderHostThatKeepsItsDesktopPrivateIsListed() async throws {
         let other = "relay:9e9d969d41649428f693b403f6f8f225"

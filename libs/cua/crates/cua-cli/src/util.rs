@@ -27,6 +27,31 @@ pub fn cua_home() -> PathBuf {
     cua_daemon::cua_home()
 }
 
+/// Raises this process's soft open-file limit toward 65,536 (the daemon
+/// holds a socket or pipe per Space, client, stream and engine
+/// connection); the SDK does the same when its runtime starts. Returns the
+/// soft limit before and after, or `None` when nothing changed.
+pub fn raise_open_file_limit() -> Option<(u64, u64)> {
+    cua_sdk::support::raise_open_file_limit()
+}
+
+#[cfg(all(test, unix))]
+mod fd_limit_tests {
+    #[test]
+    fn the_daemon_gets_more_than_the_default_open_file_limit() {
+        let _ = super::raise_open_file_limit();
+        let mut lim = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        // SAFETY: getrlimit fills the struct it is given.
+        assert_eq!(unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) }, 0);
+        assert!(lim.rlim_cur >= lim.rlim_max.min(1024), "{}", lim.rlim_cur);
+        // Raising again is a no-op.
+        assert_eq!(super::raise_open_file_limit(), None);
+    }
+}
+
 /// An `Internal` error from anything displayable.
 pub fn internal(e: impl std::fmt::Display) -> CuaError {
     CuaError::Internal(e.to_string())

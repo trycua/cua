@@ -40,12 +40,15 @@ pub enum AgentCmd {
     },
     /// Print a run's normalized events (--follow to stream).
     #[command(after_help = "Examples:
-  cua agent logs local:dev run-1a2b3c4d -f")]
+  cua agent logs local:dev run-1a2b3c4d -f
+  cua agent logs session:refactor -f")]
     Logs {
         #[command(flatten)]
         at: Narrow,
+        /// Sandbox, or `session:NAME` for a durable session.
         sandbox: String,
-        run_id: String,
+        /// The run (not for a session).
+        run_id: Option<String>,
         /// Keep streaming until the turn ends.
         #[arg(long, short)]
         follow: bool,
@@ -76,30 +79,39 @@ pub enum AgentCmd {
     },
     /// Stop a run and verify it is gone.
     #[command(after_help = "Examples:
-  cua agent stop local:dev run-1a2b3c4d")]
+  cua agent stop local:dev run-1a2b3c4d
+  cua agent stop session:refactor")]
     Stop {
         #[command(flatten)]
         at: Narrow,
+        /// Sandbox, or `session:NAME` for a durable session.
         sandbox: String,
-        run_id: String,
+        /// The run (not for a session).
+        run_id: Option<String>,
     },
     /// A run's status and last result.
     #[command(after_help = "Examples:
-  cua agent status local:dev run-1a2b3c4d")]
+  cua agent status local:dev run-1a2b3c4d
+  cua agent status session:refactor")]
     Status {
         #[command(flatten)]
         at: Narrow,
+        /// Sandbox, or `session:NAME` for a durable session.
         sandbox: String,
-        run_id: String,
+        /// The run (not for a session).
+        run_id: Option<String>,
     },
     /// Stop a run and delete its record (secrets included).
     #[command(after_help = "Examples:
-  cua agent rm local:dev run-1a2b3c4d")]
+  cua agent rm local:dev run-1a2b3c4d
+  cua agent rm session:refactor")]
     Rm {
         #[command(flatten)]
         at: Narrow,
+        /// Sandbox, or `session:NAME` for a durable session.
         sandbox: String,
-        run_id: String,
+        /// The run (not for a session).
+        run_id: Option<String>,
     },
     /// Install harnesses or apps now (`claude-code`, `blender`, ...).
     #[command(after_help = "Examples:
@@ -111,6 +123,11 @@ pub enum AgentCmd {
         #[arg(required = true)]
         ids: Vec<String>,
     },
+    /// Durable sessions: agents your machines keep alive (`run --durable`).
+    #[command(after_help = "Examples:
+  cua agent sessions
+  cua --json agent sessions")]
+    Sessions,
     /// The harnesses: readiness, installs, key variables, limits.
     #[command(after_help = "Examples:
   cua agent harnesses
@@ -134,57 +151,83 @@ pub enum AgentCmd {
 #[derive(clap::Args, Debug)]
 pub struct RunArgs {
     #[command(flatten)]
-    at: Narrow,
+    pub(crate) at: Narrow,
     /// Sandbox (`local:NAME`, `direct:HOST:PORT`, or NAME).
-    sandbox: String,
+    pub(crate) sandbox: String,
     /// Harness (`cua agent harnesses`).
-    harness: String,
+    pub(crate) harness: String,
     /// The task.
-    prompt: String,
+    pub(crate) prompt: String,
     /// Forward a provider key from this shell's environment (repeatable),
     /// for example ANTHROPIC_API_KEY. The value never appears in argv.
     #[arg(long = "env-from-host", value_name = "VAR")]
-    env_from_host: Vec<String>,
+    pub(crate) env_from_host: Vec<String>,
     /// Git repository cloned into the working directory first.
     #[arg(long)]
-    repo: Option<String>,
+    pub(crate) repo: Option<String>,
     #[arg(long)]
-    branch: Option<String>,
+    pub(crate) branch: Option<String>,
     /// Working directory in the sandbox.
     #[arg(long)]
-    cwd: Option<String>,
+    pub(crate) cwd: Option<String>,
     #[arg(long)]
-    model: Option<String>,
+    pub(crate) model: Option<String>,
     /// A custom model endpoint (proxy or compatible server).
     #[arg(long)]
-    base_url: Option<String>,
+    pub(crate) base_url: Option<String>,
     /// Its wire format: anthropic, openai-responses, openai-chat, gemini.
     #[arg(long)]
-    wire: Option<String>,
+    pub(crate) wire: Option<String>,
     /// An MCP server for the agent: NAME=URL (HTTP, as reachable inside the
     /// sandbox) or NAME=cmd:COMMAND ARGS... (stdio, run in the sandbox).
     #[arg(long = "mcp", value_name = "NAME=URL")]
-    mcp: Vec<String>,
+    pub(crate) mcp: Vec<String>,
     /// Attach a local file to the prompt (repeatable).
     #[arg(long = "file", value_name = "PATH")]
-    files: Vec<std::path::PathBuf>,
+    pub(crate) files: Vec<std::path::PathBuf>,
     /// Do not give the agent the sandbox's own MCP tools.
     #[arg(long)]
-    no_sandbox_mcp: bool,
+    pub(crate) no_sandbox_mcp: bool,
     /// Do not copy the cua skills into the harness.
     #[arg(long)]
-    no_skills: bool,
+    pub(crate) no_skills: bool,
     /// Stop (resumably) once the prompt is answered.
     #[arg(long)]
-    exit_when_idle: bool,
+    pub(crate) exit_when_idle: bool,
     #[arg(long)]
-    label: Option<String>,
+    pub(crate) label: Option<String>,
     /// Stream events until the turn ends.
     #[arg(long, short)]
-    follow: bool,
+    pub(crate) follow: bool,
+    /// Keep the agent alive across a lost driver or machine: your machines'
+    /// coordinator starts it again (a higher epoch each time, with backoff
+    /// and a cap). SANDBOX is then a durable Space by name, or `auto` for
+    /// none.
+    #[arg(long)]
+    pub(crate) durable: bool,
+    /// With --durable: the machine the driver runs on (`auto`, or a
+    /// machine's name; default: this machine).
+    #[arg(long, value_name = "MACHINE", requires = "durable")]
+    pub(crate) on: Option<String>,
+    /// With --durable: drives allowed in total before the session fails
+    /// (default 5).
+    #[arg(long, value_name = "N", requires = "durable")]
+    pub(crate) max_attempts: Option<u32>,
+    /// With --durable: seconds the driver may write no output before it
+    /// counts as wedged, is cancelled and started again (default 120; 0:
+    /// never). Drivers print a heartbeat every quarter of it.
+    #[arg(long, value_name = "SECS", requires = "durable")]
+    pub(crate) stall_secs: Option<u32>,
+    /// With --durable: the session's name (default: generated).
+    #[arg(long, requires = "durable")]
+    pub(crate) name: Option<String>,
+    #[arg(long, hide = true, requires = "durable")]
+    pub(crate) driver_cmd: Option<String>,
+    #[arg(long, hide = true, requires = "durable")]
+    pub(crate) driver_bundle: Option<std::path::PathBuf>,
 }
 
-fn mcp_arg(s: &str) -> Result<AgentRunMcpServer, CuaError> {
+pub(crate) fn mcp_arg(s: &str) -> Result<AgentRunMcpServer, CuaError> {
     let (name, rest) = s
         .split_once('=')
         .ok_or_else(|| CuaError::InvalidArgument(format!("--mcp {s:?}: expected NAME=URL")))?;
@@ -259,7 +302,7 @@ async fn harnesses(cua: &Arc<Cua>) -> serde_json::Value {
 }
 
 /// The provider key variables `--env-from-host` may name.
-fn provider_key_names() -> Vec<String> {
+pub(crate) fn provider_key_names() -> Vec<String> {
     let v: serde_json::Value =
         serde_json::from_str(&cua_sdk::agent_harnesses()).unwrap_or_default();
     let mut names: Vec<String> = v
@@ -536,8 +579,36 @@ pub async fn run(
         }
         return Ok(0);
     }
+    if let AgentCmd::Sessions = cmd {
+        return crate::agent_session_cmd::sessions(json, out).await;
+    }
     if let AgentCmd::Run(a) = cmd {
+        if a.durable {
+            return crate::agent_session_cmd::start(*a, json, out).await;
+        }
         return start(cua, *a, json, out).await;
+    }
+    // `session:NAME` where a sandbox goes: a durable session.
+    match &cmd {
+        AgentCmd::Logs { sandbox, .. }
+        | AgentCmd::Status { sandbox, .. }
+        | AgentCmd::Stop { sandbox, .. }
+        | AgentCmd::Rm { sandbox, .. } => {
+            if let Some(name) = crate::agent_session_cmd::session_of(sandbox) {
+                let name = name.to_string();
+                return match &cmd {
+                    AgentCmd::Logs { follow: f, .. } => {
+                        crate::agent_session_cmd::logs(&name, *f, json, out).await
+                    }
+                    AgentCmd::Status { .. } => {
+                        crate::agent_session_cmd::status(&name, json, out).await
+                    }
+                    AgentCmd::Stop { .. } => crate::agent_session_cmd::stop(&name, json, out).await,
+                    _ => crate::agent_session_cmd::rm(&name, json, out).await,
+                };
+            }
+        }
+        _ => {}
     }
     let (at, sandbox) = match &cmd {
         AgentCmd::Ls { at, sandbox }
@@ -549,6 +620,7 @@ pub async fn run(
         | AgentCmd::Rm { at, sandbox, .. }
         | AgentCmd::Ensure { at, sandbox, .. } => (*at, sandbox.clone()),
         AgentCmd::Run(_)
+        | AgentCmd::Sessions
         | AgentCmd::Harnesses
         | AgentCmd::Keys { .. }
         | AgentCmd::Persistent(_) => unreachable!(),
@@ -574,6 +646,15 @@ pub async fn run(
                 .collect::<String>()
         )
     };
+    let need_run = |r: Option<String>| {
+        r.ok_or_else(|| {
+            CuaError::InvalidArgument(
+                "name the run (`cua agent ls SANDBOX` lists them), or use session:NAME for a \
+                 durable session"
+                    .into(),
+            )
+        })
+    };
     match cmd {
         AgentCmd::Ls { .. } => {
             let runs = agents.list().await?;
@@ -597,7 +678,7 @@ pub async fn run(
             raw,
             ..
         } => {
-            let run = agents.get(run_id).await?;
+            let run = agents.get(need_run(run_id)?).await?;
             follow(&run, 0, f, raw, json, out).await?;
         }
         AgentCmd::Send {
@@ -620,12 +701,12 @@ pub async fn run(
             line(out, info_line(&s));
         }
         AgentCmd::Stop { run_id, .. } => {
-            let s = agents.get(run_id).await?.stop().await?;
+            let s = agents.get(need_run(run_id)?).await?.stop().await?;
             line(out, info_line(&s));
             return Ok(if s.alive == Some(false) { 0 } else { 1 });
         }
         AgentCmd::Status { run_id, .. } => {
-            let run = agents.get(run_id).await?;
+            let run = agents.get(need_run(run_id)?).await?;
             let s = run.status().await?;
             let r = run.result().await?;
             if json {
@@ -647,6 +728,7 @@ pub async fn run(
             }
         }
         AgentCmd::Rm { run_id, .. } => {
+            let run_id = need_run(run_id)?;
             agents.get(run_id.clone()).await?.remove().await?;
             line(out, format!("removed {run_id}"));
         }
@@ -656,6 +738,7 @@ pub async fn run(
             }
         }
         AgentCmd::Run(_)
+        | AgentCmd::Sessions
         | AgentCmd::Harnesses
         | AgentCmd::Keys { .. }
         | AgentCmd::Persistent(_) => {}

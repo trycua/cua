@@ -127,7 +127,7 @@ jobs:
     needs: version
     name: native ${{ matrix.label }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
+    timeout-minutes: 240
     container: ${{ matrix.container }}
     # Holds the Azure Artifact Signing identity (Windows Authenticode).
     environment: cua-driver-release-signing
@@ -197,6 +197,49 @@ jobs:
           mkdir -p "native/${{ matrix.label }}"
           cp "target/${{ matrix.target }}/release/${{ matrix.lib }}" "native/${{ matrix.label }}/"
           cp "target/${{ matrix.target }}/release/${{ matrix.exe }}" "native/${{ matrix.label }}/"
+      # The microVM guest init runs as PID 1 from an initramfs with nothing
+      # else in it: it must be static (a dynamic one panics the guest
+      # kernel). It ships next to `cua`, where the daemon looks for it.
+      - name: Build the static microVM guest init (Linux)
+        if: contains(matrix.target, 'linux')
+        working-directory: libs/cua
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: |
+          cargo build --locked --release -p cua-microvm-init --target ${{ matrix.target }}
+          init="target/${{ matrix.target }}/release/cua-microvm-init"
+          if file "$init" 2>/dev/null | grep -q interpreter; then
+            echo "::error::cua-microvm-init is dynamically linked"; exit 1
+          fi
+          cp "$init" "native/${{ matrix.label }}/"
+      # macOS microVMs (kind microvm on a Mac): cua's own monitor, cua-vz
+      # (Swift, signed below with its virtualization entitlement), and the
+      # aarch64 guest init, built static here with rust-lld. Both ship next
+      # to `cua`, where the daemon looks for them.
+      - name: Build cua-vz and the aarch64 guest init (Apple silicon)
+        if: matrix.label == 'darwin-arm64'
+        working-directory: libs/cua
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: rust-lld
+        run: |
+          rustup target add aarch64-unknown-linux-musl
+          cargo build --locked --release -p cua-microvm-init --target aarch64-unknown-linux-musl
+          init=target/aarch64-unknown-linux-musl/release/cua-microvm-init
+          file "$init" | grep -q "statically linked" || { echo "::error::cua-microvm-init is not static"; exit 1; }
+          cp "$init" "native/${{ matrix.label }}/"
+          # Ad-hoc signed here; the Developer ID step re-signs it with the
+          # same entitlement and the hardened runtime.
+          vz/build.sh "native/${{ matrix.label }}"
+      # An OCI image without cua-spacesd (alpine, node) gets a static one
+      # injected on containers and microVMs: it ships next to `cua`, where
+      # the daemon looks for it. The cua-spacesd release the CLI pins builds
+      # it (cd-cua-spacesd.yml, the musl targets).
+      - name: Bundle the static cua-spacesd
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/fetch_static_spacesd.sh "$CUA_RELEASE_REPOSITORY" "${{ matrix.label }}" "libs/cua/native/${{ matrix.label }}"
       - name: Developer ID sign and notarize (macOS)
         if: runner.os == 'macOS'
         working-directory: libs/cua/native/${{ matrix.label }}
@@ -235,6 +278,12 @@ jobs:
             codesign --force --timestamp --options runtime --sign "$identity" --keychain "$kc" "$f"
             codesign --verify --strict --verbose=2 "$f"
           done
+          if [ -f cua-vz ]; then
+            # Virtualization.framework refuses a monitor without it.
+            codesign --force --timestamp --options runtime --sign "$identity" --keychain "$kc" \
+              --identifier ai.cua.vz --entitlements "$GITHUB_WORKSPACE/libs/cua/vz/cua-vz.entitlements" cua-vz
+            codesign --verify --strict --verbose=2 cua-vz
+          fi
           # Bare Mach-O files cannot be stapled; notarization registers their
           # cdhashes with Apple, which Gatekeeper checks online.
           /usr/bin/ditto -c -k . "$RUNNER_TEMP/notarize.zip"
@@ -350,6 +399,10 @@ jobs:
     needs: [version, native]
     runs-on: ubuntu-latest
     steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h /
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions/setup-node@v4
         with:
@@ -546,10 +599,16 @@ jobs:
             label="${pair%%:*}" platform="${pair##*:}"
             d="dist/native-$label"
             if [ -f "$d/cua.exe" ]; then
-              (cd "$d" && zip -q "$OLDPWD/release/cua-cli-$VERSION-$platform.zip" cua.exe)
+              (cd "$d" && zip -q "$OLDPWD/release/cua-cli-$VERSION-$platform.zip" cua.exe cua-spacesd-linux-*)
             else
               chmod +x "$d/cua"
-              tar -czf "release/cua-cli-$VERSION-$platform.tar.gz" -C "$d" cua
+              # A Mac's microVM monitor and guest init, and the static
+              # cua-spacesd injected into OCI images, travel with the CLI.
+              extra=()
+              for f in cua-vz cua-microvm-init cua-spacesd-linux-aarch64 cua-spacesd-linux-x86_64; do
+                [ -f "$d/$f" ] && extra+=("$f")
+              done
+              tar -czf "release/cua-cli-$VERSION-$platform.tar.gz" -C "$d" cua "${extra[@]}"
             fi
           done
           # release-artifacts.json: this CLI + the newest Spaces app from the

@@ -1,0 +1,332 @@
+name: "Compat drift (E2B, Daytona, Modal SDKs)"
+
+# Keeps the claim "the provider's unmodified SDK works on Cua" honest as the
+# SDKs move. The versions Cua claims live in ONE file, tests/compat/SDK_VERSIONS.json.
+#
+#   weekly / dispatch
+#     versions      latest release of every SDK (PyPI and npm) next to the claimed ones
+#     surface       the latest release's public surface (Python and TypeScript, E2B,
+#                   Daytona, Modal) against the committed fixture of the newest claimed
+#                   version, and every claimed version against its own fixture; a
+#                   readable REMOVED / CHANGED / ADDED list, nonzero on any difference
+#     coverage      the E2B coverage matrix still maps every public symbol
+#     gateway       the provider suites with the LATEST SDKs against the gateway over
+#                   mock Spaces (hermetic) and on real Linux Spaces (QEMU, KVM runner)
+#     live-e2b      with the E2B_API_KEY secret: the shared cases (Python and TypeScript
+#                   runners, pinned and latest SDKs) against live E2B, compared with the
+#                   committed recordings; plus the cross-language check
+#   pull request (paths below)
+#     fixtures      claimed SDK versions against their committed fixtures; Python and
+#                   TypeScript recordings of the shared cases agree with each other
+#
+# It opens nothing automatically: a failing run is the report. The E2B Python surface
+# and live conformance also run in ci-cua-compat.yml; the per-provider fuzz and
+# perf work is in the provider suites, not here.
+
+on:
+  pull_request:
+    paths:
+      - "tests/compat/SDK_VERSIONS.json"
+      - "tests/compat/drift/**"
+      - "tests/compat/e2b/fixtures/**"
+      - "tests/compat/daytona/fixtures/**"
+      - ".github/workflows/compat-drift.yml"
+  schedule:
+    - cron: "23 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compat-drift-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+env:
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: "4"
+
+jobs:
+  versions:
+    name: latest releases vs claimed
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Latest releases next to the claimed versions
+        working-directory: tests/compat/drift
+        run: |
+          python latest_versions.py | tee "$RUNNER_TEMP/versions.txt"
+          { echo '### SDK versions'; echo '```'; cat "$RUNNER_TEMP/versions.txt"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
+
+  fixtures:
+    name: claimed versions match their fixtures
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {provider: daytona, lang: py}
+          - {provider: daytona, lang: ts}
+          - {provider: modal, lang: py}
+          - {provider: modal, lang: ts}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Each fixture is reproduced by its own release
+        working-directory: tests/compat/drift
+        run: |
+          set -e
+          status=0
+          for f in fixtures/${{ matrix.provider }}-${{ matrix.lang }}-*.json; do
+            ver="${f##*-}"; ver="${ver%.json}"
+            echo "== ${{ matrix.provider }} ${{ matrix.lang }} $ver"
+            ./dump.sh ${{ matrix.provider }} ${{ matrix.lang }} "$ver" >"$RUNNER_TEMP/cur.json"
+            python surface_diff.py "$f" "$RUNNER_TEMP/cur.json" || status=1
+          done
+          exit $status
+
+  crosslang-fixtures:
+    name: Python and TypeScript recordings agree
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: E2B shared cases, recorded Python vs TypeScript
+        run: |
+          status=0
+          shopt -s nullglob
+          for py in tests/compat/e2b/fixtures/cases-py-*.json; do
+            ver="${py##*cases-py-}"; ts="tests/compat/e2b/fixtures/cases-ts-$ver"
+            [ -f "$ts" ] || { echo "::warning::no TypeScript recording for $ver"; continue; }
+            echo "== e2b $ver"
+            python tests/compat/drift/crosslang.py "$py" "$ts" --allow tests/compat/drift/crosslang-allow-e2b.json || status=1
+          done
+          exit $status
+
+  surface:
+    name: latest ${{ matrix.provider }} ${{ matrix.lang }} surface
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {provider: daytona, lang: py}
+          - {provider: daytona, lang: ts}
+          - {provider: modal, lang: py}
+          - {provider: modal, lang: ts}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: The latest release against the newest claimed fixture
+        working-directory: tests/compat/drift
+        run: |
+          newest=$(ls fixtures/${{ matrix.provider }}-${{ matrix.lang }}-*.json | sort -V | tail -1)
+          ./dump.sh ${{ matrix.provider }} ${{ matrix.lang }} latest >"$RUNNER_TEMP/latest.json"
+          echo "newest claimed fixture: $newest"
+          python surface_diff.py "$newest" "$RUNNER_TEMP/latest.json" | tee "$RUNNER_TEMP/diff.txt" || rc=$?
+          { echo '### ${{ matrix.provider }} ${{ matrix.lang }}: latest vs newest claimed'; echo '```'; cat "$RUNNER_TEMP/diff.txt"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
+          if [ "${rc:-0}" != 0 ]; then
+            echo "::error::the latest ${{ matrix.provider }} ${{ matrix.lang }} SDK changed its public surface: decide what the gateway does with each new or changed member (coverage matrix), record a fixture, add the version to tests/compat/SDK_VERSIONS.json"
+            exit 1
+          fi
+
+  e2b-ts-surface:
+    name: latest e2b TypeScript surface and coverage matrix
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Latest e2b (npm) against the newest TypeScript snapshot
+        run: |
+          if [ ! -f tests/compat/e2b/surface_ts.mjs ]; then
+            echo "::warning::tests/compat/e2b/surface_ts.mjs is not in the tree yet: using the generic surface tool"
+            tests/compat/drift/dump.sh e2b ts latest >"$RUNNER_TEMP/e2b-ts-latest.json"
+            newest=$(ls tests/compat/drift/fixtures/e2b-ts-*.json 2>/dev/null | sort -V | tail -1)
+            [ -n "$newest" ] || { echo "::warning::no committed e2b TypeScript fixture yet"; exit 0; }
+            python tests/compat/drift/surface_diff.py "$newest" "$RUNNER_TEMP/e2b-ts-latest.json"
+            exit 0
+          fi
+          mkdir -p "$RUNNER_TEMP/e2b-ts" && cd "$RUNNER_TEMP/e2b-ts"
+          npm init -y >/dev/null && npm install --ignore-scripts --no-audit --no-fund --silent e2b@latest typescript@5
+          cd "$GITHUB_WORKSPACE"
+          newest=$(ls tests/compat/e2b/fixtures/surface-ts-*.json | sort -V | tail -1)
+          node tests/compat/e2b/surface_ts.mjs --diff "$newest" "$RUNNER_TEMP/e2b-ts/node_modules/e2b" "$RUNNER_TEMP/e2b-ts/node_modules/typescript"
+      - name: Every public symbol of every claimed e2b is mapped (coverage matrix)
+        run: |
+          if [ -f tests/compat/e2b/coverage.py ]; then python tests/compat/e2b/coverage.py --check
+          else echo "::warning::tests/compat/e2b/coverage.py is not in the tree yet: coverage matrix not checked"; fi
+
+  gateway-hermetic:
+    name: gateway over mock Spaces with the latest SDKs
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: cua-compat-drift
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: E2B SDK, pinned and latest
+        run: tests/compat/run_hermetic.sh e2b
+      - name: Daytona SDKs (Python sync, async, TypeScript), pinned and latest
+        run: |
+          if [ -f tests/compat/daytona/run_hermetic.sh ]; then
+            tests/compat/daytona/run_hermetic.sh --latest
+          else
+            echo "::warning::tests/compat/daytona/run_hermetic.sh is not in the tree yet: running the shared hermetic script"
+            tests/compat/run_hermetic.sh daytona
+          fi
+      - name: Modal SDK, latest
+        run: |
+          if [ -f tests/compat/modal/run_hermetic.sh ]; then
+            tests/compat/modal/run_hermetic.sh --latest
+          else
+            echo "::warning::tests/compat/modal/run_hermetic.sh is not in the tree yet: the Modal gateway has no hermetic drift run"
+          fi
+
+  gateway-spaces:
+    name: gateway on real Spaces (QEMU) with the latest SDKs
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: |
+            libs/cua
+            libs/cua-spacesd
+          key: cua-compat-e2e
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
+      - name: Build cua (Cua Spaces build), the reference images and disks
+        run: |
+          tests/e2e/cua-sdk/ci-setup.sh --images --disks
+          (cd libs/cua && cargo build --locked -p cua-spaces-cli)
+          echo "CUA=$PWD/libs/cua/target/debug/cua" >>"$GITHUB_ENV"
+          arch=$(uname -m); case "$arch" in aarch64|arm64) a=arm64;; *) a=amd64;; esac
+          echo "LINUX_DISK=$HOME/.cache/cua-images-e2e/linux/$a/disk.img" >>"$GITHUB_ENV"
+      - name: Start the daemon
+        run: |
+          "$CUA" daemon start --foreground >"$RUNNER_TEMP/daemon.log" 2>&1 &
+          for i in $(seq 100); do "$CUA" daemon status >/dev/null 2>&1 && break; sleep 0.3; done
+      - name: E2B conformance, latest SDK
+        run: SDKS="e2b" OUT="$RUNNER_TEMP/drift-e2b" tests/compat/run_space.sh e2b --on local --kind vm --image "vm:$LINUX_DISK"
+      - name: Daytona conformance, latest SDK
+        run: SDKS="daytona" OUT="$RUNNER_TEMP/drift-daytona" tests/compat/run_space.sh daytona --on local --kind vm --image "vm:$LINUX_DISK"
+      - name: E2B shared cases, Python and TypeScript runners, latest SDKs
+        run: |
+          if [ -f tests/compat/run_cases_space.sh ]; then
+            export PY_SDKS=latest TS_SDKS=latest CASES_WORK="$RUNNER_TEMP/cases-e2b"
+            tests/compat/run_cases_space.sh -- --on local --kind vm --image "vm:$LINUX_DISK"
+          else
+            echo "::warning::tests/compat/run_cases_space.sh is not in the tree yet"
+          fi
+      - name: Python and TypeScript agree (cross-language)
+        run: |
+          d="$RUNNER_TEMP/cases-e2b"
+          py=$(ls "$d"/cases-py-*.json 2>/dev/null | sort -V | tail -1); ts=$(ls "$d"/cases-ts-*.json 2>/dev/null | sort -V | tail -1)
+          if [ -z "$py" ] || [ -z "$ts" ]; then echo "::warning::no shared-case runs to compare"; exit 0; fi
+          python tests/compat/drift/crosslang.py "$py" "$ts" --allow tests/compat/drift/crosslang-allow-e2b.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: compat-drift-spaces
+          path: |
+            ${{ runner.temp }}/drift-*
+            ${{ runner.temp }}/cases-e2b
+            ${{ runner.temp }}/daemon.log
+
+  live-e2b:
+    name: live E2B shared cases and cross-language
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Shared cases against live E2B (pinned and latest, Python and TypeScript)
+        if: env.E2B_API_KEY != ''
+        run: |
+          if [ ! -f tests/compat/run_cases.sh ]; then
+            echo "::warning::tests/compat/run_cases.sh is not in the tree yet: using the conformance suite"
+            python -m venv "$RUNNER_TEMP/v" && "$RUNNER_TEMP/v/bin/pip" install -q -U e2b
+            "$RUNNER_TEMP/v/bin/python" tests/compat/e2b/conformance.py >"$RUNNER_TEMP/live.json"
+            python tests/compat/e2b/compare.py "$(ls tests/compat/e2b/fixtures/e2b-*.json | sort -V | tail -1)" "$RUNNER_TEMP/live.json"
+            exit 0
+          fi
+          export CASES_WORK="$RUNNER_TEMP/cases-live"
+          tests/compat/run_cases.sh --rules tests/compat/e2b/rules.json
+      - name: Python and TypeScript agree on the live run
+        if: env.E2B_API_KEY != ''
+        run: |
+          d="$RUNNER_TEMP/cases-live"
+          ls "$d"/cases-py-*.json >/dev/null 2>&1 || { echo "::warning::no shared-case runs to compare"; exit 0; }
+          py=$(ls "$d"/cases-py-*.json | sort -V | tail -1); ts=$(ls "$d"/cases-ts-*.json | sort -V | tail -1)
+          python tests/compat/drift/crosslang.py "$py" "$ts" --allow tests/compat/drift/crosslang-allow-e2b.json
+      - name: No E2B_API_KEY secret
+        if: env.E2B_API_KEY == ''
+        run: echo "::warning::E2B_API_KEY is not set; the live E2B drift check did not run"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always() && env.E2B_API_KEY != ''
+        with:
+          name: compat-drift-live-e2b
+          path: ${{ runner.temp }}/cases-live

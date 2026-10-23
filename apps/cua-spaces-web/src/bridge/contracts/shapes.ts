@@ -54,7 +54,7 @@ import type {
 import type { NotificationInput } from "./notifications";
 import type { AboutInput, DriveCheckInput, DriveStorageInput, LoginItemReport, StorageInput, UpdateState } from "./settings";
 import type { ShareEntry, ShareRemoval } from "./share";
-import type { SpaceProgress, SpaceRow } from "./spaces";
+import type { CreateFix, SpaceProgress, SpaceRow } from "./spaces";
 import type { CatalogEntry, ConsentItem, KvDomainCount, KvInventory, OpenWindow, PlanStep, RemoteWindow, RunReport, TeleportPlan } from "./teleport";
 import type { AgentSetupOutcome, DriveGrantInput, DriveMountInput, DriveRequestInput, Experiments, VolumeOverview } from "./volume";
 import type { AgentKeysReport } from "../ops/agent-keys";
@@ -64,6 +64,7 @@ import type { RelayUsage } from "../ops/relay-usage";
 import type { RiskyRequest } from "../ops/nudges";
 import type { ComputerResources, DiskOnHost, DiskWarning, GuestUsage, ResourcesSnapshot, SpaceResources } from "../ops/resources";
 import type { HostChecklistState } from "../ops/checklist";
+import type { ShareLink } from "../ops/links";
 import type { PresenceCursorWire, PresenceJoinInfo, PresenceParticipantWire } from "../ops/presence";
 import type { StartupState } from "../ops/startup";
 import type { StreamTicket } from "../ops/stream";
@@ -107,9 +108,24 @@ const ComputerResourcesShape = ref(
   }),
 );
 
+const CreateFixShape = ref(
+  "CreateFix",
+  obj<CreateFix>()({ text: str, label: str, action: oneOf("copy-command", "open-url", "details"), value: opt(str) }),
+);
+
 const SpaceProgressShape = ref(
   "SpaceProgress",
-  obj<SpaceProgress>()({ phase: str, permille: num, label: str, error: opt(str), transfer: opt(str), cancellable: opt(bool), cancelling: opt(bool) }),
+  obj<SpaceProgress>()({
+    phase: str,
+    permille: num,
+    label: str,
+    error: opt(str),
+    transfer: opt(str),
+    cancellable: opt(bool),
+    cancelling: opt(bool),
+    retrying: opt(bool),
+    fix: opt(CreateFixShape),
+  }),
 );
 
 const SpaceRowShape = ref(
@@ -700,6 +716,19 @@ const ChecklistAnswerShape = object({
   state: obj<HostChecklistState>()({ done: strings, dismissed: bool, shown: bool }),
 });
 
+/** A link to something you run (`ops/links.ts`). */
+const ShareLinkShape = obj<ShareLink>()({
+  id: str,
+  url: str,
+  name: nullable(str),
+  access: oneOf("private", "team", "public"),
+  kind: str,
+  target: str,
+  owner: str,
+  createdAtUnix: nullable(num),
+  expiresAtUnix: nullable(num),
+});
+
 /** One Machines row as the core lists it (`machines::MachinePageRow`). */
 const MachinePageRowShape = ref(
   "MachinePageRow",
@@ -1019,6 +1048,9 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   ),
   "checklist.get": ChecklistAnswerShape,
   "checklist.send": ChecklistAnswerShape,
+  "links.list": object({ links: list(ShareLinkShape) }),
+  "links.create": ShareLinkShape,
+  "links.stop": object({ stopped: strings }),
   "presence.join": obj<PresenceJoinInfo>()({
     handle: str,
     me: PresenceParticipantShape,
@@ -1421,6 +1453,9 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "machines.checkHealth": nul,
   "checklist.get": OP_SHAPES["checklist.get"],
   "checklist.send": OP_SHAPES["checklist.send"],
+  "links.list": OP_SHAPES["links.list"],
+  "links.create": OP_SHAPES["links.create"],
+  "links.stop": OP_SHAPES["links.stop"],
 };
 
 /** Methods whose answer has no shape here, and why (none today: keep the

@@ -7,7 +7,9 @@ syntax = "proto3";
 
 package cua.daemon.v1;
 
-import "cua/daemon/v1/spaces.proto";
+import "cua/daemon/v1/checkpoints.proto";
+import "cua/daemon/v1/resize.proto";
+import "cua/daemon/v1/spaces_create.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -21,11 +23,9 @@ service SandboxService {
   // Creates a sandbox where `location` says (local by default), or
   // connects to an existing machine (`direct:<addr>`).
   rpc CreateSandbox(CreateSandboxRequest) returns (CreateSandboxResponse);
-  // `CreateSandbox`, streaming what the create is doing: progress events
-  // (pulling the image with its bytes, creating, booting, waiting for the
-  // probes) in order, then exactly one `result`. A failed create ends the
-  // stream with its status. Closing the stream cancels the create, as for
-  // a `CreateSandbox` whose caller goes away.
+  // `CreateSandbox`, streaming progress events (pulling with bytes,
+  // creating, booting, probes) in order, then exactly one `result`. A
+  // failed create ends the stream with its status; closing it cancels.
   rpc CreateSandboxStream(CreateSandboxStreamRequest) returns (stream CreateSandboxStreamResponse);
   // Cancels a `CreateSandbox` of a named sandbox still running: the work
   // in flight stops (an image download, a boot) and what the
@@ -48,6 +48,8 @@ service SandboxService {
   rpc ResumeSandbox(ResumeSandboxRequest) returns (ResumeSandboxResponse);
   // Restarts a sandbox.
   rpc RestartSandbox(RestartSandboxRequest) returns (RestartSandboxResponse);
+  // Resizes a local VM.
+  rpc ResizeSandbox(ResizeSandboxRequest) returns (ResizeSandboxResponse);
   // Extends the lifetime of a provider sandbox that expires.
   rpc KeepAlive(KeepAliveRequest) returns (KeepAliveResponse);
   // Waits until user-declared readiness probes pass.
@@ -64,10 +66,8 @@ service SandboxService {
   // with the sandbox credentials attached by the daemon.
   rpc GetEnvEndpoint(GetEnvEndpointRequest) returns (GetEnvEndpointResponse);
   // The daemon's loopback passthrough for a named service of a sandbox:
-  // any HTTP request (any method, streamed both ways, headers passed
-  // through) sent to `url` + path reaches that path on the service with the
-  // sandbox's route and credentials attached by the daemon. For MCP
-  // clients, SSE and anything else served over HTTP.
+  // any HTTP request (streamed both ways) sent to `url` + path reaches that
+  // path on the service with the sandbox's route and credentials attached.
   rpc GetServiceEndpoint(GetServiceEndpointRequest) returns (GetServiceEndpointResponse);
   // Returns a URL for a named service usable from this machine without
   // credentials: the published loopback port locally.
@@ -77,6 +77,20 @@ service SandboxService {
   rpc CreatePublicUrl(CreatePublicUrlRequest) returns (CreatePublicUrlResponse);
   // Revokes a URL created by `CreatePublicUrl`.
   rpc RevokePublicUrl(RevokePublicUrlRequest) returns (RevokePublicUrlResponse);
+  // Saves a local sandbox's state as a named checkpoint (see
+  // checkpoints.proto).
+  rpc CheckpointSandbox(CheckpointSandboxRequest) returns (CheckpointSandboxResponse);
+  // Creates and starts a new local sandbox from a sandbox or a checkpoint
+  // (see checkpoints.proto for what a fork keeps).
+  rpc ForkSandbox(ForkSandboxRequest) returns (ForkSandboxResponse);
+  // Lists checkpoints.
+  rpc ListCheckpoints(ListCheckpointsRequest) returns (ListCheckpointsResponse);
+  // Deletes a checkpoint (forks made from it keep running).
+  rpc DeleteCheckpoint(DeleteCheckpointRequest) returns (DeleteCheckpointResponse);
+  // Pins or unpins a checkpoint (see checkpoints.proto).
+  rpc PinCheckpoint(PinCheckpointRequest) returns (PinCheckpointResponse);
+  // Deletes every unpinned checkpoint.
+  rpc PruneCheckpoints(PruneCheckpointsRequest) returns (PruneCheckpointsResponse);
 }
 
 // Where a sandbox comes from. Deprecated: requests use the `location`
@@ -155,8 +169,8 @@ message Sandbox {
   // What kind of machine it runs as: "container" or "vm"; empty when not
   // known (an existing machine).
   string kind = 16;
-  // The engine that runs it: "gvisor", "runc", "qemu", "lume" or a
-  // provider's own; empty when not known.
+  // The engine that runs it: "gvisor", "runc", "qemu", "lume",
+  // "firecracker" or a provider's own; empty when not known.
   string runtime = 17;
   // Why a local sandbox stopped without being asked to, in plain words:
   // "out of memory", "killed", "exited" or "exited with code N". Empty
@@ -307,9 +321,8 @@ message CreateSandboxRequest {
   // `gvisor`, used when `runtime` is empty.
   string container_runtime = 25 [deprecated = true];
   // The client process that owns an ephemeral sandbox (no `name`). The
-  // daemon records it in the sandbox's lease, so a local ephemeral sandbox
-  // is reaped after its client dies even while the daemon runs. 0: the
-  // daemon itself owns it.
+  // daemon records it in the lease and reaps the sandbox after that client
+  // dies. 0: the daemon itself owns it.
   uint32 owner_pid = 27;
   // Guest network: empty or `default` gives outbound network (like a
   // Docker container); `none` cuts egress while published ports still
@@ -321,13 +334,16 @@ message CreateSandboxRequest {
   // `CUA_DEFAULT_ON`, else "local"); clients resolve the default on their
   // side and send it explicitly.
   string location = 29;
-  // What kind of machine: "auto" (empty), "container" or "vm". Auto
-  // decides from the image: macOS and Windows images are VMs, an image
-  // with a container rootfs is a container, a disk-only image is a VM.
+  // What kind of machine: "auto" (empty), "container", "vm" or
+  // "microvm". Auto decides from the image: macOS and Windows images are
+  // VMs, an image with a container rootfs is a container, a disk-only
+  // image is a VM. A microVM (only by name) boots the container rootfs
+  // with its own kernel.
   string kind = 30;
   // Which engine: "auto" (empty) or one the location offers for the kind.
-  // Local: "gvisor", "runc" (containers), "qemu", "lume" (VMs). A
-  // registered provider offers its own engines. Anything else is
+  // Local: "gvisor", "runc" (containers), "qemu", "lume" (VMs),
+  // "firecracker" (microVMs). A registered provider offers its own
+  // engines. Anything else is
   // DAEMON_ERROR_REASON_INVALID_PLACEMENT, listing the valid values.
   string runtime = 31;
   // Keep a named sandbox whose readiness check fails (its VM or container,
@@ -335,15 +351,26 @@ message CreateSandboxRequest {
   // made. Ephemeral sandboxes are always deleted.
   bool keep_on_failure = 32;
   // A GPU option of the runtime it runs on (`GetGpuSupport`):
-  // "paravirtual" (a macOS VM on Lume: GPU acceleration, experimental),
+  // "paravirtual" (macOS VMs on Lume, experimental),
   // "virgl" (QEMU on Linux), "nvidia" (a runc container on Linux), a
   // contrib provider's GPU type; "auto" picks the runtime's own. Empty: no
-  // GPU. An option the runtime does not offer here is
-  // DAEMON_ERROR_REASON_INVALID_ARGUMENT or _UNSUPPORTED, saying why.
+  // GPU. An option the runtime lacks fails, saying why.
   string gpu = 33;
-  // Removed with Cua Cloud (Fleets), which ended on 18 Oct 2026: the pool to
-  // claim from, the cloud runtime, the pool replicas, claim TTL, warm and
-  // size options, and apply.
+  // A fork source (see checkpoints.proto): a local QEMU VM's RAM is a
+  // shared file. Other kinds ignore it.
+  bool forkable = 34;
+  // No desktop: only cua-spacesd runs (exec, files, MCP).
+  bool headless = 35;
+  // Size profile: "rollout" or "default".
+  string profile = 40;
+  // Inject cua-spacesd into an image without it. Unset: yes.
+  optional bool spacesd = 41;
+  // A local pool (`PoolService`): the sandbox takes its image and shape.
+  // (4, the Cua Cloud pool, is reserved.)
+  string local_pool = 42;
+  // Removed with Cua Cloud (Fleets), which ended on 18 Oct 2026: the cloud
+  // runtime, the pool replicas, claim TTL, warm and size options, and
+  // apply. Their numbers and names are never reused.
   reserved 4, 16, 17, 18, 19, 20, 26;
   reserved "pool", "fleet_runtime", "fleet_replicas", "fleet_ttl_seconds", "fleet_warm", "fleet_max_pool_size", "fleet_apply";
 }
@@ -352,6 +379,8 @@ message CreateSandboxRequest {
 message CreateSandboxResponse {
   // The sandbox.
   Sandbox sandbox = 1;
+  // The network applied: `none` or empty.
+  string network = 2;
 }
 
 // Request for `SandboxService.CreateSandboxStream`.
@@ -423,8 +452,7 @@ message ConnectSandboxResponse {
 
 // Request for `SandboxService.SuspendSandbox`.
 message SuspendSandboxRequest {
-  // Sandbox ref ("local:<name>", "cloud:<name>", "direct:<host:port>", a
-  // legacy id) or a name that is unique across locations.
+  // Sandbox ref (as for `GetSandbox`) or a name unique across locations.
   string name = 1;
 }
 
@@ -433,8 +461,7 @@ message SuspendSandboxResponse {}
 
 // Request for `SandboxService.ResumeSandbox`.
 message ResumeSandboxRequest {
-  // Sandbox ref ("local:<name>", "cloud:<name>", "direct:<host:port>", a
-  // legacy id) or a name that is unique across locations.
+  // Sandbox ref (as for `GetSandbox`) or a name unique across locations.
   string name = 1;
 }
 
@@ -443,8 +470,7 @@ message ResumeSandboxResponse {}
 
 // Request for `SandboxService.RestartSandbox`.
 message RestartSandboxRequest {
-  // Sandbox ref ("local:<name>", "cloud:<name>", "direct:<host:port>", a
-  // legacy id) or a name that is unique across locations.
+  // Sandbox ref (as for `GetSandbox`) or a name unique across locations.
   string name = 1;
 }
 
@@ -453,11 +479,12 @@ message RestartSandboxResponse {}
 
 // Request for `SandboxService.KeepAlive`.
 message KeepAliveRequest {
-  // Sandbox ref ("local:<name>", "cloud:<name>", "direct:<host:port>", a
-  // legacy id) or a name that is unique across locations.
+  // Sandbox ref, or a name unique across locations.
   string name = 1;
   // How long to extend the lease by.
   google.protobuf.Duration duration = 2;
+  // `delete` or `suspend` (local).
+  string on_expire = 3;
 }
 
 // Response for `SandboxService.KeepAlive`.
@@ -648,3 +675,9 @@ message RevokePublicUrlRequest {
 
 // Response for `SandboxService.RevokePublicUrl`.
 message RevokePublicUrlResponse {}
+
+// Response for `SandboxService.ForkSandbox`.
+message ForkSandboxResponse {
+  // The new sandbox, running.
+  Sandbox sandbox = 1;
+}

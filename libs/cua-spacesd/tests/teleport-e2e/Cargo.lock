@@ -1350,14 +1350,17 @@ dependencies = [
 name = "cua-agents"
 version = "0.7.0"
 dependencies = [
+ "base64 0.22.1",
  "cua-agent-setup",
  "cua-proto",
  "cua-spacesd-client",
+ "flate2",
  "hex",
  "rand 0.9.5",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tar",
  "thiserror 2.0.20",
  "tokio",
 ]
@@ -1511,6 +1514,7 @@ dependencies = [
  "hmac 0.12.1",
  "http",
  "if-addrs",
+ "libc",
  "quinn",
  "rand 0.9.5",
  "rcgen",
@@ -1549,6 +1553,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "clap",
+ "cua-mesh",
  "futures-util",
  "hex",
  "http",
@@ -1557,6 +1562,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "jsonwebtoken",
+ "libc",
  "rand 0.8.8",
  "reqwest",
  "ring",
@@ -1574,6 +1580,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-snapshot-sync"
+version = "0.7.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "base64 0.22.1",
+ "hex",
+ "hmac 0.12.1",
+ "http",
+ "libc",
+ "rand 0.9.5",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "cua-spacesd-client"
 version = "0.7.0"
 dependencies = [
@@ -1581,6 +1608,7 @@ dependencies = [
  "bytes",
  "cua-proto",
  "futures-util",
+ "h2",
  "hex",
  "http",
  "http-body",
@@ -1633,6 +1661,7 @@ dependencies = [
  "cua-mesh",
  "cua-proto",
  "cua-relay",
+ "cua-snapshot-sync",
  "cua-spacesd-html5",
  "cua-spacesd-socks",
  "cua-spacesd-teleport",
@@ -5545,6 +5574,7 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
  "digest 0.10.7",
+ "sha2-asm",
 ]
 
 [[package]]
@@ -5556,6 +5586,15 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.3.1",
  "digest 0.11.3",
+]
+
+[[package]]
+name = "sha2-asm"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b845214d6175804686b2bd482bcffe96651bb2d1200742b712003504a2dac1ab"
+dependencies = [
+ "cc",
 ]
 
 [[package]]

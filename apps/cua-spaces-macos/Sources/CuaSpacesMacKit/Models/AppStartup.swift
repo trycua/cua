@@ -628,6 +628,8 @@ public final class PendingSpacesBackend: SpacesBackend, AgentsToolRunning, Cloud
     public func setLumeSource(_ value: String) async throws { try await b().setLumeSource(value) }
     public func linuxSource() async -> String? { await b().linuxSource() }
     public func setLinuxSource(_ value: String) async throws { try await b().setLinuxSource(value) }
+    public func placementOverflow() async -> Bool? { await b().placementOverflow() }
+    public func setPlacementOverflow(_ on: Bool) async throws { try await b().setPlacementOverflow(on) }
     public func localStorage() async -> LocalStorage? { await b().localStorage() }
     public func cloudAvailable() async -> Bool { await b().cloudAvailable() }
     public func runningMacosVms() async -> Int? { await b().runningMacosVms() }
@@ -658,6 +660,11 @@ public final class PendingSpacesBackend: SpacesBackend, AgentsToolRunning, Cloud
     public func primaryDisplay(id: String) async -> AppStreamDisplay? { await b().primaryDisplay(id: id) }
     public func usage(id: String) async -> AppSpaceUsage? { await b().usage(id: id) }
     public func shares(id: String) async throws -> [AppShareEntryInput] { try await b().shares(id: id) }
+    public func links() async throws -> [ShareLink] { try await b().links() }
+    public func createLink(target: String, access: String?, ttlSeconds: UInt32?, name: String?) async throws -> ShareLink {
+        try await b().createLink(target: target, access: access, ttlSeconds: ttlSeconds, name: name)
+    }
+    public func stopLink(id: String) async throws -> [String] { try await b().stopLink(id: id) }
     public func share(id: String, who: String, role: String) async throws -> [AppShareEntryInput] {
         try await b().share(id: id, who: who, role: role)
     }

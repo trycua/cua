@@ -15,6 +15,9 @@
 #                                          Updater.app, then the framework
 #   Contents/Frameworks/libcua_sdk.dylib   (no entitlements)
 #   Contents/MacOS/cua                     com.trycua.cua, Support/cua.entitlements
+#   Contents/MacOS/cua-vz                  ai.cua.vz, libs/cua/vz/cua-vz.entitlements
+#                                          (the microVM monitor; arm64 builds)
+#   Contents/Resources/cua-microvm-init    the microVMs' Linux guest init (data)
 #   Contents/MacOS/cua-spacesd             com.trycua.cua-env-driver (the host service,
 #                                          which the app's own executable runs as its
 #                                          login item)
@@ -113,6 +116,21 @@ if [ "$skip_cargo" = 0 ]; then
   done
 fi
 
+# microVMs (Apple silicon): the monitor and the static aarch64 guest init.
+microvm_env=()
+if [[ " $archs " == *" arm64 "* ]]; then
+  if [ "$skip_cargo" = 0 ]; then
+    (cd "$cua" && RUSTFLAGS="-C target-feature=+crt-static" \
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld \
+      cargo build --locked --release -p cua-microvm-init --target aarch64-unknown-linux-musl)
+  fi
+  init_bin="$target/aarch64-unknown-linux-musl/release/cua-microvm-init"
+  [ -f "$init_bin" ] || { echo "missing $init_bin (build it, or drop --skip-cargo)" >&2; exit 1; }
+  file "$init_bin" | grep -q "statically linked" || { echo "$init_bin is not static" >&2; exit 1; }
+  "$cua/vz/build.sh" "$out/.vz" >/dev/null
+  microvm_env=(CUA_VZ_BIN="$out/.vz/cua-vz" CUA_MICROVM_INIT_BIN="$init_bin")
+fi
+
 # One library and one CLI with every architecture, where stage-library.sh
 # and build-app.sh look for them.
 joined="$out/.joined"
@@ -129,7 +147,7 @@ for f in libcua_spaces_ffi.dylib cua-spaces-cli; do
 done
 CARGO_TARGET_DIR="$joined" "$repo/libs/spaces-app-swift/scripts/stage-library.sh"
 
-CUA_APP_ARCHS="$archs" CUA_CLI_BIN="$joined/release/cua-spaces-cli" \
+env ${microvm_env[@]+"${microvm_env[@]}"} CUA_APP_ARCHS="$archs" CUA_CLI_BIN="$joined/release/cua-spaces-cli" \
   "$here/scripts/build-app.sh" release "$out" >/dev/null
 app="$out/Cua Spaces.app"
 [ -x "$app/Contents/MacOS/cua" ] || { echo "$app has no bundled cua CLI" >&2; exit 1; }
@@ -188,6 +206,13 @@ done
 "${sign[@]}" "$app/Contents/Frameworks/libcua_sdk.dylib"
 "${sign[@]}" --identifier com.trycua.cua \
   --entitlements "$here/Support/cua.entitlements" "$app/Contents/MacOS/cua"
+vz_parts=()
+if [ -e "$app/Contents/MacOS/cua-vz" ]; then
+  # Virtualization.framework refuses a monitor without its entitlement.
+  "${sign[@]}" --identifier ai.cua.vz \
+    --entitlements "$cua/vz/cua-vz.entitlements" "$app/Contents/MacOS/cua-vz"
+  vz_parts=("$app/Contents/MacOS/cua-vz")
+fi
 # The host service. The app's own executable runs it, so its permissions
 # are the app's (designated requirement: identifier and team, checked
 # below), and they stay granted across updates.
@@ -203,7 +228,7 @@ fi
 
 codesign --verify --deep --strict --verbose=2 "$app" >&2
 for f in "$app" "$app/Contents/MacOS/cua" "$app/Contents/Frameworks/libcua_sdk.dylib" "${sparkle_parts[@]}" \
-  "$app/Contents/MacOS/cua-spacesd"; do
+  "$app/Contents/MacOS/cua-spacesd" ${vz_parts[@]+"${vz_parts[@]}"}; do
   flags="$(codesign -dv "$f" 2>&1 | sed -n 's/^CodeDirectory.*flags=\([^ ]*\).*/\1/p')"
   case "$flags" in *runtime*) ;; *) echo "$f is not signed with the hardened runtime ($flags)" >&2; exit 1 ;; esac
 done

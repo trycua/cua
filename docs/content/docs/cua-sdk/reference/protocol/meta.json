@@ -5,7 +5,20 @@
     "env-process",
     "env-computer",
     "env-stream",
+    "env-host-spaces",
+    "env-host-records",
+    "env-host-capacity",
+    "env-host-warm",
+    "env-host-snapshots",
+    "daemon-resize",
+    "daemon-fork-batch",
+    "daemon-shares",
+    "daemon-spaces-create",
+    "daemon-builds",
+    "daemon-gpu",
+    "daemon-egress",
     "daemon",
+    "daemon-spaces",
     "daemon-resources"
   ]
 }

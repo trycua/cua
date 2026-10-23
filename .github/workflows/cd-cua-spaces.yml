@@ -289,12 +289,28 @@ jobs:
       - uses: ./.github/actions/spaces-rust-slice
         with:
           triple: ${{ matrix.triple }}
+      # microVMs on Apple silicon: the static aarch64 guest init the app
+      # bundles (build-release.sh --skip-cargo takes it from here).
+      - name: Build the microVM guest init (arm64)
+        if: matrix.arch == 'arm64'
+        working-directory: libs/cua
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: rust-lld
+        run: |
+          set -euo pipefail
+          rustup target add aarch64-unknown-linux-musl
+          cargo build --locked --release -p cua-microvm-init --target aarch64-unknown-linux-musl
+          init=target/aarch64-unknown-linux-musl/release/cua-microvm-init
+          file "$init" | grep -q "statically linked" || { echo "::error::cua-microvm-init is not static"; exit 1; }
+          cp "$init" "target/${{ matrix.triple }}/release/"
       - uses: actions/upload-artifact@v4
         with:
           name: macos-rust-${{ matrix.arch }}
           path: |
             libs/cua/target/${{ matrix.triple }}/release/libcua_spaces_ffi.dylib
             libs/cua/target/${{ matrix.triple }}/release/cua-spaces-cli
+            libs/cua/target/${{ matrix.triple }}/release/cua-microvm-init
           if-no-files-found: error
           retention-days: 3
 
@@ -423,6 +439,10 @@ jobs:
             cp "$RUNNER_TEMP/macos-rust/macos-rust-${pair%%:*}/"* "$dir/"
             chmod +x "$dir/cua-spaces-cli"
           done
+          # The microVM guest init, where build-release.sh --skip-cargo looks.
+          musl=libs/cua/target/aarch64-unknown-linux-musl/release
+          mkdir -p "$musl"
+          mv libs/cua/target/aarch64-apple-darwin/release/cua-microvm-init "$musl/"
 
       # A throwaway keychain holds the Developer ID Application identity for
       # this job only (deleted in the last step).
@@ -459,8 +479,17 @@ jobs:
           name: spaces-web-dist
           path: apps/cua-spaces-web/dist
 
+      # An OCI image without cua-spacesd gets a static one injected on
+      # containers and microVMs; the app carries it (Contents/Resources),
+      # from the cua-spacesd release it pins.
+      - name: Fetch the static cua-spacesd
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/fetch_static_spacesd.sh "$GITHUB_REPOSITORY" aarch64,x86_64 "$RUNNER_TEMP/static-spacesd"
+
       - name: Build and sign Cua Spaces.app (universal)
         env:
+          CUA_SPACESD_STATIC_DIR: ${{ runner.temp }}/static-spacesd
           VERSION: ${{ steps.version.outputs.version }}
           SIGNED: ${{ steps.signing.outputs.apple }}
           DEVELOPER_NAME: ${{ secrets.DEVELOPER_NAME }}
@@ -1093,7 +1122,7 @@ jobs:
     needs: electron-plan
     if: needs.electron-plan.outputs.desktop == 'true'
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 120
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:

@@ -54,6 +54,11 @@ jobs:
     name: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    # This job does not check out the repo, so the workflow default
+    # (apps/cua-spaces) does not exist here.
+    defaults:
+      run:
+        working-directory: /tmp
     permissions:
       contents: read
       pull-requests: read

@@ -102,7 +102,11 @@ def test_spaces_releases_macos_only_for_now() -> None:
     # The Tauri Linux/Windows job is kept but off unless explicitly enabled.
     assert jobs["build-linux-windows"]["if"] == "vars.CUA_SPACES_LINUX_WINDOWS == 'true'"
     # The SwiftUI app builds on every release; only an Electron dry run skips it.
-    assert jobs["build-macos"]["if"] == "github.event_name != 'workflow_dispatch' || !inputs.electron_dry_run"
+    # A release without macOS (a Windows or Linux patch) skips it too.
+    assert jobs["build-macos"]["if"] == (
+        "(github.event_name != 'workflow_dispatch' || !inputs.electron_dry_run) "
+        "&& needs.electron-plan.outputs.macos == 'true'"
+    )
     # Publishing runs with the Tauri job skipped, never after it failed.
     gate = jobs["installer-manifest"]["if"]
     assert "!cancelled()" in gate
@@ -133,11 +137,15 @@ def test_spaces_electron_builds_only_for_prereleases_and_dry_runs() -> None:
     assert '[ "$DRY_RUN" != true ]' in plan and "refs/tags/cua-spaces-v*" in plan
     assert jobs["electron-mac"]["if"] == "needs.electron-plan.outputs.build == 'true'"
     # Windows and Linux build for every release tag, stable included.
-    for name in ("electron-native", "electron-windows", "electron-linux"):
-        assert jobs[name]["if"] == "needs.electron-plan.outputs.desktop == 'true'", name
+    # (a partial release builds only the platforms it changed).
+    assert jobs["electron-native"]["if"] == "needs.electron-plan.outputs.desktop == 'true'"
+    for name, platform in (("electron-windows", "windows"), ("electron-linux", "linux")):
+        want = f"needs.electron-plan.outputs.desktop == 'true' && needs.electron-plan.outputs.{platform} == 'true'"
+        assert jobs[name]["if"] == want, name
     publish_gate = jobs["electron-publish"]["if"]
-    assert "needs.electron-plan.outputs.publish == 'true'" in publish_gate
-    assert "needs.electron-windows.result == 'success' && needs.electron-linux.result == 'success'" in publish_gate
+    assert "needs.electron-plan.outputs.publish_electron == 'true'" in publish_gate
+    assert "(needs.electron-plan.outputs.windows != 'true' || needs.electron-windows.result == 'success')" in publish_gate
+    assert "(needs.electron-plan.outputs.linux != 'true' || needs.electron-linux.result == 'success')" in publish_gate
     # Each build runs the native and notch interfaces before electron-builder.
     mac = "\n".join(s.get("run", "") for s in steps("cd-cua-spaces.yml", "electron-mac"))
     assert "pnpm native -- --target aarch64-apple-darwin" in mac
@@ -168,7 +176,7 @@ def test_spaces_electron_builds_only_for_prereleases_and_dry_runs() -> None:
         assert 'elif [ "$REQUIRE_SIGNING" = true ]; then' in sign, name
     # The release waits for the Electron installers; the feed goes up after it is published.
     gate = jobs["installer-manifest"]["if"]
-    assert "needs.electron-plan.outputs.publish != 'true' || needs.electron-publish.result == 'success'" in gate
+    assert "needs.electron-plan.outputs.publish_electron != 'true' || needs.electron-publish.result == 'success'" in gate
     names = [s.get("name") for s in steps("cd-cua-spaces.yml", "installer-manifest")]
     assert names.index("Publish the release") < names.index("Upload the Electron feed to cua-spaces-latest")
     publish = step("cd-cua-spaces.yml", "electron-publish", "Upload the installers and ready the feed")["run"]
@@ -198,7 +206,7 @@ def test_spaces_prereleases_never_become_latest_or_move_canonical_feeds() -> Non
     assert "--prerelease --latest=false" in publish
     assert "UNSIGNED" in publish
     feeds = step("cd-cua-spaces.yml", "installer-manifest", "Update the rolling feeds")
-    assert feeds["if"] == "needs.build-macos.outputs.prerelease != 'true' || github.repository != 'trycua/cua'"
+    assert feeds["if"] == "needs.electron-plan.outputs.prerelease != 'true' || github.repository != 'trycua/cua'"
 
 
 def test_sdk_registries_publish_only_from_trycua_cua() -> None:

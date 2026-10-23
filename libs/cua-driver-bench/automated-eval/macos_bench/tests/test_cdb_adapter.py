@@ -101,6 +101,18 @@ class AdapterTest(unittest.TestCase):
         self.assertEqual(task.sub("${workspace_uri}"), task.workspace.as_uri())
         self.assertTrue(task.sub("${workspace_uri}").startswith("file:///"))
 
+    def test_missing_electron_apps_follow_manifests(self) -> None:
+        root = Path(self.tmp.name) / "tasks"
+        expected = ["shared/syn/apps/desk", "shared/syn/apps/mail"]
+        for name in expected:
+            app = root / name
+            (app / "node_modules/electron/dist").mkdir(parents=True)
+            (app / "package.json").write_text("{}")
+        (root / "shared/syn/apps/unmanaged/node_modules/electron/dist").mkdir(parents=True)
+        self.assertEqual(cdb_adapter.missing_electron_apps(root), (expected, []))
+        (root / expected[1] / "node_modules/electron/dist").rmdir()
+        self.assertEqual(cdb_adapter.missing_electron_apps(), (expected, [expected[1]]))
+
     def test_electron_apps_get_their_own_name_and_bundle_id(self) -> None:
         import plistlib
         from unittest import mock

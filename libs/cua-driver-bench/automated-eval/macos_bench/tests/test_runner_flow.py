@@ -94,6 +94,81 @@ def attempt_row(
     return row
 
 
+class PreflightTest(unittest.TestCase):
+    def test_native_mcp_is_live_only_online(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_ctx(tmp, offline=True, allow_non_terminal=True)
+            ctx.task_ids = []
+            cli = Path(tmp) / "codex"
+            cli.touch()
+            with (
+                mock.patch.object(rb, "terminal_ancestor", return_value=True),
+                mock.patch.object(rb.rec, "free_gb", return_value=1000),
+                mock.patch.object(rb, "check_pins", return_value=[]),
+                mock.patch.object(rb, "registered_bench_copies", return_value=[]),
+                mock.patch.object(
+                    rb.subprocess, "run", return_value=mock.Mock(returncode=1, stdout="")
+                ),
+                mock.patch.object(rb.cxn, "CODEX_CLI", cli),
+                mock.patch.object(
+                    rb.cxn,
+                    "server_entry",
+                    return_value={"command": "mcp", "args": [], "env": {}},
+                ),
+                mock.patch.object(rb.ca, "cu_helper_observed", return_value={}),
+                mock.patch.object(rb.ca, "check_cu_helper_pins", return_value=[]),
+                mock.patch.object(rb, "cu_helper_live_checks", return_value=[]),
+                mock.patch.object(rb, "native_codex_checks", return_value=[]) as native,
+                mock.patch.object(rb, "mcp_list_tools") as probe,
+                mock.patch.object(rb, "ensure_agent_daemon") as daemon,
+            ):
+                for arm in rb.cxn.ARMS:
+                    with self.subTest(arm=arm):
+                        ctx.arm_names = [arm]
+                        ctx.mcp[arm] = (Path(tmp) / "mcp.json", rb.cxn.SERVER_OF[arm])
+                        ctx.args.offline = True
+                        probe.reset_mock()
+                        daemon.reset_mock()
+                        probe.side_effect = AssertionError("offline MCP probe")
+                        daemon.side_effect = AssertionError("offline daemon")
+                        rows = rb.preflight(ctx)
+                        probe.assert_not_called()
+                        daemon.assert_not_called()
+                        native.assert_called_with(ctx, arm, False)
+                        self.assertIn(
+                            (
+                                "daemons, MCP servers, recording, model calls",
+                                "warn",
+                                "skipped (--offline)",
+                            ),
+                            rows,
+                        )
+                        ctx.args.offline = False
+                        probe.side_effect = None
+                        probe.return_value = [
+                            "js",
+                            "js_reset",
+                            "list_apps",
+                            "run_script",
+                        ] + rb.ca.load_pins()["claude_cu_helper"]["tools"]
+                        daemon.side_effect = None
+                        rows = rb.preflight(ctx)
+                        probe.assert_called_once_with("mcp", [], {})
+                        source = rb.cxn.SOURCE_ARM[arm]
+                        if source in rb.ca.CUA_ARMS:
+                            daemon.assert_called_once_with(ctx, source)
+                        else:
+                            daemon.assert_not_called()
+                        self.assertTrue(
+                            any(
+                                name.startswith(f"{arm} ")
+                                and "MCP server lists" in name
+                                and status == "pass"
+                                for name, status, _ in rows
+                            )
+                        )
+
+
 class ExecuteTrialTest(unittest.TestCase):
     def run_trial(
         self, ctx: rb.Ctx, rows: list[dict]

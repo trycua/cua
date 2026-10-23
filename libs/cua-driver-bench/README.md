@@ -145,10 +145,14 @@ cd "$CDB_BENCH_WORK/src/macos_bench"
 swift/build.sh "$CDB_BENCH_WORK/build"     # BenchLab.app and BenchSentinel.app, ad-hoc signed
 ```
 
-Install the task apps' Electron dependency, pinned by each lockfile:
+Install the task apps' Electron dependency, pinned by each lockfile. npm 12 may
+skip Electron's postinstall; run its installer in each app if `dist` is missing:
 
 ```bash
-for app in "$CDB_BENCH_WORK"/taskpack/tasks/shared/*/apps/*; do (cd "$app" && npm ci); done
+for app in "$CDB_BENCH_WORK"/taskpack/tasks/shared/*/apps/*; do
+  (cd "$app" && npm ci &&
+    { [ -d node_modules/electron/dist ] || node node_modules/electron/install.js; })
+done
 ```
 
 ### 3. Install each setup

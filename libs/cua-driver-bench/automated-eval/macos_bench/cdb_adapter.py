@@ -41,6 +41,7 @@ import claude_arms as ca
 SKIP_KINDS = {"terminal", "editor"}
 EVAL_ENTRY = "/usr/local/libexec/cdb-eval-run"
 APP_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+ELECTRON_DIST = Path("node_modules/electron/dist")
 
 
 REPO_TASKPACK = Path(__file__).resolve().parents[2] / "taskpack"
@@ -52,6 +53,14 @@ def pack_tasks_root() -> Path:
         return Path(env) / "tasks"
     work = ca.WORK / "taskpack"
     return (work if work.is_dir() else REPO_TASKPACK) / "tasks"
+
+
+def missing_electron_apps(root: Path | None = None) -> tuple[list[str], list[str]]:
+    root = root if root is not None else pack_tasks_root()
+    apps = [p.parent for p in sorted(root.glob("*/*/apps/*/package.json"))]
+    expected = [str(app.relative_to(root)) for app in apps]
+    missing = [name for app, name in zip(apps, expected) if not (app / ELECTRON_DIST).is_dir()]
+    return expected, missing
 
 
 def tree_sha256(path: Path) -> str:
@@ -200,7 +209,7 @@ def electron_argv(argv: list[str], cwd: str, name: str) -> list[str]:
         at = next(i for i in range(len(argv) - 1) if argv[i] == "npx" and argv[i + 1] == "electron")
     except StopIteration:
         return argv
-    source = Path(cwd) / "node_modules/electron/dist/Electron.app"
+    source = Path(cwd) / ELECTRON_DIST / "Electron.app"
     if not source.is_dir():
         raise RuntimeError(f"Electron.app missing for {name}: {source}")
     bundle = named_electron_app(source, name)

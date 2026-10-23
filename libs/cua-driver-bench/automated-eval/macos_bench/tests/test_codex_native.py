@@ -61,7 +61,9 @@ class HomeTest(unittest.TestCase):
             for arm in cxn.ARMS:
                 configs = {}
                 for mode in ("gateway", "chatgpt"):
-                    with mock.patch.dict(os.environ, {"CDB_CODEX_AUTH": mode, "HOME": tmp}, clear=True):
+                    with mock.patch.dict(
+                        os.environ, {"CDB_CODEX_AUTH": mode, "HOME": tmp}, clear=True
+                    ):
                         env = cxn.render_home(
                             root / f"{arm}-{mode}", mcp, cxn.MODEL, cxn.EFFORT, "SYSTEM", arm
                         )
@@ -115,7 +117,10 @@ class HomeTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 cxn.config_toml(
                     {"command": "node", "args": [], "env": {}},
-                    cxn.MODEL, cxn.EFFORT, "", Path("/tmp/home"),
+                    cxn.MODEL,
+                    cxn.EFFORT,
+                    "",
+                    Path("/tmp/home"),
                 )
 
     def test_config_uses_arm_b_launcher_and_switches_routes_off(self) -> None:
@@ -230,9 +235,17 @@ class ChatGPTPreflightTest(unittest.TestCase):
             requests = root / "requests"
             pid_file = root / "pid"
             for scenario in (
-                "ok", "apiKey", "missing", "model", "rpc", "exit", "timeout", "malformed", "replace"
+                "ok",
+                "apiKey",
+                "missing",
+                "model",
+                "rpc",
+                "exit",
+                "timeout",
+                "malformed",
+                "replace",
             ):
-                cli.write_text(f'''#!{sys.executable}
+                cli.write_text(f"""#!{sys.executable}
 import json, os, sys, time
 from pathlib import Path
 Path({str(pid_file)!r}).write_text(str(os.getpid()))
@@ -261,7 +274,7 @@ for line in sys.stdin:
         else:
             result = {{'data': [{{'id': 'other' if scenario == 'model' else 'gpt-6.1-sol'}}], 'nextCursor': None}}
         if scenario == 'replace':
-            link = Path({str(home / 'auth.json')!r})
+            link = Path({str(home / "auth.json")!r})
             link.unlink()
             link.touch()
     print(json.dumps({{'method': 'notification', 'params': {{'private': 'SECRET'}}}}), flush=True)
@@ -269,7 +282,7 @@ for line in sys.stdin:
     if scenario == 'rpc':
         reply = {{'id': msg['id'], 'error': {{'message': 'SECRET'}}}}
     print(json.dumps(reply), flush=True)
-''')
+""")
                 cli.chmod(0o755)
                 requests.write_text("")
                 with mock.patch.object(cxn, "CHATGPT_CHECK_TIMEOUT", 0.3):
@@ -286,7 +299,8 @@ for line in sys.stdin:
                 )
                 if scenario == "ok":
                     self.assertEqual(
-                        methods, ["initialize", "initialized", "account/read", "model/list", "model/list"]
+                        methods,
+                        ["initialize", "initialized", "account/read", "model/list", "model/list"],
                     )
 
 

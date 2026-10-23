@@ -175,9 +175,7 @@ class ArmsTest(unittest.TestCase):
     def test_arm_homes_differ_only_in_tool_layer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for name in (
-                "skills/computer-use/SKILL.md", ".codex-plugin/computer-use-node-repl.md"
-            ):
+            for name in ("skills/computer-use/SKILL.md", ".codex-plugin/computer-use-node-repl.md"):
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("fixture")
@@ -270,7 +268,9 @@ class ScheduleTest(unittest.TestCase):
                 sentinel.return_value.enabled = False
                 sentinel.return_value.summary.return_value = {}
                 command.return_value.stdout = "version"
-                row = run_pilot.run_trial(args, None, task, "codex-native-cu", 1, 0, Path(tmp), None)
+                row = run_pilot.run_trial(
+                    args, None, task, "codex-native-cu", 1, 0, Path(tmp), None
+                )
                 manifest = run_pilot.environment_manifest(args)
                 self.assertEqual(row["codex_auth_path"], mode)
                 self.assertEqual(manifest["codex_auth_path"], mode)

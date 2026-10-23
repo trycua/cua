@@ -121,7 +121,9 @@ def codex_auth() -> CodexAuth:
 def link_chatgpt_auth(codex_home: Path) -> None:
     if codex_auth() == "gateway":
         return
-    source = Path(os.environ.get("CDB_CODEX_AUTH_FILE") or "~/.codex/auth.json").expanduser().absolute()
+    source = (
+        Path(os.environ.get("CDB_CODEX_AUTH_FILE") or "~/.codex/auth.json").expanduser().absolute()
+    )
     if not source.is_file():
         raise FileNotFoundError("ChatGPT auth file is missing")
     link = codex_home / "auth.json"

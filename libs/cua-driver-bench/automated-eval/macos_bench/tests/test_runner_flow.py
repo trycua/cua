@@ -73,11 +73,18 @@ class CodexAuthPreflightTest(unittest.TestCase):
             ctx = make_ctx(tmp)
             arm = "cx-codex-cu"
             mcp = Path(tmp) / "mcp.json"
-            mcp.write_text(json.dumps({
-                "mcpServers": {
-                    "sky": {"command": "node", "env": {"CUA_REPL_ENABLED_SURFACES": "computer"}}
-                }
-            }))
+            mcp.write_text(
+                json.dumps(
+                    {
+                        "mcpServers": {
+                            "sky": {
+                                "command": "node",
+                                "env": {"CUA_REPL_ENABLED_SURFACES": "computer"},
+                            }
+                        }
+                    }
+                )
+            )
             ctx.mcp[arm] = (mcp, "cua_repl")
             source = Path(tmp) / "auth.json"
             source.touch()

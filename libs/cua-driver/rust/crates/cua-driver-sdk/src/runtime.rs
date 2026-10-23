@@ -557,7 +557,6 @@ pub(crate) fn tool_inventory(options: RuntimeOptions) -> Value {
 fn build_registry(options: &RuntimeOptions) -> ToolRegistry {
     #[cfg(target_os = "macos")]
     let mut registry = {
-        configure_macos_runtime();
         platform_macos::register_tools_with_cursor_and_provider(
             options.authorization_host.clone(),
             options.cursor.clone(),
@@ -569,7 +568,6 @@ fn build_registry(options: &RuntimeOptions) -> ToolRegistry {
 
     #[cfg(target_os = "windows")]
     let mut registry = {
-        configure_windows_runtime();
         platform_windows::register_tools_with_cursor_and_provider(
             options.authorization_host.clone(),
             options.cursor.clone(),
@@ -622,54 +620,6 @@ fn build_registry(options: &RuntimeOptions) -> ToolRegistry {
     registry
 }
 
-#[cfg(target_os = "macos")]
-fn configure_macos_runtime() {
-    cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
-        if let Some(window_id) = window_id {
-            platform_macos::capture::screenshot_window_bytes(window_id as u32).ok()
-        } else if let Some(pid) = pid {
-            platform_macos::windows::resolve_main_window_id(pid as i32)
-                .ok()
-                .and_then(|window_id| {
-                    platform_macos::capture::screenshot_window_bytes(window_id).ok()
-                })
-        } else {
-            platform_macos::capture::screenshot_display_bytes().ok()
-        }
-    });
-    cua_driver_core::recording::set_click_marker_fn(|png_bytes, x, y| {
-        platform_macos::capture::crosshair_png_bytes(png_bytes, x, y).ok()
-    });
-    cua_driver_core::recording::set_budgeted_ax_snapshot_fn(|window_id, pid, budget| {
-        platform_macos::recording_hooks::app_state_json_for(window_id, pid, budget)
-    });
-    cua_driver_core::recording::set_element_bounds_fn(|window_id, pid, index| {
-        platform_macos::recording_hooks::element_window_local_xy(window_id, pid, index)
-    });
-    cua_driver_core::video::set_video_backend_factory(Box::new(
-        platform_macos::video_sckit::SckitVideoBackendFactory,
-    ));
-}
-
-#[cfg(target_os = "windows")]
-fn configure_windows_runtime() {
-    cua_driver_core::recording::set_classified_screenshot_fn(|window_id, pid| {
-        platform_windows::recording_hooks::screenshot_for_recording(window_id, pid)
-    });
-    cua_driver_core::recording::set_click_marker_fn(|png_bytes, x, y| {
-        platform_windows::capture::crosshair_png_bytes(png_bytes, x, y).ok()
-    });
-    cua_driver_core::recording::set_budgeted_ax_snapshot_fn(|window_id, pid, budget| {
-        platform_windows::recording_hooks::app_state_json_for(window_id, pid, budget)
-    });
-    cua_driver_core::recording::set_element_bounds_fn(|window_id, pid, index| {
-        platform_windows::recording_hooks::element_window_local_xy(window_id, pid, index)
-    });
-    cua_driver_core::video::set_video_backend_factory(Box::new(
-        cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory,
-    ));
-}
-
 #[cfg(target_os = "linux")]
 fn configure_linux_runtime(prepare_desktop_environment: bool) {
     if prepare_desktop_environment {
@@ -681,27 +631,6 @@ fn configure_linux_runtime(prepare_desktop_environment: bool) {
                 tracing::warn!("could not activate the persistent AT-SPI listener: {error}");
             }
         }
-    }
-    cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
-        platform_linux::recording_hooks::screenshot_for_recording(window_id, pid)
-    });
-    cua_driver_core::recording::set_click_marker_fn(|png_bytes, x, y| {
-        platform_linux::capture::crosshair_png_bytes(png_bytes, x, y).ok()
-    });
-    cua_driver_core::recording::set_budgeted_ax_snapshot_fn(|window_id, pid, budget| {
-        platform_linux::recording_hooks::app_state_json_for(window_id, pid, budget)
-    });
-    cua_driver_core::recording::set_element_bounds_fn(|window_id, pid, index| {
-        platform_linux::recording_hooks::element_window_local_xy(window_id, pid, index)
-    });
-    if platform_linux::wayland::is_wayland() {
-        cua_driver_core::video::set_video_backend_factory(Box::new(
-            platform_linux::video_wayland::WfRecorderVideoBackendFactory,
-        ));
-    } else {
-        cua_driver_core::video::set_video_backend_factory(Box::new(
-            cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory,
-        ));
     }
 }
 

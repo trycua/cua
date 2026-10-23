@@ -1,18 +1,18 @@
 //! Cross-platform video-capture abstraction.
 //!
 //! The recording session calls into a single `VideoBackend` trait; the
-//! concrete implementation is selected at process startup by the
-//! platform crate. Today:
+//! concrete implementation is installed during platform tool registration.
+//! Today:
 //!
 //! - **macOS:** native ScreenCaptureKit via `platform_macos::video_sckit`
 //!   (no extra TCC grant — inherits cua-driver's own Screen Recording
 //!   permission, no subprocess).
-//! - **Windows + Linux:** ffmpeg subprocess via `video_ffmpeg`
+//! - **Windows + Linux X11:** ffmpeg subprocess via `video_ffmpeg`
 //!   (`gdigrab` / `x11grab` input + libx264 encode).
+//! - **Linux Wayland:** platform recorder selected when capture starts.
 //!
-//! The factory is registered with `set_video_backend_factory` from each
-//! platform's `main.rs` startup block, mirroring how `SCREENSHOT_FN` /
-//! `AX_SNAPSHOT_FN` are wired in `recording.rs`.
+//! The factory is registered with `set_video_backend_factory` during platform
+//! tool registration, alongside the recording callbacks in `recording.rs`.
 //!
 //! `VideoMetadata` is the shape `RecordingSession` stamps into
 //! `session.json` after `stop()` — kept identical to the prior concrete

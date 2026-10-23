@@ -1007,6 +1007,171 @@ async fn presence_two_clients_and_an_agent_cursor() {
 }
 
 #[tokio::test]
+async fn driver_recording_captures_screenshots_state_and_video() {
+    use cua_proto::env::v1::{driver_service_client::DriverServiceClient, CallToolRequest};
+    use serde_json::{json, Value};
+
+    async fn call(driver: &mut DriverServiceClient<Ch>, name: &str, args: Value) -> Value {
+        let response = driver
+            .call_tool(CallToolRequest {
+                name: name.into(),
+                arguments_json: args.to_string(),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(!response.is_error, "{name}: {response:?}");
+        if response.structured_json.is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_str(&response.structured_json).unwrap()
+        }
+    }
+
+    if !enabled() {
+        return;
+    }
+    let title = unique("gtk-recording");
+    let log = format!("/tmp/{title}.jsonl");
+    let child = spawn_fixture(
+        "python3",
+        &[
+            std::env::var("CUA_ENV_GTK_FIXTURE").expect("CUA_ENV_GTK_FIXTURE"),
+            "--title".into(),
+            title.clone(),
+            "--log".into(),
+            log.clone(),
+        ],
+    )
+    .await;
+    let fixture = Fixture { child, log, title };
+    fixture.wait_for("ready", Duration::from_secs(15)).await;
+    let pid = fixture
+        .events()
+        .await
+        .iter()
+        .find_map(|event| event["pid"].as_u64())
+        .unwrap();
+    let mut driver = DriverServiceClient::new(channel().await);
+    call(
+        &mut driver,
+        "start_session",
+        json!({"session": fixture.title}),
+    )
+    .await;
+    let mut token = None;
+    for _ in 0..30 {
+        let state = call(
+            &mut driver,
+            "get_window_state",
+            json!({"pid": pid, "tree_format": "elements", "session": fixture.title}),
+        )
+        .await;
+        token = state["elements"].as_array().and_then(|elements| {
+            elements
+                .iter()
+                .find(|element| matches!(element["role"].as_str(), Some("text" | "entry")))
+                .and_then(|element| element["element_token"].as_str())
+                .map(str::to_owned)
+        });
+        if token.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+    let token = token.expect("GTK text entry token");
+    let output = format!("/tmp/{}-trajectory", fixture.title);
+    let started = call(
+        &mut driver,
+        "start_recording",
+        json!({"output_dir": output, "record_video": true, "session": fixture.title}),
+    )
+    .await;
+    call(
+        &mut driver,
+        "type_text",
+        json!({"pid": pid, "element_token": token, "text": "recorded text", "session": fixture.title}),
+    )
+    .await;
+    call(
+        &mut driver,
+        "stop_recording",
+        json!({"session": fixture.title}),
+    )
+    .await;
+    call(
+        &mut driver,
+        "end_session",
+        json!({"session": fixture.title}),
+    )
+    .await;
+    assert_eq!(started["video_active"], true, "{started}");
+    assert!(fixture
+        .events()
+        .await
+        .iter()
+        .any(|event| event["value"] == "recorded text"));
+    let evidence: Value = serde_json::from_str(
+        &run(
+            "python3",
+            &[
+                "-c",
+                "import pathlib,sys; print(pathlib.Path(sys.argv[1]).read_text())",
+                &format!("{output}/turn-00001/evidence.json"),
+            ],
+        )
+        .await,
+    )
+    .unwrap();
+    for phase in ["before", "after"] {
+        assert_eq!(
+            evidence[phase]["screenshot"]["status"], "captured",
+            "{evidence}"
+        );
+        assert_eq!(evidence[phase]["state"]["status"], "captured", "{evidence}");
+        let state: Value = serde_json::from_str(
+            &run(
+                "python3",
+                &[
+                    "-c",
+                    "import pathlib,sys; print(pathlib.Path(sys.argv[1]).read_text())",
+                    &format!("{output}/turn-00001/{phase}_state.json"),
+                ],
+            )
+            .await,
+        )
+        .unwrap();
+        assert!(state["element_count"].as_u64().unwrap() > 0, "{state}");
+        assert!(
+            !state["tree_markdown"].as_str().unwrap().is_empty(),
+            "{state}"
+        );
+        let decoded = run(
+            "python3",
+            &["-c", "import sys; from gi.repository import GdkPixbuf; p=GdkPixbuf.Pixbuf.new_from_file(sys.argv[1]); print(p.get_width() > 0 and p.get_height() > 0)", &format!("{output}/turn-00001/{phase}.png")],
+        ).await;
+        assert_eq!(decoded, "True");
+    }
+    let duration = run(
+        "ffprobe",
+        &[
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=duration",
+            "-of",
+            "default=nw=1:nk=1",
+            &format!("{output}/recording.mp4"),
+        ],
+    )
+    .await;
+    assert!(duration.parse::<f64>().unwrap() > 0.0);
+}
+
+#[tokio::test]
 async fn accessibility_finds_and_presses_a_gtk_button() {
     if !enabled() {
         return;

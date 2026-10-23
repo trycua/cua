@@ -10417,6 +10417,7 @@ pub fn build_registry_with_provider(
     // Share the element cache with the recording-hook layer so it can
     // resolve element_index → window-local screenshot coords for click.png.
     crate::recording_hooks::set_snapshots(state.snapshots.clone());
+    crate::recording_hooks::install();
 
     // Drop a session's owned cursor on `session_end` (explicit end_session, the
     // CLI `session end` verb, or the daemon idle-TTL sweep). The session id IS

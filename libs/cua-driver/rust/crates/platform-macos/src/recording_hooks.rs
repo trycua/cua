@@ -5,6 +5,28 @@ use cua_driver_core::snapshot_store::{current_runtime_store, register_runtime_st
 use serde_json::Value;
 use std::sync::Arc;
 
+pub(crate) fn install() {
+    cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
+        if let Some(window_id) = window_id {
+            crate::capture::screenshot_window_bytes(window_id as u32).ok()
+        } else if let Some(pid) = pid {
+            crate::windows::resolve_main_window_id(pid as i32)
+                .ok()
+                .and_then(|window_id| crate::capture::screenshot_window_bytes(window_id).ok())
+        } else {
+            crate::capture::screenshot_display_bytes().ok()
+        }
+    });
+    cua_driver_core::recording::set_click_marker_fn(|png_bytes, x, y| {
+        crate::capture::crosshair_png_bytes(png_bytes, x, y).ok()
+    });
+    cua_driver_core::recording::set_budgeted_ax_snapshot_fn(app_state_json_for);
+    cua_driver_core::recording::set_element_bounds_fn(element_window_local_xy);
+    cua_driver_core::video::set_video_backend_factory(Box::new(
+        crate::video_sckit::SckitVideoBackendFactory,
+    ));
+}
+
 pub fn set_snapshots(cache: Arc<Snapshots>) {
     register_runtime_store(&cache);
 }

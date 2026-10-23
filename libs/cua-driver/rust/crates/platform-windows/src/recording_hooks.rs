@@ -32,6 +32,19 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 #[cfg(target_os = "windows")]
+pub(crate) fn install() {
+    cua_driver_core::recording::set_classified_screenshot_fn(screenshot_for_recording);
+    cua_driver_core::recording::set_click_marker_fn(|png_bytes, x, y| {
+        crate::capture::crosshair_png_bytes(png_bytes, x, y).ok()
+    });
+    cua_driver_core::recording::set_budgeted_ax_snapshot_fn(app_state_json_for);
+    cua_driver_core::recording::set_element_bounds_fn(element_window_local_xy);
+    cua_driver_core::video::set_video_backend_factory(Box::new(
+        cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory,
+    ));
+}
+
+#[cfg(target_os = "windows")]
 pub fn set_snapshots(cache: Arc<Snapshots>) {
     register_runtime_store(&cache);
 }

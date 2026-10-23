@@ -590,8 +590,10 @@ pub enum SandboxCmd {
         action: McpAction,
     },
     /// Open the sandbox desktop in the browser (the cua-spacesd HTML5 viewer).
-    /// A local Lume sandbox without cua-spacesd opens its VNC display with
-    /// `lume attach`.
+    /// A sandbox at a plain-HTTP address other than loopback (a local Lume
+    /// VM) is viewed through a loopback proxy, so the command keeps running
+    /// until Ctrl-C. A local Lume sandbox without cua-spacesd opens its VNC
+    /// display with `lume attach`.
     #[command(after_help = "Examples:
   cua sb view dev
   # Watch only, print the link instead of opening it
@@ -2482,6 +2484,7 @@ pub async fn view(
         .map(parse_secs)
         .transpose()
         .map_err(CuaError::InvalidArgument)?;
+    let mut proxy = None;
     let (url, expires, forward) = match v.service {
         Some(service) => {
             let (url, forward) = service_page_url(cua, &name, Some(service)).await?;
@@ -2493,7 +2496,11 @@ pub async fn view(
                 other => other.map(str::to_owned),
             };
             match viewer_link(cua, &name, ttl, v.view_only, files).await {
-                Ok(link) => (link.url, Some(link.expires_at_unix), None),
+                Ok(link) => {
+                    let (url, p) = on_loopback(link.url).await?;
+                    proxy = p;
+                    (url, Some(link.expires_at_unix), None)
+                }
                 Err(CuaError::SpacesdNotAvailable(m)) => match agentless(cua, &name).await? {
                     Some(sb) => return view_agentless(&sb, &name, &v, json, out).await,
                     None => return Err(CuaError::SpacesdNotAvailable(m)),
@@ -2512,9 +2519,11 @@ pub async fn view(
     if !v.no_open {
         util::open_browser(&url);
     }
-    if let Some(f) = forward {
+    if forward.is_some() || proxy.is_some() {
         eprintln!("Forwarding to {name}; press Ctrl-C to stop.");
         let _ = tokio::signal::ctrl_c().await;
+    }
+    if let Some(f) = forward {
         let _ = f.close().await;
     }
     Ok(0)
@@ -2684,6 +2693,25 @@ pub async fn viewer_link(
             )),
             other => other,
         })
+}
+
+/// The viewer needs a secure context (WebCodecs), which plain HTTP is only
+/// on loopback (#5734). A link to another host over HTTP, like a Lume VM's
+/// NAT address, is served through a loopback proxy to its origin instead;
+/// the proxy lives as long as this process.
+async fn on_loopback(
+    link: String,
+) -> Result<(String, Option<cua_sandbox_core::proxy::HttpProxy>), CuaError> {
+    use cua_sandbox_core::proxy;
+    let Ok(url) = url::Url::parse(&link) else {
+        return Ok((link, None));
+    };
+    if url.scheme() != "http" || proxy::require_loopback_http(&link).is_ok() {
+        return Ok((link, None));
+    }
+    let p = proxy::forward_to(url.origin().ascii_serialization(), vec![]).await?;
+    let local = format!("{}{}", p.url(), &url[url::Position::BeforePath..]);
+    Ok((local, Some(p)))
 }
 
 /// A browser URL for a web service of the sandbox (no credentials): the

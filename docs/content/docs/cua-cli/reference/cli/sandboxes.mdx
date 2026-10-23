@@ -734,7 +734,7 @@ cua sb mcp dev mcp request skills/list
 
 ### `cua sandbox view`
 
-Open the sandbox desktop in the browser (the cua-spacesd HTML5 viewer). A local Lume sandbox without cua-spacesd opens its VNC display with `lume attach`.
+Open the sandbox desktop in the browser (the cua-spacesd HTML5 viewer). A sandbox at a plain-HTTP address other than loopback (a local Lume VM) is viewed through a loopback proxy, so the command keeps running until Ctrl-C. A local Lume sandbox without cua-spacesd opens its VNC display with `lume attach`.
 
 ```text output
 cua sandbox view [OPTIONS] <NAME>

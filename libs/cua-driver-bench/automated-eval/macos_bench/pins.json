@@ -38,14 +38,14 @@
     }
   },
   "cua_main": {
-    "note": "Bench v2 runs: main at the commit of the latest registered run (A17.3 rerun: 984e5f9c5). Built in the VM with tools/vm_main_build. Earlier registered runs used other main commits; see the dated amendment commits.",
-    "git_sha": "984e5f9c5c5a39185e7d0e03f3d6937e44503c31",
-    "version": "0.34.0",
-    "version_string": "cua-driver 0.34.0",
-    "binary_sha256": "3657e899b14f734f71b4aa52af3f9bbf44c2a97a62947ea9c40cbf0e0a5c1098",
-    "skills_tree_sha256": "7f1c0fd0f22cb4a3dd0ae04256a3e78c9f4d51194e92284765cc554381249504",
+    "note": "Bench v2 uses main at 1fa2247ae built in the VM with tools/vm_main_build.",
+    "git_sha": "1fa2247ae745f5029211573ad4f5c3087efcf641",
+    "version": "0.38.0",
+    "version_string": "cua-driver 0.38.0",
+    "binary_sha256": "f53304e429ca0c2a3fc3f0fd5699d273251b2ef847eaa728949c3260b6da8969",
+    "skills_tree_sha256": "e1ea6ffdabfef1cf1757283ae281dd75ab0a7a3b179b14bb50d9869b9f8e6eb7",
     "skills_source": "libs/cua-driver/rust/Skills/cua-driver at git_sha",
-    "script_binary_sha256": "8d5dc83f23e7ff0f95bcade4fff67e25cd7309bf02d67a5ca31e86ca5059cce4"
+    "script_binary_sha256": "3398da9e53a2fc7980c58ae9d45060c7befecb9eebd7e602f97f5d9b4f8a2f56"
   },
   "codex_1007": {
     "_note": "Arm cc-codex-cu-1007-browser (Amendment 10): the ChatGPT/Codex app 26.1007.21159 (build 20052) from the public appcast, installed in a clone of the bench VM only and never launched. The Computer Use service is not in the app bundle (the app installs it at run time), so it stays 26.929.1001365.",

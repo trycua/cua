@@ -37,9 +37,19 @@ macOS Space needs an Apple silicon Mac and about 50 GB of free disk.
     ```
   </Tab>
   <Tab value="Windows (preview)">
+    Recommended: run this in PowerShell.
+
     ```powershell skip="host-install"
     irm https://cua.ai/install.ps1 | iex
     ```
+
+    If you download and run the installer from the [download page](https://cua.ai/download)
+    instead, Windows may show a SmartScreen prompt the first time: choose **More info**,
+    then **Run anyway**. The publisher shows as **Cua AI, Inc.**
+
+    Windows 11 Home is supported; Hyper-V is not required. Local Spaces use
+    Docker Desktop on WSL 2 (the app can install it for you) or QEMU with WHPX,
+    which needs the **Windows Hypervisor Platform** feature turned on.
   </Tab>
 </Tabs>
 

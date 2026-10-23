@@ -452,7 +452,8 @@ await client
       } catch (e) {
         if (exiting) return;
         flush();
-        emit("error", { message: e?.message ?? String(e), code: e?.code ?? null, data: e?.data ?? null });
+        const message = (e?.message ?? String(e)) + (e?.code === -32000 && cfg.authHint ? `\n${cfg.authHint}` : "");
+        emit("error", { message, code: e?.code ?? null, data: e?.data ?? null });
         endTurn("error");
         return;
       }

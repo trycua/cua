@@ -108,6 +108,22 @@ test("prompt errors retain the provider reason without launch diagnostics", {tim
   assert.equal(events.filter(e => e.type === "turn_ended").length, 1);
 });
 
+test("prompt authentication errors include the guest sign-in command and remain recoverable", {timeout: 6000}, async (t) => {
+  const authHint = "Run ~/.cua/bin/claude inside the Space to sign in";
+  const {events, state} = await failureRun(t, {
+    config: {prompt: "hello", idleExitSecs: 0.01, authHint},
+    request: `if (method === 'initialize') return {};
+      if (method === 'new') return {sessionId: 's'};
+      throw Object.assign(new Error('Authentication required'), {code: -32000});`,
+  });
+  const errors = events.filter(e => e.type === "error");
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0].message, `Authentication required\n${authHint}`);
+  assert.equal(errors[0].code, -32000);
+  assert.equal(events.filter(e => e.type === "turn_ended").length, 1);
+  assert.equal(state.status, "exited");
+});
+
 test("transport exit ends a pending prompt exactly once", {timeout: 6000}, async (t) => {
   const {events, state} = await failureRun(t, {config: {prompt: "hello"}, request: "if (method === 'initialize') return {}; if (method === 'new') return {sessionId: 's'}; return new Promise(() => {});", agent: "setTimeout(() => process.exit(1), 300)"});
   assert.equal(events.filter(e => e.type === "turn_ended").length, 1);

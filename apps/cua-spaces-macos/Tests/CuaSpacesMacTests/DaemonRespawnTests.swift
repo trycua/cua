@@ -69,7 +69,11 @@ import Testing
         #expect(await eventually(60) { daemon.lock.withLock { daemon.starts } == 1 })
         #expect(await eventually(60) { daemon.lock.withLock { daemon.restarted } == 1 })
 
-        // The new daemon is watched too.
+        // The new daemon is watched too. The supervisor watches the new pid
+        // only after its confirming probe (the second one: the miss, then
+        // this one), so wait for that probe instead of a fixed sleep; a kill
+        // before the watch is armed is never seen until the next hourly probe.
+        #expect(await eventually(60) { daemon.lock.withLock { daemon.probes } >= 2 })
         try await Task.sleep(for: .milliseconds(200))
         daemon.kill()
         #expect(await eventually(60) { daemon.lock.withLock { daemon.starts } == 2 })

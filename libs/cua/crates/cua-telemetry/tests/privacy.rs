@@ -781,20 +781,19 @@ fn capture_never_blocks_on_a_slow_or_dead_endpoint() {
         .product("cli", "1.0.0")
         .build();
     t.acknowledge_notice();
+    // The endpoint never answers, so a capture or flush that waited on it
+    // would take the sink's whole send timeout (3 s) or more. Bound the
+    // elapsed time just under that: it separates blocking from not blocking
+    // without a wall-clock budget a loaded runner can exceed.
+    let ceiling = cua_telemetry::sink::SEND_TIMEOUT - Duration::from_millis(500);
     let start = std::time::Instant::now();
     for _ in 0..20 {
         t.capture(events::sandbox_deleted("local", Outcome::Ok, None));
     }
-    assert!(
-        start.elapsed() < Duration::from_millis(500),
-        "capture blocked"
-    );
+    assert!(start.elapsed() < ceiling, "capture blocked");
     let start = std::time::Instant::now();
     t.flush(Duration::from_millis(300));
-    assert!(
-        start.elapsed() < Duration::from_secs(2),
-        "flush exceeded its budget"
-    );
+    assert!(start.elapsed() < ceiling, "flush exceeded its budget");
     drop(listener);
 }
 

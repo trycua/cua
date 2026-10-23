@@ -95,7 +95,24 @@ jobs:
         with:
           go-version-file: libs/cua/crates/cua-contrib/modal-helper/go.mod
           cache-dependency-path: libs/cua/crates/cua-contrib/modal-helper/go.sum
+      # Module downloads from proxy.golang.org time out now and then. setup-go
+      # restores the module cache by go.sum; a miss downloads here with retries
+      # and a fallback proxy (the pipe tries the next on any error), so a slow
+      # proxy no longer fails vet, test or build.
+      - name: Download modules (retried, fallback proxy)
+        env:
+          GOPROXY: https://proxy.golang.org|https://goproxy.io|direct
+        run: |
+          for attempt in 1 2 3 4; do
+            go mod download && exit 0
+            echo "::warning::go mod download failed (attempt $attempt)"
+            sleep $((attempt * 15))
+          done
+          exit 1
       - name: Vet, test and build
+        env:
+          GOPROXY: https://proxy.golang.org|https://goproxy.io|direct
+          GOFLAGS: -mod=readonly
         run: |
           test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
           go vet ./...

@@ -100,13 +100,9 @@ impl McpDriver {
     /// tests therefore use this constructor instead of the testkit's ephemeral
     /// source-tree daemon.
     pub fn spawn_daemon_proxy_named(socket: &str, recording_label: &str) -> Option<Self> {
-        if !daemon_socket_is_reachable(socket) {
-            let hint = if cfg!(target_os = "macos") {
-                " — run `./scripts/install-local.sh` and `cua-driver permissions grant`;"
-            } else {
-                " —"
-            };
-            eprintln!("[testkit] CuaDriver daemon not listening at {socket}{hint} skipping");
+        let mut message = String::new();
+        if !daemon_proxy_available(socket, daemon_socket_is_reachable, &mut message) {
+            eprintln!("{message}");
             return None;
         }
         Self::spawn_internal(
@@ -483,6 +479,23 @@ impl McpDriver {
     }
 }
 
+fn daemon_proxy_available(
+    socket: &str,
+    probe: impl FnOnce(&str) -> bool,
+    message: &mut String,
+) -> bool {
+    if probe(socket) {
+        return true;
+    }
+    let hint = if cfg!(target_os = "macos") {
+        " — run `./scripts/install-local.sh` and `cua-driver permissions grant`;"
+    } else {
+        " —"
+    };
+    *message = format!("[testkit] CuaDriver daemon not listening at {socket}{hint} skipping");
+    false
+}
+
 #[cfg(unix)]
 fn daemon_socket_is_reachable(socket: &str) -> bool {
     std::os::unix::net::UnixStream::connect(socket).is_ok()
@@ -662,14 +675,35 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
-    fn macos_proxy_skips_when_socket_is_missing() {
-        let dir = std::env::temp_dir().join(format!("cua-testkit-{}", std::process::id()));
-        let socket = dir.join("missing.sock");
-        std::env::set_var("CUA_E2E_MACOS_DAEMON_SOCKET", &socket);
-        let driver = super::McpDriver::spawn_macos_daemon_proxy_named("missing-socket");
-        std::env::remove_var("CUA_E2E_MACOS_DAEMON_SOCKET");
-        assert!(driver.is_none());
+    fn missing_daemon_message_names_the_socket_and_macos_install_hint() {
+        let mut message = String::new();
+        assert!(!super::daemon_proxy_available(
+            "/x/y.sock",
+            |_| false,
+            &mut message
+        ));
+        assert!(message.contains("not listening at /x/y.sock"));
+        assert_eq!(
+            message.contains("./scripts/install-local.sh"),
+            cfg!(target_os = "macos")
+        );
+    }
+
+    #[test]
+    fn reachable_daemon_is_probed_once_without_a_message() {
+        let probes = std::cell::Cell::new(0);
+        let mut message = String::new();
+        let ok = super::daemon_proxy_available(
+            "/x/y.sock",
+            |_| {
+                probes.set(probes.get() + 1);
+                true
+            },
+            &mut message,
+        );
+        assert!(ok);
+        assert_eq!(probes.get(), 1);
+        assert!(message.is_empty());
     }
 }

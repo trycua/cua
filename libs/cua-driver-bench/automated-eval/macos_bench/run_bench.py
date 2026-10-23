@@ -2037,29 +2037,30 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
         if not cxn.CODEX_CLI.is_file():
             add("Codex CLI in the ChatGPT app", "fail", str(cxn.CODEX_CLI))
             continue
-        try:
-            path, server = ctx.mcp[native_arm]
-            entry = cxn.server_entry(path, native_arm)
-            source = cxn.SOURCE_ARM[native_arm]
-            if (
-                source in ca.CUA_ARMS and not offline
-            ):  # A23: Cua Driver under Codex uses that build's daemon
-                ensure_agent_daemon(ctx, source)
-            tools = mcp_list_tools(entry["command"], entry["args"], entry["env"])
-            want = (
-                {"js", "js_reset"}
-                if server == cxn.SERVER
-                else set(ca.load_pins().get("claude_cu_helper", {}).get("tools") or ["app_click"])
-                if server == ca.CU_HELPER_SERVER
-                else {"list_apps", "run_script"}
-            )
-            add(
-                f"{native_arm} {server} MCP server lists {sorted(want)}",
-                "pass" if want <= set(tools) else "fail",
-                f"{len(tools)} tools",
-            )
-        except Exception as error:  # noqa: BLE001
-            add(f"{native_arm} MCP server", "fail", f"{type(error).__name__}: {error}")
+        if not offline:
+            try:
+                path, server = ctx.mcp[native_arm]
+                entry = cxn.server_entry(path, native_arm)
+                source = cxn.SOURCE_ARM[native_arm]
+                if source in ca.CUA_ARMS:  # A23: Cua Driver under Codex uses that build's daemon
+                    ensure_agent_daemon(ctx, source)
+                tools = mcp_list_tools(entry["command"], entry["args"], entry["env"])
+                want = (
+                    {"js", "js_reset"}
+                    if server == cxn.SERVER
+                    else set(
+                        ca.load_pins().get("claude_cu_helper", {}).get("tools") or ["app_click"]
+                    )
+                    if server == ca.CU_HELPER_SERVER
+                    else {"list_apps", "run_script"}
+                )
+                add(
+                    f"{native_arm} {server} MCP server lists {sorted(want)}",
+                    "pass" if want <= set(tools) else "fail",
+                    f"{len(tools)} tools",
+                )
+            except Exception as error:  # noqa: BLE001
+                add(f"{native_arm} MCP server", "fail", f"{type(error).__name__}: {error}")
         for name, status, detail in native_codex_checks(
             ctx, native_arm, with_models and not offline
         ):
@@ -2096,11 +2097,12 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
                 "pass" if Path(f"/Applications/{app}.app").is_dir() else "fail",
                 f"/Applications/{app}.app",
             )
-        electron = list(cdb_adapter.pack_tasks_root().glob("*/*/apps/*/node_modules/electron/dist"))
+        electron, missing = cdb_adapter.missing_electron_apps()
         add(
             "CDB Electron apps installed (npm ci + install.js)",
-            "pass" if len(electron) >= 5 else "fail",
-            f"{len(electron)} of 5",
+            "fail" if missing else "pass",
+            f"{len(electron) - len(missing)} of {len(electron)}"
+            + (f"; missing: {', '.join(missing)}" if missing else ""),
         )
         add(
             "CDB evaluator isolation (pack unreadable by the agent's user)",

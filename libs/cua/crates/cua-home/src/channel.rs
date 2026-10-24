@@ -9,7 +9,7 @@
 //!
 //! | Name                  | Stable                                        | Local                                            |
 //! |-----------------------|-----------------------------------------------|--------------------------------------------------|
-//! | Bundle id             | `com.trycua.spaces.macos` (see below)         | `com.trycua.spaces.local`                        |
+//! | Bundle id             | `com.trycua.spaces.macos`                     | `com.trycua.spaces.macos.local`                  |
 //! | App                   | `/Applications/Cua Spaces.app`                | `~/Applications/Cua Spaces Local.app`            |
 //! | CLI                   | `~/.local/bin/cua`                            | `~/.local/bin/cua-local`                         |
 //! | Cua home              | `~/.cua` (`envs/staging` below it on staging) | `~/.cua-local` (`envs/prod` below it on prod)    |
@@ -23,16 +23,18 @@
 //! | URL scheme            | `cua://`                                      | `cua-local://`                                   |
 //! | Cua Volume            | `~/Cua Volume`                                | `~/Cua Volume Local`                             |
 //! | Lume                  | `lume`, `com.trycua.lume_daemon`, `:7777`, `~/.lume` | `lume-local`, `com.trycua.lume_daemon.local`, `:7787`, `~/.lume-local` |
-//! | App data              | `~/Library/Application Support/com.trycua.spaces.macos` | `.../com.trycua.spaces.local`          |
+//! | App data              | `~/Library/Application Support/com.trycua.spaces.macos` | `.../com.trycua.spaces.macos.local`    |
 //! | Agent MCP server      | `cua` (launches `cua mcp`)                    | `cua-local` (launches `cua-local mcp`)           |
 //! | Agent skills          | `cua-spaces`, `cua-volume`, ...               | `cua-spaces-local`, `cua-volume-local`, ...      |
 //!
-//! **Stable bundle id.** Stable is `com.trycua.spaces.macos` today. The
-//! rename to `com.trycua.spaces` is a later, separate change (CUA-1776,
-//! "PR 5": it needs a first-launch migration and makes macOS ask for the
-//! permission grants again). When it lands, [`CuaChannel::bundle_id`] and
-//! [`CuaChannel::app_support_dir_name`] change for Stable here and nowhere
-//! else.
+//! **Bundle ids.** Stable stays `com.trycua.spaces.macos`. Local is that id
+//! plus `.local`, so a future iOS app is `com.trycua.spaces.ios` (and
+//! `.ios.local`) in the same scheme. The `.macos.local` id is a dot extension
+//! of Stable's, so compare ids whole, never by prefix (`starts_with`, a shell
+//! `*id*` pattern): a prefix test would take Local for Stable. Local's first
+//! builds used `com.trycua.spaces.local` ([`CuaChannel::legacy_bundle_id`]);
+//! `install-local.sh` and `uninstall-local.sh` remove what that id left behind.
+//! The launchd ids (helper, host runner, Lume daemon) did not change.
 //!
 //! # Resolution
 //!
@@ -313,13 +315,24 @@ impl CuaChannel {
     // ----- the app ---------------------------------------------------------
 
     /// The bundle identifier, which TCC grants and the app's data are keyed
-    /// to. Stable is `com.trycua.spaces.macos` for now; it becomes
-    /// `com.trycua.spaces` in a later PR (CUA-1776 "PR 5", with a first-launch
-    /// migration), so nothing may hard-code it.
+    /// to. Local's is Stable's plus `.local`, which makes it a dot extension
+    /// of Stable's: compare whole ids, never by prefix.
     pub fn bundle_id(self) -> &'static str {
         match self {
             Self::Stable => "com.trycua.spaces.macos",
-            Self::Local => "com.trycua.spaces.local",
+            Self::Local => "com.trycua.spaces.macos.local",
+        }
+    }
+
+    /// The bundle identifier this channel used before the current one, which
+    /// the installers move away from: Local's first builds were
+    /// `com.trycua.spaces.local`. Stable has none. Nothing but the install
+    /// and uninstall scripts reads it: they remove the old app and what it
+    /// left in `~/Library`.
+    pub fn legacy_bundle_id(self) -> Option<&'static str> {
+        match self {
+            Self::Stable => None,
+            Self::Local => Some("com.trycua.spaces.local"),
         }
     }
 
@@ -342,11 +355,11 @@ impl CuaChannel {
 
     /// The app's folder name below `~/Library/Application Support`.
     pub fn app_support_dir_name(self) -> &'static str {
-        // The same as the bundle id today (macOS convention), but a
-        // separate name: the rename migration moves this folder.
+        // The same as the bundle id (macOS convention), but a separate name
+        // so a later rename of one can move the folder.
         match self {
             Self::Stable => "com.trycua.spaces.macos",
-            Self::Local => "com.trycua.spaces.local",
+            Self::Local => "com.trycua.spaces.macos.local",
         }
     }
 
@@ -949,6 +962,7 @@ mod tests {
         let s = CuaChannel::Stable;
         // The Stable bundle id is renamed to com.trycua.spaces in a later PR.
         assert_eq!(s.bundle_id(), "com.trycua.spaces.macos");
+        assert_eq!(s.legacy_bundle_id(), None);
         assert_eq!(s.app_name(), "Cua Spaces");
         assert_eq!(s.app_path(), Path::new("/Applications/Cua Spaces.app"));
         assert_eq!(s.app_support_dir_name(), "com.trycua.spaces.macos");
@@ -996,16 +1010,17 @@ mod tests {
     #[test]
     fn local_names_are_the_designed_names() {
         let l = CuaChannel::Local;
-        assert_eq!(l.bundle_id(), "com.trycua.spaces.local");
+        assert_eq!(l.bundle_id(), "com.trycua.spaces.macos.local");
+        assert_eq!(l.legacy_bundle_id(), Some("com.trycua.spaces.local"));
         assert_eq!(l.app_name(), "Cua Spaces Local");
         assert_eq!(
             l.app_path(),
             user_home().join("Applications/Cua Spaces Local.app")
         );
-        assert_eq!(l.app_support_dir_name(), "com.trycua.spaces.local");
+        assert_eq!(l.app_support_dir_name(), "com.trycua.spaces.macos.local");
         assert_eq!(
             l.app_support_dir(),
-            user_home().join("Library/Application Support/com.trycua.spaces.local")
+            user_home().join("Library/Application Support/com.trycua.spaces.macos.local")
         );
         assert_eq!(l.cli_name(), "cua-local");
         assert_eq!(l.cli_path(), user_home().join(".local/bin/cua-local"));

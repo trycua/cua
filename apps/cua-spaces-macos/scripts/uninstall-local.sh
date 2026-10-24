@@ -23,6 +23,9 @@
 #     and ~/Library/Application Support/com.trycua.spaces.local
 #   - what macOS keeps for the Local bundle id under ~/Library: its preferences,
 #     caches, web view data, cookies and saved window state
+#   - the same for the old Local bundle id (com.trycua.spaces.local, before the
+#     rename to com.trycua.spaces.macos.local): an app with that id at the Local
+#     path, its ~/Library files and its permission rows
 #   - the Local Keychain items (ai.cua.session.local, ai.cua.session.local.staging)
 #   - optionally lume-local (libs/lume/scripts/uninstall-local.sh)
 # It keeps the Cua Volume Local folder and the permissions macOS granted the
@@ -114,6 +117,7 @@ echo "  app:                $APP_DEST"
 echo "  CLI:                $CLI_LINK"
 echo "  state:              $LOCAL_HOME and $LOCAL_APP_SUPPORT"
 echo "  macOS leftovers:    the $LOCAL_BUNDLE_ID preferences, caches, web view data and window state in ~/Library"
+echo "                      (and those of the old id $LOCAL_LEGACY_BUNDLE_ID, if any)"
 echo "  Keychain items:     ${LOCAL_KEYCHAIN_SERVICES[*]}"
 if [ "$YES" != 1 ]; then
     confirm "Remove them?" || { log "cancelled, nothing was removed"; exit 0; }
@@ -129,14 +133,17 @@ fi
 # --- The helper login item and the host runner ------------------------------------
 
 # Only this bundle's own code may unregister its login item, so ask the app
-# (the same call the host setup makes). Without the app, stop the job.
+# (the same call the host setup makes). Without the app, stop the job. An app
+# with the old Local id at this path is handled the same way.
+LEGACY_FOUND=0
+if is_legacy_local_bundle "$APP_DEST"; then
+    LEGACY_FOUND=1
+    log "found the old ${LOCAL_APP_DIR_NAME%.app} (bundle id $LOCAL_LEGACY_BUNDLE_ID); removing it too"
+fi
 if [ -x "$APP_DEST/Contents/MacOS/CuaSpacesMac" ]; then
     log "unregistering the helper login item"
-    CUA_CHANNEL=local "$APP_DEST/Contents/MacOS/CuaSpacesMac" --service-helper unregister >/dev/null 2>&1 \
-        || warn "the app could not unregister its helper; remove $LOCAL_APP_DIR_NAME from System Settings > Login Items if it stays."
 fi
-quit_local_app "$APP_DEST"
-launchctl bootout "$GUI_DOMAIN/$LOCAL_HELPER_LABEL" >/dev/null 2>&1 || true
+retire_local_app "$APP_DEST"
 # The plain runner (`cua host setup` without the app) has its own Local label.
 launchctl bootout "$GUI_DOMAIN/$LOCAL_HOST_LABEL" >/dev/null 2>&1 || true
 if [ -f "$HOST_JOB_PLIST" ]; then
@@ -183,7 +190,7 @@ fi
 # What macOS keeps for the Local bundle id (every name carries it; Stable's
 # folders have its own id and are never listed). The app is stopped above, so
 # it cannot write them back.
-for leaf in "${LOCAL_LIBRARY_LEAVES[@]}"; do
+while IFS= read -r leaf; do
     case "$leaf" in
         *"$LOCAL_BUNDLE_ID"*) ;;
         *) die "internal error: $leaf is not a Local path" ;;
@@ -193,7 +200,18 @@ for leaf in "${LOCAL_LIBRARY_LEAVES[@]}"; do
         rm -rf "$leftover"
         log "removed $leftover"
     fi
-done
+done < <(library_leaves "$LOCAL_BUNDLE_ID")
+
+# The old Local bundle id's leftovers, from before the rename: the same kinds
+# of files under the old id (none is a name of the current id or Stable's).
+while IFS= read -r leftover; do
+    [ -n "$leftover" ] || continue
+    LEGACY_FOUND=1
+    log "removed $leftover"
+done < <(remove_legacy_local_data)
+if [ "$LEGACY_FOUND" = 1 ]; then
+    clear_legacy_local_permissions
+fi
 
 # The Keychain tool deletes one item per call and has no wildcard: repeat per
 # service (one item per account) until none is left. Local services only.

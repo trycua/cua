@@ -68,12 +68,12 @@ prints them), so nothing here hard-codes one.
 | | Stable | Local |
 |---|---|---|
 | App | `Cua Spaces.app` | `Cua Spaces Local.app` |
-| Bundle id | `com.trycua.spaces.macos` | `com.trycua.spaces.local` |
+| Bundle id | `com.trycua.spaces.macos` | `com.trycua.spaces.macos.local` |
 | Info.plist | no channel keys | `CuaChannel=local`, `CuaEnv=staging`, `CuaHome=~/.cua-local`, `CuaHelperLabel`, `CuaUrlScheme` |
 | Cua deployment | prod (`CUA_ENV` picks another) | staging (`CUA_ENV=prod` opts in) |
 | Cua home | `~/.cua` (`~/.cua/envs/staging` on staging) | `~/.cua-local` on staging; `~/.cua-local/envs/prod` under the `CUA_ENV=prod` opt-in |
 | Sign-in Keychain service | `ai.cua.session` (`.staging` on staging) | `ai.cua.session.local` (`.staging` on staging) |
-| Helper login item | `com.trycua.spaces.helper` | `com.trycua.spaces.local.helper` (plist file and `AssociatedBundleIdentifiers` stamped to match) |
+| Helper login item | `com.trycua.spaces.helper` | `com.trycua.spaces.local.helper` (plist file stamped to match; `AssociatedBundleIdentifiers` is the Local bundle id) |
 | URL scheme | `cua://` | `cua-local://` |
 | Updater | Sparkle feed and key | none (`SUFeedURL`, `SUPublicEDKey` removed): it never offers or installs an update |
 
@@ -356,7 +356,7 @@ The Local build shares nothing with the released app. Every name comes from
 | | Cua Spaces | Cua Spaces Local |
 |---|---|---|
 | App | `/Applications/Cua Spaces.app` | `~/Applications/Cua Spaces Local.app` |
-| Bundle id | `com.trycua.spaces.macos` | `com.trycua.spaces.local` |
+| Bundle id | `com.trycua.spaces.macos` | `com.trycua.spaces.macos.local` |
 | CLI | `~/.local/bin/cua` | `~/.local/bin/cua-local` |
 | Home | `~/.cua` | `~/.cua-local` |
 | Backend | production | staging (`CUA_ENV=prod` opts in) |
@@ -422,13 +422,26 @@ It unregisters the Local helper login item and removes the app, `cua-local`,
 (`ai.cua.session.local*`). It keeps `~/Cua Volume Local` and the permissions
 macOS granted.
 
+**The Local bundle id changed.** The first Local builds were
+`com.trycua.spaces.local`; Local is now `com.trycua.spaces.macos.local` (Stable
+plus `.local`; the launchd ids, ports, `cua-local` and `~/.cua-local` did not
+change). `install-local.sh` finds an app with the old id at the Local path,
+unregisters its helper login item, removes it, installs the renamed app, and
+then removes what the old id left in `~/Library` (its Application Support
+folder, preferences, caches, web view data, cookies and window state) and its
+permission rows. It says so in one line. Your sign-in (`~/.cua-local`) and
+`~/Cua Volume Local` stay, and macOS asks for the renamed app's permissions
+once. `uninstall-local.sh` removes both ids' leftovers. Neither touches
+anything Stable owns. Because the new id is Stable's plus a suffix, compare
+bundle ids whole, never by prefix.
+
 There is one Local slot per Mac: an Internal build from CI uses the same
 identity, so it and a build from source replace each other.
 
 `scripts/tests/install-local-test.sh` checks all of this against a fake `HOME`
 and a fake build: a Stable install is byte-identical before and after install,
 rebuild and uninstall, a wrong bundle id is refused, a failed copy is rolled
-back. `CUA_TEST_SIGNING_KEYCHAIN=<keychain>` adds the certificate-signing checks.
+back, an app with the old Local id is replaced and its leftovers removed. `CUA_TEST_SIGNING_KEYCHAIN=<keychain>` adds the certificate-signing checks.
 
 ## Release
 

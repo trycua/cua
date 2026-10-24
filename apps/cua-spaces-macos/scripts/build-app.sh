@@ -27,7 +27,7 @@
 #
 # --channel local builds "Cua Spaces Local.app", which runs beside an
 # installed Cua Spaces and cannot touch it (CUA-1776): the Local bundle id
-# (com.trycua.spaces.local), name, helper login item (label and plist file
+# (com.trycua.spaces.macos.local), name, helper login item (label and plist file
 # name), URL scheme (cua-local, not cua) and cua home (~/.cua-local), staging
 # by default (CuaEnv), and no Sparkle feed or key, so it never offers or
 # installs an update. Every name comes from CuaChannel (scripts/channel-names.sh,

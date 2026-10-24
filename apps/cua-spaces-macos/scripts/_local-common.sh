@@ -14,12 +14,15 @@
 # shellcheck disable=SC2034 # each script uses some of these names
 
 # --- Local (what these scripts install and remove) ---------------------------
-LOCAL_BUNDLE_ID="com.trycua.spaces.local"          # CuaChannel::bundle_id
+LOCAL_BUNDLE_ID="com.trycua.spaces.macos.local"    # CuaChannel::bundle_id
+# The id Local's first builds had (CuaChannel::legacy_bundle_id): what the
+# installer moves away from and the uninstaller also cleans up.
+LOCAL_LEGACY_BUNDLE_ID="com.trycua.spaces.local"   # CuaChannel::legacy_bundle_id
 LOCAL_APP_DIR_NAME="Cua Spaces Local.app"          # CuaChannel::app_path
 LOCAL_CLI_NAME="cua-local"                         # CuaChannel::cli_name
 LOCAL_URL_SCHEME="cua-local"                       # CuaChannel::url_scheme
 LOCAL_HOME_DIR_NAME=".cua-local"                   # CuaChannel::home_dir
-LOCAL_APP_SUPPORT_DIR_NAME="com.trycua.spaces.local" # CuaChannel::app_support_dir_name
+LOCAL_APP_SUPPORT_DIR_NAME="com.trycua.spaces.macos.local" # CuaChannel::app_support_dir_name
 LOCAL_HELPER_LABEL="com.trycua.spaces.local.helper"  # CuaChannel::helper_label
 LOCAL_HOST_LABEL="com.trycua.spacesd.host.local"     # CuaChannel::host_label
 LOCAL_VOLUME_NAME="Cua Volume Local"               # CuaChannel::volume_name
@@ -28,17 +31,20 @@ LOCAL_LUME_DIR_NAME=".lume-local"                  # CuaChannel::lume_dir
 # CuaChannel::keychain_service(Prod) and (Staging). The sign-in and the device
 # key live under these services, one item per account.
 LOCAL_KEYCHAIN_SERVICES=("ai.cua.session.local" "ai.cua.session.local.staging")
-# What macOS keeps under ~/Library for the Local bundle id: preferences, caches,
-# web view data and saved window state. Every name carries the Local bundle id
-# (Stable's are the same folders with its own id, which are never listed here).
-LOCAL_LIBRARY_LEAVES=(
-    "Preferences/$LOCAL_BUNDLE_ID.plist"
-    "Caches/$LOCAL_BUNDLE_ID"
-    "HTTPStorages/$LOCAL_BUNDLE_ID"
-    "WebKit/$LOCAL_BUNDLE_ID"
-    "Cookies/$LOCAL_BUNDLE_ID.binarycookies"
-    "Saved Application State/$LOCAL_BUNDLE_ID.savedState"
-)
+# What macOS keeps under ~/Library for a bundle id: preferences, caches, web view
+# data, cookies and saved window state. `library_leaves ID` prints their paths
+# below ~/Library, one per line; every one carries ID whole. The Local id is
+# Stable's plus ".local", so none of these names is a Stable one (Stable's are
+# the same folders with its own id, which are never listed here).
+library_leaves() {
+    printf '%s\n' \
+        "Preferences/$1.plist" \
+        "Caches/$1" \
+        "HTTPStorages/$1" \
+        "WebKit/$1" \
+        "Cookies/$1.binarycookies" \
+        "Saved Application State/$1.savedState"
+}
 
 # --- Stable (what these scripts must never create, replace or remove) --------
 # Only used to refuse a bundle that carries a Stable identity.
@@ -87,9 +93,20 @@ plist_url_schemes() {
     done
 }
 
+# Succeeds when `app` is a Cua Spaces Local bundle with the bundle id Local's
+# first builds had (com.trycua.spaces.local). The id is compared whole.
+is_legacy_local_bundle() {
+    local app="$1"
+    [ ! -L "$app" ] && [ -f "$app/Contents/Info.plist" ] \
+        && [ "$(bundle_id_of "$app")" = "$LOCAL_LEGACY_BUNDLE_ID" ]
+}
+
 # Succeeds when `path` is absent or a Cua Spaces Local bundle, the only thing
-# these scripts may replace or remove. Anything else, a Stable app included, is
-# refused with the reason.
+# these scripts may replace or remove: one with the Local bundle id, or with
+# the one Local had before (they move that one to the new id). Anything else, a
+# Stable app included, is refused with the reason. Ids are compared whole: the
+# Local id is Stable's plus ".local", so a prefix test would take one for the
+# other.
 require_local_bundle_or_absent() {
     local app="$1" id
     if [ ! -e "$app" ] && [ ! -L "$app" ]; then
@@ -104,7 +121,7 @@ require_local_bundle_or_absent() {
         return 1
     fi
     id="$(bundle_id_of "$app")"
-    if [ "$id" != "$LOCAL_BUNDLE_ID" ]; then
+    if [ "$id" != "$LOCAL_BUNDLE_ID" ] && [ "$id" != "$LOCAL_LEGACY_BUNDLE_ID" ]; then
         err "refusing to touch $app: its bundle id is '${id:-none}', not $LOCAL_BUNDLE_ID"
         return 1
     fi
@@ -131,6 +148,47 @@ quit_local_app() {
         # shellcheck disable=SC2086
         kill -9 $pids 2>/dev/null || true
     fi
+}
+
+# The old Local app's helper login item and processes: the app unregisters its
+# own login item (the same call the host setup makes), then it is stopped, and
+# the helper job is booted out in case the app could not do it. Nothing but the
+# Local helper label is named. `app` must be a Local bundle (checked by the
+# caller).
+retire_local_app() {
+    local app="$1"
+    if [ -x "$app/Contents/MacOS/CuaSpacesMac" ]; then
+        CUA_CHANNEL=local "$app/Contents/MacOS/CuaSpacesMac" --service-helper unregister >/dev/null 2>&1 \
+            || warn "the app could not unregister its helper; remove $LOCAL_APP_DIR_NAME from System Settings > Login Items if it stays."
+    fi
+    quit_local_app "$app"
+    launchctl bootout "gui/$(id -u)/$LOCAL_HELPER_LABEL" >/dev/null 2>&1 || true
+}
+
+# Removes what the old Local bundle id left under ~/Library: its Application
+# Support folder and the files macOS keeps for a bundle id. Every name carries
+# the old id whole (and none is a name of the current Local id or of Stable's).
+# Prints each path it removed, one per line.
+remove_legacy_local_data() {
+    local leaf path
+    while IFS= read -r leaf; do
+        case "$leaf" in
+            *"$LOCAL_LEGACY_BUNDLE_ID"*) ;;
+            *) continue ;;
+        esac
+        path="$HOME/Library/$leaf"
+        if [ -e "$path" ] || [ -L "$path" ]; then
+            rm -rf "$path"
+            printf '%s\n' "$path"
+        fi
+    done < <(printf '%s\n' "Application Support/$LOCAL_LEGACY_BUNDLE_ID"; library_leaves "$LOCAL_LEGACY_BUNDLE_ID")
+}
+
+# Clears the permissions macOS granted the old bundle id (best effort): that
+# app is gone, so the rows would only linger in System Settings.
+clear_legacy_local_permissions() {
+    command -v tccutil >/dev/null 2>&1 || return 0
+    tccutil reset All "$LOCAL_LEGACY_BUNDLE_ID" >/dev/null 2>&1 || true
 }
 
 # --- Where Local may write -----------------------------------------------------

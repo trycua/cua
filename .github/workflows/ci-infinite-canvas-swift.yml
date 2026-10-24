@@ -10,32 +10,19 @@ name: "CI: infinite-canvas (Swift)"
 #
 # The macOS build is 28 to 33 minutes, so a pull request runs it only when
 # something it compiles or reads changes: the sample, the Swift packages, the
-# SDK crate the binding is generated from, and the cursor theme (the map and
-# the reasons are in .github/scripts/ci_swift_samples_scope.py). Rust-internal
+# SDK crate the binding is generated from, the composite actions it runs and
+# the cursor theme (the map and the reasons are in
+# .github/scripts/ci_swift_samples_scope.py). There is no event-level `paths:`
+# filter: the cheap ubuntu `scope` job always runs and decides, so the `ci:full`
+# label, every push to main and the nightly schedule reach it. Rust-internal
 # changes that leave the binding alone are covered by the full run on every
-# push to main and by the nightly schedule. The `ci:full` label, release
-# pull requests, manual runs, pushes and the schedule always build.
+# push to main and by the nightly schedule. Release-please branches skip the
+# macOS job as they always have.
 
 on:
   pull_request:
-    paths:
-      - "examples/infinite-canvas-swift/**"
-      - "libs/cua/**"
-      - "libs/spaces-sdk-swift/**"
-      - "libs/spaces-app-swift/**"
-      - "libs/cua-driver/rust/crates/cursor-overlay/assets/**"
-      - ".github/scripts/ci_swift_samples_scope.py"
-      - ".github/workflows/ci-infinite-canvas-swift.yml"
   push:
     branches: [main]
-    paths:
-      - "examples/infinite-canvas-swift/**"
-      - "libs/cua/**"
-      - "libs/spaces-sdk-swift/**"
-      - "libs/spaces-app-swift/**"
-      - "libs/cua-driver/rust/crates/cursor-overlay/assets/**"
-      - ".github/scripts/ci_swift_samples_scope.py"
-      - ".github/workflows/ci-infinite-canvas-swift.yml"
   # Drift check: the full build on main, whatever changed.
   schedule:
     - cron: "37 5 * * *"
@@ -73,7 +60,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
-          HEAD_REF: ${{ github.head_ref }}
           LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -83,7 +69,9 @@ jobs:
           python3 .github/scripts/ci_swift_samples_scope.py check-manifests infinite-canvas
           files=""
           if [[ "$EVENT" == pull_request ]]; then
-            files=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --jq '.[].filename')
+            # Both names of a renamed file: moving a dependency out of a mapped
+            # directory is still a change to the dependency.
+            files=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --jq '.[] | .filename, (.previous_filename // empty)')
           fi
           python3 .github/scripts/ci_swift_samples_scope.py scope infinite-canvas <<< "$files" | tee -a "$GITHUB_STEP_SUMMARY"
 

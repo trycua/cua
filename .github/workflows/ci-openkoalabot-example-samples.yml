@@ -9,41 +9,20 @@ name: "CI: openkoalabot-example (TypeScript and Swift)"
 #
 # The macOS Swift build is 28 minutes, so a pull request runs it only when
 # something it compiles or reads changes: the sample, the files its tests read,
-# the Swift packages and the SDK crate the binding is generated from (the map
-# and the reasons are in .github/scripts/ci_swift_samples_scope.py).
-# Rust-internal changes that leave the binding alone are covered by the full run
-# on every push to main and by the nightly schedule. The `ci:full` label,
-# release pull requests, manual runs, pushes and the schedule always build. The
-# TypeScript job is not scoped here.
+# the Swift packages, the SDK crate the binding is generated from and the
+# composite actions it runs (the map and the reasons are in
+# .github/scripts/ci_swift_samples_scope.py). There is no event-level `paths:`
+# filter: the cheap ubuntu `scope` job always runs and decides, so the `ci:full`
+# label, every push to main and the nightly schedule reach it. Rust-internal
+# changes that leave the binding alone are covered by the full run on every
+# push to main and by the nightly schedule. Release-please branches skip both
+# jobs as they always have. The TypeScript job keeps the trigger paths this
+# workflow had before; the scope job evaluates them too.
 
 on:
   pull_request:
-    paths:
-      - "examples/openkoalabot-example-ts/**"
-      - "examples/openkoalabot-example-swift/**"
-      - "examples/openkoalabot-example-scenario/**"
-      - "libs/cua/**"
-      - "libs/spaces-sdk-swift/**"
-      - "libs/spaces-app-swift/**"
-      - "libs/images/sandbox-images.json"
-      - "docs/content/docs/spaces/guides/**"
-      - "docs/content/docs/spaces/examples/**"
-      - ".github/scripts/ci_swift_samples_scope.py"
-      - ".github/workflows/ci-openkoalabot-example-samples.yml"
   push:
     branches: [main]
-    paths:
-      - "examples/openkoalabot-example-ts/**"
-      - "examples/openkoalabot-example-swift/**"
-      - "examples/openkoalabot-example-scenario/**"
-      - "libs/cua/**"
-      - "libs/spaces-sdk-swift/**"
-      - "libs/spaces-app-swift/**"
-      - "libs/images/sandbox-images.json"
-      - "docs/content/docs/spaces/guides/**"
-      - "docs/content/docs/spaces/examples/**"
-      - ".github/scripts/ci_swift_samples_scope.py"
-      - ".github/workflows/ci-openkoalabot-example-samples.yml"
   # Drift check: the full build on main, whatever changed.
   schedule:
     - cron: "53 5 * * *"
@@ -77,7 +56,8 @@ env:
 
 jobs:
   typescript:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    needs: changes
+    if: ${{ needs.changes.outputs.typescript == 'true' && !startsWith(github.head_ref, 'release-please--branches--') }}
     name: openkoalabot-example-ts (npm test)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -139,6 +119,7 @@ jobs:
       pull-requests: read
     outputs:
       run: ${{ steps.scope.outputs.run }}
+      typescript: ${{ steps.scope.outputs.typescript }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -147,7 +128,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
-          HEAD_REF: ${{ github.head_ref }}
           LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -157,7 +137,9 @@ jobs:
           python3 .github/scripts/ci_swift_samples_scope.py check-manifests openkoalabot
           files=""
           if [[ "$EVENT" == pull_request ]]; then
-            files=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --jq '.[].filename')
+            # Both names of a renamed file: moving a dependency out of a mapped
+            # directory is still a change to the dependency.
+            files=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --jq '.[] | .filename, (.previous_filename // empty)')
           fi
           python3 .github/scripts/ci_swift_samples_scope.py scope openkoalabot <<< "$files" | tee -a "$GITHUB_STEP_SUMMARY"
 

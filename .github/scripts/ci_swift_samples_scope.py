@@ -11,8 +11,12 @@ Usage:
     ci_swift_samples_scope.py scope <lane>             changed paths on stdin
     ci_swift_samples_scope.py check-manifests <lane>   run from the repo root
 
-`scope` writes GitHub Actions outputs (`run`, `reason`). `check-manifests`
-fails when the dependency map below no longer matches the repository.
+The workflows have no event-level `paths:` filter: a cheap ubuntu scope job is
+the only thing that always runs, so the `ci:full` label, pushes to main and the
+nightly schedule reach it whatever changed. `scope` writes GitHub Actions
+outputs (`run`, plus `typescript` for the openkoalabot lane, and `reason`).
+`check-manifests` fails when the dependency map below no longer matches the
+repository.
 
 What a sample depends on
 ------------------------
@@ -26,6 +30,7 @@ What a sample depends on
   against the wire contract in libs/cua/proto and crates/cua-proto. The Rust
   workspace manifest, lockfile, toolchain pin and cargo config decide how it is
   built, and stage-uniffi-library.mjs stages it.
+* The composite actions both builds run: setup-protoc and rust-cache.
 
 What is deliberately not a trigger: the rest of cua-sdk's Rust closure (daemon,
 vmm, spaces, host, ...). A change there that alters the Swift API must
@@ -34,9 +39,14 @@ ci-cua-sdk.yml enforces on every libs/cua pull request, and that path is a
 trigger here. A change that only alters runtime behavior is covered by the
 full run on every push to main and the nightly schedule.
 
-Always the full build: any event other than pull_request, a release-please
-branch, a pull request labelled `ci:full`, a change to the workflow or this
-script, and a file listing that is empty or may be truncated (fail closed).
+Always the full build: any event other than pull_request (every push to main,
+the schedule, a manual run), a pull request labelled `ci:full`, a change to the
+workflow or this script, and a file listing that is empty or may be truncated
+(fail closed). The file listing carries both names of a renamed file, so moving
+a dependency out of a mapped directory still counts. Release-please branches
+are skipped by the macOS jobs' own `if`, as before this scope existed;
+ci-cua-sdk.yml and e2b-bindings.yml run the Swift binding on release pull
+requests.
 """
 
 from __future__ import annotations
@@ -66,7 +76,12 @@ SDK_BINDING = (
     "libs/cua/rust-toolchain.toml",
     "libs/cua/.cargo/",
 )
-COMMON = SWIFT_PACKAGES + SDK_BINDING + (".github/scripts/ci_swift_samples_scope.py",)
+# Composite actions both builds run.
+ACTIONS = (
+    ".github/actions/setup-protoc/",
+    ".github/actions/rust-cache/",
+)
+COMMON = SWIFT_PACKAGES + SDK_BINDING + ACTIONS + (".github/scripts/ci_swift_samples_scope.py",)
 
 LANES = {
     "infinite-canvas": {
@@ -88,6 +103,23 @@ LANES = {
             "libs/images/sandbox-images.json",
             ".github/workflows/ci-openkoalabot-example-samples.yml",
         ),
+        # The workflow's TypeScript job (Linux) is not scoped by this change:
+        # it keeps the trigger paths the workflow had before, now evaluated
+        # here because the workflow has no event-level filter.
+        "extra": {
+            "typescript": (
+                "examples/openkoalabot-example-ts/",
+                "examples/openkoalabot-example-swift/",
+                "libs/cua/",
+                "libs/spaces-sdk-swift/",
+                "libs/spaces-app-swift/",
+                "docs/content/docs/spaces/guides/",
+                "docs/content/docs/spaces/examples/",
+                *ACTIONS,
+                ".github/scripts/ci_swift_samples_scope.py",
+                ".github/workflows/ci-openkoalabot-example-samples.yml",
+            ),
+        },
     },
 }
 
@@ -99,15 +131,30 @@ PATH_DEPENDENCY = re.compile(r'\.package\s*\([^)]*?\bpath:\s*"([^"]+)"')
 FILE_LISTING_LIMIT = 3000
 
 
+def matches(inputs: tuple[str, ...], path: str) -> bool:
+    return any(path.startswith(i) if i.endswith("/") else path == i for i in inputs)
+
+
 def covered(lane: str, path: str) -> bool:
-    return any(path.startswith(i) if i.endswith("/") else path == i for i in LANES[lane]["inputs"])
+    return matches(LANES[lane]["inputs"], path)
 
 
-def decide(lane: str, files: list[str], event: str, head_ref: str = "", labels: tuple[str, ...] = ()) -> tuple[bool, str]:
+def decide(
+    lane: str,
+    files: list[str],
+    event: str,
+    labels: tuple[str, ...] = (),
+    inputs: tuple[str, ...] | None = None,
+) -> tuple[bool, str]:
+    """`files` holds every changed path, and for a rename both the old and the new name.
+
+    `inputs` replaces the lane's dependency map for a job that keeps its old
+    trigger paths; markdown only counts as inert for the Swift builds.
+    """
+    inert = INERT if inputs is None else re.compile(r"(?!)")
+    inputs = LANES[lane]["inputs"] if inputs is None else inputs
     if event != "pull_request":
         return True, f"{event} runs the full build"
-    if head_ref.startswith("release-please--"):
-        return True, "release PR runs the full build"
     if "ci:full" in labels:
         return True, "ci:full label"
     if not files:
@@ -115,7 +162,7 @@ def decide(lane: str, files: list[str], event: str, head_ref: str = "", labels: 
     if len(files) >= FILE_LISTING_LIMIT:
         return True, "file listing may be truncated, failing closed"
     for f in files:
-        if not INERT.match(f) and covered(lane, f):
+        if not inert.match(f) and matches(inputs, f):
             return True, f"{f} is a dependency of the sample"
     return False, "no changed path is a dependency of the sample"
 
@@ -174,10 +221,12 @@ def main(argv: list[str]) -> int:
             print(f"::error::ci_swift_samples_scope.py: {p}")
         return 1 if problems else 0
     files = [line.strip() for line in sys.stdin if line.strip()]
-    run, reason = decide(
-        lane, files, os.environ.get("EVENT", "pull_request"), os.environ.get("HEAD_REF", ""), labels_from_env()
-    )
-    emit(run=str(run).lower(), reason=reason)
+    event, labels = os.environ.get("EVENT", "pull_request"), labels_from_env()
+    run, reason = decide(lane, files, event, labels)
+    outputs = {"run": str(run).lower(), "reason": reason}
+    for job, inputs in LANES[lane].get("extra", {}).items():
+        outputs[job] = str(decide(lane, files, event, labels, inputs)[0]).lower()
+    emit(**outputs)
     return 0
 
 

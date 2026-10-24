@@ -1222,9 +1222,7 @@ impl AgentSetup {
                         out.push(o);
                         continue;
                     }
-                    if let Err(e) =
-                        self.remove_mcp(&mut state, a, m, &file, &name, opts.dry_run, &mut o)
-                    {
+                    if let Err(e) = self.remove_mcp(&mut state, a, m, &name, opts.dry_run, &mut o) {
                         o.change = Change::Failed;
                         o.detail = e.to_string();
                     }
@@ -1317,11 +1315,12 @@ impl AgentSetup {
         state: &mut State,
         a: &AgentSpec,
         m: &McpSpec,
-        file: &Path,
         name: &str,
         dry_run: bool,
         o: &mut Outcome,
     ) -> Result<()> {
+        let file = self.mcp_file(m);
+        let file = file.as_path();
         // `cua`'s record may carry another name (older states).
         let key = if state.mcp.get(file).is_some_and(|r| r.name == name) {
             MCP_SERVER_NAME

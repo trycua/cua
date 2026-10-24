@@ -32,8 +32,8 @@ fn strings(v: &serde_json::Value, key: &str) -> Vec<String> {
 /// the top level in the hand-written VM manifests.
 fn claims(rel: &str) -> Manifest {
     let path = repo_root().join(rel);
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let text =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     let doc: serde_json::Value =
         serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {rel}: {e}"));
     let claims = doc.get("claims").unwrap_or(&doc);

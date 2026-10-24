@@ -140,6 +140,8 @@ pub struct TreeWalkResult {
     pub nodes: Vec<AXNode>,
     /// True when the walk was cut short by its node or time budget.
     pub truncated: bool,
+    /// True when nodes past `max_depth` were omitted, independently of budget `truncated`.
+    pub depth_truncated: bool,
     /// Why and where the walk stopped (see [`cua_driver_core::walk_budget`]).
     pub walk: WalkOutcome,
     /// Whether the requested `window_id` actually resolved to an AX surface,
@@ -241,6 +243,7 @@ fn walk_tree_with_web_content(
     let mut nodes: Vec<AXNode> = Vec::new();
     let mut lines: Vec<(usize, String)> = Vec::new(); // (depth, line)
     let mut index_counter = 0usize;
+    let mut depth_truncated = false;
     let mut window_scope: Option<WindowScope> = None;
 
     unsafe {
@@ -250,6 +253,7 @@ fn walk_tree_with_web_content(
                 tree_markdown: String::new(),
                 nodes,
                 truncated: false,
+                depth_truncated: false,
                 walk: budget.outcome(),
                 // No application AX element at all, so a requested window
                 // certainly did not resolve.
@@ -322,6 +326,7 @@ fn walk_tree_with_web_content(
                 &mut lines,
                 &mut index_counter,
                 &mut budget,
+                &mut depth_truncated,
                 max_depth,
                 include_web_content,
             );
@@ -351,6 +356,7 @@ fn walk_tree_with_web_content(
         tree_markdown,
         nodes,
         truncated: walk.truncated(),
+        depth_truncated,
         walk,
         window_scope,
     }
@@ -438,10 +444,12 @@ unsafe fn walk_element(
     lines: &mut Vec<(usize, String)>,
     counter: &mut usize,
     budget: &mut WalkBudget,
+    depth_truncated: &mut bool,
     max_depth: usize,
     include_web_content: bool,
 ) {
     if depth > max_depth {
+        *depth_truncated = true;
         return;
     }
     // Node and time budget: a refused node is counted as discovered but not
@@ -477,6 +485,7 @@ unsafe fn walk_element(
                 lines,
                 counter,
                 budget,
+                depth_truncated,
                 max_depth,
                 include_web_content,
             );
@@ -544,6 +553,7 @@ unsafe fn walk_element(
                 lines,
                 counter,
                 budget,
+                depth_truncated,
                 max_depth,
                 include_web_content,
             );
@@ -680,6 +690,7 @@ unsafe fn walk_element(
             lines,
             counter,
             budget,
+            depth_truncated,
             max_depth,
             include_web_content,
         );

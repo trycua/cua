@@ -2,6 +2,8 @@ import argparse
 from pathlib import Path
 import re
 
+CONTRACT_LINE = "Contract version "
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Synchronize SDK release documentation.")
@@ -13,7 +15,14 @@ def main(argv: list[str] | None = None) -> int:
              for path in (args.root / "docs/content/docs" / folder).rglob("*.mdx")]
     for path in [*paths, args.root / "scripts/docs-generators/cli-specs/cua.json"]:
         content = path.read_text()
-        updated = re.sub(r"(?<![\d.])" + re.escape(args.previous) + r"(?!\.?\d)", version, content)
+        # The MCP contract has its own version (CONTRACT_VERSION in
+        # cua-spaces-contract), which the generated reference prints on a
+        # "Contract version" line; it does not follow the SDK release.
+        updated = "".join(
+            line if line.startswith(CONTRACT_LINE) else
+            re.sub(r"(?<![\d.])" + re.escape(args.previous) + r"(?!\.?\d)", version, line)
+            for line in content.splitlines(keepends=True)
+        )
         path.write_text(updated)
     return 0
 

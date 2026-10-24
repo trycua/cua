@@ -14,12 +14,12 @@ exclusive: a change that touches two areas runs both.
 
 | You changed | Workflows that run |
 |---|---|
-| `libs/cua/**` (Rust core: SDK, daemon, CLI, spaces crates) | CI: cua SDK (rust lint, rust test, spaces e2e, bindings drift, python/node/browser smoke, kotlin; macOS and Windows legs with the `ci:full` label), CI: Cua Spaces (frontend + bundles), CI: Test Python, CI: openkoalabot-example (TypeScript and Tauri; its Swift job only for the rows below), CI: cua contrib providers, CI: cua your-cloud providers, CI: Check Docs |
+| `libs/cua/**` (Rust core: SDK, daemon, CLI, spaces crates) | CI: cua SDK (rust lint, rust test, spaces e2e, bindings drift, python/node/browser smoke, kotlin; macOS and Windows legs with the `ci:full` label), CI: Cua Spaces (frontend + Rust tests; installer bundles only with the `ci:full` label), CI: Test Python, CI: openkoalabot-example (TypeScript and Tauri; its Swift job only for the rows below), CI: cua contrib providers, CI: cua your-cloud providers, CI: Check Docs |
 | `libs/cua/swift/**`, `libs/spaces-sdk-swift/**`, `libs/spaces-app-swift/**`, `libs/cua/crates/cua-sdk/**`, `libs/cua/proto/**`, the Rust workspace manifest, lockfile and toolchain pin, `.github/actions/setup-protoc/**`, `.github/actions/rust-cache/**`, or the Swift samples (`examples/infinite-canvas-swift/**`, `examples/openkoalabot-example-swift/**` and the files its tests read) | CI: infinite-canvas (Swift) and the Swift job of CI: openkoalabot-example, each 28 to 33 macOS minutes. The full list is in `.github/scripts/ci_swift_samples_scope.py`. Other `libs/cua/**` changes skip them. Both workflows start a cheap scope job on every pull request and push; it decides, so main, the nightly schedule and the `ci:full` label build them every time. Release-please branches skip them as before |
 | `libs/cua-spacesd/**` | CI: cua-spacesd (3 OS + relay e2e), CI: Image doctor, CD: Image linux (build and gates only), CI: Images on the current cua-spacesd, openkoalabot (Tauri) |
 | `libs/cua-driver/**` | CI: Rust Linux / macOS / Windows unit, CI: Nix Linux Rust source, CI: cua-driver contract clients, driver quick feedback, Image doctor, CI: cua-spacesd |
-| `apps/cua-spaces/src/**` (web frontend only) | CI: Cua Spaces: vitest + typecheck and the Linux bundle. The Windows and macOS bundles run only when something other than `src/`, `public/`, `e2e/`, `tests/`, `docs/` or markdown changed (the web assets are packed identically on every OS) |
-| `apps/cua-spaces/src-tauri/**` or anything native | CI: Cua Spaces with all three bundles |
+| `apps/cua-spaces/src/**` (web frontend only) | CI: Cua Spaces: vitest + typecheck and the Rust command-layer tests. The installer bundles (a Tauri app that does not ship) are not built on pull requests; add the `ci:full` label to build them, and then the Windows and macOS bundles run only when something other than `src/`, `public/`, `e2e/`, `tests/`, `docs/` or markdown changed |
+| `apps/cua-spaces/src-tauri/**` or anything native | CI: Cua Spaces (Rust command-layer tests compile and test the Tauri crate; all three bundles with the `ci:full` label) |
 | `apps/cua-spaces-macos/**` | CI: Cua Spaces for macOS (SwiftUI) |
 | `apps/cua-spaces-desktop/**` | CI: Cua Spaces web UI and Electron shell |
 | `docs/**` | CI: Check Docs Links, Docs: compile lanes, Docs page tests |
@@ -29,7 +29,9 @@ exclusive: a change that touches two areas runs both.
 | markdown, comments only | metadata checks only (Release metadata, SPDX, link checks) |
 
 Main runs every workflow above on its own paths too (the Rust ones warm the
-build cache, below), and the nightly schedules cover the rest.
+build cache, below), and the nightly schedules cover the rest. The Cua Spaces
+Tauri installer bundles are the one thing pull requests skip by default: they
+build on main pushes, manual runs and `ci:full` pull requests.
 
 ## Required checks
 

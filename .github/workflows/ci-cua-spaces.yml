@@ -1,16 +1,22 @@
 name: "CI: Cua Spaces"
 
-# Pull-request builds of the Cua Spaces app: frontend tests, the Rust command
-# layer tests, and unsigned installer bundles on the three desktop OSes
-# (macOS dmg, Windows NSIS + MSI, Linux deb + AppImage). No signing or
+# Builds of the Tauri Cua Spaces app (apps/cua-spaces): frontend tests, the
+# Rust command layer tests, and unsigned installer bundles on the three desktop
+# OSes (macOS dmg, Windows NSIS + MSI, Linux deb + AppImage). No signing or
 # notarization secrets are used; updater artifacts (which need the updater
 # signing key) are turned off with a config override. The signed macOS
 # release stays in cd-cua-spaces.yml.
 #
-# The installer bundles take 60 to 85 minutes, so a pull request builds them
-# only when it changes something they package (see the `changes` job). Every
-# pull request still runs vitest, typecheck and the Rust command-layer tests
-# (`rust`). A manual run (workflow_dispatch) always builds the bundles.
+# This app is not what ships: stable releases are the SwiftUI app on macOS
+# and the Electron app on Windows and Linux (see cd-cua-spaces.yml). The
+# installer bundles take 60 to 100 minutes cold, so a pull request does not
+# build them. Every pull request still runs vitest, typecheck and the Rust
+# command-layer tests (`rust`), which compile the Tauri crate and test it.
+# The bundles build on every push to main that touches the paths above, on a
+# manual run (workflow_dispatch), and on a pull request that carries the
+# `ci:full` label when it is opened or pushed (add the label, then push or
+# reopen), limited to PRs that change something the bundles package (see the
+# `changes` job).
 #
 # Installer mode (first-run onboarding preselection) is exercised by the
 # bundles themselves:
@@ -193,10 +199,12 @@ jobs:
   bundle:
     name: bundle (${{ matrix.name }})
     # Runs in parallel with frontend (no needs on it). Skipped (reported as
-    # skipped, which ci-gate accepts) on pull requests that change nothing the
-    # installers package, and on release-please PRs (fast checks only).
+    # skipped, which ci-gate accepts) on pull requests unless they carry the
+    # `ci:full` label and change something the installers package, and on
+    # release-please PRs (fast checks only). Main pushes, manual runs and
+    # `ci:full` PRs build them.
     needs: changes
-    if: ${{ needs.changes.outputs.bundle == 'true' && !startsWith(github.head_ref, 'release-please--branches--') }}
+    if: ${{ needs.changes.outputs.bundle == 'true' && !startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
     strategy:
       fail-fast: false
       matrix:

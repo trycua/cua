@@ -347,8 +347,10 @@ run() {
         export HOME="$FAKE_HOME" PATH="$SHIMS:$PATH" CUA_LSREGISTER="$SHIMS/lsregister" \
             SHIM_LOG SHIM_STATE STUB_LOG FAKE_BUILD_LOG="$BUILD_LOG" FAKE_STUB="$STUB_BIN" \
             FAKE_DYLIB="$STUB_DYLIB" LUME_LOG CARGO_LOG WEB_LOG FAKE_CHECKOUT_DAEMON="$DAEMON_CHECKOUT" FAKE_PINNED_DAEMON="$DAEMON_PINNED"
+        # CI is set on a CI runner and not on a Mac. The web UI check expects
+        # CI=true only where install-local.sh sets it (pnpm install), so drop it.
         unset SUDO_USER CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN CUA_DRIVER_LOCAL_SIGNING_IDENTITY CUA_CHANNEL CUA_HOME CUA_ENV \
-            CARGO_TARGET_DIR CUA_SPACESD_BIN CUA_WEBUI_DIST
+            CARGO_TARGET_DIR CUA_SPACESD_BIN CUA_WEBUI_DIST CI
         "$@" < "$STDIN_FILE" 2>&1
     )"
     RC=$?

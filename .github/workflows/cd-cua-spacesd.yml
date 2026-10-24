@@ -413,6 +413,10 @@ jobs:
         if: vars.AZURE_CLIENT_ID != '' && vars.AZURE_ARTIFACT_SIGNING_ENDPOINT != ''
         uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
         with:
+          # The action caches its modules under a per-runner absolute path; x64 and
+          # arm64 Windows runners use different drives, so a shared cache restores
+          # an unloadable module (Invoke-ArtifactSigning not found). Install fresh.
+          cache-dependencies: false
           endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
           signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
           certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}

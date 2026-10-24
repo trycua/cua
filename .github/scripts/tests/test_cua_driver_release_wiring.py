@@ -1233,5 +1233,28 @@ fi
         self.assertEqual(workflow.count('libxkbcommon"'), 2)
 
 
+    def test_artifact_signing_never_shares_its_dependency_cache(self) -> None:
+        # x64 and arm64 Windows runners lay out drives differently, so the
+        # action's shared module cache restores an unloadable module there.
+        uses = "uses: azure/artifact-signing-action@"
+        for path in sorted((REPO_ROOT / ".github/workflows").glob("*.yml")):
+            lines = path.read_text().split("\n")
+            for index, line in enumerate(lines):
+                if uses not in line:
+                    continue
+                indent = len(line) - len(line.lstrip())
+                block = []
+                for following in lines[index + 1 :]:
+                    stripped = following.strip()
+                    depth = len(following) - len(following.lstrip())
+                    if stripped and (depth < indent or stripped.startswith("- ")):
+                        break
+                    block.append(following.strip())
+                self.assertIn(
+                    "cache-dependencies: false",
+                    block,
+                    f"{path.name}:{index + 1} must set cache-dependencies: false",
+                )
+
 if __name__ == "__main__":
     unittest.main()

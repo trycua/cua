@@ -37,11 +37,6 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
-      - uses: Swatinem/rust-cache@a8e6f3f1e04b2b2b9a4b0f4e6b4a0b0b4a0b0b0b # v2
-        with:
-          workspaces: libs/cua-driver/rust
-          key: patched-driver
-
       - name: Build cua-driver (release, x86_64-pc-windows-msvc)
         shell: pwsh
         working-directory: libs/cua-driver/rust

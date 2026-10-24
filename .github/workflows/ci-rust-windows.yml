@@ -82,10 +82,15 @@ jobs:
       # 7.8 to 11.9 minutes per run) and relinked the driver. With one set,
       # the build step is the only build and each test step is a cargo-nextest
       # filter over it.
+      # Two crates keep their own `cargo test` steps: cua-driver-sdk, the
+      # published embedding boundary, so its tests build with only its own
+      # features; and cua-driver-uia, whose binary embeds uiAccess=true so
+      # Windows refuses to run it unelevated, even to list its tests (nextest
+      # lists every binary in the set).
       DRIVER_PACKAGES: >-
         -p cua-driver -p cua-driver-e2e -p cua-driver-core -p cua-driver-sdk
         -p cua-driver-testkit -p cursor-overlay -p cursor-theme-cli
-        -p platform-windows -p cua-driver-uia
+        -p platform-windows
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
@@ -110,7 +115,9 @@ jobs:
         # below run tests from this build.
         run: |
           $pkgs = $env:DRIVER_PACKAGES.Trim() -split '\s+'
-          cargo nextest run @pkgs --all-targets --no-run --locked
+          cargo test @pkgs --all-targets --no-run --locked
+          if ($LASTEXITCODE -ne 0) { throw "building the driver test targets failed with exit $LASTEXITCODE" }
+          cargo test -p cua-driver-uia --all-targets --no-run --locked
       - name: Run complete desktop-independent core tests
         working-directory: libs/cua-driver/rust
         run: |
@@ -235,7 +242,7 @@ jobs:
           # The production binary embeds uiAccess=true and Windows correctly
           # refuses to launch it unelevated. Run the same pure security policy
           # from the manifest-free library test target.
-          cargo nextest run @pkgs --all-targets --locked --no-tests=fail -E 'package(cua-driver-uia) & kind(lib) & test(authorization_tests::)'
+          cargo test -p cua-driver-uia --lib authorization_tests:: --locked
           if ($LASTEXITCODE -ne 0) { throw "UIAccess authorization tests failed with exit $LASTEXITCODE" }
       - name: Run full SDK unit suite in an interactive runner session
         if: steps.runner-session.outputs.session_id != '0'

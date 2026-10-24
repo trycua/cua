@@ -380,7 +380,9 @@ jobs:
         working-directory: libs/cua/python
         run: |
           VERSION="${{ needs.version.outputs.version }}"
-          sed -i.bak "s/^version = .*/version = \"$VERSION\"/" pyproject.toml && rm pyproject.toml.bak
+          # The `cua` wheel depends on the `cua-cli` wheel (cli/) at its version.
+          sed -i.bak -e "s/^version = .*/version = \"$VERSION\"/" -e "s/\"cua-cli==[^\"]*\"/\"cua-cli==$VERSION\"/" pyproject.toml && rm pyproject.toml.bak
+          sed -i.bak "s/^version = .*/version = \"$VERSION\"/" cli/pyproject.toml && rm cli/pyproject.toml.bak
           sed -i.bak "s/^__version__ = .*/__version__ = \"$VERSION\"/" src/cua/__init__.py && rm src/cua/__init__.py.bak
           python -m pip install --upgrade pip build hatchling
           DIR="../../../native/native-${{ matrix.native }}"
@@ -391,15 +393,39 @@ jobs:
             A=x86_64; [ "${{ matrix.arch }}" = arm64 ] && A=aarch64
             SPACESD=(--spacesd "$DIR/cua-spacesd-linux-$A")
           fi
+          # Two wheels: `cua` (the SDK library, plus the static cua-spacesd
+          # on Linux) and its dependency `cua-cli` (the `cua` binary).
           python build_wheel.py --library "$DIR/${{ matrix.lib }}" --cli "$DIR/$EXE" "${SPACESD[@]}" --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
-      - name: Check the wheel ships the static cua-spacesd next to cua
+      # PyPI rejects a file over 100 MB (HTTP 400) only at upload, after the
+      # whole build: fail here, with margin, instead.
+      - name: Check every wheel is under 95 MB
+        run: |
+          limit=$((95 * 1024 * 1024)); n=0
+          for whl in libs/cua/python/dist/*.whl; do
+            n=$((n + 1))
+            size=$(wc -c < "$whl" | tr -d ' ')
+            echo "$(basename "$whl"): $size bytes"
+            if [ "$size" -gt "$limit" ]; then
+              echo "::error::$(basename "$whl") is $size bytes, over the 95 MB guard (PyPI's per-file limit is 100 MB)"
+              exit 1
+            fi
+          done
+          test "$n" = 2
+      - name: Check the wheel ships the static cua-spacesd in cua/bin/
         if: matrix.platform == 'linux'
         run: .github/scripts/check_static_spacesd_packaged.sh libs/cua/python/dist
       - name: Import the wheel
         working-directory: libs/cua/python
         run: |
-          python -m pip install --force-reinstall dist/*.whl
           VERSION="${{ needs.version.outputs.version }}"
+          # The SDK alone (--no-deps): the `cua` command says how to get the CLI.
+          python -m venv "$RUNNER_TEMP/sdk-only"
+          py="$RUNNER_TEMP/sdk-only/bin/python"; [ -x "$py" ] || py="$RUNNER_TEMP/sdk-only/Scripts/python.exe"
+          "$py" -m pip install --no-deps dist/cua-[0-9]*.whl
+          set +e; hint="$(cd / && "$py" -c "import cua._cli, sys; sys.exit(cua._cli.main())" 2>&1)"; code=$?; set -e
+          echo "$hint"
+          test "$code" = 127 && grep -qF "pip install \"cua-cli==$VERSION\"" <<<"$hint"
+          python -m pip install --force-reinstall dist/*.whl
           cd / && python -c "import cua, sys; v = cua.cua_sdk_version(); print(v); cua.embedded(); sys.exit(v != sys.argv[1])" "$VERSION"
           test "$(cua --version | tr -d '\r')" = "cua $VERSION"
       - uses: actions/upload-artifact@v4

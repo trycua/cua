@@ -177,7 +177,7 @@ pub fn sweep_temps(dir: &Path, depth: usize) -> std::io::Result<(u64, u64)> {
         // what the sweep wants, so it is not an error.
         let meta = match entry.metadata() {
             Ok(m) => m,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) if temp_vanished(&e, &entry.path()) => continue,
             Err(e) => return Err(e),
         };
         if meta.is_dir() {
@@ -194,7 +194,7 @@ pub fn sweep_temps(dir: &Path, depth: usize) -> std::io::Result<(u64, u64)> {
                     files += 1;
                     bytes += meta.len();
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) if temp_vanished(&e, &entry.path()) => {}
                 Err(e) => return Err(e),
             }
         }
@@ -728,6 +728,34 @@ fn probe_dir(dir: &Path) -> Result<Duration, String> {
     result.map_err(|e| format!("write probe: {e}"))?;
     removed.map_err(|e| format!("write probe cleanup: {e}"))?;
     Ok(start.elapsed())
+}
+
+/// Whether a temp-file stat or remove failed only because the file is gone.
+///
+/// The sweep races the writers that rename or remove their own temps, and a
+/// file that vanished is what the sweep wants. On Windows a file whose last
+/// handle has not closed yet is "delete pending": opening or removing it
+/// fails with `PermissionDenied` (os error 5) until it disappears. There it
+/// counts as gone once the path stops resolving within a short wait; a
+/// `PermissionDenied` on a file that stays is still an error.
+pub(crate) fn temp_vanished(err: &std::io::Error, path: &std::path::Path) -> bool {
+    match err.kind() {
+        std::io::ErrorKind::NotFound => true,
+        #[cfg(windows)]
+        std::io::ErrorKind::PermissionDenied => {
+            for _ in 0..50 {
+                match std::fs::symlink_metadata(path) {
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => return true,
+                    Ok(_) | Err(_) => std::thread::sleep(std::time::Duration::from_millis(10)),
+                }
+            }
+            false
+        }
+        _ => {
+            let _ = path;
+            false
+        }
+    }
 }
 
 #[cfg(test)]

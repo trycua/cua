@@ -66,14 +66,16 @@ fn identifiers(c: CuaChannel) -> Vec<(String, String)> {
     ids
 }
 
-/// Every port a channel listens on, as `proto:port`. (QUIC and the mesh
-/// media port are both UDP.)
+/// Every port a channel listens on, as `proto:port`. The mesh media port
+/// is left out: it is a port of the mesh's own in-process network, not a
+/// socket of the operating system, so two channels cannot collide on it,
+/// and it is 3212 for both by design (guest Spaces and older cua-spacesd
+/// builds fix it there; see `Ports::mesh_udp`).
 fn ports(c: CuaChannel) -> BTreeSet<String> {
     let p = c.ports();
     [
         format!("tcp:{}", p.tcp),
         format!("udp:{}", p.quic),
-        format!("udp:{}", p.mesh_udp),
         format!("tcp:{}", c.lume_port()),
     ]
     .into_iter()
@@ -118,6 +120,15 @@ fn stable_and_local_launchd_labels_never_overlap() {
     // Each channel's own labels are distinct from one another.
     assert_eq!(stable.len(), 3);
     assert_eq!(local.len(), 3);
+}
+
+/// The one port the channels do share, on purpose: the mesh media UDP port
+/// lives on the mesh's own network (not the OS), and the peers dial 3212.
+#[test]
+fn the_mesh_media_port_is_shared_by_design() {
+    let (s, l) = (CuaChannel::Stable.ports(), CuaChannel::Local.ports());
+    assert_eq!((s.mesh_udp, l.mesh_udp), (3212, 3212));
+    assert!(s.tcp != l.tcp && s.quic != l.quic, "the OS ports differ");
 }
 
 #[test]

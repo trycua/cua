@@ -2369,8 +2369,16 @@ fn stopped_sharing_reason(e: &Error) -> Option<String> {
 /// local Space (2 vCPUs, 4 GiB).
 /// How this machine's daemon reaches the machine's own cua-spacesd (the
 /// host service): where it listens (the direct listener, `CUA_ENV_LISTEN`,
-/// else loopback on `CUA_ENV_PORT` or 3211) and its local env token.
+/// else loopback on `CUA_ENV_PORT` or the channel's port, 3211 or 3221 for
+/// Cua Spaces Local) and its local env token.
 fn host_spacesd(host: &Host) -> std::result::Result<cua_cluster::machine::HostSpacesd, String> {
+    host_spacesd_on(host, cua_home::channel::CuaChannel::current())
+}
+
+fn host_spacesd_on(
+    host: &Host,
+    channel: cua_home::channel::CuaChannel,
+) -> std::result::Result<cua_cluster::machine::HostSpacesd, String> {
     let listen = host
         .config()
         .ok()
@@ -2386,7 +2394,7 @@ fn host_spacesd(host: &Host) -> std::result::Result<cua_cluster::machine::HostSp
             let port = std::env::var("CUA_ENV_PORT")
                 .ok()
                 .and_then(|p| p.trim().parse::<u16>().ok())
-                .unwrap_or(cua_proto::SPACESD_DEFAULT_PORT);
+                .unwrap_or(channel.ports().tcp);
             format!("127.0.0.1:{port}")
         });
     // A listener on every interface is reached on loopback.
@@ -4359,6 +4367,31 @@ mod tests {
     }
 
     use super::*;
+
+    /// The daemon reaches its own host service on the channel's port:
+    /// Cua Spaces Local's is not Stable's 3211.
+    #[test]
+    fn the_daemon_reaches_its_host_spacesd_on_the_channels_port() {
+        use cua_home::channel::CuaChannel;
+        if std::env::var_os("CUA_ENV_LISTEN").is_some()
+            || std::env::var_os("CUA_ENV_PORT").is_some()
+        {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let host = Host::new(dir.path());
+        std::fs::create_dir_all(host.paths().env_token().parent().unwrap()).unwrap();
+        std::fs::write(host.paths().env_token(), "secret\n").unwrap();
+        let on = |channel| host_spacesd_on(&host, channel).unwrap();
+        assert_eq!(on(CuaChannel::Stable).url, "http://127.0.0.1:3211");
+        assert_eq!(on(CuaChannel::Local).url, "http://127.0.0.1:3221");
+        assert_eq!(on(CuaChannel::Local).token, "secret");
+        // The mesh media port is every channel's, by design: guest Spaces
+        // and older cua-spacesd serve it there, and it is not an OS port.
+        for channel in CuaChannel::ALL {
+            assert_eq!(channel.ports().mesh_udp, cua_mesh::MEDIA_UDP_PORT);
+        }
+    }
 
     /// What a create on a host reports to its caller, by elapsed minute,
     /// when the host call takes `call` and the host answers `ask`.

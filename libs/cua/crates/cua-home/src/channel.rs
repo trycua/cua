@@ -18,7 +18,7 @@
 //! | App helper            | `com.trycua.spaces.helper`                    | `com.trycua.spaces.local.helper`                 |
 //! | Helper spec           | `~/.cua/helper/service.json`                  | `~/.cua-local/helper/service.json`               |
 //! | Plain host runner     | `com.trycua.spacesd.host`                     | `com.trycua.spacesd.host.local`                  |
-//! | spacesd ports         | 3211 TCP, 3212 QUIC, mesh UDP 3212            | 3221 TCP, 3222 QUIC, mesh UDP 3222               |
+//! | spacesd ports         | 3211 TCP, 3212 QUIC, mesh UDP 3212            | 3221 TCP, 3222 QUIC, mesh UDP 3212 (shared)      |
 //! | URL scheme            | `cua://`                                      | `cua-local://`                                   |
 //! | Cua Volume            | `~/Cua Volume`                                | `~/Cua Volume Local`                             |
 //! | Lume                  | `lume`, `com.trycua.lume_daemon`, `:7777`, `~/.lume` | `lume-local`, `com.trycua.lume_daemon.local`, `:7787`, `~/.lume-local` |
@@ -79,7 +79,12 @@ pub struct Ports {
     pub tcp: u16,
     /// The spacesd QUIC port (`--quic-port`, UDP).
     pub quic: u16,
-    /// The mesh media UDP port (`cua-mesh`'s `MEDIA_UDP_PORT`).
+    /// The mesh media UDP port (`cua-mesh`'s `MEDIA_UDP_PORT`), 3212 for
+    /// every channel, by design. It is a port of the mesh's own in-process
+    /// network, not a socket of the operating system, so a Stable and a
+    /// Local host on one Mac never compete for it; and it must match what
+    /// the peers dial, which guest Spaces and older cua-spacesd builds
+    /// fix at 3212. (`--mesh-udp-port` stays an optional override.)
     pub mesh_udp: u16,
 }
 
@@ -402,7 +407,8 @@ impl CuaChannel {
         }
     }
 
-    /// The spacesd TCP and QUIC ports and the mesh media UDP port.
+    /// The spacesd TCP and QUIC ports, and the mesh media UDP port (the
+    /// same for both channels, see [`Ports::mesh_udp`]).
     pub fn ports(self) -> Ports {
         match self {
             Self::Stable => Ports {
@@ -413,7 +419,7 @@ impl CuaChannel {
             Self::Local => Ports {
                 tcp: 3221,
                 quic: 3222,
-                mesh_udp: 3222,
+                mesh_udp: 3212,
             },
         }
     }
@@ -870,7 +876,7 @@ mod tests {
             Ports {
                 tcp: 3221,
                 quic: 3222,
-                mesh_udp: 3222
+                mesh_udp: 3212
             }
         );
         assert_eq!(l.url_scheme(), "cua-local");

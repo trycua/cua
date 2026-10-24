@@ -323,8 +323,16 @@ pub fn default_relay_url() -> String {
     cua_home::env::relay_url()
 }
 
-/// The direct mode's default listen address.
-pub const DEFAULT_LISTEN: &str = "0.0.0.0:3211";
+/// The direct mode's default listen address: every interface, on the
+/// channel's spacesd port (3211, or 3221 for Cua Spaces Local, so its host
+/// runs beside a Stable one).
+pub fn default_listen() -> String {
+    listen_on(cua_home::channel::CuaChannel::current())
+}
+
+fn listen_on(channel: cua_home::channel::CuaChannel) -> String {
+    format!("0.0.0.0:{}", channel.ports().tcp)
+}
 
 /// Adds the "This machine" entry to a roster, first (it is always present
 /// in the live app; `status` is `None` until the host answers).
@@ -1495,7 +1503,7 @@ impl Default for HostFormState {
             allow: String::new(),
             advanced: false,
             direct: false,
-            listen: DEFAULT_LISTEN.into(),
+            listen: default_listen(),
             relay_url: default_relay_url(),
             busy: false,
             error: None,
@@ -1762,7 +1770,7 @@ pub fn form_view(s: &HostFormState, identity: Option<&str>) -> HostFormView {
             fields.push(text(
                 "listen",
                 "Listen on",
-                DEFAULT_LISTEN,
+                &default_listen(),
                 &s.listen,
                 bad,
                 true,
@@ -1828,6 +1836,18 @@ pub fn form_view(s: &HostFormState, identity: Option<&str>) -> HostFormView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The "Listen on" default is the channel's spacesd port: Cua Spaces
+    /// Local's host does not take Stable's 3211.
+    #[test]
+    fn the_default_listen_address_follows_the_channel() {
+        use cua_home::channel::CuaChannel;
+        assert_eq!(listen_on(CuaChannel::Stable), "0.0.0.0:3211");
+        assert_eq!(listen_on(CuaChannel::Local), "0.0.0.0:3221");
+        for channel in CuaChannel::ALL {
+            assert!(looks_like_listen(&listen_on(channel)));
+        }
+    }
 
     #[test]
     fn listen_needs_a_port() {

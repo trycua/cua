@@ -419,7 +419,7 @@ pub struct AgentStatus {
     pub cua_driver_configured: bool,
     /// Bundled skills present in the skills directory.
     pub skills_installed: Vec<String>,
-    /// Installed bundled skills whose content differs from this build's.
+    /// Unedited copies cua wrote that differ from this build's (what `update` refreshes).
     pub skills_outdated: Vec<String>,
     /// A problem reading the MCP config (malformed file, ...).
     pub error: Option<String>,
@@ -693,9 +693,14 @@ impl AgentSetup {
                 .chain(a.also_reads.iter().map(|l| l.resolve(&self.env)))
                 .collect();
             for s in bundled {
-                if let Some(h) = dirs.iter().find_map(|d| fsutil::hash_dir(&d.join(&s.name))) {
+                let found = dirs.iter().find_map(|d| {
+                    let p = d.join(&s.name);
+                    fsutil::hash_dir(&p).map(|h| (p, h))
+                });
+                if let Some((p, h)) = found {
                     skills_installed.push(s.name.clone());
-                    if h != s.hash {
+                    let owned_unmodified = state.skills.get(&p).is_some_and(|r| r.hash == h);
+                    if h != s.hash && owned_unmodified {
                         skills_outdated.push(s.name.clone());
                     }
                 }

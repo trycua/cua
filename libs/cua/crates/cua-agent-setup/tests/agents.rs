@@ -781,6 +781,32 @@ fn update_refreshes_outdated_copies_cua_wrote() {
     );
 }
 
+#[test]
+fn copies_cua_did_not_write_or_the_user_edited_are_never_outdated() {
+    let t = T::new();
+    let s = t.setup();
+    // Another installer's copy.
+    t.write(
+        ".cline/skills/cua-driver/SKILL.md",
+        "---\nname: cua-driver\ndescription: from the driver installer\n---\n",
+    );
+    // A copy cua wrote, edited since.
+    s.install_skills(&ids(&["cline"]), &ids(&["cua-sandboxes"]), false)
+        .unwrap();
+    let edited = t.home.join(".cline/skills/cua-sandboxes/SKILL.md");
+    std::fs::write(&edited, format!("{}\nmy notes\n", t.read(&edited))).unwrap();
+
+    let st = s.detect().into_iter().find(|a| a.id == "cline").unwrap();
+    assert!(st.skills_installed.iter().any(|n| n == "cua-driver"));
+    assert!(st.skills_installed.iter().any(|n| n == "cua-sandboxes"));
+    assert!(st.skills_outdated.is_empty(), "{:?}", st.skills_outdated);
+
+    for o in s.update(None).unwrap() {
+        assert_ne!(o.change, Change::Updated, "{o:#?}");
+    }
+    assert!(t.read(&edited).contains("my notes"));
+}
+
 #[cfg(unix)]
 #[test]
 fn claude_code_is_configured_through_its_own_cli_when_present() {

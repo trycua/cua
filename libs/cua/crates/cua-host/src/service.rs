@@ -112,8 +112,13 @@ pub fn app_helper_name() -> &'static str {
     CuaChannel::current().app_name()
 }
 /// The cua-spacesd the app ships, inside the app (the service runs only
-/// this one).
-pub const APP_HELPER_DAEMON: &str = "Contents/MacOS/cua-spacesd";
+/// this one). In `Contents/Helpers`, not `Contents/MacOS`: from there, AppKit
+/// (its cursor overlay) registered it with LaunchServices as the app itself,
+/// and opening the app activated the windowless daemon instead of launching
+/// it.
+pub const APP_HELPER_DAEMON: &str = "Contents/Helpers/cua-spacesd";
+/// Where apps before 0.15 kept it (they run it from there).
+pub const APP_HELPER_DAEMON_BEFORE_0_15: &str = "Contents/MacOS/cua-spacesd";
 /// The `SMAppService.agent` plist of `channel`'s app, inside the app:
 /// `Contents/Library/LaunchAgents/<helper label>.plist` (the label is
 /// [`CuaChannel::helper_label`]; `build-app.sh` stamps it per channel).
@@ -1337,7 +1342,8 @@ pub fn app_helper_launcher(app: &Path) -> PathBuf {
 /// of the other's helper.
 pub fn has_app_helper(app: &Path, channel: CuaChannel) -> bool {
     app.join(app_helper_plist(channel)).is_file()
-        && app.join(APP_HELPER_DAEMON).is_file()
+        && (app.join(APP_HELPER_DAEMON).is_file()
+            || app.join(APP_HELPER_DAEMON_BEFORE_0_15).is_file())
         && app.join(APP_EXECUTABLE).is_file()
 }
 
@@ -2063,7 +2069,12 @@ mod tests {
             !has_app_helper(&app, stable),
             "an app without its own cua-spacesd (0.9.4)"
         );
+        std::fs::create_dir_all(app.join(APP_HELPER_DAEMON).parent().unwrap()).unwrap();
         std::fs::write(app.join(APP_HELPER_DAEMON), "").unwrap();
+        assert!(has_app_helper(&app, stable));
+        // An app before 0.15 kept it in Contents/MacOS.
+        std::fs::remove_file(app.join(APP_HELPER_DAEMON)).unwrap();
+        std::fs::write(app.join(APP_HELPER_DAEMON_BEFORE_0_15), "").unwrap();
         assert!(has_app_helper(&app, stable));
         let launcher = app_helper_launcher(&app);
         assert_eq!(launcher, app.join(APP_EXECUTABLE));
@@ -2078,6 +2089,14 @@ mod tests {
             helper_spec_path_for(stable, Path::new("/Users/ada")),
             Path::new("/Users/ada/.cua/helper/service.json")
         );
+    }
+
+    #[test]
+    fn the_app_helper_daemon_is_outside_contents_macos() {
+        // Any executable in Contents/MacOS is the app to LaunchServices once
+        // it starts AppKit; the daemon there took over the app's launch.
+        assert!(APP_HELPER_DAEMON.starts_with("Contents/Helpers/"));
+        assert!(!APP_HELPER_DAEMON.starts_with("Contents/MacOS/"));
     }
 
     /// A Cua Spaces app of `channel` with the helper, in `parent`.

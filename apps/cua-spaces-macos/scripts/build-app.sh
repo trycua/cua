@@ -14,7 +14,7 @@
 # artifact, with its XPC services) in Contents/Frameworks and the
 # third-party notices (Settings, About, Acknowledgements), the host
 # service (the pinned cua-spacesd from scripts/fetch-spacesd.sh, or
-# $CUA_SPACESD_BIN, in Contents/MacOS; the app's own executable runs it as
+# $CUA_SPACESD_BIN, in Contents/Helpers; the app's own executable runs it as
 # its login item, whose SMAppService plist is in
 # Contents/Library/LaunchAgents), then signs it ad hoc as
 # com.trycua.spaces.macos.
@@ -191,15 +191,20 @@ for rp in $(otool -l "$app/Contents/MacOS/CuaSpacesMac" | awk '/LC_RPATH/ {getli
 done
 install_name_tool -add_rpath "@executable_path/../Frameworks" "$app/Contents/MacOS/CuaSpacesMac" 2>/dev/null || true
 
-# The host service: cua-spacesd next to the app's executable, which runs it
-# as the app's login item (SMAppService.agent; `CuaSpacesMac
-# --service-helper run`), so macOS asks for and keeps its permissions under
-# the app's own name, "Cua Spaces".
-mkdir -p "$app/Contents/Library/LaunchAgents"
+# The host service: cua-spacesd in Contents/Helpers. The app's own
+# executable runs it as the app's login item (SMAppService.agent;
+# `CuaSpacesMac --service-helper run`), so macOS asks for and keeps its
+# permissions under the app's own name, "Cua Spaces". Not in Contents/MacOS:
+# AppKit takes the main bundle from the executable's path, so when the
+# daemon's cursor overlay starts AppKit there it checks in with
+# LaunchServices as the app itself, and opening Cua Spaces then activates
+# the windowless daemon instead of launching the app (see the
+# Contents/MacOS check below).
+mkdir -p "$app/Contents/Library/LaunchAgents" "$app/Contents/Helpers"
 # shellcheck disable=SC2086 # one word per architecture
 spacesd="$("$here/scripts/fetch-spacesd.sh" ${archs:-$(uname -m)})"
-cp "$spacesd" "$app/Contents/MacOS/cua-spacesd"
-chmod 0755 "$app/Contents/MacOS/cua-spacesd"
+cp "$spacesd" "$app/Contents/Helpers/cua-spacesd"
+chmod 0755 "$app/Contents/Helpers/cua-spacesd"
 helper_plist="$app/Contents/Library/LaunchAgents/$helper_label.plist"
 cp "$here/Support/Helper/com.trycua.spaces.helper.plist" "$helper_plist"
 if [ "$channel" = local ]; then
@@ -218,7 +223,7 @@ if [ "$config" = release ]; then
   syms="$out/dSYMs"
   rm -rf "$syms"
   mkdir -p "$syms"
-  for f in "$app/Contents/MacOS/CuaSpacesMac" "$app/Contents/MacOS/cua" "$app/Contents/MacOS/cua-spacesd" \
+  for f in "$app/Contents/MacOS/CuaSpacesMac" "$app/Contents/MacOS/cua" "$app/Contents/Helpers/cua-spacesd" \
     "$app/Contents/Frameworks/libcua_sdk.dylib"; do
     [ -f "$f" ] || continue
     # A prebuilt binary (cua-spacesd) has no debug map: its dSYM still
@@ -232,7 +237,7 @@ if [ "$config" = release ]; then
 fi
 # The daemon keeps a signature of its own (ad hoc here; build-release.sh
 # signs it with the release identity).
-codesign -s - -f -i com.trycua.cua-env-driver "$app/Contents/MacOS/cua-spacesd"
+codesign -s - -f -i com.trycua.cua-env-driver "$app/Contents/Helpers/cua-spacesd"
 
 if [ -x "$cli" ]; then
   codesign -s - -f -i com.trycua.cua "$app/Contents/MacOS/cua"
@@ -286,13 +291,17 @@ fi
 # only fail on the other kind of Mac).
 if [ -n "$archs" ]; then
   for f in "$app/Contents/MacOS/CuaSpacesMac" "$app/Contents/Frameworks/libcua_sdk.dylib" "$app/Contents/MacOS/cua" \
-    "$app/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle" "$app/Contents/MacOS/cua-spacesd"; do
+    "$app/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle" "$app/Contents/Helpers/cua-spacesd"; do
     [ -e "$f" ] || continue
     for arch in $archs; do
       lipo "$f" -verify_arch "$arch" || { echo "$f has no $arch slice ($(lipo -archs "$f"))" >&2; exit 1; }
     done
   done
 fi
+# Only the app and the command-line tools are in Contents/MacOS
+# (scripts/check-bundle-layout.sh: a background process there that starts
+# AppKit registers as the app and takes over its launch).
+"$here/scripts/check-bundle-layout.sh" "$app" >&2
 # It launches (scripts/check-launch.sh: libraries resolve and load; the app
 # starts and exits before any window).
 "$here/scripts/check-launch.sh" "$app" >&2

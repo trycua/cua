@@ -34,6 +34,9 @@ def test_driver_nightly_publishes_only_after_the_desktop_e2e_gate():
     # The builder's E2E gate jobs need actions: read from the nightly caller.
     assert "permissions:\n  # actions: read" in nightly
     assert "\n  actions: read\n" in nightly
+    # The builder's tag-only `staging-gate` job asks for statuses: read. The
+    # caller must grant it or the run ends as startup_failure (20 to 24 Oct).
+    assert "\n  statuses: read\n" in nightly
     # Nightly builds run the same suites as the stable tag push, against the
     # exact nightly source rather than the caller's workflow revision.
     build = nightly.split("\n  build:\n", 1)[1].split("\n\n", 1)[0]

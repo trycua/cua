@@ -68,13 +68,23 @@ pub fn capture_blocked_reason() -> Option<String> {
             return Some(blocked_message(&bundle));
         }
     }
-    let home = std::env::var_os("HOME")?;
     let bundle_id = crate::tools::main_bundle_identifier();
-    match consent_state(
-        &Path::new(&home).join(APPROVALS_RELATIVE_PATH),
-        &bundle,
-        bundle_id.as_deref(),
-    ) {
+    let mut state = ConsentState::Missing;
+    for home in approval_homes() {
+        match consent_state(
+            &home.join(APPROVALS_RELATIVE_PATH),
+            &bundle,
+            bundle_id.as_deref(),
+        ) {
+            ConsentState::Recorded => {
+                state = ConsentState::Recorded;
+                break;
+            }
+            ConsentState::Unknown => state = ConsentState::Unknown,
+            ConsentState::Missing => {}
+        }
+    }
+    match state {
         ConsentState::Recorded | ConsentState::Unknown => {
             RECORDED.store(true, Ordering::Relaxed);
             None
@@ -86,6 +96,50 @@ pub fn capture_blocked_reason() -> Option<String> {
             Some(blocked_message(&bundle))
         }
     }
+}
+
+/// Home directories whose approvals file may hold this app's entry: the
+/// account's real home first, then `$HOME`. replayd records approvals under
+/// the real home, so a daemon started with a private `$HOME` (a sandboxed or
+/// scripted launch) would otherwise never find an approval that exists.
+fn approval_homes() -> Vec<PathBuf> {
+    let mut homes = Vec::new();
+    if let Some(real) = account_home() {
+        homes.push(real);
+    }
+    if let Some(env_home) = std::env::var_os("HOME").map(PathBuf::from) {
+        if !homes.contains(&env_home) {
+            homes.push(env_home);
+        }
+    }
+    homes
+}
+
+/// The current user's home from the account database, ignoring `$HOME`.
+fn account_home() -> Option<PathBuf> {
+    use std::ffi::CStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let mut buffer = vec![0u8; 4096];
+    // SAFETY: `passwd` is plain data, and `getpwuid_r` writes only into it and
+    // `buffer`, which outlive the call.
+    let mut passwd: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut result: *mut libc::passwd = std::ptr::null_mut();
+    let status = unsafe {
+        libc::getpwuid_r(
+            libc::getuid(),
+            &mut passwd,
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            &mut result,
+        )
+    };
+    if status != 0 || result.is_null() || passwd.pw_dir.is_null() {
+        return None;
+    }
+    // SAFETY: `pw_dir` points into `buffer`, NUL-terminated by `getpwuid_r`.
+    let dir = unsafe { CStr::from_ptr(passwd.pw_dir) };
+    Some(PathBuf::from(std::ffi::OsStr::from_bytes(dir.to_bytes())))
 }
 
 fn blocked_message(bundle: &Path) -> String {
@@ -233,6 +287,13 @@ mod tests {
             app_bundle_of(Path::new("/tmp/CuaDriver/Contents/MacOS/cua-driver")),
             None
         );
+    }
+
+    #[test]
+    fn account_home_ignores_the_home_variable() {
+        let real = account_home().expect("account home");
+        assert!(real.is_absolute());
+        assert!(approval_homes().contains(&real));
     }
 
     #[test]

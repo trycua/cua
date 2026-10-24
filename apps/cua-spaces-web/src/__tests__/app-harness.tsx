@@ -12,7 +12,7 @@ import { afterEach, beforeEach } from "vitest";
 import type { DataAdapter } from "@/bridge/adapter";
 import type { MachinesView } from "@/bridge/contracts/host";
 import type { HostEvent } from "@/bridge/protocol";
-import { createDemoAdapter } from "@/bridge/adapters/demo";
+import { createDemoAdapter, type DemoOptions } from "@/bridge/adapters/demo";
 import { BridgeProvider, useBridge, useMachines, useSpaces, type SpacesHook } from "@/bridge";
 import { testCore } from "@/bridge/__tests__/testCore";
 import { ToastProvider } from "@/components/ui/toast";
@@ -50,6 +50,8 @@ export interface TestHost {
   intercept?: (op: string, args: unknown) => unknown;
   /** The Machines page as the host's core drew it (`machinesView`). */
   machinesView?: () => MachinesView | null;
+  /** The demo host's own options (signed out, a first run). */
+  demo?: DemoOptions;
 }
 
 /** The routers mounted by the running test: a navigation the app started (a
@@ -65,7 +67,7 @@ afterEach(async () => {
 });
 
 export async function mountApp(path: string, host: TestHost = { failsCreates: true, listsGhost: true }) {
-  const demo = createDemoAdapter({ latencyMs: 1, stepMs: 4 });
+  const demo = createDemoAdapter({ latencyMs: 1, stepMs: 4, ...host.demo });
   // The page's listeners, so a test can push what the host would (`emit`).
   const listeners = new Set<(event: HostEvent) => void>();
   const adapter: DataAdapter = {

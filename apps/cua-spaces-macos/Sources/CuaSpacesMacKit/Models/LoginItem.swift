@@ -87,15 +87,71 @@ public enum LoginLaunch {
 
 /// The host service's login item: this app's own executable
 /// (`CuaSpacesMac --service-helper run`, so its permissions are the app's) run by
-/// `SMAppService.agent` from Contents/Library/LaunchAgents/
-/// com.trycua.spaces.helper.plist. cua-host (the `app-helper` runner, in
-/// this app's SDK and in the `cua` CLI) drives it through
-/// `CuaSpacesMac --service-helper register|unregister|status`, because only
-/// this bundle's code may register it; it writes what the helper runs
-/// (~/.cua/helper/service.json) and starts it with launchctl.
+/// `SMAppService.agent` from Contents/Library/LaunchAgents/<label>.plist
+/// (com.trycua.spaces.helper.plist for the released app). cua-host (the
+/// `app-helper` runner, in this app's SDK and in the `cua` CLI) drives it
+/// through `CuaSpacesMac --service-helper register|unregister|status`,
+/// because only this bundle's code may register it; it writes what the
+/// helper runs (<CuaHome>/helper/service.json, ~/.cua/helper/service.json
+/// for the released app) and starts it with launchctl.
+///
+/// Each channel has its own helper, so Cua Spaces Local runs beside the
+/// released app without sharing its login item, launchd label or spec:
+/// `scripts/build-app.sh` stamps `CuaHelperLabel` and `CuaHome` (and names
+/// the plist after the label) into the bundle, and this reads them. A bundle
+/// without them is the released app and keeps the names it always had.
 public enum HelperService {
-    public static let plistName = "com.trycua.spaces.helper.plist"
-    public static let label = "com.trycua.spaces.helper"
+    /// The released app's launchd label, and the default when the bundle
+    /// has no `CuaHelperLabel` (`CuaChannel::helper_label` in cua-home).
+    static let defaultLabel = "com.trycua.spaces.helper"
+    /// The default Cua home, below the user's home, when the bundle has no
+    /// `CuaHome` (`CuaChannel::home_dir` in cua-home).
+    static let defaultHome = ".cua"
+
+    /// The launchd label of this bundle's helper: `CuaHelperLabel`, else the
+    /// released app's.
+    public static func label(info: [String: Any]?) -> String {
+        stamped(info, "CuaHelperLabel") ?? defaultLabel
+    }
+
+    /// The plist in Contents/Library/LaunchAgents: `<label>.plist`.
+    public static func plistName(info: [String: Any]?) -> String {
+        label(info: info) + ".plist"
+    }
+
+    /// Where cua-host writes what the helper runs: `<CuaHome>/helper/
+    /// service.json` (`CuaHome` is `~/...` or absolute), else
+    /// `~/.cua/helper/service.json`. `nil` for a bundle that names another
+    /// channel (`CuaChannel` other than `stable`) without a usable home: it
+    /// must never fall back to the released app's file, so it runs nothing.
+    public static func specPath(info: [String: Any]?, home: String) -> String? {
+        let base: String
+        if let stampedHome = stamped(info, "CuaHome") {
+            if stampedHome == "~" {
+                base = home
+            } else if stampedHome.hasPrefix("~/") {
+                base = home + "/" + String(stampedHome.dropFirst(2))
+            } else if stampedHome.hasPrefix("/") {
+                base = stampedHome
+            } else {
+                return nil
+            }
+        } else if let channel = stamped(info, "CuaChannel"), channel.lowercased() != "stable" {
+            return nil
+        } else {
+            base = home + "/" + defaultHome
+        }
+        return (base as NSString).appendingPathComponent("helper/service.json")
+    }
+
+    private static func stamped(_ info: [String: Any]?, _ key: String) -> String? {
+        guard let value = (info?[key] as? String)?.trimmingCharacters(in: .whitespaces),
+              !value.isEmpty else { return nil }
+        return value
+    }
+
+    public static var label: String { label(info: Bundle.main.infoDictionary) }
+    public static var plistName: String { plistName(info: Bundle.main.infoDictionary) }
 
     static var service: SMAppService { SMAppService.agent(plistName: plistName) }
 

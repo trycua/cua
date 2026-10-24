@@ -987,7 +987,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
 
     // MARK: - The checklist
 
-    /// A page's checklist action: a step done, shown, closed, opened again,
+    /// A page's checklist action: a step done or skipped, shown, closed, opened again,
     /// or progress the page kept itself before (merged once). What the app
     /// shows ticks steps off here, not in the page (`AppModel.followChecklist`).
     func checklistAction(_ raw: Any?) throws -> AppChecklistAction {
@@ -1000,16 +1000,22 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
                   let step = ChecklistModel.words.first(where: { $0.1 == word })?.0
             else { throw Failure.badArgs("step: one of the checklist's steps") }
             return .done(step: step)
+        case "skip":
+            guard let word = a["step"] as? String,
+                  let step = ChecklistModel.words.first(where: { $0.1 == word })?.0
+            else { throw Failure.badArgs("step: one of the checklist's steps") }
+            return .skip(step: step)
         case "shown": return .shown
         case "dismiss": return .dismiss
         case "reopen": return .reopen
         case "merge":
-            guard let s = a["state"] as? [String: Any] else { throw Failure.badArgs("state: {done, dismissed, shown}") }
+            guard let s = a["state"] as? [String: Any] else { throw Failure.badArgs("state: {done, dismissed, shown, skipped}") }
             return .merge(state: ChecklistModel.state(done: s["done"] as? [String] ?? [],
                                                       dismissed: s["dismissed"] as? Bool ?? false,
-                                                      shown: s["shown"] as? Bool ?? false))
+                                                      shown: s["shown"] as? Bool ?? false,
+                                                      skipped: s["skipped"] as? [String] ?? []))
         default:
-            throw Failure.badArgs("action: done, shown, dismiss, reopen or merge")
+            throw Failure.badArgs("action: done, skip, shown, dismiss, reopen or merge")
         }
     }
 

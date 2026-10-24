@@ -80,6 +80,8 @@ export interface DemoOptions {
   /** The relay allowance: `idle` (free, no live session, so prompts can show),
    * `warn` (80% of the hours), `limit` (used up), `pro` or `teams`. */
   usage?: "idle" | "warn" | "limit" | "pro" | "teams";
+  /** Which agents are on this computer (`?demo=agents-none`, `?demo=agents-codex`); all of them by default. */
+  agents?: "none" | "codex";
   /** This Mac's free disk: `low` (`?demo=low-disk`) or `full` (`?demo=disk-full`). */
   disk?: "low" | "full";
   /** The machine the demo runs on: a Mac on Apple silicon unless set (the
@@ -124,6 +126,7 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     macHost: flags.has("mac-host"),
     unenrolled: flags.has("unenrolled"),
     usage: (["idle", "warn", "limit", "pro", "teams"] as const).find((u) => flags.has(`usage-${u}`)),
+    agents: (["none", "codex"] as const).find((a) => flags.has(`agents-${a}`)),
     nudge: (["second-agent", "risky"] as const).find((n) => flags.has(`nudge-${n}`)),
     disk: flags.has("disk-full") ? "full" : flags.has("low-disk") ? "low" : undefined,
     failCreates: flags.has("create-fail-runtime") ? "runtime-once" : flags.has("create-fail-disk") ? "disk" : undefined,
@@ -178,7 +181,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     agents: demoPersistentAgents(now()),
     // A named allowance is for showing the prompts, which wait for no agent run.
     runs: options.usage ? [] : demoRunRecords(now()),
-    agentSetup: demoAgentSetup(),
+    agentSetup: demoAgentSetup(options.onboarded === false, options.agents === "none" ? [] : options.agents === "codex" ? ["codex"] : null),
     platform: options.platform ?? MAC_DEMO_PLATFORM,
     paired: [],
     renamed: {},

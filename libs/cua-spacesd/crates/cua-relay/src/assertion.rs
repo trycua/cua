@@ -269,13 +269,23 @@ pub fn remove_stale_temps(path: &std::path::Path) -> std::io::Result<(usize, u64
         if !file_name.starts_with(&prefix) || !file_name.ends_with(".tmp") {
             continue;
         }
-        let meta = entry.metadata()?;
+        // Gone between the listing and here (its writer renamed it): fine.
+        let meta = match entry.metadata() {
+            Ok(m) => m,
+            Err(e) if crate::storage::temp_vanished(&e, &entry.path()) => continue,
+            Err(e) => return Err(e),
+        };
         if !meta.is_file() {
             continue;
         }
-        std::fs::remove_file(entry.path())?;
-        files += 1;
-        bytes += meta.len();
+        match std::fs::remove_file(entry.path()) {
+            Ok(()) => {
+                files += 1;
+                bytes += meta.len();
+            }
+            Err(e) if crate::storage::temp_vanished(&e, &entry.path()) => {}
+            Err(e) => return Err(e),
+        }
     }
     if files > 0 {
         tracing::warn!(
@@ -438,6 +448,36 @@ mod tests {
         let key = RelayKey::load_or_create(&path).unwrap();
         assert!(!stale.exists());
         assert_eq!(RelayKey::load_or_create(&path).unwrap().kid(), key.kid());
+    }
+
+    #[test]
+    fn removing_stale_temps_racing_their_removal_does_not_fail() {
+        use std::sync::{Arc, Barrier};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let names: Vec<_> = (0..4000)
+            .map(|_| {
+                let id = uuid::Uuid::new_v4().simple();
+                dir.path().join(format!(".devices.json.{id}.tmp"))
+            })
+            .collect();
+        for name in &names {
+            std::fs::write(name, "partial").unwrap();
+        }
+        let barrier = Arc::new(Barrier::new(2));
+        let remover = {
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                for name in &names {
+                    let _ = std::fs::remove_file(name);
+                }
+            })
+        };
+        barrier.wait();
+        let removed = super::remove_stale_temps(&path);
+        remover.join().unwrap();
+        removed.unwrap();
     }
 
     #[test]

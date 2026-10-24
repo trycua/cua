@@ -2299,6 +2299,7 @@ name = "cua-agent-setup"
 version = "0.8.0"
 dependencies = [
  "chrono",
+ "cua-home",
  "hex",
  "include_dir",
  "jsonc-parser",
@@ -3520,6 +3521,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "serde_yaml_ng",
  "sha2 0.10.9",
  "tar",
  "tempfile",

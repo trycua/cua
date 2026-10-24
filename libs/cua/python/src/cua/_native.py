@@ -607,7 +607,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_agentrun_wait() != 14426:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp() != 62628:
+    if lib.uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp() != 53713:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_agentsetup_detect() != 59369:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -28191,7 +28191,8 @@ class AgentSetupProtocol(typing.Protocol):
     async def configure_mcp(self, agents: typing.List[str],server: typing.Optional[AgentMcpServer]) -> typing.List[AgentSetupOutcome]:
         """
         Configures the MCP server (default: `cua mcp`, `cua` resolved on
-        PATH) for `agents`.
+        PATH; `cua-local mcp` named `cua-local` for the Local app) for
+        `agents`. A server without a name gets the channel's.
 """
         raise NotImplementedError
     def detect(self, ) -> typing.List[AgentInfo]:
@@ -28293,7 +28294,8 @@ class AgentSetup(AgentSetupProtocol):
     async def configure_mcp(self, agents: typing.List[str],server: typing.Optional[AgentMcpServer]) -> typing.List[AgentSetupOutcome]:
         """
         Configures the MCP server (default: `cua mcp`, `cua` resolved on
-        PATH) for `agents`.
+        PATH; `cua-local mcp` named `cua-local` for the Local app) for
+        `agents`. A server without a name gets the channel's.
 """
 
         _UniffiFfiConverterSequenceString.check_lower(agents)

@@ -10922,7 +10922,11 @@ export type AppChecklistRow = {
     /**
      * Done (ticked, struck through).
      */
-    done: boolean
+    done: boolean,
+    /**
+     * Skipped (struck through, not ticked); never with `done`.
+     */
+    skipped: boolean
 }
 
 /**
@@ -10950,7 +10954,8 @@ const FfiConverterTypeAppChecklistRow = (() => {
                 title: FfiConverterString.read(from),
                 detail: FfiConverterString.read(from),
                 action: FfiConverterString.read(from),
-                done: FfiConverterBool.read(from)
+                done: FfiConverterBool.read(from),
+                skipped: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -10959,13 +10964,15 @@ const FfiConverterTypeAppChecklistRow = (() => {
             FfiConverterString.write(value.detail, into);
             FfiConverterString.write(value.action, into);
             FfiConverterBool.write(value.done, into);
+            FfiConverterBool.write(value.skipped, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeAppChecklistStep.allocationSize(value.step) +
              FfiConverterString.allocationSize(value.title) +
              FfiConverterString.allocationSize(value.detail) +
              FfiConverterString.allocationSize(value.action) +
-             FfiConverterBool.allocationSize(value.done);
+             FfiConverterBool.allocationSize(value.done) +
+             FfiConverterBool.allocationSize(value.skipped);
 
         }
     };
@@ -12045,7 +12052,13 @@ export type AppChecklistState = {
     /**
      * It was on screen once (`checklist_shown` was recorded).
      */
-    shown: boolean
+    shown: boolean,
+    /**
+     * Steps skipped ("Skip"), each once, in checklist order: they count as
+     * done for the progress and for `complete`, and a skipped step done
+     * later shows as done.
+     */
+    skipped: Array<AppChecklistStep>
 }
 
 /**
@@ -12071,18 +12084,21 @@ const FfiConverterTypeAppChecklistState = (() => {
             return {
                 done: FfiConverterSequenceTypeAppChecklistStep.read(from),
                 dismissed: FfiConverterBool.read(from),
-                shown: FfiConverterBool.read(from)
+                shown: FfiConverterBool.read(from),
+                skipped: FfiConverterSequenceTypeAppChecklistStep.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterSequenceTypeAppChecklistStep.write(value.done, into);
             FfiConverterBool.write(value.dismissed, into);
             FfiConverterBool.write(value.shown, into);
+            FfiConverterSequenceTypeAppChecklistStep.write(value.skipped, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterSequenceTypeAppChecklistStep.allocationSize(value.done) +
              FfiConverterBool.allocationSize(value.dismissed) +
-             FfiConverterBool.allocationSize(value.shown);
+             FfiConverterBool.allocationSize(value.shown) +
+             FfiConverterSequenceTypeAppChecklistStep.allocationSize(value.skipped);
 
         }
     };
@@ -12956,6 +12972,14 @@ export type AppChecklistView = {
      */
     closeLabel: string,
     /**
+     * "Skip", on each step not done or skipped.
+     */
+    skipLabel: string,
+    /**
+     * "Hide", or "Done" once complete: closes the checklist.
+     */
+    hideLabel: string,
+    /**
      * The steps in order.
      */
     rows: Array<AppChecklistRow>
@@ -12988,6 +13012,8 @@ const FfiConverterTypeAppChecklistView = (() => {
                 detail: FfiConverterString.read(from),
                 progress: FfiConverterString.read(from),
                 closeLabel: FfiConverterString.read(from),
+                skipLabel: FfiConverterString.read(from),
+                hideLabel: FfiConverterString.read(from),
                 rows: FfiConverterSequenceTypeAppChecklistRow.read(from)
             };
         }
@@ -12998,6 +13024,8 @@ const FfiConverterTypeAppChecklistView = (() => {
             FfiConverterString.write(value.detail, into);
             FfiConverterString.write(value.progress, into);
             FfiConverterString.write(value.closeLabel, into);
+            FfiConverterString.write(value.skipLabel, into);
+            FfiConverterString.write(value.hideLabel, into);
             FfiConverterSequenceTypeAppChecklistRow.write(value.rows, into);
         }
         allocationSize(value: TypeName): number {
@@ -13007,6 +13035,8 @@ const FfiConverterTypeAppChecklistView = (() => {
              FfiConverterString.allocationSize(value.detail) +
              FfiConverterString.allocationSize(value.progress) +
              FfiConverterString.allocationSize(value.closeLabel) +
+             FfiConverterString.allocationSize(value.skipLabel) +
+             FfiConverterString.allocationSize(value.hideLabel) +
              FfiConverterSequenceTypeAppChecklistRow.allocationSize(value.rows);
 
         }
@@ -13212,7 +13242,8 @@ export type AppCliInstallPlan = {
      */
     bundledVersion?: string,
     /**
-     * Another `cua` found earlier on PATH (it would shadow `target`).
+     * Another CLI of the same name found earlier on PATH (it would shadow
+     * `target`).
      */
     shadowedBy?: string,
     /**
@@ -13228,9 +13259,10 @@ export type AppCliInstallPlan = {
      */
     pathLine?: string,
     /**
-     * A working `cua` CLI already on this machine: `target`, else the
-     * first in the usual install folders or on PATH (a Finder-launched
+     * A working CLI of this channel already on this machine: `target`, else
+     * the first in the usual install folders or on PATH (a Finder-launched
      * app's PATH lacks `~/.local/bin`, so the folders are searched too).
+     * Local looks for `cua-local` only: a Stable `cua` is not its CLI.
      */
     found?: string
 }
@@ -50601,6 +50633,7 @@ const FfiConverterTypeAppApproveSheetAction = (() => {
 export enum AppChecklistAction_Tags {
     Done = "Done",
     Shown = "Shown",
+    Skip = "Skip",
     Dismiss = "Dismiss",
     Reopen = "Reopen",
     Observe = "Observe",
@@ -50669,11 +50702,45 @@ inner: {step: AppChecklistStep }): Done_ {
 
     }
 
+    type Skip__interface = {
+        tag: AppChecklistAction_Tags.Skip;
+        inner:
+Readonly<{step: AppChecklistStep}>
+    };
+    /**
+     * "Skip" on a step: not for this person; it counts as done.
+     */
+    class Skip_ extends UniffiEnum implements Skip__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "AppChecklistAction";
+        readonly tag = AppChecklistAction_Tags.Skip;
+        readonly inner:
+Readonly<{step: AppChecklistStep}>;
+        constructor(
+inner: {step: AppChecklistStep }) {
+            super("AppChecklistAction", "Skip");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {step: AppChecklistStep }): Skip_ {
+            return new Skip_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Skip_ {
+            return obj.tag === AppChecklistAction_Tags.Skip;
+        }
+
+    }
+
     type Dismiss__interface = {
         tag: AppChecklistAction_Tags.Dismiss
     };
     /**
-     * Closed with ×.
+     * Closed with × ("Hide", or "Done" once complete).
      */
     class Dismiss_ extends UniffiEnum implements Dismiss__interface {
         /**
@@ -50802,6 +50869,7 @@ inner: {state: AppChecklistState }): Merge_ {
         instanceOf,
   Done: Done_,
   Shown: Shown_,
+  Skip: Skip_,
   Dismiss: Dismiss_,
   Reopen: Reopen_,
   Observe: Observe_,
@@ -50810,7 +50878,7 @@ inner: {state: AppChecklistState }): Merge_ {
 
 })();
 export type AppChecklistAction = InstanceType<
-    typeof AppChecklistAction['Done' | 'Shown' | 'Dismiss' | 'Reopen' | 'Observe' | 'Merge']
+    typeof AppChecklistAction['Done' | 'Shown' | 'Skip' | 'Dismiss' | 'Reopen' | 'Observe' | 'Merge']
 >;
 
 // FfiConverter for enum AppChecklistAction
@@ -50822,10 +50890,11 @@ const FfiConverterTypeAppChecklistAction = (() => {
             switch (ordinalConverter.read(from)) {
                 case 1: return new AppChecklistAction.Done({step: FfiConverterTypeAppChecklistStep.read(from) });
                 case 2: return new AppChecklistAction.Shown();
-                case 3: return new AppChecklistAction.Dismiss();
-                case 4: return new AppChecklistAction.Reopen();
-                case 5: return new AppChecklistAction.Observe({otherMachine: FfiConverterBool.read(from), hasSpace: FfiConverterBool.read(from), agentRan: FfiConverterBool.read(from) });
-                case 6: return new AppChecklistAction.Merge({state: FfiConverterTypeAppChecklistState.read(from) });
+                case 3: return new AppChecklistAction.Skip({step: FfiConverterTypeAppChecklistStep.read(from) });
+                case 4: return new AppChecklistAction.Dismiss();
+                case 5: return new AppChecklistAction.Reopen();
+                case 6: return new AppChecklistAction.Observe({otherMachine: FfiConverterBool.read(from), hasSpace: FfiConverterBool.read(from), agentRan: FfiConverterBool.read(from) });
+                case 7: return new AppChecklistAction.Merge({state: FfiConverterTypeAppChecklistState.read(from) });
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -50841,16 +50910,22 @@ const FfiConverterTypeAppChecklistAction = (() => {
                     ordinalConverter.write(2, into);
                     return;
                 }
-                case AppChecklistAction_Tags.Dismiss: {
+                case AppChecklistAction_Tags.Skip: {
                     ordinalConverter.write(3, into);
+                    const inner = value.inner;
+                    FfiConverterTypeAppChecklistStep.write(inner.step, into);
                     return;
                 }
-                case AppChecklistAction_Tags.Reopen: {
+                case AppChecklistAction_Tags.Dismiss: {
                     ordinalConverter.write(4, into);
                     return;
                 }
-                case AppChecklistAction_Tags.Observe: {
+                case AppChecklistAction_Tags.Reopen: {
                     ordinalConverter.write(5, into);
+                    return;
+                }
+                case AppChecklistAction_Tags.Observe: {
+                    ordinalConverter.write(6, into);
                     const inner = value.inner;
                     FfiConverterBool.write(inner.otherMachine, into);
                     FfiConverterBool.write(inner.hasSpace, into);
@@ -50858,7 +50933,7 @@ const FfiConverterTypeAppChecklistAction = (() => {
                     return;
                 }
                 case AppChecklistAction_Tags.Merge: {
-                    ordinalConverter.write(6, into);
+                    ordinalConverter.write(7, into);
                     const inner = value.inner;
                     FfiConverterTypeAppChecklistState.write(inner.state, into);
                     return;
@@ -50879,15 +50954,21 @@ const FfiConverterTypeAppChecklistAction = (() => {
                 case AppChecklistAction_Tags.Shown: {
                     return ordinalConverter.allocationSize(2);
                 }
+                case AppChecklistAction_Tags.Skip: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(3);
+                    size += FfiConverterTypeAppChecklistStep.allocationSize(inner.step);
+                    return size;
+                }
                 case AppChecklistAction_Tags.Dismiss: {
-                    return ordinalConverter.allocationSize(3);
+                    return ordinalConverter.allocationSize(4);
                 }
                 case AppChecklistAction_Tags.Reopen: {
-                    return ordinalConverter.allocationSize(4);
+                    return ordinalConverter.allocationSize(5);
                 }
                 case AppChecklistAction_Tags.Observe: {
                     const inner = value.inner;
-                    let size = ordinalConverter.allocationSize(5);
+                    let size = ordinalConverter.allocationSize(6);
                     size += FfiConverterBool.allocationSize(inner.otherMachine);
                     size += FfiConverterBool.allocationSize(inner.hasSpace);
                     size += FfiConverterBool.allocationSize(inner.agentRan);
@@ -50895,7 +50976,7 @@ const FfiConverterTypeAppChecklistAction = (() => {
                 }
                 case AppChecklistAction_Tags.Merge: {
                     const inner = value.inner;
-                    let size = ordinalConverter.allocationSize(6);
+                    let size = ordinalConverter.allocationSize(7);
                     size += FfiConverterTypeAppChecklistState.allocationSize(inner.state);
                     return size;
                 }

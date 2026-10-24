@@ -619,6 +619,13 @@ pub(crate) fn setup_token_state(mode: &str, token: Option<&str>) -> &'static str
     }
 }
 
+/// Where a direct host listens when the caller gives no address: every
+/// interface, on the channel's spacesd port (3211, or 3221 for Cua Spaces
+/// Local, so it runs beside a Stable host).
+fn direct_listen_default(channel: cua_home::channel::CuaChannel) -> String {
+    format!("0.0.0.0:{}", channel.ports().tcp)
+}
+
 /// Converts binding options to cua-host options.
 pub(crate) fn setup_options(o: HostSetupOptions) -> Result<cua_host::SetupOptions> {
     let mut opts = match o.mode.as_deref().unwrap_or("relay") {
@@ -628,7 +635,8 @@ pub(crate) fn setup_options(o: HostSetupOptions) -> Result<cua_host::SetupOption
                 .unwrap_or_else(cua_host::relay_url_from_env),
         ),
         "direct" => {
-            let listen = o.direct.as_deref().unwrap_or("0.0.0.0:3211");
+            let default = direct_listen_default(cua_home::channel::CuaChannel::current());
+            let listen = o.direct.as_deref().unwrap_or(&default);
             cua_host::SetupOptions::direct(listen.parse().map_err(|_| {
                 CuaError::InvalidArgument(format!("direct address {listen:?} is not ip:port"))
             })?)
@@ -1233,6 +1241,22 @@ impl Devices {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A direct host the caller gives no address listens on the channel's
+    /// spacesd port: Cua Spaces Local's is not Stable's 3211.
+    #[test]
+    fn a_direct_host_listens_on_the_channels_port_by_default() {
+        use cua_home::channel::CuaChannel;
+        assert_eq!(direct_listen_default(CuaChannel::Stable), "0.0.0.0:3211");
+        assert_eq!(direct_listen_default(CuaChannel::Local), "0.0.0.0:3221");
+        for channel in CuaChannel::ALL {
+            assert!(
+                direct_listen_default(channel)
+                    .parse::<std::net::SocketAddr>()
+                    .is_ok()
+            );
+        }
+    }
 
     /// The Machines page groups team machines and says whether a machine
     /// provides Spaces from what the relay recorded at registration.

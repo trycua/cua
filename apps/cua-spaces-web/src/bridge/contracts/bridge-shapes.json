@@ -5251,12 +5251,19 @@
             },
             "shown": {
               "type": "boolean"
+            },
+            "skipped": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
             "done",
             "dismissed",
-            "shown"
+            "shown",
+            "skipped"
           ]
         }
       },
@@ -5281,12 +5288,19 @@
             },
             "shown": {
               "type": "boolean"
+            },
+            "skipped": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
             "done",
             "dismissed",
-            "shown"
+            "shown",
+            "skipped"
           ]
         }
       },
@@ -7006,12 +7020,19 @@
             },
             "shown": {
               "type": "boolean"
+            },
+            "skipped": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
             "done",
             "dismissed",
-            "shown"
+            "shown",
+            "skipped"
           ]
         }
       },
@@ -7036,12 +7057,19 @@
             },
             "shown": {
               "type": "boolean"
+            },
+            "skipped": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
             "done",
             "dismissed",
-            "shown"
+            "shown",
+            "skipped"
           ]
         }
       },

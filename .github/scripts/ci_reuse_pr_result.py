@@ -105,6 +105,7 @@ def find_reusable(
         return [], f"PR #{pr['number']} has no successful run of this workflow on its head"
     reused: list[str] = []
     matched: list[str] = []
+    stamps_seen = 0
     for run in runs:
         jobs = jobs_of(f"repos/{repo}/actions/runs/{run['id']}/jobs?filter=latest&per_page=100")
         stamp = next((j for j in jobs if j["name"] == stamp_job), None)
@@ -112,6 +113,7 @@ def find_reusable(
             continue
         notes = api(f"repos/{repo}/check-runs/{stamp['id']}/annotations")
         stamped = [m.group(1) for n in notes if (m := STAMP_RE.match(n.get("message") or ""))]
+        stamps_seen += len(stamped)
         if tree not in stamped:
             continue
         matched.append(str(run["id"]))
@@ -119,6 +121,8 @@ def find_reusable(
             if job["conclusion"] == "success" and job["name"] not in reused:
                 reused.append(job["name"])
     if not matched:
+        if not stamps_seen:
+            return [], f"PR #{pr['number']} runs carry no tree stamp"
         return [], f"PR #{pr['number']} was last tested on a different tree (main moved or the head changed)"
     return reused, f"tree {tree[:10]} was tested green by PR #{pr['number']} run {', '.join(matched)}"
 

@@ -108,7 +108,8 @@ def test_a_different_tree_reuses_nothing():
 
 
 def test_unstamped_run_reuses_nothing():
-    assert decide(notes={})[0] == []
+    reused, _, why, *_ = decide(notes={})
+    assert reused == [] and "no tree stamp" in why
     assert decide(notes={1: [{"message": "something else"}]})[0] == []
     assert decide(jobs={11: [{"id": 2, "name": "Generated contract and SDK bindings", "conclusion": "success"}]})[0] == []
 

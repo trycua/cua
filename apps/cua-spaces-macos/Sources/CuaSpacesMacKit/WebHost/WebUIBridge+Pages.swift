@@ -295,7 +295,9 @@ extension WebUIBridge {
             guard url.hasPrefix("x-apple.systempreferences:"), let u = URL(string: url) else {
                 throw Failure.badArgs("Only System Settings panes open here")
             }
-            NSWorkspace.shared.open(u)
+            // Screen Recording and Accessibility: the app's guide to the
+            // pane (PermissionFlow), never macOS's bare prompt.
+            if !PermissionGuide.guide(url) { NSWorkspace.shared.open(u) }
             return NSNull()
 
         default:

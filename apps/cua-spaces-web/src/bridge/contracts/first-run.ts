@@ -8,8 +8,9 @@
  */
 
 /** Welcome, Pick your agent (`connect`), Install the Cua CLI (`cli`, only
- * while it is missing), Connect your other devices, Try it (`setup`). */
-export type FirstRunStep = "welcome" | "connect" | "cli" | "devices" | "setup";
+ * while it is missing), Connect your other devices, Share this Mac's screen
+ * (`permissions`, only on a signed-in Mac that shares it), Try it (`setup`). */
+export type FirstRunStep = "welcome" | "connect" | "cli" | "devices" | "permissions" | "setup";
 
 /** What installing the app's bundled CLI would do (`installer::CliInstallPlan`). */
 export interface CliInstallPlan {
@@ -85,6 +86,10 @@ export interface FirstRunHost {
   online?: boolean | null;
   permissions: FirstRunPermission[];
   error?: string | null;
+  /** People it is shared with see and use its screen (null: not known). */
+  shareDesktop?: boolean | null;
+  /** The name System Settings lists the app under ("Cua Spaces Local"). */
+  appName?: string | null;
 }
 
 export interface FirstRunOffer {
@@ -223,10 +228,25 @@ export interface FirstRunDevicesView {
   note: string | null;
 }
 
+/** Share this Mac's screen: Screen Recording and Accessibility, each with
+ * Allow (the app's guide to its System Settings pane) and a check once
+ * granted (`first_run::PermissionsView`). */
+export interface FirstRunPermissionsView {
+  title: string;
+  lede: string;
+  /** `screen-recording`, `accessibility`: `ok`, `fix` (Allow), `checking`. */
+  rows: FirstRunRow[];
+  note: string;
+  /** "Continue" once both are granted. */
+  primary: FirstRunButton | null;
+  /** "Not now" while one is missing. */
+  secondary: FirstRunButton | null;
+}
+
 export type FirstRunRowState = "checking" | "ok" | "fix";
 
 export interface FirstRunRow {
-  id: "agent" | "computer" | "account";
+  id: "agent" | "computer" | "account" | "screen-recording" | "accessibility";
   state: FirstRunRowState;
   title: string;
   note: string;
@@ -304,6 +324,8 @@ export interface FirstRunView {
   welcome: FirstRunWelcomeView | null;
   connect: FirstRunConnectView | null;
   devices: FirstRunDevicesView | null;
+  /** Only on a signed-in Mac that shares its screen. */
+  permissions?: FirstRunPermissionsView | null;
   setup: FirstRunSetupView | null;
   cli: FirstRunCliView | null;
   art: FirstRunArt;

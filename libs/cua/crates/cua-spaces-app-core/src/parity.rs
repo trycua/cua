@@ -3469,6 +3469,33 @@ fn run_first_run(f: &Value, h: &dyn Host) -> Result<Value, String> {
                 "note": k["note"],
             });
         }
+        if v["permissions"].is_object() {
+            let k = &v["permissions"];
+            let rows: Vec<String> = k["rows"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|r| {
+                    format!(
+                        "{}{}",
+                        row(r),
+                        if r["settingsUrl"].is_string() {
+                            format!(" <{}>", s(&r["settingsUrl"]))
+                        } else {
+                            String::new()
+                        }
+                    )
+                })
+                .collect();
+            frame["permissions"] = json!({
+                "title": k["title"],
+                "lede": k["lede"],
+                "rows": rows,
+                "note": k["note"],
+                "primary": btn(&k["primary"]),
+                "secondary": btn(&k["secondary"]),
+            });
+        }
         if v["setup"].is_object() {
             let k = &v["setup"];
             let extra = if k["extra"].is_object() {

@@ -507,6 +507,207 @@
         "title": "Connect an agent."
       },
       "step": "connect"
+    },
+    {
+      "art": "hermes on outline",
+      "case": "19 this Mac in the account, Continue goes to permissions",
+      "devices": {
+        "lede": "Sign in on your other computers, and they reach its Spaces.",
+        "note": null,
+        "primary": "continue:Continue",
+        "rows": [
+          "Your other computers — They join this Mac's pool",
+          "Your cloud — Hetzner, AWS, Google Cloud or Modal"
+        ],
+        "secondary": "",
+        "status": "[ok] This Mac is in your account — Your other computers can reach its Spaces.",
+        "title": "This Mac is in your account."
+      },
+      "step": "devices",
+      "steps": [
+        "welcome",
+        "connect",
+        "devices",
+        "permissions",
+        "setup"
+      ]
+    },
+    {
+      "art": "hermes on outline",
+      "case": "20 permissions, this Mac still being added",
+      "permissions": {
+        "lede": "To let your team and agents see and use this Mac, allow two permissions.",
+        "note": "Allow opens System Settings and shows you where to turn on Cua Spaces.",
+        "primary": "",
+        "rows": [
+          "[checking] See this Mac's screen — Adding this Mac to your account first…",
+          "[checking] Use the mouse and keyboard — Adding this Mac to your account first…"
+        ],
+        "secondary": "not-now:Not now",
+        "title": "Share this Mac's screen."
+      },
+      "step": "permissions",
+      "steps": [
+        "welcome",
+        "connect",
+        "devices",
+        "permissions",
+        "setup"
+      ]
+    },
+    {
+      "art": "hermes on outline",
+      "case": "21 permissions, both missing (Cua Spaces Local)",
+      "permissions": {
+        "lede": "To let your team and agents see and use this Mac, allow two permissions.",
+        "note": "Allow opens System Settings and shows you where to turn on Cua Spaces Local.",
+        "primary": "",
+        "rows": [
+          "[fix] See this Mac's screen — So your team and agents can see what's on it. (allow:Allow) <x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture>",
+          "[fix] Use the mouse and keyboard — So they can click and type on this Mac. (allow:Allow) <x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility>"
+        ],
+        "secondary": "not-now:Not now",
+        "title": "Share this Mac's screen."
+      },
+      "step": "permissions",
+      "steps": [
+        "welcome",
+        "connect",
+        "devices",
+        "permissions",
+        "setup"
+      ]
+    },
+    {
+      "art": "hermes on outline",
+      "case": "22 permissions, Screen Recording allowed",
+      "permissions": {
+        "lede": "To let your team and agents see and use this Mac, allow two permissions.",
+        "note": "Allow opens System Settings and shows you where to turn on Cua Spaces.",
+        "primary": "",
+        "rows": [
+          "[ok] See this Mac's screen — Allowed",
+          "[fix] Use the mouse and keyboard — So they can click and type on this Mac. (allow:Allow) <x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility>"
+        ],
+        "secondary": "not-now:Not now",
+        "title": "Share this Mac's screen."
+      },
+      "step": "permissions",
+      "steps": [
+        "welcome",
+        "connect",
+        "devices",
+        "permissions",
+        "setup"
+      ]
+    },
+    {
+      "art": "hermes on outline",
+      "case": "23 permissions, both allowed",
+      "permissions": {
+        "lede": "To let your team and agents see and use this Mac, allow two permissions.",
+        "note": "Allow opens System Settings and shows you where to turn on Cua Spaces.",
+        "primary": "continue:Continue",
+        "rows": [
+          "[ok] See this Mac's screen — Allowed",
+          "[ok] Use the mouse and keyboard — Allowed"
+        ],
+        "secondary": "",
+        "title": "Share this Mac's screen."
+      },
+      "step": "permissions",
+      "steps": [
+        "welcome",
+        "connect",
+        "devices",
+        "permissions",
+        "setup"
+      ]
+    },
+    {
+      "art": "hermes on outline",
+      "case": "24 try it after permissions, Back goes to permissions",
+      "setup": {
+        "extra": null,
+        "lede": "Paste this. Hermes makes the Space itself.",
+        "primary": "done:Done",
+        "prompt": "Paste this in Hermes: Make a Linux Space on this Mac and stream the desktop in a new window. / It runs on this Mac.",
+        "status": "[checking] Waiting for Hermes… — If Hermes was already open, restart it.",
+        "title": "Try it in Hermes."
+      },
+      "step": "setup",
+      "steps": [
+        "welcome",
+        "connect",
+        "devices",
+        "permissions",
+        "setup"
+      ]
+    },
+    {
+      "art": "hermes on outline",
+      "case": "25 not signed in: Not now skips permissions",
+      "devices": {
+        "lede": "Sign in once, and your other computers reach this Mac's Spaces.",
+        "note": "This Mac works without it.",
+        "primary": "sign-in:Sign in to connect",
+        "rows": [
+          "Your other computers — They join this Mac's pool",
+          "Your cloud — Hetzner, AWS, Google Cloud or Modal"
+        ],
+        "secondary": "not-now:Not now",
+        "status": null,
+        "title": "Connect your other devices."
+      },
+      "step": "devices",
+      "steps": [
+        "welcome",
+        "connect",
+        "devices",
+        "setup"
+      ]
+    },
+    {
+      "art": "hermes on outline",
+      "case": "26 a Mac kept for Spaces only: no permissions screen",
+      "setup": {
+        "extra": null,
+        "lede": "Paste this. Hermes makes the Space itself.",
+        "primary": "done:Done",
+        "prompt": "Paste this in Hermes: Make a Linux Space on this Mac and stream the desktop in a new window. / It runs on this Mac.",
+        "status": "[checking] Waiting for Hermes… — If Hermes was already open, restart it.",
+        "title": "Try it in Hermes."
+      },
+      "step": "setup",
+      "steps": [
+        "welcome",
+        "connect",
+        "devices",
+        "setup"
+      ]
+    },
+    {
+      "art": "hermes on outline",
+      "case": "27 a Windows PC: no permissions screen",
+      "devices": {
+        "lede": "Sign in on your other computers, and they reach its Spaces.",
+        "note": null,
+        "primary": "continue:Continue",
+        "rows": [
+          "Your other computers — They join this PC's pool",
+          "Your cloud — Hetzner, AWS, Google Cloud or Modal"
+        ],
+        "secondary": "",
+        "status": "[ok] This PC is in your account — Your other computers can reach its Spaces.",
+        "title": "This PC is in your account."
+      },
+      "step": "devices",
+      "steps": [
+        "welcome",
+        "connect",
+        "devices",
+        "setup"
+      ]
     }
   ]
 }

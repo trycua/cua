@@ -387,4 +387,6 @@ export interface WkHostState {
   account?: { id?: string | null; email?: string | null; display?: string | null } | null;
   /** `HostModel.progress`: what a running setup or Sign In waits for. */
   progress?: string | null;
+  /** The app's name as System Settings lists it ("Cua Spaces Local"). */
+  appName?: string | null;
 }

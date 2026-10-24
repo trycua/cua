@@ -315,6 +315,7 @@ pub const METHODS: &[&str] = &[
     "upsell.allows",
     "firstRun.view",
     "firstRun.todos",
+    "firstRun.permissions",
     "firstRun.agentUsed",
     "firstRun.leadAgent",
     "firstRun.cli",
@@ -553,6 +554,7 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "firstRun.view" => out(crate::first_run::view(&a.get("input")?)),
         "firstRun.cli" => out(crate::first_run::cli_view(&a.get("input")?)),
         "firstRun.todos" => out(crate::first_run::todos(&a.get("input")?)),
+        "firstRun.permissions" => out(crate::first_run::permissions_view(&a.get("input")?)),
         "firstRun.agentUsed" => out(crate::first_run::agent_used(
             &a.get::<Vec<crate::first_run::AccessLine>>("lines")?,
             a.get::<u64>("sinceMs")?,

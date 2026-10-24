@@ -3,7 +3,10 @@
 
 /**
  * The first run every host shows: Welcome, Pick your agent, Connect your
- * other devices (an optional sign-in), then Try it in your agent. The words,
+ * other devices (an optional sign-in), Share this Mac's screen (a signed-in
+ * Mac that shares its screen: Screen Recording and Accessibility, each with
+ * Allow, which `host.openSettings` turns into the app's guide to the pane),
+ * then Try it in your agent. The words,
  * the agents' order, which button does what and the to-do list on Home are
  * the app core's (`firstRun.view`, `firstRun.todos`,
  * `cua-spaces-app-core/src/first_run.rs`); this module gathers what the core
@@ -42,6 +45,7 @@ import type {
   FirstRunExtra,
   FirstRunInput,
   FirstRunOffer,
+  FirstRunPermissionsView,
   FirstRunPlan,
   FirstRunStep,
   FirstRunTodos,
@@ -104,10 +108,22 @@ export function cliMissing(cli: FirstRunCli | undefined): boolean {
   return !cliPresent(cli) && Boolean(cli?.plan?.source);
 }
 
-/** The screens a run shows (`first_run::steps`): the CLI's only while it is missing. */
+/** The screens a run shows (`first_run::steps`): the CLI's only while it
+ * is missing; Share this Mac's screen only on a signed-in Mac that shares
+ * its screen (`first_run::asks_permissions`). */
 export function firstRunSteps(input: FirstRunInput): FirstRunStep[] {
   const cli = input.step === "cli" || Boolean(input.cli?.installed) || cliMissing(input.cli);
-  return cli ? ["welcome", "connect", "cli", "devices", "setup"] : ["welcome", "connect", "devices", "setup"];
+  const asks = input.hostOs === "macos" && input.signedIn && input.host?.shareDesktop !== false;
+  return ["welcome", "connect", ...(cli ? ["cli" as const] : []), "devices", ...(asks ? ["permissions" as const] : []), "setup"];
+}
+
+/** The two permissions a shared screen needs (`firstRun.permissions`): the
+ * first run's screen and Settings' group say the same. */
+export function firstRunPermissions(core: CoreClient, input: FirstRunInput): FirstRunPermissionsView {
+  return (
+    core.tryCall<FirstRunPermissionsView>("firstRun.permissions", { input }) ??
+    fallbackView({ ...input, step: "permissions", hostOs: "macos", signedIn: true }).permissions!
+  );
 }
 
 export function firstRunTodos(core: CoreClient, input: FirstRunInput): FirstRunTodos | null {
@@ -136,7 +152,7 @@ const rank = (id: string) => {
   return i < 0 ? PREFERENCE.length : i;
 };
 
-/** Without the core: the four screens in their plainest state. Not the
+/** Without the core: the screens in their plainest state. Not the
  * product's behaviour; the demo and tests without wasm use it. */
 function fallbackView(input: FirstRunInput): FirstRunView {
   const place = input.hostOs === "macos" ? "this Mac" : input.hostOs === "windows" ? "this PC" : "this computer";
@@ -145,20 +161,24 @@ function fallbackView(input: FirstRunInput): FirstRunView {
   const connected = found.filter((a) => a.configured || (input.picked ?? []).includes(a.agent));
   const lead = connected[0] ?? null;
   const steps = firstRunSteps(input);
+  // The permissions screen of a Mac that no longer asks shows Try it instead.
+  const step: FirstRunStep = steps.includes(input.step) ? input.step : "setup";
+  const at = Math.max(steps.indexOf(step), 0);
   const base: FirstRunView = {
-    step: input.step,
+    step,
     later: "Skip for now",
     welcome: null,
     connect: null,
     devices: null,
+    permissions: null,
     setup: null,
     cli: null,
-    art: { agent: lead?.agent ?? found[0]?.agent ?? "other", computer: "on", extra: input.step === "welcome" ? "none" : "outline" },
+    art: { agent: lead?.agent ?? found[0]?.agent ?? "other", computer: "on", extra: step === "welcome" ? "none" : "outline" },
     steps,
     dots: steps.length,
-    current: Math.max(steps.indexOf(input.step), 0),
+    current: at,
   };
-  switch (input.step) {
+  switch (step) {
     case "cli": {
       const name = input.cliName ?? "cua";
       const present = cliPresent(input.cli);
@@ -216,6 +236,33 @@ function fallbackView(input: FirstRunInput): FirstRunView {
           note: input.signedIn ? null : `${Place} works without it.`,
         },
       };
+    case "permissions": {
+      const host = input.host;
+      const known = host?.configured && !input.hostSettingUp ? host : null;
+      const rows = (
+        [
+          ["screen-recording", `See ${place}'s screen`, "So your team and agents can see what's on it.", "Privacy_ScreenCapture"],
+          ["accessibility", "Use the mouse and keyboard", `So they can click and type on ${place}.`, "Privacy_Accessibility"],
+        ] as const
+      ).map(([id, title, note, pane]) => {
+        const missing = known?.permissions.find((p) => p.id === id && !p.granted);
+        if (!known) return { id, state: "checking" as const, title, note: `Adding ${place} to your account first…`, action: null, settingsUrl: null };
+        if (!missing) return { id, state: "ok" as const, title, note: "Allowed", action: null, settingsUrl: null };
+        return { id, state: "fix" as const, title, note, action: { id: "allow", label: "Allow" }, settingsUrl: missing.settingsUrl ?? `x-apple.systempreferences:com.apple.preference.security?${pane}` };
+      });
+      const all = rows.every((r) => r.state === "ok");
+      return {
+        ...base,
+        permissions: {
+          title: `Share ${place}'s screen.`,
+          lede: `To let your team and agents see and use ${place}, allow two permissions.`,
+          rows,
+          note: `Allow opens System Settings and shows you where to turn on ${host?.appName || "Cua Spaces"}.`,
+          primary: all ? { id: "continue", label: "Continue" } : null,
+          secondary: all ? null : { id: "not-now", label: "Not now" },
+        },
+      };
+    }
     case "setup":
       return {
         ...base,
@@ -378,7 +425,7 @@ export interface FirstRunUsage {
   help: string | null;
 }
 
-const STEPS: FirstRunStep[] = ["welcome", "connect", "cli", "devices", "setup"];
+const STEPS: FirstRunStep[] = ["welcome", "connect", "cli", "devices", "permissions", "setup"];
 
 export interface FirstRunHook {
   view: FirstRunView;
@@ -395,7 +442,7 @@ export interface FirstRunHook {
   connect(agent: string): Promise<void>;
   /** Starts an agent's own sign-in on this computer (`codex login`). */
   signIn(agent: string): Promise<void>;
-  /** A screen's button: `start`, `continue`, `skip`, `not-now` (next screen), `install` (the CLI), `sign-in`, `set-up`, `open-settings`, `copy`, `add`. */
+  /** A screen's button: `start`, `continue`, `skip`, `not-now` (next screen), `install` (the CLI), `sign-in`, `set-up`, `open-settings`, `allow` (the app's guide to that System Settings pane), `copy`, `add`. */
   act(id: string, settingsUrl?: string | null): Promise<void>;
   /** Copies `text` (the tab shown), else the selected request. */
   copyPrompt(text?: string): Promise<void>;
@@ -409,6 +456,82 @@ export interface FirstRunHook {
   later(): void;
   /** The screen before. */
   back(): void;
+}
+
+/** The first run's input with nothing read yet. */
+const NO_INPUT: FirstRunInput = {
+  step: "welcome",
+  hostOs: "macos",
+  agents: null,
+  agent: null,
+  picked: null,
+  keys: null,
+  agentSigningIn: null,
+  agentSignInError: null,
+  connecting: false,
+  connectError: null,
+  agentOpenBeforeSetup: null,
+  agentUsedAt: null,
+  signedIn: false,
+  signingIn: false,
+  host: null,
+  hostSettingUp: false,
+  offers: [],
+  extra: { phase: "none" },
+  plan: null,
+};
+
+export interface ScreenPermissions {
+  view: FirstRunPermissionsView;
+  /** A row's Allow: the app's guide to that System Settings pane. */
+  allow(settingsUrl: string): Promise<void>;
+}
+
+/** Settings' "Permissions": the first run's two rows, live, on a Mac that
+ * is set up and shares its screen (null anywhere else). */
+export function useScreenPermissions(active = true, pollMs = FIRST_RUN_POLL_MS): ScreenPermissions | null {
+  const ctx = useContext(BridgeContext);
+  if (!ctx) throw new Error("bridge hooks need a <BridgeProvider> above them");
+  const { core, adapter } = ctx;
+  const [host, setHost] = useState<HostStatus | null>(null);
+  useEffect(() => {
+    if (!active || !adapter || hostOs() !== "macos") return;
+    let live = true;
+    const read = () =>
+      void adapter
+        .call("host.status", {})
+        .then((h) => live && setHost(h))
+        .catch(() => {});
+    read();
+    const timer = setInterval(read, pollMs);
+    window.addEventListener("focus", read);
+    return () => {
+      live = false;
+      clearInterval(timer);
+      window.removeEventListener("focus", read);
+    };
+  }, [active, adapter, pollMs]);
+  if (hostOs() !== "macos" || !adapter || !host?.configured || host.shareDesktop === false) return null;
+  const input: FirstRunInput = {
+    ...NO_INPUT,
+    step: "permissions",
+    signedIn: true,
+    host: {
+      configured: true,
+      running: Boolean(host.service?.running),
+      online: host.online ?? null,
+      permissions: host.permissions.map((p) => ({ id: p.id, granted: Boolean(p.granted), settingsUrl: p.settingsUrl ?? null })),
+      error: host.error ?? null,
+      shareDesktop: host.shareDesktop ?? null,
+      appName: host.appName ?? null,
+    },
+  };
+  return {
+    view: firstRunPermissions(core, input),
+    allow: async (settingsUrl) => {
+      await adapter.call("host.openSettings", { url: settingsUrl });
+    },
+  };
 }
 
 /** Live readings while `active` (the first run, or what reads its state). */
@@ -460,7 +583,7 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
           .then((rows) => live && setAgents(rows))
           .catch(() => live && setAgents((a) => a ?? []));
       }
-      if (step === "devices" || step === "setup" || s.finishedLater) {
+      if (step === "devices" || step === "permissions" || step === "setup" || s.finishedLater) {
         void adapter
           .call("host.status", {})
           .then((h) => live && setHost(h))
@@ -545,6 +668,8 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
           online: host.online ?? null,
           permissions: host.permissions.map((p) => ({ id: p.id, granted: Boolean(p.granted), settingsUrl: p.settingsUrl ?? null })),
           error: setupError ?? host.error ?? null,
+          shareDesktop: host.shareDesktop ?? null,
+          appName: host.appName ?? null,
         }
       : null,
     hostSettingUp: settingUp,
@@ -613,7 +738,7 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
   };
   // The screens this run shows (the core's): the CLI's only while it is missing.
   const shown = view.steps?.length ? view.steps : firstRunSteps(input);
-  const at = Math.max(shown.indexOf(step), 0);
+  const at = Math.max(shown.indexOf(view.step), 0);
   const forward = () => go(shown[Math.min(at + 1, shown.length - 1)]!);
 
   const setUpThisComputer = async () => {
@@ -632,7 +757,7 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
   // Signed in on a computer that isn't in the account yet: add it, once.
   const autoSetUp = useRef(false);
   useEffect(() => {
-    if (!active || (step !== "devices" && step !== "setup") || !signedIn || !host || host.configured || autoSetUp.current) return;
+    if (!active || (step !== "devices" && step !== "permissions" && step !== "setup") || !signedIn || !host || host.configured || autoSetUp.current) return;
     autoSetUp.current = true;
     void setUpThisComputer();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -734,6 +859,8 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
           await setUpThisComputer();
           break;
         case "open-settings":
+        case "allow":
+          // A privacy pane: the Mac app guides it (PermissionFlow).
           if (settingsUrl && adapter) {
             await (settingsUrl.startsWith("x-apple.systempreferences:")
               ? adapter.call("host.openSettings", { url: settingsUrl })

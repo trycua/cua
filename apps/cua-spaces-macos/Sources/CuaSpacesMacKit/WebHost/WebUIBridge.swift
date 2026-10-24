@@ -838,6 +838,10 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         guard let state = model.host.state, var out = BridgeValue.encode(state) as? [String: Any] else { return NSNull() }
         out["machineId"] = model.host.machineId ?? NSNull()
         out["progress"] = model.host.progress ?? NSNull()
+        // The name System Settings lists this app under ("Cua Spaces Local"),
+        // for the permissions screen's words.
+        out["appName"] = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+            ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? NSNull()
         // Before setup the host has no name yet: the web UI's setup form
         // starts with what the system calls this Mac, as the native one does.
         if !state.configured, (out["name"] as? String)?.isEmpty ?? true, let name = model.host.computerName() {

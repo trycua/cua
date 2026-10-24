@@ -32,14 +32,14 @@ afterEach(cleanup);
 
 type Calls = { op: string; args: unknown }[];
 
-async function mount(opts: { host?: (h: HostStatus) => HostStatus; local?: (l: NonNullable<NewSpaceOptions["local"]>) => NewSpaceOptions["local"]; agents?: (rows: AgentSetupRow[]) => AgentSetupRow[]; cli?: "missing" | "local" } = {}) {
+async function mount(opts: { signedIn?: boolean; host?: (h: HostStatus) => HostStatus; local?: (l: NonNullable<NewSpaceOptions["local"]>) => NewSpaceOptions["local"]; agents?: (rows: AgentSetupRow[]) => AgentSetupRow[]; cli?: "missing" | "local" } = {}) {
   await testCore();
   const calls: Calls = [];
   await mountApp("/onboarding", {
     failsCreates: false,
     listsGhost: false,
     // A first run: signed out, and Cua in no agent's settings yet.
-    demo: { signedIn: false, onboarded: false, cli: opts.cli },
+    demo: { signedIn: opts.signedIn ?? false, onboarded: false, cli: opts.cli },
     intercept: (op, args) => {
       calls.push({ op, args });
       return undefined;
@@ -264,6 +264,56 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     await waitFor(() => expect(heading()).toBe("Pick your agent."));
     click("[data-onboarding-primary]");
     await waitFor(() => expect(heading()).toBe("Connect your other devices."));
+  });
+
+  it("a signed-in Mac that shares its screen asks for two permissions in its own words, and Allow opens the guide", async () => {
+    const SR = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
+    const AX = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
+    let missing = [
+      { id: "screen-recording", label: "Screen Recording", settingsUrl: SR },
+      { id: "accessibility", label: "Accessibility", settingsUrl: AX },
+    ];
+    writeFirstRun({ step: "devices", picked: ["codex"] });
+    const calls = await mount({
+      signedIn: true,
+      host: (h) => ({ ...h, configured: true, shareDesktop: true, appName: "Cua Spaces Local", permissions: missing }),
+    });
+    await waitFor(() => expect(heading()).toBe("This Mac is in your account."));
+    click('[data-first-run-devices-primary="continue"]');
+    await waitFor(() => expect(heading()).toBe("Share this Mac's screen."));
+    expect(document.body.textContent).toMatch(/To let your team and agents see and use this Mac, allow two permissions\./);
+    expect(document.body.textContent).toMatch(/turn on Cua Spaces Local\./);
+    // Nothing is asked before a click.
+    expect(calls.some((c) => c.op === "host.openSettings")).toBe(false);
+    const rows = () => [...document.querySelectorAll<HTMLElement>("[data-first-run-permissions] [data-first-run-status]")].map((e) => `${e.dataset.firstRunStatus}:${e.dataset.state}`);
+    await waitFor(() => expect(rows()).toEqual(["screen-recording:fix", "accessibility:fix"]));
+    click('[data-first-run-status="screen-recording"] [data-first-run-action="allow"]');
+    await waitFor(() => expect(calls.find((c) => c.op === "host.openSettings")?.args).toEqual({ url: SR }));
+    // Granted in System Settings: a check, live; Continue once both are.
+    missing = [];
+    fireEvent.focus(window);
+    await waitFor(() => expect(rows()).toEqual(["screen-recording:ok", "accessibility:ok"]));
+    click('[data-first-run-permissions-primary="continue"]');
+    await waitFor(() => expect(heading()).toBe("Try it in OpenAI Codex."));
+    click("[data-first-run-back]");
+    await waitFor(() => expect(heading()).toBe("Share this Mac's screen."));
+  });
+
+  it("Not now on the permissions screen goes on; a Mac kept for Spaces only never sees it", async () => {
+    writeFirstRun({ step: "permissions", picked: ["codex"] });
+    let share = true;
+    const calls = await mount({
+      signedIn: true,
+      host: (h) => ({ ...h, configured: true, shareDesktop: share, permissions: [{ id: "accessibility", label: "Accessibility" }] }),
+    });
+    await waitFor(() => expect(heading()).toBe("Share this Mac's screen."));
+    click('[data-first-run-permissions-secondary="not-now"]');
+    await waitFor(() => expect(heading()).toBe("Try it in OpenAI Codex."));
+    expect(calls.some((c) => c.op === "host.openSettings")).toBe(false);
+    share = false;
+    writeFirstRun({ step: "permissions" });
+    fireEvent.focus(window);
+    await waitFor(() => expect(heading()).toBe("Try it in OpenAI Codex."));
   });
 
   it("with no agent: install one or use the CLI, then a one-click first Space", async () => {

@@ -25,6 +25,7 @@ import { SettingsGroup, SettingsRow } from "@/components/settings-group";
 import { AdvancedSection } from "@/components/settings/advanced-section";
 import { AgentsSettingsSection } from "@/components/settings/agents-section";
 import { CliSettingsSection } from "@/components/settings/cli-section";
+import { ScreenPermissionsSection } from "@/components/settings/screen-permissions-section";
 import { SharedLinks } from "@/components/links/shared-links";
 import { CoreSettingsRow, CoreSettingsSection } from "@/components/settings/core-section";
 import { Button } from "@/components/ui/button";
@@ -153,6 +154,8 @@ function CoreGeneralPage({ page }: { page: CorePage }) {
         <SettingsRow label="Appearance" control={<Segmented aria-label="Appearance" value={preference} options={APPEARANCE} onValueChange={setPreference} />} />
         <GlobalShortcutRow shortcut={settings?.globalShortcut} />
       </SettingsGroup>
+
+      <ScreenPermissionsSection />
 
       <StorageSection />
 
@@ -299,6 +302,8 @@ function FallbackSettingsPage() {
         ) : null}
         <GlobalShortcutRow shortcut={settings?.globalShortcut} />
       </SettingsGroup>
+
+      <ScreenPermissionsSection />
 
       <StorageSection />
 

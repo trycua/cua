@@ -54,4 +54,10 @@ TargetEnvironment.pin()
 cuaSpacesRegister()
 // `CUA_SPACES_OFFSCREEN=1` (debug): an accessory app, for captures nobody sees.
 OffscreenRun.prepare()
+// The app runs with its window here: it asks for Screen Recording and
+// Accessibility itself (its first run and Settings, PermissionGuide), so the
+// host service no longer shows macOS's own prompts (ServiceLauncher).
+if let spec = HelperService.specPath(info: Bundle.main.infoDictionary, home: NSHomeDirectory()) {
+    PermissionGuide.noteAppAsks(specPath: spec)
+}
 CuaSpacesMacApp.main()

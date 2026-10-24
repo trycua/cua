@@ -420,6 +420,7 @@ export function toHostStatus(h: WkHostState): HostStatus {
     ownerEmail: h.ownerEmail ?? null,
     account: h.account ?? null,
     progress: h.progress ?? null,
+    appName: h.appName ?? null,
   };
 }
 

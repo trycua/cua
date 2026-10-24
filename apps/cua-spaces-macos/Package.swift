@@ -23,6 +23,12 @@ import PackageDescription
 // framework that scripts/build-app.sh embeds in Contents/Frameworks and
 // scripts/build-release.sh signs from the inside out.
 //
+// PermissionFlow (MIT, pinned to a release) is the guide to Screen
+// Recording and Accessibility in System Settings: it opens the pane and
+// floats this app beside it to drag into the list (PermissionGuide.swift).
+// Its strings ship as a SwiftPM resource bundle, which build-app.sh copies
+// into Contents/Resources like ours.
+//
 // UI tests (XCUITest) live in UITests/ and build through project.yml
 // (XcodeGen) on a macOS runner with Xcode.
 let package = Package(
@@ -39,6 +45,7 @@ let package = Package(
         .package(name: "CuaSpacesApp", path: "../../libs/spaces-app-swift"),
         .package(name: "CuaSpacesNotch", path: "../../libs/spaces-notch-swift"),
         .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.0"),
+        .package(url: "https://github.com/jaywcjlove/PermissionFlow", exact: "2.11.4"),
     ],
     targets: [
         .target(
@@ -51,6 +58,7 @@ let package = Package(
                 .product(name: "CuaSpacesTeleport", package: "CuaSpacesApp"),
                 .product(name: "CuaSpacesNotchUI", package: "CuaSpacesNotch"),
                 .product(name: "Sparkle", package: "Sparkle"),
+                .product(name: "PermissionFlow", package: "PermissionFlow"),
             ],
             path: "Sources/CuaSpacesMacKit",
             resources: [.process("Resources")],
@@ -68,7 +76,8 @@ let package = Package(
                            .product(name: "CuaSpacesFFI", package: "CuaSpacesApp"),
                            .product(name: "CuaSpacesStreaming", package: "CuaSpacesApp"),
                            .product(name: "CuaSpacesNotchUI", package: "CuaSpacesNotch"),
-                           .product(name: "CuaSpacesNotchHelper", package: "CuaSpacesNotch")],
+                           .product(name: "CuaSpacesNotchHelper", package: "CuaSpacesNotch"),
+                           .product(name: "PermissionFlow", package: "PermissionFlow")],
             path: "Tests/CuaSpacesMacTests",
             resources: [.copy("Snapshots")],
             swiftSettings: [.swiftLanguageMode(.v5)]

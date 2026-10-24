@@ -207,6 +207,7 @@ const HostStatusShape = ref(
     ownerEmail: optNull(str),
     account: optNull(object({ id: optNull(str), email: optNull(str), display: optNull(str) })),
     progress: optNull(str),
+    appName: optNull(str),
   }),
 );
 
@@ -1165,6 +1166,7 @@ const WkHostShape = ref(
     ownerEmail: optNull(str),
     account: optNull(object({ id: optNull(str), email: optNull(str), display: optNull(str) })),
     progress: optNull(str),
+    appName: optNull(str),
   }),
 );
 

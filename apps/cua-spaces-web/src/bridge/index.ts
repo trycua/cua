@@ -181,6 +181,7 @@ export {
   FIRST_RUN_POLL_MS,
   TEAMMATES_KEY,
   UPSELL_DISMISSED_KEY,
+  firstRunPermissions,
   firstRunTodos,
   firstRunView,
   firstRunCliView,
@@ -194,8 +195,10 @@ export {
   resetFirstRunCache,
   useFirstRun,
   useFirstRunSaved,
+  useScreenPermissions,
   writeFirstRun,
   type FirstRunHook,
+  type ScreenPermissions,
   type FirstRunUsage,
   type FirstRunSaved,
 } from "./first-run";

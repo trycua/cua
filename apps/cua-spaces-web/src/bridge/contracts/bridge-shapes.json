@@ -1309,6 +1309,12 @@
             "string",
             "null"
           ]
+        },
+        "appName": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -4369,6 +4375,12 @@
           }
         },
         "progress": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "appName": {
           "type": [
             "string",
             "null"

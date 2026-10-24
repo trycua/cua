@@ -34,7 +34,8 @@ export const Route = createFileRoute("/onboarding/")({
 /**
  * The first run, the same on macOS, Windows and Linux: Welcome, Pick your
  * agent, Install the Cua CLI (only while the app's CLI is not on this
- * computer), Connect your other devices (optional), Try it in your agent. Every
+ * computer), Connect your other devices (optional), Share this Mac's screen
+ * (a signed-in Mac that shares it), Try it in your agent. Every
  * word, the agents' order and which button does what are the app core's
  * (`firstRun.view`, through `useFirstRun`); this file places them beside the
  * keycap art, as plain rows.
@@ -93,6 +94,7 @@ function OnboardingPage() {
           {view.connect ? <Connect fr={fr} view={view} /> : null}
           {view.cli ? <CommandLine fr={fr} view={view} /> : null}
           {view.devices ? <Devices fr={fr} view={view} /> : null}
+          {view.permissions ? <Permissions fr={fr} view={view} /> : null}
           {view.setup ? <Setup fr={fr} view={view} onFinish={() => void finish()} /> : null}
         </div>
       </div>
@@ -432,7 +434,31 @@ function CommandLine({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
   );
 }
 
-/* ---- 4 · Try it ---------------------------------------------------------------------- */
+/* ---- 4 · Share this Mac's screen (a signed-in Mac that shares it) ------------------- */
+
+function Permissions({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
+  const p = view.permissions!;
+  return (
+    <Step id="permissions" onBack={fr.back}>
+      <Heading>{p.title}</Heading>
+      <Lede>{p.lede}</Lede>
+      <Rows className="mt-6" data-first-run-permissions="">
+        {p.rows.map((r) => (
+          <StatusLine key={r.id} row={r} onAct={r.action ? () => void fr.act(r.action!.id, r.settingsUrl) : undefined} />
+        ))}
+      </Rows>
+      <p className="mt-3 text-[13px] text-muted-foreground" data-first-run-permissions-note="">
+        {p.note}
+      </p>
+      <div className="mt-7 flex flex-wrap items-center gap-3">
+        {p.primary ? <Primary label={p.primary.label} onClick={() => void fr.act(p.primary!.id)} data-first-run-permissions-primary={p.primary.id} /> : null}
+        {p.secondary ? <Secondary label={p.secondary.label} onClick={() => void fr.act(p.secondary!.id)} data-first-run-permissions-secondary={p.secondary.id} /> : null}
+      </div>
+    </Step>
+  );
+}
+
+/* ---- 5 · Try it ---------------------------------------------------------------------- */
 
 function Setup({ fr, view, onFinish }: { fr: FirstRunHook; view: FirstRunView; onFinish: () => void }) {
   const s = view.setup!;

@@ -257,7 +257,7 @@ fn cua_local_with_the_prod_opt_in_keeps_its_own_home() {
         json["store"],
         format!(
             "file {}",
-            home.join(".cua-local/credentials.json").display()
+            home.join(".cua-local/envs/prod/credentials.json").display()
         ),
         "{json}"
     );

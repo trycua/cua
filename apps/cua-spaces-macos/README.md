@@ -71,7 +71,8 @@ prints them), so nothing here hard-codes one.
 | Bundle id | `com.trycua.spaces.macos` | `com.trycua.spaces.local` |
 | Info.plist | no channel keys | `CuaChannel=local`, `CuaEnv=staging`, `CuaHome=~/.cua-local`, `CuaHelperLabel`, `CuaUrlScheme` |
 | Cua deployment | prod (`CUA_ENV` picks another) | staging (`CUA_ENV=prod` opts in) |
-| Cua home | `~/.cua` | `~/.cua-local` (no `envs/staging` below it) |
+| Cua home | `~/.cua` (`~/.cua/envs/staging` on staging) | `~/.cua-local` on staging; `~/.cua-local/envs/prod` under the `CUA_ENV=prod` opt-in |
+| Sign-in Keychain service | `ai.cua.session` (`.staging` on staging) | `ai.cua.session.local` (`.staging` on staging) |
 | Helper login item | `com.trycua.spaces.helper` | `com.trycua.spaces.local.helper` (plist file and `AssociatedBundleIdentifiers` stamped to match) |
 | URL scheme | `cua://` | `cua-local://` |
 | Updater | Sparkle feed and key | none (`SUFeedURL`, `SUPublicEDKey` removed): it never offers or installs an update |
@@ -218,9 +219,13 @@ team `YCK386LBJ7`, identifier in `CUA_IDENTIFIERS`, hardened runtime.
 
 The saved sign-in (`cua auth login`, shared by the app, its `cua` daemon
 and the `cua` CLI) is a generic password in the login keychain: service
-`run.cua.ai`, account `cua-cli`, plus `cua-cli.<name>` for named secrets
-such as the device key (`cua-auth`). Only Cua-signed builds use the
-keychain; ad hoc and unsigned builds keep it in `~/.cua/credentials.json`.
+`ai.cua.session` (`ai.cua.session.staging` on staging), account `cua-cli`,
+plus `cua-cli.<name>` for named secrets such as the device key (`cua-auth`).
+Items older builds kept under `run.cua.ai` move to it once. Cua Spaces Local
+has its own services, `ai.cua.session.local` and `ai.cua.session.local.staging`
+(`CuaChannel::keychain_service`), and nothing to move, so it never reads,
+replaces or signs out the released app's sign-in. Only Cua-signed builds use
+the keychain; ad hoc and unsigned builds keep it in `<cua home>/credentials.json`.
 
 **The launch never waits on it.** The window (or New UI's) opens first,
 on stand-ins for the live services (`Models/AppStartup.swift`). Then, off

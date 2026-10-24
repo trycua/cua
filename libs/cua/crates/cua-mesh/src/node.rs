@@ -22,7 +22,14 @@ use crate::quic::{self, MeshStream, StreamHeader};
 use crate::vnet::VSocket;
 use crate::{Error, Result};
 
-/// The mesh UDP port a machine forwards to its local QUIC media port.
+/// The default mesh UDP port a machine forwards to its local QUIC media
+/// port, and the one a client forward sends media datagrams to.
+///
+/// It is a port of the mesh's own overlay network (an in-process socket of
+/// the node's own mesh address), not a port of the operating system, so two
+/// nodes on one computer never compete for it. A host and the clients that
+/// dial it must agree, so both take it from [`MeshConfig::media_udp_port`]:
+/// a build that runs next to another one (Cua Spaces Local) picks its own.
 pub const MEDIA_UDP_PORT: u16 = 3212;
 
 /// How a node is set up.
@@ -50,6 +57,11 @@ pub struct MeshConfig {
     pub stun: Vec<String>,
     /// Never use direct paths (tests; `CUA_MESH_RELAY_ONLY=1`).
     pub relay_only: bool,
+    /// The mesh UDP port of the peers' QUIC media service: client forwards
+    /// send media datagrams to it, and a machine serves it with
+    /// [`Mesh::serve_udp`] on the same number. Default
+    /// [`MEDIA_UDP_PORT`].
+    pub media_udp_port: u16,
 }
 
 impl std::fmt::Debug for MeshConfig {
@@ -81,6 +93,7 @@ impl MeshConfig {
             approved_path: None,
             stun: Vec::new(),
             relay_only: std::env::var("CUA_MESH_RELAY_ONLY").is_ok_and(|v| v == "1"),
+            media_udp_port: MEDIA_UDP_PORT,
         }
     }
 }
@@ -240,6 +253,8 @@ struct Inner {
     stun: Vec<String>,
     shutdown: coord::tokio_util_cancel::Token,
     approved: Option<Arc<Approved>>,
+    /// [`MeshConfig::media_udp_port`].
+    media_udp_port: u16,
     udp_services: Mutex<Vec<tokio::task::JoinHandle<()>>>,
     /// The peer flows of every [`Mesh::serve_udp`] service.
     udp_flows: Mutex<Vec<UdpFlows>>,
@@ -296,6 +311,7 @@ impl Mesh {
             stun: cfg.stun.clone(),
             shutdown: shutdown.clone(),
             approved: approved.clone(),
+            media_udp_port: cfg.media_udp_port,
             udp_services: Mutex::new(Vec::new()),
             udp_flows: Mutex::new(Vec::new()),
             endpoints: Mutex::new(Vec::new()),
@@ -378,6 +394,12 @@ impl Mesh {
     /// This node's mesh address.
     pub fn addr(&self) -> std::net::Ipv6Addr {
         self.inner.identity.addr()
+    }
+
+    /// The mesh UDP port client forwards of this node send media datagrams
+    /// to ([`MeshConfig::media_udp_port`]).
+    pub fn media_udp_port(&self) -> u16 {
+        self.inner.media_udp_port
     }
 
     /// Current peers.
@@ -604,7 +626,8 @@ impl Mesh {
     /// Forwards a loopback port to `service` on `peer`: every TCP
     /// connection to the returned address becomes one mesh stream, and
     /// datagrams to the same port number on UDP go to the peer's
-    /// [`MEDIA_UDP_PORT`]. Dropping the [`Forward`] stops it.
+    /// [`MeshConfig::media_udp_port`] (default [`MEDIA_UDP_PORT`]). Dropping
+    /// the [`Forward`] stops it.
     pub async fn forward(
         &self,
         peer: PublicKey,
@@ -1091,7 +1114,7 @@ async fn udp_client_forward(mesh: Mesh, local: Arc<UdpSocket>, peer: PublicKey) 
             continue;
         };
         mesh.inner.engine.want(&peer);
-        let dst = SocketAddrV6::new(info.addr(), MEDIA_UDP_PORT, 0, 0);
+        let dst = SocketAddrV6::new(info.addr(), mesh.inner.media_udp_port, 0, 0);
         let sock = {
             let mut f = flows.lock().expect("flows");
             f.retain(|_, (_, at)| at.elapsed() < Duration::from_secs(180));

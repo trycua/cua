@@ -100,7 +100,9 @@ signed with an in-process key it trusts next to the relay's (only on
 requests carrying the per-forward session key the dialer chose), so the
 spacesd host policy decides as for relayed calls; a static machine splices
 streams unchanged (the env token rides inside WireGuard). Mesh UDP 3212
-reaches the local QUIC media port.
+(`--mesh-udp-port`) reaches the local QUIC media port; it is a port of the
+mesh's own network, so another cua-spacesd on the same computer does not
+compete for it.
 
 ## Hosted-machine proxy transport
 

@@ -189,6 +189,13 @@ struct ServeArgs {
     /// address (0 = no QUIC; media stays on the /media WebSocket).
     #[arg(long, env = "CUA_ENV_QUIC_PORT", default_value_t = cua_proto::SPACESD_DEFAULT_QUIC_PORT)]
     quic_port: u16,
+    /// Mesh UDP port that reaches the QUIC media listener over the mesh
+    /// (`join`, when the relay coordinates a mesh). Peers dial the same
+    /// number, so a build that runs beside another one on this machine
+    /// (Cua Spaces Local) sets its own. A port of the mesh's own network,
+    /// not of the operating system.
+    #[arg(long, env = "CUA_ENV_MESH_UDP_PORT", default_value_t = config::DEFAULT_MESH_UDP_PORT)]
+    mesh_udp_port: u16,
     /// Default per-process scrollback in bytes.
     #[arg(long, env = "CUA_ENV_SCROLLBACK_BYTES", default_value_t = config::DEFAULT_SCROLLBACK_BYTES)]
     scrollback_bytes: u64,
@@ -610,6 +617,7 @@ fn build_config(
         allow_guest_power: args.allow_guest_power,
         runtime_override: args.runtime.clone(),
         media_quic_port: args.quic_port,
+        mesh_udp_port: args.mesh_udp_port,
         downloads_dir: args.downloads_dir.clone(),
         force_poll_watcher: args.poll_watcher,
         cursor_probe: args.cursor_probe,
@@ -670,6 +678,7 @@ fn build_await_config(
         allow_guest_power: args.allow_guest_power,
         runtime_override: args.runtime.clone(),
         media_quic_port: args.quic_port,
+        mesh_udp_port: args.mesh_udp_port,
         downloads_dir: args.downloads_dir.clone(),
         force_poll_watcher: args.poll_watcher,
         cursor_probe: args.cursor_probe,
@@ -1301,6 +1310,72 @@ mod tests {
         assert!(cli.command.is_none());
         assert_eq!(cli.serve.port, 4000);
         assert!(cli.serve.print_config);
+    }
+
+    /// Cua Spaces Local runs its host next to a Stable one: its ports come
+    /// from flags, and the defaults stay what every release has used.
+    #[test]
+    fn the_ports_follow_the_flags_and_default_to_3211_3212_3212() {
+        let dir = tempfile::tempdir().unwrap();
+        let token_file = dir.path().join("env-token");
+        let token_file = token_file.to_str().unwrap();
+        let (config, _) =
+            build_config(&parse(&["--token-file", token_file]).serve, false, None).unwrap();
+        assert_eq!(config.listen.port(), 3211);
+        assert_eq!(config.media_quic_port, 3212);
+        assert_eq!(config.mesh_udp_port, 3212);
+        assert_eq!(
+            serde_json::to_value(&config).unwrap()["mesh_udp_port"],
+            3212,
+            "--print-config shows it"
+        );
+
+        let local = parse(&[
+            "--token-file",
+            token_file,
+            "--port",
+            "3221",
+            "--quic-port",
+            "3222",
+            "--mesh-udp-port",
+            "3222",
+        ]);
+        assert_eq!(local.serve.mesh_udp_port, 3222);
+        let (config, _) = build_config(&local.serve, false, None).unwrap();
+        assert_eq!(config.listen.port(), 3221);
+        assert_eq!(config.media_quic_port, 3222);
+        assert_eq!(config.mesh_udp_port, 3222);
+
+        // The same flags on `join` (what the host service runs), and in
+        // await-token-file mode.
+        let cli = parse(&[
+            "join",
+            "--relay",
+            "wss://relay.example",
+            "--relay-token",
+            "r",
+            "--token-file",
+            token_file,
+            "--mesh-udp-port",
+            "3222",
+        ]);
+        let Some(Command::Join(join)) = cli.command else {
+            panic!("not join")
+        };
+        let (config, _) = build_config(&join.serve, true, None).unwrap();
+        assert_eq!(config.mesh_udp_port, 3222);
+        let args = parse(&[
+            "--await-token-file",
+            "--token-file",
+            token_file,
+            "--mesh-udp-port",
+            "3222",
+        ])
+        .serve;
+        let (config, _) = build_await_config(&args, false, None).unwrap();
+        assert_eq!(config.mesh_udp_port, 3222);
+
+        assert!(Cli::try_parse_from(["cua-spacesd", "--mesh-udp-port", "no"]).is_err());
     }
 
     #[test]

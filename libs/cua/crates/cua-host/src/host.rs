@@ -9,6 +9,7 @@ use crate::preflight::{self, SessionProbe};
 use crate::relay::{AccountTokens, ConnectedClient, MachinePatch, RegisterRequest, RelayClient};
 use crate::service::{self, RunnerKind, ServiceManager, ServiceSpec, ServiceState};
 use crate::{Error, Result};
+use cua_home::channel::{CUA_CHANNEL_VAR, CuaChannel};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -775,6 +776,12 @@ fn valid_machine_id(id: &str) -> bool {
         && !id.ends_with('-')
 }
 
+/// The environment variables of cua-spacesd's `--port`, `--quic-port` and
+/// `--mesh-udp-port`.
+const PORT_ENV: &str = "CUA_ENV_PORT";
+const QUIC_PORT_ENV: &str = "CUA_ENV_QUIC_PORT";
+const MESH_UDP_PORT_ENV: &str = "CUA_ENV_MESH_UDP_PORT";
+
 /// The environment variable with this machine's cost per hour (US
 /// dollars), passed on to the host service.
 pub const HOST_USD_PER_HOUR: &str = "CUA_HOST_USD_PER_HOUR";
@@ -1050,6 +1057,13 @@ impl Host {
 
     /// The command line the service runs.
     pub fn service_spec(&self, config: &HostConfig) -> ServiceSpec {
+        self.service_spec_for(config, CuaChannel::current())
+    }
+
+    /// [`Host::service_spec`] for a build of `channel`: the ports it
+    /// serves on are the channel's, so Cua Spaces Local's host runs beside
+    /// the Stable one.
+    pub(crate) fn service_spec_for(&self, config: &HostConfig, channel: CuaChannel) -> ServiceSpec {
         let p = &self.paths;
         let s = |p: PathBuf| p.to_string_lossy().into_owned();
         let mut args: Vec<String> = match config.mode.as_str() {
@@ -1131,6 +1145,33 @@ impl Host {
             ]);
         }
         let mut env = vec![("CUA_ENV_LOG".into(), "info".into())];
+        // A Local build's host service is told its channel and ports, so it
+        // runs beside a Stable one (3211 TCP, 3212 QUIC). Nothing is passed
+        // for Stable: its service is the one it has always been, on
+        // cua-spacesd's own defaults.
+        //
+        // The ports go twice. `--port` (the listener of a joined host;
+        // `--listen` names a direct one) and `--quic-port` are on the
+        // command line, where they show in `ps` and win; the environment
+        // carries the same for everything the service starts, which reads
+        // `CUA_ENV_PORT` and `CUA_CHANNEL`. The mesh port is only in the
+        // environment: a cua-spacesd that predates `--mesh-udp-port` ignores
+        // the variable, but would refuse the flag and not start.
+        let (ports, stable) = (channel.ports(), CuaChannel::Stable.ports());
+        if ports.tcp != stable.tcp {
+            args.extend(["--port".to_string(), ports.tcp.to_string()]);
+            env.push((PORT_ENV.into(), ports.tcp.to_string()));
+        }
+        if ports.quic != stable.quic {
+            args.extend(["--quic-port".to_string(), ports.quic.to_string()]);
+            env.push((QUIC_PORT_ENV.into(), ports.quic.to_string()));
+        }
+        if ports.mesh_udp != stable.mesh_udp {
+            env.push((MESH_UDP_PORT_ENV.into(), ports.mesh_udp.to_string()));
+        }
+        if channel != CuaChannel::Stable {
+            env.push((CUA_CHANNEL_VAR.into(), channel.name().into()));
+        }
         if let Some(mesh) = &config.mesh {
             env.push(("CUA_MESH".into(), mesh.clone()));
         }

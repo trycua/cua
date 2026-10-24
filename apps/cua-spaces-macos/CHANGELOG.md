@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.15.0](https://github.com/trycua/cua/compare/cua-spaces-v0.14.0...cua-spaces-v0.15.0) (2026-10-24)
+
+
+### Features
+
+* **cua-home:** CuaChannel, the names that keep Cua Spaces Local apart from stable (CUA-1776) ([#5800](https://github.com/trycua/cua/issues/5800)) ([e896967](https://github.com/trycua/cua/commit/e896967501382d6dc26ef6d96282c0f8af882648))
+* **spaces:** agent-first onboarding and a quieter Home ([#5869](https://github.com/trycua/cua/issues/5869)) ([be2dad3](https://github.com/trycua/cua/commit/be2dad3345b53b6195192505a63db0538fcc035d))
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.9.0 in Cua Spaces ([#5873](https://github.com/trycua/cua/issues/5873)) ([c74795a](https://github.com/trycua/cua/commit/c74795a3d558a67a350d0b08ce3ed5966d09eb66))
+* **spaces-macos:** run cua-spacesd from Contents/Helpers so opening the app shows a window ([#5871](https://github.com/trycua/cua/issues/5871)) ([92c4cbe](https://github.com/trycua/cua/commit/92c4cbe2241190b5f5a1488ba2a94859e7e51829))
+
 ## [0.14.0](https://github.com/trycua/cua/compare/cua-spaces-v0.13.1...cua-spaces-v0.14.0) (2026-10-24)
 
 

@@ -188,18 +188,27 @@ Describe 'Invoke-CuaUninstall' {
         $script:Calls | Should -Contain 'other-uninstaller cua-driver'
     }
 
-    It 'stops before removing anything when cua is too old to leave Cua Driver''s entries alone' {
+    It 'skips the agent step, says what stays and finishes the rest when cua is too old to leave Cua Driver''s entries alone' {
         $Yes = [switch]$true
         $script:OldCua = $true
-        { Invoke-CuaUninstall *>&1 | Out-Null } | Should -Throw '*older than the version that removes only Cua Spaces*'
-        Test-Path (Join-Path $script:Bin 'cua.exe') | Should -BeTrue
-        Test-Path (Join-Path $script:CuaHome 'config.toml') | Should -BeTrue
-        @($script:Calls | Where-Object { $_ -like '*agents remove --agents all*' -and $_ -notlike '*--help' }) | Should -BeNullOrEmpty
-        $script:Calls | Should -Not -Contain 'app-uninstaller'
-        # A dry run says so and carries on.
-        $DryRun = [switch]$true
         $out = Invoke-CuaUninstall *>&1 | Out-String
-        $out | Should -Match 'this cua is too old to list it'
+        $out | Should -Match 'older than the version that removes only Cua Spaces'
+        $out | Should -Match 'agent step is skipped'
+        @($script:Calls | Where-Object { $_ -like '*agents remove --agents all*' -and $_ -notlike '*--help' }) | Should -BeNullOrEmpty
+        # Everything else still goes, and the run reports that a step needs attention.
+        $script:Calls | Should -Contain 'app-uninstaller'
+        Test-Path (Join-Path $script:Bin 'cua.exe') | Should -BeFalse
+        $global:LASTEXITCODE | Should -Be 1
+        $global:LASTEXITCODE = 0
+        $script:Failed = $false
+    }
+
+    It 'says so in a dry run when cua is too old to list the agent entries' {
+        $DryRun = [switch]$true
+        $script:OldCua = $true
+        $out = Invoke-CuaUninstall *>&1 | Out-String
+        $out | Should -Match '\[dry-run\] cua agents remove --agents all: skipped, this cua is older than'
+        $out | Should -Match '\[dry-run\] cua host remove --force --uninstalling'
     }
 
     It 'keeps the cua home and the device key with -KeepData but still signs out' {

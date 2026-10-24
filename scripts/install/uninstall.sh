@@ -671,16 +671,10 @@ cua_scopes_agents_remove() {
     grep -e '--include-cua-driver' "$tmp/agents-remove-help" >/dev/null 2>&1
 }
 
-# Stops before anything is removed when this cua is too old to leave Cua
-# Driver's agent entries alone: running its `agents remove` would strip them,
-# and the uninstaller deletes the record of what cua wrote (~/.cua) afterwards,
-# so the entries could not be removed later.
-require_scoped_agents_remove() {
-    [ "$dry_run" = 0 ] || return 0
-    [ -n "$cua_bin" ] || return 0
-    cua_scopes_agents_remove && return 0
-    die "this cua is older than the version that removes only Cua Spaces' entries from your agents. Its 'cua agents remove' would also take Cua Driver's skill and MCP server out of Claude Code, Codex, Cursor and your other agents. Nothing was removed. Update cua, then run this uninstaller again: curl -fsSL https://cua.ai/install.sh | sh -s -- --cli-only --yes"
-}
+# What a cua that is too old to leave Cua Driver's entries alone costs: its
+# `agents remove` would strip them, so the step is skipped. ~/.cua/agent-setup.json,
+# the record `cua agents remove` works from, stays unless --delete-spaces.
+OLD_CUA_AGENTS="this cua is older than the version that removes only Cua Spaces' entries from your agents: its 'cua agents remove' would also take Cua Driver's skill and MCP server out of Claude Code, Codex, Cursor and your other agents. So the agent step is skipped, and Cua Spaces' 'cua' MCP server and skills (cua-spaces, cua-volume, cua-sandboxes, gui-automation) stay in your agents. To remove them later, install the latest cua (curl -fsSL https://cua.ai/install.sh | sh -s -- --cli-only --yes) and run: cua agents remove"
 
 # Removes the Cua Spaces skills and MCP entries (the `cua` server, `cua-local`
 # for Local) from the agents. Cua Driver's `cua-driver` skill and server, and
@@ -693,11 +687,19 @@ remove_agent_integrations() {
     if [ "$all_tools" = 1 ]; then
         set -- "$@" --include-cua-driver
     fi
-    if [ "$dry_run" = 1 ]; then
-        if ! cua_scopes_agents_remove; then
-            say "[dry-run] cua $*: this cua is too old to list it; the real run stops and asks you to update cua first"
-            return 0
+    if ! cua_scopes_agents_remove; then
+        if [ "$dry_run" = 1 ]; then
+            say "[dry-run] cua $*: skipped, $OLD_CUA_AGENTS"
+        else
+            warn "$OLD_CUA_AGENTS"
+            if [ "$delete_spaces" = 1 ]; then
+                warn "--delete-spaces also deletes the record cua keeps of them (agent-setup.json), so remove them by hand"
+            fi
+            failed=1
         fi
+        return 0
+    fi
+    if [ "$dry_run" = 1 ]; then
         say "[dry-run] cua $* --dry-run:"
         if bounded 60 env CUA_TELEMETRY=0 DO_NOT_TRACK=1 "$cua_bin" "$@" --dry-run >"$tmp/agents-plan" 2>&1; then
             sed -e '/^Dry run:/d' -e 's/^/[dry-run] /' "$tmp/agents-plan"
@@ -1197,7 +1199,6 @@ main() {
         info "dry run: nothing will be changed"
     fi
     recognise_home
-    require_scoped_agents_remove
     spaces="$(local_spaces)"
     confirm_plan
     quit_app

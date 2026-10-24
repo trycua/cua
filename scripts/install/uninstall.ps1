@@ -214,15 +214,9 @@ function Test-CuaScopesAgentsRemove {
     return ($result.ExitCode -eq 0 -and "$($result.Output)" -match '--include-cua-driver')
 }
 
-# Stops before anything is removed when this cua is too old to leave Cua
-# Driver's agent entries alone: running its `agents remove` would strip them,
-# and the uninstaller deletes the record of what cua wrote (%USERPROFILE%\.cua)
-# afterwards, so the entries could not be removed later.
-function Test-ScopedAgentsRemove {
-    if ($DryRun -or -not $script:Cua) { return }
-    if (Test-CuaScopesAgentsRemove) { return }
-    Stop-Uninstall 'this cua is older than the version that removes only Cua Spaces'' entries from your agents. Its ''cua agents remove'' would also take Cua Driver''s skill and MCP server out of Claude Code, Codex, Cursor and your other agents. Nothing was removed. Update cua, then run this uninstaller again: & ([scriptblock]::Create((irm https://cua.ai/install.ps1))) -CliOnly -Yes'
-}
+# What a cua that is too old to leave Cua Driver's entries alone costs: its
+# `agents remove` would strip them, so the step is skipped.
+$OldCuaAgents = 'this cua is older than the version that removes only Cua Spaces'' entries from your agents: its ''cua agents remove'' would also take Cua Driver''s skill and MCP server out of Claude Code, Codex, Cursor and your other agents. So the agent step is skipped, and Cua Spaces'' ''cua'' MCP server and skills (cua-spaces, cua-volume, cua-sandboxes, gui-automation) stay in your agents. To remove them later, install the latest cua (& ([scriptblock]::Create((irm https://cua.ai/install.ps1))) -CliOnly -Yes) and run: cua agents remove'
 
 # Removes the Cua Spaces skills and MCP entries (the `cua` server, `cua-local`
 # for Local) from the agents. Cua Driver's `cua-driver` skill and server, and
@@ -232,11 +226,17 @@ function Test-ScopedAgentsRemove {
 function Remove-AgentIntegrations {
     $agentArgs = @('agents', 'remove', '--agents', 'all')
     if ($All) { $agentArgs += '--include-cua-driver' }
-    if ($DryRun) {
-        if (-not (Test-CuaScopesAgentsRemove)) {
-            Write-Host "[dry-run] cua $($agentArgs -join ' '): this cua is too old to list it; the real run stops and asks you to update cua first"
-            return
+    if (-not (Test-CuaScopesAgentsRemove)) {
+        if ($DryRun) {
+            Write-Host "[dry-run] cua $($agentArgs -join ' '): skipped, $OldCuaAgents"
+        } else {
+            Write-Warn $OldCuaAgents
+            if ($DeleteSpaces) { Write-Warn '-DeleteSpaces also deletes the record cua keeps of them (agent-setup.json), so remove them by hand' }
+            $script:Failed = $true
         }
+        return
+    }
+    if ($DryRun) {
         Write-Host "[dry-run] cua $($agentArgs -join ' ') --dry-run:"
         $plan = Invoke-Bounded $script:Cua ($agentArgs + '--dry-run') 60
         if ($plan.ExitCode -ne 0) {
@@ -526,7 +526,6 @@ function Invoke-CuaUninstall {
     }
     if ($DryRun) { Write-Info 'dry run: nothing will be changed' }
     Test-HomeRecognised
-    Test-ScopedAgentsRemove
     $spaces = @(Get-LocalSpaces)
 
     if (-not $DryRun) {

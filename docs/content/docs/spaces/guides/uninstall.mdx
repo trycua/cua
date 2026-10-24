@@ -115,11 +115,13 @@ non-zero status.
   left in System Settings, Login Items, switch it off there.
 - **A `cua` from pip, npm or Homebrew** is not touched. Remove it with the tool
   that installed it.
-- **An older `cua`.** Before the version that added `cua agents remove
-  --dry-run`, `cua agents remove` also took out Cua Driver's skill and MCP
-  server. The uninstaller stops before it removes anything and says how to update
-  `cua` (`curl -fsSL https://cua.ai/install.sh | sh -s -- --cli-only --yes`);
-  run it again after that.
+- **An older `cua`.** Before the version that added `--dry-run` and
+  `--include-cua-driver` to `cua agents remove`, that command also took out Cua
+  Driver's skill and MCP server. The uninstaller does not run it. It skips that one step, removes the
+  rest, and says that the `cua` MCP server and the Cua Spaces skills are still in
+  your agents. To take them out, install the latest `cua`
+  (`curl -fsSL https://cua.ai/install.sh | sh -s -- --cli-only --yes`) and run
+  `cua agents remove`.
 - **The `.deb` on Linux** needs root: `sudo apt-get remove cua-spaces`.
 
 To install again: `curl -fsSL https://cua.ai/install.sh | sh`. See

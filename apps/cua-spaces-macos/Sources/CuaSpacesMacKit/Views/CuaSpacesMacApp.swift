@@ -417,8 +417,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // launch opens (the main window is suppressed), the first run at
         // `/onboarding`; not when opened at login.
         if CuaSpacesMacApp.opensWebUIAtLaunch(model), !Self.launchedAtLogin {
-            if !model.onboarding.completed {
-                WebUIWindowController.show(model: model, at: .onboarding)
+            if let route = MainWindowSwitch.firstRunRoute(onboarded: model.onboarding.completed) {
+                WebUIWindowController.show(model: model, at: route)
             } else if DevHooks.value("CUA_SPACES_START_VIEW") == nil {
                 WebUIWindowController.show(model: model)
             }

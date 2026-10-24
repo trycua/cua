@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { useAgentKeys, useFirstRun, type FirstRunArt, type FirstRunCredential, type FirstRunExtraView, type FirstRunHook, type FirstRunRow, type FirstRunView } from "@/bridge";
+import { readSavedOnboarding } from "@/bridge/onboarding";
 import { KeySheet } from "@/components/agents/key-sheet";
 import { CuaLogo } from "@/components/cua-logo";
 import { OsIcon } from "@/components/os-icon";
@@ -16,7 +17,19 @@ import { toast } from "@/components/ui/toast";
 import { RuntimeFixRow } from "@/components/new-space/runtime-fix";
 import { cn } from "@/lib/utils";
 
-export const Route = createFileRoute("/onboarding/")({ component: OnboardingPage });
+export const Route = createFileRoute("/onboarding/")({
+  // `?due=1` is a host opening the first run because it is not done (the Mac
+  // app at launch, or when its window opens again). The page keeps to what
+  // the person chose: after "Skip for now" it goes to Spaces instead, as the
+  // root route does for a host that opens the app at `/`. Every other way in
+  // (the sidebar's "Finish setting up", Settings, the command palette) has
+  // no `due` and always shows the first run.
+  validateSearch: (s: Record<string, unknown>): { due?: true } => (s.due === 1 || s.due === "1" || s.due === true ? { due: true as const } : {}),
+  beforeLoad: ({ search }) => {
+    if (search.due && readSavedOnboarding().skipped) throw redirect({ to: "/spaces" });
+  },
+  component: OnboardingPage,
+});
 
 /**
  * The first run, the same on macOS, Windows and Linux: Welcome, Pick your

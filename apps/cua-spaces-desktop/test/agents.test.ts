@@ -360,7 +360,7 @@ describe.skipIf(!built)("agents", () => {
     await live.remove(["codex"]);
     expect(seen).toEqual([
       ["skills", ["codex"], [], false],
-      ["mcp", ["codex"], { name: "cua", command: "/Applications/Cua Spaces.app/Contents/MacOS/cua", args: ["mcp"], env: new Map() }],
+      ["mcp", ["codex"], { name: "", command: "/Applications/Cua Spaces.app/Contents/MacOS/cua", args: ["mcp"], env: new Map() }],
       ["driver", ["codex"], undefined, true, true],
       ["remove", ["codex"], true, true],
     ]);

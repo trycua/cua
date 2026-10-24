@@ -103,6 +103,18 @@ impl Harness {
         .presented()
     }
 
+    /// Launch with the opt-in disabled checkbox (`disabled_control` scenario).
+    fn launch_with_disabled_control() -> Self {
+        Self::spawn(
+            None,
+            None,
+            false,
+            None,
+            &[("CUA_APPKIT_DISABLED_CONTROL", "1")],
+        )
+        .presented()
+    }
+
     fn presented(self) -> Self {
         // Settle for window creation + activation.
         std::thread::sleep(Duration::from_millis(800));
@@ -1834,6 +1846,98 @@ fn harness_appkit_erroring_toggle_press_counts_only_when_its_value_moved() {
                 assert!(
                     after.contains("acts_then_errors=true errors_only=false"),
                     "fixture state after the presses:\n{after}"
+                );
+            },
+        )
+        .unwrap_or_else(|error| panic!("background desktop contract failed: {error}"));
+
+        Observation::delivered_with_fixture_state(passed)
+    });
+}
+
+/// A disabled control is published with `enabled: false` and its frame, and a
+/// press on its token is refused without changing it (#3949).
+#[test]
+#[ignore]
+fn harness_appkit_disabled_control_is_published_and_its_press_refused() {
+    let case = native_background_case(
+        "appkit",
+        "disabled_control_press",
+        Targeting::Ax,
+        DriverRoute::MacosAxAction,
+    );
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named(&cell_id)
+            .expect("start installed macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        let harness = Harness::launch_with_disabled_control();
+        let pid = harness.pid;
+        let (wid, _) = driver
+            .find_window(pid as i64, "CuaTestHarness AppKit")
+            .expect("AppKit main window not found");
+
+        let (_, passed) = run_with_background_oracles(
+            &mut driver,
+            TargetWindow {
+                pid,
+                native_id: wid,
+            },
+            |driver| {
+                let snapshot = snapshot_elements(driver, pid, wid);
+                assert!(
+                    snapshot.tree_text().contains("disabled_checked=false"),
+                    "disabled checkbox did not start off"
+                );
+                let index = element_index_by_id(snapshot.tree_text(), "chk-disabled")
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "the disabled checkbox has no element_index:\n{}",
+                            snapshot.tree_text()
+                        )
+                    });
+                let element = snapshot.structured()["elements"]
+                    .as_array()
+                    .and_then(|elements| {
+                        elements
+                            .iter()
+                            .find(|element| element["element_index"].as_u64() == Some(index))
+                    })
+                    .cloned()
+                    .expect("the disabled checkbox is missing from elements");
+                assert_eq!(element["enabled"], false, "{element}");
+                assert!(
+                    element["frame"]["w"].as_f64().unwrap_or(0.0) > 0.0,
+                    "the disabled checkbox has no frame: {element}"
+                );
+
+                let refused = driver.call(
+                    "click",
+                    serde_json::json!({
+                        "pid": pid as i64,
+                        "window_id": wid,
+                        "element_token": element["element_token"],
+                        "action": "press",
+                        "delivery_mode": "background"
+                    }),
+                );
+                assert!(
+                    refused.is_error(),
+                    "a press on a disabled control was reported as performed: {}",
+                    refused.raw
+                );
+                assert!(
+                    refused.text().contains("AXEnabled=false"),
+                    "{}",
+                    refused.raw
+                );
+
+                std::thread::sleep(Duration::from_millis(200));
+                let after = snapshot_elements(driver, pid, wid);
+                assert!(
+                    after.tree_text().contains("disabled_checked=false"),
+                    "the refused press changed the disabled checkbox:\n{}",
+                    after.tree_text()
                 );
             },
         )

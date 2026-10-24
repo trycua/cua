@@ -53,6 +53,15 @@
 # the Local one (it refuses). The build is staged, signed and verified first;
 # the live copy is swapped only then, and put back if the copy fails to verify.
 #
+# An old Cua Spaces Local (the bundle id com.trycua.spaces.local, before the
+# rename to com.trycua.spaces.macos.local) at the Local path is replaced: its
+# login item is unregistered, the app is removed, and once the new app is
+# installed its old settings in ~/Library go too, and its helper login item is
+# registered again for the new app (a failed copy puts the old app and its login
+# item back). ~/.cua-local (the sign-in) and Cua Volume Local stay.
+# macOS asks for the renamed app's permissions once; the old id's permission rows
+# stay in macOS's list (macOS cannot clear them for an app that is gone), unused.
+#
 # Signing: the stable local certificate shared with Cua Driver's local install
 # (libs/cua-driver/scripts/_local-signing.sh), so the Screen Recording and
 # Accessibility grants of Cua Spaces Local survive a rebuild. Without it the
@@ -679,7 +688,7 @@ reset_spaces_local_tcc() {
 # helper label), no update feed. Prints every problem; fails on any.
 verify_local_bundle() {
     local app="$1" plist="$1/Contents/Info.plist" failures=0 id channel label schemes scheme
-    local has_local_scheme=0 helper_plist associated
+    local has_local_scheme=0 helper_plist associated i
 
     bad() { err "$app: $*"; failures=$((failures + 1)); }
 
@@ -728,9 +737,21 @@ EOF
         [ -f "$helper_plist" ] || continue
         label="$(plist_get "$helper_plist" Label || true)"
         [ "$label" != "$STABLE_HELPER_LABEL" ] || bad "$(basename "$helper_plist") has the Stable helper label $STABLE_HELPER_LABEL"
+        # Each entry is compared whole: the Local id is Stable's plus ".local",
+        # so a substring test would flag the Local id itself. launchd takes the
+        # key as an array or as one string; both are read.
         associated="$(plist_get "$helper_plist" AssociatedBundleIdentifiers || true)"
         case "$associated" in
-            *"$STABLE_BUNDLE_ID"*) bad "$(basename "$helper_plist") is associated with the Stable app $STABLE_BUNDLE_ID" ;;
+            "Array {"*)
+                i=0
+                while associated="$(plist_get "$helper_plist" "AssociatedBundleIdentifiers:$i")"; do
+                    [ "$associated" != "$STABLE_BUNDLE_ID" ] || bad "$(basename "$helper_plist") is associated with the Stable app $STABLE_BUNDLE_ID"
+                    i=$((i + 1))
+                done
+                ;;
+            *)
+                [ "$associated" != "$STABLE_BUNDLE_ID" ] || bad "$(basename "$helper_plist") is associated with the Stable app $STABLE_BUNDLE_ID"
+                ;;
         esac
     done
 
@@ -756,6 +777,21 @@ fi
 log "installing $APP_DEST"
 # The path may have been taken since the preflight.
 require_local_bundle_or_absent "$APP_DEST" || exit 1
+# The old Local (bundle id com.trycua.spaces.local) is retired here, after the
+# build and its checks, so a failed build leaves it as it was. Its settings in
+# ~/Library are removed below, once the new app is in.
+REPLACING_LEGACY_LOCAL=0
+LEGACY_HELPER_WAS_ENABLED=0
+if is_legacy_local_bundle "$APP_DEST"; then
+    REPLACING_LEGACY_LOCAL=1
+    PREVIOUS_REQUIREMENT=""
+    log "found the old ${LOCAL_APP_DIR_NAME%.app} (bundle id $LOCAL_LEGACY_BUNDLE_ID): replacing it with the renamed app ($LOCAL_BUNDLE_ID) and removing its old settings. Your sign-in stays; macOS asks for the app's permissions once more."
+    if local_helper_enabled "$APP_DEST"; then LEGACY_HELPER_WAS_ENABLED=1; fi
+    retire_local_app "$APP_DEST"
+    if [ -x "$LSREGISTER" ]; then
+        "$LSREGISTER" -u "$APP_DEST" >/dev/null 2>&1 || true
+    fi
+fi
 quit_local_app "$APP_DEST"
 mkdir -p "$APP_PARENT"
 APP_BACKUP="$APP_DEST.install-backup.$$"
@@ -781,11 +817,17 @@ else
     rm -rf "$APP_DEST"
     if [ -d "$APP_BACKUP" ]; then
         mv "$APP_BACKUP" "$APP_DEST"
+        if [ "$REPLACING_LEGACY_LOCAL" = 1 ]; then
+            restore_retired_local_app "$APP_DEST" "$LEGACY_HELPER_WAS_ENABLED"
+        fi
         die "the installed copy did not verify; restored the previous $LOCAL_APP_DIR_NAME."
     fi
     die "the installed copy did not verify and was removed."
 fi
 ok "installed $APP_DEST"
+if [ "$REPLACING_LEGACY_LOCAL" = 1 ]; then
+    remove_legacy_local_data >/dev/null
+fi
 if [ "$INSTALLED_CLASS" = certificate-backed ]; then
     ok "signature: certificate-backed, the same on every rebuild"
 fi
@@ -796,6 +838,12 @@ if [ -x "$LSREGISTER" ]; then
     "$LSREGISTER" -f "$APP_DEST" >/dev/null 2>&1 || true
 fi
 reset_spaces_local_tcc "$PREVIOUS_REQUIREMENT" "$INSTALLED_REQUIREMENT"
+# The old app's helper login item was enabled and was unregistered above: enable
+# the renamed app's (the same label), so the host is back at the next login
+# whether or not the app is opened now.
+if [ "$LEGACY_HELPER_WAS_ENABLED" = 1 ]; then
+    register_local_helper "$APP_DEST" "the new app"
+fi
 
 # --- The CLI -----------------------------------------------------------------------
 

@@ -86,8 +86,15 @@ WEB_LOG="$WORK/web.log"
 cat > "$WORK/stub.c" <<'EOF'
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 int main(int argc, char **argv) {
     const char *log = getenv("STUB_LOG");
+    // `CuaSpacesMac --service-helper status`: the login item is registered
+    // (STUB_HELPER_STATUS=not-registered: it is not).
+    if (argc >= 3 && strcmp(argv[1], "--service-helper") == 0 && strcmp(argv[2], "status") == 0) {
+        const char *status = getenv("STUB_HELPER_STATUS");
+        printf("{\"status\":\"%s\"}\n", status ? status : "enabled");
+    }
     FILE *f = log ? fopen(log, "a") : NULL;
     if (f) {
         const char *channel = getenv("CUA_CHANNEL");
@@ -116,7 +123,7 @@ set -euo pipefail
 echo "$*" >> "$FAKE_BUILD_LOG"
 [ "$1" = --channel ] && [ "$2" = local ] || { echo "fake build-app.sh: expected --channel local" >&2; exit 2; }
 out="$4"
-id="${FAKE_BUILD_ID:-com.trycua.spaces.local}"
+id="${FAKE_BUILD_ID:-com.trycua.spaces.macos.local}"
 name="${FAKE_BUILD_APP_NAME:-Cua Spaces Local}"
 scheme="${FAKE_BUILD_SCHEME:-cua-local}"
 helper="${FAKE_BUILD_HELPER_LABEL:-com.trycua.spaces.local.helper}"
@@ -177,12 +184,18 @@ cat > "$app/Contents/Info.plist" <<PLIST
 $feed
 </dict></plist>
 PLIST
+# launchd takes AssociatedBundleIdentifiers as an array or as one string.
+if [ "${FAKE_BUILD_ASSOCIATED_SCALAR:-0}" = 1 ]; then
+  assoc_xml="<key>AssociatedBundleIdentifiers</key><string>$associated</string>"
+else
+  assoc_xml="<key>AssociatedBundleIdentifiers</key><array><string>$associated</string></array>"
+fi
 cat > "$app/Contents/Library/LaunchAgents/$helper.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0"><dict>
 <key>Label</key><string>$helper</string>
 <key>BundleProgram</key><string>Contents/MacOS/CuaSpacesMac</string>
-<key>AssociatedBundleIdentifiers</key><array><string>$associated</string></array>
+$assoc_xml
 </dict></plist>
 PLIST
 /usr/bin/codesign -s - -f -i "$id" "$app/Contents/Helpers/cua-spacesd" >/dev/null 2>&1
@@ -448,6 +461,51 @@ LOCAL_APP="$FAKE_HOME/Applications/Cua Spaces Local.app"
 LOCAL_CLI="$FAKE_HOME/.local/bin/cua-local"
 installed_id() { /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$1/Contents/Info.plist" 2>/dev/null; }
 
+# The old Cua Spaces Local, as its first builds (bundle id com.trycua.spaces.local,
+# before the rename to com.trycua.spaces.macos.local) left it. make_legacy_data is
+# what it keeps in ~/Library; make_legacy_local adds the app at the Local path
+# (signed, as every build is), the sign-in and the Local volume.
+LEGACY_ID=com.trycua.spaces.local
+make_legacy_data() {
+    mkdir -p "$FAKE_HOME/Library/Application Support/$LEGACY_ID" "$FAKE_HOME/Library/Preferences" \
+        "$FAKE_HOME/Library/Caches/$LEGACY_ID" "$FAKE_HOME/Library/HTTPStorages/$LEGACY_ID" "$FAKE_HOME/Library/WebKit/$LEGACY_ID" \
+        "$FAKE_HOME/Library/Cookies" "$FAKE_HOME/Library/Saved Application State/$LEGACY_ID.savedState"
+    echo '{}' > "$FAKE_HOME/Library/Application Support/$LEGACY_ID/settings.json"
+    echo '<plist/>' > "$FAKE_HOME/Library/Preferences/$LEGACY_ID.plist"
+    echo 'cache' > "$FAKE_HOME/Library/Caches/$LEGACY_ID/Cache.db"
+    echo 'http' > "$FAKE_HOME/Library/HTTPStorages/$LEGACY_ID/httpstorages.sqlite"
+    echo 'web' > "$FAKE_HOME/Library/WebKit/$LEGACY_ID/data"
+    echo 'cookies' > "$FAKE_HOME/Library/Cookies/$LEGACY_ID.binarycookies"
+    echo 'state' > "$FAKE_HOME/Library/Saved Application State/$LEGACY_ID.savedState/windows.plist"
+}
+legacy_data_gone() {
+    [ ! -e "$FAKE_HOME/Library/Application Support/$LEGACY_ID" ] && [ ! -e "$FAKE_HOME/Library/Preferences/$LEGACY_ID.plist" ] \
+        && [ ! -e "$FAKE_HOME/Library/Caches/$LEGACY_ID" ] && [ ! -e "$FAKE_HOME/Library/HTTPStorages/$LEGACY_ID" ] \
+        && [ ! -e "$FAKE_HOME/Library/WebKit/$LEGACY_ID" ] && [ ! -e "$FAKE_HOME/Library/Cookies/$LEGACY_ID.binarycookies" ] \
+        && [ ! -e "$FAKE_HOME/Library/Saved Application State/$LEGACY_ID.savedState" ]
+}
+make_legacy_local() {
+    local d="$LOCAL_APP/Contents"
+    mkdir -p "$d/MacOS" "$FAKE_HOME/.cua-local/helper" "$FAKE_HOME/Cua Volume Local"
+    cp "$STUB_BIN" "$d/MacOS/CuaSpacesMac"
+    cat > "$d/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>CuaSpacesMac</string>
+<key>CFBundleIdentifier</key><string>$LEGACY_ID</string>
+<key>CFBundleName</key><string>Cua Spaces Local</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleVersion</key><string>1</string>
+<key>CuaChannel</key><string>local</string>
+</dict></plist>
+PLIST
+    /usr/bin/codesign -s - -f -i "$LEGACY_ID" "$LOCAL_APP" >/dev/null 2>&1
+    echo '{"session":"local"}' > "$FAKE_HOME/.cua-local/credentials.json"
+    echo '{"label":"com.trycua.spaces.local.helper"}' > "$FAKE_HOME/.cua-local/helper/service.json"
+    echo 'my local files' > "$FAKE_HOME/Cua Volume Local/note.txt"
+    make_legacy_data
+}
+
 # Every added path must be inside the Local app or be `cua-local`; nothing may
 # be removed or changed. Compares two snap_all outputs.
 only_local_additions() {
@@ -469,7 +527,7 @@ if [ -f "$CHANNEL_RS" ]; then
     done < <(
         # shellcheck disable=SC1091
         . "$SCRIPTS_DIR/_local-common.sh"
-        printf '%s\n' "$LOCAL_BUNDLE_ID" "$LOCAL_APP_DIR_NAME" "$LOCAL_CLI_NAME" "$LOCAL_URL_SCHEME" \
+        printf '%s\n' "$LOCAL_BUNDLE_ID" "$LOCAL_LEGACY_BUNDLE_ID" "$LOCAL_APP_DIR_NAME" "$LOCAL_CLI_NAME" "$LOCAL_URL_SCHEME" \
             "$LOCAL_HOME_DIR_NAME" "$LOCAL_APP_SUPPORT_DIR_NAME" "$LOCAL_HELPER_LABEL" "$LOCAL_HOST_LABEL" \
             "$LOCAL_VOLUME_NAME" "$LOCAL_LUME_BIN_NAME" "$LOCAL_LUME_DIR_NAME" "${LOCAL_KEYCHAIN_SERVICES[@]}" \
             "$STABLE_BUNDLE_ID" "$STABLE_URL_SCHEME" "$STABLE_HELPER_LABEL" "$STABLE_APP_PARENT" \
@@ -490,10 +548,10 @@ install
 check "install-local.sh succeeds (status $RC)" '[ "$RC" = 0 ]'
 [ "$RC" = 0 ] || note "$OUT"
 check "builds with --channel local debug <out>" 'grep >/dev/null -- "^--channel local debug " "$BUILD_LOG"'
-check "the app is ~/Applications/Cua Spaces Local.app with the Local bundle id" '[ "$(installed_id "$LOCAL_APP")" = com.trycua.spaces.local ]'
+check "the app is ~/Applications/Cua Spaces Local.app with the Local bundle id" '[ "$(installed_id "$LOCAL_APP")" = com.trycua.spaces.macos.local ]'
 check "the signature verifies (deep, strict)" '/usr/bin/codesign --verify --deep --strict "$LOCAL_APP" 2>/dev/null'
 check "nested code was re-signed with the app's identity (cua-spacesd keeps its identifier)" \
-    '/usr/bin/codesign -dv "$LOCAL_APP/Contents/Helpers/cua-spacesd" 2>&1 | grep >/dev/null "^Identifier=com.trycua.spaces.local$"'
+    '/usr/bin/codesign -dv "$LOCAL_APP/Contents/Helpers/cua-spacesd" 2>&1 | grep >/dev/null "^Identifier=com.trycua.spaces.macos.local$"'
 check "the nested framework is signed and sealed" '/usr/bin/codesign --verify --strict "$LOCAL_APP/Contents/Frameworks/Fake.framework" 2>/dev/null'
 check "cua-local links to the bundled cua" '[ "$(readlink "$LOCAL_CLI")" = "$LOCAL_APP/Contents/MacOS/cua" ]'
 check "cua-local runs the bundled cua" 'STUB_LOG="$STUB_LOG" "$LOCAL_CLI" status && grep >/dev/null "cua-local status" "$STUB_LOG"'
@@ -514,7 +572,7 @@ check "a rebuild installs over the Local app (status $RC)" '[ "$RC" = 0 ]'
 check "it is the new build" '[ "$(cat "$LOCAL_APP/Contents/Resources/salt.txt")" = 2 ]'
 check "no backup is left behind" '! ls "$FAKE_HOME"/Applications/*.install-backup.* >/dev/null 2>&1'
 check "an ad hoc cdhash change resets the Local TCC rows, and only those" \
-    'grep >/dev/null "^tccutil reset ScreenCapture com.trycua.spaces.local\$" "$SHIM_LOG" && ! grep "^tccutil" "$SHIM_LOG" | grep -v "com.trycua.spaces.local"'
+    'grep >/dev/null "^tccutil reset ScreenCapture com.trycua.spaces.macos.local\$" "$SHIM_LOG" && ! grep "^tccutil" "$SHIM_LOG" | grep -v "com.trycua.spaces.macos.local"'
 check "Stable files are byte-identical after a rebuild" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
 check "nothing but the Local app changed" '[ "$(snap_all | grep -v "Cua Spaces Local.app")" = "$(printf "%s\n" "$ALL_BEFORE" | grep -v "Cua Spaces Local.app")" ]'
 
@@ -528,7 +586,7 @@ check "without --no-launch the app is opened by its exact path" 'grep >/dev/null
 reset_fixture
 ALL_BEFORE="$(snap_all)"
 install --prefix "$WORK/prefix"
-check "--prefix installs under the prefix (status $RC)" '[ "$RC" = 0 ] && [ "$(installed_id "$WORK/prefix/Applications/Cua Spaces Local.app")" = com.trycua.spaces.local ] && [ -L "$WORK/prefix/.local/bin/cua-local" ]'
+check "--prefix installs under the prefix (status $RC)" '[ "$RC" = 0 ] && [ "$(installed_id "$WORK/prefix/Applications/Cua Spaces Local.app")" = com.trycua.spaces.macos.local ] && [ -L "$WORK/prefix/.local/bin/cua-local" ]'
 check "--prefix leaves the whole HOME untouched" '[ "$(snap_all)" = "$ALL_BEFORE" ]'
 install --prefix /
 check "a prefix that would put the app in /Applications is refused" '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep >/dev/null "/Applications"'
@@ -692,6 +750,19 @@ uninstall --yes
 check "uninstall-local.sh refuses the same bundle too" '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep >/dev/null "refusing to touch"'
 check "and removes nothing" '[ "$(snap_all)" = "$ALL_BEFORE" ] && [ -z "$(cat "$SHIM_LOG")" ]'
 
+# The Local id is Stable's plus ".local": an id that only starts with Stable's
+# (the notch's, com.trycua.spaces.macos.notch) is neither of them.
+reset_fixture
+mkdir -p "$FAKE_HOME/Applications"
+cp -R "$FAKE_HOME/Applications/Cua Spaces.app" "$LOCAL_APP"
+sed -i '' 's#com.trycua.spaces.macos</string>#com.trycua.spaces.macos.notch</string>#' "$LOCAL_APP/Contents/Info.plist"
+ALL_BEFORE="$(snap_all)"
+install
+check "a bundle whose id only starts with the Stable id (.macos.notch) is refused, before anything is built" \
+    '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep >/dev/null "refusing to touch" && [ ! -s "$BUILD_LOG" ] && [ "$(snap_all)" = "$ALL_BEFORE" ]'
+uninstall --yes
+check "uninstall-local.sh refuses it too and removes nothing" '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep >/dev/null "refusing to touch" && [ "$(snap_all)" = "$ALL_BEFORE" ] && [ -z "$(cat "$SHIM_LOG")" ]'
+
 reset_fixture
 mkdir -p "$FAKE_HOME/Applications/Cua Spaces Local.app/Contents"
 ALL_BEFORE="$(snap_all)"
@@ -710,7 +781,8 @@ for variant in "FAKE_BUILD_ID=com.trycua.spaces.macos|bundle id" \
     "FAKE_BUILD_SCHEME=cua|URL scheme" \
     "FAKE_BUILD_CHANNEL=stable|CuaChannel" \
     "FAKE_BUILD_HELPER_LABEL=com.trycua.spaces.helper|Stable helper label" \
-    "FAKE_BUILD_ASSOCIATED=com.trycua.spaces.macos|associated with the Stable app"; do
+    "FAKE_BUILD_ASSOCIATED=com.trycua.spaces.macos|associated with the Stable app" \
+    "FAKE_BUILD_ASSOCIATED_SCALAR=1 FAKE_BUILD_ASSOCIATED=com.trycua.spaces.macos|associated with the Stable app"; do
     var="${variant%%|*}"
     what="${variant#*|}"
     reset_fixture
@@ -720,6 +792,9 @@ for variant in "FAKE_BUILD_ID=com.trycua.spaces.macos|bundle id" \
     check "$var: refused ($what), and the installed Local app is unchanged" \
         '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep -i >/dev/null "$what" && [ "$(snap_all)" = "$ALL_BEFORE" ]'
 done
+reset_fixture
+FAKE_BUILD_ASSOCIATED_SCALAR=1 install
+check "a login item associated with the Local id, as one string or as an array, is accepted (status $RC)" '[ "$RC" = 0 ] && [ "$(installed_id "$LOCAL_APP")" = com.trycua.spaces.macos.local ]'
 reset_fixture
 ALL_BEFORE="$(snap_all)"
 FAKE_BUILD_APP_NAME="Cua Spaces" install
@@ -838,6 +913,72 @@ check "a copy that does not verify fails the install (status $RC)" '[ "$RC" != 0
 check "the previous Local app is back, byte for byte" '[ "$(snap "Applications/Cua Spaces Local.app")" = "$OLD_APP" ]'
 check "no backup is left behind" '! ls "$FAKE_HOME"/Applications/*.install-backup.* >/dev/null 2>&1'
 check "Stable files are byte-identical after the rollback" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
+
+# --- 5a. The old Local id is replaced -------------------------------------------------------------
+
+echo "== the old Local id is replaced =="
+reset_fixture
+make_legacy_local
+STABLE_BEFORE="$(snap_stable)"
+KEPT_BEFORE="$(snap .cua-local "Cua Volume Local")"
+: > "$SHIM_LOG"; : > "$STUB_LOG"
+install
+check "installing over an app with the old id succeeds (status $RC)" '[ "$RC" = 0 ]'
+[ "$RC" = 0 ] || note "$OUT"
+check "the old id is gone: the app at the Local path has the new Local id" '[ "$(installed_id "$LOCAL_APP")" = com.trycua.spaces.macos.local ] && /usr/bin/codesign --verify --deep --strict "$LOCAL_APP" 2>/dev/null'
+check "it says so in one plain line" \
+    '[ "$(printf "%s\n" "$OUT" | grep -c "found the old Cua Spaces Local")" = 1 ] && printf "%s\n" "$OUT" | grep "found the old" | grep >/dev/null "found the old Cua Spaces Local (bundle id com.trycua.spaces.local): replacing it with the renamed app (com.trycua.spaces.macos.local)"'
+check "the old app was asked to unregister its login item, and the new app registers its own (it was enabled)" \
+    'grep >/dev/null -- "--service-helper unregister \[CUA_CHANNEL=local\]" "$STUB_LOG" && [ "$(grep -n -- "--service-helper unregister" "$STUB_LOG" | head -1 | cut -d: -f1)" -lt "$(grep -n -- "--service-helper register" "$STUB_LOG" | head -1 | cut -d: -f1)" ]'
+check "launchd was asked about the Local helper label only" \
+    '[ "$(grep -c "^launchctl" "$SHIM_LOG")" = 1 ] && grep >/dev/null "bootout gui/[0-9]*/com.trycua.spaces.local.helper$" "$SHIM_LOG"'
+check "LaunchServices forgot the old registration, then registered the new app" \
+    'grep >/dev/null "^lsregister -u $LOCAL_APP\$" "$SHIM_LOG" && grep >/dev/null "^lsregister -f $LOCAL_APP\$" "$SHIM_LOG"'
+check "the old id's settings, preferences, caches, web view data, cookies and window state are gone" 'legacy_data_gone'
+check "no permission rows were reset (tccutil cannot resolve an app that is gone, so none is attempted)" '! grep >/dev/null "^tccutil" "$SHIM_LOG"'
+check "the sign-in, the helper spec and Cua Volume Local are untouched" '[ "$(snap .cua-local "Cua Volume Local")" = "$KEPT_BEFORE" ]'
+check "Stable files are byte-identical" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
+check "no backup is left behind" '! ls "$FAKE_HOME"/Applications/*.install-backup.* >/dev/null 2>&1'
+check "cua-local links to the new app's cua" '[ "$(readlink "$LOCAL_CLI")" = "$LOCAL_APP/Contents/MacOS/cua" ]'
+: > "$SHIM_LOG"; : > "$STUB_LOG"
+install
+check "the next install is a plain rebuild: no migration line, nothing about the old id" \
+    '[ "$RC" = 0 ] && ! printf "%s" "$OUT" | grep >/dev/null "found the old" && ! grep >/dev/null "service-helper" "$STUB_LOG"'
+
+# An old app whose login item was not registered gets none registered for the new one.
+reset_fixture
+make_legacy_local
+: > "$STUB_LOG"
+STUB_HELPER_STATUS=not-registered install
+check "an old Local without a registered login item: replaced, and no login item is registered (status $RC)" \
+    '[ "$RC" = 0 ] && [ "$(installed_id "$LOCAL_APP")" = com.trycua.spaces.macos.local ] && ! grep >/dev/null -- "--service-helper register" "$STUB_LOG"'
+
+# A build that is refused leaves the old app, its settings and its login item alone.
+reset_fixture
+make_legacy_local
+ALL_BEFORE="$(snap_all)"
+: > "$SHIM_LOG"; : > "$STUB_LOG"
+FAKE_BUILD_FEED=1 install
+check "a bad build over the old Local is refused and nothing of the old Local changed" \
+    '[ "$RC" != 0 ] && [ "$(snap_all)" = "$ALL_BEFORE" ] && ! grep >/dev/null "service-helper" "$STUB_LOG" && ! grep >/dev/null "^launchctl\|^tccutil" "$SHIM_LOG"'
+
+# A copy that fails to verify puts the old app back, and its settings were not touched.
+reset_fixture
+make_legacy_local
+: > "$SHIM_LOG"; : > "$STUB_LOG"
+FAKE_BUILD_SALT=3 FAIL_VERIFY_PATH="$LOCAL_APP" install
+check "a copy that does not verify restores the old app (the old id, not the new one)" \
+    '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep >/dev/null "restored the previous" && [ "$(installed_id "$LOCAL_APP")" = "$LEGACY_ID" ] && ! ls "$FAKE_HOME"/Applications/*.install-backup.* >/dev/null 2>&1'
+check "and the old app is known to LaunchServices again and its login item is registered again" \
+    'grep >/dev/null -- "--service-helper register \[CUA_CHANNEL=local\]" "$STUB_LOG" && [ "$(grep -n "^lsregister -u $LOCAL_APP\$" "$SHIM_LOG" | tail -1 | cut -d: -f1)" -lt "$(grep -n "^lsregister -f $LOCAL_APP\$" "$SHIM_LOG" | tail -1 | cut -d: -f1)" ]'
+check "and the old id's settings are still there" '[ -f "$FAKE_HOME/Library/Application Support/$LEGACY_ID/settings.json" ] && [ -f "$FAKE_HOME/Library/Preferences/$LEGACY_ID.plist" ]'
+
+# Old settings without an old app (it was deleted by hand) are not touched by an install:
+# only the uninstaller cleans them.
+reset_fixture
+make_legacy_data
+install
+check "old-id settings with no old app are left to the uninstaller (status $RC)" '[ "$RC" = 0 ] && ! legacy_data_gone && ! grep >/dev/null "tccutil" "$SHIM_LOG"'
 
 # --- 5b. A stalled codesign -----------------------------------------------------------------------
 
@@ -1083,20 +1224,20 @@ reset_fixture
 ALL_BEFORE="$(snap_all)"
 STABLE_BEFORE="$(snap_stable)"
 install
-mkdir -p "$FAKE_HOME/.cua-local/helper" "$FAKE_HOME/Library/Application Support/com.trycua.spaces.local" "$FAKE_HOME/Cua Volume Local"
+mkdir -p "$FAKE_HOME/.cua-local/helper" "$FAKE_HOME/Library/Application Support/com.trycua.spaces.macos.local" "$FAKE_HOME/Cua Volume Local"
 echo '{}' > "$FAKE_HOME/.cua-local/helper/service.json"
 echo '{}' > "$FAKE_HOME/.cua-local/credentials.json"
-echo '{}' > "$FAKE_HOME/Library/Application Support/com.trycua.spaces.local/settings.json"
+echo '{}' > "$FAKE_HOME/Library/Application Support/com.trycua.spaces.macos.local/settings.json"
 echo '<plist/>' > "$FAKE_HOME/Library/LaunchAgents/com.trycua.spacesd.host.local.plist"
 # What macOS keeps for the Local bundle id in ~/Library.
-mkdir -p "$FAKE_HOME/Library/Preferences" "$FAKE_HOME/Library/Caches/com.trycua.spaces.local" "$FAKE_HOME/Library/HTTPStorages/com.trycua.spaces.local" \
-    "$FAKE_HOME/Library/WebKit/com.trycua.spaces.local" "$FAKE_HOME/Library/Cookies" "$FAKE_HOME/Library/Saved Application State/com.trycua.spaces.local.savedState"
-echo '<plist/>' > "$FAKE_HOME/Library/Preferences/com.trycua.spaces.local.plist"
-echo 'cache' > "$FAKE_HOME/Library/Caches/com.trycua.spaces.local/Cache.db"
-echo 'http' > "$FAKE_HOME/Library/HTTPStorages/com.trycua.spaces.local/httpstorages.sqlite"
-echo 'web' > "$FAKE_HOME/Library/WebKit/com.trycua.spaces.local/data"
-echo 'cookies' > "$FAKE_HOME/Library/Cookies/com.trycua.spaces.local.binarycookies"
-echo 'state' > "$FAKE_HOME/Library/Saved Application State/com.trycua.spaces.local.savedState/windows.plist"
+mkdir -p "$FAKE_HOME/Library/Preferences" "$FAKE_HOME/Library/Caches/com.trycua.spaces.macos.local" "$FAKE_HOME/Library/HTTPStorages/com.trycua.spaces.macos.local" \
+    "$FAKE_HOME/Library/WebKit/com.trycua.spaces.macos.local" "$FAKE_HOME/Library/Cookies" "$FAKE_HOME/Library/Saved Application State/com.trycua.spaces.macos.local.savedState"
+echo '<plist/>' > "$FAKE_HOME/Library/Preferences/com.trycua.spaces.macos.local.plist"
+echo 'cache' > "$FAKE_HOME/Library/Caches/com.trycua.spaces.macos.local/Cache.db"
+echo 'http' > "$FAKE_HOME/Library/HTTPStorages/com.trycua.spaces.macos.local/httpstorages.sqlite"
+echo 'web' > "$FAKE_HOME/Library/WebKit/com.trycua.spaces.macos.local/data"
+echo 'cookies' > "$FAKE_HOME/Library/Cookies/com.trycua.spaces.macos.local.binarycookies"
+echo 'state' > "$FAKE_HOME/Library/Saved Application State/com.trycua.spaces.macos.local.savedState/windows.plist"
 echo 'mine' > "$FAKE_HOME/Cua Volume Local/keep.txt"
 BEFORE_UNINSTALL="$(snap_all)"
 : > "$SHIM_LOG"; : > "$STUB_LOG"
@@ -1112,9 +1253,9 @@ STDIN_FILE="$WORK/answer-y"; echo y > "$STDIN_FILE"
 uninstall
 check "answering y removes Local (status $RC)" '[ "$RC" = 0 ] && [ ! -e "$LOCAL_APP" ] && [ ! -e "$LOCAL_CLI" ] && [ ! -L "$LOCAL_CLI" ]'
 STDIN_FILE=/dev/null
-check "the Local home and its app support folder are gone" '[ ! -e "$FAKE_HOME/.cua-local" ] && [ ! -e "$FAKE_HOME/Library/Application Support/com.trycua.spaces.local" ]'
+check "the Local home and its app support folder are gone" '[ ! -e "$FAKE_HOME/.cua-local" ] && [ ! -e "$FAKE_HOME/Library/Application Support/com.trycua.spaces.macos.local" ]'
 check "the Local bundle id's preferences, caches, web view data, cookies and window state are gone" \
-    '[ ! -e "$FAKE_HOME/Library/Preferences/com.trycua.spaces.local.plist" ] && [ ! -e "$FAKE_HOME/Library/Caches/com.trycua.spaces.local" ] && [ ! -e "$FAKE_HOME/Library/HTTPStorages/com.trycua.spaces.local" ] && [ ! -e "$FAKE_HOME/Library/WebKit/com.trycua.spaces.local" ] && [ ! -e "$FAKE_HOME/Library/Cookies/com.trycua.spaces.local.binarycookies" ] && [ ! -e "$FAKE_HOME/Library/Saved Application State/com.trycua.spaces.local.savedState" ]'
+    '[ ! -e "$FAKE_HOME/Library/Preferences/com.trycua.spaces.macos.local.plist" ] && [ ! -e "$FAKE_HOME/Library/Caches/com.trycua.spaces.macos.local" ] && [ ! -e "$FAKE_HOME/Library/HTTPStorages/com.trycua.spaces.macos.local" ] && [ ! -e "$FAKE_HOME/Library/WebKit/com.trycua.spaces.macos.local" ] && [ ! -e "$FAKE_HOME/Library/Cookies/com.trycua.spaces.macos.local.binarycookies" ] && [ ! -e "$FAKE_HOME/Library/Saved Application State/com.trycua.spaces.macos.local.savedState" ]'
 check "and Stable's preferences, caches, web view data, cookies and window state of the same kinds are still there" \
     '[ -f "$FAKE_HOME/Library/Preferences/com.trycua.spaces.macos.plist" ] && [ -f "$FAKE_HOME/Library/Caches/com.trycua.spaces.macos/Cache.db" ] && [ -f "$FAKE_HOME/Library/WebKit/com.trycua.spaces.macos/data" ] && [ -f "$FAKE_HOME/Library/Cookies/com.trycua.spaces.macos.binarycookies" ] && [ -f "$FAKE_HOME/Library/Saved Application State/com.trycua.spaces.macos.savedState/windows.plist" ]'
 check "the Local host runner job file is gone" '[ ! -e "$FAKE_HOME/Library/LaunchAgents/com.trycua.spacesd.host.local.plist" ]'
@@ -1125,6 +1266,33 @@ check "only the Local Keychain services were deleted (both of them)" \
     'grep >/dev/null "^security delete-generic-password -s ai.cua.session.local\$" "$SHIM_LOG" && grep >/dev/null "^security delete-generic-password -s ai.cua.session.local.staging\$" "$SHIM_LOG" && ! grep "^security" "$SHIM_LOG" | grep -v -e "-s ai.cua.session.local\$" -e "-s ai.cua.session.local.staging\$"'
 check "the Local volume folder is kept" '[ "$(cat "$FAKE_HOME/Cua Volume Local/keep.txt")" = mine ]'
 check "Stable files are byte-identical after uninstall" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
+
+echo "== uninstall and the old Local id =="
+reset_fixture
+make_legacy_local
+STABLE_BEFORE="$(snap_stable)"
+: > "$SHIM_LOG"; : > "$STUB_LOG"
+uninstall --yes
+check "uninstall removes an old-id app at the Local path (status $RC)" '[ "$RC" = 0 ] && [ ! -e "$LOCAL_APP" ] && printf "%s" "$OUT" | grep >/dev/null "found the old"'
+check "the old app unregistered its login item, and launchd was asked about the two Local labels only" \
+    'grep >/dev/null -- "--service-helper unregister \[CUA_CHANNEL=local\]" "$STUB_LOG" && [ "$(grep -c "^launchctl" "$SHIM_LOG")" = 2 ] && grep >/dev/null "bootout gui/[0-9]*/com.trycua.spaces.local.helper$" "$SHIM_LOG" && grep >/dev/null "bootout gui/[0-9]*/com.trycua.spacesd.host.local$" "$SHIM_LOG"'
+check "its settings, preferences, caches, web view data, cookies and window state are gone" 'legacy_data_gone'
+check "the Local home is gone, Cua Volume Local is kept" '[ ! -e "$FAKE_HOME/.cua-local" ] && [ "$(cat "$FAKE_HOME/Cua Volume Local/note.txt")" = "my local files" ]'
+check "Stable files are byte-identical" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
+
+# Both ids' leftovers at once, no app of either (nothing is installed).
+reset_fixture
+make_legacy_data
+mkdir -p "$FAKE_HOME/Library/Application Support/com.trycua.spaces.macos.local" "$FAKE_HOME/Library/Caches/com.trycua.spaces.macos.local"
+echo '{}' > "$FAKE_HOME/Library/Application Support/com.trycua.spaces.macos.local/settings.json"
+echo 'cache' > "$FAKE_HOME/Library/Caches/com.trycua.spaces.macos.local/Cache.db"
+STABLE_BEFORE="$(snap_stable)"
+: > "$SHIM_LOG"
+uninstall --yes
+check "uninstall removes the leftovers of both ids when no app is installed (status $RC)" \
+    '[ "$RC" = 0 ] && legacy_data_gone && [ ! -e "$FAKE_HOME/Library/Application Support/com.trycua.spaces.macos.local" ] && [ ! -e "$FAKE_HOME/Library/Caches/com.trycua.spaces.macos.local" ]'
+check "and Stable files, whose names the new Local id extends, are byte-identical" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
+check "uninstall never resets permission rows (macOS keeps them for a reinstall)" '! grep >/dev/null "^tccutil" "$SHIM_LOG"'
 
 echo "== install, then uninstall, leaves the HOME as it was =="
 reset_fixture

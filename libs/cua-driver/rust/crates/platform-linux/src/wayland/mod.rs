@@ -2621,9 +2621,20 @@ fn libei_wait_keyboard_ready() -> anyhow::Result<()> {
 
 #[cfg(feature = "portal-input")]
 fn libei_click(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
+    libei_click_with(x, y, count, button, output_dimensions)
+}
+
+#[cfg(feature = "portal-input")]
+fn libei_click_with(
+    x: i32,
+    y: i32,
+    count: u32,
+    button: u8,
+    dimensions: impl FnOnce() -> anyhow::Result<(u32, u32)>,
+) -> anyhow::Result<()> {
     let btn = cua_button_to_libei(button);
     let (px, py) = if (x, y) == (0, 0) {
-        let (w, h) = output_dimensions()?;
+        let (w, h) = dimensions()?;
         ((w / 2) as i32, (h / 2) as i32)
     } else {
         (x, y)
@@ -3901,9 +3912,18 @@ mod tests {
 
         #[test]
         fn click_at_origin_means_output_centre_not_literal_origin() {
-            let (_, events) = record(|| libei_click(0, 0, 1, 1));
+            let (result, events) = record(|| libei_click_with(0, 0, 1, 1, || Ok((3840, 2160))));
+            result.unwrap();
             assert!(!events.contains(&motion(0.0, 0.0)));
-            assert!(!events.iter().any(|e| matches!(e, Emitted::Button(..))));
+            assert_eq!(events.first(), Some(&motion(1920.0, 1080.0)));
+            let buttons: Vec<bool> = events
+                .iter()
+                .filter_map(|e| match e {
+                    Emitted::Button(_, down) => Some(*down),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(buttons, vec![true, false]);
         }
 
         #[test]

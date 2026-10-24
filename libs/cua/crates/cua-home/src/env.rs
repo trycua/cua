@@ -14,6 +14,9 @@
 //! | Spaces site   | `CUA_SPACES_SITE_URL` | `https://cua.ai`                         | `https://spaces.staging.cua.ai`             |
 //! | cua home      | `CUA_HOME`            | `~/.cua`                                 | `~/.cua/envs/staging`                       |
 //!
+//! (The cua home and the Keychain service in the table are Stable's; Local
+//! has its own, see [`crate::channel`].)
+//!
 //! A per-setting override always wins over `CUA_ENV`. With `CUA_ENV` unset,
 //! the build's default applies: production, or staging for a beta channel
 //! build (compiled with `CUA_DEFAULT_ENV=staging`).
@@ -21,8 +24,11 @@
 //! The Local channel (`CUA_CHANNEL=local`, "Cua Spaces Local",
 //! [`crate::channel`]) is a different default: with `CUA_ENV` unset it is
 //! staging, so a Local build never signs in to production by accident, and
-//! its home is `~/.cua-local` itself, with no `envs/staging` below it.
-//! `CUA_ENV=prod` is an explicit opt-in. Stable is unchanged.
+//! its home is `~/.cua-local` itself. `CUA_ENV=prod` is an explicit opt-in,
+//! and it gets its own home below that, `~/.cua-local/envs/prod`, so Local's
+//! production state never mixes with its staging state or with Stable's.
+//! Stable is unchanged. The Keychain service follows the channel too
+//! ([`CuaChannel::keychain_service`]).
 
 use std::path::PathBuf;
 
@@ -156,8 +162,9 @@ impl CuaEnv {
         }
     }
 
-    /// The OS credential vault service the session, the device key and the
-    /// other named secrets are stored under. The name is neutral on purpose:
+    /// The OS credential vault service Stable stores the session, the device
+    /// key and the other named secrets under (Local's are
+    /// [`CuaChannel::keychain_service`]). The name is neutral on purpose:
     /// it used to be the retired Cloud API host (see
     /// [`CuaEnv::legacy_keyring_service`]).
     pub fn keyring_service(self) -> &'static str {
@@ -179,7 +186,8 @@ impl CuaEnv {
         }
     }
 
-    /// The cua home below the default `~/.cua` (`None`: `~/.cua` itself).
+    /// Stable's cua home below the default `~/.cua` (`None`: `~/.cua`
+    /// itself). Use [`CuaChannel::home_subdir`] for the process's channel.
     pub fn home_subdir(self) -> Option<&'static str> {
         match self {
             Self::Prod => None,
@@ -265,18 +273,20 @@ pub fn account_app_url() -> String {
     Endpoints::current().account_app_url
 }
 
-/// The cua home a Local channel or a non-production environment uses when
+/// The cua home a Local channel or a non-default environment uses when
 /// `CUA_HOME` is not set: `None` for Stable production or when `CUA_HOME`
 /// is set.
 pub fn env_home() -> Option<PathBuf> {
     if std::env::var_os("CUA_HOME").is_some_and(|v| !v.is_empty()) {
         return None;
     }
-    // Local's home is `~/.cua-local` whatever the environment is.
-    if !CuaChannel::current().is_local() {
-        CuaEnv::current().home_subdir()?;
+    // Local always has a home of its own (`~/.cua-local`, or its `envs/prod`
+    // below it); Stable has one only below `~/.cua`.
+    let (channel, env) = CuaChannel::current_with_env();
+    if !channel.is_local() {
+        channel.home_subdir(env)?;
     }
-    Some(crate::cua_home())
+    Some(channel.env_home_dir(env))
 }
 
 /// Sets `CUA_HOME` to the channel's or environment's home when the Local

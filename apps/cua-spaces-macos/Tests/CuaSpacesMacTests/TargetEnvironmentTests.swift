@@ -28,8 +28,9 @@ struct TargetEnvironmentTests {
     }
 }
 
-/// `CUA_CHANNEL=local` (Cua Spaces Local): its own home, staging by default,
-/// the same three variables for every child; Stable is untouched.
+/// `CUA_CHANNEL=local` (Cua Spaces Local): its own home, staging by default
+/// (and `envs/prod` below it under the production opt-in), the same three
+/// variables for every child; Stable is untouched.
 @Suite("Target environment, Local channel")
 struct LocalChannelTargetEnvironmentTests {
 
@@ -48,7 +49,7 @@ struct LocalChannelTargetEnvironmentTests {
         ])
     }
 
-    @Test func localHomeHasNoEnvironmentBelowIt() {
+    @Test func localHomeHasNoEnvironmentBelowItOnStaging() {
         let home = pinned()["CUA_HOME"] ?? ""
         #expect(home == "/Users/ada/.cua-local")
         #expect(!home.contains("envs"))
@@ -61,11 +62,59 @@ struct LocalChannelTargetEnvironmentTests {
         #expect(pinned(bundleEnv: "", bundleHome: "")["CUA_ENV"] == "staging")
     }
 
-    @Test func productionIsAnExplicitOptInAndKeepsTheLocalHome() {
+    @Test func productionIsAnExplicitOptInWithAHomeOfItsOwnBelowLocal() {
         let out = pinned(env: ["CUA_ENV": "prod"])
         #expect(out["CUA_ENV"] == nil)
-        #expect(out["CUA_HOME"] == "/Users/ada/.cua-local")
+        #expect(out["CUA_HOME"] == "/Users/ada/.cua-local/envs/prod")
         #expect(out["CUA_CHANNEL"] == "local")
+        // Spelled any way cua-home accepts.
+        #expect(pinned(env: ["CUA_ENV": " Production "])["CUA_HOME"] == "/Users/ada/.cua-local/envs/prod")
+        // From the bundle, when `CUA_ENV` is unset.
+        let bundle = pinned(bundleEnv: "prod")
+        #expect(bundle["CUA_ENV"] == "prod")
+        #expect(bundle["CUA_HOME"] == "/Users/ada/.cua-local/envs/prod")
+        // An absolute bundle home gets the same folder below it.
+        #expect(pinned(env: ["CUA_ENV": "prod"], bundleHome: "/Volumes/x/.cua-local")["CUA_HOME"]
+            == "/Volumes/x/.cua-local/envs/prod")
+    }
+
+    @Test func aMistypedEnvironmentIsStagingNotProduction() {
+        // As in cua-home: Local never falls back to production.
+        #expect(pinned(env: ["CUA_ENV": "prd"])["CUA_HOME"] == "/Users/ada/.cua-local")
+    }
+
+    @Test func explicitStagingKeepsTheLocalHome() {
+        #expect(pinned(env: ["CUA_ENV": "staging"])["CUA_HOME"] == "/Users/ada/.cua-local")
+    }
+
+    /// The four (channel, environment) pairs, each with a home of its own
+    /// (`CuaChannel::env_home_dir`), and no Local home inside Stable's.
+    @Test func everyChannelAndEnvironmentHasItsOwnHome() {
+        func home(_ env: [String: String], channel: String?) -> String {
+            let out = TargetEnvironment.pinned(
+                env: env, bundleEnv: nil, home: "/Users/ada",
+                bundleChannel: channel, bundleHome: channel == "local" ? "~/.cua-local" : nil)
+            // Stable production pins nothing: its home is `~/.cua`.
+            return out["CUA_HOME"] ?? "/Users/ada/.cua"
+        }
+        let homes = [
+            home([:], channel: nil),
+            home(["CUA_ENV": "staging"], channel: nil),
+            home(["CUA_ENV": "staging"], channel: "local"),
+            home(["CUA_ENV": "prod"], channel: "local"),
+        ]
+        #expect(homes == [
+            "/Users/ada/.cua",
+            "/Users/ada/.cua/envs/staging",
+            "/Users/ada/.cua-local",
+            "/Users/ada/.cua-local/envs/prod",
+        ])
+        #expect(Set(homes).count == 4)
+        for stable in homes[0..<2] {
+            for local in homes[2..<4] {
+                #expect(!stable.hasPrefix(local + "/") && !local.hasPrefix(stable + "/"))
+            }
+        }
     }
 
     @Test func setVariablesWin() {

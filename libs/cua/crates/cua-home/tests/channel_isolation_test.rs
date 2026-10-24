@@ -18,6 +18,28 @@ use cua_home::env::CuaEnv;
 
 const ENVS: [CuaEnv; 2] = [CuaEnv::Prod, CuaEnv::Staging];
 
+/// The four (channel, environment) pairs a Mac can run: Stable and Local,
+/// each on prod and on staging.
+fn pairs() -> Vec<(CuaChannel, CuaEnv)> {
+    CuaChannel::ALL
+        .into_iter()
+        .flat_map(|c| ENVS.map(|e| (c, e)))
+        .collect()
+}
+
+/// What a cua home holds that two processes must never share: the daemon's
+/// socket and files, the credentials file, the Keyvault, the host's tokens
+/// and spacesd's data.
+const HOME_ENTRIES: [&str; 7] = [
+    "cua.sock",
+    "daemon.json",
+    "credentials.json",
+    "keyvault.sock",
+    "keyvault",
+    "host",
+    "spacesd",
+];
+
 /// Every file-system location the channel owns.
 fn paths(c: CuaChannel) -> Vec<(&'static str, PathBuf)> {
     vec![
@@ -25,6 +47,8 @@ fn paths(c: CuaChannel) -> Vec<(&'static str, PathBuf)> {
         ("app support", c.app_support_dir()),
         ("cli", c.cli_path()),
         ("cua home", c.home_dir()),
+        ("cua home (prod)", c.env_home_dir(CuaEnv::Prod)),
+        ("cua home (staging)", c.env_home_dir(CuaEnv::Staging)),
         ("helper spec", c.helper_spec_path()),
         ("volume mount", c.volume_mount_path()),
         ("lume vms", c.lume_dir()),
@@ -62,8 +86,24 @@ fn identifiers(c: CuaChannel) -> Vec<(String, String)> {
             format!("keychain service ({})", env.name()),
             c.keychain_service(env).to_string(),
         ));
+        // The service an older build used, which this channel moves from.
+        if let Some(legacy) = c.legacy_keychain_service(env) {
+            ids.push((
+                format!("legacy keychain service ({})", env.name()),
+                legacy.to_string(),
+            ));
+        }
     }
     ids
+}
+
+/// Every Keychain service a process of the channel reads, writes, moves from
+/// or deletes, for either environment.
+fn keychain_services_touched(c: CuaChannel) -> BTreeSet<&'static str> {
+    ENVS.iter()
+        .flat_map(|e| [Some(c.keychain_service(*e)), c.legacy_keychain_service(*e)])
+        .flatten()
+        .collect()
 }
 
 /// Every port a channel listens on, as `proto:port`. The mesh media port
@@ -166,6 +206,114 @@ fn stable_and_local_schemes_and_keychain_services_never_overlap() {
     assert!(
         ks.is_disjoint(&kl),
         "shared Keychain services: {ks:?} {kl:?}"
+    );
+}
+
+#[test]
+fn every_channel_and_environment_has_a_keychain_service_of_its_own() {
+    // The session and the device key live under it: a Local build on
+    // staging must not read, replace or sign out a Stable app on staging.
+    let services: BTreeSet<&str> = pairs()
+        .into_iter()
+        .map(|(c, e)| c.keychain_service(e))
+        .collect();
+    assert_eq!(
+        services.len(),
+        4,
+        "a Keychain service is shared: {services:?}"
+    );
+
+    // Nothing Stable touches (its own services and the legacy ones it moves
+    // from and deletes) is a Local service, in either environment.
+    let stable = keychain_services_touched(CuaChannel::Stable);
+    let local = keychain_services_touched(CuaChannel::Local);
+    assert!(
+        stable.is_disjoint(&local),
+        "Keychain services both channels touch: {stable:?} {local:?}"
+    );
+    // Local has no legacy items, so it touches exactly its own two.
+    assert_eq!(local.len(), ENVS.len());
+    assert_eq!(
+        local,
+        BTreeSet::from(["ai.cua.session.local", "ai.cua.session.local.staging"])
+    );
+    // Stable's are what its sign-in has always used, plus the legacy pair.
+    assert_eq!(
+        stable,
+        BTreeSet::from([
+            "ai.cua.session",
+            "ai.cua.session.staging",
+            "run.cua.ai",
+            "staging.run.cua.ai",
+        ])
+    );
+}
+
+#[test]
+fn every_channel_and_environment_has_a_home_of_its_own() {
+    // The home holds the daemon, its sockets, the registry, the Keyvault,
+    // the credentials file and spacesd's data: two builds on one home would
+    // take each other's daemon and read each other's sign-in.
+    let mut seen: Vec<(String, PathBuf)> = Vec::new();
+    for (c, e) in pairs() {
+        let home = c.env_home_dir(e);
+        let what = format!("{} on {}", c.name(), e.name());
+        seen.push((format!("{what}: the home"), home.clone()));
+        for entry in HOME_ENTRIES {
+            seen.push((format!("{what}: {entry}"), home.join(entry)));
+        }
+    }
+    let unique: BTreeSet<&PathBuf> = seen.iter().map(|(_, p)| p).collect();
+    assert_eq!(
+        unique.len(),
+        seen.len(),
+        "two pairs share a path: {seen:#?}"
+    );
+
+    // Across channels, no home or file in it is inside the other's: a Local
+    // home under `~/.cua` would be wiped or scanned by Stable, and the other
+    // way round. (Within a channel the second environment sits below the
+    // first, as Stable's staging always has.)
+    for (sc, se) in pairs()
+        .into_iter()
+        .filter(|(c, _)| *c == CuaChannel::Stable)
+    {
+        for (lc, le) in pairs().into_iter().filter(|(c, _)| *c == CuaChannel::Local) {
+            let (s, l) = (sc.env_home_dir(se), lc.env_home_dir(le));
+            assert!(
+                !s.starts_with(&l) && !l.starts_with(&s),
+                "stable on {} {s:?} and local on {} {l:?} overlap",
+                se.name(),
+                le.name()
+            );
+        }
+    }
+}
+
+#[test]
+fn local_prod_never_uses_the_stable_or_the_local_staging_home() {
+    let local_prod = CuaChannel::Local.env_home_dir(CuaEnv::Prod);
+    for (c, e) in pairs() {
+        if (c, e) == (CuaChannel::Local, CuaEnv::Prod) {
+            continue;
+        }
+        assert_ne!(
+            c.env_home_dir(e),
+            local_prod,
+            "{} on {}",
+            c.name(),
+            e.name()
+        );
+    }
+    // It is the opt-in's own folder below Local's, mirroring how Stable
+    // keeps its staging below `~/.cua`.
+    assert_eq!(
+        local_prod,
+        CuaChannel::Local.home_dir().join("envs").join("prod")
+    );
+    assert_eq!(
+        CuaChannel::Stable.env_home_dir(CuaEnv::Staging),
+        CuaChannel::Stable.home_dir().join("envs").join("staging")
     );
 }
 

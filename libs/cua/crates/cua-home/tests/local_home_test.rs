@@ -1,4 +1,5 @@
-//! The Local channel's home and environment (CUA-1776).
+//! The cua home, environment and Keychain service of every channel and
+//! environment (CUA-1776): Stable and Local, each on prod and staging.
 //!
 //! `cua_home()`, `CuaEnv::current()` and `pin_home()` read the process
 //! environment, which a test in this process cannot change safely, so each
@@ -33,6 +34,16 @@ fn probe() {
         },
     );
     show("home", cua_home::cua_home().display().to_string());
+    show(
+        "keychain",
+        CuaChannel::current_keychain_service().to_string(),
+    );
+    show(
+        "legacy keychain",
+        CuaChannel::current_legacy_keychain_service()
+            .unwrap_or("none")
+            .to_string(),
+    );
     // SAFETY: the probe is its own process and runs one test, on the main
     // thread (`--test-threads=1`).
     let pinned = unsafe { pin_home() };
@@ -103,13 +114,14 @@ fn display(home: &Path, rest: &str) -> String {
 }
 
 #[test]
-fn local_home_is_cua_local_with_no_environment_below_it() {
+fn local_home_is_cua_local_on_staging_and_envs_prod_below_it_on_prod() {
     if built_with_defaults() {
         return;
     }
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path();
     let local_home = display(home, ".cua-local");
+    let local_prod_home = display(home, ".cua-local/envs/prod");
 
     // Local, `CUA_ENV` unset: staging, and `~/.cua-local` itself.
     let p = run(home, &[("CUA_CHANNEL", "local")]);
@@ -129,21 +141,121 @@ fn local_home_is_cua_local_with_no_environment_below_it() {
     assert_eq!(p.get("env"), "staging");
     assert_eq!(p.get("home"), local_home);
 
-    // `CUA_ENV=prod` is the explicit opt-in; the home stays Local's.
-    let p = run(home, &[("CUA_CHANNEL", "local"), ("CUA_ENV", "prod")]);
-    assert_eq!(p.get("env"), "prod");
-    assert_eq!(p.get("home"), local_home);
+    // `CUA_ENV=prod` is the explicit opt-in, and it has a home of its own
+    // below Local's, so it never shares one with Local's staging state.
+    for prod in ["prod", "Production"] {
+        let p = run(home, &[("CUA_CHANNEL", "local"), ("CUA_ENV", prod)]);
+        assert_eq!(p.get("env"), "prod");
+        assert_eq!(p.get("home"), local_prod_home, "CUA_ENV={prod}");
+    }
 
     // A mistyped `CUA_ENV` is an error at startup and staging, not prod,
     // anywhere that has to answer anyway.
     let p = run(home, &[("CUA_CHANNEL", "local"), ("CUA_ENV", "prd")]);
     assert_eq!(p.get("env"), "staging");
+    assert_eq!(p.get("home"), local_home);
     assert!(p.get("try_current").contains("CUA_ENV"), "{:?}", p.0);
 
-    // `CUA_HOME` still wins.
+    // `CUA_HOME` still wins, on both environments.
     let elsewhere = display(home, "elsewhere");
-    let p = run(home, &[("CUA_CHANNEL", "local"), ("CUA_HOME", &elsewhere)]);
-    assert_eq!(p.get("home"), elsewhere);
+    for env in ["staging", "prod"] {
+        let p = run(
+            home,
+            &[
+                ("CUA_CHANNEL", "local"),
+                ("CUA_ENV", env),
+                ("CUA_HOME", &elsewhere),
+            ],
+        );
+        assert_eq!(p.get("home"), elsewhere);
+    }
+}
+
+/// All four (channel, environment) pairs, as one process sees them: each
+/// has a home and a Keychain service of its own, and none is shared.
+#[test]
+fn every_channel_and_environment_has_its_own_home_and_keychain_service() {
+    if built_with_defaults() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path();
+
+    // (CUA_CHANNEL, CUA_ENV, resolved env, home below $HOME, Keychain
+    // service, legacy Keychain service).
+    let cases: [(&str, &str, &str, &str, &str, &str); 4] = [
+        (
+            "stable",
+            "prod",
+            "prod",
+            ".cua",
+            "ai.cua.session",
+            "run.cua.ai",
+        ),
+        (
+            "stable",
+            "staging",
+            "staging",
+            ".cua/envs/staging",
+            "ai.cua.session.staging",
+            "staging.run.cua.ai",
+        ),
+        (
+            "local",
+            "staging",
+            "staging",
+            ".cua-local",
+            "ai.cua.session.local.staging",
+            "none",
+        ),
+        (
+            "local",
+            "prod",
+            "prod",
+            ".cua-local/envs/prod",
+            "ai.cua.session.local",
+            "none",
+        ),
+    ];
+    let mut homes = Vec::new();
+    let mut services = Vec::new();
+    for (channel, env, want_env, want_home, want_service, want_legacy) in cases {
+        let p = run(home, &[("CUA_CHANNEL", channel), ("CUA_ENV", env)]);
+        let what = format!("{channel} on {env}");
+        assert_eq!(p.get("channel"), channel, "{what}");
+        assert_eq!(p.get("env"), want_env, "{what}");
+        assert_eq!(p.get("home"), display(home, want_home), "{what}");
+        assert_eq!(p.get("keychain"), want_service, "{what}");
+        assert_eq!(p.get("legacy keychain"), want_legacy, "{what}");
+        homes.push(p.get("home").to_string());
+        services.push(p.get("keychain").to_string());
+    }
+    // Local on staging is also what Local with nothing set resolves to, and
+    // Stable with nothing set is Stable on prod.
+    let p = run(home, &[("CUA_CHANNEL", "local")]);
+    assert_eq!(p.get("keychain"), "ai.cua.session.local.staging");
+    assert_eq!(p.get("legacy keychain"), "none");
+    let p = run(home, &[]);
+    assert_eq!(p.get("keychain"), "ai.cua.session");
+    assert_eq!(p.get("legacy keychain"), "run.cua.ai");
+
+    for list in [&homes, &services] {
+        let mut sorted = list.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), 4, "a home or service is shared: {list:?}");
+    }
+    // No Local home is inside a Stable home, or the other way round.
+    let (stable_homes, local_homes) = homes.split_at(2);
+    for s in stable_homes {
+        for l in local_homes {
+            let (s, l) = (Path::new(s), Path::new(l));
+            assert!(
+                !s.starts_with(l) && !l.starts_with(s),
+                "{s:?} and {l:?} overlap"
+            );
+        }
+    }
 }
 
 #[test]
@@ -195,11 +307,15 @@ fn pin_home_pins_local_for_every_child_and_leaves_stable_alone() {
     assert_eq!(p.get("after CUA_ENV"), "staging");
     assert_eq!(p.get("after CUA_HOME"), local_home);
 
-    // Local with the production opt-in: the opt-in is kept, the home is
-    // still pinned (Stable production would not pin one).
+    // Local with the production opt-in: the opt-in is kept, and the home
+    // pinned is Local's production one (Stable production would not pin one).
     let p = run(home, &[("CUA_CHANNEL", "local"), ("CUA_ENV", "prod")]);
+    assert_eq!(p.get("pinned"), display(home, ".cua-local/envs/prod"));
     assert_eq!(p.get("after CUA_ENV"), "prod");
-    assert_eq!(p.get("after CUA_HOME"), local_home);
+    assert_eq!(
+        p.get("after CUA_HOME"),
+        display(home, ".cua-local/envs/prod")
+    );
 
     // A `CUA_HOME` that is set is never replaced.
     let elsewhere = display(home, "elsewhere");

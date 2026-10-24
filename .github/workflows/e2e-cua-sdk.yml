@@ -4,7 +4,8 @@ name: "E2E: cua SDK"
 # tests/e2e/cua-sdk (see its scenarios.json for the guide x lane registry).
 #
 #   pull_request   hermetic (fixtures, daemon) + container (docker + gVisor on
-#                  the locally built reference images) + docs blocks.
+#                  the locally built reference images) + docs blocks: five
+#                  build jobs in parallel, then 4 test shards (see `jobs:`).
 #   nightly        cua-sandbox and local QEMU (KVM) on the reference disk.
 #                  Cua Cloud has ended, so there is no live Fleet lane.
 #   dispatch       any lane set.
@@ -36,6 +37,15 @@ on:
       langs:
         description: "Languages (py,ts,rust)"
         default: "py,ts,rust"
+      # For measuring concurrency: run the same commit at 2 or 3 nearby values,
+      # at least 3 times each, and compare the shards' `measured` seconds in
+      # the run summary.
+      rust_threads:
+        description: "Rust test threads per binary (the default, 2, is what the suite has always used)"
+        default: "2"
+      ts_concurrency:
+        description: "node --test-concurrency (the default, 1, runs files one at a time)"
+        default: "1"
 
 permissions:
   contents: read
@@ -54,22 +64,113 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_BUILD_JOBS: "4"
   CUA_E2E_RUN: gh${{ github.run_id }}-${{ github.run_attempt }}
+  # Test shards of a pull request run (the shard job's matrix lists 1..N).
+  E2E_SHARDS: "4"
 
 jobs:
-  local:
-    name: hermetic + container (${{ github.event_name == 'workflow_dispatch' && inputs.lanes || 'hermetic,container' }})
+  # Pull requests: build once, test on N shards.
+  #
+  #   build-sdk, build-cli, build-fixtures, build-rust-tests and build-images
+  #   run side by side on their own runners (the release SDK; the debug CLI
+  #   with the TypeScript and wasm builds; the fixtures and the static
+  #   cua-spacesd; the Rust test binaries; the reference images) and upload
+  #   what they built (ci-artifacts.sh).
+  #   shard 1..E2E_SHARDS download all of it and each runs its slice of the
+  #   suite. The slices are cut from measured test times (sharding.py,
+  #   timings.json) so they finish within a few percent of each other.
+  #   matrix merges the shards' results and applies the whole-suite checks
+  #   (every cell present, docs coverage) that one run used to apply.
+  #
+  # Before this, one job built everything in series (about 46 minutes of
+  # builds) and then ran the three language halves in series (about 15).
+  build-sdk:
+    name: build / release SDK
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule') }}
     runs-on: ubuntu-24.04
-    # Run 37562962482 exhausted 180 minutes during cold browser compilation,
-    # before image preparation or the suite. Allow the hosted runner's full
-    # six-hour budget for the unchanged build and strict test matrix.
-    timeout-minutes: 360
+    timeout-minutes: 240
     env:
-      # Optional: an authenticated Docker Hub keeps anonymous manifest-read
-      # rate limits from failing the docs blocks' runtime inspection.
-      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-      # The debug builds, images and the suite's own image builds share the
-      # runner's disk: line tables only and no incremental cache.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: |
+            libs/cua
+            tests/e2e/cua-sdk/rust
+            libs/cua-spacesd
+          key: cua-e2e
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Build the release SDK and stage it for Python and Node
+        run: tests/e2e/cua-sdk/ci-setup.sh --only sdk,stage
+      - name: Pack
+        run: tests/e2e/cua-sdk/ci-artifacts.sh pack sdk "$RUNNER_TEMP/build"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cua-e2e-build-sdk
+          path: ${{ runner.temp }}/build/cua-e2e-build-sdk.tar.zst
+          compression-level: 0
+          retention-days: 2
+          overwrite: true
+          if-no-files-found: error
+
+  build-cli:
+    name: build / debug CLI, TypeScript, wasm
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Unit-test the shard planner and the runner helpers
+        run: python3 -m unittest tests/e2e/cua-sdk/test_sharding.py tests/e2e/cua-sdk/test_run_janitor.py
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: |
+            libs/cua
+            tests/e2e/cua-sdk/rust
+            libs/cua-spacesd
+          key: cua-e2e
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      # The wasm build generates its bindings from the debug cua-sdk library,
+      # so it follows the debug build on this runner.
+      - name: Build the debug CLI, the TypeScript package and the wasm browser build
+        run: tests/e2e/cua-sdk/ci-setup.sh --only cli,web
+      - name: Pack
+        run: tests/e2e/cua-sdk/ci-artifacts.sh pack cli "$RUNNER_TEMP/build"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cua-e2e-build-cli
+          path: ${{ runner.temp }}/build/cua-e2e-build-cli.tar.zst
+          compression-level: 0
+          retention-days: 2
+          overwrite: true
+          if-no-files-found: error
+
+  build-fixtures:
+    name: build / fixtures, static cua-spacesd
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
       CARGO_INCREMENTAL: "0"
     steps:
@@ -80,7 +181,7 @@ jobs:
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
         with:
-          targets: wasm32-unknown-unknown,x86_64-unknown-linux-musl
+          targets: x86_64-unknown-linux-musl
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: |
@@ -90,6 +191,7 @@ jobs:
           key: cua-e2e
       # An image without cua-spacesd gets the static musl build injected, so
       # the suite tests this tree's daemon (same build as ci-cua-oci-spacesd).
+      # The shards point CUA_SPACESD_STATIC at this file in their checkout.
       - name: Build the static cua-spacesd
         working-directory: libs/cua-spacesd
         run: |
@@ -97,40 +199,191 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq musl-tools
           cargo build --locked --profile static --target x86_64-unknown-linux-musl -p cua-spacesd --bin cua-spacesd
           bash packaging/release/check-static-binary.sh target/x86_64-unknown-linux-musl/static/cua-spacesd
-          mkdir -p "$RUNNER_TEMP/static"
-          cp target/x86_64-unknown-linux-musl/static/cua-spacesd "$RUNNER_TEMP/static/cua-spacesd-linux-x86_64"
-          chmod +x "$RUNNER_TEMP/static/cua-spacesd-linux-x86_64"
-          echo "CUA_SPACESD_STATIC=$RUNNER_TEMP/static/cua-spacesd-linux-x86_64" >>"$GITHUB_ENV"
+          chmod +x target/x86_64-unknown-linux-musl/static/cua-spacesd
+      - name: Build the test fixtures
+        run: tests/e2e/cua-sdk/ci-setup.sh --only fixtures
+      - name: Pack
+        run: tests/e2e/cua-sdk/ci-artifacts.sh pack fixtures "$RUNNER_TEMP/build"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cua-e2e-build-fixtures
+          path: ${{ runner.temp }}/build/cua-e2e-build-fixtures.tar.zst
+          compression-level: 0
+          retention-days: 2
+          overwrite: true
+          if-no-files-found: error
+
+  build-rust-tests:
+    name: build / Rust test binaries
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: |
+            libs/cua
+            tests/e2e/cua-sdk/rust
+            libs/cua-spacesd
+          key: cua-e2e
+      # The Rust half's own build (its own target directory), done once here
+      # instead of inside `cargo test` on every shard.
+      - name: Build the Rust half's test binaries
+        run: tests/e2e/cua-sdk/ci-setup.sh --only rust-tests
+      - name: Pack
+        run: tests/e2e/cua-sdk/ci-artifacts.sh pack rust-tests "$RUNNER_TEMP/build"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cua-e2e-build-rust-tests
+          path: ${{ runner.temp }}/build/cua-e2e-build-rust-tests.tar.zst
+          compression-level: 0
+          retention-days: 2
+          overwrite: true
+          if-no-files-found: error
+
+  build-images:
+    name: build / reference images
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      # Optional: an authenticated Docker Hub keeps anonymous pull rate limits
+      # from failing the base image pulls.
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_USERNAME != ''
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      # cua-spacesd builds in a rust container and the three images on top,
+      # all in the runner's docker.
+      - name: Build the reference images
+        run: tests/e2e/cua-sdk/ci-setup.sh --images --only images
+      - name: Pack
+        run: tests/e2e/cua-sdk/ci-artifacts.sh pack images "$RUNNER_TEMP/build"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cua-e2e-build-images
+          path: ${{ runner.temp }}/build/cua-e2e-build-images.tar.zst
+          compression-level: 0
+          retention-days: 2
+          overwrite: true
+          if-no-files-found: error
+
+  shard:
+    name: tests (shard ${{ matrix.shard }})
+    needs: [build-sdk, build-cli, build-fixtures, build-rust-tests, build-images]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        # The count is E2E_SHARDS: a test pins the two together.
+        shard: [1, 2, 3, 4]
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      # The shared libraries the built binaries link against (the build jobs
+      # installed them with the headers); the disk is not tight here.
+      - uses: ./.github/actions/linux-rust-prep
+        with:
+          free-disk: "false"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: cua-e2e-build-*
+          path: ${{ runner.temp }}/build
+          merge-multiple: true
       - name: Log in to Docker Hub (docs blocks read image manifests)
         if: env.DOCKERHUB_USERNAME != ''
         uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Build the SDK, fixtures, bindings, images and runtimes
-        run: tests/e2e/cua-sdk/ci-setup.sh --images
-      # The suite builds container images and cua keeps 5 GiB free: give the
-      # build cache back (the built images stay).
-      - name: Reclaim build space
-        run: |
-          df -h / | tail -1
-          docker builder prune --all --force >/dev/null
-          docker image prune --force >/dev/null
-          df -h / | tail -1
-      - name: Run the suite
+      - name: Unpack the builds, install gVisor, load the images
+        run: tests/e2e/cua-sdk/ci-artifacts.sh prepare "$RUNNER_TEMP/build"
+      - name: Run this shard of the suite
         env:
           LANES: ${{ github.event_name == 'workflow_dispatch' && inputs.lanes || 'hermetic,container' }}
           LANGS: ${{ github.event_name == 'workflow_dispatch' && inputs.langs || 'py,ts,rust' }}
           CUA_E2E_PLAYWRIGHT_DIR: ${{ runner.temp }}/pw
-          # cua keeps 5 GiB free by default. On this disposable runner, after
-          # the setup and the Rust half's own debug build, that refused the
-          # suite's 4 GiB image builds with 7.5 GiB still free.
+          CUA_E2E_RUST_THREADS: ${{ github.event_name == 'workflow_dispatch' && inputs.rust_threads || '2' }}
+          CUA_E2E_TS_CONCURRENCY: ${{ github.event_name == 'workflow_dispatch' && inputs.ts_concurrency || '1' }}
+          # The static cua-spacesd the build-fixtures job made, in this checkout.
+          CUA_SPACESD_STATIC: ${{ github.workspace }}/libs/cua-spacesd/target/x86_64-unknown-linux-musl/static/cua-spacesd
+          # cua keeps 5 GiB free by default. On this disposable runner that
+          # refused the suite's 4 GiB image builds with 7.5 GiB still free.
           CUA_DISK_MIN_FREE: 2GiB
-        run: python3 tests/e2e/cua-sdk/run.py --lanes "$LANES" --langs "$LANGS" --strict --out "$RUNNER_TEMP/cua-e2e"
+        run: >
+          python3 tests/e2e/cua-sdk/run.py --lanes "$LANES" --langs "$LANGS" --strict
+          --shard "${{ matrix.shard }}/$E2E_SHARDS"
+          --rust-prebuilt tests/e2e/cua-sdk/rust/prebuilt
+          --out "$RUNNER_TEMP/cua-e2e"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: cua-e2e-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/cua-e2e
+          retention-days: 7
+          overwrite: true
+
+  # The check that used to be the one big job: every shard's results merged,
+  # then the whole-suite checks on the merge (every expected cell present, no
+  # unexpected skip, docs code-block coverage) and the matrix in the summary.
+  matrix:
+    name: matrix (${{ github.event_name == 'workflow_dispatch' && inputs.lanes || 'hermetic,container' }})
+    needs: shard
+    if: ${{ !cancelled() && needs.shard.result != 'skipped' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: cua-e2e-shard-*
+          path: ${{ runner.temp }}/shards
+      - name: Merge the shards' results
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/cua-e2e"
+          for dir in "$RUNNER_TEMP"/shards/cua-e2e-shard-*; do
+            n="${dir##*-}"
+            for f in "$dir"/*.jsonl; do
+              [ -e "$f" ] && cat "$f" >>"$RUNNER_TEMP/cua-e2e/$(basename "$f")"
+            done
+            cp "$dir/shard.json" "$RUNNER_TEMP/cua-e2e/shard-$n.json" || true
+          done
+          ls -l "$RUNNER_TEMP/cua-e2e"
+      - name: Check the merged matrix
+        env:
+          LANES: ${{ github.event_name == 'workflow_dispatch' && inputs.lanes || 'hermetic,container' }}
+          LANGS: ${{ github.event_name == 'workflow_dispatch' && inputs.langs || 'py,ts,rust' }}
+        run: python3 tests/e2e/cua-sdk/run.py --matrix-only --lanes "$LANES" --langs "$LANGS" --strict --out "$RUNNER_TEMP/cua-e2e"
+      - name: Shards covered the whole plan
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          {
+            printf '## Shards (predicted vs measured seconds)\n\n```\n'
+            python3 tests/e2e/cua-sdk/sharding.py check "$RUNNER_TEMP"/shards/cua-e2e-shard-* --shards "$E2E_SHARDS" | tee /dev/stderr
+            printf '```\n'
+          } >>"$GITHUB_STEP_SUMMARY"
       - name: Matrix summary
         if: always()
         run: |
@@ -144,6 +397,7 @@ jobs:
         with:
           name: cua-e2e-local
           path: ${{ runner.temp }}/cua-e2e
+          overwrite: true
 
   live:
     name: nightly (cua-sandbox, qemu)

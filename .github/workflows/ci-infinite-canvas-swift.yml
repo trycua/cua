@@ -7,6 +7,14 @@ name: "CI: infinite-canvas (Swift)"
 # tile pipeline on a local H.264 test pattern (VideoToolbox encode and
 # decode), and a UI smoke test in an offscreen window. Nothing connects to a
 # Space and nothing touches host apps. Liquid Glass needs the macOS 26 SDK.
+#
+# The macOS build is 28 to 33 minutes, so a pull request runs it only when
+# something it compiles or reads changes: the sample, the Swift packages, the
+# SDK crate the binding is generated from, and the cursor theme (the map and
+# the reasons are in .github/scripts/ci_swift_samples_scope.py). Rust-internal
+# changes that leave the binding alone are covered by the full run on every
+# push to main and by the nightly schedule. The `ci:full` label, release
+# pull requests, manual runs, pushes and the schedule always build.
 
 on:
   pull_request:
@@ -16,16 +24,21 @@ on:
       - "libs/spaces-sdk-swift/**"
       - "libs/spaces-app-swift/**"
       - "libs/cua-driver/rust/crates/cursor-overlay/assets/**"
+      - ".github/scripts/ci_swift_samples_scope.py"
       - ".github/workflows/ci-infinite-canvas-swift.yml"
   push:
     branches: [main]
     paths:
-      - "samples/infinite-canvas-swift/**"
+      - "examples/infinite-canvas-swift/**"
       - "libs/cua/**"
       - "libs/spaces-sdk-swift/**"
       - "libs/spaces-app-swift/**"
       - "libs/cua-driver/rust/crates/cursor-overlay/assets/**"
+      - ".github/scripts/ci_swift_samples_scope.py"
       - ".github/workflows/ci-infinite-canvas-swift.yml"
+  # Drift check: the full build on main, whatever changed.
+  schedule:
+    - cron: "37 5 * * *"
   workflow_dispatch:
 
 permissions:
@@ -43,8 +56,40 @@ env:
   CARGO_BUILD_JOBS: "4"
 
 jobs:
+  changes:
+    name: scope (macOS Swift sample)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      run: ${{ steps.scope.outputs.run }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          # Fails when the dependency map no longer matches the Swift manifests.
+          python3 .github/scripts/ci_swift_samples_scope.py check-manifests infinite-canvas
+          files=""
+          if [[ "$EVENT" == pull_request ]]; then
+            files=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --jq '.[].filename')
+          fi
+          python3 .github/scripts/ci_swift_samples_scope.py scope infinite-canvas <<< "$files" | tee -a "$GITHUB_STEP_SUMMARY"
+
   swift:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    needs: changes
+    if: ${{ needs.changes.outputs.run == 'true' && !startsWith(github.head_ref, 'release-please--branches--') }}
     name: infinite-canvas-swift (swift test)
     runs-on: macos-26
     timeout-minutes: 90

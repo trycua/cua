@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
+use indexmap::IndexMap;
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -228,7 +229,7 @@ pub struct TargetRecord {
     /// CDP browser window id, or None for the exact single-page embedded route.
     pub cdp_window_id: Option<i64>,
     pub quality: BindingQuality,
-    pub tabs: HashMap<String, TabRecord>,
+    pub tabs: IndexMap<String, TabRecord>,
 }
 
 #[derive(Default)]
@@ -488,7 +489,7 @@ mod tests {
             cdp_target_id: "CDP1".into(),
             cdp_window_id: Some(11),
             quality: BindingQuality::Exact,
-            tabs: HashMap::new(),
+            tabs: IndexMap::new(),
         }
     }
 

@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
+import os
 import time
 import traceback
 from contextlib import asynccontextmanager
@@ -44,6 +46,28 @@ class Job:
 #: Version of the ``result.json`` / ``summary.json`` layout. New keys are
 #: additive only; a rename or removal bumps it.
 RESULT_SCHEMA_VERSION = 2
+
+#: Default bound on one variant's setup, agent and evaluation (``0`` runs
+#: unbounded). 10 800 s covers the worst adapter phase envelope
+#: (setup 1800 + oracle 3600 + evaluate 1800 = 7200, plus slack); a larger
+#: ``CUA_BENCH_HARNESS_TIMEOUT`` (the harness agent's turn budget, default
+#: 1800) raises the default to budget + 5400 so the deadline never cuts off
+#: a healthy run.
+DEFAULT_VARIANT_TIMEOUT_S = 10_800.0
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        value = float(os.environ.get(name, "") or default)
+    except ValueError:
+        return default
+    # A non-finite budget would never fire (nan) or crash call_at (inf).
+    return value if math.isfinite(value) else default
+
+
+def _default_variant_timeout_s() -> float:
+    harness_budget = _env_float("CUA_BENCH_HARNESS_TIMEOUT", 1800.0)
+    return max(DEFAULT_VARIANT_TIMEOUT_S, harness_budget + 5400.0)
 
 
 @dataclass
@@ -182,10 +206,17 @@ class BatchRunner:
         attach: Callable[[Any, EnvSpec], Any] = _attach_session,
         retries: int = 0,
         retry_backoff_s: float = 2.0,
+        variant_timeout_s: Optional[float] = None,
     ) -> None:
         self.target = target
         self.retries = max(0, int(retries))
         self.retry_backoff_s = retry_backoff_s
+        if variant_timeout_s is None:
+            self.variant_timeout_s = _default_variant_timeout_s()
+        else:
+            self.variant_timeout_s = float(variant_timeout_s)
+            if not math.isfinite(self.variant_timeout_s) or self.variant_timeout_s < 0:
+                raise ValueError("variant_timeout_s must be a finite number, 0 or more")
         self.opts = opts
         self.reporter = reporter or NullReporter()
         self.on_status = on_status
@@ -272,6 +303,12 @@ class BatchRunner:
         job.output_dir.mkdir(parents=True, exist_ok=True)
         self._status(job, "starting")
 
+        #: Bound on setup, agent and evaluation (not sandbox start, which
+        #: ``--retries`` covers). Created unarmed so ``expired()`` is always
+        #: safe to call below; armed on entry, so sandbox start and
+        #: ``_env_factory`` never count against it. ``0`` stays unarmed.
+        deadline = asyncio.timeout(None)
+
         opener, attach = self._opener, self._attach
         if not spec.needs_sandbox:
             opener, attach = _no_sandbox, _dataset_session
@@ -301,9 +338,14 @@ class BatchRunner:
                     )
                     session = attach(sandbox, spec)
                     try:
-                        episode = await run_episode(
-                            env, job.variant, self.opts, job.output_dir, session=session
-                        )
+                        async with deadline:
+                            if self.variant_timeout_s > 0:
+                                deadline.reschedule(
+                                    asyncio.get_running_loop().time() + self.variant_timeout_s
+                                )
+                            episode = await run_episode(
+                                env, job.variant, self.opts, job.output_dir, session=session
+                            )
                     finally:
                         await session.close()
                 result.reward = episode.reward
@@ -322,9 +364,14 @@ class BatchRunner:
                 self._finish(job, result, started)
                 raise
             except Exception as error:  # noqa: BLE001 - one variant never stops the batch
-                result.error = explain_error(error, spec, target)
+                if isinstance(error, TimeoutError) and deadline.expired():
+                    result.error = f"variant timed out after {self.variant_timeout_s:g} s"
+                    # A hung variant is not an infrastructure failure: no retry.
+                    result._retryable = False  # type: ignore[attr-defined]
+                else:
+                    result.error = explain_error(error, spec, target)
+                    result._retryable = not isinstance(error, TargetError)  # type: ignore[attr-defined]
                 result._error_obj = error  # type: ignore[attr-defined]
-                result._retryable = not isinstance(error, TargetError)  # type: ignore[attr-defined]
                 traceback.print_exc()
                 print(f"\n✗ Task failed: {result.error}")
         self._finish(job, result, started)

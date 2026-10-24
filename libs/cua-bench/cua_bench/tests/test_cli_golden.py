@@ -224,6 +224,64 @@ def test_run_dataset_filters_and_parallelism(cli_env, tmp_path, capsys):
     assert cli_env.peak <= 2
 
 
+def test_run_dataset_variant_timeout_fails_the_hung_variant(cli_env, tmp_path, monkeypatch):
+    """--variant-timeout bounds a variant whose sandbox call never returns (#5193)."""
+    import asyncio
+    import textwrap
+
+    from .fakes import FakeShell
+
+    original_run = FakeShell.run
+
+    async def run(self, command, timeout=None, background=False):
+        if "sleep 100000" in command:
+            await asyncio.Event().wait()  # never returns
+        return await original_run(self, command, timeout=timeout, background=background)
+
+    monkeypatch.setattr(FakeShell, "run", run)
+
+    task = tmp_path / "ds" / "hang_env"
+    task.mkdir(parents=True)
+    (task / "main.py").write_text(
+        textwrap.dedent(
+            """
+            import cua_bench as cb
+
+            @cb.tasks_config(split="train")
+            def load():
+                return [
+                    cb.Task(description=f"v{i}", metadata={"i": i},
+                            computer={"provider": "native", "setup_config": {
+                                "os_type": "linux", "image": "registry.example/d:1"}})
+                    for i in range(2)
+                ]
+
+            @cb.solve_task(split="train")
+            async def solve(task_cfg, session):
+                if task_cfg.metadata["i"] == 1:
+                    await session.run_command("sleep 100000")
+                else:
+                    await session.write_file("/tmp/answer", "done")
+
+            @cb.evaluate_task(split="train")
+            async def evaluate(task_cfg, session):
+                return [1.0]
+            """
+        )
+    )
+    out = tmp_path / "out"
+    code = run_cb(
+        ["run", str(tmp_path / "ds"), "-j", "2", "--variant-timeout", "5", "--output-dir", str(out)]
+    )
+    assert code == 1  # a failed variant; before the fix cb run never returned
+    summary = json.loads((out / "summary.json").read_text())
+    by_variant = {r["variant"]: r for r in summary["results"]}
+    assert by_variant[0]["status"] == "completed"
+    assert by_variant[1]["status"] == "failed"
+    assert "timed out" in by_variant[1]["error"]
+    assert cli_env.live == 0 and cli_env.released == 2
+
+
 def test_run_list_info_logs_and_trace_lookup(cli_env, tmp_path, capsys):
     code = run_cb(["run", str(HELLO), "--variant-id", "1", "--run-id", "run12345"])
     assert code == 0

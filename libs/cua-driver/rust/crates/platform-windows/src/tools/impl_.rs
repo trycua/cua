@@ -7807,7 +7807,16 @@ impl Tool for DragTool {
             let duration_ms = input.duration_ms.unwrap_or(500);
             let steps = input.steps.unwrap_or(20) as usize;
             let button = input.button.unwrap_or(ClickButton::Left).as_str();
-            let hwnd = match crate::input::mouse::foreground_window() {
+            // Issue #5783: resolve the window that actually owns the drag
+            // start point instead of the foreground window. A desktop-scope
+            // drag is coordinate-routed, so the pointer lands on whatever is
+            // under (from_x, from_y). Using the foreground window made the
+            // drag target a different window than the one being dragged —
+            // for a `WS_EX_NOACTIVATE` overlay (Wails floating ball) the
+            // foreground window is never the ball at all, so the drag could
+            // never move it. Mirror the desktop click path, which resolves
+            // the root window under the point via WindowFromPoint.
+            let hwnd = match crate::input::mouse::window_root_at_point(from_x, from_y) {
                 Ok(hwnd) => hwnd,
                 Err(error) => return ToolResult::error(error.to_string()),
             };

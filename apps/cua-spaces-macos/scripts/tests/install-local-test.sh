@@ -20,7 +20,9 @@
 #     checked first, in one message;
 #   - on a fresh Keychain (a certificate codesign cannot use yet) it says so and
 #     sets it up only when asked (--setup-signing), or prints the exact steps;
-#   - uninstall-local.sh removes the Local pieces and only those;
+#   - uninstall-local.sh removes the Local pieces and only those, and first
+#     takes this Mac off the relay when Local is signed in, as Local and with
+#     nothing of the caller's Stable environment;
 #   - the names in scripts/_local-common.sh are the ones CuaChannel::Local has.
 #
 #   scripts/tests/install-local-test.sh
@@ -1219,6 +1221,25 @@ check "and Stable files, lume included, are byte-identical" '[ "$(snap_stable)" 
 
 # --- 8. Uninstall --------------------------------------------------------------------------------------------------
 
+# The bundled cua of the installed Local app, as a script that logs how it was
+# called: its arguments, the variables it got, and whether the sign-in still
+# existed. `auth status` and `host remove` answer as STUB_AUTH_STATUS and
+# STUB_HOST_REMOVE say (0 unless set).
+export LOCAL_CUA_LOG="$WORK/local-cua.log"
+write_local_cli() {
+    : > "$LOCAL_CUA_LOG"
+    cat > "$LOCAL_APP/Contents/MacOS/cua" <<'STUBEOF'
+#!/bin/bash
+echo "cua $* [CUA_CHANNEL=${CUA_CHANNEL-}] [CUA_HOME=${CUA_HOME-}] [CUA_API_KEY=${CUA_API_KEY-}] [CUA_RELAY_URL=${CUA_RELAY_URL-}] [CUA_ENV=${CUA_ENV-}] creds=$([ -e "$HOME/.cua-local/credentials.json" ] && echo present || echo gone)" >> "$LOCAL_CUA_LOG"
+case "$*" in
+    "auth status") exit "${STUB_AUTH_STATUS:-0}" ;;
+    "host remove --force --uninstalling") exit "${STUB_HOST_REMOVE:-0}" ;;
+esac
+exit 0
+STUBEOF
+    chmod +x "$LOCAL_APP/Contents/MacOS/cua"
+}
+
 echo "== uninstall =="
 reset_fixture
 ALL_BEFORE="$(snap_all)"
@@ -1239,6 +1260,7 @@ echo 'web' > "$FAKE_HOME/Library/WebKit/com.trycua.spaces.macos.local/data"
 echo 'cookies' > "$FAKE_HOME/Library/Cookies/com.trycua.spaces.macos.local.binarycookies"
 echo 'state' > "$FAKE_HOME/Library/Saved Application State/com.trycua.spaces.macos.local.savedState/windows.plist"
 echo 'mine' > "$FAKE_HOME/Cua Volume Local/keep.txt"
+write_local_cli
 BEFORE_UNINSTALL="$(snap_all)"
 : > "$SHIM_LOG"; : > "$STUB_LOG"
 
@@ -1258,6 +1280,8 @@ check "the Local bundle id's preferences, caches, web view data, cookies and win
     '[ ! -e "$FAKE_HOME/Library/Preferences/com.trycua.spaces.macos.local.plist" ] && [ ! -e "$FAKE_HOME/Library/Caches/com.trycua.spaces.macos.local" ] && [ ! -e "$FAKE_HOME/Library/HTTPStorages/com.trycua.spaces.macos.local" ] && [ ! -e "$FAKE_HOME/Library/WebKit/com.trycua.spaces.macos.local" ] && [ ! -e "$FAKE_HOME/Library/Cookies/com.trycua.spaces.macos.local.binarycookies" ] && [ ! -e "$FAKE_HOME/Library/Saved Application State/com.trycua.spaces.macos.local.savedState" ]'
 check "and Stable's preferences, caches, web view data, cookies and window state of the same kinds are still there" \
     '[ -f "$FAKE_HOME/Library/Preferences/com.trycua.spaces.macos.plist" ] && [ -f "$FAKE_HOME/Library/Caches/com.trycua.spaces.macos/Cache.db" ] && [ -f "$FAKE_HOME/Library/WebKit/com.trycua.spaces.macos/data" ] && [ -f "$FAKE_HOME/Library/Cookies/com.trycua.spaces.macos.binarycookies" ] && [ -f "$FAKE_HOME/Library/Saved Application State/com.trycua.spaces.macos.savedState/windows.plist" ]'
+check "this Mac was taken off the relay, as Local, before the sign-in was deleted" \
+    'grep >/dev/null "^cua auth status \[CUA_CHANNEL=local\]" "$LOCAL_CUA_LOG" && grep >/dev/null "^cua host remove --force --uninstalling \[CUA_CHANNEL=local\] .*creds=present" "$LOCAL_CUA_LOG"'
 check "the Local host runner job file is gone" '[ ! -e "$FAKE_HOME/Library/LaunchAgents/com.trycua.spacesd.host.local.plist" ]'
 check "the helper login item was unregistered by the Local app itself" 'grep >/dev/null -- "--service-helper unregister \[CUA_CHANNEL=local\]" "$STUB_LOG"'
 check "launchctl was asked about the two Local labels only" \
@@ -1293,6 +1317,45 @@ check "uninstall removes the leftovers of both ids when no app is installed (sta
     '[ "$RC" = 0 ] && legacy_data_gone && [ ! -e "$FAKE_HOME/Library/Application Support/com.trycua.spaces.macos.local" ] && [ ! -e "$FAKE_HOME/Library/Caches/com.trycua.spaces.macos.local" ]'
 check "and Stable files, whose names the new Local id extends, are byte-identical" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
 check "uninstall never resets permission rows (macOS keeps them for a reinstall)" '! grep >/dev/null "^tccutil" "$SHIM_LOG"'
+
+echo "== uninstall takes this Mac off the relay, safely =="
+# A stray environment of the released Cua Spaces in the caller's shell: its
+# home and its API key must not reach the Local CLI (CUA_ENV, the opt-in to
+# production, does).
+reset_fixture
+STABLE_BEFORE="$(snap_stable)"
+install
+mkdir -p "$FAKE_HOME/.cua-local"
+echo '{}' > "$FAKE_HOME/.cua-local/credentials.json"
+write_local_cli
+run env CUA_HOME="$FAKE_HOME/.cua" CUA_API_KEY=stable-key CUA_RELAY_URL=https://relay.example.invalid CUA_ENV=prod "$FAKE_SCRIPTS/uninstall-local.sh" --yes
+check "uninstall with a stray Stable environment (status $RC)" '[ "$RC" = 0 ] && [ ! -e "$LOCAL_APP" ] && [ ! -e "$FAKE_HOME/.cua-local" ]'
+check "the Local CLI got none of CUA_HOME, CUA_API_KEY or CUA_RELAY_URL, and CUA_ENV=prod" \
+    'grep >/dev/null "^cua host remove .*\[CUA_HOME=\] \[CUA_API_KEY=\] \[CUA_RELAY_URL=\] \[CUA_ENV=prod\]" "$LOCAL_CUA_LOG"'
+check "Stable files, library folders included, are byte-identical" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
+
+# Not signed in: nothing to unregister, and nothing is said about it.
+reset_fixture
+install
+write_local_cli
+STUB_AUTH_STATUS=1 uninstall --yes
+check "not signed in: it asks nothing of the relay and says nothing" \
+    '[ "$RC" = 0 ] && grep >/dev/null "^cua auth status" "$LOCAL_CUA_LOG" && ! grep >/dev/null "host remove" "$LOCAL_CUA_LOG" && ! printf "%s" "$OUT" | grep >/dev/null -e "taking this Mac off" -e "could not take" -e warning'
+check "not signed in: the rest is removed all the same" '[ ! -e "$LOCAL_APP" ]'
+
+# Signed in but the relay cannot be reached: one warning, and the uninstall goes on.
+reset_fixture
+install
+write_local_cli
+STUB_HOST_REMOVE=1 uninstall --yes
+check "relay unreachable: one warning, and Local is removed all the same" \
+    '[ "$RC" = 0 ] && [ "$(printf "%s" "$OUT" | grep -c "could not take this Mac off the relay")" = 1 ] && [ ! -e "$LOCAL_APP" ]'
+check "relay unreachable: Stable files are byte-identical" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
+
+# Nothing installed (or the app already gone): no CLI to ask, nothing said.
+: > "$LOCAL_CUA_LOG"
+uninstall --yes
+check "no Local app: it does not try the relay" '[ "$RC" = 0 ] && [ ! -s "$LOCAL_CUA_LOG" ] && ! printf "%s" "$OUT" | grep >/dev/null -e "taking this Mac off" -e "could not take" -e warning'
 
 echo "== install, then uninstall, leaves the HOME as it was =="
 reset_fixture

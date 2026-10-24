@@ -16,6 +16,8 @@
 #                        (default $HOME); the state is always removed from $HOME
 #
 # It removes, after asking:
+#   - this Mac's entry in the relay, when Local is signed in (best effort: the
+#     machine would otherwise stay listed as offline), before the sign-in goes
 #   - the Local helper login item (unregistered) and the Local host runner job
 #   - ~/Applications/Cua Spaces Local.app
 #   - ~/.local/bin/cua-local
@@ -119,6 +121,7 @@ echo "  state:              $LOCAL_HOME and $LOCAL_APP_SUPPORT"
 echo "  macOS leftovers:    the $LOCAL_BUNDLE_ID preferences, caches, web view data and window state in ~/Library"
 echo "                      (and those of the old id $LOCAL_LEGACY_BUNDLE_ID, if any)"
 echo "  Keychain items:     ${LOCAL_KEYCHAIN_SERVICES[*]}"
+echo "  relay:              this Mac's entry, if Local is signed in"
 if [ "$YES" != 1 ]; then
     confirm "Remove them?" || { log "cancelled, nothing was removed"; exit 0; }
 fi
@@ -129,6 +132,38 @@ if [ "$WITH_LUME_LOCAL" = 1 ]; then
 elif [ "$YES" != 1 ] && lume_local_present; then
     confirm "Also remove $LOCAL_LUME_BIN_NAME and its VMs in ~/$LOCAL_LUME_DIR_NAME?" && REMOVE_LUME=1
 fi
+
+# --- This Mac's entry in the relay ---------------------------------------------------
+
+# The bundled Local CLI, as Local and nothing else: every CUA_ variable of the
+# caller's shell but CUA_ENV (the opt-in to production) is dropped, so a stray
+# CUA_HOME or CUA_API_KEY for the released Cua Spaces can neither aim it at that
+# install nor hand its key to this one. It gives up after 30 seconds.
+run_local_cli() {
+    local cli="$1" var
+    shift
+    (
+        for var in $(compgen -e); do
+            case "$var" in CUA_ENV) ;; CUA_*) unset "$var" ;; esac
+        done
+        export CUA_CHANNEL=local CUA_TELEMETRY=0
+        exec /usr/bin/perl -e 'alarm 30; exec @ARGV or exit 127' -- "$cli" "$@"
+    )
+}
+
+# Takes this Mac off the relay while the sign-in and the host's machine token
+# still exist: they are what proves it may. Best effort. Not signed in (or no
+# app left to ask): there is nothing to unregister, so it says nothing.
+unregister_from_relay() {
+    local cli="$APP_DEST/Contents/MacOS/cua"
+    [ -f "$cli" ] && [ -x "$cli" ] && [ ! -L "$cli" ] || return 0
+    run_local_cli "$cli" auth status >/dev/null 2>&1 || return 0
+    log "taking this Mac off the relay"
+    if ! run_local_cli "$cli" host remove --force --uninstalling >/dev/null 2>&1; then
+        warn "could not take this Mac off the relay (offline?): it may stay listed, offline, in your computers until you remove it there."
+    fi
+}
+unregister_from_relay
 
 # --- The helper login item and the host runner ------------------------------------
 

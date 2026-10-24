@@ -52,12 +52,11 @@
 //! is an explicit opt-in. See [`CuaChannel::default_env`] and
 //! [`CuaChannel::current_env`].
 //!
-//! TODO(CUA-1776, PR 1b): nothing calls this module yet. PR 1b wires it into
-//! [`CuaEnv::build_default`] (so Local defaults to staging everywhere),
-//! `Endpoints::from_lookup` (which must read `CUA_CHANNEL` from its lookup
-//! to stay hermetic in tests) and [`crate::cua_home`]. The last one needs a
-//! decision: Local's home is `~/.cua-local` itself (the app pins `CUA_HOME`
-//! to it), not `~/.cua-local/envs/staging`.
+//! The environment follows the channel everywhere: [`CuaEnv::build_default`],
+//! [`CuaEnv::current`], `Endpoints::from_lookup` (which reads `CUA_CHANNEL`
+//! from its lookup, so tests stay hermetic) and [`crate::cua_home`] all go
+//! through this module. Local's home is `~/.cua-local` itself, not
+//! `~/.cua-local/envs/staging`; the app pins `CUA_HOME` to it.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -189,18 +188,23 @@ impl CuaChannel {
         )
     }
 
+    /// The channel of this process for a given `CUA_CHANNEL` value (`None`:
+    /// unset), the compile-time default and this executable's path. An
+    /// unknown value is ignored, as in [`CuaChannel::current`]. For callers
+    /// that read their variables through a lookup (`Endpoints::from_lookup`).
+    pub fn from_env_value(env_value: Option<&str>) -> Self {
+        let build_default = option_env!("CUA_DEFAULT_CHANNEL");
+        let exe_paths = current_exe_paths();
+        Self::resolve(env_value, build_default, &exe_paths)
+            .or_else(|_| Self::resolve(None, build_default, &exe_paths))
+            .unwrap_or_default()
+    }
+
     /// The channel of this process. An unknown `CUA_CHANNEL` value is
     /// ignored, so the compile-time default and the executable path still
     /// apply: a typo never moves a Local build onto Stable's names.
     pub fn current() -> Self {
-        Self::try_current().unwrap_or_else(|_| {
-            Self::resolve(
-                None,
-                option_env!("CUA_DEFAULT_CHANNEL"),
-                &current_exe_paths(),
-            )
-            .unwrap_or_default()
-        })
+        Self::from_env_value(std::env::var(CUA_CHANNEL_VAR).ok().as_deref())
     }
 
     /// `stable` or `local`: the value of `CUA_CHANNEL`.
@@ -228,24 +232,25 @@ impl CuaChannel {
     // ----- environment -----------------------------------------------------
 
     /// The deployment when `CUA_ENV` is not set: Stable keeps
-    /// [`CuaEnv::build_default`] (prod, or staging for a beta build); Local
-    /// is always staging.
+    /// [`CuaEnv::compiled_default`] (prod, or staging for a beta build);
+    /// Local is always staging.
     pub fn default_env(self) -> CuaEnv {
         match self {
-            Self::Stable => CuaEnv::build_default(),
+            Self::Stable => CuaEnv::compiled_default(),
             Self::Local => CuaEnv::Staging,
         }
     }
 
     /// The deployment for a `CUA_ENV` value (`None`: unset).
     ///
-    /// Stable is exactly [`CuaEnv::try_from_value`]. Local treats unset and
+    /// Stable is the rule `CuaEnv::try_from_value` always had: unset is
+    /// [`CuaEnv::compiled_default`], blank is prod. Local treats unset and
     /// blank as the default (staging); anything else must be a known
     /// environment, so `prod` is an explicit opt-in and a typo is an error
     /// rather than production.
     pub fn env_from_value(self, value: Option<&str>) -> Result<CuaEnv, String> {
         match self {
-            Self::Stable => CuaEnv::try_from_value(value),
+            Self::Stable => CuaEnv::stable_from_value(value),
             Self::Local => match value.filter(|v| !v.trim().is_empty()) {
                 None => Ok(self.default_env()),
                 Some(v) => CuaEnv::parse(v).ok_or_else(|| {
@@ -255,6 +260,16 @@ impl CuaChannel {
         }
     }
 
+    /// [`CuaChannel::env_from_value`] with an unknown value answered rather
+    /// than refused: production for Stable (what `CuaEnv::current` always
+    /// did), staging for Local, so a typo never reaches production.
+    pub fn env_or_fallback(self, value: Option<&str>) -> CuaEnv {
+        self.env_from_value(value).unwrap_or(match self {
+            Self::Stable => CuaEnv::Prod,
+            Self::Local => CuaEnv::Staging,
+        })
+    }
+
     /// The deployment of this process: [`CuaChannel::current`] and `CUA_ENV`,
     /// or an error for an unknown `CUA_ENV` value.
     pub fn try_current_env() -> Result<CuaEnv, String> {
@@ -262,12 +277,10 @@ impl CuaChannel {
     }
 
     /// The deployment of this process. An unknown `CUA_ENV` value falls back
-    /// to the channel's default (so never to production for Local).
+    /// as [`CuaChannel::env_or_fallback`] says (never to production for
+    /// Local).
     pub fn current_env() -> CuaEnv {
-        let channel = Self::current();
-        channel
-            .env_from_value(std::env::var(CUA_ENV_VAR).ok().as_deref())
-            .unwrap_or_else(|_| channel.default_env())
+        Self::current().env_or_fallback(std::env::var(CUA_ENV_VAR).ok().as_deref())
     }
 
     // ----- the app ---------------------------------------------------------
@@ -765,11 +778,29 @@ mod tests {
     }
 
     #[test]
+    fn an_unknown_environment_is_answered_by_channel() {
+        use CuaChannel::{Local, Stable};
+        for v in [Some("prd"), Some("stagign"), Some("dev")] {
+            assert_eq!(Stable.env_or_fallback(v), CuaEnv::Prod, "{v:?}");
+            assert_eq!(Local.env_or_fallback(v), CuaEnv::Staging, "{v:?}");
+        }
+        // A known or unset value is exactly `env_from_value`.
+        for v in [None, Some(""), Some("prod"), Some("staging")] {
+            assert_eq!(Local.env_or_fallback(v), Local.env_from_value(v).unwrap());
+            assert_eq!(Stable.env_or_fallback(v), Stable.env_from_value(v).unwrap());
+        }
+    }
+
+    #[test]
     fn stable_environment_is_unchanged() {
         use CuaChannel::Stable;
-        assert_eq!(Stable.default_env(), CuaEnv::build_default());
+        assert_eq!(Stable.default_env(), CuaEnv::compiled_default());
         for v in [None, Some(""), Some("prod"), Some("staging"), Some("dev")] {
-            assert_eq!(Stable.env_from_value(v), CuaEnv::try_from_value(v), "{v:?}");
+            assert_eq!(
+                Stable.env_from_value(v),
+                CuaEnv::stable_from_value(v),
+                "{v:?}"
+            );
         }
     }
 

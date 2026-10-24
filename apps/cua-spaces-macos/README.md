@@ -53,7 +53,37 @@ cd ../../apps/cua-spaces-macos
 swift build                      # the package
 scripts/test.sh                  # unit, parity and snapshot tests (swift-testing)
 scripts/build-app.sh release     # .build/app/Cua Spaces.app, ad hoc signed
+scripts/build-app.sh --channel local release   # .build/app/Cua Spaces Local.app (below)
 ```
+
+### Cua Spaces Local, beside the installed app
+
+`scripts/build-app.sh --channel local` builds **Cua Spaces Local**, which runs
+at the same time as an installed Cua Spaces and cannot touch it (CUA-1776).
+Without `--channel` the build is Stable, the app the release scripts ship.
+Every Local name comes from `CuaChannel`
+(`libs/cua/crates/cua-home/src/channel.rs`; `scripts/channel-names.sh local`
+prints them), so nothing here hard-codes one.
+
+| | Stable | Local |
+|---|---|---|
+| App | `Cua Spaces.app` | `Cua Spaces Local.app` |
+| Bundle id | `com.trycua.spaces.macos` | `com.trycua.spaces.local` |
+| Info.plist | no channel keys | `CuaChannel=local`, `CuaEnv=staging`, `CuaHome=~/.cua-local`, `CuaHelperLabel`, `CuaUrlScheme` |
+| Cua deployment | prod (`CUA_ENV` picks another) | staging (`CUA_ENV=prod` opts in) |
+| Cua home | `~/.cua` | `~/.cua-local` (no `envs/staging` below it) |
+| Helper login item | `com.trycua.spaces.helper` | `com.trycua.spaces.local.helper` (plist file and `AssociatedBundleIdentifiers` stamped to match) |
+| URL scheme | `cua://` | `cua-local://` |
+| Updater | Sparkle feed and key | none (`SUFeedURL`, `SUPublicEDKey` removed): it never offers or installs an update |
+
+The app reads `CuaChannel`, `CuaEnv` and `CuaHome` at start and sets
+`CUA_CHANNEL`, `CUA_ENV` and `CUA_HOME` before anything else runs (the login
+item included), so `cua-spacesd` and every other child inherit them
+(`TargetEnvironment`). A variable that is already set wins. The build ends with
+`scripts/check-local-bundle.sh`, which fails if a Local bundle has the
+production id, a Sparkle feed or the `cua` scheme; CI runs it too. Run a Local
+build from the build directory: installing it beside Stable (with its CLI,
+Volume and Lume) is the install-local work of CUA-1776.
 
 `SNAPSHOT_RECORD=1 scripts/test.sh` re-records the snapshot references.
 UI tests (XCUITest) need Xcode: `xcodegen generate` (project.yml), then

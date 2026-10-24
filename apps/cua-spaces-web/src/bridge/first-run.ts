@@ -176,7 +176,7 @@ function fallbackView(input: FirstRunInput): FirstRunView {
           ? {
               title: `Try it in ${lead.name}.`,
               lede: `Paste this. ${lead.name} makes the Space itself.`,
-              prompt: { heading: `Paste this in ${lead.name}`, text: `Make a Linux Space on ${place} and run my tests there.`, note: `It runs on ${place}.`, copy: "Copy" },
+              prompt: { heading: `Paste this in ${lead.name}`, text: `Make a Linux Space on ${place} and stream the desktop in a new window.`, note: `It runs on ${place}.`, copy: "Copy" },
               status: { id: "agent", state: input.agentUsedAt ? "ok" : "checking", title: input.agentUsedAt ? `${lead.name} used Cua at ${input.agentUsedAt}.` : `Waiting for ${lead.name}…`, note: "", action: null, settingsUrl: null },
               extra: null,
               primary: { id: "done", label: "Done", enabled: true, note: null },
@@ -350,7 +350,8 @@ export interface FirstRunHook {
   signIn(agent: string): Promise<void>;
   /** A screen's button: `start`, `continue`, `skip`, `not-now` (next screen), `sign-in`, `set-up`, `open-settings`, `copy`, `add`. */
   act(id: string, settingsUrl?: string | null): Promise<void>;
-  copyPrompt(): Promise<void>;
+  /** Copies `text` (the tab shown), else the selected request. */
+  copyPrompt(text?: string): Promise<void>;
   /** Opens a page in the browser (installing an agent). */
   openUrl(url: string): Promise<void>;
   /** The first Space card: `macos`/`linux` start it; `cancel`, `not-now`, `add`, `retry`, `fix`. */
@@ -610,8 +611,8 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
     }
   };
 
-  const copyPrompt = async () => {
-    const text = view.setup?.prompt?.text ?? firstRunView(core, { ...input, step: "setup" }).setup?.prompt?.text ?? "";
+  const copyPrompt = async (shown?: string) => {
+    const text = shown ?? view.setup?.prompt?.text ?? firstRunView(core, { ...input, step: "setup" }).setup?.prompt?.text ?? "";
     await navigator.clipboard?.writeText(text).catch(() => {});
   };
 

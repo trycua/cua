@@ -193,7 +193,7 @@
         "extra": null,
         "lede": "Paste this. Hermes makes the Space itself.",
         "primary": "done:Done",
-        "prompt": "Paste this in Hermes: Make a Linux Space on this Mac and run my tests there. / It runs on this Mac.",
+        "prompt": "Paste this in Hermes: Make a Linux Space on this Mac and stream the desktop in a new window. / It runs on this Mac.",
         "status": "[checking] Waiting for Hermes… — If Hermes was already open, restart it.",
         "title": "Try it in Hermes."
       },
@@ -206,7 +206,7 @@
         "extra": null,
         "lede": "Paste this. Hermes makes the Space itself.",
         "primary": "done:Done",
-        "prompt": "Paste this in Hermes: Make a Linux Space on this Mac and run my tests there. / It runs on this Mac.",
+        "prompt": "Paste this in Hermes: Make a Linux Space on this Mac and stream the desktop in a new window. / It runs on this Mac.",
         "status": "[ok] Hermes used Cua at 18:12. — Ask it anything else.",
         "title": "Try it in Hermes."
       },
@@ -216,7 +216,7 @@
         "items": [
           "[ ] Connect Hermes and Claude Code — Cua isn't in Hermes and Claude Code's settings yet. (connect:Connect)",
           "[ ] Make this Mac your first Space — After you sign in.",
-          "[x] Try your first request — Ask Hermes or Claude Code: “Make a Linux Space on this Mac and run my tests there.”",
+          "[x] Try your first request — Ask Hermes or Claude Code: “Make a Linux Space on this Mac and stream the desktop in a new window.”",
           "[ ] Give your agent its own Space (optional) — A fresh computer inside this Mac, away from your files and your mouse. (add:Add a Space)",
           "[ ] Connect your other devices (optional) — Sign in, and your other computers reach this Mac's Spaces. (sign-in:Sign in)"
         ],
@@ -231,7 +231,7 @@
         "extra": null,
         "lede": "Paste this. OpenAI Codex makes the Space itself.",
         "primary": "done:Done",
-        "prompt": "Paste this in OpenAI Codex: Make a Linux Space on this PC and run my tests there. / It runs on this PC.",
+        "prompt": "Paste this in OpenAI Codex: Make a Linux Space on this PC and stream the desktop in a new window. / It runs on this PC.",
         "status": "[checking] Waiting for OpenAI Codex… — If OpenAI Codex was already open, restart it.",
         "title": "Try it in OpenAI Codex."
       },
@@ -319,7 +319,7 @@
         "extra": null,
         "lede": "Paste this. Claude Code makes the Space itself.",
         "primary": "done:Done",
-        "prompt": "Paste this in Claude Code: Make a Linux Space on this Mac and run my tests there. / It runs on this Mac.",
+        "prompt": "Paste this in Claude Code: Make a Linux Space on this Mac and stream the desktop in a new window. / It runs on this Mac.",
         "status": "[checking] Waiting for Claude Code… — If Claude Code was already open, restart it.",
         "title": "Try it in Claude Code."
       },
@@ -329,7 +329,7 @@
         "items": [
           "[ ] Connect Claude Code — Cua isn't in Claude Code's settings yet. (connect:Connect)",
           "[ ] Let Cua control this Mac — So your agent can click and type. macOS asks you once. (open-settings:Open Settings)",
-          "[ ] Try your first request — Ask Claude Code: “Make a Linux Space on this Mac and run my tests there.” (copy:Copy)",
+          "[ ] Try your first request — Ask Claude Code: “Make a Linux Space on this Mac and stream the desktop in a new window.” (copy:Copy)",
           "[ ] Give your agent its own Space (optional) — A fresh computer inside this Mac, away from your files and your mouse. (add:Add a Space)",
           "[x] Connect your other devices (optional) — Signed in to Cua."
         ],

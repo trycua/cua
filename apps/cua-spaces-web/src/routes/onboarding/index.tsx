@@ -10,6 +10,7 @@ import { KeySheet } from "@/components/agents/key-sheet";
 import { CuaLogo } from "@/components/cua-logo";
 import { OsIcon } from "@/components/os-icon";
 import { Button } from "@/components/ui/button";
+import { Segmented } from "@/components/ui/segmented";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
 import { RuntimeFixRow } from "@/components/new-space/runtime-fix";
@@ -335,8 +336,12 @@ function Devices({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
 function Setup({ fr, view, onFinish }: { fr: FirstRunHook; view: FirstRunView; onFinish: () => void }) {
   const s = view.setup!;
   const [copied, setCopied] = useState(false);
+  const [tab, setTab] = useState<string | null>(null);
+  const tabs = s.prompt?.tabs ?? [];
+  const shownTab = tabs.find((t) => t.id === (tab ?? s.prompt?.selected));
+  const promptText = shownTab?.text ?? s.prompt?.text ?? "";
   const copy = async () => {
-    await fr.copyPrompt();
+    await fr.copyPrompt(promptText);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
@@ -344,12 +349,25 @@ function Setup({ fr, view, onFinish }: { fr: FirstRunHook; view: FirstRunView; o
     <div data-first-run="setup">
       <Heading>{s.title}</Heading>
       <Lede>{s.lede}</Lede>
+      {s.prompt && tabs.length > 1 ? (
+        <div className="mt-6" data-first-run-prompt-tabs="">
+          <Segmented
+            aria-label="System"
+            value={shownTab?.id ?? tabs[0]!.id}
+            options={tabs.map((t) => ({ value: t.id, label: t.label }))}
+            onValueChange={(v) => {
+              setTab(v);
+              setCopied(false);
+            }}
+          />
+        </div>
+      ) : null}
       {s.prompt ? (
-        <div className="mt-6 flex items-start gap-3">
+        <div className={cn("flex items-start gap-3", tabs.length > 1 ? "mt-3" : "mt-6")}>
           <textarea
             readOnly
             rows={2}
-            value={s.prompt.text}
+            value={promptText}
             aria-label={s.prompt.heading}
             onFocus={(e) => e.currentTarget.select()}
             className="min-w-0 flex-1 resize-none rounded-lg border border-foreground/15 bg-transparent px-3 py-2 font-mono text-[13px] leading-relaxed outline-none select-text focus-visible:ring-2 focus-visible:ring-ring/60"

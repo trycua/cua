@@ -128,7 +128,7 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     expect(calls.some((c) => c.op === "session.signIn")).toBe(false);
     const prompt = document.querySelector<HTMLTextAreaElement>("textarea[data-first-run-prompt]")!;
     expect(prompt.readOnly).toBe(true);
-    expect(prompt.value).toMatch(/^Make a Linux Space on this (Mac|PC|computer) and run my tests there\.$/);
+    expect(prompt.value).toMatch(/^Make a Linux Space on this (Mac|PC|computer) and stream the desktop in a new window\.$/);
     expect(document.querySelector("[data-first-run-copy]")).toBeTruthy();
     // A Codex user never sees Claude or its key first.
     expect(document.body.textContent).not.toMatch(/Claude|Anthropic/);

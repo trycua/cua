@@ -1361,7 +1361,7 @@ check "Stable files, library folders included, are byte-identical" '[ "$(snap_st
 # A Local home that is a link into the released Cua Spaces' folders: the CLI
 # would unregister Stable's host and delete its state, so it is not asked, and
 # only the link is removed.
-for linked in home host host-config host-token host-spaces helper-spec credentials; do
+for linked in home host host-config host-token host-spaces helper-spec credentials host-elsewhere; do
     reset_fixture
     mkdir -p "$FAKE_HOME/.cua/host"
     echo '{"stable":true}' > "$FAKE_HOME/.cua/host/config.json"
@@ -1386,6 +1386,13 @@ for linked in home host host-config host-token host-spaces helper-spec credentia
                 host-token) ln -s "$FAKE_HOME/.cua/host/machine-token" "$FAKE_HOME/.cua-local/host/machine-token" ;;
                 host-spaces) ln -s "$FAKE_HOME/.cua/host/provided-spaces.json" "$FAKE_HOME/.cua-local/host/provided-spaces.json" ;;
             esac ;;
+        host-elsewhere)
+            # The host folder is a link to a folder of its own that holds the
+            # link into Stable's host folder: one indirection more.
+            mkdir -p "$WORK/elsewhere-host" "$FAKE_HOME/.cua-local"
+            echo '{}' > "$FAKE_HOME/.cua-local/credentials.json"
+            ln -s "$FAKE_HOME/.cua/host/config.json" "$WORK/elsewhere-host/config.json"
+            ln -s "$WORK/elsewhere-host" "$FAKE_HOME/.cua-local/host" ;;
         helper-spec)
             mkdir -p "$FAKE_HOME/.cua-local/helper"
             echo '{}' > "$FAKE_HOME/.cua-local/credentials.json"
@@ -1400,6 +1407,20 @@ for linked in home host host-config host-token host-spaces helper-spec credentia
     check "a Local $linked that is, or holds, a link into ~/.cua: only Local's own go, Stable files are byte-identical" \
         '[ ! -e "$FAKE_HOME/.cua-local" ] && [ ! -L "$FAKE_HOME/.cua-local" ] && [ "$(snap_stable)" = "$STABLE_BEFORE" ]'
 done
+
+# A Local host folder kept elsewhere (a link to a folder that holds nothing of
+# the released app's) is fine: the CLI is run, and only the link goes.
+reset_fixture
+STABLE_BEFORE="$(snap_stable)"
+install
+mkdir -p "$WORK/own-host" "$FAKE_HOME/.cua-local"
+echo '{}' > "$FAKE_HOME/.cua-local/credentials.json"
+echo '{}' > "$WORK/own-host/config.json"
+ln -s "$WORK/own-host" "$FAKE_HOME/.cua-local/host"
+write_local_cli
+uninstall --yes
+check "a Local host folder kept elsewhere, with no link into ~/.cua: the Local CLI is run (status $RC)" \
+    '[ "$RC" = 0 ] && grep >/dev/null "^cua host remove" "$LOCAL_CUA_LOG" && grep >/dev/null "^cua agents remove" "$LOCAL_CUA_LOG" && [ ! -e "$FAKE_HOME/.cua-local" ] && [ -f "$WORK/own-host/config.json" ] && [ "$(snap_stable)" = "$STABLE_BEFORE" ]'
 reset_fixture
 STABLE_BEFORE="$(snap_stable)"
 

@@ -179,21 +179,37 @@ run_local_cli() {
     )
 }
 
+# Succeeds when every link in `dir` (down to `maxdepth` levels) resolves to a
+# place of its own and not to anything of the released Cua Spaces, and so does
+# every link inside the folders those links lead to (`levels` folders deep).
+# `find -H` looks inside `dir` when `dir` itself is a link.
+links_are_isolated() {
+    local dir="$1" levels="$2" maxdepth="$3" entry resolved
+    [ "$levels" -gt 0 ] || return 0
+    while IFS= read -r entry; do
+        resolved="$(canonicalize_path "$entry")" || return 1
+        reject_stable_overlap "Local state" "$resolved" >/dev/null 2>&1 || return 1
+        if [ -d "$resolved" ]; then
+            links_are_isolated "$resolved" $((levels - 1)) 4 || return 1
+        fi
+    done < <(find -H "$dir" -maxdepth "$maxdepth" -type l 2>/dev/null)
+}
+
 # Whether a Local home may be handed to the Local CLI: it, the folders the CLI
-# reads and removes in it and every link inside them resolve to places of their
-# own and not to anything of the released Cua Spaces (a link such as
-# ~/.cua-local -> ~/.cua, or ~/.cua-local/host/config.json -> ~/.cua/host/config.json,
+# reads and removes in it, and every link in them, however indirect, resolve to
+# places of their own and not to anything of the released Cua Spaces (a link such
+# as ~/.cua-local -> ~/.cua, or ~/.cua-local/host/config.json ->
+# ~/.cua/host/config.json, or a host folder elsewhere that holds such a link,
 # would make the CLI unregister and delete Stable's host or its Spaces).
 local_home_is_isolated() {
-    local home="$1" sub resolved entry
+    local home="$1" sub resolved
     for sub in "" /host /helper /agent-setup.json; do
         resolved="$(canonicalize_path "$home$sub")" || return 1
         reject_stable_overlap "Local state" "$resolved" >/dev/null 2>&1 || return 1
     done
-    while IFS= read -r entry; do
-        resolved="$(canonicalize_path "$entry")" || return 1
-        reject_stable_overlap "Local state" "$resolved" >/dev/null 2>&1 || return 1
-    done < <(find "$home" -maxdepth 1 -type l 2>/dev/null; find "$home/host" "$home/helper" -type l 2>/dev/null)
+    links_are_isolated "$home" 3 1 || return 1
+    links_are_isolated "$home/host" 3 4 || return 1
+    links_are_isolated "$home/helper" 3 4 || return 1
 }
 
 # Takes this Mac off the relay, while the sign-in and the host's machine token

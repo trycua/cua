@@ -170,6 +170,24 @@ restored, and the daemon log records the step. A call that passes
 `delivery_mode: "background"` explicitly is never escalated. Leave the
 variable unset on a Mac someone is using.
 
+### Try the background drag-and-drop route (macOS, experimental)
+
+Set `CUA_DRIVER_EXPERIMENTAL_BACKGROUND_DND=1` in the daemon's environment to
+let a background `drag` finish a native drag-and-drop session (reordering a
+list, moving a file between windows, dragging an object onto a drop zone)
+without moving the pointer or raising the window. The driver keeps posting the
+gesture to the source app, holds the hardware button down at the pointer's
+current position, and releases it before the drop. A transparent shield window
+under the pointer absorbs that one press and release, so the app under the
+pointer never sees a click.
+
+Limits: it needs the daemon's AppKit loop (a graphic session with the agent
+cursor on), and the user has to leave the pointer alone for about two seconds.
+If the pointer moves, the drag fails with an error instead of reporting a drop.
+When the hold can't be made, the drag falls back to the refusal above (or to
+the brief foreground step, if that is on). Sliders, splitters and canvas drags
+don't need it.
+
 ## Update
 
 ```bash test="cli-shape" id="cua-driver-check-update"

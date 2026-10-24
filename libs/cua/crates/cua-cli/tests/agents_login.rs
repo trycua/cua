@@ -489,6 +489,106 @@ async fn the_local_cli_registers_cua_local_beside_stables_cua() {
     assert!(stable_skill.join("SKILL.md").is_file() && !local_skill.exists());
 }
 
+/// What `uninstall-local.sh` runs (`cua-local agents remove --yes`) removes
+/// Local's own MCP server and skills and nothing of the released app's: its
+/// `cua` and `cua-driver` entries and skills stay, also when Local was asked to
+/// set up `cua-driver` itself after Stable had (CUA-1776).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_local_cli_removes_only_its_own_entries_and_leaves_stables_cua_and_cua_driver() {
+    let mut h = home();
+    mkdirs(&h, &[".cursor"]);
+    let cursor = h.dir.path().join(".cursor/mcp.json");
+    let root = h.dir.path().to_path_buf();
+    let skill = move |name: &str| root.join(".agents/skills").join(name);
+    let servers = |p: &std::path::Path| -> Vec<String> {
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap();
+        let mut names: Vec<String> = v["mcpServers"]
+            .as_object()
+            .map(|o| o.keys().cloned().collect())
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
+
+    // The released app: `cua`, and Cua Driver's `cua-driver`.
+    h.run(&[
+        "agents",
+        "setup",
+        "--agents",
+        "cursor",
+        "--yes",
+        "--mcp-command",
+        "/opt/cua/bin/cua",
+    ])
+    .await
+    .ok();
+    h.run(&[
+        "agents",
+        "setup",
+        "--cua-driver",
+        "--agents",
+        "cursor",
+        "--yes",
+        "--mcp-command",
+        "/opt/drv/cua-driver",
+    ])
+    .await
+    .ok();
+    assert_eq!(servers(&cursor), ["cua", "cua-driver"]);
+    let stable_config = std::fs::read_to_string(&cursor).unwrap();
+    assert!(skill("cua-spaces").join("SKILL.md").is_file());
+    assert!(skill("cua-driver").join("SKILL.md").is_file());
+
+    // Local, in its own home: `cua-local`, and (asked to) `cua-driver` too.
+    let local_home = h.dir.path().join(".cua-local");
+    h.set("CUA_CHANNEL", "local")
+        .set("CUA_HOME", local_home.display().to_string());
+    h.run(&[
+        "agents",
+        "setup",
+        "--agents",
+        "cursor",
+        "--yes",
+        "--mcp-command",
+        "/opt/cua-local/bin/cua-local",
+    ])
+    .await
+    .ok();
+    h.run(&[
+        "agents",
+        "setup",
+        "--cua-driver",
+        "--agents",
+        "cursor",
+        "--yes",
+        "--mcp-command",
+        "/opt/drv/cua-driver",
+    ])
+    .await
+    .ok();
+    assert_eq!(servers(&cursor), ["cua", "cua-driver", "cua-local"]);
+    assert!(skill("cua-spaces-local").join("SKILL.md").is_file());
+
+    // The uninstaller's call.
+    h.run(&["agents", "remove", "--yes"]).await.ok();
+    assert_eq!(
+        servers(&cursor),
+        ["cua", "cua-driver"],
+        "only Local's server went"
+    );
+    let left: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&cursor).unwrap()).unwrap();
+    let before: serde_json::Value = serde_json::from_str(&stable_config).unwrap();
+    assert_eq!(left, before, "Stable's entries are exactly as they were");
+    assert!(!skill("cua-spaces-local").exists(), "Local's skills went");
+    assert!(
+        skill("cua-spaces").join("SKILL.md").is_file()
+            && skill("cua-driver").join("SKILL.md").is_file(),
+        "Stable's skills, cua-driver's included, stay"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agents_setup_cua_driver_adds_the_driver_skill_and_server() {
     let h = home();

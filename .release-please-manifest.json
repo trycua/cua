@@ -6,7 +6,7 @@
   "libs/cua": "0.7.0",
   "libs/cua-spacesd": "0.7.0",
   "apps/cua-spaces-macos": "0.13.1",
-  "libs/python/agent": "0.9.1",
+  "libs/python/agent": "0.9.2",
   "libs/python/core": "0.3.2",
   "libs/cua-bench": "0.3.1",
   "libs/python/bench-ui": "0.7.1",

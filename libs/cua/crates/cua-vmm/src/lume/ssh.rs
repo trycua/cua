@@ -290,24 +290,50 @@ mod tests {
         assert_eq!(out.stderr_str(), "it's set\n");
     }
 
+    /// The command cannot finish until the test has seen its first chunk (it
+    /// blocks reading a FIFO that only the test writes to), so this fails
+    /// only if stdout is held back until the command ends. No timing
+    /// assumption: a slow or loaded machine only makes it slower.
     #[tokio::test]
     async fn streams_stdout_before_the_command_ends() {
         let dir = tempfile::tempdir().unwrap();
+        let go = dir.path().join("go");
+        let made = std::process::Command::new("mkfifo")
+            .arg(&go)
+            .status()
+            .unwrap();
+        assert!(made.success(), "mkfifo failed");
         let e = LumeSshExec::new(fake_lume(dir.path()), "cua-e2e-vm");
         let (tx, mut rx) = mpsc::channel(16);
+        let go_path = go.display().to_string();
         let run = tokio::spawn(async move {
             e.exec_streaming(
-                ExecRequest::sh("echo first; sleep 1; echo second")
-                    .timeout(Duration::from_secs(20)),
+                ExecRequest::sh("echo first; read _ < \"$GO\"; echo second")
+                    .timeout(Duration::from_secs(60))
+                    .env_var("GO", go_path),
                 tx,
             )
             .await
         });
-        let first = tokio::time::timeout(Duration::from_millis(900), rx.recv())
+        let first = tokio::time::timeout(Duration::from_secs(30), rx.recv())
             .await
             .expect("stdout arrives while the command still runs");
         assert_eq!(first, Some(ExecChunk::Stdout(b"first\n".to_vec())));
+        assert!(
+            !run.is_finished(),
+            "the command is still blocked on the FIFO"
+        );
+        // Release the command: opening the FIFO for writing blocks until
+        // the command's `read` has opened it for reading.
+        tokio::task::spawn_blocking(move || std::fs::write(go, b"go\n"))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(run.await.unwrap().unwrap(), 0);
+        assert_eq!(
+            rx.recv().await,
+            Some(ExecChunk::Stdout(b"second\n".to_vec()))
+        );
     }
 
     #[tokio::test]

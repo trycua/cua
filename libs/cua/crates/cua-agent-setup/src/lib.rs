@@ -182,7 +182,8 @@ impl HostEnv {
 
     /// The real environment: `$HOME` (or `%USERPROFILE%`), `$PATH`, the
     /// agent override variables, `/Applications` and `~/Applications`
-    /// (or `$CUA_AGENT_APP_DIRS`).
+    /// (or `$CUA_AGENT_APP_DIRS`), and the usual install dirs after PATH
+    /// (or `$CUA_AGENT_BIN_DIRS`).
     pub fn current() -> Self {
         let home = std::env::var_os("HOME")
             .or_else(|| std::env::var_os("USERPROFILE"))
@@ -218,7 +219,17 @@ impl HostEnv {
         // A GUI app (Cua Spaces from the Dock) runs without the user's
         // shell PATH, so an agent installed under a user bin dir would look
         // missing. Search the usual install dirs after the real PATH.
-        for dir in env.well_known_bin_dirs() {
+        // `CUA_AGENT_BIN_DIRS` (a path list, empty for none) replaces them,
+        // like `CUA_AGENT_APP_DIRS` does for apps: a hermetic run with a
+        // reduced PATH would otherwise still find the host's agents under
+        // `/opt/homebrew/bin` or `/usr/local/bin`.
+        let fallback = match std::env::var_os("CUA_AGENT_BIN_DIRS") {
+            Some(v) => std::env::split_paths(&v)
+                .filter(|p| !p.as_os_str().is_empty())
+                .collect(),
+            None => env.well_known_bin_dirs(),
+        };
+        for dir in fallback {
             if !env.path.contains(&dir) {
                 env.path.push(dir);
             }

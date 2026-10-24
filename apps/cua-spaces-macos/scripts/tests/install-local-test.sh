@@ -1237,7 +1237,15 @@ echo "cua $* [CUA_CHANNEL=${CUA_CHANNEL-}] [CUA_HOME=${CUA_HOME-}] [CUA_API_KEY=
 case "$*" in
     "auth status") exit "${STUB_AUTH_STATUS:-0}" ;;
     "host remove --force --uninstalling") exit "${STUB_HOST_REMOVE:-0}" ;;
-    "agents remove --yes") exit "${STUB_AGENTS_REMOVE:-0}" ;;
+    "agents remove --yes")
+        # STUB_AGENTS_REMOVE=hang: start a program of its own (like `claude mcp
+        # remove`) and wait for it, so only a timeout on the whole group ends it.
+        if [ "${STUB_AGENTS_REMOVE:-0}" = hang ]; then
+            sleep 300 &
+            echo $! > "$STUB_CHILD_PID"
+            wait
+        fi
+        exit "${STUB_AGENTS_REMOVE:-0}" ;;
 esac
 exit 0
 STUBEOF
@@ -1353,22 +1361,43 @@ check "Stable files, library folders included, are byte-identical" '[ "$(snap_st
 # A Local home that is a link into the released Cua Spaces' folders: the CLI
 # would unregister Stable's host and delete its state, so it is not asked, and
 # only the link is removed.
-for linked in home host; do
+for linked in home host host-config host-token host-spaces helper-spec credentials; do
     reset_fixture
+    mkdir -p "$FAKE_HOME/.cua/host"
+    echo '{"stable":true}' > "$FAKE_HOME/.cua/host/config.json"
+    echo 'stable-token' > "$FAKE_HOME/.cua/host/machine-token"
+    echo '[]' > "$FAKE_HOME/.cua/host/provided-spaces.json"
     STABLE_BEFORE="$(snap_stable)"
     install
     write_local_cli
-    if [ "$linked" = home ]; then
-        ln -s "$FAKE_HOME/.cua" "$FAKE_HOME/.cua-local"
-    else
-        mkdir -p "$FAKE_HOME/.cua-local"
-        echo '{}' > "$FAKE_HOME/.cua-local/credentials.json"
-        ln -s "$FAKE_HOME/.cua" "$FAKE_HOME/.cua-local/host"
-    fi
+    case "$linked" in
+        home) ln -s "$FAKE_HOME/.cua" "$FAKE_HOME/.cua-local" ;;
+        host)
+            mkdir -p "$FAKE_HOME/.cua-local"
+            echo '{}' > "$FAKE_HOME/.cua-local/credentials.json"
+            ln -s "$FAKE_HOME/.cua" "$FAKE_HOME/.cua-local/host" ;;
+        host-config|host-token|host-spaces)
+            # A real folder whose files are links into Stable's host folder: the
+            # CLI would read Stable's host config and token and unregister it.
+            mkdir -p "$FAKE_HOME/.cua-local/host"
+            echo '{}' > "$FAKE_HOME/.cua-local/credentials.json"
+            case "$linked" in
+                host-config) ln -s "$FAKE_HOME/.cua/host/config.json" "$FAKE_HOME/.cua-local/host/config.json" ;;
+                host-token) ln -s "$FAKE_HOME/.cua/host/machine-token" "$FAKE_HOME/.cua-local/host/machine-token" ;;
+                host-spaces) ln -s "$FAKE_HOME/.cua/host/provided-spaces.json" "$FAKE_HOME/.cua-local/host/provided-spaces.json" ;;
+            esac ;;
+        helper-spec)
+            mkdir -p "$FAKE_HOME/.cua-local/helper"
+            echo '{}' > "$FAKE_HOME/.cua-local/credentials.json"
+            ln -s "$FAKE_HOME/.cua/helper/service.json" "$FAKE_HOME/.cua-local/helper/service.json" ;;
+        credentials)
+            mkdir -p "$FAKE_HOME/.cua-local"
+            ln -s "$FAKE_HOME/.cua/credentials.json" "$FAKE_HOME/.cua-local/credentials.json" ;;
+    esac
     uninstall --yes
-    check "a Local $linked that is a link into ~/.cua: the Local CLI is not run, and it says why (status $RC)" \
+    check "a Local $linked that is, or holds, a link into ~/.cua: the Local CLI is not run, and it says why (status $RC)" \
         '[ "$RC" = 0 ] && [ ! -s "$LOCAL_CUA_LOG" ] && printf "%s" "$OUT" | grep -F >/dev/null "not taking this Mac off the staging relay or removing its coding agent entries"'
-    check "a Local $linked that is a link into ~/.cua: only the link goes, Stable files are byte-identical" \
+    check "a Local $linked that is, or holds, a link into ~/.cua: only Local's own go, Stable files are byte-identical" \
         '[ ! -e "$FAKE_HOME/.cua-local" ] && [ ! -L "$FAKE_HOME/.cua-local" ] && [ "$(snap_stable)" = "$STABLE_BEFORE" ]'
 done
 reset_fixture
@@ -1399,6 +1428,20 @@ check "relay unreachable: one warning, and Local is removed all the same" \
     '[ "$RC" = 0 ] && [ "$(printf "%s" "$OUT" | grep -c "could not take this Mac off the staging relay")" = 1 ] && [ ! -e "$LOCAL_APP" ]'
 check "relay unreachable: Stable files are byte-identical" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
 check "relay unreachable: the coding agents are still cleaned" 'grep >/dev/null "^cua agents remove --yes" "$LOCAL_CUA_LOG"'
+
+# The Local CLI starts a program (an agent's own CLI) and hangs: the limit stops
+# the whole process group, so nothing keeps running (and editing an agent's
+# configuration) after the uninstall has finished; the uninstall goes on.
+used_local
+rm -f "$WORK/child.pid"
+start=$SECONDS
+CUA_UNINSTALL_CLI_SECS=2 STUB_AGENTS_REMOVE=hang STUB_CHILD_PID="$WORK/child.pid" uninstall --yes
+elapsed=$((SECONDS - start))
+check "agents remove hangs: given up at the limit, not waited for (${elapsed}s, status $RC)" \
+    '[ "$RC" = 0 ] && [ "$elapsed" -lt 30 ] && [ ! -e "$LOCAL_APP" ] && [ ! -e "$FAKE_HOME/.cua-local" ] && [ "$(printf "%s" "$OUT" | grep -c "could not remove Local.s entries from your coding agents")" = 1 ]'
+check "agents remove hangs: the program it started is stopped too" \
+    '[ -s "$WORK/child.pid" ] && ! kill -0 "$(cat "$WORK/child.pid")" 2>/dev/null'
+check "agents remove hangs: the shell prints nothing about it" '! printf "%s" "$OUT" | grep >/dev/null -e Terminated -e Killed'
 
 # The coding agents cannot be cleaned: one warning, and the uninstall goes on.
 used_local

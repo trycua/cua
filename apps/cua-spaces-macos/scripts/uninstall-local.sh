@@ -145,29 +145,55 @@ fi
 # as Local and nothing else: every CUA_ variable of the caller's shell is
 # dropped, so a stray CUA_HOME or CUA_API_KEY for the released Cua Spaces can
 # neither aim it at that install nor hand its key to this one, and CUA_ENV is
-# the one asked for. It gives up after 30 seconds.
+# the one asked for. It gives up after 30 seconds (CUA_UNINSTALL_CLI_SECS
+# changes that): the CLI runs in a process group of its own, and the whole group
+# is stopped, so a program it started (`claude mcp remove`) cannot go on editing
+# an agent's configuration after the uninstall has finished.
 run_local_cli() {
-    local cli="$1" env="$2" var
+    local cli="$1" env="$2" secs="${CUA_UNINSTALL_CLI_SECS:-30}" var
     shift 2
     (
         for var in $(compgen -e); do
             case "$var" in CUA_*) unset "$var" ;; esac
         done
         export CUA_CHANNEL=local CUA_ENV="$env" CUA_TELEMETRY=0
-        exec /usr/bin/perl -e 'alarm 30; exec @ARGV or exit 127' -- "$cli" "$@"
+        exec /usr/bin/perl -e '
+            my $secs = shift @ARGV;
+            setpgrp(0, 0);
+            my $pid = fork();
+            exit 127 unless defined $pid;
+            if (!$pid) { exec @ARGV or exit 127 }
+            $SIG{ALRM} = sub {
+                $SIG{TERM} = "IGNORE";
+                kill "TERM", -$$;
+                my $until = time + 2;
+                while (time < $until && waitpid($pid, 1) == 0) { select(undef, undef, undef, 0.1) }
+                kill "KILL", -$$;
+                exit 124;
+            };
+            alarm $secs;
+            waitpid($pid, 0);
+            my $st = $?;
+            exit($st & 127 ? 128 + ($st & 127) : $st >> 8);
+        ' -- "$secs" "$cli" "$@"
     )
 }
 
-# Whether a Local home may be handed to the Local CLI: it, and the folders the
-# CLI reads and removes in it, resolve to places of their own and not to
-# anything of the released Cua Spaces (a link such as ~/.cua-local -> ~/.cua
-# would make the CLI unregister and delete Stable's host).
+# Whether a Local home may be handed to the Local CLI: it, the folders the CLI
+# reads and removes in it and every link inside them resolve to places of their
+# own and not to anything of the released Cua Spaces (a link such as
+# ~/.cua-local -> ~/.cua, or ~/.cua-local/host/config.json -> ~/.cua/host/config.json,
+# would make the CLI unregister and delete Stable's host or its Spaces).
 local_home_is_isolated() {
-    local home="$1" sub resolved
+    local home="$1" sub resolved entry
     for sub in "" /host /helper /agent-setup.json; do
         resolved="$(canonicalize_path "$home$sub")" || return 1
         reject_stable_overlap "Local state" "$resolved" >/dev/null 2>&1 || return 1
     done
+    while IFS= read -r entry; do
+        resolved="$(canonicalize_path "$entry")" || return 1
+        reject_stable_overlap "Local state" "$resolved" >/dev/null 2>&1 || return 1
+    done < <(find "$home" -maxdepth 1 -type l 2>/dev/null; find "$home/host" "$home/helper" -type l 2>/dev/null)
 }
 
 # Takes this Mac off the relay, while the sign-in and the host's machine token

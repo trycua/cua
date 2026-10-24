@@ -171,6 +171,48 @@ class RunnerChecks(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("docker is not on PATH", problems[0])
 
+    def test_a_relative_rust_prebuilt_runs_from_the_invocation_directory(self) -> None:
+        """The workflow passes `--rust-prebuilt tests/e2e/cua-sdk/rust/prebuilt` from the
+        repository root; the binaries run with the Rust half's directory as cwd."""
+        import os
+        import subprocess
+        import sys
+
+        rel = "tests/e2e/cua-sdk/rust/prebuilt"
+        with tempfile.TemporaryDirectory() as tmp:
+            prebuilt = Path(tmp, rel)
+            prebuilt.mkdir(parents=True)
+            fake = prebuilt / "guides"
+            fake.write_text('#!/bin/sh\necho "ran $0 $@" >"$CUA_E2E_RESULTS/ran.txt"\n')
+            fake.chmod(0o755)
+            (prebuilt / "manifest.json").write_text(
+                json.dumps([{"name": "guides", "file": "guides"}])
+            )
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(HERE / "run.py"),
+                    "--lanes",
+                    "hermetic",
+                    "--langs",
+                    "rust",
+                    "--shard",
+                    "1/1",
+                    "--rust-prebuilt",
+                    rel,
+                    "--out",
+                    "out",
+                ],
+                cwd=tmp,
+                env=dict(os.environ, CUA_E2E_RUN="gh123456-1"),
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            ran = Path(tmp, "out", "ran.txt").read_text()
+        self.assertTrue(ran.strip().endswith(f"{rel}/guides --test-threads=2"), ran)
+        self.assertNotIn("rust/tests/e2e", ran)
+
     def test_prebuilt_rust_binaries_are_listed_by_the_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             Path(tmp, "manifest.json").write_text(json.dumps([{"name": "core", "file": "core"}]))

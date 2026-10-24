@@ -187,6 +187,9 @@ def run_langs(
     without it every test runs, as on a developer machine and in the nightly."""
     codes = {}
     unit_secs = {} if unit_secs is None else unit_secs
+    # The binaries run with the Rust half's directory as cwd: a relative
+    # --rust-prebuilt (the workflow passes one) must not be taken from there.
+    rust_prebuilt = rust_prebuilt.resolve() if rust_prebuilt is not None else None
     for lang in langs:
         if select is not None and not select.get(lang):
             continue  # nothing of this half in this shard
@@ -507,6 +510,11 @@ def main() -> int:
         help="--test-threads of the Rust test binaries",
     )
     a = ap.parse_args()
+    # Paths are used from other working directories (the halves run in their
+    # own), so fix them against the invocation directory now.
+    a.rust_prebuilt = a.rust_prebuilt.resolve() if a.rust_prebuilt else None
+    a.timings = a.timings.resolve()
+    a.out = a.out.resolve() if a.out else None
     lanes = [x for x in a.lanes.split(",") if x]
     langs = [x for x in a.langs.split(",") if x]
     out = (

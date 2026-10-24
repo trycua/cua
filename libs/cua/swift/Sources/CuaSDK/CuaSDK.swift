@@ -980,7 +980,8 @@ public protocol AgentSetupProtocol: AnyObject, Sendable {
 
     /**
      * Configures the MCP server (default: `cua mcp`, `cua` resolved on
-     * PATH) for `agents`.
+     * PATH; `cua-local mcp` named `cua-local` for the Local app) for
+     * `agents`. A server without a name gets the channel's.
      */
     func configureMcp(agents: [String], server: AgentMcpServer?) async throws  -> [AgentSetupOutcome]
 
@@ -1104,7 +1105,8 @@ open class AgentSetup: AgentSetupProtocol, @unchecked Sendable {
 
     /**
      * Configures the MCP server (default: `cua mcp`, `cua` resolved on
-     * PATH) for `agents`.
+     * PATH; `cua-local mcp` named `cua-local` for the Local app) for
+     * `agents`. A server without a name gets the channel's.
      */
 open func configureMcp(agents: [String], server: AgentMcpServer?)async throws  -> [AgentSetupOutcome]  {
     return
@@ -48225,7 +48227,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_func_telemetry_use_app_notice() != 17365) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp() != 62628) {
+    if (uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp() != 53713) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_agentsetup_detect() != 59369) {

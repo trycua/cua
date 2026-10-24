@@ -65,6 +65,11 @@ async fn suite(t: Topology) {
                 on: Some("local".into()),
                 group_size: 2,
                 name_prefix: "fb".into(),
+                // Counted small, so this machine has room for all three
+                // whatever its memory (a CI runner's, or Windows' unmeasured
+                // default of 4 GiB); the test is about the events, not about
+                // capacity.
+                memory_mb: 64,
                 ..Default::default()
             }),
         )

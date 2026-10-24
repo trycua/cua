@@ -178,8 +178,11 @@ import Testing
         let warm = try await connection.cloud.prewarm("linux", count: 8, on: "aws") // prewarm
         XCTAssertEqual(warm.ready, 8)
         XCTAssertEqual(warm.placements.first?.host, "aws-1")
-        XCTAssertEqual(try await connection.cloud.prewarms().first?.count, 8)  // prewarm_list
-        XCTAssertTrue(try await connection.cloud.removePrewarm(warm.id))       // prewarm_remove
+        // XCTAssert's autoclosure cannot await on the actor, so await first.
+        let prewarms = try await connection.cloud.prewarms()                   // prewarm_list
+        XCTAssertEqual(prewarms.first?.count, 8)
+        let prewarmRemoved = try await connection.cloud.removePrewarm(warm.id) // prewarm_remove
+        XCTAssertTrue(prewarmRemoved)
         XCTAssertEqual(decisions.first?.action, "remove")
         // --- Cua Volume -----------------------------------------------------------
         let ada = DriveView.agent("ada", inSpace: space.id)

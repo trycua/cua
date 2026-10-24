@@ -67,10 +67,9 @@ jobs:
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-spacesd -> target"
-          key: e2b-core-nightly
       - name: Install Linux build dependencies and the privileged-test tools
         working-directory: .
         run: |
@@ -115,10 +114,12 @@ jobs:
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      # The reference disk below is built inside Docker, where sccache does
+      # not reach; this covers the host's cua-vmm test build.
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
-          key: e2b-core-nightly-vmm
+          shared-key: libs-cua-vmm
       - name: QEMU, firmware and image tooling
         run: |
           sudo apt-get update -qq

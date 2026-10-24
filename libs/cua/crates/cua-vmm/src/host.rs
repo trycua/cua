@@ -4,6 +4,7 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
+use cua_home::channel::CuaChannel;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Result, VmmError};
@@ -30,12 +31,32 @@ impl HostOs {
     }
 }
 
-/// `~/.cua` (or `$CUA_HOME`).
+/// `$CUA_HOME`, else this process's channel's cua home: `~/.cua`
+/// (Stable) or `~/.cua-local` (Local, so a standalone `cua-local` never
+/// shares Stable's state, runtimes or config when `CUA_HOME` is unset).
 pub fn cua_home() -> PathBuf {
-    if let Some(h) = std::env::var_os("CUA_HOME").filter(|h| !h.is_empty()) {
+    cua_home_with(
+        CuaChannel::current(),
+        std::env::var_os("CUA_HOME").as_deref(),
+        &home_dir(),
+    )
+}
+
+/// [`cua_home`] for `channel`, with `$CUA_HOME` and the user's home given.
+/// Local's home is `~/.cua-local` itself, as the app pins it, not below
+/// `envs/<env>`.
+pub fn cua_home_with(
+    channel: CuaChannel,
+    cua_home_env: Option<&std::ffi::OsStr>,
+    home: &Path,
+) -> PathBuf {
+    if let Some(h) = cua_home_env.filter(|h| !h.is_empty()) {
         return PathBuf::from(h);
     }
-    home_dir().join(".cua")
+    match channel.home_dir().file_name() {
+        Some(name) => home.join(name),
+        None => home.join(".cua"),
+    }
 }
 
 pub fn home_dir() -> PathBuf {
@@ -434,6 +455,8 @@ pub fn signal(pid: u32, sig: &str) {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn ports_handed_out_concurrently_never_repeat() {
         let all: Vec<u16> = std::thread::scope(|sc| {
@@ -459,7 +482,61 @@ mod tests {
         assert_eq!(uniq.len(), 8, "{ds:?}");
     }
 
-    use super::*;
+    #[test]
+    fn the_cua_home_follows_the_channel_and_cua_home_overrides_it() {
+        use std::ffi::OsStr;
+        let home = Path::new("/Users/a");
+        // Stable's default is unchanged.
+        assert_eq!(
+            cua_home_with(CuaChannel::Stable, None, home),
+            PathBuf::from("/Users/a/.cua")
+        );
+        assert_eq!(
+            cua_home_with(CuaChannel::Local, None, home),
+            PathBuf::from("/Users/a/.cua-local")
+        );
+        for c in CuaChannel::ALL {
+            assert_eq!(
+                cua_home_with(c, Some(OsStr::new("/tmp/h")), home),
+                PathBuf::from("/tmp/h")
+            );
+            // Blank says nothing.
+            assert_eq!(
+                cua_home_with(c, Some(OsStr::new("")), home),
+                cua_home_with(c, None, home)
+            );
+        }
+    }
+
+    /// A standalone `cua-local` (no app, so no `CUA_HOME` pinned) is Local
+    /// by its name and keeps everything under `~/.cua-local`.
+    #[test]
+    fn a_standalone_cua_local_without_cua_home_uses_the_local_home() {
+        let home = Path::new("/Users/a");
+        let exe = PathBuf::from("/Users/a/.local/bin/cua-local");
+        let channel = CuaChannel::resolve(None, None, &[exe]).unwrap();
+        assert_eq!(channel, CuaChannel::Local);
+        let cua = cua_home_with(channel, None, home);
+        assert_eq!(cua, PathBuf::from("/Users/a/.cua-local"));
+        #[cfg(feature = "lume")]
+        {
+            assert_eq!(
+                crate::lume::root_in(&cua),
+                PathBuf::from("/Users/a/.cua-local/vmm/lume")
+            );
+            assert_eq!(
+                crate::lume::builtin::root_in(&cua),
+                PathBuf::from("/Users/a/.cua-local/runtimes/lume")
+            );
+        }
+        // ... and the same name for Stable is still `~/.cua`.
+        let stable =
+            CuaChannel::resolve(None, None, &[PathBuf::from("/Users/a/.local/bin/cua")]).unwrap();
+        assert_eq!(
+            cua_home_with(stable, None, home),
+            PathBuf::from("/Users/a/.cua")
+        );
+    }
 
     /// Binds `port`, waiting out another thread's momentary probe of it (a
     /// probe is dropped at once; this is the window `launch` retries over).

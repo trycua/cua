@@ -29,14 +29,17 @@ public protocol AgentSetupRunning: AnyObject, Sendable {
 }
 
 /// The SDK's `AgentSetup`, registering the app's own `cua` as the MCP
-/// server when the bundle carries one.
+/// server when the bundle carries one. The server has no name here: the
+/// SDK names it for the app's channel (`cua`, `cua-local` for Cua Spaces
+/// Local), so the Local app never writes over the released app's entry, and
+/// it installs the channel's skill copies (`cua-spaces-local`).
 public final class LiveAgentSetup: AgentSetupRunning, @unchecked Sendable {
     let inner: CuaSDK.AgentSetup
     let server: AgentMcpServer?
 
     public init(inner: CuaSDK.AgentSetup, cuaBinary: String?) {
         self.inner = inner
-        self.server = cuaBinary.map { AgentMcpServer(name: "cua", command: $0, args: ["mcp"], env: [:]) }
+        self.server = cuaBinary.map { AgentMcpServer(name: "", command: $0, args: ["mcp"], env: [:]) }
     }
 
     public func statuses() async -> [AppAgentSetupStatus] { inner.detect().map { appAgentSetupStatus(info: $0) } }
@@ -462,11 +465,17 @@ public final class LiveTeams: TeamsReading, @unchecked Sendable {
 /// A fixture account's team (captures, tests).
 public final class FixtureTeams: TeamsReading, @unchecked Sendable {
     public var current: AppTeamsInput
-    /// Who the fixture's owner has not been told was removed yet.
-    public var removals: [AppShareRemovalInput]
+    private let lock = NSLock()
+    private var pending: [AppShareRemovalInput]
+    /// Who the fixture's owner has not been told was removed yet. Read by a
+    /// test while the acknowledgement clears it on another task.
+    public var removals: [AppShareRemovalInput] {
+        get { lock.withLock { pending } }
+        set { lock.withLock { pending = newValue } }
+    }
 
     public init(_ teams: [AppTeamInput]? = nil, removals: [AppShareRemovalInput] = []) {
-        self.removals = removals
+        pending = removals
         current = AppTeamsInput(accountAppUrl: "https://app.cua.ai", state: .ready(teams: teams ?? [
             AppTeamInput(
                 id: "o1", alias: "acme", name: "Acme Inc", role: "owner", plan: "teams", seats: 3,

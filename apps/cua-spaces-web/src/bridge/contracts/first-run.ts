@@ -7,7 +7,8 @@
  * Rust is the source of truth.
  */
 
-export type FirstRunStep = "connect" | "setup";
+/** Welcome, Pick your agent (`connect`), Connect your other devices, Try it (`setup`). */
+export type FirstRunStep = "welcome" | "connect" | "devices" | "setup";
 
 export interface FirstRunAgent {
   agent: string;
@@ -17,6 +18,8 @@ export interface FirstRunAgent {
   /** The account it signs in with on its own (`ChatGPT` for Codex). */
   signIn?: string | null;
   signedIn?: boolean;
+  /** The settings file Cua adds itself to. */
+  mcpConfig?: string | null;
 }
 
 export interface FirstRunPermission {
@@ -66,7 +69,7 @@ export interface FirstRunInput {
   hostOs: string;
   agents: FirstRunAgent[] | null;
   agent: string | null;
-  /** Step 1: the ticks (null: not changed, so the installed ones). Step 2: the agents connected. */
+  /** The agents connected on Pick your agent (an agent the setup reports configured counts either way). */
   picked: string[] | null;
   /** The provider keys saved on this computer (null: not read, or this app can't). */
   keys: { keys: { provider: string; env: string; last4: string; addedMs: number }[]; unavailable?: string | null; error?: string | null } | null;
@@ -74,6 +77,8 @@ export interface FirstRunInput {
   agentSigningIn: string | null;
   agentSignInError: string | null;
   connecting: boolean;
+  /** The agent being connected. */
+  connectingAgent?: string | null;
   connectError: string | null;
   agentOpenBeforeSetup: boolean | null;
   agentUsedAt: string | null;
@@ -95,14 +100,25 @@ export interface FirstRunButton {
 export interface FirstRunAgentPick {
   agent: string;
   name: string;
-  checked: boolean;
-  installed: boolean;
-  /** Cua is in its settings already: it stays ticked. */
-  locked: boolean;
+  /** The file Connect changes (`~/.claude.json`). */
+  file: string | null;
+  /** Cua is in its settings. */
+  connected: boolean;
+  /** "Connect" (`connect`), none once connected or while it runs. */
+  action: FirstRunButton | null;
+  /** "Connected", "Adding Cua…". */
   note: string | null;
 }
 
-/** A sign-in or a provider key on step 1. */
+/** No agent found: install one, or use the CLI. */
+export interface FirstRunAlternative {
+  id: "install" | "cli";
+  title: string;
+  note: string;
+  url: string | null;
+  command: string | null;
+}
+
 export interface FirstRunCredential {
   /** `sign-in:codex`, `key:anthropic`, `key:openai`. */
   id: string;
@@ -118,30 +134,44 @@ export interface FirstRunCredential {
   error: string | null;
 }
 
+export interface FirstRunWelcomeView {
+  title: string;
+  lede: string;
+  primary: FirstRunButton;
+}
+
 export interface FirstRunConnectView {
   title: string;
-  accent: string;
   lede: string;
-  intro: string;
-  agentsLabel: string;
+  /** The agents found here, most preferred first. */
   agents: FirstRunAgentPick[];
-  moreLabel: string;
-  more: FirstRunAgentPick[];
-  agentsNote: string;
-  credentialsLabel: string;
-  credentialsNote: string;
+  alternatives: FirstRunAlternative[];
+  /** The connected agents' sign-ins and keys, in the agents' order. */
   credentials: FirstRunCredential[];
+  credentialsNote: string;
   primary: FirstRunButton;
-  /** The agents Continue connects. */
-  connects: string[];
-  busy: string | null;
+  /** "Skip", until an agent is connected. */
+  secondary: FirstRunButton | null;
   error: string | null;
+}
+
+export interface FirstRunDevicesView {
+  title: string;
+  lede: string;
+  rows: { title: string; note: string }[];
+  /** The sign-in waiting, or this computer being added to the account. */
+  status: FirstRunRow | null;
+  /** "Sign in to connect" (`sign-in`), or "Continue" once signed in. */
+  primary: FirstRunButton;
+  /** "Not now" (`not-now`). */
+  secondary: FirstRunButton | null;
+  note: string | null;
 }
 
 export type FirstRunRowState = "checking" | "ok" | "fix";
 
 export interface FirstRunRow {
-  id: "agent" | "computer";
+  id: "agent" | "computer" | "account";
   state: FirstRunRowState;
   title: string;
   note: string;
@@ -174,30 +204,23 @@ export interface FirstRunExtraView {
   footnote: string | null;
 }
 
-export interface FirstRunUpsell {
-  plan: "pro" | "teams";
-  title: string;
-  lines: string[];
-  price: string;
-  cta: FirstRunButton;
-  url: string;
-  dismiss: string;
-}
-
 export interface FirstRunPrimary {
-  id: "done" | "finish-later";
+  id: "done";
   label: string;
   enabled: boolean;
   note: string | null;
 }
 
 export interface FirstRunSetupView {
+  /** "Try it in Hermes.", "Try a first Space." */
   title: string;
-  rows: FirstRunRow[];
-  /** None when no agent was picked. */
+  lede: string;
+  /** None with no connected agent. */
   prompt: FirstRunPromptView | null;
-  extra: FirstRunExtraView;
-  upsell: FirstRunUpsell | null;
+  /** "Waiting for Hermes…", then "Hermes used Cua at 18:12." */
+  status: FirstRunRow | null;
+  /** The one-click first Space, with no connected agent. */
+  extra: FirstRunExtraView | null;
   primary: FirstRunPrimary;
 }
 
@@ -210,7 +233,9 @@ export interface FirstRunArt {
 export interface FirstRunView {
   step: FirstRunStep;
   later: string;
+  welcome: FirstRunWelcomeView | null;
   connect: FirstRunConnectView | null;
+  devices: FirstRunDevicesView | null;
   setup: FirstRunSetupView | null;
   art: FirstRunArt;
   dots: number;

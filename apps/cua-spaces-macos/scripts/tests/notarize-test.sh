@@ -19,7 +19,7 @@
 #
 # Each check prints PASS or FAIL; the exit status is the number of FAILs.
 # It needs bash, python3 and plutil (macOS) or python3 alone (a shim stands in
-# for plutil elsewhere, or when CUA_TEST_FAKE_PLUTIL=1).
+# for plutil on any other system, or when CUA_TEST_FAKE_PLUTIL=1).
 # The checks are strings for eval: the variables they read are assigned above,
 # and shellcheck cannot see that.
 # shellcheck disable=SC2034,SC2016,SC2329
@@ -66,9 +66,10 @@ esac
 SHIM
 chmod +x "$SHIMS/xcrun"
 
-# plutil is macOS only. The shim reads one top-level key of a JSON file or stdin:
-# plutil -extract KEY raw -o - FILE|-
-if [ "${CUA_TEST_FAKE_PLUTIL:-0}" = 1 ] || ! command -v plutil >/dev/null 2>&1; then
+# plutil with -extract is macOS only (a plutil on a Linux runner, from the Swift
+# toolchain, lacks it), so anything but macOS gets this shim. It reads one
+# top-level key of a JSON file or stdin: plutil -extract KEY raw -o - FILE|-
+if [ "${CUA_TEST_FAKE_PLUTIL:-0}" = 1 ] || [ "$(uname -s)" != Darwin ]; then
   cat >"$SHIMS/plutil" <<'SHIM'
 #!/usr/bin/env bash
 [ "$1" = -extract ] || exit 99

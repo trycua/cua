@@ -1710,6 +1710,7 @@ name = "cua-agent-setup"
 version = "0.7.0"
 dependencies = [
  "chrono",
+ "cua-home",
  "hex",
  "include_dir",
  "jsonc-parser",

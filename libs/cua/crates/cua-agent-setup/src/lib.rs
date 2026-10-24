@@ -22,6 +22,7 @@ pub mod registry;
 pub mod skills;
 mod state;
 
+pub use cua_home::channel::CuaChannel;
 pub use edit::Format;
 pub use fsutil::hash_dir;
 pub use registry::{AGENTS, AgentSpec};
@@ -135,6 +136,11 @@ pub struct HostEnv {
     /// Whether an agent's own CLI may be run to write its config
     /// ([`registry::OwnerCli`]). Off for isolated environments.
     pub run_agent_clis: bool,
+    /// Which Cua Spaces build this runs for. It names what is written into
+    /// the agents' configs (the MCP server `cua` or `cua-local`, the skills
+    /// `cua-spaces` or `cua-spaces-local`) and the folder of the state
+    /// (`~/.cua` or `~/.cua-local`), so Local never replaces Stable's.
+    pub channel: CuaChannel,
 }
 
 const VARS: &[&str] = &[
@@ -214,6 +220,7 @@ impl HostEnv {
             app_dirs,
             os,
             run_agent_clis: true,
+            channel: CuaChannel::current(),
         };
         // A GUI app (Cua Spaces from the Dock) runs without the user's
         // shell PATH, so an agent installed under a user bin dir would look
@@ -238,7 +245,14 @@ impl HostEnv {
             path: vec![],
             os: Os::current(),
             run_agent_clis: false,
+            channel: CuaChannel::Stable,
         }
+    }
+
+    /// This environment for `channel` (a Local app's, in tests).
+    pub fn with_channel(mut self, channel: CuaChannel) -> Self {
+        self.channel = channel;
+        self
     }
 
     /// A non-empty variable.
@@ -267,11 +281,12 @@ impl HostEnv {
         None
     }
 
-    /// `~/.cua` (or `$CUA_HOME`).
+    /// `$CUA_HOME`, else the channel's home: `~/.cua`, or `~/.cua-local` for
+    /// Local ([`CuaChannel::home_dir_name`]).
     pub fn cua_home(&self) -> PathBuf {
         self.var("CUA_HOME")
             .map(PathBuf::from)
-            .unwrap_or_else(|| self.home.join(".cua"))
+            .unwrap_or_else(|| self.home.join(self.channel.home_dir_name()))
     }
 }
 
@@ -334,14 +349,25 @@ impl McpServer {
         self
     }
 
-    /// `cua mcp`, with `cua` resolved to an absolute path on `env`'s PATH
-    /// (GUI agents often run without the user's shell PATH), else `cua`.
+    /// `command mcp` under the name the channel registers: `cua`, or
+    /// `cua-local` for Local ([`CuaChannel::mcp_server_name`]).
+    pub fn for_channel(channel: CuaChannel, command: impl Into<String>) -> Self {
+        McpServer {
+            name: channel.mcp_server_name().into(),
+            ..McpServer::new(command)
+        }
+    }
+
+    /// `cua mcp` (`cua-local mcp` for Local), with the channel's CLI
+    /// resolved to an absolute path on `env`'s PATH (GUI agents often run
+    /// without the user's shell PATH), else its bare name.
     pub fn default_for(env: &HostEnv) -> Self {
+        let cli = env.channel.cli_name();
         let cmd = env
-            .which("cua")
+            .which(cli)
             .map(|p| p.display().to_string())
-            .unwrap_or_else(|| "cua".into());
-        McpServer::new(cmd)
+            .unwrap_or_else(|| cli.into());
+        McpServer::for_channel(env.channel, cmd)
     }
 }
 
@@ -376,11 +402,20 @@ impl McpServer {
     }
 }
 
-/// Whether a launch command is a cua binary (`cua`, `/x/bin/cua`,
-/// `cua.exe`).
-fn is_cua_command(cmd: &str) -> bool {
+/// Whether a launch command is the channel's cua binary: for Stable `cua`,
+/// `/x/bin/cua`, `cua.exe`; for Local `cua-local` (`cua-local.exe`), or the
+/// `cua` inside `Cua Spaces Local.app`. A Stable `cua` is not Local's, and
+/// the reverse.
+fn is_cua_command(cmd: &str, channel: CuaChannel) -> bool {
     let base = cmd.rsplit(['/', '\\']).next().unwrap_or(cmd);
-    base == "cua" || base == "cua.exe"
+    match channel {
+        CuaChannel::Stable => base == "cua" || base == "cua.exe",
+        CuaChannel::Local => {
+            base == "cua-local"
+                || base == "cua-local.exe"
+                || CuaChannel::path_is_local(Path::new(cmd))
+        }
+    }
 }
 
 /// Detection result for one agent.
@@ -521,9 +556,10 @@ impl AgentSetup {
         &self.state_path
     }
 
-    /// The bundled default skills.
+    /// The bundled default skills, as this channel installs them (Local's
+    /// carry `-local` names: [`CuaChannel::skill_install_name`]).
     pub fn bundled_skills(&self) -> Vec<Skill> {
-        skills::bundled()
+        skills::bundled_for(self.env.channel)
     }
 
     /// Resolves an agent selection: `all` (installed agents), `none`, or a
@@ -577,7 +613,7 @@ impl AgentSetup {
     /// Detects every registry agent (read-only).
     pub fn detect(&self) -> Vec<AgentStatus> {
         let state = State::load(&self.state_path).unwrap_or_default();
-        let bundled = skills::bundled();
+        let bundled = self.bundled_skills();
         AGENTS
             .iter()
             .map(|a| self.detect_one(a, &state, &bundled))
@@ -714,15 +750,16 @@ impl AgentSetup {
         if let Some(m) = &a.mcp {
             let file = self.mcp_file(m);
             status.mcp_format = Some(m.format);
-            match read_text(&file)
-                .and_then(|t| edit::get(m.format, &file, &t, m.key_path, MCP_SERVER_NAME))
-            {
+            // The channel's own entry (`cua`, or `cua-local`): Local never
+            // reads Stable's as its own.
+            let name = self.env.channel.mcp_server_name();
+            match read_text(&file).and_then(|t| edit::get(m.format, &file, &t, m.key_path, name)) {
                 Ok(Some(v)) => {
                     status.cua_configured = m
                         .shape
                         .command_of(&v)
-                        .is_some_and(|(c, _)| is_cua_command(&c));
-                    status.cua_managed = state.mcp.get(&file).is_some_and(|r| r.value == v);
+                        .is_some_and(|(c, _)| is_cua_command(&c, self.env.channel));
+                    status.cua_managed = state.record(name, &file).is_some_and(|r| r.value == v);
                 }
                 Ok(None) => {}
                 Err(e) => status.error = Some(e.to_string()),
@@ -746,16 +783,18 @@ impl AgentSetup {
         force: bool,
     ) -> Result<Vec<Outcome>> {
         let specs = self.specs(agents)?;
-        let bundled = skills::bundled();
+        let bundled = self.bundled_skills();
         let wanted: Vec<&Skill> = if skill_names.is_empty() {
             bundled.iter().collect()
         } else {
             skill_names
                 .iter()
                 .map(|n| {
+                    // By the bundled name (`cua-spaces`) or the name this
+                    // channel installs it under (`cua-spaces-local`).
                     bundled
                         .iter()
-                        .find(|s| &s.name == n)
+                        .find(|s| &s.name == n || &s.source == n)
                         .ok_or_else(|| Error::InvalidArgument(format!("unknown skill {n:?}")))
                 })
                 .collect::<Result<_>>()?
@@ -862,7 +901,7 @@ impl AgentSetup {
                 }
                 o.backup = Some(bak);
             }
-            if let Err(e) = skills::write_to(&s.name, dest) {
+            if let Err(e) = skills::write_for(self.env.channel, &s.source, dest) {
                 o.change = Change::Failed;
                 o.detail = e.to_string();
                 return o;
@@ -1030,7 +1069,7 @@ impl AgentSetup {
             None => existing.clone().filter(|v| {
                 !m.shape
                     .command_of(v)
-                    .is_some_and(|(c, _)| is_cua_command(&c))
+                    .is_some_and(|(c, _)| is_cua_command(&c, self.env.channel))
             }),
         };
         if existing.as_ref() == Some(&want) {
@@ -1105,11 +1144,13 @@ impl AgentSetup {
             for a in &specs {
                 let Some(m) = &a.mcp else { continue };
                 let file = self.mcp_file(m);
-                // `cua` always gets a row; other servers (`cua-driver`) only
-                // when cua registered them there.
+                // The channel's server (`cua`, or `cua-local`) always gets a
+                // row; other servers (`cua-driver`) only when cua registered
+                // them there.
                 let mut names = state.names_in(&file);
-                if !state.mcp.contains_key(&file) {
-                    names.insert(0, MCP_SERVER_NAME.to_string());
+                let own = self.env.channel.mcp_server_name();
+                if state.record(own, &file).is_none() {
+                    names.insert(0, own.to_string());
                 }
                 for name in names {
                     let mut o = Outcome {
@@ -1316,9 +1357,10 @@ impl AgentSetup {
                 .into_iter()
                 .filter(|a| registry::find(a).is_some())
                 .collect();
+            let bundled = self.bundled_skills();
             let names: Vec<String> = names
                 .into_iter()
-                .filter(|n| skills::get(n).is_some())
+                .filter(|n| bundled.iter().any(|s| &s.name == n))
                 .collect();
             if known.is_empty() || names.is_empty() {
                 continue;
@@ -1327,8 +1369,9 @@ impl AgentSetup {
         }
         if let Some(server) = server {
             let agents: Vec<String> = state
-                .mcp
-                .values()
+                .records(&server.name)
+                .into_iter()
+                .flat_map(|r| r.values())
                 .flat_map(|r| r.agents.iter().cloned())
                 .filter(|a| registry::find(a).is_some())
                 .collect::<BTreeSet<_>>()
@@ -1342,7 +1385,7 @@ impl AgentSetup {
                 let current = edit::get(m.format, &file, &text, m.key_path, &server.name)
                     .ok()
                     .flatten();
-                let recorded = state.mcp.get(&file).map(|r| r.value.clone());
+                let recorded = state.record(&server.name, &file).map(|r| r.value.clone());
                 if current.is_some() && current == recorded {
                     out.extend(self.configure_mcp(&[a], server)?);
                 }

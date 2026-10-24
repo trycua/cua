@@ -15,6 +15,11 @@
 #   - a bundle at the Local path with another id is refused, and so is a build
 #     that carries a Stable identity, a feed or the `cua` scheme;
 #   - a copy that fails to verify is rolled back to the previous app;
+#   - the web UI is built as the release build does (and the script stops, with
+#     a clear message, when it is missing), and the tools the build needs are
+#     checked first, in one message;
+#   - on a fresh Keychain (a certificate codesign cannot use yet) it says so and
+#     sets it up only when asked (--setup-signing), or prints the exact steps;
 #   - uninstall-local.sh removes the Local pieces and only those;
 #   - the names in scripts/_local-common.sh are the ones CuaChannel::Local has.
 #
@@ -67,9 +72,15 @@ FAKE_DAEMON_BUILT="$FAKE_REPO/libs/cua-spacesd/target/release/cua-spacesd"
 
 mkdir -p "$FAKE_SCRIPTS" "$FAKE_REPO/libs/cua-driver/scripts" "$FAKE_REPO/libs/lume/scripts" \
     "$FAKE_REPO/libs/cua" "$FAKE_REPO/libs/cua-spacesd" "$FAKE_REPO/libs/spaces-app-swift/scripts" \
+    "$FAKE_REPO/apps/cua-spaces-web/scripts" "$FAKE_REPO/apps/cua-spaces" \
     "$SHIMS" "$SHIM_STATE" "$FAKE_HOME"
 cp "$SCRIPTS_DIR/install-local.sh" "$SCRIPTS_DIR/uninstall-local.sh" "$SCRIPTS_DIR/_local-common.sh" "$FAKE_SCRIPTS/"
 cp "$SIGNING_LIB" "$FAKE_REPO/libs/cua-driver/scripts/"
+# The pins the script reads (the wasm-bindgen version and the Rust toolchain of
+# the web UI's app core), from the real files so they cannot drift from it.
+cp "$REPO_ROOT/apps/cua-spaces-web/scripts/build-core-wasm.mjs" "$FAKE_REPO/apps/cua-spaces-web/scripts/"
+cp "$REPO_ROOT/apps/cua-spaces/rust-toolchain.toml" "$FAKE_REPO/apps/cua-spaces/"
+WEB_LOG="$WORK/web.log"
 
 # A real Mach-O (codesign needs one) that logs how it was called.
 cat > "$WORK/stub.c" <<'EOF'
@@ -139,6 +150,11 @@ ln -s A "$fw/Versions/Current"
 ln -s Versions/Current/Fake "$fw/Fake"
 ln -s Versions/Current/Resources "$fw/Resources"
 echo "${FAKE_BUILD_SALT:-1}" > "$app/Contents/Resources/salt.txt"
+# The web UI, as the real build-app.sh copies it ($CUA_WEBUI_DIST, else
+# apps/cua-spaces-web/dist next to the app's folder).
+webui="${CUA_WEBUI_DIST:-$(dirname "$0")/../../cua-spaces-web/dist}"
+echo "webui=$webui" >> "$FAKE_BUILD_LOG"
+if [ "${FAKE_BUILD_NO_WEBUI:-0}" != 1 ] && [ -f "$webui/index.html" ]; then cp -R "$webui" "$app/Contents/Resources/WebUI"; fi
 feed=""
 if [ "${FAKE_BUILD_FEED:-0}" = 1 ]; then
   feed="<key>SUFeedURL</key><string>https://example.invalid/appcast.xml</string><key>SUPublicEDKey</key><string>key</string>"
@@ -230,11 +246,49 @@ if [ "$1" = delete-generic-password ] && [ "$2" = -s ]; then
   if [ -e "$marker" ]; then exit 44; fi
   : > "$marker"; exit 0
 fi
+# A fresh Keychain (SHIM_FRESH_KEYCHAIN=1): the certificate is there, but it is
+# trusted for code signing only after `add-trusted-cert`, and the Keychain is
+# in the search list only after `list-keychains -s` (SHIM_KEYCHAIN_LISTED=0).
+if [ "${SHIM_FRESH_KEYCHAIN:-0}" = 1 ]; then
+  fake=00112233445566778899AABBCCDDEEFF00112233
+  case "$1" in
+    find-identity)
+      verified=0; for a in "$@"; do [ "$a" = -v ] && verified=1; done
+      if [ "$verified" = 0 ] || [ -e "$SHIM_STATE/trusted" ]; then echo "  1) $fake \"CuaDriver Local Signing (cua-driver-rs)\""; fi
+      echo "     1 valid identities found"; exit 0 ;;
+    find-certificate)
+      echo "SHA-1 hash: $fake"; echo "-----BEGIN CERTIFICATE-----"; echo "MIIBfake"; echo "-----END CERTIFICATE-----"; exit 0 ;;
+    list-keychains)
+      if [ "$3" = -s ]; then : > "$SHIM_STATE/listed"; exit 0; fi
+      if [ "${SHIM_KEYCHAIN_LISTED:-1}" = 1 ] || [ -e "$SHIM_STATE/listed" ]; then echo "    \"$HOME/Library/Keychains/login.keychain-db\""; fi
+      echo "    \"/Library/Keychains/System.keychain\""; exit 0 ;;
+    add-trusted-cert)
+      if [ "${SHIM_TRUST_FAILS:-0}" = 1 ]; then echo "SecTrustSettingsSetTrustSettings: no user interaction was possible" >&2; exit 1; fi
+      : > "$SHIM_STATE/trusted"; exit 0 ;;
+    set-key-partition-list) : > "$SHIM_STATE/partition"; exit 0 ;;
+  esac
+fi
 exit 0'
 # codesign: the real one, except that it can be made to fail verifying one
 # path, to stall (exit like a killed-by-alarm process, no output) on its first
 # signing call only (CODESIGN_STALL_ONCE=1) or on every one (CODESIGN_STALL=1).
-write_shim codesign 'if [ -n "${FAIL_VERIFY_PATH:-}" ]; then
+write_shim codesign 'if [ "${SHIM_FRESH_KEYCHAIN:-0}" = 1 ]; then
+  # Signing with the fresh Keychain'"'"'s certificate works once it is trusted (and
+  # its key opened to codesign, SHIM_NEED_PARTITION=1); then it signs ad hoc, as
+  # a unit test has no real certificate.
+  args=(); prev=""; fake=0
+  for a in "$@"; do
+    if [ "$prev" = --sign ] && [ "$a" = 00112233445566778899AABBCCDDEEFF00112233 ]; then fake=1; args+=(-); else args+=("$a"); fi
+    prev="$a"
+  done
+  if [ "$fake" = 1 ]; then
+    if [ ! -e "$SHIM_STATE/trusted" ] || { [ "${SHIM_NEED_PARTITION:-0}" = 1 ] && [ ! -e "$SHIM_STATE/partition" ]; }; then
+      echo "no identity found" >&2; exit 1
+    fi
+    exec /usr/bin/codesign "${args[@]}"
+  fi
+fi
+if [ -n "${FAIL_VERIFY_PATH:-}" ]; then
   verifying=0; for a in "$@"; do [ "$a" = --verify ] && verifying=1; done
   for a in "$@"; do if [ "$verifying" = 1 ] && [ "$a" = "$FAIL_VERIFY_PATH" ]; then echo "shim: verify failed" >&2; exit 1; fi; done
 fi
@@ -244,6 +298,25 @@ if [ "$signing" = 1 ]; then
   if [ "${CODESIGN_STALL_ONCE:-0}" = 1 ] && [ ! -e "$SHIM_STATE/stalled" ]; then : > "$SHIM_STATE/stalled"; exit 142; fi
 fi
 exec /usr/bin/codesign "$@"'
+
+# The tools the build needs (the script checks for them first). Each can be
+# made to look missing or wrong: SHIM_NO_XCODE=1, SHIM_NODE_MAJOR=20,
+# SHIM_WASM_TARGET= (none), SHIM_WASM_BINDGEN=0.2.1, SHIM_PNPM_BUILD_FAILS=1.
+write_shim xcode-select 'if [ "${SHIM_NO_XCODE:-0}" = 1 ]; then exit 2; fi
+echo /Library/Developer/CommandLineTools'
+write_shim swift 'echo swift'
+write_shim cmake 'echo "cmake version 3.30.0"'
+write_shim node 'case "$*" in *versions.node*) echo "${SHIM_NODE_MAJOR:-22}" ;; *) echo "v${SHIM_NODE_MAJOR:-22}.1.0" ;; esac'
+write_shim rustup 'case "$*" in "target list --installed --toolchain"*) echo "${SHIM_WASM_TARGET-wasm32-unknown-unknown}" ;; esac'
+write_shim wasm-bindgen 'echo "wasm-bindgen ${SHIM_WASM_BINDGEN:-0.2.126}"'
+# pnpm: logs where and how it ran; `pnpm build` makes dist/index.html, as the
+# web UI's build does.
+write_shim pnpm 'echo "pnpm $* [in ${PWD##*/}] CI=${CI:-}" >> "$WEB_LOG"
+if [ "$1" = build ]; then
+  if [ "${SHIM_PNPM_BUILD_FAILS:-0}" = 1 ]; then echo "vite: build failed" >&2; exit 1; fi
+  mkdir -p dist && echo "<!doctype html>" > dist/index.html
+fi
+exit 0'
 
 # cargo: logs where and how it ran, and makes what the build would make. In
 # libs/cua-spacesd it makes this checkout's daemon (FAKE_CARGO_NO_DAEMON=1:
@@ -270,9 +343,9 @@ run() {
     OUT="$(
         export HOME="$FAKE_HOME" PATH="$SHIMS:$PATH" CUA_LSREGISTER="$SHIMS/lsregister" \
             SHIM_LOG SHIM_STATE STUB_LOG FAKE_BUILD_LOG="$BUILD_LOG" FAKE_STUB="$STUB_BIN" \
-            FAKE_DYLIB="$STUB_DYLIB" LUME_LOG CARGO_LOG FAKE_CHECKOUT_DAEMON="$DAEMON_CHECKOUT" FAKE_PINNED_DAEMON="$DAEMON_PINNED"
+            FAKE_DYLIB="$STUB_DYLIB" LUME_LOG CARGO_LOG WEB_LOG FAKE_CHECKOUT_DAEMON="$DAEMON_CHECKOUT" FAKE_PINNED_DAEMON="$DAEMON_PINNED"
         unset SUDO_USER CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN CUA_DRIVER_LOCAL_SIGNING_IDENTITY CUA_CHANNEL CUA_HOME CUA_ENV \
-            CARGO_TARGET_DIR CUA_SPACESD_BIN
+            CARGO_TARGET_DIR CUA_SPACESD_BIN CUA_WEBUI_DIST
         "$@" < "$STDIN_FILE" 2>&1
     )"
     RC=$?
@@ -346,9 +419,9 @@ make_stable_install() {
 
 reset_fixture() {
     rm -rf "$FAKE_HOME" "$FAKE_REPO/apps/cua-spaces-macos/.build" "$SHIM_STATE" \
-        "$FAKE_REPO/libs/cua-spacesd/target" "$FAKE_REPO/libs/cua/target"
+        "$FAKE_REPO/libs/cua-spacesd/target" "$FAKE_REPO/libs/cua/target" "$FAKE_REPO/apps/cua-spaces-web/dist"
     mkdir -p "$FAKE_HOME" "$SHIM_STATE"
-    : > "$SHIM_LOG"; : > "$STUB_LOG"; : > "$BUILD_LOG"; : > "$LUME_LOG"; : > "$CARGO_LOG"
+    : > "$SHIM_LOG"; : > "$STUB_LOG"; : > "$BUILD_LOG"; : > "$LUME_LOG"; : > "$CARGO_LOG"; : > "$WEB_LOG"
     STDIN_FILE=/dev/null
     write_lume_scripts yes
     make_stable_install
@@ -635,6 +708,108 @@ ALL_BEFORE="$(snap_all)"
 FAKE_BUILD_APP_NAME="Cua Spaces" install
 check "a build-app.sh that ignored --channel local (made Cua Spaces.app) is refused" '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep >/dev/null "did not build the Local channel" && [ "$(snap_all)" = "$ALL_BEFORE" ]'
 
+# --- 4b. The web UI ----------------------------------------------------------------------------------
+
+echo "== the web UI =="
+reset_fixture
+install
+WEB_DIST="$FAKE_REPO/apps/cua-spaces-web/dist"
+check "the web UI is built as the release build does: pnpm install --ignore-workspace --frozen-lockfile, then pnpm build, in apps/cua-spaces-web" \
+    '[ "$(cat "$WEB_LOG")" = "pnpm install --ignore-workspace --frozen-lockfile [in cua-spaces-web] CI=true
+pnpm build [in cua-spaces-web] CI=" ]'
+check "it is built before the Rust build (the quick one fails first)" '[ -s "$WEB_LOG" ] && [ -s "$CARGO_LOG" ]'
+check "the build is told where the web UI is, and the installed app has it" \
+    'grep >/dev/null "^webui=$WEB_DIST\$" "$BUILD_LOG" && [ -f "$LOCAL_APP/Contents/Resources/WebUI/index.html" ]'
+check "the signature covers the web UI (it verifies, deep and strict)" '/usr/bin/codesign --verify --deep --strict "$LOCAL_APP" 2>/dev/null'
+
+reset_fixture
+ALL_BEFORE="$(snap_all)"
+install --skip-web-build
+check "--skip-web-build with no web UI build stops with a clear message, before anything is built" \
+    '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep >/dev/null "The new UI is not in this build" && printf "%s" "$OUT" | grep >/dev/null "pnpm install --ignore-workspace" && [ ! -s "$BUILD_LOG" ] && [ ! -s "$CARGO_LOG" ] && [ ! -s "$WEB_LOG" ]'
+check "and nothing is installed" '[ ! -e "$LOCAL_APP" ] && [ "$(snap_all)" = "$ALL_BEFORE" ]'
+mkdir -p "$WEB_DIST" && echo "<!doctype html>" > "$WEB_DIST/index.html"
+install --skip-web-build
+check "--skip-web-build with a web UI build already there installs it, and runs no pnpm" \
+    '[ "$RC" = 0 ] && [ ! -s "$WEB_LOG" ] && [ -f "$LOCAL_APP/Contents/Resources/WebUI/index.html" ]'
+
+reset_fixture
+mkdir -p "$WORK/other-webui" && echo "<!doctype html>" > "$WORK/other-webui/index.html"
+run env CUA_WEBUI_DIST="$WORK/other-webui" "$FAKE_SCRIPTS/install-local.sh" --no-launch
+check "CUA_WEBUI_DIST is used as it is: no pnpm, and the build gets it" \
+    '[ "$RC" = 0 ] && [ ! -s "$WEB_LOG" ] && grep >/dev/null "^webui=$WORK/other-webui\$" "$BUILD_LOG" && [ -f "$LOCAL_APP/Contents/Resources/WebUI/index.html" ]'
+reset_fixture
+run env CUA_WEBUI_DIST="$WORK/nowhere" "$FAKE_SCRIPTS/install-local.sh" --no-launch
+check "a CUA_WEBUI_DIST without an index.html stops with the same message" \
+    '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep >/dev/null "no web UI build at $WORK/nowhere/index.html" && [ ! -e "$LOCAL_APP" ]'
+
+reset_fixture
+ALL_BEFORE="$(snap_all)"
+run env SHIM_PNPM_BUILD_FAILS=1 "$FAKE_SCRIPTS/install-local.sh" --no-launch
+check "a failing web UI build stops the install, and nothing is built after it or installed" \
+    '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep >/dev/null "the web UI build failed" && [ ! -s "$BUILD_LOG" ] && [ ! -s "$CARGO_LOG" ] && [ ! -e "$LOCAL_APP" ] && [ "$(snap_all)" = "$ALL_BEFORE" ]'
+
+reset_fixture
+install
+ALL_BEFORE="$(snap_all)"
+FAKE_BUILD_NO_WEBUI=1 FAKE_BUILD_SALT=nowebui install
+check "an app build that left the web UI out is never installed: the previous Local app stays" \
+    '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep >/dev/null "no web UI" && [ "$(snap_all)" = "$ALL_BEFORE" ]'
+
+# --- 4c. The tools the build needs -------------------------------------------------------------------
+
+echo "== prerequisites =="
+# A PATH that has the logging shims but none of the build tools, so what the
+# script finds is what the test puts back.
+MINIMAL_SHIMS="$WORK/shims-minimal"
+reset_minimal_shims() {
+    rm -rf "$MINIMAL_SHIMS"; mkdir -p "$MINIMAL_SHIMS"
+    for f in "$SHIMS"/*; do
+        case "$(basename "$f")" in
+            cmake|node|pnpm|rustup|wasm-bindgen|cargo) ;;
+            *) cp "$f" "$MINIMAL_SHIMS/" ;;
+        esac
+    done
+}
+reset_minimal_shims
+MINIMAL_PATH="$MINIMAL_SHIMS:/usr/bin:/bin:/usr/sbin:/sbin"
+no_tools_install() { run env PATH="$MINIMAL_PATH" "$FAKE_SCRIPTS/install-local.sh" --no-launch "$@"; }
+
+reset_fixture
+ALL_BEFORE="$(snap_all)"
+no_tools_install
+check "with no build tools it stops before building anything (status $RC)" '[ "$RC" != 0 ] && [ ! -s "$BUILD_LOG" ] && [ ! -s "$CARGO_LOG" ] && [ ! -s "$WEB_LOG" ] && [ ! -e "$LOCAL_APP" ] && [ "$(snap_all)" = "$ALL_BEFORE" ]'
+for want in "cmake" "brew install cmake" "rustup.rs" "Node 22 or later" "pnpm" "brew install pnpm" \
+    "wasm32 Rust target" "rustup toolchain install 1.97.1 --profile minimal --target wasm32-unknown-unknown" \
+    "wasm-bindgen-cli 0.2.126" "cargo install wasm-bindgen-cli --version 0.2.126 --locked"; do
+    check "the one message says: $want" 'printf "%s" "$OUT" | grep -F >/dev/null -- "$want"'
+done
+check "it is one message (one error line), and says nothing was built or changed" \
+    '[ "$(printf "%s\n" "$OUT" | grep -c "error:")" = 1 ] && printf "%s" "$OUT" | grep >/dev/null "Nothing was built or changed"'
+
+reset_fixture
+# Rust and the web UI already built: the only thing left to ask for is Xcode.
+mkdir -p "$FAKE_REPO/libs/cua-spacesd/target/release" "$FAKE_REPO/apps/cua-spaces-web/dist"
+cp "$DAEMON_CHECKOUT" "$FAKE_REPO/libs/cua-spacesd/target/release/cua-spacesd"
+echo "<!doctype html>" > "$FAKE_REPO/apps/cua-spaces-web/dist/index.html"
+SHIM_NO_XCODE=1 no_tools_install --skip-rust-build --skip-web-build
+check "without the Xcode command line tools it says to run xcode-select --install" '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep -F >/dev/null "xcode-select --install"'
+check "--skip-rust-build --skip-web-build ask for nothing else (no cmake, Rust, Node, pnpm or wasm line)" \
+    '! printf "%s" "$OUT" | grep -E >/dev/null "cmake|rustup.rs|Node 22|pnpm|wasm"'
+no_tools_install --skip-rust-build --skip-web-build
+check "and with Xcode in place those flags need none of the other tools (status $RC)" '[ "$RC" = 0 ] && [ -d "$LOCAL_APP" ] && [ ! -s "$CARGO_LOG" ] && [ ! -s "$WEB_LOG" ]'
+
+reset_fixture
+run env SHIM_NODE_MAJOR=20 "$FAKE_SCRIPTS/install-local.sh" --no-launch
+check "an old Node is named, with what it has" '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep -F >/dev/null "Node 22 or later, this Mac has v20" && [ ! -s "$BUILD_LOG" ]'
+reset_fixture
+run env SHIM_WASM_TARGET= SHIM_WASM_BINDGEN=0.2.100 "$FAKE_SCRIPTS/install-local.sh" --no-launch
+check "a missing wasm32 target and a wrong wasm-bindgen are listed, and only those" \
+    '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep -F >/dev/null "wasm32 Rust target" && printf "%s" "$OUT" | grep -F >/dev/null "wasm-bindgen-cli 0.2.126" && ! printf "%s" "$OUT" | grep -E >/dev/null "cmake|pnpm|Node 22"'
+reset_fixture
+install
+check "with every tool in place the install goes ahead (status $RC)" '[ "$RC" = 0 ] && [ -d "$LOCAL_APP" ]'
+
 # --- 5. Rollback ---------------------------------------------------------------------------------
 
 echo "== rollback =="
@@ -666,6 +841,78 @@ echo "== signing =="
 reset_fixture
 install --require-stable-signing
 check "--require-stable-signing without a certificate stops, and installs nothing" '[ "$RC" != 0 ] && [ ! -e "$LOCAL_APP" ] && printf "%s" "$OUT" | grep >/dev/null "stable signing is required"'
+
+# A fresh Keychain: the certificate exists, but codesign cannot use it until it
+# is trusted for code signing, its Keychain is in the search list and codesign
+# may use its key. The Keychain tools are shims here (a unit test must not
+# change trust settings), so what is checked is what the script asks of them
+# and what it tells the person, not macOS.
+echo "== a fresh Keychain =="
+FAKE_KEYCHAIN="$FAKE_HOME/Library/Keychains/login.keychain-db"
+fresh_fixture() {
+    reset_fixture
+    mkdir -p "$FAKE_HOME/Library/Keychains" && : > "$FAKE_KEYCHAIN"
+}
+fresh_install() { run env SHIM_FRESH_KEYCHAIN=1 "$@" "$FAKE_SCRIPTS/install-local.sh" --no-launch $FRESH_ARGS; }
+security_calls() { grep "^security " "$SHIM_LOG" | grep -v "find-identity\|find-certificate"; }
+
+fresh_fixture
+FRESH_ARGS=""
+fresh_install
+check "without consent it changes no trust setting and no search list" '! security_calls | grep >/dev/null -e "add-trusted-cert" -e "list-keychains .*-s " -e "set-key-partition-list"'
+check "it says codesign cannot use the certificate yet, and prints the exact steps (trust, sudo variant, key access)" \
+    'printf "%s" "$OUT" | grep -F >/dev/null "codesign cannot use the stable local certificate yet" && printf "%s" "$OUT" | grep -F >/dev/null "security add-trusted-cert -r trustRoot -p codeSign -k \"$FAKE_KEYCHAIN\"" && printf "%s" "$OUT" | grep -F >/dev/null "sudo security add-trusted-cert -d -r trustRoot -p codeSign" && printf "%s" "$OUT" | grep -F >/dev/null "security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k"'
+check "the steps are printed once" '[ "$(printf "%s\n" "$OUT" | grep -c "one-time setup")" = 1 ]'
+check "the install is ad hoc, reported, as before (status $RC)" '[ "$RC" = 0 ] && printf "%s" "$OUT" | grep -F >/dev/null "signed ad hoc"'
+
+fresh_fixture
+FRESH_ARGS="--require-stable-signing"
+fresh_install
+check "--require-stable-signing still stops, installs nothing, and prints the steps once" \
+    '[ "$RC" != 0 ] && [ ! -e "$LOCAL_APP" ] && printf "%s" "$OUT" | grep -F >/dev/null "stable signing is required" && [ "$(printf "%s\n" "$OUT" | grep -c "one-time setup")" = 1 ]'
+
+fresh_fixture
+FRESH_ARGS="--setup-signing"
+fresh_install
+check "--setup-signing trusts the certificate for code signing: security add-trusted-cert -r trustRoot -p codeSign -k <keychain> <certificate>" \
+    'grep -E >/dev/null "^security add-trusted-cert -r trustRoot -p codeSign -k $FAKE_KEYCHAIN [^ ]+\$" "$SHIM_LOG"'
+check "the trust is user-level (no -d; the script never runs sudo)" '! grep >/dev/null "^security add-trusted-cert .* -d " "$SHIM_LOG" && ! grep >/dev/null "^sudo " "$SHIM_LOG"'
+check "the Keychain was already in the search list: it is not rewritten" '! grep >/dev/null "^security list-keychains -d user -s" "$SHIM_LOG"'
+check "it asks for no key access when codesign works after the trust" '! grep >/dev/null "set-key-partition-list" "$SHIM_LOG"'
+check "it tells the person it worked, and the install goes on (status $RC)" '[ "$RC" = 0 ] && printf "%s" "$OUT" | grep -F >/dev/null "codesign can use the stable local certificate"'
+check "the certificate the trust was given for is the one that signs: its PEM is the one that was exported" '! ls "${TMPDIR:-/tmp}"/cua-local-signing.* >/dev/null 2>&1'
+
+fresh_fixture
+FRESH_ARGS="--setup-signing"
+fresh_install SHIM_KEYCHAIN_LISTED=0
+check "a Keychain missing from the search list is added to it, before the trust" \
+    'grep -n -e "^security list-keychains -d user -s $FAKE_KEYCHAIN" -e "^security add-trusted-cert" "$SHIM_LOG" | sed -n 1p | grep >/dev/null "list-keychains" && grep >/dev/null "^security add-trusted-cert" "$SHIM_LOG"'
+
+fresh_fixture
+FRESH_ARGS="--setup-signing"
+fresh_install SHIM_TRUST_FAILS=1
+check "when macOS does not take the trust, it says so and prints the steps, and the install is ad hoc (status $RC)" \
+    '[ "$RC" = 0 ] && printf "%s" "$OUT" | grep -F >/dev/null "macOS did not trust the certificate" && printf "%s" "$OUT" | grep -F >/dev/null "sudo security add-trusted-cert -d" && printf "%s" "$OUT" | grep -F >/dev/null "signed ad hoc"'
+
+fresh_fixture
+FRESH_ARGS="--setup-signing"
+fresh_install SHIM_NEED_PARTITION=1
+check "when codesign still cannot use the key and there is no terminal, it prints the key-access command rather than asking" \
+    '! grep >/dev/null "set-key-partition-list" "$SHIM_LOG" && printf "%s" "$OUT" | grep -F >/dev/null "asked at a terminal" && printf "%s" "$OUT" | grep -F >/dev/null "security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k"'
+
+fresh_fixture
+FRESH_ARGS="--setup-signing"
+fresh_install CUA_DRIVER_LOCAL_SIGNING_IDENTITY=00112233445566778899AABBCCDDEEFF00112233
+check "an identity the person picked is never trusted or changed for them" \
+    '! security_calls | grep >/dev/null -e "add-trusted-cert" -e "list-keychains .*-s " -e "set-key-partition-list" && printf "%s" "$OUT" | grep -F >/dev/null "does not change a certificate you picked"'
+
+fresh_fixture
+: > "$SHIM_STATE/trusted"
+FRESH_ARGS="--setup-signing"
+fresh_install
+check "a certificate codesign can already use: no warning and no setup" \
+    '! printf "%s" "$OUT" | grep -F >/dev/null "codesign cannot use" && ! security_calls | grep >/dev/null -e "add-trusted-cert" -e "set-key-partition-list"'
+check "the Stable files are untouched by all of this" '[ "$(snap_stable)" = "$(snap_stable)" ] && [ ! -e "$FAKE_HOME/.cua-local" ]'
 
 # The stable local certificate itself (shared with Cua Driver's local install)
 # needs a code-signing identity that codesign can use without a prompt, from a

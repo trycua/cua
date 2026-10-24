@@ -21,6 +21,20 @@ on:
       - "tests/e2e/cua-sdk/docs/extract.py"
       - "tests/e2e/cua-sdk/docs/preludes/**"
       - ".github/workflows/docs-compile-lanes.yml"
+  # Main keeps the Rust cache (docs-rust) warm for the pull request runs above.
+  push:
+    branches: [main]
+    paths:
+      - "docs/content/docs/**"
+      - "libs/cua/swift/**"
+      - "libs/cua/kotlin/**"
+      - "libs/cua/crates/**"
+      - "libs/cua/Cargo.toml"
+      - "libs/cua/Cargo.lock"
+      - "tests/e2e/cua-sdk/docs/compile_lane.py"
+      - "tests/e2e/cua-sdk/docs/extract.py"
+      - "tests/e2e/cua-sdk/docs/preludes/**"
+      - ".github/workflows/docs-compile-lanes.yml"
   workflow_dispatch:
 
 permissions:
@@ -28,7 +42,7 @@ permissions:
 
 concurrency:
   group: docs-compile-lanes-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Cua programs and packages run here never send usage telemetry.
@@ -37,7 +51,8 @@ env:
 
 jobs:
   swift:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    # Not on main pushes: those exist to keep the rust lane's cache warm.
+    if: ${{ github.event_name != 'push' && !startsWith(github.head_ref, 'release-please--branches--') }}
     name: swift blocks
     runs-on: macos-14
     timeout-minutes: 30
@@ -51,7 +66,8 @@ jobs:
         run: python3 tests/e2e/cua-sdk/docs/compile_lane.py --lane swift
 
   kotlin:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    # Not on main pushes: those exist to keep the rust lane's cache warm.
+    if: ${{ github.event_name != 'push' && !startsWith(github.head_ref, 'release-please--branches--') }}
     name: kotlin blocks
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -81,9 +97,9 @@ jobs:
         uses: ./.github/actions/setup-protoc
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: ". -> target-docs-rust"
-          key: docs-rust
+          shared-key: docs-rust
       - name: Type-check the Rust blocks
         run: python3 tests/e2e/cua-sdk/docs/compile_lane.py --lane rust

@@ -31,6 +31,7 @@ on:
       - ".github/workflows/ci-cua-spacesd.yml"
       - ".github/actions/linux-rust-prep/**"
       - ".github/scripts/ci_component_scope.py"
+      - ".github/scripts/ci_reuse_pr_result.py"
   push:
     branches: [main]
     paths:
@@ -58,6 +59,7 @@ on:
       - ".github/workflows/ci-cua-spacesd.yml"
       - ".github/actions/linux-rust-prep/**"
       - ".github/scripts/ci_component_scope.py"
+      - ".github/scripts/ci_reuse_pr_result.py"
   workflow_dispatch:
 
 permissions:
@@ -93,9 +95,13 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      actions: read
+      checks: read
     outputs:
       run: ${{ steps.scope.outputs.run }}
       matrix: ${{ steps.scope.outputs.matrix }}
+      reused: ${{ steps.reuse.outputs.reused || '[]' }}
+      legs_test: ${{ steps.legs_test.outputs.legs || steps.scope.outputs.matrix }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -117,17 +123,34 @@ jobs:
             files=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --jq '.[].filename')
           fi
           python3 .github/scripts/ci_component_scope.py spacesd <<< "$files" | tee -a "$GITHUB_STEP_SUMMARY"
+      # Reuse results by tree: a squash-merge push whose exact tree a green pull
+      # request run of this workflow already tested skips the lanes that run
+      # did. Lanes the pull request never ran (other OSes) still run. Any doubt
+      # means "run everything": see .github/scripts/ci_reuse_pr_result.py.
+      # Rollback: set the repository variable CI_REUSE_PR_RESULTS to "off".
+      - id: reuse
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_MODE: ${{ vars.CI_REUSE_PR_RESULTS }}
+        run: python3 .github/scripts/ci_reuse_pr_result.py run --stamp-job "cua-spacesd / changes"
+      - id: legs_test
+        continue-on-error: true
+        env:
+          REUSED: ${{ steps.reuse.outputs.reused }}
+          LEGS: ${{ steps.scope.outputs.matrix }}
+        run: python3 .github/scripts/ci_reuse_pr_result.py legs --template "fmt, clippy, test ({os})" --output legs
 
   test:
     name: fmt, clippy, test (${{ matrix.os }})
     needs: changes
-    if: needs.changes.outputs.run == 'true'
+    if: needs.changes.outputs.run == 'true' && needs.changes.outputs.legs_test != '[]'
     strategy:
       fail-fast: false
       matrix:
         # macOS 26: the ScreenCaptureKit dependency compiles Metal bindings for
         # macOS 26 APIs and needs that SDK.
-        os: ${{ fromJSON(needs.changes.outputs.matrix) }}
+        os: ${{ fromJSON(needs.changes.outputs.legs_test) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     defaults:
@@ -281,7 +304,7 @@ jobs:
   relay-e2e:
     name: relay e2e (docker)
     needs: changes
-    if: needs.changes.outputs.run == 'true' && contains(needs.changes.outputs.matrix, 'ubuntu')
+    if: needs.changes.outputs.run == 'true' && contains(needs.changes.outputs.matrix, 'ubuntu') && !contains(fromJSON(needs.changes.outputs.reused), 'relay e2e (docker)')
     runs-on: ubuntu-latest
     timeout-minutes: 90
     defaults:

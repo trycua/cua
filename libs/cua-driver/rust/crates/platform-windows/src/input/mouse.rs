@@ -1157,6 +1157,27 @@ pub fn foreground_window() -> Result<u64> {
     Ok(hwnd.0 as u64)
 }
 
+/// Return the root window that owns the screen point `(x, y)`.
+///
+/// A desktop-scope drag is coordinate-routed: the pointer press is delivered
+/// to whatever window sits under the start point, not to the foreground
+/// window. Resolving the target from the point keeps the drag and the
+/// window it actually moves in agreement. This matters for
+/// `WS_EX_NOACTIVATE` overlays (floating balls, HUDs) — they can never become
+/// the foreground window, so a foreground-based target would always be a
+/// different window and the drag would move the wrong thing.
+pub fn window_root_at_point(x: i32, y: i32) -> Result<u64> {
+    unsafe {
+        let target = WindowFromPoint(POINT { x, y });
+        if target.0.is_null() {
+            bail!("no window under screen point ({x},{y})");
+        }
+        let root = GetAncestor(target, GA_ROOT);
+        let hwnd = if root.0.is_null() { target } else { root };
+        Ok(hwnd.0 as u64)
+    }
+}
+
 /// Move the real OS pointer to a desktop coordinate.
 pub fn move_cursor_desktop(x: i32, y: i32) -> Result<()> {
     unsafe { SetCursorPos(x, y) }

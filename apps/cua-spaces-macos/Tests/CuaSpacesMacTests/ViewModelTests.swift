@@ -606,10 +606,13 @@ struct ViewModelTests {
     @Test func menuBarAndChromeAreTheCores() async {
         let model = makeModel()
         await model.refresh()
-        // The notch's count: This machine counts only while it is shared.
-        let open = appOpenableCount(spaces: model.spaces)
-        #expect(model.menuBar.map(\.label) == appMenuBar(spaces: open).map(\.label))
-        #expect(model.notch.view.tab.count == String(open))
+        // The notch's count: the Spaces on or starting (never This machine,
+        // never a stopped Space); the menu bar item says the same.
+        let on = appOnCount(spaces: model.spaces)
+        #expect(model.menuBar.first?.label == appOnStatusLine(count: on))
+        #expect(model.menuBar.dropFirst().map(\.label) == appMenuBar(spaces: on).dropFirst().map(\.label))
+        #expect(model.statusLine == appOnStatusLine(count: on))
+        #expect(model.notch.view.tab.count == String(on))
         #expect(model.chrome.emptyTitle == "No Spaces yet")
         #expect(model.chrome.signInLabel == nil, "no account: signing in is not offered")
     }

@@ -851,7 +851,8 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(real.map((s) => s.id)).toContain("relay:m1/space-1");
     expect(model.spaces.some((s) => isMachineDesktop(s))).toBe(true);
     const items = menuItems(bridge.context);
-    expect(items[0]!.label).toBe(native.appStatusLine(real.length));
+    // The count is the Spaces on or starting among them (never a stopped one).
+    expect(items[0]!.label).toBe(native.appOnStatusLine(native.appOnCount(model.spaces)));
     expect(items.map((i) => i.id)).toEqual(expect.arrayContaining(["open", "newSpace", "settings", "quit"]));
   });
 

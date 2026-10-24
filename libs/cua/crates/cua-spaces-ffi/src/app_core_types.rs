@@ -1977,7 +1977,7 @@ pub struct AppNotchView {
     pub prompt: Option<String>,
     /// Accessibility label of the panel.
     pub label: String,
-    /// "N Spaces": the tab's spoken label (remote Spaces only).
+    /// "N Spaces": the tab's spoken label (Spaces on or starting only).
     pub count_label: String,
     /// The tab's two rows: the count over the word.
     pub tab: AppNotchTab,
@@ -1990,7 +1990,8 @@ pub struct AppNotchView {
     pub activity: Option<AppNotchActivity>,
     /// The notch is hidden (menu bar only): draw nothing.
     pub hidden: bool,
-    /// The tab shows (closed, no drag in flight; a drag tucks it away).
+    /// The tab shows (closed, no drag in flight, at least one Space on or
+    /// starting; a drag tucks it away, and with none the notch is bare).
     pub show_tab: bool,
     /// The pointer rests on the closed notch while the dwell runs: the
     /// shells grow it by [`NotchMotion::hover_scale`].

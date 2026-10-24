@@ -67,6 +67,8 @@ pub const METHODS: &[&str] = &[
     "window.menuBar",
     "window.menu",
     "spaces.openableCount",
+    "spaces.onCount",
+    "spaces.onStatusLine",
     "wizard.initial",
     "wizard.reduce",
     "wizard.view",
@@ -479,6 +481,8 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         )),
         "window.menu" => out(window::menu(&a.get::<window::MenuInput>("input")?)),
         "spaces.openableCount" => out(spaces::openable_count(&a.get::<Vec<Space>>("spaces")?)),
+        "spaces.onCount" => out(spaces::on_count(&a.get::<Vec<Space>>("spaces")?)),
+        "spaces.onStatusLine" => out(spaces::on_status_line(a.get("count")?)),
         "window.menuBar" => out(window::menu_bar_with_keyvault(
             a.get("spaces")?,
             a.get::<Option<String>>("keyvault")?.as_deref(),

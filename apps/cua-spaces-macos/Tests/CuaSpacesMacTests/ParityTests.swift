@@ -1338,7 +1338,7 @@ struct ParityTests {
             let state: AppHostState? = c["hostState"] is NSNull ? nil : try appHostStateFromJson(json: text(c["hostState"]))
             let roster = appWithThisMachine(spaces: spaces, status: state.map { appHostSummaryInput(state: $0) }, nowMs: now)
             let tab = appNotchView(state: appNotchInitial(), spaces: roster).tab.count
-            let count = appOpenableCount(spaces: roster)
+            let count = appOnCount(spaces: roster)
             let sync: AppDriveSyncInput? = c["sync"] is NSNull ? nil : try appDriveSyncFromJson(json: text(c["sync"]))
             let menu = appMenu(input: AppMenuInput(spaces: roster, keyvault: nil, sync: sync,
                                                    nowMs: UInt64(c["nowMs"] as! Int64),

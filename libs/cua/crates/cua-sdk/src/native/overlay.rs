@@ -158,6 +158,9 @@ fn sq(s: &str) -> String {
 /// CAP_SETGID and CAP_KILL, which neither plain root nor a plain `runuser`
 /// satisfies). `cua_daemon` prints `<pid> <exe>` of the running cua-spacesd
 /// (the exec's parent first).
+///
+/// For the daemon the `/proc` hash is only the fallback: [`daemon_identity`]
+/// asks the daemon first, which hashes its own executable.
 const FIND_DAEMON: &str = r#"cua_exe() {
   e=$(readlink "/proc/$1/exe" 2>/dev/null) || e=""
   [ -n "$e" ] || e=$(tr '\0' '\n' <"/proc/$1/cmdline" 2>/dev/null | head -n1) || true
@@ -295,7 +298,8 @@ echo "pid=$pid"
 echo "how=$how"
 "#;
 
-/// Prints `<pid> <sha256>` of the running cua-spacesd.
+/// Prints `<pid> <sha256>` of the running cua-spacesd (the sha256 from
+/// `/proc`, empty when unreadable).
 const DAEMON_IDENTITY: &str = r#"d=$(cua_daemon) || exit 1
 pid=${d%% *}
 echo "$pid $(cua_exe_sha "$pid")"
@@ -576,6 +580,109 @@ async fn apply_one(
     })
 }
 
+/// Whether `s` is a sha256 in hex.
+fn is_sha256(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// The `build.exe_sha256` in a `DriverService.CallTool` response (proto3
+/// JSON) for `health_report`: the sha256 the daemon computed of its own
+/// running executable (`/proc/self/exe`, which a process can always read).
+/// Empty when the response carries none (a build that predates it).
+fn reported_exe_sha256(response_json: &str) -> String {
+    let Ok(response) = serde_json::from_str::<serde_json::Value>(response_json) else {
+        return String::new();
+    };
+    let mut texts: Vec<&str> = ["structuredJson", "structured_json"]
+        .iter()
+        .filter_map(|k| response[*k].as_str())
+        .collect();
+    if let Some(parts) = response["content"].as_array() {
+        for part in parts {
+            texts.extend(["json", "text"].iter().filter_map(|k| part[*k].as_str()));
+        }
+    }
+    texts
+        .into_iter()
+        .filter_map(|t| serde_json::from_str::<serde_json::Value>(t).ok())
+        .find_map(|report| {
+            report["build"]["exe_sha256"]
+                .as_str()
+                .filter(|s| is_sha256(s))
+                .map(str::to_ascii_lowercase)
+        })
+        .unwrap_or_default()
+}
+
+/// Asks the cua-spacesd behind `env` which executable it runs
+/// (`health_report`, served in-process). Empty when it does not say.
+async fn ask_daemon_sha256(env: &SpacesdClient) -> String {
+    let request = serde_json::json!({
+        "name": "health_report",
+        "argumentsJson": serde_json::json!({"include": ["binary_version"]}).to_string(),
+        "timeout": "20s",
+    });
+    match tokio::time::timeout(
+        Duration::from_secs(25),
+        env.call_json("DriverService/CallTool".into(), request.to_string(), None),
+    )
+    .await
+    {
+        Ok(Ok(response)) => reported_exe_sha256(&response),
+        _ => String::new(),
+    }
+}
+
+/// `(pid, sha256)` of the running daemon from the shell probe's `<pid>
+/// <sha256>` and the sha256 the daemon reported itself: its own report
+/// wins, the `/proc` hash is the fallback (daemons that predate the report,
+/// or that do not answer).
+fn identity_of(probe: &str, reported: &str) -> (String, String) {
+    let mut parts = probe.split_whitespace();
+    let pid = parts.next().unwrap_or_default().to_string();
+    let from_proc = parts.next().unwrap_or_default().to_ascii_lowercase();
+    let sha = if is_sha256(reported) {
+        reported.to_ascii_lowercase()
+    } else {
+        from_proc
+    };
+    (pid, sha)
+}
+
+/// `(pid, sha256)` of the guest's running cua-spacesd. The pid comes from
+/// the guest's process table; the sha256 from the daemon's own report,
+/// else from `/proc`. `fresh` opens a new cua-spacesd connection (after a
+/// restart the old one is gone).
+async fn daemon_identity(
+    sandbox: &Sandbox,
+    guest: &Guest,
+    fresh: bool,
+) -> Result<(String, String)> {
+    let identity = format!("{FIND_DAEMON}{DAEMON_IDENTITY}");
+    let (probe, env) = match guest {
+        // The process table first: once it shows a new pid the old daemon is
+        // gone, so the report below comes from the new one.
+        Guest::Engine { .. } => {
+            let probe = guest.sh(identity, "identity").await?;
+            (probe, sandbox.spacesd(Some(5_000)).await.ok())
+        }
+        Guest::Spacesd(env) => {
+            let env = if fresh {
+                sandbox.spacesd(Some(5_000)).await?
+            } else {
+                env.clone()
+            };
+            let probe = Guest::Spacesd(env.clone()).sh(identity, "identity").await?;
+            (probe, Some(env))
+        }
+    };
+    let reported = match &env {
+        Some(env) => ask_daemon_sha256(env).await,
+        None => String::new(),
+    };
+    Ok(identity_of(&probe, &reported))
+}
+
 /// Restarts the guest's cua-spacesd and waits (bounded by `deadline`)
 /// until a new process runs `sha256`.
 async fn restart_daemon(
@@ -584,10 +691,9 @@ async fn restart_daemon(
     sha256: &str,
     deadline: Instant,
 ) -> Result<String> {
-    let identity = format!("{FIND_DAEMON}{DAEMON_IDENTITY}");
     // Already running this build (the same overlay applied twice): no restart.
-    if let Ok(out) = guest.sh(identity.clone(), "identity").await
-        && out.split_whitespace().nth(1) == Some(sha256)
+    if let Ok((_, sha)) = daemon_identity(sandbox, guest, false).await
+        && sha.eq_ignore_ascii_case(sha256)
     {
         return Ok(String::new());
     }
@@ -611,24 +717,15 @@ async fn restart_daemon(
             break;
         }
         tokio::time::sleep(Duration::from_secs(1)).await;
-        // Through spacesd, a fresh attachment each time (the old process is
-        // gone); through the engine, the same exec.
-        let probe = match guest {
-            Guest::Engine { .. } => guest.sh(identity.clone(), "identity").await,
-            Guest::Spacesd(_) => match sandbox.spacesd(Some(5_000)).await {
-                Ok(env) => Guest::Spacesd(env).sh(identity.clone(), "identity").await,
-                Err(e) => Err(e),
-            },
-        };
-        match probe {
-            Ok(out) => {
-                let mut parts = out.split_whitespace();
-                let (pid, sha) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
-                if pid != old_pid && sha == sha256 {
+        match daemon_identity(sandbox, guest, true).await {
+            Ok((pid, sha)) => {
+                if !pid.is_empty() && pid != old_pid && sha.eq_ignore_ascii_case(sha256) {
                     return Ok(how);
                 }
                 last = if sha.is_empty() {
-                    format!("pid {pid}: its executable's sha256 could not be read")
+                    format!(
+                        "pid {pid} does not report its build, and its executable's sha256 could not be read"
+                    )
                 } else {
                     format!("pid {pid} runs sha256 {}", &sha[..sha.len().min(12)])
                 };
@@ -940,6 +1037,52 @@ supervisorctl() {
                 assert!(!String::from_utf8_lossy(&out.stderr).contains("sleep 1;"));
             }
         }
+    }
+
+    #[test]
+    fn reads_the_daemons_reported_build() {
+        let a = "a".repeat(64);
+        let report = format!(
+            r#"{{"build":{{"version":"0.8.0","exe_sha256":"{}"}}}}"#,
+            a.to_uppercase()
+        );
+        let structured = serde_json::json!({"structuredJson": report, "content": [{"text": "ok"}]});
+        assert_eq!(reported_exe_sha256(&structured.to_string()), a);
+        let snake = serde_json::json!({"structured_json": report});
+        assert_eq!(reported_exe_sha256(&snake.to_string()), a);
+        let in_content = serde_json::json!({"content": [{"text": "summary"}, {"json": report}]});
+        assert_eq!(reported_exe_sha256(&in_content.to_string()), a);
+        // Builds that predate the report, or report nothing usable.
+        for none in [
+            serde_json::json!({"structuredJson": r#"{"schema_version":"1"}"#}).to_string(),
+            serde_json::json!({"structuredJson": r#"{"build":{"exe_sha256":""}}"#}).to_string(),
+            serde_json::json!({"structuredJson": r#"{"build":{"exe_sha256":"zz"}}"#}).to_string(),
+            serde_json::json!({"content": [{"text": "not json"}]}).to_string(),
+            "not json".to_string(),
+            String::new(),
+        ] {
+            assert_eq!(reported_exe_sha256(&none), "", "{none}");
+        }
+    }
+
+    #[test]
+    fn the_daemons_report_wins_over_proc() {
+        let (a, b) = ("a".repeat(64), "b".repeat(64));
+        // The daemon's own report is primary.
+        assert_eq!(
+            identity_of(&format!("30 {b}\n"), &a),
+            ("30".into(), a.clone())
+        );
+        // An unreadable /proc (empty hash) does not matter when it reports.
+        assert_eq!(identity_of("30 \n", &a), ("30".into(), a.clone()));
+        // A daemon that predates the report: the /proc hash.
+        assert_eq!(
+            identity_of(&format!("30 {b}\n"), ""),
+            ("30".into(), b.clone())
+        );
+        // Neither: an empty sha256, which never matches the injected build.
+        assert_eq!(identity_of("30\n", ""), ("30".into(), String::new()));
+        assert_eq!(identity_of("", ""), (String::new(), String::new()));
     }
 
     #[test]

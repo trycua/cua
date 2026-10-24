@@ -7028,6 +7028,23 @@ impl Tool for ClickTool {
                          the pointer route cannot carry keyboard modifier state"
                     );
                 }
+                // Native Wayland toplevels have no X11 window, so the X11 routes
+                // below cannot address them; use the portal pointer like coordinate clicks.
+                if crate::wayland::wayland_input_enabled() {
+                    if !delivery.is_foreground() {
+                        anyhow::bail!(
+                            "background element clicks are unavailable on native Wayland; \
+                             retry with delivery_mode \"foreground\""
+                        );
+                    }
+                    let (_, sx, sy) = placement
+                        .ok_or_else(|| anyhow::anyhow!("element screen bounds unavailable"))?;
+                    let (ox, oy) = (sx.round() as i32, sy.round() as i32);
+                    crate::wayland::with_target_foreground(pid, xid2, || {
+                        crate::wayland::click_focused(ox, oy, count as u32, button)
+                    })?;
+                    return Ok(PointerRoute::Wayland);
+                }
                 // An explicit X11 foreground request needs the real XTest path
                 // even for a plain click. Some native widgets (notably GTK
                 // selectable rows) expose bounds but no AT-SPI Action and

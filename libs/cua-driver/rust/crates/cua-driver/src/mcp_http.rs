@@ -455,17 +455,17 @@ mod tests {
         String::from_utf8(response).unwrap()
     }
 
-    async fn parse_keep_alive(request: &str) -> bool {
+    async fn parse_request(request: &str) -> (String, bool) {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let addr = listener.local_addr().unwrap();
         let mut client = TcpStream::connect(addr).await.unwrap();
         let (mut server, _) = listener.accept().await.unwrap();
         client.write_all(request.as_bytes()).await.unwrap();
-        read_http_request(&mut server, "token")
+        let req = read_http_request(&mut server, "token")
             .await
             .unwrap()
-            .unwrap()
-            .keep_alive
+            .unwrap();
+        (req.method, req.keep_alive)
     }
 
     #[tokio::test]
@@ -476,7 +476,11 @@ mod tests {
             ("POST /mcp HTTP/1.1\r\nConnection: close\r\n\r\n", false),
             ("POST /mcp HTTP/1.0\r\nConnection: keep-alive\r\n\r\n", true),
         ] {
-            assert_eq!(parse_keep_alive(request).await, expected, "{request:?}");
+            assert_eq!(
+                parse_request(request).await,
+                ("POST".to_owned(), expected),
+                "{request:?}"
+            );
         }
     }
 

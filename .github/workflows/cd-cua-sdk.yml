@@ -380,8 +380,9 @@ jobs:
         working-directory: libs/cua/python
         run: |
           VERSION="${{ needs.version.outputs.version }}"
-          # The `cua` wheel depends on the `cua-cli` wheel (cli/) at its version.
-          sed -i.bak -e "s/^version = .*/version = \"$VERSION\"/" -e "s/\"cua-cli==[^\"]*\"/\"cua-cli==$VERSION\"/" pyproject.toml && rm pyproject.toml.bak
+          # The `cua-cli` wheel (cli/) takes the same version; build_wheel.py
+          # makes the `cua` wheel require it at that version.
+          sed -i.bak "s/^version = .*/version = \"$VERSION\"/" pyproject.toml && rm pyproject.toml.bak
           sed -i.bak "s/^version = .*/version = \"$VERSION\"/" cli/pyproject.toml && rm cli/pyproject.toml.bak
           sed -i.bak "s/^__version__ = .*/__version__ = \"$VERSION\"/" src/cua/__init__.py && rm src/cua/__init__.py.bak
           python -m pip install --upgrade pip build hatchling
@@ -411,6 +412,23 @@ jobs:
             fi
           done
           test "$n" = 2
+      - name: Check the cua wheel requires its cua-cli and the source does not
+        working-directory: libs/cua/python
+        run: |
+          VERSION="${{ needs.version.outputs.version }}"
+          python - "$VERSION" dist/cua-[0-9]*.whl <<'PY'
+          import sys, zipfile
+          version, whl = sys.argv[1], sys.argv[2]
+          z = zipfile.ZipFile(whl)
+          meta = z.read(next(n for n in z.namelist() if n.endswith(".dist-info/METADATA"))).decode()
+          pins = [l for l in meta.splitlines() if l.startswith("Requires-Dist: cua-cli")]
+          assert pins == [f"Requires-Dist: cua-cli=={version}"], pins
+          import tomllib
+          project = tomllib.load(open("pyproject.toml", "rb"))["project"]
+          deps = project["dependencies"] + sum(project.get("optional-dependencies", {}).values(), [])
+          assert not [d for d in deps if d.startswith("cua-cli")], "the source pyproject must not pin cua-cli"
+          print(pins[0])
+          PY
       - name: Check the wheel ships the static cua-spacesd in cua/bin/
         if: matrix.platform == 'linux'
         run: .github/scripts/check_static_spacesd_packaged.sh libs/cua/python/dist

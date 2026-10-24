@@ -50,3 +50,30 @@ def test_the_cli_is_handed_the_wheel_spacesd(monkeypatch, tmp_path) -> None:
     except SystemExit:
         pass
     assert seen["env"] == "/mine"
+
+
+def test_the_source_pyproject_pins_no_cua_cli() -> None:
+    # Source and editable installs of libs/cua/python must resolve without
+    # a cua-cli of the checkout's version on an index; build_wheel.py adds
+    # the pin to the built wheel only.
+    import tomllib
+    from pathlib import Path
+
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    project = tomllib.loads(pyproject.read_text())["project"]
+    deps = project.get("dependencies", []) + [
+        d for ds in project.get("optional-dependencies", {}).values() for d in ds
+    ]
+    assert not [d for d in deps if d.replace(" ", "").startswith("cua-cli")]
+
+
+def test_a_built_wheel_with_its_cli_requires_it_at_its_version() -> None:
+    from importlib import metadata
+
+    try:
+        metadata.version("cua-cli")
+    except metadata.PackageNotFoundError:
+        return  # a source, editable or --no-deps install
+    requires = [r.replace(" ", "") for r in metadata.requires("cua") or []]
+    assert f"cua-cli=={metadata.version('cua')}" in requires
+    assert metadata.version("cua-cli") == metadata.version("cua")

@@ -468,7 +468,7 @@ jobs:
       - name: Smoke-test the installed wheel
         working-directory: libs/cua/python
         run: |
-          # `cua` and `cua-cli` (cua[cli]): the tests drive the CLI too.
+          # `cua` and the `cua-cli` it requires: the tests drive the CLI too.
           WHEEL=$(ls dist/cua-[0-9]*.whl); CLI_WHEEL=$(ls dist/cua_cli-*.whl)
           uv run --no-project --isolated --python 3.12 --with pytest --with "$WHEEL" --with "$CLI_WHEEL" pytest -q -p no:cacheprovider tests
       # cua-e2b (the e2b-compatible module) through this wheel against the

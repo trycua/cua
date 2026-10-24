@@ -11,8 +11,9 @@ libs/cua/target/release are used.
   static cua-spacesd (`--spacesd`, the `cua-spacesd-linux-<arch>` that
   .github/scripts/fetch_static_spacesd.sh fetches) in `cua/bin/`, where the
   in-process SDK finds it to inject into images that lack one.
-- `cua-cli` (cli/, a dependency of `cua`): `cua_cli/bin/cua[.exe]`, which
-  the `cua` wheel's console command runs, pointing it at that cua-spacesd
+- `cua-cli` (cli/): `cua_cli/bin/cua[.exe]`, which the `cua` wheel requires
+  at its own version (added at build time; a source install has no pin) and
+  whose `cua` console command runs it, pointing it at that cua-spacesd
   (`$CUA_SPACESD_STATIC`). `--no-cli` skips it.
 
 The CLI and the library are separate wheels because each repeats most of
@@ -138,6 +139,9 @@ def main() -> None:
         (CLI_BIN / exe).chmod(0o755)
 
     env = dict(os.environ, CUA_SDK_WHEEL_TAG=wheel_tag(system, arch))
+    # The `cua` wheel requires the `cua-cli` wheel built with it, at the same
+    # version (hatch_build.py adds the pin; the source pyproject has none).
+    env["CUA_SDK_WHEEL_REQUIRES_CLI"] = "0" if args.no_cli else "1"
     args.out_dir.mkdir(parents=True, exist_ok=True)
     try:
         import build  # noqa: F401

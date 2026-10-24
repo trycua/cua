@@ -25,21 +25,16 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 requires-python = ">=3.10"
-# The Rust `cua` CLI ships as its own platform wheel (cli/): PyPI caps a
-# file at 100 MB and the CLI and the library together are over it. It
-# installs cua_cli/bin/cua[.exe], which the `cua` command runs (and so the
-# SDK, which starts the cua daemon through it).
-# `pip install --no-deps cua` is the SDK alone.
-dependencies = [
-    "cua-cli==0.8.0", # x-release-please-version
-]
+# The released wheel also requires `cua-cli==<its version>`: the Rust `cua`
+# CLI as its own platform wheel (cli/), since PyPI caps a file at 100 MB and
+# the CLI and the library together are over it. build_wheel.py adds that
+# pin (hatch_build.py), so a source or editable install of this directory
+# needs nothing that is not on an index. `pip install --no-deps cua` is the
+# SDK alone.
+dependencies = []
 
 [project.optional-dependencies]
 test = ["pytest"]
-# Same as the base dependency; kept so `cua[cli]` keeps resolving.
-cli = [
-    "cua-cli==0.8.0", # x-release-please-version
-]
 # The convenience surface of the former `cua` meta-package (0.1.x): with an
 # extra installed, `from cua import Sandbox, Image, ComputerAgent` keeps working.
 sandbox = ["cua-sandbox>=0.8.0; python_version >= '3.11'"]

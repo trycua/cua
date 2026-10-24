@@ -38,7 +38,7 @@ def install_hint() -> str:
     except metadata.PackageNotFoundError:
         pin = "cua-cli"
     return (
-        "cua: the cua CLI is not installed (the cua-cli package, skipped by --no-deps). "
+        "cua: the cua CLI is not installed (the cua-cli package). "
         f'Install it with `pip install "{pin}"`.\n'
     )
 

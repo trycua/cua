@@ -215,8 +215,6 @@ cua-media-transport = { path = "crates/cua-media-transport" }
 cua-media-codec = { path = "crates/cua-media-codec", default-features = false }
 cua-media-client = { path = "crates/cua-media-client", default-features = false }
 
-# SHA-256 over multi-GiB transfers is unusably slow unoptimised; keep test
-# builds fast without making every dependency release-mode.
 # Release binaries ship in the wheels, npm packages, installers and app
 # bundles. Their symbol tables roughly doubled the native files and pushed
 # the wheels past PyPI's 100 MB per-file limit. The dynamic symbol table
@@ -224,6 +222,8 @@ cua-media-client = { path = "crates/cua-media-client", default-features = false 
 [profile.release]
 strip = "symbols"
 
+# SHA-256 over multi-GiB transfers is unusably slow unoptimised; keep test
+# builds fast without making every dependency release-mode.
 [profile.dev.package.sha2]
 opt-level = 3
 

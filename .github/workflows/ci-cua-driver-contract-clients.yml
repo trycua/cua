@@ -122,20 +122,26 @@ jobs:
       # did. Lanes the pull request never ran (other OSes) still run. Any doubt
       # means "run everything": see .github/scripts/ci_reuse_pr_result.py.
       # Rollback: set the repository variable CI_REUSE_PR_RESULTS to "off".
+      # A step that cannot finish in a minute is killed and the suites run in
+      # full: the lookup never eats the job's 5 minutes.
       - id: reuse
         continue-on-error: true
+        timeout-minutes: 1
         env:
           GH_TOKEN: ${{ github.token }}
           REUSE_MODE: ${{ vars.CI_REUSE_PR_RESULTS }}
-        run: python3 .github/scripts/ci_reuse_pr_result.py run --stamp-job "contract clients / changes"
+        # Floating inputs the jobs install: setup-node "22" and setup-python "3.12".
+        run: python3 .github/scripts/ci_reuse_pr_result.py run --stamp-job "contract clients / changes" --float node-22 --float python-3.12
       - id: legs_discovery
         continue-on-error: true
+        timeout-minutes: 1
         env:
           REUSED: ${{ steps.reuse.outputs.reused }}
           LEGS: ${{ steps.scope.outputs.matrix }}
         run: python3 .github/scripts/ci_reuse_pr_result.py legs --template "MCP discovery in pinned clients ({os})" --output legs
       - id: legs_parity
         continue-on-error: true
+        timeout-minutes: 1
         env:
           REUSED: ${{ steps.reuse.outputs.reused }}
           LEGS: ${{ steps.scope.outputs.matrix }}

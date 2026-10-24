@@ -88,14 +88,20 @@ jobs:
           sparse-checkout: .github/scripts
       # `pr_subset` is true only when every job a pull request runs (the names
       # below, the Linux jobs) passed on this exact tree.
+      # A step that cannot finish in a minute is killed and the jobs run in
+      # full: the lookup never delays the suites by more than that.
+      # Floating inputs the subset's jobs install: setup-node "22" and
+      # setup-uv (latest uv, uv's managed Python).
       - id: reuse
         continue-on-error: true
+        timeout-minutes: 1
         env:
           GH_TOKEN: ${{ github.token }}
           REUSE_MODE: ${{ vars.CI_REUSE_PR_RESULTS }}
         run: |
           python3 .github/scripts/ci_reuse_pr_result.py run \
             --stamp-job "reuse PR results" \
+            --float node-22 --float uv --float python-standalone \
             --subset "pr_subset=rust (ubuntu-latest)|rust lint (ubuntu-latest)|rust lint (windows-latest)|crates.io dry run|spaces e2e (ubuntu-latest)|bindings drift (ubuntu-latest)|kotlin compile|build SDK (linux, release)|build test fixtures (linux)|build cua and cua-spaces CLIs (linux)|python smoke (ubuntu-latest)|node smoke (ubuntu-latest)|browser (wasm32) build + smoke"
 
   rust-lint:

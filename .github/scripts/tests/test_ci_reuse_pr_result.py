@@ -3,6 +3,7 @@
 import json
 import re
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,10 @@ SHA = "a" * 40
 HEAD = "b" * 40
 TREE = "c" * 40
 OTHER_TREE = "d" * 40
+FP = "1" * 16
+OTHER_FP = "2" * 16
+NOW = datetime(2026, 10, 24, 3, 0, tzinfo=timezone.utc)
+RUN_AT = "2026-10-24T01:00:00Z"  # two hours before NOW
 STAMP_JOB = "contract clients / changes"
 PUSH = {
     "GITHUB_EVENT_NAME": "push",
@@ -32,7 +37,7 @@ PUSH = {
 def world(*, tree=TREE, parents=1, prs=None, runs=None, jobs=None, notes=None):
     """A fake GitHub: path -> response for the calls find_reusable makes."""
     prs = [{"number": 7, "merge_commit_sha": SHA, "merged_at": "t", "base": {"ref": "main"}, "head": {"sha": HEAD}}] if prs is None else prs
-    runs = [{"id": 11, "created_at": "2026-10-24T01:00:00Z"}] if runs is None else runs
+    runs = [{"id": 11, "created_at": RUN_AT}] if runs is None else runs
     jobs = {
         11: [
             {"id": 1, "name": STAMP_JOB, "conclusion": "success"},
@@ -41,7 +46,7 @@ def world(*, tree=TREE, parents=1, prs=None, runs=None, jobs=None, notes=None):
             {"id": 4, "name": "Generated contract and SDK bindings", "conclusion": "success"},
         ]
     } if jobs is None else jobs
-    notes = {1: [{"message": f"ci-reuse tree={TREE}"}]} if notes is None else notes
+    notes = {1: [{"message": f"ci-reuse tree={TREE} fp={FP}"}]} if notes is None else notes
     calls = []
 
     def api(path):
@@ -68,10 +73,11 @@ def world(*, tree=TREE, parents=1, prs=None, runs=None, jobs=None, notes=None):
     return api, jobs_of, calls
 
 
-def decide(env=None, subsets=None, tree=TREE, **kw):
+def decide(env=None, subsets=None, tree=TREE, fp=FP, now=NOW, **kw):
     api, jobs_of, calls = world(**kw)
     out = reuse.decide(
-        {**PUSH, **(env or {})}, subsets or {}, STAMP_JOB, api=api, jobs_of=jobs_of, tree_fn=lambda sha: tree
+        {**PUSH, **(env or {})}, subsets or {}, STAMP_JOB, api=api, jobs_of=jobs_of, tree_fn=lambda sha: tree,
+        fp_fn=lambda: fp, now=now,
     )
     return (*out, calls)
 
@@ -111,6 +117,8 @@ def test_unstamped_run_reuses_nothing():
     reused, _, why, *_ = decide(notes={})
     assert reused == [] and "no tree stamp" in why
     assert decide(notes={1: [{"message": "something else"}]})[0] == []
+    # A stamp from before fingerprints existed has no fp and is not trusted.
+    assert decide(notes={1: [{"message": f"ci-reuse tree={TREE}"}]})[0] == []
     assert decide(jobs={11: [{"id": 2, "name": "Generated contract and SDK bindings", "conclusion": "success"}]})[0] == []
 
 
@@ -159,7 +167,7 @@ def test_runs_that_are_not_a_push_to_main_are_never_reduced():
 def test_pull_request_run_writes_a_stamp():
     reused, flags, _, note, calls = decide(env={"GITHUB_EVENT_NAME": "pull_request", "GITHUB_REF": "refs/pull/7/merge"}, subsets={"s": ["x"]})
     assert reused == [] and flags == {"s": False} and calls == []
-    assert note == f"::notice title=ci-reuse::ci-reuse tree={TREE}"
+    assert note == f"::notice title=ci-reuse::ci-reuse tree={TREE} fp={FP}"
     assert reuse.STAMP_RE.match(note.split("::")[-1])
 
 
@@ -171,8 +179,138 @@ def test_modes():
     assert off[0] == [] and off[4] == []
     stamp_off = decide(env={"REUSE_MODE": "off", "GITHUB_EVENT_NAME": "pull_request"})
     assert stamp_off[3] is None
-    assert decide(env={"REUSE_MODE": "ON"}, subsets=subsets)[1] == {"s": True}
-    assert decide(env={"REUSE_MODE": ""}, subsets=subsets)[1] == {"s": True}
+
+
+@pytest.mark.parametrize("raw", [None, "", "on", "ON", " on ", "On\n"])
+def test_valid_modes_that_enforce(raw):
+    env = {} if raw is None else {"REUSE_MODE": raw}
+    assert decide(env=env, subsets={"s": ["Generated contract and SDK bindings"]})[1] == {"s": True}
+
+
+@pytest.mark.parametrize("raw", ["shadow", " Shadow "])
+def test_shadow_is_case_and_space_insensitive(raw):
+    assert decide(env={"REUSE_MODE": raw}, subsets={"s": ["Generated contract and SDK bindings"]})[1] == {"s": False}
+
+
+@pytest.mark.parametrize("raw", ["disabled", " ", "   ", "\t", "false", "0", "1", "true", "enabled", "off-", "o n", "yes", "no", "none"])
+def test_unknown_modes_mean_no_reuse_and_no_stamp(raw):
+    # Only the allowlisted words enable anything; a typo or a stray space must not
+    # silently turn skipping on.
+    reused, flags, why, note, calls = decide(env={"REUSE_MODE": raw}, subsets={"s": ["Generated contract and SDK bindings"]})
+    assert reused == [] and flags == {"s": False} and calls == []
+    assert "is not one of on, shadow, off" in why
+    stamp = decide(env={"REUSE_MODE": raw, "GITHUB_EVENT_NAME": "pull_request"})
+    assert stamp[3] is None
+
+
+def test_parse_mode():
+    assert reuse.parse_mode(None) == "on" and reuse.parse_mode("") == "on"
+    assert [reuse.parse_mode(x) for x in ("on", "SHADOW", " off ")] == ["on", "shadow", "off"]
+    assert all(reuse.parse_mode(x) is None for x in (" ", "disabled", "onn"))
+
+
+# ---- fingerprint: the tree is the same, the inputs may not be --------------------
+
+
+def test_a_new_toolchain_since_the_pr_run_reuses_nothing():
+    # dtolnay/rust-toolchain@stable moved between the PR run and the merge.
+    reused, flags, why, *_ = decide(fp=OTHER_FP, subsets={"s": ["Generated contract and SDK bindings"]})
+    assert reused == [] and flags == {"s": False}
+    assert "runner image or a floating tool version changed" in why
+
+
+@pytest.mark.parametrize("stamped,current", [("none", FP), (FP, "none"), ("none", "none")])
+def test_an_unresolved_fingerprint_never_matches(stamped, current):
+    notes = {1: [{"message": f"ci-reuse tree={TREE} fp={stamped}"}]}
+    assert decide(fp=current, notes=notes)[0] == []
+
+
+def test_a_run_older_than_the_cap_is_not_reused():
+    just_inside = (NOW - reuse.MAX_AGE + timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    just_outside = (NOW - reuse.MAX_AGE - timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert decide(runs=[{"id": 11, "created_at": just_inside}])[0] != []
+    reused, _, why, *_ = decide(runs=[{"id": 11, "created_at": just_outside}])
+    assert reused == [] and "hours ago" in why
+
+
+def test_fingerprint_is_only_resolved_when_a_stamp_matches_the_tree():
+    calls = []
+
+    def fp():
+        calls.append(1)
+        return FP
+
+    api, jobs_of, _ = world(tree=OTHER_TREE)
+    reuse.decide(PUSH, {}, STAMP_JOB, api=api, jobs_of=jobs_of, tree_fn=lambda s: OTHER_TREE, fp_fn=fp, now=NOW)
+    assert calls == []
+
+
+def resolvers(**override):
+    base = {"rust-stable": lambda: "r1", "node-22": lambda: "n1"}
+    return {**base, **override}
+
+
+def test_fingerprint_changes_with_each_input():
+    env = {"ImageOS": "ubuntu24", "ImageVersion": "20260101.1.0"}
+    base = reuse.fingerprint(env, ["rust-stable", "node-22"], resolvers())
+    assert re.fullmatch(r"[0-9a-f]{16}", base)
+    assert reuse.fingerprint(env, ["node-22", "rust-stable"], resolvers()) == base  # order does not matter
+    assert reuse.fingerprint(env, ["rust-stable", "node-22"], resolvers(**{"rust-stable": lambda: "r2"})) != base
+    assert reuse.fingerprint(env, ["rust-stable", "node-22"], resolvers(**{"node-22": lambda: "n2"})) != base
+    assert reuse.fingerprint({**env, "ImageVersion": "20260108.1.0"}, ["rust-stable", "node-22"], resolvers()) != base
+    assert reuse.fingerprint(env, ["rust-stable"], resolvers()) != base  # another set of floats
+
+
+def test_fingerprint_is_none_when_anything_cannot_be_resolved():
+    env = {"ImageOS": "ubuntu24", "ImageVersion": "20260101.1.0"}
+
+    def down():
+        raise OSError("network down")
+
+    assert reuse.fingerprint(env, ["rust-stable"], resolvers(**{"rust-stable": down})) == "none"
+    assert reuse.fingerprint(env, ["unknown-tool"], resolvers()) == "none"
+    assert reuse.fingerprint({}, ["rust-stable"], resolvers()) == "none"  # not a GitHub-hosted image
+
+
+def test_every_float_the_workflows_use_has_a_resolver():
+    assert {"rust-stable", "node-22", "python-3.12", "uv", "python-standalone"} == set(reuse.FLOATS)
+
+
+# ---- the lookup never outlives its budget ----------------------------------------
+
+
+def test_a_spent_budget_runs_everything(monkeypatch):
+    reuse.set_budget(0)
+    try:
+        with pytest.raises(TimeoutError):
+            reuse.time_left()
+        reused, flags, why, *_ = reuse.decide(
+            PUSH, {"s": ["x"]}, STAMP_JOB, api=lambda p: reuse.gh_api(p), tree_fn=lambda s: TREE, fp_fn=lambda: FP
+        )
+        assert reused == [] and flags == {"s": False} and "running everything" in why
+    finally:
+        reuse.set_budget(None)
+
+
+def test_each_call_gets_what_is_left_of_the_budget():
+    reuse.set_budget(100)
+    try:
+        assert reuse.time_left() == reuse.CALL_SECONDS
+    finally:
+        reuse.set_budget(3)
+    try:
+        assert 0 < reuse.time_left() <= 3
+    finally:
+        reuse.set_budget(None)
+    assert reuse.time_left() == reuse.CALL_SECONDS
+
+
+def test_a_slow_lookup_is_cut_off_and_runs_everything():
+    def slow(path):
+        raise TimeoutError("gh api took too long")
+
+    reused, _, why, *_ = reuse.decide(PUSH, {"s": ["x"]}, STAMP_JOB, api=slow, tree_fn=lambda s: TREE, fp_fn=lambda: FP)
+    assert reused == [] and "running everything" in why
 
 
 def test_newest_matching_runs_all_contribute():
@@ -181,7 +319,7 @@ def test_newest_matching_runs_all_contribute():
         11: [{"id": 1, "name": STAMP_JOB, "conclusion": "success"}, {"id": 2, "name": "a", "conclusion": "success"}],
         12: [{"id": 5, "name": STAMP_JOB, "conclusion": "success"}, {"id": 6, "name": "b", "conclusion": "success"}],
     }
-    notes = {1: [{"message": f"ci-reuse tree={OTHER_TREE}"}], 5: [{"message": f"ci-reuse tree={TREE}"}]}
+    notes = {1: [{"message": f"ci-reuse tree={OTHER_TREE} fp={FP}"}], 5: [{"message": f"ci-reuse tree={TREE} fp={FP}"}]}
     reused = decide(runs=runs, jobs=jobs, notes=notes)[0]
     assert reused == [STAMP_JOB, "b"]  # run 11 tested another tree
 
@@ -297,6 +435,8 @@ def test_cua_sdk_reuse_job_cannot_block_the_run():
     wf = load("ci-cua-sdk.yml")
     step = next(s for s in wf["jobs"]["reuse"]["steps"] if s.get("id") == "reuse")
     assert step["continue-on-error"] is True
+    assert step["timeout-minutes"] == 1  # inside the job's 5 minutes, with room to spare
+    assert wf["jobs"]["reuse"]["timeout-minutes"] == 5
     assert step["env"]["REUSE_MODE"] == "${{ vars.CI_REUSE_PR_RESULTS }}"
     assert wf["jobs"]["reuse"]["permissions"] == {
         "contents": "read", "actions": "read", "checks": "read", "pull-requests": "read",
@@ -330,12 +470,14 @@ def test_scoped_lanes_wiring(filename):
     steps = {s.get("id"): s for s in changes["steps"]}
     assert f'--stamp-job "{stamp_job}"' in steps["reuse"]["run"]
     assert steps["reuse"]["continue-on-error"] is True
+    assert steps["reuse"]["timeout-minutes"] == 1
+    assert changes["timeout-minutes"] == 5
     for job_id, (template, step_id) in matrix_jobs.items():
         job = wf["jobs"][job_id]
         assert job["name"].replace("${{ matrix.os }}", "{os}") == template
         step = steps[step_id]
         assert f'--template "{template}"' in step["run"]
-        assert step["continue-on-error"] is True
+        assert step["continue-on-error"] is True and step["timeout-minutes"] == 1
         assert step["env"] == {"REUSED": "${{ steps.reuse.outputs.reused }}", "LEGS": "${{ steps.scope.outputs.matrix }}"}
         assert job["strategy"]["matrix"]["os"] == f"${{{{ fromJSON(needs.changes.outputs.{step_id}) }}}}"
         assert f"needs.changes.outputs.{step_id} != '[]'" in job["if"]
@@ -354,3 +496,28 @@ def test_script_change_triggers_the_workflow(filename):
     wf = load(filename)
     for event in ("pull_request", "push"):
         assert ".github/scripts/ci_reuse_pr_result.py" in wf[True][event]["paths"]
+
+
+# What each workflow's jobs install from a floating spec: the stamp must cover it.
+FLOATING = {
+    "ci-cua-spacesd.yml": {"rust-stable"},
+    "ci-cua-driver-contract-clients.yml": {"node-22", "python-3.12"},
+    "ci-cua-sdk.yml": {"node-22", "uv", "python-standalone"},
+}
+
+
+@pytest.mark.parametrize("filename", FLOATING)
+def test_floating_inputs_are_fingerprinted(filename):
+    text = (WORKFLOWS / filename).read_text()
+    flags = set(re.findall(r"--float ([\w.\-]+)", text))
+    assert flags == FLOATING[filename]
+    assert flags <= set(reuse.FLOATS)
+    # Anything the workflow installs from a moving spec has to be in the list.
+    if "dtolnay/rust-toolchain@stable" in text:
+        assert "rust-stable" in flags
+    if 'node-version: "22"' in text:
+        assert "node-22" in flags
+    if 'python-version: "3.12"' in text:
+        assert "python-3.12" in flags
+    if "astral-sh/setup-uv" in text:
+        assert {"uv", "python-standalone"} <= flags

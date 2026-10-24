@@ -730,6 +730,17 @@ async fn accept_loop<L: Accept>(listener: L, app: BoxedApp, mut shutdown: watch:
     conns.abort_all();
 }
 
+/// Headers that name a caller other than this machine's user.
+pub const FORWARDED_CALLER_HEADERS: &[&str] = &["x-cua-host-caller", "x-cua-share-caller"];
+
+/// Removes [`FORWARDED_CALLER_HEADERS`] from a request that did not come
+/// through the daemon socket.
+pub fn strip_forwarded_caller(headers: &mut http::HeaderMap) {
+    for h in FORWARDED_CALLER_HEADERS {
+        headers.remove(*h);
+    }
+}
+
 fn app(shared: Arc<Shared>, require_token: bool) -> BoxedApp {
     let svc = Svc(shared.clone());
     // The clients' limit, not gRPC's 4 MiB default: a tool call can carry
@@ -835,9 +846,14 @@ fn app(shared: Arc<Shared>, require_token: bool) -> BoxedApp {
         let busy = Busy::new(shared.clone());
         async move {
             let _busy = busy;
-            let req = req.map(AxumBody::new);
+            let mut req = req.map(AxumBody::new);
             if require_token && !authorized(&req, &token) {
                 return Ok::<_, std::convert::Infallible>(unauthorized(&req));
+            }
+            if require_token {
+                // A call on the loopback listener is this machine's user:
+                // only the socket's peer forwards another caller.
+                strip_forwarded_caller(req.headers_mut());
             }
             let grpc_web = req
                 .headers()

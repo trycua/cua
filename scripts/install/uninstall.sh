@@ -672,8 +672,10 @@ cua_scopes_agents_remove() {
 }
 
 # What a cua that is too old to leave Cua Driver's entries alone costs: its
-# `agents remove` would strip them, so the step is skipped. ~/.cua/agent-setup.json,
-# the record `cua agents remove` works from, stays unless --delete-spaces.
+# `agents remove` would strip them, so the step is skipped. That is a note, not a
+# failure: the uninstall finishes normally (the scripts are published before the
+# cua release that adds the flag). ~/.cua/agent-setup.json, the record
+# `cua agents remove` works from, stays unless --delete-spaces.
 OLD_CUA_AGENTS="this cua is older than the version that removes only Cua Spaces' entries from your agents: its 'cua agents remove' would also take Cua Driver's skill and MCP server out of Claude Code, Codex, Cursor and your other agents. So the agent step is skipped, and Cua Spaces' 'cua' MCP server and skills (cua-spaces, cua-volume, cua-sandboxes, gui-automation) stay in your agents. To remove them later, install the latest cua (curl -fsSL https://cua.ai/install.sh | sh -s -- --cli-only --yes) and run: cua agents remove"
 
 # Removes the Cua Spaces skills and MCP entries (the `cua` server, `cua-local`
@@ -691,11 +693,10 @@ remove_agent_integrations() {
         if [ "$dry_run" = 1 ]; then
             say "[dry-run] cua $*: skipped, $OLD_CUA_AGENTS"
         else
-            warn "$OLD_CUA_AGENTS"
+            info "$OLD_CUA_AGENTS"
             if [ "$delete_spaces" = 1 ]; then
-                warn "--delete-spaces also deletes the record cua keeps of them (agent-setup.json), so remove them by hand"
+                info "--delete-spaces also deletes the record cua keeps of them (agent-setup.json), so remove them by hand"
             fi
-            failed=1
         fi
         return 0
     fi

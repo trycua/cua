@@ -215,7 +215,9 @@ function Test-CuaScopesAgentsRemove {
 }
 
 # What a cua that is too old to leave Cua Driver's entries alone costs: its
-# `agents remove` would strip them, so the step is skipped.
+# `agents remove` would strip them, so the step is skipped. That is a note, not a
+# failure: the uninstall finishes normally (the scripts are published before the
+# cua release that adds the flag).
 $OldCuaAgents = 'this cua is older than the version that removes only Cua Spaces'' entries from your agents: its ''cua agents remove'' would also take Cua Driver''s skill and MCP server out of Claude Code, Codex, Cursor and your other agents. So the agent step is skipped, and Cua Spaces'' ''cua'' MCP server and skills (cua-spaces, cua-volume, cua-sandboxes, gui-automation) stay in your agents. To remove them later, install the latest cua (& ([scriptblock]::Create((irm https://cua.ai/install.ps1))) -CliOnly -Yes) and run: cua agents remove'
 
 # Removes the Cua Spaces skills and MCP entries (the `cua` server, `cua-local`
@@ -230,9 +232,8 @@ function Remove-AgentIntegrations {
         if ($DryRun) {
             Write-Host "[dry-run] cua $($agentArgs -join ' '): skipped, $OldCuaAgents"
         } else {
-            Write-Warn $OldCuaAgents
-            if ($DeleteSpaces) { Write-Warn '-DeleteSpaces also deletes the record cua keeps of them (agent-setup.json), so remove them by hand' }
-            $script:Failed = $true
+            Write-Info $OldCuaAgents
+            if ($DeleteSpaces) { Write-Info '-DeleteSpaces also deletes the record cua keeps of them (agent-setup.json), so remove them by hand' }
         }
         return
     }

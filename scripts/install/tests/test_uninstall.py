@@ -332,34 +332,39 @@ class UninstallMacTest(unittest.TestCase):
         self.assertIn("[dry-run]   FAILED MCP server cua: ~/.codex/config.toml", result.stdout)
         self.assertIn("reported a problem (see above), so the list may be incomplete", result.stderr)
 
-    def test_a_cua_too_old_to_leave_cua_driver_alone_skips_the_agent_step_and_finishes_the_rest(self):
+    def test_a_cua_too_old_to_leave_cua_driver_alone_skips_the_agent_step_and_still_succeeds(self):
         """An older `cua agents remove` also strips the `cua-driver` skill and MCP server and
-        has no --dry-run: the uninstaller does not run it, says what stays in the agents and
-        how to remove it, and removes everything else (exit status 1: a step needs attention)."""
+        has no --dry-run: the uninstaller does not run it, says what stays in the agents and how
+        to remove it, removes everything else and exits 0. The script is published on merge,
+        before the cua release that adds the flag, so this must not look like a failure."""
         box = self.box()
         installed_mac(box)
         box.put(".cua/agent-setup.json", "{}\n")
         result = box.run("--yes", env={"FAKE_CUA_OLD_AGENTS": "1"})
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue(box.exists(".cua/agent-setup.json"))
-        self.assertIn("older than the version that removes only Cua Spaces' entries", result.stderr)
-        self.assertIn("agent step is skipped", result.stderr)
-        self.assertIn("install.sh | sh -s -- --cli-only --yes", result.stderr)
-        self.assertIn("run: cua agents remove", result.stderr)
+        self.assertIn("older than the version that removes only Cua Spaces' entries", result.stdout)
+        self.assertIn("agent step is skipped", result.stdout)
+        self.assertIn("install.sh | sh -s -- --cli-only --yes", result.stdout)
+        self.assertIn("run: cua agents remove", result.stdout)
+        # A note, not a warning, and the run says it is done.
+        self.assertNotIn("older than the version", result.stderr)
+        self.assertNotIn("need your attention", result.stdout + result.stderr)
+        self.assertIn("cua-uninstall: done", result.stdout)
         log = box.call_log()
         self.assertEqual([c for c in log if "agents remove" in c and not c.endswith("--help")], [])
-        # The rest still goes: hosting, sign-out, the CLI and the app; the record of what cua
+        # Everything else goes: hosting, sign-out, the CLI and the app; the record of what cua
         # added to the agents stays for a later `cua agents remove` (it is not in the disposable list).
         self.assertGreaterEqual(box.index("host remove --force --uninstalling"), 0)
         self.assertGreaterEqual(box.index("auth logout"), 0)
         self.assertFalse(box.exists(".local/bin/cua"))
         self.assertFalse(box.exists("Applications/Cua Spaces.app"))
-        # --delete-spaces deletes that record too: the warning says to remove the entries by hand.
+        # --delete-spaces deletes that record too: the note says to remove the entries by hand.
         box = Sandbox(tempfile.mkdtemp(dir=self.tmp.name), "Darwin")
         installed_mac(box)
         result = box.run("--yes", "--delete-spaces", env={"FAKE_CUA_OLD_AGENTS": "1"})
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("remove them by hand", result.stderr)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("remove them by hand", result.stdout)
         # A dry run says so and lists the rest of the plan.
         box = Sandbox(tempfile.mkdtemp(dir=self.tmp.name), "Darwin")
         installed_mac(box)

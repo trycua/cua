@@ -191,19 +191,22 @@ Describe 'Invoke-CuaUninstall' {
         $script:Calls | Should -Contain 'other-uninstaller cua-driver'
     }
 
-    It 'skips the agent step, says what stays and finishes the rest when cua is too old to leave Cua Driver''s entries alone' {
+    It 'skips the agent step, says what stays and still succeeds when cua is too old to leave Cua Driver''s entries alone' {
         $Yes = [switch]$true
         $script:OldCua = $true
+        $global:LASTEXITCODE = 0
         $out = Invoke-CuaUninstall *>&1 | Out-String
         $out | Should -Match 'older than the version that removes only Cua Spaces'
         $out | Should -Match 'agent step is skipped'
+        $out | Should -Match 'run: cua agents remove'
+        # A note, not a failure: the run says it is done.
+        $out | Should -Not -Match 'need your attention'
+        $out | Should -Match 'cua-uninstall: done'
+        $global:LASTEXITCODE | Should -Not -Be 1
         @($script:Calls | Where-Object { $_ -like '*agents remove --agents all*' -and $_ -notlike '*--help' }) | Should -BeNullOrEmpty
-        # Everything else still goes, and the run reports that a step needs attention.
+        # Everything else still goes.
         $script:Calls | Should -Contain 'app-uninstaller'
         Test-Path (Join-Path $script:Bin 'cua.exe') | Should -BeFalse
-        $global:LASTEXITCODE | Should -Be 1
-        $global:LASTEXITCODE = 0
-        $script:Failed = $false
     }
 
     It 'still lists the rows in a dry run when one agent''s config cannot be read' {

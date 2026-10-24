@@ -1,0 +1,152 @@
+name: "scratch: reuse semantics"
+
+# Throwaway. Checks GitHub's evaluation of the skip patterns used by the
+# reuse-by-tree change, with fake reuse outputs.
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/scratch-reuse-semantics.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  # reuse says "everything the PR ran was reused".
+  reuse-on:
+    runs-on: ubuntu-latest
+    outputs:
+      pr_subset: ${{ steps.r.outputs.pr_subset }}
+      legs: ${{ steps.legs.outputs.legs || steps.fallback.outputs.matrix }}
+      legs_empty: ${{ steps.empty.outputs.legs || steps.fallback.outputs.matrix }}
+      reused: ${{ steps.r.outputs.reused || '[]' }}
+    steps:
+      - id: fallback
+        run: echo 'matrix=["ubuntu-latest","ubuntu-24.04"]' >> "$GITHUB_OUTPUT"
+      - id: r
+        run: |
+          echo 'pr_subset=true' >> "$GITHUB_OUTPUT"
+          echo 'reused=["named job"]' >> "$GITHUB_OUTPUT"
+      - id: legs
+        run: echo 'legs=["ubuntu-24.04"]' >> "$GITHUB_OUTPUT"
+      - id: empty
+        run: echo 'legs=[]' >> "$GITHUB_OUTPUT"
+
+  # reuse fails: everything must still run, with the full matrices.
+  reuse-broken:
+    runs-on: ubuntu-latest
+    outputs:
+      pr_subset: ${{ steps.r.outputs.pr_subset }}
+      legs: ${{ steps.legs.outputs.legs || steps.fallback.outputs.matrix }}
+      reused: ${{ steps.r.outputs.reused || '[]' }}
+    steps:
+      - id: fallback
+        run: echo 'matrix=["ubuntu-latest","ubuntu-24.04"]' >> "$GITHUB_OUTPUT"
+      - id: r
+        continue-on-error: true
+        run: exit 1
+      - id: legs
+        continue-on-error: true
+        run: exit 1
+
+  # ---- reuse-on: expect build-on skipped, py-on one leg (ubuntu-24.04), simple-on skipped,
+  #      named-on skipped, legs-on one leg, legs-empty-on skipped.
+  build-on:
+    if: ${{ !cancelled() && needs.reuse-on.outputs.pr_subset != 'true' }}
+    needs: reuse-on
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo build
+
+  py-on:
+    if: ${{ !cancelled() && needs.build-on.result != 'failure' && needs.build-on.result != 'cancelled' }}
+    needs: [reuse-on, build-on]
+    name: py-on (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON((github.event_name != 'workflow_dispatch') && (needs.reuse-on.outputs.pr_subset == 'true' && '["ubuntu-24.04"]' || '["ubuntu-latest","ubuntu-24.04"]') || '["ubuntu-latest"]') }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - run: echo py ${{ matrix.os }}
+
+  named-on:
+    needs: reuse-on
+    if: ${{ !contains(fromJSON(needs.reuse-on.outputs.reused), 'named job') }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo should be skipped
+
+  legs-on:
+    needs: reuse-on
+    if: needs.reuse-on.outputs.legs != '[]'
+    name: legs-on (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: ${{ fromJSON(needs.reuse-on.outputs.legs) }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - run: echo legs ${{ matrix.os }}
+
+  legs-empty-on:
+    needs: reuse-on
+    if: needs.reuse-on.outputs.legs_empty != '[]'
+    name: legs-empty-on (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: ${{ fromJSON(needs.reuse-on.outputs.legs_empty) }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - run: echo should be skipped
+
+  # ---- reuse-broken: everything runs.
+  build-broken:
+    if: ${{ !cancelled() && needs.reuse-broken.outputs.pr_subset != 'true' }}
+    needs: reuse-broken
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo build
+
+  py-broken:
+    if: ${{ !cancelled() && needs.build-broken.result != 'failure' && needs.build-broken.result != 'cancelled' }}
+    needs: [reuse-broken, build-broken]
+    name: py-broken (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON((github.event_name != 'workflow_dispatch') && (needs.reuse-broken.outputs.pr_subset == 'true' && '["ubuntu-24.04"]' || '["ubuntu-latest","ubuntu-24.04"]') || '["ubuntu-latest"]') }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - run: echo py ${{ matrix.os }}
+
+  named-broken:
+    needs: reuse-broken
+    if: ${{ !contains(fromJSON(needs.reuse-broken.outputs.reused), 'named job') }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo runs
+
+  legs-broken:
+    needs: reuse-broken
+    if: needs.reuse-broken.outputs.legs != '[]'
+    name: legs-broken (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: ${{ fromJSON(needs.reuse-broken.outputs.legs) }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - run: echo legs ${{ matrix.os }}
+
+  # ---- the job-level skip of a failed need still fails fast: python-like job after a failing build.
+  build-fail:
+    needs: reuse-broken
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - run: exit 1
+
+  py-after-fail:
+    if: ${{ !cancelled() && needs.build-fail.result != 'failure' && needs.build-fail.result != 'cancelled' }}
+    needs: [reuse-broken, build-fail]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo should be skipped because build-fail failed

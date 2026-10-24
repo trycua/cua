@@ -1,13 +1,13 @@
 name: "Codex: build patched cua-driver (Windows)"
 
 on:
+  push:
+    branches:
+      - "fix/windows-floating-ball-uia-and-caption-drag"
+    paths:
+      - ".github/workflows/codex-build-patched-driver.yml"
+      - "libs/cua-driver/rust/crates/platform-windows/**"
   workflow_dispatch:
-    inputs:
-      ref:
-        description: "Branch or SHA to build"
-        required: true
-        default: "fix/windows-floating-ball-uia-and-caption-drag"
-        type: string
 
 permissions:
   contents: read
@@ -31,7 +31,6 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ inputs.ref }}
           submodules: recursive
 
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1

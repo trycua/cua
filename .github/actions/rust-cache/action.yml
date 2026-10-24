@@ -3,16 +3,21 @@ description: >-
   Drop-in replacement for Swatinem/rust-cache in Cua workflows.
 
   rust-cache stores a whole target directory per job (1-3 GB each) and always
-  drops the workspace crates, so every job rebuilt them and the 10 GB Actions
-  cache budget was evicted within minutes. This action routes rustc through
-  sccache instead. sccache is content addressed: a fresh checkout still reuses
-  every unchanged crate, in every workflow and job. The cache directory is one
-  size-capped entry per OS and workspace family, restored by every run and
-  saved by main (pull requests restore main's entry; they save their own only
-  when the pr-save input is "true"). sccache runs from a local directory, not its GitHub
-  backend: that backend writes thousands of small objects and GitHub
-  rate-limits most of them (measured: 70% of writes failed), which left the
-  cache empty. When sccache cannot start, cargo simply compiles.
+  drops the workspace crates, so every job rebuilt them and the Actions cache
+  budget was evicted within minutes. This action routes rustc through sccache
+  instead. sccache is content addressed: a fresh checkout still reuses every
+  unchanged crate, in every workflow and job. The cache directory is one
+  size-capped entry per OS and family, restored by every run and saved by main
+  at most once per family per UTC day (pull requests restore main's entry and
+  never save, unless the pr-save input is "true"). sccache runs from a local
+  directory, not its GitHub backend: that backend writes thousands of small
+  objects and GitHub rate-limits most of them (measured: 70% of writes
+  failed), which left the cache empty. When sccache cannot start, cargo simply
+  compiles.
+
+  The sccache summary (hit rate, hits, misses, cache size against its cap) is
+  printed at the end of every job by the "Post Run mozilla-actions/sccache-action"
+  step and appears as a "sccache stats" annotation on the run.
 
   Do not use this action in release builds that must be reproducible from
   scratch; those keep their own explicit cache settings.
@@ -29,6 +34,8 @@ inputs:
       Cache family; defaults to the first workspace. Jobs that compile
       different unit kinds (clippy `check` units versus builds and tests) use
       different families so the entry a run saves holds what its siblings need.
+      Jobs of the same shape (same profile, features and target) share one
+      family on purpose: that is what lets one main run warm many jobs.
     default: ""
   save-if:
     description: "Set to 'false' to restore only."
@@ -39,12 +46,17 @@ inputs:
   pr-save:
     description: >-
       "true" lets Linux pull request runs save their own cache entry. Off by
-      default: with the repository's 10 GB Actions cache limit every PR entry
-      evicts main's. Flip this default once the limit is raised.
+      default: a PR entry is readable only by that PR, and every one of them
+      (1 to 4 GB each) counts against the repository's Actions cache budget and
+      evicts main's entries.
     default: "false"
   size:
-    description: "Cap of the sccache directory."
-    default: "2G"
+    description: >-
+      Cap of the sccache directory (sccache evicts its least recently used
+      objects beyond it). A family smaller than the cap saves only what it
+      holds. 4G fits the whole dependency tree of the largest families, which a
+      2G cap truncated on every run.
+    default: "4G"
 
 runs:
   using: composite
@@ -67,52 +79,86 @@ runs:
           fam="${first:-root}"
         fi
         fam="$(printf '%s' "$fam" | tr -c 'A-Za-z0-9\n' '-' | cut -c1-60)"
-        # main saves on every OS. Pull requests restore main's cache and save
-        # only when the pr-save input is "true" (set it
-        # once the Actions cache limit is large enough for one entry per
-        # push), and then only on Linux.
+        # Who saves. main saves on every OS (pushes, schedules and manual
+        # runs). A manual run on another branch saves too, into that branch's
+        # own scope: it is how a change to a workflow's cache is measured
+        # before it merges (run it twice and read the second run). Pull
+        # requests restore main's cache and save only when the pr-save input
+        # is "true", and then only on Linux.
         save=false
         if [ "$REF" = refs/heads/main ]; then save=true
+        elif [ "$EVENT" = workflow_dispatch ]; then save=true
         elif [ "$PR_SAVE" = true ] && [ "$RUNNER_OS" = Linux ]; then save=true; fi
         [ "$SAVE_IF" = false ] && save=false
         dir="$RUNNER_TEMP/sccache"
-        echo "family=$fam" >> "$GITHUB_OUTPUT"
-        echo "save=$save" >> "$GITHUB_OUTPUT"
-        echo "dir=$dir" >> "$GITHUB_OUTPUT"
-        echo "prefix=sccache-v1-$RUNNER_OS-$RUNNER_ARCH-$fam-" >> "$GITHUB_OUTPUT"
+        # The prefix ends in "_", which the family never contains (it is
+        # reduced to letters, digits and "-"). With a "-" the family libs-cua
+        # was a prefix of libs-cua-build-fixtures, libs-cua-lint and the rest,
+        # and a run restored a sibling's entry instead of its own.
+        prefix="sccache-v2-$RUNNER_OS-$RUNNER_ARCH-${fam}_"
+        # One key per family per UTC day. A key with the commit sha was new on
+        # every push, so every main push saved a full copy of every family and
+        # the 50 GB budget turned over several times an hour. With the day in
+        # the key the first main run of the day saves, later runs that day see
+        # an exact hit and skip the save, and everything else restores the
+        # newest entry through the prefix.
+        bucket="$(date -u +%Y%m%d)"
+        {
+          echo "family=$fam"
+          echo "save=$save"
+          echo "dir=$dir"
+          echo "prefix=$prefix"
+          echo "key=$prefix$bucket"
+        } >> "$GITHUB_OUTPUT"
+        echo "sccache plan: family=$fam key=$prefix$bucket save=$save"
     - name: Install sccache
       uses: mozilla-actions/sccache-action@fd02668681acd5f960e1372061bee5e3e987195c # v0.0.11
     - name: Restore the sccache directory
+      id: restore
       if: steps.plan.outputs.save != 'true'
       uses: actions/cache/restore@v4
       with:
         path: ${{ steps.plan.outputs.dir }}
-        key: ${{ steps.plan.outputs.prefix }}${{ github.sha }}
+        key: ${{ steps.plan.outputs.key }}
         restore-keys: ${{ steps.plan.outputs.prefix }}
     - name: Restore and later save the sccache directory
+      id: restore-save
       if: steps.plan.outputs.save == 'true'
       uses: actions/cache@v4
       with:
         path: ${{ steps.plan.outputs.dir }}
-        key: ${{ steps.plan.outputs.prefix }}${{ github.sha }}
+        key: ${{ steps.plan.outputs.key }}
         restore-keys: ${{ steps.plan.outputs.prefix }}
     - name: Route rustc through sccache
       shell: bash
       env:
         DIR: ${{ steps.plan.outputs.dir }}
         SIZE: ${{ inputs.size }}
+        FAMILY: ${{ steps.plan.outputs.family }}
+        SAVE: ${{ steps.plan.outputs.save }}
+        EXACT: ${{ steps.restore.outputs.cache-hit || steps.restore-save.outputs.cache-hit }}
+        MATCHED: ${{ steps.restore.outputs.cache-matched-key }}
       run: |
         mkdir -p "$DIR"
-        export SCCACHE_DIR="$DIR" SCCACHE_CACHE_SIZE="$SIZE"
+        files="$(find "$DIR" -type f | wc -l | tr -d '[:space:]')"
+        # Never let the server idle out: the end-of-job statistics come from
+        # it, and a job that compiles early and then runs tests for more than
+        # the default 10 minutes would report a fresh server's zeros.
+        export SCCACHE_DIR="$DIR" SCCACHE_CACHE_SIZE="$SIZE" SCCACHE_IDLE_TIMEOUT=0
         if sccache --start-server >/dev/null 2>&1; then
           {
             echo "SCCACHE_DIR=$DIR"
             echo "SCCACHE_CACHE_SIZE=$SIZE"
+            echo "SCCACHE_IDLE_TIMEOUT=0"
             echo "RUSTC_WRAPPER=sccache"
             # Incremental artifacts cannot be cached and bloat the target dir.
             echo "CARGO_INCREMENTAL=0"
           } >> "$GITHUB_ENV"
-          echo "sccache enabled, dir $DIR ($(du -sh "$DIR" | cut -f1) restored)"
+          if [ "$files" = 0 ]; then how="miss, starting cold"
+          elif [ "$EXACT" = true ]; then how="exact hit"
+          elif [ -n "$MATCHED" ]; then how="prefix hit on $MATCHED"
+          else how="prefix hit"; fi
+          echo "sccache enabled: family $FAMILY, cap $SIZE, restored $(du -sh "$DIR" | cut -f1) in $files files ($how), this run saves: $SAVE"
         else
           echo "::warning::sccache did not start; compiling without it"
         fi

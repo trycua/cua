@@ -83,10 +83,17 @@ struct ProviderFailureTests {
             return request.results ?? []
         }
 
-        func press(_ label: String) throws {
-            let observations = try text()
-            let match = try #require(observations.first { $0.topCandidates(1).first?.string == label },
-                                     "the actual detail renders \(label)")
+        /// Presses `label` once the detail shows it. The view updates after
+        /// the model does, so look again (up to 30 s) instead of reading the
+        /// rendered text once after a fixed wait.
+        func press(_ label: String) async throws {
+            let deadline = ContinuousClock.now + .seconds(30)
+            var found = try text().first { $0.topCandidates(1).first?.string == label }
+            while found == nil, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(100))
+                found = try text().first { $0.topCandidates(1).first?.string == label }
+            }
+            let match = try #require(found, "the actual detail renders \(label)")
             let box = match.boundingBox
             let local = NSPoint(x: box.midX * host.bounds.width,
                                 y: (host.isFlipped ? 1 - box.midY : box.midY) * host.bounds.height)
@@ -161,7 +168,7 @@ struct ProviderFailureTests {
         if !autoConnect {
             try await f.settle()
             #expect(f.backend.requestedIds.isEmpty)
-            try f.press("Connect")
+            try await f.press("Connect")
         }
         try await f.expectProviders(1)
         #expect(f.model.banner?.contains("scripted provider failure") == true)
@@ -169,7 +176,7 @@ struct ProviderFailureTests {
         try await f.settle()
         #expect(f.backend.requestedIds == [f.space.id], "polling does not retry a failure")
         for attempt in 2...3 {
-            try f.press("Try again")
+            try await f.press("Try again")
             try await f.expectProviders(attempt)
         }
         for _ in 0..<80 where f.backend.provider.attempts < 1 {
@@ -192,7 +199,7 @@ struct ProviderFailureTests {
         try await f.approve(true)
         #expect(f.model.detail(f.space).access == nil)
         #expect(f.backend.requestedIds == [f.space.id])
-        try f.press("Try again")
+        try await f.press("Try again")
         try await f.expectProviders(2)
     }
 }

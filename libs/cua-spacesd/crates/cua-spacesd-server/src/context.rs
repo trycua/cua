@@ -654,6 +654,7 @@ impl ServerContext {
             dir: self.config().data_dir.join("mesh"),
             local: std::net::SocketAddr::new(ip, local.port()),
             quic: (quic_port != 0).then(|| std::net::SocketAddr::new(ip, quic_port)),
+            media_udp_port: self.config().mesh_udp_port,
             account,
             env_token: Arc::new(move || auth.token().map(|t| t.to_string())),
             name: cua_mesh::node::hostname(),
@@ -739,6 +740,32 @@ mod tests {
             None,
         );
         assert!(!off.cursor_probe());
+    }
+
+    #[test]
+    fn the_mesh_media_port_follows_the_config() {
+        let host = |ctx: &ServerContext| {
+            ctx.mesh_host_config(
+                "https://relay.example",
+                "token",
+                None,
+                "machine-1",
+                Arc::default(),
+                "127.0.0.1:3211".parse().unwrap(),
+            )
+        };
+        // Unset: the port every release has used.
+        let ctx = ServerContext::new(ServerConfig::default(), None);
+        assert_eq!(host(&ctx).media_udp_port, 3212);
+        // An override (`--mesh-udp-port`) reaches the mesh node.
+        let local = ServerContext::new(
+            ServerConfig {
+                mesh_udp_port: 3222,
+                ..ServerConfig::default()
+            },
+            None,
+        );
+        assert_eq!(host(&local).media_udp_port, 3222);
     }
 
     #[test]

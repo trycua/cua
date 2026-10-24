@@ -3634,7 +3634,8 @@ fn type_text_in_spare_batches<G>(
         per => mapping
             .keysyms
             .chunks(per)
-            .filter(|syms| syms.iter().all(|&s| s == 0))
+            .enumerate()
+            .filter(|&(i, syms)| is_spare_keycode(8 + i, syms))
             .count(),
     };
     let mut rest = text.chars().peekable();
@@ -4585,6 +4586,50 @@ mod key_name_alias_tests {
     }
 
     #[test]
+    fn spare_keycodes_skip_keycode_8() {
+        let mut mapping = GetKeyboardMappingReply {
+            keysyms_per_keycode: 2,
+            sequence: 0,
+            keysyms: vec![0, 0, 0, 0, 'a' as u32, 'A' as u32],
+        };
+        let mut reserve = || reserve_spare_keycode(&mut mapping, 0x100_4f60, |_, _, _, _| Ok(()));
+        assert_eq!(reserve().unwrap().0, 9);
+        assert_eq!(
+            reserve().unwrap_err().to_string(),
+            "no spare keycode available to remap keysym 0x1004F60"
+        );
+    }
+
+    #[test]
+    fn text_batches_do_not_count_keycode_8_as_spare() {
+        let mapping = GetKeyboardMappingReply {
+            keysyms_per_keycode: 2,
+            sequence: 0,
+            keysyms: vec![0, 0, 0, 0, 'a' as u32, 'A' as u32],
+        };
+        let mut events = Vec::new();
+        type_text_in_spare_batches(
+            "你好",
+            &mapping,
+            |ch, mapping| {
+                reserve_spare_keycode(
+                    mapping,
+                    super::mpx_keyboard::keysym_for_char(ch),
+                    |_, _, _, _| Ok(()),
+                )
+                .map(|(keycode, guard)| (keycode, Some(guard)))
+            },
+            |keycode, _| {
+                events.push(keycode);
+                Ok(())
+            },
+            || true,
+        )
+        .unwrap();
+        assert_eq!(events, [9, 9]);
+    }
+
+    #[test]
     fn text_batches_reports_progress_when_a_later_batch_fails() {
         let mapping = GetKeyboardMappingReply {
             keysyms_per_keycode: 2,
@@ -4724,6 +4769,14 @@ impl Drop for RemappedKeycode<'_> {
     }
 }
 
+/// Whether a text may borrow `keycode`: every keysym slot is NoSymbol (0) — i.e.
+/// completely unused — so borrowing it cannot clobber a real key. Keycode 8 is
+/// evdev KEY_RESERVED, which a virtual keyboard cannot send, so it is never
+/// borrowed.
+fn is_spare_keycode(keycode: usize, keysyms: &[u32]) -> bool {
+    keycode > 8 && keysyms.iter().all(|&s| s == 0)
+}
+
 /// Reserve a fully unused keycode for `keysym`, calling `bind` before updating
 /// the local mapping. Returns the keycode and the value produced by `bind`.
 fn reserve_spare_keycode<G>(
@@ -4736,15 +4789,14 @@ fn reserve_spare_keycode<G>(
         bail!("empty keyboard mapping; cannot remap keysym 0x{keysym:X}");
     }
 
-    // Find a keycode whose every keysym slot is NoSymbol (0) — i.e. completely
-    // unused — so borrowing it cannot clobber a real key. Scan high-to-low:
-    // high keycodes are far likelier to be free than the low, populated ones.
+    // Scan high-to-low: high keycodes are far likelier to be free than the
+    // low, populated ones.
     let spare = mapping
         .keysyms
         .chunks(per)
         .enumerate()
         .rev()
-        .find(|(_, syms)| syms.iter().all(|&s| s == 0))
+        .find(|&(i, syms)| is_spare_keycode(8 + i, syms))
         .map(|(i, _)| (8 + i) as u8)
         .ok_or_else(|| anyhow!("no spare keycode available to remap keysym 0x{keysym:X}"))?;
 

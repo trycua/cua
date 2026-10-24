@@ -41,7 +41,7 @@ web = ["dep:tonic-web-wasm-client"]
 
 [dependencies]
 # Contract types (both targets). The server half never builds for wasm32.
-cua-proto = { path = "../cua-proto", version = "0.7.0", default-features = false, features = ["client", "serde"] } # x-release-please-version
+cua-proto = { path = "../cua-proto", version = "0.8.0", default-features = false, features = ["client", "serde"] } # x-release-please-version
 uniffi.workspace = true
 thiserror.workspace = true
 serde.workspace = true

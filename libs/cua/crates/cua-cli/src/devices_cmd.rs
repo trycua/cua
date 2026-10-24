@@ -6,7 +6,7 @@
 //! device; `cua auth login` does (see [`after_login`]).
 
 use crate::auth;
-use crate::util::{self, line};
+use crate::util::{self, hint_line, line};
 use clap::Subcommand;
 use cua_host::{DeviceAuth, DeviceState, DeviceView};
 use cua_sdk::CuaError;
@@ -191,7 +191,7 @@ pub async fn after_login(home: &Path, out: &mut dyn Write) {
         ),
         Ok(Ok(r)) => {
             if let Some(code) = r.code {
-                line(
+                hint_line(
                     out,
                     format!(
                         "This device is waiting for approval (code {code}): approve it from an enrolled device with `cua devices approve {code}` or in the Cua Spaces app."
@@ -199,13 +199,13 @@ pub async fn after_login(home: &Path, out: &mut dyn Write) {
                 );
             }
         }
-        Ok(Err(e)) => line(
+        Ok(Err(e)) => hint_line(
             out,
             format!(
                 "Signed in, but this device could not be enrolled yet ({e}); run `cua devices enroll`."
             ),
         ),
-        Err(_) => line(
+        Err(_) => hint_line(
             out,
             "Signed in, but the relay did not answer in time to enroll this device; run `cua devices enroll`.",
         ),
@@ -302,14 +302,14 @@ pub async fn run_with(
             }
             match (&id, &this) {
                 (None, _) => {
-                    line(
+                    hint_line(
                         out,
                         "This device is not enrolled (run `cua devices enroll`).",
                     );
                     return Ok(1);
                 }
                 (Some(id), None) => match state {
-                    Ok(None) => line(
+                    Ok(None) => hint_line(
                         out,
                         format!(
                             "This device ({id}) is not registered on {} (run `cua devices enroll`).",
@@ -342,7 +342,7 @@ pub async fn run_with(
                 }
             }
             if let Some(p) = pending {
-                line(
+                hint_line(
                     out,
                     format!(
                         "  approve it from an enrolled device: `cua devices approve {}` (code expires {})",
@@ -388,7 +388,7 @@ pub async fn run_with(
                     out,
                     format!("Approve this device from an enrolled device with the code {code}:"),
                 );
-                line(out, format!("  cua devices approve {code}"));
+                hint_line(out, format!("  cua devices approve {code}"));
                 line(
                     out,
                     format!(
@@ -399,7 +399,7 @@ pub async fn run_with(
                             .unwrap_or_else(|| "in 10 minutes".into())
                     ),
                 );
-                line(
+                hint_line(
                     out,
                     "Or sign in again: `cua auth login` enrolls this device (older relays: only your first device).",
                 );

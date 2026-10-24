@@ -10,7 +10,7 @@
 //! cua agent notifications --unread
 //! ```
 
-use crate::util::{json_line, line};
+use crate::util::{hint_line, json_line, line};
 use clap::Subcommand;
 use cua_sdk::{Cua, CuaError, PersistentAgentOptions};
 use std::io::Write;
@@ -241,7 +241,7 @@ pub async fn run(
                     .collect();
                 show(out, serde_json::json!({"agents": rows}));
             } else if all.is_empty() {
-                line(
+                hint_line(
                     out,
                     "No persistent agents. Create one with `cua agent create`.",
                 );

@@ -3,7 +3,7 @@
 //! machines; `add` / `rm`: register or forget a Space).
 
 use crate::auth;
-use crate::util::line;
+use crate::util::{hint_line, line};
 use clap::Subcommand;
 use cua_host::{
     AccountTokens, DeviceAuth, Host, HostStatus, MachinePatch, RelayClient, RunnerKind,
@@ -1537,7 +1537,7 @@ fn host_error(e: cua_host::Error, m: String) -> CuaError {
 
 fn render(s: &HostStatus, out: &mut dyn Write) {
     if !s.configured {
-        line(
+        hint_line(
             out,
             "This computer is not set up for access (run `cua host setup`).",
         );
@@ -1545,7 +1545,7 @@ fn render(s: &HostStatus, out: &mut dyn Write) {
     }
     let name = s.name.clone().unwrap_or_default();
     if s.paused_signed_out {
-        line(
+        hint_line(
             out,
             "Relay sharing is paused: the Cua app on this computer is signed out. \
              Sign in to it again (or run `cua host start`) to share it.",
@@ -1589,12 +1589,12 @@ fn render(s: &HostStatus, out: &mut dyn Write) {
         ),
     );
     if s.service.kind == "app-helper" && s.legacy_service {
-        line(
+        hint_line(
             out,
             "  the old LaunchAgent (com.trycua.spacesd.host) is still there: run `cua host migrate` to remove it",
         );
     } else if s.service.kind == "launchd" && s.helper_available {
-        line(
+        hint_line(
             out,
             "  tip: `cua host migrate` moves this service into the Cua Spaces app (its login item)",
         );
@@ -2051,7 +2051,7 @@ pub async fn run_host(
             } else {
                 line(out, format!("{}: {}", m.outcome, m.detail));
                 if m.permissions_needed {
-                    line(
+                    hint_line(
                         out,
                         "macOS will ask you once more for Screen Recording and Accessibility, \
                          now for Cua Spaces: allow both in System Settings > Privacy & \
@@ -2476,10 +2476,9 @@ async fn pair_codes(
             lines.push(format!("  Staging build (Linux):  {st}"));
         }
         lines.push(format!("  Windows:        {ps}"));
-        lines.push(
-            "It joins your pool as a host that provides Spaces; see it with `cua computers`."
-                .to_string(),
-        );
+        lines.push(crate::util::hint(
+            "It joins your pool as a host that provides Spaces; see it with `cua computers`.",
+        ));
         for l in lines {
             line(out, l);
         }
@@ -2487,7 +2486,10 @@ async fn pair_codes(
     let Some(org) = org else {
         return Ok(());
     };
-    let later = format!("cua team add-machine {} relay:<computer id>", org.id);
+    let later = crate::util::hint(&format!(
+        "cua team add-machine {} relay:<computer id>",
+        org.id
+    ));
     if no_wait {
         if !json {
             line(
@@ -2890,7 +2892,7 @@ pub async fn run_add_host(
             serde_json::json!({ "host": host, "space": info.id, "via": "direct" }).to_string(),
         );
     } else {
-        line(
+        hint_line(
             out,
             format!(
                 "Added host {host:?} ({}, direct). Create Spaces on it with `cua spaces create --on \"host:{host}\"`.",

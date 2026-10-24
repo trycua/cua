@@ -18,7 +18,7 @@ use clap::Args;
 use cua_sdk::CuaError;
 use serde_json::{Value, json};
 
-use crate::util::line;
+use crate::util::{hint_line, line};
 
 /// `cua sb run`.
 #[derive(Args, Debug)]
@@ -237,7 +237,7 @@ pub async fn run(a: RunArgs, json: bool, out: &mut dyn Write) -> Result<i32, Cua
         if json {
             line(out, json!({"run": run, "jobs": count}).to_string());
         } else {
-            line(
+            hint_line(
                 out,
                 format!(
                     "{run}: {count} job{} submitted (cua sb runs {run})",
@@ -329,7 +329,7 @@ pub async fn run(a: RunArgs, json: bool, out: &mut dyn Write) -> Result<i32, Cua
             ),
         );
         if ok < u64::from(count) {
-            line(
+            hint_line(
                 out,
                 format!("See what failed: cua sb runs {run} --state failed"),
             );
@@ -466,7 +466,10 @@ fn keys_lines(k: &Value, width: Option<usize>) -> Vec<String> {
             ));
         }
     }
-    out.iter().flat_map(|l| fit_line(l, width)).collect()
+    // Named for this build's CLI before it wraps, so a command is not split.
+    out.iter()
+        .flat_map(|l| fit_line(&crate::util::hint(l), width))
+        .collect()
 }
 
 /// `just now`, `5 min ago`, `3 h ago`, `12 days ago`.

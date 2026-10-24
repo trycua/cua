@@ -2667,27 +2667,54 @@ fn channel_command(cli: clap::Command, channel: cua_home::channel::CuaChannel) -
     if !channel.is_local() {
         return cli;
     }
-    let name = channel.cli_name();
-    localize_help(cli.bin_name(name), name)
+    let verbs = util::verbs_of(&cli);
+    localize_help(cli.bin_name(channel.cli_name()), channel, &verbs)
 }
 
-/// `cmd` and its subcommands with the examples in their after-help run as
-/// `name` (see [`localize_examples`]).
-fn localize_help(cmd: clap::Command, name: &str) -> clap::Command {
-    let after = cmd
-        .get_after_help()
-        .map(|h| localize_examples(&h.to_string(), name));
-    let after_long = cmd
-        .get_after_long_help()
-        .map(|h| localize_examples(&h.to_string(), name));
+/// `cmd` and its subcommands, their arguments included, with every command
+/// their help tells the reader to run named for `channel`'s CLI: the
+/// examples in the after-help (see [`localize_examples`]) and a `cua <verb>`
+/// anywhere in the about, long about, after-help and argument help (see
+/// [`util::hint`]). `verbs` are the CLI's command names.
+fn localize_help(
+    cmd: clap::Command,
+    channel: cua_home::channel::CuaChannel,
+    verbs: &std::collections::HashSet<String>,
+) -> clap::Command {
+    let name = channel.cli_name();
+    let text = |s: &clap::builder::StyledStr| {
+        util::localize_for(channel, &localize_examples(&s.to_string(), name), verbs)
+    };
+    let about = cmd.get_about().map(text);
+    let long_about = cmd.get_long_about().map(text);
+    let after = cmd.get_after_help().map(text);
+    let after_long = cmd.get_after_long_help().map(text);
     let mut cmd = cmd;
+    if let Some(h) = about {
+        cmd = cmd.about(h);
+    }
+    if let Some(h) = long_about {
+        cmd = cmd.long_about(h);
+    }
     if let Some(h) = after {
         cmd = cmd.after_help(h);
     }
     if let Some(h) = after_long {
         cmd = cmd.after_long_help(h);
     }
-    cmd.mut_subcommands(|sub| localize_help(sub, name))
+    cmd.mut_args(|arg| {
+        let help = arg.get_help().map(text);
+        let long_help = arg.get_long_help().map(text);
+        let mut arg = arg;
+        if let Some(h) = help {
+            arg = arg.help(h);
+        }
+        if let Some(h) = long_help {
+            arg = arg.long_help(h);
+        }
+        arg
+    })
+    .mut_subcommands(|sub| localize_help(sub, channel, verbs))
 }
 
 /// `text` with every line that is a `cua ...` example (it starts with `cua `
@@ -2721,7 +2748,7 @@ fn is_advanced_help(args: &[std::ffi::OsString]) -> bool {
 /// Shows a fallback to the relay's HTTPS path on stderr (never stdout, so
 /// `--json` output and pipes stay clean).
 fn fallback_notice(n: &cua_spaces::mesh::FallbackNotice) {
-    eprintln!("cua: {}", n.message());
+    eprintln!("{}: {}", util::cli(), n.message());
 }
 
 pub fn main() {
@@ -2854,7 +2881,7 @@ pub fn main() {
             Ok(c) => c,
             Err(e) => {
                 let _ = out.flush();
-                eprintln!("cua: {e}");
+                eprintln!("{}: {}", channel.cli_name(), util::hint(&e.to_string()));
                 exit_code(&e)
             }
         }
@@ -3692,6 +3719,35 @@ mod tests {
         assert_eq!(
             local.render_version().trim(),
             format!("cua {}", cua_sdk::VERSION)
+        );
+    }
+
+    /// Everything in Local's help that tells the reader to run a command is
+    /// already named `cua-local`: running the hint rewriter over the rendered
+    /// help (after-help, about, argument help) finds nothing left to change.
+    /// A new help text that spells `cua host setup` in the middle of a line, or
+    /// in backticks, is caught here, not by a user who pastes it.
+    #[test]
+    fn local_help_has_no_stable_command_left() {
+        use cua_home::channel::CuaChannel;
+        let verbs = util::verbs_of(&cli_command(true));
+        let mut local = channel_command(cli_command(true), CuaChannel::Local);
+        local.build();
+        for (name, text) in all_help(&mut local) {
+            assert_eq!(
+                util::localize_for(CuaChannel::Local, &text, &verbs),
+                text,
+                "{name} still names the Stable `cua`"
+            );
+        }
+        // And the rewrite is not a no-op: Stable's help still has them.
+        let mut stable = cli_command(true);
+        stable.build();
+        assert!(
+            all_help(&mut stable)
+                .iter()
+                .any(|(_, t)| t.contains("`cua ")),
+            "Stable help has backticked commands"
         );
     }
 

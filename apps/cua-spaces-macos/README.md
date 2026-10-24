@@ -379,7 +379,12 @@ not verify it puts the previous Local app back. It refuses to replace anything
 at the Local path that is not a Cua Spaces Local bundle, and it never writes to
 `/Applications/Cua Spaces.app`, `~/.local/bin/cua`, `~/.cua` or `~/.lume`.
 `cua-local` is a link to the `cua` inside the app; no shell profile is edited,
-so put `~/.local/bin` on your PATH.
+so put `~/.local/bin` on your PATH. It names itself in what it prints: its help,
+its hints and its error messages tell you to run `cua-local host setup`, never
+`cua host setup` (which would run the released CLI). The code writes each hint
+for the released CLI and `CuaChannel` renames it (`localize_cli_hints`, and
+`util::hint` in `cua-cli`); a message that names a command goes through one of
+them.
 
 **Permissions survive a rebuild** when the app is signed with the stable local
 certificate that Cua Driver's local install uses

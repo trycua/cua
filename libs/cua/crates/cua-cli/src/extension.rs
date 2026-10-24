@@ -360,7 +360,11 @@ async fn stop_daemon_within(
         .await
         .unwrap_or(false)
     {
-        eprintln!("cua: the running cua daemon (pid {pid}) did not exit when asked; ended it");
+        eprintln!(
+            "{}: the running {} daemon (pid {pid}) did not exit when asked; ended it",
+            crate::util::cli(),
+            crate::util::cli()
+        );
         if cua_daemon::client::live_address().is_none() {
             return Ok(());
         }

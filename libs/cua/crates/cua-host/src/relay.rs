@@ -86,9 +86,10 @@ pub struct NoAccount;
 #[async_trait::async_trait]
 impl AccountTokens for NoAccount {
     async fn access_token(&self) -> Result<String> {
-        Err(Error::Unauthenticated(
-            "not signed in to cua.ai (run `cua auth login` or sign in from the app)".into(),
-        ))
+        Err(Error::Unauthenticated(format!(
+            "not signed in to cua.ai (run `{} auth login` or sign in from the app)",
+            crate::cli()
+        )))
     }
 }
 

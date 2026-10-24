@@ -1,7 +1,9 @@
 //! Shared helpers: paths, output, prompts, browser, HTTP.
 
+use cua_home::channel::CuaChannel;
 use cua_sdk::CuaError;
 use std::{
+    collections::HashSet,
     io::{IsTerminal, Write},
     path::PathBuf,
     time::Duration,
@@ -65,6 +67,87 @@ pub fn http_err(e: impl std::fmt::Display) -> CuaError {
 /// Writes a line, ignoring broken pipes.
 pub fn line(out: &mut dyn Write, s: impl AsRef<str>) {
     let _ = writeln!(out, "{}", s.as_ref());
+}
+
+/// The name of this build's CLI, for a message that holds one command's name
+/// apart from its arguments (a `cua-local sb create ...` command in a JSON
+/// list): `cua`, or `cua-local` on Local. Prose goes through [`hint`].
+pub fn cli() -> &'static str {
+    CuaChannel::current().cli_name()
+}
+
+/// Writes a hint line: [`line`] with each `cua <verb>` command it tells the
+/// reader to run named for this build's CLI (`cua-local` on Local, see
+/// [`hint`]). Stable's output is unchanged. For messages we wrote, never for
+/// data (a Space's output, names, JSON).
+pub fn hint_line(out: &mut dyn Write, s: impl AsRef<str>) {
+    line(out, hint(s.as_ref()));
+}
+
+/// `s` with each command it tells the reader to run named for this build's
+/// CLI, so "run `cua host setup`" says `cua-local host setup` on Local and a
+/// pasted hint never runs the Stable CLI. Stable's text is returned as is.
+/// Two spellings are rewritten: a backticked `` `cua <anything>` `` (see
+/// [`CuaChannel::localize_cli_hints`]) and a bare `cua <verb>` ("Run it: cua
+/// spaces create ...") where `<verb>` is one of this CLI's commands, so prose
+/// such as "the cua daemon's log" or "cua will not ask again" is left alone.
+/// For messages we wrote, never for data.
+pub fn hint(s: &str) -> String {
+    hint_for(CuaChannel::current(), s)
+}
+
+fn hint_for(channel: CuaChannel, s: &str) -> String {
+    if !channel.is_local() {
+        return s.to_string();
+    }
+    localize_for(channel, s, cli_verbs())
+}
+
+/// [`hint`] for `channel`, given the names of the CLI's commands.
+pub(crate) fn localize_for(channel: CuaChannel, s: &str, verbs: &HashSet<String>) -> String {
+    let s = channel.localize_cli_hints(s);
+    if !channel.is_local() || !s.contains("cua ") {
+        return s.into_owned();
+    }
+    name_bare_commands(&s, channel.cli_name(), verbs)
+}
+
+/// The names (and aliases) of the CLI's commands, such as `host` and `sb`.
+fn cli_verbs() -> &'static HashSet<String> {
+    static VERBS: std::sync::OnceLock<HashSet<String>> = std::sync::OnceLock::new();
+    VERBS.get_or_init(|| verbs_of(&crate::cli_command(true)))
+}
+
+/// The names (and aliases) of `cli`'s top-level commands.
+pub(crate) fn verbs_of(cli: &clap::Command) -> HashSet<String> {
+    cli.get_subcommands()
+        .flat_map(|c| std::iter::once(c.get_name()).chain(c.get_all_aliases()))
+        .map(str::to_string)
+        .collect()
+}
+
+/// `text` with each bare `cua <verb>` (not part of a longer word, path or
+/// name) starting with `name` instead of `cua`.
+fn name_bare_commands(text: &str, name: &str, verbs: &HashSet<String>) -> String {
+    let mut out = String::with_capacity(text.len() + 16);
+    let mut copied = 0;
+    for (at, _) in text.match_indices("cua ") {
+        let starts_word = text[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !(c.is_alphanumeric() || "-_./~".contains(c)));
+        let rest = &text[at + 4..];
+        let verb_len = rest
+            .find(|c: char| !(c.is_alphanumeric() || c == '-' || c == '_'))
+            .unwrap_or(rest.len());
+        if starts_word && verbs.contains(&rest[..verb_len]) {
+            out.push_str(&text[copied..at]);
+            out.push_str(name);
+            copied = at + 3;
+        }
+    }
+    out.push_str(&text[copied..]);
+    out
 }
 
 /// Pretty JSON line.
@@ -562,5 +645,61 @@ mod browser_tests {
         let (program, args) = super::launch_command(SIGN_IN);
         assert_ne!(program, "cmd");
         assert_eq!(args, vec![SIGN_IN.to_string()]);
+    }
+}
+
+#[cfg(test)]
+mod hint_tests {
+    use super::*;
+
+    const HINT: &str = "run `cua host setup` (or `cua auth login`); then cua spaces ls, \
+                        cua sb view x, the cua daemon's log, cua will not ask, ~/.cua config, \
+                        `cua` and Cua spaces ls";
+
+    #[test]
+    fn stable_hints_are_unchanged() {
+        assert_eq!(hint_for(CuaChannel::Stable, HINT), HINT);
+    }
+
+    #[test]
+    fn local_hints_name_the_local_cli() {
+        assert_eq!(
+            hint_for(CuaChannel::Local, HINT),
+            "run `cua-local host setup` (or `cua-local auth login`); then cua-local spaces ls, \
+             cua-local sb view x, the cua-local daemon's log, cua will not ask, ~/.cua config, \
+             `cua` and Cua spaces ls"
+        );
+        // A command named in prose is a command of this CLI too, and the word
+        // after `cua` is the whole verb, not a prefix of one.
+        assert_eq!(
+            hint_for(CuaChannel::Local, "Not logged in. Run 'cua auth login'."),
+            "Not logged in. Run 'cua-local auth login'."
+        );
+        assert_eq!(
+            hint_for(CuaChannel::Local, "cua hostile, cua sbx, cua"),
+            "cua hostile, cua sbx, cua"
+        );
+        // Not a command of this CLI, part of a longer name or path: untouched.
+        for t in [
+            "cua foo bar",
+            "ai.cua spaces",
+            "my-cua spaces",
+            "/opt/cua spaces",
+            "cua",
+            "",
+        ] {
+            assert_eq!(hint_for(CuaChannel::Local, t), t, "{t}");
+        }
+    }
+
+    #[test]
+    fn the_verbs_are_the_cli_commands() {
+        let verbs = cli_verbs();
+        for v in [
+            "host", "spaces", "sb", "auth", "jobs", "run", "do", "daemon",
+        ] {
+            assert!(verbs.contains(v), "{v}");
+        }
+        assert!(!verbs.contains("will"));
     }
 }

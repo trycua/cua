@@ -142,12 +142,14 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: apps/cua-spaces/pnpm-lock.yaml
-      - name: Install Rust, the wasm32 target and wasm-bindgen
+      - name: Install Rust and the wasm32 target
         shell: bash
         run: |
           rustup show active-toolchain || rustup toolchain install
           rustup target add wasm32-unknown-unknown
-          cargo install wasm-bindgen-cli --version 0.2.126 --locked
+      # The prebuilt release binary: `cargo install wasm-bindgen-cli` here took
+      # 1.7 minutes (median of 25 runs) on every run.
+      - uses: ./.github/actions/wasm-bindgen
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
       - name: Install Linux build dependencies

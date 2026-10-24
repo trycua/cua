@@ -139,6 +139,31 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     await waitFor(() => expect(calls.find((c) => c.op === "session.completeOnboarding")).toBeTruthy());
   });
 
+  it("Back works from every step after Welcome, all the way to Welcome, keeping what was picked", async () => {
+    const calls = await mount();
+    await waitFor(() => expect(heading()).toBe("Your agents get their own computer."));
+    expect(document.querySelector("[data-first-run-back]")).toBeNull();
+    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toBe("Pick your agent."));
+    click('[data-first-run-connect="codex"]');
+    await waitFor(() => expect(readFirstRun().picked).toEqual(["codex"]));
+    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toBe("Connect your other devices."));
+    click("[data-first-run-secondary]");
+    await waitFor(() => expect(heading()).toBe("Try it in OpenAI Codex."));
+    // Try it → Connect your devices → Pick your agent → Welcome.
+    click("[data-first-run-back]");
+    await waitFor(() => expect(heading()).toBe("Connect your other devices."));
+    click("[data-first-run-back]");
+    await waitFor(() => expect(heading()).toBe("Pick your agent."));
+    expect(document.querySelector<HTMLElement>('[data-first-run-agent="codex"]')!.dataset.connected).toBe("true");
+    click("[data-first-run-back]");
+    await waitFor(() => expect(heading()).toBe("Your agents get their own computer."));
+    // Going back only navigates: nothing was connected again or undone.
+    expect(readFirstRun().picked).toEqual(["codex"]);
+    expect(calls.filter((c) => c.op === "agents.configure")).toHaveLength(1);
+  });
+
   it("Codex: its ChatGPT sign-in and OpenAI key follow it, and the sign-in starts on this computer", async () => {
     writeFirstRun({ step: "connect" });
     const calls = await mount({ agents: (rows) => rows.map((r) => ({ ...r, installed: r.agent === "codex" })) });

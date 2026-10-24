@@ -259,6 +259,7 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
       <div className="mt-6 flex items-center gap-4">
         <Primary label={c.primary.label} onClick={() => void fr.act(c.primary.id)} />
         {c.secondary ? <Quiet label={c.secondary.label} onClick={() => void fr.act(c.secondary!.id)} data-first-run-secondary="" /> : null}
+        <Quiet label="Back" onClick={fr.back} data-first-run-back="" />
       </div>
       {fr.usage ? (
         <label className="mt-5 flex items-center gap-2.5 text-[13px] text-muted-foreground" data-first-run-usage="">
@@ -322,6 +323,7 @@ function Devices({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
       <div className="mt-7 flex items-center gap-4">
         <Primary label={d.primary.label} onClick={() => void fr.act(d.primary.id)} data-first-run-devices-primary={d.primary.id} />
         {d.secondary ? <Quiet label={d.secondary.label} onClick={() => void fr.act(d.secondary!.id)} data-first-run-secondary="" /> : null}
+        <Quiet label="Back" onClick={fr.back} data-first-run-back="" />
       </div>
       {d.note ? <p className="mt-4 text-[13px] text-muted-foreground">{d.note}</p> : null}
     </div>

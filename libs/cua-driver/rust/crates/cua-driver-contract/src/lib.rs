@@ -640,6 +640,25 @@ mod tests {
     }
 
     #[test]
+    fn invoke_menu_discloses_background_save_automation_consent() {
+        let description = tool_contract("invoke_menu")
+            .expect("invoke_menu contract")
+            .description;
+        for phrase in [
+            "On macOS, a disabled Save (⌘S) in a background document window",
+            "known document path",
+            "scripting interface using Apple Events",
+            "without activating the app",
+            "per-app Automation consent",
+            "may show macOS’s first-use consent prompt",
+            "denied permission refuses the save",
+            "never falls back to pixels",
+        ] {
+            assert!(description.contains(phrase), "missing disclosure: {phrase}");
+        }
+    }
+
+    #[test]
     fn invoke_menu_requires_an_exact_nonempty_bounded_path() {
         let contract = tool_contract("invoke_menu").expect("invoke_menu contract");
         assert_eq!(

@@ -172,7 +172,14 @@ pub fn sweep_temps(dir: &Path, depth: usize) -> std::io::Result<(u64, u64)> {
     let (mut files, mut bytes) = (0u64, 0u64);
     for entry in entries {
         let entry = entry?;
-        let meta = entry.metadata()?;
+        // A temp file can vanish between the listing and the stat or the
+        // remove: its writer finished and renamed it, or gave up. Gone is
+        // what the sweep wants, so it is not an error.
+        let meta = match entry.metadata() {
+            Ok(m) => m,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e),
+        };
         if meta.is_dir() {
             if depth > 0 {
                 let (f, b) = sweep_temps(&entry.path(), depth - 1)?;
@@ -182,9 +189,14 @@ pub fn sweep_temps(dir: &Path, depth: usize) -> std::io::Result<(u64, u64)> {
             continue;
         }
         if meta.is_file() && is_write_temp(&entry.file_name().to_string_lossy()) {
-            std::fs::remove_file(entry.path())?;
-            files += 1;
-            bytes += meta.len();
+            match std::fs::remove_file(entry.path()) {
+                Ok(()) => {
+                    files += 1;
+                    bytes += meta.len();
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e),
+            }
         }
     }
     if files > 0 {
@@ -750,6 +762,39 @@ mod tests {
         assert_eq!(sweep_temps(dir.path(), 2).unwrap(), (0, 0));
         assert!(pool.join("log.jsonl").exists());
         assert!(dir.path().join(".notes.tmp").exists());
+    }
+
+    /// A previous relay in the same process (a restart in a test, a handover)
+    /// can still be writing while the next one sweeps: a temp file that is
+    /// renamed or removed between the listing and the stat or the remove must
+    /// not fail the start.
+    #[test]
+    fn a_sweep_racing_the_removal_of_its_temps_does_not_fail() {
+        use std::sync::Arc;
+        let dir = tempfile::tempdir().unwrap();
+        let names: Vec<_> = (0..4000)
+            .map(|_| {
+                let id = uuid::Uuid::new_v4().simple();
+                dir.path().join(format!(".relay.mesh.json.{id}.tmp"))
+            })
+            .collect();
+        for name in &names {
+            std::fs::write(name, "partial").unwrap();
+        }
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let remover = {
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                for name in &names {
+                    let _ = std::fs::remove_file(name);
+                }
+            })
+        };
+        barrier.wait();
+        let swept = sweep_temps(dir.path(), 0);
+        remover.join().unwrap();
+        swept.unwrap();
     }
 
     #[test]

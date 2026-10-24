@@ -75,12 +75,12 @@ sleep() {
 
 
 def run_gate(rows, jobs='test\tsuccess', older_jobs=None, rows_dir=None,
-             max_sleeps=4, max_seconds=10**9):
+             max_sleeps=4, max_seconds=10**9, queue_ref=''):
     # Mirrors the runner: GitHub runs a bare `run:` step with `bash -e`. The mocked
     # sleep advances SECONDS, so the poll schedule is observable without waiting.
     return subprocess.run(
         ['bash', '-e', '-c', MOCK + SCRIPT[SCRIPT.index('sha=$PR_SHA'):]],
-        env={**os.environ, 'PR_SHA': 'abc', 'QUEUE_REF': '',
+        env={**os.environ, 'PR_SHA': 'abc', 'QUEUE_REF': queue_ref,
              'GITHUB_REPOSITORY': 'test/repo', 'GITHUB_RUN_ID': '99',
              'ROWS': rows, 'JOBS': jobs,
              'OLDER_JOBS': jobs if older_jobs is None else older_jobs,
@@ -183,3 +183,16 @@ def test_gate_poll_schedule_backs_off_and_stays_within_the_api_budget():
     assert intervals.count(30) == 20
     # One run listing is one or two API calls; keep a long suite under 100 an hour.
     assert len(sleeps) <= 100
+
+
+def test_gate_reads_the_pull_request_number_from_a_merge_queue_ref():
+    ref = 'refs/heads/gh-readonly-queue/main/pr-5811-0123abcd'
+    completed = run_gate(DONE, queue_ref=ref)
+    assert completed.returncode == 0, completed.stderr
+    assert 'build: pass' in completed.stdout
+
+
+def test_gate_fails_on_a_merge_queue_ref_without_a_pull_request_number():
+    completed = run_gate(DONE, queue_ref='refs/heads/gh-readonly-queue/main/odd')
+    assert completed.returncode == 1
+    assert 'build: pass' not in completed.stdout

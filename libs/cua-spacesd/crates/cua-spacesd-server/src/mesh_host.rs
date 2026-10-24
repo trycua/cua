@@ -22,8 +22,11 @@
 //!   remembers them, and filters the relay's map to its own approvals.
 //!   Streams are spliced to spacesd unchanged: the env token still travels
 //!   in each request, now inside WireGuard.
-//! - **QUIC media.** Mesh UDP [`cua_mesh::MEDIA_UDP_PORT`] reaches the
-//!   local QUIC media port, so QUIC streaming works over the mesh.
+//! - **QUIC media.** Mesh UDP [`MeshHostConfig::media_udp_port`]
+//!   ([`cua_mesh::MEDIA_UDP_PORT`], 3212, unless `--mesh-udp-port` says
+//!   otherwise) reaches the local QUIC media port, so QUIC streaming works
+//!   over the mesh. It is a port of the mesh's own network, not of the
+//!   operating system.
 //! - **Metering (account machines).** The relay meters sessions on its
 //!   HTTPS path itself; mesh traffic never passes it in the clear, so this
 //!   node tells it which peers hold streams open (requests in flight,
@@ -239,6 +242,9 @@ pub struct MeshHostConfig {
     pub local: SocketAddr,
     /// The local QUIC media port, if QUIC runs.
     pub quic: Option<SocketAddr>,
+    /// The mesh UDP port that reaches [`Self::quic`]
+    /// ([`cua_mesh::MEDIA_UDP_PORT`] by default).
+    pub media_udp_port: u16,
     /// Account details learned on the relay handshake.
     pub account: Arc<AccountLink>,
     /// The env token, for static-mode pairing proofs.
@@ -462,7 +468,7 @@ async fn start(cfg: &MeshHostConfig) -> cua_mesh::Result<Mesh> {
     }));
     let mesh = Mesh::start(mc).await?;
     if let Some(quic) = cfg.quic {
-        mesh.serve_udp(cua_mesh::MEDIA_UDP_PORT, quic)?;
+        mesh.serve_udp(cfg.media_udp_port, quic)?;
     }
     Ok(mesh)
 }

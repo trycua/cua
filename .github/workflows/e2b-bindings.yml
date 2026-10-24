@@ -43,7 +43,7 @@ env:
 jobs:
   swift:
     name: swift tests (macOS)
-    runs-on: macos-26
+    runs-on: macos-26-xlarge
     # Cold, the release cua-sdk build alone nears 45 minutes on macos-26.
     timeout-minutes: 90
     defaults:

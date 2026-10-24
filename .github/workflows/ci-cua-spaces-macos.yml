@@ -98,7 +98,7 @@ jobs:
   swift:
     name: SwiftUI app (swift test, bundle, XCUITest)
     needs: core
-    runs-on: macos-26
+    runs-on: macos-26-xlarge
     env:
       CARGO_BUILD_JOBS: 4
     steps:

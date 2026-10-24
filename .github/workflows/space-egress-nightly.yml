@@ -1,0 +1,150 @@
+name: "Space egress (nightly)"
+
+# Egress policies are enforced by the host, outside the guest
+# (libs/cua/crates/cua-vmm/src/egress.rs). The ordinary PR lanes cover the
+# rule text and the plumbing hermetically; this workflow runs
+# libs/cua/crates/cua-daemon/tests/space_egress.rs against real guests,
+# where a root process in each guest reaches an allowed address, fails to
+# reach a denied one, flushes the guest's own firewall, sends a raw SYN and
+# opens a new network namespace, and still fails:
+#
+# - containers: Docker with runc and with gVisor (runsc), nftables on the
+#   host;
+# - vms: QEMU and Firecracker under KVM in pasta network namespaces. Hosted
+#   ubuntu-24.04 runners expose /dev/kvm; set the repository variable
+#   CUA_KVM_RUNNER to a self-hosted label to use another KVM machine.
+#
+# It needs internet (1.1.1.1 and 8.8.8.8 on 443) and fails, never skips,
+# when the runner cannot run a guest.
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua/crates/cua-vmm/src/egress.rs"
+      - "libs/cua/crates/cua-vmm/src/container/egress.rs"
+      - "libs/cua/crates/cua-daemon/tests/space_egress.rs"
+      - ".github/workflows/space-egress-nightly.yml"
+      - "libs/cua/crates/cua-byoc/src/hosts.rs"
+      - "libs/cua/crates/cua-byoc/tests/pool_host_runsc.rs"
+  schedule:
+    - cron: "41 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: space-egress-nightly-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_INCREMENTAL: "0"
+  CARGO_BUILD_JOBS: "4"
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  containers:
+    name: containers (runc, gVisor) on the engine host
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+        with:
+          free-more: "true"
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: space-egress-containers
+      - name: nftables and gVisor
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends nftables
+          scripts/images/install-gvisor.sh
+          docker info --format '{{json .Runtimes}}'
+      - name: Egress policies of runc and gVisor containers
+        working-directory: libs/cua
+        run: |
+          set -euo pipefail
+          export CUA_HOME="$(mktemp -d)"
+          cargo test --locked -p cua-daemon --test space_egress -- \
+            --ignored --nocapture --test-threads=1 container_
+      # A pool host registers runsc with cua-byoc's RUNSC_ARGS
+      # (--overlay2=none --host-uds=create): a Space there makes its own
+      # Unix sockets and never connects to the host's. The test registers
+      # that runtime itself, so it runs as root (built first as the runner).
+      - name: Pool-host gVisor registration keeps host sockets out of reach
+        working-directory: libs/cua
+        run: |
+          set -euo pipefail
+          bin=$(cargo test --locked -p cua-byoc --test pool_host_runsc --no-run --message-format=json \
+            | jq -r 'select(.profile.test == true and .target.name == "pool_host_runsc") | .executable' | tail -1)
+          sudo env CUA_TEST_POOL_RUNSC=1 PATH="$PATH" "$bin" --ignored --nocapture
+
+  vms:
+    name: QEMU and Firecracker VMs in pasta namespaces (KVM)
+    runs-on: ${{ vars.CUA_KVM_RUNNER || 'ubuntu-24.04' }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: KVM is available
+        run: |
+          if [ ! -e /dev/kvm ]; then
+            echo "::error::no /dev/kvm on this runner: the VM egress tests need a running guest. Set the CUA_KVM_RUNNER repository variable to a runner label with KVM."
+            {
+              echo "### vms did NOT run"
+              echo "No /dev/kvm on \`${{ vars.CUA_KVM_RUNNER || 'ubuntu-24.04' }}\`."
+            } >>"$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          sudo chmod 666 /dev/kvm
+      - uses: ./.github/actions/linux-rust-prep
+        with:
+          free-more: "true"
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: space-egress-vms
+      - name: QEMU, pasta, and user namespaces for pasta
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            qemu-utils qemu-system-x86 ovmf passt musl-tools e2fsprogs squashfs-tools
+          # Installing QEMU re-applies the udev rules to /dev/kvm; open it again.
+          sudo chmod 666 /dev/kvm
+          # Ubuntu 24.04 lets only profiled programs create user namespaces.
+          printf 'abi <abi/4.0>,\ninclude <tunables/global>\nprofile cua-pasta /usr/bin/pasta flags=(unconfined) {\n  userns,\n}\n' \
+            | sudo tee /etc/apparmor.d/cua-pasta >/dev/null
+          sudo apparmor_parser -r /etc/apparmor.d/cua-pasta
+          pasta --config-net -q -- true
+      - name: A Linux cloud image and the microVM init
+        working-directory: libs/cua
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/egress"
+          curl -fsSL -o "$HOME/egress/noble.qcow2" \
+            https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
+          cargo build --locked --release -p cua-microvm-init --target x86_64-unknown-linux-musl
+      - name: Egress policies of QEMU and Firecracker VMs
+        working-directory: libs/cua
+        run: |
+          set -euo pipefail
+          export CUA_HOME="$(mktemp -d)"
+          export CUA_EGRESS_TEST_DISK="$HOME/egress/noble.qcow2"
+          export CUA_MICROVM_INIT="$PWD/target/x86_64-unknown-linux-musl/release/cua-microvm-init"
+          cargo test --locked -p cua-daemon --test space_egress -- \
+            --ignored --nocapture --test-threads=1 qemu firecracker

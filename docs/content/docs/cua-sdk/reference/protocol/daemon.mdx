@@ -1,6 +1,6 @@
 ---
-title: "Cua daemon"
-description: "cua.daemon.v1: the local cua daemon API for sandboxes, local runtimes, Spaces, its identity and the media bridge."
+title: "Cua daemon: sandboxes and runtimes"
+description: "cua.daemon.v1 SandboxService and RuntimeService: sandbox lifecycle across locations, checkpoints and forks, local pools, and the local runtimes and images."
 ---
 
 {/*
@@ -10,9 +10,9 @@ description: "cua.daemon.v1: the local cua daemon API for sandboxes, local runti
   Version: 0.7.0
 */}
 
-The local `cua daemon` API (a Unix socket on the host, not cua-spacesd): sandbox lifecycle across locations, the local runtimes and images it orchestrates, Spaces and the machines that provide them, its identity (`GetInfo`) and the loopback media bridge for webviews.
+The local `cua daemon` API (a Unix socket on the host, not cua-spacesd): sandbox lifecycle across locations; checkpoints of local sandboxes that new sandboxes fork from (`ForkSandbox`); local pools of ready sandboxes (`ApplyPool`, `ListPools`, `DeletePool`, claimed by a create that names one in `local_pool`); and the local runtimes (gVisor, runc, QEMU, Lume, Firecracker) and images it orchestrates. Spaces and the daemon's identity are on [Daemon: Spaces and service](/cua-sdk/reference/protocol/daemon-spaces).
 
-Source: `libs/cua/proto/cua/daemon/v1/sandboxes.proto`, `libs/cua/proto/cua/daemon/v1/runtime.proto`, `libs/cua/proto/cua/daemon/v1/spaces.proto`, `libs/cua/proto/cua/daemon/v1/daemon.proto`.
+Source: `libs/cua/proto/cua/daemon/v1/sandboxes.proto`, `libs/cua/proto/cua/daemon/v1/checkpoints.proto`, `libs/cua/proto/cua/daemon/v1/pools.proto`, `libs/cua/proto/cua/daemon/v1/runtime.proto`.
 
 ## SandboxService
 
@@ -35,6 +35,7 @@ installed in the guest.
 | [`SuspendSandbox`](#sandboxservicesuspendsandbox) | [`SuspendSandboxRequest`](#suspendsandboxrequest) | [`SuspendSandboxResponse`](#suspendsandboxresponse) | unary |
 | [`ResumeSandbox`](#sandboxserviceresumesandbox) | [`ResumeSandboxRequest`](#resumesandboxrequest) | [`ResumeSandboxResponse`](#resumesandboxresponse) | unary |
 | [`RestartSandbox`](#sandboxservicerestartsandbox) | [`RestartSandboxRequest`](#restartsandboxrequest) | [`RestartSandboxResponse`](#restartsandboxresponse) | unary |
+| [`ResizeSandbox`](#sandboxserviceresizesandbox) | [`ResizeSandboxRequest`](/cua-sdk/reference/protocol/daemon-resize#resizesandboxrequest) | [`ResizeSandboxResponse`](/cua-sdk/reference/protocol/daemon-resize#resizesandboxresponse) | unary |
 | [`KeepAlive`](#sandboxservicekeepalive) | [`KeepAliveRequest`](#keepaliverequest) | [`KeepAliveResponse`](#keepaliveresponse) | unary |
 | [`WaitReady`](#sandboxservicewaitready) | [`WaitReadyRequest`](#waitreadyrequest) | [`WaitReadyResponse`](#waitreadyresponse) | unary |
 | [`ServiceRequest`](#sandboxserviceservicerequest) | [`ServiceRequestRequest`](#servicerequestrequest) | [`ServiceRequestResponse`](#servicerequestresponse) | unary |
@@ -45,6 +46,12 @@ installed in the guest.
 | [`GetServiceUrl`](#sandboxservicegetserviceurl) | [`GetServiceUrlRequest`](#getserviceurlrequest) | [`GetServiceUrlResponse`](#getserviceurlresponse) | unary |
 | [`CreatePublicUrl`](#sandboxservicecreatepublicurl) | [`CreatePublicUrlRequest`](#createpublicurlrequest) | [`CreatePublicUrlResponse`](#createpublicurlresponse) | unary |
 | [`RevokePublicUrl`](#sandboxservicerevokepublicurl) | [`RevokePublicUrlRequest`](#revokepublicurlrequest) | [`RevokePublicUrlResponse`](#revokepublicurlresponse) | unary |
+| [`CheckpointSandbox`](#sandboxservicecheckpointsandbox) | [`CheckpointSandboxRequest`](#checkpointsandboxrequest) | [`CheckpointSandboxResponse`](#checkpointsandboxresponse) | unary |
+| [`ForkSandbox`](#sandboxserviceforksandbox) | [`ForkSandboxRequest`](#forksandboxrequest) | [`ForkSandboxResponse`](#forksandboxresponse) | unary |
+| [`ListCheckpoints`](#sandboxservicelistcheckpoints) | [`ListCheckpointsRequest`](#listcheckpointsrequest) | [`ListCheckpointsResponse`](#listcheckpointsresponse) | unary |
+| [`DeleteCheckpoint`](#sandboxservicedeletecheckpoint) | [`DeleteCheckpointRequest`](#deletecheckpointrequest) | [`DeleteCheckpointResponse`](#deletecheckpointresponse) | unary |
+| [`PinCheckpoint`](#sandboxservicepincheckpoint) | [`PinCheckpointRequest`](#pincheckpointrequest) | [`PinCheckpointResponse`](#pincheckpointresponse) | unary |
+| [`PruneCheckpoints`](#sandboxserviceprunecheckpoints) | [`PruneCheckpointsRequest`](#prunecheckpointsrequest) | [`PruneCheckpointsResponse`](#prunecheckpointsresponse) | unary |
 
 ### SandboxService.ListSandboxes
 
@@ -63,11 +70,9 @@ connects to an existing machine (`direct:<addr>`).
 
 `/cua.daemon.v1.SandboxService/CreateSandboxStream`, server stream: [`CreateSandboxStreamRequest`](#createsandboxstreamrequest) to [`CreateSandboxStreamResponse`](#createsandboxstreamresponse).
 
-`CreateSandbox`, streaming what the create is doing: progress events
-(pulling the image with its bytes, creating, booting, waiting for the
-probes) in order, then exactly one `result`. A failed create ends the
-stream with its status. Closing the stream cancels the create, as for
-a `CreateSandbox` whose caller goes away.
+`CreateSandbox`, streaming progress events (pulling with bytes,
+creating, booting, probes) in order, then exactly one `result`. A
+failed create ends the stream with its status; closing it cancels.
 
 ### SandboxService.CancelCreateSandbox
 
@@ -118,6 +123,12 @@ Resumes a suspended sandbox.
 
 Restarts a sandbox.
 
+### SandboxService.ResizeSandbox
+
+`/cua.daemon.v1.SandboxService/ResizeSandbox`, unary: [`ResizeSandboxRequest`](/cua-sdk/reference/protocol/daemon-resize#resizesandboxrequest) to [`ResizeSandboxResponse`](/cua-sdk/reference/protocol/daemon-resize#resizesandboxresponse).
+
+Resizes a local VM.
+
 ### SandboxService.KeepAlive
 
 `/cua.daemon.v1.SandboxService/KeepAlive`, unary: [`KeepAliveRequest`](#keepaliverequest) to [`KeepAliveResponse`](#keepaliveresponse).
@@ -162,10 +173,8 @@ with the sandbox credentials attached by the daemon.
 `/cua.daemon.v1.SandboxService/GetServiceEndpoint`, unary: [`GetServiceEndpointRequest`](#getserviceendpointrequest) to [`GetServiceEndpointResponse`](#getserviceendpointresponse).
 
 The daemon's loopback passthrough for a named service of a sandbox:
-any HTTP request (any method, streamed both ways, headers passed
-through) sent to `url` + path reaches that path on the service with the
-sandbox's route and credentials attached by the daemon. For MCP
-clients, SSE and anything else served over HTTP.
+any HTTP request (streamed both ways) sent to `url` + path reaches that
+path on the service with the sandbox's route and credentials attached.
 
 ### SandboxService.GetServiceUrl
 
@@ -186,6 +195,81 @@ proxy URL with its own token, served by the daemon.
 `/cua.daemon.v1.SandboxService/RevokePublicUrl`, unary: [`RevokePublicUrlRequest`](#revokepublicurlrequest) to [`RevokePublicUrlResponse`](#revokepublicurlresponse).
 
 Revokes a URL created by `CreatePublicUrl`.
+
+### SandboxService.CheckpointSandbox
+
+`/cua.daemon.v1.SandboxService/CheckpointSandbox`, unary: [`CheckpointSandboxRequest`](#checkpointsandboxrequest) to [`CheckpointSandboxResponse`](#checkpointsandboxresponse).
+
+Saves a local sandbox's state as a named checkpoint (see
+checkpoints.proto).
+
+### SandboxService.ForkSandbox
+
+`/cua.daemon.v1.SandboxService/ForkSandbox`, unary: [`ForkSandboxRequest`](#forksandboxrequest) to [`ForkSandboxResponse`](#forksandboxresponse).
+
+Creates and starts a new local sandbox from a sandbox or a checkpoint
+(see checkpoints.proto for what a fork keeps).
+
+### SandboxService.ListCheckpoints
+
+`/cua.daemon.v1.SandboxService/ListCheckpoints`, unary: [`ListCheckpointsRequest`](#listcheckpointsrequest) to [`ListCheckpointsResponse`](#listcheckpointsresponse).
+
+Lists checkpoints.
+
+### SandboxService.DeleteCheckpoint
+
+`/cua.daemon.v1.SandboxService/DeleteCheckpoint`, unary: [`DeleteCheckpointRequest`](#deletecheckpointrequest) to [`DeleteCheckpointResponse`](#deletecheckpointresponse).
+
+Deletes a checkpoint (forks made from it keep running).
+
+### SandboxService.PinCheckpoint
+
+`/cua.daemon.v1.SandboxService/PinCheckpoint`, unary: [`PinCheckpointRequest`](#pincheckpointrequest) to [`PinCheckpointResponse`](#pincheckpointresponse).
+
+Pins or unpins a checkpoint (see checkpoints.proto).
+
+### SandboxService.PruneCheckpoints
+
+`/cua.daemon.v1.SandboxService/PruneCheckpoints`, unary: [`PruneCheckpointsRequest`](#prunecheckpointsrequest) to [`PruneCheckpointsResponse`](#prunecheckpointsresponse).
+
+Deletes every unpinned checkpoint.
+
+## PoolService
+
+`cua.daemon.v1.PoolService`
+
+Pools of the daemon's machine. Pools are kept across daemon restarts.
+
+| RPC | Request | Response | Kind |
+| --- | --- | --- | --- |
+| [`CreatePool`](#poolservicecreatepool) | [`CreatePoolRequest`](#createpoolrequest) | [`CreatePoolResponse`](#createpoolresponse) | unary |
+| [`GetPool`](#poolservicegetpool) | [`GetPoolRequest`](#getpoolrequest) | [`GetPoolResponse`](#getpoolresponse) | unary |
+| [`ListPools`](#poolservicelistpools) | [`ListPoolsRequest`](#listpoolsrequest) | [`ListPoolsResponse`](#listpoolsresponse) | unary |
+| [`DeletePool`](#poolservicedeletepool) | [`DeletePoolRequest`](#deletepoolrequest) | [`DeletePoolResponse`](#deletepoolresponse) | unary |
+
+### PoolService.CreatePool
+
+`/cua.daemon.v1.PoolService/CreatePool`, unary: [`CreatePoolRequest`](#createpoolrequest) to [`CreatePoolResponse`](#createpoolresponse).
+
+Creates a pool, or updates the pool of that name.
+
+### PoolService.GetPool
+
+`/cua.daemon.v1.PoolService/GetPool`, unary: [`GetPoolRequest`](#getpoolrequest) to [`GetPoolResponse`](#getpoolresponse).
+
+One pool, with what it holds now.
+
+### PoolService.ListPools
+
+`/cua.daemon.v1.PoolService/ListPools`, unary: [`ListPoolsRequest`](#listpoolsrequest) to [`ListPoolsResponse`](#listpoolsresponse).
+
+Every pool, with what each holds now.
+
+### PoolService.DeletePool
+
+`/cua.daemon.v1.PoolService/DeletePool`, unary: [`DeletePoolRequest`](#deletepoolrequest) to [`DeletePoolResponse`](#deletepoolresponse).
+
+Deletes a pool and its ready sandboxes; sandboxes created from it stay.
 
 ## RuntimeService
 
@@ -233,228 +317,6 @@ Builds an image from an `images.cua.ai/v1alpha1` Image resource.
 
 Copies an image (host architecture) to another registry reference.
 
-## SpaceService
-
-`cua.daemon.v1.SpaceService`
-
-Spaces: sandboxes with Spaces features (cua-spacesd, streams, agents,
-teleport) that the user works in interactively. The daemon hosts one
-`cua_spaces::Spaces` runtime: the registry in `~/.cua/spaces.json`
-(tokens in the 0600 `spaces-credentials.json`), Space creation in every
-location, hotspots, and the Spaces MCP server (`CallSpaceTool`,
-`cua daemon mcp`, `/mcp`).
-
-Verbs: `CreateSpace` / `DeleteSpace` create and delete the sandbox;
-`AddSpace` / `RemoveSpace` register an existing machine and forget it
-without touching it.
-
-| RPC | Request | Response | Kind |
-| --- | --- | --- | --- |
-| [`AddSpace`](#spaceserviceaddspace) | [`AddSpaceRequest`](#addspacerequest) | [`AddSpaceResponse`](#addspaceresponse) | unary |
-| [`ListSpaces`](#spaceservicelistspaces) | [`ListSpacesRequest`](#listspacesrequest) | [`ListSpacesResponse`](#listspacesresponse) | unary |
-| [`RemoveSpace`](#spaceserviceremovespace) | [`RemoveSpaceRequest`](#removespacerequest) | [`RemoveSpaceResponse`](#removespaceresponse) | unary |
-| [`ResolveSpace`](#spaceserviceresolvespace) | [`ResolveSpaceRequest`](#resolvespacerequest) | [`ResolveSpaceResponse`](#resolvespaceresponse) | unary |
-| [`ProvisionLocalSpace`](#spaceserviceprovisionlocalspace) | [`ProvisionLocalSpaceRequest`](#provisionlocalspacerequest) | [`ProvisionLocalSpaceResponse`](#provisionlocalspaceresponse) | unary |
-| [`ReleaseSpace`](#spaceservicereleasespace) | [`ReleaseSpaceRequest`](#releasespacerequest) | [`ReleaseSpaceResponse`](#releasespaceresponse) | unary |
-| [`CreateSpace`](#spaceservicecreatespace) | [`CreateSpaceRequest`](#createspacerequest) | [`CreateSpaceResponse`](#createspaceresponse) | unary |
-| [`CreateSpaceStream`](#spaceservicecreatespacestream) | [`CreateSpaceStreamRequest`](#createspacestreamrequest) | [`CreateSpaceStreamResponse`](#createspacestreamresponse) | server stream |
-| [`CancelCreateSpace`](#spaceservicecancelcreatespace) | [`CancelCreateSpaceRequest`](#cancelcreatespacerequest) | [`CancelCreateSpaceResponse`](#cancelcreatespaceresponse) | unary |
-| [`GetGpuSupport`](#spaceservicegetgpusupport) | [`GetGpuSupportRequest`](#getgpusupportrequest) | [`GetGpuSupportResponse`](#getgpusupportresponse) | unary |
-| [`DeleteSpace`](#spaceservicedeletespace) | [`DeleteSpaceRequest`](#deletespacerequest) | [`DeleteSpaceResponse`](#deletespaceresponse) | unary |
-| [`ConnectSpace`](#spaceserviceconnectspace) | [`ConnectSpaceRequest`](#connectspacerequest) | [`ConnectSpaceResponse`](#connectspaceresponse) | unary |
-| [`ListSpaceTools`](#spaceservicelistspacetools) | [`ListSpaceToolsRequest`](#listspacetoolsrequest) | [`ListSpaceToolsResponse`](#listspacetoolsresponse) | unary |
-| [`CallSpaceTool`](#spaceservicecallspacetool) | [`CallSpaceToolRequest`](#callspacetoolrequest) | [`CallSpaceToolResponse`](#callspacetoolresponse) | unary |
-| [`ListHosts`](#spaceservicelisthosts) | [`ListHostsRequest`](#listhostsrequest) | [`ListHostsResponse`](#listhostsresponse) | unary |
-| [`GetSpaceThumbnail`](#spaceservicegetspacethumbnail) | [`GetSpaceThumbnailRequest`](#getspacethumbnailrequest) | [`GetSpaceThumbnailResponse`](#getspacethumbnailresponse) | unary |
-| [`GetResources`](#spaceservicegetresources) | [`GetResourcesRequest`](/cua-sdk/reference/protocol/daemon-resources#getresourcesrequest) | [`GetResourcesResponse`](/cua-sdk/reference/protocol/daemon-resources#getresourcesresponse) | unary |
-| [`WatchResources`](#spaceservicewatchresources) | [`WatchResourcesRequest`](/cua-sdk/reference/protocol/daemon-resources#watchresourcesrequest) | [`WatchResourcesResponse`](/cua-sdk/reference/protocol/daemon-resources#watchresourcesresponse) | server stream |
-
-### SpaceService.AddSpace
-
-`/cua.daemon.v1.SpaceService/AddSpace`, unary: [`AddSpaceRequest`](#addspacerequest) to [`AddSpaceResponse`](#addspaceresponse).
-
-Adds an existing machine as a Space by address (`host:port`, a direct
-`http(s)://host:port`, or a sandbox ref such as `local:<name>`) after a
-`GetCapabilities` handshake.
-
-### SpaceService.ListSpaces
-
-`/cua.daemon.v1.SpaceService/ListSpaces`, unary: [`ListSpacesRequest`](#listspacesrequest) to [`ListSpacesResponse`](#listspacesresponse).
-
-Lists registered Spaces.
-
-### SpaceService.RemoveSpace
-
-`/cua.daemon.v1.SpaceService/RemoveSpace`, unary: [`RemoveSpaceRequest`](#removespacerequest) to [`RemoveSpaceResponse`](#removespaceresponse).
-
-Forgets a Space. Does not delete the underlying sandbox.
-
-### SpaceService.ResolveSpace
-
-`/cua.daemon.v1.SpaceService/ResolveSpace`, unary: [`ResolveSpaceRequest`](#resolvespacerequest) to [`ResolveSpaceResponse`](#resolvespaceresponse).
-
-Resolves any accepted spelling (id, legacy id, URL, name) to a Space.
-
-### SpaceService.ProvisionLocalSpace
-
-`/cua.daemon.v1.SpaceService/ProvisionLocalSpace`, unary: [`ProvisionLocalSpaceRequest`](#provisionlocalspacerequest) to [`ProvisionLocalSpaceResponse`](#provisionlocalspaceresponse).
-
-**Deprecated.**
-
-Deprecated: use `CreateSpace` with location "local".
-
-### SpaceService.ReleaseSpace
-
-`/cua.daemon.v1.SpaceService/ReleaseSpace`, unary: [`ReleaseSpaceRequest`](#releasespacerequest) to [`ReleaseSpaceResponse`](#releasespaceresponse).
-
-**Deprecated.**
-
-Deprecated: use `DeleteSpace`.
-
-### SpaceService.CreateSpace
-
-`/cua.daemon.v1.SpaceService/CreateSpace`, unary: [`CreateSpaceRequest`](#createspacerequest) to [`CreateSpaceResponse`](#createspaceresponse).
-
-Creates a Space (a sandbox, registered as a Space) where `location`
-says, with the same location / kind / runtime model as
-`SandboxService.CreateSandbox`.
-
-### SpaceService.CreateSpaceStream
-
-`/cua.daemon.v1.SpaceService/CreateSpaceStream`, server stream: [`CreateSpaceStreamRequest`](#createspacestreamrequest) to [`CreateSpaceStreamResponse`](#createspacestreamresponse).
-
-`CreateSpace`, streaming what the create is doing: progress events
-(pulling the image, booting, waiting for cua-spacesd, connecting) in
-order, then exactly one `result`. A failed create ends the stream with
-its status after the progress it made.
-
-### SpaceService.CancelCreateSpace
-
-`/cua.daemon.v1.SpaceService/CancelCreateSpace`, unary: [`CancelCreateSpaceRequest`](#cancelcreatespacerequest) to [`CancelCreateSpaceResponse`](#cancelcreatespaceresponse).
-
-Cancels a create that is still running, found by the caller's
-`create_id`, the id the Space will have (every progress event carries
-it in `space`) or its name: the work in flight stops (an image
-download, a boot, a relay registration) and what the create
-made is removed (its VM or container and disks, its
-relay machine, its registry entry). Nothing that existed before is
-touched; finished image downloads stay cached so the next create
-resumes. Returns once the clean-up is done; the create itself ends with
-DAEMON_ERROR_REASON_CANCELLED. Idempotent, and works for a create
-another process runs or one a daemon restart cut off.
-
-### SpaceService.GetGpuSupport
-
-`/cua.daemon.v1.SpaceService/GetGpuSupport`, unary: [`GetGpuSupportRequest`](#getgpusupportrequest) to [`GetGpuSupportResponse`](#getgpusupportresponse).
-
-The GPU options each runtime of a location offers on this host (the
-wizard's GPU row; `gpu` of `CreateSpace`).
-
-### SpaceService.DeleteSpace
-
-`/cua.daemon.v1.SpaceService/DeleteSpace`, unary: [`DeleteSpaceRequest`](#deletespacerequest) to [`DeleteSpaceResponse`](#deletespaceresponse).
-
-Deletes a Space's sandbox and forgets it. A Space added by address
-(`direct:`, `relay:`) is only forgotten: cua did not create it.
-
-### SpaceService.ConnectSpace
-
-`/cua.daemon.v1.SpaceService/ConnectSpace`, unary: [`ConnectSpaceRequest`](#connectspacerequest) to [`ConnectSpaceResponse`](#connectspaceresponse).
-
-Connects to a registered Space and returns a loopback env passthrough
-(`<loopback>/v1/spaces/<key>/env`) that carries the Space's credentials,
-so a client runs every `cua.env.v1` call and media WebSocket through the
-daemon without seeing the Space's token.
-
-### SpaceService.ListSpaceTools
-
-`/cua.daemon.v1.SpaceService/ListSpaceTools`, unary: [`ListSpaceToolsRequest`](#listspacetoolsrequest) to [`ListSpaceToolsResponse`](#listspacetoolsresponse).
-
-Lists the Spaces MCP tools (`tools/list` result as JSON).
-
-### SpaceService.CallSpaceTool
-
-`/cua.daemon.v1.SpaceService/CallSpaceTool`, unary: [`CallSpaceToolRequest`](#callspacetoolrequest) to [`CallSpaceToolResponse`](#callspacetoolresponse).
-
-Calls one Spaces MCP tool (the same implementation `cua daemon mcp` and
-`/mcp` serve).
-
-### SpaceService.ListHosts
-
-`/cua.daemon.v1.SpaceService/ListHosts`, unary: [`ListHostsRequest`](#listhostsrequest) to [`ListHostsResponse`](#listhostsresponse).
-
-Your machines that provide Spaces (the account's relay hosts and the
-hosts added by their Tailscale or LAN address), each asked for its
-limits: what `CreateSpace` takes as `on="host:<id>"` (the New Space
-wizard's Run on menu). One that does not answer is listed offline when
-it provided a Space before.
-
-### SpaceService.GetSpaceThumbnail
-
-`/cua.daemon.v1.SpaceService/GetSpaceThumbnail`, unary: [`GetSpaceThumbnailRequest`](#getspacethumbnailrequest) to [`GetSpaceThumbnailResponse`](#getspacethumbnailresponse).
-
-The Space's latest thumbnail (a small JPEG of its primary display)
-from the daemon's cache, which every client on this machine shares:
-the cached image when it is younger than `max_age`, else a fresh
-capture through cua-spacesd (the cached one again, with its older
-`captured_at`, when the capture fails). Asking keeps the daemon
-refreshing running Spaces' thumbnails in the background for a while.
-
-### SpaceService.GetResources
-
-`/cua.daemon.v1.SpaceService/GetResources`, unary: [`GetResourcesRequest`](/cua-sdk/reference/protocol/daemon-resources#getresourcesrequest) to [`GetResourcesResponse`](/cua-sdk/reference/protocol/daemon-resources#getresourcesresponse).
-
-What this computer, its extra Spaces and your other computers use now:
-processor, memory and disk, as one snapshot. The daemon's single
-sampler measures it; a snapshot a few seconds old is returned as it is.
-With `visible`, the call also says a window shows the numbers for the
-next 30 seconds, so the sampler runs every 10 seconds (every 5 minutes
-otherwise). Numbers only: no names, paths or processes.
-
-### SpaceService.WatchResources
-
-`/cua.daemon.v1.SpaceService/WatchResources`, server stream: [`WatchResourcesRequest`](/cua-sdk/reference/protocol/daemon-resources#watchresourcesrequest) to [`WatchResourcesResponse`](/cua-sdk/reference/protocol/daemon-resources#watchresourcesresponse).
-
-The same numbers as a stream: one snapshot first, then an update with
-only the entries that changed by more than 1 point or 256 MB, and a
-`low_disk` event whenever the free-disk warning level changes
-(including back to `ok`). A hidden watcher (`visible` false) is
-sampled every 5 minutes and still hears `low_disk`, for the menu bar.
-Cancel the stream to stop; call again with the other `visible` to
-switch.
-
-## DaemonService
-
-`cua.daemon.v1.DaemonService`
-
-The daemon itself: identity, the loopback bridge for webviews, shutdown.
-
-| RPC | Request | Response | Kind |
-| --- | --- | --- | --- |
-| [`GetInfo`](#daemonservicegetinfo) | [`GetInfoRequest`](#getinforequest) | [`GetInfoResponse`](#getinforesponse) | unary |
-| [`OpenMediaBridge`](#daemonserviceopenmediabridge) | [`OpenMediaBridgeRequest`](#openmediabridgerequest) | [`OpenMediaBridgeResponse`](#openmediabridgeresponse) | unary |
-| [`Shutdown`](#daemonserviceshutdown) | [`ShutdownRequest`](#shutdownrequest) | [`ShutdownResponse`](#shutdownresponse) | unary |
-
-### DaemonService.GetInfo
-
-`/cua.daemon.v1.DaemonService/GetInfo`, unary: [`GetInfoRequest`](#getinforequest) to [`GetInfoResponse`](#getinforesponse).
-
-Returns the daemon identity and its loopback endpoint.
-
-### DaemonService.OpenMediaBridge
-
-`/cua.daemon.v1.DaemonService/OpenMediaBridge`, unary: [`OpenMediaBridgeRequest`](#openmediabridgerequest) to [`OpenMediaBridgeResponse`](#openmediabridgeresponse).
-
-Opens a media session in a sandbox and returns a loopback WebSocket URL
-that relays it. The URL carries a short-lived bridge ticket; the
-browser never sees the spacesd token.
-
-### DaemonService.Shutdown
-
-`/cua.daemon.v1.DaemonService/Shutdown`, unary: [`ShutdownRequest`](#shutdownrequest) to [`ShutdownResponse`](#shutdownresponse).
-
-Stops the daemon after the response is sent.
-
 ## Types in `cua/daemon/v1/sandboxes.proto`
 
 ### Sandbox
@@ -479,7 +341,7 @@ A sandbox.
 | `provider_details` | 14 | map of `string` to `string` | Provider internals for debugging (local: backend, container_id). Not part of the portable API. |
 | `id` | 15 | `string` | Qualified ref: "local:&lt;name&gt;", "direct:&lt;host:port&gt;" or "&lt;provider&gt;:&lt;name&gt;". Every request's `name` accepts it (and a bare name when that name is unique across locations). |
 | `kind` | 16 | `string` | What kind of machine it runs as: "container" or "vm"; empty when not known (an existing machine). |
-| `runtime` | 17 | `string` | The engine that runs it: "gvisor", "runc", "qemu", "lume" or a provider's own; empty when not known. |
+| `runtime` | 17 | `string` | The engine that runs it: "gvisor", "runc", "qemu", "lume", "firecracker" or a provider's own; empty when not known. |
 | `stop_reason` | 18 | `string` | Why a local sandbox stopped without being asked to, in plain words: "out of memory", "killed", "exited" or "exited with code N". Empty otherwise, and once it is started again. |
 
 ### ReadinessProbe
@@ -594,13 +456,18 @@ Request for `SandboxService.CreateSandbox`.
 | `registry_secret` | 23 | [`RegistrySecret`](#registrysecret) | Credentials for a private `image` (and sidecar images on its registry): local pulls use them. Never logged or returned. |
 | `build` | 24 | [`ImageBuild`](#imagebuild) | Image layers built on top of `image` before the sandbox starts. |
 | `container_runtime` | 25 | `string` | Deprecated. Deprecated: use `runtime`. Local container sandboxes: `runc` or `gvisor`, used when `runtime` is empty. |
-| `owner_pid` | 27 | `uint32` | The client process that owns an ephemeral sandbox (no `name`). The daemon records it in the sandbox's lease, so a local ephemeral sandbox is reaped after its client dies even while the daemon runs. 0: the daemon itself owns it. |
+| `owner_pid` | 27 | `uint32` | The client process that owns an ephemeral sandbox (no `name`). The daemon records it in the lease and reaps the sandbox after that client dies. 0: the daemon itself owns it. |
 | `network` | 28 | `string` | Guest network: empty or `default` gives outbound network (like a Docker container); `none` cuts egress while published ports still work. Only local QEMU VMs honour `none`; containers and Lume reject it. |
 | `location` | 29 | `string` | Where it runs: "local", "direct:&lt;addr&gt;" (an existing machine running cua-spacesd), or a registered provider (SANDBOX_PROVIDER_CONTRIB, e.g. "e2b"). Empty uses the default (`default.on` in the config, `CUA_DEFAULT_ON`, else "local"); clients resolve the default on their side and send it explicitly. |
-| `kind` | 30 | `string` | What kind of machine: "auto" (empty), "container" or "vm". Auto decides from the image: macOS and Windows images are VMs, an image with a container rootfs is a container, a disk-only image is a VM. |
-| `runtime` | 31 | `string` | Which engine: "auto" (empty) or one the location offers for the kind. Local: "gvisor", "runc" (containers), "qemu", "lume" (VMs). A registered provider offers its own engines. Anything else is DAEMON_ERROR_REASON_INVALID_PLACEMENT, listing the valid values. |
+| `kind` | 30 | `string` | What kind of machine: "auto" (empty), "container", "vm" or "microvm". Auto decides from the image: macOS and Windows images are VMs, an image with a container rootfs is a container, a disk-only image is a VM. A microVM (only by name) boots the container rootfs with its own kernel. |
+| `runtime` | 31 | `string` | Which engine: "auto" (empty) or one the location offers for the kind. Local: "gvisor", "runc" (containers), "qemu", "lume" (VMs), "firecracker" (microVMs). A registered provider offers its own engines. Anything else is DAEMON_ERROR_REASON_INVALID_PLACEMENT, listing the valid values. |
 | `keep_on_failure` | 32 | `bool` | Keep a named sandbox whose readiness check fails (its VM or container, and its record) for debugging. False: a failed create deletes what it made. Ephemeral sandboxes are always deleted. |
-| `gpu` | 33 | `string` | A GPU option of the runtime it runs on (`GetGpuSupport`): "paravirtual" (a macOS VM on Lume: GPU acceleration, experimental), "virgl" (QEMU on Linux), "nvidia" (a runc container on Linux), a contrib provider's GPU type; "auto" picks the runtime's own. Empty: no GPU. An option the runtime does not offer here is DAEMON_ERROR_REASON_INVALID_ARGUMENT or _UNSUPPORTED, saying why. |
+| `gpu` | 33 | `string` | A GPU option of the runtime it runs on (`GetGpuSupport`): "paravirtual" (macOS VMs on Lume, experimental), "virgl" (QEMU on Linux), "nvidia" (a runc container on Linux), a contrib provider's GPU type; "auto" picks the runtime's own. Empty: no GPU. An option the runtime lacks fails, saying why. |
+| `forkable` | 34 | `bool` | A fork source (see checkpoints.proto): a local QEMU VM's RAM is a shared file. Other kinds ignore it. |
+| `headless` | 35 | `bool` | No desktop: only cua-spacesd runs (exec, files, MCP). |
+| `profile` | 40 | `string` | Size profile: "rollout" or "default". |
+| `spacesd` | 41 | optional `bool` | Inject cua-spacesd into an image without it. Unset: yes. |
+| `local_pool` | 42 | `string` | A local pool (`PoolService`): the sandbox takes its image and shape. (4, the Cua Cloud pool, is reserved.) |
 
 ### CreateSandboxResponse
 
@@ -609,6 +476,7 @@ Response for `SandboxService.CreateSandbox`.
 | Field | # | Type | Description |
 | --- | --- | --- | --- |
 | `sandbox` | 1 | [`Sandbox`](#sandbox) | The sandbox. |
+| `network` | 2 | `string` | The network applied: `none` or empty. |
 
 ### CreateSandboxStreamRequest
 
@@ -624,7 +492,7 @@ One message of `SandboxService.CreateSandboxStream`.
 
 | Field | # | Type | Description |
 | --- | --- | --- | --- |
-| `progress` | 1 | [`CreateSpaceProgress`](#createspaceprogress) (oneof `event`) | What the create is doing now (`space` is empty). |
+| `progress` | 1 | [`CreateSpaceProgress`](/cua-sdk/reference/protocol/daemon-spaces#createspaceprogress) (oneof `event`) | What the create is doing now (`space` is empty). |
 | `result` | 2 | [`CreateSandboxResponse`](#createsandboxresponse) (oneof `event`) | The created sandbox (the last message). |
 
 ### GetSandboxRequest
@@ -696,7 +564,7 @@ Request for `SandboxService.SuspendSandbox`.
 
 | Field | # | Type | Description |
 | --- | --- | --- | --- |
-| `name` | 1 | `string` | Sandbox ref ("local:&lt;name&gt;", "cloud:&lt;name&gt;", "direct:&lt;host:port&gt;", a legacy id) or a name that is unique across locations. |
+| `name` | 1 | `string` | Sandbox ref (as for `GetSandbox`) or a name unique across locations. |
 
 ### SuspendSandboxResponse
 
@@ -710,7 +578,7 @@ Request for `SandboxService.ResumeSandbox`.
 
 | Field | # | Type | Description |
 | --- | --- | --- | --- |
-| `name` | 1 | `string` | Sandbox ref ("local:&lt;name&gt;", "cloud:&lt;name&gt;", "direct:&lt;host:port&gt;", a legacy id) or a name that is unique across locations. |
+| `name` | 1 | `string` | Sandbox ref (as for `GetSandbox`) or a name unique across locations. |
 
 ### ResumeSandboxResponse
 
@@ -724,7 +592,7 @@ Request for `SandboxService.RestartSandbox`.
 
 | Field | # | Type | Description |
 | --- | --- | --- | --- |
-| `name` | 1 | `string` | Sandbox ref ("local:&lt;name&gt;", "cloud:&lt;name&gt;", "direct:&lt;host:port&gt;", a legacy id) or a name that is unique across locations. |
+| `name` | 1 | `string` | Sandbox ref (as for `GetSandbox`) or a name unique across locations. |
 
 ### RestartSandboxResponse
 
@@ -738,8 +606,9 @@ Request for `SandboxService.KeepAlive`.
 
 | Field | # | Type | Description |
 | --- | --- | --- | --- |
-| `name` | 1 | `string` | Sandbox ref ("local:&lt;name&gt;", "cloud:&lt;name&gt;", "direct:&lt;host:port&gt;", a legacy id) or a name that is unique across locations. |
+| `name` | 1 | `string` | Sandbox ref, or a name unique across locations. |
 | `duration` | 2 | `google.protobuf.Duration` | How long to extend the lease by. |
+| `on_expire` | 3 | `string` | `delete` or `suspend` (local). |
 
 ### KeepAliveResponse
 
@@ -932,6 +801,14 @@ Response for `SandboxService.RevokePublicUrl`.
 
 No fields.
 
+### ForkSandboxResponse
+
+Response for `SandboxService.ForkSandbox`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `sandbox` | 1 | [`Sandbox`](#sandbox) | The new sandbox, running. |
+
 ### SandboxProvider
 
 Where a sandbox comes from. Deprecated: requests use the `location`
@@ -957,6 +834,200 @@ Sandbox lifecycle state.
 | `SANDBOX_STATE_STOPPED` | 3 | Suspended or stopped; can resume. |
 | `SANDBOX_STATE_DELETING` | 4 | Being deleted. |
 | `SANDBOX_STATE_FAILED` | 5 | Failed; see `Sandbox.error`. |
+
+## Types in `cua/daemon/v1/checkpoints.proto`
+
+### Checkpoint
+
+A named checkpoint of a local sandbox.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `name` | 1 | `string` | The checkpoint's name (unique among checkpoints and sandboxes). |
+| `source` | 2 | `string` | The sandbox it was taken from. |
+| `runtime_type` | 3 | `string` | The engine that holds it ("firecracker", "gvisor", "qemu", ...). |
+| `created_at` | 4 | `google.protobuf.Timestamp` | Creation time. |
+| `image` | 5 | `string` | The image of the source sandbox. |
+| `pinned` | 6 | `bool` | Pinned: kept until unpinned (`DeleteCheckpoint` and `PruneCheckpoints` leave it). |
+| `shared_memory` | 7 | `bool` | Forks map its RAM copy-on-write and share the pages they do not write (a QEMU memory checkpoint). |
+| `release_with_forks` | 8 | `bool` | Taken to fork a running sandbox many times: deleted with the last of its forks. |
+| `forks` | 9 | `uint32` | How many of its forks still exist (for `release_with_forks`). |
+| `host` | 10 | `string` | The machine of yours that holds it (empty: this one). |
+
+### CheckpointSandboxRequest
+
+Request for `SandboxService.CheckpointSandbox`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `name` | 1 | `string` | Sandbox ref ("local:&lt;name&gt;") or a name that is unique across locations. |
+| `checkpoint` | 2 | `string` | The checkpoint's name. |
+| `pin` | 3 | `bool` | Pin the new checkpoint (see `PinCheckpoint`). |
+
+### CheckpointSandboxResponse
+
+Response for `SandboxService.CheckpointSandbox`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `checkpoint` | 1 | [`Checkpoint`](#checkpoint) | The checkpoint. |
+
+### ListCheckpointsRequest
+
+Request for `SandboxService.ListCheckpoints`.
+
+No fields.
+
+### ListCheckpointsResponse
+
+Response for `SandboxService.ListCheckpoints`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `checkpoints` | 1 | repeated [`Checkpoint`](#checkpoint) | Checkpoints, oldest first. |
+
+### DeleteCheckpointRequest
+
+Request for `SandboxService.DeleteCheckpoint`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `name` | 1 | `string` | The checkpoint's name. |
+
+### DeleteCheckpointResponse
+
+Response for `SandboxService.DeleteCheckpoint`.
+
+No fields.
+
+### PinCheckpointRequest
+
+Request for `SandboxService.PinCheckpoint`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `name` | 1 | `string` | The checkpoint's name. |
+| `pinned` | 2 | `bool` | Pin (true) or unpin (false) it. |
+
+### PinCheckpointResponse
+
+Response for `SandboxService.PinCheckpoint`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `checkpoint` | 1 | [`Checkpoint`](#checkpoint) | The checkpoint, as it is now. |
+
+### PruneCheckpointsRequest
+
+Request for `SandboxService.PruneCheckpoints`.
+
+No fields.
+
+### PruneCheckpointsResponse
+
+Response for `SandboxService.PruneCheckpoints`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `deleted` | 1 | repeated `string` | The checkpoints deleted (every one that was not pinned and could be deleted). |
+
+### ForkSandboxRequest
+
+Request for `SandboxService.ForkSandbox`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `source` | 1 | `string` | A sandbox ref or name, or a checkpoint name (a sandbox wins). |
+| `name` | 2 | `string` | The new sandbox's name. |
+| `labels` | 3 | map of `string` to `string` | User labels of the new sandbox. |
+
+## Types in `cua/daemon/v1/pools.proto`
+
+### CreatePoolRequest
+
+Request for `PoolService.CreatePool`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `name` | 1 | `string` | Pool name (a DNS label). Empty: the daemon names it. |
+| `spec` | 2 | [`CreateSandboxRequest`](#createsandboxrequest) | What its sandboxes are: a create request's image, location (only `local` today), kind, runtime, cpus, memory, env, ports and services. Its name, token and pool are ignored. |
+| `min` | 3 | `uint32` | Sandboxes kept ready at all times: one is started again as soon as one is created from the pool. |
+| `max` | 4 | `uint32` | Most sandboxes kept ready (not counting those created from the pool). 0: `min`. Above `min`, more are kept ready only while creates from the pool come faster than sandboxes start. |
+| `idle` | 5 | `google.protobuf.Duration` | After this long without a create from the pool, it keeps none ready until the next create (which starts on the default tier and refills the pool). Unset: never. |
+
+### CreatePoolResponse
+
+Response for `PoolService.CreatePool`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `pool` | 1 | [`Pool`](#pool) | The pool as created or updated. |
+
+### GetPoolRequest
+
+Request for `PoolService.GetPool`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `name` | 1 | `string` | Pool name. |
+
+### GetPoolResponse
+
+Response for `PoolService.GetPool`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `pool` | 1 | [`Pool`](#pool) | The pool. |
+
+### ListPoolsRequest
+
+Request for `PoolService.ListPools`.
+
+No fields.
+
+### ListPoolsResponse
+
+Response for `PoolService.ListPools`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `pools` | 1 | repeated [`Pool`](#pool) | Every pool. |
+
+### DeletePoolRequest
+
+Request for `PoolService.DeletePool`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `name` | 1 | `string` | Pool name. |
+
+### DeletePoolResponse
+
+Response for `PoolService.DeletePool`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `deleted` | 1 | `bool` | Whether a pool of that name existed. |
+
+### Pool
+
+A pool (`PoolService.CreatePool`).
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `name` | 1 | `string` | Name. |
+| `image` | 2 | `string` | Image, as given. |
+| `location` | 3 | `string` | Where its sandboxes run (`local`). |
+| `kind` | 4 | `string` | Kind, as given (empty: auto). |
+| `runtime` | 5 | `string` | Runtime, as given (empty: auto). |
+| `cpus` | 6 | `uint32` | CPUs of each sandbox. |
+| `memory_mb` | 7 | `uint64` | Memory of each sandbox (MiB). |
+| `min` | 8 | `uint32` | Sandboxes kept ready at all times. |
+| `max` | 9 | `uint32` | Most sandboxes kept ready. |
+| `idle` | 10 | `google.protobuf.Duration` | Idle time after which it keeps none ready (unset: never). |
+| `ready` | 11 | `uint32` | Sandboxes ready now. |
+| `starting` | 12 | `uint32` | Sandboxes starting. |
+| `status` | 13 | `string` | Why it holds what it holds, or why it cannot (an image that does not pool here, too little memory, idle). |
 
 ## Types in `cua/daemon/v1/runtime.proto`
 
@@ -1086,492 +1157,3 @@ Status of one local runtime component.
 | `CHECK_STATUS_INSTALLABLE` | 2 | Missing, but `cua runtime setup` can install it. |
 | `CHECK_STATUS_ERROR` | 3 | Missing or broken and needs user action. |
 | `CHECK_STATUS_NOT_APPLICABLE` | 4 | Not applicable on this host. |
-
-## Types in `cua/daemon/v1/spaces.proto`
-
-### Space
-
-A registered Space.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `id` | 1 | `string` | Space id, for example "space://direct/10.0.0.5:3211". |
-| `name` | 2 | `string` | Display name. |
-| `spacesd_version` | 3 | `string` | spacesd version reported at the last handshake. |
-| `features` | 4 | repeated `string` | Supported feature names reported at the last handshake. |
-| `added_at` | 5 | `google.protobuf.Timestamp` | When it was added. |
-| `os` | 6 | `string` | Guest OS family at the last handshake (GetCapabilities): "linux", "macos" or "windows"; empty when not reported. |
-| `services` | 7 | repeated `string` | Services the Space declares (never "env"), for example "mcp". A Space without cua-spacesd has an empty feature list and reaches these through generic MCP (`list_tools` / `call_tool` with `service`). |
-| `os_name` | 8 | `string` | Guest OS product or distribution at the last handshake (GetCapabilities `os.name`), for example "Ubuntu" or "macOS"; empty when not reported. The Spaces app picks the OS icon from it. |
-| `os_pretty_name` | 9 | `string` | The guest's full OS string at the last handshake (GetCapabilities `os.pretty_name`), for example "Ubuntu 24.04.3 LTS"; empty when the driver does not report one. |
-| `image` | 10 | `string` | The image the sandbox runs, as requested (local Spaces), for example "ghcr.io/trycua/linux:24.04"; empty when unknown (a Space added by address). |
-| `image_digest` | 11 | `string` | The digest of the variant that runs ("sha256:..."), when known. |
-| `kind` | 12 | `string` | Container or virtual machine: "container" or "vm" (the guest's runtime at the last handshake, else the local sandbox's record); empty when unknown. |
-| `arch` | 13 | `string` | The guest's CPU architecture: "arm64" or "amd64" (GetCapabilities `arch` at the last handshake, else the local sandbox's record); empty when unknown. |
-| `host` | 14 | `string` | For a Space a host provides (`relay:<machine>` created with `on="host:<machine>"`): the relay machine id of that host; for one a host added by its direct address created (`direct:<addr>:<port>`): that host's Space id (`direct:<addr>:<port>`); empty otherwise. Lists group these Spaces under their host. |
-| `host_name` | 15 | `string` | The display name of `host`, when known. |
-| `power` | 16 | `string` | How the Space turns off and on again (`stop_space` / `start_space`): "suspend" (its memory is kept), "stop" (its disk is kept), or empty when it cannot. Filled in when listed, not stored. |
-| `power_state` | 17 | `string` | "running", "suspended" or "stopped" as cua last recorded it; empty when unknown. Filled in when listed, not stored. |
-| `cloud` | 18 | `string` | A Space in the owner's own cloud: the provider ("aws", "gcp", "modal"); empty otherwise. |
-| `cloud_place` | 19 | `string` | Where it runs, for people ("AWS · us-west-2"); empty otherwise. |
-| `cloud_delete` | 20 | `string` | How this device would delete it permanently: "here" (this cua home created it and records it), "host:&lt;machine&gt;" (ask the device that created it, through the relay) or "elsewhere" (only from the device that created it). Empty for other Spaces. |
-| `stop_reason` | 21 | `string` | Why a local Space stopped without being asked to, in plain words: "out of memory", "killed", "exited" or "exited with code N". Empty otherwise, and once it is started again. Filled in when listed, not stored. |
-
-### AddSpaceRequest
-
-Request for `SpaceService.AddSpace`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `url` | 1 | `string` | Space URL. |
-| `token` | 2 | `string` | spacesd token (direct Spaces). |
-| `name` | 3 | `string` | Display name. Empty derives one. |
-| `service` | 4 | `string` | When `url` is not a cua-spacesd but an MCP endpoint: the service name it is registered under. Empty means "mcp". |
-
-### AddSpaceResponse
-
-Response for `SpaceService.AddSpace`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `space` | 1 | [`Space`](#space) | The Space. |
-
-### ListSpacesRequest
-
-Request for `SpaceService.ListSpaces`.
-
-No fields.
-
-### ListSpacesResponse
-
-Response for `SpaceService.ListSpaces`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `spaces` | 1 | repeated [`Space`](#space) | Spaces. |
-
-### RemoveSpaceRequest
-
-Request for `SpaceService.RemoveSpace`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `id` | 1 | `string` | Space id. |
-
-### RemoveSpaceResponse
-
-Response for `SpaceService.RemoveSpace`.
-
-No fields.
-
-### ResolveSpaceRequest
-
-Request for `SpaceService.ResolveSpace`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `space` | 1 | `string` | Id, legacy id, URL or display name. |
-
-### ResolveSpaceResponse
-
-Response for `SpaceService.ResolveSpace`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `space` | 1 | [`Space`](#space) | The registered Space. |
-
-### ProvisionLocalSpaceRequest
-
-Request for `SpaceService.ProvisionLocalSpace`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `image` | 1 | `string` | Image. Empty uses the default Spaces image. |
-| `name` | 2 | `string` | Name. Empty generates one. |
-| `cpus` | 3 | `uint32` | vCPUs (0 = 2). |
-| `memory_mb` | 4 | `uint64` | Memory in MiB (0 = 4096). |
-| `timeout` | 5 | `google.protobuf.Duration` | Provisioning budget (default 600 s). |
-| `command` | 6 | repeated `string` | Entrypoint override. Empty keeps the image's. |
-| `env` | 7 | map of `string` to `string` | Guest environment. |
-| `services` | 8 | map of `string` to `uint32` | Named services (name -&gt; guest port), for example &#123;"mcp": 8765&#125;. |
-| `spacesd` | 9 | optional `bool` | Whether the image runs cua-spacesd. Unset: yes for the Spaces images, no for any other image. |
-
-### ProvisionLocalSpaceResponse
-
-Response for `SpaceService.ProvisionLocalSpace`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `space` | 1 | [`Space`](#space) | The Space. |
-
-### ReleaseSpaceRequest
-
-Request for `SpaceService.ReleaseSpace`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `space` | 1 | `string` | Space. |
-
-### ReleaseSpaceResponse
-
-Response for `SpaceService.ReleaseSpace`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `message` | 1 | `string` | What happened, for humans. |
-
-### ConnectSpaceRequest
-
-Request for `SpaceService.ConnectSpace`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `space` | 1 | `string` | Space. |
-
-### ConnectSpaceResponse
-
-Response for `SpaceService.ConnectSpace`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `space` | 1 | [`Space`](#space) | The Space. |
-| `env_url` | 2 | `string` | env passthrough base URL (speaks `cua.env.v1`, gRPC and gRPC-Web, and relays the `/media` and `/tunnel` WebSockets). |
-| `token` | 3 | `string` | Bearer for `env_url` (the daemon's loopback token). |
-| `capabilities` | 4 | `bytes` | `cua.env.v1.GetCapabilitiesResponse` of the Space, protobuf-encoded. |
-| `services` | 5 | repeated [`SpaceServiceEndpoint`](#spaceserviceendpoint) | The Space's declared services through the daemon (same bearer as `env_url`). `env_url` is empty when the Space runs no cua-spacesd. |
-
-### SpaceServiceEndpoint
-
-A declared service of a Space, reachable through the daemon.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `name` | 1 | `string` | Service name, for example "mcp". |
-| `url` | 2 | `string` | Base URL: requests to `<url><path>` reach `<path>` on the service. |
-| `mcp_path` | 3 | `string` | Its MCP endpoint path, for example "/mcp". |
-
-### ListSpaceToolsRequest
-
-Request for `SpaceService.ListSpaceTools`.
-
-No fields.
-
-### ListSpaceToolsResponse
-
-Response for `SpaceService.ListSpaceTools`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `tools_json` | 1 | `string` | MCP `tools/list` result as JSON. |
-
-### CallSpaceToolRequest
-
-Request for `SpaceService.CallSpaceTool`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `name` | 1 | `string` | Tool name from the Spaces contract. |
-| `arguments_json` | 2 | `string` | Arguments as a JSON object. Empty means `{}`. |
-
-### CallSpaceToolResponse
-
-Response for `SpaceService.CallSpaceTool`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `content_json` | 1 | `string` | MCP content parts as a JSON array. |
-| `structured_json` | 2 | `string` | MCP structured content as JSON, when present. |
-| `is_error` | 3 | `bool` | The call failed as a tool error. |
-| `meta_json` | 4 | `string` | The result's `_meta` as JSON, when present (forwarded verbatim from an in-Space MCP service). |
-
-### CreateSpaceRequest
-
-Request for `SpaceService.CreateSpace`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `image` | 1 | `string` | Image. Empty uses the canonical Linux image. |
-| `location` | 2 | `string` | Where it runs: "local" or a registered provider. Empty uses the default (`default.on` in the config, `CUA_DEFAULT_ON`, else "local"); clients resolve the default on their side. |
-| `kind` | 3 | `string` | What kind of machine: "auto" (empty), "container" or "vm". |
-| `runtime` | 4 | `string` | Which engine: "auto" (empty), or one the location offers for the kind ("gvisor", "runc", "qemu", "lume" locally). |
-| `name` | 5 | `string` | Name. Empty generates `space-<hex>`. |
-| `cpus` | 6 | `uint32` | vCPUs (0 = the default, 2). |
-| `memory_mb` | 7 | `uint64` | Memory in MiB (0 = the default, 4096). |
-| `timeout` | 8 | `google.protobuf.Duration` | Readiness budget (default 600 s). |
-| `wait` | 9 | optional `bool` | Wait until the Space is ready (default true when unset). With false the response carries only its id and phase "starting". |
-| `reuse` | 10 | `bool` | Return a reachable registered Space with the same image, location, kind and runtime instead of creating one (get-or-create). |
-| `command` | 11 | repeated `string` | Entrypoint override. Empty keeps the image's. |
-| `env` | 12 | map of `string` to `string` | Guest environment. |
-| `services` | 13 | map of `string` to `uint32` | Named services (name -&gt; guest port), for example &#123;"mcp": 8765&#125;. |
-| `spacesd` | 14 | optional `bool` | Whether the image runs cua-spacesd. Unset: yes for the canonical images, no for any other image. |
-| `disk_gb` | 15 | `uint32` | Grow the VM's disk to this many GiB (local VMs only; 0 keeps the image's size). Lume grows the macOS APFS container before the first boot; Linux images grow their root partition at boot (cloud-init growpart). |
-| `gpu` | 16 | `string` | A GPU option of the runtime the Space runs on (`GetGpuSupport`): "paravirtual" (a macOS VM on Lume: GPU acceleration, experimental), "virgl", "nvidia", a provider's GPU type; "auto" picks the runtime's own. Empty: no GPU. Kept with the Space. |
-| `create_id` | 17 | `string` | The caller's own key for this create (an app's pending row id), for `CancelCreateSpace` before the Space's id is known. |
-
-### CreateSpaceResponse
-
-Response for `SpaceService.CreateSpace`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `space` | 1 | [`Space`](#space) | The Space (with `wait = false`: only its id). |
-| `phase` | 2 | `string` | "ready", or "starting" with `wait = false`. |
-| `reused` | 3 | `bool` | `reuse` returned an existing Space. |
-
-### CreateSpaceStreamRequest
-
-Request for `SpaceService.CreateSpaceStream`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `create` | 1 | [`CreateSpaceRequest`](#createspacerequest) | The create, as for `CreateSpace`. `wait` is ignored: the stream always runs until the Space is ready or the create fails. |
-
-### CreateSpaceProgress
-
-What a create is doing.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `phase` | 1 | `string` | "preparing", "pulling", "creating", "booting", "waiting_for_services", "connecting" or "ready", in that order. |
-| `fraction` | 2 | optional `double` | How far through the phase, 0.0 to 1.0, when its size is known (an image pull). |
-| `detail` | 3 | `string` | One short line, for example the image being pulled. |
-| `bytes_done` | 4 | optional `uint64` | Bytes downloaded so far, when the step counts them (an image pull). |
-| `bytes_total` | 5 | optional `uint64` | Bytes the download has in all. |
-| `bytes_per_second` | 6 | optional `double` | Smoothed download rate, bytes per second. |
-| `space` | 7 | `string` | The id the Space will have (`local:<name>`), for `CancelCreateSpace`. |
-
-### CreateSpaceStreamResponse
-
-One message of `SpaceService.CreateSpaceStream`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `progress` | 1 | [`CreateSpaceProgress`](#createspaceprogress) (oneof `event`) | What the create is doing now. |
-| `result` | 2 | [`CreateSpaceResponse`](#createspaceresponse) (oneof `event`) | The created Space (the last message). |
-
-### CancelCreateSpaceRequest
-
-Request for `SpaceService.CancelCreateSpace`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `space` | 1 | `string` | The create's `create_id`, the id the Space will have, or its name. |
-
-### CancelCreateSpaceResponse
-
-Response for `SpaceService.CancelCreateSpace`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `id` | 1 | `string` | The Space id the create had, when known. |
-| `state` | 2 | `string` | "cancelled", "not_creating" (nothing by that key is running) or "already_created" (it finished; delete it instead). |
-| `message` | 3 | `string` | What was removed and what stays, for people. |
-
-### GetGpuSupportRequest
-
-Request for `SpaceService.GetGpuSupport`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `location` | 1 | `string` | "local" (empty) or a registered provider. |
-
-### GpuOption
-
-One GPU option of a runtime.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `id` | 1 | `string` | What to pass as `gpu`. |
-| `label` | 2 | `string` | How a person names it ("GPU acceleration"). |
-| `experimental` | 3 | `bool` | Experimental. |
-| `supported` | 4 | `bool` | Works on this host (and account) now. |
-| `reason` | 5 | `string` | Why not, one short line. |
-| `learn_more` | 6 | `string` | A page that explains it. |
-| `usd_per_hour` | 7 | optional `double` | Estimated cost per hour while it runs (a provider's GPU types). |
-
-### GpuSupport
-
-The GPU options of one runtime.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `runtime` | 1 | `string` | "lume", "qemu", "container", "gvisor", a provider's name. |
-| `options` | 2 | repeated [`GpuOption`](#gpuoption) | Its options; empty: none. |
-| `reason` | 3 | `string` | Why it has none. |
-
-### GetGpuSupportResponse
-
-Response for `SpaceService.GetGpuSupport`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `runtimes` | 1 | repeated [`GpuSupport`](#gpusupport) | One entry per runtime of the location. |
-
-### DeleteSpaceRequest
-
-Request for `SpaceService.DeleteSpace`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `space` | 1 | `string` | Space. |
-
-### DeleteSpaceResponse
-
-Response for `SpaceService.DeleteSpace`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `message` | 1 | `string` | What happened, for humans. |
-
-### ListHostsRequest
-
-Request for `SpaceService.ListHosts`.
-
-No fields.
-
-### SpacesHostLimit
-
-One limit of a host and how much of it is used.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `resource` | 1 | `string` | `spaces` (every Space it provides) or `macos_vms` (macOS VMs on that Mac). |
-| `used` | 2 | `uint32` | In use now. |
-| `limit` | 3 | `uint32` | The limit (0: none). |
-| `reason` | 4 | `string` | Why the limit exists, for people. |
-
-### SpacesHost
-
-One of your machines that provides Spaces.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `id` | 1 | `string` | What `on="host:<id>"` takes: the relay machine id, or the name a direct host was added as. |
-| `name` | 2 | `string` | Its name. |
-| `via` | 3 | `string` | `relay` or `direct`. |
-| `online` | 4 | `bool` | It answered. |
-| `os` | 5 | `string` | Its operating system (`macos`, `linux`, `windows`), when it answered. |
-| `limits` | 6 | repeated [`SpacesHostLimit`](#spaceshostlimit) | Its limits, when it answered. |
-
-### ListHostsResponse
-
-Response for `SpaceService.ListHosts`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `hosts` | 1 | repeated [`SpacesHost`](#spaceshost) | In order: relay hosts, then direct ones. |
-
-### GetSpaceThumbnailRequest
-
-Request for `SpaceService.GetSpaceThumbnail`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `space` | 1 | `string` | Space. |
-| `max_age` | 2 | `google.protobuf.Duration` | How old a cached thumbnail may be (unset: any age; zero: always capture). |
-
-### GetSpaceThumbnailResponse
-
-Response for `SpaceService.GetSpaceThumbnail`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `image` | 1 | `bytes` | Encoded image. |
-| `format` | 2 | `string` | "jpeg". |
-| `width` | 3 | `uint32` | Pixel width. |
-| `height` | 4 | `uint32` | Pixel height. |
-| `captured_at` | 5 | `google.protobuf.Timestamp` | When it was captured. |
-
-## Types in `cua/daemon/v1/daemon.proto`
-
-### DaemonErrorInfo
-
-Structured error detail of daemon RPCs.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `reason` | 1 | [`DaemonErrorReason`](#daemonerrorreason) | Reason. |
-| `message` | 2 | `string` | Human-readable message. |
-| `metadata` | 3 | map of `string` to `string` | Extra context. |
-
-### GetInfoRequest
-
-Request for `DaemonService.GetInfo`.
-
-No fields.
-
-### GetInfoResponse
-
-Response for `DaemonService.GetInfo`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `version` | 1 | `string` | cua-daemon version. |
-| `pid` | 2 | `uint32` | Process id. |
-| `socket_path` | 3 | `string` | Unix socket path, when listening on one. |
-| `loopback_url` | 4 | `string` | Loopback base URL (`http://127.0.0.1:<port>`) serving the same services, the env passthrough and the media bridge. |
-| `loopback_token` | 5 | `string` | Bearer token of the loopback listener. |
-| `features` | 6 | repeated `string` | Compiled-in SDK features, for example "env", "sandboxes", "local". |
-| `started_at` | 7 | `google.protobuf.Timestamp` | When the daemon started. |
-| `executable` | 8 | `string` | The daemon's executable (symlinks resolved), so a client bound to an app bundle can tell its own daemon from another app's. Empty from daemons that predate it. |
-| `build_id` | 9 | `string` | The executable's build as it was when the daemon started (version, size and modification time), so a client can tell a daemon whose executable was rebuilt or updated since. Empty from daemons that predate it. |
-
-### OpenMediaBridgeRequest
-
-Request for `DaemonService.OpenMediaBridge`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `name` | 1 | `string` | Sandbox name. |
-| `open_media_json` | 2 | `string` | `cua.env.v1.OpenMediaRequest` in canonical proto3 JSON. Empty opens the primary display with defaults. |
-
-### OpenMediaBridgeResponse
-
-Response for `DaemonService.OpenMediaBridge`.
-
-| Field | # | Type | Description |
-| --- | --- | --- | --- |
-| `ws_url` | 1 | `string` | Loopback WebSocket URL, for example "ws://127.0.0.1:52011/v1/bridge/media?ticket=...". Speaks rcdp wire v2 unchanged. |
-| `ticket` | 2 | `string` | Bridge ticket (also in `ws_url`). |
-| `expires_at` | 3 | `google.protobuf.Timestamp` | When the bridge ticket stops accepting new attaches. |
-| `open_media_response_json` | 4 | `string` | `cua.env.v1.OpenMediaResponse` in canonical proto3 JSON, with the upstream ticket removed. |
-
-### ShutdownRequest
-
-Request for `DaemonService.Shutdown`.
-
-No fields.
-
-### ShutdownResponse
-
-Response for `DaemonService.Shutdown`.
-
-No fields.
-
-### DaemonErrorReason
-
-Why a daemon call failed. Packed as `DaemonErrorInfo` in the
-`google.rpc.Status` details of every daemon error.
-
-| Value | # | Description |
-| --- | --- | --- |
-| `DAEMON_ERROR_REASON_UNSPECIFIED` | 0 | Unknown. |
-| `DAEMON_ERROR_REASON_INVALID_ARGUMENT` | 1 | Bad input. |
-| `DAEMON_ERROR_REASON_NOT_FOUND` | 2 | No such sandbox, forward or bridge. |
-| `DAEMON_ERROR_REASON_PROVIDER_NOT_CONFIGURED` | 3 | The provider is not configured in the daemon (for example no local runtime). |
-| `DAEMON_ERROR_REASON_UNSUPPORTED` | 4 | The provider or build cannot do this. |
-| `DAEMON_ERROR_REASON_SPACESD_NOT_AVAILABLE` | 5 | No cua-spacesd answered in the sandbox. |
-| `DAEMON_ERROR_REASON_TIMEOUT` | 6 | A deadline elapsed. |
-| `DAEMON_ERROR_REASON_RUNTIME` | 8 | Local runtime failure. |
-| `DAEMON_ERROR_REASON_ENV` | 9 | spacesd call failure. |
-| `DAEMON_ERROR_REASON_HTTP` | 10 | HTTP failure talking to a sandbox service. |
-| `DAEMON_ERROR_REASON_INTERNAL` | 11 | Daemon bug or I/O failure. |
-| `DAEMON_ERROR_REASON_UNAUTHENTICATED` | 12 | Missing or wrong daemon token. |
-| `DAEMON_ERROR_REASON_CAPABILITY_MISSING` | 13 | The Space's spacesd reports a feature the call needs as unsupported. |
-| `DAEMON_ERROR_REASON_HOST_CAPABILITY_MISSING` | 14 | A host-side prerequisite (app-session providers, an operator display, a local runtime) is not available. |
-| `DAEMON_ERROR_REASON_TELEPORT_REFUSED` | 15 | The teleport consent gate refused. |
-| `DAEMON_ERROR_REASON_AMBIGUOUS_SANDBOX` | 18 | A bare sandbox name matches sandboxes in more than one location. The qualified candidates are in `DaemonErrorInfo.metadata["candidates"]` (comma-separated, for example "local:box,cloud:box"). |
-| `DAEMON_ERROR_REASON_INSUFFICIENT_DISK` | 19 | A pull, build or VM create would leave less than the configured minimum free disk space; nothing was written (`cua cache prune` frees space). |
-| `DAEMON_ERROR_REASON_INVALID_PLACEMENT` | 20 | A location, kind or runtime that does not exist, or a combination of them (or with the image) that does not. The accepted values are in `DaemonErrorInfo.metadata["valid"]` (comma-separated, for example "auto,gvisor,runc") and the axis in `metadata["axis"]` ("on", "kind", "runtime" or "image"). |
-| `DAEMON_ERROR_REASON_CANCELLED` | 23 | The create was cancelled (`CancelCreateSpace`, or its caller went away); what it made is gone. The message says what was removed and what stays (finished image downloads stay cached). |
-| `DAEMON_ERROR_REASON_CLOUD` | 24 | Your own cloud account (AWS, Google Cloud, Modal) refused or failed a call Cua made there: a missing permission, a quota, a region without the machine type. The message names the cloud's own error. |

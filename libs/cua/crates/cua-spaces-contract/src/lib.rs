@@ -65,6 +65,16 @@ use serde::Serialize;
 /// `cloud_disconnect`, `cloud_sweep`; stop_space and start_space stop and
 /// start a Space there), the `cloud` error kind and the `cloud_account`
 /// host requirement.
+///
+/// Added later in 0.7.0 (additive): `create_space` `durable` (a Space kept on
+/// the user's machines) and `durable` in `list_spaces`.
+///
+/// Added later in 0.7.0 (additive): the elastic pool (`cloud_plan`,
+/// `cloud_hosts`, `cloud_add_host`, `cloud_remove_host`, `cloud_budget`,
+/// `cloud_reconcile`) and `create_space` `instance_type` and `region`.
+///
+/// Added later in 0.7.0 (additive): prewarm (`prewarm`, `prewarm_list`,
+/// `prewarm_remove`).
 pub const CONTRACT_VERSION: &str = "0.7.0";
 /// Bumped when the meaning of a capability string changes.
 pub const CAPABILITY_VERSION: &str = "1";
@@ -248,7 +258,7 @@ pub fn categories() -> Vec<CategoryInfo> {
         c(
             Cloud,
             "Your cloud",
-            "Create Spaces in your own AWS, Google Cloud or Modal account: connect it, check it, and clean up what Cua created there.",
+            "Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account: connect it, check it, and clean up what Cua created there.",
         ),
     ]
 }
@@ -316,6 +326,11 @@ pub const ERROR_KINDS: &[ErrorKind] = &[
         fix: "Delete a Space on that host (delete_space), pick another computer, or create a Linux Space instead.",
     },
     ErrorKind {
+        kind: "host_capacity",
+        meaning: "The machine has no room for another Space now: its VMs are at their memory limit (shared snapshot memory counted once) or CPU limit, or it is low on memory. Nothing was started; the message says which limit and by how much.",
+        fix: "Delete a Space (delete_space), create it smaller (cpus, memory_mb), or create it with on=\"auto\" so another machine takes it.",
+    },
+    ErrorKind {
         kind: "ambiguous_sandbox",
         meaning: "A short name matches more than one sandbox.",
         fix: "Use the full id (`local:<name>` or `cloud:<name>`).",
@@ -372,7 +387,7 @@ pub const ERROR_KINDS: &[ErrorKind] = &[
     },
     ErrorKind {
         kind: "cloud",
-        meaning: "Your cloud account refused or failed a call Cua made for a Space there (AWS, Google Cloud, Modal): a missing permission, a quota, a region without the instance type. The message names the cloud's own error.",
+        meaning: "Your cloud account refused or failed a call Cua made for a Space there (AWS, Google Cloud, Hetzner, Modal): a missing permission, a quota, a region without the instance type. The message names the cloud's own error.",
         fix: "Fix what the message names in that account (`cua cloud test <provider>` checks without creating anything), or connect another region or project.",
     },
     ErrorKind {
@@ -598,7 +613,7 @@ const AGENT_EVENTS_INSTRUCTIONS: &str = "Normalized events (install, session, tu
 
 const PERSISTENT_INSTRUCTIONS: &str = "A persistent agent is a harness with a name, a Space and a home in the Cua Volume (agents/<name>/). Its harness keeps its memory in the home (Claude Code auto memory, Codex memories, Hermes MEMORY.md, the OpenClaw workspace), which is restored into the Space before each run and saved after each turn, so the agent remembers across runs, Space releases and computers. One run writes a home at a time. Start it with persistent_agent_send (or agent_start with home=<name>); the daemon notifies the user when a turn ends. Inside the Space the agent gets the `cua` bridge: notify_user, the drive, and the user's computers it was granted.";
 
-const POWER_INSTRUCTIONS: &str = "Turns a Space off the way its provider can: a local container or QEMU VM is suspended (its memory is kept and it resumes where it was), a local Lume VM is stopped (its disk is kept and it boots again), a Space one of your computers provides is stopped by that computer, which frees its memory, and a Space in your own cloud (on=\"aws\", \"gcp\") is stopped there: compute billing stops, its disk stays (storage is still billed). Anything streaming from the Space and any hotspot on it end first. A Modal sandbox, a Space added by address and your own computers on the relay cannot be turned off (wrong_provider); delete_space deletes a Space instead. start_space turns it on again.";
+const POWER_INSTRUCTIONS: &str = "Turns a Space off the way its provider can: a local container or QEMU VM is suspended (its memory is kept and it resumes where it was), a local Lume VM is stopped (its disk is kept and it boots again), a Space one of your computers provides is stopped by that computer, which frees its memory, and a Space in your own cloud (on=\"aws\", \"gcp\") is stopped there: compute billing stops, its disk stays (storage is still billed); a Hetzner server (on=\"hetzner\") is stopped too, but Hetzner keeps billing a stopped server, so delete it to stop the charge. Anything streaming from the Space and any hotspot on it end first. A Modal sandbox, a Space added by address and your own computers on the relay cannot be turned off (wrong_provider); delete_space deletes a Space instead. start_space turns it on again.";
 
 const PAUSE_INSTRUCTIONS: &str = "One call: stops the run, saves the home, releases the home's lease, keeps the agent's routines from firing, and suspends its Space when it is local. A cloud Space cannot be suspended, so pausing releases it after the home is saved; agent_resume creates it again from the same image and restores the home. Apps open in a released cloud Space do not come back. The user's own computers are never suspended.";
 
@@ -642,7 +657,7 @@ pub fn tools() -> Vec<Tool> {
             category: Category::Lifecycle,
             result: "JSON: an array of Spaces (`id`, `name`, `provider`, `spacesd_version`, `features`, `os`, `services`, `added_at`, for a Space one of your computers provides `host` and `host_name`, for a Space that can be turned off and on `power` (`suspend` or `stop`) and `power_state`, and for a Space in your cloud `cloud`, `cloud_place` and `cloud_delete`, and for a relay computer the relay cannot reach now `status` (`offline` or `not sharing`)), each with `phase`: `ready`, or `offline` for a relay computer the relay cannot reach now (a computer that is off or stopped sharing, or a Space that is gone and left its record; `relay_unregister_space` removes it).",
             errors: &["relay", "unauthenticated"],
-            instructions: "Every registered Space (cloud, local, direct and relay) with its id (local:<name>, cloud:<name>, direct:<host:port>, relay:<computer-id>), provider, spacesd version (empty without one) and supported features as of the last handshake. The signed-in account's computers on the relay are listed too: those are the names `create_space` accepts as on=\"host:<computer>\". A Space a computer provides carries `host` (that computer's id) and `host_name`; group them under it when you show them. A Space in your cloud carries `cloud` (the provider: aws, gcp, modal), `cloud_place` (account and region, to show with it) and `cloud_delete` (where delete_space can delete it: here, host:<computer>, or elsewhere).",
+            instructions: "Every registered Space (cloud, local, direct and relay) with its id (local:<name>, cloud:<name>, direct:<host:port>, relay:<computer-id>), provider, spacesd version (empty without one) and supported features as of the last handshake. The signed-in account's computers on the relay are listed too: those are the names `create_space` accepts as on=\"host:<computer>\". A Space a computer provides carries `host` (that computer's id) and `host_name`; group them under it when you show them. A Space in your cloud carries `cloud` (the provider: aws, gcp, modal), `cloud_place` (account and region, to show with it) and `cloud_delete` (where delete_space can delete it: here, host:<computer>, or elsewhere). A durable Space (create_space durable=true) carries `durable` (its name, by which it is found wherever it runs now).",
             capabilities: &["space.discover"],
             sdk_symbol: "SpacesConnection.spaces()",
             rust_symbol: "Spaces::list",
@@ -659,7 +674,7 @@ pub fn tools() -> Vec<Tool> {
                 "ambiguous_host",
                 "limit_exceeded",
             ],
-            instructions: "Creates a new sandbox where `on` says (local: this computer, free; aws, gcp or modal: the user's own cloud account, connected with cloud_connect, billed there; default: the user's default location, else local), waits until it is ready (its spacesd when the image runs one, else its declared services), and registers it as local:<name>. Cua Cloud (on=\"cloud\") has ended and fails with an error that says so. `kind` (auto, container, vm) and `runtime` (auto, or an engine the location offers for the kind) are chosen automatically by default: the canonical Linux image runs as a gVisor container, macOS images as Lume VMs, Windows and disk-only images as VMs (QEMU locally, KubeVirt in the cloud). An impossible combination fails with invalid_placement and lists the valid values. Any image works; without cua-spacesd the capability set is empty. reuse=true returns a reachable registered Space in the same location with the requested services instead of creating one. On the user's own computers: on=\"host:<computer>\" creates the Space on a computer set up with `cua host setup --provide-spaces` (for example \"spin up 2 macOS Spaces on my spare Mac mini\" is on=\"host:spare mac mini\", image=\"macos\", count=2). The computer is matched by id, exact name, or the words of its name; when several fit equally the call fails with ambiguous_host listing them (ask the user which, then pass on=\"host:<id>\"). The host runs it with its own runtimes (Lume for macOS VMs on a Mac, Docker for Linux), the Space joins the relay and is returned as relay:<computer> with `host` set. A Mac runs at most two macOS VMs (Apple's macOS license, enforced by Apple Virtualization); a host at a limit fails with limit_exceeded. Only the computer's owner and the accounts it is shared with as editors can create there, from an enrolled device. on=\"direct:<addr>\" is not accepted here: a direct address is one already-running Space, attached with add_space, not a host this call can create on.",
+            instructions: "Creates a new sandbox where `on` says (local: this computer, free; aws, gcp, hetzner or modal: the user's own cloud account, connected with cloud_connect, billed there; default: the user's default location, else local; with no location and none configured, when a linked cloud has a budget set with cloud_budget, this computer first and the linked clouds when it is full, never past the budget, unless placement.overflow is off; a Space that landed in the user's cloud carries `cloud` and `cloud_place`, the pool host and its price, so say so), waits until it is ready (its spacesd when the image runs one, else its declared services), and registers it as local:<name>. Cua Cloud (on=\"cloud\") has ended and fails with an error that says so. `kind` (auto, container, vm) and `runtime` (auto, or an engine the location offers for the kind) are chosen automatically by default: the canonical Linux image runs as a gVisor container, macOS images as Lume VMs, Windows and disk-only images as VMs (QEMU locally, KubeVirt in the cloud). An impossible combination fails with invalid_placement and lists the valid values. Any image works; without cua-spacesd the capability set is empty. reuse=true returns a reachable registered Space in the same location with the requested services instead of creating one. On the user's own computers: on=\"auto\" creates it on the least-loaded one that can take it (this computer or one signed in to the user's account that provides Spaces; the host refuses when full and the next is asked); on=\"host:<computer>\" creates the Space on a computer set up with `cua host setup --provide-spaces` (for example \"spin up 2 macOS Spaces on my spare Mac mini\" is on=\"host:spare mac mini\", image=\"macos\", count=2). The computer is matched by id, exact name, or the words of its name; when several fit equally the call fails with ambiguous_host listing them (ask the user which, then pass on=\"host:<id>\"). The host runs it with its own runtimes (Lume for macOS VMs on a Mac, Docker for Linux), the Space joins the relay and is returned as relay:<computer> with `host` set. A Mac runs at most two macOS VMs (Apple's macOS license, enforced by Apple Virtualization); a host at a limit fails with limit_exceeded. Only the computer's owner and the accounts it is shared with as editors can create there, from an enrolled device. on=\"direct:<addr>\" is not accepted here: a direct address is one already-running Space, attached with add_space, not a host this call can create on. durable=true (with on=\"auto\") keeps the Space on the user's computers: when its computer goes away it is created again on another one with the same name (its disk starts fresh), list_spaces shows it with `durable`, and delete_space deletes it for good.",
             providers: &CREATE_PROVIDERS,
             metering: Metering::Cloud,
             capabilities: &["space.create"],
@@ -1615,7 +1630,7 @@ pub fn tools() -> Vec<Tool> {
             rust_symbol: "cua_cloud::Clouds::status",
             ..Spec::new(
                 "cloud_status",
-                "List your clouds (AWS, Google Cloud, Modal): found credentials, the connected account and region, what each can run at what hourly cost, and what Cua created there.",
+                "List your clouds (AWS, Google Cloud, Hetzner, Modal): found credentials, the connected account and region, what each can run at what hourly cost, and what Cua created there.",
             )
         }
         .with::<i::CloudStatus>(),
@@ -1644,13 +1659,14 @@ pub fn tools() -> Vec<Tool> {
         .with::<i::CloudTest>(),
         Spec {
             category: Category::Cloud,
-            result: "JSON: `provider`, `disconnected` and `left` (resources Cua still records there; delete their Spaces, or cloud_sweep with all=true, to remove them).",
-            instructions: "Forgets the connection (and `default.on` when it named this cloud). Nothing in the cloud is deleted.",
+            result: "JSON: `provider`, `disconnected`, `deleted` (with delete=true: the receipt, each resource deleted first) and `left` (resources Cua still records there).",
+            errors: &["cloud"],
+            instructions: "Refuses (a `cloud` error listing them) while Cua-created instances or sandboxes still run in that cloud, because a disconnected cloud is no longer swept and they would bill unseen. With delete=true it first deletes everything Cua created there (the same tag and record checks as cloud_sweep with all=true), then asks the cloud again and forgets the connection (and `default.on` when it named this cloud) only when nothing is left; if something remains it keeps the connection and says what. Nothing that Cua did not create is ever touched.",
             capabilities: &["cloud.manage"],
-            annotations: Annotations::mutating_idempotent(),
-            sdk_symbol: "spaces.cloud.disconnect(_:)",
+            annotations: Annotations::mutating(),
+            sdk_symbol: "spaces.cloud.disconnect(_:delete:)",
             rust_symbol: "cua_cloud::Clouds::disconnect",
-            ..Spec::new("cloud_disconnect", "Forget a connected cloud account.")
+            ..Spec::new("cloud_disconnect", "Forget a connected cloud account (deleting what Cua created there first, with delete=true).")
         }
         .with::<i::CloudDisconnect>(),
         Spec {
@@ -1665,12 +1681,133 @@ pub fn tools() -> Vec<Tool> {
             ..Spec::new("cloud_sweep", "Find and delete what Cua left in your clouds.")
         }
         .with::<i::CloudSweep>(),
+        Spec {
+            category: Category::Cloud,
+            result: "JSON: `plan` (`assignments`: `group`, `target` (`on`: `host` with `name`, or `new` with `index`), `count`; `new_hosts`: `provider`, `type_name`, `region`, `usd_per_hour`, `boot_secs`, `billed_secs`; `unplaced` with `reason`; `added_usd_per_hour`, `projected_usd`, `lower_bound_usd`, `solver`, `ready_in_secs`, `explain`), `groups` (the demand it detected) and `pool` (`hosts`, `cloud`, `offers`, `constraints`, `month_usd`); with apply, `added` (the hosts added).",
+            errors: &["cloud", "limit_exceeded"],
+            instructions: ELASTIC_INSTRUCTIONS,
+            capabilities: &["cloud.read"],
+            annotations: Annotations::mutating(),
+            sdk_symbol: "spaces.cloud.plan(_:)",
+            rust_symbol: "Spaces::elastic_plan",
+            ..Spec::new("cloud_plan", "Show (or apply) the elastic pool's plan for some Spaces: where they go, which machines it adds, and the cost.")
+        }
+        .with::<i::CloudPlan>(),
+        Spec {
+            category: Category::Cloud,
+            result: "JSON array: each host `name`, `provider`, `type_name`, `region`, `id`, `machine`, `state` (`creating`, `booting`, `joined`, `cordoned`, `offline`, `gone`), `started`, `expires`, `usd_per_hour`, `billing_step_secs`, `billing_min_secs`, `pinned`.",
+            errors: &["cloud"],
+            instructions: "The hosts the elastic pool (or cloud_add_host) added in the user's linked clouds: machines that provide Spaces to the pool, with their live cost.",
+            capabilities: &["cloud.read"],
+            sdk_symbol: "spaces.cloud.hosts()",
+            rust_symbol: "cua_cloud::Clouds::hosts",
+            ..Spec::new("cloud_hosts", "List the hosts the elastic pool added in your clouds.")
+        }
+        .with::<i::CloudHosts>(),
+        Spec {
+            category: Category::Cloud,
+            result: "JSON array: the hosts added (see cloud_hosts).",
+            errors: &["cloud", "invalid_argument"],
+            instructions: "Adds hosts by hand (pinned: the scaler never removes them); it costs money in the user's account. Each host is tagged and recorded first, installs cua, joins the pool and ends at its TTL. cloud_remove_host removes it.",
+            capabilities: &["cloud.manage"],
+            annotations: Annotations::mutating(),
+            sdk_symbol: "spaces.cloud.addHost(_:)",
+            rust_symbol: "cua_cloud::Clouds::add_host",
+            ..Spec::new("cloud_add_host", "Add hosts to your pool in a linked cloud.")
+        }
+        .with::<i::CloudAddHost>(),
+        Spec {
+            category: Category::Cloud,
+            result: "JSON: `removed` (names) and `failed` (each `name`, `error`).",
+            errors: &["cloud", "not_found"],
+            instructions: "Deletes the hosts' machines (only ones this cua home added and tagged) and their relay entries. The Spaces on them end.",
+            capabilities: &["cloud.manage"],
+            annotations: Annotations::mutating(),
+            sdk_symbol: "spaces.cloud.removeHost(_:)",
+            rust_symbol: "cua_cloud::Clouds::remove_host",
+            ..Spec::new("cloud_remove_host", "Remove hosts this home added to your pool.")
+        }
+        .with::<i::CloudRemoveHost>(),
+        Spec {
+            category: Category::Cloud,
+            result: "JSON: `policy` (`autoscale`, `max_usd_per_hour`, `monthly_usd`, `max_new_hosts`, `warm`, `interactive_slo_secs`, `routed`, `allow_metal`), `month_usd` (spent this month on elastic hosts), `running_usd_per_hour` and `hosts` (how many run).",
+            errors: &["invalid_argument"],
+            instructions: "The caps the elastic pool keeps to: it never adds a machine that would take the clouds' cost over max_usd_per_hour or this month's spend over monthly_usd, and with autoscale false it adds none. Fields given are set; the rest stay.",
+            capabilities: &["cloud.manage"],
+            annotations: Annotations::mutating_idempotent(),
+            sdk_symbol: "spaces.cloud.budget(_:)",
+            rust_symbol: "Spaces::set_elastic_policy",
+            ..Spec::new("cloud_budget", "Read or set the elastic pool's budget and autoscale switch.")
+        }
+        .with::<i::CloudBudget>(),
+        Spec {
+            category: Category::Cloud,
+            result: "JSON array: each `host` and `action` (`action`: `keep` with `until` and `reason`, `cordon` with `reason`, or `remove` with `reason` and `saves_usd`).",
+            errors: &["cloud"],
+            instructions: "One scale-in pass now (the daemon runs one every 30 s): idle hosts go at the end of the time already paid, the least-used one is cordoned when the others have room.",
+            capabilities: &["cloud.manage"],
+            annotations: Annotations::mutating(),
+            sdk_symbol: "spaces.cloud.reconcile()",
+            rust_symbol: "Spaces::elastic_reconcile",
+            ..Spec::new("cloud_reconcile", "Run the elastic pool's scale-in pass now.")
+        }
+        .with::<i::CloudReconcile>(),
+        Spec {
+            category: Category::Cloud,
+            result: "JSON: `id`, `image`, `kind`, `cpus`, `memory_mb`, `count`, `ready`, `placements` (`host`, `machine`, `count`, `ready`), `expires_at` (unix seconds) and `new_hosts` (hosts added for it).",
+            errors: &["invalid_argument", "limit_exceeded", "cloud"],
+            instructions: PREWARM_INSTRUCTIONS,
+            capabilities: &["cloud.manage"],
+            annotations: Annotations::mutating(),
+            sdk_symbol: "spaces.prewarm(_:)",
+            rust_symbol: "Spaces::prewarm",
+            ..Spec::new("prewarm", "Keep Spaces of one shape ready where the elastic pool puts them, so the next creates start in a fraction of a second.")
+        }
+        .with::<i::Prewarm>(),
+        Spec {
+            category: Category::Cloud,
+            result: "JSON array of prewarms, as `prewarm` returns them, with `ready` counted now.",
+            errors: &["cloud"],
+            instructions: PREWARM_INSTRUCTIONS,
+            capabilities: &["cloud.read"],
+            annotations: Annotations::reading(),
+            sdk_symbol: "spaces.prewarms()",
+            rust_symbol: "Spaces::prewarms",
+            ..Spec::new("prewarm_list", "List the prewarms and how many Spaces each keeps ready.")
+        }
+        .with::<i::PrewarmList>(),
+        Spec {
+            category: Category::Cloud,
+            result: "JSON: `removed` (false when there was no such prewarm).",
+            errors: &["cloud"],
+            instructions: PREWARM_INSTRUCTIONS,
+            capabilities: &["cloud.manage"],
+            annotations: Annotations::mutating_idempotent(),
+            sdk_symbol: "spaces.removePrewarm(_:)",
+            rust_symbol: "Spaces::remove_prewarm",
+            ..Spec::new("prewarm_remove", "End a prewarm: its ready Spaces go.")
+        }
+        .with::<i::PrewarmRemove>(),
+        Spec {
+            category: Category::Cloud,
+            result: "JSON array, oldest first, newest last: each `ts` (RFC 3339), `action` (`connect`, `disconnect`, `resource_recorded`, `resource_created`, `resource_confirmed`, `resource_deleted`), `provider`, `kind`, `id`, `space`, `actor` (`user`, `sweep`, `auto-sweep`, `disconnect`, `rollback`), `outcome` (`ok`, `failed`, `refused`) and `detail`.",
+            instructions: "Reads the append-only audit log under the cua home (cloud/audit.jsonl, rotated at 5 MB): every connect, disconnect, resource recorded before its create, created, confirmed and deleted (by you, by a sweep, by the automatic sweep, by disconnect with delete). It never holds a secret or a token. Default limit 50.",
+            capabilities: &["cloud.read"],
+            sdk_symbol: "spaces.cloud.audit(limit:)",
+            rust_symbol: "cua_cloud::Clouds::audit",
+            ..Spec::new("cloud_audit", "Read the log of what Cua did in your clouds.")
+        }
+        .with::<i::CloudAudit>(),
     ]
 }
 
+const PREWARM_INSTRUCTIONS: &str = "A prewarm keeps count Spaces of one shape (image, kind, cpus, memory_mb) ready on the machines the elastic pool picks (the same solve as on=\"auto\": devices first, then hosts with room, then new cloud machines, under the budget and pins). Any later create of that shape on those machines claims one in a fraction of a second, through every surface, with no extra argument; the pool keeps count ready until ttl_secs. A prewarm the budget, quotas or pins cannot fit is refused and buys nothing. End it with prewarm_remove when the burst is over.";
+
+const ELASTIC_INSTRUCTIONS: &str = "The elastic pool places Spaces with on=\"auto\" (or on a linked cloud) by one solve: the user's devices first (free), then cloud hosts already running, then new cloud hosts (provider x type x region) at the least cost that fits the image's needs (kind, KVM, arch, size learned from earlier Spaces), the start-time goal, the relay's machine limit and the budget (cloud_budget). Idle cloud hosts go at the end of their paid time. cloud_plan shows the decision without doing it; pins (provider, region, instance_type, hosts, no_scale, devices_only, max_usd_per_hour) are constraints of the same solve, so an agent can inspect, adjust and apply.";
+
 const CLOUD_STATUS_RESULT: &str = "JSON: `default_on`, `providers` (each `name`, `title`, `tier` (`vm`: a VM that provides Spaces, `sandbox`: one sandbox per Space), `connected`, `default`, `credentials` (`found`, `source`), `account`, `profile`, `region`, `zone`, `project`, `environment`, `label` (\"AWS · us-west-2\"), `ttl_hours` and `kinds` (each `image`, `kind`, `supported`, `reason`, `machine_type`, `usd_per_hour`)) and `resources` (what Cua created: `provider`, `id`, `type`, `space`, `region`, `state`, `created`, `expires`, `expired`).";
 
-const CLOUD_INSTRUCTIONS: &str = "Sandboxes and Spaces can run in the user's own cloud account: on=\"aws\" (EC2), \"gcp\" (Compute Engine) or \"modal\" (Modal Sandboxes). EC2 and Compute Engine start one small VM per sandbox that runs the image with Docker; Modal runs one Modal sandbox. Either way the guest's cua-spacesd dials out to the cua.ai relay as a computer of the signed-in account (no inbound port), and the Space is that computer, relay:<computer>. Each cloud uses its own CLI sign-in; connect it first with cloud_connect (the user decides; it costs money in their account). Everything Cua creates is tagged cua-managed=true with this cua home's cua-owner and an expiry, recorded under the cua home, deleted with its sandbox, and ends itself at its expiry; cloud_sweep removes leftovers.";
+const CLOUD_INSTRUCTIONS: &str = "Sandboxes and Spaces can run in the user's own cloud account: on=\"aws\" (EC2), \"gcp\" (Compute Engine), \"hetzner\" (Hetzner Cloud) or \"modal\" (Modal Sandboxes). EC2, Compute Engine and Hetzner Cloud start one small VM or server per sandbox that runs the image with Docker; Modal runs one Modal sandbox. Hetzner Cloud servers have no /dev/kvm, so Hetzner runs container images only (Windows and other VM images are refused). Either way the guest's cua-spacesd dials out to the cua.ai relay as a computer of the signed-in account (no inbound port), and the Space is that computer, relay:<computer>. AWS, Google Cloud and Modal use their own CLI sign-in; Hetzner uses a project API token (Read & Write) that cloud_connect saves in the Cua credential store. Connect it first with cloud_connect (the user decides; it costs money in their account). Everything Cua creates is tagged cua-managed=true with this cua home's cua-owner and an expiry, recorded under the cua home, deleted with its sandbox, and ends itself at its expiry (a Hetzner server, which cannot delete itself, shuts down and is billed until cloud_sweep or delete_space removes it); cloud_sweep removes leftovers, and the daemon runs that sweep by itself every 15 minutes (CUA_CLOUD_SWEEP_SECS; 0 turns it off). cloud_disconnect refuses while Cua resources still run there unless delete=true; cloud_audit lists what Cua did.";
 
 /// Former tool names still accepted (for one release) and the tool each is
 /// now: `(old, new)`. Hidden: never in `tools/list` or the manifest.
@@ -1760,7 +1897,7 @@ mod tests {
 
     #[test]
     fn advertises_every_tool() {
-        assert_eq!(tools().len(), 86);
+        assert_eq!(tools().len(), 96);
     }
 
     #[test]

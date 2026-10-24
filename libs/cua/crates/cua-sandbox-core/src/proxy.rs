@@ -66,7 +66,8 @@ where
     }
 }
 
-type ProxyBody = BoxBody<Bytes, hyper::Error>;
+/// Body type of proxied responses.
+pub type ProxyBody = BoxBody<Bytes, hyper::Error>;
 type Https = hyper_rustls::HttpsConnector<HttpConnector>;
 
 /// A running proxy. Dropping it (or [`HttpProxy::close`]) stops the
@@ -205,7 +206,7 @@ fn plain(status: u16, msg: String) -> Response<ProxyBody> {
 }
 
 async fn handle(
-    mut req: Request<Incoming>,
+    req: Request<Incoming>,
     router: &dyn ProxyRouter,
     client: &Client<Https, ProxyBody>,
 ) -> Response<ProxyBody> {
@@ -218,6 +219,47 @@ async fn handle(
         RouteDecision::Forward(r) => r,
         RouteDecision::Refuse(status, msg) => return plain(status, msg),
     };
+    forward_with(req, route, client).await
+}
+
+/// Forwards requests to HTTP upstreams, streaming both bodies and splicing
+/// `Connection: upgrade` (WebSocket) after the upstream answers `101`. Hosts
+/// that route requests themselves (the cua daemon's share gateway) use this
+/// instead of [`HttpProxy`].
+#[derive(Clone)]
+pub struct Forwarder {
+    client: Client<Https, ProxyBody>,
+}
+
+impl Default for Forwarder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Forwarder {
+    /// A forwarder with its own connection pool.
+    pub fn new() -> Self {
+        Self { client: client() }
+    }
+
+    /// Sends `req` to `route.url` with `route.headers` set, answering the
+    /// upstream's response (or a 502 with the reason).
+    pub async fn forward(&self, req: Request<Incoming>, route: ProxyRoute) -> Response<ProxyBody> {
+        forward_with(req, route, &self.client).await
+    }
+}
+
+/// A plain-text response with `status`.
+pub fn text_response(status: u16, msg: impl Into<String>) -> Response<ProxyBody> {
+    plain(status, msg.into())
+}
+
+async fn forward_with(
+    mut req: Request<Incoming>,
+    route: ProxyRoute,
+    client: &Client<Https, ProxyBody>,
+) -> Response<ProxyBody> {
     let upgrade = is_upgrade(req.headers());
     let mut headers = forward_headers(req.headers(), upgrade);
     for (k, v) in &route.headers {

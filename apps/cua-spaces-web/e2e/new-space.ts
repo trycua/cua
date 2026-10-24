@@ -202,7 +202,7 @@ async function checkCloudConnect(page: Page, v: CloudConnectView): Promise<void>
   expect(await texts(root.locator("[data-cloud-row-detail]"))).toEqual(v.rows.map((r) => r.detail));
   expect(await rows.evaluateAll((els) => els.map((el) => el.querySelector("[data-cloud-found]") !== null))).toEqual(v.rows.map((r) => r.found));
 
-  const fields = [v.field, v.profileField].filter((f) => f !== null);
+  const fields = [v.field, v.profileField, v.tokenField].filter((f) => f !== null);
   const drawn = root.locator("[data-cloud-field]");
   expect(await attrs(drawn, "data-cloud-field")).toEqual(fields.map((f) => f.id));
   expect(await drawn.locator("input").evaluateAll((els) => els.map((el) => (el as HTMLInputElement).value))).toEqual(fields.map((f) => f.value));

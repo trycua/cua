@@ -113,7 +113,10 @@ public enum AppEnvironment {
                              appVersion: fixtures ? nil : info.version)
         if fixtures { model.teamsReader = FixtureTeams() }
         if !fixtures {
-            LiveLocalNetworkPermission().request()
+            // Local Network access is asked for before the first macOS
+            // Space on this Mac, after the core's explanation (not at
+            // launch, where the prompt came without a reason).
+            model.localNetworkGate = LocalNetworkGate(probe: LiveLocalNetworkProbe())
             // Signed out is nil (setup signs in first); anything else (no
             // network, the credential vault) is the error itself, never a
             // silent nil that reads as "not signed in".

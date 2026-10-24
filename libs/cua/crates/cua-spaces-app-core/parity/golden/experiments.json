@@ -86,8 +86,8 @@
         "# Experiments (experiments)",
         "- experiment:cua_volume toggle: Cua Volume {On|*Off}",
         "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
-        "- experiment:your_cloud toggle: Your cloud {On|*Off}",
-        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
+        "- experiment:your_cloud toggle: Your cloud {*On|Off}",
+        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account.",
         "- experiment:sharing toggle: Sharing {*On|Off}",
         "- experiment:sharing-note note: Share a Space with other Cua accounts.",
         "- experiment:classic_ui toggle: Use classic UI {*On|Off}",
@@ -101,12 +101,17 @@
           "placement",
           "kind",
           "runtime",
+          "connect-cloud",
           "connect-by-address"
         ],
         "placements": [
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
+          "---",
           "local | This Mac | Container on this Mac (gVisor when installed) | on *",
           "---",
-          "host:m-mini | Mac mini | Through the Cua relay | on"
+          "host:m-mini | Mac mini | Through the Cua relay | on",
+          "---",
+          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on"
         ]
       }
     },
@@ -204,6 +209,7 @@
         {
           "experiments": [
             "cua_volume",
+            "your_cloud",
             "sharing"
           ],
           "type": "experiments-on"
@@ -215,8 +221,8 @@
         "# Experiments (experiments)",
         "- experiment:cua_volume toggle: Cua Volume {*On|Off}",
         "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
-        "- experiment:your_cloud toggle: Your cloud {On|*Off}",
-        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
+        "- experiment:your_cloud toggle: Your cloud {*On|Off}",
+        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account.",
         "- experiment:sharing toggle: Sharing {*On|Off}",
         "- experiment:sharing-note note: Share a Space with other Cua accounts.",
         "- experiment:classic_ui toggle: Use classic UI {*On|Off}",
@@ -230,12 +236,17 @@
           "placement",
           "kind",
           "runtime",
+          "connect-cloud",
           "connect-by-address"
         ],
         "placements": [
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
+          "---",
           "local | This Mac | Container on this Mac (gVisor when installed) | on *",
           "---",
-          "host:m-mini | Mac mini | Through the Cua relay | on"
+          "host:m-mini | Mac mini | Through the Cua relay | on",
+          "---",
+          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on"
         ]
       }
     },
@@ -326,27 +337,26 @@
       ],
       "signals": [
         {
-          "action": "experiment_on",
+          "action": "experiment_off",
           "experiment": "your_cloud",
           "type": "experiment"
         },
         {
           "experiments": [
             "cua_volume",
-            "your_cloud",
             "sharing"
           ],
           "type": "experiments-on"
         }
       ],
-      "step": "your cloud on",
+      "step": "your cloud off",
       "tab": [
         "= Experiments",
         "# Experiments (experiments)",
         "- experiment:cua_volume toggle: Cua Volume {*On|Off}",
         "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
-        "- experiment:your_cloud toggle: Your cloud {*On|Off}",
-        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
+        "- experiment:your_cloud toggle: Your cloud {On|*Off}",
+        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account.",
         "- experiment:sharing toggle: Sharing {*On|Off}",
         "- experiment:sharing-note note: Share a Space with other Cua accounts.",
         "- experiment:classic_ui toggle: Use classic UI {*On|Off}",
@@ -360,15 +370,14 @@
           "placement",
           "kind",
           "runtime",
-          "connect-cloud",
           "connect-by-address"
         ],
         "placements": [
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
+          "---",
           "local | This Mac | Container on this Mac (gVisor when installed) | on *",
           "---",
-          "host:m-mini | Mac mini | Through the Cua relay | on",
-          "---",
-          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on"
+          "host:m-mini | Mac mini | Through the Cua relay | on"
         ]
       }
     },
@@ -464,8 +473,8 @@
         "# Experiments (experiments)",
         "- experiment:cua_volume toggle: Cua Volume {*On|Off}",
         "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
-        "- experiment:your_cloud toggle: Your cloud {*On|Off}",
-        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
+        "- experiment:your_cloud toggle: Your cloud {On|*Off}",
+        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account.",
         "- experiment:sharing toggle: Sharing {*On|Off}",
         "- experiment:sharing-note note: Share a Space with other Cua accounts.",
         "- experiment:classic_ui toggle: Use classic UI {*On|Off}",
@@ -479,15 +488,14 @@
           "placement",
           "kind",
           "runtime",
-          "connect-cloud",
           "connect-by-address"
         ],
         "placements": [
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
+          "---",
           "local | This Mac | Container on this Mac (gVisor when installed) | on *",
           "---",
-          "host:m-mini | Mac mini | Through the Cua relay | on",
-          "---",
-          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on"
+          "host:m-mini | Mac mini | Through the Cua relay | on"
         ]
       }
     },
@@ -583,8 +591,8 @@
         "# Experiments (experiments)",
         "- experiment:cua_volume toggle: Cua Volume {*On|Off}",
         "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
-        "- experiment:your_cloud toggle: Your cloud {*On|Off}",
-        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
+        "- experiment:your_cloud toggle: Your cloud {On|*Off}",
+        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account.",
         "- experiment:sharing toggle: Sharing {*On|Off}",
         "- experiment:sharing-note note: Share a Space with other Cua accounts.",
         "- experiment:classic_ui toggle: Use classic UI {*On|Off}",
@@ -598,15 +606,14 @@
           "placement",
           "kind",
           "runtime",
-          "connect-cloud",
           "connect-by-address"
         ],
         "placements": [
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
+          "---",
           "local | This Mac | Container on this Mac (gVisor when installed) | on *",
           "---",
-          "host:m-mini | Mac mini | Through the Cua relay | on",
-          "---",
-          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on"
+          "host:m-mini | Mac mini | Through the Cua relay | on"
         ]
       }
     },
@@ -702,8 +709,8 @@
         "# Experiments (experiments)",
         "- experiment:cua_volume toggle: Cua Volume {*On|Off}",
         "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
-        "- experiment:your_cloud toggle: Your cloud {*On|Off}",
-        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
+        "- experiment:your_cloud toggle: Your cloud {On|*Off}",
+        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account.",
         "- experiment:sharing toggle: Sharing {*On|Off}",
         "- experiment:sharing-note note: Share a Space with other Cua accounts.",
         "- experiment:classic_ui toggle: Use classic UI {*On|Off}",
@@ -717,15 +724,14 @@
           "placement",
           "kind",
           "runtime",
-          "connect-cloud",
           "connect-by-address"
         ],
         "placements": [
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
+          "---",
           "local | This Mac | Container on this Mac (gVisor when installed) | on *",
           "---",
-          "host:m-mini | Mac mini | Through the Cua relay | on",
-          "---",
-          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on"
+          "host:m-mini | Mac mini | Through the Cua relay | on"
         ]
       }
     },
@@ -815,7 +821,6 @@
         },
         {
           "experiments": [
-            "your_cloud",
             "sharing"
           ],
           "type": "experiments-on"
@@ -827,8 +832,8 @@
         "# Experiments (experiments)",
         "- experiment:cua_volume toggle: Cua Volume {On|*Off}",
         "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
-        "- experiment:your_cloud toggle: Your cloud {*On|Off}",
-        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
+        "- experiment:your_cloud toggle: Your cloud {On|*Off}",
+        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account.",
         "- experiment:sharing toggle: Sharing {*On|Off}",
         "- experiment:sharing-note note: Share a Space with other Cua accounts.",
         "- experiment:classic_ui toggle: Use classic UI {*On|Off}",
@@ -842,15 +847,14 @@
           "placement",
           "kind",
           "runtime",
-          "connect-cloud",
           "connect-by-address"
         ],
         "placements": [
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
+          "---",
           "local | This Mac | Container on this Mac (gVisor when installed) | on *",
           "---",
-          "host:m-mini | Mac mini | Through the Cua relay | on",
-          "---",
-          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on"
+          "host:m-mini | Mac mini | Through the Cua relay | on"
         ]
       }
     },
@@ -934,25 +938,26 @@
       ],
       "signals": [
         {
-          "action": "experiment_off",
+          "action": "experiment_on",
           "experiment": "your_cloud",
           "type": "experiment"
         },
         {
           "experiments": [
+            "your_cloud",
             "sharing"
           ],
           "type": "experiments-on"
         }
       ],
-      "step": "your cloud off",
+      "step": "your cloud on again",
       "tab": [
         "= Experiments",
         "# Experiments (experiments)",
         "- experiment:cua_volume toggle: Cua Volume {On|*Off}",
         "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
-        "- experiment:your_cloud toggle: Your cloud {On|*Off}",
-        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
+        "- experiment:your_cloud toggle: Your cloud {*On|Off}",
+        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account.",
         "- experiment:sharing toggle: Sharing {*On|Off}",
         "- experiment:sharing-note note: Share a Space with other Cua accounts.",
         "- experiment:classic_ui toggle: Use classic UI {*On|Off}",
@@ -966,12 +971,17 @@
           "placement",
           "kind",
           "runtime",
+          "connect-cloud",
           "connect-by-address"
         ],
         "placements": [
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
+          "---",
           "local | This Mac | Container on this Mac (gVisor when installed) | on *",
           "---",
-          "host:m-mini | Mac mini | Through the Cua relay | on"
+          "host:m-mini | Mac mini | Through the Cua relay | on",
+          "---",
+          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on"
         ]
       }
     },
@@ -1059,7 +1069,9 @@
           "type": "experiment"
         },
         {
-          "experiments": [],
+          "experiments": [
+            "your_cloud"
+          ],
           "type": "experiments-on"
         }
       ],
@@ -1069,8 +1081,8 @@
         "# Experiments (experiments)",
         "- experiment:cua_volume toggle: Cua Volume {On|*Off}",
         "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
-        "- experiment:your_cloud toggle: Your cloud {On|*Off}",
-        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
+        "- experiment:your_cloud toggle: Your cloud {*On|Off}",
+        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account.",
         "- experiment:sharing toggle: Sharing {On|*Off}",
         "- experiment:sharing-note note: Share a Space with other Cua accounts.",
         "- experiment:classic_ui toggle: Use classic UI {*On|Off}",
@@ -1084,12 +1096,17 @@
           "placement",
           "kind",
           "runtime",
+          "connect-cloud",
           "connect-by-address"
         ],
         "placements": [
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
+          "---",
           "local | This Mac | Container on this Mac (gVisor when installed) | on *",
           "---",
-          "host:m-mini | Mac mini | Through the Cua relay | on"
+          "host:m-mini | Mac mini | Through the Cua relay | on",
+          "---",
+          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on"
         ]
       }
     },
@@ -1178,6 +1195,7 @@
         },
         {
           "experiments": [
+            "your_cloud",
             "web_ui"
           ],
           "type": "experiments-on"
@@ -1189,8 +1207,8 @@
         "# Experiments (experiments)",
         "- experiment:cua_volume toggle: Cua Volume {On|*Off}",
         "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
-        "- experiment:your_cloud toggle: Your cloud {On|*Off}",
-        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
+        "- experiment:your_cloud toggle: Your cloud {*On|Off}",
+        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account.",
         "- experiment:sharing toggle: Sharing {On|*Off}",
         "- experiment:sharing-note note: Share a Space with other Cua accounts.",
         "- experiment:classic_ui toggle: Use classic UI {On|*Off}",
@@ -1204,12 +1222,17 @@
           "placement",
           "kind",
           "runtime",
+          "connect-cloud",
           "connect-by-address"
         ],
         "placements": [
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
+          "---",
           "local | This Mac | Container on this Mac (gVisor when installed) | on *",
           "---",
-          "host:m-mini | Mac mini | Through the Cua relay | on"
+          "host:m-mini | Mac mini | Through the Cua relay | on",
+          "---",
+          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on"
         ]
       }
     },
@@ -1297,7 +1320,9 @@
           "type": "experiment"
         },
         {
-          "experiments": [],
+          "experiments": [
+            "your_cloud"
+          ],
           "type": "experiments-on"
         }
       ],
@@ -1307,8 +1332,8 @@
         "# Experiments (experiments)",
         "- experiment:cua_volume toggle: Cua Volume {On|*Off}",
         "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
-        "- experiment:your_cloud toggle: Your cloud {On|*Off}",
-        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud or Modal account.",
+        "- experiment:your_cloud toggle: Your cloud {*On|Off}",
+        "- experiment:your_cloud-note note: Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account.",
         "- experiment:sharing toggle: Sharing {On|*Off}",
         "- experiment:sharing-note note: Share a Space with other Cua accounts.",
         "- experiment:classic_ui toggle: Use classic UI {*On|Off}",
@@ -1322,12 +1347,17 @@
           "placement",
           "kind",
           "runtime",
+          "connect-cloud",
           "connect-by-address"
         ],
         "placements": [
+          "auto | Auto | Least-loaded of your machines: this Mac or one of your machines that provides Spaces. | on",
+          "---",
           "local | This Mac | Container on this Mac (gVisor when installed) | on *",
           "---",
-          "host:m-mini | Mac mini | Through the Cua relay | on"
+          "host:m-mini | Mac mini | Through the Cua relay | on",
+          "---",
+          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on"
         ]
       }
     }

@@ -37,6 +37,12 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 config="${1:-debug}"
 out="${2:-$here/.build/app}"
 icons="$here/../cua-spaces/src-tauri/icons"
+# CUA_VZ_BIN, CUA_MICROVM_INIT_BIN: the microVM monitor (cua-vz) and the
+# static aarch64 guest init to bundle (build-release.sh builds both).
+# CUA_SPACESD_STATIC_DIR: a directory of static Linux cua-spacesd builds
+# (cua-spacesd-linux-aarch64, cua-spacesd-linux-x86_64) to bundle: the
+# daemon injects one into OCI images that carry none (the release workflow
+# fetches them from the pinned cua-spacesd release).
 # CUA_CLI_BIN: the `cua` to bundle (default: the Cua Spaces build of `cua`,
 # `cargo build --release -p cua-spaces-cli`, when present).
 cli="${CUA_CLI_BIN:-${CARGO_TARGET_DIR:-$here/../../libs/cua/target}/release/cua-spaces-cli}"
@@ -156,6 +162,25 @@ if [ -x "$cli" ]; then
   codesign -s - -f -i com.trycua.cua "$app/Contents/MacOS/cua"
 else
   echo "note: no cua CLI at $cli (cargo build --release -p cua-spaces-cli); the app will not install one" >&2
+fi
+# microVMs on Apple silicon: the monitor among the executables, the Linux
+# guest init among the resources (it is not Mach-O code to sign).
+if [ -n "${CUA_VZ_BIN:-}" ] && [ -n "${CUA_MICROVM_INIT_BIN:-}" ]; then
+  cp "$CUA_VZ_BIN" "$app/Contents/MacOS/cua-vz"
+  codesign -s - -f -i ai.cua.vz --entitlements "$here/../../libs/cua/vz/cua-vz.entitlements" \
+    "$app/Contents/MacOS/cua-vz"
+  cp "$CUA_MICROVM_INIT_BIN" "$app/Contents/Resources/cua-microvm-init"
+fi
+# The static cua-spacesd builds among the resources (Linux executables, data
+# to the bundle).
+if [ -n "${CUA_SPACESD_STATIC_DIR:-}" ]; then
+  found=0
+  for f in "$CUA_SPACESD_STATIC_DIR"/cua-spacesd-linux-*; do
+    [ -f "$f" ] || continue
+    cp "$f" "$app/Contents/Resources/$(basename "$f")"
+    found=1
+  done
+  [ "$found" = 1 ] || { echo "no cua-spacesd-linux-* in $CUA_SPACESD_STATIC_DIR" >&2; exit 1; }
 fi
 codesign -s - -f -i com.trycua.spaces.macos "$app/Contents/Frameworks/libcua_sdk.dylib"
 # Sparkle keeps its upstream ad hoc signatures here (build-release.sh signs

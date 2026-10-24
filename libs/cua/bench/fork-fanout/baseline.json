@@ -1,0 +1,79 @@
+{
+  "comment": "Fork fan-out baselines per host class (lower is better; check.py fails above factor x baseline plus a small slack). Numbers from real runs of run.sh; `source` says where.",
+  "factor": 1.5,
+  "hosts": {
+    "macos-hvf": {
+      "source": "Mac Studio, Apple M2 Max 12-core, 96 GB, macOS 26.6.2, QEMU 10.2.2; run.sh WAVES=8,32,64 MEMORY_MB=2048 DIRTY_MB=300 FORKABLE=1, 2026-10-19",
+      "forkable": true,
+      "checkpoint_ms": 607,
+      "waves": {
+        "8": {
+          "fork_ms_p50": 440,
+          "fork_ms_p95": 469,
+          "wall_s": 0.47,
+          "private_mb_per_fork": 274
+        },
+        "32": {
+          "fork_ms_p50": 1522,
+          "fork_ms_p95": 1747,
+          "wall_s": 2.02,
+          "private_mb_per_fork": 245
+        },
+        "64": {
+          "fork_ms_p50": 4351,
+          "fork_ms_p95": 5180,
+          "wall_s": 5.52,
+          "private_mb_per_fork": 249
+        }
+      }
+    },
+    "linux-kvm-gha-forkable": {
+      "source": "GitHub-hosted ubuntu-24.04 (4 vCPU, nested KVM), QEMU from apt, run.sh MEMORY_MB=1024 DIRTY_MB=200, PR #74 run 39363060790, 2026-10-20, published slim disk, FORKABLE=1",
+      "factor": 2.0,
+      "forkable": true,
+      "checkpoint_ms": 7307,
+      "waves": {
+        "4": {
+          "fork_ms_p50": 6862,
+          "fork_ms_p95": 6892,
+          "wall_s": 6.89,
+          "private_mb_per_fork": 72
+        },
+        "8": {
+          "fork_ms_p50": 11225,
+          "fork_ms_p95": 13327,
+          "wall_s": 13.78,
+          "private_mb_per_fork": 74
+        }
+      }
+    },
+    "linux-kvm-gha-loaded-stream": {
+      "source": "GitHub-hosted ubuntu-24.04 (4 vCPU, nested KVM), QEMU from apt, run.sh MEMORY_MB=1024 DIRTY_MB=200, PR #74 run 39363060790, 2026-10-20, published slim disk, FORKABLE=0",
+      "factor": 2.0,
+      "forkable": false,
+      "checkpoint_ms": 9855,
+      "waves": {
+        "4": {
+          "fork_ms_p50": 6775,
+          "fork_ms_p95": 6843,
+          "wall_s": 6.84,
+          "private_mb_per_fork": 77
+        }
+      }
+    },
+    "linux-kvm-gha-warm-forkable": {
+      "source": "GitHub-hosted ubuntu-24.04 (4 vCPU, nested KVM), QEMU from apt, run.sh MEMORY_MB=1024 DIRTY_MB=200, PR #74 run 39363060790, 2026-10-20, disk built from this tree (bake VM starts warm), FORKABLE=1",
+      "factor": 2.0,
+      "forkable": true,
+      "checkpoint_ms": 9418,
+      "waves": {
+        "4": {
+          "fork_ms_p50": 8507,
+          "fork_ms_p95": 8805,
+          "wall_s": 8.8,
+          "private_mb_per_fork": 138
+        }
+      }
+    }
+  }
+}

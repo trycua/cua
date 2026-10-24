@@ -546,11 +546,60 @@ function Add-UserPath([string]$Dir) {
     Write-Step "Added $Dir to your user PATH (open a new terminal window to use cua)"
 }
 
+# True when cua version $A is strictly newer than $B (semver: a pre-release
+# sorts before its release; a dev build, 0.0.0 or one naming "dev", counts
+# as older than any release of the same or a later version). False when
+# either does not parse. Mirrors cua-home's version.rs and install.sh.
+function Read-CuaVersion([string]$V) {
+    $V = $V.TrimStart('v')
+    $dev = $V -match 'dev'
+    $V = ($V -split '\+')[0]
+    $pre = ''
+    $i = $V.IndexOf('-')
+    if ($i -ge 0) { $pre = $V.Substring($i + 1); $V = $V.Substring(0, $i) }
+    if ($V -notmatch '^\d+\.\d+\.\d+$') { return $null }
+    $core = [version]$V
+    if ($core -eq [version]'0.0.0') { $dev = $true }
+    return @{ Core = $core; Pre = $pre; Dev = $dev }
+}
+
+function Test-CuaVersionNewer([string]$A, [string]$B) {
+    $x = Read-CuaVersion $A; $y = Read-CuaVersion $B
+    if ($null -eq $x -or $null -eq $y) { return $false }
+    if ($x.Dev -and -not $y.Dev) { return $x.Core -gt $y.Core }
+    if (-not $x.Dev -and $y.Dev) { return $x.Core -ge $y.Core }
+    if ($x.Core -ne $y.Core) { return $x.Core -gt $y.Core }
+    if ($x.Pre -eq $y.Pre) { return $false }
+    if ($x.Pre -eq '') { return $true }
+    if ($y.Pre -eq '') { return $false }
+    $xs = $x.Pre -split '\.'; $ys = $y.Pre -split '\.'
+    for ($k = 0; $k -lt [Math]::Min($xs.Count, $ys.Count); $k++) {
+        if ($xs[$k] -eq $ys[$k]) { continue }
+        $xn = $xs[$k] -match '^\d+$'; $yn = $ys[$k] -match '^\d+$'
+        if ($xn -and $yn) { return [int64]$xs[$k] -gt [int64]$ys[$k] }
+        if ($xn) { return $false }
+        if ($yn) { return $true }
+        return [string]::CompareOrdinal($xs[$k], $ys[$k]) -gt 0
+    }
+    return $xs.Count -gt $ys.Count
+}
+
 function Install-Cli($Manifest, [string]$ManifestUrl, [string]$Platform, [string]$Tmp) {
     $bin = Get-CliBinDir
     $target = Join-Path $bin 'cua.exe'
     # -CliOnly / -Only already said what to install.
     if (-not ($CliOnly -or $Only) -and -not (Confirm-Step "Install the command-line tools to ${target}?")) { Stop-Install 'cancelled; rerun with -Prefix DIR to choose another location' }
+    # Never a downgrade: a newer cua already there stays, unless a version
+    # was asked for (-Version rolls back on purpose).
+    if (-not $Version -and (Test-Path -LiteralPath $target)) {
+        $have = $null
+        try { $have = ((& $target --version 2>$null | Select-Object -First 1) -replace '^cua\s+(\S+).*$', '$1') } catch { }
+        $entry = Find-Artifact $Manifest 'cli' $Platform 'zip'
+        if ($have -and $entry -and (Test-CuaVersionNewer $have ([string]$entry.version))) {
+            Write-Step "Kept $target (cua $have is newer than the release's $($entry.version); use -Version $($entry.version) to go back)"
+            return $target
+        }
+    }
     Write-Step "Installing the command-line tools to $target"
     $zip = Get-Artifact $Manifest $ManifestUrl 'cli' $Platform 'zip' $Tmp
     if ($DryRun) {
@@ -562,6 +611,12 @@ function Install-Cli($Manifest, [string]$ManifestUrl, [string]$Platform, [string
         if (-not $exe) { Stop-Install "no cua.exe inside $(Split-Path -Leaf $zip)" }
         New-Item -ItemType Directory -Force -Path $bin | Out-Null
         Copy-Item -LiteralPath $exe.FullName -Destination $target -Force
+        # The static cua-spacesd injected into OCI images that carry none is
+        # found next to the CLI.
+        Get-ChildItem -LiteralPath $out -Recurse -Filter 'cua-spacesd-linux-*' | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $bin $_.Name) -Force
+        }
+        Write-Info "installed $target"
         $script:DidCli = $target
     }
     $onPath = @($env:Path -split ';') -contains $bin

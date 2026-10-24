@@ -27,7 +27,7 @@ Each image publishes directly under `ghcr.io/trycua/<os>` (`linux`, `windows`, `
 | `ghcr.io/trycua/macos:26-slim` | Lume image built by `macos/`, slim tier (the base plus cua-spacesd and Google Chrome); pin `26-slim-20261021-fca2193` |
 | `ghcr.io/trycua/macos:15` | Lume image (copy of `macos-sequoia-cua`) |
 
-- Every floating tag has an immutable dated pin: `<tag>-<yyyymmdd>-<sha7>`. Pins and per-arch children are written once. In the canonical repos only the floating tags (`<version>[-slim|-xcode[-X.Y]][-disk]`: `24.04`, `24.04-disk`, `2022`, `2022-disk`, `26`, `26-slim`, `15`) ever move, and only to a pin's digest. The macOS tiers also push `<pin>-raw` (the plain `lume push`) before `annotate.sh` writes the pin; it never moves.
+- Every floating tag has an immutable dated pin: `<tag>-<yyyymmdd>-<sha7>`. Pins and per-arch children are written once. In the canonical repos only the floating tags (`<version>[-slim|-docker|-xcode[-X.Y]][-disk]`: `24.04`, `24.04-disk`, `2022`, `2022-disk`, `26`, `26-slim`, `15`) ever move, and only to a pin's digest. The macOS tiers also push `<pin>-raw` (the plain `lume push`) before `annotate.sh` writes the pin; it never moves.
 - The first cua-spacesd `macos:26` (base plus cua-spacesd, no Chrome) stays at its pins `26-20260925-56503f3` (the `lume push`) and `26-20260925-3262e04` (annotated). It is the base every slim tier builds from (`macos/versions.env`), so it needs no other tag.
 - The rootfs index carries the annotation `ai.cua.image.variants`, a JSON map of variant to pinned ref (`{"containerdisk": "ghcr.io/trycua/linux@sha256:..."}`). The disk index points back at the immutable rootfs pin. ghcr has no OCI 1.1 referrers API, so the link is annotation only.
 - Copies carry `ai.cua.image.source` (the source ref and digest).
@@ -334,3 +334,9 @@ Headless PipeWire runs under supervisord in the container and as `cua-audio.serv
 - The session runtime dir is `/run/cua-desktop`, not `/run/user/1000`. logind would mount over `/run/user/1000` and remove it for each login.
 
 `desktop-env <cmd>` runs a command inside the session environment: `DISPLAY`, the fixed session bus `unix:path=/run/cua-desktop/bus`, and the a11y bridge.
+
+## Running as another guest user (`process.run_as`)
+
+The Linux images start `cua-spacesd` as `cua` (uid 1000, the default user of commands and files) holding exactly `CAP_SETUID`, `CAP_SETGID` and `CAP_KILL` (`linux/files/run-spacesd.sh` under supervisord, `AmbientCapabilities=` in `cua-spacesd.service`). A command with `user` (any SDK: `SpacesdCommand.user`, `UploadOptions.user`, E2B `user=`, Daytona) or a file call with `run_as` takes the target user's uid, gid and groups in the agent, between `fork` and `exec`: no `sudo`, so it works under gVisor, runc and VMs. `GetCapabilities` reports it as feature `process.run_as`, attribute `mode` = `root` | `capabilities` | `sudo` | `none`; clients use `sudo -n` only for `sudo` and agents that predate the feature.
+
+Trust boundary: whoever holds the agent token (or a relay-verified owner/editor) can already run any command in the Space, so being able to pick the user adds nothing; a viewer ticket and a view-only share cannot call `StartProcess` or use `run_as` at all (refused before the switch). The agent drops the inheritable and ambient sets at start and every child drops all capabilities after the switch, so a command, the `fs-as` file helper, a desktop app or a browser never holds them; the agent never becomes root and its default user does not change. The capabilities must be in the container's bounding set (Docker, runc and gVisor defaults include them); otherwise `run-spacesd.sh` logs that and starts the agent without, and callers fall back to `sudo`.

@@ -1,0 +1,195 @@
+name: "CI: microVMs"
+
+# The microVM backend (cua-vmm microvm/, the guest init, cua-vz) and its
+# placement:
+#   unit       Linux: the backend's, the init's and placement's unit tests;
+#              the static guest init for both architectures.
+#   macos      hosted macOS: cua-vz's Swift tests and signed build, the
+#              backend's unit tests on a Mac (vz.json, gvproxy config,
+#              process lookups), the aarch64 guest init built there the way
+#              the release builds it, and the perf guard's own tests.
+#   vz-e2e     nightly, on a self-hosted Apple silicon Mac
+#              (vars.CUA_E2E_LUME_RUNNER; hosted runners cannot nest VMs):
+#              a real microVM Space checkpointed, restored and forked 8
+#              times (tests/e2e/local-runtimes/tests/microvm_vz.rs), then the
+#              perf guard (libs/cua/bench/microvm-fork) through the CLI
+#              against its committed baseline.
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua/crates/cua-vmm/**"
+      - "libs/cua/crates/cua-microvm-init/**"
+      - "libs/cua/crates/cua-sandbox-core/src/placement.rs"
+      - "libs/cua/vz/**"
+      - "libs/cua/bench/microvm-fork/**"
+      - "tests/e2e/local-runtimes/tests/microvm_vz.rs"
+      - ".github/workflows/ci-cua-microvm.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua/crates/cua-vmm/**"
+      - "libs/cua/crates/cua-microvm-init/**"
+      - "libs/cua/crates/cua-sandbox-core/src/placement.rs"
+      - "libs/cua/vz/**"
+      - "libs/cua/bench/microvm-fork/**"
+      - ".github/workflows/ci-cua-microvm.yml"
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cua-microvm-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+jobs:
+  unit:
+    name: unit (linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: libs/cua
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: clippy, rustfmt
+          targets: x86_64-unknown-linux-musl, aarch64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: cua-microvm
+      - name: Format
+        run: cargo fmt -p cua-vmm -p cua-microvm-init -- --check
+      - name: Clippy
+        run: cargo clippy --locked -p cua-vmm -p cua-microvm-init --all-targets -- -D warnings
+      - name: Test (backend, init, placement)
+        run: |
+          cargo test --locked -p cua-microvm-init
+          cargo test --locked -p cua-vmm --lib microvm
+          cargo test --locked -p cua-sandbox-core --lib placement
+      - name: The guest init is static (both architectures)
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: rust-lld
+        run: |
+          for t in x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+            cargo build --locked --release -p cua-microvm-init --target "$t"
+            if file "target/$t/release/cua-microvm-init" | grep -q interpreter; then
+              echo "::error::cua-microvm-init ($t) is dynamically linked"; exit 1
+            fi
+          done
+
+  macos:
+    name: unit (macos)
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          targets: aarch64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: cua-microvm-macos
+      - name: cua-vz Swift tests
+        working-directory: libs/cua/vz
+        run: swift test
+      - name: cua-vz builds and is signed with its entitlement
+        run: libs/cua/vz/build.sh "$RUNNER_TEMP/vz"
+      - name: Backend unit tests on a Mac
+        working-directory: libs/cua
+        run: |
+          cargo test --locked -p cua-vmm --lib microvm
+          cargo test --locked -p cua-sandbox-core --lib placement
+      - name: The aarch64 guest init builds static on macOS (as the release does)
+        working-directory: libs/cua
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: rust-lld
+        run: |
+          cargo build --locked --release -p cua-microvm-init --target aarch64-unknown-linux-musl
+          file target/aarch64-unknown-linux-musl/release/cua-microvm-init | grep -q "statically linked"
+      - name: Perf guard self-test
+        working-directory: libs/cua/bench/microvm-fork
+        run: python3 test_check.py
+
+  vz-e2e:
+    name: vz e2e + perf guard (self-hosted Mac)
+    if: vars.CUA_E2E_LUME_RUNNER != '' && github.event_name != 'pull_request'
+    runs-on: ["self-hosted", "macOS", "${{ vars.CUA_E2E_LUME_RUNNER }}"]
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Build cua, cua-vz and the guest init
+        env:
+          RUSTFLAGS: ""
+        run: |
+          set -euo pipefail
+          # Everything this job makes stays in the runner's temp directory.
+          bin="$RUNNER_TEMP/bin"
+          mkdir -p "$bin"
+          libs/cua/vz/build.sh "$bin"
+          (cd libs/cua && cargo build --locked --release -p cua-cli)
+          cp libs/cua/target/release/cua "$bin/"
+          (cd libs/cua && RUSTFLAGS="-C target-feature=+crt-static" \
+            CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld \
+            cargo build --locked --release -p cua-microvm-init --target aarch64-unknown-linux-musl)
+          cp libs/cua/target/aarch64-unknown-linux-musl/release/cua-microvm-init "$bin/"
+          {
+            echo "CUA_HOME=$RUNNER_TEMP/cua-home"
+            echo "CUA_E2E_MICROVM_ROOT=$RUNNER_TEMP/cua-home/vmm/microvm"
+            echo "CUA_VZ=$bin/cua-vz"
+            echo "CUA_MICROVM_INIT=$bin/cua-microvm-init"
+            echo "CUA_BIN=$bin/cua"
+          } >> "$GITHUB_ENV"
+      - name: Checkpoint, restore and 8 independent forks (real VMs)
+        working-directory: tests/e2e/local-runtimes
+        env:
+          CUA_E2E_VZ: "1"
+          CUA_E2E_VZ_REPORT: ${{ runner.temp }}/vz-e2e.json
+        run: cargo test --test microvm_vz -- --nocapture --test-threads=1
+      - name: Perf guard (CLI, against the committed baseline)
+        working-directory: libs/cua/bench/microvm-fork
+        env:
+          # This build of `cua` runs its own daemon, not an installed Cua
+          # Spaces app's (which `cua daemon start` would otherwise hand to).
+          CUA_SPACES_CLI: /nonexistent
+        run: |
+          set -euo pipefail
+          "$CUA_BIN" daemon stop >/dev/null 2>&1 || true
+          "$CUA_BIN" daemon start
+          CUA="$CUA_BIN" OUT="$RUNNER_TEMP/microvm-fork" bash bench.sh
+          python3 check.py "$RUNNER_TEMP/microvm-fork/summary.json" baseline.json
+      - name: Stop the daemon
+        if: always()
+        env:
+          CUA_SPACES_CLI: /nonexistent
+        run: '"$CUA_BIN" daemon stop || true'
+      - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        if: always()
+        with:
+          name: microvm-vz-perf
+          path: |
+            ${{ runner.temp }}/vz-e2e.json
+            ${{ runner.temp }}/microvm-fork

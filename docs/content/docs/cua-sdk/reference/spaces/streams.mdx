@@ -911,10 +911,10 @@ Returned by [`SpacePresence.next_event`](#spacepresencenext_event).
 
 ## `PresenceView`
 
-The shared presence netcode model: who is present and what to draw,
-with remote cursors interpolated (render delay, Catmull-Rom,
+The shared presence netcode model: who is present and what to draw.
+Remote cursors are interpolated (render delay, Catmull-Rom,
 extrapolation cap), idle cursors faded, stale participants dropped and
-your own cursor at the local pointer (libs/cua/proto/PRESENCE.md
+your own cursor kept at the local pointer (libs/cua/proto/PRESENCE.md
 section 4). Feed it every presence event; call `drawables` each frame.
 
 Returned by [`SpacePresence.view`](#spacepresence).

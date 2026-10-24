@@ -377,19 +377,27 @@ export type CloudConnectAction =
   | { type: "set-value"; text: string }
   | { type: "set-profile"; text: string }
   | { type: "set-make-default"; on: boolean }
+  | { type: "set-token-entered"; entered: boolean }
   | { type: "test" }
   | { type: "tested"; ok: boolean; account: string; checks: { name: string; ok: boolean; detail: string }[] }
   | { type: "connect" }
   | { type: "connected"; label: string }
   | { type: "failed"; error: string };
 
-/** Where Spaces go in the account (names only; credentials stay with the CLI). */
+/**
+ * Where Spaces go in the account. Names only: credentials stay with each
+ * cloud's CLI. The one exception is Hetzner's API token: `uses_token` is the
+ * core's request to attach it, and `token` is the secret the shell adds for
+ * that one call (never stored, logged or sent to the core).
+ */
 export interface CloudTarget {
   provider: string;
   profile?: string;
   region?: string;
   project?: string;
   environment?: string;
+  uses_token?: boolean;
+  token?: string;
 }
 
 export type CloudConnectRequest =
@@ -408,6 +416,8 @@ export interface CloudConnectView {
   rows: { id: string; title: string; detail: string; found: boolean; selected: boolean }[];
   field: CloudField | null;
   profileField: CloudField | null;
+  /** Hetzner's masked API token field; the shell keeps its text. */
+  tokenField: CloudField | null;
   checks: { ok: boolean; text: string }[];
   result: string | null;
   touches: string[];

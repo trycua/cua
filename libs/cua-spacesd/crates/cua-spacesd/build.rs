@@ -25,6 +25,13 @@ fn git(args: &[&str]) -> Option<String> {
 }
 
 fn main() {
+    // A musl Linux build is the static headless guest daemon that Cua injects
+    // into any OCI image: exec, files, processes, ports, no desktop (no
+    // cua-driver platform, capture, presence or doctor).
+    println!("cargo:rustc-check-cfg=cfg(cua_headless)");
+    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("musl") {
+        println!("cargo:rustc-cfg=cua_headless");
+    }
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         // The linked Windows driver expects physical pixels. Declare the
         // process context before any async, native, or overlay thread starts.

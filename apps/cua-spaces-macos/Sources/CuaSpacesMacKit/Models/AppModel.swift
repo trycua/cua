@@ -98,6 +98,8 @@ public final class AppModel {
     public let agentKeys: AgentKeysModel
     /// The user's own clouds: the "Your cloud" tile and "Connect a cloud".
     public let cloud: CloudModel
+    /// The cloud hosts the elastic pool added (Machines), read-only.
+    public let elastic: ElasticModel
     /// The Settings tab showing.
     public var settingsTab: SettingsTab = .general
     /// A Settings section to scroll to when Settings opens (captures).
@@ -152,7 +154,7 @@ public final class AppModel {
     /// Spaces being created: each shows in the list the moment its create
     /// starts and follows the SDK's progress (`spaces::creating`). Spaces
     /// being deleted, which show Deleting until the delete returns.
-    public private(set) var creates = AppCreatesState(pending: [], deleting: [], powering: [])
+    public private(set) var creates = AppCreatesState(pending: [], deleting: [], powering: [], streaks: [])
     /// Sidebar rows as targets for a dragged real window.
     public let dropTargets = SidebarDropTargets()
     /// The New UI window's Space tiles, the same kind of target.
@@ -183,6 +185,10 @@ public final class AppModel {
         self.storage = StorageModel(tools: backend as? AgentsToolRunning)
         self.agentKeys = AgentKeysModel(tools: backend as? AgentsToolRunning)
         self.cloud = CloudModel(tools: backend as? CloudToolRunning)
+        // Fixtures never read the real cua home's ledger.
+        let fixtures = backend as? FixtureSpacesBackend
+        self.elastic = ElasticModel(tools: backend as? CloudToolRunning,
+                                    ledger: fixtures.map { fx in { fx.fixtureElastic ? FixtureSpacesBackend.fixtureLedger() : nil } })
         self.billing = billing
         self.loginItem = loginItem
         self.host = HostModel(host: host)
@@ -479,7 +485,7 @@ public final class AppModel {
         try await relay.renameMachine(id: machine, name: clean)
         await host.refresh()
         await devices.refresh()
-        await refresh()
+        await refresh(fresh: true)
     }
 
     /// Remove from account: `machine` leaves the relay directory, then
@@ -494,7 +500,7 @@ public final class AppModel {
             try await relay.revoke(id: device)
         }
         await devices.refresh()
-        await refresh()
+        await refresh(fresh: true)
     }
 
     /// What each machine sharing its desktop (`relay:<machine>`) reported
@@ -710,6 +716,11 @@ public final class AppModel {
     /// The registry read in flight: refreshes share it, so a read that
     /// never returns is asked once, not once a poll.
     private var rowsInFlight: Task<[AppSpaceRow], Error>?
+    /// Registry reads started so far, the one in flight and the newest
+    /// one shown: an older read that answers late is not shown over it.
+    private var rowsReads = 0
+    private var rowsInFlightRead = 0
+    private var rowsShownRead = 0
     private var hostInFlight: Task<Void, Never>?
 
     /// The list poll: a refresh every `interval`, each one bounded, and a
@@ -781,34 +792,57 @@ public final class AppModel {
         if finished, hostInFlight == task { hostInFlight = nil }
     }
 
-    /// The registry, shared and bounded (`TimeoutError` past `listTimeout`).
-    private func readRows() async throws -> [AppSpaceRow] {
-        let task = rowsInFlight ?? Task { [backend] in try await backend.rows() }
-        rowsInFlight = task
+    /// The registry, shared and bounded (`TimeoutError` past `listTimeout`),
+    /// with the number of the read that answered. `fresh`: a new read, not
+    /// one already in flight, which started before the change just made
+    /// and may answer without it.
+    private func readRows(fresh: Bool = false) async throws -> (rows: [AppSpaceRow], read: Int) {
+        if fresh || rowsInFlight == nil {
+            rowsReads += 1
+            rowsInFlightRead = rowsReads
+            rowsInFlight = Task { [backend] in try await backend.rows() }
+        }
+        guard let task = rowsInFlight else { throw CancellationError() }
+        let read = rowsInFlightRead
         let result = await withTimeout(seconds: listTimeout) { try await task.value }
         if case .failure(TimeoutError.timedOut) = result {
             // Still running: the next refresh waits on the same read.
         } else if rowsInFlight == task {
             rowsInFlight = nil
         }
-        return try result.get()
+        return (try result.get(), read)
     }
 
     /// Re-reads the registry (and the host). Bounded: a daemon that stopped
     /// answering leaves the list as it was, and the poll reconnects.
-    public func refresh() async {
+    /// `fresh` after a change this app made (a create, a delete): the list
+    /// is read again from now, so it shows the change.
+    public func refresh(fresh: Bool = false) async {
         await refreshHost()
         cloudConfigured = await backend.cloudAvailable()
         do {
-            let rows = try await readRows()
+            let (rows, read) = try await readRows(fresh: fresh)
             lastListOk = listClock()
             lastListAnswer = lastListOk
+            // A read from before a newer one already shown is out of date.
+            guard read >= rowsShownRead else { return }
+            rowsShownRead = read
             let now = Int64(Date().timeIntervalSince1970 * 1000)
             registrySpaces = appRowsToSpaces(rows: rows, nowMs: now)
             creates = appCreatesSettle(state: creates, spaces: registrySpaces)
             recompose()
             loaded = true
             rosterError = nil
+            // Your machines' load for their sidebar lines, every so often
+            // (each machine is asked; never holds up the list).
+            if registrySpaces.contains(where: { $0.id.hasPrefix("relay:") }),
+               hostsReadAt.map({ Date().timeIntervalSince($0) >= Self.hostsRefreshInterval }) ?? true {
+                hostsReadAt = Date()
+                Task { await refreshHosts() }
+            }
+            // The pool's cloud hosts, spend and events (it reads no more
+            // than every few seconds, and never holds up the list).
+            Task { await elastic.refresh() }
             // The checklist's "Run an agent": read the persistent agents
             // once (the Agents page reads them again when it opens).
             if !checklistReadAgents, servicesIn, !checklist.state.done.contains(.runAgent) {
@@ -937,13 +971,35 @@ public final class AppModel {
         wizard.update(env: wizardEnv(from: wizard.env))
     }
 
-    /// Your machines that provide Spaces, as New Space last read them.
+    /// Your machines that provide Spaces, as New Space or the sidebar last
+    /// read them.
     var hosts: [AppSpaceHost] = []
+    /// When the sidebar last asked for `hosts`.
+    @ObservationIgnored private var hostsReadAt: Date?
+    /// How often the sidebar asks your machines how busy they are.
+    static let hostsRefreshInterval: TimeInterval = 30
+
+    /// Reads your machines that provide Spaces again (how busy each is).
+    func refreshHosts() async {
+        hostsReadAt = Date()
+        hosts = await backend.hosts()
+    }
+
+    /// The one short line under one of your machines in the sidebar ("3
+    /// running · 40% CPU", "Paused"); `nil` for any other row, or while the
+    /// machine is offline or reports no load.
+    func hostLoadLine(_ rowId: String) -> String? {
+        guard rowId.hasPrefix("relay:") else { return nil }
+        let id = String(rowId.dropFirst("relay:".count))
+        return hosts.first { $0.id == id }.flatMap { appHostLoadText(host: $0) }
+    }
 
     /// Which Lume macOS Spaces run on (`runtime.lume`), once read.
     public private(set) var lumeSource: String?
     /// Which engine local Linux Spaces run on (`runtime.linux`), once read.
     public private(set) var linuxSource: String?
+    /// `placement.overflow` (Settings, General), once read.
+    public private(set) var placementOverflow: Bool?
 
     /// New Space's "Use built-in Lume" / "Use built-in runtime": switches
     /// `runtime.lume` or `runtime.linux`, then the open wizard reads the
@@ -1044,7 +1100,7 @@ public final class AppModel {
         startCreate(args, os: plan.image.os, pendingId: pendingId, select: plan.openDesktop)
         // A failure stays on its row.
         Task {
-            guard let id = try? await followCreate(args, pendingId: pendingId), plan.openDesktop else { return }
+            guard let id = try? await followCreate(args, os: plan.image.os, pendingId: pendingId), plan.openDesktop else { return }
             WebUIWindowController.actions?.openSpace(id)
         }
     }
@@ -1056,11 +1112,19 @@ public final class AppModel {
     /// and hands over to the registry's row when it is ready; returns its
     /// id. A failure stays on its row; a cancelled create (Cancel, or `cua
     /// spaces cancel` elsewhere) only leaves the list. Either way it throws.
+    ///
+    /// A failure that usually passes (the core's `fail_decision`: a runtime
+    /// that did not start this time, a network drop during the download, a
+    /// VM that did not answer in time) runs the create once more by itself,
+    /// the row saying "Retrying…"; `retrying` hears of it first (New UI's
+    /// page applies the same failure). Only the final outcome throws.
     @discardableResult
     public func runCreate(_ args: AppCreateSpaceArgs, os: AppSpaceOs, pendingId: String,
-                          progress: (@MainActor @Sendable (SpaceCreateProgress) -> Void)? = nil) async throws -> String {
+                          progress: (@MainActor @Sendable (SpaceCreateProgress) -> Void)? = nil,
+                          retrying: (@MainActor @Sendable (_ error: String, _ errorVariant: String) -> Void)? = nil)
+        async throws -> String {
         startCreate(args, os: os, pendingId: pendingId, select: false)
-        return try await followCreate(args, pendingId: pendingId, progress: progress)
+        return try await followCreate(args, os: os, pendingId: pendingId, progress: progress, retrying: retrying)
     }
 
     /// The pending row (selected when `open`).
@@ -1086,6 +1150,11 @@ public final class AppModel {
             ?? spaces.first { $0.host == id && $0.hostName != nil }?.hostName
     }
 
+    /// Asks for macOS Local Network access before a macOS Space is created
+    /// on this Mac (the core's steps; nil in fixtures and tests that do not
+    /// set one).
+    public var localNetworkGate: LocalNetworkGate?
+
     /// How long the daemon may take to take a create (its first progress
     /// report, "Preparing", comes as it starts): past it the create fails
     /// at once, with Try again, instead of after the 4 min stall.
@@ -1100,14 +1169,69 @@ public final class AppModel {
         }
     }
 
-    /// The SDK's create, through to the registry's row.
-    private func followCreate(_ args: AppCreateSpaceArgs, pendingId: String,
-                              progress: (@MainActor @Sendable (SpaceCreateProgress) -> Void)? = nil) async throws -> String {
+    /// The SDK's create, through to the registry's row; once more when the
+    /// core says the failure usually passes (`retryPending` on the row).
+    private func followCreate(_ args: AppCreateSpaceArgs, os: AppSpaceOs, pendingId: String,
+                              progress: (@MainActor @Sendable (SpaceCreateProgress) -> Void)? = nil,
+                              retrying: (@MainActor @Sendable (_ error: String, _ errorVariant: String) -> Void)? = nil)
+        async throws -> String {
+        // A macOS Space here needs Local Network access: explained and asked
+        // for now, or the create fails at once with the fix (never retried).
+        if let gate = localNetworkGate,
+           appLocalNetworkApplies(provider: args.on == "local" ? .local : .relay, os: os, hostIsMac: true) {
+            do {
+                try await gate.check()
+            } catch where isCancelled(error) {
+                sendCreate(.cancelDone(id: pendingId))
+                throw error
+            } catch {
+                sendCreate(.fail(id: pendingId, error: LiveSpacesBackend.words(error),
+                                 errorVariant: Self.errorVariant(error), now: Self.nowMs()))
+                throw error
+            }
+        }
+        while true {
+            let reconnectsBefore = reconnects
+            do {
+                return try await attemptCreate(args, pendingId: pendingId, progress: progress)
+            } catch where isCancelled(error) {
+                throw error
+            } catch {
+                guard let row = creates.pending.first(where: { $0.id == pendingId }),
+                      row.retryPending, !row.cancelling else { throw error }
+                retrying?(LiveSpacesBackend.words(error), Self.errorVariant(error))
+                // Cua's service did not take the create: it is being
+                // connected again; the second try goes over the new connection.
+                if row.retriedSubclass == "daemon_unresponsive", reconnect != nil {
+                    var waited = 0
+                    while (reconnects == reconnectsBefore || reconnecting) && waited < 120 {
+                        try? await Task.sleep(for: .milliseconds(250))
+                        waited += 1
+                    }
+                }
+            }
+        }
+    }
+
+    /// The error enum's case name telemetry and the core read (`Runtime`).
+    static func errorVariant(_ error: Error) -> String {
+        (error as? LocalNetworkRefusal)?.variant
+            ?? (error as? CuaError).flatMap { Mirror(reflecting: $0).children.first?.label } ?? ""
+    }
+
+    /// One run of the SDK's create: the row follows it; a failure is put on
+    /// the row (the core may turn it into a retry) and thrown.
+    private func attemptCreate(_ args: AppCreateSpaceArgs, pendingId: String,
+                               progress: (@MainActor @Sendable (SpaceCreateProgress) -> Void)?) async throws -> String {
         do {
             let accepted = CreateAcceptance()
             let backend = self.backend
             let create = Task {
-                try await backend.create(args, createId: pendingId) { p in
+                // The connection it goes over, so a cancel of this attempt
+                // goes there too, never to the next connection's retry.
+                let connection = await (backend as? PendingSpacesBackend)?.connection() ?? backend
+                accepted.sent(on: connection)
+                return try await connection.create(args, createId: pendingId) { p in
                     accepted.mark()
                     Task { @MainActor [weak self] in
                         self?.sendCreate(.progress(id: pendingId, phase: p.phase,
@@ -1120,11 +1244,14 @@ public final class AppModel {
             }
             let id = try await awaitAccepted(create, accepted: accepted, pendingId: pendingId)
             sendCreate(.finish(id: pendingId, spaceId: id))
-            await refresh()
+            await refresh(fresh: true)
             if selectedSpaceId == pendingId { select(id) }
-            // The registry lists it now; the pending row is gone from
-            // the list already, so drop it from the state too.
-            sendCreate(.dismiss(id: pendingId))
+            // Listed: the pending row is gone from the list already, so
+            // drop it from the state too. Not listed yet (a slow read): the
+            // finished row stays until a read lists the Space.
+            if registrySpaces.contains(where: { $0.id == id }) {
+                sendCreate(.dismiss(id: pendingId))
+            }
             return id
         } catch where isCancelled(error) {
             // Cancelled, here or elsewhere: the row goes; it did not fail.
@@ -1133,7 +1260,7 @@ public final class AppModel {
         } catch {
             devices.noteRefusal(LiveSpacesBackend.words(error))
             sendCreate(.fail(id: pendingId, error: LiveSpacesBackend.words(error),
-                             errorVariant: (error as? CuaError).flatMap { Mirror(reflecting: $0).children.first?.label } ?? ""))
+                             errorVariant: Self.errorVariant(error), now: Self.nowMs()))
             throw error
         }
     }
@@ -1149,10 +1276,14 @@ public final class AppModel {
         case .success(let id): return id
         case .failure(TimeoutError.timedOut) where !accepted.done:
             NSLog("Cua Spaces: the cua daemon did not take create %@ within %d s", pendingId, Int(limit))
-            let backend = self.backend
             // Best effort: it may still reach the daemon over the old
-            // connection; never wait on it.
-            Task.detached { _ = await withTimeout(seconds: 30) { try await backend.cancelCreate(createId: pendingId) } }
+            // connection; never wait on it. Only that connection: the
+            // retry goes over the new one under the same create id.
+            if let connection = accepted.connection {
+                Task.detached {
+                    _ = await withTimeout(seconds: 30) { try await connection.cancelCreate(createId: pendingId) }
+                }
+            }
             Task { @MainActor [weak self] in await self?.reconnectNow(reason: "a create was not taken") }
             throw CreateNotAccepted(seconds: Int(limit.rounded(.up)))
         case .failure(TimeoutError.timedOut):
@@ -1183,7 +1314,7 @@ public final class AppModel {
     public func addByAddress(url: String, token: String?, name: String?) async throws {
         try await backend.add(url: url, token: token, name: name)
         showingNewSpace = false
-        await refresh()
+        await refresh(fresh: true)
     }
 
     /// Whether the Space is being deleted (its row shows Deleting).
@@ -1213,7 +1344,7 @@ public final class AppModel {
             do {
                 try await backend.remove(id: space.id, removeOnly: removeOnly || detail.removeOnly)
                 sendCreate(.deleteDone(id: space.id))
-                await refresh()
+                await refresh(fresh: true)
             } catch {
                 sendCreate(.deleteFail(id: space.id))
                 show(error: appDeleteFailedText(name: space.name, error: LiveSpacesBackend.words(error)))
@@ -1238,7 +1369,7 @@ public final class AppModel {
             do {
                 try await backend.setPower(id: space.id, on: on)
                 sendCreate(.powerDone(id: space.id))
-                await refresh()
+                await refresh(fresh: true)
             } catch {
                 devices.noteRefusal(LiveSpacesBackend.words(error))
                 sendCreate(.powerFail(id: space.id, error: LiveSpacesBackend.words(error)))
@@ -1415,7 +1546,8 @@ public final class AppModel {
             experiments: settings.experiments, keyvaultAutoWipe: keyvault.autoWipe,
             keyvaultUnlockPrompt: keyvault.unlockPromptShows,
             keyvaultSiteIcons: settings.keyvaultSiteIcons, keyvaultProtection: keyvault.page.protection,
-            autoConnect: settings.autoConnect, lumeSource: lumeSource, linuxSource: linuxSource))
+            autoConnect: settings.autoConnect, lumeSource: lumeSource, linuxSource: linuxSource,
+            overflow: placementOverflow))
     }
 
     /// Teams for Settings: the account's organizations with their people
@@ -1579,6 +1711,7 @@ public final class AppModel {
     public func loadSettings() async {
         lumeSource = await backend.lumeSource()
         linuxSource = await backend.linuxSource()
+        placementOverflow = await backend.placementOverflow()
         telemetryInput = telemetry?.status()
         readLoginItem()
         await storage.load()
@@ -1638,6 +1771,13 @@ public final class AppModel {
             do {
                 try await backend.setLinuxSource(option)
                 linuxSource = await backend.linuxSource() ?? option
+            } catch {
+                show(error: LiveSpacesBackend.words(error))
+            }
+        case "placement-overflow":
+            do {
+                try await backend.setPlacementOverflow(option == "on")
+                placementOverflow = await backend.placementOverflow() ?? (option == "on")
             } catch {
                 show(error: LiveSpacesBackend.words(error))
             }
@@ -1737,6 +1877,10 @@ public final class AppModel {
 final class CreateAcceptance: @unchecked Sendable {
     private let lock = NSLock()
     private var reported = false
+    private var sentOn: SpacesBackend?
     func mark() { lock.withLock { reported = true } }
     var done: Bool { lock.withLock { reported } }
+    /// The daemon connection the create was sent over (nil until it was).
+    func sent(on connection: SpacesBackend) { lock.withLock { sentOn = connection } }
+    var connection: SpacesBackend? { lock.withLock { sentOn } }
 }

@@ -1,0 +1,102 @@
+name: "Nightly: QEMU VM lifecycle (KVM)"
+
+# The opt-in QEMU integration tests of cua-vmm on a GitHub-hosted Ubuntu
+# runner with KVM, against the published Linux Spaces disk:
+#
+#   qemu_checkpoint_fork  a warm-pool member is claimed as a Space (the
+#                         pool's rename), then checkpointed while running
+#                         and forked; the fork reads back what the Space
+#                         wrote. Regression for `bdrv_inactivate_all()
+#                         failed` on checkpoints of claimed Spaces. Two
+#                         disks: the published one (its cua-spacesd predates
+#                         new-machine renewal, so members boot cold) and one
+#                         built from this tree, whose members restore the
+#                         golden memory snapshot as the daemon's pool does
+#                         (CUA_VMM_TEST_REQUIRE_WARM=1); both carry the
+#                         bulk-lane disk, and every file QEMU was started with
+#                         must still resolve after the claim.
+#
+# Pull requests that touch the QEMU runtime or these tests run it too.
+
+on:
+  schedule:
+    - cron: "41 6 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "libs/cua/crates/cua-vmm/src/qemu/**"
+      - "libs/cua/crates/cua-vmm/tests/qemu_checkpoint_fork.rs"
+      - ".github/workflows/nightly-qemu-vmm.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-qemu-vmm-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "10"
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  # The published Linux Spaces disk (slim tier), as a containerDisk.
+  VMM_DISK_REF: ghcr.io/trycua/linux:24.04-slim-disk
+
+jobs:
+  linux-kvm:
+    name: linux-kvm (${{ matrix.disk }} disk)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        disk: [published, source]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: qemu-vmm
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        with:
+          go-version: "1.24"
+      - name: Install QEMU, firmware and crane
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-utils qemu-system-x86 ovmf genisoimage ipxe-qemu
+          sudo chmod 666 /dev/kvm
+          go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
+          echo "$(go env GOPATH)/bin" >>"$GITHUB_PATH"
+      - name: Fetch the Linux disk
+        if: matrix.disk == 'published'
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/disk"
+          crane export --platform linux/amd64 "$VMM_DISK_REF" - | tar -x -C "$RUNNER_TEMP/disk" disk/disk.img
+          ls -la "$RUNNER_TEMP/disk/disk"
+      - name: Build the Linux disk from this tree
+        if: matrix.disk == 'source'
+        run: |
+          set -euo pipefail
+          cd libs/images
+          linux/build-spacesd-linux.sh amd64
+          ./build.sh linux --tag e2e --outputs rootfs,disk --out "$RUNNER_TEMP/images"
+          mkdir -p "$RUNNER_TEMP/disk/disk"
+          mv "$RUNNER_TEMP/images/linux/amd64/disk.img" "$RUNNER_TEMP/disk/disk/disk.img"
+      - name: Claimed Space checkpoints and forks
+        working-directory: libs/cua
+        env:
+          CUA_VMM_TEST_QEMU: "1"
+          CUA_VMM_TEST_DISK: ${{ runner.temp }}/disk/disk/disk.img
+          CUA_VMM_TEST_REQUIRE_WARM: ${{ matrix.disk == 'source' && '1' || '0' }}
+        run: >
+          cargo test --locked -p cua-vmm --features qemu
+          --test qemu_checkpoint_fork -- --ignored --nocapture

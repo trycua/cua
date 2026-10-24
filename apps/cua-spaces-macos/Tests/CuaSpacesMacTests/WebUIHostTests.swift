@@ -417,7 +417,7 @@ struct WebUIHostTests {
     @Test func createOptionsAreTheNativeSheetsEnv() async throws {
         let backend = FixtureSpacesBackend()
         backend.fixtureHosts = [AppSpaceHost(id: "96fedb7e", name: "gamma-4 Mac Studio", via: "relay", online: true,
-                                             os: "macos", limits: [])]
+                                             os: "macos", limits: [], load: nil)]
         let (bridge, model) = bridge(backend: backend)
         let options = try #require(try await bridge.handle("spaces.createOptions", [:]) as? [String: Any])
         let env = try #require(options["env"] as? [String: Any])

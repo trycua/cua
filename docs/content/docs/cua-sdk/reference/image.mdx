@@ -588,13 +588,14 @@ RegistrySecret::AwsEcr { region: Option<String> }
 
 The canonical image for `os`, `version` and `tier`: `slim` (the minimum
 that passes `cua-spacesd doctor --strict`; CI and benchmarks use it),
-`full` or `None` (the default, with dev tooling) or, on macOS, `xcode`
-/ `xcode-<X.Y>` (full plus one pinned Xcode). The tag is
+`full` or `None` (the default, with dev tooling), on macOS `xcode`
+/ `xcode-<X.Y>` (full plus one pinned Xcode) or, on Linux, `docker`
+(slim plus the Docker engine, a VM: `-docker-disk`). The tag is
 `<os-version>[-<tier>]` (`ghcr.io/trycua/linux:24.04-slim`); the
 resolver finds its `-disk` sibling. `CUA_IMAGE_<OS>` overrides only the
 default full image. Raises `ImageNotPublished` for a tier CI has not
-published yet, `InvalidArgument` for an unknown tier or `xcode`
-outside macOS.
+published yet, `InvalidArgument` for an unknown tier, `xcode` outside
+macOS or `docker` outside Linux.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -696,6 +697,272 @@ pub fn omarchy_image(channel: Option<String>) -> Result<String, CuaError>
 
 **Returns** `String` · **Raises** [`CuaError`](/cua-sdk/reference/errors) ([`ImageNotPublished`](/cua-sdk/reference/errors#imagenotpublished))
 
+## Pools
+
+A pool is sandboxes of one shape the cua daemon keeps ready on its machine: `min` at all times (one starts again as soon as one is taken), up to `max` while creates come faster than sandboxes start, and none after `idle_ms` without a create. A create with `pool` set to its name gets the pool's image and size and takes a ready sandbox. Without pools, the daemon keeps sandboxes ready only where repeated creates of a shape pay for it (`cua daemon status` says why). Pools need a daemon (`Cua.connect`) and run on this machine only (`on = "local"`); the CLI is `cua sb pool`.
+
+Python programs usually use the high-level API instead: [`create_pool`](/cua-sdk/reference/python/sandbox#pools-on-this-machine).
+
+## Pool methods
+
+Methods of [`Sandboxes`](/cua-sdk/reference/sandbox#sandboxes).
+
+### `Sandboxes.create_pool`
+
+Creates a pool: sandboxes of `image` (and `options`' shape) kept
+ready on this machine by `cua daemon`, so that a create from the
+pool (`SandboxCreateOptions.pool`) takes one in about 0.1 s.
+
+- `min`: kept ready at all times; one starts again as soon as one is
+created from the pool.
+- `max`: the most kept ready (not counting those created from the
+pool); above `min` only while creates come faster than sandboxes
+start. Default: `min`.
+- `idle_ms`: after this long without a create from the pool it keeps
+none ready, until the next create (which starts on the default tier
+and refills it). Default: never.
+
+Pools run on this machine (`on = "local"`, the default). Without a
+pool, the daemon keeps sandboxes ready only where repeated creates of
+a shape pay for it; a pool asks for them explicitly. Creating a pool
+with the name of an existing one updates it.
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+async def create_pool(self, image: str, options: PoolCreateOptions) -> SandboxPool
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+createPool(image: string, options: PoolCreateOptions, asyncOpts_?: { signal: AbortSignal }): Promise<SandboxPool>
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func createPool(image: String, options: PoolCreateOptions) async throws -> SandboxPool
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+@Throws(CuaException::class)
+suspend fun createPool(image: String, options: PoolCreateOptions): SandboxPool
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub async fn create_pool(&self, image: String, options: PoolCreateOptions) -> Result<SandboxPool, CuaError>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `image` | `String` | required |
+| `options` | [`PoolCreateOptions`](#poolcreateoptions-record) | required |
+
+**Returns** [`SandboxPool`](#sandboxpool-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+
+### `Sandboxes.get_pool`
+
+Pool `name`, with what it holds now.
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+async def get_pool(self, name: str) -> SandboxPool
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+getPool(name: string, asyncOpts_?: { signal: AbortSignal }): Promise<SandboxPool>
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func getPool(name: String) async throws -> SandboxPool
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+@Throws(CuaException::class)
+suspend fun getPool(name: String): SandboxPool
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub async fn get_pool(&self, name: String) -> Result<SandboxPool, CuaError>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `name` | `String` | required |
+
+**Returns** [`SandboxPool`](#sandboxpool-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+
+### `Sandboxes.list_pools`
+
+Every pool, with what each holds now.
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+async def list_pools(self) -> List[SandboxPool]
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+listPools(asyncOpts_?: { signal: AbortSignal }): Promise<Array<SandboxPool>>
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func listPools() async throws -> [SandboxPool]
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+@Throws(CuaException::class)
+suspend fun listPools(): List<SandboxPool>
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub async fn list_pools(&self) -> Result<Vec<SandboxPool>, CuaError>
+```
+
+</Tab>
+</Tabs>
+
+**Returns** [`Vec<SandboxPool>`](#sandboxpool-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+
+### `Sandboxes.delete_pool`
+
+Deletes pool `name`: its ready sandboxes go; sandboxes created from
+it stay. `false` when there was none.
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+async def delete_pool(self, name: str) -> bool
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+deletePool(name: string, asyncOpts_?: { signal: AbortSignal }): Promise<boolean>
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func deletePool(name: String) async throws -> Bool
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+@Throws(CuaException::class)
+suspend fun deletePool(name: String): Boolean
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub async fn delete_pool(&self, name: String) -> Result<bool, CuaError>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `name` | `String` | required |
+
+**Returns** `bool` · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+
+## `PoolCreateOptions` record
+
+What a pool's sandboxes are and how many it keeps ready
+(`Sandboxes.create_pool`). The shape fields mean what they mean in
+`SandboxCreateOptions`.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `name` | `Option<String>` | `None` | Pool name (lower-case letters, digits and `-`). `None`: a new name. The name of an existing pool updates it. |
+| `on` | `Option<String>` | `None` | Where its sandboxes run: `local` (the default; the only location with pools today). |
+| `kind` | `Option<String>` | `None` | What kind of machine: `auto`, `container`, `vm` or `microvm`. |
+| `runtime` | `Option<String>` | `None` | Which engine: `auto` or one the location offers for the kind. |
+| `os` | `Option<String>` | `None` | Guest OS (`linux`, `macos`, `windows`). |
+| `cpus` | `Option<u32>` | `None` | vCPUs of each sandbox. |
+| `memory_mb` / `memoryMb` | `Option<u64>` | `None` | Memory of each sandbox (MiB). |
+| `env` | `HashMap<String, String>` | `[:]` | Guest environment. |
+| `ports` | `Vec<u16>` | `[]` | Extra guest ports to publish. |
+| `services` | `HashMap<String, u16>` | `[:]` | Named services (name → guest port). |
+| `command` | `Option<Vec<String>>` | `None` | The sandboxes' command (argv), replacing the image's entrypoint (as `SandboxCreateOptions.command`). |
+| `headless` | `bool` | `false` | Sandboxes without a desktop (as `SandboxCreateOptions.headless`). |
+| `min` | `u32` | `1` | Sandboxes kept ready at all times (refilled right after each create from the pool). |
+| `max` | `Option<u32>` | `None` | The most kept ready, not counting those created from the pool (default: `min`). |
+| `idle_ms` / `idleMs` | `Option<u64>` | `None` | After this long without a create from the pool it keeps none ready, until the next create (default: never). |
+
+## `SandboxPool` record
+
+A pool (`Sandboxes.create_pool`).
+
+Returned by [`Sandboxes.create_pool`](#sandboxescreate_pool), [`Sandboxes.get_pool`](#sandboxesget_pool), [`Sandboxes.list_pools`](#sandboxeslist_pools).
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `name` | `String` |  | Name. |
+| `image` | `String` |  | Image as given. |
+| `location` | `String` |  | Where its sandboxes run (`local`). |
+| `kind` | `String` |  | Kind and runtime as given (empty: auto). |
+| `runtime` | `String` |  |  |
+| `cpus` | `u32` |  | Each sandbox's CPUs and memory (MiB). |
+| `memory_mb` / `memoryMb` | `u64` |  |  |
+| `min` | `u32` |  | Sandboxes kept ready at all times, and at most. |
+| `max` | `u32` |  |  |
+| `idle_ms` / `idleMs` | `Option<u64>` |  | After this long without a create it keeps none ready (`None`: never). |
+| `ready` | `u32` |  | Ready now, and starting. |
+| `starting` | `u32` |  |  |
+| `status` | `String` |  | Why it holds what it holds, or why it cannot. |
+
 ## Create options
 
 `Sandboxes.create` takes one `SandboxCreateOptions`. Every field means the same thing locally and in the cloud; `on` picks where the sandbox runs, `kind` and `runtime` what runs it.
@@ -714,6 +981,7 @@ Options for `Sandboxes.create`.
 | `image` | `String` | `""` | Image reference. A `pool:<name>` image fails with the "Cua Cloud has ended" error. |
 | `name` | `Option<String>` | `None` | Name. `None`: ephemeral (no state file; deleted with the sandbox). |
 | `token` | `Option<String>` | `None` | spacesd token. |
+| `pool` | `Option<String>` | `None` | Create from this pool: locally, a pool made with `Sandboxes.create_pool` (the sandbox gets the pool's image and shape and takes one of its ready sandboxes in about 0.1 s; `image` may be left empty). |
 | `os` | `Option<String>` | `None` | Guest OS (`linux`, `macos`, `windows`). |
 | `cpus` | `Option<u32>` | `None` | vCPUs. |
 | `memory_mb` / `memoryMb` | `Option<u64>` | `None` | Memory (MiB). |
@@ -722,6 +990,7 @@ Options for `Sandboxes.create`.
 | `wait_for` / `waitFor` | [`Vec<ReadinessProbe>`](#readinessprobe-record) | `[]` | Readiness probes. |
 | `ready_timeout_ms` / `readyTimeoutMs` | `Option<u32>` | `None` | Readiness budget (default 10 min). |
 | `env` | `HashMap<String, String>` | `[:]` | Guest environment (local: container environment or cloud-init; values are not secrets). |
+| `ttl_seconds` / `ttlSeconds` | `Option<u32>` | `None` | Lifetime backstop in seconds: the platform deletes the sandbox this long after it stops being kept alive (a provider sandbox such as `on = "e2b"`: its lifetime). `None`: the platform's default. |
 | `command` | `Option<Vec<String>>` | `None` | The sandbox's command (argv), replacing the image's entrypoint. Same meaning local (container ENTRYPOINT, or run by cloud-init in a Linux VM) and in the cloud (the template command with `processMode: Run`, on gVisor and KubeVirt). |
 | `sidecars` | [`Vec<Container>`](#container-record) | `[]` | Sidecar containers, addressed by name (see `Container`). |
 | `registry_secret` / `registrySecret` | [`Option<RegistrySecret>`](#registrysecret-enum) | `None` | Credentials for a private `image` (and sidecar images on its registry). |
@@ -730,6 +999,10 @@ Options for `Sandboxes.create`.
 | `overlays` | [`Vec<Overlay>`](/cua-sdk/reference/sandbox#overlay-record) | `[]` | Binaries to inject once the sandbox is up, so tests run the build under test and not the copy the image bundles (see `Overlay`; the same as calling `Sandbox.overlay` after create). Needs cua-spacesd in the image, or a local container. |
 | `keep_on_failure` / `keepOnFailure` | `bool` | `false` | Keep a named sandbox whose readiness check fails (its VM or container, and its record) to debug it. `false` (the default): a failed create deletes what it made. Ephemeral sandboxes are always deleted. |
 | `gpu` | `Option<String>` | `None` | A GPU option of the runtime it runs on (`Spaces.gpu_support` lists them): `paravirtual` (a macOS VM on Lume: GPU acceleration, experimental), `virgl` (QEMU on Linux), `nvidia` (a runc container on Linux), a contrib provider's GPU type; `auto` picks the runtime's own. `None` (the default): no GPU. |
+| `headless` | `bool` | `false` | A Space without a desktop: only cua-spacesd runs (exec, files, processes, MCP), with no display, window manager or audio. For shell and RL workloads it starts several times faster and fits many more per machine. Images without cua-spacesd are unaffected; a `command` of your own is kept. |
+| `spacesd` | `Option<bool>` | `None` | Whether an image without cua-spacesd gets a static one injected, so any OCI image is a full Space (local containers and microVMs: exec, files, ports). `None` (the default): yes. `Some(false)` runs the image as it is. |
+| `profile` | `Option<String>` | `None` | A size profile: defaults for what is left unset. `"rollout"`: 1 vCPU, 1024 MiB and `headless` (a local VM gets no display hardware, so many more fit on one machine), for RL rollouts and agent episodes that mostly wait. `None` or `"default"`: 2 vCPUs, 4096 MiB. |
+| `forkable` | `Option<bool>` | `None` | A fork source (a "bake" sandbox): a local QEMU VM's guest RAM is a shared file, so its checkpoints take milliseconds and forks of them share its pages (`Sandboxes.checkpoint`, `Sandboxes.fork`). Other kinds ignore it. `None` (the default): not one. |
 
 ## `ReadinessProbe` record
 

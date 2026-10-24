@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  headingName,
   fenceIndentedCode,
   SANDBOX_PAGES,
   assertCoverage,
@@ -78,14 +79,15 @@ test('every page section maps to a unique anchor on its page', () => {
   assert.equal(anchors.get('Image'), '/cua-sdk/reference/python/sandbox#image');
   assert.equal(anchors.get('Pool'), undefined);
   assert.equal(anchors.get('Shell'), '/cua-sdk/reference/python/interfaces#shell');
-  const names = SANDBOX_PAGES.flatMap((p) =>
-    p.sections.flatMap((s) => s.objects.map((o) => o.split('.').at(-1)))
-  );
+  // Pools on this machine are a section of the Sandbox page.
+  assert.equal(anchors.get('list_pools'), '/cua-sdk/reference/python/sandbox#list_pools');
+  const heading = (s: { prefix?: string }, o: string) => headingName(o.split('.').at(-1)!, undefined, s.prefix);
+  const names = SANDBOX_PAGES.flatMap((p) => p.sections.flatMap((s) => s.objects.map((o) => heading(s, o))));
   assert.equal(new Set(names).size, names.length, 'object names must be unique across pages');
   // Section titles must not collide with object anchors on the same page.
   for (const page of SANDBOX_PAGES) {
     const objects = new Set(
-      page.sections.flatMap((s) => s.objects.map((o) => o.split('.').at(-1)!.toLowerCase()))
+      page.sections.flatMap((s) => s.objects.map((o) => heading(s, o).toLowerCase()))
     );
     for (const section of page.sections)
       assert.ok(!objects.has(section.title.toLowerCase()), section.title);

@@ -31,6 +31,12 @@ protocol VMVirtualizationService {
     func resume() async throws
     func updateSharedDirectories(_ sharedDirectories: [SharedDirectory]) async throws
     func waitForStop() async throws
+    /// Writes the paused VM's full state (memory and devices) to `url`
+    /// (Virtualization.framework `saveMachineStateTo`, macOS 14+).
+    func saveMachineState(to url: URL) async throws
+    /// Loads a state written by `saveMachineState(to:)` into this stopped VM,
+    /// which is left paused. The configuration must match the saved one.
+    func restoreMachineState(from url: URL) async throws
 }
 
 /// Base implementation of VMVirtualizationService using VZVirtualMachine
@@ -188,6 +194,38 @@ class BaseVirtualizationService: VMVirtualizationService {
         try await lifecycleMonitor.waitForStop()
     }
 
+    func saveMachineState(to url: URL) async throws {
+        let handle = virtualMachineHandle
+        try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Void, Error>) in
+            handle.queue.async {
+                handle.machine.saveMachineStateTo(url: url) { error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume()
+                    }
+                }
+            }
+        }
+    }
+
+    func restoreMachineState(from url: URL) async throws {
+        let handle = virtualMachineHandle
+        try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Void, Error>) in
+            handle.queue.async {
+                handle.machine.restoreMachineStateFrom(url: url) { error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume()
+                    }
+                }
+            }
+        }
+    }
+
     // Helper methods for creating common configurations
     static func createStorageDeviceConfiguration(
         diskPath: Path,
@@ -284,7 +322,10 @@ class BaseVirtualizationService: VMVirtualizationService {
     {
         let grouped = Dictionary(grouping: sharedDirectories ?? [], by: \.tag)
         let automountTag = VZVirtioFileSystemDeviceConfiguration.macOSGuestAutomountTag
-        return grouped.map { tag, directories in
+        // Sorted by tag: a saved machine state restores only into the same
+        // devices in the same order, so the order must not depend on
+        // dictionary iteration.
+        return grouped.sorted { $0.key < $1.key }.map { tag, directories in
             let device = VZVirtioFileSystemDeviceConfiguration(tag: tag)
             device.share = createDirectoryShare(
                 directories,

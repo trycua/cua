@@ -176,9 +176,13 @@ fn verdict_for(
     // update of the SwiftUI app to the Electron app does): the daemon runs a
     // build that no longer exists. Its code cannot be checked against its
     // file (the Keyvault's caller check needs that), and its own app would
-    // replace it too. Replaced, whatever its version or KEEP_ENV.
+    // replace it too. Replaced, whatever KEEP_ENV says, but never when it is
+    // newer than this build: a user who upgraded the CLI in place
+    // (install.sh over the running daemon's file) must not have the daemon
+    // swapped for an older one. It is kept and used.
     if !same_file
         && !executable.is_empty()
+        && !cua_home::version::is_newer(theirs, ours)
         && let Some(why) = gone_build(executable, build_id)
     {
         return Verdict::Replace(why);
@@ -374,14 +378,22 @@ mod tests {
         // Another app's executable updated or replaced in place since its
         // daemon started (a Sparkle update of the SwiftUI app to the
         // Electron app): replaced, whatever its version or KEEP_ENV.
-        let (exe, build) = id(&swift, "0.5.0");
+        let (exe, build) = id(&swift, "0.4.1");
         std::fs::write(&swift, b"replaced").unwrap();
         assert!(
-            matches!(verdict_for("0.5.0", &exe, &build, &electron, "0.4.1", &[]), Verdict::Replace(w) if w.contains("updated or replaced since it started"))
+            matches!(verdict_for("0.4.1", &exe, &build, &electron, "0.4.1", &[]), Verdict::Replace(w) if w.contains("updated or replaced since it started"))
         );
+        // UL2: ... but a daemon NEWER than this build is never replaced, even
+        // when its file was updated in place under it (install.sh over it).
+        let (nexe, nbuild) = id(&swift, "0.5.0");
+        std::fs::write(&swift, b"replaced again").unwrap();
+        assert!(matches!(
+            verdict_for("0.5.0", &nexe, &nbuild, &electron, "0.4.1", &[]),
+            Verdict::Keep(_)
+        ));
         assert!(matches!(
             verdict_for(
-                "0.5.0",
+                "0.4.1",
                 &exe,
                 &build,
                 &electron,
@@ -390,11 +402,15 @@ mod tests {
             ),
             Verdict::Replace(_)
         ));
-        // ... or gone (the app was removed): replaced.
+        // ... or gone (the app was removed): replaced; a newer one is kept.
         std::fs::remove_file(&swift).unwrap();
         assert!(
-            matches!(verdict_for("0.5.0", &exe, &build, &electron, "0.4.1", &[]), Verdict::Replace(w) if w.contains("which is gone"))
+            matches!(verdict_for("0.4.1", &exe, &build, &electron, "0.4.1", &[]), Verdict::Replace(w) if w.contains("which is gone"))
         );
+        assert!(matches!(
+            verdict_for("0.5.0", &nexe, &nbuild, &electron, "0.4.1", &[]),
+            Verdict::Keep(_)
+        ));
         std::fs::write(&swift, b"cua").unwrap();
         // This app's own executable rebuilt or updated since its daemon
         // started: replaced, whatever the version.

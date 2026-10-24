@@ -129,6 +129,19 @@ function demoProviders(): CloudProviderWire[] {
       ],
     },
     {
+      name: "hetzner",
+      title: "Hetzner",
+      tier: "vm",
+      connected: false,
+      credentials: { found: false },
+      region: "fsn1",
+      ttl_hours: 8,
+      kinds: [
+        { image: "linux", kind: "container", supported: true, machine_type: "cx23", usd_per_hour: 0.0114 },
+        { image: "windows", kind: "vm", supported: false, reason: "Hetzner Cloud has no nested virtualization; only containers run." },
+      ],
+    },
+    {
       name: "modal",
       title: "Modal",
       tier: "sandbox",
@@ -141,7 +154,7 @@ function demoProviders(): CloudProviderWire[] {
   ];
 }
 
-const REGION_NAME: Record<string, string> = { aws: "region", gcp: "project", modal: "environment" };
+const REGION_NAME: Record<string, string> = { aws: "region", gcp: "project", hetzner: "location", modal: "environment" };
 
 type Handlers = { [K in keyof NewSpaceOperations]: (args: NewSpaceOperations[K]["args"]) => Promise<NewSpaceOperations[K]["result"]> | NewSpaceOperations[K]["result"] };
 
@@ -215,8 +228,8 @@ export function newSpaceDemoHandlers({ state, wait, emit, step, now }: NewSpaceD
     "clouds.test": async ({ target }) => {
       const p = find(target);
       await wait(step * 2);
-      if (!p.credentials?.found) {
-        return { provider: p.name, ok: false, checks: [{ name: "credentials", ok: false, detail: `no ${p.title} sign-in on this computer` }] };
+      if (!p.credentials?.found && !target.token) {
+        return { provider: p.name, ok: false, checks: [{ name: "credentials", ok: false, detail: p.name === "hetzner" ? "paste a Hetzner project API token" : `no ${p.title} sign-in on this computer` }] };
       }
       const where = placeOf(p, target);
       return {
@@ -233,9 +246,11 @@ export function newSpaceDemoHandlers({ state, wait, emit, step, now }: NewSpaceD
     "clouds.connect": async ({ target, makeDefault }) => {
       const p = find(target);
       await wait(step * 2);
-      if (!p.credentials?.found) throw new HostError(`no ${p.title} sign-in on this computer`, "failed");
+      if (!p.credentials?.found && !target.token) throw new HostError(`no ${p.title} sign-in on this computer`, "failed");
       const where = placeOf(p, target);
       p.connected = true;
+      // The token is used for the checks only; the demo keeps nothing of it.
+      if (target.token) p.credentials = { found: true, source: "saved token" };
       if (target.region) p.region = target.region;
       if (target.project) p.project = target.project;
       if (target.environment) p.environment = target.environment;

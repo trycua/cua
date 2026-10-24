@@ -119,6 +119,40 @@ pub struct AppSpaceProgress {
     pub cancellable: bool,
     /// Cancel was pressed and the create is being cleaned up.
     pub cancelling: bool,
+    /// The app is running the create a second time by itself, after a
+    /// failure that usually passes (the label says "Retrying…" while it
+    /// prepares).
+    pub retrying: bool,
+    /// It failed the same way twice in a row (same cause, same machine,
+    /// same image): the fix to show instead of a plain Try again.
+    pub fix: Option<AppCreateFix>,
+}
+
+/// What a fix button does.
+pub type AppCreateFixAction = core::model::CreateFixAction;
+#[uniffi::remote(Enum)]
+pub enum AppCreateFixAction {
+    /// Copies `value` (a Terminal command) to the clipboard.
+    CopyCommand,
+    /// Opens `value` (a help page) in the browser.
+    OpenUrl,
+    /// Opens the failed create's details (the diagnostic report to review).
+    Details,
+}
+
+/// The fix for a create that keeps failing the same way: one plain
+/// sentence and one button.
+pub type AppCreateFix = core::model::CreateFix;
+#[uniffi::remote(Record)]
+pub struct AppCreateFix {
+    /// What is wrong and what to do, in plain words.
+    pub text: String,
+    /// The button's words.
+    pub label: String,
+    /// What the button does.
+    pub action: AppCreateFixAction,
+    /// The command to copy or the page to open.
+    pub value: Option<String>,
 }
 
 /// How a Space turns off: the SDK's `power` words.
@@ -285,7 +319,7 @@ pub enum AppLocation {
     Cloud,
     /// This Mac.
     Local,
-    /// The user's own cloud account (AWS, Google Cloud, Modal), connected
+    /// The user's own cloud account (AWS, Google Cloud, Hetzner, Modal), connected
     /// with `cua cloud connect`: the SDK's `on` is the provider's word
     /// (`aws`), which the wizard carries beside it.
     Yours,
@@ -293,6 +327,11 @@ pub enum AppLocation {
     /// one added by its Tailscale or LAN address): the SDK's `on` is
     /// `host:<machine>`, which the wizard carries beside it.
     Host,
+    /// The least-loaded of the user's machines that can take it: this Mac
+    /// or one of their machines that provides Spaces (the SDK's
+    /// `on="auto"`). Offered only while the user has such a machine, and
+    /// never a default.
+    Auto,
 }
 
 /// Container or virtual machine.
@@ -306,6 +345,9 @@ pub enum AppSpaceKind {
 }
 
 /// The engine that runs a Space.
+///
+/// JSON is the SDK's plain `runtime` word: the built-in engines' words, or
+/// the name of an external runtime provider ([`Runtime::Other`]).
 pub type AppRuntime = core::model::Runtime;
 #[uniffi::remote(Enum)]
 pub enum AppRuntime {
@@ -321,6 +363,9 @@ pub enum AppRuntime {
     Lume,
     /// KubeVirt.
     Kubevirt,
+    /// An external runtime provider installed on this machine, by its name
+    /// (the `<name>` of its `cua-runtime-<name>` executable).
+    Other(String),
 }
 
 /// The three ambient status dots.
@@ -485,6 +530,19 @@ pub struct AppPendingCreate {
     pub host: Option<String>,
     /// That machine's name, for the row and for a failure that names it.
     pub host_name: Option<String>,
+    /// How many times the app ran this create again by itself: 0, or 1
+    /// after a failure that usually passes ([`fail_decision`]).
+    pub attempt: u32,
+    /// The create failed and the app runs it again now: the shell starts
+    /// the same create (same arguments, same pending id) once more. Cleared
+    /// by the new attempt's first progress or its end.
+    pub retry_pending: bool,
+    /// The finer cause (`error_subclass` word) of the failure the app
+    /// retried, for the create's final usage event.
+    pub retried_subclass: Option<String>,
+    /// It failed the same way as the last create of this image here: the
+    /// fix to show instead of a plain Try again ([`fix_for`]).
+    pub fix: Option<AppCreateFix>,
 }
 
 /// One delete in flight (or done, until the registry drops the Space).
@@ -518,6 +576,21 @@ pub struct AppPendingPower {
     pub error: Option<String>,
 }
 
+/// Creates of one image on one machine that failed for the same cause in a
+/// row.
+pub type AppFailureStreak = core::spaces::creating::FailureStreak;
+#[uniffi::remote(Record)]
+pub struct AppFailureStreak {
+    /// The cause word (`insufficient_disk`, `runtime_not_running`, ...).
+    pub kind: String,
+    /// Where: `local`, `cloud`, or `relay:<machine>`.
+    pub place: String,
+    /// The image asked for (empty for the default).
+    pub image: String,
+    /// Failures in a row.
+    pub count: u32,
+}
+
 /// Every pending create and delete, and every power action.
 pub type AppCreatesState = core::spaces::creating::CreatesState;
 #[uniffi::remote(Record)]
@@ -528,6 +601,10 @@ pub struct AppCreatesState {
     pub deleting: Vec<AppPendingDelete>,
     /// Spaces being turned off or on (or whose last try failed).
     pub powering: Vec<AppPendingPower>,
+    /// The same failure in a row, per cause, machine and image (kept when
+    /// the failed row is dismissed; a success there clears it). No error
+    /// text, only the cause word.
+    pub streaks: Vec<AppFailureStreak>,
 }
 
 /// `spaces::creating::CreateAction`.
@@ -619,6 +696,8 @@ pub enum AppCreateAction {
         error: String,
         /// The error enum's case name, when the shell has one.
         error_variant: String,
+        /// Epoch ms (an automatic retry starts its clock here).
+        now: Option<i64>,
     },
     /// Remove a failed row.
     Dismiss {
@@ -2968,6 +3047,9 @@ pub struct AppReviewView {
 }
 
 /// The image list's local engine.
+///
+/// JSON is a plain word: `container`, `qemu`, `lume`, or the name of an
+/// external runtime provider ([`LocalEngine::External`]).
 pub type AppLocalEngine = core::wizard::LocalEngine;
 #[uniffi::remote(Enum)]
 pub enum AppLocalEngine {
@@ -2977,6 +3059,48 @@ pub enum AppLocalEngine {
     Qemu,
     /// A Lume VM.
     Lume,
+    /// An external runtime provider installed on this Mac, by its name
+    /// ([`ExternalRuntimeInfo::name`]).
+    External(String),
+}
+
+/// An image an external runtime provider offers.
+pub type AppExternalImage = core::wizard::ExternalImage;
+#[uniffi::remote(Record)]
+pub struct AppExternalImage {
+    /// The reference to create a Space from.
+    pub reference: String,
+    /// A short title.
+    pub title: String,
+    /// The provider's default image.
+    pub default: bool,
+}
+
+/// An external runtime provider installed on this Mac, as `cua runtime
+/// doctor` reports it ([`external_runtimes_from_doctor`]). Registered with
+/// [`set_external_runtimes`], its images join the New Space catalog in a
+/// group of their own and run only on this Mac.
+pub type AppExternalRuntime = core::wizard::ExternalRuntimeInfo;
+#[uniffi::remote(Record)]
+pub struct AppExternalRuntime {
+    /// Its name: the runtime word a create passes (`acme`).
+    pub name: String,
+    /// The name it gives itself ("macOS VMs"), else its name.
+    pub label: String,
+    /// One line about it, when it gave one.
+    pub description: Option<String>,
+    /// What its Spaces present as (a micro VM is a virtual machine).
+    pub kind: AppSpaceKind,
+    /// The guest operating systems it runs (`macos`, `linux`, `windows`).
+    pub os: Vec<String>,
+    /// The guest architectures it runs (`arm64`, `amd64`).
+    pub arch: Vec<String>,
+    /// It can create Spaces now.
+    pub ready: bool,
+    /// Its doctor's one line.
+    pub detail: String,
+    /// The images it offers.
+    pub images: Vec<AppExternalImage>,
 }
 
 /// The image list's cloud engine.
@@ -2999,6 +3123,8 @@ pub enum AppImageTier {
     Full,
     /// macOS: full plus one pinned Xcode.
     Xcode,
+    /// Linux: slim plus the Docker engine, a VM with dockerd up at boot.
+    Docker,
 }
 
 /// The guest distribution a catalog image names: its id picks the OS icon
@@ -3162,7 +3288,7 @@ pub struct AppCloudOffer {
 pub type AppConnectedCloud = core::wizard::ConnectedCloud;
 #[uniffi::remote(Record)]
 pub struct AppConnectedCloud {
-    /// The SDK's `on` word: `aws`, `gcp`, `modal`.
+    /// The SDK's `on` word: `aws`, `gcp`, `hetzner`, `modal`.
     pub name: String,
     /// `AWS`, `Google Cloud`, `Modal`.
     pub title: String,
@@ -3194,6 +3320,24 @@ pub struct AppHostLimit {
     pub reason: String,
 }
 
+/// How busy one of your machines is (its job runner's view).
+pub type AppHostLoad = core::wizard::HostLoad;
+#[uniffi::remote(Record)]
+pub struct AppHostLoad {
+    /// CPU it offers, in thousandths.
+    pub millicpus_total: u32,
+    /// Of that, free.
+    pub millicpus_free: u32,
+    /// Memory it offers (MiB).
+    pub memory_total_mb: u64,
+    /// Of that, free.
+    pub memory_free_mb: u64,
+    /// Spaces running there.
+    pub spaces: u32,
+    /// Why it takes nothing now (empty: it does).
+    pub problem: String,
+}
+
 /// One of the user's machines that provides Spaces (the SDK's
 /// `Spaces.hosts()`): a relay host, or one added by its Tailscale or LAN
 /// address. New Space can create on it (`on="host:<id>"`).
@@ -3215,6 +3359,8 @@ pub struct AppSpaceHost {
     /// Its limits, when it answered; a [`HOST_SHARING_STOPPED`] entry when
     /// it is online and refused because its owner stopped sharing it.
     pub limits: Vec<AppHostLimit>,
+    /// How busy it is, when it answered and reports it.
+    pub load: Option<AppHostLoad>,
 }
 
 /// A setting that makes This Mac able to run the Space: shown when the
@@ -3236,14 +3382,14 @@ pub struct AppRuntimeSwitch {
 pub type AppPlacementOption = core::wizard::PlacementOption;
 #[uniffi::remote(Record)]
 pub struct AppPlacementOption {
-    /// What choosing it sets as the create's `on`: `local`, `cloud`,
-    /// `host:<machine>`, or a connected cloud's word (`aws`).
+    /// What choosing it sets as the create's `on`: `auto`, `local`,
+    /// `cloud`, `host:<machine>`, or a connected cloud's word (`aws`).
     pub id: String,
     /// The menu's text: "This Mac", "Mac mini", "Mac mini (offline)",
     /// "Mac mini (not sharing)", "AWS · us-west-2".
     pub label: String,
-    /// Its group, in menu order (a separator between groups): `this-mac`,
-    /// `hosts`, `clouds`.
+    /// Its group, in menu order (a separator between groups): `auto`,
+    /// `this-mac`, `hosts`, `clouds`.
     pub group: String,
     /// Chosen.
     pub selected: bool,
@@ -3656,8 +3802,8 @@ pub type AppCreateSpaceArgs = core::wizard::CreateSpaceArgs;
 pub struct AppCreateSpaceArgs {
     /// Image ref.
     pub image: String,
-    /// The SDK's `on`: `local`, `cloud`, `host:<machine>`, or a connected
-    /// cloud's word (`aws`, `gcp`, `modal`).
+    /// The SDK's `on`: `local`, `cloud`, `auto`, `host:<machine>`, or a
+    /// connected cloud's word (`aws`, `gcp`, `hetzner`, `modal`).
     pub on: String,
     /// `container` / `vm`.
     pub kind: AppSpaceKind,
@@ -6588,6 +6734,62 @@ pub struct AppLoginItemPlan {
     pub record: Option<bool>,
 }
 
+/// What the shell's platform check found from the app's own process.
+pub type AppLocalNetworkAccess = core::local_network::LocalNetworkAccess;
+#[uniffi::remote(Enum)]
+pub enum AppLocalNetworkAccess {
+    /// A connect to the local network went out.
+    Allowed,
+    /// macOS blocked it (not allowed yet, or turned off).
+    Blocked,
+    /// No local network to try, or no clear answer.
+    Unknown,
+    /// Not probed: the app has not explained yet, and a connect while access
+    /// is undecided makes macOS ask before the explanation.
+    NotChecked,
+}
+
+/// What the shell found.
+pub type AppLocalNetworkInput = core::local_network::LocalNetworkInput;
+#[uniffi::remote(Record)]
+pub struct AppLocalNetworkInput {
+    /// The app's own connect.
+    pub access: AppLocalNetworkAccess,
+    /// The app already explained and made macOS ask (saved by the shell).
+    pub asked: bool,
+    /// `netstat -rn -f inet`, or empty when it could not be read.
+    pub routes: String,
+}
+
+/// What to do.
+pub type AppLocalNetworkStepKind = core::local_network::LocalNetworkStepKind;
+#[uniffi::remote(Enum)]
+pub enum AppLocalNetworkStepKind {
+    Proceed,
+    Explain,
+    Fail,
+}
+
+/// The step, in the words to show.
+pub type AppLocalNetworkStep = core::local_network::LocalNetworkStep;
+#[uniffi::remote(Record)]
+pub struct AppLocalNetworkStep {
+    pub kind: AppLocalNetworkStepKind,
+    /// The dialog's title (none for Proceed).
+    pub title: String,
+    /// The dialog's text; for Fail also the create's error.
+    pub message: String,
+    /// The main button: Continue, Open Settings or OK.
+    pub primary: String,
+    /// The other button: Cancel or OK; empty when there is one button.
+    pub secondary: String,
+    /// What the main button opens (Fail for missing access).
+    pub settings_url: Option<String>,
+    /// For Fail: the create's error variant (`local_network_denied`,
+    /// `local_network_vpn`; telemetry's `error_subclass`).
+    pub error_variant: String,
+}
+
 /// The switches, as stored (`"experiments": {"cuaVolume": true}`).
 pub type AppExperiments = core::experiments::Experiments;
 #[uniffi::remote(Record)]
@@ -6786,6 +6988,9 @@ pub struct AppSettingsInput {
     /// Which engine local Linux Spaces run on (`runtime.linux`: `auto`,
     /// `builtin`, `system`); none: no Linux row.
     pub linux_source: Option<String>,
+    /// Overflow into your clouds when this machine is full
+    /// (`placement.overflow`); none: no row.
+    pub overflow: Option<bool>,
 }
 
 /// How a Settings row draws.
@@ -8322,9 +8527,9 @@ pub struct AppApproveSheetView {
 pub type AppCloudProviderInput = core::cloud_connect::CloudProviderInput;
 #[uniffi::remote(Record)]
 pub struct AppCloudProviderInput {
-    /// `aws`, `gcp`, `modal`.
+    /// `aws`, `gcp`, `hetzner`, `modal`.
     pub name: String,
-    /// `AWS`, `Google Cloud`, `Modal`.
+    /// `AWS`, `Google Cloud`, `Hetzner`, `Modal`.
     pub title: String,
     /// Connected already.
     pub connected: bool,
@@ -8407,6 +8612,9 @@ pub struct AppCloudConnectState {
     pub profile: String,
     /// Also make it the default location.
     pub make_default: bool,
+    /// The shell's token field (Hetzner) is not empty. Only this flag
+    /// lives here; the token itself stays in the shell's secure field.
+    pub token_entered: bool,
     /// Where it is.
     pub phase: AppCloudConnectPhase,
 }
@@ -8417,7 +8625,7 @@ pub type AppCloudConnectAction = core::cloud_connect::CloudConnectAction;
 pub enum AppCloudConnectAction {
     /// A provider row.
     Select {
-        /// `aws`, `gcp`, `modal`.
+        /// `aws`, `gcp`, `hetzner`, `modal`.
         name: String,
     },
     /// The region, project or environment field.
@@ -8434,6 +8642,12 @@ pub enum AppCloudConnectAction {
     SetMakeDefault {
         /// On.
         on: bool,
+    },
+    /// The token field changed between empty and not empty (the text
+    /// itself is never sent here).
+    SetTokenEntered {
+        /// Not empty.
+        entered: bool,
     },
     /// Test pressed (the shell runs the view's request).
     Test,
@@ -8465,7 +8679,7 @@ pub enum AppCloudConnectAction {
 pub type AppCloudTargetArgs = core::cloud_connect::CloudTargetArgs;
 #[uniffi::remote(Record)]
 pub struct AppCloudTargetArgs {
-    /// `aws`, `gcp`, `modal`.
+    /// `aws`, `gcp`, `hetzner`, `modal`.
     pub provider: String,
     /// AWS or Modal profile.
     pub profile: Option<String>,
@@ -8475,6 +8689,9 @@ pub struct AppCloudTargetArgs {
     pub project: Option<String>,
     /// Modal environment.
     pub environment: Option<String>,
+    /// Hetzner: the shell attaches the API token it holds as the call's
+    /// secret `token`. The token itself is never in this value.
+    pub uses_token: bool,
 }
 
 /// The call the shell runs now.
@@ -8548,6 +8765,9 @@ pub struct AppCloudConnectView {
     pub field: Option<AppCloudField>,
     /// The profile field (AWS, Modal).
     pub profile_field: Option<AppCloudField>,
+    /// The API token field (Hetzner only): a masked field whose value the
+    /// shell keeps (`value` is always empty here).
+    pub token_field: Option<AppCloudField>,
     /// The checks the last test ran.
     pub checks: Vec<AppCloudCheckRow>,
     /// One line under the checks ("Ready. Nothing was created.").
@@ -9393,6 +9613,11 @@ pub enum AppTelemetrySignal {
         gpu: bool,
         /// The error enum's case name, when the shell sent one.
         error_variant: String,
+        /// 1 when the app ran the create a second time by itself, else 0.
+        retry_attempt: u32,
+        /// The finer cause (`error_subclass`): the failure's, or on a
+        /// retried create that worked, the failure it recovered from.
+        error_subclass: String,
     },
     /// A Space create started (`cua_space_create_started`).
     SpaceCreateStarted {

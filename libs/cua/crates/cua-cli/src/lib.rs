@@ -21,14 +21,21 @@
 //! (`~/.cua/daemon.json`) and an embedded runtime otherwise; `--embedded`
 //! and `--daemon <addr>` force one.
 
+#![recursion_limit = "512"]
+
+#[cfg(feature = "byoc")]
+mod add_aws;
 mod agent_cmd;
 mod agent_keys_cmd;
+mod agent_session_cmd;
 mod agents;
 mod auth;
 mod browse;
+mod build_cmd;
 mod cache;
 mod catalog;
 mod cloud_cmd;
+mod compat_cmd;
 mod computer;
 mod config_cmd;
 mod devices_cmd;
@@ -40,13 +47,18 @@ pub mod extension;
 mod host;
 mod image_build;
 mod image_release;
+mod jobs_cmd;
 pub mod keyvault_cmd;
 mod mcp;
+pub mod onboard;
 mod persistent_cmd;
+pub mod prewarm;
 mod providers;
 mod resources_view;
 mod risky;
+mod runs;
 pub mod sandbox;
+mod share_cmd;
 mod shell;
 mod skills;
 #[doc(hidden)]
@@ -71,15 +83,19 @@ use util::line;
 /// an error when it gives up: normal churn that says nothing a user can act
 /// on. `CUA_LOG=warn,boringtun=debug` brings them back.
 fn log_filter_spec(env: Option<&str>, daemon_log: bool) -> String {
-    let base = env
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .unwrap_or(if daemon_log { "info" } else { "warn" });
-    if base.contains("boringtun") {
+    let chosen = env.map(str::trim).filter(|s| !s.is_empty());
+    let base = chosen.unwrap_or(if daemon_log { "info" } else { "warn" });
+    let mut spec = if base.contains("boringtun") {
         base.to_owned()
     } else {
         format!("{base},boringtun=off")
+    };
+    // A fallback to the relay's HTTPS path is shown once as a notice
+    // (`fallback_notice`); the default log need not repeat it.
+    if chosen.is_none() && !daemon_log {
+        spec.push_str(&format!(",{}=error", cua_spaces::mesh::FALLBACK_LOG_TARGET));
     }
+    spec
 }
 
 #[derive(Parser, Debug)]
@@ -121,6 +137,10 @@ enum Command {
     /// AI coding agents on this computer: install cua skills and configure the cua MCP server.
     #[command(subcommand)]
     Agents(agents::AgentsCmd),
+    /// Share a link to a port, a file or a folder that opens on your other
+    /// signed-in devices (never localhost): `cua share 3000`, `cua share
+    /// ./report.html`, `cua share ls`, `cua share stop ID`.
+    Share(share_cmd::ShareArgs),
     /// Run coding agents inside a sandbox: run, ls, logs, send, interrupt, stop.
     #[command(subcommand)]
     Agent(agent_cmd::AgentCmd),
@@ -193,6 +213,10 @@ enum Command {
     /// Removed: Cua Cloud has ended.
     #[command(hide = true, disable_help_flag = true)]
     Pools(util::EndedArgs),
+    /// Build an image from a Dockerfile, in a Space, as pinned checkpoints
+    /// that Spaces fork from in under a second. Works in any directory;
+    /// layers already built are reused.
+    Build(build_cmd::BuildArgs),
     /// Images: local OCI pull/build/push.
     #[command(subcommand, visible_alias = "img")]
     Image(ImageCmd),
@@ -209,6 +233,10 @@ enum Command {
     /// Local runtimes (cua-vmm).
     #[command(subcommand)]
     Runtime(RuntimeCmd),
+    /// Run another provider's SDK unchanged on Cua Spaces: a local gateway
+    /// that speaks its wire protocol (`cua compat serve --provider e2b`).
+    #[command(subcommand)]
+    Compat(compat_cmd::CompatCmd),
     /// Disk used by images, sandboxes, builds and logs, and its cleanup.
     #[command(subcommand)]
     Cache(cache::CacheCmd),
@@ -223,20 +251,48 @@ enum Command {
   # CI: fail on warnings, write JUnit XML
   cua doctor local:dev --strict --junit doctor.xml")]
     Doctor(Box<doctor::DoctorCmd>),
+    /// Run a Python function on your pool: `FILE::FN`, decorated with
+    /// `@app.function(...)` (the `cua` jobs shim). Each member runs in a
+    /// Space (a macOS VM with GPU on a Mac, the computer's own Space on a
+    /// dedicated host, a container elsewhere); a lost computer re-places the
+    /// gang and the job resumes from its checkpoints. Rank 0's result is
+    /// saved in ./cua-runs/<run>/.
+    #[command(after_help = "Examples:
+  cua run train.py::finetune
+  cua run train.py::finetune --nodes 1:2 --accelerator gpu
+  cua run train.py::finetune --on host:aws-1 --detach")]
+    Run(jobs_cmd::RunArgs),
+    /// Runs on your pool: the list, one run's members and cost, its logs,
+    /// cancel, and its result.
+    #[command(after_help = "Examples:
+  cua jobs
+  cua jobs p-finetune-1a2b3c4d
+  cua jobs logs -f p-finetune-1a2b3c4d --rank 0
+  cua jobs cancel p-finetune-1a2b3c4d
+  cua jobs result p-finetune-1a2b3c4d -o ./adapter")]
+    Jobs(jobs_cmd::JobsArgs),
+    /// The computers in your pool, as its coordinator sees them now: state,
+    /// OS/arch, load, jobs, accelerators and $/h, with the queue.
+    #[command(after_help = "Examples:
+  cua computers
+  cua computers --json")]
+    Computers,
     /// Unattended access to this computer (setup, status, stop, start, remove).
     #[command(subcommand)]
     Host(host::HostCmd),
     /// Spaces: registered ones and your computers on the relay.
     #[command(subcommand)]
     Spaces(host::SpacesCmd),
-    /// Spaces in your own cloud account (AWS, Google Cloud, Modal):
-    /// connect, status, test, disconnect, sweep.
+    /// Spaces in your own cloud account (AWS, Google Cloud, Hetzner, Modal):
+    /// connect, status, test, disconnect, sweep; and pool hosts there
+    /// (`cua cloud add aws`).
     #[command(
         subcommand,
         after_help = "Examples:
   cua cloud status
   cua cloud connect aws --region us-west-2 --default
   cua spaces create --on aws
+  cua cloud add aws --count 2 --type g6.xlarge
   cua cloud sweep"
     )]
     Cloud(cloud_cmd::CloudCmd),
@@ -670,6 +726,19 @@ enum DaemonCmd {
     #[command(after_help = "Examples:
   cua daemon stop")]
     Stop,
+    /// End the VMs nobody uses: a Space whose lifetime passed, a warm-pool
+    /// member of a daemon that is gone, a VM nothing records or whose home
+    /// was deleted. Runs without a daemon (a service manager can run it on
+    /// a timer); a home with a running daemon is left to that daemon.
+    #[command(after_help = "Examples:
+  # See what would be ended
+  cua daemon reap --dry-run
+  cua daemon reap")]
+    Reap {
+        /// Only report what would be ended.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Show daemon status.
     #[command(after_help = "Examples:
   cua daemon status")]
@@ -1024,6 +1093,10 @@ pub(crate) const EXIT_CODES: &[(i32, &str)] = &[
     ),
     (7, "Not enough free disk space (see `cua cache`)"),
     (
+        8,
+        "No room on the machine: its VMs are at their memory or CPU limit, or it is low on memory",
+    ),
+    (
         130,
         "Cancelled (Ctrl-C during a create): what it made was removed",
     ),
@@ -1043,6 +1116,7 @@ fn exit_code(e: &CuaError) -> i32 {
         | CuaError::DaemonNotRunning(_) => 5,
         CuaError::Unauthenticated(_) | CuaError::PermissionDenied(_) | CuaError::Cloud(_) => 6,
         CuaError::InsufficientDisk(_) => 7,
+        CuaError::HostCapacity(_) => 8,
         CuaError::Cancelled(_) => 130,
         _ => 1,
     }
@@ -1516,6 +1590,8 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         Command::Config(cmd) => return config_cmd::run(cmd.clone(), json, out),
         Command::Telemetry(cmd) => return telemetry_cmd::run(cmd.clone(), json, out),
         Command::Keyvault(cmd) => return extension::keyvault(cmd.clone(), json, out).await,
+        Command::Share(args) => return share_cmd::run(args.clone(), json, out).await,
+        Command::Compat(cmd) => return compat_cmd::run(cmd.clone(), json, out).await,
         Command::Cache(cmd) => {
             let state_dir = cli.state_dir.clone();
             return cache::run(cmd.clone(), state_dir.as_deref(), json, out).await;
@@ -1525,6 +1601,45 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             socket,
             loopback,
         }) => return daemon_start(&cli, *foreground, socket.clone(), loopback, out).await,
+        Command::Daemon(DaemonCmd::Reap { dry_run }) => {
+            let home = cua_daemon::cua_home();
+            let serving = cua_daemon::guard::daemon_alive(&home);
+            let ended = cua_daemon::guard::sweep(
+                &home,
+                serving,
+                &cua_daemon::guard::Policy::default(),
+                *dry_run,
+            )
+            .await;
+            print(
+                out,
+                serde_json::json!({ "dry_run": dry_run, "ended": ended }),
+                json,
+                || {
+                    if ended.is_empty() {
+                        return "no VM to end".to_string();
+                    }
+                    ended
+                        .iter()
+                        .map(|e| {
+                            format!(
+                                "{} {} (pid {}, {:?}){}",
+                                if *dry_run { "would end" } else { "ended" },
+                                e.name,
+                                e.pid,
+                                e.reason,
+                                e.error
+                                    .as_ref()
+                                    .map(|x| format!(": {x}"))
+                                    .unwrap_or_default()
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                },
+            );
+            return Ok(i32::from(ended.iter().any(|e| e.error.is_some())));
+        }
         Command::Teleport(
             cmd @ (teleport::TeleportCmd::Providers | teleport::TeleportCmd::Manifest(_)),
         ) => {
@@ -1533,6 +1648,9 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         _ => {}
     }
     match cli.command {
+        Command::Run(a) => return jobs_cmd::run(a, json, out).await,
+        Command::Jobs(a) => return jobs_cmd::jobs(a, json, out).await,
+        Command::Computers => return runs::computers(json, out).await,
         Command::Host(cmd) => {
             let home = util::cua_home();
             // An uninstall turns off the Spaces this machine provides first
@@ -1547,6 +1665,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                 let rest = Cli {
                     command: Command::Spaces(host::SpacesCmd::Ls {
                         relay: None,
+                        label: vec![],
                         no_size: false,
                     }),
                     ..cli
@@ -1607,6 +1726,8 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             | host::SpacesCmd::Delete { .. }
             | host::SpacesCmd::Stop { .. }
             | host::SpacesCmd::Start { .. }
+            | host::SpacesCmd::Egress { .. }
+            | host::SpacesCmd::Prewarm { .. }
             | host::SpacesCmd::Share { .. }
             | host::SpacesCmd::Unshare { .. }
             | host::SpacesCmd::Shares { .. }
@@ -1628,10 +1749,13 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                     // your cloud, is turned off and on through the relay.
                     | host::SpacesCmd::Stop { .. }
                     | host::SpacesCmd::Start { .. }
+                    | host::SpacesCmd::Egress { .. }
+                    | host::SpacesCmd::Prewarm { .. }
             );
             let rest = Cli {
                 command: Command::Spaces(host::SpacesCmd::Ls {
                     relay: None,
+                    label: vec![],
                     no_size: false,
                 }),
                 ..cli
@@ -1652,15 +1776,31 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                     // The daemon asks for user presence on this computer.
                     use std::io::IsTerminal as _;
                     host::daemon_share_gate(yes, std::io::stdin().is_terminal())?;
-                    eprintln!("Confirm the share on this computer (Touch ID or your password).");
+                    eprintln!("{}", host::share_confirm_prompt());
                 }
             }
             return host::run_spaces_sdk(&cua, cmd, json, out).await;
         }
+        Command::Build(a) => {
+            let rest = Cli {
+                command: Command::Spaces(host::SpacesCmd::Ls {
+                    relay: None,
+                    label: vec![],
+                    no_size: false,
+                }),
+                ..cli
+            };
+            let cua = open(&rest, false).await?;
+            return build_cmd::run(&cua, a, json, out).await;
+        }
+        Command::Cloud(cloud_cmd::CloudCmd::Add {
+            cloud: cloud_cmd::AddCloud::Aws(a),
+        }) => return add_aws(a, json, out).await,
         Command::Cloud(cmd) => {
             let rest = Cli {
                 command: Command::Spaces(host::SpacesCmd::Ls {
                     relay: None,
+                    label: vec![],
                     no_size: false,
                 }),
                 ..cli
@@ -1832,7 +1972,8 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                             .await?
                     }
                     (Some(remote), None) => {
-                        env.download_file(remote.to_string(), dst.clone()).await?
+                        env.download_file(remote.to_string(), dst.clone(), None)
+                            .await?
                     }
                     _ => {
                         return Err(CuaError::InvalidArgument(
@@ -1866,11 +2007,23 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                 token,
             } => {
                 let env = env_at(&cua, &url, token).await?;
-                line(out, env.call_json(method, body).await?);
+                line(out, env.call_json(method, body, None).await?);
             }
         },
         Command::Daemon(DaemonCmd::Status) => {
             let i = cua.info().await?;
+            // The warm pool, from the daemon itself.
+            let warm = match i.daemon_pid {
+                Some(_) => match cua_daemon::client::existing_daemon().await {
+                    Ok(d) => d
+                        .info()
+                        .await
+                        .ok()
+                        .map(|r| (r.warm_spaces, r.warm_memory_bytes, r.warm_reason)),
+                    Err(_) => None,
+                },
+                None => None,
+            };
             print(
                 out,
                 serde_json::json!({
@@ -1879,15 +2032,32 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                     "pid": i.daemon_pid,
                     "socket": i.socket_path,
                     "loopback": i.loopback_url,
+                    "warm_spaces": warm.as_ref().map(|w| w.0),
+                    "warm_memory_bytes": warm.as_ref().map(|w| w.1),
+                    "warm_reason": warm.as_ref().map(|w| w.2.clone()),
                 }),
                 json,
                 || match i.daemon_pid {
-                    Some(pid) => format!(
-                        "cua daemon {} (pid {pid}) socket={} loopback={}",
-                        i.daemon_version.clone().unwrap_or_default(),
-                        i.socket_path.clone().unwrap_or_default(),
-                        i.loopback_url.clone().unwrap_or_default()
-                    ),
+                    Some(pid) => {
+                        let mut s = format!(
+                            "cua daemon {} (pid {pid}) socket={} loopback={}",
+                            i.daemon_version.clone().unwrap_or_default(),
+                            i.socket_path.clone().unwrap_or_default(),
+                            i.loopback_url.clone().unwrap_or_default()
+                        );
+                        match &warm {
+                            Some((n, bytes, why)) if *n > 0 => s.push_str(&format!(
+                                "\nwarm: {n} Space{}, {:.1} GB ({why})",
+                                if *n == 1 { "" } else { "s" },
+                                *bytes as f64 / 1e9
+                            )),
+                            Some((_, _, why)) if !why.is_empty() => {
+                                s.push_str(&format!("\nwarm: 0 ({why})"))
+                            }
+                            _ => {}
+                        }
+                        s
+                    }
                     None => "no cua daemon is running".into(),
                 },
             );
@@ -1900,6 +2070,9 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                 line(out, "no cua daemon is running");
                 return Ok(1);
             };
+            // A Linux runtime VM that is up stops with the daemon (unless
+            // Spaces still run in it): that takes a while.
+            let runtime_up = cua_vmm::managed::running();
             cua.shutdown_daemon().await?;
             // The daemon stops after answering: wait (bounded) until it has,
             // so a `cua daemon start` right after starts a new one instead of
@@ -1916,11 +2089,15 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             }
             // Then its exit (best effort: a parent that has not reaped it
             // yet keeps a zombie that looks alive).
-            let exit_by = std::time::Instant::now() + Duration::from_secs(5);
+            let exit_by =
+                std::time::Instant::now() + Duration::from_secs(if runtime_up { 210 } else { 5 });
             while cua_host::service::process_alive(pid) && std::time::Instant::now() < exit_by {
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
             line(out, "stopped");
+            if let Some(note) = cua_vmm::managed::take_shutdown_note() {
+                line(out, note);
+            }
         }
         Command::Runtime(RuntimeCmd::Doctor) => {
             let report = cua.local().doctor().await?;
@@ -1974,8 +2151,12 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         | Command::WifToken(_)
         | Command::Trajectory(_)
         | Command::Skills(_)
-        | Command::Daemon(DaemonCmd::Start { .. })
+        | Command::Daemon(DaemonCmd::Start { .. } | DaemonCmd::Reap { .. })
         | Command::Host(_)
+        | Command::Run(_)
+        | Command::Build(_)
+        | Command::Jobs(_)
+        | Command::Computers
         | Command::Spaces(_)
         | Command::Cloud(_)
         | Command::Devices(_)
@@ -1985,6 +2166,8 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         | Command::Pools(_)
         | Command::Teleport(_)
         | Command::Cache(_)
+        | Command::Share(_)
+        | Command::Compat(_)
         | Command::Config(_)
         | Command::Telemetry(_)
         | Command::Keyvault(_)
@@ -1992,6 +2175,19 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         | Command::DumpDocs { .. } => unreachable!("handled above"),
     }
     Ok(0)
+}
+
+/// `cua cloud add aws` (builds with AWS: the `byoc` feature).
+#[cfg(feature = "byoc")]
+async fn add_aws(a: onboard::AwsArgs, json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
+    add_aws::run(a, json, out).await
+}
+
+#[cfg(not(feature = "byoc"))]
+async fn add_aws(_a: onboard::AwsArgs, _json: bool, _out: &mut dyn Write) -> Result<i32, CuaError> {
+    Err(CuaError::Unsupported(
+        "this cua was built without AWS (the byoc feature); install the Cua Spaces cua".into(),
+    ))
 }
 
 /// `cua spacesd targets`: `StreamService.ListTargets`, one line per target.
@@ -2064,6 +2260,11 @@ async fn daemon_start(
     out: &mut dyn Write,
 ) -> Result<i32, CuaError> {
     let discovery = cua_daemon::default_discovery_path();
+    if foreground {
+        // Job members that ask for `compat:e2b` / `compat:daytona` reach a
+        // cua-compat gateway this daemon runs (shared, started on first use).
+        compat_cmd::register_job_services();
+    }
     if !foreground {
         if let Some(d) = cua_daemon::Discovery::read(&discovery)
             && Cua::connect(None, None)?.info().await.is_ok()
@@ -2087,6 +2288,16 @@ async fn daemon_start(
             };
             let why = if missing.is_empty() {
                 stranger
+            } else if let Some(theirs) = extension::newer_daemon_version().await {
+                // Never a downgrade: a daemon newer than this `cua` stays,
+                // although it lacks what this build carries. Those
+                // commands say so when they are used.
+                Some(Verdict::Keep(format!(
+                    "cua {theirs} is newer than this cua {}, so it is not replaced, \
+                     although it lacks {}",
+                    cua_daemon::VERSION,
+                    missing.join(", ")
+                )))
             } else {
                 Some(Verdict::Replace(format!("it lacks {}", missing.join(", "))))
             };
@@ -2126,12 +2337,20 @@ async fn daemon_start(
         }
         // The Cua Spaces `cua` runs the daemon when this build has no
         // extensions of its own and one is installed ([`extension`]).
-        let exe = match (
-            cua_daemon::extension::registered().is_empty(),
-            extension::spaces_cli(),
-        ) {
-            (true, Some(spaces)) => spaces,
-            _ => std::env::current_exe().map_err(util::internal)?,
+        let spaces = if cua_daemon::extension::registered().is_empty() {
+            match extension::spaces_cli_not_older() {
+                Ok(found) => found,
+                Err(why) => {
+                    line(out, why);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let exe = match spaces {
+            Some(spaces) => spaces,
+            None => std::env::current_exe().map_err(util::internal)?,
         };
         let mut args = vec!["daemon".to_string(), "start".into(), "--foreground".into()];
         if let Some(s) = &socket {
@@ -2186,6 +2405,11 @@ async fn daemon_start(
         return Err(CuaError::Timeout(
             "the daemon did not start within 10 s".into(),
         ));
+    }
+    // A daemon holds a descriptor per Space, client and stream: dozens of
+    // concurrent creates exhausted macOS's default soft limit of 256.
+    if let Some((before, after)) = util::raise_open_file_limit() {
+        eprintln!("cua daemon: open-file limit {before} -> {after}");
     }
     // Starting: clients wait for this daemon (until its discovery file is
     // written) instead of running a runtime of their own meanwhile.
@@ -2278,7 +2502,7 @@ async fn daemon_start(
                 }
             });
         } else {
-            cua_telemetry::global().shutdown(Duration::from_millis(400));
+            cua_telemetry::global().shutdown(EXIT_TELEMETRY_BUDGET);
         }
     }
     let h = h?;
@@ -2439,6 +2663,12 @@ fn is_advanced_help(args: &[std::ffi::OsString]) -> bool {
     args.len() == 2 && args[0] == "help" && args[1] == "advanced"
 }
 
+/// Shows a fallback to the relay's HTTPS path on stderr (never stdout, so
+/// `--json` output and pipes stay clean).
+fn fallback_notice(n: &cua_spaces::mesh::FallbackNotice) {
+    eprintln!("cua: {}", n.message());
+}
+
 pub fn main() {
     #[cfg(windows)]
     keep_stdio_out_of_children();
@@ -2474,6 +2704,11 @@ pub fn main() {
     // (not for `cua telemetry` / `cua config`, which are how you answer it).
     if record && !matches!(cli.command, Command::Config(_)) {
         telemetry.show_notice_if_needed();
+    }
+    // A Space that falls back from the mesh to the relay's HTTPS path says
+    // so once, on stderr (the daemon logs a warning instead).
+    if !daemon_process {
+        cua_spaces::mesh::on_fallback(fallback_notice);
     }
     let started = std::time::Instant::now();
     // The daemon logs to a size-capped, self-rotating file as well as
@@ -2560,10 +2795,15 @@ pub fn main() {
     });
     let _ = std::io::stdout().flush();
     // Telemetry never holds the exit up for more than this; what is left
-    // goes to the offline spool.
-    telemetry.shutdown(Duration::from_millis(400));
+    // goes to the offline spool, which the cua daemon (or the next command)
+    // sends. A round trip to the collector often takes longer than this, and
+    // agents run commands back to back: every one used to wait out 400 ms.
+    telemetry.shutdown(EXIT_TELEMETRY_BUDGET);
     std::process::exit(code);
 }
+
+/// The longest a command waits at exit to send its telemetry.
+const EXIT_TELEMETRY_BUDGET: Duration = Duration::from_millis(60);
 
 fn runtime_optional(report_json: &str) -> Vec<String> {
     runtime_optional_with(
@@ -2888,6 +3128,7 @@ mod tests {
             CuaError::PermissionDenied(s()),
             CuaError::Cloud(s()),
             CuaError::InsufficientDisk(s()),
+            CuaError::HostCapacity(s()),
             CuaError::ImageNotPublished(s()),
             CuaError::Cancelled(s()),
             CuaError::Timeout(s()),
@@ -2897,6 +3138,108 @@ mod tests {
                 "{e:?} exits undocumented"
             );
         }
+    }
+
+    /// A full machine exits 8, apart from "not found" (3): a script retries
+    /// or frees a Space on one and not the other.
+    #[test]
+    fn a_full_machine_exits_8_and_not_found_exits_3() {
+        assert_eq!(exit_code(&CuaError::HostCapacity("no room".into())), 8);
+        assert_eq!(exit_code(&CuaError::NotFound("x".into())), 3);
+        assert!(
+            EXIT_CODES
+                .iter()
+                .any(|(c, d)| *c == 8 && d.starts_with("No room"))
+        );
+    }
+
+    /// `cua computers` is the one command that lists the pool's computers;
+    /// `cua machines` and `cua sb runs --machines` (old spellings) are gone, not aliases.
+    #[test]
+    fn computers_is_its_own_command_and_machines_is_gone() {
+        let parse =
+            |a: &[&str]| Cli::try_parse_from(std::iter::once("cua").chain(a.iter().copied()));
+        assert!(matches!(
+            parse(&["computers"]).unwrap().command,
+            Command::Computers
+        ));
+        let j = parse(&["computers", "--json"]).unwrap();
+        assert!(j.json && matches!(j.command, Command::Computers));
+        assert!(parse(&["computers", "extra"]).is_err());
+        assert!(parse(&["machines"]).is_err());
+        for sb in ["sb", "sandbox"] {
+            let e = parse(&[sb, "runs", "--machines"]).unwrap_err();
+            assert_eq!(
+                e.kind(),
+                clap::error::ErrorKind::UnknownArgument,
+                "{sb}: {e}"
+            );
+        }
+        assert!(parse(&["sb", "runs"]).is_ok());
+        assert!(parse(&["sb", "runs", "p-1a2b3c4d", "--state", "failed"]).is_ok());
+    }
+
+    #[test]
+    fn build_takes_a_context_anywhere_and_the_docker_flags() {
+        let parse =
+            |a: &[&str]| Cli::try_parse_from(std::iter::once("cua").chain(a.iter().copied()));
+        let Command::Build(a) = parse(&["build"]).unwrap().command else {
+            panic!()
+        };
+        assert_eq!(a.context, std::path::PathBuf::from("."));
+        assert!(a.file.is_none() && a.tag.is_none() && !a.no_cache && !a.desktop);
+        let Command::Build(a) = parse(&[
+            "build",
+            "-f",
+            "docker/Dockerfile.dev",
+            "-t",
+            "app",
+            "--build-arg",
+            "A=1",
+            "--build-arg",
+            "B=2",
+            "--kind",
+            "vm",
+            "--cpus",
+            "4",
+            "--memory",
+            "8192",
+            "--no-cache",
+            "--step-timeout",
+            "30m",
+            "/tmp/ctx",
+        ])
+        .unwrap()
+        .command
+        else {
+            panic!()
+        };
+        assert_eq!(a.context, std::path::PathBuf::from("/tmp/ctx"));
+        assert_eq!(a.file.as_deref(), Some("docker/Dockerfile.dev"));
+        assert_eq!(
+            (a.tag.as_deref(), a.cpus, a.memory_mb),
+            (Some("app"), Some(4), Some(8192))
+        );
+        assert_eq!(a.build_arg, ["A=1", "B=2"]);
+        assert!(a.no_cache);
+        assert!(parse(&["build", "--json", "-f", "-"]).unwrap().json);
+        assert!(parse(&["build", "--cpus", "many"]).is_err());
+    }
+
+    #[test]
+    fn local_pool_commands_parse() {
+        let parse =
+            |a: &[&str]| Cli::try_parse_from(std::iter::once("cua").chain(a.iter().copied()));
+        assert!(parse(&["sandbox", "create", "--pool", "p", "--name", "n"]).is_ok());
+        assert!(
+            parse(&[
+                "sandbox", "pool", "create", "linux", "--name", "agents", "--min", "2", "--max",
+                "8", "--idle", "30m"
+            ])
+            .is_ok()
+        );
+        assert!(parse(&["sandbox", "pool", "ls"]).is_ok());
+        assert!(parse(&["sandbox", "pool", "rm", "agents"]).is_ok());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -3040,6 +3383,9 @@ mod tests {
                 qemu: Default::default(),
                 lume: Default::default(),
                 container: Default::default(),
+                containerization: Default::default(),
+                microvm: Default::default(),
+                vz: Default::default(),
             };
             let raw = cua_daemon::local::doctor_checks(&r);
             assert_eq!(

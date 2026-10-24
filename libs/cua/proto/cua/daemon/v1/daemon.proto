@@ -68,10 +68,15 @@ enum DaemonErrorReason {
   // away); what it made is gone. The message says what was removed and
   // what stays (finished image downloads stay cached).
   DAEMON_ERROR_REASON_CANCELLED = 23;
-  // Your own cloud account (AWS, Google Cloud, Modal) refused or failed a
+  // Your own cloud account (AWS, Google Cloud, Hetzner, Modal) refused or failed a
   // call Cua made there: a missing permission, a quota, a region without
   // the machine type. The message names the cloud's own error.
   DAEMON_ERROR_REASON_CLOUD = 24;
+  // This host has no room for another Space now: its VMs are at their
+  // memory or CPU limit (`CUA_VM_MAX_RSS_FRACTION`,
+  // `CUA_VM_VCPU_OVERCOMMIT`) or the machine is low on memory. Nothing was
+  // started; the message says which limit, by how much, and what to do.
+  DAEMON_ERROR_REASON_HOST_CAPACITY = 25;
   // Removed with Cua Cloud (Fleets), which ended on 18 Oct 2026: the Fleet
   // API failure, a named pool's template mismatch, claim secrets that never
   // arrived, Fleet's admission refusal and the cloud credit refusal. Their
@@ -118,6 +123,14 @@ message GetInfoResponse {
   // and modification time), so a client can tell a daemon whose executable
   // was rebuilt or updated since. Empty from daemons that predate it.
   string build_id = 9;
+  // Local Spaces the daemon keeps ready to claim (its warm pool). Zero from
+  // daemons that predate warm pools.
+  uint32 warm_spaces = 10;
+  // Memory those Spaces hold, in bytes.
+  uint64 warm_memory_bytes = 11;
+  // Why the daemon keeps that many ready, in a few words (for example "no
+  // repeat traffic" or "burst: 12.0 creates/min, 3 kept ready").
+  string warm_reason = 12;
 }
 
 // Request for `DaemonService.OpenMediaBridge`.

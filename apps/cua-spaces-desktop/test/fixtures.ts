@@ -21,7 +21,7 @@ import type {
   SpacePresenceLike,
   TeleportLike,
 } from "../src/native/generated/index";
-import type { LocalRuntimes, MachineHealthReport, SpaceThumbnailData, SpacesBackend } from "../src/model/backend";
+import type { LocalRuntimes, MachineHealthReport, ShareLinkRow, SpaceThumbnailData, SpacesBackend } from "../src/model/backend";
 import type { StreamWindow } from "../src/model/streams";
 import type { AccountProfile, AccountRunning, LinkNoticeView, SignInAttempt, TelemetryRunning } from "../src/model/services";
 
@@ -220,6 +220,31 @@ export class FixtureSpacesBackend implements SpacesBackend {
     const rows = (this.sharesNow.get(id) ?? []).filter((r) => r.who !== who);
     this.sharesNow.set(id, [...rows, { who, role, connected: false }]);
     return this.shares(id);
+  }
+  linksNow: ShareLinkRow[] = [];
+  async links() {
+    return [...this.linksNow];
+  }
+  async createLink(target: string, access: string | null, ttlSeconds: number | null, name: string | null) {
+    const id = `share-${String(this.linksNow.length + 1).padStart(12, "0")}`;
+    const row: ShareLinkRow = {
+      id,
+      url: `https://s${id}.m.relay.example/`,
+      name,
+      access: access === "team" || access === "public" ? access : "private",
+      kind: target.startsWith("space:") ? "space_port" : /^\d+$/.test(target) ? "port" : "file",
+      target,
+      owner: "ada@example.com",
+      createdAtUnix: 1_000,
+      expiresAtUnix: ttlSeconds ? 1_000 + ttlSeconds : null,
+    };
+    this.linksNow = [row, ...this.linksNow];
+    return row;
+  }
+  async stopLink(id: string) {
+    const gone = this.linksNow.filter((l) => id === "all" || l.id === id).map((l) => l.id);
+    this.linksNow = this.linksNow.filter((l) => !gone.includes(l.id));
+    return gone;
   }
   async unshare(id: string, who: string) {
     this.sharesNow.set(id, (this.sharesNow.get(id) ?? []).filter((r) => r.who !== who));

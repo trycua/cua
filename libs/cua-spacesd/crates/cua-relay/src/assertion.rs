@@ -272,7 +272,7 @@ pub fn remove_stale_temps(path: &std::path::Path) -> std::io::Result<(usize, u64
         // Gone between the listing and here (its writer renamed it): fine.
         let meta = match entry.metadata() {
             Ok(m) => m,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) if crate::storage::temp_vanished(&e, &entry.path()) => continue,
             Err(e) => return Err(e),
         };
         if !meta.is_file() {
@@ -283,7 +283,7 @@ pub fn remove_stale_temps(path: &std::path::Path) -> std::io::Result<(usize, u64
                 files += 1;
                 bytes += meta.len();
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) if crate::storage::temp_vanished(&e, &entry.path()) => {}
             Err(e) => return Err(e),
         }
     }

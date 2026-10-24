@@ -750,7 +750,11 @@ impl DesktopBackend for LinuxBackend {
                 FeatureStatus::no(name, why)
             }
         };
-        let a11y_bus = std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some();
+        // The same discovery AT-SPI uses: a daemon started outside the
+        // desktop session (supervisord under gVisor) adopts the session bus
+        // from the desktop's processes, so a11y works without the variable
+        // in its own environment.
+        let a11y_bus = platform_linux::session_bus::ensure_session_bus_discovered();
         let encoders = cua_media_codec::probe();
         let hardware = encoders.iter().find(|encoder| {
             encoder.status == cua_media_codec::ProbeStatus::Available && encoder.hardware

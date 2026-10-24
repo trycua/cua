@@ -89,7 +89,7 @@ export interface ViewerConfig {
  */
 export interface SpaceCreateConfig {
   image?: string;
-  /** `local`, `cloud`, or a connected cloud's word (`aws`, `gcp`, `modal`). */
+  /** `local`, `cloud`, or a connected cloud's word (`aws`, `gcp`, `hetzner`, `modal`). */
   on?: Location | string;
   kind?: SpaceKind | "auto";
   runtime?: Runtime;
@@ -396,7 +396,7 @@ export function createTauriFleetBridge(): FleetBridge {
     ensureDaemon: () => invoke<DaemonStatus>("ensure_daemon"),
     localStatus: () => invoke<LocalStatus>("local_status"),
     cloudPricing: () => invoke<CloudPricing | null>("cloud_pricing"),
-    billingStatus: () => invoke<BillingStatus | null>("billing_status"),
+    billingStatus: () => invoke<BillingStatus | null>("billing_status"), // resolves null (no Fleets call)
     listSpaces: () => invoke<SpaceRow[]>("list_spaces"),
     spaceInfo: (spaceId) => invoke<SpaceRow>("space_info", { spaceId }),
     addSpace: (url, token, name) =>

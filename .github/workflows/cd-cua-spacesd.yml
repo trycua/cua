@@ -15,9 +15,16 @@ name: "CD: cua-spacesd"
 #                                      notarized when the secrets exist)
 #   <asset>.sha256 for each, plus SHA256SUMS
 #
+#   cua-spacesd-<arch>-unknown-linux-musl  the static headless build (no
+#                                      desktop), bare and as a .tar.gz; the
+#                                      `cua` CLI and the Spaces app bundle it
+#                                      to inject into OCI images that carry
+#                                      none (cua-spacesd-linux-static-<arch>)
+#
 # Archives hold the binary, LICENSE and THIRD_PARTY_NOTICES.md at the root.
 # Linux builds in debian:11 (glibc 2.31 floor, OpenSSL vendored statically via
-# the workspace `native-tls/vendored` feature). A publishing run on trycua/cua
+# the workspace `native-tls/vendored` feature); the musl targets are fully
+# static. A publishing run on trycua/cua
 # requires macOS Developer ID signing + notarization and Windows Authenticode
 # (Azure Artifact Signing through the `cua-driver-release-signing`
 # environment) and fails without them; a dry run may ship ad-hoc signed /
@@ -143,8 +150,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { arch: x86_64, runner: ubuntu-latest, target: x86_64-unknown-linux-gnu }
-          - { arch: aarch64, runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
+          - { arch: x86_64, runner: ubuntu-latest, target: x86_64-unknown-linux-gnu, profile: release }
+          - { arch: aarch64, runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, profile: release }
+          # The static headless daemon injected into OCI images (the small
+          # `static` profile of libs/cua-spacesd/Cargo.toml).
+          - { arch: x86_64, runner: ubuntu-latest, target: x86_64-unknown-linux-musl, profile: static }
+          - { arch: aarch64, runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, profile: static }
     defaults:
       run:
         shell: bash
@@ -167,14 +178,23 @@ jobs:
           key: release-${{ matrix.target }}
       - name: Build
         working-directory: libs/cua-spacesd
-        run: cargo build --locked --release --target ${{ matrix.target }} -p cua-spacesd --bin cua-spacesd
+        env:
+          # ring's C code for the arm64 musl target: the arm runner has no
+          # aarch64-linux-musl-gcc, but its native musl-gcc builds for it.
+          CC_aarch64_unknown_linux_musl: musl-gcc
+        run: cargo build --locked --profile ${{ matrix.profile }} --target ${{ matrix.target }} -p cua-spacesd --bin cua-spacesd
       - name: Check glibc floor and static OpenSSL
+        if: endsWith(matrix.target, '-gnu')
         working-directory: libs/cua-spacesd
-        run: bash packaging/release/check-linux-binary.sh target/${{ matrix.target }}/release/cua-spacesd 2.31
+        run: bash packaging/release/check-linux-binary.sh target/${{ matrix.target }}/${{ matrix.profile }}/cua-spacesd 2.31
+      - name: Check the static build
+        if: endsWith(matrix.target, '-musl')
+        working-directory: libs/cua-spacesd
+        run: bash packaging/release/check-static-binary.sh target/${{ matrix.target }}/${{ matrix.profile }}/cua-spacesd
       - name: Package
         working-directory: libs/cua-spacesd
         run: |
-          bash packaging/release/package.sh --binary target/${{ matrix.target }}/release/cua-spacesd \
+          bash packaging/release/package.sh --binary target/${{ matrix.target }}/${{ matrix.profile }}/cua-spacesd \
             --target ${{ matrix.target }} --out "$GITHUB_WORKSPACE/dist"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

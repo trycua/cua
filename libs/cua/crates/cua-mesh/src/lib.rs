@@ -27,14 +27,15 @@
 //!   network change moves packets to another path underneath a QUIC
 //!   connection that keeps going.
 //!
-//! The coordinator (accounts, devices, share lists, the relay) runs in
-//! Cua's relay service; this crate only speaks its protocol
+//! The coordinator (accounts, devices, share lists, the relay) is the
+//! source-available `cua-relay`; this crate only speaks its protocol
 //! ([`proto`]). [`testing`] has an in-process stand-in for tests.
 
 pub mod coord;
 pub mod dialer;
 pub mod disco;
 pub mod engine;
+pub mod gang;
 pub mod key;
 pub mod node;
 pub mod packet;

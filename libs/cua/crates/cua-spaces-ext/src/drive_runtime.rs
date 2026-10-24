@@ -39,6 +39,10 @@ pub(crate) struct Mounted {
     servers: Arc<GuestServers>,
     /// The persistent agent whose view the volume shows while it runs.
     holder: Option<String>,
+    /// The named volumes the Space mounted (its view grants them).
+    access: Vec<cua_volume::MountAccess>,
+    /// The mounts they came from.
+    named: Vec<cua_spaces::named_volumes::VolumeMount>,
 }
 
 impl Mounted {
@@ -129,6 +133,23 @@ impl DriveRuntime {
     pub(crate) fn set_keys(&mut self, keys: Arc<dyn cua_volume::service::KeyStore>) {
         self.keys = keys;
     }
+}
+
+/// What the mounts of a Space grant it in the Cua Volume.
+pub fn mount_access(
+    mounts: &[cua_spaces::named_volumes::VolumeMount],
+) -> Vec<cua_volume::MountAccess> {
+    mounts
+        .iter()
+        .map(|m| cua_volume::MountAccess {
+            prefix: m.folder(),
+            mode: if m.read_only {
+                cua_volume::Mode::Read
+            } else {
+                cua_volume::Mode::ReadWrite
+            },
+        })
+        .collect()
 }
 
 /// The Cua Volume runtime of a [`Spaces`] with a [`crate::DriveExtension`].
@@ -249,7 +270,9 @@ impl SpacesDrive for Spaces {
         let id = self.resolve(space)?.to_string();
         let mut volumes = ext.runtime.volumes.lock().await;
         if let Some(m) = volumes.get(&id) {
-            if m.attachment.is_live() {
+            // Live, and with the mounts the Space has now (a Space that
+            // connected first and got its mounts after is mounted again).
+            if m.attachment.is_live() && m.named == self.volume_mounts(&id)? {
                 return Ok(Some(m.info(&id)));
             }
             if let Some(stale) = volumes.remove(&id) {
@@ -257,6 +280,8 @@ impl SpacesDrive for Spaces {
             }
         }
         let s = self.space(&id).await?;
+        let named = self.volume_mounts(&id)?;
+        let access = mount_access(&named);
         let Some(backend) = s.volume_backend() else {
             let answered_before = self
                 .registry()
@@ -289,6 +314,14 @@ impl SpacesDrive for Spaces {
             tracing::info!(space = %id, "no Cua Volume in this Space: {why}");
             ext.runtime
                 .note_unavailable(&id, Some(format!("no Cua Volume in this Space: {why}")));
+            // A Space that asked for named volumes cannot work without them.
+            if !named.is_empty() {
+                return Err(Error::CapabilityMissing {
+                    space: id,
+                    feature: VOLUME_FEATURE.into(),
+                    limitation: format!("named volumes need the Cua Volume mount: {why}"),
+                });
+            }
             return Ok(None);
         };
         let drive = ext.drive();
@@ -299,7 +332,7 @@ impl SpacesDrive for Spaces {
             .join(cua_volume::path::space_folder_name(&id));
         let vfs = Vfs::new(
             drive,
-            cua_volume::Context::space(&id),
+            cua_volume::Context::space(&id).with_mounts(access.clone()),
             svc.as_ref().map(|s| s.cache().clone()),
             svc.as_ref().map(|s| s.feed().clone()),
             &state,
@@ -313,7 +346,13 @@ impl SpacesDrive for Spaces {
                 limitation: format!("this host cannot serve a {backend} guest mount"),
             });
         }
-        let attachment = s.attach_volume(servers.dialer(), None).await?;
+        let attachment = s
+            .attach_volume_with(
+                servers.dialer(),
+                None,
+                cua_spaces::named_volumes::binds(&named),
+            )
+            .await?;
         if let Err(e) = attachment.wait_mounted(MOUNT_TIMEOUT).await {
             let _ = attachment.detach().await;
             if let Ok(s) = Arc::try_unwrap(servers) {
@@ -325,6 +364,8 @@ impl SpacesDrive for Spaces {
             attachment,
             servers,
             holder: None,
+            access,
+            named,
         };
         let info = m.info(&id);
         tracing::info!(space = %id, path = %info.mount_path, backend = %info.backend, "Cua Volume mounted");
@@ -376,7 +417,7 @@ impl SpacesDrive for Spaces {
             return Ok(None);
         }
         m.vfs()
-            .set_context(cua_volume::Context::agent(agent, Some(&id)))
+            .set_context(cua_volume::Context::agent(agent, Some(&id)).with_mounts(m.access.clone()))
             .await
             .drive()?;
         m.holder = Some(agent.to_string());
@@ -405,7 +446,7 @@ impl SpacesDrive for Spaces {
             && m.holder.as_deref() == Some(agent)
         {
             m.vfs()
-                .set_context(cua_volume::Context::space(&id))
+                .set_context(cua_volume::Context::space(&id).with_mounts(m.access.clone()))
                 .await
                 .drive()?;
             m.holder = None;
@@ -450,8 +491,22 @@ impl DriveRuntime {
 /// guest's own mount wait is [`MOUNT_TIMEOUT`]).
 pub const ATTACH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
+/// Whether a Space that just connected gets the volume: local and cloud
+/// Spaces always, any other when it has named volumes to serve.
+pub(crate) fn attaches_on_connect(id: &str, has_mounts: bool) -> bool {
+    id.starts_with("local:") || id.starts_with("cloud:") || has_mounts
+}
+
 pub(crate) fn spawn_attach(spaces: &Spaces, id: &str) {
-    if !(id.starts_with("local:") || id.starts_with("cloud:")) {
+    // Elsewhere, the Space is someone's own computer, unless it asked for
+    // named volumes: then this machine, which holds the Cua Volume, serves
+    // them over the Space's own connection (a Space on a pool host).
+    if !attaches_on_connect(id, spaces.volume_mounts(id).is_ok_and(|m| !m.is_empty())) {
+        return;
+    }
+    // A cluster job's Space runs one command for someone else's queue: it
+    // gets no volume.
+    if cua_spaces::host_jobs::is_job_space(id) {
         return;
     }
     let Ok(ext) = spaces.drive_extension() else {
@@ -573,6 +628,21 @@ async fn remount(spaces: &Spaces, key: &str) -> Result<Option<VolumeInfo>> {
         tracing::info!(space = %key, "Cua Volume mounted again");
     }
     Ok(info)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::attaches_on_connect;
+
+    #[test]
+    fn only_spaces_with_mounts_attach_off_this_machine() {
+        assert!(attaches_on_connect("local:a", false));
+        assert!(attaches_on_connect("cloud:a", false));
+        assert!(!attaches_on_connect("relay:m1", false));
+        assert!(!attaches_on_connect("direct:10.0.0.5:3211", false));
+        assert!(attaches_on_connect("relay:m1", true));
+        assert!(attaches_on_connect("direct:10.0.0.5:3211", true));
+    }
 }
 
 #[cfg(test)]

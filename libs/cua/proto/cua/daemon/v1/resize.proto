@@ -1,0 +1,24 @@
+// Resizing a sandbox (cua.daemon.v1): the messages of
+// `SandboxService.ResizeSandbox`. A local VM stops and boots again from its
+// own disk with the new shape, so its memory and running processes do not
+// survive; its files do. Containers, Fleet claims and other providers'
+// sandboxes are refused as unsupported.
+syntax = "proto3";
+
+package cua.daemon.v1;
+
+// Request for `SandboxService.ResizeSandbox`.
+message ResizeSandboxRequest {
+  // Sandbox ref ("local:<name>", "cloud:<name>", "direct:<host:port>", a
+  // legacy id) or a name that is unique across locations.
+  string name = 1;
+  // New vCPU count; unset keeps it.
+  optional uint32 cpus = 2;
+  // New memory in MiB; unset keeps it.
+  optional uint64 memory_mb = 3;
+  // Grow the disk to this many GiB; unset keeps it. A disk never shrinks.
+  optional uint32 disk_gb = 4;
+}
+
+// Response for `SandboxService.ResizeSandbox`.
+message ResizeSandboxResponse {}

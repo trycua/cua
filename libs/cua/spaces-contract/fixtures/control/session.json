@@ -945,6 +945,116 @@
         "relay"
       ],
       "metering": "free"
+    },
+    {
+      "tool": "cloud_plan",
+      "sdk_symbol": "Connection::cloud_plan",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "cloud_hosts",
+      "sdk_symbol": "Connection::cloud_hosts",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "cloud_add_host",
+      "sdk_symbol": "Connection::cloud_add_host",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "cloud_remove_host",
+      "sdk_symbol": "Connection::cloud_remove_host",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "cloud_budget",
+      "sdk_symbol": "Connection::cloud_budget",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "cloud_reconcile",
+      "sdk_symbol": "Connection::cloud_reconcile",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "prewarm",
+      "sdk_symbol": "Connection::prewarm",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "prewarm_list",
+      "sdk_symbol": "Connection::prewarm_list",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "prewarm_remove",
+      "sdk_symbol": "Connection::prewarm_remove",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "cloud_audit",
+      "sdk_symbol": "Connection::cloud_audit",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
     }
   ],
   "honesty": {

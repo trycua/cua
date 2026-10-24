@@ -1,15 +1,15 @@
 {
   "name": "experiments",
-  "about": "Settings, Experiments: every switch off by default, then each turned on and off. After each change: the tab (a switch and one line per experiment), the events it sends (experiment_on or experiment_off, then the set that is on), Settings (Storage after General only with Cua Volume, and the launch-at-login line), the first run's pages and Done page (the Volume page and its line only with Cua Volume), the main window's Volume page and the menu bar's Volume sync line and conflicts (only with Cua Volume), a shared Space's buttons (Share only with Sharing) and New Space's Run on menu and links (the connected cloud and Connect a cloud only with Your cloud). Turning one off undoes nothing: the Volume stays mounted, AWS stays connected and the Space stays shared.",
+  "about": "Settings, Experiments: every switch at its default (Sharing and Your cloud on, the rest off), then each changed. After each change: the tab (a switch and one line per experiment), the events it sends (experiment_on or experiment_off, then the set that is on), Settings (Storage after General only with Cua Volume, and the launch-at-login line), the first run's pages and Done page (the Volume page and its line only with Cua Volume), the main window's Volume page and the menu bar's Volume sync line and conflicts (only with Cua Volume), a shared Space's buttons (Share only with Sharing) and New Space's Run on menu and links (the connected cloud and Connect a cloud unless Your cloud is off). Turning one off undoes nothing: AWS stays connected, the Volume stays mounted and the Space stays shared.",
   "now": 1790000000000,
   "changes": [
     { "step": "cua volume on", "row": "experiment:cua_volume", "option": "on" },
-    { "step": "your cloud on", "row": "experiment:your_cloud", "option": "on" },
+    { "step": "your cloud off", "row": "experiment:your_cloud", "option": "off" },
     { "step": "sharing on", "row": "experiment:sharing", "option": "on" },
     { "step": "on again changes nothing", "row": "experiment:sharing", "option": "on" },
     { "step": "another row changes nothing", "row": "notch", "option": "hide" },
     { "step": "cua volume off", "row": "experiment:cua_volume", "option": "off" },
-    { "step": "your cloud off", "row": "experiment:your_cloud", "option": "off" },
+    { "step": "your cloud on again", "row": "experiment:your_cloud", "option": "on" },
     { "step": "sharing off", "row": "experiment:sharing", "option": "off" },
     { "step": "new ui on (use classic ui off)", "row": "experiment:classic_ui", "option": "off" },
     { "step": "use classic ui on", "row": "experiment:classic_ui", "option": "on" }

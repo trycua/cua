@@ -102,6 +102,7 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 mod callback_page;
 #[allow(dead_code)]
 mod chunked;
+pub mod http;
 #[allow(dead_code)]
 mod legacy_vault;
 #[cfg(target_os = "macos")]
@@ -1260,7 +1261,7 @@ impl std::fmt::Display for KeychainBlocked {
 impl std::error::Error for KeychainBlocked {}
 
 /// How long a non-interactive keychain call may take.
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 fn keychain_deadline() -> Duration {
     let secs = std::env::var(KEYCHAIN_TIMEOUT_ENV)
         .ok()
@@ -1676,12 +1677,14 @@ impl Oidc {
             issuer: issuer.into().trim_end_matches('/').to_string(),
             client_id: client_id.into(),
             scope: DEFAULT_SCOPE.into(),
-            http: reqwest::Client::builder()
-                .connect_timeout(Duration::from_secs(15))
-                .timeout(Duration::from_secs(60))
-                .user_agent(concat!("cua-auth/", env!("CARGO_PKG_VERSION")))
-                .build()
-                .expect("http client"),
+            // Shared: a session is read per relay call, and a client per
+            // read re-read the OS roots each time (F53).
+            http: http::shared(http::Shape {
+                connect_timeout: Duration::from_secs(15),
+                timeout: Duration::from_secs(60),
+                user_agent: Some(concat!("cua-auth/", env!("CARGO_PKG_VERSION"))),
+            })
+            .expect("http client"),
         }
     }
 

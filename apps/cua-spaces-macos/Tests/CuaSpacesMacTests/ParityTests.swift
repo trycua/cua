@@ -54,6 +54,16 @@ struct ParityTests {
     @Test("placement-picker") func placementPicker() throws { try check("placement-picker", runPlacementPicker) }
     @Test("checklist") func checklist() throws { try check("checklist", runChecklist) }
     @Test("create-stages") func createStages() throws { try check("create-stages", runProvisioning) }
+    @Test("create-retry") func createRetry() throws { try check("create-retry", runProvisioning) }
+
+    /// A fix button's action word, as the core serializes it.
+    func fixWord(_ a: AppCreateFixAction) -> String {
+        switch a {
+        case .copyCommand: return "copy-command"
+        case .openUrl: return "open-url"
+        case .details: return "details"
+        }
+    }
 
     // MARK: - Harness
 
@@ -130,6 +140,7 @@ struct ParityTests {
         case "cloud": .cloud
         case "yours": .yours
         case "host": .host
+        case "auto": .auto
         default: .local
         }
     }
@@ -337,7 +348,8 @@ struct ParityTests {
         case "tick": return .tick(now: Int64(a["now"] as! Int))
         case "finish": return .finish(id: id, spaceId: a["spaceId"] as! String)
         case "fail": return .fail(id: id, error: a["error"] as! String,
-                                  errorVariant: a["errorVariant"] as? String ?? "")
+                                  errorVariant: a["errorVariant"] as? String ?? "",
+                                  now: (a["now"] as? NSNumber)?.int64Value)
         case "dismiss": return .dismiss(id: id)
         case "delete-start": return .deleteStart(id: id, now: Int64(a["now"] as! Int))
         case "delete-fail": return .deleteFail(id: id)
@@ -378,6 +390,10 @@ struct ParityTests {
             ]
             // Why turning it off or on failed, when it did.
             if let e = d.powerError { detail["powerError"] = e }
+            // A create that failed the same way twice: its fix.
+            if let fix = s.progress?.fix {
+                detail["fix"] = "\(fix.text) [\(fix.label): \(fixWord(fix.action)) \(fix.value ?? "-")]"
+            }
             return detail
         }
         return [
@@ -398,7 +414,7 @@ struct ParityTests {
         let now = Int64(f["now"] as! Int)
         let registry = appRowsToSpaces(rows: try appSpaceRowsFromJson(json: text(f["rows"])), nowMs: now)
         var roster = appRosterInitial(spaces: [])
-        var creates = AppCreatesState(pending: [], deleting: [], powering: [])
+        var creates = AppCreatesState(pending: [], deleting: [], powering: [], streaks: [])
         var frames: [Any] = [["creates": "initial", "frame": provisioningFrame(registry, creates, &roster)]]
         for a in f["creates"] as! [[String: Any]] {
             creates = appCreatesReduce(state: creates, action: createAction(a))
@@ -417,7 +433,7 @@ struct ParityTests {
         let now = Int64(f["now"] as! Int)
         var registry = appRowsToSpaces(rows: try appSpaceRowsFromJson(json: text(f["rows"])), nowMs: now)
         var roster = appRosterInitial(spaces: [])
-        var creates = AppCreatesState(pending: [], deleting: [], powering: [])
+        var creates = AppCreatesState(pending: [], deleting: [], powering: [], streaks: [])
         var frames: [Any] = []
         for step in f["steps"] as! [[String: Any]] {
             let action = step["action"] as? [String: Any]
@@ -453,7 +469,7 @@ struct ParityTests {
         let now = Int64(f["now"] as! Int)
         var registry = appRowsToSpaces(rows: try appSpaceRowsFromJson(json: text(f["rows"])), nowMs: now)
         var roster = appRosterInitial(spaces: [])
-        var creates = AppCreatesState(pending: [], deleting: [], powering: [])
+        var creates = AppCreatesState(pending: [], deleting: [], powering: [], streaks: [])
         var frames: [Any] = []
         for step in f["steps"] as! [[String: Any]] {
             if let action = step["action"] as? [String: Any] {
@@ -1857,7 +1873,7 @@ struct ParityTests {
 
     func os(_ w: String) -> AppSpaceOs { w == "macos" ? .macos : w == "windows" ? .windows : .linux }
     func runtime(_ w: String) -> AppRuntime {
-        [.auto, .gvisor, .runc, .qemu, .lume, .kubevirt].first { word($0) == w } ?? .auto
+        [.auto, .gvisor, .runc, .qemu, .lume, .kubevirt].first { word($0) == w } ?? (w.isEmpty ? .auto : .other(w))
     }
     func move(_ w: String) -> AppTeleportMove {
         [.appOnly, .appWithFiles, .appWithState].first { word($0) == w }!
@@ -1874,6 +1890,7 @@ struct ParityTests {
         case .qemu: "qemu"
         case .lume: "lume"
         case .kubevirt: "kubevirt"
+        case .other(let name): name
         }
     }
     func word(_ v: AppWindowMode) -> String {
@@ -1980,6 +1997,7 @@ struct ParityTests {
             if let v = t.region { d["region"] = v }
             if let v = t.project { d["project"] = v }
             if let v = t.environment { d["environment"] = v }
+            if t.usesToken { d["uses_token"] = true }
             return d
         }
         let request: Any = switch v.request {
@@ -1994,6 +2012,7 @@ struct ParityTests {
             },
             "field": field(v.field),
             "profile": field(v.profileField),
+            "token": field(v.tokenField),
             "checks": v.checks.map { "\($0.ok ? "ok" : "failed") \($0.text)" },
             "result": opt(v.result),
             "touches": v.touches,
@@ -2182,10 +2201,12 @@ struct ParityTests {
         case let .onboardingPage(page, action, choice):
             return ["type": "onboarding-page", "page": page, "action": action, "choice": choice]
         case let .spaceWizard(action): return ["type": "space-wizard", "action": action]
-        case let .spaceCreate(location, guestOs, kind, outcome, failedPhase, stalled, elapsedMs, gpu, errorVariant):
+        case let .spaceCreate(location, guestOs, kind, outcome, failedPhase, stalled, elapsedMs, gpu, errorVariant,
+                              retryAttempt, errorSubclass):
             return ["type": "space-create", "location": location, "guestOs": guestOs, "kind": kind,
                     "outcome": outcome, "failedPhase": failedPhase, "stalled": stalled, "elapsedMs": Int(elapsedMs),
-                    "gpu": gpu, "errorVariant": errorVariant]
+                    "gpu": gpu, "errorVariant": errorVariant, "retryAttempt": Int(retryAttempt),
+                    "errorSubclass": errorSubclass]
         case let .spaceCreateStarted(location, guestOs, kind, gpu):
             return ["type": "space-create-started", "location": location, "guestOs": guestOs, "kind": kind, "gpu": gpu]
         case let .volumeSetup(surface, storage, addToFinder, mountMethod, outcome):
@@ -2220,7 +2241,7 @@ struct ParityTests {
             }
             frames.append(["at": run, "action": "finish", "signals": signals(appTelemetryOnboardingFinished(state: st))])
         }
-        var creates = AppCreatesState(pending: [], deleting: [], powering: [])
+        var creates = AppCreatesState(pending: [], deleting: [], powering: [], streaks: [])
         for step in f["creates"] as! [[String: Any]] {
             let a = step["action"] as! [String: Any]
             let action = createAction(a)

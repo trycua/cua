@@ -381,6 +381,13 @@ public protocol BillingRunning: AnyObject, Sendable {
     func status() async throws -> AppBillingStatus
 }
 
+/// The account app's billing page. Billing moves to app.cua.ai; the row stays
+/// hidden until that design lands (`AccountURLs.billingEnabled`).
+public enum AccountURLs {
+    public static let billing = "https://app.cua.ai/billing"
+    public static let billingEnabled = false
+}
+
 /// Billing has no service behind it: Cua Cloud has ended. It reports "billing
 /// not enabled" with no network call, so Settings hides the row and a refused
 /// cloud Space offers no Add credit.
@@ -389,7 +396,9 @@ public final class LiveBilling: BillingRunning, @unchecked Sendable {
     public init(cua: Cua) { self.cua = cua }
 
     public func status() async throws -> AppBillingStatus {
-        AppBillingStatus(billingEnabled: false, card: nil, credit: nil, billingUrl: nil)
+        AppBillingStatus(
+            billingEnabled: AccountURLs.billingEnabled, card: nil, credit: nil,
+            billingUrl: AccountURLs.billingEnabled ? AccountURLs.billing : nil)
     }
 }
 
@@ -401,7 +410,7 @@ public final class FixtureBilling: BillingRunning, @unchecked Sendable {
         current = AppBillingStatus(
             billingEnabled: enabled, card: nil,
             credit: AppBillingCredit(balanceUsdCents: balanceCents),
-            billingUrl: "https://app.cua.ai/billing")
+            billingUrl: AccountURLs.billing)
     }
 
     public func status() async throws -> AppBillingStatus { current }

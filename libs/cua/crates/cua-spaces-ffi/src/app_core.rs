@@ -1150,7 +1150,33 @@ pub fn app_space_host(host: cua_sdk::SpacesHost) -> AppSpaceHost {
                 reason: l.reason,
             })
             .collect(),
+        load: host.load.map(|l| core::wizard::HostLoad {
+            millicpus_total: l.millicpus_total,
+            millicpus_free: l.millicpus_free,
+            memory_total_mb: l.memory_total_mb,
+            memory_free_mb: l.memory_free_mb,
+            spaces: l.spaces,
+            problem: l.problem,
+        }),
     }
+}
+
+/// The one short line under a machine of yours in the sidebar ("3 running
+/// · 40% CPU", "Paused"); `None` while it is offline or reports no load.
+#[uniffi::export]
+pub fn app_host_load_text(host: AppSpaceHost) -> Option<String> {
+    core::wizard::host_load_text(&host)
+}
+
+/// Registers the external runtime providers in a `cua runtime doctor`
+/// JSON report (`LocalDoctorReport.report_json`) for the New Space wizard,
+/// and returns them: their images join the catalog and run only on this
+/// Mac. A report with none removes any registered before.
+#[uniffi::export]
+pub fn app_wizard_use_doctor_report(report_json: String) -> Vec<AppExternalRuntime> {
+    let list = core::wizard::external_runtimes_from_doctor(&report_json);
+    core::wizard::set_external_runtimes(list.clone());
+    list
 }
 
 /// The presets matching the image field's text, grouped.
@@ -2168,6 +2194,25 @@ pub fn app_experiments_choose(
 #[uniffi::export]
 pub fn app_experiments_from_json(json: String) -> Result<AppExperiments> {
     from_json("experiments", &json)
+}
+
+// ---- Local Network (macOS Spaces on this Mac) -----------------------------
+
+/// Whether a create needs the Local Network check (`local_network::applies`).
+#[uniffi::export]
+pub fn app_local_network_applies(
+    provider: AppSpaceProvider,
+    os: AppSpaceOs,
+    host_is_mac: bool,
+) -> bool {
+    core::local_network::applies(provider, os, host_is_mac)
+}
+
+/// What to do before a macOS Space is created on this Mac
+/// (`local_network::step`): go ahead, explain then ask, or fail.
+#[uniffi::export]
+pub fn app_local_network_step(input: AppLocalNetworkInput) -> AppLocalNetworkStep {
+    core::local_network::step(&input)
 }
 
 /// What the app does about launch at login at launch (the user's choice,

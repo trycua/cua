@@ -14,6 +14,17 @@ rest.
 When a Space can't be created, Cua Spaces shows **Couldn't create this Space**
 with the reason, a **Try again** button and a **Remove from list** button.
 
+Some failures usually pass: the built-in Linux runtime did not start, the
+network dropped during the image download, or the new VM did not answer in
+time. Cua Spaces tries those once more by itself, and the Space says
+**Retrying…** while it does. You only see the failure if the second try
+fails too.
+
+When a Space fails twice in a row for the same reason, on the same computer
+and with the same image, Cua Spaces shows the fix for that reason instead of
+**Try again**: for example **Copy cua cache prune** when the disk is full, or
+**Copy cua runtime doctor** when no container engine is running.
+
 <VideoDemo
   src="https://trycua.github.io/assets/videos/cua-spaces/troubleshoot.mp4"
   poster="https://trycua.github.io/assets/videos/cua-spaces/troubleshoot-poster.jpg"

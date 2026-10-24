@@ -88,10 +88,26 @@ export function ConnectCloudDialog() {
                 ))}
               </div>
 
-              {v.field || v.profileField ? (
+              {v.field || v.profileField || v.tokenField ? (
                 <div className="divide-y overflow-hidden rounded-xl border bg-card shadow-xs">
                   {v.field ? text(v.field, "set-value") : null}
                   {v.profileField ? text(v.profileField, "set-profile") : null}
+                  {v.tokenField ? (
+                    <div data-cloud-field={v.tokenField.id} className="px-4 py-2.5">
+                      <label htmlFor="cc-token" className="mb-2 block text-[13px]">
+                        {v.tokenField.label}
+                      </label>
+                      <Input
+                        id="cc-token"
+                        type="password"
+                        value={connect.token}
+                        placeholder={v.tokenField.placeholder}
+                        spellCheck={false}
+                        autoComplete="off"
+                        onChange={(e) => connect.setToken(e.target.value)}
+                      />
+                    </div>
+                  ) : null}
                   {v.field ? (
                     <label className="flex items-center gap-2 px-4 py-2.5 text-[13px]">
                       <Checkbox data-make-default="" checked={v.makeDefault} onCheckedChange={(on) => send({ type: "set-make-default", on })} />

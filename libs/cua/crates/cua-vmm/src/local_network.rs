@@ -129,6 +129,148 @@ pub async fn report(lume_base: &str) -> Report {
     }
 }
 
+/// Why this process cannot reach the macOS VM at `ip` (a connect to it
+/// failed with "No route to host"): a VPN or firewall
+/// ([`IssueKind::LocalNetworkVpn`]: the route to it goes through a VPN's
+/// tunnel, or this process reaches the rest of the local network) or
+/// missing Local Network access ([`IssueKind::LocalNetwork`]: the local
+/// network is blocked for this process too). `None` when neither can be
+/// told (no local network to compare with). Bounded: about 2 s. Off macOS,
+/// always `None`.
+///
+/// [`IssueKind::LocalNetworkVpn`]: cua_create_failure::preflight::IssueKind::LocalNetworkVpn
+/// [`IssueKind::LocalNetwork`]: cua_create_failure::preflight::IssueKind::LocalNetwork
+pub async fn diagnose_unreachable(ip: &str) -> Option<cua_create_failure::preflight::IssueKind> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    let route = tokio::time::timeout(
+        Duration::from_secs(2),
+        crate::host::run("/sbin/route", &["-n", "get", ip]),
+    )
+    .await
+    .ok()
+    .and_then(Result::ok);
+    let iface = route
+        .as_deref()
+        .and_then(cua_create_failure::local_network::route_interface);
+    let lan = match lan_host() {
+        Some(host) => lan_access(&host).await,
+        None => cua_create_failure::local_network::Access::Unknown,
+    };
+    let cause = cua_create_failure::local_network::unreachable_cause(iface, lan);
+    tracing::info!(
+        ip,
+        ?iface,
+        ?lan,
+        ?cause,
+        "macOS VM unreachable: local network check"
+    );
+    cause
+}
+
+/// A connect from this process to `host` on the local network: macOS
+/// blocks it at once ("No route to host") when Local Network access is off
+/// for the app responsible for this process; anything that went out
+/// (accepted, refused) means it is on. Port 9 (discard): nothing has to
+/// listen.
+async fn lan_access(host: &str) -> cua_create_failure::local_network::Access {
+    use cua_create_failure::local_network::Access;
+    let started = std::time::Instant::now();
+    match tokio::time::timeout(
+        CONNECT_TIMEOUT,
+        tokio::net::TcpStream::connect((host, 9u16)),
+    )
+    .await
+    {
+        Ok(Ok(_)) => Access::Allowed,
+        Ok(Err(e)) if e.kind() == std::io::ErrorKind::ConnectionRefused => Access::Allowed,
+        // The block is immediate; a slow "no route" is a host that is not
+        // there, which says nothing about the permission.
+        Ok(Err(e))
+            if crate::probe::is_unreachable(&e)
+                && started.elapsed() < Duration::from_millis(500) =>
+        {
+            Access::Blocked
+        }
+        _ => Access::Unknown,
+    }
+}
+
+/// The first host of this Mac's first active local IPv4 network (usually
+/// its router): not loopback, not link-local, not a VPN's tunnel, not the
+/// VMs' own bridge. `None` without one.
+#[cfg(unix)]
+fn lan_host() -> Option<String> {
+    let mut list: *mut libc::ifaddrs = std::ptr::null_mut();
+    // SAFETY: getifaddrs fills `list` with a linked list we free below.
+    if unsafe { libc::getifaddrs(&mut list) } != 0 || list.is_null() {
+        return None;
+    }
+    let mut out = None;
+    let mut cursor = list;
+    while !cursor.is_null() {
+        // SAFETY: `cursor` is a node of the list getifaddrs returned.
+        let ifa = unsafe { &*cursor };
+        cursor = ifa.ifa_next;
+        let flags = ifa.ifa_flags as libc::c_int;
+        if flags & libc::IFF_UP == 0
+            || flags & libc::IFF_RUNNING == 0
+            || flags & libc::IFF_LOOPBACK != 0
+            || ifa.ifa_addr.is_null()
+            || ifa.ifa_netmask.is_null()
+        {
+            continue;
+        }
+        // SAFETY: ifa_addr is non-null and points at a sockaddr.
+        if i32::from(unsafe { (*ifa.ifa_addr).sa_family }) != libc::AF_INET {
+            continue;
+        }
+        // SAFETY: ifa_name is a NUL-terminated C string.
+        let name = unsafe { std::ffi::CStr::from_ptr(ifa.ifa_name) }.to_string_lossy();
+        if name.starts_with("bridge") || cua_create_failure::local_network::is_tunnel(&name) {
+            continue;
+        }
+        // SAFETY: both are AF_INET sockaddrs (checked above for the address;
+        // the mask of an AF_INET address is one too).
+        let (ip, mask) = unsafe {
+            let a = &*(ifa.ifa_addr as *const libc::sockaddr_in);
+            let m = &*(ifa.ifa_netmask as *const libc::sockaddr_in);
+            (
+                u32::from_be(a.sin_addr.s_addr),
+                u32::from_be(m.sin_addr.s_addr),
+            )
+        };
+        if let Some(host) = subnet_host(ip, mask) {
+            out = Some(host);
+            break;
+        }
+    }
+    // SAFETY: `list` came from getifaddrs.
+    unsafe { libc::freeifaddrs(list) };
+    out
+}
+
+#[cfg(not(unix))]
+fn lan_host() -> Option<String> {
+    None
+}
+
+/// The subnet's first host (`192.168.1.23/24` → `192.168.1.1`, or `.2`
+/// when that is this Mac); `None` for link-local or a subnet with no room
+/// for another host.
+#[cfg_attr(not(unix), allow(dead_code))]
+fn subnet_host(ip: u32, mask: u32) -> Option<String> {
+    if ip >> 16 == 0xA9FE || mask == 0 || !mask < 2 {
+        return None;
+    }
+    let mut target = (ip & mask) + 1;
+    if target == ip {
+        target += 1;
+    }
+    Some(std::net::Ipv4Addr::from(target).to_string())
+}
+
 /// The `lume serve` this host's runtimes talk to.
 pub fn lume_base() -> String {
     std::env::var("LUME_API").unwrap_or_else(|_| "http://127.0.0.1:7777".into())
@@ -242,6 +384,31 @@ mod tests {
             classify("m", "1.2.3.4", Err(())),
             Probe::Unclear { .. }
         ));
+    }
+
+    #[test]
+    fn the_lan_probe_aims_at_the_subnets_first_host() {
+        let ip = |s: &str| u32::from(s.parse::<std::net::Ipv4Addr>().unwrap());
+        assert_eq!(
+            subnet_host(ip("192.168.1.23"), ip("255.255.255.0")).as_deref(),
+            Some("192.168.1.1")
+        );
+        assert_eq!(
+            subnet_host(ip("10.0.0.1"), ip("255.0.0.0")).as_deref(),
+            Some("10.0.0.2")
+        );
+        assert_eq!(subnet_host(ip("169.254.3.4"), ip("255.255.0.0")), None);
+        assert_eq!(subnet_host(ip("10.8.0.6"), ip("255.255.255.255")), None);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn diagnosing_is_bounded_and_never_panics() {
+        // Whatever this Mac's network is: an answer (or none) within the
+        // route lookup and one connect.
+        let started = std::time::Instant::now();
+        let _ = diagnose_unreachable("192.168.64.250").await;
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 
     #[test]

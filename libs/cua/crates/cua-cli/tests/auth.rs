@@ -388,13 +388,8 @@ async fn removed_cloud_commands_are_not_in_help() {
     }
     let o = h.run(&["sb", "create", "--help"]).await;
     o.ok();
-    for flag in [
-        "--pool",
-        "--apply",
-        "--warm",
-        "--claim-ttl",
-        "--max-pool-size",
-    ] {
+    // (`--pool` names a pool on this computer: `cua sb pool create`.)
+    for flag in ["--apply", "--warm", "--claim-ttl", "--max-pool-size"] {
         assert!(!o.stdout.contains(flag), "{flag}: {}", o.stdout);
     }
     let o = h.run(&["sb", "ls", "--help"]).await;

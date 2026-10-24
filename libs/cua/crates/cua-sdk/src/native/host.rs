@@ -180,6 +180,49 @@ pub struct Relay {
     account_token: String,
 }
 
+impl Relay {
+    /// A copy of this handle for a task on the SDK runtime.
+    fn clone_parts(&self) -> Relay {
+        Relay {
+            client: self.client.clone(),
+            account_token: self.account_token.clone(),
+        }
+    }
+
+    /// This device's session on the relay, when it is enrolled: the relay
+    /// refuses per-machine calls (and the machine gateway) that carry only
+    /// the account token ("this device is not enrolled"), while the
+    /// machine list passes. `None` when this device has no key or session.
+    ///
+    /// Network I/O: call it only inside [`run`], on the SDK runtime. The
+    /// caller's executor (plain `asyncio`, a sync bridge) has no Tokio
+    /// reactor, which is a panic ("no reactor running").
+    async fn device_session(&self) -> Option<String> {
+        debug_assert!(
+            tokio::runtime::Handle::try_current().is_ok(),
+            "Relay::device_session must run on the SDK runtime (inside `run`)"
+        );
+        let session = Arc::new(cua_auth::Session::from_env());
+        let store = session.store().clone();
+        let tokens = Arc::new(SessionTokens(session));
+        let auth = cua_host::DeviceAuth::new(
+            self.client.base(),
+            tokens,
+            Arc::new(store),
+            cua_host::device_name(),
+        )
+        .ok()?;
+        auth.try_session().await
+    }
+
+    /// The relay client with this device's session attached.
+    async fn client_with_device(&self) -> cua_host::RelayClient {
+        self.client
+            .clone()
+            .with_device_session(self.device_session().await)
+    }
+}
+
 #[uniffi::export]
 impl Relay {
     /// A relay (`None` = the relay `cua` uses: `CUA_RELAY_URL`, else this
@@ -216,23 +259,41 @@ impl Relay {
 
     /// One machine.
     pub async fn machine(&self, machine_id: String) -> Result<RelayMachine> {
-        let client = self.client.clone();
-        let token = self.account_token.clone();
-        run(async move { Ok(client.machine(&token, &machine_id).await?.into()) }).await
+        let this = self.clone_parts();
+        run(async move {
+            let client = this.client_with_device().await;
+            Ok(client
+                .machine(&this.account_token, &machine_id)
+                .await?
+                .into())
+        })
+        .await
     }
 
     /// Cuts every client of a machine the account owns and refuses new ones.
     pub async fn stop_sharing(&self, machine_id: String) -> Result<RelayMachine> {
-        let client = self.client.clone();
-        let token = self.account_token.clone();
-        run(async move { Ok(client.stop_sharing(&token, &machine_id).await?.into()) }).await
+        let this = self.clone_parts();
+        run(async move {
+            let client = this.client_with_device().await;
+            Ok(client
+                .stop_sharing(&this.account_token, &machine_id)
+                .await?
+                .into())
+        })
+        .await
     }
 
     /// Accepts clients again.
     pub async fn start_sharing(&self, machine_id: String) -> Result<RelayMachine> {
-        let client = self.client.clone();
-        let token = self.account_token.clone();
-        run(async move { Ok(client.start_sharing(&token, &machine_id).await?.into()) }).await
+        let this = self.clone_parts();
+        run(async move {
+            let client = this.client_with_device().await;
+            Ok(client
+                .start_sharing(&this.account_token, &machine_id)
+                .await?
+                .into())
+        })
+        .await
     }
 
     /// Connects to a machine's spacesd through `<relay>/m/<id>`, with the
@@ -240,9 +301,14 @@ impl Relay {
     pub async fn connect(&self, machine_id: String) -> Result<Arc<SpacesdClient>> {
         let url = self.client.machine_url(&machine_id);
         let token = self.account_token.clone();
+        let this = self.clone_parts();
         run(async move {
-            let o = cua_spacesd_client::ConnectOptions::parse(&url)?
+            let device = this.device_session().await;
+            let mut o = cua_spacesd_client::ConnectOptions::parse(&url)?
                 .gateway(Arc::new(cua_spacesd_client::StaticBearer(token)));
+            if let Some(session) = device {
+                o = o.header(cua_host::relay::DEVICE_SESSION_HEADER, session);
+            }
             let client = cua_spacesd_client::SpacesdClient::connect(o).await?;
             Ok(Arc::new(SpacesdClient::new(client, vec![]).at("relay")))
         })

@@ -1,0 +1,67 @@
+---
+title: Run Modal code on Spaces
+description: 'Point the unmodified Modal Python, JavaScript or Go SDK at Cua: Sandboxes, Images, Volumes, Functions and the rest become Spaces on your own machines. What maps, what answers with Modal''s own error, and how it is tested.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+The Modal SDKs (`modal` for Python, 1.6.2 and the latest release, and the `modal` npm package and the Go library for Sandboxes, Volumes, Queues and Functions) run against a local Cua gateway with no code change. Every Sandbox, and every container a Function runs in, is a Space on your machines, your pool or your own cloud accounts. Nothing talks to Modal and no Modal account is needed.
+
+```bash skip="pseudo"
+cua run --compat modal -- python agent.py
+```
+
+`cua run --compat modal` starts the gateway for the life of the job and sets `MODAL_SERVER_URL`, `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET` and `SSL_CERT_FILE`. For a long-running gateway use `cua compat serve --provider modal`, then `eval "$(cua compat env --provider modal)"`.
+
+```python skip="pseudo"
+import modal
+
+app = modal.App.lookup("demo", create_if_missing=True)
+image = modal.Image.debian_slim(python_version="3.12").pip_install("requests")
+sb = modal.Sandbox.create("sleep", "infinity", app=app, image=image, timeout=600)
+print(sb.exec("python", "-c", "import requests; print(requests.__version__)").stdout.read())
+sb.terminate()
+```
+
+Functions work the same way: `@app.function`, `.remote()`, `.map()`, `.spawn()`, generators, `@app.cls` and `app.deploy` with `Function.from_name`. The containers start from your Image plus the `modal` client, so pin the same `modal` version your code uses (the gateway installs 1.6.2 in the container) and keep your Python version the same as the Image's, since Modal pickles arguments and results.
+
+## What you get that Modal does not have
+
+<Callout>
+  `experimental_options` places a Sandbox or a Function: `cua.on` (`local`, `host:<machine>`, a pool, a BYOC cloud), `cua.kind` (`vm`, `gvisor`, `microvm`), `cua.cpus`, `cua.memory_mb`, `cua.disk_gb` and `cua.gpu` (the runtime's GPU option). Modal's `region` and `cloud` have no meaning on your own machines and are ignored with a warning.
+</Callout>
+
+## What is covered
+
+Every public symbol of the Python SDK has a row in the coverage matrix at `libs/cua/crates/cua-compat/maps/modal-coverage.md`, generated from the SDK: implemented with the test that exercises it, or answered with Modal's own error and the reason.
+
+- Sandboxes: create with every option the SDK has (timeouts, resources, environment, secrets, ports, volumes, readiness probes, experimental options), `exec` with streams and stdin, `from_id`, `from_name`, `list`, tags, `terminate`, `wait`, `poll`, tunnels (TLS names and raw TCP), connect tokens, `wait_until_ready`, logs, and the whole `Sandbox.filesystem` including `watch`, `copy_from_local` and `copy_to_local`.
+- Snapshots: `snapshot_filesystem`, `snapshot_directory` with `mount_image` and `unmount_image`, memory snapshots (`_experimental_snapshot`) and exit snapshots.
+- Images: every builder (`from_registry`, `debian_slim`, `pip_install`, `uv_pip_install`, `apt_install`, `run_commands`, `dockerfile_commands`, `from_dockerfile`, `micromamba`, `run_function`, `add_local_*`, `env`, `workdir`, ...). Each layer is built in a Space and cached by a hash of the spec, so the second build is instant. `from_registry` accepts Cua images, `python:*`, `ubuntu:*`, `debian:*` and images you map in `images.json`; another base raises `ImageBuildError` that says how to map it.
+- Volumes (a folder of Cua Volume), CloudBucketMount (AWS Mountpoint for S3), Secrets, Dicts, Queues, Apps, Environments.
+- Functions and Classes: `.remote`, `.map`, `.starmap`, `.for_each`, `.spawn`, `.spawn_map`, generators, retries, timeouts, batching, input concurrency, `with_options`, autoscaler settings, parametrised classes, `enter` and `exit` hooks.
+- Errors: Modal's exception classes (`NotFoundError`, `AlreadyExistsError`, `SandboxFilesystemNotFoundError`, `SandboxTimeoutError`, ...) with the status codes and messages the SDK maps.
+
+## Where Cua differs, and why
+
+| Modal | On Cua |
+|---|---|
+| Web endpoints, schedules, `modal.Server`, clustered Functions | `UnimplementedError` naming the feature when the Function is created. These need Modal's public edge or scheduler; expose a Sandbox port with `encrypted_ports` or use a Cua routine. |
+| GPU models (`gpu="A10G"`) | `UnimplementedError` unless `experimental_options={"cua.gpu": "nvidia", "cua.on": "host:<gpu machine>"}` is set; then the Space is created with the runtime's GPU option. |
+| Outbound allowlists, inbound CIDR allowlists, header-replacement policies, proxies | `UnimplementedError`. Cua Spaces can block egress entirely (`block_network=True`) or leave it open; a filter that code running as root in the Space could undo would not be a filter. |
+| Sidecar containers, private-registry bases (`from_aws_ecr`, `from_gcp_artifact_registry`), NetworkFileSystem, workspace administration, billing, metrics series | `UnimplementedError` with the reason. |
+| Volumes | Version 1 only, as in Modal: a Sandbox sees a copy of the volume, its changes are committed to the volume (a folder of Cua Volume) every few seconds and when it ends, and `reload_volumes` fetches what others committed. The whole volume is copied in at mount; file modes and ownership are not stored. `version=2` raises `InvalidError`. |
+| Image bases | A base must run `cua-spacesd`, so arbitrary registry images are mapped (`images.json`) rather than pulled. |
+| `snapshot_filesystem` | A Cua checkpoint of the machine; a Sandbox made from it has the files, and the snapshotted machine's processes continue in the copy. |
+| Tunnels | `https://<port>-<sandbox id>.modal.localhost:<port>` names served by the gateway; the generated CA is in `SSL_CERT_FILE`. Unencrypted ports are loopback listeners. Ports declared with `h2_ports` negotiate HTTP/2. |
+| Container privileges | Processes run as root, as in Modal. |
+
+The differences that remain, with the code that decides them, are tracked in the handoff notes of the compat work and in the coverage matrix notes.
+
+## Keeping capacity warm
+
+`cua run --compat modal --prewarm IMAGE[=N]` keeps N Spaces of a Cua image ready, so the first `Sandbox.create` or Function container starts from warm capacity. `IMAGE` is read the way `Image.from_registry` reads it: a Cua image names itself, `python:<version>`, `ubuntu:*` and `debian:*` start from the default Cua image (the Python layer is built once and cached, then every Sandbox forks it), and an entry of `images.json` names its target. Modal's own warm settings map to the same count: a Function's `min_containers` stay running and `buffer_containers` are added while inputs run.
+
+## How it is tested
+
+The Python SDK (pinned 1.6.2 and the latest release), the JavaScript SDK and the Go library run against the gateway over mock Spaces on every pull request. The Function suites run Modal's own container entrypoint, so registration, queuing, outputs, retries, timeouts, generators and classes are exercised end to end. The same cases run on real Spaces on a Mac nightly, and their observations are compared with a golden derived from the SDK sources (no Modal service is ever called). The gRPC surface is generated from the pinned wheel's descriptors, and a weekly job installs the latest `modal`, diffs the descriptors against the pinned set and fails on a removed or changed RPC or message field that the gateway serves. Wire translation is covered by property tests and a wire test with the generated client, and a guard fails when the gateway's own overhead grows by more than 1.5x its recorded baseline.

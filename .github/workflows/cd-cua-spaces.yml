@@ -25,7 +25,10 @@ name: "CD: Cua Spaces"
 # item is the notarized DMG of a release, EdDSA-signed by Sparkle's
 # generate_appcast (apps/cua-spaces-macos/scripts/make-appcast.sh, checked
 # by verify-appcast.sh). X.Y.Z-suffix versions go to the `beta` channel
-# (apps set to "Update to: Beta"). Only with the CUA_SPACES_SPARKLE_ED_PRIVATE_KEY
+# (apps set to "Update to: Beta"). A beta is a production build with a
+# prerelease version, not a staging build: it is built exactly like a stable
+# release, so it talks to production (CUA_ENV=staging at launch selects
+# staging for any build). Only with the CUA_SPACES_SPARKLE_ED_PRIVATE_KEY
 # secret and a Developer ID build: without it no appcast is made or
 # published and every other step is unchanged. The macOS job writes the
 # appcast (merged into the published one) as a workflow artifact; the last
@@ -289,12 +292,28 @@ jobs:
       - uses: ./.github/actions/spaces-rust-slice
         with:
           triple: ${{ matrix.triple }}
+      # microVMs on Apple silicon: the static aarch64 guest init the app
+      # bundles (build-release.sh --skip-cargo takes it from here).
+      - name: Build the microVM guest init (arm64)
+        if: matrix.arch == 'arm64'
+        working-directory: libs/cua
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: rust-lld
+        run: |
+          set -euo pipefail
+          rustup target add aarch64-unknown-linux-musl
+          cargo build --locked --release -p cua-microvm-init --target aarch64-unknown-linux-musl
+          init=target/aarch64-unknown-linux-musl/release/cua-microvm-init
+          file "$init" | grep -q "statically linked" || { echo "::error::cua-microvm-init is not static"; exit 1; }
+          cp "$init" "target/${{ matrix.triple }}/release/"
       - uses: actions/upload-artifact@v4
         with:
           name: macos-rust-${{ matrix.arch }}
           path: |
             libs/cua/target/${{ matrix.triple }}/release/libcua_spaces_ffi.dylib
             libs/cua/target/${{ matrix.triple }}/release/cua-spaces-cli
+            libs/cua/target/${{ matrix.triple }}/release/cua-microvm-init
           if-no-files-found: error
           retention-days: 3
 
@@ -423,6 +442,10 @@ jobs:
             cp "$RUNNER_TEMP/macos-rust/macos-rust-${pair%%:*}/"* "$dir/"
             chmod +x "$dir/cua-spaces-cli"
           done
+          # The microVM guest init, where build-release.sh --skip-cargo looks.
+          musl=libs/cua/target/aarch64-unknown-linux-musl/release
+          mkdir -p "$musl"
+          mv libs/cua/target/aarch64-apple-darwin/release/cua-microvm-init "$musl/"
 
       # A throwaway keychain holds the Developer ID Application identity for
       # this job only (deleted in the last step).
@@ -459,8 +482,17 @@ jobs:
           name: spaces-web-dist
           path: apps/cua-spaces-web/dist
 
+      # An OCI image without cua-spacesd gets a static one injected on
+      # containers and microVMs; the app carries it (Contents/Resources),
+      # from the cua-spacesd release it pins.
+      - name: Fetch the static cua-spacesd
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/fetch_static_spacesd.sh "$GITHUB_REPOSITORY" aarch64,x86_64 "$RUNNER_TEMP/static-spacesd"
+
       - name: Build and sign Cua Spaces.app (universal)
         env:
+          CUA_SPACESD_STATIC_DIR: ${{ runner.temp }}/static-spacesd
           VERSION: ${{ steps.version.outputs.version }}
           SIGNED: ${{ steps.signing.outputs.apple }}
           DEVELOPER_NAME: ${{ secrets.DEVELOPER_NAME }}
@@ -470,7 +502,8 @@ jobs:
           identity="-"
           [ "$SIGNED" = true ] && identity="Developer ID Application: $DEVELOPER_NAME ($TEAM_ID)"
           # The updater's feed is this repository's (staging updates from
-          # staging).
+          # staging). Stable and beta versions are built the same way, and
+          # production is the build default.
           apps/cua-spaces-macos/scripts/build-release.sh --version "$VERSION" \
             --build-number "$GITHUB_RUN_NUMBER" --arch universal --skip-cargo \
             --sign "$identity" --out "$RUNNER_TEMP/spaces-app" \
@@ -1093,7 +1126,7 @@ jobs:
     needs: electron-plan
     if: needs.electron-plan.outputs.desktop == 'true'
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 120
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
@@ -1663,9 +1696,10 @@ jobs:
         with:
           name: electron-native-linux-${{ matrix.arch }}
           path: apps/cua-spaces-desktop/native/linux-${{ matrix.arch }}
-      # Artifacts drop the executable bit; the daemon starts from this cua.
+      # Artifacts drop the executable bit; the daemon starts from this cua,
+      # and a Space without cua-spacesd runs the static one beside it.
       - name: The bundled cua is executable
-        run: chmod +x native/linux-${{ matrix.arch }}/cua
+        run: chmod +x native/linux-${{ matrix.arch }}/cua native/linux-${{ matrix.arch }}/cua-spacesd-linux-*
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       # No OS code signing on Linux; electron-updater checks each file's sha512.
@@ -1686,6 +1720,9 @@ jobs:
             echo "electron-linux: updater sha512 only (no OS code signing on Linux)" > electron-assets/signing-electron-linux.txt
           fi
           sha256sum electron-assets/*
+      - name: Check the deb ships the static cua-spacesd next to cua
+        working-directory: .
+        run: .github/scripts/check_static_spacesd_packaged.sh apps/cua-spaces-desktop/electron-assets
       - uses: actions/upload-artifact@v4
         with:
           name: electron-linux-${{ matrix.arch }}

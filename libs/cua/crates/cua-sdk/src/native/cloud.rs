@@ -47,9 +47,9 @@ pub struct CloudKind {
 /// One cloud as `cloud_status` lists it.
 #[derive(Debug, Clone, PartialEq, Default, Deserialize, uniffi::Record)]
 pub struct CloudProvider {
-    /// `aws`, `gcp`, `modal`.
+    /// `aws`, `gcp`, `hetzner`, `modal`.
     pub name: String,
-    /// `AWS`, `Google Cloud`, `Modal`.
+    /// `AWS`, `Google Cloud`, `Hetzner Cloud`, `Modal`.
     pub title: String,
     /// `vm` or `sandbox`.
     pub tier: String,
@@ -158,6 +158,36 @@ pub struct CloudDisconnected {
     /// Resources Cua still records there.
     #[serde(default)]
     pub left: Vec<CloudResource>,
+    /// With `delete`: what was deleted from the account first.
+    #[serde(default)]
+    pub deleted: Vec<CloudResource>,
+}
+
+/// One line of the cloud audit log (`cloud_audit`). Never a secret.
+#[derive(Debug, Clone, PartialEq, Default, Deserialize, uniffi::Record)]
+pub struct CloudAuditEntry {
+    /// When (RFC 3339, UTC).
+    pub ts: String,
+    /// `connect`, `disconnect`, `resource_recorded`, `resource_created`,
+    /// `resource_confirmed` or `resource_deleted`.
+    pub action: String,
+    pub provider: String,
+    /// The resource type; empty for `connect` and `disconnect`.
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub id: String,
+    /// The Space it belongs to.
+    #[serde(default)]
+    pub space: String,
+    /// `user`, `sweep`, `auto-sweep`, `disconnect` or `rollback`.
+    #[serde(default)]
+    pub actor: String,
+    /// `ok`, `failed` or `refused`.
+    #[serde(default)]
+    pub outcome: String,
+    #[serde(default)]
+    pub detail: String,
 }
 
 /// One row of `cloud_sweep`.
@@ -176,16 +206,17 @@ pub struct CloudSweepReport {
     pub resources: Vec<CloudSweepItem>,
 }
 
-/// Where in a cloud account Spaces go. Credentials are never here: each
-/// cloud uses its own CLI sign-in.
-#[derive(Debug, Clone, PartialEq, Default, uniffi::Record)]
+/// Where in a cloud account Spaces go. AWS, Google Cloud and Modal use
+/// their own CLI sign-in; Hetzner takes its API token in `token` (or
+/// `HCLOUD_TOKEN`).
+#[derive(Clone, PartialEq, Default, uniffi::Record)]
 pub struct CloudTarget {
-    /// `aws`, `gcp` or `modal`.
+    /// `aws`, `gcp`, `hetzner` or `modal`.
     pub provider: String,
     /// AWS or Modal profile.
     #[uniffi(default = None)]
     pub profile: Option<String>,
-    /// AWS or GCP region.
+    /// AWS or GCP region, or Hetzner location (`fsn1`).
     #[uniffi(default = None)]
     pub region: Option<String>,
     /// GCP zone.
@@ -197,6 +228,25 @@ pub struct CloudTarget {
     /// Modal environment.
     #[uniffi(default = None)]
     pub environment: Option<String>,
+    /// Hetzner: the project's Read & Write API token. Secret: used for the
+    /// checks, saved in the Cua credential store when they pass, never
+    /// printed.
+    #[uniffi(default = None)]
+    pub token: Option<String>,
+}
+
+impl std::fmt::Debug for CloudTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CloudTarget")
+            .field("provider", &self.provider)
+            .field("profile", &self.profile)
+            .field("region", &self.region)
+            .field("zone", &self.zone)
+            .field("project", &self.project)
+            .field("environment", &self.environment)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 impl CloudTarget {
@@ -208,6 +258,7 @@ impl CloudTarget {
             "zone": self.zone,
             "project": self.project,
             "environment": self.environment,
+            "token": self.token,
         })
     }
 }
@@ -292,12 +343,35 @@ impl Spaces {
         run(async move { parse(host.tool_value("cloud_test", target.args()).await?) }).await
     }
 
-    /// Forgets a connected cloud (nothing in it is deleted).
-    pub async fn cloud_disconnect(&self, provider: String) -> Result<CloudDisconnected> {
+    /// Forgets a connected cloud. Refused (listing them) while Cua
+    /// resources still run there; with `delete_resources`, deletes everything Cua
+    /// created there first and disconnects once the cloud confirms.
+    #[uniffi::method(default(delete_resources = false))]
+    pub async fn cloud_disconnect(
+        &self,
+        provider: String,
+        delete_resources: bool,
+    ) -> Result<CloudDisconnected> {
         let host = self.tool_caller();
         run(async move {
             parse(
-                host.tool_value("cloud_disconnect", json!({"provider": provider}))
+                host.tool_value(
+                    "cloud_disconnect",
+                    json!({"provider": provider, "delete": delete_resources}),
+                )
+                .await?,
+            )
+        })
+        .await
+    }
+
+    /// What Cua did in your clouds, newest last (default the newest 50).
+    #[uniffi::method(default(limit = None))]
+    pub async fn cloud_audit(&self, limit: Option<u32>) -> Result<Vec<CloudAuditEntry>> {
+        let host = self.tool_caller();
+        run(async move {
+            parse(
+                host.tool_value("cloud_audit", json!({"limit": limit}))
                     .await?,
             )
         })

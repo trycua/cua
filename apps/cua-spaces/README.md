@@ -112,7 +112,7 @@ links `/usr/local/bin/cua` to the bundled CLI). Releases
 (`.github/workflows/cd-cua-spaces.yml`) ship this app for Linux and Windows
 only; the macOS release is the SwiftUI app (`apps/cua-spaces-macos`), and
 the release .pkg wraps that app.
-`.github/workflows/ci-cua-spaces.yml` builds them unsigned on pull requests. Silent / MDM installs can preselect the first-run choice
+`.github/workflows/ci-cua-spaces.yml` builds them unsigned on pushes to main and on pull requests labelled `ci:full`; other pull requests run the frontend and Rust command-layer tests only. Silent / MDM installs can preselect the first-run choice
 (the user still confirms in the app):
 
 | Installer | Flag |

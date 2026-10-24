@@ -148,7 +148,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-cua-sdk = { git = "https://github.com/trycua/cua", tag = "cua-sdk-v0.7.0" }
+cua-sdk = { git = "https://github.com/trycua/cua", tag = "cua-sdk-v0.8.0" }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 ```
@@ -188,7 +188,7 @@ async fn drive(sb: &cua_sdk::Sandbox) -> Result<(), Box<dyn std::error::Error>> 
     // Write a file and read it back.
     env.upload("/tmp/note.txt".into(), b"hello from my harness\n".to_vec(), None)
         .await?;
-    let note = env.download("/tmp/note.txt".into()).await?;
+    let note = env.download("/tmp/note.txt".into(), None).await?;
     println!("file: {}", String::from_utf8_lossy(&note).trim());
 
     // Click, then type into a terminal.
@@ -207,7 +207,7 @@ async fn drive(sb: &cua_sdk::Sandbox) -> Result<(), Box<dyn std::error::Error>> 
     // Any cua.env.v1 RPC without a typed method: proto3 JSON in and out.
     let request = json!({ "filter": { "titleContains": "harness" } });
     let reply = env
-        .call_json("WindowsService/ListWindows".into(), request.to_string())
+        .call_json("WindowsService/ListWindows".into(), request.to_string(), None)
         .await?;
     let reply: Value = serde_json::from_str(&reply)?;
     for w in reply["windows"].as_array().into_iter().flatten() {

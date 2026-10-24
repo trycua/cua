@@ -120,6 +120,10 @@ export class PendingSpacesBackend implements SpacesBackend {
   shares = async (id: string) => (await this.b()).shares(id);
   share = async (id: string, who: string, role: string) => (await this.b()).share(id, who, role);
   unshare = async (id: string, who: string) => (await this.b()).unshare(id, who);
+  links = async () => (await this.b()).links();
+  createLink = async (target: string, access: string | null, ttlSeconds: number | null, name: string | null) =>
+    (await this.b()).createLink(target, access, ttlSeconds, name);
+  stopLink = async (id: string) => (await this.b()).stopLink(id);
   tool = async (tool: string, args: Record<string, unknown>) => (await this.b()).tool(tool, args);
   teleportContext = async (id: string): Promise<{ teleport: TeleportLike; space: SpaceLike } | null> => (await this.b()).teleportContext(id);
   teleportHandle = () => this.current?.teleportHandle() ?? null;

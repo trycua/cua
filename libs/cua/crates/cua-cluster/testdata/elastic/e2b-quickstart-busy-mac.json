@@ -1,0 +1,35 @@
+{
+  "assignments": [
+    {
+      "group": "e2b-quickstart",
+      "target": {
+        "on": "new",
+        "index": 0
+      },
+      "count": 1,
+      "sync": false
+    }
+  ],
+  "new_hosts": [
+    {
+      "provider": "modal",
+      "type_name": "2x4",
+      "region": "us-east",
+      "usd_per_hour": 0.079128,
+      "boot_secs": 3,
+      "billed_secs": 300,
+      "one_space": true
+    }
+  ],
+  "unplaced": [],
+  "added_usd_per_hour": 0.079128,
+  "projected_usd": 0.006594000000000001,
+  "lower_bound_usd": 0.00017552083333333333,
+  "solver": "exact",
+  "elapsed_us": 0,
+  "relay_after": 1,
+  "ready_in_secs": 3,
+  "explain": [
+    "1 x e2b-quickstart -> new modal 2x4 in us-east ($0.0791/h, ready in ~3 s)"
+  ]
+}

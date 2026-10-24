@@ -15,6 +15,7 @@ import { isUnsupported, type DataAdapter } from "./adapter";
 import type { AgentRunStatus, AgentSetupRow, PersistentAgent, SpaceAgentRun } from "./contracts/agents";
 import type { CoreClient } from "./core";
 import { withCreateContext } from "./create-context";
+import { HOST_RUNS_CREATES, loadCreateStreaks, saveCreateStreaks } from "./create-retry";
 import { createReport, reportMailto, type CreateReport, type ReportSend } from "./diagnostic-report";
 import type { AboutInput } from "./contracts/settings";
 import { passedSteps } from "./onboarding";
@@ -249,7 +250,7 @@ export class BridgeStore {
   private listNoticeText: string | null = null;
   /** The host's standing notice (`DataAdapter.hostNotice`). */
   private hostNoticeText: string | null = null;
-  private creates: CreatesState = NO_CREATES;
+  private creates: CreatesState = { ...NO_CREATES, streaks: loadCreateStreaks() };
   private machineRows: MachineRow[] = [];
   private settingsSnap: SettingsSnapshot | undefined;
   private sessionSnap: SessionSnapshot | undefined;
@@ -517,9 +518,13 @@ export class BridgeStore {
   }
 
   private dispatch(action: CreateAction): void {
-    void this.telemetry.track(telemetryCreates(this.core, this.creates, action, this.now()));
+    // A host that runs the create records its usage events itself, from
+    // the same core decisions (`AppModel.sendCreate`): sending the page's
+    // copy too counted every create twice.
+    if (!HOST_RUNS_CREATES[this.adapter.mode]) void this.telemetry.track(telemetryCreates(this.core, this.creates, action, this.now()));
     const before = this.creates;
     this.creates = reduceCreates(this.core, this.creates, action);
+    if (this.creates.streaks !== before.streaks) saveCreateStreaks(this.creates.streaks);
     this.publishSpaces();
     if (action.type === "fail" || action.type === "tick" || action.type === "progress") this.noteFailures(before);
   }
@@ -611,8 +616,9 @@ export class BridgeStore {
       host,
       hostName: machine?.name ?? null,
     });
+    const args = notifyWhenReady ? { config, pendingId, os, notifyWhenReady } : { config, pendingId, os };
     try {
-      const row = await this.adapter.call("spaces.create", notifyWhenReady ? { config, pendingId, os, notifyWhenReady } : { config, pendingId, os });
+      const row = await this.createOnHost(args, pendingId);
       this.createdIds.set(pendingId, row.id);
       this.dispatch({ type: "finish", id: pendingId, spaceId: row.id });
       this.createRequests.delete(pendingId);
@@ -628,10 +634,29 @@ export class BridgeStore {
       // The words it failed with, for a diagnostic report the person may send.
       this.createFailures.set(pendingId, { error: message, at: this.now() });
       if (message.startsWith("cancelled")) this.dispatch({ type: "cancel-done", id: pendingId });
-      // The failed row, and its one notification (`noteFailures`).
-      else this.dispatch({ type: "fail", id: pendingId, error: message });
+      // The failed row (already shown by `createOnHost`), and its one
+      // notification (`noteFailures`).
       // Where it ran, for the notice that words the failure (`createFailedText`).
       throw withCreateContext(toError(e), { provider, hostName: machine?.name });
+    }
+  }
+
+  /** `spaces.create` on the host. A failure the core answers by running the
+   * create once more (one that usually passes: the row says "Retrying…")
+   * runs it again here, unless the host runs creates and retries on its own
+   * side (`HOST_RUNS_CREATES`, telling the page with `CreateProgress.retry`).
+   * Any other failure is put on the row and thrown. */
+  private async createOnHost(args: { config: SpaceCreateConfig; pendingId: string; os: SpaceOs; notifyWhenReady?: boolean }, pendingId: string): Promise<SpaceRow> {
+    for (;;) {
+      try {
+        return await this.adapter.call("spaces.create", args);
+      } catch (e) {
+        const message = toError(e).message;
+        if (message.startsWith("cancelled")) throw e;
+        this.dispatch({ type: "fail", id: pendingId, error: message, now: this.now() });
+        const again = !HOST_RUNS_CREATES[this.adapter.mode] && this.creates.pending.some((p) => p.id === pendingId && p.retryPending && !p.cancelling);
+        if (!again) throw e;
+      }
     }
   }
 
@@ -1342,6 +1367,13 @@ export class BridgeStore {
         break;
       case "spaces.createProgress": {
         const p = e.progress;
+        // The host runs the create once more after a failure that usually
+        // passes: the same failure here shows "Retrying…" (the core decides
+        // alike on both sides).
+        if (p.retry) {
+          this.dispatch({ type: "fail", id: p.pendingId, error: p.retry.error, errorVariant: p.retry.errorVariant ?? "", now: this.now() });
+          break;
+        }
         this.dispatch({
           type: "progress",
           id: p.pendingId,

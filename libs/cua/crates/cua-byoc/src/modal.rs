@@ -38,7 +38,9 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::api::{CloudApi, Result, Target, Tested, cloud_err};
-use crate::model::{self, Connection, ProvisionSpec, Resource, Tier};
+use crate::model::{
+    self, Billing, Capabilities, Connection, HostType, ProvisionSpec, Resource, Supplies, Tier,
+};
 
 /// The helper's file name.
 pub const HELPER: &str = "cua-modal-helper";
@@ -173,21 +175,39 @@ impl ModalApi {
             app: &self.app,
             ..req
         };
-        let answer = self
-            .transport
-            .call(
-                serde_json::to_value(&req)?,
-                !conn.profile.is_empty(),
-                deadline,
-            )
-            .await?;
-        let reply: Reply = serde_json::from_value(answer).map_err(|e| {
-            cloud_err(
-                "modal",
-                op,
-                format!("an answer the helper should not give: {e}"),
-            )
-        })?;
+        let mut tries = 0;
+        let reply = loop {
+            let answer = self
+                .transport
+                .call(
+                    serde_json::to_value(&req)?,
+                    !conn.profile.is_empty(),
+                    deadline,
+                )
+                .await?;
+            let reply: Reply = serde_json::from_value(answer).map_err(|e| {
+                cloud_err(
+                    "modal",
+                    op,
+                    format!("an answer the helper should not give: {e}"),
+                )
+            })?;
+            // Rate limited or briefly unavailable: ask again a few times.
+            // A create is never repeated (it may have happened).
+            if op != "create"
+                && reply
+                    .error
+                    .as_ref()
+                    .is_some_and(|e| e.kind == "unavailable")
+            {
+                tries += 1;
+                if let Some(wait) = crate::api::retry_backoff(tries) {
+                    tokio::time::sleep(wait).await;
+                    continue;
+                }
+            }
+            break reply;
+        };
         if let Some(e) = reply.error {
             return Err(match e.kind.as_str() {
                 "not_found" => Error::NotFound(format!("modal: {}", e.message)),
@@ -609,6 +629,11 @@ impl CloudApi for ModalApi {
     }
 
     async fn provision(&self, conn: &Connection, spec: &ProvisionSpec) -> Result<Vec<Resource>> {
+        if spec.is_host() {
+            return Err(Error::InvalidArgument(
+                "modal runs Spaces itself: it supplies no hosts to the pool".into(),
+            ));
+        }
         let image = cua_sandbox_core::ProviderImage {
             reference: spec.image.clone(),
             pinned_ref: spec.image.clone(),
@@ -775,6 +800,51 @@ impl CloudApi for ModalApi {
             .filter(|s| model::is_ours(&s.tags, owner))
             .map(|s| self.resource(conn, s))
             .collect())
+    }
+
+    fn capabilities(&self, conn: &Connection) -> Capabilities {
+        Capabilities {
+            // Modal runs Spaces itself: there is no host the pool controls.
+            supplies: Supplies::Spaces,
+            billing: Billing {
+                granularity_secs: 1,
+                minimum_secs: 0,
+                stopped_bills: false,
+            },
+            regions: vec![if conn.environment.is_empty() {
+                "modal".into()
+            } else {
+                conn.environment.clone()
+            }],
+            max_machines: 100,
+            vcpu_quotas: Default::default(),
+            self_deletes: true,
+        }
+    }
+
+    async fn host_types(&self, conn: &Connection) -> Result<Vec<HostType>> {
+        // Modal list prices (modal.com/pricing, 2026-10-21): $0.0000131 per
+        // physical core-second (1 physical core = 2 vCPU) and $0.00000222
+        // per GiB-second. Each "type" is one Space of that size.
+        let regions = self.capabilities(conn).regions;
+        let size = |vcpus: u32, gib: u64| {
+            let usd =
+                (f64::from(vcpus) / 2.0) * 0.0000131 * 3600.0 + gib as f64 * 0.00000222 * 3600.0;
+            HostType {
+                name: format!("{vcpus}x{gib}"),
+                arch: "amd64".into(),
+                vcpus,
+                memory_mb: gib * 1024,
+                disk_gb: 0,
+                kvm: false,
+                gpu: String::new(),
+                usd_per_hour: (usd * 10_000.0).round() / 10_000.0,
+                regions: regions.clone(),
+                boot_secs: 3,
+                quota_pool: String::new(),
+            }
+        };
+        Ok(vec![size(1, 1), size(2, 4), size(4, 8)])
     }
 }
 

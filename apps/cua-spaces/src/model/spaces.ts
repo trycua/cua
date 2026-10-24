@@ -51,7 +51,7 @@ export interface SpaceRow {
   power?: string;
   /** `running`, `suspended` or `stopped` as cua last left it, when known. */
   powerState?: string;
-  /** For a Space in your cloud: the provider word (`aws`, `gcp`, `modal`),
+  /** For a Space in your cloud: the provider word (`aws`, `gcp`, `hetzner`, `modal`),
    * its account and region in words ("AWS · us-west-2"), and where Delete
    * Permanently can delete it (`here`, `host:<machine>`, `elsewhere`). */
   cloud?: string;

@@ -325,7 +325,7 @@
           "allow: Share with (optional) [Teammates’ emails] = "
         ],
         "lede": "You and the people you share with can see and use this computer’s screen from other devices. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
-        "request": "mode=relay relay=https://relay.cua.ai direct=- name=- allow=-",
+        "request": "mode=relay relay=- direct=- name=- allow=-",
         "title": "Set up this computer"
       },
       "hostForm": "initial"
@@ -343,7 +343,7 @@
           "allow: Share with (optional) [Teammates’ emails] = "
         ],
         "lede": "You and the people you share with can see and use this computer’s screen from other devices. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
-        "request": "mode=relay relay=https://relay.cua.ai direct=- name=Studio allow=-",
+        "request": "mode=relay relay=- direct=- name=Studio allow=-",
         "title": "Set up this computer"
       },
       "hostForm": "set-name"
@@ -361,7 +361,7 @@
           "allow: Share with (optional) [Teammates’ emails] = grace@example.com, bob@example.com"
         ],
         "lede": "You and the people you share with can see and use this computer’s screen from other devices. Cua connects them for you, with no network setup. Signed in as ada@example.com.",
-        "request": "mode=relay relay=https://relay.cua.ai direct=- name=Studio allow=grace@example.com,bob@example.com",
+        "request": "mode=relay relay=- direct=- name=Studio allow=grace@example.com,bob@example.com",
         "title": "Set up this computer"
       },
       "hostForm": "set-allow"
@@ -371,17 +371,17 @@
         "advanced": "Advanced (open)",
         "busy": false,
         "buttons": "Back / Turn on remote access",
-        "canSubmit": true,
+        "canSubmit": false,
         "error": null,
         "fields": [
           "name: Name [How it shows on your other devices] =  Studio ",
           "profile: Use it to [-] = desktop",
           "allow: Share with (optional) [Teammates’ emails] = grace@example.com, bob@example.com",
           "direct: Direct connection = off (advanced)",
-          "relay: Relay server [https://relay.example.com] = https://relay.cua.ai (advanced)"
+          "relay: Relay server [https://relay.example.com] =  (advanced)"
         ],
         "lede": "For self-hosting teams: joins your own relay at the address below.",
-        "request": "mode=relay relay=https://relay.cua.ai direct=- name=Studio allow=grace@example.com,bob@example.com",
+        "request": null,
         "title": "Set up this computer"
       },
       "hostForm": "toggle-advanced"

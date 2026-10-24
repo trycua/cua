@@ -1,0 +1,122 @@
+{
+  "assignments": [
+    {
+      "group": "windows",
+      "target": {
+        "on": "host",
+        "name": "studio-a"
+      },
+      "count": 2,
+      "sync": false
+    },
+    {
+      "group": "windows",
+      "target": {
+        "on": "host",
+        "name": "studio-b"
+      },
+      "count": 1,
+      "sync": false
+    },
+    {
+      "group": "eval",
+      "target": {
+        "on": "host",
+        "name": "linux-box"
+      },
+      "count": 16,
+      "sync": false
+    },
+    {
+      "group": "eval",
+      "target": {
+        "on": "new",
+        "index": 0
+      },
+      "count": 31,
+      "sync": false
+    },
+    {
+      "group": "eval",
+      "target": {
+        "on": "new",
+        "index": 1
+      },
+      "count": 31,
+      "sync": false
+    },
+    {
+      "group": "eval",
+      "target": {
+        "on": "new",
+        "index": 2
+      },
+      "count": 15,
+      "sync": false
+    },
+    {
+      "group": "eval",
+      "target": {
+        "on": "new",
+        "index": 3
+      },
+      "count": 7,
+      "sync": false
+    }
+  ],
+  "new_hosts": [
+    {
+      "provider": "hetzner",
+      "type_name": "cx53",
+      "region": "fsn1",
+      "usd_per_hour": 0.0674,
+      "boot_secs": 50,
+      "billed_secs": 3600,
+      "one_space": false
+    },
+    {
+      "provider": "hetzner",
+      "type_name": "cx53",
+      "region": "fsn1",
+      "usd_per_hour": 0.0674,
+      "boot_secs": 50,
+      "billed_secs": 3600,
+      "one_space": false
+    },
+    {
+      "provider": "hetzner",
+      "type_name": "cax31",
+      "region": "fsn1",
+      "usd_per_hour": 0.0354,
+      "boot_secs": 50,
+      "billed_secs": 3600,
+      "one_space": false
+    },
+    {
+      "provider": "hetzner",
+      "type_name": "cax21",
+      "region": "fsn1",
+      "usd_per_hour": 0.0194,
+      "boot_secs": 50,
+      "billed_secs": 3600,
+      "one_space": false
+    }
+  ],
+  "unplaced": [],
+  "added_usd_per_hour": 0.18960000000000002,
+  "projected_usd": 0.18960000000000002,
+  "lower_bound_usd": 0.13914838709677418,
+  "solver": "greedy",
+  "elapsed_us": 0,
+  "relay_after": 4,
+  "ready_in_secs": 50,
+  "explain": [
+    "2 x windows -> studio-a (your device, free)",
+    "1 x windows -> studio-b (your device, free)",
+    "16 x eval -> linux-box (your device, free)",
+    "31 x eval -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)",
+    "31 x eval -> new hetzner cx53 in fsn1 ($0.0674/h, ready in ~50 s)",
+    "15 x eval -> new hetzner cax31 in fsn1 ($0.0354/h, ready in ~50 s)",
+    "7 x eval -> new hetzner cax21 in fsn1 ($0.0194/h, ready in ~50 s)"
+  ]
+}

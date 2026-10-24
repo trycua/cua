@@ -121,18 +121,19 @@ describe("MainWindow", () => {
     expect(screen.queryByRole("dialog", { name: "New Space" })).toBeNull();
   });
 
-  it("runs on this Mac, offers no cloud without the Your cloud experiment, never Cua Cloud", async () => {
+  it("runs on this Mac, offers no cloud with Your cloud turned off, never Cua Cloud", async () => {
+    window.localStorage.setItem("cua.settings.experiments", JSON.stringify({ yourCloud: false }));
     setup();
     fireEvent.click(await screen.findByRole("button", { name: "New Space" }));
     const dialog = await screen.findByRole("dialog", { name: "New Space" });
     expect(within(within(dialog).getByRole("combobox", { name: "Run on" })).getAllByRole("option").map((o) => o.textContent)).toEqual(["This Mac"]);
     expect(within(dialog).queryByRole("button", { name: /Connect a cloud/ })).toBeNull();
     expect(within(dialog).queryByText(/Cua Cloud/)).toBeNull();
+    window.localStorage.removeItem("cua.settings.experiments");
   });
 
   it("connects a cloud from the wizard, tests it, then creates there", async () => {
-    // With the Your cloud experiment (Settings, Experiments).
-    window.localStorage.setItem("cua.settings.experiments", JSON.stringify({ yourCloud: true }));
+    // Your cloud is on by default (Settings, Experiments).
     const cloud = createFakeCloudBridge();
     const { createSpace } = setup({}, true, cloud);
     fireEvent.click(await screen.findByRole("button", { name: "New Space" }));
@@ -151,7 +152,6 @@ describe("MainWindow", () => {
       expect(within(within(dialog).getByRole("combobox", { name: "Run on" })).getAllByRole("option").map((o) => o.getAttribute("value"))).toContain("aws"),
     );
     fireEvent.change(within(dialog).getByRole("combobox", { name: "Run on" }), { target: { value: "aws" } });
-    window.localStorage.removeItem("cua.settings.experiments");
     for (let i = 0; i < 3; i++) fireEvent.click(within(dialog).getByRole("button", { name: "Continue" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Create Space" }));
     await waitFor(() =>

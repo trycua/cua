@@ -31,6 +31,103 @@ pub mod tag {
     pub const EXPIRES: &str = "cua-expires";
     /// The relay machine the sandbox joined as (`cloud-...`).
     pub const MACHINE: &str = "cua-machine";
+    /// On a security group: what it is for (`pool-hosts`; absent: the
+    /// outbound-only group of sandboxes).
+    pub const GROUP: &str = "cua-group";
+    /// What a machine is for: `host` (an elastic pool host that provides
+    /// Spaces) or `sandbox` (one sandbox's machine). Absent: `sandbox`.
+    pub const ROLE: &str = "cua-role";
+}
+
+/// The `cua-role` of an elastic pool host.
+pub const ROLE_HOST: &str = "host";
+/// The `cua-role` of a one-sandbox machine.
+pub const ROLE_SANDBOX: &str = "sandbox";
+
+/// What a cloud supplies to the elastic pool (`provider-contract.md`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Supplies {
+    /// Nothing: the cloud only runs one sandbox per machine (no elastic
+    /// pool there).
+    #[default]
+    Nothing,
+    /// Machines the pool controls: each runs cua-spacesd as a host and many
+    /// Spaces run on it (AWS, GCP, Hetzner).
+    Hosts,
+    /// Spaces directly, one platform sandbox per Space; no host the pool
+    /// controls (Modal). The solver prices each Space as a one-Space host.
+    Spaces,
+}
+
+impl Supplies {
+    /// The wire word: `hosts`, `spaces` (empty for nothing).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Supplies::Nothing => "",
+            Supplies::Hosts => "hosts",
+            Supplies::Spaces => "spaces",
+        }
+    }
+}
+
+/// How a cloud bills a machine.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Billing {
+    /// Billed in steps of this many seconds (Hetzner 3600, AWS 1).
+    pub granularity_secs: u64,
+    /// Minimum billed per machine (Hetzner 3600, AWS 60).
+    pub minimum_secs: u64,
+    /// A stopped machine is still billed (Hetzner).
+    pub stopped_bills: bool,
+}
+
+/// What a cloud supplies, how it bills, where, and its limits.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Capabilities {
+    /// What it supplies.
+    pub supplies: Supplies,
+    /// How it bills.
+    pub billing: Billing,
+    /// Regions a host may be added in (the connection's first).
+    pub regions: Vec<String>,
+    /// Most machines Cua may run there at once.
+    pub max_machines: u32,
+    /// The cloud deletes a machine on its own when it shuts down (AWS).
+    pub self_deletes: bool,
+    /// vCPU limits per quota pool, when the cloud says them (`shared` ->
+    /// 10). A pool not listed is learned from a refused create.
+    #[serde(default)]
+    pub vcpu_quotas: std::collections::BTreeMap<String, u32>,
+}
+
+/// One machine type a cloud offers.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct HostType {
+    /// The cloud's type name.
+    pub name: String,
+    /// `amd64` or `arm64`.
+    pub arch: String,
+    /// vCPUs.
+    pub vcpus: u32,
+    /// Memory, MiB.
+    pub memory_mb: u64,
+    /// Boot disk it comes with, GiB (0: Cua picks).
+    pub disk_gb: u32,
+    /// `/dev/kvm` on the machine.
+    pub kvm: bool,
+    /// Accelerator or empty.
+    pub gpu: String,
+    /// On-demand USD per hour with what every machine of it carries.
+    pub usd_per_hour: f64,
+    /// Where it is offered now.
+    pub regions: Vec<String>,
+    /// Typical seconds from create to ready.
+    pub boot_secs: u32,
+    /// The quota pool its vCPUs count against (`shared`, `dedicated`,
+    /// `standard`, `g`); empty: none known.
+    #[serde(default)]
+    pub quota_pool: String,
 }
 
 /// How a cloud runs a Space.
@@ -233,6 +330,39 @@ pub struct ProvisionSpec {
     pub tags: BTreeMap<String, String>,
     /// Seconds until it expires (0: never).
     pub ttl_secs: u64,
+    /// VM tier: boot this image, named by a public SSM parameter that
+    /// holds its id (`/aws/service/...`), instead of the provider's
+    /// default image (pool hosts: Ubuntu 24.04 or the AWS Deep Learning
+    /// Base GPU image). Empty: the default.
+    pub image_parameter: String,
+    /// VM tier: a TCP port range the instances of this kind open to each
+    /// other only (pool hosts: every port, since a framework's ranks open
+    /// ports of their own choosing, as PyTorch's NCCL and Gloo do), and
+    /// every UDP port (the mesh's direct path). Such instances get their own
+    /// group, whose ingress rules name the group itself; nothing is opened
+    /// to any address. `None`: the outbound-only group.
+    pub peer_ports: Option<(u16, u16)>,
+    /// [`ROLE_HOST`] (an elastic pool host: exactly `machine_type` in
+    /// `region`, user data passed through) or [`ROLE_SANDBOX`] / empty.
+    pub role: String,
+    /// The region for this machine (empty: the connection's).
+    pub region: String,
+}
+
+impl ProvisionSpec {
+    /// Whether this is an elastic pool host.
+    pub fn is_host(&self) -> bool {
+        self.role == ROLE_HOST
+    }
+
+    /// The region to create it in.
+    pub fn region_or<'a>(&'a self, conn: &'a Connection) -> &'a str {
+        if self.region.is_empty() {
+            &conn.region
+        } else {
+            &self.region
+        }
+    }
 }
 
 /// Unix seconds now.

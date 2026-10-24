@@ -595,6 +595,9 @@ public final class PendingSpacesBackend: SpacesBackend, AgentsToolRunning, Cloud
     /// The backend calls go to now (nil until the SDK is in).
     public var current: SpacesBackend? { lock.withLock { replaced } ?? gate.current?.backend }
 
+    /// The connection calls go to now, once the SDK is in.
+    public func connection() async -> SpacesBackend { await b() }
+
     private func b() async -> SpacesBackend {
         if let now = lock.withLock({ replaced }) { return now }
         return await gate.wait().backend
@@ -628,6 +631,8 @@ public final class PendingSpacesBackend: SpacesBackend, AgentsToolRunning, Cloud
     public func setLumeSource(_ value: String) async throws { try await b().setLumeSource(value) }
     public func linuxSource() async -> String? { await b().linuxSource() }
     public func setLinuxSource(_ value: String) async throws { try await b().setLinuxSource(value) }
+    public func placementOverflow() async -> Bool? { await b().placementOverflow() }
+    public func setPlacementOverflow(_ on: Bool) async throws { try await b().setPlacementOverflow(on) }
     public func localStorage() async -> LocalStorage? { await b().localStorage() }
     public func cloudAvailable() async -> Bool { await b().cloudAvailable() }
     public func runningMacosVms() async -> Int? { await b().runningMacosVms() }
@@ -658,6 +663,11 @@ public final class PendingSpacesBackend: SpacesBackend, AgentsToolRunning, Cloud
     public func primaryDisplay(id: String) async -> AppStreamDisplay? { await b().primaryDisplay(id: id) }
     public func usage(id: String) async -> AppSpaceUsage? { await b().usage(id: id) }
     public func shares(id: String) async throws -> [AppShareEntryInput] { try await b().shares(id: id) }
+    public func links() async throws -> [ShareLink] { try await b().links() }
+    public func createLink(target: String, access: String?, ttlSeconds: UInt32?, name: String?) async throws -> ShareLink {
+        try await b().createLink(target: target, access: access, ttlSeconds: ttlSeconds, name: name)
+    }
+    public func stopLink(id: String) async throws -> [String] { try await b().stopLink(id: id) }
     public func share(id: String, who: String, role: String) async throws -> [AppShareEntryInput] {
         try await b().share(id: id, who: who, role: role)
     }

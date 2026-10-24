@@ -217,6 +217,11 @@ pub const FLOWS: &[(&str, &str, &str)] = &[
         include_str!("../parity/first-run.json"),
         include_str!("../parity/golden/first-run.json"),
     ),
+    (
+        "create-retry",
+        include_str!("../parity/create-retry.json"),
+        include_str!("../parity/golden/create-retry.json"),
+    ),
 ];
 
 /// The core calls a flow makes, over JSON. A host implements it with its
@@ -1827,6 +1832,7 @@ pub mod frame {
                 if r["selected"] == true { " | selected" } else { "" }))).collect::<Vec<_>>(),
             "field": field(&v["field"]),
             "profile": field(&v["profileField"]),
+            "token": field(&v["tokenField"]),
             "checks": v["checks"].as_array().into_iter().flatten().map(|c| Value::String(format!(
                 "{} {}", if c["ok"] == true { "ok" } else { "failed" }, str_of(&c["text"])))).collect::<Vec<_>>(),
             "result": v["result"],
@@ -1926,7 +1932,7 @@ pub fn run(name: &str, flow_json: &str, h: &dyn Host) -> Result<Value, String> {
         "main-window" => run_main_window(&flow, h),
         "notch" => run_notch(&flow, h),
         "notch-drag-trigger" => run_notch_drag_trigger(&flow, h),
-        "provisioning" | "create-progress" | "create-cancel" | "create-stages" => {
+        "provisioning" | "create-progress" | "create-cancel" | "create-stages" | "create-retry" => {
             run_provisioning(&flow, h)
         }
         "stream-section" => run_stream_section(&flow, h),
@@ -2274,6 +2280,17 @@ fn provisioning_frame(
         // Why turning it off or on failed, when it did.
         if let Some(e) = d["powerError"].as_str() {
             detail["powerError"] = Value::String(e.into());
+        }
+        // A create that failed the same way twice: its fix, as
+        // `text [label: action value]`.
+        let fix = &space["progress"]["fix"];
+        if let Some(text) = fix["text"].as_str() {
+            detail["fix"] = Value::String(format!(
+                "{text} [{}: {} {}]",
+                fix["label"].as_str().unwrap_or(""),
+                fix["action"].as_str().unwrap_or(""),
+                fix["value"].as_str().unwrap_or("-"),
+            ));
         }
         details.push(detail);
     }

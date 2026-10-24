@@ -10,7 +10,7 @@ description: "Every Spaces tool by category, with parameters, results, errors an
   Version: 0.7.0
 */}
 
-The Spaces contract: 86 tools with the same names and schemas on every surface: `cua mcp`, `cua daemon mcp` and the Spaces SDKs. Contract 0.7.0, MCP protocol revision 2025-06-18, transports `mcp_stdio` and `mcp_streamable_http`. Experimental: names and shapes can change between minor versions.
+The Spaces contract: 96 tools with the same names and schemas on every surface: `cua mcp`, `cua daemon mcp` and the Spaces SDKs. Contract 0.7.0, MCP protocol revision 2025-06-18, transports `mcp_stdio` and `mcp_streamable_http`. Experimental: names and shapes can change between minor versions.
 
 ## Tools
 
@@ -174,15 +174,25 @@ Let other cua.ai accounts watch or edit a Space, through the relay.
 
 ### [Your cloud](/spaces/reference/spaces#your-cloud)
 
-Create Spaces in your own AWS, Google Cloud or Modal account: connect it, check it, and clean up what Cua created there.
+Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account: connect it, check it, and clean up what Cua created there.
 
 | Tool | Description | Effect |
 | --- | --- | --- |
-| [`cloud_status`](/spaces/reference/spaces#cloud_status) | List your clouds (AWS, Google Cloud, Modal): found credentials, the connected account and region, what each can run at what hourly cost, and what Cua created there. | read-only, idempotent |
+| [`cloud_status`](/spaces/reference/spaces#cloud_status) | List your clouds (AWS, Google Cloud, Hetzner, Modal): found credentials, the connected account and region, what each can run at what hourly cost, and what Cua created there. | read-only, idempotent |
 | [`cloud_connect`](/spaces/reference/spaces#cloud_connect) | Connect a cloud account Spaces can be created in. | mutating, idempotent |
 | [`cloud_test`](/spaces/reference/spaces#cloud_test) | Check a cloud account without creating anything. | read-only, idempotent |
-| [`cloud_disconnect`](/spaces/reference/spaces#cloud_disconnect) | Forget a connected cloud account. | mutating, idempotent |
+| [`cloud_disconnect`](/spaces/reference/spaces#cloud_disconnect) | Forget a connected cloud account (deleting what Cua created there first, with delete=true). | destructive |
 | [`cloud_sweep`](/spaces/reference/spaces#cloud_sweep) | Find and delete what Cua left in your clouds. | destructive |
+| [`cloud_plan`](/spaces/reference/spaces#cloud_plan) | Show (or apply) the elastic pool's plan for some Spaces: where they go, which machines it adds, and the cost. | destructive |
+| [`cloud_hosts`](/spaces/reference/spaces#cloud_hosts) | List the hosts the elastic pool added in your clouds. | read-only, idempotent |
+| [`cloud_add_host`](/spaces/reference/spaces#cloud_add_host) | Add hosts to your pool in a linked cloud. | destructive |
+| [`cloud_remove_host`](/spaces/reference/spaces#cloud_remove_host) | Remove hosts this home added to your pool. | destructive |
+| [`cloud_budget`](/spaces/reference/spaces#cloud_budget) | Read or set the elastic pool's budget and autoscale switch. | mutating, idempotent |
+| [`cloud_reconcile`](/spaces/reference/spaces#cloud_reconcile) | Run the elastic pool's scale-in pass now. | destructive |
+| [`prewarm`](/spaces/reference/spaces#prewarm) | Keep Spaces of one shape ready where the elastic pool puts them, so the next creates start in a fraction of a second. | destructive |
+| [`prewarm_list`](/spaces/reference/spaces#prewarm_list) | List the prewarms and how many Spaces each keeps ready. | read-only, idempotent |
+| [`prewarm_remove`](/spaces/reference/spaces#prewarm_remove) | End a prewarm: its ready Spaces go. | mutating, idempotent |
+| [`cloud_audit`](/spaces/reference/spaces#cloud_audit) | Read the log of what Cua did in your clouds. | read-only, idempotent |
 
 ## Space ids
 
@@ -230,6 +240,7 @@ Branch on `kind`; the message is for people. Every tool can return `invalid_argu
 | [`permission_denied`](#permission_denied) | The signed-in account may not reach that relay computer. |
 | [`ambiguous_host`](#ambiguous_host) | The computer name given to on="host:&lt;name&gt;" fits several of your computers equally well; the message lists them. |
 | [`limit_exceeded`](#limit_exceeded) | The host is at a capacity limit: two macOS VMs per Mac (Apple's macOS license, enforced by Apple Virtualization) or the host's own Space limit. |
+| [`host_capacity`](#host_capacity) | The machine has no room for another Space now: its VMs are at their memory limit (shared snapshot memory counted once) or CPU limit, or it is low on memory. Nothing was started; the message says which limit and by how much. |
 | [`ambiguous_sandbox`](#ambiguous_sandbox) | A short name matches more than one sandbox. |
 | [`transfer_failed`](#transfer_failed) | A file transfer did not land, or landed with a different sha256. |
 | [`teleport_refused`](#teleport_refused) | The teleport consent gate refused: a sensitive item without acknowledge_sensitive, a declined approval, or a Space that cannot import the app. |
@@ -241,7 +252,7 @@ Branch on `kind`; the message is for people. Every tool can return `invalid_argu
 | [`env`](#env) | A cua-spacesd call failed. |
 | [`invalid_placement`](#invalid_placement) | The location, kind or runtime does not exist, or the combination (with the image) does not. |
 | [`sandbox`](#sandbox) | Starting, stopping or deleting the Space's sandbox failed. |
-| [`cloud`](#cloud) | Your cloud account refused or failed a call Cua made for a Space there (AWS, Google Cloud, Modal): a missing permission, a quota, a region without the instance type. The message names the cloud's own error. |
+| [`cloud`](#cloud) | Your cloud account refused or failed a call Cua made for a Space there (AWS, Google Cloud, Hetzner, Modal): a missing permission, a quota, a region without the instance type. The message names the cloud's own error. |
 | [`relay`](#relay) | The cua.ai relay directory failed. |
 | [`mcp`](#mcp) | An MCP service inside the Space failed. |
 | [`io`](#io) | Reading or writing a local file failed. |
@@ -259,7 +270,7 @@ An argument is missing, malformed or out of range.
 
 Fix: Check the call against the tool's input schema; the message names the argument.
 
-Listed by [`volume_storage_set`](/spaces/reference/agents#volume_storage_set), [`volume_cache_set`](/spaces/reference/agents#volume_cache_set), [`relay_unregister_space`](/spaces/reference/spaces#relay_unregister_space).
+Listed by [`volume_storage_set`](/spaces/reference/agents#volume_storage_set), [`volume_cache_set`](/spaces/reference/agents#volume_cache_set), [`relay_unregister_space`](/spaces/reference/spaces#relay_unregister_space), [`cloud_add_host`](/spaces/reference/spaces#cloud_add_host), [`cloud_budget`](/spaces/reference/spaces#cloud_budget), [`prewarm`](/spaces/reference/spaces#prewarm).
 
 #### not_found
 
@@ -267,7 +278,7 @@ No Space, run, window, service, tool or file with that id.
 
 Fix: List what exists first (list_spaces, agent_list, list_space_windows, list_tools).
 
-Listed by [`volume_sync_resolve`](/spaces/reference/agents#volume_sync_resolve).
+Listed by [`volume_sync_resolve`](/spaces/reference/agents#volume_sync_resolve), [`cloud_remove_host`](/spaces/reference/spaces#cloud_remove_host).
 
 #### spacesd_not_available
 
@@ -325,7 +336,13 @@ The host is at a capacity limit: two macOS VMs per Mac (Apple's macOS license, e
 
 Fix: Delete a Space on that host (delete_space), pick another computer, or create a Linux Space instead.
 
-Listed by [`create_space`](/spaces/reference/spaces#create_space).
+Listed by [`create_space`](/spaces/reference/spaces#create_space), [`cloud_plan`](/spaces/reference/spaces#cloud_plan), [`prewarm`](/spaces/reference/spaces#prewarm).
+
+#### host_capacity
+
+The machine has no room for another Space now: its VMs are at their memory limit (shared snapshot memory counted once) or CPU limit, or it is low on memory. Nothing was started; the message says which limit and by how much.
+
+Fix: Delete a Space (delete_space), create it smaller (cpus, memory_mb), or create it with on="auto" so another machine takes it.
 
 #### ambiguous_sandbox
 
@@ -411,11 +428,11 @@ Listed by [`create_space`](/spaces/reference/spaces#create_space), [`delete_spac
 
 #### cloud
 
-Your cloud account refused or failed a call Cua made for a Space there (AWS, Google Cloud, Modal): a missing permission, a quota, a region without the instance type. The message names the cloud's own error.
+Your cloud account refused or failed a call Cua made for a Space there (AWS, Google Cloud, Hetzner, Modal): a missing permission, a quota, a region without the instance type. The message names the cloud's own error.
 
 Fix: Fix what the message names in that account (`cua cloud test <provider>` checks without creating anything), or connect another region or project.
 
-Listed by [`stop_space`](/spaces/reference/spaces#stop_space), [`start_space`](/spaces/reference/spaces#start_space), [`cloud_connect`](/spaces/reference/spaces#cloud_connect), [`cloud_test`](/spaces/reference/spaces#cloud_test), [`cloud_sweep`](/spaces/reference/spaces#cloud_sweep).
+Listed by [`stop_space`](/spaces/reference/spaces#stop_space), [`start_space`](/spaces/reference/spaces#start_space), [`cloud_connect`](/spaces/reference/spaces#cloud_connect), [`cloud_test`](/spaces/reference/spaces#cloud_test), [`cloud_disconnect`](/spaces/reference/spaces#cloud_disconnect), [`cloud_sweep`](/spaces/reference/spaces#cloud_sweep), [`cloud_plan`](/spaces/reference/spaces#cloud_plan), [`cloud_hosts`](/spaces/reference/spaces#cloud_hosts), [`cloud_add_host`](/spaces/reference/spaces#cloud_add_host), [`cloud_remove_host`](/spaces/reference/spaces#cloud_remove_host), [`cloud_reconcile`](/spaces/reference/spaces#cloud_reconcile), [`prewarm`](/spaces/reference/spaces#prewarm), [`prewarm_list`](/spaces/reference/spaces#prewarm_list), [`prewarm_remove`](/spaces/reference/spaces#prewarm_remove).
 
 #### relay
 

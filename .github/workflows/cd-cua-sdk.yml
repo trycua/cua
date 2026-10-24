@@ -589,13 +589,17 @@ jobs:
         run: |
           python -m pip install --upgrade twine
           python -m twine check --strict dist/wheel-*/*.whl
+          # cua-cli first: `cua` depends on it at the same version, so `cua`
+          # never resolves before its CLI is on the index.
+          wheels=(dist/wheel-*/cua_cli-*.whl dist/wheel-*/cua-[0-9]*.whl)
+          all=(dist/wheel-*/*.whl); test "${#wheels[@]}" = "${#all[@]}"
           if [ "$CANONICAL" = true ] && [ "$PYPI" = false ]; then
             echo "::notice::pypi=false: wheels checked, not uploaded to PyPI"
           elif [ "$CANONICAL" = true ]; then
-            python -m twine upload --skip-existing dist/wheel-*/*.whl
+            python -m twine upload --skip-existing "${wheels[@]}"
           elif [ -n "$TEST_PYPI_TOKEN" ]; then
             TWINE_PASSWORD="$TEST_PYPI_TOKEN" python -m twine upload --skip-existing \
-              --repository-url https://test.pypi.org/legacy/ dist/wheel-*/*.whl
+              --repository-url https://test.pypi.org/legacy/ "${wheels[@]}"
           else
             echo "::notice::$GITHUB_REPOSITORY is not trycua/cua: wheels checked, not uploaded to PyPI (DRY RUN)"
           fi

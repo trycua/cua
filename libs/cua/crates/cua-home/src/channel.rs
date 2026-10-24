@@ -24,6 +24,8 @@
 //! | Cua Volume            | `~/Cua Volume`                                | `~/Cua Volume Local`                             |
 //! | Lume                  | `lume`, `com.trycua.lume_daemon`, `:7777`, `~/.lume` | `lume-local`, `com.trycua.lume_daemon.local`, `:7787`, `~/.lume-local` |
 //! | App data              | `~/Library/Application Support/com.trycua.spaces.macos` | `.../com.trycua.spaces.local`          |
+//! | Agent MCP server      | `cua` (launches `cua mcp`)                    | `cua-local` (launches `cua-local mcp`)           |
+//! | Agent skills          | `cua-spaces`, `cua-volume`, ...               | `cua-spaces-local`, `cua-volume-local`, ...      |
 //!
 //! **Stable bundle id.** Stable is `com.trycua.spaces.macos` today. The
 //! rename to `com.trycua.spaces` is a later, separate change (CUA-1776,
@@ -85,6 +87,12 @@ const LOCAL_CLI_NAME: &str = "cua-local";
 
 /// The directory name of the Local app bundle.
 const LOCAL_APP_DIR_NAME: &str = "Cua Spaces Local.app";
+
+/// The name Local registers the cua MCP server under in coding agents.
+const LOCAL_MCP_SERVER_NAME: &str = "cua-local";
+
+/// What Local adds to a bundled skill's name in coding agents' skills folders.
+const LOCAL_SKILL_SUFFIX: &str = "-local";
 
 /// The fixed TCP and UDP ports of a channel's `cua-spacesd`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -476,6 +484,36 @@ impl CuaChannel {
     /// Where the first run installs the CLI: `~/.local/bin/<cli_name>`.
     pub fn cli_path(self) -> PathBuf {
         user_home().join(".local").join("bin").join(self.cli_name())
+    }
+
+    // ----- coding agents: the MCP server and the skills --------------------
+
+    /// The name the cua MCP server is registered under in a coding agent's
+    /// config (Claude Code, Codex, ...): `cua`, or `cua-local` for Local, so
+    /// the two channels never write the same entry. It launches
+    /// [`CuaChannel::cli_name`] (`cua mcp`, `cua-local mcp`).
+    pub fn mcp_server_name(self) -> &'static str {
+        match self {
+            Self::Stable => "cua",
+            Self::Local => LOCAL_MCP_SERVER_NAME,
+        }
+    }
+
+    /// The suffix a bundled skill's name takes in a coding agent's skills
+    /// folder: none for Stable, `-local` for Local.
+    pub fn skill_suffix(self) -> &'static str {
+        match self {
+            Self::Stable => "",
+            Self::Local => LOCAL_SKILL_SUFFIX,
+        }
+    }
+
+    /// The name the bundled skill `bundled` (`cua-spaces`) is installed
+    /// under, as its folder and its `name`: `cua-spaces` for Stable,
+    /// `cua-spaces-local` for Local. Local's copies sit beside Stable's and
+    /// never replace them.
+    pub fn skill_install_name(self, bundled: &str) -> String {
+        format!("{bundled}{}", self.skill_suffix())
     }
 
     // ----- host: helper, runner, ports -------------------------------------
@@ -1061,6 +1099,35 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn coding_agents_get_names_of_the_channel() {
+        assert_eq!(CuaChannel::Stable.mcp_server_name(), "cua");
+        assert_eq!(CuaChannel::Local.mcp_server_name(), "cua-local");
+        assert_eq!(
+            CuaChannel::Stable.skill_install_name("cua-spaces"),
+            "cua-spaces"
+        );
+        assert_eq!(
+            CuaChannel::Local.skill_install_name("cua-spaces"),
+            "cua-spaces-local"
+        );
+        // The server is the channel's CLI, so the entry launches its own.
+        for c in CuaChannel::ALL {
+            assert_eq!(c.mcp_server_name(), c.cli_name());
+        }
+        // Nothing the two channels register in a coding agent is shared.
+        for skill in ["cua-spaces", "cua-driver", "gui-automation"] {
+            assert_ne!(
+                CuaChannel::Stable.skill_install_name(skill),
+                CuaChannel::Local.skill_install_name(skill)
+            );
+        }
+        assert_ne!(
+            CuaChannel::Stable.mcp_server_name(),
+            CuaChannel::Local.mcp_server_name()
+        );
     }
 
     #[test]

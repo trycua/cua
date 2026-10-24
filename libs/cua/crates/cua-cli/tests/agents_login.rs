@@ -380,6 +380,110 @@ async fn agents_commands_round_trip_and_protect_malformed_files() {
     assert_eq!(o.code, 2, "{o:?}");
 }
 
+/// The Local CLI (`CUA_CHANNEL=local`, its own home) registers `cua-local`
+/// beside the Stable `cua` in the same agent config, installs `-local` skill
+/// copies beside Stable's, and removes only its own (CUA-1776).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_local_cli_registers_cua_local_beside_stables_cua() {
+    let mut h = home();
+    mkdirs(&h, &[".cursor"]);
+    let cursor = h.dir.path().join(".cursor/mcp.json");
+    let stable_skill = h.dir.path().join(".agents/skills/cua-spaces");
+    let local_skill = h.dir.path().join(".agents/skills/cua-spaces-local");
+
+    // Stable first: `cua`.
+    let o = h
+        .run(&[
+            "agents",
+            "setup",
+            "--agents",
+            "cursor",
+            "--yes",
+            "--mcp-command",
+            "/opt/cua/bin/cua",
+        ])
+        .await;
+    o.ok();
+    let before = std::fs::read_to_string(&cursor).unwrap();
+    assert!(
+        before.contains("\"cua\"") && !before.contains("cua-local"),
+        "{before}"
+    );
+    assert!(stable_skill.join("SKILL.md").is_file());
+
+    // Then the Local CLI, in its own home.
+    let local_home = h.dir.path().join(".cua-local");
+    h.set("CUA_CHANNEL", "local")
+        .set("CUA_HOME", local_home.display().to_string());
+    let o = h
+        .run(&[
+            "--json",
+            "agents",
+            "setup",
+            "--agents",
+            "cursor",
+            "--yes",
+            "--mcp-command",
+            "/opt/cua-local/bin/cua-local",
+        ])
+        .await;
+    o.ok();
+    let v = o.json();
+    let mcp: Vec<&str> = v["outcomes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["target"] == "mcp")
+        .map(|m| m["item"].as_str().unwrap())
+        .collect();
+    assert_eq!(mcp, ["cua-local"], "{v}");
+    let both: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&cursor).unwrap()).unwrap();
+    assert_eq!(both["mcpServers"]["cua"]["command"], "/opt/cua/bin/cua");
+    assert_eq!(
+        both["mcpServers"]["cua-local"]["command"],
+        "/opt/cua-local/bin/cua-local"
+    );
+    assert!(local_skill.join("SKILL.md").is_file());
+    assert!(
+        std::fs::read_to_string(local_skill.join("SKILL.md"))
+            .unwrap()
+            .contains("name: cua-spaces-local")
+    );
+    assert!(local_home.join("agent-setup.json").is_file());
+
+    let o = h.run(&["--json", "agents", "status"]).await;
+    o.ok();
+    let v = o.json();
+    let c = v["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["id"] == "cursor")
+        .unwrap();
+    assert_eq!(
+        (c["cua_configured"].clone(), c["cua_managed"].clone()),
+        (true.into(), true.into()),
+        "{c}"
+    );
+    assert!(
+        v["skills"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s["name"].as_str().unwrap().ends_with("-local")),
+        "{v}"
+    );
+
+    // Removing Local's setup leaves Stable's entry and skills.
+    h.run(&["agents", "remove", "--yes"]).await.ok();
+    let left: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&cursor).unwrap()).unwrap();
+    assert_eq!(left["mcpServers"]["cua"]["command"], "/opt/cua/bin/cua");
+    assert!(left["mcpServers"]["cua-local"].is_null(), "{left}");
+    assert!(stable_skill.join("SKILL.md").is_file() && !local_skill.exists());
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agents_setup_cua_driver_adds_the_driver_skill_and_server() {
     let h = home();

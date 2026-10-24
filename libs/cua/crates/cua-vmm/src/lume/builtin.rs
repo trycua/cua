@@ -561,33 +561,42 @@ impl LumeCmd {
     }
 }
 
-/// Lume's `config.yaml` that makes `vm_dir` the one VM location.
+/// `s` as a YAML scalar. A JSON string is a double-quoted YAML scalar
+/// (YAML 1.2 is a superset of JSON, and Lume's parser reads the escapes
+/// JSON writes), so `serde_json` escapes `\`, `"` and control characters
+/// instead of them being pasted into the quotes.
+fn yaml_string(s: &str) -> String {
+    serde_json::to_string(s).expect("a string always serializes")
+}
+
+/// Lume's `config.yaml` that makes `vm_dir` the one VM location. The paths
+/// are escaped ([`yaml_string`]): a `LUME_HOME` with a backslash or a quote
+/// in it still reads back as the same directory.
 pub fn config_yaml(vm_dir: &str) -> String {
+    let dir = yaml_string(vm_dir);
+    let cache = yaml_string(&format!("{vm_dir}/cache"));
     format!(
         "# Written by Cua Spaces Local: its Lume keeps VMs apart from the released Cua Spaces.\n\
          defaultLocationName: \"home\"\n\
-         cacheDirectory: \"{vm_dir}/cache\"\n\
+         cacheDirectory: {cache}\n\
          cachingEnabled: false\n\
          telemetryEnabled: false\n\
          \n\
          vmLocations:\n\
          \x20 - name: \"home\"\n\
-         \x20   path: \"{vm_dir}\"\n"
+         \x20   path: {dir}\n"
     )
 }
 
 /// Writes the Local Lume's `config.yaml` at `file` unless it already makes
 /// `vm_dir` the default location with telemetry off.
 fn seed_config(file: &Path, vm_dir: &Path) -> std::io::Result<()> {
-    let dir = vm_dir
-        .to_str()
-        .filter(|d| !d.contains(['"', '\n']))
-        .ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!("{} cannot be a Lume VM directory", vm_dir.display()),
-            )
-        })?;
+    let dir = vm_dir.to_str().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{} cannot be a Lume VM directory", vm_dir.display()),
+        )
+    })?;
     let current = std::fs::read_to_string(file).ok();
     if current.as_deref().is_some_and(|y| {
         crate::storage::lume_default_location(y).is_some_and(|p| p == dir)
@@ -998,8 +1007,16 @@ mod tests {
                 .unwrap()
                 .contains("telemetryEnabled: false")
         );
-        // A directory that cannot be written into a YAML string is refused.
-        assert!(lume_for(CuaChannel::Local, dir.path(), Path::new("/a\"b")).is_err());
+        // A directory with a quote or a backslash in it is escaped, not
+        // refused: it reads back as the same directory.
+        for odd in ["/a\"b", r"/a\b"] {
+            lume_for(CuaChannel::Local, dir.path(), Path::new(odd)).unwrap();
+            let text = std::fs::read_to_string(&file).unwrap();
+            assert_eq!(
+                crate::storage::lume_default_location(&text).as_deref(),
+                Some(odd)
+            );
+        }
     }
 
     /// A stand-in `lume` that prints a version and records the environment
@@ -1141,6 +1158,85 @@ mod tests {
         });
         assert!(reads.load(Ordering::Relaxed) > 0);
         // No temp files left beside it.
+        let left: Vec<_> = std::fs::read_dir(file.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name())
+            .collect();
+        assert_eq!(left, [std::ffi::OsString::from("config.yaml")]);
+    }
+
+    /// A VM directory with a backslash, a quote or a newline in it is
+    /// escaped, so a real YAML parser (Lume's) reads the same directory
+    /// back: it is not decoded as `\t` or `\U`, and it ends where it ends.
+    #[test]
+    fn the_config_reads_back_the_directory_it_was_written_for() {
+        #[derive(serde::Deserialize)]
+        struct Location {
+            name: String,
+            path: String,
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Config {
+            default_location_name: String,
+            cache_directory: String,
+            telemetry_enabled: bool,
+            vm_locations: Vec<Location>,
+        }
+        for dir in [
+            "/Users/a/.lume-local",
+            r"/Volumes/Fast\tmp\Users\new",
+            r"C:\Users\a\.lume-local",
+            r#"/Users/a/it's "quoted""#,
+            "/Users/a/two\nlines",
+            "/Users/a/ünïcode #not a comment: x",
+        ] {
+            let parsed: Config = serde_yaml_ng::from_str(&config_yaml(dir))
+                .unwrap_or_else(|e| panic!("{dir:?}: {e}"));
+            assert_eq!(parsed.default_location_name, "home", "{dir:?}");
+            assert_eq!(parsed.vm_locations.len(), 1, "{dir:?}");
+            assert_eq!(parsed.vm_locations[0].name, "home", "{dir:?}");
+            assert_eq!(parsed.vm_locations[0].path, dir);
+            assert_eq!(parsed.cache_directory, format!("{dir}/cache"));
+            assert!(!parsed.telemetry_enabled);
+            // Cua's own reader agrees with the parser.
+            assert_eq!(
+                crate::storage::lume_default_location(&config_yaml(dir)).as_deref(),
+                Some(dir),
+                "{dir:?}"
+            );
+        }
+    }
+
+    /// Seeding writes that config and is then a no-op for the same directory
+    /// (the file is read back through the escapes), and replaces it atomically
+    /// for another.
+    #[test]
+    fn seeding_a_backslash_directory_is_stable() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("xdg/lume/config.yaml");
+        let vm = Path::new(r"/Volumes/Fast\tmp\Users\new");
+        seed_config(&file, vm).unwrap();
+        let first = std::fs::read_to_string(&file).unwrap();
+        let parsed: serde_yaml_ng::Value = serde_yaml_ng::from_str(&first).unwrap();
+        assert_eq!(
+            parsed["vmLocations"][0]["path"].as_str(),
+            vm.to_str(),
+            "{first}"
+        );
+        let before = std::fs::metadata(&file).unwrap().modified().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        seed_config(&file, vm).unwrap();
+        assert_eq!(
+            std::fs::metadata(&file).unwrap().modified().unwrap(),
+            before
+        );
+        let other = Path::new(r"C:\other");
+        seed_config(&file, other).unwrap();
+        let parsed: serde_yaml_ng::Value =
+            serde_yaml_ng::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(parsed["vmLocations"][0]["path"].as_str(), other.to_str());
         let left: Vec<_> = std::fs::read_dir(file.parent().unwrap())
             .unwrap()
             .flatten()

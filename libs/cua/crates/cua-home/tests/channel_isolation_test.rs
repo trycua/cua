@@ -80,7 +80,22 @@ fn identifiers(c: CuaChannel) -> Vec<(String, String)> {
         ("lume binary".to_string(), c.lume_bin_name().to_string()),
         ("lume api".to_string(), c.lume_api().to_string()),
         ("telemetry".to_string(), c.telemetry_channel().to_string()),
+        // What the Spaces app writes into a coding agent's config (Claude
+        // Code, Codex, ...): the MCP server entry and the skill folders.
+        (
+            "agent mcp server".to_string(),
+            c.mcp_server_name().to_string(),
+        ),
     ];
+    for skill in [
+        "cua-spaces",
+        "cua-volume",
+        "cua-sandboxes",
+        "cua-driver",
+        "gui-automation",
+    ] {
+        ids.push((format!("agent skill {skill}"), c.skill_install_name(skill)));
+    }
     for env in ENVS {
         ids.push((
             format!("keychain service ({})", env.name()),

@@ -336,7 +336,15 @@ scripts/install-local.sh --release       # release configuration
 scripts/install-local.sh --no-launch     # install without opening it
 scripts/install-local.sh --with-lume-local   # also install lume-local
 scripts/install-local.sh --prefix DIR    # app in DIR/Applications, cua-local in DIR/.local/bin
+scripts/install-local.sh --skip-web-build    # use the web UI already built in apps/cua-spaces-web/dist
+scripts/install-local.sh --setup-signing # do the one-time signing setup on a new Keychain without asking
 ```
+
+It first checks what the build needs and lists everything that is missing in
+one message, with what to run: the Xcode command line tools, `cmake`, Rust
+(rustup), and for the web UI Node 22 or later, `pnpm`, the `wasm32` Rust target
+and `wasm-bindgen-cli` (the versions the release build pins). Nothing is built
+before they are all there.
 
 `--prefix` is resolved first (`..` and symlinks included) and refused when the
 app or `cua-local` would land on, or inside, anything the released Cua Spaces
@@ -355,8 +363,12 @@ The Local build shares nothing with the released app. Every name comes from
 | URL scheme | `cua://` | `cua-local://` |
 | Updates | Sparkle | none |
 
-The script builds the library, the `cua` CLI and `cua-spacesd` from this
-checkout (`--skip-rust-build` reuses the last build), then runs
+The script builds the web UI as the release build does (`pnpm install
+--ignore-workspace --frozen-lockfile`, `pnpm build` in `apps/cua-spaces-web`;
+`--skip-web-build` or `CUA_WEBUI_DIST` use a build that is already there) and
+stops, with a message, when there is none: without it the app says "The new UI
+is not in this build". Then it builds the library, the `cua` CLI and
+`cua-spacesd` from this checkout (`--skip-rust-build` reuses the last build) and runs
 `scripts/build-app.sh --channel local` with `CUA_SPACESD_BIN` set to that
 `cua-spacesd`. Without it build-app.sh bundles the pinned release of the host
 service, which does not know the Local ports; the script compares the bundled
@@ -376,6 +388,28 @@ certificate that Cua Driver's local install uses
 the app is signed ad hoc and macOS asks for Screen Recording and Accessibility
 again after every rebuild; the script says so, and clears the stale rows for the
 Local bundle id only. `--require-stable-signing` stops instead of signing ad hoc.
+
+On a new Keychain the certificate is created but codesign cannot use it until
+macOS trusts it for code signing, its Keychain is in your search list and
+codesign may use its key. The script checks that with a real signing. When it
+does not work it says so and, once you agree at a terminal (or with
+`--setup-signing`), sets it up: macOS asks for your password once to trust the
+certificate, and the Keychain password is asked once (not stored) if codesign
+still needs the key, which is opened for that certificate's key only (`-t
+private -l <its name>`; never every signing key in your Keychain). Without a terminal or a screen (SSH, a VM) it prints the
+exact commands, `sudo` variant included, and does nothing. It never trusts
+anything unasked, never changes a certificate you chose with
+`CUA_DRIVER_LOCAL_SIGNING_IDENTITY`, and still requires a certificate-backed
+signature before it counts as stable.
+
+**Coding agents.** The Local app's agent setup ("Continue" on the welcome
+screen) registers its own MCP server as `cua-local` (it launches Local's `cua`)
+and installs its own skill copies as `<name>-local` (`cua-spaces-local`, ...;
+`SKILL.md` carries that name and a note to run `cua-local`), in the same agent
+configs and skills folders as the released app, and keeps its record under
+`~/.cua-local`. The released app's `cua` entry and skills are left as they are,
+and removing Local's setup removes only Local's. The names come from
+`CuaChannel` (`mcp_server_name`, `skill_install_name`).
 
 Rebuilding is the same command. To remove it:
 

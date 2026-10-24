@@ -122,7 +122,23 @@ fn expand_home(p: &str, home: &Path) -> PathBuf {
 
 /// The path of Lume's `defaultLocationName` in its `config.yaml`.
 pub fn lume_default_location(yaml: &str) -> Option<String> {
-    let unquote = |v: &str| v.trim().trim_matches('"').trim_matches('\'').to_string();
+    // A double-quoted scalar is read with its escapes (`\\`, `\"`: what
+    // `builtin::config_yaml` writes, and what Lume's parser reads); a
+    // single-quoted one with `''` for a quote; anything else as it is.
+    let unquote = |v: &str| {
+        let v = v.trim();
+        if v.len() >= 2
+            && v.starts_with('"')
+            && v.ends_with('"')
+            && let Ok(s) = serde_json::from_str::<String>(v)
+        {
+            return s;
+        }
+        if v.len() >= 2 && v.starts_with('\'') && v.ends_with('\'') {
+            return v[1..v.len() - 1].replace("''", "'");
+        }
+        v.trim_matches('"').trim_matches('\'').to_string()
+    };
     let default = yaml
         .lines()
         .find_map(|l| l.trim().strip_prefix("defaultLocationName:"))

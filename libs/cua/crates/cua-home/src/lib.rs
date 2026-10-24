@@ -25,6 +25,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+pub mod channel;
 pub mod env;
 pub mod experimental;
 pub mod filetable;

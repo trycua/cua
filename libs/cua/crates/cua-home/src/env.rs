@@ -52,6 +52,8 @@ impl CuaEnv {
     /// The default when `CUA_ENV` is unset: the build's `CUA_DEFAULT_ENV`
     /// (beta channel builds are compiled with `staging`), else production.
     pub fn build_default() -> Self {
+        // TODO(CUA-1776, PR 1b): the Local channel defaults to staging
+        // (`crate::channel::CuaChannel::default_env`); wire it in here.
         option_env!("CUA_DEFAULT_ENV")
             .and_then(Self::parse)
             .unwrap_or_default()

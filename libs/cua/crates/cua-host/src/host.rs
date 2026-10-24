@@ -429,7 +429,7 @@ pub fn permission_hints(os: &str, driver: &Path) -> Vec<PermissionHint> {
 /// runs it, else "cua-spacesd (<path>)".
 fn service_name(driver: &Path) -> String {
     if crate::service::is_app_helper_launcher(driver) {
-        crate::service::APP_HELPER_NAME.to_string()
+        crate::service::app_helper_name().to_string()
     } else {
         format!("cua-spacesd ({})", driver.display())
     }
@@ -452,7 +452,7 @@ pub fn local_network_hint(os: &str, provide_spaces: bool, driver: &Path) -> Opti
     }
     let d = service_name(driver);
     let short = if crate::service::is_app_helper_launcher(driver) {
-        crate::service::APP_HELPER_NAME
+        crate::service::app_helper_name()
     } else {
         "cua-spacesd"
     };

@@ -25,6 +25,8 @@
 
 use std::path::Path;
 
+use cua_home::channel::CuaChannel;
+
 /// One `bootpd` lease.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Lease {
@@ -170,10 +172,28 @@ pub async fn lookup(
     arp_ip(&String::from_utf8_lossy(&out.stdout), mac).map(|ip| (ip, "arp"))
 }
 
-/// Directories Lume keeps VMs in: `~/.lume` plus every `path:` under
-/// `vmLocations` in `~/.config/lume/config.yaml`.
+/// Directories this process's Lume keeps VMs in ([`vm_dirs_for`]).
 pub fn vm_dirs(home: &Path) -> Vec<std::path::PathBuf> {
-    let mut out = vec![home.join(".lume")];
+    vm_dirs_for(
+        CuaChannel::current(),
+        home,
+        crate::storage::lume_home_env().as_deref(),
+    )
+}
+
+/// Directories `channel`'s Lume keeps VMs in: its default one (`~/.lume`,
+/// `~/.lume-local`, or `lume_home`), plus, for Stable, every `path:` under
+/// `vmLocations` in `~/.config/lume/config.yaml`. Local's Lume has its own
+/// config, so Stable's is not read: its VMs are never Local's.
+pub fn vm_dirs_for(
+    channel: CuaChannel,
+    home: &Path,
+    lume_home: Option<&str>,
+) -> Vec<std::path::PathBuf> {
+    let mut out = vec![crate::storage::default_lume_dir(channel, home, lume_home)];
+    if channel.is_local() {
+        return out;
+    }
     if let Ok(cfg) = std::fs::read_to_string(home.join(".config/lume/config.yaml")) {
         for l in cfg.lines() {
             if let Some(p) = l.trim().strip_prefix("path:") {
@@ -196,10 +216,15 @@ pub fn vm_dirs(home: &Path) -> Vec<std::path::PathBuf> {
 /// VM directory. Only `name`'s, and only while no VM of that name exists
 /// there; a guard with content is not Lume's and stays.
 pub fn remove_resize_guards(home: &Path, name: &str) {
+    remove_resize_guards_in(&vm_dirs(home), name);
+}
+
+/// [`remove_resize_guards`] in `dirs`.
+pub fn remove_resize_guards_in(dirs: &[std::path::PathBuf], name: &str) {
     if name.is_empty() || name.contains('/') || name.starts_with('.') {
         return;
     }
-    for dir in vm_dirs(home) {
+    for dir in dirs {
         let guard = dir.join(format!(".{name}.resize.guard"));
         let empty = std::fs::symlink_metadata(&guard).is_ok_and(|m| m.is_file() && m.len() == 0);
         if empty
@@ -214,7 +239,12 @@ pub fn remove_resize_guards(home: &Path, name: &str) {
 /// The VM's MAC from its Lume `config.json` (read-only). `lume serve`
 /// releases before 0.6 do not report `macAddress` over the API.
 pub fn config_mac(home: &Path, name: &str) -> Option<String> {
-    vm_dirs(home).into_iter().find_map(|d| {
+    config_mac_in(&vm_dirs(home), name)
+}
+
+/// [`config_mac`] in `dirs`.
+pub fn config_mac_in(dirs: &[std::path::PathBuf], name: &str) -> Option<String> {
+    dirs.iter().find_map(|d| {
         let raw = std::fs::read(d.join(name).join("config.json")).ok()?;
         let v: serde_json::Value = serde_json::from_slice(&raw).ok()?;
         v.get("macAddress")?.as_str().and_then(normalize_mac)
@@ -234,10 +264,11 @@ mod tests {
             std::fs::write(lume.join(format!(".{f}.resize.guard")), b"").unwrap();
         }
         std::fs::write(lume.join(".full.resize.guard"), b"x").unwrap();
-        remove_resize_guards(home.path(), "gone");
-        remove_resize_guards(home.path(), "kept");
-        remove_resize_guards(home.path(), "full");
-        remove_resize_guards(home.path(), "../escape");
+        let dirs = vm_dirs_for(CuaChannel::Stable, home.path(), None);
+        remove_resize_guards_in(&dirs, "gone");
+        remove_resize_guards_in(&dirs, "kept");
+        remove_resize_guards_in(&dirs, "full");
+        remove_resize_guards_in(&dirs, "../escape");
         assert!(!lume.join(".gone.resize.guard").exists());
         assert!(
             lume.join(".kept.resize.guard").exists(),
@@ -322,11 +353,35 @@ mod tests {
             r#"{"macAddress":"E2:2D:52:4:4E:BB","os":"linux"}"#,
         )
         .unwrap();
+        let dirs = vm_dirs_for(CuaChannel::Stable, home.path(), None);
         assert_eq!(
-            config_mac(home.path(), "vm1").as_deref(),
+            config_mac_in(&dirs, "vm1").as_deref(),
             Some("e2:2d:52:04:4e:bb")
         );
-        assert_eq!(config_mac(home.path(), "nope"), None);
+        assert_eq!(config_mac_in(&dirs, "nope"), None);
+    }
+
+    #[test]
+    fn local_reads_its_own_vm_dir_and_never_stable_s() {
+        let home = tempfile::tempdir().unwrap();
+        // Stable's config points somewhere; Local must not follow it.
+        let other = home.path().join("vms");
+        std::fs::create_dir_all(home.path().join(".config/lume")).unwrap();
+        std::fs::write(
+            home.path().join(".config/lume/config.yaml"),
+            format!("vmLocations:\n  - name: x\n    path: {}\n", other.display()),
+        )
+        .unwrap();
+        let local = vm_dirs_for(CuaChannel::Local, home.path(), None);
+        assert_eq!(local, [home.path().join(".lume-local")]);
+        let stable = vm_dirs_for(CuaChannel::Stable, home.path(), None);
+        assert_eq!(stable, [home.path().join(".lume"), other]);
+        assert!(!local.contains(&home.path().join(".lume")));
+        // LUME_HOME moves the default one, in either channel.
+        assert_eq!(
+            vm_dirs_for(CuaChannel::Local, home.path(), Some("~/moved")),
+            [home.path().join("moved")]
+        );
     }
 
     #[test]

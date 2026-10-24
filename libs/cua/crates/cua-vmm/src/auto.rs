@@ -413,7 +413,7 @@ pub async fn doctor() -> DoctorReport {
     let mut lume = LumeReport {
         supported_host: host_os == HostOs::Macos && host_arch == Arch::Aarch64,
         binary: lume_binary(),
-        url: std::env::var("LUME_API").unwrap_or_else(|_| "http://127.0.0.1:7777".into()),
+        url: crate::local_network::lume_base(),
         ..Default::default()
     };
     #[cfg(feature = "lume")]
@@ -948,7 +948,7 @@ fn lume_binary() -> Option<PathBuf> {
     }
     #[cfg(not(feature = "lume"))]
     {
-        host::which("lume")
+        host::which(cua_home::channel::CuaChannel::current().lume_bin_name())
     }
 }
 

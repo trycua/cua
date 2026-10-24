@@ -26,6 +26,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use cua_home::channel::CuaChannel;
 
 use crate::error::{Result, VmmError};
 use crate::exec::{GuestExec, PrefixExec};
@@ -93,7 +94,14 @@ pub const INSTALL_URL: &str =
 /// Configuration for [`LumeRuntime`].
 #[derive(Clone, Debug)]
 pub struct LumeConfig {
-    /// API base URL (default `$LUME_API` or `http://127.0.0.1:7777`).
+    /// The Cua channel this Lume belongs to (default: this process's,
+    /// [`CuaChannel::current`]). It decides the default URL and port, the
+    /// VM directory, the binary name and the fallback ports: Stable's
+    /// `lume` on `:7777` with VMs in `~/.lume`, Local's `lume-local` on
+    /// `:7787` with VMs in `~/.lume-local`.
+    pub channel: CuaChannel,
+    /// API base URL (default `$LUME_API`, else the channel's:
+    /// `http://127.0.0.1:7777` for Stable, `http://127.0.0.1:7787` for Local).
     pub url: String,
     /// Start `lume serve` when the API is unreachable.
     pub spawn_serve: bool,
@@ -111,10 +119,13 @@ pub struct LumeConfig {
 
 impl Default for LumeConfig {
     fn default() -> Self {
+        let channel = CuaChannel::current();
         Self {
-            url: serving_url(
-                &std::env::var("LUME_API").unwrap_or_else(|_| "http://127.0.0.1:7777".into()),
-            ),
+            channel,
+            url: serving_url(&crate::local_network::lume_base_with(
+                channel,
+                std::env::var("LUME_API").ok().as_deref(),
+            )),
             spawn_serve: true,
             allow_install: false,
             root: host::cua_home().join("vmm").join("lume"),
@@ -173,10 +184,14 @@ async fn server_version(client: &LumeClient) -> Option<String> {
     }
     let port = url_port(&url)?;
     tokio::task::spawn_blocking(move || {
-        // Only a `lume` is asked for its version (never, say, a test's
-        // own fake server process).
+        // Only a Lume (`lume`, or a channel's own such as `lume-local`) is
+        // asked for its version, never, say, a test's own fake server
+        // process.
         builtin::serving_binary(port)
-            .filter(|b| b.file_name().is_some_and(|n| n == "lume"))
+            .filter(|b| {
+                b.file_name()
+                    .is_some_and(|n| CuaChannel::ALL.iter().any(|c| n == c.lume_bin_name()))
+            })
             .and_then(|b| builtin::binary_version(&b))
     })
     .await
@@ -234,8 +249,8 @@ pub fn warm_vm_names(base: &str) -> [String; 2] {
 /// (a warm state, a checkpoint) or a claimed pool member would otherwise
 /// keep the name it was saved with. Bounded retries while SSH comes up;
 /// failures are logged, never fatal.
-fn set_macos_hostname_later(vm: &str, name: &str) {
-    let Some(bin) = lume_bin() else { return };
+fn set_macos_hostname_later(bin: Option<PathBuf>, vm: &str, name: &str) {
+    let Some(bin) = bin else { return };
     let host = macos_hostname(name);
     let exec = PrefixExec {
         program: bin.display().to_string(),
@@ -279,9 +294,16 @@ pub fn macos_hostname(name: &str) -> String {
 }
 
 /// Locate the `lume` binary for the `runtime.lume` setting: this Mac's
-/// own, or the built-in one ([`builtin`]) when installed.
+/// own, or the built-in one ([`builtin`]) when installed. For this
+/// process's channel ([`lume_bin_for`]).
 pub fn lume_bin() -> Option<PathBuf> {
-    builtin::resolve(builtin::LumeSource::current())
+    lume_bin_for(CuaChannel::current())
+}
+
+/// [`lume_bin`] for `channel`: Stable's own Lume is `lume`, Local's
+/// `lume-local` (Local never uses Stable's).
+pub fn lume_bin_for(channel: CuaChannel) -> Option<PathBuf> {
+    builtin::resolve_for(channel, builtin::LumeSource::current())
 }
 
 /// Deletes a clone whose create was cut off (dropped) before its first
@@ -370,7 +392,7 @@ impl LumeRuntime {
 
     /// GPU acceleration on this host ([`crate::gpu::lume_support`]).
     pub fn gpu_support(&self) -> crate::gpu::GpuSupport {
-        crate::gpu::lume_support(lume_bin().is_some())
+        crate::gpu::lume_support(self.bin().is_some())
     }
 
     /// After `name` was deleted: GPU acceleration's host preference goes
@@ -397,10 +419,26 @@ impl LumeRuntime {
         &self.client
     }
 
+    /// The Lume this runtime runs: this Mac's own or the built-in one, for
+    /// its channel ([`lume_bin_for`]).
+    fn bin(&self) -> Option<PathBuf> {
+        lume_bin_for(self.cfg.channel)
+    }
+
+    /// Where this runtime's Lume keeps VMs by default (`~/.lume`,
+    /// `~/.lume-local`, or `$LUME_HOME`).
+    fn vm_dir(&self) -> PathBuf {
+        crate::storage::default_lume_dir(
+            self.cfg.channel,
+            &host::home_dir(),
+            crate::storage::lume_home_env().as_deref(),
+        )
+    }
+
     /// The port of the `lume serve` in use (moved off the configured one
     /// when an old Lume holds it).
     fn port(&self) -> u16 {
-        url_port(&self.client.base()).unwrap_or(7777)
+        url_port(&self.client.base()).unwrap_or_else(|| self.cfg.channel.lume_port())
     }
 
     /// Make sure a current `lume serve` answers, starting (and, if allowed,
@@ -442,7 +480,7 @@ impl LumeRuntime {
     }
 
     /// The `lume serve` at `old_url` is Lume `old` (too old): use a current
-    /// one on the first of [`builtin::fallback_ports`] that has one or is
+    /// one on the first of [`builtin::fallback_ports_for`] that has one or is
     /// free, starting it there. The old server keeps running untouched.
     async fn serve_elsewhere(&self, old_url: &str, old: &str) -> Result<()> {
         let too_old = format!(
@@ -455,8 +493,9 @@ impl LumeRuntime {
                 "update it (or stop it and let cua run its built-in Lume)",
             ));
         }
-        let port = url_port(old_url).unwrap_or(7777);
-        for p in builtin::fallback_ports(port) {
+        let port = url_port(old_url).unwrap_or_else(|| self.cfg.channel.lume_port());
+        let ports: Vec<u16> = builtin::fallback_ports_for(self.cfg.channel, port).collect();
+        for &p in &ports {
             let url = builtin::with_port(old_url, p);
             let candidate = LumeClient::new(url.clone());
             if candidate.reachable().await {
@@ -491,8 +530,8 @@ impl LumeRuntime {
             too_old,
             format!(
                 "ports {}-{} are taken too; update or stop that Lume",
-                port.saturating_add(1),
-                port.saturating_add(9)
+                ports.first().copied().unwrap_or(port),
+                ports.last().copied().unwrap_or(port)
             ),
         ))
     }
@@ -513,7 +552,7 @@ impl LumeRuntime {
             ));
         }
         let source = builtin::LumeSource::current();
-        let bin = match lume_bin() {
+        let bin = match self.bin() {
             Some(b) => b,
             // Nothing to ask: the pinned, signed Lume, into cua's own dir.
             None if source.allows_builtin() => builtin::ensure().await?,
@@ -524,14 +563,31 @@ impl LumeRuntime {
                      Choose Built-in for macOS VMs in Settings (or `cua config set runtime.lume builtin`)",
                 ));
             }
-            None if self.cfg.allow_install => {
+            // The official installer is Stable's (`lume`, its LaunchAgent and
+            // port): Local never runs it over a Stable install.
+            None if self.cfg.allow_install && !self.cfg.channel.is_local() => {
                 install_lume().await?;
                 if self.client.reachable().await {
                     return Ok(()); // installer's LaunchAgent started it
                 }
-                lume_bin().ok_or_else(|| {
-                    VmmError::missing("lume", "installer finished but `lume` is not on PATH")
+                self.bin().ok_or_else(|| {
+                    VmmError::missing(
+                        self.cfg.channel.lume_bin_name(),
+                        format!(
+                            "installer finished but `{}` is not on PATH",
+                            self.cfg.channel.lume_bin_name()
+                        ),
+                    )
                 })?
+            }
+            None if self.cfg.channel.is_local() => {
+                return Err(VmmError::missing(
+                    self.cfg.channel.lume_bin_name(),
+                    format!(
+                        "install it with Lume's install-local.sh, or let cua use its built-in Lume (`cua config set runtime.lume builtin`); `{}` is not on PATH",
+                        self.cfg.channel.lume_bin_name()
+                    ),
+                ));
             }
             None => {
                 return Err(VmmError::missing(
@@ -560,6 +616,7 @@ impl LumeRuntime {
         let log = std::fs::File::create(self.cfg.root.join("serve.log"))?;
         let mut cmd = std::process::Command::new(&bin);
         cmd.args(["serve", "--port", &self.port().to_string()])
+            .envs(builtin::serve_env(self.cfg.channel, &self.cfg.root)?)
             .stdin(std::process::Stdio::null())
             .stdout(log.try_clone()?)
             .stderr(log);
@@ -814,7 +871,8 @@ impl LumeRuntime {
         disk: &std::path::Path,
         seed: Option<&std::path::Path>,
     ) -> Result<()> {
-        let bin = lume_bin()
+        let bin = self
+            .bin()
             .ok_or_else(|| VmmError::missing("lume", "binary needed for Linux disk VMs"))?;
         let log = self.cfg.root.join(name).join("run.log");
         let mut args = vec![
@@ -926,7 +984,7 @@ impl LumeRuntime {
             }
         }
         crate::disk::ensure_space(
-            &host::home_dir().join(".lume"),
+            &self.vm_dir(),
             crate::disk::LUME_PULL_ESTIMATE,
             &format!("pull {reference}"),
         )?;
@@ -945,7 +1003,7 @@ impl LumeRuntime {
         let pulled = match creds.filter(|c| c.applies_to(crate::registry_of(reference))) {
             // `lume serve`'s pull API takes no credentials: the `lume pull`
             // CLI reads them from its environment (never argv).
-            Some(c) => match lume_bin() {
+            Some(c) => match self.bin() {
                 Some(bin) => cli_pull(&bin, reference, base_name, c, self.cfg.pull_timeout).await,
                 None => Err(VmmError::missing(
                     "lume",
@@ -1493,7 +1551,7 @@ impl LumeRuntime {
                 self.ensure_base_with(&spec.image, &base, spec.registry_auth.as_ref())
                     .await?;
                 crate::disk::ensure_space(
-                    &host::home_dir().join(".lume"),
+                    &self.vm_dir(),
                     crate::disk::VM_CREATE_ESTIMATE,
                     &format!("create VM {}", spec.name),
                 )?;
@@ -1524,7 +1582,7 @@ impl LumeRuntime {
                     self.wait_restored(&spec.name).await;
                     tracing::info!(vm = %spec.name, warm = %warm, "resumed a new Space from the image's warm state");
                     let inst = self.finish_start(spec, true).await?;
-                    set_macos_hostname_later(&spec.name, &spec.name);
+                    set_macos_hostname_later(self.bin(), &spec.name, &spec.name);
                     return Ok(inst);
                 }
                 // APFS clonefile: copy-on-write, so the clone costs only what
@@ -1612,7 +1670,7 @@ impl LumeRuntime {
         }
         let inst = self.finish_start(spec, macos_booted).await?;
         if resumes_state && macos_booted {
-            set_macos_hostname_later(&spec.name, &spec.name);
+            set_macos_hostname_later(self.bin(), &spec.name, &spec.name);
         }
         Ok(inst)
     }
@@ -1625,8 +1683,7 @@ impl LumeRuntime {
         ));
         let vm = self.wait_for_ip(&spec.name).await?;
         if macos_booted {
-            let bin = lume_bin();
-            let exec = bin.map(|b| PrefixExec {
+            let exec = self.bin().map(|b| PrefixExec {
                 program: b.display().to_string(),
                 prefix: vec!["ssh".into(), spec.name.clone()],
             });
@@ -2017,7 +2074,11 @@ impl Runtime for LumeRuntime {
             .await?
             .ok_or_else(|| VmmError::NotFound(new_name.into()))?;
         if vm.os.eq_ignore_ascii_case("macos") {
-            set_macos_hostname_later(new_name, identity.hostname.as_deref().unwrap_or(new_name));
+            set_macos_hostname_later(
+                self.bin(),
+                new_name,
+                identity.hostname.as_deref().unwrap_or(new_name),
+            );
         }
         Ok(Self::instance(&vm, None, &self.load_ports(new_name)))
     }
@@ -2142,7 +2203,7 @@ impl Runtime for LumeRuntime {
             // something starts it). The `lume` CLI reads the VM's state from
             // its directory without a server, so a status check does not have
             // to start one.
-            Err(VmmError::Missing { .. }) => match lume_bin() {
+            Err(VmmError::Missing { .. }) => match self.bin() {
                 Some(bin) => cli_status(&bin, name).await,
                 // No Lume on this machine at all (the built-in one is set
                 // up on first use): it runs no VM, so none has this name.
@@ -2204,8 +2265,9 @@ impl Runtime for LumeRuntime {
             .await?
             .ok_or_else(|| VmmError::NotFound(name.into()))?;
         if vm.os.eq_ignore_ascii_case("macos") {
-            let bin =
-                lume_bin().ok_or_else(|| VmmError::missing("lume", "needed for `lume ssh`"))?;
+            let bin = self
+                .bin()
+                .ok_or_else(|| VmmError::missing("lume", "needed for `lume ssh`"))?;
             return Ok(Some(Arc::new(LumeSshExec::new(
                 bin.display().to_string(),
                 name,
@@ -2218,6 +2280,48 @@ impl Runtime for LumeRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn runtime_for(channel: CuaChannel, url: &str) -> LumeRuntime {
+        LumeRuntime::new(LumeConfig {
+            channel,
+            url: url.into(),
+            spawn_serve: false,
+            ..LumeConfig::default()
+        })
+    }
+
+    /// Stable is unchanged (`:7777`); Local serves on its own port, and a
+    /// URL without one falls back to the channel's.
+    #[test]
+    fn each_channel_serves_on_its_own_port() {
+        for (channel, port) in [(CuaChannel::Stable, 7777), (CuaChannel::Local, 7787)] {
+            assert_eq!(channel.lume_port(), port);
+            assert_eq!(runtime_for(channel, channel.lume_api()).port(), port);
+            assert_eq!(runtime_for(channel, "http://localhost").port(), port);
+        }
+        // `LUME_API` (here, the configured URL) still decides when it has a port.
+        assert_eq!(
+            runtime_for(CuaChannel::Local, "http://127.0.0.1:7900").port(),
+            7900
+        );
+        assert_eq!(
+            runtime_for(CuaChannel::Stable, "http://127.0.0.1:7900").port(),
+            7900
+        );
+    }
+
+    /// A runtime keeps its VMs where its channel does.
+    #[test]
+    fn each_channel_keeps_its_vms_in_its_own_directory() {
+        let home = host::home_dir();
+        let stable = runtime_for(CuaChannel::Stable, "http://127.0.0.1:1").vm_dir();
+        let local = runtime_for(CuaChannel::Local, "http://127.0.0.1:1").vm_dir();
+        if crate::storage::lume_home_env().is_none() {
+            assert_eq!(stable, home.join(".lume"));
+            assert_eq!(local, home.join(".lume-local"));
+            assert_ne!(stable, local);
+        }
+    }
 
     /// A killed serve's half-made pull is removed; a pull still being
     /// written, and anything not Lume's, stays.

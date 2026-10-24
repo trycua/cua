@@ -23,6 +23,8 @@
 
 use std::path::{Path, PathBuf};
 
+use cua_home::channel::CuaChannel;
+
 use crate::error::{Result, VmmError};
 use crate::host;
 
@@ -127,11 +129,22 @@ pub fn installed() -> Option<PathBuf> {
 /// Written last, once the unpacked Lume passed every check.
 const VERIFIED: &str = ".verified";
 
-/// The Lume to run for `source`: this Mac's own (`system`, or `auto` when
-/// it has one at least [`MIN_VERSION`]), else the built-in one when
-/// installed.
+/// The Lume to run for `source` on this process's channel
+/// ([`resolve_for`]).
 pub fn resolve(source: LumeSource) -> Option<PathBuf> {
-    let system = || host::which("lume").filter(|p| !p.starts_with(root()));
+    resolve_for(CuaChannel::current(), source)
+}
+
+/// The Lume to run for `source` on `channel`: this Mac's own (`system`, or
+/// `auto` when it has one at least [`MIN_VERSION`]), else the built-in one
+/// when installed.
+///
+/// This Mac's own Lume is the one the channel names
+/// ([`CuaChannel::lume_bin_name`]): Stable's `lume`, Local's `lume-local`.
+/// Local never picks up Stable's `lume`, which keeps its VMs in `~/.lume`
+/// and its server on port 7777.
+pub fn resolve_for(channel: CuaChannel, source: LumeSource) -> Option<PathBuf> {
+    let system = || system_lume(channel, host::which, &root());
     match source {
         LumeSource::System => system(),
         LumeSource::Builtin => installed(),
@@ -139,6 +152,16 @@ pub fn resolve(source: LumeSource) -> Option<PathBuf> {
             .filter(|p| system_binary_usable(source, binary_version(p).as_deref()))
             .or_else(installed),
     }
+}
+
+/// This Mac's own Lume for `channel`, looked up with `which` by the name
+/// the channel gives it; never the built-in one under `builtin_root`.
+fn system_lume(
+    channel: CuaChannel,
+    which: impl Fn(&str) -> Option<PathBuf>,
+    builtin_root: &Path,
+) -> Option<PathBuf> {
+    which(channel.lume_bin_name()).filter(|p| !p.starts_with(builtin_root))
 }
 
 /// The oldest Lume cua runs macOS Spaces on. Lume 0.6.0 is the first
@@ -211,9 +234,33 @@ pub fn system_binary_usable(source: LumeSource, version: Option<&str>) -> bool {
 
 /// The ports tried, in order, for a current Lume when the configured one
 /// is taken by an old server: the next nine. Fixed, so every cua process
-/// on this Mac finds the same one.
+/// on this Mac finds the same one. Stable's walk (`fallback_ports_for`).
 pub fn fallback_ports(port: u16) -> impl Iterator<Item = u16> {
-    (1..=9u16).filter_map(move |d| port.checked_add(d))
+    fallback_ports_for(CuaChannel::Stable, port)
+}
+
+/// How many ports after its own one a channel's Lume may move to.
+pub const FALLBACK_SPAN: u16 = 9;
+
+/// The ports a channel's Lume may use: its own and the nine after it
+/// (Stable's `7777..=7786`, Local's `7787..=7796`).
+pub fn port_range(channel: CuaChannel) -> std::ops::RangeInclusive<u16> {
+    let p = channel.lume_port();
+    p..=p.saturating_add(FALLBACK_SPAN)
+}
+
+/// [`fallback_ports`] for `channel`: the next nine ports after `port`,
+/// except any in another channel's range, so a Local Lume never walks into
+/// Stable's ports (and Stable's never into Local's).
+pub fn fallback_ports_for(channel: CuaChannel, port: u16) -> impl Iterator<Item = u16> {
+    let others: Vec<_> = CuaChannel::ALL
+        .into_iter()
+        .filter(move |c| *c != channel)
+        .map(port_range)
+        .collect();
+    (1..=FALLBACK_SPAN)
+        .filter_map(move |d| port.checked_add(d))
+        .filter(move |p| !others.iter().any(|r| r.contains(p)))
 }
 
 /// `url` with its port replaced by `port`.
@@ -332,6 +379,86 @@ pub fn remove() -> Result<()> {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
         _ => Ok(()),
     }
+}
+
+/// The environment `lume serve` is started with for `channel`, and the
+/// files it needs: nothing for Stable, whose Lume is started as it always
+/// was.
+///
+/// Local's Lume keeps its VMs in `~/.lume-local` ([`crate::storage::lume_dir_for`])
+/// whichever Lume runs it, so it gets:
+///
+/// * `LUME_HOME`: the VM directory, for a Lume that reads it (`lume-local`,
+///   and releases after the pinned one);
+/// * `XDG_CONFIG_HOME`: a config directory of its own under `config_root`,
+///   with a `lume/config.yaml` that makes the VM directory the default
+///   location. A Lume that does not read `LUME_HOME` yet (the pinned one)
+///   reads this, so it never writes to Stable's `~/.lume` or reads Stable's
+///   `~/.config/lume`.
+pub fn serve_env(
+    channel: CuaChannel,
+    config_root: &Path,
+) -> std::io::Result<Vec<(&'static str, std::ffi::OsString)>> {
+    serve_env_with(channel, config_root, &crate::storage::lume_dir_for(channel))
+}
+
+/// [`serve_env`] with the VM directory given.
+fn serve_env_with(
+    channel: CuaChannel,
+    config_root: &Path,
+    vm_dir: &Path,
+) -> std::io::Result<Vec<(&'static str, std::ffi::OsString)>> {
+    if !channel.is_local() {
+        return Ok(Vec::new());
+    }
+    let vm_dir = vm_dir.to_path_buf();
+    let xdg = config_root.join("xdg");
+    seed_config(&xdg.join("lume").join("config.yaml"), &vm_dir)?;
+    Ok(vec![
+        (crate::storage::LUME_HOME_VAR, vm_dir.into_os_string()),
+        ("XDG_CONFIG_HOME", xdg.into_os_string()),
+    ])
+}
+
+/// Lume's `config.yaml` that makes `vm_dir` the one VM location.
+pub fn config_yaml(vm_dir: &str) -> String {
+    format!(
+        "# Written by Cua Spaces Local: its Lume keeps VMs apart from the released Cua Spaces.\n\
+         defaultLocationName: \"home\"\n\
+         cacheDirectory: \"{vm_dir}/cache\"\n\
+         cachingEnabled: false\n\
+         telemetryEnabled: true\n\
+         \n\
+         vmLocations:\n\
+         \x20 - name: \"home\"\n\
+         \x20   path: \"{vm_dir}\"\n"
+    )
+}
+
+/// Writes the Local Lume's `config.yaml` at `file` unless it already makes
+/// `vm_dir` the default location.
+fn seed_config(file: &Path, vm_dir: &Path) -> std::io::Result<()> {
+    let dir = vm_dir
+        .to_str()
+        .filter(|d| !d.contains(['"', '\n']))
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("{} cannot be a Lume VM directory", vm_dir.display()),
+            )
+        })?;
+    let current = std::fs::read_to_string(file).ok();
+    if current
+        .as_deref()
+        .and_then(crate::storage::lume_default_location)
+        .is_some_and(|p| p == dir)
+    {
+        return Ok(());
+    }
+    if let Some(parent) = file.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(file, config_yaml(dir))
 }
 
 /// One install at a time in this process (a second create waits for it).
@@ -567,6 +694,129 @@ mod tests {
         assert!(is_loopback("http://localhost:7777/"));
         assert!(is_loopback("http://[::1]:7777"));
         assert!(!is_loopback("http://10.0.0.5:7777"));
+    }
+
+    #[test]
+    fn stable_keeps_its_ports_and_local_has_a_range_of_its_own() {
+        use CuaChannel::{Local, Stable};
+        assert_eq!(Stable.lume_port(), 7777);
+        assert_eq!(Local.lume_port(), 7787);
+        assert_eq!(port_range(Stable), 7777..=7786);
+        assert_eq!(port_range(Local), 7787..=7796);
+        // Stable is unchanged.
+        let stable: Vec<u16> = fallback_ports_for(Stable, 7777).collect();
+        assert_eq!(stable, (7778..=7786).collect::<Vec<_>>());
+        assert_eq!(fallback_ports(7777).collect::<Vec<_>>(), stable);
+        // Local walks 7788-7796 from its own port.
+        assert_eq!(
+            fallback_ports_for(Local, 7787).collect::<Vec<_>>(),
+            (7788..=7796).collect::<Vec<_>>()
+        );
+        // Neither walks into the other's range, even from an overridden port.
+        for from in 7770..7800 {
+            assert!(
+                fallback_ports_for(Local, from).all(|p| !port_range(Stable).contains(&p)),
+                "Local from {from}"
+            );
+            assert!(
+                fallback_ports_for(Stable, from).all(|p| !port_range(Local).contains(&p)),
+                "Stable from {from}"
+            );
+        }
+        assert_eq!(fallback_ports_for(Local, u16::MAX).count(), 0);
+    }
+
+    #[test]
+    fn each_channel_looks_for_its_own_lume_binary() {
+        use CuaChannel::{Local, Stable};
+        let root = Path::new("/h/.cua/runtimes/lume");
+        let on_path = |names: &'static [&'static str]| {
+            move |n: &str| {
+                names
+                    .contains(&n)
+                    .then(|| PathBuf::from("/Users/a/.local/bin").join(n))
+            }
+        };
+        // Local prefers an installed `lume-local`, and never takes `lume`.
+        assert_eq!(
+            system_lume(Local, on_path(&["lume", "lume-local"]), root),
+            Some(PathBuf::from("/Users/a/.local/bin/lume-local"))
+        );
+        assert_eq!(system_lume(Local, on_path(&["lume"]), root), None);
+        // Stable is unchanged: `lume`.
+        assert_eq!(
+            system_lume(Stable, on_path(&["lume", "lume-local"]), root),
+            Some(PathBuf::from("/Users/a/.local/bin/lume"))
+        );
+        assert_eq!(system_lume(Stable, on_path(&["lume-local"]), root), None);
+        // The built-in one is not "this Mac's own".
+        assert_eq!(
+            system_lume(Local, |_| Some(root.join("0.6.0/lume-local")), root),
+            None
+        );
+    }
+
+    #[test]
+    fn stable_s_lume_is_started_as_it_always_was() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(
+            serve_env_with(CuaChannel::Stable, dir.path(), Path::new("/h/.lume"))
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn local_s_lume_is_started_on_its_own_vm_directory_and_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let vms = Path::new("/Users/a/.lume-local");
+        let env = serve_env_with(CuaChannel::Local, dir.path(), vms).unwrap();
+        let get = |k: &str| env.iter().find(|(n, _)| *n == k).map(|(_, v)| v.clone());
+        assert_eq!(get("LUME_HOME"), Some(vms.into()));
+        let xdg = PathBuf::from(get("XDG_CONFIG_HOME").unwrap());
+        assert!(xdg.starts_with(dir.path()));
+        // A Lume that does not read LUME_HOME reads this config instead.
+        let yaml = std::fs::read_to_string(xdg.join("lume/config.yaml")).unwrap();
+        assert_eq!(
+            crate::storage::lume_default_location(&yaml).as_deref(),
+            Some("/Users/a/.lume-local")
+        );
+        assert!(yaml.contains("cacheDirectory: \"/Users/a/.lume-local/cache\""));
+        assert!(
+            !yaml.contains("\"~/.lume\""),
+            "never Stable's default location"
+        );
+    }
+
+    #[test]
+    fn the_local_config_is_kept_while_it_is_right_and_fixed_when_it_is_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("xdg/lume/config.yaml");
+        let vms = Path::new("/Users/a/.lume-local");
+        serve_env_with(CuaChannel::Local, dir.path(), vms).unwrap();
+        // Right: left alone (Lume may have added its own settings).
+        let kept = format!(
+            "{}# added by Lume\n",
+            std::fs::read_to_string(&file).unwrap()
+        );
+        std::fs::write(&file, &kept).unwrap();
+        serve_env_with(CuaChannel::Local, dir.path(), vms).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), kept);
+        // Wrong (say it still names Stable's directory): rewritten.
+        std::fs::write(
+            &file,
+            "defaultLocationName: \"home\"\nvmLocations:\n  - name: \"home\"\n    path: \"~/.lume\"\n",
+        )
+        .unwrap();
+        serve_env_with(CuaChannel::Local, dir.path(), vms).unwrap();
+        assert_eq!(
+            crate::storage::lume_default_location(&std::fs::read_to_string(&file).unwrap())
+                .as_deref(),
+            Some("/Users/a/.lume-local")
+        );
+        // A directory that cannot be written into a YAML string is refused.
+        assert!(serve_env_with(CuaChannel::Local, dir.path(), Path::new("/a\"b")).is_err());
     }
 
     #[test]

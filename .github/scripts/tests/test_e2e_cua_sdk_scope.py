@@ -6,6 +6,7 @@ what runs it, what skips it, that every doubt runs it, that the workflow's
 as passed.
 """
 
+import glob
 import importlib.util
 import os
 import subprocess
@@ -159,6 +160,16 @@ def test_docs_files_that_are_not_pages_skip(path):
         "libs/cua-spacesd/Cargo.lock",
         "libs/images/linux/Dockerfile",
         "libs/python/cua-sandbox/cua_sandbox/__init__.py",
+        "libs/cua-driver/rust/crates/cua-driver-core/src/lib.rs",
+        "libs/cua-driver/rust/crates/cua-driver-core/src/mcp_skills.rs",
+        "libs/cua-driver/rust/crates/cua-driver-sdk/Cargo.toml",
+        "libs/cua-driver/rust/crates/platform-linux/src/wayland/shell_helper.rs",
+        "libs/cua-driver/rust/crates/platform-macos/Cargo.toml",
+        "libs/cua-driver/rust/crates/platform-windows/Cargo.toml",
+        "libs/cua-driver/rust/Cargo.toml",
+        "libs/cua-driver/rust/Skills/cua-driver/SKILL.md",
+        "libs/cua-driver/rust/include/cua_driver_abi.h",
+        "libs/cua-driver/wayland-helper/winrects@cua/extension.js",
         "tests/e2e/cua-sdk/run.py",
         "tests/e2e/cua-sdk/rust/Cargo.lock",
         "tests/e2e/browse/server.py",
@@ -189,12 +200,100 @@ def test_unrelated_files_beside_docs_prose_skip(path):
     assert not run, why
 
 
-def test_workflow_filter_gaps_are_unchanged():
-    # Not inputs today (the suite never ran for them), and still not: adding
-    # the driver crates the daemon builds from would put this suite on a third
-    # of the open pull requests.
-    assert not decide([scope.Change("M", "libs/cua-driver/rust/crates/cua-driver-core/src/lib.rs")])[0]
-    assert not decide([scope.Change("M", "libs/cua-driver/rust/Cargo.toml")])[0]
+def test_docs_prose_beside_a_driver_dependency_runs():
+    # Before the docs filter was narrowed, the docs page alone started the whole
+    # suite for this pull request. The driver crate is an input in its own right,
+    # so the mix must not skip it.
+    changes = [
+        scope.Change("M", OTHER),
+        scope.Change("M", "libs/cua-driver/rust/crates/cua-driver-core/src/lib.rs"),
+    ]
+    run, why = decide(changes, {OTHER: page(PLAIN)}, {OTHER: page(PLAIN, prose="New.")})
+    assert run and "cua-driver-core" in why
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        # Driver code the static cua-spacesd build does not compile.
+        "libs/cua-driver/rust/crates/cua-driver/src/main.rs",
+        "libs/cua-driver/rust/crates/platform-macos/src/lib.rs",
+        "libs/cua-driver/rust/crates/platform-windows/src/lib.rs",
+        "libs/cua-driver/rust/crates/cua-perception/src/lib.rs",
+        "libs/cua-driver/rust/Cargo.lock",
+        "libs/cua-driver/typescript/package.json",
+    ],
+)
+def test_driver_code_outside_the_closure_beside_docs_prose_skips(path):
+    changes = [scope.Change("M", OTHER), scope.Change("M", path)]
+    run, why = decide(changes, {OTHER: page(PLAIN)}, {OTHER: page(PLAIN, prose="New.")})
+    assert not run, why
+
+
+def load_toml(path):
+    try:
+        import tomllib
+
+        return tomllib.loads(path.read_text(encoding="utf-8"))
+    except ModuleNotFoundError:
+        return pytest.importorskip("toml").loads(path.read_text(encoding="utf-8"))
+
+
+def spacesd_path_dependencies():
+    """Every crate directory the libs/cua-spacesd workspace reaches through
+    `path = ...` dependencies, on every platform."""
+    seen = set()
+
+    def walk(directory):
+        directory = os.path.normpath(directory)
+        if directory in seen:
+            return
+        seen.add(directory)
+        doc = load_toml(Path(directory) / "Cargo.toml")
+        tables = [doc.get(k, {}) for k in ("dependencies", "dev-dependencies", "build-dependencies")]
+        tables.append(doc.get("workspace", {}).get("dependencies", {}))
+        for target in doc.get("target", {}).values():
+            tables += [target.get(k, {}) for k in ("dependencies", "dev-dependencies", "build-dependencies")]
+        for table in tables:
+            for spec in table.values():
+                if isinstance(spec, dict) and "path" in spec:
+                    walk(os.path.join(directory, spec["path"]))
+        for member in doc.get("workspace", {}).get("members", []):
+            for found in glob.glob(os.path.join(directory, member)):
+                if (Path(found) / "Cargo.toml").exists():
+                    walk(found)
+
+    walk(ROOT / "libs" / "cua-spacesd")
+    return {os.path.relpath(d, ROOT) for d in seen}
+
+
+# The cargo lockfile covers these, but a Linux build does not compile them.
+NOT_COMPILED_ON_LINUX = {"platform-macos", "platform-windows"}
+
+
+def test_driver_closure_is_listed():
+    crates = {
+        d.rsplit("/", 1)[1] for d in spacesd_path_dependencies() if d.startswith("libs/cua-driver/rust/crates/")
+    }
+    assert {"cua-driver-core", "platform-linux"} <= crates, "the walk found no driver crates"
+    for crate in sorted(crates):
+        base = f"libs/cua-driver/rust/crates/{crate}"
+        assert scope.is_input(f"{base}/Cargo.toml"), crate
+        if crate not in NOT_COMPILED_ON_LINUX:
+            assert scope.is_input(f"{base}/src/lib.rs"), f"{crate} is built into cua-spacesd but is not an input"
+
+
+@pytest.mark.parametrize(
+    "directory",
+    [
+        "libs/cua-driver/rust/Skills/cua-driver",
+        "libs/cua-driver/rust/include",
+        "libs/cua-driver/wayland-helper/winrects@cua",
+    ],
+)
+def test_compile_time_includes_exist(directory):
+    # The directories behind the include_str! inputs: a rename must update PATHS.
+    assert (ROOT / directory).is_dir()
 
 
 # --- doubt runs the suite ------------------------------------------------------
@@ -245,7 +344,9 @@ def test_every_path_matches_itself_and_nothing_wider():
     for pattern in scope.PATHS:
         sample = pattern.replace("**", "a/b.txt")
         assert scope.is_input(sample), pattern
-    assert not scope.is_input("libs/cua-driver/rust/Cargo.toml")
+    assert not scope.is_input("libs/cua-driver/rust/crates/cua-driver/src/main.rs")
+    assert not scope.is_input("libs/cua-driver/rust/crates/platform-macos/src/lib.rs")
+    assert not scope.is_input("libs/cua-driver/rust/crates/cua-driver-core-extras/a.rs")
     assert not scope.is_input("libs/cuax/a.rs")
     assert not scope.is_input("tests/e2e/cua-sdk-other/a.py")
 

@@ -24,6 +24,22 @@ on:
       - "libs/images/**"
       # The docs lane installs cua-sandbox from the tree.
       - "libs/python/cua-sandbox/**"
+      # The cua-driver crates the static cua-spacesd build compiles (the closure
+      # `cargo metadata` reports from libs/cua-spacesd) and what they include.
+      - "libs/cua-driver/rust/crates/cua-cursor-motion/**"
+      - "libs/cua-driver/rust/crates/cua-driver-contract/**"
+      - "libs/cua-driver/rust/crates/cua-driver-core/**"
+      - "libs/cua-driver/rust/crates/cua-driver-sdk/**"
+      - "libs/cua-driver/rust/crates/cursor-overlay/**"
+      - "libs/cua-driver/rust/crates/pip-preview/**"
+      - "libs/cua-driver/rust/crates/platform-linux/**"
+      # Not compiled on this runner, but the lockfile (--locked) covers them.
+      - "libs/cua-driver/rust/crates/platform-macos/Cargo.toml"
+      - "libs/cua-driver/rust/crates/platform-windows/Cargo.toml"
+      - "libs/cua-driver/rust/Cargo.toml"
+      - "libs/cua-driver/rust/Skills/**"
+      - "libs/cua-driver/rust/include/**"
+      - "libs/cua-driver/wayland-helper/**"
       - "tests/e2e/cua-sdk/**"
       # The browse-the-web scenario's MCP client session.
       - "tests/e2e/browse/**"

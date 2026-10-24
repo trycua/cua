@@ -52,6 +52,32 @@ PATHS = (
     "libs/cua-spacesd/**",
     "libs/images/**",
     "libs/python/cua-sandbox/**",
+    # The cua-driver crates the static cua-spacesd build compiles, the closure
+    # `cargo metadata --filter-platform x86_64-unknown-linux-musl` reports from
+    # libs/cua-spacesd, and the files they include at compile time. Their
+    # manifests inherit from the driver workspace root. The macOS and Windows
+    # platform crates are not compiled on this Linux runner, but cargo's
+    # lockfile covers them, so only their manifests count (`--locked`).
+    # test_driver_closure_is_listed walks the Cargo.toml path dependencies and
+    # fails when a crate is missing here.
+    *(
+        f"libs/cua-driver/rust/crates/{crate}/**"
+        for crate in (
+            "cua-cursor-motion",
+            "cua-driver-contract",
+            "cua-driver-core",
+            "cua-driver-sdk",
+            "cursor-overlay",
+            "pip-preview",
+            "platform-linux",
+        )
+    ),
+    "libs/cua-driver/rust/crates/platform-macos/Cargo.toml",
+    "libs/cua-driver/rust/crates/platform-windows/Cargo.toml",
+    "libs/cua-driver/rust/Cargo.toml",
+    "libs/cua-driver/rust/Skills/**",  # include_str! in cua-driver-core
+    "libs/cua-driver/rust/include/**",  # include_str! in cua-driver-sdk
+    "libs/cua-driver/wayland-helper/**",  # include_str! in platform-linux
     "tests/e2e/cua-sdk/**",
     # The browse-the-web scenario's MCP client session.
     "tests/e2e/browse/**",

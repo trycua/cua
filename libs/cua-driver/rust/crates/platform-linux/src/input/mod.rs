@@ -3275,7 +3275,10 @@ fn connect_x11_for_input() -> Result<(RustConnection, usize)> {
 
 /// Send a synthetic FocusIn event to a window without changing the actual X11 input focus.
 /// This can trigger toolkit-level focus handlers (e.g., Qt5's AT-SPI bridge) without
-/// moving the window manager's active window. Use with send_focus_out to restore state.
+/// moving the window manager's active window. Deliver only to the window owner:
+/// a FOCUS_CHANGE mask also sends these fake events to the WM, and XFWM then
+/// clears _NET_ACTIVE_WINDOW even though core input focus has not moved.
+/// Use with send_focus_out to restore the toolkit's state.
 pub fn send_focus_in(xid: u64) -> Result<()> {
     let (conn, _) = connect_x11_for_input()?;
     let window = xid as u32;
@@ -3288,7 +3291,8 @@ pub fn send_focus_in(xid: u64) -> Result<()> {
         mode: NotifyMode::NORMAL,
     };
 
-    conn.send_event(false, window, EventMask::FOCUS_CHANGE, focus_in)?;
+    conn.send_event(false, window, EventMask::NO_EVENT, focus_in)?
+        .check()?;
     conn.flush()?;
     Ok(())
 }
@@ -3306,9 +3310,107 @@ pub fn send_focus_out(xid: u64) -> Result<()> {
         mode: NotifyMode::NORMAL,
     };
 
-    conn.send_event(false, window, EventMask::FOCUS_CHANGE, focus_out)?;
+    conn.send_event(false, window, EventMask::NO_EVENT, focus_out)?
+        .check()?;
     conn.flush()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod focus_hint_tests {
+    use super::*;
+    use x11rb::protocol::Event;
+
+    #[test]
+    #[ignore = "requires Xvfb; run explicitly in the driver build"]
+    fn live_focus_hints_reach_owner_without_notifying_wm() {
+        use x11rb::connection::Connection;
+        use x11rb::protocol::xproto::{ConnectionExt, CreateWindowAux, WindowClass};
+        let (owner, screen) = x11rb::connect(None).expect("run under an isolated Xvfb");
+        let (observer, _) = x11rb::connect(None).unwrap();
+        let window = owner.generate_id().unwrap();
+        owner
+            .create_window(
+                x11rb::COPY_DEPTH_FROM_PARENT,
+                window,
+                owner.setup().roots[screen].root,
+                0,
+                0,
+                200,
+                100,
+                0,
+                WindowClass::INPUT_OUTPUT,
+                0,
+                &CreateWindowAux::new().event_mask(EventMask::FOCUS_CHANGE),
+            )
+            .unwrap()
+            .check()
+            .unwrap();
+        owner.map_window(window).unwrap().check().unwrap();
+        observer
+            .change_window_attributes(
+                window,
+                &x11rb::protocol::xproto::ChangeWindowAttributesAux::new()
+                    .event_mask(EventMask::FOCUS_CHANGE),
+            )
+            .unwrap()
+            .check()
+            .unwrap();
+        while owner.poll_for_event().unwrap().is_some() {}
+        while observer.poll_for_event().unwrap().is_some() {}
+        send_focus_in(window.into()).unwrap();
+        send_focus_out(window.into()).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_millis(300);
+        let mut owner_events = Vec::new();
+        let mut observer_events = Vec::new();
+        while std::time::Instant::now() < deadline {
+            for (conn, events) in [
+                (&owner, &mut owner_events),
+                (&observer, &mut observer_events),
+            ] {
+                while let Some(event) = conn.poll_for_event().unwrap() {
+                    match event {
+                        Event::FocusIn(_) => events.push("in"),
+                        Event::FocusOut(_) => events.push("out"),
+                        _ => {}
+                    }
+                }
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            owner_events,
+            ["in", "out"],
+            "toolkit must receive both hints"
+        );
+        assert!(
+            observer_events.is_empty(),
+            "WM must not see fake focus transitions: {observer_events:?}"
+        );
+
+        // A core focus alone is not proof that the window manager activated
+        // the target. Keep the exact-target foreground safety gate intact.
+        owner
+            .set_input_focus(
+                x11rb::protocol::xproto::InputFocus::PARENT,
+                window,
+                x11rb::CURRENT_TIME,
+            )
+            .unwrap()
+            .check()
+            .unwrap();
+        let ran = std::cell::Cell::new(false);
+        let error = with_x11_foreground(window.into(), 1, || {
+            ran.set(true);
+            Ok(())
+        })
+        .expect_err("core focus alone must not authorize foreground input");
+        assert_eq!(
+            foreground::error_code(&error),
+            Some(foreground::CODE_UNAVAILABLE)
+        );
+        assert!(!ran.get(), "unverified global input must not be sent");
+    }
 }
 
 /// Round-trip to the X server before the short-lived connection that sent

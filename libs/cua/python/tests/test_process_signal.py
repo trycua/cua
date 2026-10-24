@@ -66,6 +66,47 @@ def test_signal_deaths_carry_number_and_name(fixtures, tmp_path):
     asyncio.run(asyncio.wait_for(body(), timeout=60))
 
 
+# A Windows process never dies of a POSIX signal: even when it ends abnormally
+# the native exit code says how, and every signal field stays unset. The second
+# case ends through TerminateProcess, the call behind `Process.kill()` there.
+_WINDOWS_TERMINATE_SELF = (
+    "import ctypes, ctypes.wintypes as w;"
+    "k = ctypes.windll.kernel32;"
+    "k.GetCurrentProcess.restype = w.HANDLE;"
+    "k.TerminateProcess.argtypes = [w.HANDLE, w.UINT];"
+    "k.TerminateProcess(k.GetCurrentProcess(), 7)"
+)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows exit codes; POSIX is covered above")
+@pytest.mark.parametrize(
+    ("snippet", "native_code"),
+    [
+        ("import os; os._exit(3)", 3),
+        (_WINDOWS_TERMINATE_SELF, 7),
+    ],
+    ids=["os-exit", "terminate-process"],
+)
+def test_windows_abnormal_termination_reports_native_code_and_no_signal(
+    fixtures, tmp_path, snippet, native_code
+):
+    async def body():
+        c = cua.embedded(
+            state_dir=str(tmp_path / "sbx"),
+            spaces_home=str(tmp_path / "cua"),
+        )
+        env = await c.spacesd(fixtures["spaces_url"], fixtures["spaces_token"])
+
+        exit_info = await run_program(env, sys.executable, "-c", snippet)
+        assert exit_info.code == native_code, exit_info
+        assert not exit_info.success, exit_info
+        assert not exit_info.timed_out, exit_info
+        assert exit_info.signal is None, exit_info
+        assert exit_info.signal_number is None and exit_info.signal_name is None
+
+    asyncio.run(asyncio.wait_for(body(), timeout=60))
+
+
 def test_a_normal_exit_carries_its_code_and_no_signal_on_every_os(fixtures, tmp_path):
     async def body():
         c = cua.embedded(

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
-import { CheckIcon, CopyIcon } from "lucide-react";
+import { ArrowLeftIcon, CheckIcon, CopyIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { useAgentKeys, useFirstRun, type FirstRunArt, type FirstRunCredential, type FirstRunExtraView, type FirstRunHook, type FirstRunRow, type FirstRunView } from "@/bridge";
@@ -61,13 +61,28 @@ function OnboardingPage() {
     document.querySelector<HTMLElement>("[data-onboarding-heading]")?.focus();
   }, [view.step]);
 
+  // Esc goes back a step, like the "Back" link, on every step that has one.
+  // An open sheet or menu keeps its own Esc.
+  const canGoBack = view.step !== "welcome";
+  useEffect(() => {
+    if (!canGoBack) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented || e.isComposing) return;
+      if (document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]')) return;
+      e.preventDefault();
+      fr.back();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [canGoBack, fr.back]);
+
   return (
     <div className="relative flex h-full flex-col overflow-hidden bg-[#F4F5F7] dark:bg-[#07080a]" data-step={view.step}>
       <Backdrop />
       <Art art={view.art} step={view.step} />
       <header className="relative z-30 flex shrink-0 items-center justify-between px-10 pt-[calc(var(--titlebar-height)+12px)] pb-2">
         <CuaWordmark />
-        <button type="button" onClick={leave} className="text-[13px] text-muted-foreground hover:text-foreground" data-onboarding-later="">
+        <button type="button" onClick={leave} className={cn(QUIET_LINK, "text-[13px]")} data-onboarding-later="">
           {view.later}
         </button>
       </header>
@@ -124,11 +139,39 @@ function Primary({ label, onClick, ...rest }: { label: string; onClick: () => vo
   );
 }
 
-function Quiet({ label, onClick, ...rest }: { label: string; onClick: () => void } & Record<`data-${string}`, string | undefined>) {
+/** The quieter choice beside the primary: the same pill, outlined, lower contrast. */
+function Secondary({ label, onClick, describedBy, ...rest }: { label: string; onClick: () => void; describedBy?: string } & Record<`data-${string}`, string | undefined>) {
   return (
-    <button type="button" className="text-[13px] text-muted-foreground hover:text-foreground" onClick={onClick} {...rest}>
+    <Button
+      size="lg"
+      variant="ghost"
+      className="h-11 rounded-full border-foreground/20 px-6 text-[15px] font-normal text-foreground/75 hover:bg-foreground/[0.06] hover:text-foreground"
+      aria-describedby={describedBy}
+      data-first-run-secondary=""
+      onClick={onClick}
+      {...rest}
+    >
       {label}
-    </button>
+    </Button>
+  );
+}
+
+const QUIET_LINK = "-mx-1.5 rounded-md px-1.5 py-0.5 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60";
+
+/**
+ * A step after Welcome: "Back" sits above the heading, apart from the
+ * step's own choices. It comes last in the page's order, so Tab goes
+ * primary, then secondary, then Back; Esc does the same as Back.
+ */
+function Step({ id, onBack, children }: { id: string; onBack: () => void; children: ReactNode }) {
+  return (
+    <div data-first-run={id} className="flex flex-col">
+      {children}
+      <button type="button" onClick={onBack} aria-keyshortcuts="Escape" className={cn(QUIET_LINK, "order-first mb-5 inline-flex items-center gap-1.5 self-start text-[13px]")} data-first-run-back="">
+        <ArrowLeftIcon aria-hidden className="size-3.5" />
+        Back
+      </button>
+    </div>
   );
 }
 
@@ -190,7 +233,7 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
   const keys = useAgentKeys();
   const [copied, setCopied] = useState(false);
   return (
-    <div data-first-run="connect">
+    <Step id="connect" onBack={fr.back}>
       <Heading>{c.title}</Heading>
       <Lede>{c.lede}</Lede>
       {c.agents.length ? (
@@ -270,10 +313,9 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
           {c.error}
         </p>
       ) : null}
-      <div className="mt-6 flex items-center gap-4">
+      <div className="mt-6 flex flex-wrap items-center gap-3">
         <Primary label={c.primary.label} onClick={() => void fr.act(c.primary.id)} />
-        {c.secondary ? <Quiet label={c.secondary.label} onClick={() => void fr.act(c.secondary!.id)} data-first-run-secondary="" /> : null}
-        <Quiet label="Back" onClick={fr.back} data-first-run-back="" />
+        {c.secondary ? <Secondary label={c.secondary.label} onClick={() => void fr.act(c.secondary!.id)} /> : null}
       </div>
       {fr.usage ? (
         <label className="mt-5 flex items-center gap-2.5 text-[13px] text-muted-foreground" data-first-run-usage="">
@@ -287,7 +329,7 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
         </label>
       ) : null}
       {keys.sheet ? <KeySheet key={keys.sheet.provider} keys={keys} provider={keys.sheet.provider} env={keys.sheet.env} /> : null}
-    </div>
+    </Step>
   );
 }
 
@@ -322,7 +364,7 @@ function CredentialRowView({ row: r, onAct }: { row: FirstRunCredential; onAct: 
 function Devices({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
   const d = view.devices!;
   return (
-    <div data-first-run="devices">
+    <Step id="devices" onBack={fr.back}>
       <Heading>{d.title}</Heading>
       <Lede>{d.lede}</Lede>
       <Rows className="mt-6" data-first-run-devices="">
@@ -334,13 +376,16 @@ function Devices({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
         ))}
         {d.status ? <StatusLine row={d.status} onAct={() => void fr.act(d.status!.action?.id ?? "")} /> : null}
       </Rows>
-      <div className="mt-7 flex items-center gap-4">
+      <div className="mt-7 flex flex-wrap items-center gap-3">
         <Primary label={d.primary.label} onClick={() => void fr.act(d.primary.id)} data-first-run-devices-primary={d.primary.id} />
-        {d.secondary ? <Quiet label={d.secondary.label} onClick={() => void fr.act(d.secondary!.id)} data-first-run-secondary="" /> : null}
-        <Quiet label="Back" onClick={fr.back} data-first-run-back="" />
+        {d.secondary ? <Secondary label={d.secondary.label} onClick={() => void fr.act(d.secondary!.id)} describedBy={d.note ? "first-run-devices-note" : undefined} /> : null}
       </div>
-      {d.note ? <p className="mt-4 text-[13px] text-muted-foreground">{d.note}</p> : null}
-    </div>
+      {d.note ? (
+        <p id="first-run-devices-note" className="mt-3 text-[13px] text-muted-foreground" data-first-run-devices-note="">
+          {d.note}
+        </p>
+      ) : null}
+    </Step>
   );
 }
 
@@ -359,7 +404,7 @@ function Setup({ fr, view, onFinish }: { fr: FirstRunHook; view: FirstRunView; o
     setTimeout(() => setCopied(false), 1500);
   };
   return (
-    <div data-first-run="setup">
+    <Step id="setup" onBack={fr.back}>
       <Heading>{s.title}</Heading>
       <Lede>{s.lede}</Lede>
       {s.prompt && tabs.length > 1 ? (
@@ -400,13 +445,12 @@ function Setup({ fr, view, onFinish }: { fr: FirstRunHook; view: FirstRunView; o
         </div>
       ) : null}
       {s.extra ? <ExtraCard extra={s.extra} fr={fr} /> : null}
-      <div className="mt-8 flex items-center gap-4">
+      <div className="mt-8 flex items-center gap-3">
         <Button size="lg" className="h-11 min-w-28 rounded-full px-6 text-[15px]" disabled={!s.primary.enabled} data-onboarding-primary="" data-first-run-primary={s.primary.id} onClick={onFinish}>
           {s.primary.label}
         </Button>
-        <Quiet label="Back" onClick={fr.back} data-first-run-back="" />
       </div>
-    </div>
+    </Step>
   );
 }
 
@@ -451,7 +495,7 @@ function ExtraCard({ extra, fr }: { extra: FirstRunExtraView; fr: FirstRunHook }
             </button>
           ))}
           {extra.action ? (
-            <button type="button" className="px-2 text-[14px] font-medium underline decoration-foreground/25 underline-offset-4" onClick={() => act(extra.action!.id)}>
+            <button type="button" className="rounded-md px-2 text-[14px] font-medium underline decoration-foreground/25 underline-offset-4 outline-none focus-visible:ring-2 focus-visible:ring-ring/60" onClick={() => act(extra.action!.id)}>
               {extra.action.label}
             </button>
           ) : null}

@@ -164,6 +164,29 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     expect(calls.filter((c) => c.op === "agents.configure")).toHaveLength(1);
   });
 
+  it("Back sits above the heading, apart from the choices; Tab goes primary, secondary, Back; Esc goes back", async () => {
+    writeFirstRun({ step: "devices" });
+    await mount();
+    await waitFor(() => expect(heading()).toBe("Connect your other devices."));
+    const step = document.querySelector<HTMLElement>('[data-first-run="devices"]')!;
+    const back = step.querySelector<HTMLElement>("[data-first-run-back]")!;
+    // Drawn first (above the heading), but last in the page's order.
+    expect(back.className).toContain("order-first");
+    const order = Array.from(step.querySelectorAll<HTMLElement>("[data-onboarding-primary], [data-first-run-secondary], [data-first-run-back]"));
+    expect(order.map((el) => (el.matches("[data-onboarding-primary]") ? "primary" : el.matches("[data-first-run-back]") ? "back" : "secondary"))).toEqual(["primary", "secondary", "back"]);
+    // "Not now" is a button of its own, described by the note under it.
+    const secondary = step.querySelector<HTMLElement>("[data-first-run-secondary]")!;
+    expect(screen.getByRole("button", { name: "Not now" })).toBe(secondary);
+    expect(document.getElementById(secondary.getAttribute("aria-describedby")!)?.textContent).toBe("This Mac works without it.");
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(heading()).toBe("Pick your agent."));
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
+    // Welcome has no Back, so Esc stays.
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(heading()).toBe("Your computers, shared by your team and its agents.");
+  });
+
   it("Codex: its ChatGPT sign-in and OpenAI key follow it, and the sign-in starts on this computer", async () => {
     writeFirstRun({ step: "connect" });
     const calls = await mount({ agents: (rows) => rows.map((r) => ({ ...r, installed: r.agent === "codex" })) });

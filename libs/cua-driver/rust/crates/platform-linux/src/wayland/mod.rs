@@ -41,6 +41,7 @@ use wayland_client::{
     event_created_child,
     protocol::{
         wl_buffer::WlBuffer,
+        wl_callback::{self, WlCallback},
         wl_output::{self, WlOutput},
         wl_pointer::{Axis, AxisSource, ButtonState},
         wl_registry,
@@ -49,6 +50,10 @@ use wayland_client::{
         wl_shm_pool::WlShmPool,
     },
     Connection, Dispatch, Proxy, QueueHandle, WEnum,
+};
+use wayland_protocols::xdg::xdg_output::zv1::client::{
+    zxdg_output_manager_v1::ZxdgOutputManagerV1,
+    zxdg_output_v1::{self, ZxdgOutputV1},
 };
 use wayland_protocols_wlr::foreign_toplevel::v1::client::{
     zwlr_foreign_toplevel_handle_v1::{self as ftl_handle, ZwlrForeignToplevelHandleV1},
@@ -1076,6 +1081,23 @@ fn screenshot_window_bytes_with_dispatch(
     if wayland {
         let crop = wayland_crop(xid)?;
         let output = display_capture()?;
+        // Fractional-scale unification (#3061): the display buffer is backing
+        // pixels while `crop` is compositor-logical. When a single logical
+        // output is known, map through the buffer's own backing scale (self-
+        // consistent even if the capture tier already returned logical pixels);
+        // otherwise keep the legacy 1:1 crop.
+        if let Some(scale) = backing_scale_for_capture(&output) {
+            return crop_backing_png_to_logical_rect(
+                &output,
+                crop.x,
+                crop.y,
+                crop.width,
+                crop.height,
+                scale,
+                &format!("Wayland window {xid}"),
+            );
+        }
+        tracing::debug!("no backing scale for Wayland window {xid}, keeping legacy 1:1 crop");
         return crop_png_to_rect(
             &output,
             crop.x,
@@ -1163,6 +1185,409 @@ fn crop_png_to_rect(
     let mut cursor = std::io::Cursor::new(Vec::new());
     cropped.write_to(&mut cursor, image::ImageFormat::Png)?;
     Ok(cursor.into_inner())
+}
+
+// ── Logical output frame (fractional-scale unification, #3061) ───────────────
+// The desktop contract is "screenshot pixels == input coordinates". Native
+// Wayland capture buffers use backing (physical) pixels while the compositor's
+// pointer protocol, Shell/AT-SPI geometry, and libei input all use logical
+// pixels. The helpers below resolve the logical frame from the compositor's
+// own `zxdg_output_manager_v1` advertisement (the same protocol the overlay
+// already consumes) so every scale computation stays ground-truth based:
+// desktop capture and window crops derive the backing scale from the buffer
+// in hand, and screen-size derives it from the advertised output mode.
+//
+
+/// One compositor-logical output (`LogicalPosition` + `LogicalSize`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LogicalOutput {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// The compositor-logical desktop frame with its backing scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LogicalDesktop {
+    pub width: u32,
+    pub height: u32,
+    /// Backing (physical) pixels per logical pixel, from the advertised
+    /// output mode. Uniform-guarded; see [`uniform_backing_scale`].
+    pub scale: f64,
+}
+
+/// Keep the established single-output contract (mirrors Hyprland's qualified
+/// 1:1 frame): exactly one non-empty logical output at origin resolves.
+/// Anything else yields `None`, retaining the legacy frame instead of guessing which
+/// output a fullscreen buffer belongs to. Multi-output fractional layouts
+/// stay a documented limitation.
+fn single_logical_output(outputs: &[LogicalOutput]) -> Option<(u32, u32)> {
+    let [output] = outputs else { return None };
+    (output.x == 0 && output.y == 0 && output.width > 0 && output.height > 0)
+        .then_some((output.width, output.height))
+}
+
+/// Uniform backing-to-logical scale, or `None` when the mapping is empty or
+/// non-uniform (mixed-scale multi-monitor). Mirrors the fail-closed mapping
+/// guard in `normalize_desktop_capture_for_action_frame`.
+fn uniform_backing_scale(
+    capture_width: u32,
+    capture_height: u32,
+    action_width: u32,
+    action_height: u32,
+) -> Option<f64> {
+    if capture_width == 0 || capture_height == 0 || action_width == 0 || action_height == 0 {
+        return None;
+    }
+    let scale_x = f64::from(capture_width) / f64::from(action_width);
+    let scale_y = f64::from(capture_height) / f64::from(action_height);
+    ((scale_x - scale_y).abs() <= 0.01).then_some(scale_x)
+}
+
+/// Backing scale of a captured display buffer against the known logical
+/// frame, or `None` when no single logical output is advertised or the
+/// buffer does not map uniformly onto it (e.g. a per-output screencopy
+/// buffer on a multi-output desktop). `None` means "keep the legacy path".
+fn backing_scale_for_capture(output_png: &[u8]) -> Option<f64> {
+    let (logical_w, logical_h) = logical_desktop_frame()?;
+    let (capture_w, capture_h) = crate::capture::png_dimensions_pub(output_png).ok()?;
+    uniform_backing_scale(capture_w, capture_h, logical_w, logical_h)
+}
+
+/// Scale-aware sibling of [`crop_png_to_rect`] for backing-pixel buffers:
+/// normalize the display to logical pixels, then crop in the input frame.
+/// Clipped right/bottom edges keep their visible logical dimensions instead
+/// of being stretched to the requested extent. At scale 1.0 this is exactly
+/// the legacy 1:1 crop.
+fn crop_backing_png_to_logical_rect(
+    output_png: &[u8],
+    rect_x: i32,
+    rect_y: i32,
+    rect_width: u32,
+    rect_height: u32,
+    scale: f64,
+    label: &str,
+) -> anyhow::Result<Vec<u8>> {
+    if !scale.is_finite() || scale <= 0.0 {
+        anyhow::bail!("{label} has non-positive backing scale {scale}");
+    }
+    if rect_width == 0 || rect_height == 0 {
+        anyhow::bail!("{label} has empty capture geometry");
+    }
+    if (scale - 1.0).abs() <= 0.01 {
+        return crop_png_to_rect(output_png, rect_x, rect_y, rect_width, rect_height, label);
+    }
+    // Normalize before cropping so right/bottom clipping cannot stretch the
+    // visible portion back to the requested size. Clamping, including the
+    // legacy negative-origin behavior, then happens in logical coordinates.
+    let image = image::load_from_memory(output_png)?;
+    let logical_width = (f64::from(image.width()) / scale).round() as u32;
+    let logical_height = (f64::from(image.height()) / scale).round() as u32;
+    if logical_width == 0 || logical_height == 0 {
+        anyhow::bail!("{label} has empty logical capture geometry");
+    }
+    let logical = image.resize_exact(
+        logical_width,
+        logical_height,
+        image::imageops::FilterType::Lanczos3,
+    );
+    let x = rect_x.max(0) as u32;
+    let y = rect_y.max(0) as u32;
+    if x >= logical_width || y >= logical_height {
+        anyhow::bail!(
+            "{label} origin ({x},{y}) is outside captured output {logical_width}x{logical_height}"
+        );
+    }
+    let cropped = logical.crop_imm(
+        x,
+        y,
+        rect_width.min(logical_width - x),
+        rect_height.min(logical_height - y),
+    );
+    let mut cursor = std::io::Cursor::new(Vec::new());
+    cropped.write_to(&mut cursor, image::ImageFormat::Png)?;
+    Ok(cursor.into_inner())
+}
+
+#[derive(Default)]
+struct LogicalOutputQuery {
+    manager: Option<ZxdgOutputManagerV1>,
+    outputs: Vec<LogicalOutputCell>,
+    sync_done: bool,
+}
+
+#[derive(Default)]
+struct LogicalOutputCell {
+    registry_name: u32,
+    removed: bool,
+    output: Option<WlOutput>,
+    xdg_output: Option<ZxdgOutputV1>,
+    mode_width: u32,
+    mode_height: u32,
+    logical_x: Option<i32>,
+    logical_y: Option<i32>,
+    logical_width: Option<u32>,
+    logical_height: Option<u32>,
+}
+
+impl LogicalOutputCell {
+    fn update_mode(&mut self, flags: WEnum<wl_output::Mode>, width: i32, height: i32) {
+        // Other advertised modes are available choices, not the active buffer
+        // size. Replace the current pair together, including when it shrinks.
+        if matches!(flags, WEnum::Value(flags) if flags.contains(wl_output::Mode::Current)) {
+            self.mode_width = width.max(0) as u32;
+            self.mode_height = height.max(0) as u32;
+        }
+    }
+}
+
+impl LogicalOutputQuery {
+    fn snapshot(&self) -> anyhow::Result<(Vec<LogicalOutput>, Vec<(u32, u32)>)> {
+        // Never discard incomplete or removed cells: that could turn an
+        // unqualified multi-output topology into an apparent single output.
+        let logical: Option<Vec<_>> = self
+            .outputs
+            .iter()
+            .map(|cell| {
+                if cell.removed {
+                    return None;
+                }
+                Some(LogicalOutput {
+                    x: cell.logical_x?,
+                    y: cell.logical_y?,
+                    width: cell.logical_width.filter(|width| *width > 0)?,
+                    height: cell.logical_height.filter(|height| *height > 0)?,
+                })
+            })
+            .collect();
+        let logical =
+            logical.ok_or_else(|| anyhow::anyhow!("incomplete logical output topology"))?;
+        let modes = self
+            .outputs
+            .iter()
+            .map(|cell| (cell.mode_width, cell.mode_height))
+            .collect();
+        Ok((logical, modes))
+    }
+}
+
+impl Dispatch<wl_registry::WlRegistry, ()> for LogicalOutputQuery {
+    fn event(
+        state: &mut Self,
+        registry: &wl_registry::WlRegistry,
+        event: wl_registry::Event,
+        _: &(),
+        _: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        if let wl_registry::Event::GlobalRemove { name } = &event {
+            if let Some(cell) = state
+                .outputs
+                .iter_mut()
+                .find(|cell| cell.registry_name == *name)
+            {
+                cell.removed = true;
+            }
+        }
+        if let wl_registry::Event::Global {
+            name,
+            interface,
+            version,
+        } = event
+        {
+            if interface == ZxdgOutputManagerV1::interface().name {
+                state.manager =
+                    Some(registry.bind::<ZxdgOutputManagerV1, _, _>(name, version.min(3), qh, ()));
+            } else if interface == WlOutput::interface().name {
+                // The bind order is the cell index carried as user data, so
+                // `wl_output` and xdg-output events land on the right cell.
+                let index = state.outputs.len();
+                state.outputs.push(LogicalOutputCell {
+                    registry_name: name,
+                    output: Some(registry.bind::<WlOutput, _, _>(name, version.min(4), qh, index)),
+                    ..Default::default()
+                });
+            }
+        }
+    }
+}
+
+impl Dispatch<WlOutput, usize> for LogicalOutputQuery {
+    fn event(
+        state: &mut Self,
+        _: &WlOutput,
+        event: wl_output::Event,
+        index: &usize,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_output::Event::Mode {
+            flags,
+            width,
+            height,
+            ..
+        } = event
+        {
+            if let Some(cell) = state.outputs.get_mut(*index) {
+                cell.update_mode(flags, width, height);
+            }
+        }
+    }
+}
+
+impl Dispatch<ZxdgOutputManagerV1, ()> for LogicalOutputQuery {
+    fn event(
+        _: &mut Self,
+        _: &ZxdgOutputManagerV1,
+        _: <ZxdgOutputManagerV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<ZxdgOutputV1, usize> for LogicalOutputQuery {
+    fn event(
+        state: &mut Self,
+        _: &ZxdgOutputV1,
+        event: <ZxdgOutputV1 as Proxy>::Event,
+        index: &usize,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let Some(cell) = state.outputs.get_mut(*index) else {
+            return;
+        };
+        match event {
+            zxdg_output_v1::Event::LogicalPosition { x, y } => {
+                cell.logical_x = Some(x);
+                cell.logical_y = Some(y);
+            }
+            zxdg_output_v1::Event::LogicalSize { width, height } => {
+                cell.logical_width = Some(width.max(0) as u32);
+                cell.logical_height = Some(height.max(0) as u32);
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<WlCallback, ()> for LogicalOutputQuery {
+    fn event(
+        state: &mut Self,
+        _: &WlCallback,
+        event: wl_callback::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_callback::Event::Done { .. } = event {
+            state.sync_done = true;
+        }
+    }
+}
+
+// Fresh metadata is essential: a TTL can admit a disconnected or resized
+// output and silently remap screenshot pixels to the wrong input positions.
+// All barriers share one deadline; a stalled compositor cannot wedge a tool.
+const LOGICAL_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
+
+fn query_logical_outputs_on(
+    conn: Connection,
+) -> anyhow::Result<(Vec<LogicalOutput>, Vec<(u32, u32)>)> {
+    let deadline = std::time::Instant::now() + LOGICAL_QUERY_TIMEOUT;
+    let mut queue = conn.new_event_queue::<LogicalOutputQuery>();
+    let qh = queue.handle();
+    conn.display().get_registry(&qh, ());
+    let mut state = LogicalOutputQuery::default();
+    let sync = |queue: &mut wayland_client::EventQueue<LogicalOutputQuery>,
+                state: &mut LogicalOutputQuery| {
+        state.sync_done = false;
+        conn.display().sync(&qh, ());
+        hyprland_capture::dispatch_until(
+            queue,
+            state,
+            deadline,
+            "logical output metadata",
+            |state| state.sync_done,
+        )
+    };
+    sync(&mut queue, &mut state)?;
+    let manager = state
+        .manager
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("compositor does not advertise zxdg_output_manager_v1"))?;
+    for (index, cell) in state.outputs.iter_mut().enumerate() {
+        let Some(output) = cell.output.clone() else {
+            continue;
+        };
+        cell.xdg_output = Some(manager.get_xdg_output(&output, &qh, index));
+    }
+    // Outputs report `Mode` first, xdg-output events follow; drain both.
+    sync(&mut queue, &mut state)?;
+    sync(&mut queue, &mut state)?;
+    state.snapshot()
+}
+
+fn query_logical_outputs() -> Option<(Vec<LogicalOutput>, Vec<(u32, u32)>)> {
+    match Connection::connect_to_env()
+        .map_err(anyhow::Error::from)
+        .and_then(query_logical_outputs_on)
+    {
+        Ok(queried) => Some(queried),
+        Err(error) => {
+            tracing::debug!("logical output probe failed, keeping legacy frame: {error:#}");
+            None
+        }
+    }
+}
+
+/// Resolve the compositor-logical desktop frame: `(width, height)` in the
+/// input coordinate frame. `None` when there is no Wayland connection, no
+/// xdg-output manager, or anything but exactly one logical output is
+/// advertised at origin — callers keep their legacy frame.
+pub fn logical_desktop_frame() -> Option<(u32, u32)> {
+    query_logical_outputs().and_then(|(logical, _)| {
+        let frame = single_logical_output(&logical);
+        if frame.is_none() {
+            tracing::debug!(
+                outputs = logical.len(),
+                "logical desktop needs exactly one output, keeping legacy frame"
+            );
+        }
+        frame
+    })
+}
+
+/// Resolve the full logical desktop (frame + backing scale from the
+/// advertised hardware mode). `None` under the same conditions as
+/// [`logical_desktop_frame`], plus a missing or non-uniform mode mapping.
+pub fn logical_desktop() -> Option<LogicalDesktop> {
+    let (logical, modes) = query_logical_outputs()?;
+    let (width, height) = single_logical_output(&logical)?;
+    let [(mode_width, mode_height)] = modes.as_slice() else {
+        tracing::debug!(
+            outputs = logical.len(),
+            modes = modes.len(),
+            "logical desktop mode mapping is ambiguous, keeping legacy frame"
+        );
+        return None;
+    };
+    let scale = uniform_backing_scale(*mode_width, *mode_height, width, height)?;
+    if !scale.is_finite() || scale <= 0.0 {
+        tracing::debug!(
+            scale,
+            "logical desktop scale is not usable, keeping legacy frame"
+        );
+        return None;
+    }
+    Some(LogicalDesktop {
+        width,
+        height,
+        scale,
+    })
 }
 
 /// Display-level capture dispatcher. Cascade:
@@ -1449,14 +1874,12 @@ fn approach_pixel(px: u32, extent: u32) -> u32 {
     }
 }
 
-/// Logical desktop frame published by a compositor adapter whose geometry is
-/// in logical pixels, or `None` when callers keep the protocol-native frame
-/// (for example the full-output screencopy buffer on Sway). Desktop capture
-/// and the virtual pointer both read this, so a desktop screenshot pixel and a
-/// pointer coordinate always share one frame.
 pub(crate) fn compositor_logical_frame() -> Option<anyhow::Result<(u32, u32)>> {
-    hyprland::is_session()
-        .then(|| hyprland::screen_size().map(|(width, height, _scale)| (width, height)))
+    if hyprland::is_session() {
+        Some(hyprland::screen_size().map(|(width, height, _scale)| (width, height)))
+    } else {
+        logical_desktop_frame().map(Ok)
+    }
 }
 
 /// Pointer space for `zwlr_virtual_pointer_v1::motion_absolute`, as
@@ -1473,7 +1896,9 @@ fn virtual_pointer_space(output_mode: (u32, u32)) -> anyhow::Result<(i32, i32, u
     let layout = if hyprland::is_session() {
         hyprland::pointer_space()?
     } else {
-        None
+        compositor_logical_frame()
+            .transpose()?
+            .map(|(width, height)| (0, 0, width, height))
     };
     Ok(select_virtual_pointer_space(output_mode, layout))
 }
@@ -4295,5 +4720,367 @@ mod tests {
         assert!(parse_inject_geometry("geometry 1").is_err());
         assert!(parse_inject_geometry("err target-not-found").is_err());
         assert!(parse_inject_geometry("ok").is_err());
+    }
+}
+
+#[cfg(test)]
+mod logical_frame_tests {
+    use super::{
+        crop_backing_png_to_logical_rect, crop_png_to_rect, query_logical_outputs_on,
+        single_logical_output, uniform_backing_scale, LogicalOutput, LogicalOutputCell,
+        LogicalOutputQuery,
+    };
+
+    fn output(x: i32, y: i32, width: u32, height: u32) -> LogicalOutput {
+        LogicalOutput {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    /// Backing buffer painted in solid left/right halves so a wrong-frame
+    /// crop is observably the wrong color, not just the wrong size.
+    fn halves_png(backing_w: u32, backing_h: u32) -> Vec<u8> {
+        let mut rgba = Vec::with_capacity((backing_w * backing_h * 4) as usize);
+        for _y in 0..backing_h {
+            for x in 0..backing_w {
+                if x < backing_w / 2 {
+                    rgba.extend_from_slice(&[255, 0, 0, 255]);
+                } else {
+                    rgba.extend_from_slice(&[0, 0, 255, 255]);
+                }
+            }
+        }
+        cua_driver_core::image_utils::encode_rgba_to_png(&rgba, backing_w, backing_h)
+            .expect("encode halves fixture")
+    }
+
+    fn mean_channels(png: &[u8]) -> (f64, f64, f64) {
+        let decoded = image::load_from_memory(png)
+            .expect("decode result")
+            .to_rgba8();
+        let raw = decoded.into_raw();
+        let pixels = raw.len() / 4;
+        let (mut r, mut g, mut b) = (0u64, 0u64, 0u64);
+        for px in raw.chunks_exact(4) {
+            r += u64::from(px[0]);
+            g += u64::from(px[1]);
+            b += u64::from(px[2]);
+        }
+        (
+            r as f64 / pixels as f64,
+            g as f64 / pixels as f64,
+            b as f64 / pixels as f64,
+        )
+    }
+
+    #[test]
+    fn single_output_layout_resolves_while_other_layouts_stay_legacy() {
+        assert_eq!(
+            single_logical_output(&[output(0, 0, 2560, 1440)]),
+            Some((2560, 1440))
+        );
+        assert_eq!(single_logical_output(&[]), None);
+        assert_eq!(
+            single_logical_output(&[output(0, 0, 2560, 1440), output(2560, 0, 1920, 1080)]),
+            None
+        );
+        assert_eq!(single_logical_output(&[output(0, 0, 0, 1440)]), None);
+        // Translating a desktop needs origin metadata throughout the input
+        // contract; do not pretend these are zero-origin frames.
+        for (x, y) in [(100, 0), (-100, 0), (0, 100), (0, -100)] {
+            assert_eq!(single_logical_output(&[output(x, y, 2560, 1440)]), None);
+        }
+    }
+
+    fn complete_cell() -> LogicalOutputCell {
+        LogicalOutputCell {
+            logical_x: Some(0),
+            logical_y: Some(0),
+            logical_width: Some(1920),
+            logical_height: Some(1080),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn active_mode_ignores_larger_available_and_preferred_modes() {
+        use wayland_client::{protocol::wl_output::Mode, WEnum};
+        let mut cell = complete_cell();
+        cell.update_mode(WEnum::Value(Mode::Current), 1920, 1080);
+        cell.update_mode(WEnum::Value(Mode::Preferred), 3840, 2160);
+        cell.update_mode(WEnum::Value(Mode::empty()), 2560, 1440);
+        cell.update_mode(WEnum::Unknown(0x80), 7680, 4320);
+        assert_eq!((cell.mode_width, cell.mode_height), (1920, 1080));
+        cell.update_mode(WEnum::Value(Mode::Current | Mode::Preferred), 1280, 720);
+        assert_eq!((cell.mode_width, cell.mode_height), (1280, 720));
+    }
+
+    #[test]
+    fn preferred_mode_alone_does_not_invent_a_backing_scale() {
+        use wayland_client::{protocol::wl_output::Mode, WEnum};
+        let mut cell = complete_cell();
+        cell.update_mode(WEnum::Value(Mode::Preferred), 3840, 2160);
+        assert_eq!(
+            uniform_backing_scale(cell.mode_width, cell.mode_height, 1920, 1080),
+            None
+        );
+    }
+
+    #[test]
+    fn incomplete_peer_never_becomes_a_single_output_frame() {
+        let mut state = LogicalOutputQuery {
+            outputs: vec![complete_cell(), LogicalOutputCell::default()],
+            ..Default::default()
+        };
+        assert!(
+            state.snapshot().is_err(),
+            "incomplete peer must not be dropped"
+        );
+        state.outputs[1] = complete_cell();
+        let (logical, modes) = state.snapshot().expect("complete peers");
+        assert_eq!(modes.len(), 2);
+        assert_eq!(single_logical_output(&logical), None);
+        state.outputs.pop();
+        let (logical, _) = state.snapshot().expect("one complete output");
+        assert_eq!(single_logical_output(&logical), Some((1920, 1080)));
+    }
+
+    #[test]
+    fn removed_or_incomplete_output_is_not_reused() {
+        let mut state = LogicalOutputQuery {
+            outputs: vec![complete_cell()],
+            ..Default::default()
+        };
+        state.outputs[0].removed = true;
+        assert!(state.snapshot().is_err());
+        state.outputs[0].removed = false;
+        state.outputs[0].logical_x = None;
+        assert!(state.snapshot().is_err());
+    }
+
+    #[test]
+    fn backing_scale_accepts_fractional_and_rejects_mixed_frames() {
+        assert_eq!(uniform_backing_scale(3840, 2160, 2560, 1440), Some(1.5));
+        assert_eq!(uniform_backing_scale(1920, 1080, 1920, 1080), Some(1.0));
+        assert_eq!(uniform_backing_scale(3840, 2160, 2560, 1200), None);
+        assert_eq!(uniform_backing_scale(0, 2160, 2560, 1440), None);
+        assert_eq!(uniform_backing_scale(3840, 2160, 0, 1440), None);
+    }
+
+    #[test]
+    fn fractional_crop_maps_the_logical_rect_into_backing_pixels() {
+        // 150% layout: logical 200x150 over a 300x225 backing buffer. The
+        // logical rect (110,10,20,20) is red 1:1 but blue once scaled.
+        let backing = halves_png(300, 225);
+        let fixed = crop_backing_png_to_logical_rect(&backing, 110, 10, 20, 20, 1.5, "test")
+            .expect("scale-aware crop");
+        let (w, h) = crate::capture::png_dimensions_pub(&fixed).expect("dims");
+        assert_eq!((w, h), (20, 20), "window image stays in the logical frame");
+        let (r, _, b) = mean_channels(&fixed);
+        assert!(
+            b > 250.0 && r < 5.0,
+            "crop shows the backing region, r={r} b={b}"
+        );
+
+        // The legacy 1:1 crop of the same logical rect is the wrong region.
+        let legacy = crop_png_to_rect(&backing, 110, 10, 20, 20, "test").expect("legacy crop");
+        let (r, _, b) = mean_channels(&legacy);
+        assert!(
+            r > 250.0 && b < 5.0,
+            "legacy crop shows the wrong region, r={r} b={b}"
+        );
+    }
+
+    #[test]
+    fn negative_origin_clamps_in_backing_space_like_the_legacy_crop() {
+        // Partially off-screen window: the logical origin maps below zero in
+        // backing pixels, and the shared clamp keeps buffer-origin behavior.
+        let backing = halves_png(300, 225);
+        let fixed = crop_backing_png_to_logical_rect(&backing, -10, 10, 40, 20, 1.5, "test")
+            .expect("negative-origin crop");
+        let (w, h) = crate::capture::png_dimensions_pub(&fixed).expect("dims");
+        assert_eq!((w, h), (40, 20));
+        let (r, _, b) = mean_channels(&fixed);
+        assert!(
+            r > 250.0 && b < 5.0,
+            "clamped region starts at buffer origin, r={r} b={b}"
+        );
+    }
+
+    #[test]
+    fn unit_scale_crop_matches_the_legacy_crop() {
+        let backing = halves_png(200, 150);
+        let fixed = crop_backing_png_to_logical_rect(&backing, 110, 10, 20, 20, 1.0, "test")
+            .expect("unit crop");
+        let legacy = crop_png_to_rect(&backing, 110, 10, 20, 20, "test").expect("legacy crop");
+        let fixed_raw = image::load_from_memory(&fixed)
+            .expect("decode")
+            .to_rgba8()
+            .into_raw();
+        let legacy_raw = image::load_from_memory(&legacy)
+            .expect("decode")
+            .to_rgba8()
+            .into_raw();
+        assert_eq!(fixed_raw, legacy_raw);
+    }
+
+    #[test]
+    fn scale_aware_crop_rejects_degenerate_input() {
+        let backing = halves_png(300, 225);
+        assert!(crop_backing_png_to_logical_rect(&backing, 0, 0, 0, 20, 1.5, "test").is_err());
+        assert!(crop_backing_png_to_logical_rect(&backing, 0, 0, 20, 20, 0.0, "test").is_err());
+        assert!(
+            crop_backing_png_to_logical_rect(&backing, 0, 0, 20, 20, f64::NAN, "test").is_err()
+        );
+    }
+
+    #[test]
+    fn clipped_fractional_crop_keeps_logical_pixel_spacing() {
+        let backing = halves_png(300, 225);
+        for (x, y, expected) in [
+            (190, 10, (10, 20)),
+            (110, 140, (20, 10)),
+            (190, 140, (10, 10)),
+        ] {
+            let fixed = crop_backing_png_to_logical_rect(&backing, x, y, 20, 20, 1.5, "clipped")
+                .expect("clipped fractional crop");
+            assert_eq!(
+                crate::capture::png_dimensions_pub(&fixed).unwrap(),
+                expected
+            );
+            let (r, _, b) = mean_channels(&fixed);
+            assert!(b > 250.0 && r < 5.0);
+        }
+        assert!(
+            crop_backing_png_to_logical_rect(&backing, 200, 10, 20, 20, 1.5, "outside").is_err()
+        );
+        assert!(
+            crop_backing_png_to_logical_rect(&backing, 10, 150, 20, 20, 1.5, "outside").is_err()
+        );
+    }
+
+    /// Minimal wire peer for the actual registry/mode/xdg callbacks. It
+    /// advertises a larger preferred mode after CURRENT, as real outputs may.
+    /// No desktop or process-global Wayland environment mutation is needed.
+    fn mock_output_query(
+        logical_width: u32,
+        incomplete_peer: bool,
+    ) -> anyhow::Result<(Vec<LogicalOutput>, Vec<(u32, u32)>)> {
+        use std::io::{Read, Write};
+        use std::os::unix::net::UnixStream;
+        fn send(stream: &mut UnixStream, object: u32, opcode: u32, body: &[u32]) {
+            let header = [object, (((body.len() + 2) * 4) as u32) << 16 | opcode];
+            for word in header.iter().chain(body) {
+                stream.write_all(&word.to_ne_bytes()).unwrap();
+            }
+        }
+        fn global(
+            stream: &mut UnixStream,
+            registry: u32,
+            name: u32,
+            interface: &str,
+            version: u32,
+        ) {
+            let mut text = interface.as_bytes().to_vec();
+            text.push(0);
+            let len = text.len() as u32;
+            text.resize((text.len() + 3) & !3, 0);
+            let mut body = vec![name, len];
+            body.extend(
+                text.chunks_exact(4)
+                    .map(|word| u32::from_ne_bytes(word.try_into().unwrap())),
+            );
+            body.push(version);
+            send(stream, registry, 0, &body);
+        }
+        let (client, mut server) = UnixStream::pair().unwrap();
+        server
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        let peer = std::thread::spawn(move || {
+            let mut registry = 0;
+            let mut manager = 0;
+            let mut primary = 0;
+            loop {
+                let mut header = [0; 8];
+                if server.read_exact(&mut header).is_err() {
+                    break;
+                }
+                let object = u32::from_ne_bytes(header[..4].try_into().unwrap());
+                let size_opcode = u32::from_ne_bytes(header[4..].try_into().unwrap());
+                let opcode = size_opcode & 0xffff;
+                let mut bytes = vec![0; (size_opcode >> 16) as usize - 8];
+                server.read_exact(&mut bytes).unwrap();
+                let body: Vec<u32> = bytes
+                    .chunks_exact(4)
+                    .map(|word| u32::from_ne_bytes(word.try_into().unwrap()))
+                    .collect();
+                if object == 1 && opcode == 1 {
+                    registry = body[0];
+                    global(&mut server, registry, 10, "zxdg_output_manager_v1", 3);
+                    global(&mut server, registry, 20, "wl_output", 4);
+                    if incomplete_peer {
+                        global(&mut server, registry, 21, "wl_output", 4);
+                    }
+                } else if object == 1 && opcode == 0 {
+                    send(&mut server, body[0], 0, &[0]); // wl_callback.done
+                    send(&mut server, 1, 1, &[body[0]]); // wl_display.delete_id
+                } else if object == registry && opcode == 0 {
+                    let id = *body.last().unwrap();
+                    if body[0] == 10 {
+                        manager = id;
+                    } else {
+                        if body[0] == 20 {
+                            primary = id;
+                        }
+                        send(&mut server, id, 1, &[1, 1920, 1080, 60000]); // CURRENT
+                        send(&mut server, id, 1, &[2, 3840, 2160, 60000]); // PREFERRED
+                        send(&mut server, id, 2, &[]); // wl_output.done
+                    }
+                } else if object == manager && opcode == 1 && body[1] == primary {
+                    send(&mut server, body[0], 0, &[0, 0]); // logical_position
+                    send(&mut server, body[0], 1, &[logical_width, 1080]); // logical_size
+                    send(&mut server, primary, 2, &[]);
+                }
+            }
+        });
+        let result =
+            query_logical_outputs_on(wayland_client::Connection::from_socket(client).unwrap());
+        peer.join().unwrap();
+        result
+    }
+
+    #[test]
+    fn wire_queries_use_current_modes_and_fresh_complete_topology() {
+        let (logical, modes) = mock_output_query(1920, false).expect("initial topology");
+        assert_eq!(single_logical_output(&logical), Some((1920, 1080)));
+        assert_eq!(modes, vec![(1920, 1080)]);
+        let (logical, _) = mock_output_query(1280, false).expect("changed topology");
+        assert_eq!(single_logical_output(&logical), Some((1280, 1080)));
+        assert!(
+            mock_output_query(1280, true).is_err(),
+            "new incomplete peer must disqualify the frame"
+        );
+    }
+
+    #[test]
+    fn stalled_logical_query_has_a_shared_deadline() {
+        let (client, _silent_server) = std::os::unix::net::UnixStream::pair().unwrap();
+        let conn = wayland_client::Connection::from_socket(client).unwrap();
+        let started = std::time::Instant::now();
+        let error = query_logical_outputs_on(conn).expect_err("silent compositor must time out");
+        assert!(error.to_string().contains("timed out"), "{error:#}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    }
+
+    #[test]
+    fn disconnected_logical_query_fails_closed() {
+        let (client, server) = std::os::unix::net::UnixStream::pair().unwrap();
+        let conn = wayland_client::Connection::from_socket(client).unwrap();
+        drop(server);
+        assert!(query_logical_outputs_on(conn).is_err());
     }
 }

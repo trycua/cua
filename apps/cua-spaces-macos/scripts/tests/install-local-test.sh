@@ -1230,7 +1230,7 @@ write_local_cli() {
     : > "$LOCAL_CUA_LOG"
     cat > "$LOCAL_APP/Contents/MacOS/cua" <<'STUBEOF'
 #!/bin/bash
-echo "cua $* [CUA_CHANNEL=${CUA_CHANNEL-}] [CUA_HOME=${CUA_HOME-}] [CUA_API_KEY=${CUA_API_KEY-}] [CUA_RELAY_URL=${CUA_RELAY_URL-}] [CUA_ENV=${CUA_ENV-}] creds=$([ -e "$HOME/.cua-local/credentials.json" ] && echo present || echo gone)" >> "$LOCAL_CUA_LOG"
+echo "cua $* [CUA_CHANNEL=${CUA_CHANNEL-}] [CUA_HOME=${CUA_HOME-}] [CUA_API_KEY=${CUA_API_KEY-}] [CUA_RELAY_URL=${CUA_RELAY_URL-}] [CUA_ENV=${CUA_ENV-}] creds=$([ -e "$HOME/.cua-local${CUA_ENV:+$([ "$CUA_ENV" = prod ] && echo /envs/prod)}/credentials.json" ] && echo present || echo gone)" >> "$LOCAL_CUA_LOG"
 case "$*" in
     "auth status") exit "${STUB_AUTH_STATUS:-0}" ;;
     "host remove --force --uninstalling") exit "${STUB_HOST_REMOVE:-0}" ;;
@@ -1280,8 +1280,8 @@ check "the Local bundle id's preferences, caches, web view data, cookies and win
     '[ ! -e "$FAKE_HOME/Library/Preferences/com.trycua.spaces.macos.local.plist" ] && [ ! -e "$FAKE_HOME/Library/Caches/com.trycua.spaces.macos.local" ] && [ ! -e "$FAKE_HOME/Library/HTTPStorages/com.trycua.spaces.macos.local" ] && [ ! -e "$FAKE_HOME/Library/WebKit/com.trycua.spaces.macos.local" ] && [ ! -e "$FAKE_HOME/Library/Cookies/com.trycua.spaces.macos.local.binarycookies" ] && [ ! -e "$FAKE_HOME/Library/Saved Application State/com.trycua.spaces.macos.local.savedState" ]'
 check "and Stable's preferences, caches, web view data, cookies and window state of the same kinds are still there" \
     '[ -f "$FAKE_HOME/Library/Preferences/com.trycua.spaces.macos.plist" ] && [ -f "$FAKE_HOME/Library/Caches/com.trycua.spaces.macos/Cache.db" ] && [ -f "$FAKE_HOME/Library/WebKit/com.trycua.spaces.macos/data" ] && [ -f "$FAKE_HOME/Library/Cookies/com.trycua.spaces.macos.binarycookies" ] && [ -f "$FAKE_HOME/Library/Saved Application State/com.trycua.spaces.macos.savedState/windows.plist" ]'
-check "this Mac was taken off the relay, as Local, before the sign-in was deleted" \
-    'grep >/dev/null "^cua auth status \[CUA_CHANNEL=local\]" "$LOCAL_CUA_LOG" && grep >/dev/null "^cua host remove --force --uninstalling \[CUA_CHANNEL=local\] .*creds=present" "$LOCAL_CUA_LOG"'
+check "this Mac was taken off the relay, as Local, in staging (the only environment with state), before the sign-in was deleted" \
+    'grep >/dev/null "^cua auth status \[CUA_CHANNEL=local\]" "$LOCAL_CUA_LOG" && grep >/dev/null "^cua host remove --force --uninstalling \[CUA_CHANNEL=local\] .*\[CUA_ENV=staging\] creds=present" "$LOCAL_CUA_LOG" && ! grep >/dev/null "CUA_ENV=prod" "$LOCAL_CUA_LOG"'
 check "the Local host runner job file is gone" '[ ! -e "$FAKE_HOME/Library/LaunchAgents/com.trycua.spacesd.host.local.plist" ]'
 check "the helper login item was unregistered by the Local app itself" 'grep >/dev/null -- "--service-helper unregister \[CUA_CHANNEL=local\]" "$STUB_LOG"'
 check "launchctl was asked about the two Local labels only" \
@@ -1325,14 +1325,41 @@ echo "== uninstall takes this Mac off the relay, safely =="
 reset_fixture
 STABLE_BEFORE="$(snap_stable)"
 install
-mkdir -p "$FAKE_HOME/.cua-local"
+mkdir -p "$FAKE_HOME/.cua-local/envs/prod"
 echo '{}' > "$FAKE_HOME/.cua-local/credentials.json"
+echo '{}' > "$FAKE_HOME/.cua-local/envs/prod/credentials.json"
 write_local_cli
 run env CUA_HOME="$FAKE_HOME/.cua" CUA_API_KEY=stable-key CUA_RELAY_URL=https://relay.example.invalid CUA_ENV=prod "$FAKE_SCRIPTS/uninstall-local.sh" --yes
 check "uninstall with a stray Stable environment (status $RC)" '[ "$RC" = 0 ] && [ ! -e "$LOCAL_APP" ] && [ ! -e "$FAKE_HOME/.cua-local" ]'
-check "the Local CLI got none of CUA_HOME, CUA_API_KEY or CUA_RELAY_URL, and CUA_ENV=prod" \
-    'grep >/dev/null "^cua host remove .*\[CUA_HOME=\] \[CUA_API_KEY=\] \[CUA_RELAY_URL=\] \[CUA_ENV=prod\]" "$LOCAL_CUA_LOG"'
+check "the Local CLI got none of CUA_HOME, CUA_API_KEY or CUA_RELAY_URL" \
+    '[ "$(grep -c "^cua host remove .*\[CUA_HOME=\] \[CUA_API_KEY=\] \[CUA_RELAY_URL=\]" "$LOCAL_CUA_LOG")" = 2 ]'
+check "both Local environments with state are taken off their relay, each with its own sign-in still there: staging, and prod (the opt-in), whatever CUA_ENV the shell had" \
+    'grep >/dev/null "^cua host remove .*\[CUA_ENV=staging\] creds=present" "$LOCAL_CUA_LOG" && grep >/dev/null "^cua host remove .*\[CUA_ENV=prod\] creds=present" "$LOCAL_CUA_LOG"'
 check "Stable files, library folders included, are byte-identical" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
+
+# A Local home that is a link into the released Cua Spaces' folders: the CLI
+# would unregister Stable's host and delete its state, so it is not asked, and
+# only the link is removed.
+for linked in home host; do
+    reset_fixture
+    STABLE_BEFORE="$(snap_stable)"
+    install
+    write_local_cli
+    if [ "$linked" = home ]; then
+        ln -s "$FAKE_HOME/.cua" "$FAKE_HOME/.cua-local"
+    else
+        mkdir -p "$FAKE_HOME/.cua-local"
+        echo '{}' > "$FAKE_HOME/.cua-local/credentials.json"
+        ln -s "$FAKE_HOME/.cua" "$FAKE_HOME/.cua-local/host"
+    fi
+    uninstall --yes
+    check "a Local $linked that is a link into ~/.cua: the Local CLI is not run, and it says why (status $RC)" \
+        '[ "$RC" = 0 ] && [ ! -s "$LOCAL_CUA_LOG" ] && printf "%s" "$OUT" | grep -F >/dev/null "not taking this Mac off the staging relay"'
+    check "a Local $linked that is a link into ~/.cua: only the link goes, Stable files are byte-identical" \
+        '[ ! -e "$FAKE_HOME/.cua-local" ] && [ ! -L "$FAKE_HOME/.cua-local" ] && [ "$(snap_stable)" = "$STABLE_BEFORE" ]'
+done
+reset_fixture
+STABLE_BEFORE="$(snap_stable)"
 
 # Not signed in: nothing to unregister, and nothing is said about it.
 reset_fixture

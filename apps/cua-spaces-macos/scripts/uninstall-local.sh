@@ -16,8 +16,9 @@
 #                        (default $HOME); the state is always removed from $HOME
 #
 # It removes, after asking:
-#   - this Mac's entry in the relay, when Local is signed in (best effort: the
-#     machine would otherwise stay listed as offline), before the sign-in goes
+#   - this Mac's entry in the relay, in each environment Local is signed in to
+#     (best effort: the machine would otherwise stay listed as offline), before
+#     the sign-in goes
 #   - the Local helper login item (unregistered) and the Local host runner job
 #   - ~/Applications/Cua Spaces Local.app
 #   - ~/.local/bin/cua-local
@@ -135,33 +136,59 @@ fi
 
 # --- This Mac's entry in the relay ---------------------------------------------------
 
-# The bundled Local CLI, as Local and nothing else: every CUA_ variable of the
-# caller's shell but CUA_ENV (the opt-in to production) is dropped, so a stray
-# CUA_HOME or CUA_API_KEY for the released Cua Spaces can neither aim it at that
-# install nor hand its key to this one. It gives up after 30 seconds.
+# The bundled Local CLI for one environment (staging, or prod for the opt-in),
+# as Local and nothing else: every CUA_ variable of the caller's shell is
+# dropped, so a stray CUA_HOME or CUA_API_KEY for the released Cua Spaces can
+# neither aim it at that install nor hand its key to this one, and CUA_ENV is
+# the one asked for. It gives up after 30 seconds.
 run_local_cli() {
-    local cli="$1" var
-    shift
+    local cli="$1" env="$2" var
+    shift 2
     (
         for var in $(compgen -e); do
-            case "$var" in CUA_ENV) ;; CUA_*) unset "$var" ;; esac
+            case "$var" in CUA_*) unset "$var" ;; esac
         done
-        export CUA_CHANNEL=local CUA_TELEMETRY=0
+        export CUA_CHANNEL=local CUA_ENV="$env" CUA_TELEMETRY=0
         exec /usr/bin/perl -e 'alarm 30; exec @ARGV or exit 127' -- "$cli" "$@"
     )
 }
 
-# Takes this Mac off the relay while the sign-in and the host's machine token
-# still exist: they are what proves it may. Best effort. Not signed in (or no
-# app left to ask): there is nothing to unregister, so it says nothing.
+# Whether a Local home may be handed to the Local CLI: it, and the folders the
+# CLI reads and removes in it, resolve to places of their own and not to
+# anything of the released Cua Spaces (a link such as ~/.cua-local -> ~/.cua
+# would make the CLI unregister and delete Stable's host).
+local_home_is_isolated() {
+    local home="$1" sub resolved
+    for sub in "" /host /helper; do
+        resolved="$(canonicalize_path "$home$sub")" || return 1
+        reject_stable_overlap "Local state" "$resolved" >/dev/null 2>&1 || return 1
+    done
+}
+
+# Takes this Mac off the relay, in each environment Local has state for
+# (staging, and prod when Local was opted in to it), while the sign-in and the
+# host's machine token still exist: they are what proves it may. Best effort.
+# Not signed in in an environment (or no app left to ask): there is nothing to
+# unregister there, so it says nothing.
 unregister_from_relay() {
-    local cli="$APP_DEST/Contents/MacOS/cua"
+    local cli="$APP_DEST/Contents/MacOS/cua" env home
     [ -f "$cli" ] && [ -x "$cli" ] && [ ! -L "$cli" ] || return 0
-    run_local_cli "$cli" auth status >/dev/null 2>&1 || return 0
-    log "taking this Mac off the relay"
-    if ! run_local_cli "$cli" host remove --force --uninstalling >/dev/null 2>&1; then
-        warn "could not take this Mac off the relay (offline?): it may stay listed, offline, in your computers until you remove it there."
-    fi
+    for env in staging prod; do
+        case "$env" in
+            staging) home="$LOCAL_HOME" ;;
+            *) home="$LOCAL_HOME/envs/prod" ;;
+        esac
+        [ -d "$home" ] || continue
+        if ! local_home_is_isolated "$home"; then
+            warn "not taking this Mac off the $env relay: $home leads into the released Cua Spaces' folders."
+            continue
+        fi
+        run_local_cli "$cli" "$env" auth status >/dev/null 2>&1 || continue
+        log "taking this Mac off the $env relay"
+        if ! run_local_cli "$cli" "$env" host remove --force --uninstalling >/dev/null 2>&1; then
+            warn "could not take this Mac off the $env relay (offline?): it may stay listed, offline, in your computers until you remove it there."
+        fi
+    done
 }
 unregister_from_relay
 

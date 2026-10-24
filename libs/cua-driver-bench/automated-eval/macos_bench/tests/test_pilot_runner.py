@@ -22,6 +22,30 @@ import arms  # noqa: E402
 import codex_events  # noqa: E402
 
 
+def _x11_ready() -> bool:
+    if sys.platform != "linux" or not os.environ.get("DISPLAY"):
+        return False
+    try:
+        return (
+            subprocess.run(
+                ["xdpyinfo", "-display", os.environ["DISPLAY"]],
+                capture_output=True,
+                timeout=10,
+            ).returncode
+            == 0
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _has_gi() -> bool:
+    try:
+        import gi  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
 def _stamp(events: list[tuple[float, dict]]) -> Path:
     handle = tempfile.NamedTemporaryFile("w", suffix=".tsv", delete=False)
     for stamp, event in events:
@@ -182,9 +206,7 @@ class DesktopRuntimeTest(unittest.TestCase):
                 )
             )
 
-    @unittest.skipUnless(
-        sys.platform == "linux" and os.environ.get("DISPLAY"), "headless X11 session required"
-    )
+    @unittest.skipUnless(_x11_ready(), "headless X11 session required")
     def test_task_helpers_emit_evaluator_compatible_initial_state_and_evidence(self) -> None:
         import desktop_runtime as desktop
         import run_bench as runner
@@ -249,9 +271,7 @@ class DesktopRuntimeTest(unittest.TestCase):
             for name in ("display", "at-spi", "ffmpeg"):
                 self.assertEqual(checks[name].status, "pass", checks[name].detail)
 
-    @unittest.skipUnless(
-        sys.platform == "linux" and os.environ.get("DISPLAY"), "headless X11 session required"
-    )
+    @unittest.skipUnless(_x11_ready() and _has_gi(), "headless X11 session with GTK required")
     def test_real_gtk_interactions_are_accepted_by_unchanged_evaluators(self) -> None:
         import desktop_runtime as desktop
         import run_pilot as pilot
@@ -430,9 +450,7 @@ class DesktopRuntimeTest(unittest.TestCase):
                 proc.wait(timeout=5)
                 desktop.stop_group(proc.pid)
 
-    @unittest.skipUnless(
-        sys.platform == "linux" and os.environ.get("DISPLAY"), "headless X11 session required"
-    )
+    @unittest.skipUnless(_x11_ready(), "headless X11 session required")
     def test_sentinel_witness_and_helper_cleanup(self) -> None:
         import desktop_runtime as desktop
         import run_bench as runner

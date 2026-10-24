@@ -123,15 +123,15 @@ helper="${FAKE_BUILD_HELPER_LABEL:-com.trycua.spaces.local.helper}"
 associated="${FAKE_BUILD_ASSOCIATED:-$id}"
 app="$out/$name.app"
 rm -rf "$app"
-mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Frameworks" "$app/Contents/Library/LaunchAgents"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Helpers" "$app/Contents/Resources" "$app/Contents/Frameworks" "$app/Contents/Library/LaunchAgents"
 for b in CuaSpacesMac cua; do cp "$FAKE_STUB" "$app/Contents/MacOS/$b"; done
 # The host service, as the real build-app.sh gets it: from fetch-spacesd.sh,
 # which prints $CUA_SPACESD_BIN when set and the pinned release otherwise.
 # FAKE_BUILD_IGNORE_SPACESD_BIN stands for a build-app.sh that does not honour it.
 if [ "${FAKE_BUILD_IGNORE_SPACESD_BIN:-0}" = 1 ]; then unset CUA_SPACESD_BIN; fi
 spacesd="$("$(dirname "$0")/fetch-spacesd.sh")"
-cp "$spacesd" "$app/Contents/MacOS/cua-spacesd"
-chmod 0755 "$app/Contents/MacOS/cua-spacesd"
+cp "$spacesd" "$app/Contents/Helpers/cua-spacesd"
+chmod 0755 "$app/Contents/Helpers/cua-spacesd"
 cp "$FAKE_DYLIB" "$app/Contents/Frameworks/libfake.dylib"
 fw="$app/Contents/Frameworks/Fake.framework"
 mkdir -p "$fw/Versions/A/Resources"
@@ -185,7 +185,7 @@ cat > "$app/Contents/Library/LaunchAgents/$helper.plist" <<PLIST
 <key>AssociatedBundleIdentifiers</key><array><string>$associated</string></array>
 </dict></plist>
 PLIST
-/usr/bin/codesign -s - -f -i "$id" "$app/Contents/MacOS/cua-spacesd" >/dev/null 2>&1
+/usr/bin/codesign -s - -f -i "$id" "$app/Contents/Helpers/cua-spacesd" >/dev/null 2>&1
 /usr/bin/codesign -s - -f -i "$id" "$app" >/dev/null 2>&1
 echo "$app"
 EOF
@@ -481,7 +481,7 @@ check "builds with --channel local debug <out>" 'grep >/dev/null -- "^--channel 
 check "the app is ~/Applications/Cua Spaces Local.app with the Local bundle id" '[ "$(installed_id "$LOCAL_APP")" = com.trycua.spaces.local ]'
 check "the signature verifies (deep, strict)" '/usr/bin/codesign --verify --deep --strict "$LOCAL_APP" 2>/dev/null'
 check "nested code was re-signed with the app's identity (cua-spacesd keeps its identifier)" \
-    '/usr/bin/codesign -dv "$LOCAL_APP/Contents/MacOS/cua-spacesd" 2>&1 | grep >/dev/null "^Identifier=com.trycua.spaces.local$"'
+    '/usr/bin/codesign -dv "$LOCAL_APP/Contents/Helpers/cua-spacesd" 2>&1 | grep >/dev/null "^Identifier=com.trycua.spaces.local$"'
 check "the nested framework is signed and sealed" '/usr/bin/codesign --verify --strict "$LOCAL_APP/Contents/Frameworks/Fake.framework" 2>/dev/null'
 check "cua-local links to the bundled cua" '[ "$(readlink "$LOCAL_CLI")" = "$LOCAL_APP/Contents/MacOS/cua" ]'
 check "cua-local runs the bundled cua" 'STUB_LOG="$STUB_LOG" "$LOCAL_CLI" status && grep >/dev/null "cua-local status" "$STUB_LOG"'
@@ -536,8 +536,8 @@ check "the library and CLI are built and staged" \
 check "cua-spacesd is built from this checkout's libs/cua-spacesd" \
     'grep >/dev/null "^cargo build --locked --release -p cua-spacesd --bin cua-spacesd \[in cua-spacesd\]$" "$CARGO_LOG"'
 check "(the checkout's and the pinned daemon of this fixture differ in code)" '[ "$(text_hash "$DAEMON_CHECKOUT")" != "$(text_hash "$DAEMON_PINNED")" ]'
-check "the bundled cua-spacesd is this checkout's build" '[ "$(text_hash "$LOCAL_APP/Contents/MacOS/cua-spacesd")" = "$(text_hash "$DAEMON_CHECKOUT")" ]'
-check "and not the pinned release" '[ "$(text_hash "$LOCAL_APP/Contents/MacOS/cua-spacesd")" != "$(text_hash "$DAEMON_PINNED")" ]'
+check "the bundled cua-spacesd is this checkout's build" '[ "$(text_hash "$LOCAL_APP/Contents/Helpers/cua-spacesd")" = "$(text_hash "$DAEMON_CHECKOUT")" ]'
+check "and not the pinned release" '[ "$(text_hash "$LOCAL_APP/Contents/Helpers/cua-spacesd")" != "$(text_hash "$DAEMON_PINNED")" ]'
 
 ALL_BEFORE="$(snap_all)"
 FAKE_BUILD_SALT=pinned FAKE_BUILD_IGNORE_SPACESD_BIN=1 install
@@ -560,7 +560,7 @@ install
 : > "$CARGO_LOG"
 FAKE_BUILD_SALT=skip install --skip-rust-build
 check "--skip-rust-build uses the existing build: no cargo, the same daemon bundled (status $RC)" \
-    '[ "$RC" = 0 ] && [ ! -s "$CARGO_LOG" ] && [ "$(cat "$LOCAL_APP/Contents/Resources/salt.txt")" = skip ] && [ "$(text_hash "$LOCAL_APP/Contents/MacOS/cua-spacesd")" = "$(text_hash "$DAEMON_CHECKOUT")" ]'
+    '[ "$RC" = 0 ] && [ ! -s "$CARGO_LOG" ] && [ "$(cat "$LOCAL_APP/Contents/Resources/salt.txt")" = skip ] && [ "$(text_hash "$LOCAL_APP/Contents/Helpers/cua-spacesd")" = "$(text_hash "$DAEMON_CHECKOUT")" ]'
 reset_fixture
 run env CARGO_TARGET_DIR=relative/target "$FAKE_SCRIPTS/install-local.sh" --no-launch
 check "a relative CARGO_TARGET_DIR is refused (the daemon could not be found)" '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep >/dev/null "CARGO_TARGET_DIR must be an absolute path"'
@@ -1038,7 +1038,7 @@ if [ -n "${CUA_TEST_SIGNING_KEYCHAIN:-}" ]; then
         check "a rebuild keeps the same designated requirement, so TCC grants survive" '[ -n "$REQ1" ] && [ "$REQ1" = "$REQ2" ] && [ "$(cat "$SIGNED_APP/Contents/Resources/salt.txt")" = rebuilt ]'
         check "a rebuild signed with the certificate resets no TCC rows" '! grep >/dev/null "^tccutil" "$SHIM_LOG"'
         check "every nested piece is signed with the same certificate" \
-            'for f in Contents/MacOS/cua Contents/MacOS/cua-spacesd Contents/Frameworks/libfake.dylib Contents/Frameworks/Fake.framework; do /usr/bin/codesign -d -r- "$SIGNED_APP/$f" 2>&1 | grep >/dev/null "certificate leaf" || exit 1; done'
+            'for f in Contents/MacOS/cua Contents/Helpers/cua-spacesd Contents/Frameworks/libfake.dylib Contents/Frameworks/Fake.framework; do /usr/bin/codesign -d -r- "$SIGNED_APP/$f" 2>&1 | grep >/dev/null "certificate leaf" || exit 1; done'
         check "the fake HOME was not written" '[ "$(snap_all)" = "$ALL_BEFORE" ]'
     else
         fail "install with the signing keychain $CUA_TEST_SIGNING_KEYCHAIN failed (status $RC)"

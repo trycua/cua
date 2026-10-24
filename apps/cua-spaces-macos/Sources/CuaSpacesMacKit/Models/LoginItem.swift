@@ -144,6 +144,26 @@ public enum HelperService {
         return (base as NSString).appendingPathComponent("helper/service.json")
     }
 
+    /// Where the host service's executable lives, relative to the app's
+    /// `Contents`: `Helpers/cua-spacesd`, never `MacOS/`. AppKit takes the
+    /// main bundle from the executable's path, so a cua-spacesd in
+    /// `Contents/MacOS` checks in with LaunchServices *as the app* (same
+    /// bundle id and name) when its cursor overlay starts AppKit. Opening
+    /// the app then activates that windowless helper instead of launching
+    /// the UI. From `Contents/Helpers` it has no bundle of its own and runs
+    /// as a nameless background UI element (`cua_host::service::
+    /// APP_HELPER_DAEMON`; `scripts/build-app.sh` puts it there).
+    public static let daemonInContents = "Helpers/cua-spacesd"
+
+    /// The cua-spacesd of the app whose executable is `executable`
+    /// (`<App>.app/Contents/MacOS/<exe>`): `Contents/Helpers/cua-spacesd`.
+    public static func daemonPath(executable: URL) -> URL {
+        executable.resolvingSymlinksInPath()
+            .deletingLastPathComponent() // Contents/MacOS
+            .deletingLastPathComponent() // Contents
+            .appendingPathComponent(daemonInContents)
+    }
+
     private static func stamped(_ info: [String: Any]?, _ key: String) -> String? {
         guard let value = (info?[key] as? String)?.trimmingCharacters(in: .whitespaces),
               !value.isEmpty else { return nil }

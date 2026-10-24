@@ -212,7 +212,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.changes.outputs.native == 'true' && '[{"name":"macos-dmg","os":"macos-26","bundles":"app,dmg"},{"name":"windows-nsis-msi","os":"windows-latest","bundles":"nsis,msi"},{"name":"linux-deb-appimage","os":"ubuntu-22.04","bundles":"deb,appimage"}]' || '[{"name":"linux-deb-appimage","os":"ubuntu-22.04","bundles":"deb,appimage"}]') }}
+        include: ${{ fromJSON(needs.changes.outputs.native == 'true' && '[{"name":"macos-dmg","os":"macos-26-xlarge","bundles":"app,dmg"},{"name":"windows-nsis-msi","os":"cua-windows-8core","bundles":"nsis,msi"},{"name":"linux-deb-appimage","os":"ubuntu-22.04","bundles":"deb,appimage"}]' || '[{"name":"linux-deb-appimage","os":"ubuntu-22.04","bundles":"deb,appimage"}]') }}
     runs-on: ${{ matrix.os }}
     # A cold Windows bundle takes about 1 h 45 min (the sidecar release build
     # alone is ~50 min). Fail a real hang instead of holding a runner for the
@@ -228,7 +228,7 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: "0"
       # Two jobs on the 7 GB Linux runner: four rustc processes ran it out of
       # memory ("runner received a shutdown signal").
-      CARGO_BUILD_JOBS: ${{ matrix.os == 'ubuntu-22.04' && 2 || 4 }}
+      CARGO_BUILD_JOBS: ${{ matrix.os == 'ubuntu-22.04' && 2 || matrix.os == 'cua-windows-8core' && 8 || 4 }}
     steps:
       - uses: actions/checkout@v4
       # Linking the debug test binaries and the bundle exhausted the Linux

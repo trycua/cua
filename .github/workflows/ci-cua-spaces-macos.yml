@@ -129,7 +129,7 @@ jobs:
   ffi:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Cua Spaces app library (built once)
-    runs-on: macos-26
+    runs-on: macos-26-xlarge
     env:
       CARGO_BUILD_JOBS: 4
       # The slice cache key names the repository (same value as the producer).
@@ -177,7 +177,7 @@ jobs:
   swift-tests:
     name: SwiftUI app (swift tests, bridge contract)
     needs: ffi
-    runs-on: macos-26
+    runs-on: macos-26-xlarge
     steps:
       - uses: actions/checkout@v4
       - name: Download the Cua Spaces app library
@@ -275,7 +275,7 @@ jobs:
   app-bundle:
     name: SwiftUI app (bundle, launch check, XCUITest)
     needs: ffi
-    runs-on: macos-26
+    runs-on: macos-26-xlarge
     steps:
       - uses: actions/checkout@v4
       - name: Download the Cua Spaces app library

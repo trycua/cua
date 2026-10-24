@@ -187,7 +187,9 @@ jobs:
   rust:
     if: ${{ !cancelled() && !startsWith(github.head_ref, 'release-please--branches--') }}
     name: rust (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    # The matrix keeps the standard labels (they name the job); the larger
+    # runners are mapped here.
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && 'cua-linux-16core' || matrix.os == 'macos-26' && 'macos-26-xlarge' || matrix.os == 'windows-latest' && 'cua-windows-8core' || matrix.os }}
     needs: reuse
     # Tests only: lint runs in rust-lint, in parallel.
     timeout-minutes: 90

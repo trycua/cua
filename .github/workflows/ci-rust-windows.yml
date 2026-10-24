@@ -62,7 +62,7 @@ jobs:
   unit:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Rust Windows unit and compile
-    runs-on: windows-latest
+    runs-on: cua-windows-8core
     # The suite below has been running within a hair of this budget for months:
     # the last green run on `main` (359fad56) took 28m31s of 30m. The tests this
     # branch adds push it past the line, and the failure mode is silent -- every

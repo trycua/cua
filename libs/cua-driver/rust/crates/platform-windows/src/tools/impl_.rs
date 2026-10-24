@@ -7812,16 +7812,29 @@ impl Tool for DragTool {
                 Err(error) => return ToolResult::error(error.to_string()),
             };
             let native_drag = tokio::task::spawn_blocking(move || {
-                crate::input::mouse::send_drag_synthesized(
-                    hwnd,
-                    from_x,
-                    from_y,
-                    to_x,
-                    to_y,
-                    duration_ms,
-                    steps,
-                    &button,
-                )
+                if input.delivery_mode == Some(DeliveryMode::Foreground) {
+                    crate::input::mouse::send_drag_synthesized_active(
+                        hwnd,
+                        from_x,
+                        from_y,
+                        to_x,
+                        to_y,
+                        duration_ms,
+                        steps,
+                        &button,
+                    )
+                } else {
+                    crate::input::mouse::send_drag_synthesized(
+                        hwnd,
+                        from_x,
+                        from_y,
+                        to_x,
+                        to_y,
+                        duration_ms,
+                        steps,
+                        &button,
+                    )
+                }
             });
             let visual_drag = track_overlay_drag(
                 cursor_key.clone(),

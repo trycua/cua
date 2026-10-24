@@ -107,6 +107,13 @@ jobs:
         run: python3 scripts/generate-app-core-ffi.py --check
       - name: No UI keeps its own icon cache
         run: scripts/check-icon-caches.sh
+      # notarize.sh against a fake xcrun: a notarytool that dies from a signal
+      # before it returns a submission id is submitted again, a wait that dies
+      # resumes on the same id, anything else is not repeated. Needs no
+      # certificate, network or Apple account (#5837).
+      - name: notarize.sh retries a crashed notarytool (fake xcrun)
+        working-directory: apps/cua-spaces-macos
+        run: scripts/tests/notarize-test.sh
       - name: The SDK icon cache (hit/miss, single flight, negatives, eviction)
         run: cargo test --locked -p cua-icon-cache -- --test-threads=4
       - name: Core tests and parity flows

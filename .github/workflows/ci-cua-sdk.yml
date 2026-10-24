@@ -212,7 +212,7 @@ jobs:
   crates-dry-run:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: crates.io dry run
-    runs-on: cua-linux-16core
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

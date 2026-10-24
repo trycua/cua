@@ -6,9 +6,9 @@
       "case": "01 welcome",
       "step": "welcome",
       "welcome": {
-        "lede": "Spaces on this Mac, away from your files and your mouse.",
+        "lede": "Run agents in Spaces on this Mac, or on any computer your team connects.",
         "primary": "start:Get started",
-        "title": "Your agents get their own computer."
+        "title": "Your computers, shared by your team and its agents."
       }
     },
     {

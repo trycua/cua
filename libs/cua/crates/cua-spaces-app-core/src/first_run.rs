@@ -3,7 +3,7 @@
 
 //! The first run every app shows: four short screens, agent first.
 //!
-//! 1. **Welcome.** "Your agents get their own computer." One button.
+//! 1. **Welcome.** "Your computers, shared by your team and its agents." One button.
 //! 2. **Pick your agent.** The agents found on this computer, in the order
 //!    [`PREFERENCE`] gives (Hermes, Claude Code, Codex, Cursor, then the
 //!    rest), one Connect each. Nothing is connected until its button is
@@ -258,7 +258,7 @@ fn button(id: &str, label: &str) -> FirstRunButton {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WelcomeView {
-    /// "Your agents get their own computer."
+    /// "Your computers, shared by your team and its agents."
     pub title: String,
     pub lede: String,
     /// "Get started" (`start`).
@@ -846,8 +846,8 @@ fn default_or(name: &str, id: &str) -> String {
 fn welcome_view(input: &FirstRunInput) -> WelcomeView {
     let place = this_computer(&input.host_os);
     WelcomeView {
-        title: "Your agents get their own computer.".into(),
-        lede: format!("Spaces on {place}, away from your files and your mouse."),
+        title: "Your computers, shared by your team and its agents.".into(),
+        lede: format!("Run agents in Spaces on {place}, or on any computer your team connects."),
         primary: button("start", "Get started"),
     }
 }
@@ -1639,7 +1639,7 @@ mod tests {
             assert!(drawn[n as usize]);
         }
         let w = view(&input(FirstRunStep::Welcome, vec![])).welcome.unwrap();
-        assert_eq!(w.title, "Your agents get their own computer.");
+        assert_eq!(w.title, "Your computers, shared by your team and its agents.");
         assert_eq!(w.primary.id, "start");
     }
 

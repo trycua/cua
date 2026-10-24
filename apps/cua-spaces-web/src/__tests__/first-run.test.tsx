@@ -105,7 +105,7 @@ const noAgents = (rows: AgentSetupRow[]) => rows.map((r) => ({ ...r, installed: 
 describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
   it("walks Welcome, Pick your agent, Connect your devices and Try it, connecting only what is clicked", async () => {
     const calls = await mount();
-    await waitFor(() => expect(heading()).toBe("Your agents get their own computer."));
+    await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
     click("[data-onboarding-primary]");
     await waitFor(() => expect(heading()).toBe("Pick your agent."));
     // The agents found here, most preferred first; nothing connected by itself.
@@ -141,7 +141,7 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
 
   it("Back works from every step after Welcome, all the way to Welcome, keeping what was picked", async () => {
     const calls = await mount();
-    await waitFor(() => expect(heading()).toBe("Your agents get their own computer."));
+    await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
     expect(document.querySelector("[data-first-run-back]")).toBeNull();
     click("[data-onboarding-primary]");
     await waitFor(() => expect(heading()).toBe("Pick your agent."));
@@ -158,7 +158,7 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     await waitFor(() => expect(heading()).toBe("Pick your agent."));
     expect(document.querySelector<HTMLElement>('[data-first-run-agent="codex"]')!.dataset.connected).toBe("true");
     click("[data-first-run-back]");
-    await waitFor(() => expect(heading()).toBe("Your agents get their own computer."));
+    await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
     // Going back only navigates: nothing was connected again or undone.
     expect(readFirstRun().picked).toEqual(["codex"]);
     expect(calls.filter((c) => c.op === "agents.configure")).toHaveLength(1);
@@ -194,7 +194,7 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
 
   it("with no agent: install one or use the CLI, then a one-click first Space", async () => {
     const calls = await mount({ agents: noAgents, local: (l) => ({ ...l, backends: ["docker"], macosImage: null, hostArch: "amd64" }) });
-    await waitFor(() => expect(heading()).toBe("Your agents get their own computer."));
+    await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
     click("[data-onboarding-primary]");
     await waitFor(() => expect(heading()).toBe("Connect an agent."));
     expect(agents()).toEqual([]);

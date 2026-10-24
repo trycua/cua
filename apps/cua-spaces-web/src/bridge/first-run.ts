@@ -134,7 +134,7 @@ function fallbackView(input: FirstRunInput): FirstRunView {
   };
   switch (input.step) {
     case "welcome":
-      return { ...base, welcome: { title: "Your agents get their own computer.", lede: `Spaces on ${place}, away from your files and your mouse.`, primary: { id: "start", label: "Get started" } } };
+      return { ...base, welcome: { title: "Your computers, shared by your team and its agents.", lede: `Run agents in Spaces on ${place}, or on any computer your team connects.`, primary: { id: "start", label: "Get started" } } };
     case "connect":
       return {
         ...base,

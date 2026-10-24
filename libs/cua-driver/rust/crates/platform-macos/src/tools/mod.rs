@@ -25,6 +25,7 @@ mod type_text;
 // path. The capture functions they wrapped (ScreenCaptureKit, CGWindow,
 // etc.) live elsewhere under CuaDriverCore::Capture and are reached
 // through GetWindowStateTool.
+mod accessibility_surfaces;
 mod check_permissions;
 mod cursor_tools;
 mod desktop_pointer_guard;
@@ -1094,6 +1095,9 @@ pub fn register_all(
     registry.register(Box::new(get_window_state::GetWindowStateTool::new(
         state.clone(),
     )));
+    registry.register(Box::new(
+        accessibility_surfaces::GetAccessibilitySurfacesTool,
+    ));
     registry.register(Box::new(
         cua_driver_core::expectation::VerifyStateTool::new(Arc::new(
             cua_driver_core::expectation::ToolObservationProvider::new(

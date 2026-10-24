@@ -52,12 +52,12 @@ jobs:
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: |
             libs/cua
             libs/cua-spacesd
-          key: perf-cua-channel
+          shared-key: perf-cua-channel
       - name: Check script self-test
         run: python3 libs/cua/bench/channel/check.py --self-test
       - name: QEMU and KVM

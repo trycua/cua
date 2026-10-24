@@ -2,13 +2,11 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { CheckIcon, ChevronRightIcon, CopyIcon } from "lucide-react";
+import { CheckIcon, CopyIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { useAgentKeys, useFirstRun, type FirstRunAgentPick, type FirstRunArt, type FirstRunCredential, type FirstRunExtraView, type FirstRunHook, type FirstRunRow, type FirstRunUpsell, type FirstRunView } from "@/bridge";
+import { useAgentKeys, useFirstRun, type FirstRunArt, type FirstRunCredential, type FirstRunExtraView, type FirstRunHook, type FirstRunRow, type FirstRunView } from "@/bridge";
 import { KeySheet } from "@/components/agents/key-sheet";
-import { Checkbox } from "@/components/ui/checkbox";
-import { CuaKey } from "@/components/cua-key";
 import { CuaLogo } from "@/components/cua-logo";
 import { OsIcon } from "@/components/os-icon";
 import { Button } from "@/components/ui/button";
@@ -20,10 +18,11 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/onboarding/")({ component: OnboardingPage });
 
 /**
- * The first run, the same on macOS, Windows and Linux: pick any agents (or
- * none), then "Your agent can use this Mac". Every word and state is the app
- * core's (`firstRun.view`, through `useFirstRun`); this file places them
- * beside the keycap art.
+ * The first run, the same on macOS, Windows and Linux: Welcome, Pick your
+ * agent, Connect your other devices (optional), Try it in your agent. Every
+ * word, the agents' order and which button does what are the app core's
+ * (`firstRun.view`, through `useFirstRun`); this file places them beside the
+ * keycap art, as plain rows.
  */
 function OnboardingPage() {
   const fr = useFirstRun();
@@ -59,8 +58,12 @@ function OnboardingPage() {
         </button>
       </header>
       <div className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto px-10 pb-6 [@media(min-width:1000px)]:pr-[42%]">
-        {view.connect ? <Connect fr={fr} view={view} /> : null}
-        {view.setup ? <Setup fr={fr} view={view} onFinish={() => void finish()} /> : null}
+        <div className="my-auto flex max-w-[600px] flex-col py-6">
+          {view.welcome ? <Welcome fr={fr} view={view} /> : null}
+          {view.connect ? <Connect fr={fr} view={view} /> : null}
+          {view.devices ? <Devices fr={fr} view={view} /> : null}
+          {view.setup ? <Setup fr={fr} view={view} onFinish={() => void finish()} /> : null}
+        </div>
       </div>
       <Dots view={view} />
     </div>
@@ -76,7 +79,79 @@ function CuaWordmark() {
   );
 }
 
-/* ---- Step 1: connect your agent --------------------------------------------------- */
+/* ---- Pieces every screen uses ------------------------------------------------------ */
+
+function Heading({ children }: { children: ReactNode }) {
+  return (
+    <h1 tabIndex={-1} data-onboarding-heading="" className="font-display text-[clamp(32px,4.4vw,48px)] leading-[1.05] font-semibold tracking-[-0.03em] text-balance outline-none">
+      {children}
+    </h1>
+  );
+}
+
+function Lede({ children }: { children: ReactNode }) {
+  return <p className="mt-3 text-[15px] leading-relaxed text-muted-foreground">{children}</p>;
+}
+
+/** Plain rows between hairlines: no boxes, no filled panels. */
+function Rows({ children, className, ...rest }: { children: ReactNode; className?: string } & Record<`data-${string}`, string | undefined>) {
+  return (
+    <div className={cn("flex flex-col divide-y divide-foreground/10 border-y border-foreground/10", className)} {...rest}>
+      {children}
+    </div>
+  );
+}
+
+function Primary({ label, onClick, ...rest }: { label: string; onClick: () => void } & Record<`data-${string}`, string | undefined>) {
+  return (
+    <Button size="lg" className="h-11 min-w-28 rounded-full px-6 text-[15px]" data-onboarding-primary="" onClick={onClick} {...rest}>
+      {label}
+    </Button>
+  );
+}
+
+function Quiet({ label, onClick, ...rest }: { label: string; onClick: () => void } & Record<`data-${string}`, string | undefined>) {
+  return (
+    <button type="button" className="text-[13px] text-muted-foreground hover:text-foreground" onClick={onClick} {...rest}>
+      {label}
+    </button>
+  );
+}
+
+/** A line with a state: a check, a spinner, or a fix with its button. */
+function StatusLine({ row, onAct }: { row: FirstRunRow; onAct?: () => void }) {
+  return (
+    <div className="flex items-center gap-3 py-2.5" data-first-run-status={row.id} data-state={row.state}>
+      <StateIcon state={row.state} />
+      <div className="min-w-0 flex-1">
+        <div className="text-[14px]">{row.title}</div>
+        {row.note ? <div className="text-[13px] text-muted-foreground">{row.note}</div> : null}
+      </div>
+      {row.action && onAct ? (
+        <Button size="sm" variant="outline" className="shrink-0 rounded-full" onClick={onAct} data-first-run-action={row.action.id}>
+          {row.action.label}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+/* ---- 1 · Welcome ------------------------------------------------------------------ */
+
+function Welcome({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
+  const w = view.welcome!;
+  return (
+    <div data-first-run="welcome">
+      <Heading>{w.title}</Heading>
+      <Lede>{w.lede}</Lede>
+      <div className="mt-8">
+        <Primary label={w.primary.label} onClick={() => void fr.act(w.primary.id)} />
+      </div>
+    </div>
+  );
+}
+
+/* ---- 2 · Pick your agent ------------------------------------------------------------ */
 
 const MARKS: Record<string, string> = {
   "claude-code": "/onboarding/marks/mark-claude.svg",
@@ -99,149 +174,111 @@ function AgentMark({ agent, name, className }: { agent: string; name?: string; c
 function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
   const c = view.connect!;
   const keys = useAgentKeys();
-  const [moreOpen, setMoreOpen] = useState(false);
-  const [before, after] = c.title.split(c.accent);
-  const busy = Boolean(c.busy);
-  // A ticked agent from "More agents" stays in view.
-  const more = moreOpen ? c.more : [];
-  // The picker draws once the agents and keys are read, all at once, so nothing on the page moves while
-  // they load (and the page isn't centred vertically: a growing block would move the heading).
-  const ready = fr.input.agents !== null && !keys.isLoading;
+  const [copied, setCopied] = useState(false);
   return (
-    <div className="flex max-w-[560px] flex-col py-8" data-first-run="connect">
-      <h1
-        tabIndex={-1}
-        data-onboarding-heading=""
-        className="font-display text-[clamp(36px,5vw,56px)] leading-[1.02] font-semibold tracking-[-0.03em] text-balance outline-none"
-      >
-        {before}
-        {after !== undefined ? (
-          <>
-            <span className="font-accent font-normal tracking-normal italic">{c.accent}</span>
-            {after}
-          </>
-        ) : null}
-      </h1>
-      <p className="mt-4 max-w-[520px] text-[15px] leading-relaxed text-muted-foreground">{c.lede}</p>
-      {ready ? (
-        <>
-          <p className="mt-7 text-[14px] font-medium" data-first-run-intro="">
-            {c.intro}
-          </p>
-
-          <section className="mt-3" data-first-run-agents="">
-            <h2 className="mb-1.5 px-1 text-xs font-semibold text-muted-foreground">{c.agentsLabel}</h2>
-            <Card className="p-1.5">
-              {[...c.agents, ...more].map((p) => (
-                <AgentPickRow key={p.agent} pick={p} disabled={busy} onChange={(on) => fr.toggle(p.agent, on)} />
-              ))}
-              {c.more.length ? (
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-1.5 rounded-lg px-3 py-1.5 text-left text-[13px] text-muted-foreground hover:text-foreground"
-                  aria-expanded={moreOpen}
-                  data-first-run-more=""
-                  onClick={() => setMoreOpen((v) => !v)}
-                >
-                  <ChevronRightIcon className={cn("size-3.5 transition-transform", moreOpen && "rotate-90")} aria-hidden />
-                  {c.moreLabel} ({c.more.length})
-                </button>
+    <div data-first-run="connect">
+      <Heading>{c.title}</Heading>
+      <Lede>{c.lede}</Lede>
+      {c.agents.length ? (
+        <Rows className="mt-6" data-first-run-agents="">
+          {c.agents.map((a) => (
+            <div key={a.agent} className="flex min-h-11 items-center gap-3 py-2" data-first-run-agent={a.agent} data-connected={String(a.connected)}>
+              <AgentMark agent={a.agent} name={a.name} />
+              <div className="min-w-0 flex-1">
+                <span className="text-[14px]">{a.name}</span>
+                {a.file ? <span className="ml-2 font-mono text-[12px] text-muted-foreground">{a.file}</span> : null}
+              </div>
+              {a.note ? (
+                <span className={cn("shrink-0 text-[13px]", a.connected ? "text-[#1f9d55]" : "text-muted-foreground")}>{a.note}</span>
               ) : null}
-            </Card>
-            <p className="mt-2 px-1 text-xs text-muted-foreground" data-first-run-agents-note="">
-              {c.agentsNote}
-            </p>
-          </section>
-
-          {c.credentials.length ? (
-            <section className="mt-6" data-first-run-credentials="">
-              <h2 className="mb-1.5 px-1 text-xs font-semibold text-muted-foreground">{c.credentialsLabel}</h2>
-              <Card className="divide-y p-0">
-                {c.credentials.map((r) => (
-                  <CredentialRowView
-                    key={r.id}
-                    row={r}
-                    onAct={() => {
-                      if (r.action?.id === "agent-sign-in" && r.agent) void fr.signIn(r.agent);
-                      else if (r.action?.id === "add-key" && (r.provider === "anthropic" || r.provider === "openai")) keys.openSheet(r.provider);
-                    }}
-                  />
-                ))}
-              </Card>
-              <p className="mt-2 px-1 text-xs text-muted-foreground" data-first-run-credentials-note="">
-                {c.credentialsNote}
-              </p>
-            </section>
-          ) : null}
-
-          <div className="mt-8 flex items-center gap-4">
-            <Button
-              size="lg"
-              className="h-11 min-w-28 rounded-full px-6 text-[15px]"
-              data-onboarding-primary=""
-              data-first-run-continue={c.connects.join(",")}
-              disabled={busy}
-              autoFocus
-              onClick={() => void fr.connect()}
-            >
-              {c.busy ?? c.primary.label}
-            </Button>
-          </div>
-          {c.error ? (
-            <p role="alert" className="mt-3 text-[13px] text-destructive">
-              {c.error}
-            </p>
-          ) : null}
-          {fr.usage ? (
-            <div className="mt-8 flex max-w-[520px] flex-col gap-3 text-[13px] text-muted-foreground" data-first-run-usage="">
-              <p>
-                {fr.usage.notice}{" "}
-                <button type="button" className="underline hover:text-foreground" onClick={fr.openUsageLink}>
-                  {fr.usage.linkLabel}
-                </button>
-              </p>
-              <label className="flex items-center gap-2.5 text-foreground">
-                <Switch
-                  checked={fr.usage.on}
-                  disabled={!fr.usage.enabled}
-                  onCheckedChange={(on) => void fr.setUsage(on).catch(() => {})}
-                  aria-label={fr.usage.label}
-                />
-                <span>{fr.usage.label}</span>
-                {fr.usage.help ? <span className="text-muted-foreground">{fr.usage.help}</span> : null}
-              </label>
+              {a.action ? (
+                <Button size="sm" variant="outline" className="shrink-0 rounded-full" onClick={() => void fr.connect(a.agent)} data-first-run-connect={a.agent}>
+                  {a.action.label}
+                </Button>
+              ) : null}
             </div>
-          ) : null}
+          ))}
+        </Rows>
+      ) : null}
+      {c.alternatives.length ? (
+        <Rows className="mt-6" data-first-run-alternatives="">
+          {c.alternatives.map((alt) => (
+            <div key={alt.id} className="flex items-center gap-3 py-2.5" data-first-run-alternative={alt.id}>
+              <div className="min-w-0 flex-1">
+                <div className="text-[14px]">{alt.title}</div>
+                <div className="text-[13px] text-muted-foreground">{alt.note}</div>
+                {alt.command ? <code className="mt-1 block font-mono text-[12.5px]">{alt.command}</code> : null}
+              </div>
+              {alt.url ? (
+                <Button size="sm" variant="outline" className="shrink-0 rounded-full" onClick={() => void fr.openUrl(alt.url!)}>
+                  Open
+                </Button>
+              ) : alt.command ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="shrink-0 gap-1.5 rounded-full"
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(alt.command!).catch(() => {});
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 1500);
+                  }}
+                >
+                  {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+                  {copied ? "Copied" : "Copy"}
+                </Button>
+              ) : null}
+            </div>
+          ))}
+        </Rows>
+      ) : null}
+      {c.credentials.length ? (
+        <>
+          <Rows className="mt-4" data-first-run-credentials="">
+            {c.credentials.map((r) => (
+              <CredentialRowView
+                key={r.id}
+                row={r}
+                onAct={() => {
+                  if (r.action?.id === "agent-sign-in" && r.agent) void fr.signIn(r.agent);
+                  else if (r.action?.id === "add-key" && (r.provider === "anthropic" || r.provider === "openai")) keys.openSheet(r.provider);
+                }}
+              />
+            ))}
+          </Rows>
+          <p className="mt-2 text-xs text-muted-foreground" data-first-run-credentials-note="">
+            {c.credentialsNote}
+          </p>
         </>
+      ) : null}
+      {c.error ? (
+        <p role="alert" className="mt-3 text-[13px] text-destructive">
+          {c.error}
+        </p>
+      ) : null}
+      <div className="mt-6 flex items-center gap-4">
+        <Primary label={c.primary.label} onClick={() => void fr.act(c.primary.id)} />
+        {c.secondary ? <Quiet label={c.secondary.label} onClick={() => void fr.act(c.secondary!.id)} data-first-run-secondary="" /> : null}
+      </div>
+      {fr.usage ? (
+        <label className="mt-5 flex items-center gap-2.5 text-[13px] text-muted-foreground" data-first-run-usage="">
+          <Switch checked={fr.usage.on} disabled={!fr.usage.enabled} onCheckedChange={(on) => void fr.setUsage(on).catch(() => {})} aria-label={fr.usage.label} />
+          <span>
+            {fr.usage.label}.{" "}
+            <button type="button" className="underline hover:text-foreground" onClick={fr.openUsageLink}>
+              {fr.usage.linkLabel}
+            </button>
+          </span>
+        </label>
       ) : null}
       {keys.sheet ? <KeySheet key={keys.sheet.provider} keys={keys} provider={keys.sheet.provider} env={keys.sheet.env} /> : null}
     </div>
   );
 }
 
-/** One agent: the box toggles, and so does a click anywhere on the row. */
-function AgentPickRow({ pick: p, disabled, onChange }: { pick: FirstRunAgentPick; disabled: boolean; onChange: (on: boolean) => void }) {
-  const off = p.locked || disabled;
-  return (
-    <div
-      className={cn("flex min-h-9 items-center gap-3 rounded-lg px-3 py-1.5", !off && "cursor-default hover:bg-foreground/[0.03]")}
-      data-first-run-pick={p.agent}
-      data-checked={String(p.checked)}
-      onClick={(e) => {
-        if (!off && !(e.target as HTMLElement).closest('[data-slot="checkbox"]')) onChange(!p.checked);
-      }}
-    >
-      <Checkbox checked={p.checked} disabled={off} aria-label={p.name} onCheckedChange={(on) => onChange(Boolean(on))} />
-      <AgentMark agent={p.agent} name={p.name} />
-      <span className="min-w-0 flex-1 text-[14px] select-none">{p.name}</span>
-      {p.note ? <span className="shrink-0 text-xs text-muted-foreground">{p.note}</span> : null}
-    </div>
-  );
-}
-
 function CredentialRowView({ row: r, onAct }: { row: FirstRunCredential; onAct: () => void }) {
   return (
-    <div className="flex items-center gap-3 px-4 py-2.5" data-first-run-credential={r.id}>
+    <div className="flex items-center gap-3 py-2.5" data-first-run-credential={r.id}>
       <div className="min-w-0 flex-1">
         <div className="text-[14px]">{r.title}</div>
         <div className="text-xs text-muted-foreground">{r.note}</div>
@@ -252,7 +289,7 @@ function CredentialRowView({ row: r, onAct }: { row: FirstRunCredential; onAct: 
         ) : null}
       </div>
       {r.status ? (
-        <span className={cn("shrink-0 text-xs", r.ok ? "rounded-full bg-[#1f9d55]/10 px-2 py-0.5 font-medium text-[#1f9d55]" : "text-muted-foreground")} data-first-run-credential-status="">
+        <span className={cn("shrink-0 text-[13px]", r.ok ? "text-[#1f9d55]" : "text-muted-foreground")} data-first-run-credential-status="">
           {r.status}
         </span>
       ) : null}
@@ -265,7 +302,33 @@ function CredentialRowView({ row: r, onAct }: { row: FirstRunCredential; onAct: 
   );
 }
 
-/* ---- Step 2: your agent can use this Mac ------------------------------------------- */
+/* ---- 3 · Connect your other devices -------------------------------------------------- */
+
+function Devices({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
+  const d = view.devices!;
+  return (
+    <div data-first-run="devices">
+      <Heading>{d.title}</Heading>
+      <Lede>{d.lede}</Lede>
+      <Rows className="mt-6" data-first-run-devices="">
+        {d.rows.map((r) => (
+          <div key={r.title} className="flex items-baseline gap-3 py-2.5 text-[14px]">
+            <span className="w-48 shrink-0">{r.title}</span>
+            <span className="text-[13px] text-muted-foreground">{r.note}</span>
+          </div>
+        ))}
+        {d.status ? <StatusLine row={d.status} onAct={() => void fr.act(d.status!.action?.id ?? "")} /> : null}
+      </Rows>
+      <div className="mt-7 flex items-center gap-4">
+        <Primary label={d.primary.label} onClick={() => void fr.act(d.primary.id)} data-first-run-devices-primary={d.primary.id} />
+        {d.secondary ? <Quiet label={d.secondary.label} onClick={() => void fr.act(d.secondary!.id)} data-first-run-secondary="" /> : null}
+      </div>
+      {d.note ? <p className="mt-4 text-[13px] text-muted-foreground">{d.note}</p> : null}
+    </div>
+  );
+}
+
+/* ---- 4 · Try it ---------------------------------------------------------------------- */
 
 function Setup({ fr, view, onFinish }: { fr: FirstRunHook; view: FirstRunView; onFinish: () => void }) {
   const s = view.setup!;
@@ -276,64 +339,40 @@ function Setup({ fr, view, onFinish }: { fr: FirstRunHook; view: FirstRunView; o
     setTimeout(() => setCopied(false), 1500);
   };
   return (
-    <div className="my-auto flex max-w-[600px] flex-col py-6" data-first-run="setup">
-      <h1 tabIndex={-1} data-onboarding-heading="" className="font-display text-[clamp(32px,4.4vw,48px)] leading-[1.05] font-semibold tracking-[-0.03em] outline-none" role="status">
-        {s.title}
-      </h1>
-      <Card className="mt-7 divide-y p-0">
-        {s.rows.map((r) => (
-          <Row key={r.id} row={r} onAct={() => void fr.act(r.action!.id, r.settingsUrl)} />
-        ))}
-      </Card>
-
+    <div data-first-run="setup">
+      <Heading>{s.title}</Heading>
+      <Lede>{s.lede}</Lede>
       {s.prompt ? (
-        <>
-          <h2 className="mt-7 text-[14px] font-semibold">{s.prompt.heading}</h2>
+        <div className="mt-6 flex items-start gap-3">
+          <textarea
+            readOnly
+            rows={2}
+            value={s.prompt.text}
+            aria-label={s.prompt.heading}
+            onFocus={(e) => e.currentTarget.select()}
+            className="min-w-0 flex-1 resize-none rounded-lg border border-foreground/15 bg-transparent px-3 py-2 font-mono text-[13px] leading-relaxed outline-none select-text focus-visible:ring-2 focus-visible:ring-ring/60"
+            data-first-run-prompt=""
+          />
           {s.prompt.copy ? (
-            <Card className="mt-2 flex items-center justify-between gap-3 py-2.5 pr-2.5">
-              <span className="min-w-0 text-[14px] select-text">“{s.prompt.text}”</span>
-              <Button variant="outline" size="sm" className="shrink-0 gap-1.5 rounded-full" onClick={() => void copy()} data-first-run-copy="">
-                {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
-                {copied ? "Copied" : s.prompt.copy}
-              </Button>
-            </Card>
-          ) : (
-            <p className="mt-1.5 text-[14px] select-text">“{s.prompt.text}”</p>
-          )}
-          <p className="mt-2 text-[13px] text-muted-foreground">{s.prompt.note}</p>
-        </>
+            <Button variant="outline" size="sm" className="shrink-0 gap-1.5 rounded-full" onClick={() => void copy()} data-first-run-copy="">
+              {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+              {copied ? "Copied" : s.prompt.copy}
+            </Button>
+          ) : null}
+        </div>
       ) : null}
-
-      <ExtraCard extra={s.extra} fr={fr} />
-      {s.upsell ? <UpsellCard card={s.upsell} fr={fr} /> : null}
-
+      {s.status ? (
+        <div className="mt-3">
+          <StatusLine row={s.status} />
+        </div>
+      ) : null}
+      {s.extra ? <ExtraCard extra={s.extra} fr={fr} /> : null}
       <div className="mt-8 flex items-center gap-4">
-        <Button
-          size="lg"
-          variant={s.primary.id === "done" ? "default" : "outline"}
-          className="h-11 min-w-28 rounded-full px-6 text-[15px]"
-          disabled={!s.primary.enabled}
-          data-onboarding-primary=""
-          data-first-run-primary={s.primary.id}
-          onClick={onFinish}
-        >
+        <Button size="lg" className="h-11 min-w-28 rounded-full px-6 text-[15px]" disabled={!s.primary.enabled} data-onboarding-primary="" data-first-run-primary={s.primary.id} onClick={onFinish}>
           {s.primary.label}
         </Button>
-        {s.primary.note ? <span className="text-[13px] text-muted-foreground">{s.primary.note}</span> : null}
+        <Quiet label="Back" onClick={fr.back} data-first-run-back="" />
       </div>
-      {view.setup && !fr.saved.usedAtMs ? (
-        <button type="button" onClick={fr.back} className="mt-5 self-start text-xs text-muted-foreground hover:text-foreground">
-          Change agents
-        </button>
-      ) : null}
-    </div>
-  );
-}
-
-function Card({ children, className, ...rest }: { children: ReactNode; className?: string } & Record<`data-${string}`, string | undefined>) {
-  return (
-    <div className={cn("rounded-2xl border bg-card px-5 py-4 shadow-xs", className)} {...rest}>
-      {children}
     </div>
   );
 }
@@ -350,28 +389,11 @@ function StateIcon({ state }: { state: FirstRunRow["state"] | "later" }) {
   return <span className="size-5 shrink-0 animate-spin rounded-full border-2 border-foreground/15 border-t-foreground/60" aria-label="Checking" />;
 }
 
-function Row({ row, onAct }: { row: FirstRunRow; onAct: () => void }) {
-  return (
-    <div className="flex items-center gap-3.5 px-5 py-3.5" data-first-run-row={row.id} data-state={row.state}>
-      <StateIcon state={row.state} />
-      <div className="min-w-0 flex-1">
-        <div className="text-[14px] font-medium">{row.title}</div>
-        <div className="text-[13px] text-muted-foreground">{row.note}</div>
-      </div>
-      {row.action ? (
-        <Button size="sm" variant={row.action.id === "restart-check" ? "outline" : "default"} className="shrink-0 rounded-full" onClick={onAct} data-first-run-action={row.action.id}>
-          {row.action.label}
-        </Button>
-      ) : null}
-    </div>
-  );
-}
-
 function ExtraCard({ extra, fr }: { extra: FirstRunExtraView; fr: FirstRunHook }) {
   const act = (id: string) => void fr.extra(id);
   if (extra.phase === "choose") {
     return (
-      <Card className="mt-6 border-dashed bg-card/60" data-first-run-extra="choose">
+      <div className="mt-6" data-first-run-extra="choose">
         <div className="flex items-baseline gap-2">
           <h2 className="text-[15px] font-semibold">{extra.title}</h2>
           {extra.tag ? <span className="text-[13px] text-muted-foreground">{extra.tag}</span> : null}
@@ -403,12 +425,12 @@ function ExtraCard({ extra, fr }: { extra: FirstRunExtraView; fr: FirstRunHook }
         </div>
         {/* Windows without Docker Desktop: install or start it from here, and the choices follow. */}
         {extra.choices.some((c) => c.blocked !== null) ? <RuntimeFixRow /> : null}
-      </Card>
+      </div>
     );
   }
   const icon = extra.phase === "ready" ? "ok" : extra.phase === "failed" ? "fix" : extra.phase === "not-now" ? "later" : "checking";
   return (
-    <Card className="mt-6" data-first-run-extra={extra.phase}>
+    <div className="mt-6 border-y border-foreground/10 py-3" data-first-run-extra={extra.phase}>
       <div className="flex items-start gap-3.5">
         <span className="mt-0.5 flex">
           <StateIcon state={icon} />
@@ -434,39 +456,7 @@ function ExtraCard({ extra, fr }: { extra: FirstRunExtraView; fr: FirstRunHook }
           </Button>
         ) : null}
       </div>
-    </Card>
-  );
-}
-
-function UpsellCard({ card, fr }: { card: FirstRunUpsell; fr: FirstRunHook }) {
-  useEffect(() => {
-    // Counted once per showing.
-    fr.upsell("shown");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [card.plan]);
-  return (
-    <Card className="mt-4" data-first-run-upsell={card.plan}>
-      <div className="flex items-start gap-3">
-        <CuaKey size={20} className="mt-0.5" />
-        <div className="min-w-0 flex-1">
-          <h2 className="text-[15px] font-semibold">{card.title}</h2>
-          {card.lines.map((l) => (
-            <p key={l} className="text-[13px] text-muted-foreground">
-              {l}
-            </p>
-          ))}
-          <div className="mt-3 flex items-center gap-2">
-            <span className="flex-1 text-[14px] font-medium">{card.price}</span>
-            <Button size="sm" className="rounded-full" onClick={() => fr.upsell("click")} data-first-run-upsell-cta="">
-              {card.cta.label}
-            </Button>
-            <Button variant="outline" size="sm" className="rounded-full" onClick={() => fr.upsell("dismiss")} data-first-run-upsell-dismiss="">
-              {card.dismiss}
-            </Button>
-          </div>
-        </div>
-      </div>
-    </Card>
+    </div>
   );
 }
 

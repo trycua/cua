@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
+import { setExpanded } from "@/components/getting-started";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import {
   CornerDownLeftIcon,
@@ -143,7 +144,7 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
       icon: icon(ListChecksIcon),
       run: () => {
         checklist.reopen();
-        void navigate({ to: "/spaces" });
+        setExpanded(true);
       },
     },
     ...realSpaces(spaces).flatMap((s): Command[] => {

@@ -6619,6 +6619,10 @@ public struct AppChecklistRow: Equatable, Hashable {
      * Done (ticked, struck through).
      */
     public var done: Bool
+    /**
+     * Skipped (struck through, not ticked); never with `done`.
+     */
+    public var skipped: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -6637,12 +6641,16 @@ public struct AppChecklistRow: Equatable, Hashable {
          */action: String,
         /**
          * Done (ticked, struck through).
-         */done: Bool) {
+         */done: Bool,
+        /**
+         * Skipped (struck through, not ticked); never with `done`.
+         */skipped: Bool) {
         self.step = step
         self.title = title
         self.detail = detail
         self.action = action
         self.done = done
+        self.skipped = skipped
     }
 
 
@@ -6665,7 +6673,8 @@ public struct FfiConverterTypeAppChecklistRow: FfiConverterRustBuffer {
                 title: FfiConverterString.read(from: &buf),
                 detail: FfiConverterString.read(from: &buf),
                 action: FfiConverterString.read(from: &buf),
-                done: FfiConverterBool.read(from: &buf)
+                done: FfiConverterBool.read(from: &buf),
+                skipped: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -6675,6 +6684,7 @@ public struct FfiConverterTypeAppChecklistRow: FfiConverterRustBuffer {
         FfiConverterString.write(value.detail, into: &buf)
         FfiConverterString.write(value.action, into: &buf)
         FfiConverterBool.write(value.done, into: &buf)
+        FfiConverterBool.write(value.skipped, into: &buf)
     }
 }
 
@@ -6793,6 +6803,12 @@ public struct AppChecklistState: Equatable, Hashable {
      * It was on screen once (`checklist_shown` was recorded).
      */
     public var shown: Bool
+    /**
+     * Steps skipped ("Skip"), each once, in checklist order: they count as
+     * done for the progress and for `complete`, and a skipped step done
+     * later shows as done.
+     */
+    public var skipped: [AppChecklistStep]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -6805,10 +6821,16 @@ public struct AppChecklistState: Equatable, Hashable {
          */dismissed: Bool,
         /**
          * It was on screen once (`checklist_shown` was recorded).
-         */shown: Bool) {
+         */shown: Bool,
+        /**
+         * Steps skipped ("Skip"), each once, in checklist order: they count as
+         * done for the progress and for `complete`, and a skipped step done
+         * later shows as done.
+         */skipped: [AppChecklistStep]) {
         self.done = done
         self.dismissed = dismissed
         self.shown = shown
+        self.skipped = skipped
     }
 
 
@@ -6829,7 +6851,8 @@ public struct FfiConverterTypeAppChecklistState: FfiConverterRustBuffer {
             try AppChecklistState(
                 done: FfiConverterSequenceTypeAppChecklistStep.read(from: &buf),
                 dismissed: FfiConverterBool.read(from: &buf),
-                shown: FfiConverterBool.read(from: &buf)
+                shown: FfiConverterBool.read(from: &buf),
+                skipped: FfiConverterSequenceTypeAppChecklistStep.read(from: &buf)
         )
     }
 
@@ -6837,6 +6860,7 @@ public struct FfiConverterTypeAppChecklistState: FfiConverterRustBuffer {
         FfiConverterSequenceTypeAppChecklistStep.write(value.done, into: &buf)
         FfiConverterBool.write(value.dismissed, into: &buf)
         FfiConverterBool.write(value.shown, into: &buf)
+        FfiConverterSequenceTypeAppChecklistStep.write(value.skipped, into: &buf)
     }
 }
 
@@ -6948,6 +6972,14 @@ public struct AppChecklistView: Equatable, Hashable {
      */
     public var closeLabel: String
     /**
+     * "Skip", on each step not done or skipped.
+     */
+    public var skipLabel: String
+    /**
+     * "Hide", or "Done" once complete: closes the checklist.
+     */
+    public var hideLabel: String
+    /**
      * The steps in order.
      */
     public var rows: [AppChecklistRow]
@@ -6974,6 +7006,12 @@ public struct AppChecklistView: Equatable, Hashable {
          * The close button's accessibility label.
          */closeLabel: String,
         /**
+         * "Skip", on each step not done or skipped.
+         */skipLabel: String,
+        /**
+         * "Hide", or "Done" once complete: closes the checklist.
+         */hideLabel: String,
+        /**
          * The steps in order.
          */rows: [AppChecklistRow]) {
         self.visible = visible
@@ -6982,6 +7020,8 @@ public struct AppChecklistView: Equatable, Hashable {
         self.detail = detail
         self.progress = progress
         self.closeLabel = closeLabel
+        self.skipLabel = skipLabel
+        self.hideLabel = hideLabel
         self.rows = rows
     }
 
@@ -7007,6 +7047,8 @@ public struct FfiConverterTypeAppChecklistView: FfiConverterRustBuffer {
                 detail: FfiConverterString.read(from: &buf),
                 progress: FfiConverterString.read(from: &buf),
                 closeLabel: FfiConverterString.read(from: &buf),
+                skipLabel: FfiConverterString.read(from: &buf),
+                hideLabel: FfiConverterString.read(from: &buf),
                 rows: FfiConverterSequenceTypeAppChecklistRow.read(from: &buf)
         )
     }
@@ -7018,6 +7060,8 @@ public struct FfiConverterTypeAppChecklistView: FfiConverterRustBuffer {
         FfiConverterString.write(value.detail, into: &buf)
         FfiConverterString.write(value.progress, into: &buf)
         FfiConverterString.write(value.closeLabel, into: &buf)
+        FfiConverterString.write(value.skipLabel, into: &buf)
+        FfiConverterString.write(value.hideLabel, into: &buf)
         FfiConverterSequenceTypeAppChecklistRow.write(value.rows, into: &buf)
     }
 }
@@ -49099,7 +49143,15 @@ public enum AppChecklistAction: Equatable, Hashable {
      */
     case shown
     /**
-     * Closed with ×.
+     * "Skip" on a step: not for this person; it counts as done.
+     */
+    case skip(
+        /**
+         * The step.
+         */step: AppChecklistStep
+    )
+    /**
+     * Closed with × ("Hide", or "Done" once complete).
      */
     case dismiss
     /**
@@ -49157,14 +49209,17 @@ public struct FfiConverterTypeAppChecklistAction: FfiConverterRustBuffer {
 
         case 2: return .shown
 
-        case 3: return .dismiss
-
-        case 4: return .reopen
-
-        case 5: return .observe(otherMachine: try FfiConverterBool.read(from: &buf), hasSpace: try FfiConverterBool.read(from: &buf), agentRan: try FfiConverterBool.read(from: &buf)
+        case 3: return .skip(step: try FfiConverterTypeAppChecklistStep.read(from: &buf)
         )
 
-        case 6: return .merge(state: try FfiConverterTypeAppChecklistState.read(from: &buf)
+        case 4: return .dismiss
+
+        case 5: return .reopen
+
+        case 6: return .observe(otherMachine: try FfiConverterBool.read(from: &buf), hasSpace: try FfiConverterBool.read(from: &buf), agentRan: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 7: return .merge(state: try FfiConverterTypeAppChecklistState.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -49184,23 +49239,28 @@ public struct FfiConverterTypeAppChecklistAction: FfiConverterRustBuffer {
             writeInt(&buf, Int32(2))
 
 
-        case .dismiss:
+        case let .skip(step):
             writeInt(&buf, Int32(3))
+            FfiConverterTypeAppChecklistStep.write(step, into: &buf)
 
 
-        case .reopen:
+        case .dismiss:
             writeInt(&buf, Int32(4))
 
 
-        case let .observe(otherMachine,hasSpace,agentRan):
+        case .reopen:
             writeInt(&buf, Int32(5))
+
+
+        case let .observe(otherMachine,hasSpace,agentRan):
+            writeInt(&buf, Int32(6))
             FfiConverterBool.write(otherMachine, into: &buf)
             FfiConverterBool.write(hasSpace, into: &buf)
             FfiConverterBool.write(agentRan, into: &buf)
 
 
         case let .merge(state):
-            writeInt(&buf, Int32(6))
+            writeInt(&buf, Int32(7))
             FfiConverterTypeAppChecklistState.write(state, into: &buf)
 
         }

@@ -713,7 +713,7 @@ const PresenceCursorShape = ref(
 
 /** The host's copy of the checklist (`ops/checklist.ts`). */
 const ChecklistAnswerShape = object({
-  state: obj<HostChecklistState>()({ done: strings, dismissed: bool, shown: bool }),
+  state: obj<HostChecklistState>()({ done: strings, dismissed: bool, shown: bool, skipped: strings }),
 });
 
 /** A link to something you run (`ops/links.ts`). */

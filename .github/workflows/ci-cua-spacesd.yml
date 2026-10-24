@@ -151,6 +151,10 @@ jobs:
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-spacesd -> target"
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        if: runner.os == 'Linux'
+        with:
+          tool: cargo-nextest@0.9.149
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         working-directory: .
@@ -163,8 +167,21 @@ jobs:
             libxfixes-dev libxdamage-dev libudev-dev
       - name: Format
         run: cargo fmt --all --check
+      # Linux runs the tests with cargo-nextest, which runs the tests of all
+      # binaries in one pool instead of one binary after another. Measured on
+      # ubuntu-latest (4 vCPU, 3 rounds, this workspace, one shared build):
+      # `cargo test` 296 to 374 s, `cargo test --test-threads=8` 291 to 295 s,
+      # nextest -j4 172 to 197 s, nextest -j8 152 to 164 s, no failures in any
+      # variant. nextest does not run doctests, so those run separately. macOS
+      # and Windows keep `cargo test` (not measured there).
       - name: Test
-        run: cargo test --workspace --locked
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            cargo nextest run --workspace --locked --no-tests=fail -j 8
+            cargo test --workspace --locked --doc
+          else
+            cargo test --workspace --locked
+          fi
         env:
           DYLD_FALLBACK_LIBRARY_PATH: /usr/lib/swift
       - name: Clippy

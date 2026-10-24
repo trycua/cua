@@ -158,10 +158,28 @@ mod tests {
             KeyringKeyProvider::service("cua-driver").unwrap(),
             KeyringKeyProvider::service("cua-driver-local").unwrap()
         );
-        assert!(KeyringKeyProvider::service("../escape").is_err());
-        assert!(KeyringKeyProvider::service("").is_err());
-        assert!(KeyringKeyProvider::service(&"a".repeat(65)).is_err());
-        assert!(KeyringKeyProvider::service("caf\u{e9}").is_err());
+        assert_eq!(
+            KeyringKeyProvider::service("../escape")
+                .unwrap_err()
+                .category,
+            HistoryHealthCategory::KeyUnavailable
+        );
+        assert_eq!(
+            KeyringKeyProvider::service("").unwrap_err().category,
+            HistoryHealthCategory::KeyUnavailable
+        );
+        assert_eq!(
+            KeyringKeyProvider::service(&"a".repeat(65))
+                .unwrap_err()
+                .category,
+            HistoryHealthCategory::KeyUnavailable
+        );
+        assert_eq!(
+            KeyringKeyProvider::service("caf\u{e9}")
+                .unwrap_err()
+                .category,
+            HistoryHealthCategory::KeyUnavailable
+        );
         assert!(KeyringKeyProvider::service(&"a".repeat(64)).is_ok());
         assert!(KeyringKeyProvider::service("a-b_c").is_ok());
     }

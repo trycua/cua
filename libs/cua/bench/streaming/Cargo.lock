@@ -404,7 +404,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-client"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "cua-media-codec",
  "cua-media-protocol",
@@ -414,7 +414,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-codec"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "audiopus_sys",
  "libloading",
@@ -429,7 +429,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-protocol"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -437,7 +437,7 @@ dependencies = [
 
 [[package]]
 name = "cua-media-transport"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "cua-media-protocol",
  "quinn",
@@ -450,7 +450,7 @@ dependencies = [
 
 [[package]]
 name = "cua-proto"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "pbjson-build",
  "pbjson-types",
@@ -464,7 +464,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-client"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",

@@ -34,11 +34,11 @@ jobs:
               --jq ".workflow_runs[] | select(.workflow_id != $GITHUB_WORKFLOW_ID and (.event == \"pull_request\" or .event == \"pull_request_target\") and (.path | test(\"claude-auto-fix|ci-release-reminder|review-cua-perception-candidates\") | not)) | [.workflow_id, .id, .name, .conclusion // \"\", .status] | @tsv"
           }
           GITHUB_WORKFLOW_ID=$(api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .workflow_id) || exit 1
-          # Every pull_request workflow run for one event is created within a few seconds of it
-          # (0 to 4 s across 30 recent PRs), so 30 s before the first poll is ample. A poll counts
-          # only when the run set is identical to the previous poll's and every run is completed,
-          # so a run that appears late still holds the gate. Poll fast while quick PRs finish,
-          # then back off: a long suite costs about 100 polls an hour, well inside the API limit.
+          # Two identical listings cannot prove every run has appeared, so no verdict is allowed
+          # before a fixed 120 s window. Runs for one event are created within 4 s of it (30 recent
+          # PRs); the window leaves 30x margin for slow fan-out. After it, a poll counts only when
+          # the run set equals the previous poll's and every run is completed. Poll fast while quick
+          # PRs finish, then back off: a long suite costs about 85 run listings an hour.
           poll_interval() {
             local elapsed=$((SECONDS - started))
             if (( elapsed < 300 )); then echo 10
@@ -47,7 +47,7 @@ jobs:
             fi
           }
           started=$SECONDS
-          sleep 30
+          sleep 120
           previous=
           while :; do
             current=$(runs) || exit 1

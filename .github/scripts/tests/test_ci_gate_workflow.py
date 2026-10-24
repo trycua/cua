@@ -52,10 +52,11 @@ api() {
       fi ;;
     *'head_sha='*)
       if [[ -n "${ROWS_DIR:-}" ]]; then
-        n=$(( $(cat "$ROWS_DIR/polls" 2>/dev/null || echo 0) + 1 ))
-        echo "$n" > "$ROWS_DIR/polls"
-        file="$ROWS_DIR/rows.$n"
-        [[ -f "$file" ]] || file="$ROWS_DIR/rows.last"
+        file=
+        for candidate in "$ROWS_DIR"/rows.*; do
+          at=${candidate##*rows.}
+          if (( at <= SECONDS )) && [[ -z "$file" || ${file##*rows.} -lt $at ]]; then file=$candidate; fi
+        done
         cat "$file"
       else
         printf '%s' "$ROWS"
@@ -94,10 +95,10 @@ def sleeps_of(completed):
             if line.startswith('sleep ')]
 
 
-def poll_sequence(tmp_path, *polls):
-    for number, rows in enumerate(polls, 1):
-        (tmp_path / f'rows.{number}').write_text(rows)
-    (tmp_path / 'rows.last').write_text(polls[-1])
+def timeline(tmp_path, snapshots):
+    """Run listings by simulated second: {0: rows, 125: rows} shows `rows` from 125 s on."""
+    for at, rows in snapshots.items():
+        (tmp_path / f'rows.{at}').write_text(rows)
     return tmp_path
 
 
@@ -125,33 +126,42 @@ def test_gate_waits_until_timeout_without_completed_runs(rows):
 
 
 DONE = '1\t11\tbuild\tsuccess\tcompleted'
+LATE_FAILURE = DONE + '\n2\t12\tlint\tfailure\tcompleted'
+MIN_WINDOW = 120
 
 
-def test_gate_finishes_within_a_minute_when_every_run_is_done():
+def test_gate_gives_no_verdict_before_the_minimum_window():
     completed = run_gate(DONE)
     assert completed.returncode == 0, completed.stderr
-    assert sleeps_of(completed) == [30, 10]
+    sleeps = sleeps_of(completed)
+    assert sleeps[0] >= MIN_WINDOW
+    assert sleeps == [MIN_WINDOW, 10]
+
+
+def test_gate_catches_a_failing_run_that_appears_inside_the_window(tmp_path):
+    # Identical completed listings at 30 s and 40 s would have passed this PR; the
+    # failing workflow only shows up at 45 s. No poll may count before the window ends.
+    rows = timeline(tmp_path, {0: DONE, 45: LATE_FAILURE})
+    completed = run_gate('', rows_dir=rows)
+    assert completed.returncode == 1, completed.stderr
+    assert sleeps_of(completed) == [MIN_WINDOW, 10]
+    assert 'build: pass' in completed.stdout
+    assert 'lint: fail' in completed.stdout
 
 
 def test_gate_needs_two_identical_completed_polls(tmp_path):
-    rows = poll_sequence(
-        tmp_path,
-        '1\t11\tbuild\t\tin_progress',
-        DONE,
-        DONE,
-    )
+    rows = timeline(tmp_path, {0: '1\t11\tbuild\t\tin_progress', 125: DONE})
     completed = run_gate('', rows_dir=rows)
     assert completed.returncode == 0, completed.stderr
-    assert sleeps_of(completed) == [30, 10, 10]
+    assert sleeps_of(completed) == [MIN_WINDOW, 10, 10]
     assert 'build: pass' in completed.stdout
 
 
 def test_gate_holds_for_a_run_that_appears_after_the_first_poll(tmp_path):
-    late_failure = DONE + '\n2\t12\tlint\tfailure\tcompleted'
-    rows = poll_sequence(tmp_path, DONE, late_failure, late_failure)
+    rows = timeline(tmp_path, {0: DONE, 125: LATE_FAILURE})
     completed = run_gate('', rows_dir=rows)
     assert completed.returncode == 1, completed.stderr
-    assert sleeps_of(completed) == [30, 10, 10]
+    assert sleeps_of(completed) == [MIN_WINDOW, 10, 10]
     assert 'build: pass' in completed.stdout
     assert 'lint: fail' in completed.stdout
 
@@ -161,12 +171,12 @@ def test_gate_poll_schedule_backs_off_and_stays_within_the_api_budget():
     completed = run_gate(stuck, max_sleeps=1000, max_seconds=3600)
     assert completed.returncode == 124
     sleeps = sleeps_of(completed)
-    assert sleeps[0] == 30
+    assert sleeps[0] == MIN_WINDOW
     intervals = sleeps[1:]
     assert intervals == sorted(intervals)
     assert set(intervals) == {10, 30, 60}
     # Fast polling only while quick PRs finish, then 30 s, then one poll a minute.
-    assert intervals.count(10) == 27
+    assert intervals.count(10) == 18
     assert intervals.count(30) == 20
-    # One run listing is one or two API calls; keep a long suite near 100 an hour.
+    # One run listing is one or two API calls; keep a long suite under 100 an hour.
     assert len(sleeps) <= 100

@@ -13,15 +13,27 @@ description: >-
   in cd-cua-spaces.yml and run on whatever this action leaves in place. Run
   after actions/checkout.
 
+  With `build: "false"` the action only restores (ci-cua-spaces-macos.yml:
+  a pull request that does not change the Rust inputs takes main's compiled
+  library and skips the 30 to 60 minute build; one that does falls back to
+  its own build). Same key either way, so there is one definition of it.
+
 inputs:
   triple:
     description: "Rust target triple (aarch64-apple-darwin or x86_64-apple-darwin)."
     required: true
+  build:
+    description: >-
+      "true" (default): build on a miss and save, as the producer and the
+      release do. "false": restore only; on a miss nothing is built or saved
+      and the caller builds for itself.
+    required: false
+    default: "true"
 
 outputs:
   cache-hit:
     description: "true when the slice came from the cache."
-    value: ${{ steps.cache.outputs.cache-hit }}
+    value: ${{ steps.cache.outputs.cache-hit || steps.restore.outputs.cache-hit }}
   key:
     description: "The cache key."
     value: ${{ steps.key.outputs.key }}
@@ -47,7 +59,17 @@ runs:
         echo "key=swiftui-rust-v2-${TRIPLE}-rust1.97.1-${repo}-${inputs_hash}" >> "$GITHUB_OUTPUT"
     - name: Restore the compiled slice
       id: cache
+      if: inputs.build == 'true'
       uses: actions/cache@v4
+      with:
+        path: |
+          libs/cua/target/${{ inputs.triple }}/release/libcua_spaces_ffi.dylib
+          libs/cua/target/${{ inputs.triple }}/release/cua-spaces-cli
+        key: ${{ steps.key.outputs.key }}
+    - name: Restore the compiled slice (restore only)
+      id: restore
+      if: inputs.build != 'true'
+      uses: actions/cache/restore@v4
       with:
         path: |
           libs/cua/target/${{ inputs.triple }}/release/libcua_spaces_ffi.dylib
@@ -56,17 +78,17 @@ runs:
     - name: Report the cache
       shell: bash
       env:
-        HIT: ${{ steps.cache.outputs.cache-hit || 'false' }}
+        HIT: ${{ steps.cache.outputs.cache-hit || steps.restore.outputs.cache-hit || 'false' }}
         KEY: ${{ steps.key.outputs.key }}
       run: echo "::notice::SwiftUI Rust slice cache hit = ${HIT} (${KEY})"
-    - if: steps.cache.outputs.cache-hit != 'true'
+    - if: inputs.build == 'true' && steps.cache.outputs.cache-hit != 'true'
       uses: dtolnay/rust-toolchain@1.97.1
       with:
         targets: ${{ inputs.triple }}
-    - if: steps.cache.outputs.cache-hit != 'true'
+    - if: inputs.build == 'true' && steps.cache.outputs.cache-hit != 'true'
       name: Install protoc
       uses: ./.github/actions/setup-protoc
-    - if: steps.cache.outputs.cache-hit != 'true'
+    - if: inputs.build == 'true' && steps.cache.outputs.cache-hit != 'true'
       uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
       with:
         workspaces: libs/cua -> target
@@ -76,7 +98,7 @@ runs:
         # within the hour. Only the default branch saves it.
         save-if: ${{ github.ref == 'refs/heads/main' }}
         cache-on-failure: true
-    - if: steps.cache.outputs.cache-hit != 'true'
+    - if: inputs.build == 'true' && steps.cache.outputs.cache-hit != 'true'
       name: Build the slice
       shell: bash
       working-directory: libs/cua
@@ -88,6 +110,7 @@ runs:
         TRIPLE: ${{ inputs.triple }}
       run: cargo build --locked --release -p cua-spaces-ffi -p cua-spaces-cli --target "$TRIPLE"
     - name: Check the slice
+      if: inputs.build == 'true' || steps.restore.outputs.cache-hit == 'true'
       shell: bash
       env:
         TRIPLE: ${{ inputs.triple }}

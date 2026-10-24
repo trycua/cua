@@ -28,6 +28,17 @@ LOCAL_LUME_DIR_NAME=".lume-local"                  # CuaChannel::lume_dir
 # CuaChannel::keychain_service(Prod) and (Staging). The sign-in and the device
 # key live under these services, one item per account.
 LOCAL_KEYCHAIN_SERVICES=("ai.cua.session.local" "ai.cua.session.local.staging")
+# What macOS keeps under ~/Library for the Local bundle id: preferences, caches,
+# web view data and saved window state. Every name carries the Local bundle id
+# (Stable's are the same folders with its own id, which are never listed here).
+LOCAL_LIBRARY_LEAVES=(
+    "Preferences/$LOCAL_BUNDLE_ID.plist"
+    "Caches/$LOCAL_BUNDLE_ID"
+    "HTTPStorages/$LOCAL_BUNDLE_ID"
+    "WebKit/$LOCAL_BUNDLE_ID"
+    "Cookies/$LOCAL_BUNDLE_ID.binarycookies"
+    "Saved Application State/$LOCAL_BUNDLE_ID.savedState"
+)
 
 # --- Stable (what these scripts must never create, replace or remove) --------
 # Only used to refuse a bundle that carries a Stable identity.

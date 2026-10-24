@@ -382,6 +382,8 @@ snap_all() { snap . | LC_ALL=C sort; }
 STABLE_PATHS=(
     ".cua" ".lume" ".local/bin/cua" ".local/bin/lume"
     "Library/Application Support/com.trycua.spaces.macos"
+    "Library/Preferences/com.trycua.spaces.macos.plist" "Library/Caches/com.trycua.spaces.macos"
+    "Library/HTTPStorages/com.trycua.spaces.macos" "Library/WebKit/com.trycua.spaces.macos"
     "Library/LaunchAgents/com.trycua.spacesd.host.plist"
     "Library/LaunchAgents/com.trycua.lume_daemon.plist"
     "Cua Volume" "Applications/Cua Spaces.app"
@@ -405,6 +407,8 @@ make_stable_install() {
     local d
     mkdir -p "$FAKE_HOME/.cua/helper" "$FAKE_HOME/.lume/vm1" "$FAKE_HOME/.local/bin" \
         "$FAKE_HOME/Library/Application Support/com.trycua.spaces.macos" \
+        "$FAKE_HOME/Library/Preferences" "$FAKE_HOME/Library/Caches/com.trycua.spaces.macos" \
+        "$FAKE_HOME/Library/HTTPStorages/com.trycua.spaces.macos" "$FAKE_HOME/Library/WebKit/com.trycua.spaces.macos" \
         "$FAKE_HOME/Library/LaunchAgents" "$FAKE_HOME/Cua Volume" \
         "$FAKE_HOME/Applications/Cua Spaces.app/Contents/MacOS"
     echo '{"session":"stable"}' > "$FAKE_HOME/.cua/credentials.json"
@@ -414,6 +418,10 @@ make_stable_install() {
     cp "$STUB_BIN" "$FAKE_HOME/.local/bin/cua"
     cp "$STUB_BIN" "$FAKE_HOME/.local/bin/lume"
     echo '{}' > "$FAKE_HOME/Library/Application Support/com.trycua.spaces.macos/settings.json"
+    echo '<plist/>' > "$FAKE_HOME/Library/Preferences/com.trycua.spaces.macos.plist"
+    echo 'cache' > "$FAKE_HOME/Library/Caches/com.trycua.spaces.macos/Cache.db"
+    echo 'http' > "$FAKE_HOME/Library/HTTPStorages/com.trycua.spaces.macos/httpstorages.sqlite"
+    echo 'web' > "$FAKE_HOME/Library/WebKit/com.trycua.spaces.macos/data"
     echo '<plist/>' > "$FAKE_HOME/Library/LaunchAgents/com.trycua.spacesd.host.plist"
     echo '<plist/>' > "$FAKE_HOME/Library/LaunchAgents/com.trycua.lume_daemon.plist"
     echo 'my files' > "$FAKE_HOME/Cua Volume/note.txt"
@@ -1076,6 +1084,15 @@ echo '{}' > "$FAKE_HOME/.cua-local/helper/service.json"
 echo '{}' > "$FAKE_HOME/.cua-local/credentials.json"
 echo '{}' > "$FAKE_HOME/Library/Application Support/com.trycua.spaces.local/settings.json"
 echo '<plist/>' > "$FAKE_HOME/Library/LaunchAgents/com.trycua.spacesd.host.local.plist"
+# What macOS keeps for the Local bundle id in ~/Library.
+mkdir -p "$FAKE_HOME/Library/Preferences" "$FAKE_HOME/Library/Caches/com.trycua.spaces.local" "$FAKE_HOME/Library/HTTPStorages/com.trycua.spaces.local" \
+    "$FAKE_HOME/Library/WebKit/com.trycua.spaces.local" "$FAKE_HOME/Library/Cookies" "$FAKE_HOME/Library/Saved Application State/com.trycua.spaces.local.savedState"
+echo '<plist/>' > "$FAKE_HOME/Library/Preferences/com.trycua.spaces.local.plist"
+echo 'cache' > "$FAKE_HOME/Library/Caches/com.trycua.spaces.local/Cache.db"
+echo 'http' > "$FAKE_HOME/Library/HTTPStorages/com.trycua.spaces.local/httpstorages.sqlite"
+echo 'web' > "$FAKE_HOME/Library/WebKit/com.trycua.spaces.local/data"
+echo 'cookies' > "$FAKE_HOME/Library/Cookies/com.trycua.spaces.local.binarycookies"
+echo 'state' > "$FAKE_HOME/Library/Saved Application State/com.trycua.spaces.local.savedState/windows.plist"
 echo 'mine' > "$FAKE_HOME/Cua Volume Local/keep.txt"
 BEFORE_UNINSTALL="$(snap_all)"
 : > "$SHIM_LOG"; : > "$STUB_LOG"
@@ -1092,6 +1109,10 @@ uninstall
 check "answering y removes Local (status $RC)" '[ "$RC" = 0 ] && [ ! -e "$LOCAL_APP" ] && [ ! -e "$LOCAL_CLI" ] && [ ! -L "$LOCAL_CLI" ]'
 STDIN_FILE=/dev/null
 check "the Local home and its app support folder are gone" '[ ! -e "$FAKE_HOME/.cua-local" ] && [ ! -e "$FAKE_HOME/Library/Application Support/com.trycua.spaces.local" ]'
+check "the Local bundle id's preferences, caches, web view data, cookies and window state are gone" \
+    '[ ! -e "$FAKE_HOME/Library/Preferences/com.trycua.spaces.local.plist" ] && [ ! -e "$FAKE_HOME/Library/Caches/com.trycua.spaces.local" ] && [ ! -e "$FAKE_HOME/Library/HTTPStorages/com.trycua.spaces.local" ] && [ ! -e "$FAKE_HOME/Library/WebKit/com.trycua.spaces.local" ] && [ ! -e "$FAKE_HOME/Library/Cookies/com.trycua.spaces.local.binarycookies" ] && [ ! -e "$FAKE_HOME/Library/Saved Application State/com.trycua.spaces.local.savedState" ]'
+check "and Stable's preferences, caches and web view data of the same kinds are still there" \
+    '[ -f "$FAKE_HOME/Library/Preferences/com.trycua.spaces.macos.plist" ] && [ -f "$FAKE_HOME/Library/Caches/com.trycua.spaces.macos/Cache.db" ] && [ -f "$FAKE_HOME/Library/WebKit/com.trycua.spaces.macos/data" ]'
 check "the Local host runner job file is gone" '[ ! -e "$FAKE_HOME/Library/LaunchAgents/com.trycua.spacesd.host.local.plist" ]'
 check "the helper login item was unregistered by the Local app itself" 'grep >/dev/null -- "--service-helper unregister \[CUA_CHANNEL=local\]" "$STUB_LOG"'
 check "launchctl was asked about the two Local labels only" \

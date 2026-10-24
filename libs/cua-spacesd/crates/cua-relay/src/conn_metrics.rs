@@ -29,6 +29,11 @@ pub(crate) enum Kind {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct RelayStatus(pub(crate) StatusCode);
 
+/// A response of a connection route that is not a connection attempt
+/// (an unrouted path, the share sign-in redirect and session exchange).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Uncounted;
+
 /// The target computer is not connected (a sleeping Mac, not a relay fault).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Offline;
@@ -45,6 +50,9 @@ pub(crate) enum Outcome {
 pub(crate) fn classify(response: &Response) -> Option<(Kind, Outcome)> {
     let ext = response.extensions();
     let kind = *ext.get::<Kind>()?;
+    if ext.get::<Uncounted>().is_some() {
+        return None;
+    }
     let outcome = if ext.get::<Offline>().is_some() {
         Outcome::Offline
     } else {
@@ -178,6 +186,9 @@ mod tests {
 
     #[test]
     fn other_routes_are_not_counted() {
+        let mut r = response(Some(Kind::Client), Some(404), false, 404);
+        r.extensions_mut().insert(Uncounted);
+        assert_eq!(classify(&r), None);
         assert_eq!(classify(&response(None, Some(401), false, 401)), None);
         assert_eq!(classify(&response(None, None, false, 200)), None);
     }

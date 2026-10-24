@@ -1120,9 +1120,20 @@ fn percent_encode_grpc(message: &str) -> String {
 async fn machine_connect(
     state: State<Relay>,
     headers: HeaderMap,
-    upgrade: WebSocketUpgrade,
+    upgrade: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
 ) -> Response {
-    let mut response = machine_connect_inner(state, headers, upgrade).await;
+    let mut response = match upgrade {
+        Ok(upgrade) => machine_connect_inner(state, headers, upgrade).await,
+        // Not a WebSocket handshake: refused before the relay looks at it.
+        Err(rejection) => {
+            let mut response = rejection.into_response();
+            let status = response.status();
+            response
+                .extensions_mut()
+                .insert(crate::conn_metrics::RelayStatus(status));
+            response
+        }
+    };
     response
         .extensions_mut()
         .insert(crate::conn_metrics::Kind::Machine);
@@ -1898,12 +1909,17 @@ async fn proxy_inner(State(relay): State<Relay>, mut request: Request) -> Respon
             Some(domain) => format!("use <computer-id>.{domain}/…"),
             None => "use /m/<computer-id>/…".to_owned(),
         };
-        return refuse(
+        // Not a computer route (stray paths, scanners): not a connection.
+        let mut response = refuse(
             request.headers(),
             StatusCode::NOT_FOUND,
             GrpcCode::NotFound,
             message,
         );
+        response
+            .extensions_mut()
+            .insert(crate::conn_metrics::Uncounted);
+        return response;
     };
     use crate::share_web::{Cookie, ShareKind};
     // The session endpoint of a private share origin: trades a login code
@@ -1913,7 +1929,11 @@ async fn proxy_inner(State(relay): State<Relay>, mut request: Request) -> Respon
             && sh.kind == ShareKind::Private
             && request.uri().path() == crate::share_web::SESSION_PATH
         {
-            return crate::share_web::session(&relay, &request);
+            let mut response = crate::share_web::session(&relay, &request);
+            response
+                .extensions_mut()
+                .insert(crate::conn_metrics::Uncounted);
+            return response;
         }
     }
     // Only the relay mints assertions; device sessions are for the relay
@@ -2009,7 +2029,11 @@ async fn proxy_inner(State(relay): State<Relay>, mut request: Request) -> Respon
                                 .map(|p| p.as_str())
                                 .unwrap_or("/")
                         );
-                        return relay.share_login_redirect(&original);
+                        let mut response = relay.share_login_redirect(&original);
+                        response
+                            .extensions_mut()
+                            .insert(crate::conn_metrics::Uncounted);
+                        return response;
                     }
                 }
             },

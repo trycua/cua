@@ -91,8 +91,27 @@ async fn outcomes_are_counted_by_kind() {
     .await;
     assert!(bad.is_err());
 
+    // Machine rejected: not a WebSocket handshake. Unrouted paths are not counted.
+    let r = http
+        .get(format!("{base}{}", cua_relay::CONNECT_PATH))
+        .header(cua_relay::MACHINE_ID_HEADER, ID)
+        .bearer_auth(TOKEN)
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_client_error());
+    assert_eq!(
+        http.get(format!("{base}/favicon.ico"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+
     let text = metrics(&base).await;
-    assert_eq!(series(&text, "machine", "rejected"), 1, "{text}");
+    assert_eq!(series(&text, "machine", "rejected"), 2, "{text}");
+    assert_eq!(series(&text, "client", "rejected"), 0, "{text}");
     assert_eq!(series(&text, "client", "ok"), 0, "{text}");
 
     // Machine ok and client ok (the computer's own 404 passes through as ok).

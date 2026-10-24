@@ -1125,6 +1125,20 @@ pub(super) fn window_focus_is_browser_chrome_field(pid: i32, window_id: u32) -> 
     )
 }
 
+/// Whether `element` is proven to sit outside web content: its ancestor walk
+/// reaches the window or application without passing an `AXWebArea`. Unlike
+/// [`target_in_web_area`], an AX failure or an unfinished walk is not proof.
+pub(super) fn element_outside_web_content(
+    pid: i32,
+    element: AXUIElementRef,
+    window_id: u32,
+) -> bool {
+    matches!(
+        classify_target_web_area(pid, Some((element as usize, None)), Some(window_id)),
+        WebAreaClassification::NonWebContent
+    )
+}
+
 /// Whether `pid` is a web browser whose omnibox and pages the foreground
 /// typing rung must activate fully (see the browser branch of the rung).
 pub(super) fn is_browser_pid(pid: i32) -> bool {

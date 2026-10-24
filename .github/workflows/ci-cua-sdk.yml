@@ -523,17 +523,18 @@ jobs:
       - name: Smoke-test the installed wheel
         working-directory: libs/cua/python
         run: |
-          WHEEL=$(ls dist/*.whl)
-          uv run --no-project --isolated --python 3.12 --with pytest --with "$WHEEL" pytest -q -p no:cacheprovider tests
+          # `cua` and the `cua-cli` it requires: the tests drive the CLI too.
+          WHEEL=$(ls dist/cua-[0-9]*.whl); CLI_WHEEL=$(ls dist/cua_cli-*.whl)
+          uv run --no-project --isolated --python 3.12 --with pytest --with "$WHEEL" --with "$CLI_WHEEL" pytest -q -p no:cacheprovider tests
       # cua-e2b (the e2b-compatible module) through this wheel against the
       # fixture's cua-spacesd, compared with the e2b 2.42 behaviour golden.
       - name: cua-e2b conformance against cua-spacesd
         if: runner.os == 'Linux'
         working-directory: libs/python/cua-e2b
         run: |
-          WHEEL=$(ls ../../cua/python/dist/*.whl)
+          WHEEL=$(ls ../../cua/python/dist/cua-[0-9]*.whl); CLI_WHEEL=$(ls ../../cua/python/dist/cua_cli-*.whl)
           uv run --no-project --isolated --python 3.12 --with pytest --with pytest-asyncio \
-            --with "$WHEEL" --with-editable . pytest -q -p no:cacheprovider tests/test_conformance.py
+            --with "$WHEEL" --with "$CLI_WHEEL" --with-editable . pytest -q -p no:cacheprovider tests/test_conformance.py
 
   node:
     if: ${{ !cancelled() && !startsWith(github.head_ref, 'release-please--branches--')

@@ -80,6 +80,7 @@ jobs:
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
+          shared-key: libs-cua-proto
       - name: Format
         run: cargo fmt --all -- --check
       - name: Clippy

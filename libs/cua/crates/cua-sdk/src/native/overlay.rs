@@ -148,11 +148,19 @@ fn sq(s: &str) -> String {
 }
 
 /// Shell helpers. `cua_exe PID` prints a process's executable (from
-/// `/proc/PID/exe`, else its argv[0]: root in gVisor may not read another
-/// user's `exe` link), without a ` (deleted)` suffix. `cua_exe_sha PID`
-/// prints the sha256 of what it runs (as its owner when root cannot read
-/// it). `cua_daemon` prints `<pid> <exe>` of the running cua-spacesd (the
-/// exec's parent first).
+/// `/proc/PID/exe`, else its argv[0]: the `exe` link of another user's
+/// process, or of one holding capabilities the reader lacks, is unreadable
+/// without CAP_SYS_PTRACE), without a ` (deleted)` suffix. `cua_exe_sha PID`
+/// prints the sha256 of what it runs, empty when unreadable: directly, else
+/// as root (`sudo -n` when not root), else as root and as its owner.
+/// `cua_daemon` prints `<pid> <exe>` of the running cua-spacesd (the exec's
+/// parent first).
+///
+/// The `/proc` hash is only the fallback for the daemon: a cua-spacesd that
+/// holds capabilities (the images run it as the desktop user with
+/// CAP_SETUID/SETGID/KILL) cannot be read by root without CAP_SYS_PTRACE
+/// (not in the Docker default set) nor by its owner, so [`daemon_identity`]
+/// asks the daemon first.
 const FIND_DAEMON: &str = r#"cua_exe() {
   e=$(readlink "/proc/$1/exe" 2>/dev/null) || e=""
   [ -n "$e" ] || e=$(tr '\0' '\n' <"/proc/$1/cmdline" 2>/dev/null | head -n1) || true
@@ -161,9 +169,15 @@ const FIND_DAEMON: &str = r#"cua_exe() {
 }
 cua_exe_sha() {
   s=$(sha256sum "/proc/$1/exe" 2>/dev/null | cut -d' ' -f1)
-  if [ -z "$s" ] && [ "$(id -u)" = 0 ]; then
-    u=$(stat -c %U "/proc/$1" 2>/dev/null)
-    s=$(runuser -u "$u" -- sha256sum "/proc/$1/exe" 2>/dev/null | cut -d' ' -f1)
+  if [ -z "$s" ]; then
+    if [ "$(id -u)" = 0 ]; then R=""
+    elif sudo -n true 2>/dev/null; then R="sudo -n"
+    else echo ""; return 0; fi
+    [ -z "$R" ] || s=$($R sha256sum "/proc/$1/exe" 2>/dev/null | cut -d' ' -f1)
+    if [ -z "$s" ]; then
+      u=$(stat -c %U "/proc/$1" 2>/dev/null) || u=""
+      [ -z "$u" ] || s=$($R runuser -u "$u" -- sha256sum "/proc/$1/exe" 2>/dev/null | cut -d' ' -f1)
+    fi
   fi
   echo "$s"
 }
@@ -273,7 +287,8 @@ echo "pid=$pid"
 echo "how=$how"
 "#;
 
-/// Prints `<pid> <sha256>` of the running cua-spacesd.
+/// Prints `<pid> <sha256>` of the running cua-spacesd (the sha256 from
+/// `/proc`, empty when unreadable).
 const DAEMON_IDENTITY: &str = r#"d=$(cua_daemon) || exit 1
 pid=${d%% *}
 echo "$pid $(cua_exe_sha "$pid")"
@@ -554,6 +569,109 @@ async fn apply_one(
     })
 }
 
+/// Whether `s` is a sha256 in hex.
+fn is_sha256(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// The `build.exe_sha256` in a `DriverService.CallTool` response (proto3
+/// JSON) for `health_report`: the sha256 the daemon computed of its own
+/// running executable (`/proc/self/exe`, which a process can always read).
+/// Empty when the response carries none (a build that predates it).
+fn reported_exe_sha256(response_json: &str) -> String {
+    let Ok(response) = serde_json::from_str::<serde_json::Value>(response_json) else {
+        return String::new();
+    };
+    let mut texts: Vec<&str> = ["structuredJson", "structured_json"]
+        .iter()
+        .filter_map(|k| response[*k].as_str())
+        .collect();
+    if let Some(parts) = response["content"].as_array() {
+        for part in parts {
+            texts.extend(["json", "text"].iter().filter_map(|k| part[*k].as_str()));
+        }
+    }
+    texts
+        .into_iter()
+        .filter_map(|t| serde_json::from_str::<serde_json::Value>(t).ok())
+        .find_map(|report| {
+            report["build"]["exe_sha256"]
+                .as_str()
+                .filter(|s| is_sha256(s))
+                .map(str::to_ascii_lowercase)
+        })
+        .unwrap_or_default()
+}
+
+/// Asks the cua-spacesd behind `env` which executable it runs
+/// (`health_report`, served in-process). Empty when it does not say.
+async fn ask_daemon_sha256(env: &SpacesdClient) -> String {
+    let request = serde_json::json!({
+        "name": "health_report",
+        "argumentsJson": serde_json::json!({"include": ["binary_version"]}).to_string(),
+        "timeout": "20s",
+    });
+    match tokio::time::timeout(
+        Duration::from_secs(25),
+        env.call_json("DriverService/CallTool".into(), request.to_string(), None),
+    )
+    .await
+    {
+        Ok(Ok(response)) => reported_exe_sha256(&response),
+        _ => String::new(),
+    }
+}
+
+/// `(pid, sha256)` of the running daemon from the shell probe's `<pid>
+/// <sha256>` and the sha256 the daemon reported itself: its own report
+/// wins, the `/proc` hash is the fallback (daemons that predate the report,
+/// or that do not answer).
+fn identity_of(probe: &str, reported: &str) -> (String, String) {
+    let mut parts = probe.split_whitespace();
+    let pid = parts.next().unwrap_or_default().to_string();
+    let from_proc = parts.next().unwrap_or_default().to_ascii_lowercase();
+    let sha = if is_sha256(reported) {
+        reported.to_ascii_lowercase()
+    } else {
+        from_proc
+    };
+    (pid, sha)
+}
+
+/// `(pid, sha256)` of the guest's running cua-spacesd. The pid comes from
+/// the guest's process table; the sha256 from the daemon's own report,
+/// else from `/proc`. `fresh` opens a new cua-spacesd connection (after a
+/// restart the old one is gone).
+async fn daemon_identity(
+    sandbox: &Sandbox,
+    guest: &Guest,
+    fresh: bool,
+) -> Result<(String, String)> {
+    let identity = format!("{FIND_DAEMON}{DAEMON_IDENTITY}");
+    let (probe, env) = match guest {
+        // The process table first: once it shows a new pid the old daemon is
+        // gone, so the report below comes from the new one.
+        Guest::Engine { .. } => {
+            let probe = guest.sh(identity, "identity").await?;
+            (probe, sandbox.spacesd(Some(5_000)).await.ok())
+        }
+        Guest::Spacesd(env) => {
+            let env = if fresh {
+                sandbox.spacesd(Some(5_000)).await?
+            } else {
+                env.clone()
+            };
+            let probe = Guest::Spacesd(env.clone()).sh(identity, "identity").await?;
+            (probe, Some(env))
+        }
+    };
+    let reported = match &env {
+        Some(env) => ask_daemon_sha256(env).await,
+        None => String::new(),
+    };
+    Ok(identity_of(&probe, &reported))
+}
+
 /// Restarts the guest's cua-spacesd and waits (bounded by `deadline`)
 /// until a new process runs `sha256`.
 async fn restart_daemon(
@@ -562,10 +680,9 @@ async fn restart_daemon(
     sha256: &str,
     deadline: Instant,
 ) -> Result<String> {
-    let identity = format!("{FIND_DAEMON}{DAEMON_IDENTITY}");
     // Already running this build (the same overlay applied twice): no restart.
-    if let Ok(out) = guest.sh(identity.clone(), "identity").await
-        && out.split_whitespace().nth(1) == Some(sha256)
+    if let Ok((_, sha)) = daemon_identity(sandbox, guest, false).await
+        && sha.eq_ignore_ascii_case(sha256)
     {
         return Ok(String::new());
     }
@@ -589,23 +706,16 @@ async fn restart_daemon(
             break;
         }
         tokio::time::sleep(Duration::from_secs(1)).await;
-        // Through spacesd, a fresh attachment each time (the old process is
-        // gone); through the engine, the same exec.
-        let probe = match guest {
-            Guest::Engine { .. } => guest.sh(identity.clone(), "identity").await,
-            Guest::Spacesd(_) => match sandbox.spacesd(Some(5_000)).await {
-                Ok(env) => Guest::Spacesd(env).sh(identity.clone(), "identity").await,
-                Err(e) => Err(e),
-            },
-        };
-        match probe {
-            Ok(out) => {
-                let mut parts = out.split_whitespace();
-                let (pid, sha) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
-                if pid != old_pid && sha == sha256 {
+        match daemon_identity(sandbox, guest, true).await {
+            Ok((pid, sha)) => {
+                if !pid.is_empty() && pid != old_pid && sha.eq_ignore_ascii_case(sha256) {
                     return Ok(how);
                 }
-                last = format!("pid {pid} runs sha256 {}", &sha[..sha.len().min(12)]);
+                last = if sha.is_empty() {
+                    format!("pid {pid} does not report its build, and its executable is unreadable")
+                } else {
+                    format!("pid {pid} runs sha256 {}", &sha[..sha.len().min(12)])
+                };
             }
             Err(e) => last = e.to_string(),
         }
@@ -862,6 +972,96 @@ supervisorctl() {
                 assert!(!String::from_utf8_lossy(&out.stderr).contains("sleep 1;"));
             }
         }
+    }
+
+    /// Runs `cua_exe_sha 42` with a fake `/proc/42/exe` readable only by
+    /// the identities in `readers` (`direct`, `root`, `owner`), as uid
+    /// `uid`, with or without passwordless sudo.
+    #[cfg(unix)]
+    fn exe_sha_as(uid: u32, sudo: bool, readers: &str) -> String {
+        let script = format!(
+            r#"{FIND_DAEMON}
+WHO=direct
+id() {{ if [ "$WHO" = root ]; then echo 0; else echo {uid}; fi; }}
+can() {{ case " {readers} " in *" $1 "*) return 0;; esac; return 1; }}
+sha256sum() {{ if can "$WHO"; then echo "feed  $1"; else return 1; fi; }}
+stat() {{ echo cua; }}
+sudo() {{ [ "$1" = -n ] && shift; [ {sudo} = true ] || return 1; o=$WHO; WHO=root; "$@"; r=$?; WHO=$o; return $r; }}
+runuser() {{ [ "$WHO" = root ] || [ {uid} = 0 ] || return 1; o=$WHO; WHO=owner; shift 3; "$@"; r=$?; WHO=$o; return $r; }}
+[ {uid} != 0 ] || WHO=root
+cua_exe_sha 42"#
+        );
+        let out = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(script)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exe_sha_falls_back_to_root_then_the_owner() {
+        // Readable directly: no elevation.
+        assert_eq!(exe_sha_as(1000, false, "direct"), "feed");
+        // A non-root caller with passwordless sudo reads it as root.
+        assert_eq!(exe_sha_as(1000, true, "root"), "feed");
+        // ... or as the owner through root.
+        assert_eq!(exe_sha_as(1000, true, "owner"), "feed");
+        // Root reads it as the owner.
+        assert_eq!(exe_sha_as(0, false, "owner"), "feed");
+        // Without sudo there is no fallback, and nobody may read it at all
+        // (a daemon holding capabilities, no CAP_SYS_PTRACE): empty.
+        assert_eq!(exe_sha_as(1000, false, "root owner"), "");
+        assert_eq!(exe_sha_as(1000, true, ""), "");
+        assert_eq!(exe_sha_as(0, false, ""), "");
+    }
+
+    #[test]
+    fn reads_the_daemons_reported_build() {
+        let a = "a".repeat(64);
+        let report = format!(
+            r#"{{"build":{{"version":"0.8.0","exe_sha256":"{}"}}}}"#,
+            a.to_uppercase()
+        );
+        let structured = serde_json::json!({"structuredJson": report, "content": [{"text": "ok"}]});
+        assert_eq!(reported_exe_sha256(&structured.to_string()), a);
+        let snake = serde_json::json!({"structured_json": report});
+        assert_eq!(reported_exe_sha256(&snake.to_string()), a);
+        let in_content = serde_json::json!({"content": [{"text": "summary"}, {"json": report}]});
+        assert_eq!(reported_exe_sha256(&in_content.to_string()), a);
+        // Builds that predate the report, or report nothing usable.
+        for none in [
+            serde_json::json!({"structuredJson": r#"{"schema_version":"1"}"#}).to_string(),
+            serde_json::json!({"structuredJson": r#"{"build":{"exe_sha256":""}}"#}).to_string(),
+            serde_json::json!({"structuredJson": r#"{"build":{"exe_sha256":"zz"}}"#}).to_string(),
+            serde_json::json!({"content": [{"text": "not json"}]}).to_string(),
+            "not json".to_string(),
+            String::new(),
+        ] {
+            assert_eq!(reported_exe_sha256(&none), "", "{none}");
+        }
+    }
+
+    #[test]
+    fn the_daemons_report_wins_over_proc() {
+        let (a, b) = ("a".repeat(64), "b".repeat(64));
+        // The daemon's own report is primary.
+        assert_eq!(
+            identity_of(&format!("30 {b}\n"), &a),
+            ("30".into(), a.clone())
+        );
+        // An unreadable /proc (empty hash) does not matter when it reports.
+        assert_eq!(identity_of("30 \n", &a), ("30".into(), a.clone()));
+        // A daemon that predates the report: the /proc hash.
+        assert_eq!(
+            identity_of(&format!("30 {b}\n"), ""),
+            ("30".into(), b.clone())
+        );
+        // Neither: an empty sha256, which never matches the injected build.
+        assert_eq!(identity_of("30\n", ""), ("30".into(), String::new()));
+        assert_eq!(identity_of("", ""), (String::new(), String::new()));
     }
 
     #[test]

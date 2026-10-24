@@ -1,0 +1,69 @@
+name: "Codex: build patched cua-driver (Windows)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch or SHA to build"
+        required: true
+        default: "fix/windows-floating-ball-uia-and-caption-drag"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codex-patched-driver-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "180"
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  build:
+    name: Build patched cua-driver.exe
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.ref }}
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@a8e6f3f1e04b2b2b9a4b0f4e6b4a0b0b4a0b0b0b # v2
+        with:
+          workspaces: libs/cua-driver/rust
+          key: patched-driver
+
+      - name: Build cua-driver (release, x86_64-pc-windows-msvc)
+        shell: pwsh
+        working-directory: libs/cua-driver/rust
+        run: |
+          cargo build --release --locked -p cua-driver --target x86_64-pc-windows-msvc
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $src = 'libs/cua-driver/rust/target/x86_64-pc-windows-msvc/release/cua-driver.exe'
+          if (-not (Test-Path $src)) { throw "binary missing: $src" }
+          Copy-Item $src 'cua-driver-patched.exe' -Force
+          $h = (Get-FileHash 'cua-driver-patched.exe' -Algorithm SHA256).Hash
+          "sha256=$h" | Out-File -FilePath 'cua-driver-patched.exe.sha256' -Encoding ascii
+          Write-Host "built: $((Get-Item 'cua-driver-patched.exe').Length) bytes sha256=$h"
+
+      - name: Upload patched driver
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cua-driver-patched-windows
+          path: |
+            cua-driver-patched.exe
+            cua-driver-patched.exe.sha256
+          retention-days: 30

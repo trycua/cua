@@ -181,8 +181,8 @@ pub fn vm_dirs(home: &Path) -> Vec<std::path::PathBuf> {
     )
 }
 
-/// Directories `channel`'s Lume keeps VMs in: its default one (`~/.lume`,
-/// `~/.lume-local`, or `lume_home`), plus, for Stable, every `path:` under
+/// Directories `channel`'s Lume keeps VMs in: its default one (`~/.lume`, or
+/// Local's `~/.lume-local`, which `lume_home` moves), plus, for Stable, every `path:` under
 /// `vmLocations` in `~/.config/lume/config.yaml`. Local's Lume has its own
 /// config, so Stable's is not read: its VMs are never Local's.
 pub fn vm_dirs_for(
@@ -377,10 +377,14 @@ mod tests {
         let stable = vm_dirs_for(CuaChannel::Stable, home.path(), None);
         assert_eq!(stable, [home.path().join(".lume"), other]);
         assert!(!local.contains(&home.path().join(".lume")));
-        // LUME_HOME moves the default one, in either channel.
+        // LUME_HOME moves Local's default one, never Stable's.
         assert_eq!(
             vm_dirs_for(CuaChannel::Local, home.path(), Some("~/moved")),
             [home.path().join("moved")]
+        );
+        assert_eq!(
+            vm_dirs_for(CuaChannel::Stable, home.path(), Some("~/moved")),
+            stable
         );
     }
 

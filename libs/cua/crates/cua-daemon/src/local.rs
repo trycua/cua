@@ -2360,8 +2360,11 @@ impl LocalRuntime for VmmLocal {
             via: "vnc".into(),
             // `lume attach` opens the VM's own display (VNC as its fallback)
             // and handles the password.
-            open_command: cua_vmm::lume::lume_bin()
-                .map(|b| vec![b.display().to_string(), "attach".into(), name.to_string()]),
+            // Run with the channel's Lume environment, so a Local Lume
+            // attaches to a Local VM.
+            open_command: cua_vmm::lume::lume_cmd()
+                .map_err(rt_err)?
+                .map(|l| l.argv(["attach", name])),
         })
     }
 }

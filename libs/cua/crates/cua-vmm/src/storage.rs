@@ -40,9 +40,11 @@ pub fn host_volume(path: &Path) -> Option<Volume> {
     })
 }
 
-/// The variable Lume reads its home and VM directory from. Spaces sets it
-/// for the Lume it starts for Local ([`crate::lume::LumeRuntime`]), and
-/// follows it when it is set (the Lume this Mac runs sees it too).
+/// The variable Lume reads its home and VM directory from. Spaces Local
+/// follows it and sets it for the Lume it starts ([`crate::lume::LumeCmd`]).
+/// Stable ignores it: the Lume it runs (the pinned 0.6.0, and any before
+/// the one that honours it) keeps VMs where its `config.yaml` says, so
+/// Spaces must look there too.
 pub const LUME_HOME_VAR: &str = "LUME_HOME";
 
 /// `$LUME_HOME`, when set and not blank.
@@ -55,11 +57,10 @@ pub fn lume_home_env() -> Option<String> {
 /// Lume's default VM storage directory for this process's channel: where a
 /// macOS Space's clone is written.
 ///
-/// * `$LUME_HOME`, when set (either channel);
-/// * Local: `~/.lume-local` ([`CuaChannel::lume_dir`]), never Stable's
-///   `~/.config/lume/config.yaml`;
-/// * Stable: the default location in `~/.config/lume/config.yaml`, else
-///   `~/.lume`.
+/// * Stable (unchanged): the default location in
+///   `~/.config/lume/config.yaml`, else `~/.lume`;
+/// * Local: `$LUME_HOME` when set, else `~/.lume-local`
+///   ([`CuaChannel::lume_dir`]); never Stable's `~/.config/lume/config.yaml`.
 pub fn lume_dir() -> PathBuf {
     lume_dir_for(CuaChannel::current())
 }
@@ -79,21 +80,23 @@ pub fn lume_dir_with(
     lume_home: Option<&str>,
     config_yaml: Option<&str>,
 ) -> PathBuf {
-    let lume_home = lume_home.map(str::trim).filter(|h| !h.is_empty());
-    if lume_home.is_none() && channel == CuaChannel::Stable {
-        return config_yaml
-            .and_then(lume_default_location)
-            .map(|p| expand_home(&p, home))
-            .unwrap_or_else(|| default_lume_dir(channel, home, None));
+    if channel.is_local() {
+        return default_lume_dir(channel, home, lume_home);
     }
-    default_lume_dir(channel, home, lume_home)
+    config_yaml
+        .and_then(lume_default_location)
+        .map(|p| expand_home(&p, home))
+        .unwrap_or_else(|| default_lume_dir(channel, home, None))
 }
 
 /// The VM directory `channel`'s Lume uses before its `config.yaml` is
-/// consulted: `lume_home` (a leading `~` is `home`), else `~/.lume` or
-/// `~/.lume-local`, named by [`CuaChannel::lume_dir`].
+/// consulted: for Local `lume_home` (a leading `~` is `home`), else
+/// `~/.lume-local`; for Stable always `~/.lume`, whatever `lume_home` says
+/// ([`LUME_HOME_VAR`]). The names come from [`CuaChannel::lume_dir`].
 pub fn default_lume_dir(channel: CuaChannel, home: &Path, lume_home: Option<&str>) -> PathBuf {
-    if let Some(h) = lume_home.map(str::trim).filter(|h| !h.is_empty()) {
+    if channel.is_local()
+        && let Some(h) = lume_home.map(str::trim).filter(|h| !h.is_empty())
+    {
         return expand_home(h, home);
     }
     let dir = channel.lume_dir();
@@ -365,23 +368,34 @@ mod tests {
     }
 
     #[test]
-    fn lume_home_overrides_the_directory_in_either_channel() {
+    fn lume_home_moves_local_s_directory_and_never_stable_s() {
         let home = Path::new("/Users/a");
-        for c in CuaChannel::ALL {
-            assert_eq!(
-                lume_dir_with(
-                    c,
-                    home,
-                    Some("/Volumes/X/vms"),
-                    Some("defaultLocationName: \"h\"")
-                ),
-                PathBuf::from("/Volumes/X/vms")
-            );
-            assert_eq!(
-                lume_dir_with(c, home, Some("~/vms"), None),
-                PathBuf::from("/Users/a/vms")
-            );
-        }
+        let cfg = Some(
+            "defaultLocationName: \"h\"\nvmLocations:\n  - name: \"h\"\n    path: \"/Volumes/X/lume\"\n",
+        );
+        // Local follows it.
+        assert_eq!(
+            lume_dir_with(CuaChannel::Local, home, Some("/Volumes/X/vms"), cfg),
+            PathBuf::from("/Volumes/X/vms")
+        );
+        assert_eq!(
+            lume_dir_with(CuaChannel::Local, home, Some("~/vms"), None),
+            PathBuf::from("/Users/a/vms")
+        );
+        // Stable does not: the pinned Lume keeps VMs where its config says,
+        // so that is where Spaces must look.
+        assert_eq!(
+            lume_dir_with(CuaChannel::Stable, home, Some("/Volumes/X/vms"), cfg),
+            PathBuf::from("/Volumes/X/lume")
+        );
+        assert_eq!(
+            lume_dir_with(CuaChannel::Stable, home, Some("/Volumes/X/vms"), None),
+            PathBuf::from("/Users/a/.lume")
+        );
+        assert_eq!(
+            default_lume_dir(CuaChannel::Stable, home, Some("/Volumes/X/vms")),
+            PathBuf::from("/Users/a/.lume")
+        );
     }
 
     #[test]

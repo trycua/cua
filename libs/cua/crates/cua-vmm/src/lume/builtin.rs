@@ -381,43 +381,125 @@ pub fn remove() -> Result<()> {
     }
 }
 
-/// The environment `lume serve` is started with for `channel`, and the
-/// files it needs: nothing for Stable, whose Lume is started as it always
-/// was.
+/// A Lume to run for a channel: its binary and the environment every
+/// process started from it needs. **Every** Lume subprocess goes through
+/// one of these (`serve`, `pull`, `get`, `run`, `ssh`, `attach`), so none of
+/// them can fall back to Stable's VM directory.
 ///
-/// Local's Lume keeps its VMs in `~/.lume-local` ([`crate::storage::lume_dir_for`])
-/// whichever Lume runs it, so it gets:
+/// Stable's has no environment: its Lume runs as it always did.
+///
+/// Local's Lume keeps its VMs in `~/.lume-local`
+/// ([`crate::storage::lume_dir_for`]) whichever Lume runs it, so it gets:
 ///
 /// * `LUME_HOME`: the VM directory, for a Lume that reads it (`lume-local`,
 ///   and releases after the pinned one);
 /// * `XDG_CONFIG_HOME`: a config directory of its own under `config_root`,
 ///   with a `lume/config.yaml` that makes the VM directory the default
 ///   location. A Lume that does not read `LUME_HOME` yet (the pinned one)
-///   reads this, so it never writes to Stable's `~/.lume` or reads Stable's
+///   reads this, so it never reads or writes Stable's `~/.lume` or
 ///   `~/.config/lume`.
-pub fn serve_env(
-    channel: CuaChannel,
-    config_root: &Path,
-) -> std::io::Result<Vec<(&'static str, std::ffi::OsString)>> {
-    serve_env_with(channel, config_root, &crate::storage::lume_dir_for(channel))
+#[derive(Clone, Debug)]
+pub struct LumeCmd {
+    bin: PathBuf,
+    env: Vec<(&'static str, std::ffi::OsString)>,
 }
 
-/// [`serve_env`] with the VM directory given.
-fn serve_env_with(
-    channel: CuaChannel,
-    config_root: &Path,
-    vm_dir: &Path,
-) -> std::io::Result<Vec<(&'static str, std::ffi::OsString)>> {
-    if !channel.is_local() {
-        return Ok(Vec::new());
+impl LumeCmd {
+    /// `bin` with no extra environment (Stable's, and tests').
+    pub fn plain(bin: impl Into<PathBuf>) -> Self {
+        Self {
+            bin: bin.into(),
+            env: Vec::new(),
+        }
     }
-    let vm_dir = vm_dir.to_path_buf();
-    let xdg = config_root.join("xdg");
-    seed_config(&xdg.join("lume").join("config.yaml"), &vm_dir)?;
-    Ok(vec![
-        (crate::storage::LUME_HOME_VAR, vm_dir.into_os_string()),
-        ("XDG_CONFIG_HOME", xdg.into_os_string()),
-    ])
+
+    /// `bin` for `channel`; Local's writes its config under `config_root`.
+    pub fn new(
+        channel: CuaChannel,
+        config_root: &Path,
+        bin: impl Into<PathBuf>,
+    ) -> std::io::Result<Self> {
+        Self::with_vm_dir(
+            channel,
+            config_root,
+            bin,
+            &crate::storage::lume_dir_for(channel),
+        )
+    }
+
+    /// [`LumeCmd::new`] with the VM directory given.
+    pub fn with_vm_dir(
+        channel: CuaChannel,
+        config_root: &Path,
+        bin: impl Into<PathBuf>,
+        vm_dir: &Path,
+    ) -> std::io::Result<Self> {
+        let bin = bin.into();
+        if !channel.is_local() {
+            return Ok(Self::plain(bin));
+        }
+        let xdg = config_root.join("xdg");
+        seed_config(&xdg.join("lume").join("config.yaml"), vm_dir)?;
+        Ok(Self {
+            bin,
+            env: vec![
+                (crate::storage::LUME_HOME_VAR, vm_dir.as_os_str().to_owned()),
+                ("XDG_CONFIG_HOME", xdg.into_os_string()),
+            ],
+        })
+    }
+
+    /// The Lume binary.
+    pub fn bin(&self) -> &Path {
+        &self.bin
+    }
+
+    /// The environment it runs with (empty for Stable).
+    pub fn env(&self) -> &[(&'static str, std::ffi::OsString)] {
+        &self.env
+    }
+
+    /// A command for it, with the environment set.
+    pub fn command(&self) -> std::process::Command {
+        let mut cmd = std::process::Command::new(&self.bin);
+        cmd.envs(self.env.iter().map(|(k, v)| (k, v)));
+        cmd
+    }
+
+    /// [`LumeCmd::command`] for `tokio`.
+    pub fn tokio_command(&self) -> tokio::process::Command {
+        tokio::process::Command::from(self.command())
+    }
+
+    /// The program and leading arguments that run it with its environment
+    /// when only a program and arguments can be given (`PrefixExec`,
+    /// [`super::LumeSshExec`], a command for another process to run): the
+    /// binary itself for Stable, `env K=V... <bin>` for Local.
+    pub fn wrapped(&self) -> (String, Vec<String>) {
+        if self.env.is_empty() {
+            return (self.bin.display().to_string(), Vec::new());
+        }
+        let mut lead: Vec<String> = self
+            .env
+            .iter()
+            .map(|(k, v)| format!("{k}={}", v.to_string_lossy()))
+            .collect();
+        lead.push(self.bin.display().to_string());
+        ("/usr/bin/env".into(), lead)
+    }
+
+    /// [`LumeCmd::wrapped`] followed by `args`, as one argv.
+    pub fn argv<I, S>(&self, args: I) -> Vec<String>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let (program, lead) = self.wrapped();
+        let mut argv = vec![program];
+        argv.extend(lead);
+        argv.extend(args.into_iter().map(Into::into));
+        argv
+    }
 }
 
 /// Lume's `config.yaml` that makes `vm_dir` the one VM location.
@@ -756,14 +838,17 @@ mod tests {
         );
     }
 
+    fn lume_for(channel: CuaChannel, root: &Path, vms: &Path) -> std::io::Result<LumeCmd> {
+        LumeCmd::with_vm_dir(channel, root, "/opt/lume", vms)
+    }
+
     #[test]
     fn stable_s_lume_is_started_as_it_always_was() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(
-            serve_env_with(CuaChannel::Stable, dir.path(), Path::new("/h/.lume"))
-                .unwrap()
-                .is_empty()
-        );
+        let cmd = lume_for(CuaChannel::Stable, dir.path(), Path::new("/h/.lume")).unwrap();
+        assert!(cmd.env().is_empty());
+        assert_eq!(cmd.wrapped(), ("/opt/lume".to_string(), Vec::new()));
+        assert_eq!(cmd.argv(["get", "vm"]), ["/opt/lume", "get", "vm"]);
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 
@@ -771,12 +856,17 @@ mod tests {
     fn local_s_lume_is_started_on_its_own_vm_directory_and_config() {
         let dir = tempfile::tempdir().unwrap();
         let vms = Path::new("/Users/a/.lume-local");
-        let env = serve_env_with(CuaChannel::Local, dir.path(), vms).unwrap();
-        let get = |k: &str| env.iter().find(|(n, _)| *n == k).map(|(_, v)| v.clone());
+        let cmd = lume_for(CuaChannel::Local, dir.path(), vms).unwrap();
+        let get = |k: &str| {
+            cmd.env()
+                .iter()
+                .find(|(n, _)| *n == k)
+                .map(|(_, v)| v.clone())
+        };
         assert_eq!(get("LUME_HOME"), Some(vms.into()));
         let xdg = PathBuf::from(get("XDG_CONFIG_HOME").unwrap());
         assert!(xdg.starts_with(dir.path()));
-        // A Lume that does not read LUME_HOME reads this config instead.
+        // A Lume that does not read LUME_HOME yet reads this config instead.
         let yaml = std::fs::read_to_string(xdg.join("lume/config.yaml")).unwrap();
         assert_eq!(
             crate::storage::lume_default_location(&yaml).as_deref(),
@@ -787,6 +877,13 @@ mod tests {
             !yaml.contains("\"~/.lume\""),
             "never Stable's default location"
         );
+        // Where only a program and arguments can be given, the same
+        // environment goes through `env`.
+        let argv = cmd.argv(["attach", "vm"]);
+        assert_eq!(argv[0], "/usr/bin/env");
+        assert!(argv.contains(&"LUME_HOME=/Users/a/.lume-local".to_string()));
+        assert!(argv.iter().any(|a| a.starts_with("XDG_CONFIG_HOME=")));
+        assert_eq!(&argv[argv.len() - 3..], ["/opt/lume", "attach", "vm"]);
     }
 
     #[test]
@@ -794,14 +891,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("xdg/lume/config.yaml");
         let vms = Path::new("/Users/a/.lume-local");
-        serve_env_with(CuaChannel::Local, dir.path(), vms).unwrap();
+        lume_for(CuaChannel::Local, dir.path(), vms).unwrap();
         // Right: left alone (Lume may have added its own settings).
         let kept = format!(
             "{}# added by Lume\n",
             std::fs::read_to_string(&file).unwrap()
         );
         std::fs::write(&file, &kept).unwrap();
-        serve_env_with(CuaChannel::Local, dir.path(), vms).unwrap();
+        lume_for(CuaChannel::Local, dir.path(), vms).unwrap();
         assert_eq!(std::fs::read_to_string(&file).unwrap(), kept);
         // Wrong (say it still names Stable's directory): rewritten.
         std::fs::write(
@@ -809,14 +906,14 @@ mod tests {
             "defaultLocationName: \"home\"\nvmLocations:\n  - name: \"home\"\n    path: \"~/.lume\"\n",
         )
         .unwrap();
-        serve_env_with(CuaChannel::Local, dir.path(), vms).unwrap();
+        lume_for(CuaChannel::Local, dir.path(), vms).unwrap();
         assert_eq!(
             crate::storage::lume_default_location(&std::fs::read_to_string(&file).unwrap())
                 .as_deref(),
             Some("/Users/a/.lume-local")
         );
         // A directory that cannot be written into a YAML string is refused.
-        assert!(serve_env_with(CuaChannel::Local, dir.path(), Path::new("/a\"b")).is_err());
+        assert!(lume_for(CuaChannel::Local, dir.path(), Path::new("/a\"b")).is_err());
     }
 
     #[test]

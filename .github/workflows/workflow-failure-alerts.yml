@@ -1,0 +1,88 @@
+name: "Alerts: Workflow failures"
+
+# CUA-2227. GitHub emails a failed scheduled workflow only to whoever last edited
+# its cron line, so Nightly: Cua Driver ended as startup_failure for five nights
+# (20 to 24 Oct 2026) and nobody was told. This posts the state of the release
+# and scheduled workflows below to Alertmanager (label source=github-actions),
+# which sends it to the private Slack channel #alerts-staging. It never pages.
+#
+#   - workflow_run: reports a run the moment it finishes.
+#   - schedule: every 15 minutes, reports the latest finished run of each watched
+#     workflow (at most 3 days old). It refreshes a red alert, posts the first
+#     green after a red, and covers a run that ended as startup_failure (no job,
+#     no log) in case GitHub does not send the workflow_run event for it.
+#
+# To watch another workflow, add its name in both places: the workflow_run
+# trigger and WATCH below (a unit test checks they match), as name=label.
+# trycua/cloud has the same notifier for the staging workflows.
+
+on:
+  workflow_run:
+    workflows:
+      - "Nightly: Cua Driver"
+      - "Nightly: Lume"
+      - "E2E: Cua Driver release gate"
+      - "CI: Cua Driver installer compatibility"
+      - "Monitor branded installer endpoints"
+      - "Release: Pipeline guard"
+      - "Security: push watch"
+      - "CD: Cua Driver (cross-platform)"
+      - "CD: Cua Driver SDK packages"
+      - "CD: Cua Spaces"
+      - "CD: cua-spacesd"
+      - "CD: Lume (macOS)"
+      - "Release: Prepare component releases"
+      - "Release: installer scripts feed"
+    types: [completed]
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: workflow-failure-alerts
+  cancel-in-progress: false
+
+jobs:
+  alert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      WATCH: |
+        Nightly: Cua Driver=ci
+        Nightly: Lume=ci
+        E2E: Cua Driver release gate=release
+        CI: Cua Driver installer compatibility=release
+        Monitor branded installer endpoints=release
+        Release: Pipeline guard=release
+        Security: push watch=ci
+        CD: Cua Driver (cross-platform)=release
+        CD: Cua Driver SDK packages=release
+        CD: Cua Spaces=release
+        CD: cua-spacesd=release
+        CD: Lume (macOS)=release
+        Release: Prepare component releases=release
+        Release: installer scripts feed=release
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts/workflow_alerts.py
+          persist-credentials: false
+      - name: Post workflow state to Alertmanager
+        run: |
+          set -euo pipefail
+          args=()
+          while IFS= read -r entry; do
+            [ -n "$entry" ] && args+=(--watch "$entry")
+          done <<< "$WATCH"
+          if [ "$GITHUB_EVENT_NAME" = workflow_run ]; then
+            mode=(--event "$GITHUB_EVENT_PATH")
+          else
+            mode=(--sweep --max-age-days 3)
+          fi
+          python3 .github/scripts/workflow_alerts.py "${args[@]}" "${mode[@]}"

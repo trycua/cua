@@ -3882,6 +3882,72 @@ mod tests {
         assert!(region_route::route_absolute(mixed, 6237.0, 1014.0).is_err());
     }
 
+    #[cfg(feature = "portal-input")]
+    mod libei_adapters {
+        use super::super::*;
+        use libei::local_eis::{record, Emitted};
+
+        fn motion(x: f32, y: f32) -> Emitted {
+            Emitted::Motion("wide".into(), x, y)
+        }
+
+        #[test]
+        fn click_adapter_does_not_clamp_or_shift_second_monitor_point() {
+            let (result, events) = record(|| libei_click(6237, 1014, 1, 1));
+            result.unwrap();
+            assert_eq!(events[0], motion(6237.0, 1014.0));
+            assert_eq!(events[1], motion(6237.0, 1014.0));
+        }
+
+        #[test]
+        fn click_at_origin_means_output_centre_not_literal_origin() {
+            let (_, events) = record(|| libei_click(0, 0, 1, 1));
+            assert!(!events.contains(&motion(0.0, 0.0)));
+            assert!(!events.iter().any(|e| matches!(e, Emitted::Button(..))));
+        }
+
+        #[test]
+        fn move_adapter_keeps_second_monitor_point_and_literal_origin() {
+            let (result, events) = record(|| libei_move_absolute(6237, 1014));
+            result.unwrap();
+            assert_eq!(events, vec![motion(6237.0, 1014.0)]);
+            let (result, events) = record(|| libei_move_absolute(0, 0));
+            result.unwrap();
+            assert_eq!(events, vec![motion(0.0, 0.0)]);
+        }
+
+        #[test]
+        fn drag_adapter_keeps_endpoints_and_literal_origin() {
+            let (result, events) = record(|| libei_drag(0, 0, 6237, 1014, 2, 0, 1));
+            result.unwrap();
+            assert_eq!(events.first(), Some(&motion(0.0, 0.0)));
+            assert_eq!(events[events.len() - 2], motion(6237.0, 1014.0));
+        }
+
+        #[test]
+        fn positioned_scroll_scrolls_after_a_valid_move() {
+            let (result, events) = record(|| {
+                libei_move_absolute(6237, 1014)?;
+                libei_scroll("down", 1)
+            });
+            result.unwrap();
+            assert_eq!(
+                events,
+                vec![motion(6237.0, 1014.0), Emitted::Scroll(0.0, 10.0)]
+            );
+        }
+
+        #[test]
+        fn positioned_scroll_to_an_invalid_point_emits_no_scroll() {
+            let (result, events) = record(|| {
+                libei_move_absolute(8000, 100)?;
+                libei_scroll("down", 1)
+            });
+            assert!(result.is_err());
+            assert_eq!(events, vec![]);
+        }
+    }
+
     #[test]
     fn no_announced_regions_falls_back() {
         let none: [region_route::RegionRect; 0] = [];

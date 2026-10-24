@@ -1335,6 +1335,167 @@ fn drag_step_delay(duration_ms: u64, steps: u32) -> std::time::Duration {
 }
 
 #[cfg(test)]
+pub(super) mod local_eis {
+    use super::*;
+    use reis::enumflags2::BitFlags;
+    use reis::handshake::EisHandshaker;
+    use reis::request::{DeviceCapability, EisRequest, EisRequestConverter};
+    use reis::PendingRequestResult;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Debug, PartialEq)]
+    pub(in crate::wayland) enum Emitted {
+        Motion(String, f32, f32),
+        Button(u32, bool),
+        Scroll(f32, f32),
+    }
+
+    const DEVICES: [(&str, &[u32]); 2] = [("wide", &[0, 3840]), ("far", &[10_000])];
+
+    type Log = Arc<Mutex<Vec<Emitted>>>;
+
+    struct Server {
+        ctx: reis::eis::Context,
+        handshaker: Option<EisHandshaker>,
+        converter: Option<EisRequestConverter>,
+        devices: Vec<reis::request::Device>,
+        log: Log,
+    }
+
+    impl Server {
+        fn pump(&mut self) {
+            if self.ctx.read().is_err() {
+                return;
+            }
+            while let Some(PendingRequestResult::Request(request)) = self.ctx.pending_request() {
+                if let Some(handshaker) = self.handshaker.as_mut() {
+                    if let Some(resp) = handshaker.handle_request(request).unwrap() {
+                        let converter = EisRequestConverter::new(&self.ctx, resp, 1);
+                        let _ = converter.handle().add_seat(
+                            Some("seat"),
+                            DeviceCapability::PointerAbsolute
+                                | DeviceCapability::Button
+                                | DeviceCapability::Scroll,
+                        );
+                        self.converter = Some(converter);
+                        self.handshaker = None;
+                    }
+                    continue;
+                }
+                let converter = self.converter.as_mut().unwrap();
+                converter.handle_request(request).unwrap();
+                let requests: Vec<_> = std::iter::from_fn(|| converter.next_request()).collect();
+                for request in requests {
+                    self.record(request);
+                }
+            }
+            let _ = self.ctx.flush();
+        }
+
+        fn record(&mut self, request: EisRequest) {
+            let mut log = self.log.lock().unwrap();
+            match request {
+                EisRequest::Bind(bind) => {
+                    for (name, offsets) in DEVICES {
+                        let device = bind.seat.add_device(
+                            Some(name),
+                            reis::eis::device::DeviceType::Virtual,
+                            BitFlags::from(DeviceCapability::PointerAbsolute)
+                                | DeviceCapability::Button
+                                | DeviceCapability::Scroll,
+                            |device| {
+                                for &x in offsets {
+                                    device.device().region(x, 0, 3840, 2160, 1.0);
+                                }
+                            },
+                        );
+                        device.resumed();
+                        self.devices.push(device);
+                    }
+                }
+                EisRequest::PointerMotionAbsolute(m) => log.push(Emitted::Motion(
+                    m.device.name().unwrap_or_default().to_owned(),
+                    m.dx_absolute,
+                    m.dy_absolute,
+                )),
+                EisRequest::Button(b) => log.push(Emitted::Button(
+                    b.button,
+                    b.state == reis::eis::button::ButtonState::Press,
+                )),
+                EisRequest::ScrollDelta(s) => log.push(Emitted::Scroll(s.dx, s.dy)),
+                _ => {}
+            }
+        }
+    }
+
+    struct Fixture {
+        log: Log,
+        gate: Mutex<()>,
+    }
+
+    fn install() -> &'static Fixture {
+        use std::os::unix::net::UnixStream;
+        static FIXTURE: OnceLock<Fixture> = OnceLock::new();
+        FIXTURE.get_or_init(|| {
+            let log = Log::default();
+            let (tx, rx) = bounded::<Cmd>(64);
+            assert!(TX.set(tx).is_ok(), "real libei worker already started");
+            let (client_end, server_end) = UnixStream::pair().unwrap();
+            let mut client = reis::ei::Context::new(client_end).unwrap();
+            let ctx = reis::eis::Context::new(server_end).unwrap();
+            let handshaker = EisHandshaker::new(&ctx, 1);
+            let mut server = Server {
+                ctx,
+                handshaker: Some(handshaker),
+                converter: None,
+                devices: Vec::new(),
+                log: log.clone(),
+            };
+            thread::spawn(move || {
+                let mut state = EisState::default();
+                let _ = client.handshake();
+                let _ = client.flush();
+                loop {
+                    server.pump();
+                    let _ = state.handle_eis_readable(&mut client);
+                    let resumed = state.devices.values().filter(|d| d.resumed).count();
+                    if resumed == DEVICES.len() {
+                        match rx.try_recv() {
+                            Ok(Cmd::Shutdown)
+                            | Err(crossbeam_channel::TryRecvError::Disconnected) => break,
+                            Ok(cmd) => state.handle_command(cmd),
+                            Err(_) => {}
+                        }
+                    }
+                    state
+                        .pending_sync
+                        .retain(|_, (_, sent)| sent.elapsed().as_secs() < 5);
+                    thread::sleep(std::time::Duration::from_millis(1));
+                }
+            });
+            Fixture {
+                log,
+                gate: Mutex::new(()),
+            }
+        })
+    }
+
+    /// Run `f` against a local EIS server and return what the server received
+    /// from it. A trailing barrier motion guarantees events from commands that
+    /// failed early are not still in flight when the log is read.
+    pub(in crate::wayland) fn record<R>(f: impl FnOnce() -> R) -> (R, Vec<Emitted>) {
+        let fixture = install();
+        let _gate = fixture.gate.lock().unwrap_or_else(|e| e.into_inner());
+        fixture.log.lock().unwrap().clear();
+        let result = f();
+        move_absolute(1.0, 1.0).unwrap();
+        let mut events = std::mem::take(&mut *fixture.log.lock().unwrap());
+        assert!(matches!(events.pop(), Some(Emitted::Motion(_, x, y)) if x == 1.0 && y == 1.0));
+        (result, events)
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1388,5 +1549,76 @@ mod tests {
                 (KeyTransition::Release(29), 3),
             ]
         );
+    }
+
+    use local_eis::{record, Emitted};
+
+    fn motion(device: &str, x: f32, y: f32) -> Emitted {
+        Emitted::Motion(device.into(), x, y)
+    }
+
+    const LEFT: u32 = 0x110;
+
+    #[test]
+    fn click_on_second_monitor_sends_layout_coordinate_unchanged() {
+        let (result, events) = record(|| click(6237.0, 1014.0, Button::Left));
+        result.unwrap();
+        assert_eq!(
+            events,
+            vec![
+                motion("wide", 6237.0, 1014.0),
+                Emitted::Button(LEFT, true),
+                Emitted::Button(LEFT, false),
+            ]
+        );
+    }
+
+    #[test]
+    fn click_routes_to_the_device_owning_the_region() {
+        let (result, events) = record(|| click(11_000.0, 50.0, Button::Left));
+        result.unwrap();
+        assert_eq!(events[0], motion("far", 11_000.0, 50.0));
+    }
+
+    #[test]
+    fn move_sends_layout_coordinate_unchanged_and_origin_literally() {
+        let (result, events) = record(|| move_absolute(6237.0, 1014.0));
+        result.unwrap();
+        assert_eq!(events, vec![motion("wide", 6237.0, 1014.0)]);
+
+        let (result, events) = record(|| move_absolute(0.0, 0.0));
+        result.unwrap();
+        assert_eq!(events, vec![motion("wide", 0.0, 0.0)]);
+    }
+
+    #[test]
+    fn drag_across_regions_of_one_device_holds_button_over_unchanged_endpoints() {
+        let (result, events) = record(|| drag(0.0, 0.0, 6237.0, 1014.0, 4, 0, Button::Left));
+        result.unwrap();
+        assert_eq!(events.first(), Some(&motion("wide", 0.0, 0.0)));
+        assert_eq!(events[1], Emitted::Button(LEFT, true));
+        assert_eq!(events[events.len() - 2], motion("wide", 6237.0, 1014.0));
+        assert_eq!(events.last(), Some(&Emitted::Button(LEFT, false)));
+        assert_eq!(events.len(), 2 + 1 + 4 + 1 - 1);
+    }
+
+    #[test]
+    fn drag_endpoint_outside_selected_device_fails_before_any_event() {
+        let (result, events) = record(|| drag(100.0, 100.0, 11_000.0, 100.0, 4, 0, Button::Left));
+        assert!(result.is_err());
+        assert_eq!(events, vec![]);
+    }
+
+    #[test]
+    fn pointer_commands_outside_every_region_fail_before_any_event() {
+        let (result, events) = record(|| {
+            (
+                click(8000.0, 100.0, Button::Left),
+                move_absolute(8000.0, 100.0),
+                drag(8000.0, 100.0, 100.0, 100.0, 4, 0, Button::Left),
+            )
+        });
+        assert!(result.0.is_err() && result.1.is_err() && result.2.is_err());
+        assert_eq!(events, vec![]);
     }
 }

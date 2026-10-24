@@ -2463,18 +2463,15 @@ impl ToolRegistry {
         // entirely to avoid wasted capture work). We push for the same set
         // of action tools the recording pipeline cares about (non-read-only,
         // not the recording-control meta-tools) so the live view matches
-        // what the recorder would have captured for the turn.
+        // what the recorder would have captured for the turn. The frame is
+        // only a preview, so it is captured off the request path: capturing
+        // and encoding a large window held the result back for up to 2 s.
         if pip_hook::pip_enabled() && should_record && !private_consent_turn {
-            let window_id = args.opt_u64("window_id");
-            let pid = args.opt_i64("pid");
-            if let Some(png_bytes) = screenshot_for(window_id, pid) {
-                let label = synthesize_action_label(name, &public_args);
-                pip_hook::push_pip_frame(pip_hook::PipHookFrame {
-                    png_bytes,
-                    action_label: label,
-                    timestamp_ms: now_ms(),
-                });
-            }
+            push_pip_frame_in_background(
+                args.opt_u64("window_id"),
+                args.opt_i64("pid"),
+                synthesize_action_label(name, &public_args),
+            );
         }
 
         if renamed_tool(original_name).is_some() {
@@ -6227,6 +6224,40 @@ fn recording_args_for(tool_name: &str, args: &Value) -> Value {
 impl Default for ToolRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// A PiP frame capture is running; a newer request waits for the next action
+/// instead of queueing behind it.
+static PIP_CAPTURE_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Capture the action's window for the PiP preview on its own thread, so the
+/// tool result does not wait for it. At most one capture runs at a time.
+fn push_pip_frame_in_background(window_id: Option<u64>, pid: Option<i64>, label: String) {
+    use std::sync::atomic::Ordering;
+    struct Busy;
+    impl Drop for Busy {
+        fn drop(&mut self) {
+            PIP_CAPTURE_BUSY.store(false, Ordering::Release);
+        }
+    }
+    if PIP_CAPTURE_BUSY.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let spawned = std::thread::Builder::new()
+        .name("pip-frame".into())
+        .spawn(move || {
+            let _busy = Busy;
+            if let Some(png_bytes) = screenshot_for(window_id, pid) {
+                pip_hook::push_pip_frame(pip_hook::PipHookFrame {
+                    png_bytes,
+                    action_label: label,
+                    timestamp_ms: now_ms(),
+                });
+            }
+        });
+    if spawned.is_err() {
+        PIP_CAPTURE_BUSY.store(false, Ordering::Release);
     }
 }
 

@@ -79,6 +79,10 @@ pub enum Command {
         /// Admit the encrypted local Computer History early preview for this
         /// daemon generation. Capture still requires separate persisted opt-in.
         experimental_history: bool,
+        /// True when `--development` is on argv: run a locally built daemon
+        /// without installed-app obligations — history stays unadmitted and
+        /// the first-launch permissions gate is skipped.
+        development: bool,
     },
     Stop {
         socket: Option<String>,
@@ -260,12 +264,12 @@ const VALUE_FLAGS: &[&str] = &[
     "--effects",
 ];
 
-/// Authorization selectors are trusted-daemon startup inputs. Direct MCP
-/// accepts their environment-variable equivalents, while a daemon-backed MCP
-/// client inherits the already-fixed profile through `--socket`. Silently
-/// consuming these flags on `mcp` would leave the default profile active while
-/// telling the operator nothing.
-const SERVE_ONLY_AUTHORIZATION_FLAGS: &[&str] = &[
+/// Authorization selectors and daemon-startup flags are trusted-daemon startup
+/// inputs. Direct MCP accepts their environment-variable equivalents, while a
+/// daemon-backed MCP client inherits the already-fixed profile through
+/// `--socket`. Silently consuming these flags on `mcp` would leave the default
+/// profile active while telling the operator nothing.
+const SERVE_ONLY_FLAGS: &[&str] = &[
     "--permission-mode",
     "--capability-manifest",
     "--approve-capability-manifest",
@@ -273,10 +277,11 @@ const SERVE_ONLY_AUTHORIZATION_FLAGS: &[&str] = &[
     "--approve-session-policy",
     "--dangerously-bypass-approvals",
     "--no-permissions-gate",
+    "--development",
 ];
 
-fn serve_only_authorization_flag(args: &[String]) -> Option<&'static str> {
-    SERVE_ONLY_AUTHORIZATION_FLAGS.iter().copied().find(|flag| {
+fn serve_only_flag(args: &[String]) -> Option<&'static str> {
+    SERVE_ONLY_FLAGS.iter().copied().find(|flag| {
         args.iter().any(|arg| {
             arg == flag
                 || arg
@@ -738,6 +743,9 @@ pub fn parse_command() -> Command {
         println!(
             "                              Capture remains off until `cua-driver history enable`."
         );
+        println!("  --development               Run a locally built daemon without installed-app");
+        println!("                              obligations: history stays unadmitted and the");
+        println!("                              first-launch permissions gate is skipped.");
         println!("  cua-driver history enable   Opt in and initialize encrypted local history.");
         println!("  cua-driver history status|pause|resume|flush|list|show|disable|delete");
         println!("  --experimental-pip          Show a small always-on-top window with the latest");
@@ -797,9 +805,9 @@ pub fn parse_command() -> Command {
     let expected_stop_pid = parse_expected_stop_pid(&args, positionals.first().copied());
 
     if matches!(positionals.first().copied(), None | Some("mcp")) {
-        if let Some(flag) = serve_only_authorization_flag(&args) {
-            eprintln!("cua-driver mcp does not accept {flag}; authorization flags belong to `cua-driver serve`.");
-            eprintln!("For direct MCP, use CUA_DRIVER_PERMISSION_MODE and the related CUA_DRIVER_* environment variables.");
+        if let Some(flag) = serve_only_flag(&args) {
+            eprintln!("cua-driver mcp does not accept {flag}; daemon startup and authorization flags belong to `cua-driver serve`.");
+            eprintln!("For direct MCP, use the CUA_DRIVER_* environment equivalents (e.g. CUA_DRIVER_PERMISSION_MODE).");
             eprintln!("Otherwise start a configured daemon and connect with `cua-driver mcp --socket <path>`." );
             process::exit(64);
         }
@@ -851,27 +859,41 @@ pub fn parse_command() -> Command {
             client: mcp_client,
             no_skills: args.iter().any(|a| a == "--no-skills"),
         },
-        Some("serve") => Command::Serve {
-            socket,
-            pid_file: flag_value(&args, "--pid-file"),
-            permission_mode: flag_value(&args, "--permission-mode"),
-            dangerously_bypass_approvals: args
-                .iter()
-                .any(|a| a == "--dangerously-bypass-approvals"),
-            capability_manifest: aliased_flag_value(
-                &args,
-                "--capability-manifest",
-                "--session-policy",
-            ),
-            approve_capability_manifest: args
-                .iter()
-                .any(|a| a == "--approve-capability-manifest" || a == "--approve-session-policy"),
-            // Bare flag — present anywhere on argv counts as "skip the gate".
-            no_permissions_gate: args.iter().any(|a| a == "--no-permissions-gate"),
-            claude_code_compat,
-            grants,
-            experimental_history: args.iter().any(|a| a == "--experimental-history"),
-        },
+        Some("serve") => {
+            let development = args.iter().any(|a| a == "--development");
+            let experimental_history = args.iter().any(|a| a == "--experimental-history");
+            // Both flags on one argv is an operator-typed contradiction: a
+            // development daemon always runs Computer History unadmitted, so
+            // the history request can never be honoured. Checked here, while
+            // parse still owns usage-error exits, rather than in the Serve
+            // arms where spawned-daemon argv and operator argv look alike.
+            if development && experimental_history {
+                eprintln!("cua-driver: --experimental-history cannot be combined with --development: a development daemon always runs Computer History unadmitted.");
+                process::exit(64);
+            }
+            Command::Serve {
+                socket,
+                pid_file: flag_value(&args, "--pid-file"),
+                permission_mode: flag_value(&args, "--permission-mode"),
+                dangerously_bypass_approvals: args
+                    .iter()
+                    .any(|a| a == "--dangerously-bypass-approvals"),
+                capability_manifest: aliased_flag_value(
+                    &args,
+                    "--capability-manifest",
+                    "--session-policy",
+                ),
+                approve_capability_manifest: args.iter().any(|a| {
+                    a == "--approve-capability-manifest" || a == "--approve-session-policy"
+                }),
+                // Bare flag — present anywhere on argv counts as "skip the gate".
+                no_permissions_gate: args.iter().any(|a| a == "--no-permissions-gate"),
+                development,
+                claude_code_compat,
+                grants,
+                experimental_history,
+            }
+        }
         Some("stop") => Command::Stop {
             socket,
             expected_pid: expected_stop_pid,
@@ -1792,6 +1814,9 @@ fn append_daemon_launch_state(
     if state.no_permissions_gate {
         args.push("--no-permissions-gate".to_owned());
     }
+    // `--development` is intentionally not replayed: a relaunch always targets
+    // the installed product, which must run the admission check and the
+    // permissions gate.
     if state.claude_code_compat {
         args.push("--claude-code-computer-use-compat".to_owned());
     }
@@ -2050,6 +2075,7 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--session-policy", "type": "string", "description": "Deprecated alias for --capability-manifest." },
                   { "name": "--approve-session-policy", "type": "flag", "description": "Deprecated alias for --approve-capability-manifest." },
                   { "name": "--no-permissions-gate", "type": "flag", "description": "Skip the macOS TCC first-launch gate." },
+                  { "name": "--development", "type": "flag", "description": "Run a locally built daemon without installed-app obligations: history stays unadmitted and the first-launch permissions gate is skipped. Still binds the standard socket; stop an installed daemon first or pass --socket." },
                   { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Forwarded by the MCP proxy when the client asked for the compat surface." },
                   { "name": "--embedded", "type": "flag", "description": "Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1." },
                   { "name": "--host-bundle-id", "type": "string", "description": "Advisory host bundle id label echoed in check_permissions output." }
@@ -2743,6 +2769,27 @@ pub fn run_history_cmd(
             .and_then(|value| value.get("admitted").and_then(serde_json::Value::as_bool))
             == Some(true);
         if !admitted {
+            if crate::serve::is_daemon_listening(&socket_path) {
+                prior_daemon_was_running = true;
+                prior_daemon_state = match history_daemon_relaunch_state(&socket_path) {
+                    Ok(state) => state,
+                    Err(error) => {
+                        eprintln!(
+                            "history enable: cannot preserve the running daemon mode: {error}. Stop the daemon and retry."
+                        );
+                        process::exit(1);
+                    }
+                };
+            }
+            // A development daemon always serves Computer History unadmitted
+            // and cannot be relaunched into the installed product — refuse
+            // before any installed-product verification could claim otherwise.
+            if prior_daemon_state.development {
+                eprintln!(
+                    "history enable: the running daemon is in development mode and always serves Computer History unadmitted. Stop it and retry to relaunch the installed daemon."
+                );
+                process::exit(1);
+            }
             #[cfg(target_os = "macos")]
             if crate::bundle::is_local_installation() {
                 eprintln!(
@@ -2755,18 +2802,6 @@ pub fn run_history_cmd(
             if let Err(error) = crate::history_runtime::verify_installed_product_for_history() {
                 eprintln!("history enable: installed product verification failed: {error}");
                 process::exit(1);
-            }
-            if crate::serve::is_daemon_listening(&socket_path) {
-                prior_daemon_was_running = true;
-                prior_daemon_state = match history_daemon_relaunch_state(&socket_path) {
-                    Ok(state) => state,
-                    Err(error) => {
-                        eprintln!(
-                            "history enable: cannot preserve the running daemon mode: {error}. Stop the daemon and retry."
-                        );
-                        process::exit(1);
-                    }
-                };
             }
             if let Err(error) = crate::history_runtime::set_preview_admitted_preference(true) {
                 eprintln!("history enable: could not persist preview admission: {error}");
@@ -4440,6 +4475,7 @@ fn cli_docs_literal() -> serde_json::Value {
                     {"name":"approve-capability-manifest","short_name":null,"help":"Trusted-launcher confirmation that the exact capability manifest was reviewed.","default_value":false},
                     {"name":"approve-session-policy","short_name":null,"help":"Deprecated alias for approve-capability-manifest.","default_value":false},
                     {"name":"no-permissions-gate","short_name":null,"help":"Skip the macOS first-launch permissions gate.","default_value":false},
+                    {"name":"development","short_name":null,"help":"Run a locally built daemon without installed-app obligations: history stays unadmitted and the first-launch permissions gate is skipped. Still binds the standard socket; stop an installed daemon first or pass --socket.","default_value":false},
                     {"name":"embedded","short_name":null,"help":"Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1.","default_value":false},
                     {"name":"no-overlay","short_name":null,"help":"Disable the agent cursor overlay for this daemon.","default_value":false},
                     {"name":"experimental-history","short_name":null,"help":"Admit the encrypted local Computer History early preview for this daemon launch.","default_value":false}
@@ -5778,6 +5814,7 @@ mod tests {
             approve_capability_manifest: true,
             no_permissions_gate: true,
             claude_code_compat: true,
+            development: true,
             grants,
         };
         #[cfg(target_os = "macos")]
@@ -5797,6 +5834,10 @@ mod tests {
             .any(|pair| { pair == ["--capability-manifest", "/tmp/capabilities.yaml"] }));
         assert!(launch.contains(&"--approve-capability-manifest".to_owned()));
         assert!(launch.contains(&"--no-permissions-gate".to_owned()));
+        // `--development` is recorded in the launch state (so `history enable`
+        // can refuse a dev daemon) but is never replayed into a relaunch argv:
+        // relaunches always target the installed product.
+        assert!(!launch.contains(&"--development".to_owned()));
         assert!(launch.contains(&"--claude-code-computer-use-compat".to_owned()));
         assert!(launch.contains(&"--experimental-history".to_owned()));
         assert!(launch

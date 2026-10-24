@@ -239,7 +239,7 @@ impl ToolState {
         })
     }
 
-    fn zoom_context(
+    pub(crate) fn zoom_context(
         &self,
         args: &Value,
         pid: u32,
@@ -253,7 +253,7 @@ impl ToolState {
     }
 }
 
-fn screenshot_scale(
+pub(crate) fn screenshot_scale(
     state: &ToolState,
     args: &Value,
     pid: u32,
@@ -520,7 +520,7 @@ fn disambiguate_installed_match(
 /// Return the lowercase basename of an executable token, stripping any
 /// leading shell-wrapper words and quoting. `env FOO=1 /usr/bin/firefox %U`
 /// → `firefox`. `firefox %u` → `firefox`.
-fn exec_basename(s: &str) -> String {
+pub(crate) fn exec_basename(s: &str) -> String {
     // Take the first whitespace-separated token that looks like a binary,
     // skipping `env`-style prefixes and `K=V` assignments.
     for tok in s.split_whitespace() {
@@ -621,7 +621,7 @@ impl Tool for ListWindowsTool {
 /// existing Linux callers don't break. Fully additive; no field removed,
 /// no schema_version bump.
 ///
-fn window_record_json(w: &crate::x11::WindowInfo) -> Value {
+pub(crate) fn window_record_json(w: &crate::x11::WindowInfo) -> Value {
     json!({
         "window_id": w.xid,
         "pid": w.pid,
@@ -637,7 +637,7 @@ fn window_record_json(w: &crate::x11::WindowInfo) -> Value {
     })
 }
 
-fn visible_live_desktop_windows(
+pub(crate) fn visible_live_desktop_windows(
     mut windows: Vec<crate::x11::WindowInfo>,
 ) -> Vec<crate::x11::WindowInfo> {
     windows.retain(|window| {
@@ -777,7 +777,7 @@ fn popup_item_role(role: &str) -> bool {
 /// Falls back to the input when nothing matches, so a popup that is not a
 /// menu (a GTK popover without its own frame) still returns what the walk
 /// found.
-fn popup_menu_elements(
+pub(crate) fn popup_menu_elements(
     elements: Vec<serde_json::Value>,
     (origin_x, origin_y): (i32, i32),
     width: u32,
@@ -887,7 +887,7 @@ fn popup_menu_elements(
 /// Elements that have a frame (visible, hit-testable on the screenshot)
 /// come first, in walk order; frameless ones follow. A client that caps the
 /// result then still shows the document, toolbar and sidebar controls.
-fn framed_elements_first(elements: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+pub(crate) fn framed_elements_first(elements: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
     let (framed, frameless): (Vec<_>, Vec<_>) = elements
         .into_iter()
         .partition(|entry| entry.get("frame").is_some());
@@ -899,16 +899,16 @@ fn framed_elements_first(elements: Vec<serde_json::Value>) -> Vec<serde_json::Va
 /// overlaps the target's rectangle (then its own drawable is not what the
 /// user sees).
 #[derive(Default)]
-struct WindowOverlays {
-    dialogs: Vec<serde_json::Value>,
-    popups: Vec<serde_json::Value>,
-    covers_window: bool,
-    window_rect: Option<(i32, i32, u32, u32)>,
+pub(crate) struct WindowOverlays {
+    pub(crate) dialogs: Vec<serde_json::Value>,
+    pub(crate) popups: Vec<serde_json::Value>,
+    pub(crate) covers_window: bool,
+    pub(crate) window_rect: Option<(i32, i32, u32, u32)>,
 }
 
 impl WindowOverlays {
     /// One sentence per overlay naming the call that acts on it.
-    fn follow_up(&self, pid: u32) -> Option<String> {
+    pub(crate) fn follow_up(&self, pid: u32) -> Option<String> {
         let mut parts = Vec::new();
         for dialog in &self.dialogs {
             let id = dialog["window_id"].as_u64().unwrap_or(0);
@@ -947,7 +947,7 @@ impl WindowOverlays {
     }
 }
 
-fn rects_intersect(a: (i32, i32, u32, u32), b: (i32, i32, u32, u32)) -> bool {
+pub(crate) fn rects_intersect(a: (i32, i32, u32, u32), b: (i32, i32, u32, u32)) -> bool {
     a.0 < b.0 + b.2 as i32
         && a.0 + a.2 as i32 > b.0
         && a.1 < b.1 + b.3 as i32
@@ -1024,7 +1024,7 @@ fn window_overlays(pid: u32, xid: u64) -> WindowOverlays {
 }
 
 pub struct GetWindowStateTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 
 const COLD_START_WALK_TIMEOUT_MS: u64 = 2_000;
@@ -2403,7 +2403,7 @@ fn settle_launch(
 #[cfg(test)]
 mod launch_resolution_tests;
 
-fn chromium_family_program(program: &str) -> bool {
+pub(crate) fn chromium_family_program(program: &str) -> bool {
     let basename = std::path::Path::new(program)
         .file_name()
         .and_then(|name| name.to_str())
@@ -2423,7 +2423,7 @@ fn chromium_family_program(program: &str) -> bool {
 /// the owning window (via `xid_hint` or the first window for `pid`), then
 /// converts screen-absolute → window-local coords via compositor metadata on
 /// Wayland or XTranslateCoordinates on X11.
-fn resolve_element_local_coords(
+pub(crate) fn resolve_element_local_coords(
     pid: u32,
     token: &crate::atspi::TokenElement,
     xid_hint: Option<u64>,
@@ -2500,7 +2500,7 @@ impl std::error::Error for ElementBoundsUnusable {}
 
 /// `resolve_element_local_coords` plus the sanity check that the centre lies
 /// inside the window it belongs to. Blocking.
-fn checked_element_local_coords(
+pub(crate) fn checked_element_local_coords(
     pid: u32,
     token: &crate::atspi::TokenElement,
     xid_hint: Option<u64>,
@@ -2525,7 +2525,7 @@ fn checked_element_local_coords(
     Ok((xid, lx, ly))
 }
 
-fn element_screen_center(
+pub(crate) fn element_screen_center(
     pid: u32,
     token: &crate::atspi::TokenElement,
     xid: Option<u64>,
@@ -2535,7 +2535,7 @@ fn element_screen_center(
 
 /// The element's screen centre plus its AT-SPI extents as the overlay's
 /// `[x, y, width, height]`, both from one bounds lookup (same screen space).
-fn element_screen_center_and_rect(
+pub(crate) fn element_screen_center_and_rect(
     pid: u32,
     token: &crate::atspi::TokenElement,
     xid: Option<u64>,
@@ -2561,7 +2561,7 @@ fn frame_target_rect(bounds: Option<(i32, i32, u32, u32)>, sx: f64, sy: f64) -> 
 }
 
 /// Shared schema for the optional `coordinate_frame` of pointer tools.
-fn coordinate_frame_schema() -> Value {
+pub(crate) fn coordinate_frame_schema() -> Value {
     json!({
         "type": "string",
         "enum": ["window", "desktop"],
@@ -2572,11 +2572,11 @@ fn coordinate_frame_schema() -> Value {
     })
 }
 
-fn coordinate_frame_is_desktop(args: &Value) -> bool {
+pub(crate) fn coordinate_frame_is_desktop(args: &Value) -> bool {
     args.get("coordinate_frame").and_then(Value::as_str) == Some("desktop")
 }
 
-fn window_scope_unproven_refusal(tool: &str, xid: u64, reason: &str) -> ToolResult {
+pub(crate) fn window_scope_unproven_refusal(tool: &str, xid: u64, reason: &str) -> ToolResult {
     let message = format!(
         "{tool}: the element's membership in window_id {xid} is unproven ({reason}); \
          call get_window_state again"
@@ -2591,7 +2591,7 @@ fn window_scope_unproven_refusal(tool: &str, xid: u64, reason: &str) -> ToolResu
 /// token's window, then carry that element to dispatch. `Ok(None)` without a
 /// token. Refuses before any dispatch. X11, Hyprland and compositors without
 /// a GNOME Shell need no proof.
-async fn prove_token_element(
+pub(crate) async fn prove_token_element(
     pid: u32,
     resolved: &cua_driver_core::element_token::ResolvedElement<
         crate::atspi::snapshot::CachedElement,
@@ -2619,7 +2619,7 @@ async fn prove_token_element(
     token_element_for(tool, xid, *element_index, element.clone(), proof).map(Some)
 }
 
-fn token_element_for(
+pub(crate) fn token_element_for(
     tool: &str,
     xid: u64,
     index: usize,
@@ -2634,7 +2634,11 @@ fn token_element_for(
 /// The object an element token observed no longer answers: the token is
 /// stale. Nothing reached that object, and it is never retargeted by index
 /// after a window proof.
-fn stale_observed_element(tool: &str, idx: usize, error: &anyhow::Error) -> Option<ToolResult> {
+pub(crate) fn stale_observed_element(
+    tool: &str,
+    idx: usize,
+    error: &anyhow::Error,
+) -> Option<ToolResult> {
     error
         .is::<crate::atspi::native::CachedElementGone>()
         .then(|| {
@@ -2664,7 +2668,7 @@ fn element_click_placement(
 #[cfg(test)]
 mod token_window_scope_tests;
 
-fn window_local_to_screen(xid: u64, x: f64, y: f64) -> anyhow::Result<(f64, f64)> {
+pub(crate) fn window_local_to_screen(xid: u64, x: f64, y: f64) -> anyhow::Result<(f64, f64)> {
     use x11rb::connection::Connection;
     use x11rb::protocol::xproto::ConnectionExt as _;
     use x11rb::rust_connection::RustConnection;
@@ -2686,21 +2690,21 @@ const ELEMENT_AX_BUDGET: std::time::Duration = std::time::Duration::from_secs(30
 
 /// Either `coordinate_frame:"desktop"` or `scope:"desktop"` marks `x,y` as
 /// desktop (screen) pixels; both are translated exactly once by the caller.
-fn desktop_frame_requested(args: &Value) -> bool {
+pub(crate) fn desktop_frame_requested(args: &Value) -> bool {
     coordinate_frame_is_desktop(args)
         || args.get("scope").and_then(Value::as_str) == Some("desktop")
 }
 
 /// Convert desktop (screen) coordinates to `xid`'s window-local frame so the
 /// rest of the pointer pipeline (which is window-local by contract) is reused.
-fn desktop_to_window_local(xid: u64, x: f64, y: f64) -> anyhow::Result<(f64, f64)> {
+pub(crate) fn desktop_to_window_local(xid: u64, x: f64, y: f64) -> anyhow::Result<(f64, f64)> {
     let (ox, oy) = window_local_to_screen(xid, 0.0, 0.0)?;
     Ok((x - ox, y - oy))
 }
 
 /// Upper bound for one foreground input transaction: focus confirmation plus
 /// the injection itself. Typing sleeps per character, so scale with `chars`.
-fn foreground_budget(chars: usize) -> std::time::Duration {
+pub(crate) fn foreground_budget(chars: usize) -> std::time::Duration {
     std::time::Duration::from_millis(12_000 + (chars as u64) * 40)
 }
 
@@ -2708,7 +2712,7 @@ fn foreground_budget(chars: usize) -> std::time::Duration {
 /// holding a server grab) must surface as a structured `foreground_timeout`
 /// error instead of a tool call that never returns. The blocking task is not
 /// cancellable; it is left to finish (or leak) on the blocking pool.
-async fn spawn_blocking_bounded<T: Send + 'static>(
+pub(crate) async fn spawn_blocking_bounded<T: Send + 'static>(
     label: &'static str,
     budget: std::time::Duration,
     f: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
@@ -2726,7 +2730,7 @@ async fn spawn_blocking_bounded<T: Send + 'static>(
 /// Map an input-path error to a tool error, attaching the structured
 /// foreground `code` (`foreground_unavailable` / `foreground_timeout`) when the
 /// message carries one so the caller can branch instead of parsing prose.
-fn input_error_result(e: anyhow::Error) -> ToolResult {
+pub(crate) fn input_error_result(e: anyhow::Error) -> ToolResult {
     let text = e.to_string();
     if crate::input::is_uinput_unavailable(&e) {
         // The focus-free real-input route exists but this process cannot open
@@ -2757,7 +2761,7 @@ fn input_error_result(e: anyhow::Error) -> ToolResult {
 }
 
 /// Structured payload for a completed foreground transaction.
-fn foreground_structured(
+pub(crate) fn foreground_structured(
     path: &str,
     report: crate::input::ForegroundReport,
     extra: serde_json::Map<String, Value>,
@@ -2786,7 +2790,7 @@ fn foreground_structured(
 /// process (`ForegroundReport::window_change_confirms`). Otherwise, focus that
 /// left the process is a suspected no-op and anything else stays
 /// unverifiable with a `native_api_result` item.
-fn apply_foreground_report(v: &mut Value, report: &crate::input::ForegroundReport) {
+pub(crate) fn apply_foreground_report(v: &mut Value, report: &crate::input::ForegroundReport) {
     v["foreground"] = report.to_json();
     v["focus_after"] = json!(report.focus_after.as_str());
     let confirming_change = report
@@ -2834,7 +2838,7 @@ fn apply_foreground_report(v: &mut Value, report: &crate::input::ForegroundRepor
 /// Typed refusal for a pointer tool whose arguments name neither an element
 /// nor a complete point. Before this check a call with only a pid was
 /// executed at window-local (0, 0) — the top-left corner, i.e. the File menu.
-fn invalid_pointer_arguments(tool: &str, detail: &str) -> ToolResult {
+pub(crate) fn invalid_pointer_arguments(tool: &str, detail: &str) -> ToolResult {
     let accepted = [
         "pid + element_token from get_window_state",
         "pid/window_id + x + y (window-local pixels of window_id; coordinate_frame:\"desktop\" for screen pixels)",
@@ -2855,7 +2859,7 @@ fn invalid_pointer_arguments(tool: &str, detail: &str) -> ToolResult {
 
 /// `Some(refusal)` when a pointer tool reached its coordinate path without
 /// both `x` and `y` (and, by construction, without an element).
-fn require_point_args(tool: &str, args: &Value) -> Option<ToolResult> {
+pub(crate) fn require_point_args(tool: &str, args: &Value) -> Option<ToolResult> {
     let present = |name: &str| args.get(name).is_some_and(|v| v.is_number());
     match (present("x"), present("y")) {
         (true, true) => None,
@@ -2872,7 +2876,7 @@ fn require_point_args(tool: &str, args: &Value) -> Option<ToolResult> {
 #[cfg(test)]
 mod pointer_argument_tests;
 
-fn parse_mouse_button(name: &str) -> u8 {
+pub(crate) fn parse_mouse_button(name: &str) -> u8 {
     match name {
         "right" => 3,
         "middle" => 2,
@@ -2889,7 +2893,7 @@ fn parse_mouse_button(name: &str) -> u8 {
 /// focus — see `input::delivery`), and the pixel path itself routes through the
 /// same coordinate-free AT-SPI actuation that just no-op'd, so the move there is
 /// to bring the window to the foreground first (`foreground`).
-fn non_ax_escalation() -> Value {
+pub(crate) fn non_ax_escalation() -> Value {
     if crate::wayland::is_wayland() {
         json!({
             "recommended": "foreground",
@@ -3060,7 +3064,7 @@ fn type_text_ax_result(pid: u32, text_len: usize, route: &str) -> ToolResult {
 /// Native GTK/Qt apps never spawn such helpers, so this is conservative (very
 /// low false-positive). The single-process fallback also matches the embedder's
 /// own argv. Reads `/proc`; cheap and only invoked on the rare AT-SPI confirm.
-fn is_chromium_embedder(pid: u32) -> bool {
+pub(crate) fn is_chromium_embedder(pid: u32) -> bool {
     fn argv_is_chromium_helper(p: u32) -> bool {
         fs::read(format!("/proc/{p}/cmdline"))
             .map(|raw| crate::at_point_policy::cmdline_is_chromium_helper(&raw))
@@ -3114,7 +3118,7 @@ fn is_chromium_embedder(pid: u32) -> bool {
     false
 }
 
-fn is_webkitgtk_embedder(pid: u32) -> bool {
+pub(crate) fn is_webkitgtk_embedder(pid: u32) -> bool {
     fn argv_is_webkit_helper(pid: u32) -> bool {
         fs::read(format!("/proc/{pid}/cmdline"))
             .map(|raw| {
@@ -3159,13 +3163,13 @@ fn is_webkitgtk_embedder(pid: u32) -> bool {
     false
 }
 
-fn maps_indicate_gtk(maps: &str) -> bool {
+pub(crate) fn maps_indicate_gtk(maps: &str) -> bool {
     maps.contains("libgtk-3.so") || maps.contains("libgtk-4.so")
 }
 
 /// Toolkits known to discard synthetic (`send_event`) X11 pointer events:
 /// GTK3/4 (XInput2 only), LibreOffice VCL (all plugins), Qt5/6 (xcb, XI2).
-fn maps_indicate_synthetic_pointer_dropped(maps: &str) -> bool {
+pub(crate) fn maps_indicate_synthetic_pointer_dropped(maps: &str) -> bool {
     maps_indicate_gtk(maps)
         || maps.contains("libvcl")
         || maps.contains("libmergedlo")
@@ -3173,7 +3177,7 @@ fn maps_indicate_synthetic_pointer_dropped(maps: &str) -> bool {
         || maps.contains("libQt6Gui")
 }
 
-fn synthetic_pointer_is_dropped(pid: u32) -> bool {
+pub(crate) fn synthetic_pointer_is_dropped(pid: u32) -> bool {
     fs::read_to_string(format!("/proc/{pid}/maps"))
         .map(|maps| maps_indicate_synthetic_pointer_dropped(&maps))
         .unwrap_or(false)
@@ -3193,7 +3197,7 @@ fn is_gtk_process(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
-fn unavailable_webkit_background(
+pub(crate) fn unavailable_webkit_background(
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
 ) -> Option<ToolResult> {
@@ -3208,7 +3212,7 @@ fn unavailable_webkit_background(
     })
 }
 
-fn unavailable_webkit_keyboard_background(
+pub(crate) fn unavailable_webkit_keyboard_background(
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
 ) -> Option<ToolResult> {
@@ -3244,7 +3248,7 @@ fn with_uinput_hint(mut refusal: ToolResult) -> ToolResult {
 /// Honest refusal for a background keyboard action that has no focus-free
 /// actuator. Carries the uinput hint whenever the MPX route is missing only
 /// because `/dev/uinput` is not writable (the fixable case).
-fn background_keyboard_refusal(atspi_ok: bool) -> ToolResult {
+pub(crate) fn background_keyboard_refusal(atspi_ok: bool) -> ToolResult {
     let mut refusal = crate::input::delivery::background_unavailable_error(
         crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
     );
@@ -3260,12 +3264,12 @@ fn background_keyboard_refusal(atspi_ok: bool) -> ToolResult {
     }
 }
 
-fn atspi_up() -> bool {
+pub(crate) fn atspi_up() -> bool {
     let probe = std::thread::spawn(crate::health_report::probe_a11y_bus);
     crate::wayland::is_wayland() || probe.join().unwrap_or(false)
 }
 
-fn unavailable_gtk_keyboard_background(
+pub(crate) fn unavailable_gtk_keyboard_background(
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
 ) -> Option<ToolResult> {
@@ -3278,7 +3282,7 @@ fn unavailable_gtk_keyboard_background(
 
 /// Outcome of one background/foreground keyboard delivery on X11, funnelled
 /// through `spawn_blocking`'s success type so the tool can report the route.
-enum KeyRoute {
+pub(crate) enum KeyRoute {
     /// Activated the window and injected via XTest.
     Foreground(crate::input::ForegroundReport),
     /// Real key events through the session's XI2 virtual master keyboard.
@@ -3295,7 +3299,7 @@ enum KeyRoute {
 /// holds an active keyboard grab, so the virtual master keyboard route would
 /// be silently lost; the core keyboard (XTest) reaches the grab holder, which
 /// is the target itself, without any focus change.
-fn background_virtual_key(
+pub(crate) fn background_virtual_key(
     cursor_id: &str,
     pid: u32,
     xid: u64,
@@ -3315,7 +3319,7 @@ fn background_virtual_key(
 }
 
 /// Text counterpart of [`background_virtual_key`].
-fn background_virtual_text(
+pub(crate) fn background_virtual_text(
     cursor_id: &str,
     pid: u32,
     xid: u64,
@@ -3333,7 +3337,7 @@ fn background_virtual_text(
     crate::input::send_virtual_keyboard_text(cursor_id, xid, text)
 }
 
-fn is_popup_keyboard_grab(error: &anyhow::Error) -> bool {
+pub(crate) fn is_popup_keyboard_grab(error: &anyhow::Error) -> bool {
     error
         .downcast_ref::<crate::input::PopupKeyboardGrab>()
         .is_some()
@@ -3345,7 +3349,7 @@ fn is_popup_keyboard_grab(error: &anyhow::Error) -> bool {
 /// (the tool turns it into the refusal + hint); any other MPX failure falls
 /// back to XSendEvent for the toolkits that still accept it, and is reported
 /// as an error for the ones known to drop it.
-fn background_key_route(
+pub(crate) fn background_key_route(
     cursor_id: &str,
     pid: u32,
     xid: u64,
@@ -3425,7 +3429,7 @@ fn is_grab_focus_failure(error: &anyhow::Error) -> bool {
 /// Merge a background focus-guard report into a finished tool result: the
 /// structured `focus_changed` / `focus_restored` / `grab_held_by` fields plus
 /// one sentence of text when anything moved.
-fn attach_focus_guard(
+pub(crate) fn attach_focus_guard(
     mut result: ToolResult,
     report: Option<&crate::input::FocusGuardReport>,
 ) -> ToolResult {
@@ -3495,7 +3499,7 @@ async fn attach_focused_cell(mut result: ToolResult, pid: u32) -> ToolResult {
 
 /// Append an `evidence[]` item to a structured payload (the public action
 /// contract keeps `evidence`, while flat diagnostic fields are reduced away).
-fn push_evidence(structured: &mut Value, item: Value) {
+pub(crate) fn push_evidence(structured: &mut Value, item: Value) {
     match structured.get_mut("evidence").and_then(Value::as_array_mut) {
         Some(items) => items.push(item),
         None => structured["evidence"] = json!([item]),
@@ -3503,7 +3507,7 @@ fn push_evidence(structured: &mut Value, item: Value) {
 }
 
 /// Tool result for a completed keyboard route (`press_key` / `hotkey`).
-fn key_route_result(action: &str, route: KeyRoute, mode_label: &str) -> ToolResult {
+pub(crate) fn key_route_result(action: &str, route: KeyRoute, mode_label: &str) -> ToolResult {
     match route {
         KeyRoute::Foreground(report) => ToolResult::text(format!(
             "{action} as a real key event (delivery_mode=foreground, focus_after={}); \
@@ -3574,7 +3578,7 @@ fn key_route_result(action: &str, route: KeyRoute, mode_label: &str) -> ToolResu
     }
 }
 
-fn unavailable_gtk_pointer_background(
+pub(crate) fn unavailable_gtk_pointer_background(
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
 ) -> Option<ToolResult> {
@@ -3589,7 +3593,7 @@ fn unavailable_gtk_pointer_background(
     })
 }
 
-fn unavailable_wayland_focused_input_background(
+pub(crate) fn unavailable_wayland_focused_input_background(
     delivery: crate::input::delivery::DeliveryMode,
     focus_free_inject_supported: bool,
 ) -> Option<ToolResult> {
@@ -3604,7 +3608,7 @@ fn unavailable_wayland_focused_input_background(
 }
 
 #[derive(Debug)]
-enum CoordinateContext {
+pub(crate) enum CoordinateContext {
     Zoom(ZoomContext),
     Screenshot(f64),
 }
@@ -3647,7 +3651,7 @@ fn coordinate_scroll_scale(
 /// unfocused toplevel. Returning success here would be a silent loss, so all
 /// input tools expose the same typed refusal and leave foreground activation
 /// as the explicit escalation.
-fn unavailable_chromium_background(
+pub(crate) fn unavailable_chromium_background(
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
 ) -> Option<ToolResult> {
@@ -3668,7 +3672,7 @@ fn unavailable_chromium_background(
     }
 }
 
-fn chromium_background_must_refuse(
+pub(crate) fn chromium_background_must_refuse(
     foreground: bool,
     focus_free_inject_mode: bool,
     chromium: bool,
@@ -3679,7 +3683,7 @@ fn chromium_background_must_refuse(
 /// Screen-absolute center of a window (top-left from translate_coordinates plus
 /// half its geometry). Used to position the no-focus-steal scroll over the
 /// window's content. Blocking — call inside spawn_blocking.
-fn window_screen_center(xid: u64) -> anyhow::Result<(i32, i32)> {
+pub(crate) fn window_screen_center(xid: u64) -> anyhow::Result<(i32, i32)> {
     use x11rb::connection::Connection;
     use x11rb::protocol::xproto::ConnectionExt as _;
     use x11rb::rust_connection::RustConnection;
@@ -3699,7 +3703,7 @@ fn window_screen_center(xid: u64) -> anyhow::Result<(i32, i32)> {
 /// How a background pointer action was delivered on X11, with the cheap
 /// post-checks the real-pointer route can make.
 #[derive(Debug)]
-enum PointerRoute {
+pub(crate) enum PointerRoute {
     /// Real button events from the session's MPX virtual master pointer.
     Mpx(crate::input::PointerEffect),
     /// A background pixel click resolved to an accessible under the point and
@@ -3715,7 +3719,7 @@ enum PointerRoute {
 
 impl PointerRoute {
     /// Result `path`; the Wayland routes keep their own tool-level labels.
-    fn path(&self) -> Option<&'static str> {
+    pub(crate) fn path(&self) -> Option<&'static str> {
         match self {
             Self::Mpx(_) => Some(crate::input::MPX_POINTER_PATH),
             Self::Atspi(_) => Some("x11_atspi"),
@@ -3729,7 +3733,7 @@ impl PointerRoute {
     /// `path`, `verified`, `effect`, and for the MPX route the post-checks
     /// (`focus_unchanged`, `region_diff_pct`). `verified:true` + `effect:
     /// "landed"` only when the screen around the point visibly reacted.
-    fn structured(&self, mode_label: &str) -> Value {
+    pub(crate) fn structured(&self, mode_label: &str) -> Value {
         let mut v = json!({
             "verified": false,
             "effect": "unverifiable",
@@ -3856,7 +3860,7 @@ impl PointerRoute {
     }
 
     /// Human-readable tail for the result text.
-    fn text_suffix(&self, mode_label: &str) -> String {
+    pub(crate) fn text_suffix(&self, mode_label: &str) -> String {
         let mut text = self.text_suffix_inner(mode_label);
         if let Self::Mpx(effect) = self {
             if let Some(popup) = effect.popups.last() {
@@ -4001,7 +4005,7 @@ fn popup_list(popups: &[crate::input::PopupWindow]) -> String {
 /// a coordinate-frame mistake is visible: `window_point` is what the caller
 /// passed (window-local pixels after zoom / resize translation),
 /// `screen_point` is where that lands on the screen.
-fn with_pixel_points(
+pub(crate) fn with_pixel_points(
     mut result: ToolResult,
     screen: Option<(i32, i32)>,
     window: (i32, i32),
@@ -4031,7 +4035,7 @@ fn with_pixel_points(
     result
 }
 
-fn x11_pixel_click_no_focus_steal(
+pub(crate) fn x11_pixel_click_no_focus_steal(
     cursor_id: &str,
     xid: u64,
     lx: i32,
@@ -4096,7 +4100,7 @@ fn x11_pixel_click_no_focus_steal(
 /// Typed tool error for a Linux input failure: uinput permission, an occluded
 /// target, or a real-pointer delivery that did not go through. Everything
 /// else keeps its full error chain in the text.
-fn linux_input_error(error: anyhow::Error) -> ToolResult {
+pub(crate) fn linux_input_error(error: anyhow::Error) -> ToolResult {
     if crate::input::is_uinput_unavailable(&error) {
         return ToolResult::error(error.to_string()).with_structured(json!({
             "code": crate::input::UINPUT_UNAVAILABLE_CODE,
@@ -4202,11 +4206,11 @@ fn linux_input_error(error: anyhow::Error) -> ToolResult {
     ToolResult::error(format!("{error:#}"))
 }
 
-fn isolated_hyprland_background(delivery: crate::input::delivery::DeliveryMode) -> bool {
+pub(crate) fn isolated_hyprland_background(delivery: crate::input::delivery::DeliveryMode) -> bool {
     !delivery.is_foreground() && crate::wayland::hyprland_input::enabled()
 }
 
-fn hyprland_foreground(delivery: crate::input::delivery::DeliveryMode) -> bool {
+pub(crate) fn hyprland_foreground(delivery: crate::input::delivery::DeliveryMode) -> bool {
     delivery.is_foreground()
         && crate::wayland::wayland_input_enabled()
         && crate::wayland::hyprland::is_session()
@@ -4215,12 +4219,12 @@ fn hyprland_foreground(delivery: crate::input::delivery::DeliveryMode) -> bool {
 /// AT-SPI roles whose `activate`/`press` action does not move the widget
 /// focus into them, so a following keystroke would land elsewhere; a real
 /// pointer click at their centre is what a user does.
-fn element_needs_real_click(role: &str) -> bool {
+pub(crate) fn element_needs_real_click(role: &str) -> bool {
     crate::atspi::is_focus_taking_role(role)
 }
 
 /// Menubar entries and the items of an open menu.
-fn element_is_menu_role(role: &str) -> bool {
+pub(crate) fn element_is_menu_role(role: &str) -> bool {
     matches!(
         role.trim().to_ascii_lowercase().as_str(),
         "menu" | "menu item" | "check menu item" | "radio menu item"
@@ -4282,7 +4286,7 @@ fn wm_chord_kind(key: &str, modifiers: &[String]) -> Option<WmChord> {
 
 /// Background delivery of a WM-level chord: close the window for Alt+F4,
 /// refuse the rest (`wm_chord_unavailable`). `None` for ordinary chords.
-async fn wm_chord_background(
+pub(crate) async fn wm_chord_background(
     pid: u32,
     xid: u64,
     key: &str,
@@ -4433,7 +4437,7 @@ async fn close_window_background(pid: u32, xid: u64, display: &str) -> ToolResul
 
 /// `press_key` accepts `"alt+F4"` / `"ctrl+shift+t"` style keys: everything
 /// before the last `+` is a modifier. A bare `"+"` stays the plus key.
-fn split_key_combo(key: &str) -> (Vec<String>, String) {
+pub(crate) fn split_key_combo(key: &str) -> (Vec<String>, String) {
     if key.len() <= 1 || !key.contains('+') {
         return (Vec::new(), key.to_owned());
     }
@@ -4517,7 +4521,7 @@ fn hyprland_foreground_semantic_click_preserves_pointer_gestures() {
     }
 }
 
-fn isolated_hyprland_refusal(detail: impl Into<String>) -> ToolResult {
+pub(crate) fn isolated_hyprland_refusal(detail: impl Into<String>) -> ToolResult {
     let detail = detail.into();
     ToolResult::error(format!("background_unavailable: {detail}")).with_structured(json!({
         "ok": false, "code": "background_unavailable", "reason": "unsupported_operation",
@@ -4525,11 +4529,11 @@ fn isolated_hyprland_refusal(detail: impl Into<String>) -> ToolResult {
     }))
 }
 
-fn isolated_hyprland_result(result: anyhow::Result<Value>) -> ToolResult {
+pub(crate) fn isolated_hyprland_result(result: anyhow::Result<Value>) -> ToolResult {
     hyprland_input_result(result, false)
 }
 
-fn hyprland_input_result(result: anyhow::Result<Value>, foreground: bool) -> ToolResult {
+pub(crate) fn hyprland_input_result(result: anyhow::Result<Value>, foreground: bool) -> ToolResult {
     use cua_driver_core::action_record::{
         ActionEffect, ActionExecutionRecord, ActionTransport, ActualDelivery, RequestedDelivery,
     };
@@ -4674,14 +4678,17 @@ fn hyprland_input_result(result: anyhow::Result<Value>, foreground: bool) -> Too
     }
 }
 
-fn isolated_hyprland_task_error(error: tokio::task::JoinError, acknowledged: bool) -> ToolResult {
+pub(crate) fn isolated_hyprland_task_error(
+    error: tokio::task::JoinError,
+    acknowledged: bool,
+) -> ToolResult {
     isolated_hyprland_result(Err(crate::wayland::hyprland_input::unknown_dispatch(
         error.into(),
         u32::from(acknowledged),
     )))
 }
 
-fn spawn_isolated_hyprland(
+pub(crate) fn spawn_isolated_hyprland(
     args: &Value,
     work: impl FnOnce(crate::wayland::hyprland_input::ActionCancellation) -> anyhow::Result<Value>
         + Send
@@ -4721,7 +4728,7 @@ fn spawn_isolated_hyprland(
     Ok((guard, dispatch))
 }
 
-async fn isolated_hyprland_action(
+pub(crate) async fn isolated_hyprland_action(
     args: &Value,
     pid: u32,
     xid: u64,
@@ -4740,7 +4747,7 @@ async fn isolated_hyprland_action(
     }
 }
 
-fn foreground_hyprland_refusal(detail: impl Into<String>) -> ToolResult {
+pub(crate) fn foreground_hyprland_refusal(detail: impl Into<String>) -> ToolResult {
     hyprland_input_result(
         Ok(json!({
             "ok": false, "code": "unsupported_operation", "detail": detail.into()
@@ -4749,7 +4756,7 @@ fn foreground_hyprland_refusal(detail: impl Into<String>) -> ToolResult {
     )
 }
 
-async fn foreground_hyprland_action(
+pub(crate) async fn foreground_hyprland_action(
     args: &Value,
     pid: u32,
     xid: u64,
@@ -4811,7 +4818,7 @@ async fn foreground_hyprland_scroll(
     )
 }
 
-fn foreground_hyprland_key(
+pub(crate) fn foreground_hyprland_key(
     key: String,
     mut modifiers: Vec<String>,
 ) -> Result<crate::wayland::hyprland_input::Action, ToolResult> {
@@ -4836,7 +4843,7 @@ fn foreground_hyprland_key(
     Ok(crate::wayland::hyprland_input::Action::Key { key, modifiers })
 }
 
-async fn focus_hyprland_foreground(
+pub(crate) async fn focus_hyprland_foreground(
     state: &Arc<ToolState>,
     args: &Value,
     pid: u32,
@@ -5481,7 +5488,7 @@ fn x11_pixel_click_no_focus_steal_modifiers(
     crate::input::send_click_with_modifiers(xid, lx, ly, count, button, modifiers)
 }
 
-fn mouse_button_name(button: u8) -> &'static str {
+pub(crate) fn mouse_button_name(button: u8) -> &'static str {
     match button {
         3 => "right",
         2 => "middle",
@@ -5489,7 +5496,7 @@ fn mouse_button_name(button: u8) -> &'static str {
     }
 }
 
-fn resolve_cursor_key(args: &Value) -> String {
+pub(crate) fn resolve_cursor_key(args: &Value) -> String {
     cua_driver_core::tool_args::resolve_session_key(args)
 }
 
@@ -5498,11 +5505,11 @@ fn resolve_cursor_key(args: &Value) -> String {
 /// legacy cursor_id-only path into session semantics. The proxy-minted
 /// `_session_id` is trusted lifecycle state and must behave like a public named
 /// session for cursor ownership.
-fn named_session_cursor_key(args: &Value) -> Option<String> {
+pub(crate) fn named_session_cursor_key(args: &Value) -> Option<String> {
     cursor_overlay::named_session_cursor_key(args)
 }
 
-fn mouse_hold_json(cursor_id: &str, hold: Option<&MouseHoldState>) -> Value {
+pub(crate) fn mouse_hold_json(cursor_id: &str, hold: Option<&MouseHoldState>) -> Value {
     match hold {
         Some(hold) => json!({
             "cursor_id": cursor_id,
@@ -5525,7 +5532,7 @@ fn mouse_hold_json(cursor_id: &str, hold: Option<&MouseHoldState>) -> Value {
     }
 }
 
-fn held_target_mismatch(
+pub(crate) fn held_target_mismatch(
     args: &Value,
     cursor_id: &str,
     hold: &MouseHoldState,
@@ -5578,11 +5585,11 @@ fn mouse_button_up_coordinates(
     Ok((x, y))
 }
 
-fn clear_mouse_hold_after_release(state: &ToolState, cursor_id: &str) {
+pub(crate) fn clear_mouse_hold_after_release(state: &ToolState, cursor_id: &str) {
     state.mouse_hold.lock().unwrap().remove(cursor_id);
 }
 
-fn persistent_pointer_coordinates(
+pub(crate) fn persistent_pointer_coordinates(
     is_wayland: bool,
     window_id: u64,
     x: i32,
@@ -5614,7 +5621,7 @@ where
     Ok(())
 }
 
-fn overlay_snap_to_for(cursor_id: &str, sx: f64, sy: f64, heading: Option<f64>) {
+pub(crate) fn overlay_snap_to_for(cursor_id: &str, sx: f64, sy: f64, heading: Option<f64>) {
     crate::overlay::send_command_for(
         cursor_id.to_owned(),
         cursor_overlay::OverlayCommand::SnapTo {
@@ -5631,7 +5638,7 @@ fn overlay_move_to_for(cursor_id: &str, sx: f64, sy: f64, heading: Option<f64>) 
 
 /// [`overlay_move_to_for`] with the targeted element's screen rect
 /// `[x, y, width, height]` (same space as `sx`/`sy`).
-fn overlay_move_to_target_for(
+pub(crate) fn overlay_move_to_target_for(
     cursor_id: &str,
     sx: f64,
     sy: f64,
@@ -5649,7 +5656,7 @@ fn overlay_move_to_target_for(
     );
 }
 
-async fn overlay_glide_to_for(cursor_id: &str, sx: f64, sy: f64) {
+pub(crate) async fn overlay_glide_to_for(cursor_id: &str, sx: f64, sy: f64) {
     overlay_glide_to_target_for(cursor_id, sx, sy, None).await;
 }
 
@@ -5683,7 +5690,7 @@ async fn overlay_glide_to_target_for(cursor_id: &str, sx: f64, sy: f64, target: 
 /// The compositor snapshot a desktop-scope action is addressed in. One
 /// snapshot converts the action's points, places the overlay and sizes the
 /// virtual pointer, so they cannot disagree about the monitor layout.
-async fn desktop_input_space() -> anyhow::Result<crate::wayland::DesktopInputSpace> {
+pub(crate) async fn desktop_input_space() -> anyhow::Result<crate::wayland::DesktopInputSpace> {
     if !crate::wayland::wayland_input_enabled() {
         return Ok(crate::wayland::DesktopInputSpace::default());
     }
@@ -5695,7 +5702,7 @@ async fn desktop_input_space() -> anyhow::Result<crate::wayland::DesktopInputSpa
 /// Keep the logical cursor position in sync with every visibly targeted
 /// pointer action. Overlay delivery is intentionally best-effort: registry
 /// state is still updated when no renderer is running or its queue is closed.
-async fn reveal_pointer_action_for(
+pub(crate) async fn reveal_pointer_action_for(
     state: &ToolState,
     cursor_id: &str,
     sx: f64,
@@ -5707,7 +5714,7 @@ async fn reveal_pointer_action_for(
 
 /// [`reveal_pointer_action_for`] with the targeted element's screen rect
 /// `[x, y, width, height]` (same space as `sx`/`sy`).
-async fn reveal_pointer_action_target_for(
+pub(crate) async fn reveal_pointer_action_target_for(
     state: &ToolState,
     cursor_id: &str,
     sx: f64,
@@ -5753,7 +5760,7 @@ pub(crate) fn emit_cursor_hook(cursor_id: &str, x: f64, y: f64, pressed: bool) {
     );
 }
 
-fn keyboard_window_center(xid: u64) -> Option<(f64, f64)> {
+pub(crate) fn keyboard_window_center(xid: u64) -> Option<(f64, f64)> {
     if xid == 0 {
         return None;
     }
@@ -5785,7 +5792,7 @@ fn current_pointer_position() -> Option<(f64, f64)> {
     Some((f64::from(reply.root_x), f64::from(reply.root_y)))
 }
 
-fn explicit_keyboard_cursor_target(
+pub(crate) fn explicit_keyboard_cursor_target(
     pid: u32,
     xid: u64,
     element: Option<&crate::atspi::TokenElement>,
@@ -5814,7 +5821,7 @@ fn explicit_keyboard_cursor_target(
 /// overlay is left alone (anonymous calls keep their legacy visuals); only an
 /// embedder publishing presence learns the position, so a viewer sees the
 /// agent's cursor go to the field it is about to type into.
-async fn announce_keyboard_target(
+pub(crate) async fn announce_keyboard_target(
     args: &Value,
     pid: u32,
     xid: u64,
@@ -5837,7 +5844,7 @@ async fn announce_keyboard_target(
     }
 }
 
-async fn position_named_session_keyboard_cursor(
+pub(crate) async fn position_named_session_keyboard_cursor(
     state: &ToolState,
     args: &Value,
     pid: u32,
@@ -6006,7 +6013,7 @@ fn process_name(pid: u32) -> Option<String> {
         .map(|l| l[5..].trim().to_owned())
 }
 
-fn is_terminal_process(pid: u32) -> bool {
+pub(crate) fn is_terminal_process(pid: u32) -> bool {
     // Canonical list lives in `crate::terminal::TERMINAL_PROCESS_NAMES`
     // — keeps the additive contract centralised. Adding a new terminal
     // here means appending one string in `crate::terminal`.
@@ -6097,7 +6104,7 @@ fn is_enter_key(key: &str) -> bool {
 /// pty, then borrows the emulator's master fd and writes to it (see
 /// `crate::tty`). Returns `Ok(false)` when the target isn't a terminal we can
 /// reach this way so the caller falls back to the generic XSendEvent path.
-fn inject_terminal_input(pid: u32, xid: u64, text: &str) -> anyhow::Result<bool> {
+pub(crate) fn inject_terminal_input(pid: u32, xid: u64, text: &str) -> anyhow::Result<bool> {
     let Some(tty) = terminal_tty_for_window(pid, xid) else {
         return Ok(false);
     };
@@ -6115,10 +6122,10 @@ fn inject_terminal_input(pid: u32, xid: u64, text: &str) -> anyhow::Result<bool>
 // ── click ─────────────────────────────────────────────────────────────────────
 
 pub struct ClickTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 
-fn capture_admission_error(error: anyhow::Error) -> ToolResult {
+pub(crate) fn capture_admission_error(error: anyhow::Error) -> ToolResult {
     let code = cua_driver_core::capture_runtime::admission_error_code(&error);
     ToolResult::error(format!("capture-bound click refused: {error}"))
         .with_structured(json!({ "code": code, "effect": "refused" }))
@@ -7487,7 +7494,7 @@ impl Tool for ClickTool {
 ///
 /// Retains the parent's authenticated session admission for the nested click.
 /// `point` is the window-local pixel to click for focus.
-async fn focus_by_pixel(
+pub(crate) async fn focus_by_pixel(
     state: &Arc<ToolState>,
     pid: u32,
     window_id: Option<u64>,
@@ -7534,7 +7541,7 @@ async fn focus_by_pixel(
 /// Establish widget-local focus inside a nested-compositor target without
 /// changing the compositor's focused toplevel. AX uses Component.GrabFocus;
 /// PX sends a private per-surface left click at the requested local point.
-async fn focus_nested_inject_target(
+pub(crate) async fn focus_nested_inject_target(
     pid: u32,
     window_id: u64,
     element: Option<crate::atspi::TokenElement>,
@@ -7571,7 +7578,7 @@ async fn focus_nested_inject_target(
 // ── type_text ─────────────────────────────────────────────────────────────────
 
 pub struct TypeTextTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 static TYPE_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
@@ -8493,7 +8500,7 @@ fn mpx_type_text_with_skipped_characters_is_an_error() {
 // ── press_key ─────────────────────────────────────────────────────────────────
 
 pub struct PressKeyTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 static PRESS_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
@@ -8923,7 +8930,7 @@ impl Tool for PressKeyTool {
 
 // ── hotkey ────────────────────────────────────────────────────────────────────
 
-fn is_modifier(k: &str) -> bool {
+pub(crate) fn is_modifier(k: &str) -> bool {
     matches!(
         k.to_lowercase().as_str(),
         "ctrl"
@@ -8940,7 +8947,7 @@ fn is_modifier(k: &str) -> bool {
 }
 
 pub struct HotkeyTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 static HOTKEY_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
@@ -9381,7 +9388,7 @@ impl Tool for HotkeyTool {
 // ── set_value ─────────────────────────────────────────────────────────────────
 
 pub struct SetValueTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 static SV_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
@@ -9681,7 +9688,7 @@ fn pick_from_popup(
 }
 
 /// Numeric-aware equality for the `set_value` read-back ("40" == "40.0").
-fn values_agree(wanted: &str, observed: &str) -> bool {
+pub(crate) fn values_agree(wanted: &str, observed: &str) -> bool {
     let wanted = wanted.trim();
     let observed = observed.trim();
     if wanted == observed {
@@ -9760,7 +9767,7 @@ mod set_value_tests;
 // ── scroll ────────────────────────────────────────────────────────────────────
 
 pub struct ScrollTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 
 fn atspi_scroll_result(progress: crate::atspi::ScrollProgress, foreground: bool) -> ToolResult {
@@ -10409,7 +10416,7 @@ impl Tool for ScrollTool {
 // ── double_click ──────────────────────────────────────────────────────────────
 
 pub struct DoubleClickTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 static DCLICK_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
@@ -10691,7 +10698,7 @@ impl Tool for DoubleClickTool {
 // ── right_click ───────────────────────────────────────────────────────────────
 
 pub struct RightClickTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 static RCLICK_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
@@ -10995,7 +11002,7 @@ fn wayland_modified_drag_refusal() -> ToolResult {
 }
 
 pub struct DragTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 static DRAG_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
@@ -11723,7 +11730,7 @@ impl Tool for DragTool {
 // ── mouse_button_down / mouse_drag / mouse_button_up ────────────────────────
 
 pub struct MouseButtonDownTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 static MDOWN_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
@@ -11899,7 +11906,7 @@ impl Tool for MouseButtonDownTool {
 }
 
 pub struct MouseDragTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 static MDRAG_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
@@ -12110,7 +12117,7 @@ impl Tool for MouseDragTool {
 }
 
 pub struct MouseButtonUpTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 static MUP_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
@@ -12246,7 +12253,7 @@ impl Tool for MouseButtonUpTool {
 }
 
 pub struct ParallelMouseDragTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 static PMDRAG_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
@@ -12675,7 +12682,7 @@ impl Tool for GetScreenSizeTool {
 
 /// Read the true X11 root-window size in pixels: (width, height).
 /// Shared by `get_screen_size` and `get_desktop_state`.
-fn x11_screen_size() -> anyhow::Result<(u32, u32)> {
+pub(crate) fn x11_screen_size() -> anyhow::Result<(u32, u32)> {
     use x11rb::connection::Connection;
     use x11rb::rust_connection::RustConnection;
     let (conn, screen_num) = RustConnection::connect(None)
@@ -12708,7 +12715,7 @@ fn x11_screen_size() -> anyhow::Result<(u32, u32)> {
 /// pixels. Returning the backing image alongside logical dimensions violates
 /// the screenshot-to-action contract and makes every vision-grounded action
 /// miss by the output scale.
-fn normalize_desktop_capture_for_action_frame(
+pub(crate) fn normalize_desktop_capture_for_action_frame(
     png: Vec<u8>,
     action_width: u32,
     action_height: u32,
@@ -12745,7 +12752,7 @@ fn normalize_desktop_capture_for_action_frame(
 // ── get_desktop_state ─────────────────────────────────────────────────────────
 
 pub struct GetDesktopStateTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 static GDS_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
@@ -13092,7 +13099,7 @@ impl Tool for GetCursorPositionTool {
 // ── move_cursor ───────────────────────────────────────────────────────────────
 
 pub struct MoveCursorTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 
 static MCURSOR_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -13181,7 +13188,7 @@ impl Tool for MoveCursorTool {
 // ── set_agent_cursor_enabled ──────────────────────────────────────────────────
 
 pub struct SetAgentCursorEnabledV2Tool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 
 static CURSOR_ENABLED_V2_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -13260,7 +13267,7 @@ impl Tool for SetAgentCursorMotionV2Tool {
 }
 
 pub struct SetAgentCursorThemeTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 
 static CURSOR_THEME_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -13328,7 +13335,7 @@ impl Tool for SetAgentCursorThemeTool {
 }
 
 pub struct GetAgentCursorStateV2Tool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 
 static CURSOR_STATE_V2_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -13485,7 +13492,7 @@ async fn check_permissions_accepts_the_status_prompt_argument() {
 // ── get_config ────────────────────────────────────────────────────────────────
 
 pub struct GetConfigTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 static GCFG_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
@@ -13532,7 +13539,7 @@ fn with_cursor_motion_config_properties(mut schema: Value) -> Value {
 }
 
 pub struct SetConfigTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 static SCFG_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
@@ -13727,7 +13734,7 @@ impl Tool for GetAccessibilityTreeTool {
 // ── zoom ──────────────────────────────────────────────────────────────────────
 
 pub struct ZoomTool {
-    state: Arc<ToolState>,
+    pub(crate) state: Arc<ToolState>,
 }
 static ZOOM_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 

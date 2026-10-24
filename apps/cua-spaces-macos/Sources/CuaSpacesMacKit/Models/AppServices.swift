@@ -462,11 +462,17 @@ public final class LiveTeams: TeamsReading, @unchecked Sendable {
 /// A fixture account's team (captures, tests).
 public final class FixtureTeams: TeamsReading, @unchecked Sendable {
     public var current: AppTeamsInput
-    /// Who the fixture's owner has not been told was removed yet.
-    public var removals: [AppShareRemovalInput]
+    private let lock = NSLock()
+    private var pending: [AppShareRemovalInput]
+    /// Who the fixture's owner has not been told was removed yet. Read by a
+    /// test while the acknowledgement clears it on another task.
+    public var removals: [AppShareRemovalInput] {
+        get { lock.withLock { pending } }
+        set { lock.withLock { pending = newValue } }
+    }
 
     public init(_ teams: [AppTeamInput]? = nil, removals: [AppShareRemovalInput] = []) {
-        self.removals = removals
+        pending = removals
         current = AppTeamsInput(accountAppUrl: "https://app.cua.ai", state: .ready(teams: teams ?? [
             AppTeamInput(
                 id: "o1", alias: "acme", name: "Acme Inc", role: "owner", plan: "teams", seats: 3,

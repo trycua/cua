@@ -15,6 +15,8 @@ import Testing
         var starts = 0
         var probes = 0
         var restarted = 0
+        /// How often the supervisor read the pid it arms its exit watch on.
+        var pidReads = 0
 
         func spawn() {
             let p = Process()
@@ -24,6 +26,11 @@ import Testing
             lock.withLock { process = p }
         }
         var pid: Int32? { lock.withLock { process.flatMap { $0.isRunning ? $0.processIdentifier : nil } } }
+        /// The supervisor's `daemonPid`: it watches the pid this returns.
+        func watchedPid() -> Int32? {
+            lock.withLock { pidReads += 1 }
+            return pid
+        }
         func kill() { lock.withLock { process }?.terminate() }
         func stop() { lock.withLock { process }?.terminate() }
     }
@@ -56,8 +63,11 @@ import Testing
                 daemon.spawn()
                 return nil
             },
-            daemonPid: { daemon.pid })
+            daemonPid: { daemon.watchedPid() })
         defer { task.cancel() }
+        // The supervisor has read the pid and armed its watch (a kill before
+        // that is not seen until the next probe), then stays quiet.
+        #expect(await eventually(60) { daemon.lock.withLock { daemon.pidReads } >= 1 })
         try await Task.sleep(for: .milliseconds(300))
         #expect(daemon.lock.withLock { daemon.starts } == 0)
         // Waiting is not polling.
@@ -69,12 +79,13 @@ import Testing
         #expect(await eventually(60) { daemon.lock.withLock { daemon.starts } == 1 })
         #expect(await eventually(60) { daemon.lock.withLock { daemon.restarted } == 1 })
 
-        // The new daemon is watched too. The supervisor watches the new pid
-        // only after its confirming probe (the second one: the miss, then
-        // this one), so wait for that probe instead of a fixed sleep; a kill
-        // before the watch is armed is never seen until the next hourly probe.
-        #expect(await eventually(60) { daemon.lock.withLock { daemon.probes } >= 2 })
-        try await Task.sleep(for: .milliseconds(200))
+        // The new daemon is watched too. The supervisor reads the pid to
+        // watch only after its confirming probe (the second one: the miss,
+        // then this one), at the top of its loop; a kill before that read
+        // finds no pid to watch and is never seen until the next hourly
+        // probe. So wait for the second read (the first was at the start),
+        // not for a fixed time: the watch is armed in the same step.
+        #expect(await eventually(60) { daemon.lock.withLock { daemon.pidReads } >= 2 })
         daemon.kill()
         #expect(await eventually(60) { daemon.lock.withLock { daemon.starts } == 2 })
     }

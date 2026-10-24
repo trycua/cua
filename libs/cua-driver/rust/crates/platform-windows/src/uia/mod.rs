@@ -294,6 +294,24 @@ unsafe fn walk_tree_unsafe(
     max_depth: usize,
     budget: &mut WalkBudget,
 ) -> UiaTreeResult {
+    // Issue #5783: check for the crashing overlay shape FIRST, before any
+    // UIA object is created. `CoCreateInstance(&CUIAutomation)` itself touches
+    // uiautomationcore.dll, and the access violation reported for this issue
+    // originates in that module — so the guard has to run before the
+    // automation object exists, not merely before the tree walk.
+    {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetWindowLongPtrW, GWL_EXSTYLE, WINDOW_EX_STYLE, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+            WS_EX_TOOLWINDOW,
+        };
+        let hwnd_win = windows::Win32::Foundation::HWND(hwnd as *mut _);
+        let style = GetWindowLongPtrW(hwnd_win, GWL_EXSTYLE) as u32;
+        let mask = (WS_EX_LAYERED.0 | WS_EX_NOACTIVATE.0 | WS_EX_TOOLWINDOW.0) as u32;
+        if (style & mask) == mask {
+            return crate::msaa::walk_msaa_tree_budgeted(hwnd, budget);
+        }
+    }
+
     let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
 
     let automation: IUIAutomation =
@@ -357,27 +375,6 @@ unsafe fn walk_tree_unsafe(
         n > 0 && String::from_utf16_lossy(&buf[..n as usize]).starts_with("SAL")
     };
     if sal_class {
-        return crate::msaa::walk_msaa_tree_budgeted(hwnd, budget);
-    }
-
-    // Issue #5783: layered + noactivate + toolwindow surfaces such as
-    // Wails floating balls are reported by list_windows (EnumWindows) but
-    // walking their UIA provider can crash uiautomationcore.dll, which
-    // kills the whole daemon. Skip the UIA walk entirely and fall back to
-    // MSAA, which does not enter the crashing BuildUpdatedCache path for
-    // these overlay-style windows. A tree with zero actionable rows is
-    // expected here — callers should treat them as pixel-only surfaces.
-    let is_overlay_style_window: bool = {
-        use windows::Win32::UI::WindowsAndMessaging::{GetWindowLongPtrW, GWL_EXSTYLE};
-        const WS_EX_LAYERED_ISIZE: isize = 0x0008_0000;
-        const WS_EX_NOACTIVATE_ISIZE: isize = 0x0800_0000;
-        const WS_EX_TOOLWINDOW_ISIZE: isize = 0x0000_0080;
-        let style = GetWindowLongPtrW(hwnd_win, GWL_EXSTYLE);
-        style & WS_EX_LAYERED_ISIZE != 0
-            && style & WS_EX_NOACTIVATE_ISIZE != 0
-            && style & WS_EX_TOOLWINDOW_ISIZE != 0
-    };
-    if is_overlay_style_window {
         return crate::msaa::walk_msaa_tree_budgeted(hwnd, budget);
     }
 

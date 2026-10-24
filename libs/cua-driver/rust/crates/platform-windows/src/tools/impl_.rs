@@ -1447,7 +1447,8 @@ impl Tool for GetWindowStateTool {
                 } else {
                     crate::uia::snapshot::SnapshotKind::Uia
                 };
-                let payload = crate::uia::snapshot::UiaSnapshot::from_nodes(&tree.nodes, kind);
+                let payload = crate::uia::snapshot::UiaSnapshot::from_nodes(&tree.nodes, kind)
+                    .with_read_while_minimized(crate::input::window_is_iconic(hwnd));
                 (tree, payload, budget.outcome())
             });
             let started = std::time::Instant::now();
@@ -3935,6 +3936,27 @@ impl Tool for ClickTool {
                 && count == 1
                 && crate::input::is_chromium_target_window(hwnd)
             {
+                // This route posts at the cached center without
+                // `resolve_onscreen_point_with_scroll`, so check it here.
+                if admitted
+                    .as_ref()
+                    .is_some_and(|element| element.read_while_minimized)
+                {
+                    let message = format!(
+                        "Element [{idx}] resolves to ({cx},{cy}), which was read while \
+                         window 0x{hwnd:x} was minimized. Re-snapshot with get_window_state \
+                         before retrying."
+                    );
+                    return ToolResult::error(message.clone()).with_structured(json!({
+                        "status": "refused",
+                        "code": "element_not_visible",
+                        "effect": "refused",
+                        "refusal": {
+                            "code": "element_not_visible",
+                            "message": message,
+                        }
+                    }));
+                }
                 let posted = tokio::task::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {

@@ -87,11 +87,13 @@ pub fn hint_line(out: &mut dyn Write, s: impl AsRef<str>) {
 /// `s` with each command it tells the reader to run named for this build's
 /// CLI, so "run `cua host setup`" says `cua-local host setup` on Local and a
 /// pasted hint never runs the Stable CLI. Stable's text is returned as is.
-/// Two spellings are rewritten: a backticked `` `cua <anything>` `` (see
-/// [`CuaChannel::localize_cli_hints`]) and a bare `cua <verb>` ("Run it: cua
-/// spaces create ...") where `<verb>` is one of this CLI's commands, so prose
-/// such as "the cua daemon's log" or "cua will not ask again" is left alone.
-/// For messages we wrote, never for data.
+/// Two spellings are rewritten: a backticked `` `cua <anything>` `` and a bare
+/// `cua <verb>` ("Run it: cua spaces create ...") where `<verb>` is one of this
+/// CLI's commands, so prose such as "cua will not ask again" is left alone.
+/// Text inside double quotes is left alone too: that is where a message puts
+/// a name the user chose (`{name:?}`), and a host called "cua host" is not a
+/// command. For messages we wrote; where a message names a user's value next
+/// to a command, spell the command with [`cli`] instead.
 pub fn hint(s: &str) -> String {
     hint_for(CuaChannel::current(), s)
 }
@@ -100,16 +102,17 @@ fn hint_for(channel: CuaChannel, s: &str) -> String {
     if !channel.is_local() {
         return s.to_string();
     }
-    localize_for(channel, s, cli_verbs())
+    rename_commands(s, channel.cli_name(), cli_verbs(), true)
 }
 
-/// [`hint`] for `channel`, given the names of the CLI's commands.
+/// Help text we wrote (about, examples, argument help) for `channel`, given
+/// the names of the CLI's commands: [`hint`] without the quote rule, since
+/// there is no user's value in it (an example can quote an argument).
 pub(crate) fn localize_for(channel: CuaChannel, s: &str, verbs: &HashSet<String>) -> String {
-    let s = channel.localize_cli_hints(s);
-    if !channel.is_local() || !s.contains("cua ") {
-        return s.into_owned();
+    if !channel.is_local() {
+        return s.to_string();
     }
-    name_bare_commands(&s, channel.cli_name(), verbs)
+    rename_commands(s, channel.cli_name(), verbs, false)
 }
 
 /// The names (and aliases) of the CLI's commands, such as `host` and `sb`.
@@ -126,21 +129,22 @@ pub(crate) fn verbs_of(cli: &clap::Command) -> HashSet<String> {
         .collect()
 }
 
-/// `text` with each bare `cua <verb>` (not part of a longer word, path or
-/// name) starting with `name` instead of `cua`.
-fn name_bare_commands(text: &str, name: &str, verbs: &HashSet<String>) -> String {
+/// `text` with each command it names (a backticked `` `cua ...` ``, or a bare
+/// `cua <verb>` that is not part of a longer word, path or name) starting with
+/// `name` instead of `cua`. With `skip_quoted`, not inside double quotes.
+fn rename_commands(text: &str, name: &str, verbs: &HashSet<String>, skip_quoted: bool) -> String {
     let mut out = String::with_capacity(text.len() + 16);
     let mut copied = 0;
     for (at, _) in text.match_indices("cua ") {
-        let starts_word = text[..at]
-            .chars()
-            .next_back()
-            .is_none_or(|c| !(c.is_alphanumeric() || "-_./~".contains(c)));
+        let before = &text[..at];
+        let prev = before.chars().next_back();
+        let starts_word = prev.is_none_or(|c| !(c.is_alphanumeric() || "-_./~".contains(c)));
         let rest = &text[at + 4..];
         let verb_len = rest
             .find(|c: char| !(c.is_alphanumeric() || c == '-' || c == '_'))
             .unwrap_or(rest.len());
-        if starts_word && verbs.contains(&rest[..verb_len]) {
+        let is_command = prev == Some('`') || verbs.contains(&rest[..verb_len]);
+        if starts_word && is_command && !(skip_quoted && inside_double_quotes(before)) {
             out.push_str(&text[copied..at]);
             out.push_str(name);
             copied = at + 3;
@@ -148,6 +152,21 @@ fn name_bare_commands(text: &str, name: &str, verbs: &HashSet<String>) -> String
     }
     out.push_str(&text[copied..]);
     out
+}
+
+/// Whether the end of `before` is inside a double-quoted span (an unescaped
+/// `"` opens one and the next closes it).
+fn inside_double_quotes(before: &str) -> bool {
+    let (mut open, mut escaped) = (false, false);
+    for c in before.chars() {
+        match c {
+            _ if escaped => escaped = false,
+            '\\' => escaped = true,
+            '"' => open = !open,
+            _ => {}
+        }
+    }
+    open
 }
 
 /// Pretty JSON line.
@@ -678,6 +697,38 @@ mod hint_tests {
         assert_eq!(
             hint_for(CuaChannel::Local, "cua hostile, cua sbx, cua"),
             "cua hostile, cua sbx, cua"
+        );
+        // A value the user chose sits in double quotes (`{name:?}`): never a
+        // command, whatever it says. The command next to it is renamed.
+        assert_eq!(
+            hint_for(
+                CuaChannel::Local,
+                r#"no team of yours is called "cua host" (`cua team ls`)"#
+            ),
+            r#"no team of yours is called "cua host" (`cua-local team ls`)"#
+        );
+        // An escaped quote inside the value does not end it.
+        assert_eq!(
+            hint_for(
+                CuaChannel::Local,
+                r#"host "say \"cua host\" now" added; run cua host status"#
+            ),
+            r#"host "say \"cua host\" now" added; run cua-local host status"#
+        );
+        // Help text we wrote has no user's value: an example's quotes do not
+        // hide its command.
+        let verbs = cli_verbs();
+        assert_eq!(
+            localize_for(
+                CuaChannel::Local,
+                r#"say "cua host setup" then cua sb ls"#,
+                verbs
+            ),
+            r#"say "cua-local host setup" then cua-local sb ls"#
+        );
+        assert_eq!(
+            localize_for(CuaChannel::Stable, r#"say "cua host setup""#, verbs),
+            r#"say "cua host setup""#
         );
         // Not a command of this CLI, part of a longer name or path: untouched.
         for t in [

@@ -84,14 +84,8 @@ use crate::env::{CUA_ENV_VAR, CuaEnv};
 /// The environment variable that selects the channel.
 pub const CUA_CHANNEL_VAR: &str = "CUA_CHANNEL";
 
-/// The file name of the Stable CLI.
-const STABLE_CLI_NAME: &str = "cua";
-
 /// The file name of the Local CLI.
 const LOCAL_CLI_NAME: &str = "cua-local";
-
-/// How a hint starts a command: a backtick, then `cua` and a space.
-const CLI_HINT_PREFIX: &str = "`cua ";
 
 /// The directory name of the Local app bundle.
 const LOCAL_APP_DIR_NAME: &str = "Cua Spaces Local.app";
@@ -495,25 +489,9 @@ impl CuaChannel {
     /// The CLI's file name: `cua` or `cua-local`.
     pub fn cli_name(self) -> &'static str {
         match self {
-            Self::Stable => STABLE_CLI_NAME,
+            Self::Stable => "cua",
             Self::Local => LOCAL_CLI_NAME,
         }
-    }
-
-    /// `text` with every command it tells the reader to run named for this
-    /// channel's CLI: a backticked `` `cua <verb> ...` `` becomes
-    /// `` `cua-local <verb> ...` `` on Local, so a hint such as "run `cua host
-    /// setup`" does not send a Local user to the Stable CLI. Stable's text is
-    /// returned untouched (the same borrowed string), so its output stays
-    /// byte-identical. Use it on hints and error messages, never on data: only
-    /// a backticked command that starts with `cua ` is rewritten, which is how
-    /// every hint spells one.
-    pub fn localize_cli_hints(self, text: &str) -> std::borrow::Cow<'_, str> {
-        let name = self.cli_name();
-        if name == STABLE_CLI_NAME || !text.contains(CLI_HINT_PREFIX) {
-            return std::borrow::Cow::Borrowed(text);
-        }
-        std::borrow::Cow::Owned(text.replace(CLI_HINT_PREFIX, &format!("`{name} ")))
     }
 
     /// Where the first run installs the CLI: `~/.local/bin/<cli_name>`.
@@ -726,27 +704,6 @@ mod tests {
 
     const LOCAL_EXE: &str = "/Users/ada/Applications/Cua Spaces Local.app/Contents/MacOS/cua";
     const STABLE_EXE: &str = "/Applications/Cua Spaces.app/Contents/MacOS/cua";
-
-    #[test]
-    fn local_hints_name_the_local_cli_and_stable_hints_are_untouched() {
-        let hint = "run `cua host setup` (or `cua auth login --json`); `cua` and cua-local stay";
-        let stable = CuaChannel::Stable.localize_cli_hints(hint);
-        assert!(matches!(stable, std::borrow::Cow::Borrowed(_)));
-        assert_eq!(stable, hint);
-        assert_eq!(
-            CuaChannel::Local.localize_cli_hints(hint),
-            "run `cua-local host setup` (or `cua-local auth login --json`); `cua` and cua-local stay"
-        );
-        // Already Local, no command, or not a backticked command: unchanged.
-        for t in [
-            "run `cua-local host setup`",
-            "",
-            "cua host setup",
-            "ships next to `cua`",
-        ] {
-            assert_eq!(CuaChannel::Local.localize_cli_hints(t), t);
-        }
-    }
 
     #[test]
     fn parses_channel_names() {

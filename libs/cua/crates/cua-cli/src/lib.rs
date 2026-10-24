@@ -2737,15 +2737,17 @@ pub fn main() {
         return;
     }
     promote_spacesd_env_vars();
-    // `CUA_ENV` picks every endpoint and the cua home: a typo must not fall
-    // back to production silently.
+    // `CUA_CHANNEL` and `CUA_ENV` pick every endpoint and the cua home (Local
+    // is `cua-local`: staging and `~/.cua-local` unless told otherwise): a
+    // typo must not fall back to production silently.
     if let Err(e) = cua_home::env::CuaEnv::try_current() {
         eprintln!("error: {e}");
         std::process::exit(2);
     }
     // SAFETY: still first in `main`, before any other thread exists. Pins
-    // `CUA_HOME` for a non-production `CUA_ENV` so every component and
-    // child process (the daemon) uses that environment's home.
+    // `CUA_HOME` for the Local channel or a non-production `CUA_ENV` (and
+    // `CUA_CHANNEL` and `CUA_ENV` for Local) so every component and child
+    // process (the daemon) uses that channel's and environment's home.
     unsafe { cua_home::env::pin_home() };
     let matches = channel_command(
         cli_command(cua_home::experimental::teams_enabled()),

@@ -5,8 +5,9 @@
 import Foundation
 import Testing
 
-/// `CUA_ENV`: production changes nothing; staging gets its own home; a beta
-/// build's bundle default applies only when `CUA_ENV` is unset.
+/// `CUA_ENV`: production changes nothing; staging gets its own home; a
+/// bundle's `CuaEnv` default (a development build can set it) applies only when
+/// `CUA_ENV` is unset.
 @Suite("Target environment")
 struct TargetEnvironmentTests {
     @Test func productionChangesNothing() {
@@ -21,7 +22,7 @@ struct TargetEnvironmentTests {
             .isEmpty)
     }
 
-    @Test func betaBundleDefaultsToStaging() {
+    @Test func bundleDefaultStagingAppliesWhenCuaEnvIsUnset() {
         #expect(TargetEnvironment.pinned(env: [:], bundleEnv: "staging", home: "/Users/ada")
             == ["CUA_ENV": "staging", "CUA_HOME": "/Users/ada/.cua/envs/staging"])
     }

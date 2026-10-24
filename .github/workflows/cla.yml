@@ -63,4 +63,4 @@ jobs:
           # (labelled `autorelease: pending`) makes release-please die when it
           # comments on it, so it can never open the next release PR.
           lock-pullrequest-aftermerge: false
-          allowlist: "f-trycua,francedot,injaneity,ddupont808,0xjohnnydev,cuaclaw,dependabot[bot],github-actions[bot],release-please[bot],cua-release-bot[bot],trycua-release[bot]"
+          allowlist: "f-trycua,francedot,injaneity,ddupont808,0xjohnnydev,cuaclaw,dependabot[bot],github-actions[bot],release-please[bot],cua-release-bot[bot],trycua-release[bot],cua-agents[bot]"

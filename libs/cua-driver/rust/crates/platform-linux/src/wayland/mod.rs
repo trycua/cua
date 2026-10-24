@@ -21,6 +21,8 @@ pub mod persistent_vptr;
 pub(crate) mod portal;
 pub mod portal_screenshot;
 mod primary_seat;
+#[cfg(any(feature = "portal-input", test))]
+mod region_route;
 pub mod shell_helper;
 pub mod sway_ipc;
 mod virtual_keyboard;
@@ -3840,6 +3842,54 @@ mod tests {
     }
 
     use super::*;
+
+    fn region(offset_x: f32) -> region_route::RegionRect {
+        region_route::RegionRect {
+            offset_x,
+            offset_y: 0.0,
+            width: 3840.0,
+            height: 2160.0,
+        }
+    }
+
+    #[test]
+    fn absolute_point_on_second_monitor_routes_to_its_region() {
+        let (l, r) = ([region(0.0)], [region(3840.0)]);
+        let one = [("abs", &[l[0], r[0]][..])];
+        assert_eq!(
+            region_route::route_absolute(one, 6237.0, 1014.0).unwrap(),
+            Some("abs")
+        );
+        let two = [("left", &l[..]), ("right", &r[..])];
+        assert_eq!(
+            region_route::route_absolute(two, 6237.0, 1014.0).unwrap(),
+            Some("right")
+        );
+    }
+
+    #[test]
+    fn point_outside_announced_regions_is_an_error() {
+        let both = [region(0.0), region(3840.0)];
+        assert!(region_route::route_absolute([("abs", &both[..])], 8000.0, 100.0).is_err());
+        assert!(region_route::route_absolute([("abs", &both[..])], 7680.0, 100.0).is_err());
+    }
+
+    #[test]
+    fn unmatched_point_cannot_escape_through_an_empty_candidate() {
+        let l = [region(0.0)];
+        let none: [region_route::RegionRect; 0] = [];
+        let mixed = [("empty", &none[..]), ("left", &l[..])];
+        assert!(region_route::route_absolute(mixed, 6237.0, 1014.0).is_err());
+    }
+
+    #[test]
+    fn no_announced_regions_falls_back() {
+        let none: [region_route::RegionRect; 0] = [];
+        assert_eq!(
+            region_route::route_absolute([("abs", &none[..])], 6237.0, 1.0).unwrap(),
+            None
+        );
+    }
 
     fn window(xid: u64, pid: Option<u32>, title: &str) -> WindowInfo {
         WindowInfo {

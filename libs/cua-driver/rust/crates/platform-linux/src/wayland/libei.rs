@@ -29,6 +29,7 @@
 //! and the first device.Done event. Multi-monitor: the region containing the
 //! target (x, y) selects the device; the point is sent unchanged.
 
+use super::region_route::{route_absolute, RegionRect};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -654,29 +655,6 @@ struct EisState {
 #[derive(Default)]
 struct SeatData {
     capabilities: HashMap<String, u64>,
-}
-
-/// One announced ei_device::Region — a single monitor's pixel rectangle
-/// inside the seat's logical coordinate space. Multi-monitor sessions
-/// announce one Region per output; we route each absolute (x, y) to the
-/// region containing it so the cursor lands on the correct monitor.
-#[derive(Clone, Copy, Debug)]
-struct RegionRect {
-    offset_x: f32,
-    offset_y: f32,
-    width: f32,
-    height: f32,
-}
-
-impl RegionRect {
-    fn contains(&self, x: f64, y: f64) -> bool {
-        let xf = x as f32;
-        let yf = y as f32;
-        xf >= self.offset_x
-            && xf < self.offset_x + self.width
-            && yf >= self.offset_y
-            && yf < self.offset_y + self.height
-    }
 }
 
 #[derive(Default)]
@@ -1356,73 +1334,9 @@ fn drag_step_delay(duration_ms: u64, steps: u32) -> std::time::Duration {
     )
 }
 
-/// First candidate whose regions contain `(x, y)`. `Ok(None)` means no
-/// candidate announced any region (caller falls back). Regions that exist but
-/// exclude the point are an error: EIS would silently discard the motion and
-/// the button would land at the stale pointer position.
-fn route_absolute<'a, K>(
-    candidates: impl IntoIterator<Item = (K, &'a [RegionRect])>,
-    x: f64,
-    y: f64,
-) -> anyhow::Result<Option<K>> {
-    let mut announced = false;
-    for (key, regions) in candidates {
-        if regions.iter().any(|r| r.contains(x, y)) {
-            return Ok(Some(key));
-        }
-        announced |= !regions.is_empty();
-    }
-    if announced {
-        anyhow::bail!("libei: ({x}, {y}) lies outside every announced pointer region");
-    }
-    Ok(None)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn region(offset_x: f32) -> RegionRect {
-        RegionRect {
-            offset_x,
-            offset_y: 0.0,
-            width: 3840.0,
-            height: 2160.0,
-        }
-    }
-
-    #[test]
-    fn absolute_point_on_second_monitor_routes_to_its_region() {
-        let (l, r) = ([region(0.0)], [region(3840.0)]);
-        let one = [("abs", &[l[0], r[0]][..])];
-        assert_eq!(route_absolute(one, 6237.0, 1014.0).unwrap(), Some("abs"));
-        let two = [("left", &l[..]), ("right", &r[..])];
-        assert_eq!(route_absolute(two, 6237.0, 1014.0).unwrap(), Some("right"));
-    }
-
-    #[test]
-    fn point_outside_announced_regions_is_an_error() {
-        let both = [region(0.0), region(3840.0)];
-        assert!(route_absolute([("abs", &both[..])], 8000.0, 100.0).is_err());
-        assert!(route_absolute([("abs", &both[..])], 7680.0, 100.0).is_err());
-    }
-
-    #[test]
-    fn unmatched_point_cannot_escape_through_an_empty_candidate() {
-        let l = [region(0.0)];
-        let none: [RegionRect; 0] = [];
-        let mixed = [("empty", &none[..]), ("left", &l[..])];
-        assert!(route_absolute(mixed, 6237.0, 1014.0).is_err());
-    }
-
-    #[test]
-    fn no_announced_regions_falls_back() {
-        let none: [RegionRect; 0] = [];
-        assert_eq!(
-            route_absolute([("abs", &none[..])], 6237.0, 1.0).unwrap(),
-            None
-        );
-    }
 
     #[test]
     fn key_sequence_accepts_empty_and_maximum_length_requests() {

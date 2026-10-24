@@ -127,6 +127,12 @@ jobs:
       - name: Swift tests (view models, parity, snapshots)
         working-directory: apps/cua-spaces-macos
         run: scripts/test.sh
+      # install-local.sh and uninstall-local.sh against a fake HOME and a fake
+      # build: a Stable install stays byte-identical, a wrong bundle id is
+      # refused. Needs no build, certificate or network.
+      - name: install-local and uninstall-local (fake HOME)
+        working-directory: apps/cua-spaces-macos
+        run: scripts/tests/install-local-test.sh
       # BridgeContractTests (above) checked every answer against
       # apps/cua-spaces-web/src/bridge/contracts/bridge-shapes.json; its
       # answers then go through the web UI's webkit adapter.

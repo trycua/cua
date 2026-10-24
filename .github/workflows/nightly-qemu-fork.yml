@@ -25,6 +25,7 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
+      - "libs/cua/crates/cua-vmm/src/density.rs"
       - "libs/cua/crates/cua-vmm/src/qemu/**"
       - "libs/cua/crates/cua-daemon/tests/qemu_fork_fanout.rs"
       - "libs/cua/bench/fork-fanout/**"
@@ -128,6 +129,13 @@ jobs:
           EXPECT_WARM: ${{ matrix.disk == 'source' && '1' || '0' }}
           MEMORY_MB: "1024"
           DIRTY_MB: "200"
+          # This bench measures fork memory and latency, not admission (unit
+          # tested in cua-vmm). Hosted runners of private repositories have
+          # 2 CPUs, where 8 forks of 2 vCPUs plus the world (18) pass the
+          # default 8x overcommit (16) and the last fork would be refused;
+          # public ones have 4. Allow the same forks on both, so a run stays
+          # comparable with the baseline.
+          CUA_VM_VCPU_OVERCOMMIT: "10"
           # A Linux VM runs with free page reporting by default, and the RAM
           # of such a VM stays in its checkpoint's stream, loaded privately
           # by each fork. The loaded-stream path this lane measures (the

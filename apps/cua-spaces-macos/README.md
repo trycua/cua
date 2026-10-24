@@ -318,6 +318,79 @@ app for Windows and Linux.
 This app is the macOS release; the Electron app (`apps/cua-spaces-desktop`)
 ships for Windows and Linux.
 
+## Run a Local build next to the stable app
+
+`scripts/install-local.sh` builds this checkout and installs it as **Cua Spaces
+Local**, beside the released Cua Spaces, so you can use Spaces to build Spaces:
+the released app on your production account, your build on staging, both
+signed in and both hosting this Mac.
+
+```sh
+scripts/install-local.sh                 # debug build, then opens the app
+scripts/install-local.sh --release       # release configuration
+scripts/install-local.sh --no-launch     # install without opening it
+scripts/install-local.sh --with-lume-local   # also install lume-local
+scripts/install-local.sh --prefix DIR    # app in DIR/Applications, cua-local in DIR/.local/bin
+```
+
+`--prefix` is resolved first (`..` and symlinks included) and refused when the
+app or `cua-local` would land on, or inside, anything the released Cua Spaces
+owns: `/Applications`, `~/.cua`, `~/.local/bin/cua`, `~/.lume`, `~/Cua Volume`.
+
+The Local build shares nothing with the released app. Every name comes from
+`CuaChannel::Local` (`libs/cua/crates/cua-home/src/channel.rs`):
+
+| | Cua Spaces | Cua Spaces Local |
+|---|---|---|
+| App | `/Applications/Cua Spaces.app` | `~/Applications/Cua Spaces Local.app` |
+| Bundle id | `com.trycua.spaces.macos` | `com.trycua.spaces.local` |
+| CLI | `~/.local/bin/cua` | `~/.local/bin/cua-local` |
+| Home | `~/.cua` | `~/.cua-local` |
+| Backend | production | staging (`CUA_ENV=prod` opts in) |
+| URL scheme | `cua://` | `cua-local://` |
+| Updates | Sparkle | none |
+
+The script builds the library, the `cua` CLI and `cua-spacesd` from this
+checkout (`--skip-rust-build` reuses the last build), then runs
+`scripts/build-app.sh --channel local` with `CUA_SPACESD_BIN` set to that
+`cua-spacesd`. Without it build-app.sh bundles the pinned release of the host
+service, which does not know the Local ports; the script compares the bundled
+daemon's machine code with the one it built and refuses the app if they differ.
+It copies the app to a staging folder, signs it, checks the signature, the bundle id, the URL scheme
+and that there is no update feed, and only then swaps it in. If the copy does
+not verify it puts the previous Local app back. It refuses to replace anything
+at the Local path that is not a Cua Spaces Local bundle, and it never writes to
+`/Applications/Cua Spaces.app`, `~/.local/bin/cua`, `~/.cua` or `~/.lume`.
+`cua-local` is a link to the `cua` inside the app; no shell profile is edited,
+so put `~/.local/bin` on your PATH.
+
+**Permissions survive a rebuild** when the app is signed with the stable local
+certificate that Cua Driver's local install uses
+(`libs/cua-driver/scripts/_local-signing.sh`; setup in
+`libs/cua-driver/scripts/README.md`, "Stable macOS local signing"). Without it
+the app is signed ad hoc and macOS asks for Screen Recording and Accessibility
+again after every rebuild; the script says so, and clears the stale rows for the
+Local bundle id only. `--require-stable-signing` stops instead of signing ad hoc.
+
+Rebuilding is the same command. To remove it:
+
+```sh
+scripts/uninstall-local.sh               # asks first; --yes to skip, --with-lume-local to include lume-local
+```
+
+It unregisters the Local helper login item and removes the app, `cua-local`,
+`~/.cua-local`, the Local app support folder and the Local Keychain items
+(`ai.cua.session.local*`). It keeps `~/Cua Volume Local` and the permissions
+macOS granted.
+
+There is one Local slot per Mac: an Internal build from CI uses the same
+identity, so it and a build from source replace each other.
+
+`scripts/tests/install-local-test.sh` checks all of this against a fake `HOME`
+and a fake build: a Stable install is byte-identical before and after install,
+rebuild and uninstall, a wrong bundle id is refused, a failed copy is rolled
+back. `CUA_TEST_SIGNING_KEYCHAIN=<keychain>` adds the certificate-signing checks.
+
 ## Release
 
 `.github/workflows/cd-cua-spaces.yml` (tags `cua-spaces-v*`) runs

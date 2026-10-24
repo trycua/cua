@@ -39,8 +39,10 @@ on:
       - "libs/spaces-notch-swift/**"
       - "libs/images/sandbox-images.json"
       - "libs/cua/crates/cua-icon-cache/**"
-      # `ffi` restores main's compiled library through this action.
+      # `ffi` restores main's compiled library through this action, keyed by
+      # what that script says the build reads.
       - ".github/actions/spaces-rust-slice/**"
+      - ".github/scripts/spaces_rust_slice_inputs.py"
       - ".github/workflows/ci-cua-spaces-macos.yml"
   push:
     branches: [main]
@@ -61,8 +63,10 @@ on:
       - "libs/spaces-notch-swift/**"
       - "libs/images/sandbox-images.json"
       - "libs/cua/crates/cua-icon-cache/**"
-      # `ffi` restores main's compiled library through this action.
+      # `ffi` restores main's compiled library through this action, keyed by
+      # what that script says the build reads.
       - ".github/actions/spaces-rust-slice/**"
+      - ".github/scripts/spaces_rust_slice_inputs.py"
       - ".github/workflows/ci-cua-spaces-macos.yml"
   workflow_dispatch:
 

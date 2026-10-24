@@ -175,7 +175,11 @@ fn remember_move(from: &str, to: &str) {
 
 /// The version of the `lume serve` at `client`: what it reports, else (on
 /// this Mac) its executable's `--version`.
-async fn server_version(client: &LumeClient) -> Option<String> {
+async fn server_version(
+    channel: CuaChannel,
+    config_root: &std::path::Path,
+    client: &LumeClient,
+) -> Option<String> {
     if let Some(v) = client.reported_version().await {
         return Some(v);
     }
@@ -184,6 +188,7 @@ async fn server_version(client: &LumeClient) -> Option<String> {
         return None;
     }
     let port = url_port(&url)?;
+    let config_root = config_root.to_path_buf();
     tokio::task::spawn_blocking(move || {
         // Only a Lume (`lume`, or a channel's own such as `lume-local`) is
         // asked for its version, never, say, a test's own fake server
@@ -193,7 +198,7 @@ async fn server_version(client: &LumeClient) -> Option<String> {
                 b.file_name()
                     .is_some_and(|n| CuaChannel::ALL.iter().any(|c| n == c.lume_bin_name()))
             })
-            .and_then(|b| builtin::binary_version(&b))
+            .and_then(|b| builtin::binary_version_in(channel, &config_root, &b))
     })
     .await
     .ok()
@@ -298,6 +303,24 @@ fn lume_ssh_prefix(lume: &LumeCmd, vm: &str) -> PrefixExec {
     PrefixExec { program, prefix }
 }
 
+/// `lume --version`'s output, run as `lume` runs (its channel's
+/// environment), for a report; `None` when it fails or takes over 5 s.
+pub async fn version_text(lume: &LumeCmd) -> Option<String> {
+    let run = lume
+        .tokio_command()
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .output();
+    let out = tokio::time::timeout(Duration::from_secs(5), run)
+        .await
+        .ok()?
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
 /// [`lume_cmd_for`] this process's channel.
 pub fn lume_cmd() -> Result<Option<LumeCmd>> {
     lume_cmd_for(CuaChannel::current())
@@ -316,7 +339,7 @@ pub fn lume_cmd_for(channel: CuaChannel) -> Result<Option<LumeCmd>> {
 
 /// State for Linux disk conversions and seeds, and the private config and
 /// temp directories of Local's Lume: `<cua home>/vmm/lume`.
-fn default_root() -> PathBuf {
+pub(crate) fn default_root() -> PathBuf {
     root_in(&host::cua_home())
 }
 
@@ -512,7 +535,8 @@ impl LumeRuntime {
                 return Ok(());
             }
             let source = builtin::LumeSource::current();
-            match builtin::judge_server(source, server_version(&self.client).await.as_deref()) {
+            let version = server_version(self.cfg.channel, &self.cfg.root, &self.client).await;
+            match builtin::judge_server(source, version.as_deref()) {
                 builtin::ServerVerdict::Use => {}
                 builtin::ServerVerdict::UseOld(v) => {
                     tracing::warn!(
@@ -553,7 +577,7 @@ impl LumeRuntime {
             if candidate.reachable().await {
                 // Only a Lume known to be current (cua's own from an earlier
                 // run); anything else on the port is left alone.
-                if server_version(&candidate)
+                if server_version(self.cfg.channel, &self.cfg.root, &candidate)
                     .await
                     .is_some_and(|v| builtin::new_enough(&v))
                 {
@@ -650,8 +674,10 @@ impl LumeRuntime {
                 ));
             }
         };
+        std::fs::create_dir_all(&self.cfg.root)?;
+        let lume = LumeCmd::new(self.cfg.channel, &self.cfg.root, &bin)?;
         if source == builtin::LumeSource::System
-            && let Some(v) = builtin::binary_version(&bin).filter(|v| !builtin::new_enough(v))
+            && let Some(v) = builtin::binary_version(&lume).filter(|v| !builtin::new_enough(v))
         {
             tracing::warn!(
                 bin = %bin.display(),
@@ -661,8 +687,6 @@ impl LumeRuntime {
             );
             *self.old_lume.lock().unwrap_or_else(|e| e.into_inner()) = Some(v);
         }
-        std::fs::create_dir_all(&self.cfg.root)?;
-        let lume = LumeCmd::new(self.cfg.channel, &self.cfg.root, &bin)?;
         // No `lume serve` answers, so none of its pulls runs: a pull a
         // killed serve left half-made in its temp dir is only taking space.
         sweep_pull_dirs_for(&lume, &lume_temp_dir(), STALE_PULL_DIR_IDLE);

@@ -420,11 +420,14 @@ pub async fn doctor() -> DoctorReport {
     if lume.supported_host {
         let c = crate::lume::LumeClient::new(lume.url.clone());
         lume.serving = c.reachable().await;
-        if let Some(b) = &lume.binary {
-            lume.version = host::run(b, &["--version"])
-                .await
-                .ok()
-                .map(|s| s.trim().to_string());
+        if lume.binary.is_some() {
+            // Run as Lume runs for this channel: a bare `lume --version`
+            // initialises the pinned Lume's settings and telemetry under
+            // Stable's `~/.config/lume` and `~/.lume`. (For Local this
+            // writes only its own config under its home.)
+            if let Ok(Some(l)) = crate::lume::lume_cmd() {
+                lume.version = crate::lume::version_text(&l).await;
+            }
         }
     }
     // Without any Lume, the built-in one is set up on first use unless the

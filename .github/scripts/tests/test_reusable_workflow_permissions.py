@@ -22,8 +22,25 @@ import yaml
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOWS = ROOT / ".github/workflows"
 LEVEL = {"none": 0, "read": 1, "write": 2}
-# `metadata: read` is always available.
-IGNORED_SCOPES = {"metadata"}
+# Every scope GITHUB_TOKEN can hold; `read-all` and `write-all` expand to these.
+# `metadata: read` is always available, so it is left out.
+TOKEN_SCOPES = (
+    "actions",
+    "attestations",
+    "checks",
+    "contents",
+    "deployments",
+    "discussions",
+    "id-token",
+    "issues",
+    "models",
+    "packages",
+    "pages",
+    "pull-requests",
+    "repository-projects",
+    "security-events",
+    "statuses",
+)
 
 
 def load(path: Path) -> dict:
@@ -35,14 +52,18 @@ def scopes(perms) -> dict[str, int] | None:
     if perms is None:
         return None
     if perms == "read-all":
-        return {"*": 1}
+        return {scope: LEVEL["read"] for scope in TOKEN_SCOPES}
     if perms == "write-all":
-        return {"*": 2}
-    return {scope: LEVEL[str(level)] for scope, level in perms.items() if scope not in IGNORED_SCOPES}
+        return {scope: LEVEL["write"] for scope in TOKEN_SCOPES}
+    return {scope: LEVEL[str(level)] for scope, level in perms.items() if scope != "metadata"}
 
 
 def level_of(granted: dict[str, int], scope: str) -> int:
-    return granted.get(scope, granted.get("*", 0))
+    return granted.get(scope, 0)
+
+
+def name_of(level: int) -> str:
+    return next(name for name, value in LEVEL.items() if value == level)
 
 
 def effective(workflow: dict, job: dict) -> dict[str, int] | None:
@@ -60,10 +81,8 @@ def violations(caller_name: str, granted: dict[str, int], callee_path: Path, tra
             for scope, level in wanted.items():
                 if level > level_of(granted, scope):
                     yield (
-                        f"{caller_name} -> {' -> '.join(here)} asks for {scope}: "
-                        f"{[k for k, v in LEVEL.items() if v == level][0]} "
-                        f"but the caller grants {scope}: "
-                        f"{[k for k, v in LEVEL.items() if v == level_of(granted, scope)][0]}"
+                        f"{caller_name} -> {' -> '.join(here)} asks for {scope}: {name_of(level)} "
+                        f"but the caller grants {scope}: {name_of(level_of(granted, scope))}"
                     )
         uses = job.get("uses", "")
         if uses.startswith("./.github/workflows/"):
@@ -75,7 +94,7 @@ def violations(caller_name: str, granted: dict[str, int], callee_path: Path, tra
 
 def all_violations() -> list[str]:
     found: list[str] = []
-    for path in sorted(WORKFLOWS.glob("*.yml")):
+    for path in sorted([*WORKFLOWS.glob("*.yml"), *WORKFLOWS.glob("*.yaml")]):
         workflow = load(path)
         for job_id, job in (workflow.get("jobs") or {}).items():
             uses = job.get("uses", "")
@@ -108,3 +127,38 @@ def test_checker_catches_the_nightly_cua_driver_failure(tmp_path):
     found = list(violations("nightly.yml", {"contents": 2, "issues": 2}, callee, ("build",)))
     assert len(found) == 1 and "statuses: read" in found[0]
     assert not list(violations("nightly.yml", {"contents": 2, "statuses": 1}, callee, ("build",)))
+
+
+def test_read_all_and_write_all_expand_to_explicit_scopes():
+    assert scopes("read-all") == {scope: 1 for scope in TOKEN_SCOPES}
+    assert scopes("write-all") == {scope: 2 for scope in TOKEN_SCOPES}
+    assert scopes({"statuses": "read", "metadata": "read"}) == {"statuses": 1}
+    assert scopes({}) == {}
+    assert scopes(None) is None
+    # A caller that lists every scope explicitly is equivalent to read-all.
+    callee = {"permissions": "read-all", "jobs": {}}
+    assert effective(callee, {}) == {scope: 1 for scope in TOKEN_SCOPES}
+
+
+def test_yaml_extension_callers_are_scanned(tmp_path, monkeypatch):
+    workflows = tmp_path / ".github/workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "callee.yml").write_text(
+        "on: workflow_call\n"
+        "jobs:\n"
+        "  gate:\n"
+        "    permissions: {statuses: read}\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps: []\n"
+    )
+    (workflows / "caller.yaml").write_text(
+        "on: push\n"
+        "permissions: {contents: read}\n"
+        "jobs:\n"
+        "  call:\n"
+        "    uses: ./.github/workflows/callee.yml\n"
+    )
+    monkeypatch.setattr(f"{__name__}.ROOT", tmp_path)
+    monkeypatch.setattr(f"{__name__}.WORKFLOWS", workflows)
+    found = all_violations()
+    assert len(found) == 1 and found[0].startswith("caller.yaml -> call -> callee.yml:gate")

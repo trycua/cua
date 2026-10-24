@@ -1700,7 +1700,7 @@ dependencies = [
 
 [[package]]
 name = "cua-relay"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "axum 0.8.9",
  "base64 0.22.1",
@@ -1758,7 +1758,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "axum 0.7.9",
  "bytes",
@@ -1839,7 +1839,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-desktop"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -1888,7 +1888,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-doctor"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "bytes",
  "cua-hotspot",
@@ -1930,7 +1930,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-provider-api"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "cua-media-protocol",
  "serde_json",
@@ -1939,7 +1939,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-server"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2007,7 +2007,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-session"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "cua-media-codec",
  "cua-media-protocol",
@@ -2024,7 +2024,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-socks"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "cua-hotspot",
  "futures-util",
@@ -2034,14 +2034,14 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-supervise"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "cua-spacesd-teleport"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "cua-chromium-storage",
  "cua-teleport-bundle",
@@ -2058,7 +2058,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-test-apps"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "libc",
  "libloading",

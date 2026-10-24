@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.9.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.8.0...cua-spacesd-v0.9.0) (2026-10-24)
+
+
+### Features
+
+* **cua-home:** CuaChannel, the names that keep Cua Spaces Local apart from stable (CUA-1776) ([#5800](https://github.com/trycua/cua/issues/5800)) ([e896967](https://github.com/trycua/cua/commit/e896967501382d6dc26ef6d96282c0f8af882648))
+
+
+### Bug Fixes
+
+* **images:** claim the features cua-spacesd 0.8.0 reports on every image ([#5823](https://github.com/trycua/cua/issues/5823)) ([9fd979a](https://github.com/trycua/cua/commit/9fd979a24a6e6103b201eaf3d646d2f5c23d14ad))
+* **relay:** a temp file pending delete on Windows counts as gone in the sweep ([#5867](https://github.com/trycua/cua/issues/5867)) ([4c9a7bb](https://github.com/trycua/cua/commit/4c9a7bb8c1b76fba5ffbbdeca5326e3e257cd2f4))
+
 ## [0.8.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.7.0...cua-spacesd-v0.8.0) (2026-10-24)
 
 

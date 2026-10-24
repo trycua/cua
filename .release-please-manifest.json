@@ -14,5 +14,5 @@
   "libs/python/cua-sandbox-apps": "0.1.2",
   "libs/typescript/core": "0.1.6",
   "libs/typescript/playground": "0.3.0",
-  "libs/cuabot": "1.0.16"
+  "libs/cuabot": "1.0.17"
 }

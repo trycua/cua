@@ -757,7 +757,7 @@ mod tests {
         // Unset: the port every release has used.
         let ctx = ServerContext::new(ServerConfig::default(), None);
         assert_eq!(host(&ctx).media_udp_port, 3212);
-        // Cua Spaces Local serves its own, beside a Stable host's.
+        // An override (`--mesh-udp-port`) reaches the mesh node.
         let local = ServerContext::new(
             ServerConfig {
                 mesh_udp_port: 3222,

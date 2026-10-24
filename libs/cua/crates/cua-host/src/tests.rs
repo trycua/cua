@@ -1811,9 +1811,9 @@ fn the_service_gets_the_hosts_price_only_when_setup_was_given_it() {
 
 /// The ports are the channel's: a Stable host service is the one it has
 /// always been (nothing passed, so a service installed before this still
-/// matches), and a Local one asks for 3221 and 3222 (and mesh UDP 3222),
-/// on the command line and in the environment, so it runs beside the
-/// Stable one.
+/// matches), and a Local one asks for 3221 and 3222, on the command line
+/// and in the environment, so it runs beside the Stable one. Neither passes
+/// a mesh media port: it is 3212 for both, by design.
 #[test]
 fn the_service_serves_on_the_channels_ports() {
     use cua_home::channel::CuaChannel;
@@ -1830,7 +1830,6 @@ fn the_service_serves_on_the_channels_ports() {
         listen: Some("0.0.0.0:3221".into()),
         ..Default::default()
     };
-    let mesh_env = "CUA_ENV_MESH_UDP_PORT".to_string();
     for config in [&relay, &direct] {
         let stable = host.service_spec_for(config, CuaChannel::Stable);
         assert!(
@@ -1847,7 +1846,7 @@ fn the_service_serves_on_the_channels_ports() {
             "Stable passes no ports and no channel"
         );
 
-        // Local is Stable's command line plus its three ports.
+        // Local is Stable's command line plus its two ports.
         let local = host.service_spec_for(config, CuaChannel::Local);
         let mut expected = stable.args.clone();
         expected.extend(["--port", "3221", "--quic-port", "3222"].map(String::from));
@@ -1861,7 +1860,6 @@ fn the_service_serves_on_the_channels_ports() {
                 var("CUA_ENV_LOG", "info"),
                 var("CUA_ENV_PORT", "3221"),
                 var("CUA_ENV_QUIC_PORT", "3222"),
-                var(&mesh_env, "3222"),
                 var("CUA_CHANNEL", "local"),
             ]
         );
@@ -1910,7 +1908,8 @@ fn the_service_serves_on_the_channels_ports() {
 /// What a host service asks the machine for: the TCP port of its listener,
 /// the UDP port of its QUIC media, and its mesh UDP port, from the command
 /// line and environment of `spec`, else cua-spacesd's own defaults (3211,
-/// 3212, 3212). A flag beats the environment, as in cua-spacesd.
+/// 3212, 3212). A flag beats the environment, as in cua-spacesd. (The mesh
+/// port is only ever the default here: no channel overrides it.)
 fn requested_ports(spec: &crate::service::ServiceSpec) -> (u16, u16, u16) {
     let flag = |name: &str| {
         spec.args
@@ -1989,8 +1988,17 @@ async fn a_stable_and_a_local_host_service_share_no_listener() {
         let local = host.service_spec_for(&config(CuaChannel::Local), CuaChannel::Local);
         let (s, l) = (requested_ports(&stable), requested_ports(&local));
         assert_eq!(s, (3211, 3212, 3212), "{mode}: Stable keeps its ports");
-        assert_eq!(l, (3221, 3222, 3222), "{mode}: Local has its own");
-        assert!(s.0 != l.0 && s.1 != l.1 && s.2 != l.2, "{mode}");
+        assert_eq!(l, (3221, 3222, 3212), "{mode}: Local has its own");
+        // The OS listeners differ. The mesh media port (.2) is the same on
+        // purpose: it is a port of the mesh's own in-process network, not a
+        // socket on the Mac, so the two cannot collide on it, and it must
+        // stay 3212 where guest Spaces and older cua-spacesd serve it.
+        assert!(s.0 != l.0 && s.1 != l.1, "{mode}");
+        assert_eq!(s.2, l.2, "{mode}: the mesh media port is shared");
+        assert!(
+            local.env.iter().all(|(k, _)| k != "CUA_ENV_MESH_UDP_PORT"),
+            "{mode}: Local does not move the mesh port"
+        );
         // The environment agrees with the command line.
         let env = |spec: &crate::service::ServiceSpec, k: &str| {
             spec.env

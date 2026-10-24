@@ -28,8 +28,10 @@ use crate::{Error, Result};
 /// It is a port of the mesh's own overlay network (an in-process socket of
 /// the node's own mesh address), not a port of the operating system, so two
 /// nodes on one computer never compete for it. A host and the clients that
-/// dial it must agree, so both take it from [`MeshConfig::media_udp_port`]:
-/// a build that runs next to another one (Cua Spaces Local) picks its own.
+/// dial it must agree, so both take it from [`MeshConfig::media_udp_port`].
+/// Every Cua build leaves it at 3212 (guest Spaces and older cua-spacesd
+/// fix it there); the setting is an override for a deployment that must
+/// move it.
 pub const MEDIA_UDP_PORT: u16 = 3212;
 
 /// How a node is set up.

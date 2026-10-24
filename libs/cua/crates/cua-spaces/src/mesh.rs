@@ -421,13 +421,9 @@ async fn start(via: &Via<'_>) -> Result<(Dialer, Option<std::fs::File>), String>
         Some(lock) => (Some(dir.join(format!("{name}.json"))), Some(lock)),
         None => (None, None),
     };
-    // Hosts of this build's channel serve their media on the channel's mesh
-    // UDP port (Cua Spaces Local's differs from Stable's).
-    let media_port = cua_home::channel::CuaChannel::current().ports().mesh_udp;
-    let dialer =
-        Dialer::start_with_media_port(&url, auth, identity, Duration::from_secs(10), media_port)
-            .await
-            .map_err(|e| e.to_string())?;
+    let dialer = Dialer::start(&url, auth, identity, Duration::from_secs(10))
+        .await
+        .map_err(|e| e.to_string())?;
     Ok((dialer, lock))
 }
 

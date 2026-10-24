@@ -157,14 +157,11 @@ impl Dialers {
             }
             _ => {}
         }
-        // The cluster's hosts are this build's channel's: they serve their
-        // media on its mesh UDP port.
-        match cua_mesh::dialer::Dialer::start_with_media_port(
+        match cua_mesh::dialer::Dialer::start(
             relay,
             cua_mesh::static_auth(Vec::new()),
             None,
             Duration::from_secs(5),
-            cua_home::channel::CuaChannel::current().ports().mesh_udp,
         )
         .await
         {

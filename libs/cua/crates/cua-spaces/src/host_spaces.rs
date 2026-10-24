@@ -4386,11 +4386,11 @@ mod tests {
         assert_eq!(on(CuaChannel::Stable).url, "http://127.0.0.1:3211");
         assert_eq!(on(CuaChannel::Local).url, "http://127.0.0.1:3221");
         assert_eq!(on(CuaChannel::Local).token, "secret");
-        // Stable's mesh port is the one every release has used.
-        assert_eq!(
-            CuaChannel::Stable.ports().mesh_udp,
-            cua_mesh::MEDIA_UDP_PORT
-        );
+        // The mesh media port is every channel's, by design: guest Spaces
+        // and older cua-spacesd serve it there, and it is not an OS port.
+        for channel in CuaChannel::ALL {
+            assert_eq!(channel.ports().mesh_udp, cua_mesh::MEDIA_UDP_PORT);
+        }
     }
 
     /// What a create on a host reports to its caller, by elapsed minute,

@@ -191,9 +191,9 @@ struct ServeArgs {
     quic_port: u16,
     /// Mesh UDP port that reaches the QUIC media listener over the mesh
     /// (`join`, when the relay coordinates a mesh). Peers dial the same
-    /// number, so a build that runs beside another one on this machine
-    /// (Cua Spaces Local) sets its own. A port of the mesh's own network,
-    /// not of the operating system.
+    /// number, so leave it at the default unless every peer is told too.
+    /// A port of the mesh's own network, not of the operating system, so
+    /// two hosts on one machine do not compete for it.
     #[arg(long, env = "CUA_ENV_MESH_UDP_PORT", default_value_t = config::DEFAULT_MESH_UDP_PORT)]
     mesh_udp_port: u16,
     /// Default per-process scrollback in bytes.

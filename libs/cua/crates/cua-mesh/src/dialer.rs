@@ -75,8 +75,7 @@ impl Dialer {
 
     /// [`Dialer::start`] for machines that serve their QUIC media on mesh
     /// UDP port `media_udp_port` (`--mesh-udp-port` of their cua-spacesd)
-    /// instead of [`MEDIA_UDP_PORT`]: a Cua Spaces Local build and its
-    /// Local hosts.
+    /// instead of [`MEDIA_UDP_PORT`].
     pub async fn start_with_media_port(
         relay: &str,
         auth: AuthProvider,

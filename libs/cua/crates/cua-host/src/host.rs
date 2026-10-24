@@ -776,11 +776,9 @@ fn valid_machine_id(id: &str) -> bool {
         && !id.ends_with('-')
 }
 
-/// The environment variables of cua-spacesd's `--port`, `--quic-port` and
-/// `--mesh-udp-port`.
+/// The environment variables of cua-spacesd's `--port` and `--quic-port`.
 const PORT_ENV: &str = "CUA_ENV_PORT";
 const QUIC_PORT_ENV: &str = "CUA_ENV_QUIC_PORT";
-const MESH_UDP_PORT_ENV: &str = "CUA_ENV_MESH_UDP_PORT";
 
 /// The environment variable with this machine's cost per hour (US
 /// dollars), passed on to the host service.
@@ -1154,9 +1152,10 @@ impl Host {
         // `--listen` names a direct one) and `--quic-port` are on the
         // command line, where they show in `ps` and win; the environment
         // carries the same for everything the service starts, which reads
-        // `CUA_ENV_PORT` and `CUA_CHANNEL`. The mesh port is only in the
-        // environment: a cua-spacesd that predates `--mesh-udp-port` ignores
-        // the variable, but would refuse the flag and not start.
+        // `CUA_ENV_PORT` and `CUA_CHANNEL`. The mesh media port is not
+        // passed: it is 3212 for every channel, by design (a port of the
+        // mesh's own network that guest Spaces and older cua-spacesd builds
+        // fix, so two hosts on one Mac do not compete for it).
         let (ports, stable) = (channel.ports(), CuaChannel::Stable.ports());
         if ports.tcp != stable.tcp {
             args.extend(["--port".to_string(), ports.tcp.to_string()]);
@@ -1165,9 +1164,6 @@ impl Host {
         if ports.quic != stable.quic {
             args.extend(["--quic-port".to_string(), ports.quic.to_string()]);
             env.push((QUIC_PORT_ENV.into(), ports.quic.to_string()));
-        }
-        if ports.mesh_udp != stable.mesh_udp {
-            env.push((MESH_UDP_PORT_ENV.into(), ports.mesh_udp.to_string()));
         }
         if channel != CuaChannel::Stable {
             env.push((CUA_CHANNEL_VAR.into(), channel.name().into()));

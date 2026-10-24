@@ -70,10 +70,10 @@ pub struct ServerConfig {
     /// `SideChannels`; the listener itself belongs to the desktop provider.
     pub media_quic_port: u16,
     /// The mesh UDP port that reaches the QUIC media listener over the
-    /// mesh ([`cua_mesh::MEDIA_UDP_PORT`], 3212, unless a build that runs
-    /// beside another one, Cua Spaces Local, picks its own). A port of the
-    /// mesh's own network, not of the operating system; clients dial the
-    /// same number (`cua_mesh::MeshConfig::media_udp_port`).
+    /// mesh ([`cua_mesh::MEDIA_UDP_PORT`], 3212 for every build, unless
+    /// `--mesh-udp-port` overrides it). A port of the mesh's own network,
+    /// not of the operating system; clients dial the same number
+    /// (`cua_mesh::MeshConfig::media_udp_port`).
     pub mesh_udp_port: u16,
     /// Teleport destination root (default `~/Downloads`).
     pub downloads_dir: Option<PathBuf>,

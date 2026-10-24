@@ -2334,10 +2334,24 @@ pub fn app_menu(input: AppMenuInput) -> Vec<AppMenuItem> {
     core::window::menu(&input)
 }
 
-/// The Spaces the user can open (the notch tab and the menu bar item).
+/// The Spaces the user can open (the open notch's tiles), on or not.
 #[uniffi::export]
 pub fn app_openable_count(spaces: Vec<AppSpace>) -> u32 {
     core::spaces::openable_count(&spaces)
+}
+
+/// The Spaces on or starting (the notch tab and the menu bar item); never
+/// This machine, a stopped Space or a failed one.
+#[uniffi::export]
+pub fn app_on_count(spaces: Vec<AppSpace>) -> u32 {
+    core::spaces::on_count(&spaces)
+}
+
+/// The menu bar item's status line for `count` Spaces on ("No Spaces
+/// running", "3 Spaces running").
+#[uniffi::export]
+pub fn app_on_status_line(count: u32) -> String {
+    core::spaces::on_status_line(count)
 }
 
 /// `volume_sync_status`'s JSON as the core takes it.

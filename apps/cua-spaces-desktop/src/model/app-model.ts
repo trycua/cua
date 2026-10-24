@@ -887,7 +887,7 @@ export class AppModel {
 
   /** The count the menu bar item and the notch show. */
   get statusLine(): string {
-    return this.native.appStatusLine(this.native.appOpenableCount(this.spaces));
+    return this.native.appOnStatusLine(this.native.appOnCount(this.spaces));
   }
 
   /** The window chrome (account line, New Space, empty state). */

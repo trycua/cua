@@ -2966,6 +2966,42 @@ export function appNotificationsView(feed: Array<AppNotificationInput>, nowMs: b
     }
 
 /**
+ * The Spaces on or starting (the notch tab and the menu bar item); never
+ * This machine, a stopped Space or a failed one.
+ */
+export function appOnCount(spaces: Array<AppSpace>): number {
+    return FfiConverterUInt32.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_on_count(
+        FfiConverterSequenceTypeAppSpace.lower(spaces, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * The menu bar item's status line for `count` Spaces on ("No Spaces
+ * running", "3 Spaces running").
+ */
+export function appOnStatusLine(count: number): string {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterString.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_on_status_line(
+        FfiConverterUInt32.lower(count, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
  * A first-run action from JSON (parity flows).
  */
 export function appOnboardingActionFromJson(json: string): AppOnboardingAction /*throws*/ {
@@ -3148,7 +3184,7 @@ export function appOnboardingView(state: AppOnboardingState): AppOnboardingView 
     }
 
 /**
- * The Spaces the user can open (the notch tab and the menu bar item).
+ * The Spaces the user can open (the open notch's tiles), on or not.
  */
 export function appOpenableCount(spaces: Array<AppSpace>): number {
     return FfiConverterUInt32.lift(uniffiCaller.rustCall(
@@ -29788,7 +29824,7 @@ export type AppNotchView = {
      */
     label: string,
     /**
-     * "N Spaces": the tab's spoken label (remote Spaces only).
+     * "N Spaces": the tab's spoken label (Spaces on or starting only).
      */
     countLabel: string,
     /**
@@ -29813,7 +29849,8 @@ export type AppNotchView = {
      */
     hidden: boolean,
     /**
-     * The tab shows (closed, no drag in flight; a drag tucks it away).
+     * The tab shows (closed, no drag in flight, at least one Space on or
+     * starting; a drag tucks it away, and with none the notch is bare).
      */
     showTab: boolean,
     /**
@@ -66126,6 +66163,12 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_notifications_view() !== 27432) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_notifications_view");
     }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_on_count() !== 27823) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_on_count");
+    }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_on_status_line() !== 37662) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_on_status_line");
+    }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_onboarding_action_from_json() !== 6687) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_onboarding_action_from_json");
     }
@@ -66153,7 +66196,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_onboarding_view() !== 63118) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_onboarding_view");
     }
-    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_openable_count() !== 46279) {
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_openable_count() !== 49692) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_openable_count");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_os_icon_svg() !== 43181) {

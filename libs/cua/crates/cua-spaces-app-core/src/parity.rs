@@ -4037,7 +4037,8 @@ fn run_drive_storage(f: &Value, h: &dyn Host) -> Result<Value, String> {
     Ok(json!({ "flow": "drive-storage", "frames": frames }))
 }
 
-/// The menu bar item and the notch count the same Spaces: for each case
+/// The menu bar item and the notch count the same Spaces, the ones on or
+/// starting: for each case
 /// (this machine not hosting, hosting, a provider's Spaces, remote Spaces,
 /// then Cua Volume's sync states), the notch tab's count, the menu's lines
 /// and whether the two agree.
@@ -4067,7 +4068,7 @@ fn run_menu_count(f: &Value, h: &dyn Host) -> Result<Value, String> {
             "notch.view",
             json!({ "state": notch_state, "spaces": roster }),
         )?;
-        let count = c(h, "spaces.openableCount", json!({ "spaces": roster }))?;
+        let count = c(h, "spaces.onCount", json!({ "spaces": roster }))?;
         let menu = c(
             h,
             "window.menu",

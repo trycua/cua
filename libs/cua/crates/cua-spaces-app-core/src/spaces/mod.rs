@@ -419,9 +419,8 @@ pub fn is_machine_desktop(space: &Space) -> bool {
 /// The Spaces the user can open, in `spaces`' order: every Space but the
 /// machines' own desktops ([`is_machine_desktop`]): not This machine, even
 /// while it provides Spaces, and not one of your machines on the relay. A
-/// Space a machine provides is listed. The notch's tiles list these, and
-/// its tab and the menu bar item count them ([`openable_count`]), so the
-/// list and the count always agree.
+/// Space a machine provides is listed. The notch's tiles list these; its
+/// tab and the menu bar item count the ones that are on ([`on_count`]).
 pub fn openable_spaces(spaces: &[Space]) -> Vec<Space> {
     spaces
         .iter()
@@ -430,10 +429,46 @@ pub fn openable_spaces(spaces: &[Space]) -> Vec<Space> {
         .collect()
 }
 
-/// How many [`openable_spaces`] there are: the notch tab's and the menu bar
-/// item's number.
+/// How many [`openable_spaces`] there are (the open notch's tiles), on or
+/// not; the tab counts only the ones that are on ([`on_count`]).
 pub fn openable_count(spaces: &[Space]) -> u32 {
     openable_spaces(spaces).len() as u32
+}
+
+/// Whether `space` is on or on its way up: running (an agent waiting for
+/// approval included), being created or started, or being turned on. A
+/// stopped or suspended Space, one whose create failed and one being
+/// deleted are not.
+pub fn is_on(space: &Space) -> bool {
+    if space.progress.as_ref().is_some_and(|p| p.error.is_some()) {
+        return false;
+    }
+    let turning_on = space
+        .power
+        .as_ref()
+        .is_some_and(|p| p.turning_on == Some(true));
+    match space.status {
+        SpaceStatus::Running | SpaceStatus::Approval | SpaceStatus::Provisioning => true,
+        SpaceStatus::Suspended => turning_on,
+        SpaceStatus::Local | SpaceStatus::Deleting => false,
+    }
+}
+
+/// How many [`openable_spaces`] are on or starting ([`is_on`]): the notch
+/// tab's and the menu bar item's number. Stopped Spaces still show as
+/// tiles in the open notch (they take drops), but they are not counted.
+pub fn on_count(spaces: &[Space]) -> u32 {
+    openable_spaces(spaces).iter().filter(|s| is_on(s)).count() as u32
+}
+
+/// The menu bar item's status line for [`on_count`] Spaces ("No Spaces
+/// running", "1 Space running", "3 Spaces running").
+pub fn on_status_line(on: u32) -> String {
+    match on {
+        0 => "No Spaces running".into(),
+        1 => "1 Space running".into(),
+        n => format!("{n} Spaces running"),
+    }
 }
 
 /// The three ambient status dots.
@@ -724,5 +759,50 @@ mod tests {
         let idle = this_machine_space(None, 0, SpaceOs::Macos);
         assert!(is_machine_desktop(&idle));
         assert_eq!(openable_count(&[idle]), 0);
+    }
+
+    /// The notch and the menu bar count the Spaces on or starting, never a
+    /// stopped one or This machine; the tiles still list the stopped ones.
+    #[test]
+    fn the_count_is_the_spaces_on_or_starting() {
+        use crate::host::{HostSummaryInput, this_machine_space};
+        let hosting = HostSummaryInput {
+            configured: true,
+            service_running: true,
+            sharing: true,
+            ..Default::default()
+        };
+        let this_mac = this_machine_space(Some(&hosting), 0, SpaceOs::Macos);
+        let mut stopped = row();
+        stopped.id = "local:a".into();
+        stopped.provider = "local".into();
+        stopped.reachable = false;
+        stopped.power = Some("stop".into());
+        stopped.power_state = Some("stopped".into());
+        let mut running = stopped.clone();
+        running.id = "local:b".into();
+        running.reachable = true;
+        running.power_state = Some("running".into());
+        let mut out = vec![this_mac.clone()];
+        for (i, r) in [&stopped, &stopped, &stopped, &stopped].iter().enumerate() {
+            let mut s = row_to_space(r, 0);
+            s.id = format!("local:s{i}");
+            out.push(s);
+        }
+        assert!(!is_on(&this_mac));
+        assert_eq!(openable_count(&out), 4);
+        assert_eq!(on_count(&out), 0);
+        assert_eq!(on_status_line(on_count(&out)), "No Spaces running");
+        // Turning one on counts it at once.
+        out[1].power.as_mut().unwrap().turning_on = Some(true);
+        assert_eq!(on_count(&out), 1);
+        assert_eq!(on_status_line(1), "1 Space running");
+        // A running one counts; turning off counts until it is off.
+        out.push(row_to_space(&running, 0));
+        assert_eq!(on_count(&out), 2);
+        out[2].status = SpaceStatus::Running;
+        out[2].power.as_mut().unwrap().turning_on = Some(false);
+        assert_eq!(on_count(&out), 3);
+        assert_eq!(on_status_line(3), "3 Spaces running");
     }
 }

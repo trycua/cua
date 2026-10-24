@@ -24870,7 +24870,7 @@ public struct AppNotchView: Equatable, Hashable {
      */
     public var label: String
     /**
-     * "N Spaces": the tab's spoken label (remote Spaces only).
+     * "N Spaces": the tab's spoken label (Spaces on or starting only).
      */
     public var countLabel: String
     /**
@@ -24895,7 +24895,8 @@ public struct AppNotchView: Equatable, Hashable {
      */
     public var hidden: Bool
     /**
-     * The tab shows (closed, no drag in flight; a drag tucks it away).
+     * The tab shows (closed, no drag in flight, at least one Space on or
+     * starting; a drag tucks it away, and with none the notch is bare).
      */
     public var showTab: Bool
     /**
@@ -24932,7 +24933,7 @@ public struct AppNotchView: Equatable, Hashable {
          * Accessibility label of the panel.
          */label: String,
         /**
-         * "N Spaces": the tab's spoken label (remote Spaces only).
+         * "N Spaces": the tab's spoken label (Spaces on or starting only).
          */countLabel: String,
         /**
          * The tab's two rows: the count over the word.
@@ -24951,7 +24952,8 @@ public struct AppNotchView: Equatable, Hashable {
          * The notch is hidden (menu bar only): draw nothing.
          */hidden: Bool,
         /**
-         * The tab shows (closed, no drag in flight; a drag tucks it away).
+         * The tab shows (closed, no drag in flight, at least one Space on or
+         * starting; a drag tucks it away, and with none the notch is bare).
          */showTab: Bool,
         /**
          * The pointer rests on the closed notch while the dwell runs: the
@@ -72887,6 +72889,28 @@ public func appNotificationsView(feed: [AppNotificationInput], nowMs: UInt64) ->
 })
 }
 /**
+ * The Spaces on or starting (the notch tab and the menu bar item); never
+ * This machine, a stopped Space or a failed one.
+ */
+public func appOnCount(spaces: [AppSpace]) -> UInt32  {
+    return try!  FfiConverterUInt32.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_on_count(
+        FfiConverterSequenceTypeAppSpace.lower(spaces),$0
+    )
+})
+}
+/**
+ * The menu bar item's status line for `count` Spaces on ("No Spaces
+ * running", "3 Spaces running").
+ */
+public func appOnStatusLine(count: UInt32) -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_on_status_line(
+        FfiConverterUInt32.lower(count),$0
+    )
+})
+}
+/**
  * A first-run action from JSON (parity flows).
  */
 public func appOnboardingActionFromJson(json: String)throws  -> AppOnboardingAction  {
@@ -72978,7 +73002,7 @@ public func appOnboardingView(state: AppOnboardingState) -> AppOnboardingView  {
 })
 }
 /**
- * The Spaces the user can open (the notch tab and the menu bar item).
+ * The Spaces the user can open (the open notch's tiles), on or not.
  */
 public func appOpenableCount(spaces: [AppSpace]) -> UInt32  {
     return try!  FfiConverterUInt32.lift(try! rustCall() {
@@ -75309,6 +75333,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_notifications_view() != 27432) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_on_count() != 27823) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_on_status_line() != 37662) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_spaces_ffi_checksum_func_app_onboarding_action_from_json() != 6687) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -75336,7 +75366,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_onboarding_view() != 63118) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_openable_count() != 46279) {
+    if (uniffi_cua_spaces_ffi_checksum_func_app_openable_count() != 49692) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_os_icon_svg() != 43181) {

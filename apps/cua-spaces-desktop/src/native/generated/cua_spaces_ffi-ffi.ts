@@ -1092,6 +1092,16 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_spaces_ffi_fn_func_app_on_count": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.UInt32,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_spaces_ffi_fn_func_app_on_status_line": {
+      args: [FfiType.UInt32],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_spaces_ffi_fn_func_app_onboarding_action_from_json": {
       args: [FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
@@ -2887,6 +2897,16 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_spaces_ffi_checksum_func_app_on_count": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_spaces_ffi_checksum_func_app_on_status_line": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_spaces_ffi_checksum_func_app_onboarding_action_from_json": {
       args: [],
       ret: FfiType.UInt16,
@@ -4314,6 +4334,8 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_fn_func_app_notifications_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_notifications_plan(feed: Uint8Array, seenMs: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_notifications_view(feed: Uint8Array, nowMs: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_on_count(spaces: Uint8Array, uniffi_out_err: UniffiRustCallStatus): number;
+    uniffi_cua_spaces_ffi_fn_func_app_on_status_line(count: number, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_onboarding_action_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_onboarding_copy(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_onboarding_initial(installerMode: Uint8Array, identity: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -4673,6 +4695,8 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_checksum_func_app_notifications_from_json(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_notifications_plan(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_notifications_view(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_on_count(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_on_status_line(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_onboarding_action_from_json(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_onboarding_copy(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_onboarding_initial(): number;

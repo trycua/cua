@@ -15,8 +15,10 @@ import Testing
         var starts = 0
         var probes = 0
         var restarted = 0
-        /// How often the supervisor read the pid it arms its exit watch on.
-        var pidReads = 0
+        /// The pids the supervisor said it watches, in order.
+        var watched: [Int32] = []
+        /// Whether the supervisor watches the daemon running now.
+        var watchingIt: Bool { lock.withLock { process.map { watched.last == $0.processIdentifier } ?? false } }
 
         func spawn() {
             let p = Process()
@@ -26,16 +28,6 @@ import Testing
             lock.withLock { process = p }
         }
         var pid: Int32? { lock.withLock { process.flatMap { $0.isRunning ? $0.processIdentifier : nil } } }
-        /// The supervisor's `daemonPid`: it watches the pid this returns. The
-        /// pid is captured and the read counted under one lock, so a test
-        /// that sees the count cannot kill the daemon before the pid is
-        /// captured (which would return nil and arm no watch).
-        func watchedPid() -> Int32? {
-            lock.withLock {
-                pidReads += 1
-                return process.flatMap { $0.isRunning ? $0.processIdentifier : nil }
-            }
-        }
         func kill() { lock.withLock { process }?.terminate() }
         func stop() { lock.withLock { process }?.terminate() }
     }
@@ -68,12 +60,12 @@ import Testing
                 daemon.spawn()
                 return nil
             },
-            daemonPid: { daemon.watchedPid() })
+            daemonPid: { daemon.pid },
+            watching: { pid in daemon.lock.withLock { daemon.watched.append(pid) } })
         defer { task.cancel() }
-        // The supervisor has read the pid and armed its watch (a kill before
-        // that is not seen until the next probe), then stays quiet.
-        #expect(await eventually(60) { daemon.lock.withLock { daemon.pidReads } >= 1 })
-        try await Task.sleep(for: .milliseconds(300))
+        // Killed only once the supervisor watches it (else only the hourly
+        // probe could see the kill).
+        #expect(await eventually(60) { daemon.watchingIt })
         #expect(daemon.lock.withLock { daemon.starts } == 0)
         // Waiting is not polling.
         #expect(daemon.lock.withLock { daemon.probes } == 0)
@@ -84,15 +76,54 @@ import Testing
         #expect(await eventually(60) { daemon.lock.withLock { daemon.starts } == 1 })
         #expect(await eventually(60) { daemon.lock.withLock { daemon.restarted } == 1 })
 
-        // The new daemon is watched too. The supervisor reads the pid to
-        // watch only after its confirming probe (the second one: the miss,
-        // then this one), at the top of its loop; a kill before that read
-        // finds no pid to watch and is never seen until the next hourly
-        // probe. So wait for the second read (the first was at the start),
-        // not for a fixed time: the watch is armed in the same step.
-        #expect(await eventually(60) { daemon.lock.withLock { daemon.pidReads } >= 2 })
+        // The new daemon is watched too (its own pid, after its confirming
+        // probe).
+        #expect(await eventually(60) { daemon.watchingIt })
         daemon.kill()
         #expect(await eventually(60) { daemon.lock.withLock { daemon.starts } == 2 })
+    }
+
+    /// A daemon started again that dies before the supervisor reads its
+    /// pid leaves nothing to watch: it is probed (and started) again at
+    /// once, not after the next probe an hour later.
+    @Test func aDaemonThatDiesBeforeItIsWatchedIsStartedAgainAtOnce() async throws {
+        let supervisor = try #require(DaemonSupervisor(bundledCua: "/bin/sh"))
+        let daemon = Daemon()
+        daemon.spawn()
+        defer { daemon.stop() }
+        final class Once: @unchecked Sendable { var done = false }
+        let once = Once()
+        let task = supervisor.supervise(
+            interval: .seconds(3600),
+            isUp: {
+                let up = daemon.pid != nil
+                // The first restart answers its confirming probe, then
+                // dies before the supervisor reads its pid.
+                let die = daemon.lock.withLock { () -> Bool in
+                    guard up, daemon.starts == 1, !once.done else { return false }
+                    once.done = true
+                    return true
+                }
+                if die {
+                    let p = daemon.lock.withLock { daemon.process }
+                    p?.terminate()
+                    p?.waitUntilExit()
+                }
+                return up
+            },
+            report: { _ in },
+            start: {
+                daemon.lock.withLock { daemon.starts += 1 }
+                daemon.spawn()
+                return nil
+            },
+            daemonPid: { daemon.pid },
+            watching: { pid in daemon.lock.withLock { daemon.watched.append(pid) } })
+        defer { task.cancel() }
+        #expect(await eventually(60) { daemon.watchingIt })
+        daemon.kill()
+        #expect(await eventually(60) { daemon.lock.withLock { daemon.starts } == 2 })
+        #expect(await eventually(60) { daemon.watchingIt })
     }
 
     @Test func anExitWatcherFiresForAProcessThatIsAlreadyGone() async {

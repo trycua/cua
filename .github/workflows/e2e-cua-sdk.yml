@@ -4,7 +4,9 @@ name: "E2E: cua SDK"
 # tests/e2e/cua-sdk (see its scenarios.json for the guide x lane registry).
 #
 #   pull_request   hermetic (fixtures, daemon) + container (docker + gVisor on
-#                  the locally built reference images) + docs blocks.
+#                  the locally built reference images) + docs blocks. A docs
+#                  edit that leaves every fenced code block as it was skips the
+#                  suite (the `changes` job, .github/scripts/e2e_cua_sdk_scope.py).
 #   nightly        cua-sandbox and local QEMU (KVM) on the reference disk.
 #                  Cua Cloud has ended, so there is no live Fleet lane.
 #   dispatch       any lane set.
@@ -15,16 +17,27 @@ name: "E2E: cua SDK"
 on:
   pull_request:
     paths:
+      # Keep in step with PATHS in .github/scripts/e2e_cua_sdk_scope.py (a test
+      # pins the two lists together).
       - "libs/cua/**"
       - "libs/cua-spacesd/**"
       - "libs/images/**"
+      # The docs lane installs cua-sandbox from the tree.
+      - "libs/python/cua-sandbox/**"
       - "tests/e2e/cua-sdk/**"
       # The browse-the-web scenario's MCP client session.
       - "tests/e2e/browse/**"
       # Every docs page: tagged blocks run in the docs lane, and any page
       # (reference/**, cua-sdk/index.mdx, how-to-guides/spaces/**, ...) can gain one.
+      # The `changes` job lets through only a change to a fenced code block.
       - "docs/content/docs/**"
       - "docs/code-block-policy.json"
+      # gVisor, the toolchain and cache steps, and the scope script the job runs.
+      - "scripts/images/install-gvisor.sh"
+      - ".github/actions/linux-rust-prep/**"
+      - ".github/actions/setup-protoc/**"
+      - ".github/actions/rust-cache/**"
+      - ".github/scripts/e2e_cua_sdk_scope.py"
       - ".github/workflows/e2e-cua-sdk.yml"
   schedule:
     - cron: "23 7 * * *"
@@ -56,9 +69,37 @@ env:
   CUA_E2E_RUN: gh${{ github.run_id }}-${{ github.run_attempt }}
 
 jobs:
+  # Pull requests: the paths filter above starts this workflow for any docs
+  # page. The suite reads a page only through its fenced code blocks, so this
+  # job runs the suite when a block changed (or a tagged page came or went) and
+  # skips it for prose. Every other trigger, and any doubt, runs it. When it is
+  # skipped, the run still exists and succeeds, so `ci-gate` counts it as passed.
+  changes:
+    name: "E2E: cua SDK / changes"
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      run: ${{ steps.scope.outputs.run }}
+    steps:
+      # The merge commit's first parent is the base, so two commits of history
+      # are enough to list exactly what the pull request changes.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: python3 .github/scripts/e2e_cua_sdk_scope.py | tee -a "$GITHUB_STEP_SUMMARY"
+
   local:
     name: hermetic + container (${{ github.event_name == 'workflow_dispatch' && inputs.lanes || 'hermetic,container' }})
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule') }}
+    needs: changes
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule') && needs.changes.outputs.run != 'false' }}
     runs-on: ubuntu-24.04
     # Run 37562962482 exhausted 180 minutes during cold browser compilation,
     # before image preparation or the suite. Allow the hosted runner's full

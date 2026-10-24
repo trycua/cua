@@ -28,8 +28,8 @@ use super::platform::{
 use super::pointer::BrowserPointerTool;
 use super::refusal::BrowserRefusal;
 use super::tools::{
-    browser_protected_resource_scope, BrowserClickTool, BrowserNavigateTool, BrowserPrepareTool,
-    BrowserSelectTool, BrowserTypeTool, GetBrowserStateTool,
+    browser_protected_resource_scope, BrowserClickTool, BrowserDialogTool, BrowserNavigateTool,
+    BrowserPrepareTool, BrowserSelectTool, BrowserTypeTool, GetBrowserStateTool,
 };
 use super::types::{
     BrowserClassification, BrowserEngineFamily, BrowserProcessRole, BrowserProduct,
@@ -58,6 +58,9 @@ pub(super) struct FixtureState {
     oopif_sessions: u64,
     fail_key_down_after: Option<usize>,
     completed_key_pairs: usize,
+    /// A synthetic `this.click()` opens a confirm() dialog: the mock emits
+    /// `Page.javascriptDialogOpening` and never answers the call.
+    click_opens_dialog: bool,
     semantic_large_page: bool,
     semantic_html_style: String,
     semantic_full_dom_fails: bool,
@@ -105,6 +108,7 @@ impl Default for FixtureState {
             oopif_sessions: 0,
             fail_key_down_after: None,
             completed_key_pairs: 0,
+            click_opens_dialog: false,
             semantic_large_page: false,
             semantic_html_style: String::new(),
             semantic_full_dom_fails: false,
@@ -754,7 +758,30 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 if st.dom_click_changes_readback {
                     st.dom_click_generation += 1;
                 }
+                let declaration = call.params["functionDeclaration"]
+                    .as_str()
+                    .unwrap_or_default();
+                if st.click_opens_dialog && declaration.contains("const el = this;") {
+                    return MockReply::hang().with_events(vec![MockEvent {
+                        method: "Page.javascriptDialogOpening".into(),
+                        session_id: Some(sess.clone()),
+                        params: json!({
+                            "url": "https://fixture.test/",
+                            "message": "Delete?",
+                            "type": "confirm",
+                            "hasBrowserHandler": false,
+                        }),
+                    }]);
+                }
                 MockReply::ok(json!({ "result": { "value": true } }))
+            }
+            "Page.enable" if is_tab => MockReply::ok(json!({})),
+            "Page.handleJavaScriptDialog" if is_tab => {
+                MockReply::ok(json!({})).with_events(vec![MockEvent {
+                    method: "Page.javascriptDialogClosed".into(),
+                    session_id: Some(sess.clone()),
+                    params: json!({ "result": call.params["accept"], "userInput": "" }),
+                }])
             }
             other => MockReply::method_not_found(other),
         }
@@ -3602,4 +3629,142 @@ async fn method_unsupported_keeps_the_electron_none_path() {
     let tabs = s["tabs"].as_array().expect("tabs");
     assert_eq!(tabs.len(), 1, "{s}");
     assert_eq!(tabs[0]["url"], "https://fixture.test/");
+}
+
+#[tokio::test]
+async fn dom_event_click_returns_when_its_handler_opens_a_dialog() {
+    let f = fixture_with(|state| state.click_opens_dialog = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let button = ref_of(&snap, "main", "main-btn");
+
+    let started = std::time::Instant::now();
+    let clicked = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": button,
+            "input_route": "dom_event", "session": SESSION
+        }))
+        .await;
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "the click must not wait out the CDP call timeout: {:?}",
+        started.elapsed()
+    );
+    let s = structured(&clicked);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["effect"], "unverifiable", "{s}");
+    assert_eq!(s["route"], "dom_event", "{s}");
+    assert_eq!(s["dialog"]["present"], true, "{s}");
+    assert_eq!(s["dialog"]["kind"], "confirm", "{s}");
+    let dialog_id = s["dialog"]["dialog_id"]
+        .as_str()
+        .expect("dialog id")
+        .to_owned();
+    assert!(dialog_id.starts_with("dialog-"), "{s}");
+    assert!(clicked.content.iter().any(|content| matches!(
+        content,
+        crate::protocol::Content::Text { text, .. } if text.contains("browser_dialog")
+    )));
+
+    // Page events were enabled on the tab session before the click went out.
+    {
+        let state = f.state.lock().unwrap();
+        let enable_at = state
+            .calls
+            .iter()
+            .position(|(_, m, _)| m == "Page.enable")
+            .expect("Page.enable recorded");
+        let click_at = state
+            .calls
+            .iter()
+            .position(|(_, m, p)| {
+                m == "Runtime.callFunctionOn"
+                    && p["functionDeclaration"]
+                        .as_str()
+                        .is_some_and(|d| d.contains("const el = this;"))
+            })
+            .expect("click recorded");
+        assert!(enable_at < click_at, "Page.enable must precede the click");
+    }
+
+    // The dialog is reachable without a second Page.enable, and resolvable.
+    let inspected = BrowserDialogTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "action": "inspect", "session": SESSION
+        }))
+        .await;
+    let i = structured(&inspected);
+    assert_eq!(i["present"], true, "{i}");
+    assert_eq!(i["dialog_id"], dialog_id, "{i}");
+    assert_eq!(recorded_calls(&f, "Page.enable").len(), 1);
+
+    let accepted = BrowserDialogTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "action": "accept",
+            "dialog_id": dialog_id, "session": SESSION, "delivery_mode": "foreground"
+        }))
+        .await;
+    let a = structured(&accepted);
+    assert_eq!(a["status"], "ok", "{a}");
+    assert_eq!(a["action"], "accept", "{a}");
+    let handled = recorded_calls(&f, "Page.handleJavaScriptDialog");
+    assert_eq!(handled.len(), 1);
+    assert_eq!(handled[0].1["accept"], true);
+}
+
+#[tokio::test]
+async fn dom_event_click_without_a_dialog_reports_none() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let button = ref_of(&snap, "main", "main-btn");
+
+    let clicked = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": button,
+            "input_route": "dom_event", "session": SESSION
+        }))
+        .await;
+    assert_ne!(clicked.is_error, Some(true));
+    assert!(clicked.action_record.is_some());
+    assert!(recorded_calls(&f, "Page.handleJavaScriptDialog").is_empty());
+}
+
+#[tokio::test]
+async fn dom_event_click_refuses_while_a_dialog_is_already_open() {
+    let f = fixture_with(|state| state.click_opens_dialog = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let button = ref_of(&snap, "main", "main-btn");
+    let args = json!({
+        "target_id": target, "tab_id": tab, "ref": button,
+        "input_route": "dom_event", "session": SESSION
+    });
+    let first = BrowserClickTool::new(f.engine.clone())
+        .invoke(args.clone())
+        .await;
+    assert_eq!(structured(&first)["dialog"]["present"], true);
+    let frame_trees_before = recorded_calls(&f, "Page.getFrameTree").len();
+
+    let second = BrowserClickTool::new(f.engine.clone()).invoke(args).await;
+    assert_eq!(
+        recorded_calls(&f, "Page.getFrameTree").len(),
+        frame_trees_before,
+        "a blocked renderer must not be asked for its frame tree"
+    );
+    let s = structured(&second);
+    assert_eq!(s["refusal"]["code"], "browser_action_unavailable", "{s}");
+    assert_eq!(s["refusal"]["detail"]["dialog"]["present"], true, "{s}");
+    let clicks = recorded_calls(&f, "Runtime.callFunctionOn")
+        .into_iter()
+        .filter(|(_, p)| {
+            p["functionDeclaration"]
+                .as_str()
+                .is_some_and(|d| d.contains("const el = this;"))
+        })
+        .count();
+    assert_eq!(
+        clicks, 1,
+        "no second click may be sent into a blocked frame"
+    );
 }

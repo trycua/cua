@@ -41,6 +41,15 @@ set_target_properties(cua_hyprland_protocol PROPERTIES POSITION_INDEPENDENT_CODE
 
 if(BUILD_TESTING)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_executable(cua_hyprland_agent_seat_filter_test
+        tests/agent_seat_filter_test.cpp)
+    target_compile_features(cua_hyprland_agent_seat_filter_test PRIVATE cxx_std_26)
+    target_include_directories(cua_hyprland_agent_seat_filter_test PRIVATE src)
+    target_compile_options(cua_hyprland_agent_seat_filter_test
+        PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    add_test(NAME cua_hyprland_agent_seat_filter_test
+        COMMAND cua_hyprland_agent_seat_filter_test)
+
     add_test(NAME cua_hyprland_desktop_fault_policy_test
         COMMAND ${Python3_EXECUTABLE} -B
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/desktop_fault_policy_test.py)

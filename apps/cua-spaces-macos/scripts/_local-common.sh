@@ -31,9 +31,15 @@ LOCAL_KEYCHAIN_SERVICES=("ai.cua.session.local" "ai.cua.session.local.staging")
 
 # --- Stable (what these scripts must never create, replace or remove) --------
 # Only used to refuse a bundle that carries a Stable identity.
-STABLE_BUNDLE_ID="com.trycua.spaces.macos"
+STABLE_BUNDLE_ID="com.trycua.spaces.macos"          # also its app support folder name
 STABLE_URL_SCHEME="cua"
 STABLE_HELPER_LABEL="com.trycua.spaces.helper"
+STABLE_APP_PARENT="/Applications"                   # CuaChannel::app_path
+STABLE_APP_DIR_NAME="Cua Spaces.app"
+STABLE_HOME_DIR_NAME=".cua"                         # CuaChannel::home_dir
+STABLE_CLI_NAME="cua"                               # CuaChannel::cli_name
+STABLE_LUME_DIR_NAME=".lume"                        # CuaChannel::lume_dir
+STABLE_VOLUME_NAME="Cua Volume"                     # CuaChannel::volume_name
 
 PLISTBUDDY=/usr/libexec/PlistBuddy
 LSREGISTER="${CUA_LSREGISTER:-/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister}"
@@ -113,5 +119,113 @@ quit_local_app() {
     if [ -n "$pids" ]; then
         # shellcheck disable=SC2086
         kill -9 $pids 2>/dev/null || true
+    fi
+}
+
+# --- Where Local may write -----------------------------------------------------
+
+# The absolute path with `.`, `..` and every symlink resolved, whether or not
+# it exists yet (what is missing is taken as written: it cannot be a link).
+# Fails on a symlink loop. This is the path an install or removal acts on, so
+# a `..` or a link in --prefix cannot hide where it lands.
+canonicalize_path() {
+    local rest="$1" cur="/" comp next target links=0
+    case "$rest" in
+        /*) ;;
+        *) rest="$PWD/$rest" ;;
+    esac
+    while :; do
+        while [ "${rest#/}" != "$rest" ]; do rest="${rest#/}"; done
+        [ -n "$rest" ] || break
+        comp="${rest%%/*}"
+        if [ "$comp" = "$rest" ]; then rest=""; else rest="${rest#*/}"; fi
+        case "$comp" in
+            .) continue ;;
+            ..) cur="$(dirname "$cur")"; continue ;;
+        esac
+        next="${cur%/}/$comp"
+        if [ -L "$next" ]; then
+            links=$((links + 1))
+            [ "$links" -le 40 ] || return 1
+            target="$(readlink "$next")" || return 1
+            case "$target" in
+                /*) cur="/" ;;
+            esac
+            rest="$target/$rest"
+            continue
+        fi
+        cur="$next"
+    done
+    printf '%s' "$cur"
+}
+
+# A path as compared: lower case (the usual macOS volume ignores case) and
+# without the firmlink prefix that makes /System/Volumes/Data/Applications the
+# same folder as /Applications.
+path_key() {
+    local key
+    key="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+    case "$key" in
+        /system/volumes/data/*) key="${key#/system/volumes/data}" ;;
+    esac
+    printf '%s' "$key"
+}
+
+# Succeeds when `candidate`, or a folder above it, is the very file system
+# object `container` (same device and inode): it is `container` or inside it,
+# however the path is spelled.
+is_inside_by_identity() {
+    local container="$1" candidate="$2" want have
+    want="$(stat -f '%d:%i' "$container" 2>/dev/null || true)"
+    [ -n "$want" ] || return 1
+    while :; do
+        have="$(stat -f '%d:%i' "$candidate" 2>/dev/null || true)"
+        [ "$have" != "$want" ] || return 0
+        [ "$candidate" != "/" ] || return 1
+        candidate="$(dirname "$candidate")"
+    done
+}
+
+# Succeeds when one path is the other or inside it (both given canonical).
+paths_overlap() {
+    local a b
+    a="$(path_key "$1")/"
+    b="$(path_key "$2")/"
+    case "$a" in "$b"*) return 0 ;; esac
+    case "$b" in "$a"*) return 0 ;; esac
+    is_inside_by_identity "$1" "$2" && return 0
+    is_inside_by_identity "$2" "$1" && return 0
+    return 1
+}
+
+# What belongs to the released Cua Spaces, one path per line, for the home
+# `$1` (canonical): the app, the home, the CLI, Lume's folder, Cua Volume and
+# the app's support folder.
+stable_owned_paths() {
+    local home="$1"
+    printf '%s\n' \
+        "$STABLE_APP_PARENT/$STABLE_APP_DIR_NAME" \
+        "$home/$STABLE_HOME_DIR_NAME" \
+        "$home/.local/bin/$STABLE_CLI_NAME" \
+        "$home/$STABLE_LUME_DIR_NAME" \
+        "$home/$STABLE_VOLUME_NAME" \
+        "$home/Library/Application Support/$STABLE_BUNDLE_ID"
+}
+
+# Fails, saying why, when `path` (canonical; `label` names it) is or is inside
+# anything the released Cua Spaces owns, or inside /Applications, where
+# Cua Spaces Local never goes.
+reject_stable_overlap() {
+    local label="$1" path="$2" home owned
+    home="$(canonicalize_path "$HOME")" || { err "cannot resolve HOME ($HOME)"; return 1; }
+    while IFS= read -r owned; do
+        if paths_overlap "$path" "$owned"; then
+            err "refusing: the $label path $path is, or is inside, $owned, which belongs to the released Cua Spaces. Pick another --prefix."
+            return 1
+        fi
+    done < <(stable_owned_paths "$home")
+    if paths_overlap "$path" "$STABLE_APP_PARENT"; then
+        err "refusing: the $label path $path is inside $STABLE_APP_PARENT, where the released Cua Spaces lives. Cua Spaces Local goes under ~/Applications; pick another --prefix."
+        return 1
     fi
 }

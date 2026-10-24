@@ -58,8 +58,15 @@ BUILD_LOG="$WORK/build.log"
 LUME_LOG="$WORK/lume.log"
 STUB_BIN="$WORK/stub"
 STUB_DYLIB="$WORK/libfake.dylib"
+CARGO_LOG="$WORK/cargo.log"
+# The cua-spacesd this checkout builds, and the pinned release build-app.sh
+# bundles unless it is told otherwise: two programs with different code.
+DAEMON_CHECKOUT="$WORK/daemon-checkout"
+DAEMON_PINNED="$WORK/daemon-pinned"
+FAKE_DAEMON_BUILT="$FAKE_REPO/libs/cua-spacesd/target/release/cua-spacesd"
 
 mkdir -p "$FAKE_SCRIPTS" "$FAKE_REPO/libs/cua-driver/scripts" "$FAKE_REPO/libs/lume/scripts" \
+    "$FAKE_REPO/libs/cua" "$FAKE_REPO/libs/cua-spacesd" "$FAKE_REPO/libs/spaces-app-swift/scripts" \
     "$SHIMS" "$SHIM_STATE" "$FAKE_HOME"
 cp "$SCRIPTS_DIR/install-local.sh" "$SCRIPTS_DIR/uninstall-local.sh" "$SCRIPTS_DIR/_local-common.sh" "$FAKE_SCRIPTS/"
 cp "$SIGNING_LIB" "$FAKE_REPO/libs/cua-driver/scripts/"
@@ -82,6 +89,10 @@ int main(int argc, char **argv) {
 }
 EOF
 printf 'int fake_symbol(void) { return 1; }\n' > "$WORK/dylib.c"
+# The daemon stubs differ in code, not only in data: the constant is an operand.
+printf '#include <stdio.h>\nint main(void) { printf("%%d\\n", DAEMON_VARIANT * 7919); return 0; }\n' > "$WORK/daemon.c"
+cc -DDAEMON_VARIANT=1 -o "$DAEMON_CHECKOUT" "$WORK/daemon.c" || { echo "could not compile the checkout daemon stub"; exit 1; }
+cc -DDAEMON_VARIANT=2 -o "$DAEMON_PINNED" "$WORK/daemon.c" || { echo "could not compile the pinned daemon stub"; exit 1; }
 cc -o "$STUB_BIN" "$WORK/stub.c" || { echo "could not compile the stub"; exit 1; }
 cc -dynamiclib -o "$STUB_DYLIB" "$WORK/dylib.c" || { echo "could not compile the stub library"; exit 1; }
 
@@ -102,7 +113,14 @@ associated="${FAKE_BUILD_ASSOCIATED:-$id}"
 app="$out/$name.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Frameworks" "$app/Contents/Library/LaunchAgents"
-for b in CuaSpacesMac cua cua-spacesd; do cp "$FAKE_STUB" "$app/Contents/MacOS/$b"; done
+for b in CuaSpacesMac cua; do cp "$FAKE_STUB" "$app/Contents/MacOS/$b"; done
+# The host service, as the real build-app.sh gets it: from fetch-spacesd.sh,
+# which prints $CUA_SPACESD_BIN when set and the pinned release otherwise.
+# FAKE_BUILD_IGNORE_SPACESD_BIN stands for a build-app.sh that does not honour it.
+if [ "${FAKE_BUILD_IGNORE_SPACESD_BIN:-0}" = 1 ]; then unset CUA_SPACESD_BIN; fi
+spacesd="$("$(dirname "$0")/fetch-spacesd.sh")"
+cp "$spacesd" "$app/Contents/MacOS/cua-spacesd"
+chmod 0755 "$app/Contents/MacOS/cua-spacesd"
 cp "$FAKE_DYLIB" "$app/Contents/Frameworks/libfake.dylib"
 fw="$app/Contents/Frameworks/Fake.framework"
 mkdir -p "$fw/Versions/A/Resources"
@@ -157,6 +175,18 @@ echo "$app"
 EOF
 chmod +x "$FAKE_SCRIPTS/build-app.sh"
 
+# fetch-spacesd.sh's contract: $CUA_SPACESD_BIN when set, else the pinned release.
+cat > "$FAKE_SCRIPTS/fetch-spacesd.sh" <<'FETCH_EOF'
+#!/usr/bin/env bash
+if [ -n "${CUA_SPACESD_BIN:-}" ]; then echo "$CUA_SPACESD_BIN"; else echo "$FAKE_PINNED_DAEMON"; fi
+FETCH_EOF
+chmod +x "$FAKE_SCRIPTS/fetch-spacesd.sh"
+cat > "$FAKE_REPO/libs/spaces-app-swift/scripts/stage-library.sh" <<'STAGE_EOF'
+#!/usr/bin/env bash
+echo "stage-library" >> "$CARGO_LOG"
+STAGE_EOF
+chmod +x "$FAKE_REPO/libs/spaces-app-swift/scripts/stage-library.sh"
+
 # lume scripts: one that knows lume-local, one that does not (the old one that
 # installs over the Stable lume).
 write_lume_scripts() {
@@ -208,6 +238,20 @@ write_shim codesign 'if [ -n "${FAIL_VERIFY_PATH:-}" ]; then
 fi
 exec /usr/bin/codesign "$@"'
 
+# cargo: logs where and how it ran, and makes what the build would make. In
+# libs/cua-spacesd it makes this checkout's daemon (FAKE_CARGO_NO_DAEMON=1:
+# a build that succeeds and makes nothing).
+write_shim cargo 'echo "cargo $* [in ${PWD##*/}]" >> "$CARGO_LOG"
+case "$PWD" in
+  */libs/cua-spacesd)
+    if [ "${FAKE_CARGO_NO_DAEMON:-0}" != 1 ]; then
+      mkdir -p target/release && cp "$FAKE_CHECKOUT_DAEMON" target/release/cua-spacesd
+    fi ;;
+  */libs/cua)
+    mkdir -p target/release && : > target/release/cua-spaces-cli && : > target/release/libcua_spaces_ffi.dylib ;;
+esac
+exit 0'
+
 # --- Running a script ---------------------------------------------------------------
 
 STDIN_FILE=/dev/null
@@ -219,13 +263,15 @@ run() {
     OUT="$(
         export HOME="$FAKE_HOME" PATH="$SHIMS:$PATH" CUA_LSREGISTER="$SHIMS/lsregister" \
             SHIM_LOG SHIM_STATE STUB_LOG FAKE_BUILD_LOG="$BUILD_LOG" FAKE_STUB="$STUB_BIN" \
-            FAKE_DYLIB="$STUB_DYLIB" LUME_LOG
-        unset SUDO_USER CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN CUA_DRIVER_LOCAL_SIGNING_IDENTITY CUA_CHANNEL CUA_HOME CUA_ENV
+            FAKE_DYLIB="$STUB_DYLIB" LUME_LOG CARGO_LOG FAKE_CHECKOUT_DAEMON="$DAEMON_CHECKOUT" FAKE_PINNED_DAEMON="$DAEMON_PINNED"
+        unset SUDO_USER CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN CUA_DRIVER_LOCAL_SIGNING_IDENTITY CUA_CHANNEL CUA_HOME CUA_ENV \
+            CARGO_TARGET_DIR CUA_SPACESD_BIN
         "$@" < "$STDIN_FILE" 2>&1
     )"
     RC=$?
 }
-install() { run "$FAKE_SCRIPTS/install-local.sh" --skip-rust-build --no-launch "$@"; }
+# The whole path: the cargo shim builds the library, the CLI and the daemon.
+install() { run "$FAKE_SCRIPTS/install-local.sh" --no-launch "$@"; }
 uninstall() { run "$FAKE_SCRIPTS/uninstall-local.sh" "$@"; }
 
 # --- Snapshots ------------------------------------------------------------------------
@@ -292,9 +338,10 @@ make_stable_install() {
 }
 
 reset_fixture() {
-    rm -rf "$FAKE_HOME" "$FAKE_REPO/apps/cua-spaces-macos/.build" "$SHIM_STATE"
+    rm -rf "$FAKE_HOME" "$FAKE_REPO/apps/cua-spaces-macos/.build" "$SHIM_STATE" \
+        "$FAKE_REPO/libs/cua-spacesd/target" "$FAKE_REPO/libs/cua/target"
     mkdir -p "$FAKE_HOME" "$SHIM_STATE"
-    : > "$SHIM_LOG"; : > "$STUB_LOG"; : > "$BUILD_LOG"; : > "$LUME_LOG"
+    : > "$SHIM_LOG"; : > "$STUB_LOG"; : > "$BUILD_LOG"; : > "$LUME_LOG"; : > "$CARGO_LOG"
     STDIN_FILE=/dev/null
     write_lume_scripts yes
     make_stable_install
@@ -328,7 +375,8 @@ if [ -f "$CHANNEL_RS" ]; then
         printf '%s\n' "$LOCAL_BUNDLE_ID" "$LOCAL_APP_DIR_NAME" "$LOCAL_CLI_NAME" "$LOCAL_URL_SCHEME" \
             "$LOCAL_HOME_DIR_NAME" "$LOCAL_APP_SUPPORT_DIR_NAME" "$LOCAL_HELPER_LABEL" "$LOCAL_HOST_LABEL" \
             "$LOCAL_VOLUME_NAME" "$LOCAL_LUME_BIN_NAME" "$LOCAL_LUME_DIR_NAME" "${LOCAL_KEYCHAIN_SERVICES[@]}" \
-            "$STABLE_BUNDLE_ID" "$STABLE_URL_SCHEME" "$STABLE_HELPER_LABEL"
+            "$STABLE_BUNDLE_ID" "$STABLE_URL_SCHEME" "$STABLE_HELPER_LABEL" "$STABLE_APP_PARENT" \
+            "$STABLE_APP_DIR_NAME" "$STABLE_HOME_DIR_NAME" "$STABLE_CLI_NAME" "$STABLE_LUME_DIR_NAME" "$STABLE_VOLUME_NAME"
     )
     [ "$names_ok" = 1 ] && pass "every name in _local-common.sh is in CuaChannel (channel.rs)"
 else
@@ -377,7 +425,7 @@ check "nothing but the Local app changed" '[ "$(snap_all | grep -v "Cua Spaces L
 
 echo "== launch, prefix =="
 : > "$SHIM_LOG"
-run "$FAKE_SCRIPTS/install-local.sh" --skip-rust-build
+run "$FAKE_SCRIPTS/install-local.sh"
 check "without --no-launch the app is opened by its exact path" 'grep >/dev/null "^open $LOCAL_APP\$" "$SHIM_LOG"'
 
 reset_fixture
@@ -389,6 +437,104 @@ install --prefix /
 check "a prefix that would put the app in /Applications is refused" '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep >/dev/null "/Applications"'
 install --prefix relative/dir
 check "a relative prefix is refused" '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep >/dev/null "absolute"'
+
+# --- 3b. The host service ------------------------------------------------------------------
+
+# The machine code of a program, which a signature does not change.
+text_hash() { otool -X -s __TEXT __text "$1" 2>/dev/null | shasum -a 256 | cut -d' ' -f1; }
+
+echo "== the host service (cua-spacesd) =="
+reset_fixture
+install
+check "the library and CLI are built and staged" \
+    'grep >/dev/null "^cargo build --locked --release -p cua-spaces-ffi -p cua-spaces-cli \[in cua\]$" "$CARGO_LOG" && grep >/dev/null "^stage-library" "$CARGO_LOG"'
+check "cua-spacesd is built from this checkout's libs/cua-spacesd" \
+    'grep >/dev/null "^cargo build --locked --release -p cua-spacesd --bin cua-spacesd \[in cua-spacesd\]$" "$CARGO_LOG"'
+check "(the checkout's and the pinned daemon of this fixture differ in code)" '[ "$(text_hash "$DAEMON_CHECKOUT")" != "$(text_hash "$DAEMON_PINNED")" ]'
+check "the bundled cua-spacesd is this checkout's build" '[ "$(text_hash "$LOCAL_APP/Contents/MacOS/cua-spacesd")" = "$(text_hash "$DAEMON_CHECKOUT")" ]'
+check "and not the pinned release" '[ "$(text_hash "$LOCAL_APP/Contents/MacOS/cua-spacesd")" != "$(text_hash "$DAEMON_PINNED")" ]'
+
+ALL_BEFORE="$(snap_all)"
+FAKE_BUILD_SALT=pinned FAKE_BUILD_IGNORE_SPACESD_BIN=1 install
+check "a build-app.sh that bundles the pinned cua-spacesd is refused, and the installed app is unchanged" \
+    '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep >/dev/null "not the build of this checkout" && [ "$(snap_all)" = "$ALL_BEFORE" ]'
+reset_fixture
+FAKE_BUILD_IGNORE_SPACESD_BIN=1 install
+check "the same on a first install: nothing is installed" '[ "$RC" != 0 ] && [ ! -e "$LOCAL_APP" ] && [ ! -L "$LOCAL_CLI" ]'
+
+reset_fixture
+FAKE_CARGO_NO_DAEMON=1 install
+check "a cargo run that leaves no cua-spacesd stops the install before the app is built" \
+    '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep >/dev/null "cargo did not produce" && [ ! -s "$BUILD_LOG" ] && [ ! -e "$LOCAL_APP" ]'
+
+reset_fixture
+install --skip-rust-build
+check "--skip-rust-build with no cua-spacesd build is refused before anything is built" \
+    '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep >/dev/null "no cua-spacesd build" && [ ! -s "$BUILD_LOG" ] && [ ! -s "$CARGO_LOG" ]'
+install
+: > "$CARGO_LOG"
+FAKE_BUILD_SALT=skip install --skip-rust-build
+check "--skip-rust-build uses the existing build: no cargo, the same daemon bundled (status $RC)" \
+    '[ "$RC" = 0 ] && [ ! -s "$CARGO_LOG" ] && [ "$(cat "$LOCAL_APP/Contents/Resources/salt.txt")" = skip ] && [ "$(text_hash "$LOCAL_APP/Contents/MacOS/cua-spacesd")" = "$(text_hash "$DAEMON_CHECKOUT")" ]'
+reset_fixture
+run env CARGO_TARGET_DIR=relative/target "$FAKE_SCRIPTS/install-local.sh" --no-launch
+check "a relative CARGO_TARGET_DIR is refused (the daemon could not be found)" '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep >/dev/null "CARGO_TARGET_DIR must be an absolute path"'
+
+# --- 3c. --prefix is resolved before anything is built ------------------------------------------
+
+echo "== --prefix resolves .., symlinks and case, and refuses what the released app owns =="
+reset_fixture
+LINKS="$WORK/links"
+rm -rf "$LINKS" "$WORK/p-apps" "$WORK/p-bin" "$WORK/p-sys" "$WORK/ok" "$WORK/a"
+mkdir -p "$LINKS" "$WORK/p-apps" "$WORK/p-bin/.local" "$WORK/p-sys" "$WORK/ok"
+ln -s "$FAKE_HOME/.cua" "$LINKS/to-cua"
+ln -s "$LINKS/to-cua" "$LINKS/chain"
+ln -s "$LINKS/loop" "$LINKS/loop"
+ln -s "$FAKE_HOME/.lume" "$WORK/p-apps/Applications"
+ln -s "$FAKE_HOME/.cua" "$WORK/p-bin/.local/bin"
+ln -s /Applications "$WORK/p-sys/Applications"
+ln -s "$WORK/ok" "$LINKS/to-ok"
+ALL_BEFORE="$(snap_all)"
+for entry in \
+    "$FAKE_HOME/.cua|inside the Stable home" \
+    "$FAKE_HOME/.cua/deeper/still|nested in the Stable home" \
+    "$FAKE_HOME/.lume|Lume's folder" \
+    "$FAKE_HOME/Cua Volume|Cua Volume" \
+    "$FAKE_HOME/Library/Application Support/com.trycua.spaces.macos|the Stable app's support folder" \
+    "$FAKE_HOME/x/../.cua|a .. into the Stable home" \
+    "$FAKE_HOME/.cua/sub/..|a trailing .. in the Stable home" \
+    "$FAKE_HOME/.CUA|the Stable home in another case" \
+    "$LINKS/to-cua|a symlink to the Stable home" \
+    "$LINKS/chain|a chain of symlinks to the Stable home" \
+    "$WORK/p-apps|an Applications folder that is a symlink into Lume's folder" \
+    "$WORK/p-bin|a .local/bin that is a symlink into the Stable home" \
+    "$WORK/p-sys|an Applications folder that is a symlink to /Applications" \
+    "/Applications/Cua Spaces.app|inside the Stable app" \
+    "/System/Volumes/Data/Applications|/Applications by its firmlink path"; do
+    prefix="${entry%%|*}"
+    what="${entry#*|}"
+    : > "$BUILD_LOG"; : > "$CARGO_LOG"
+    install --prefix "$prefix"
+    check "install refuses --prefix $what" \
+        '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep >/dev/null "refusing" && [ ! -s "$BUILD_LOG" ] && [ ! -s "$CARGO_LOG" ] && [ "$(snap_all)" = "$ALL_BEFORE" ]'
+    : > "$SHIM_LOG"
+    uninstall --yes --prefix "$prefix"
+    check "uninstall refuses --prefix $what" \
+        '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep >/dev/null "refusing" && [ ! -s "$SHIM_LOG" ] && [ "$(snap_all)" = "$ALL_BEFORE" ]'
+done
+unset entry prefix what
+install --prefix "$LINKS/loop"
+check "a symlink loop in --prefix is refused" '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep >/dev/null "cannot resolve"'
+install --prefix "$FAKE_HOME/.cua/.."
+check "a .. that leads out of the Stable home to a safe place is accepted: the default HOME (status $RC)" '[ "$RC" = 0 ] && [ -d "$LOCAL_APP" ]'
+reset_fixture
+install --prefix "$WORK/a/b/../c"
+check "a nested --prefix with .. is installed where it resolves ($WORK/a/c)" '[ "$RC" = 0 ] && [ -d "$WORK/a/c/Applications/Cua Spaces Local.app" ] && [ ! -e "$WORK/a/b" ]'
+install --prefix "$LINKS/to-ok"
+check "a symlinked --prefix is installed where it leads ($WORK/ok)" '[ "$RC" = 0 ] && [ -d "$WORK/ok/Applications/Cua Spaces Local.app" ] && [ -L "$WORK/ok/.local/bin/cua-local" ]'
+check "and the link target is the resolved app" '[ "$(readlink "$WORK/ok/.local/bin/cua-local")" = "$WORK/ok/Applications/Cua Spaces Local.app/Contents/MacOS/cua" ]'
+uninstall --yes --prefix "$LINKS/to-ok"
+check "uninstall with the same symlinked --prefix removes it" '[ "$RC" = 0 ] && [ ! -e "$WORK/ok/Applications/Cua Spaces Local.app" ] && [ ! -L "$WORK/ok/.local/bin/cua-local" ]'
 
 # --- 4. Refusals ------------------------------------------------------------------------------
 
@@ -475,7 +621,7 @@ if [ -n "${CUA_TEST_SIGNING_KEYCHAIN:-}" ]; then
     ALL_BEFORE="$(snap_all)"
     signed_install() {
         run env HOME="$REAL_HOME" CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN="$CUA_TEST_SIGNING_KEYCHAIN" SHIM_SECURITY_PASSTHROUGH=1 \
-            "$FAKE_SCRIPTS/install-local.sh" --skip-rust-build --no-launch --require-stable-signing --prefix "$SIGNED_PREFIX" "$@"
+            "$FAKE_SCRIPTS/install-local.sh" --no-launch --require-stable-signing --prefix "$SIGNED_PREFIX" "$@"
     }
     signed_install
     if [ "$RC" = 0 ]; then

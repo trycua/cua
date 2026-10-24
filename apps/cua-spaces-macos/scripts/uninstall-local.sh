@@ -70,8 +70,12 @@ case "$PREFIX" in
     *) die "--prefix must be an absolute path (got: $PREFIX)" ;;
 esac
 PREFIX="${PREFIX%/}"
-APP_DEST="$PREFIX/Applications/$LOCAL_APP_DIR_NAME"
-CLI_LINK="$PREFIX/.local/bin/$LOCAL_CLI_NAME"
+# Resolved like install-local.sh does (`..`, symlinks), so what is removed is
+# what was installed and never anything of the released Cua Spaces.
+APP_PARENT="$(canonicalize_path "$PREFIX/Applications")" || die "cannot resolve $PREFIX/Applications (a symlink loop?)"
+BIN_DIR="$(canonicalize_path "$PREFIX/.local/bin")" || die "cannot resolve $PREFIX/.local/bin (a symlink loop?)"
+APP_DEST="$APP_PARENT/$LOCAL_APP_DIR_NAME"
+CLI_LINK="$BIN_DIR/$LOCAL_CLI_NAME"
 LOCAL_HOME="$HOME/$LOCAL_HOME_DIR_NAME"
 LOCAL_APP_SUPPORT="$HOME/Library/Application Support/$LOCAL_APP_SUPPORT_DIR_NAME"
 HOST_JOB_PLIST="$HOME/Library/LaunchAgents/$LOCAL_HOST_LABEL.plist"
@@ -83,9 +87,8 @@ GUI_DOMAIN="gui/$(id -u)"
 [ "$(basename "$APP_DEST")" = "$LOCAL_APP_DIR_NAME" ] || die "internal error: app path $APP_DEST"
 [ "$(basename "$CLI_LINK")" = "$LOCAL_CLI_NAME" ] || die "internal error: CLI path $CLI_LINK"
 [ "$(basename "$LOCAL_HOME")" = "$LOCAL_HOME_DIR_NAME" ] || die "internal error: home $LOCAL_HOME"
-case "$APP_DEST" in
-    /Applications/*) die "refusing to remove anything under /Applications (that is where Cua Spaces lives): use the --prefix you installed with." ;;
-esac
+reject_stable_overlap "app" "$APP_DEST" || exit 1
+reject_stable_overlap "$LOCAL_CLI_NAME link" "$CLI_LINK" || exit 1
 
 # Refuse before changing anything.
 require_local_bundle_or_absent "$APP_DEST" || exit 1

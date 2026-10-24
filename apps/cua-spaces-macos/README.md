@@ -303,6 +303,10 @@ scripts/install-local.sh --with-lume-local   # also install lume-local
 scripts/install-local.sh --prefix DIR    # app in DIR/Applications, cua-local in DIR/.local/bin
 ```
 
+`--prefix` is resolved first (`..` and symlinks included) and refused when the
+app or `cua-local` would land on, or inside, anything the released Cua Spaces
+owns: `/Applications`, `~/.cua`, `~/.local/bin/cua`, `~/.lume`, `~/Cua Volume`.
+
 The Local build shares nothing with the released app. Every name comes from
 `CuaChannel::Local` (`libs/cua/crates/cua-home/src/channel.rs`):
 
@@ -316,8 +320,13 @@ The Local build shares nothing with the released app. Every name comes from
 | URL scheme | `cua://` | `cua-local://` |
 | Updates | Sparkle | none |
 
-The script builds with `scripts/build-app.sh --channel local`, copies the app to
-a staging folder, signs it, checks the signature, the bundle id, the URL scheme
+The script builds the library, the `cua` CLI and `cua-spacesd` from this
+checkout (`--skip-rust-build` reuses the last build), then runs
+`scripts/build-app.sh --channel local` with `CUA_SPACESD_BIN` set to that
+`cua-spacesd`. Without it build-app.sh bundles the pinned release of the host
+service, which does not know the Local ports; the script compares the bundled
+daemon's machine code with the one it built and refuses the app if they differ.
+It copies the app to a staging folder, signs it, checks the signature, the bundle id, the URL scheme
 and that there is no update feed, and only then swaps it in. If the copy does
 not verify it puts the previous Local app back. It refuses to replace anything
 at the Local path that is not a Cua Spaces Local bundle, and it never writes to

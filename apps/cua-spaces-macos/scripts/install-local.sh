@@ -16,13 +16,20 @@
 #   --no-launch          do not open the app when it is installed
 #   --prefix DIR         install under DIR instead of $HOME: the app in
 #                        DIR/Applications, `cua-local` in DIR/.local/bin
-#                        (the state, ~/.cua-local, stays in $HOME)
+#                        (the state, ~/.cua-local, stays in $HOME). DIR is
+#                        resolved (`..`, symlinks) and refused when the app or
+#                        the link would be, or be inside, anything the released
+#                        Cua Spaces owns (/Applications, ~/.cua,
+#                        ~/.local/bin/cua, ~/.lume, ~/Cua Volume)
 #   --with-lume-local    also install lume-local (libs/lume/scripts/install-local.sh)
-#   --skip-rust-build    do not run cargo and stage the library: use the ones
-#                        already built
+#   --skip-rust-build    do not run cargo and stage the library: use the library,
+#                        `cua` and cua-spacesd already built
 #   --require-stable-signing
 #                        stop unless the app can be signed with the stable
 #                        local certificate (no ad hoc fallback)
+#
+# The bundled host service (cua-spacesd) is built from this checkout, not the
+# pinned release: the pinned one does not know the Local ports.
 #
 # What it installs, and nothing else:
 #   ~/Applications/Cua Spaces Local.app
@@ -97,20 +104,23 @@ case "$PREFIX" in
     *) die "--prefix must be an absolute path (got: $PREFIX)" ;;
 esac
 PREFIX="${PREFIX%/}"
-APP_PARENT="$PREFIX/Applications"
+# Every destination is resolved first (`.`, `..`, symlinks) and the resolved
+# paths are the ones written, so nothing in --prefix can hide where they land.
+# The links are resolved on the folders the files go into; `cua-local` itself
+# may already be a link, which is replaced, never followed.
+APP_PARENT="$(canonicalize_path "$PREFIX/Applications")" || die "cannot resolve $PREFIX/Applications (a symlink loop?)"
+BIN_DIR="$(canonicalize_path "$PREFIX/.local/bin")" || die "cannot resolve $PREFIX/.local/bin (a symlink loop?)"
 APP_DEST="$APP_PARENT/$LOCAL_APP_DIR_NAME"
-BIN_DIR="$PREFIX/.local/bin"
 CLI_LINK="$BIN_DIR/$LOCAL_CLI_NAME"
 
-# The two paths this script writes outside the build tree. Their names are the
-# Local ones and neither is under /Applications: a mistake in the prefix cannot
-# aim them at the Stable app or CLI.
+# The two paths this script writes outside the build tree have the Local names,
+# and neither is, or is inside, anything the released Cua Spaces owns
+# (/Applications, ~/.cua, ~/.local/bin/cua, ~/.lume, ~/Cua Volume).
 [ "$(basename "$APP_DEST")" = "$LOCAL_APP_DIR_NAME" ] || die "internal error: app path $APP_DEST"
 [ "$(basename "$CLI_LINK")" = "$LOCAL_CLI_NAME" ] || die "internal error: CLI path $CLI_LINK"
-case "$APP_DEST" in
-    /Applications/*) die "refusing to install Cua Spaces Local into /Applications (that is where Cua Spaces lives): use a different --prefix." ;;
-esac
-if [ "$WITH_LUME_LOCAL" = 1 ] && [ "$PREFIX" != "$HOME" ]; then
+reject_stable_overlap "app" "$APP_DEST" || exit 1
+reject_stable_overlap "$LOCAL_CLI_NAME link" "$CLI_LINK" || exit 1
+if [ "$WITH_LUME_LOCAL" = 1 ] && [ "$(canonicalize_path "$PREFIX")" != "$(canonicalize_path "$HOME")" ]; then
     die "--with-lume-local installs under \$HOME and cannot be combined with --prefix."
 fi
 
@@ -120,6 +130,16 @@ LUME_INSTALL="$REPO_ROOT/libs/lume/scripts/install-local.sh"
 BUILD_OUT="$APP_DIR/.build/local-app"
 STAGE_ROOT="$APP_DIR/.build/local-stage"
 STAGE_APP="$STAGE_ROOT/$LOCAL_APP_DIR_NAME"
+# The host service the app bundles. build-app.sh bundles the pinned release
+# (libs/cua-spacesd/VERSION) unless $CUA_SPACESD_BIN names another, and the
+# pinned one does not know this checkout's Local ports. So this build bundles
+# the cua-spacesd of this checkout.
+SPACESD_DIR="$REPO_ROOT/libs/cua-spacesd"
+case "${CARGO_TARGET_DIR:-/}" in
+    /*) ;;
+    *) die "CARGO_TARGET_DIR must be an absolute path (got: $CARGO_TARGET_DIR)." ;;
+esac
+SPACESD_BIN="${CARGO_TARGET_DIR:-$SPACESD_DIR/target}/release/cua-spacesd"
 
 [ -x "$BUILD_SCRIPT" ] || die "missing $BUILD_SCRIPT"
 [ -f "$SIGNING_LIB" ] || die "missing $SIGNING_LIB (the stable local signing shared with Cua Driver)"
@@ -138,6 +158,9 @@ OS="$(uname -s)"
 require_local_bundle_or_absent "$APP_DEST" || exit 1
 if [ -d "$CLI_LINK" ] && [ ! -L "$CLI_LINK" ]; then
     die "refusing to replace $CLI_LINK: it is a directory"
+fi
+if [ "$SKIP_RUST_BUILD" = 1 ] && [ ! -x "$SPACESD_BIN" ]; then
+    die "--skip-rust-build: there is no cua-spacesd build at $SPACESD_BIN. Build it ((cd libs/cua-spacesd && cargo build --locked --release -p cua-spacesd --bin cua-spacesd)) or leave out --skip-rust-build."
 fi
 if [ "$WITH_LUME_LOCAL" = 1 ]; then
     [ -f "$LUME_INSTALL" ] || die "--with-lume-local: missing $LUME_INSTALL"
@@ -168,12 +191,26 @@ if [ "$SKIP_RUST_BUILD" = 0 ]; then
     # (build-app.sh's defaults).
     (cd "$REPO_ROOT/libs/cua" && cargo build --locked --release -p cua-spaces-ffi -p cua-spaces-cli)
     "$REPO_ROOT/libs/spaces-app-swift/scripts/stage-library.sh"
+    log "building cua-spacesd from this checkout (cargo, release)"
+    (cd "$SPACESD_DIR" && cargo build --locked --release -p cua-spacesd --bin cua-spacesd)
 fi
+[ -x "$SPACESD_BIN" ] || die "cargo did not produce $SPACESD_BIN"
+
+# What the bundled daemon must be: this one. Compared by its machine code (the
+# __text section), which the signature build-app.sh adds does not change.
+code_hash() {
+    local hash
+    hash="$(otool -X -s __TEXT __text "$1" 2>/dev/null | shasum -a 256 | cut -d' ' -f1)"
+    # The hash of nothing: otool found no code.
+    [ -n "$hash" ] && [ "$hash" != e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 ] || return 1
+    printf '%s' "$hash"
+}
+SPACESD_CODE_HASH="$(code_hash "$SPACESD_BIN")" || die "cannot read the machine code of $SPACESD_BIN (otool)"
 
 log "building the app (build-app.sh --channel local $CONFIG)"
 mkdir -p "$BUILD_OUT"
 # build-app.sh prints the bundle path as its last line.
-if ! BUILT_APP="$("$BUILD_SCRIPT" --channel local "$CONFIG" "$BUILD_OUT" | tee /dev/stderr | tail -n 1)"; then
+if ! BUILT_APP="$(CUA_SPACESD_BIN="$SPACESD_BIN" "$BUILD_SCRIPT" --channel local "$CONFIG" "$BUILD_OUT" | tee /dev/stderr | tail -n 1)"; then
     die "build-app.sh failed"
 fi
 [ -d "$BUILT_APP" ] || BUILT_APP="$BUILD_OUT/$LOCAL_APP_DIR_NAME"
@@ -367,6 +404,14 @@ verify_local_bundle() {
 $schemes
 EOF
     [ "$has_local_scheme" = 1 ] || bad "it does not register the URL scheme $LOCAL_URL_SCHEME://"
+
+    # The host service is this checkout's build, not the pinned release (which
+    # would ignore the Local ports and take the released app's).
+    if [ ! -x "$app/Contents/MacOS/cua-spacesd" ]; then
+        bad "it has no Contents/MacOS/cua-spacesd"
+    elif [ "$(code_hash "$app/Contents/MacOS/cua-spacesd" || true)" != "$SPACESD_CODE_HASH" ]; then
+        bad "the bundled cua-spacesd is not the build of this checkout ($SPACESD_BIN), probably the pinned release, which ignores the Local ports. build-app.sh must bundle \$CUA_SPACESD_BIN."
+    fi
 
     channel="$(plist_get "$plist" CuaChannel || true)"
     [ "$channel" = local ] || bad "CuaChannel is '${channel:-none}', expected local"

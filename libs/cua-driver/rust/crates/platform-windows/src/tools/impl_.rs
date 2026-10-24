@@ -7811,8 +7811,12 @@ impl Tool for DragTool {
                 Ok(hwnd) => hwnd,
                 Err(error) => return ToolResult::error(error.to_string()),
             };
+            // Issue #5783: `delivery_mode` is not part of the typed DragInput
+            // projection, so read it straight off the raw args like the other
+            // input tools do.
+            let foreground = DeliveryMode::from_args(&args).is_foreground();
             let native_drag = tokio::task::spawn_blocking(move || {
-                if input.delivery_mode == Some(DeliveryMode::Foreground) {
+                if foreground {
                     crate::input::mouse::send_drag_synthesized_active(
                         hwnd,
                         from_x,

@@ -24,6 +24,12 @@ set -e
 #                           (default: ~/.local/bin)
 #   LUME_LOCAL_LOG_DIR      where the daemon logs go (default: /tmp)
 # LUME_HOME is deliberately ignored: it may point at the released Lume's home.
+# The `lume-local` command sets LUME_HOME to the home above, overriding any value
+# it inherits, so the CLI and the daemon always use the same home.
+#
+# Every path is canonicalised (`.`, `..` and symlinks resolved) and refused if it
+# equals, sits inside, or contains a path the released Lume owns
+# (scripts/_lume-local-common.sh).
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -38,6 +44,9 @@ RED=$(tput setaf 1 2>/dev/null || echo "")
 GREEN=$(tput setaf 2 2>/dev/null || echo "")
 BLUE=$(tput setaf 4 2>/dev/null || echo "")
 YELLOW=$(tput setaf 3 2>/dev/null || echo "")
+
+# The path guard shared with uninstall-local.sh
+. "$SCRIPT_DIR/_lume-local-common.sh"
 
 # Check if running as root or with sudo
 if [ "$(id -u)" -eq 0 ] || [ -n "$SUDO_USER" ]; then
@@ -160,23 +169,23 @@ if [ "$LUME_PORT" -eq "$STABLE_PORT" ]; then
   echo "${RED}Error: port $STABLE_PORT belongs to the released Lume. lume-local uses $LOCAL_PORT.${NORMAL}" >&2
   exit 2
 fi
-case "$LUME_LOCAL_HOME" in
-  /*) ;;
-  *) echo "${RED}Error: LUME_LOCAL_HOME must be an absolute path, got '$LUME_LOCAL_HOME'.${NORMAL}" >&2; exit 2 ;;
-esac
-case "$LUME_LOCAL_HOME" in
-  "/"|"$HOME"|"$HOME/"|"$HOME/.lume"|"$HOME/.lume/"*|"$HOME/.config/lume"|"$HOME/.config/lume/"*)
-    echo "${RED}Error: refusing to use $LUME_LOCAL_HOME as the lume-local home: it is, or is inside, a path the released Lume uses.${NORMAL}" >&2
-    exit 2
-    ;;
-esac
+
+# Canonicalise every path this script writes, and refuse any that reaches the
+# released Lume. From here on these are the canonical forms.
+LUME_LOCAL_HOME="$(lume_local_check "LUME_LOCAL_HOME" "$LUME_LOCAL_HOME")" || exit 2
 case "$INSTALL_DIR" in
   /*) ;;
   *) echo "${RED}Error: --install-dir must be an absolute path, got '$INSTALL_DIR'.${NORMAL}" >&2; exit 2 ;;
 esac
-
-PLIST_PATH="$HOME/Library/LaunchAgents/$SERVICE_NAME.plist"
+LOCAL_BIN="$(lume_local_check "the lume-local command ($INSTALL_DIR/$LOCAL_BIN_NAME)" "$INSTALL_DIR/$LOCAL_BIN_NAME")" || exit 2
+# The command's own directory (an existing symlink named lume-local is replaced,
+# not followed).
+INSTALL_DIR="$(lume_local_canon "$INSTALL_DIR")" || exit 2
 LOCAL_BIN="$INSTALL_DIR/$LOCAL_BIN_NAME"
+APP_INSTALL_DIR="$(lume_local_check "the lume-local files directory" "$APP_INSTALL_DIR")" || exit 2
+PLIST_PATH="$(lume_local_check "the lume-local LaunchAgent plist" "$HOME/Library/LaunchAgents/$SERVICE_NAME.plist")" || exit 2
+LOG_FILE="$(lume_local_check "the lume-local daemon log" "$LOG_DIR/lume_daemon.local.log")" || exit 2
+ERROR_LOG_FILE="$(lume_local_check "the lume-local daemon error log" "$LOG_DIR/lume_daemon.local.error.log")" || exit 2
 WRAPPER_MARKER="# lume-local wrapper, managed by libs/lume/scripts/install-local.sh"
 
 echo "${BOLD}${BLUE}"
@@ -323,12 +332,17 @@ install_binary() {
 
   # The command is a small wrapper, so nothing but one file lands in a bin
   # directory the released Lume shares.
+  # It sets LUME_HOME to the validated Local home, overriding whatever the
+  # caller exported (often the released Lume's), so every command uses the same
+  # home as the daemon, including with a custom LUME_LOCAL_HOME.
   rm -f "$LOCAL_BIN"
-  cat > "$LOCAL_BIN" <<WRAPPER_EOF
-#!/bin/sh
-$WRAPPER_MARKER
-exec "$REAL_BIN" "\$@"
-WRAPPER_EOF
+  {
+    printf '#!/bin/sh\n'
+    printf '%s\n' "$WRAPPER_MARKER"
+    printf 'LUME_HOME=%q\n' "$LUME_LOCAL_HOME"
+    printf 'export LUME_HOME\n'
+    printf 'exec %q "$@"\n' "$REAL_BIN"
+  } > "$LOCAL_BIN"
   chmod +x "$LOCAL_BIN"
 
   echo "${GREEN}Installation complete!${NORMAL}"
@@ -368,7 +382,7 @@ setup_background_service() {
     launchctl unload "$PLIST_PATH" 2>/dev/null || true
   fi
 
-  mkdir -p "$LOG_DIR"
+  mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$ERROR_LOG_FILE")"
 
   # Create the plist file
   cat <<EOF > "$PLIST_PATH"
@@ -401,9 +415,9 @@ setup_background_service() {
         <string>$LUME_LOCAL_HOME</string>
     </dict>
     <key>StandardOutPath</key>
-    <string>$LOG_DIR/lume_daemon.local.log</string>
+    <string>$LOG_FILE</string>
     <key>StandardErrorPath</key>
-    <string>$LOG_DIR/lume_daemon.local.error.log</string>
+    <string>$ERROR_LOG_FILE</string>
     <key>ProcessType</key>
     <string>Interactive</string>
     <key>SessionType</key>
@@ -414,8 +428,8 @@ EOF
 
   # Set permissions
   chmod 644 "$PLIST_PATH"
-  touch "$LOG_DIR/lume_daemon.local.log" "$LOG_DIR/lume_daemon.local.error.log"
-  chmod 644 "$LOG_DIR/lume_daemon.local.log" "$LOG_DIR/lume_daemon.local.error.log"
+  touch "$LOG_FILE" "$ERROR_LOG_FILE"
+  chmod 644 "$LOG_FILE" "$ERROR_LOG_FILE"
 
   # Load the LaunchAgent
   echo "Loading LaunchAgent..."
@@ -423,7 +437,7 @@ EOF
 
   echo "${GREEN}lume-local daemon LaunchAgent installed and loaded!${NORMAL}"
   echo "To check status: launchctl list | grep $SERVICE_NAME"
-  echo "To view logs: tail -f $LOG_DIR/lume_daemon.local.log"
+  echo "To view logs: tail -f $LOG_FILE"
 }
 
 # Remove background service

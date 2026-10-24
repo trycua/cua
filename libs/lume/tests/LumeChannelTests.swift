@@ -117,9 +117,6 @@ struct LumeChannelTests {
         let xdg = LumeLayout.resolve(
             channel: .stable, environment: ["XDG_CONFIG_HOME": "/Users/dev/cfg"], userHome: fakeHome)
         #expect(xdg.configDir.path == "/Users/dev/cfg/lume")
-        let blankXDG = LumeLayout.resolve(
-            channel: .stable, environment: ["XDG_CONFIG_HOME": ""], userHome: fakeHome)
-        #expect(blankXDG.configDir.path == "/Users/dev/.config/lume")
         #expect(l.homeSetting == "~/.lume")
         #expect(l.cacheSetting == "~/.lume/cache")
         #expect(l.configInHome == false)
@@ -143,24 +140,63 @@ struct LumeChannelTests {
         #expect(xdg.configDir.path == "/Users/dev/.lume-local")
     }
 
-    @Test("LUME_HOME moves the home, the VM directory, the cache and the release channel")
-    func lumeHomeOverrides() {
-        for channel in LumeChannel.allCases {
-            let l = LumeLayout.resolve(
-                channel: channel,
-                environment: ["LUME_HOME": "/Volumes/vms/lume"],
-                userHome: fakeHome
-            )
-            #expect(l.homeDir.path == "/Volumes/vms/lume")
-            #expect(l.homeSetting == "/Volumes/vms/lume")
-            #expect(l.cacheSetting == "/Volumes/vms/lume/cache")
-            #expect(l.configInHome == true)
-            #expect(l.configDir.path == "/Volumes/vms/lume")
-            #expect(l.releaseChannelFile.path == "/Volumes/vms/lume/release-channel")
+    @Test("Local: LUME_HOME moves the home, the VM directory, the cache and the release channel")
+    func localLumeHomeOverrides() {
+        let l = LumeLayout.resolve(
+            channel: .local,
+            environment: ["LUME_HOME": "/Volumes/vms/lume", "XDG_CONFIG_HOME": "/Users/dev/cfg"],
+            userHome: fakeHome
+        )
+        #expect(l.homeDir.path == "/Volumes/vms/lume")
+        #expect(l.homeSetting == "/Volumes/vms/lume")
+        #expect(l.cacheSetting == "/Volumes/vms/lume/cache")
+        #expect(l.configInHome == true)
+        #expect(l.configDir.path == "/Volumes/vms/lume")
+        #expect(l.releaseChannelFile.path == "/Volumes/vms/lume/release-channel")
+        // The channel's port does not move with the home.
+        #expect(l.port == 7787)
+    }
+
+    @Test("Stable: LUME_HOME only moves the release-channel file, as it always did")
+    func stableLumeHomeOnlyMovesTheReleaseChannel() {
+        for xdg in [nil, "/Users/dev/cfg", ""] {
+            var base: [String: String] = [:]
+            if let xdg { base["XDG_CONFIG_HOME"] = xdg }
+            var moved = base
+            moved["LUME_HOME"] = "/Volumes/vms/lume"
+
+            let plain = LumeLayout.resolve(channel: .stable, environment: base, userHome: fakeHome)
+            let withHome = LumeLayout.resolve(channel: .stable, environment: moved, userHome: fakeHome)
+
+            // The VM directory, cache, settings location and settings file
+            // are what they are without LUME_HOME.
+            #expect(withHome.homeDir == plain.homeDir)
+            #expect(withHome.homeDir.path == "/Users/dev/.lume")
+            #expect(withHome.homeSetting == "~/.lume")
+            #expect(withHome.cacheSetting == "~/.lume/cache")
+            #expect(withHome.configDir == plain.configDir)
+            #expect(withHome.configInHome == false)
+            // Only the release-channel file follows it.
+            #expect(plain.releaseChannelFile.path == "/Users/dev/.lume/release-channel")
+            #expect(withHome.releaseChannelFile.path == "/Volumes/vms/lume/release-channel")
         }
     }
 
-    @Test("LUME_HOME beats the channel default, and does not change the port")
+    @Test("Stable keeps its legacy rules for LUME_HOME and XDG_CONFIG_HOME verbatim")
+    func stableLegacyRules() {
+        func layout(_ env: [String: String]) -> LumeLayout {
+            LumeLayout.resolve(channel: .stable, environment: env, userHome: fakeHome)
+        }
+        // LUME_HOME is used as given (no trimming, no standardizing); an empty
+        // one is ignored.
+        #expect(layout(["LUME_HOME": "/data/a/../lume"]).releaseChannelFile.path == "/data/a/../lume/release-channel")
+        #expect(layout(["LUME_HOME": ""]).releaseChannelFile.path == "/Users/dev/.lume/release-channel")
+        // XDG_CONFIG_HOME is joined with /lume whenever it is set.
+        #expect(layout(["XDG_CONFIG_HOME": "/Users/dev/cfg"]).configDir.path == "/Users/dev/cfg/lume")
+        #expect(layout([:]).configDir.path == "/Users/dev/.config/lume")
+    }
+
+    @Test("Local: LUME_HOME beats the channel default, and does not change the port")
     func lumeHomeBeatsLocalDefault() {
         let l = LumeLayout.resolve(
             channel: .local,
@@ -171,11 +207,11 @@ struct LumeChannelTests {
         #expect(l.port == 7787)
     }
 
-    @Test("LUME_HOME expands a leading tilde and tidies the path")
+    @Test("Local: LUME_HOME expands a leading tilde and tidies the path")
     func lumeHomeTilde() {
         func home(_ raw: String) -> String {
             LumeLayout.resolve(
-                channel: .stable, environment: ["LUME_HOME": raw], userHome: fakeHome
+                channel: .local, environment: ["LUME_HOME": raw], userHome: fakeHome
             ).homeDir.path
         }
         #expect(home("~/vms") == "/Users/dev/vms")
@@ -186,16 +222,13 @@ struct LumeChannelTests {
         #expect(home("/data/~lume") == "/data/~lume")
     }
 
-    @Test("An empty or blank LUME_HOME is ignored")
+    @Test("Local: an empty or blank LUME_HOME is ignored")
     func emptyLumeHomeIsIgnored() {
         for raw in ["", "   ", "\n"] {
-            let stable = LumeLayout.resolve(
-                channel: .stable, environment: ["LUME_HOME": raw], userHome: fakeHome)
-            #expect(stable.homeDir.path == "/Users/dev/.lume")
-            #expect(stable.configInHome == false)
             let local = LumeLayout.resolve(
                 channel: .local, environment: ["LUME_HOME": raw], userHome: fakeHome)
             #expect(local.homeDir.path == "/Users/dev/.lume-local")
+            #expect(local.configInHome == true)
         }
     }
 
@@ -216,9 +249,16 @@ struct LumeChannelTests {
 
         let moved = LumeSettings.defaults(
             layout: .resolve(
-                channel: .stable, environment: ["LUME_HOME": "/data/lume"], userHome: fakeHome))
+                channel: .local, environment: ["LUME_HOME": "/data/lume"], userHome: fakeHome))
         #expect(moved.vmLocations == [VMLocation(name: "home", path: "/data/lume")])
         #expect(moved.cacheDirectory == "/data/lume/cache")
+
+        // Stable's defaults do not follow LUME_HOME.
+        let stableWithHome = LumeSettings.defaults(
+            layout: .resolve(
+                channel: .stable, environment: ["LUME_HOME": "/data/lume"], userHome: fakeHome))
+        #expect(stableWithHome.vmLocations == [VMLocation(name: "home", path: "~/.lume")])
+        #expect(stableWithHome.cacheDirectory == "~/.lume/cache")
     }
 
     @Test("A Local settings manager reads and writes only its own home")
@@ -269,6 +309,49 @@ struct LumeChannelTests {
             FileManager.default.fileExists(
                 atPath: xdg.appendingPathComponent("lume/config.yaml").path))
         #expect(!FileManager.default.fileExists(atPath: userHome.appendingPathComponent(".lume-local").path))
+    }
+
+    @Test("A Stable settings manager ignores LUME_HOME: same settings file, same VM and cache locations")
+    func stableSettingsIgnoreLumeHome() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lume-channel-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let xdg = root.appendingPathComponent("xdg", isDirectory: true)
+        let userHome = root.appendingPathComponent("home", isDirectory: true)
+        let lumeHome = root.appendingPathComponent("elsewhere", isDirectory: true)
+
+        // The settings Stable already has, in its XDG directory.
+        let xdgLume = xdg.appendingPathComponent("lume", isDirectory: true)
+        try FileManager.default.createDirectory(at: xdgLume, withIntermediateDirectories: true)
+        try """
+            defaultLocationName: "mine"
+            cacheDirectory: "/data/cache"
+
+            vmLocations:
+              - name: "mine"
+                path: "/data/vms"
+            """.write(to: xdgLume.appendingPathComponent("config.yaml"), atomically: true, encoding: .utf8)
+
+        let layout = LumeLayout.resolve(
+            channel: .stable,
+            environment: ["XDG_CONFIG_HOME": xdg.path, "LUME_HOME": lumeHome.path],
+            userHome: userHome)
+        let settings = SettingsManager(fileManager: .default, layout: { layout }).getSettings()
+
+        #expect(settings.defaultLocation?.path == "/data/vms")
+        #expect(settings.cacheDirectory == "/data/cache")
+        // Nothing was created under LUME_HOME, which only holds the release channel.
+        #expect(!FileManager.default.fileExists(atPath: lumeHome.path))
+        #expect(layout.releaseChannelFile.path == lumeHome.appendingPathComponent("release-channel").path)
+
+        // With no settings file at all, the defaults are still Stable's.
+        let bare = LumeLayout.resolve(
+            channel: .stable,
+            environment: ["XDG_CONFIG_HOME": root.appendingPathComponent("none").path, "LUME_HOME": lumeHome.path],
+            userHome: userHome)
+        let defaults = SettingsManager(fileManager: .default, layout: { bare }).getSettings()
+        #expect(defaults.defaultLocation?.path == "~/.lume")
+        #expect(defaults.cacheDirectory == "~/.lume/cache")
     }
 
     @Test("A settings file without a cache or a location falls back to the layout's home")

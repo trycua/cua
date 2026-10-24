@@ -38,8 +38,9 @@ enum LumeReleaseChannel: String, Codable, CaseIterable {
         try Data("\(channel.rawValue)\n".utf8).write(to: url, options: .atomic)
     }
 
-    /// `<home>/release-channel`, where the home is `LUME_HOME`, else the
-    /// channel's own (`~/.lume`, or `~/.lume-local` for `lume-local`).
+    /// `$LUME_HOME/release-channel` for the released Lume (as it always was),
+    /// else `~/.lume/release-channel`; `<home>/release-channel` for `lume-local`,
+    /// where the home is `LUME_HOME` or `~/.lume-local`.
     static func stateFileURL() -> URL {
         LumeLayout.current.releaseChannelFile
     }

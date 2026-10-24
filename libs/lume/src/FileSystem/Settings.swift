@@ -19,7 +19,7 @@ struct LumeSettings: Codable, Sendable {
     }
 
     /// The settings of a Lume that has no settings file yet: VMs and cache in
-    /// the layout's home (`~/.lume` unless `lume-local` or `LUME_HOME`).
+    /// the layout's home (`~/.lume`, or `~/.lume-local` / `LUME_HOME` for `lume-local`).
     static func defaults(layout: LumeLayout = .current) -> LumeSettings {
         LumeSettings(
             vmLocations: [
@@ -56,9 +56,9 @@ final class SettingsManager: @unchecked Sendable {
 
     private var layout: LumeLayout { layoutProvider() }
 
-    // The config directory. A Lume with its own home (lume-local, or LUME_HOME
-    // set) keeps its settings there; otherwise it follows the XDG spec
-    // (`LumeLayout` decides).
+    // The config directory. lume-local keeps its settings in its own home;
+    // the released Lume follows the XDG spec, as it always has (`LumeLayout`
+    // decides).
     private var configDir: String {
         layout.configDir.path
     }

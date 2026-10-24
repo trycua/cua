@@ -133,26 +133,29 @@ enum LumeChannel: String, CaseIterable, Sendable {
 
 /// Where this Lume keeps its files.
 ///
-/// `LUME_HOME` is the one override. It moves everything Lume owns: the VM
-/// directory, the settings file, the image cache, the release-channel file
-/// and the telemetry identity. Without it a Lume uses its channel's directory
-/// (`~/.lume`, or `~/.lume-local` for Local).
+/// **Stable** keeps them where it always has: VMs and cache in `~/.lume`, the
+/// settings file in `$XDG_CONFIG_HOME/lume` (else `~/.config/lume`), and the
+/// release-channel file in `$LUME_HOME` when that is set, else `~/.lume`.
+/// `LUME_HOME` moves nothing else for Stable.
 ///
-/// A Lume with its own home, either because it is Local or because
-/// `LUME_HOME` is set, also keeps its settings file in that home and ignores
-/// `XDG_CONFIG_HOME`: that variable is shared by every Lume on the Mac, so
-/// honouring it would point two Lumes at one `config.yaml`, and with it at one
-/// set of VMs. A Stable Lume without `LUME_HOME` keeps the settings file where
-/// it always has (`$XDG_CONFIG_HOME/lume`, else `~/.config/lume`).
+/// **Local** (a binary named `lume-local`) has a home of its own, `~/.lume-local`,
+/// and `LUME_HOME` moves all of it: the VM directory, the settings file, the
+/// image cache, the release-channel file and the telemetry identity. Local
+/// also keeps its settings file in that home and ignores `XDG_CONFIG_HOME`:
+/// that variable is shared by every Lume on the Mac, so honouring it would
+/// point Local at Stable's `config.yaml`, and with it at Stable's VMs.
 struct LumeLayout: Equatable, Sendable {
     let channel: LumeChannel
     /// The VM directory and state root, as an absolute path.
     let homeDir: URL
-    /// `homeDir` as settings store it: `~/.lume` for a default home, so the
-    /// settings file stays portable, else the absolute override.
+    /// `homeDir` as settings store it: `~/.lume` or `~/.lume-local` for a
+    /// default home, so the settings file stays portable, else the absolute
+    /// override.
     let homeSetting: String
     /// The directory of the settings file (`config.yaml`).
     let configDir: URL
+    /// The release-channel file (`stable` or `nightly`, the update track).
+    let releaseChannelFile: URL
 
     /// Whether the settings file lives in `homeDir` rather than in the shared
     /// XDG config directory.
@@ -160,11 +163,6 @@ struct LumeLayout: Equatable, Sendable {
 
     /// The default image cache, as settings store it.
     var cacheSetting: String { "\(homeSetting)/cache" }
-
-    /// The release-channel file (`stable` or `nightly`, the update track).
-    var releaseChannelFile: URL {
-        homeDir.appendingPathComponent(LumeReleaseChannel.fileName)
-    }
 
     /// The channel's default server port.
     var port: UInt16 { channel.lumePort }
@@ -176,24 +174,43 @@ struct LumeLayout: Equatable, Sendable {
         environment: [String: String],
         userHome: URL
     ) -> LumeLayout {
-        let raw = environment["LUME_HOME"]?.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let raw, !raw.isEmpty else {
+        switch channel {
+        case .stable:
             let home = channel.lumeDir(userHome: userHome)
+            // Exactly the release-channel rule Lume had before channels:
+            // LUME_HOME, when non-empty, is where that one file lives.
+            let channelDir: URL
+            if let override = environment["LUME_HOME"], !override.isEmpty {
+                channelDir = URL(fileURLWithPath: override)
+            } else {
+                channelDir = home
+            }
             return LumeLayout(
                 channel: channel,
                 homeDir: home,
                 homeSetting: "~/\(channel.lumeDirName)",
-                configDir: channel == .stable
-                    ? xdgConfigDir(environment: environment, userHome: userHome) : home
+                configDir: xdgConfigDir(environment: environment, userHome: userHome),
+                releaseChannelFile: channelDir.appendingPathComponent(LumeReleaseChannel.fileName)
+            )
+        case .local:
+            let raw = environment["LUME_HOME"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let home: URL
+            let setting: String
+            if let raw, !raw.isEmpty {
+                home = URL(fileURLWithPath: expandTilde(raw, userHome: userHome)).standardizedFileURL
+                setting = home.path
+            } else {
+                home = channel.lumeDir(userHome: userHome)
+                setting = "~/\(channel.lumeDirName)"
+            }
+            return LumeLayout(
+                channel: channel,
+                homeDir: home,
+                homeSetting: setting,
+                configDir: home,
+                releaseChannelFile: home.appendingPathComponent(LumeReleaseChannel.fileName)
             )
         }
-        let home = URL(fileURLWithPath: expandTilde(raw, userHome: userHome)).standardizedFileURL
-        return LumeLayout(
-            channel: channel,
-            homeDir: home,
-            homeSetting: home.path,
-            configDir: home
-        )
     }
 
     /// The layout of this process.
@@ -205,11 +222,11 @@ struct LumeLayout: Equatable, Sendable {
         )
     }
 
-    /// `$XDG_CONFIG_HOME/lume`, else `~/.config/lume`.
+    /// `$XDG_CONFIG_HOME/lume`, else `~/.config/lume`: where Stable has always
+    /// kept its settings.
     private static func xdgConfigDir(environment: [String: String], userHome: URL) -> URL {
-        if let xdg = environment["XDG_CONFIG_HOME"], !xdg.isEmpty {
-            return URL(fileURLWithPath: xdg, isDirectory: true)
-                .appendingPathComponent("lume", isDirectory: true)
+        if let xdg = environment["XDG_CONFIG_HOME"] {
+            return URL(fileURLWithPath: "\(xdg)/lume", isDirectory: true)
         }
         return userHome.appendingPathComponent(".config/lume", isDirectory: true)
     }

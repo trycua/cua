@@ -16,9 +16,17 @@ set -e
 #
 # Usage: uninstall-local.sh [--yes] [--keep-vms] [--install-dir DIR]
 #
+# Every path is canonicalised (`.`, `..` and symlinks resolved) and refused if it
+# equals, sits inside, or contains a path the released Lume owns, so
+# `--yes` can never delete the released Lume's VMs through an alias such as
+# `$HOME/./.lume` or a symlink to it (scripts/_lume-local-common.sh).
+#
 # Environment (all optional, as for install-local.sh):
 #   LUME_LOCAL_HOME, LUME_LOCAL_INSTALL_DIR, LUME_LOCAL_LOG_DIR
 # LUME_HOME is deliberately ignored: it may point at the released Lume's home.
+
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Define colors for output
 BOLD=$(tput bold 2>/dev/null || echo "")
@@ -27,6 +35,9 @@ RED=$(tput setaf 1 2>/dev/null || echo "")
 GREEN=$(tput setaf 2 2>/dev/null || echo "")
 YELLOW=$(tput setaf 3 2>/dev/null || echo "")
 BLUE=$(tput setaf 4 2>/dev/null || echo "")
+
+# The path guard shared with install-local.sh
+. "$SCRIPT_DIR/_lume-local-common.sh"
 
 LOCAL_BIN_NAME="lume-local"
 SERVICE_NAME="com.trycua.lume_daemon.local"
@@ -75,24 +86,21 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
-# Refuse paths that would reach the released Lume.
-case "$LUME_LOCAL_HOME" in
-  /*) ;;
-  *) echo "${RED}Error: LUME_LOCAL_HOME must be an absolute path, got '$LUME_LOCAL_HOME'.${NORMAL}" >&2; exit 2 ;;
-esac
-case "$LUME_LOCAL_HOME" in
-  "/"|"$HOME"|"$HOME/"|"$HOME/.lume"|"$HOME/.lume/"*|"$HOME/.config/lume"|"$HOME/.config/lume/"*)
-    echo "${RED}Error: refusing to remove $LUME_LOCAL_HOME: it is, or is inside, a path the released Lume uses.${NORMAL}" >&2
-    exit 2
-    ;;
-esac
+# Canonicalise every path this script deletes (`.`, `..` and symlinks resolved),
+# and refuse any that equals, sits inside, or contains a path the released Lume
+# owns. From here on these are the canonical forms.
+LUME_LOCAL_HOME="$(lume_local_check "LUME_LOCAL_HOME" "$LUME_LOCAL_HOME")" || exit 2
 case "$INSTALL_DIR" in
   /*) ;;
   *) echo "${RED}Error: --install-dir must be an absolute path, got '$INSTALL_DIR'.${NORMAL}" >&2; exit 2 ;;
 esac
-
-PLIST_PATH="$HOME/Library/LaunchAgents/$SERVICE_NAME.plist"
+lume_local_check "the lume-local command ($INSTALL_DIR/$LOCAL_BIN_NAME)" "$INSTALL_DIR/$LOCAL_BIN_NAME" >/dev/null || exit 2
+INSTALL_DIR="$(lume_local_canon "$INSTALL_DIR")" || exit 2
 LOCAL_BIN="$INSTALL_DIR/$LOCAL_BIN_NAME"
+APP_INSTALL_DIR="$(lume_local_check "the lume-local files directory" "$APP_INSTALL_DIR")" || exit 2
+PLIST_PATH="$(lume_local_check "the lume-local LaunchAgent plist" "$HOME/Library/LaunchAgents/$SERVICE_NAME.plist")" || exit 2
+LOG_FILE="$(lume_local_check "the lume-local daemon log" "$LOG_DIR/lume_daemon.local.log")" || exit 2
+ERROR_LOG_FILE="$(lume_local_check "the lume-local daemon error log" "$LOG_DIR/lume_daemon.local.error.log")" || exit 2
 
 # Ask a yes/no question. Defaults to no. --yes answers yes.
 confirm() {
@@ -180,7 +188,7 @@ else
   echo "  $APP_INSTALL_DIR not found (skipped)"
 fi
 
-for logfile in "$LOG_DIR/lume_daemon.local.log" "$LOG_DIR/lume_daemon.local.error.log"; do
+for logfile in "$LOG_FILE" "$ERROR_LOG_FILE"; do
   if [ -f "$logfile" ]; then
     rm -f "$logfile"
     echo "  ${GREEN}Removed $logfile${NORMAL}"

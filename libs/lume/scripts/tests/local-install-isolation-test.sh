@@ -24,6 +24,7 @@ if [ "$(id -u)" -eq 0 ]; then
 fi
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/lume-local-install-test.XXXXXX")"
+TMP="$(cd -P "$TMP" && pwd -P)"   # the scripts print canonical paths; compare like with like
 trap 'rm -rf "$TMP"' EXIT
 
 H="$TMP/home"                 # the fake HOME
@@ -33,7 +34,8 @@ STUB_LOG_DIR="$TMP/stub-logs"
 LOGS="$TMP/logs"              # stands in for /tmp
 mkdir -p "$H" "$SRC/scripts" "$SRC/resources" "$BIN" "$STUB_LOG_DIR" "$LOGS"
 
-cp "$REAL_LUME_DIR/scripts/install-local.sh" "$REAL_LUME_DIR/scripts/uninstall-local.sh" "$SRC/scripts/"
+cp "$REAL_LUME_DIR/scripts/install-local.sh" "$REAL_LUME_DIR/scripts/uninstall-local.sh" \
+  "$REAL_LUME_DIR/scripts/_lume-local-common.sh" "$SRC/scripts/"
 for f in lume.entitlements lume.local.entitlements Info.plist AppIcon.icns; do
   cp "$REAL_LUME_DIR/resources/$f" "$SRC/resources/$f"
 done
@@ -56,7 +58,7 @@ cat > ".build/$config/lume" <<'LUME'
 #!/bin/sh
 case "$1" in
   --version) echo "lume version 0.0.0-test" ;;
-  *) echo "stub-lume name=$(basename "$0") args=$*" ;;
+  *) echo "stub-lume name=$(basename "$0") args=$* LUME_HOME=${LUME_HOME-unset}" ;;
 esac
 LUME
 chmod +x ".build/$config/lume"
@@ -244,8 +246,25 @@ check "launchctl loaded the .local plist" grep -q "^launchctl load $PLIST\$" "$S
 check "codesign used the local identifier" grep -q -- '--identifier com.trycua.lume.local' "$STUB_LOG_DIR/codesign.log"
 check "codesign never touched the install dirs" bash -c "! grep -q '$H' '$STUB_LOG_DIR/codesign.log'"
 
-WRAPPED="$("$H/.local/bin/lume-local" serve 2>&1)"
-check "the wrapper runs the lume-local binary" test "$WRAPPED" = "stub-lume name=lume-local args=serve"
+# The wrapper's runtime environment: it runs the lume-local binary, and sets
+# LUME_HOME to the Local home whatever the caller exported (typically the
+# released Lume's).
+wrapper() { # [VAR=value...] wrapper-path args...
+  local extra=()
+  while [ "$#" -gt 0 ] && [[ "$1" == *=* ]]; do
+    extra+=("$1")
+    shift
+  done
+  env -i PATH="$BIN:/usr/bin:/bin:/usr/sbin:/sbin" ${extra[@]+"${extra[@]}"} "$@"
+}
+check "the wrapper runs the lume-local binary with the Local home" test \
+  "$(wrapper HOME="$H" "$H/.local/bin/lume-local" serve 2>&1)" = "stub-lume name=lume-local args=serve LUME_HOME=$H/.lume-local"
+check "the wrapper overrides an inherited released-Lume LUME_HOME" test \
+  "$(wrapper HOME="$H" LUME_HOME="$H/.lume" "$H/.local/bin/lume-local" serve 2>&1)" = "stub-lume name=lume-local args=serve LUME_HOME=$H/.lume-local"
+check "the wrapper overrides an inherited LUME_HOME that points elsewhere" test \
+  "$(wrapper HOME="$H" LUME_HOME=/somewhere/else "$H/.local/bin/lume-local" ls 2>&1)" = "stub-lume name=lume-local args=ls LUME_HOME=$H/.lume-local"
+check "the wrapper passes arguments through untouched" test \
+  "$(wrapper HOME="$H" "$H/.local/bin/lume-local" run 'a b' --x=1 2>&1)" = "stub-lume name=lume-local args=run a b --x=1 LUME_HOME=$H/.lume-local"
 
 # ---- 2. install again, on another port: idempotent, still only .local --------
 
@@ -305,6 +324,144 @@ same "install without a service left the released Lume alone" \
   "$S2_BEFORE" "$(fingerprint $(stable_paths "$H2"))"
 H="$H_SAVE"
 
+# ---- 3b. aliases of the released Lume's paths are refused ---------------------
+#
+# A raw-string guard accepts "$HOME/./.lume", "$HOME/x/../.lume" or a symlink to
+# ~/.lume, and then `uninstall-local.sh --yes` deletes the released Lume's VMs.
+# Every target is canonicalised first.
+
+expect_refused() { # description, then the run() arguments
+  local desc="$1" rc out
+  shift
+  reset_logs
+  out="$(run "$@" 2>&1)"
+  rc=$?
+  # Exit status 2 is the guard's; anything else would be a failure for another reason.
+  check "$desc is refused" test "$rc" -eq 2
+  check "$desc says why" grep -q 'Error: ' <<< "$out"
+  check "$desc ran no build and no launchctl" test ! -e "$STUB_LOG_DIR/swift.log" -a ! -e "$STUB_LOG_DIR/launchctl.log"
+}
+
+H4="$TMP/home4"
+mkdir -p "$H4/work"
+seed_stable "$H4"
+ln -s "$H4/.lume" "$H4/alias-to-stable"                 # a symlink to the released home
+ln -s "$H4" "$H4/home-link"                              # a symlink to HOME
+ln -s "$H4/.local/share/lume" "$H4/share-alias"          # a symlink to the released app files
+ln -s .lume "$H4/.lume-local"                            # the default Local home, already aliasing the released home
+S4_BEFORE="$(fingerprint $(stable_paths "$H4"))"
+I4_BEFORE="$(inventory "$H4")"
+H_SAVE="$H"
+H="$H4"
+
+ALIASES=(
+  "$H4/./.lume"
+  "$H4/.lume/../.lume"
+  "$H4/work/../.lume"
+  "$H4/.lume/"
+  "$H4/.lume//vm1"
+  "$H4/.LUME"
+  "$H4/alias-to-stable"
+  "$H4/alias-to-stable/vm1"
+  "$H4/alias-to-stable/../.lume"
+  "$H4/home-link/.lume"
+  "$H4/home-link/./work/../.lume/vm1"
+  "$H4/home-link"
+  "$H4/.local"
+  "$H4/.local/share"
+  "$H4/.local/share/lume"
+  "$H4/share-alias/x"
+  "$H4/.config"
+  "$H4/.config/lume/sub"
+  "$H4/Library"
+  "$H4/Library/LaunchAgents/com.trycua.lume_daemon.plist"
+)
+for alias_path in "${ALIASES[@]}"; do
+  expect_refused "install with LUME_LOCAL_HOME=${alias_path#$H4}" LUME_LOCAL_HOME="$alias_path" install-local.sh
+  expect_refused "uninstall --yes with LUME_LOCAL_HOME=${alias_path#$H4}" LUME_LOCAL_HOME="$alias_path" uninstall-local.sh --yes
+done
+
+# The default Local home is a symlink to the released home.
+expect_refused "install when ~/.lume-local is a symlink to ~/.lume" install-local.sh
+expect_refused "uninstall --yes when ~/.lume-local is a symlink to ~/.lume" uninstall-local.sh --yes
+
+# The command, its files, its plist and its logs.
+expect_refused "install with --install-dir at the released command" install-local.sh --install-dir "$H4/.local/bin/lume"
+expect_refused "install with --install-dir inside the released home" install-local.sh --install-dir "$H4/.lume"
+expect_refused "install with --install-dir through a symlink to the released home" install-local.sh --install-dir "$H4/alias-to-stable/vm1"
+expect_refused "install with --install-dir at the released files" install-local.sh --install-dir "$H4/.local/share/lume"
+expect_refused "uninstall --yes with --install-dir at the released command" uninstall-local.sh --yes --install-dir "$H4/.local/bin/lume"
+expect_refused "install with the log directory inside the released home" LUME_LOCAL_LOG_DIR="$H4/alias-to-stable" LUME_LOCAL_HOME="$H4/safe-home" install-local.sh
+expect_refused "install with a relative LUME_LOCAL_HOME" LUME_LOCAL_HOME="relative/.lume" install-local.sh
+expect_refused "install with a relative --install-dir" LUME_LOCAL_HOME="$H4/safe-home" install-local.sh --install-dir relative/bin
+
+same "refused aliases wrote nothing" "$I4_BEFORE" "$(inventory "$H4")"
+same "refused aliases left every released-Lume path untouched" "$S4_BEFORE" "$(fingerprint $(stable_paths "$H4"))"
+check "the released VM is intact after every refused uninstall" test "$(cat "$H4/.lume/vm1/config.json")" = '{"name":"vm1"}'
+check "the released home still holds its VM disk" test -f "$H4/.lume/vm1/disk.img"
+
+# Symlinks planted where the installer writes.
+H5="$TMP/home5"
+mkdir -p "$H5"
+seed_stable "$H5"
+H="$H5"
+ln -s ../share/lume "$H5/.local/share/lume-local"        # its files directory is the released one
+S5_BEFORE="$(fingerprint $(stable_paths "$H5"))"
+I5_BEFORE="$(inventory "$H5")"
+expect_refused "install when the lume-local files directory is a symlink to the released one" install-local.sh
+expect_refused "uninstall --yes when the lume-local files directory is a symlink to the released one" uninstall-local.sh --yes
+rm "$H5/.local/share/lume-local"
+ln -s com.trycua.lume_daemon.plist "$H5/Library/LaunchAgents/com.trycua.lume_daemon.local.plist"
+I5_BEFORE="$(inventory "$H5")"
+expect_refused "install when the .local plist is a symlink to the released plist" install-local.sh
+expect_refused "uninstall --yes when the .local plist is a symlink to the released plist" uninstall-local.sh --yes
+rm "$H5/Library/LaunchAgents/com.trycua.lume_daemon.local.plist"
+ln -s lume "$H5/.local/bin/lume-local"                    # the command is a symlink to the released one
+I5_BEFORE="$(inventory "$H5")"
+expect_refused "install when lume-local is a symlink to the released lume" install-local.sh
+expect_refused "uninstall --yes when lume-local is a symlink to the released lume" uninstall-local.sh --yes
+rm "$H5/.local/bin/lume-local"
+I5_BEFORE="$(inventory "$H5")"
+rm -f "$LOGS/lume_daemon.local.log" "$LOGS/lume_daemon.local.error.log"
+ln -s lume_daemon.log "$LOGS/lume_daemon.local.log"        # the daemon log is the released daemon's log
+expect_refused "install when the .local daemon log is a symlink to the released log" install-local.sh
+expect_refused "uninstall --yes when the .local daemon log is a symlink to the released log" uninstall-local.sh --yes
+rm "$LOGS/lume_daemon.local.log"
+ln -s lume_daemon.error.log "$LOGS/lume_daemon.local.error.log"
+expect_refused "install when the .local daemon error log is a symlink to the released one" install-local.sh
+expect_refused "uninstall --yes when the .local daemon error log is a symlink to the released one" uninstall-local.sh --yes
+rm "$LOGS/lume_daemon.local.error.log"
+same "planted symlinks: nothing was written" "$I5_BEFORE" "$(inventory "$H5")"
+same "planted symlinks: the released Lume is untouched" "$S5_BEFORE" "$(fingerprint $(stable_paths "$H5"))"
+
+# A custom Local home is canonicalised, reaches the daemon and the command, and
+# is what an inherited LUME_HOME is replaced with.
+H6="$TMP/home6"
+mkdir -p "$H6/real-vms"
+seed_stable "$H6"
+ln -s real-vms "$H6/vms-link"
+S6_BEFORE="$(fingerprint $(stable_paths "$H6"))"
+H="$H6"
+run LUME_LOCAL_HOME="$H6/./vms-link/../vms-link/local home" install-local.sh >/dev/null 2>&1
+check "install with a custom home (through a symlink, with a space) succeeds" test $? -eq 0
+P6="$H6/Library/LaunchAgents/com.trycua.lume_daemon.local.plist"
+check "the custom home is canonical in the plist" test "$(plist_env "$P6" LUME_HOME)" = "$H6/real-vms/local home"
+check "the custom home exists and has its release-channel" test -f "$H6/real-vms/local home/release-channel"
+check "no default Local home was made beside it" test ! -e "$H6/.lume-local"
+check "the wrapper uses the custom home, not an inherited released-Lume LUME_HOME" test \
+  "$(wrapper HOME="$H6" LUME_HOME="$H6/.lume" "$H6/.local/bin/lume-local" ls 2>&1)" = "stub-lume name=lume-local args=ls LUME_HOME=$H6/real-vms/local home"
+check "the wrapper uses the custom home when LUME_HOME is unset" test \
+  "$(wrapper HOME="$H6" "$H6/.local/bin/lume-local" ls 2>&1)" = "stub-lume name=lume-local args=ls LUME_HOME=$H6/real-vms/local home"
+same "install with a custom home left the released Lume alone" "$S6_BEFORE" "$(fingerprint $(stable_paths "$H6"))"
+mkdir -p "$H6/real-vms/local home/vm-x"
+printf '{}\n' > "$H6/real-vms/local home/vm-x/config.json"
+run LUME_LOCAL_HOME="$H6/vms-link/local home" uninstall-local.sh --yes >/dev/null 2>&1
+check "uninstall --yes with the same custom home succeeds" test $? -eq 0
+check "uninstall removed the custom home" test ! -e "$H6/real-vms/local home"
+check "uninstall kept the directory that held it" test -d "$H6/real-vms"
+same "uninstall of the custom home left the released Lume alone" "$S6_BEFORE" "$(fingerprint $(stable_paths "$H6"))"
+H="$H_SAVE"
+
 # ---- 4. bridged-entitlement build: an .app named lume-local -------------------
 
 if [ -x /usr/libexec/PlistBuddy ]; then
@@ -322,7 +479,8 @@ if [ -x /usr/libexec/PlistBuddy ]; then
     "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")" = com.trycua.lume.local
   check "bridged app executable is lume-local" test \
     "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")" = lume-local
-  check "bridged wrapper runs the app's lume-local" grep -q "exec \"$APP/Contents/MacOS/lume-local\"" "$H3/.local/bin/lume-local"
+  check "bridged wrapper runs the app's lume-local with the Local home" test \
+    "$(wrapper HOME="$H3" LUME_HOME="$H3/.lume" "$H3/.local/bin/lume-local" ls 2>&1)" = "stub-lume name=lume-local args=ls LUME_HOME=$H3/.lume-local"
   check "bridged install leaves no stale standalone binary" test ! -e "$H3/.local/share/lume-local/lume-local"
   same "bridged install left the released Lume alone" \
     "$S3_BEFORE" "$(fingerprint $(stable_paths "$H3"))"

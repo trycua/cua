@@ -65,9 +65,13 @@ lume-local serve                              # listens on 127.0.0.1:7787, VMs i
 libs/lume/scripts/uninstall-local.sh          # remove it; asks before deleting VMs (--yes, --keep-vms)
 ```
 
-A binary named `lume-local` implies these defaults, like `cua-driver-local`. Explicit flags and environment still win: `lume-local serve --port 9000`, and `LUME_HOME=/path` moves the home, VM directory, settings file, image cache, release-channel file and telemetry identity of any Lume. A Lume with its own home ignores `XDG_CONFIG_HOME`, since every Lume on the Mac shares it. `lume-local` never updates itself: `update` would run the installer of the released Lume.
+A binary named `lume-local` implies these defaults, like `cua-driver-local`. Explicit flags and environment still win: `lume-local serve --port 9000`, and for `lume-local`, `LUME_HOME=/path` moves its home, VM directory, settings file, image cache, release-channel file and telemetry identity. `lume-local` has its own home, so it ignores `XDG_CONFIG_HOME`, which every Lume on the Mac shares. The released `lume` is unchanged: `LUME_HOME` still only moves its release-channel file. `lume-local` never updates itself: `update` would run the installer of the released Lume.
 
-The installer ignores `LUME_HOME` (use `LUME_LOCAL_HOME` to move the Local home) and refuses port 7777. Older versions of `install-local.sh` installed over the released `lume`; those files are not touched, so reinstall the released Lume with `install.sh` if you still have one of those builds.
+The `lume-local` command is a small wrapper that sets `LUME_HOME` to the Local home, overriding any value it inherits (often the released Lume's), so the command line and the daemon always use the same home. The installer reads a custom home from `LUME_LOCAL_HOME` (it ignores `LUME_HOME`, which may be the released Lume's) and refuses port 7777.
+
+Both scripts canonicalise every path they write or delete (`.`, `..` and symlinks resolved) and refuse any that equals, sits inside, or contains a path the released Lume uses (`~/.lume`, `~/.config/lume`, `~/.local/bin/lume`, `~/.local/share/lume`, the stable plist and logs). `$HOME/./.lume`, `$HOME/x/../.lume` and a symlink to `~/.lume` are all refused, so `uninstall-local.sh --yes` cannot delete the released Lume's VMs.
+
+Older versions of `install-local.sh` installed over the released `lume`; those files are not touched, so reinstall the released Lume with `install.sh` if you still have one of those builds.
 
 `scripts/tests/local-install-isolation-test.sh` runs both scripts against a fake home with stubbed `swift`, `codesign` and `launchctl`, and checks that nothing of the released Lume changes. `swift test` runs it.
 

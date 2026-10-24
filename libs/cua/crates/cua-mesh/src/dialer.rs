@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::{AuthProvider, Error, Forward, Mesh, MeshConfig, NodeKind, Result};
+use crate::{AuthProvider, Error, Forward, MEDIA_UDP_PORT, Mesh, MeshConfig, NodeKind, Result};
 
 /// The spacesd service on a machine.
 pub const SPACESD_SERVICE: &str = "spacesd";
@@ -70,7 +70,21 @@ impl Dialer {
         identity: Option<PathBuf>,
         timeout: Duration,
     ) -> Result<Self> {
-        let cfg = MeshConfig::new(relay.to_owned(), NodeKind::Client, identity, auth);
+        Self::start_with_media_port(relay, auth, identity, timeout, MEDIA_UDP_PORT).await
+    }
+
+    /// [`Dialer::start`] for machines that serve their QUIC media on mesh
+    /// UDP port `media_udp_port` (`--mesh-udp-port` of their cua-spacesd)
+    /// instead of [`MEDIA_UDP_PORT`].
+    pub async fn start_with_media_port(
+        relay: &str,
+        auth: AuthProvider,
+        identity: Option<PathBuf>,
+        timeout: Duration,
+        media_udp_port: u16,
+    ) -> Result<Self> {
+        let mut cfg = MeshConfig::new(relay.to_owned(), NodeKind::Client, identity, auth);
+        cfg.media_udp_port = media_udp_port;
         let mesh = Mesh::start(cfg).await?;
         if let Err(e) = mesh.wait_ready(timeout).await {
             mesh.shutdown();

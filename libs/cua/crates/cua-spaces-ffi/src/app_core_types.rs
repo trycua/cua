@@ -7865,7 +7865,8 @@ pub struct AppCliInstallPlan {
     pub installed_version: Option<String>,
     /// `cua --version` of the bundled CLI.
     pub bundled_version: Option<String>,
-    /// Another `cua` found earlier on PATH (it would shadow `target`).
+    /// Another CLI of the same name found earlier on PATH (it would shadow
+    /// `target`).
     pub shadowed_by: Option<String>,
     /// `bin_dir` is already on PATH.
     pub on_path: bool,
@@ -7873,9 +7874,10 @@ pub struct AppCliInstallPlan {
     pub path_profile: Option<String>,
     /// The line that would be added to `path_profile`.
     pub path_line: Option<String>,
-    /// A working `cua` CLI already on this machine: `target`, else the
-    /// first in the usual install folders or on PATH (a Finder-launched
+    /// A working CLI of this channel already on this machine: `target`, else
+    /// the first in the usual install folders or on PATH (a Finder-launched
     /// app's PATH lacks `~/.local/bin`, so the folders are searched too).
+    /// Local looks for `cua-local` only: a Stable `cua` is not its CLI.
     pub found: Option<String>,
 }
 

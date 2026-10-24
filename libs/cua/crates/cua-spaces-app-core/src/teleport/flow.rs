@@ -347,11 +347,24 @@ pub struct InstallCuaPrompt {
 
 /// Where people install Cua.
 pub const CUA_INSTALL_URL: &str = "https://cua.ai/install";
-/// Opens the Keyvault page of an installed Cua app.
-pub const CUA_OPEN_URL: &str = "cua://keyvault";
+// The "Open Cua" button opens the Keyvault page of this process's channel's
+// app, `cua://keyvault` or `cua-local://keyvault` (`CuaChannel::keyvault_url`).
 
 /// The prompt when `texts` carry the Keyvault's `requires_cua_app` refusal.
 pub fn requires_cua_app(texts: &[String], installed_flag: bool) -> Option<InstallCuaPrompt> {
+    requires_cua_app_for(
+        cua_home::channel::CuaChannel::current(),
+        texts,
+        installed_flag,
+    )
+}
+
+/// [`requires_cua_app`] for `channel`'s app.
+fn requires_cua_app_for(
+    channel: cua_home::channel::CuaChannel,
+    texts: &[String],
+    installed_flag: bool,
+) -> Option<InstallCuaPrompt> {
     if !texts
         .iter()
         .any(|t| contains_word(t, "requires_cua_app") || contains_word(t, "RequiresCuaApp"))
@@ -369,7 +382,7 @@ pub fn requires_cua_app(texts: &[String], installed_flag: bool) -> Option<Instal
             title: "Open Cua to teleport your session".into(),
             message: "The Cua app keeps your logins in its Keyvault and asks you before sharing them. Open it, then try again.".into(),
             action_label: "Open Cua".into(),
-            url: CUA_OPEN_URL.into(),
+            url: channel.keyvault_url(),
         }
     } else {
         InstallCuaPrompt {
@@ -1772,8 +1785,25 @@ mod tests {
         )
         .unwrap();
         assert!(p.installed);
-        assert_eq!(p.url, CUA_OPEN_URL);
+        assert_eq!(p.url, cua_home::channel::CuaChannel::current_keyvault_url());
         assert!(requires_cua_app(&["xrequires_cua_app".into()], false).is_none());
+    }
+
+    #[test]
+    fn the_open_cua_button_opens_the_channels_app() {
+        use cua_home::channel::CuaChannel;
+        let texts = ["requires_cua_app: installed but not running".to_string()];
+        let url = |c| requires_cua_app_for(c, &texts, false).unwrap().url;
+        assert_eq!(url(CuaChannel::Stable), "cua://keyvault");
+        // Local opens Cua Spaces Local, never the released app.
+        assert_eq!(url(CuaChannel::Local), "cua-local://keyvault");
+        // Not installed: the install link, whichever channel.
+        let texts = ["requires_cua_app".to_string()];
+        for c in CuaChannel::ALL {
+            let p = requires_cua_app_for(c, &texts, false).unwrap();
+            assert!(!p.installed);
+            assert_eq!(p.url, CUA_INSTALL_URL);
+        }
     }
 
     fn chrome_entry() -> CatalogEntry {

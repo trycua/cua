@@ -172,10 +172,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
-        with:
-          workspaces: "libs/cua-spacesd -> target"
-          key: release-${{ matrix.target }}
       - name: Build
         working-directory: libs/cua-spacesd
         env:
@@ -233,10 +229,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           targets: aarch64-apple-darwin, x86_64-apple-darwin
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
-        with:
-          workspaces: "libs/cua-spacesd -> target"
-          key: release-darwin-universal
       - name: Build arm64 and x86_64
         working-directory: libs/cua-spacesd
         run: |
@@ -396,10 +388,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           targets: x86_64-pc-windows-msvc
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-spacesd -> target"
-          key: release-x86_64-pc-windows-msvc
+          shared-key: libs-cua-spacesd-release
       - name: Require Authenticode for a published release
         if: env.PUBLISH == 'true' && github.repository == 'trycua/cua' && (vars.AZURE_CLIENT_ID == '' || vars.AZURE_ARTIFACT_SIGNING_ENDPOINT == '')
         run: |

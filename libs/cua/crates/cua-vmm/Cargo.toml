@@ -80,3 +80,5 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage
 cua-spacesd-client.workspace = true
 tempfile = "3"
 tokio = { version = "1", features = ["full"] }
+# Reads Local's `config.yaml` back with a real YAML parser (same version as cua-agent-setup).
+serde_yaml_ng = "0.10"

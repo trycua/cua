@@ -1824,18 +1824,23 @@ fn default_cua_home(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> PathBuf
     if let Some(h) = set("CUA_HOME") {
         return PathBuf::from(h);
     }
+    // The channel and environment come from the lookup too (`CUA_CHANNEL`,
+    // `CUA_ENV`): each has its own home, where its daemon serves the
+    // Keyvault (`~/.cua/envs/staging`, `~/.cua-local`,
+    // `~/.cua-local/envs/prod`).
+    let channel = cua_home::channel::CuaChannel::from_env_value(
+        var("CUA_CHANNEL")
+            .and_then(|v| v.into_string().ok())
+            .as_deref(),
+    );
+    let env_value = var("CUA_ENV").and_then(|v| v.into_string().ok());
+    let env = channel.env_or_fallback(env_value.as_deref());
     let base = set("HOME")
         .or_else(|| set("USERPROFILE"))
         .map(PathBuf::from)
         .unwrap_or_default()
-        .join(".cua");
-    // A non-production `CUA_ENV` has its own home, where its daemon serves
-    // the Keyvault (`~/.cua/envs/staging`).
-    let env = var("CUA_ENV").and_then(|v| v.into_string().ok());
-    match cua_home::env::CuaEnv::try_from_value(env.as_deref())
-        .unwrap_or_default()
-        .home_subdir()
-    {
+        .join(channel.home_dir_name());
+    match channel.home_subdir(env) {
         Some(sub) => base.join(sub),
         None => base,
     }
@@ -2544,6 +2549,7 @@ impl AppCliInstaller {
     ) -> Arc<Self> {
         Arc::new(Self {
             inner: core::installer::CliInstaller {
+                channel: cua_home::channel::CuaChannel::Stable,
                 bundled: bundled.map(PathBuf::from),
                 bin_dir: bin_dir.into(),
                 path_env,
@@ -3032,6 +3038,41 @@ mod keyvault_home_tests {
         assert_eq!(
             home(&[("CUA_HOME", "/srv/cua"), ("CUA_ENV", "staging")]),
             PathBuf::from("/srv/cua")
+        );
+    }
+
+    /// The Local channel's daemon (and so its Keyvault) lives in
+    /// `~/.cua-local` on staging and `~/.cua-local/envs/prod` on prod
+    /// (CUA-1776); `CUA_HOME` still wins.
+    #[test]
+    fn the_keyvault_follows_the_local_channel() {
+        let local = |vars: &[(&str, &str)]| {
+            let mut all = vec![("HOME", "/home/ada"), ("CUA_CHANNEL", "local")];
+            all.extend_from_slice(vars);
+            home(&all)
+        };
+        assert_eq!(local(&[]), PathBuf::from("/home/ada/.cua-local"));
+        assert_eq!(
+            local(&[("CUA_ENV", "staging")]),
+            PathBuf::from("/home/ada/.cua-local")
+        );
+        assert_eq!(
+            local(&[("CUA_ENV", "prod")]),
+            PathBuf::from("/home/ada/.cua-local/envs/prod")
+        );
+        // A mistyped environment is staging on Local, never production.
+        assert_eq!(
+            local(&[("CUA_ENV", "prd")]),
+            PathBuf::from("/home/ada/.cua-local")
+        );
+        assert_eq!(
+            local(&[("CUA_HOME", "/srv/cua"), ("CUA_ENV", "prod")]),
+            PathBuf::from("/srv/cua")
+        );
+        // Stable is untouched by a Local variable elsewhere.
+        assert_eq!(
+            home(&[("HOME", "/home/ada"), ("CUA_CHANNEL", "stable")]),
+            PathBuf::from("/home/ada/.cua")
         );
     }
 }

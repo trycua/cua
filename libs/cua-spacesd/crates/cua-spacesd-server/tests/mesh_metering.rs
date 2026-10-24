@@ -140,6 +140,7 @@ impl World {
             dir: dir.path().to_owned(),
             local,
             quic: Some(media),
+            media_udp_port: cua_mesh::MEDIA_UDP_PORT,
             account,
             env_token: Arc::new(|| None),
             name: id.to_owned(),

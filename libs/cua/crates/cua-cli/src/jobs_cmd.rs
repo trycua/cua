@@ -811,7 +811,6 @@ pub fn project_bundle(dir: &Path, files: &[String]) -> Result<Vec<u8>, CuaError>
     for f in files {
         let p = dir.join(f);
         let data = std::fs::read(&p).map_err(io)?;
-        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut mode = 0o644;
         #[cfg(unix)]
         {
@@ -820,6 +819,14 @@ pub fn project_bundle(dir: &Path, files: &[String]) -> Result<Vec<u8>, CuaError>
                 .map(|m| m.permissions().mode() & 0o111 != 0)
                 .unwrap_or(false)
             {
+                mode = 0o755;
+            }
+        }
+        // A Windows file has no mode to keep, and the node that runs it does:
+        // a script (it starts with `#!`) stays executable.
+        #[cfg(not(unix))]
+        {
+            if data.starts_with(b"#!") {
                 mode = 0o755;
             }
         }

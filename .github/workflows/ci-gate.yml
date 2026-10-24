@@ -26,7 +26,8 @@ jobs:
           api() { local out; for _ in 1 2 3 4 5 6; do out=$(gh api "$@") && { printf '%s\n' "$out"; return; }; sleep 120; done; return 1; }
           sha=$PR_SHA
           if [[ -n "$QUEUE_REF" ]]; then
-            pr=$(grep -oP '/pr-\K[0-9]+' <<<"$QUEUE_REF") || exit 1
+            [[ "$QUEUE_REF" =~ /pr-([0-9]+) ]] || exit 1
+            pr=${BASH_REMATCH[1]}
             sha=$(api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq .head.sha) || exit 1
           fi
           runs() {
@@ -51,7 +52,7 @@ jobs:
           previous=
           while :; do
             current=$(runs) || exit 1
-            if [[ -n "$current" && "$current" == "$previous" ]] && ! grep -qvP '\tcompleted$' <<<"$current"; then
+            if [[ -n "$current" && "$current" == "$previous" ]] && awk -F'\t' '$NF != "completed" { exit 1 }' <<<"$current"; then
               break
             fi
             previous=$current

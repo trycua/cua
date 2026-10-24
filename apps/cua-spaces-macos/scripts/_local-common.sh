@@ -73,6 +73,29 @@ ok() { printf '%s%s%s\n' "$GREEN" "$*" "$NORMAL"; }
 warn() { printf '%swarning: %s%s\n' "$YELLOW" "$*" "$NORMAL" >&2; }
 err() { printf '%serror: %s%s\n' "$RED" "$*" "$NORMAL" >&2; }
 
+# bounded SECONDS COMMAND...: runs the command with no input and stops it after
+# SECONDS (macOS has no timeout(1)). Returns the command's status, or 143 when
+# it was stopped. Prints nothing of its own, not even the shell's "Terminated".
+bounded() {
+    local secs="$1" pid watchdog elapsed status=0
+    shift
+    "$@" </dev/null &
+    pid=$!
+    (
+        elapsed=0
+        while [ "$elapsed" -lt "$secs" ] && kill -0 "$pid" 2>/dev/null; do
+            sleep 1
+            elapsed=$((elapsed + 1))
+        done
+        if [ "$elapsed" -ge "$secs" ]; then kill "$pid" 2>/dev/null; fi
+    ) >/dev/null 2>&1 &
+    watchdog=$!
+    { wait "$pid" || status=$?; } 2>/dev/null
+    kill "$watchdog" 2>/dev/null || true
+    { wait "$watchdog"; } 2>/dev/null || true
+    return "$status"
+}
+
 # A value of a bundle's Info.plist (a key path like CFBundleIdentifier); empty
 # and failing when it is not there.
 plist_get() { "$PLISTBUDDY" -c "Print :$2" "$1" 2>/dev/null; }

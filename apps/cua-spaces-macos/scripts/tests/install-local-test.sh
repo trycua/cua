@@ -87,6 +87,7 @@ cat > "$WORK/stub.c" <<'EOF'
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 int main(int argc, char **argv) {
     const char *log = getenv("STUB_LOG");
     // `CuaSpacesMac --service-helper status`: the login item is registered
@@ -100,8 +101,22 @@ int main(int argc, char **argv) {
         const char *channel = getenv("CUA_CHANNEL");
         fprintf(f, "%s", argv[0]);
         for (int i = 1; i < argc; i++) fprintf(f, " %s", argv[i]);
-        fprintf(f, " [CUA_CHANNEL=%s]\n", channel ? channel : "");
+        fprintf(f, " [CUA_CHANNEL=%s]", channel ? channel : "");
+        // The home and environment, only when the caller pinned them (the
+        // uninstaller does for `host remove`; nothing else sets them here).
+        if (getenv("CUA_HOME")) fprintf(f, " [CUA_HOME=%s]", getenv("CUA_HOME"));
+        if (getenv("CUA_ENV")) fprintf(f, " [CUA_ENV=%s]", getenv("CUA_ENV"));
+        fprintf(f, "\n");
         fclose(f);
+    }
+    // `cua host remove`: STUB_HOST_REMOVE_HANG=N waits N seconds first (a relay
+    // that does not answer), STUB_HOST_REMOVE_STATUS=N exits with N (offline,
+    // signed out).
+    if (argc >= 3 && strcmp(argv[1], "host") == 0 && strcmp(argv[2], "remove") == 0) {
+        const char *hang = getenv("STUB_HOST_REMOVE_HANG");
+        const char *status = getenv("STUB_HOST_REMOVE_STATUS");
+        if (hang) sleep((unsigned)atoi(hang));
+        if (status) return atoi(status);
     }
     return 0;
 }
@@ -1227,6 +1242,9 @@ install
 mkdir -p "$FAKE_HOME/.cua-local/helper" "$FAKE_HOME/Library/Application Support/com.trycua.spaces.macos.local" "$FAKE_HOME/Cua Volume Local"
 echo '{}' > "$FAKE_HOME/.cua-local/helper/service.json"
 echo '{}' > "$FAKE_HOME/.cua-local/credentials.json"
+# This Mac is registered on the relay: the host setup's config exists.
+mkdir -p "$FAKE_HOME/.cua-local/host"
+echo '{}' > "$FAKE_HOME/.cua-local/host/config.json"
 echo '{}' > "$FAKE_HOME/Library/Application Support/com.trycua.spaces.macos.local/settings.json"
 echo '<plist/>' > "$FAKE_HOME/Library/LaunchAgents/com.trycua.spacesd.host.local.plist"
 # What macOS keeps for the Local bundle id in ~/Library.
@@ -1248,6 +1266,7 @@ check "answering n removes nothing" '[ "$RC" = 0 ] && [ "$(snap_all)" = "$BEFORE
 STDIN_FILE=/dev/null
 uninstall
 check "no answer (no terminal) removes nothing" '[ "$(snap_all)" = "$BEFORE_UNINSTALL" ]'
+check "and the relay is not told anything before the answer is yes" '! grep >/dev/null "host remove" "$STUB_LOG"'
 
 STDIN_FILE="$WORK/answer-y"; echo y > "$STDIN_FILE"
 uninstall
@@ -1260,12 +1279,88 @@ check "and Stable's preferences, caches, web view data, cookies and window state
     '[ -f "$FAKE_HOME/Library/Preferences/com.trycua.spaces.macos.plist" ] && [ -f "$FAKE_HOME/Library/Caches/com.trycua.spaces.macos/Cache.db" ] && [ -f "$FAKE_HOME/Library/WebKit/com.trycua.spaces.macos/data" ] && [ -f "$FAKE_HOME/Library/Cookies/com.trycua.spaces.macos.binarycookies" ] && [ -f "$FAKE_HOME/Library/Saved Application State/com.trycua.spaces.macos.savedState/windows.plist" ]'
 check "the Local host runner job file is gone" '[ ! -e "$FAKE_HOME/Library/LaunchAgents/com.trycua.spacesd.host.local.plist" ]'
 check "the helper login item was unregistered by the Local app itself" 'grep >/dev/null -- "--service-helper unregister \[CUA_CHANNEL=local\]" "$STUB_LOG"'
+check "the relay was told first: cua-local host remove, pinned to the Local channel, home and environment" \
+    'grep >/dev/null "^$FAKE_HOME/.local/bin/cua-local host remove --force --uninstalling \[CUA_CHANNEL=local\] \[CUA_HOME=$FAKE_HOME/.cua-local\] \[CUA_ENV=staging\]\$" "$STUB_LOG" && [ "$(grep -c "host remove" "$STUB_LOG")" = 1 ]'
+check "and before the app unregistered its login item and was removed" \
+    '[ "$(grep -n "host remove" "$STUB_LOG" | head -1 | cut -d: -f1)" -lt "$(grep -n -- "--service-helper unregister" "$STUB_LOG" | head -1 | cut -d: -f1)" ]'
+check "it said so in one plain line, with no warning (nothing to skip)" \
+    'printf "%s" "$OUT" | grep >/dev/null "this Mac is off the relay" && ! printf "%s" "$OUT" | grep >/dev/null "could not tell the relay"'
+check "Stable's cua was never run" '! grep >/dev/null "^$FAKE_HOME/.local/bin/cua " "$STUB_LOG"'
 check "launchctl was asked about the two Local labels only" \
     'grep >/dev/null "bootout gui/[0-9]*/com.trycua.spaces.local.helper$" "$SHIM_LOG" && grep >/dev/null "bootout gui/[0-9]*/com.trycua.spacesd.host.local$" "$SHIM_LOG" && [ "$(grep -c "^launchctl" "$SHIM_LOG")" = 2 ]'
 check "only the Local Keychain services were deleted (both of them)" \
     'grep >/dev/null "^security delete-generic-password -s ai.cua.session.local\$" "$SHIM_LOG" && grep >/dev/null "^security delete-generic-password -s ai.cua.session.local.staging\$" "$SHIM_LOG" && ! grep "^security" "$SHIM_LOG" | grep -v -e "-s ai.cua.session.local\$" -e "-s ai.cua.session.local.staging\$"'
 check "the Local volume folder is kept" '[ "$(cat "$FAKE_HOME/Cua Volume Local/keep.txt")" = mine ]'
 check "Stable files are byte-identical after uninstall" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
+
+echo "== uninstall and the relay =="
+# A helper for a fixture with a Local install and a host config in each of the
+# homes the arguments name (staging: ~/.cua-local; prod: ~/.cua-local/envs/prod).
+install_with_host() {
+    local env_name
+    reset_fixture
+    install
+    for env_name in "$@"; do
+        case "$env_name" in
+            staging) mkdir -p "$FAKE_HOME/.cua-local/host"; echo '{}' > "$FAKE_HOME/.cua-local/host/config.json" ;;
+            *) mkdir -p "$FAKE_HOME/.cua-local/envs/$env_name/host"; echo '{}' > "$FAKE_HOME/.cua-local/envs/$env_name/host/config.json" ;;
+        esac
+    done
+    STABLE_BEFORE="$(snap_stable)"
+    : > "$SHIM_LOG"; : > "$STUB_LOG"
+}
+
+# Offline or signed out: host remove exits non-zero. One plain line, and the
+# uninstall goes on.
+install_with_host staging
+STUB_HOST_REMOVE_STATUS=1 uninstall --yes
+check "a relay that cannot be told: the uninstall still finishes (status $RC)" \
+    '[ "$RC" = 0 ] && [ ! -e "$LOCAL_APP" ] && [ ! -e "$LOCAL_CLI" ] && [ ! -L "$LOCAL_CLI" ] && [ ! -e "$FAKE_HOME/.cua-local" ]'
+check "and says so in one plain line" \
+    '[ "$(printf "%s\n" "$OUT" | grep -c "could not tell the relay this Mac is gone")" = 1 ] && printf "%s" "$OUT" | grep >/dev/null "offline, signed out" && ! printf "%s" "$OUT" | grep >/dev/null "this Mac is off the relay"'
+check "Stable files are byte-identical" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
+
+# A relay that does not answer: the call is stopped at the limit.
+install_with_host staging
+start=$SECONDS
+CUA_UNINSTALL_HOST_REMOVE_SECS=2 STUB_HOST_REMOVE_HANG=30 uninstall --yes
+elapsed=$((SECONDS - start))
+check "a relay that never answers is given up on at the limit, not waited for (${elapsed}s, status $RC)" \
+    '[ "$RC" = 0 ] && [ "$elapsed" -lt 25 ] && [ ! -e "$LOCAL_APP" ] && [ ! -e "$FAKE_HOME/.cua-local" ]'
+check "it says so in one plain line, naming the limit, and prints nothing from the shell about it" \
+    '[ "$(printf "%s\n" "$OUT" | grep -c "could not tell the relay this Mac is gone")" = 1 ] && printf "%s" "$OUT" | grep >/dev/null "no answer in 2s" && ! printf "%s" "$OUT" | grep >/dev/null "Terminated"'
+
+# Not set up for access (no host config): nothing to tell the relay.
+install_with_host
+uninstall --yes
+check "no host setup: the relay is not called, and it says so (status $RC)" \
+    '[ "$RC" = 0 ] && ! grep >/dev/null "host remove" "$STUB_LOG" && printf "%s" "$OUT" | grep >/dev/null "not set up for access" && [ ! -e "$LOCAL_APP" ]'
+
+# The link is gone but the app is there: the bundled cua is the same program.
+install_with_host staging
+rm -f "$LOCAL_CLI"
+uninstall --yes
+check "without the cua-local link, the app's own cua tells the relay (status $RC)" \
+    '[ "$RC" = 0 ] && grep >/dev/null "^$LOCAL_APP/Contents/MacOS/cua host remove --force --uninstalling \[CUA_CHANNEL=local\]" "$STUB_LOG" && ! grep >/dev/null "^$FAKE_HOME/.local/bin/cua " "$STUB_LOG"'
+
+# No CLI at all (a half-removed install): skipped, one line, the rest is removed.
+reset_fixture
+mkdir -p "$FAKE_HOME/.cua-local/host"
+echo '{}' > "$FAKE_HOME/.cua-local/host/config.json"
+STABLE_BEFORE="$(snap_stable)"
+: > "$SHIM_LOG"; : > "$STUB_LOG"
+uninstall --yes
+check "no cua-local to run: skipped with one line, and the rest is still removed (status $RC)" \
+    '[ "$RC" = 0 ] && [ "$(printf "%s\n" "$OUT" | grep -c "skipped taking this Mac off the relay")" = 1 ] && [ ! -e "$FAKE_HOME/.cua-local" ] && [ ! -s "$STUB_LOG" ]'
+check "Stable files are byte-identical" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
+
+# The production opt-in keeps its host setup in a home of its own; staging's is
+# separate. Each is told, with its own home and environment.
+install_with_host staging prod
+uninstall --yes
+check "staging and production homes are each taken off the relay, with their own home and environment (status $RC)" \
+    '[ "$RC" = 0 ] && grep >/dev/null "host remove .*\[CUA_HOME=$FAKE_HOME/.cua-local\] \[CUA_ENV=staging\]\$" "$STUB_LOG" && grep >/dev/null "host remove .*\[CUA_HOME=$FAKE_HOME/.cua-local/envs/prod\] \[CUA_ENV=prod\]\$" "$STUB_LOG" && [ "$(grep -c "host remove" "$STUB_LOG")" = 2 ]'
+check "Stable files are byte-identical" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
 
 echo "== uninstall and the old Local id =="
 reset_fixture

@@ -16,6 +16,8 @@
 #                        (default $HOME); the state is always removed from $HOME
 #
 # It removes, after asking:
+#   - this Mac's entry in your machine list: `cua-local host remove` tells the
+#     relay first (best effort: offline or signed out, it says so and goes on)
 #   - the Local helper login item (unregistered) and the Local host runner job
 #   - ~/Applications/Cua Spaces Local.app
 #   - ~/.local/bin/cua-local
@@ -86,6 +88,9 @@ LOCAL_APP_SUPPORT="$HOME/Library/Application Support/$LOCAL_APP_SUPPORT_DIR_NAME
 HOST_JOB_PLIST="$HOME/Library/LaunchAgents/$LOCAL_HOST_LABEL.plist"
 LUME_UNINSTALL="$REPO_ROOT/libs/lume/scripts/uninstall-local.sh"
 GUI_DOMAIN="gui/$(id -u)"
+# How long `cua-local host remove` may take to tell the relay (the released
+# uninstaller waits the same: it also turns off the Spaces this Mac provides).
+HOST_REMOVE_SECS="${CUA_UNINSTALL_HOST_REMOVE_SECS:-150}"
 
 # Every path this script removes has a Local name; these are the checks that
 # keep a bad prefix or HOME from aiming it elsewhere.
@@ -112,6 +117,7 @@ confirm() {
 }
 
 echo "This removes Cua Spaces Local. The released Cua Spaces, ~/.cua, ~/.local/bin/cua and ~/.lume are not touched."
+echo "  machine list:       this Mac is removed from it ($LOCAL_CLI_NAME host remove), if it is set up for access"
 echo "  helper login item:  $LOCAL_HELPER_LABEL"
 echo "  app:                $APP_DEST"
 echo "  CLI:                $CLI_LINK"
@@ -129,6 +135,62 @@ if [ "$WITH_LUME_LOCAL" = 1 ]; then
 elif [ "$YES" != 1 ] && lume_local_present; then
     confirm "Also remove $LOCAL_LUME_BIN_NAME and its VMs in ~/$LOCAL_LUME_DIR_NAME?" && REMOVE_LUME=1
 fi
+
+# --- This Mac in your machine list ---------------------------------------------------
+
+# The homes Local keeps a host setup in, as "ENV<TAB>HOME" lines: ~/.cua-local
+# (staging, Local's default) and ~/.cua-local/envs/<env> (the production
+# opt-in). Only a home that has a host config is listed.
+local_host_homes() {
+    local env_home
+    if [ -f "$LOCAL_HOME/host/config.json" ]; then
+        printf 'staging\t%s\n' "$LOCAL_HOME"
+    fi
+    for env_home in "$LOCAL_HOME"/envs/*; do
+        [ -f "$env_home/host/config.json" ] || continue
+        printf '%s\t%s\n' "$(basename "$env_home")" "$env_home"
+    done
+}
+
+# Tells the relay this Mac is gone (`cua-local host remove`, as the released
+# uninstaller runs `cua host remove`), so it does not stay in the user's machine
+# list. It runs first: the app and the CLI are still there, and it also removes
+# the host service. Best effort and bounded: offline, signed out or no answer in
+# time, it says so in one line and the uninstall goes on. The channel, home and
+# environment are pinned, so a CUA_CHANNEL or CUA_HOME in the shell can never
+# aim it at the released Cua Spaces.
+unregister_local_host() {
+    local entries cli="" candidate env_name home failed=0
+    entries="$(local_host_homes)"
+    if [ -z "$entries" ]; then
+        log "this Mac is not set up for access: nothing to take off the relay"
+        return 0
+    fi
+    for candidate in "$CLI_LINK" "$APP_DEST/Contents/MacOS/cua"; do
+        if [ -x "$candidate" ] && [ ! -d "$candidate" ]; then
+            cli="$candidate"
+            break
+        fi
+    done
+    if [ -z "$cli" ]; then
+        warn "skipped taking this Mac off the relay: $LOCAL_CLI_NAME is not installed. It may still be in your machine list; remove it there."
+        return 0
+    fi
+    log "taking this Mac off the relay ($LOCAL_CLI_NAME host remove)"
+    while IFS=$'\t' read -r env_name home; do
+        [ -n "$home" ] || continue
+        bounded "$HOST_REMOVE_SECS" env CUA_CHANNEL=local CUA_ENV="$env_name" CUA_HOME="$home" \
+            CUA_TELEMETRY=0 DO_NOT_TRACK=1 \
+            "$cli" host remove --force --uninstalling >/dev/null 2>&1 || failed=1
+    done <<< "$entries"
+    if [ "$failed" = 1 ]; then
+        warn "could not tell the relay this Mac is gone (offline, signed out or no answer in ${HOST_REMOVE_SECS}s). It may still be in your machine list; remove it there."
+    else
+        log "this Mac is off the relay"
+    fi
+}
+
+unregister_local_host
 
 # --- The helper login item and the host runner ------------------------------------
 

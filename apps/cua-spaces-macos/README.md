@@ -417,10 +417,12 @@ Rebuilding is the same command. To remove it:
 scripts/uninstall-local.sh               # asks first; --yes to skip, --with-lume-local to include lume-local
 ```
 
-It unregisters the Local helper login item and removes the app, `cua-local`,
-`~/.cua-local`, the Local app support folder and the Local Keychain items
-(`ai.cua.session.local*`). It keeps `~/Cua Volume Local` and the permissions
-macOS granted.
+It first runs `cua-local host remove` (best effort, stopped after 150 seconds),
+so this Mac does not stay in your machine list; offline or signed out, it says
+so in one line and goes on. Then it unregisters the Local helper login item and
+removes the app, `cua-local`, `~/.cua-local`, the Local app support folder and
+the Local Keychain items (`ai.cua.session.local*`). It keeps `~/Cua Volume Local`
+and the permissions macOS granted.
 
 **The Local bundle id changed.** The first Local builds were
 `com.trycua.spaces.local`; Local is now `com.trycua.spaces.macos.local` (Stable

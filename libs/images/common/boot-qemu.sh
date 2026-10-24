@@ -40,7 +40,9 @@ DISK="${1:?disk.img}"; shift
 host_arch() { case "$(uname -m)" in arm64|aarch64) echo arm64 ;; *) echo amd64 ;; esac; }
 ARCH="$(host_arch)"; MEM=4G; SMP=4; FWD="3211,22"; PROBE=""; RFB_OUT=""
 CLAIM_DIR=""; RUN_CMD=""
-SSH=0; SSH_CMD='uname -a; systemctl is-system-running || true; systemctl --no-pager --plain list-units "cua-*"'; ENV_TOKEN=""; TIMEOUT=300; LOG=""; KEEP=0; UEFI=0
+# The default SSH check also fails when cloud-init rewrote apt's sources with
+# a release it could not read ("UNAVAILABLE"), which breaks apt-get.
+SSH=0; SSH_CMD='uname -a; systemctl is-system-running || true; systemctl --no-pager --plain list-units "cua-*"; if grep -rsl UNAVAILABLE /etc/apt/sources.list /etc/apt/sources.list.d/; then echo "apt sources name no release (UNAVAILABLE)" >&2; exit 1; fi'; ENV_TOKEN=""; TIMEOUT=300; LOG=""; KEEP=0; UEFI=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --arch) ARCH="$2"; shift 2 ;;

@@ -186,6 +186,12 @@ jobs:
         if: matrix.container == ''
         with:
           node-version: "22"
+      # The Windows signing step needs the ArtifactSigning PowerShell module.
+      # Install it (with retries) and prove its cmdlet resolves now, so a
+      # problem fails the job in seconds and not after the build (#5838).
+      - name: Check the Artifact Signing module (Windows)
+        if: runner.os == 'Windows' && vars.AZURE_CLIENT_ID != ''
+        uses: ./.github/actions/artifact-signing-module
       - name: Build libcua_sdk, the cua CLI and the N-API runtime
         working-directory: libs/cua
         env:
@@ -306,6 +312,8 @@ jobs:
         if: runner.os == 'Windows' && vars.AZURE_CLIENT_ID != ''
         uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
         with:
+          # Install the module on every run: a cached one skipped the install and was not found (#5838).
+          cache-dependencies: 'false'
           endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
           signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
           certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}

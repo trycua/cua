@@ -730,7 +730,47 @@ async fn pid_of(
     oref: &atspi::ObjectRefOwned,
 ) -> Option<u32> {
     let bus = atspi::zbus::names::BusName::try_from(oref.name_as_str()?.to_owned()).ok()?;
-    dbus.get_connection_unix_process_id(bus).await.ok()
+    let pid = dbus.get_connection_unix_process_id(bus).await.ok()?;
+    Some(flatpak_app_pid(pid).unwrap_or(pid))
+}
+
+/// Flatpak apps reach the a11y bus through their instance's xdg-dbus-proxy, so
+/// the bus reports the proxy's pid. Map it to the sandboxed app's host pid:
+/// the child of the instance's inner bwrap (`bwrapinfo.json` `child-pid`).
+fn flatpak_app_pid(proxy_pid: u32) -> Option<u32> {
+    if process_name(proxy_pid).as_deref() != Some("xdg-dbus-proxy") {
+        return None;
+    }
+    let info = std::fs::read_to_string(format!("/proc/{proxy_pid}/root/.flatpak-info")).ok()?;
+    let instance = info
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("instance-id="))?
+        .trim()
+        .to_owned();
+    let uid = std::fs::read_to_string(format!("/proc/{proxy_pid}/status"))
+        .ok()?
+        .lines()
+        .find_map(|l| l.strip_prefix("Uid:"))?
+        .split_whitespace()
+        .next()?
+        .to_owned();
+    let bwrapinfo =
+        std::fs::read_to_string(format!("/run/user/{uid}/.flatpak/{instance}/bwrapinfo.json")).ok()?;
+    let rest = &bwrapinfo[bwrapinfo.find("\"child-pid\"")? + "\"child-pid\"".len()..];
+    let digits: String = rest
+        .trim_start_matches(|c: char| c == ':' || c.is_whitespace())
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    let inner: u32 = digits.parse().ok()?;
+    // The app is the inner bwrap's first child; fall back to the inner bwrap itself.
+    let children = std::fs::read_to_string(format!("/proc/{inner}/task/{inner}/children")).unwrap_or_default();
+    Some(
+        children
+            .split_whitespace()
+            .find_map(|c| c.parse().ok())
+            .unwrap_or(inner),
+    )
 }
 
 /// Keep the first matching application as a compatibility fallback, but allow

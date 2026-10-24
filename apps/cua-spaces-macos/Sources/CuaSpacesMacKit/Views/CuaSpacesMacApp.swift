@@ -313,8 +313,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
 
-    /// `cua://add/<CODE>` links: the page's Machines at the code, which it
-    /// confirms before joining. Never joins by itself.
+    /// `cua://add/<CODE>` links (`cua-local://` in Cua Spaces Local, which
+    /// answers to its own scheme only): the page's Machines at the code,
+    /// which it confirms before joining. Never joins by itself.
     func application(_ application: NSApplication, open urls: [URL]) {
         guard let route = urls.lazy.compactMap(JoinWithCode.route(for:)).first else { return }
         NSApp.activate()

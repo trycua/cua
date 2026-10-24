@@ -16,6 +16,8 @@
 //!
 //! The Spaces apps ship this binary as their `cua`.
 
+#![recursion_limit = "256"]
+
 use std::io::Write;
 use std::sync::Arc;
 

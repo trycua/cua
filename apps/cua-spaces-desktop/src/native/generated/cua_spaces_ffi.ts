@@ -13212,7 +13212,8 @@ export type AppCliInstallPlan = {
      */
     bundledVersion?: string,
     /**
-     * Another `cua` found earlier on PATH (it would shadow `target`).
+     * Another CLI of the same name found earlier on PATH (it would shadow
+     * `target`).
      */
     shadowedBy?: string,
     /**
@@ -13228,9 +13229,10 @@ export type AppCliInstallPlan = {
      */
     pathLine?: string,
     /**
-     * A working `cua` CLI already on this machine: `target`, else the
-     * first in the usual install folders or on PATH (a Finder-launched
+     * A working CLI of this channel already on this machine: `target`, else
+     * the first in the usual install folders or on PATH (a Finder-launched
      * app's PATH lacks `~/.local/bin`, so the folders are searched too).
+     * Local looks for `cua-local` only: a Stable `cua` is not its CLI.
      */
     found?: string
 }

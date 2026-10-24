@@ -23,7 +23,19 @@
 # dylib, all but the dynamic ones from the executables) after writing their
 # dSYMs to <out-dir>/dSYMs, which crash reports symbolicate against.
 #
-#   scripts/build-app.sh [debug|release] [out-dir]
+#   scripts/build-app.sh [--channel stable|local] [debug|release] [out-dir]
+#
+# --channel local builds "Cua Spaces Local.app", which runs beside an
+# installed Cua Spaces and cannot touch it (CUA-1776): the Local bundle id
+# (com.trycua.spaces.local), name, helper login item (label and plist file
+# name), URL scheme (cua-local, not cua) and cua home (~/.cua-local), staging
+# by default (CuaEnv), and no Sparkle feed or key, so it never offers or
+# installs an update. Every name comes from CuaChannel (scripts/channel-names.sh,
+# libs/cua/crates/cua-home/src/channel.rs); the Info.plist keys CuaChannel,
+# CuaHome, CuaHelperLabel, CuaUrlScheme and CuaEnv tell the app and its
+# helpers which channel they are. scripts/check-local-bundle.sh proves it, and
+# runs at the end of this script. Without --channel (the default, stable) the
+# bundle is exactly the one the release scripts sign and ship.
 #
 # CUA_APP_ARCHS="arm64 x86_64" builds each architecture and joins them with
 # lipo (a universal app; the SDK dylib and the `cua` CLI must then be
@@ -34,8 +46,43 @@
 # development and CI builds.
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+channel=stable
+args=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --channel) [ $# -ge 2 ] || { echo "--channel needs stable or local" >&2; exit 2; }; channel="$2"; shift 2 ;;
+    --channel=*) channel="${1#--channel=}"; shift ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+case "$channel" in
+  stable | local) ;;
+  *) echo "--channel must be stable or local (got '$channel')" >&2; exit 2 ;;
+esac
+set -- ${args[@]+"${args[@]}"}
 config="${1:-debug}"
 out="${2:-$here/.build/app}"
+# The names this bundle carries. Stable's are the ones the release scripts
+# and the updater know; Local's come from CuaChannel, never from here.
+app_name="Cua Spaces"
+bundle_id=com.trycua.spaces.macos
+helper_label=com.trycua.spaces.helper
+if [ "$channel" = local ]; then
+  names="$("$here/scripts/channel-names.sh" local)"
+  while IFS='=' read -r key value; do
+    case "$key" in
+      app_name) app_name="$value" ;;
+      bundle_id) bundle_id="$value" ;;
+      helper_label) helper_label="$value" ;;
+      url_scheme) url_scheme="$value" ;;
+      home) cua_home="$value" ;;
+      env) cua_env="$value" ;;
+    esac
+  done <<<"$names"
+  for v in app_name bundle_id helper_label url_scheme cua_home cua_env; do
+    [ -n "${!v:-}" ] || { echo "scripts/channel-names.sh local printed no $v" >&2; exit 1; }
+  done
+fi
 icons="$here/../cua-spaces/src-tauri/icons"
 # CUA_VZ_BIN, CUA_MICROVM_INIT_BIN: the microVM monitor (cua-vz) and the
 # static aarch64 guest init to bundle (build-release.sh builds both).
@@ -71,10 +118,31 @@ fi
 # Resource bundles are the same for every architecture.
 bin="${bins[0]}"
 
-app="$out/Cua Spaces.app"
+app="$out/$app_name.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Frameworks"
 cp "$here/Support/Info.plist" "$app/Contents/Info.plist"
+if [ "$channel" = local ]; then
+  # Another identity, no updater, staging, its own home, helper and URL
+  # scheme. Nothing here may reach an installed Cua Spaces: see
+  # scripts/check-local-bundle.sh.
+  plist="$app/Contents/Info.plist"
+  pb=/usr/libexec/PlistBuddy
+  $pb -c "Set :CFBundleIdentifier $bundle_id" "$plist"
+  $pb -c "Set :CFBundleName $app_name" "$plist"
+  $pb -c "Set :CFBundleDisplayName $app_name" "$plist"
+  for key in SUFeedURL SUPublicEDKey SUEnableAutomaticChecks SUAutomaticallyUpdate SUVerifyUpdateBeforeExtraction; do
+    $pb -c "Delete :$key" "$plist"
+  done
+  # The `cua` scheme is Stable's (cua://add/<code>): Local answers cua-local://.
+  $pb -c "Set :CFBundleURLTypes:0:CFBundleURLName $bundle_id" "$plist"
+  $pb -c "Set :CFBundleURLTypes:0:CFBundleURLSchemes:0 $url_scheme" "$plist"
+  for kv in "CuaChannel:local" "CuaEnv:$cua_env" "CuaHome:$cua_home" "CuaHelperLabel:$helper_label" "CuaUrlScheme:$url_scheme"; do
+    $pb -c "Delete :${kv%%:*}" "$plist" 2>/dev/null || true
+    $pb -c "Add :${kv%%:*} string ${kv#*:}" "$plist"
+  done
+  plutil -lint "$plist" >/dev/null
+fi
 if [ ${#bins[@]} -gt 1 ]; then
   slices=()
   for b in "${bins[@]}"; do slices+=("$b/CuaSpacesMac"); done
@@ -132,7 +200,15 @@ mkdir -p "$app/Contents/Library/LaunchAgents"
 spacesd="$("$here/scripts/fetch-spacesd.sh" ${archs:-$(uname -m)})"
 cp "$spacesd" "$app/Contents/MacOS/cua-spacesd"
 chmod 0755 "$app/Contents/MacOS/cua-spacesd"
-cp "$here/Support/Helper/com.trycua.spaces.helper.plist" "$app/Contents/Library/LaunchAgents/com.trycua.spaces.helper.plist"
+helper_plist="$app/Contents/Library/LaunchAgents/$helper_label.plist"
+cp "$here/Support/Helper/com.trycua.spaces.helper.plist" "$helper_plist"
+if [ "$channel" = local ]; then
+  # The login item's own label and the app it belongs to: its own launchd
+  # job and its own entry in System Settings, never Stable's.
+  /usr/libexec/PlistBuddy -c "Set :Label $helper_label" "$helper_plist"
+  /usr/libexec/PlistBuddy -c "Set :AssociatedBundleIdentifiers:0 $bundle_id" "$helper_plist"
+  plutil -lint "$helper_plist" >/dev/null
+fi
 [ -x "$cli" ] && cp "$cli" "$app/Contents/MacOS/cua"
 
 # Release: symbols go to dSYMs, not into the download (about 40% of each
@@ -182,10 +258,10 @@ if [ -n "${CUA_SPACESD_STATIC_DIR:-}" ]; then
   done
   [ "$found" = 1 ] || { echo "no cua-spacesd-linux-* in $CUA_SPACESD_STATIC_DIR" >&2; exit 1; }
 fi
-codesign -s - -f -i com.trycua.spaces.macos "$app/Contents/Frameworks/libcua_sdk.dylib"
+codesign -s - -f -i "$bundle_id" "$app/Contents/Frameworks/libcua_sdk.dylib"
 # Sparkle keeps its upstream ad hoc signatures here (build-release.sh signs
 # each piece with the release identity).
-codesign -s - -f -i com.trycua.spaces.macos "$app"
+codesign -s - -f -i "$bundle_id" "$app"
 codesign --verify --deep --strict "$app"
 
 # The app must run on a Mac without this build directory: the resource
@@ -220,4 +296,7 @@ fi
 # It launches (scripts/check-launch.sh: libraries resolve and load; the app
 # starts and exits before any window).
 "$here/scripts/check-launch.sh" "$app" >&2
+if [ "$channel" = local ]; then
+  "$here/scripts/check-local-bundle.sh" "$app" >&2
+fi
 echo "$app"

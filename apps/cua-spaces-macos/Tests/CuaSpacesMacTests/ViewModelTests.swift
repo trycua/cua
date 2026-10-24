@@ -557,8 +557,11 @@ struct ViewModelTests {
         task.cancel()
     }
 
+    /// Waits for `done`, up to 30 s (it ends at once when it holds; the
+    /// bound only matters on a failure, and a loaded runner is slow).
     func waitUntil(_ done: @MainActor () -> Bool) async throws {
-        for _ in 0..<200 where !done() { try await Task.sleep(for: .milliseconds(10)) }
+        let deadline = ContinuousClock.now + .seconds(30)
+        while !done(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
         #expect(done())
     }
 
@@ -1476,7 +1479,8 @@ struct ViewModelTests {
         #expect(note.action.label == "Invite to your team")
         model.dismissShareRemovalNote()
         #expect(model.shareRemovalNote == nil)
-        try await Task.sleep(for: .milliseconds(100))
+        // The acknowledgement runs in a task the dismissal starts: wait for it.
+        try await waitUntil { teams.removals.isEmpty }
         #expect(teams.removals.isEmpty, "acknowledged, so it does not come back")
         await model.reloadShareRemovals()
         #expect(model.shareRemovalNote == nil)

@@ -3,7 +3,10 @@
 //! [`cua_home`] is `$CUA_HOME`, else `$HOME/.cua` (`%USERPROFILE%\.cua` on
 //! Windows): the directory that holds the Spaces registry, sandbox state,
 //! env tokens and credentials. A non-production `CUA_ENV` (see [`env`])
-//! moves the default below it (`~/.cua/envs/staging`).
+//! moves the default below it (`~/.cua/envs/staging`). The Local channel
+//! (see [`channel`]) has a home of its own, `~/.cua-local` (its default
+//! environment is staging), with production below it
+//! (`~/.cua-local/envs/prod`).
 //!
 //! [`guard_write`] refuses a write under the user's *real* `~/.cua` (the
 //! passwd home, or on Windows the account's profile directory; never
@@ -25,6 +28,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+pub mod channel;
 pub mod env;
 pub mod experimental;
 pub mod filetable;
@@ -81,22 +85,17 @@ pub fn bundled_cua_of(exe: &Path) -> Option<PathBuf> {
     file(dir.join("resources/native").join(CUA_FILE))
 }
 
-/// The cua home: `$CUA_HOME`, else `~/.cua` (production) or
-/// `~/.cua/envs/<env>` (another `CUA_ENV`).
+/// The cua home: `$CUA_HOME`, else the channel's home for the environment
+/// ([`channel::CuaChannel::env_home_dir`]): `~/.cua` (Stable, production),
+/// `~/.cua/envs/staging` (Stable, staging), `~/.cua-local` (Local, staging)
+/// or `~/.cua-local/envs/prod` (Local, with the `CUA_ENV=prod` opt-in, which
+/// is an opt-in to the production deployment, not to Stable's home).
 pub fn cua_home() -> PathBuf {
     if let Some(h) = std::env::var_os("CUA_HOME").filter(|v| !v.is_empty()) {
         return PathBuf::from(h);
     }
-    let home = std::env::var_os("HOME")
-        .filter(|v| !v.is_empty())
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    let base = home.join(".cua");
-    match env::CuaEnv::current().home_subdir() {
-        Some(sub) => base.join(sub),
-        None => base,
-    }
+    let (channel, env) = channel::CuaChannel::current_with_env();
+    channel.env_home_dir(env)
 }
 
 /// The user's real `~/.cua`, from the account database rather than `$HOME`

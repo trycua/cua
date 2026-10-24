@@ -712,8 +712,8 @@ async fn machine_services(
 /// macOS VMs Lume runs on this Mac that are not job members (Apple's
 /// license allows two per Mac, and Apple Virtualization refuses a third).
 async fn macos_vms_running() -> u32 {
-    let base = std::env::var("LUME_API").unwrap_or_else(|_| "http://127.0.0.1:7777".into());
-    let client = cua_vmm::lume::LumeClient::new(base);
+    // `$LUME_API`, else this channel's own Lume (Local's is not on :7777).
+    let client = cua_vmm::lume::LumeClient::new(cua_vmm::lume::LumeConfig::default().url);
     match tokio::time::timeout(Duration::from_secs(4), client.list()).await {
         Ok(Ok(vms)) => vms
             .iter()

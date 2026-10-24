@@ -247,17 +247,22 @@ mod tests {
     #[tokio::test]
     async fn without_a_mesh_node_the_placed_addresses_stay_and_say_so() {
         let home = tempfile::tempdir().unwrap();
+        // Why the mesh is not used: no node here (macOS, Linux), or no mesh
+        // on this OS at all (Windows).
+        let why = if cfg!(unix) {
+            "the mesh is off on this computer"
+        } else {
+            "gang traffic over the mesh needs macOS or Linux"
+        };
         let r = MeshPeerRouter::new(home.path())
             .route(&gang(0, &["m-a", "m-b"]), MemberNet::machine())
             .await
             .unwrap()
             .expect("routed");
         assert_eq!(r.peers, ["10.0.0.1:47010", "10.0.0.2:47010"]);
-        assert!(
-            r.notes[0]
-                == "rank traffic uses the placed addresses: the mesh is off on this computer",
-            "{:?}",
-            r.notes
+        assert_eq!(
+            r.notes[0],
+            format!("rank traffic uses the placed addresses: {why}")
         );
         assert_eq!(
             r.notes[1],
@@ -290,7 +295,7 @@ mod tests {
             .route(&gang(0, &["m-a", "m-b"]), vm)
             .await
             .unwrap_err();
-        assert!(e.contains("the mesh is off on this computer"), "{e}");
+        assert!(e.contains(why), "{e}");
     }
 
     #[tokio::test]

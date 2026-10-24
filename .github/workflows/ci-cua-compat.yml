@@ -24,6 +24,16 @@ on:
       - "libs/cua/crates/cua-spacesd-client/src/testing.rs"
       - "tests/compat/**"
       - ".github/workflows/ci-cua-compat.yml"
+  # Main keeps the Rust cache family (libs-cua-compat, Linux and macOS) warm
+  # for the pull request runs above; the weekly run alone let it expire.
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua/crates/cua-compat/**"
+      - "libs/cua/crates/cua-cli/src/compat_cmd.rs"
+      - "libs/cua/crates/cua-spacesd-client/src/testing.rs"
+      - "tests/compat/**"
+      - ".github/workflows/ci-cua-compat.yml"
   schedule:
     - cron: "41 6 * * 1"
   workflow_dispatch:
@@ -33,7 +43,9 @@ permissions:
 
 concurrency:
   group: ci-cua-compat-${{ github.ref }}-${{ github.event_name }}
-  cancel-in-progress: true
+  # Only superseded pull request runs are cancelled: a cancelled main run
+  # saves no cache.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -60,10 +72,10 @@ jobs:
         uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
-          key: cua-compat
+          shared-key: libs-cua-compat
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.13"
@@ -83,6 +95,8 @@ jobs:
 
   surface:
     name: E2B SDK surface
+    # Not on main pushes: those exist to keep the hermetic job's Rust cache warm.
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -96,7 +110,7 @@ jobs:
           /tmp/pinned/bin/pip install -q "e2b==$(cat tests/compat/e2b/PINNED)"
           /tmp/pinned/bin/python tests/compat/e2b/surface.py --diff "tests/compat/e2b/fixtures/surface-$(cat tests/compat/e2b/PINNED).json"
       - name: Latest SDK matches the newest snapshot (drift)
-        if: github.event_name != 'pull_request'
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
           python -m venv /tmp/latest
           /tmp/latest/bin/pip install -q -U e2b
@@ -105,7 +119,9 @@ jobs:
 
   live-e2b:
     name: live E2B conformance (drift)
-    if: github.event_name != 'pull_request'
+    # Paid E2B sandboxes and a live provider: the weekly run and manual runs only,
+    # never the main pushes that keep the Rust cache warm.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:

@@ -462,6 +462,22 @@ pub fn decide(
         )));
     }
     let cap = cfg.rss_cap_mb(host.total_mb);
+    // One VM bigger than everything VMs may use here never fits, however
+    // many VMs are deleted: say what it asked for and the cap.
+    if need > cap {
+        return Err(Refusal(format!(
+            "'{}' needs about {} of memory ({} asked), more than this host's VM memory \
+             limit of {} (max_rss_fraction {} of {}); give it less memory (--memory), \
+             raise CUA_VM_MAX_RSS_FRACTION on this host, or create it on a machine with \
+             more memory (on=\"auto\")",
+            req.name,
+            gib(need),
+            gib(req.memory_mb),
+            gib(cap),
+            cfg.max_rss_fraction,
+            gib(host.total_mb)
+        )));
+    }
     let used = usage.vm_rss_mb() + pending_mb;
     if used + need > cap {
         return Err(Refusal(format!(
@@ -909,6 +925,60 @@ mod tests {
             min_available_mb: 1024,
             enabled: true,
         }
+    }
+
+    /// The CI runner: 7.8 GiB, nothing running, default fraction (6.2 GiB
+    /// for VMs).
+    fn runner() -> (DensityConfig, Usage) {
+        let cfg = DensityConfig {
+            min_available_mb: 0,
+            ..DensityConfig::default()
+        };
+        let u = Usage {
+            host: host(7_990, 7_200),
+            host_cpus: 4,
+            ..Default::default()
+        };
+        (cfg, u)
+    }
+
+    fn fresh(name: &str, memory_mb: u64) -> Request {
+        Request {
+            name: name.into(),
+            vcpus: 2,
+            memory_mb,
+            shared_file: None,
+            shared_file_mb: 0,
+        }
+    }
+
+    #[test]
+    fn a_vm_under_the_cap_is_admitted_on_an_empty_host() {
+        let (cfg, u) = runner();
+        // A 4 GiB bake on the 7.8 GiB runner, nothing else running.
+        let a = decide(&cfg, &u, &[], &fresh("bake", 4096)).unwrap();
+        assert!(a.expected_mb >= 4096);
+        // Right at the cap still fits.
+        let cap = cfg.rss_cap_mb(7_990);
+        let at_cap = cap - cap / 11 - 64;
+        assert!(decide(&cfg, &u, &[], &fresh("edge", at_cap)).is_ok());
+    }
+
+    #[test]
+    fn a_vm_bigger_than_the_cap_says_what_it_asked_for_and_the_cap() {
+        let (cfg, u) = runner();
+        let e = decide(&cfg, &u, &[], &fresh("big", 8192)).unwrap_err().0;
+        assert!(
+            e.starts_with("'big' needs about 8.0 GiB of memory (8.0 GiB asked)"),
+            "{e}"
+        );
+        assert!(
+            e.contains("more than this host's VM memory limit of 6.2 GiB"),
+            "{e}"
+        );
+        assert!(e.contains("CUA_VM_MAX_RSS_FRACTION"), "{e}");
+        // Not the "its VMs use 0.0 GiB" message for a host that is empty.
+        assert!(!e.contains("its VMs use"), "{e}");
     }
 
     #[test]

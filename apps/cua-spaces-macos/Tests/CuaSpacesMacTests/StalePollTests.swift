@@ -133,7 +133,8 @@ import Testing
         model.listTimeout = 1
         model.hostTimeout = 1
         model.listStaleAfter = 3
-        model.createAcceptTimeout = 2
+        // Creates keep the app's acceptance timeout: on a loaded run a
+        // create the daemon takes may report later than any short one.
         model.reconnect = {
             guard let connection = next() else { return false }
             pending.replace(connection, live: nil)
@@ -286,6 +287,10 @@ import Testing
         let model = makeModel(gate: gate) { second }
         model.listStaleAfter = 600
         first.wedge()
+        // Short for the attempt that hangs; the app's own for the retry,
+        // which the daemon takes.
+        let acceptTimeout = model.createAcceptTimeout
+        model.createAcceptTimeout = 2
 
         let started = Date()
         let retries = Retries()
@@ -293,8 +298,13 @@ import Testing
         // is made again, and the model runs the create once more by itself
         // (the row says "Retrying…"), over the new connection.
         let id = try await model.runCreate(args("e2e-1005-linux"), os: .linux, pendingId: "pending:one",
-                                           retrying: { error, _ in retries.errors.append(error) })
-        #expect(Date().timeIntervalSince(started) < 60)
+                                           retrying: { error, _ in
+                                               retries.errors.append(error)
+                                               model.createAcceptTimeout = acceptTimeout
+                                           })
+        // Well before the 4 min stall this replaced (the retry may wait
+        // the app's whole acceptance timeout on a loaded run).
+        #expect(Date().timeIntervalSince(started) < 240)
         #expect(retries.errors.count == 1)
         #expect(retries.errors.first?.contains("didn't start this create") == true)
         #expect(model.reconnects == 1)
@@ -341,6 +351,8 @@ import Testing
         // The new connection is wedged too.
         let model = makeModel(gate: gate) { connection }
         model.listStaleAfter = 600
+        // Both attempts hang: a short wait is enough to see each one fail.
+        model.createAcceptTimeout = 2
         connection.wedge()
         do {
             _ = try await model.runCreate(args("e2e-1005-linux"), os: .linux, pendingId: "pending:one")
@@ -359,8 +371,12 @@ import Testing
         let gate = LiveGate<LiveServices>()
         gate.resolve(LiveServices(backend: connection))
         let model = makeModel(gate: gate) { nil }
+        let started = Date()
         let create = Task { try await model.runCreate(args("slow"), os: .linux, pendingId: "pending:slow") }
-        try await Task.sleep(for: .seconds(3))
+        // Taken (the daemon said "preparing"), then held past the watchdog.
+        #expect(await eventually { connection.createCalls == 1 })
+        let past = model.createAcceptTimeout + 1 - Date().timeIntervalSince(started)
+        if past > 0 { try await Task.sleep(for: .seconds(past)) }
         connection.inner.releaseCreate()
         let id = try await create.value
         #expect(id == "local:slow")

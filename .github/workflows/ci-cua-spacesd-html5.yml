@@ -69,8 +69,5 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: ./.github/actions/rust-cache
-        with:
-          workspaces: libs/cua
       - run: cargo fmt -p cua-spacesd-html5 -- --check
       - run: cargo test --locked -p cua-spacesd-html5 --features standalone

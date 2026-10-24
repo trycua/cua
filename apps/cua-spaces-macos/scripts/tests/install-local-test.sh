@@ -384,6 +384,7 @@ STABLE_PATHS=(
     "Library/Application Support/com.trycua.spaces.macos"
     "Library/Preferences/com.trycua.spaces.macos.plist" "Library/Caches/com.trycua.spaces.macos"
     "Library/HTTPStorages/com.trycua.spaces.macos" "Library/WebKit/com.trycua.spaces.macos"
+    "Library/Cookies/com.trycua.spaces.macos.binarycookies" "Library/Saved Application State/com.trycua.spaces.macos.savedState"
     "Library/LaunchAgents/com.trycua.spacesd.host.plist"
     "Library/LaunchAgents/com.trycua.lume_daemon.plist"
     "Cua Volume" "Applications/Cua Spaces.app"
@@ -409,6 +410,7 @@ make_stable_install() {
         "$FAKE_HOME/Library/Application Support/com.trycua.spaces.macos" \
         "$FAKE_HOME/Library/Preferences" "$FAKE_HOME/Library/Caches/com.trycua.spaces.macos" \
         "$FAKE_HOME/Library/HTTPStorages/com.trycua.spaces.macos" "$FAKE_HOME/Library/WebKit/com.trycua.spaces.macos" \
+        "$FAKE_HOME/Library/Cookies" "$FAKE_HOME/Library/Saved Application State/com.trycua.spaces.macos.savedState" \
         "$FAKE_HOME/Library/LaunchAgents" "$FAKE_HOME/Cua Volume" \
         "$FAKE_HOME/Applications/Cua Spaces.app/Contents/MacOS"
     echo '{"session":"stable"}' > "$FAKE_HOME/.cua/credentials.json"
@@ -422,6 +424,8 @@ make_stable_install() {
     echo 'cache' > "$FAKE_HOME/Library/Caches/com.trycua.spaces.macos/Cache.db"
     echo 'http' > "$FAKE_HOME/Library/HTTPStorages/com.trycua.spaces.macos/httpstorages.sqlite"
     echo 'web' > "$FAKE_HOME/Library/WebKit/com.trycua.spaces.macos/data"
+    echo 'cookies' > "$FAKE_HOME/Library/Cookies/com.trycua.spaces.macos.binarycookies"
+    echo 'state' > "$FAKE_HOME/Library/Saved Application State/com.trycua.spaces.macos.savedState/windows.plist"
     echo '<plist/>' > "$FAKE_HOME/Library/LaunchAgents/com.trycua.spacesd.host.plist"
     echo '<plist/>' > "$FAKE_HOME/Library/LaunchAgents/com.trycua.lume_daemon.plist"
     echo 'my files' > "$FAKE_HOME/Cua Volume/note.txt"
@@ -1111,8 +1115,8 @@ STDIN_FILE=/dev/null
 check "the Local home and its app support folder are gone" '[ ! -e "$FAKE_HOME/.cua-local" ] && [ ! -e "$FAKE_HOME/Library/Application Support/com.trycua.spaces.local" ]'
 check "the Local bundle id's preferences, caches, web view data, cookies and window state are gone" \
     '[ ! -e "$FAKE_HOME/Library/Preferences/com.trycua.spaces.local.plist" ] && [ ! -e "$FAKE_HOME/Library/Caches/com.trycua.spaces.local" ] && [ ! -e "$FAKE_HOME/Library/HTTPStorages/com.trycua.spaces.local" ] && [ ! -e "$FAKE_HOME/Library/WebKit/com.trycua.spaces.local" ] && [ ! -e "$FAKE_HOME/Library/Cookies/com.trycua.spaces.local.binarycookies" ] && [ ! -e "$FAKE_HOME/Library/Saved Application State/com.trycua.spaces.local.savedState" ]'
-check "and Stable's preferences, caches and web view data of the same kinds are still there" \
-    '[ -f "$FAKE_HOME/Library/Preferences/com.trycua.spaces.macos.plist" ] && [ -f "$FAKE_HOME/Library/Caches/com.trycua.spaces.macos/Cache.db" ] && [ -f "$FAKE_HOME/Library/WebKit/com.trycua.spaces.macos/data" ]'
+check "and Stable's preferences, caches, web view data, cookies and window state of the same kinds are still there" \
+    '[ -f "$FAKE_HOME/Library/Preferences/com.trycua.spaces.macos.plist" ] && [ -f "$FAKE_HOME/Library/Caches/com.trycua.spaces.macos/Cache.db" ] && [ -f "$FAKE_HOME/Library/WebKit/com.trycua.spaces.macos/data" ] && [ -f "$FAKE_HOME/Library/Cookies/com.trycua.spaces.macos.binarycookies" ] && [ -f "$FAKE_HOME/Library/Saved Application State/com.trycua.spaces.macos.savedState/windows.plist" ]'
 check "the Local host runner job file is gone" '[ ! -e "$FAKE_HOME/Library/LaunchAgents/com.trycua.spacesd.host.local.plist" ]'
 check "the helper login item was unregistered by the Local app itself" 'grep >/dev/null -- "--service-helper unregister \[CUA_CHANNEL=local\]" "$STUB_LOG"'
 check "launchctl was asked about the two Local labels only" \

@@ -1,0 +1,123 @@
+name: "Release: staged rollout (Cua Spaces)"
+
+# Moves a published stable Cua Spaces build through 10% -> 50% -> 100% of
+# installs, or pauses it (CUA-2069, phase 4 of CUA-1991; design in
+# trycua/cua#5704, "Staged rollout"). It only edits the updater feeds on the
+# rolling `cua-spaces-latest` release; it never builds or publishes a release.
+#
+#   electron-updater (Windows, Linux, Electron macOS): `stagingPercentage` in
+#     latest*.yml. 100 removes it, pause sets 0.
+#   Sparkle (macOS): `sparkle:phasedRolloutInterval` on the newest stable
+#     appcast item. 100 removes it, pause removes the item (kept for resume).
+#
+# The edits and what they mean for users: .github/scripts/release_rollout.py and
+# apps/cua-spaces-desktop/docs/staged-rollout.md (also the beta rehearsal).
+# Stable only by default; `channel: beta` exists to rehearse on the beta feed.
+# `dry_run` (the default) prints the feed diff and uploads nothing. The actor
+# and the reason go to the job summary. The release workflow still publishes
+# feeds as before; writing them at 10% on publish comes with phase 2.
+
+on:
+  workflow_dispatch:
+    inputs:
+      component:
+        description: "Component"
+        type: choice
+        options: [spaces]
+        default: spaces
+      platform:
+        description: "Platform"
+        type: choice
+        options: [all, macos, windows, linux]
+        default: all
+      stage:
+        description: "Share of installs offered the update (pause: none)"
+        type: choice
+        options: ["10", "50", "100", pause]
+      reason:
+        description: "Why (logged in the job summary)"
+        type: string
+        required: true
+      channel:
+        description: "Feed (stable; beta only to rehearse)"
+        type: choice
+        options: [stable, beta]
+        default: stable
+      dry_run:
+        description: "Print the feed diff, upload nothing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-rollout-spaces
+  cancel-in-progress: false
+
+jobs:
+  rollout:
+    name: "Rollout ${{ inputs.stage }} (${{ inputs.channel }}, ${{ inputs.platform }}${{ inputs.dry_run && ', dry run' || '' }})"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: cua-spaces-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the rollout script
+        run: python3 .github/scripts/tests/test_release_rollout.py
+      - name: Record who and why
+        env:
+          REASON: ${{ inputs.reason }}
+        run: |
+          {
+            echo "## Rollout: ${{ inputs.stage }} on ${{ inputs.channel }}, ${{ inputs.platform }}"
+            echo
+            echo "- actor: \`$GITHUB_ACTOR\`"
+            echo "- run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "- dry run: ${{ inputs.dry_run }}"
+            echo "- reason: $REASON"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Fetch the feeds
+        run: |
+          set -euo pipefail
+          mkdir -p feed
+          for pattern in 'latest*.yml' 'beta*.yml' cua-spaces-appcast.xml cua-spaces-appcast-paused.xml; do
+            gh release download "$TAG" --pattern "$pattern" --dir feed --clobber --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+          done
+          ls -l feed
+          [ -n "$(ls feed)" ] || { echo "::error::no feed files on $TAG"; exit 1; }
+      - name: Edit the feeds
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/release_rollout.py --feed-dir feed --out-dir out \
+            --channel "${{ inputs.channel }}" --platform "${{ inputs.platform }}" --stage "${{ inputs.stage }}" \
+            | tee report.md >> "$GITHUB_STEP_SUMMARY"
+          [ "${PIPESTATUS[0]}" = 0 ]
+          shopt -s nullglob
+          for f in out/*.xml; do xmllint --noout "$f"; done
+      - name: Upload the feeds
+        if: ${{ !inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(out/*.yml out/*.xml)
+          if [ ${#files[@]} -gt 0 ]; then
+            gh release upload "$TAG" "${files[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+          fi
+          while read -r name; do
+            [ -n "$name" ] && gh release delete-asset "$TAG" "$name" --yes --repo "$GITHUB_REPOSITORY"
+          done < out/deletions.txt
+          # Read back what is live.
+          mkdir -p live
+          for f in "${files[@]}"; do
+            gh release download "$TAG" --pattern "$(basename "$f")" --dir live --clobber --repo "$GITHUB_REPOSITORY"
+            cmp "$f" "live/$(basename "$f")"
+          done
+          echo "Uploaded: ${files[*]:-nothing}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Dry run note
+        if: ${{ inputs.dry_run }}
+        run: |
+          echo "Dry run, nothing was uploaded. Run again with dry_run off to apply this diff." >> "$GITHUB_STEP_SUMMARY"

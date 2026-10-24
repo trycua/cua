@@ -83,6 +83,80 @@ pub struct Identity {
     /// an account that already has a strong enrolled device (S4) without
     /// needing an approval.
     pub mfa: bool,
+    /// Keycloak Organizations the user is in (the `organization` claim),
+    /// with the role their org group gives. Empty when the token has none.
+    pub orgs: Vec<OrgClaim>,
+}
+
+/// One entry of the `organization` claim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrgClaim {
+    /// The organization's alias (the claim's key).
+    pub alias: String,
+    /// The organization's id, when the mapper includes it.
+    pub id: Option<String>,
+    /// `owner`, `admin` or `member` (from the `/owner` and `/admin` org
+    /// groups; no group is a member).
+    pub role: &'static str,
+}
+
+impl OrgClaim {
+    /// The id the Spaces API knows the organization by: its id, else its
+    /// alias.
+    pub fn key(&self) -> &str {
+        self.id.as_deref().unwrap_or(&self.alias)
+    }
+}
+
+/// Reads the `organization` claim: an object of alias -> `{id, groups}`
+/// (the Organization Group Membership mapper) or a plain list of aliases.
+pub fn org_claims(claims: &serde_json::Value) -> Vec<OrgClaim> {
+    let role = |groups: Option<&serde_json::Value>| {
+        let groups: Vec<&str> = groups
+            .and_then(|g| g.as_array())
+            .map(|a| a.iter().filter_map(|g| g.as_str()).collect())
+            .unwrap_or_default();
+        let has = |name: &str| {
+            groups
+                .iter()
+                .any(|g| g.trim_start_matches('/').eq_ignore_ascii_case(name))
+        };
+        if has("owner") {
+            "owner"
+        } else if has("admin") {
+            "admin"
+        } else {
+            "member"
+        }
+    };
+    let mut out = match claims.get("organization") {
+        Some(serde_json::Value::Object(map)) => map
+            .iter()
+            .filter(|(alias, _)| !alias.is_empty())
+            .map(|(alias, v)| OrgClaim {
+                alias: alias.clone(),
+                id: v
+                    .get("id")
+                    .and_then(|i| i.as_str())
+                    .filter(|i| !i.is_empty())
+                    .map(str::to_owned),
+                role: role(v.get("groups")),
+            })
+            .collect(),
+        Some(serde_json::Value::Array(list)) => list
+            .iter()
+            .filter_map(|a| a.as_str())
+            .filter(|a| !a.is_empty())
+            .map(|alias| OrgClaim {
+                alias: alias.to_owned(),
+                id: None,
+                role: "member",
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    out.truncate(64);
+    out
 }
 
 /// Minimum time between JWKS refreshes triggered by unknown key ids.
@@ -321,6 +395,7 @@ impl OidcValidator {
             name: text("name").or_else(|| text("preferred_username")),
             auth_time: claims.get("auth_time").and_then(|v| v.as_u64()),
             mfa,
+            orgs: org_claims(&claims),
         })
     }
 }
@@ -375,6 +450,8 @@ pub mod testing {
         amrs: std::sync::Mutex<std::collections::HashMap<String, Vec<String>>>,
         /// `acr` claims per subject (none by default).
         acrs: std::sync::Mutex<std::collections::HashMap<String, String>>,
+        /// `organization` claims per subject (none by default).
+        orgs: std::sync::Mutex<std::collections::HashMap<String, serde_json::Value>>,
         kid: String,
         encoding: jsonwebtoken::EncodingKey,
         public: Vec<u8>,
@@ -393,6 +470,7 @@ pub mod testing {
                 auth_times: std::sync::Mutex::default(),
                 amrs: std::sync::Mutex::default(),
                 acrs: std::sync::Mutex::default(),
+                orgs: std::sync::Mutex::default(),
                 kid: format!("fake-{}", uuid::Uuid::new_v4().simple()),
                 encoding: jsonwebtoken::EncodingKey::from_ec_der(pkcs8.as_ref()),
                 public: pair.public_key().as_ref().to_vec(),
@@ -442,6 +520,16 @@ pub mod testing {
             self.acrs.lock().expect("acrs").get(sub).cloned()
         }
 
+        /// Tokens for `sub` carry this `organization` claim from now on
+        /// (Keycloak Organizations, e.g. `{"acme": {"id": "…", "groups":
+        /// ["/owner"]}}`).
+        pub fn set_orgs(&self, sub: &str, organization: serde_json::Value) {
+            self.orgs
+                .lock()
+                .expect("orgs")
+                .insert(sub.to_owned(), organization);
+        }
+
         /// The issuer's JWKS as JSON.
         pub fn jwks_json(&self) -> serde_json::Value {
             let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -486,6 +574,9 @@ pub mod testing {
             if let Some(acr) = self.acr(sub) {
                 claims["acr"] = acr.into();
             }
+            if let Some(orgs) = self.orgs.lock().expect("orgs").get(sub).cloned() {
+                claims["organization"] = orgs;
+            }
             if let Some(email) = email {
                 claims["email"] = email.into();
                 claims["email_verified"] = email_verified.into();
@@ -501,6 +592,26 @@ pub mod testing {
 mod tests {
     use super::testing::FakeIssuer;
     use super::*;
+
+    #[test]
+    fn reads_the_organization_claim() {
+        let claims = serde_json::json!({"organization": {
+            "aigis": {"id": "o1", "groups": ["/owner"]},
+            "acme": {"id": "o2", "groups": ["/admin"]},
+            "solo": {},
+        }});
+        let orgs = org_claims(&claims);
+        let find = |a: &str| orgs.iter().find(|o| o.alias == a).cloned().unwrap();
+        assert_eq!(find("aigis").role, "owner");
+        assert_eq!(find("aigis").key(), "o1");
+        assert_eq!(find("acme").role, "admin");
+        assert_eq!(find("solo").role, "member");
+        assert_eq!(find("solo").key(), "solo");
+        let list = org_claims(&serde_json::json!({"organization": ["aigis"]}));
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].role, "member");
+        assert!(org_claims(&serde_json::json!({})).is_empty());
+    }
 
     #[tokio::test]
     async fn validates_issuer_audience_and_expiry() {

@@ -711,7 +711,7 @@ class SquashTrailerGitHub:
 SQUASH_4500 = CommitRecord(
     "c8edda06",
     "fix(cua-driver): batch Windows foreground multiline input (#4500)",
-    "Co-authored-by: Dillon DuPont <dillondupont808@gmail.com>",
+    "Co-authored-by: Dillon DuPont <dev@example.com>",
 )
 PULL_4500 = {
     "number": 4500,

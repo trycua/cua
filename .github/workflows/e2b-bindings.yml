@@ -1,0 +1,66 @@
+# Swift binding tests on every PR that touches the cua SDK bindings.
+#
+# ci-cua-sdk.yml already runs, unconditionally on these paths (libs/cua/**):
+#   - `bindings`: `generate-uniffi-bindings.mjs --check` (drift, regenerates
+#     Python/Swift/Kotlin/TypeScript and fails when the tree differs), and
+#   - `kotlin`: `gradle -p libs/cua/kotlin compileKotlin`.
+# Its `swift` job, however, only runs on release-please PRs, the `ci:full`
+# label, pushes to main and the nightly schedule. This workflow adds the
+# missing piece: the Swift suite (swift/scripts/test.sh, against the release
+# dylib and the loopback test fixtures) on ordinary PRs for the binding paths.
+# It reuses the same cache key as ci-cua-sdk.yml's swift job.
+name: e2b-bindings
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua/crates/cua-sdk/**"
+      - "libs/cua/proto/**"
+      - "libs/cua/swift/**"
+      - "libs/cua/kotlin/**"
+      - "libs/cua/python/src/**"
+      - "libs/cua/typescript/src/**"
+      - ".github/workflows/e2b-bindings.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2b-bindings-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_BUILD_JOBS: "4"
+
+jobs:
+  swift:
+    name: swift tests (macOS)
+    runs-on: macos-26
+    # Cold, the release cua-sdk build alone nears 45 minutes on macos-26.
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: libs/cua
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: cua-sdk-swift
+      - name: Release dylib, test fixtures, Swift suite
+        run: |
+          cargo build --locked --release -p cua-sdk
+          scripts/build-test-fixtures.sh
+          node scripts/stage-uniffi-library.mjs --only=swift
+          swift/scripts/test.sh

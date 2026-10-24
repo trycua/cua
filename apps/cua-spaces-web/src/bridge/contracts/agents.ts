@@ -103,6 +103,10 @@ export interface AgentSetupRow {
   /** The MCP config file cua edits, when the agent has one. */
   mcpConfig: string | null;
   skillsDir: string | null;
+  /** The account it signs in with on its own (`ChatGPT` for Codex), when the setup can see that sign-in. */
+  signIn: string | null;
+  /** That sign-in is on this computer. */
+  signedIn: boolean;
 }
 
 /* ---- One persistent agent's detail ---------------------------------------------

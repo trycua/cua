@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.8.0](https://github.com/trycua/cua/compare/cua-sdk-v0.7.0...cua-sdk-v0.8.0) (2026-10-24)
+
+
+### Features
+
+* compat gateways for E2B and Daytona, Hetzner as your own cloud, the elastic pool, cua share and the public relay ([#5778](https://github.com/trycua/cua/issues/5778)) ([d4f3f80](https://github.com/trycua/cua/commit/d4f3f8063d7b30a3b3bda2b4c05c565a9dfcb460))
+* **spaces-macos:** run the host service as the Cua Spaces app itself, one name in System Settings (CUA-1885) ([#5494](https://github.com/trycua/cua/issues/5494)) ([cd134c2](https://github.com/trycua/cua/commit/cd134c2431ee9c88118080b5a40a0b120eaaecd1))
+* **spaces:** onboarding agents step: pick any agents or none, per computer, with Codex's ChatGPT sign-in (CUA-1995) ([#5707](https://github.com/trycua/cua/issues/5707)) ([4a44f4d](https://github.com/trycua/cua/commit/4a44f4d39677c2d906d588b5b205a85aa8353354))
+
+
+### Bug Fixes
+
+* **cua:** stabilize the known flaky release-gate tests ([#5538](https://github.com/trycua/cua/issues/5538)) ([c3b557e](https://github.com/trycua/cua/commit/c3b557e1dced1238bf5b479af876aad9ea409498))
+* **spaces-macos:** newer-Cua note with a real action, shared desktop listed first, bundle new cua in Cua Spaces (CUA-1989) ([#5702](https://github.com/trycua/cua/issues/5702)) ([b131466](https://github.com/trycua/cua/commit/b131466103eccede0c65213a59ef2d082813fb9e))
+* **spaces:** recognize configured Claude Code without PATH evidence ([#5749](https://github.com/trycua/cua/issues/5749)) ([4ecb58e](https://github.com/trycua/cua/commit/4ecb58e45b9a9af3e2235d44e2ac57c79d502a98))
+* **spaces:** show every sign-in state, with a reason and Try again ([#5708](https://github.com/trycua/cua/issues/5708)) ([c2a21e7](https://github.com/trycua/cua/commit/c2a21e764e2cc8b3a0a187aa9ca7d688265fe389))
+* **spaces:** this Mac's own desktop says why instead of loading forever (CUA-2072) ([#5735](https://github.com/trycua/cua/issues/5735)) ([eac64d7](https://github.com/trycua/cua/commit/eac64d72828a33c82be4068a7119edf1fa09d2a4))
+
 ## [0.7.0](https://github.com/trycua/cua/compare/cua-sdk-v0.6.0...cua-sdk-v0.7.0) (2026-10-21)
 
 

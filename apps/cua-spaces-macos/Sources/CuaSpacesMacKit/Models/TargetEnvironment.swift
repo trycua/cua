@@ -7,9 +7,9 @@ import Foundation
 /// `staging`). The SDK resolves every endpoint from it. The app only settles
 /// it before anything starts:
 ///
-/// - `CUA_ENV` unset: the bundle's `CuaEnv` Info.plist value, which a beta
-///   channel build sets to `staging` (`scripts/build-release.sh` with
-///   `CUA_CHANNEL=beta`); release builds have none (production);
+/// - `CUA_ENV` unset: the bundle's `CuaEnv` Info.plist value, which a
+///   development build can set to `staging`; release builds, betas included,
+///   have none (`scripts/build-release.sh` removes it), so they use production;
 /// - `CUA_HOME` unset under staging: `~/.cua/envs/staging`, so the daemon it
 ///   supervises and every file it reads use the same home as the SDK.
 public enum TargetEnvironment {

@@ -96,6 +96,9 @@ jobs:
             shasum -a 256 * | sort > checksums.txt
           )
 
+      - name: Fetch the attribution base tag read-only
+        run: .github/scripts/ensure_upstream_tag.sh "${{ needs.plan.outputs.attribution_base_tag }}"
+
       - name: Collect PR-first attribution and render nightly body
         env:
           GH_TOKEN: ${{ github.token }}

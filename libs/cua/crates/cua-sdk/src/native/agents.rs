@@ -498,6 +498,8 @@ fn run_options(o: AgentRunOptions) -> Result<ca::RunOptions> {
         home: None,
         home_dir: None,
         bridge: false,
+        // Durable runs are started through a session (`cua agent run --durable`).
+        durable: None,
     })
 }
 

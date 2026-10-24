@@ -28,6 +28,7 @@ import { notificationsMethods } from "./notifications";
 import { nudgesMethods } from "./nudges";
 import { onboardingMethods } from "./onboarding";
 import { presenceMethods } from "./presence";
+import { linksMethods } from "./links";
 import { relayUsageMethods } from "./relay-usage";
 import { resourcesMethods } from "./resources";
 import { sessionMethods, sessionState } from "./session";
@@ -74,6 +75,7 @@ export const AREAS = [
   nudgesMethods,
   resourcesMethods,
   checklistMethods,
+  linksMethods,
   presenceMethods,
 ];
 

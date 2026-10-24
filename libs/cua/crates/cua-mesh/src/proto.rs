@@ -17,8 +17,8 @@
 //!   | ==== binary: SEND dst(32) | packet ====> |   (WireGuard or disco
 //! ```                                              ciphertext only)
 //!
-//! The coordinator (accounts, devices, sharing and the relay) runs in Cua's
-//! relay service; this module is the contract
+//! The coordinator implementation (accounts, devices, sharing and the
+//! relay) is the source-available `cua-relay`; this module is the contract
 //! both sides speak.
 
 use std::net::{Ipv6Addr, SocketAddr};
@@ -85,6 +85,27 @@ pub enum Mode {
     /// Self-hosted static tokens: each client pairs with a machine by
     /// proving it holds that machine's env token; the machine approves.
     Static,
+}
+
+/// The [`Grant::role`] of a peer that is another machine of the same
+/// account (machine-to-machine peering: a gang's rank traffic between the
+/// owner's hosts). Such a peer reaches only [`port_service`] streams a
+/// running job registered, never a machine's spacesd.
+pub const ROLE_MACHINE: &str = "machine";
+
+/// The stream service name for local TCP port `port` on a machine
+/// (`port:<n>`; see [`parse_port_service`]).
+pub fn port_service(port: u16) -> String {
+    format!("port:{port}")
+}
+
+/// The port of a [`port_service`] name (`port:<n>`, `n` in 1..=65535).
+pub fn parse_port_service(service: &str) -> Option<u16> {
+    let n = service.strip_prefix("port:")?;
+    if n.is_empty() || n.len() > 5 || !n.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    n.parse().ok().filter(|p| *p != 0)
 }
 
 /// Who a client peer is, as the coordinator vouches to a machine (account
@@ -400,6 +421,27 @@ pub struct MeshInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn port_services_round_trip_and_reject_anything_else() {
+        assert_eq!(port_service(47012), "port:47012");
+        assert_eq!(parse_port_service("port:47012"), Some(47012));
+        assert_eq!(parse_port_service("port:65535"), Some(65535));
+        for bad in [
+            "port:0",
+            "port:",
+            "port:65536",
+            "port:-1",
+            "port:+80",
+            "port: 80",
+            "port:080000",
+            "spacesd",
+            "Port:80",
+            "port:80x",
+        ] {
+            assert_eq!(parse_port_service(bad), None, "{bad}");
+        }
+    }
 
     #[test]
     fn hello_proof_binds_the_node_key() {

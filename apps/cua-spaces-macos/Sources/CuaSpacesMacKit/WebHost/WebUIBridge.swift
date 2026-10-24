@@ -74,7 +74,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "spaces.setPower", "spaces.delete", "spaces.cancelCreate",
         "machines.list", "host.status",
         "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
-        "agents.setup", "agents.configure",
+        "agents.setup", "agents.configure", "agents.signIn",
         // A persistent agent's Memory, Routines and Access (`PersistentModel`).
         "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine",
         "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer",
@@ -121,6 +121,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "machines.rename", "machines.remove", "machines.checkHealth",
         // The getting-started checklist: the app's one copy (`ChecklistModel`).
         "checklist.get", "checklist.send",
+        // Links to things you run (WebUIBridge+Pages.swift).
+        "links.list", "links.create", "links.stop",
     ]
 
     let model: AppModel
@@ -298,7 +300,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             return hostStatus()
 
         case "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",
-             "agents.setup", "agents.configure":
+             "agents.setup", "agents.configure", "agents.signIn":
             return try await agents(method, args)
 
         case "checklist.get": return ["state": model.checklist.stored]
@@ -613,9 +615,15 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         let os = (args["os"] as? String).flatMap(AppSpaceOs.init(word:)) ?? .unknown
         let id: String
         do {
-            id = try await model.runCreate(createArgs, os: os, pendingId: pendingId) { [weak self] p in
+            id = try await model.runCreate(createArgs, os: os, pendingId: pendingId, progress: { [weak self] p in
                 self?.host?.emit("spaces.createProgress", payload: Self.progress(p, pendingId: pendingId))
-            }
+            }, retrying: { [weak self] error, variant in
+                // The model runs it once more: the page shows "Retrying…".
+                self?.host?.emit("spaces.createProgress", payload: [
+                    "pendingId": pendingId, "phase": "preparing", "detail": "",
+                    "retry": ["error": error, "errorVariant": variant],
+                ] as [String: Any])
+            })
         } catch where isCancelled(error) {
             throw Failure(code: "cancelled", message: "cancelled")
         }
@@ -707,6 +715,12 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             } else {
                 await model.agentAction(try strings(args, "agents"), remove: false)
             }
+            return BridgeValue.encode(model.agentRows ?? [])
+        case "agents.signIn":
+            guard model.agentSetup != nil else { throw Failure.unsupported("Agent setup is not available in this build") }
+            do { try await model.agentSignIn(try string(args, "agent")) }
+            catch let f as Failure { throw f }
+            catch { throw Failure(code: "failed", message: LiveSpacesBackend.words(error)) }
             return BridgeValue.encode(model.agentRows ?? [])
         default:
             throw Failure.unimplemented(method)

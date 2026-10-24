@@ -1,0 +1,83 @@
+name: "Nightly: VM Space ready after boot"
+
+# A cold-booted VM Space must be usable the moment create returns. Cloud-init's
+# final stage runs the seed's runcmd about two seconds after cua-spacesd first
+# answers; a seed that restarted the driver there aborted every call in flight
+# (`Aborted`, `SendRequest`, exit -1). The integration test
+# (cua-sdk/tests/vm_ready_after_boot.rs) cold-boots VM Spaces from the
+# published Linux disk and runs commands back to back from the moment create
+# returns (at least 50 commands over 15 s, a fresh connection for every second
+# one); not one may fail. Sequential and several-at-once.
+#
+# Same KVM runner shape as the QEMU fork lane (nightly-qemu-fork.yml where it
+# exists); fold this job into that workflow's linux-kvm lane if you prefer one
+# file.
+
+on:
+  schedule:
+    - cron: "41 6 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "libs/cua/crates/cua-vmm/src/cloudinit.rs"
+      - "libs/cua/crates/cua-daemon/src/guest_identity.rs"
+      - "libs/cua/crates/cua-daemon/src/local.rs"
+      - "libs/cua/crates/cua-sdk/tests/vm_ready_after_boot.rs"
+      - "libs/images/common/boot-qemu.sh"
+      - ".github/workflows/nightly-qemu-ready.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-qemu-ready-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "10"
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  linux-kvm:
+    name: linux-kvm (${{ matrix.shape }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shape: sequential
+            creates: "4"
+            concurrency: "1"
+          - shape: concurrent
+            creates: "8"
+            concurrency: "4"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: qemu-ready
+      - name: Install QEMU and firmware
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-utils qemu-system-x86 ovmf genisoimage
+          sudo chmod 666 /dev/kvm
+      - name: Cold VM Spaces are usable the moment create returns
+        working-directory: libs/cua
+        env:
+          CUA_TEST_VM_READY: "1"
+          CUA_TEST_VM_READY_CREATES: ${{ matrix.creates }}
+          CUA_TEST_VM_READY_CONCURRENCY: ${{ matrix.concurrency }}
+        run: >
+          cargo test --locked -p cua-sdk --test vm_ready_after_boot
+          -- --ignored --nocapture

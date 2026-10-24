@@ -23,6 +23,9 @@ public protocol AgentSetupRunning: AnyObject, Sendable {
     func setUpCuaDriver(agents: [String]) async throws -> [AppAgentSetupOutcomeInput]
     /// Removes what cua added.
     func remove(agents: [String]) async throws -> [AppAgentSetupOutcomeInput]
+    /// Starts the agent's own sign-in on this Mac (`codex login` opens the
+    /// browser); returns once it runs. The sign-in stays the agent's own.
+    func signIn(agent: String) async throws
 }
 
 /// The SDK's `AgentSetup`, registering the app's own `cua` as the MCP
@@ -54,6 +57,8 @@ public final class LiveAgentSetup: AgentSetupRunning, @unchecked Sendable {
     public func remove(agents: [String]) async throws -> [AppAgentSetupOutcomeInput] {
         try await inner.remove(agents: agents, skills: true, mcp: true).map { appAgentSetupOutcome(outcome: $0) }
     }
+
+    public func signIn(agent: String) async throws { try inner.signIn(agent: agent) }
 }
 
 /// In-memory agents for fixtures and tests: nothing on disk is read or written.
@@ -65,12 +70,14 @@ public final class FixtureAgentSetup: AgentSetupRunning, @unchecked Sendable {
         current = statuses ?? [
             AppAgentSetupStatus(id: "claude-code", name: "Claude Code", installed: true, skillsDir: "~/.claude/skills",
                                 mcpConfig: "~/.claude.json", cuaConfigured: false, skillsInstalled: [],
-                                skillsOutdated: [], error: nil),
+                                skillsOutdated: [], error: nil, signIn: nil, signedIn: false),
             AppAgentSetupStatus(id: "codex", name: "Codex", installed: true, skillsDir: "~/.agents/skills",
                                 mcpConfig: "~/.codex/config.toml", cuaConfigured: true,
-                                skillsInstalled: ["cua-spaces", "cua-sandbox"], skillsOutdated: [], error: nil),
+                                skillsInstalled: ["cua-spaces", "cua-sandbox"], skillsOutdated: [], error: nil,
+                                signIn: "ChatGPT", signedIn: false),
             AppAgentSetupStatus(id: "cursor", name: "Cursor", installed: false, skillsDir: nil, mcpConfig: nil,
-                                cuaConfigured: false, skillsInstalled: [], skillsOutdated: [], error: nil),
+                                cuaConfigured: false, skillsInstalled: [], skillsOutdated: [], error: nil,
+                                signIn: nil, signedIn: false),
         ]
     }
 
@@ -109,6 +116,16 @@ public final class FixtureAgentSetup: AgentSetupRunning, @unchecked Sendable {
             }
         }
         return out
+    }
+
+    /// The sign-in finishes at once (no browser in a fixture).
+    public func signIn(agent: String) async throws {
+        calls.append("sign-in:\(agent)")
+        guard let i = current.firstIndex(where: { $0.id == agent }), current[i].signIn != nil else {
+            throw NSError(domain: "FixtureAgentSetup", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "\(agent) has no sign-in cua can start"])
+        }
+        current[i].signedIn = true
     }
 
     public func remove(agents: [String]) async throws -> [AppAgentSetupOutcomeInput] {
@@ -364,6 +381,13 @@ public protocol BillingRunning: AnyObject, Sendable {
     func status() async throws -> AppBillingStatus
 }
 
+/// The account app's billing page. Billing moves to app.cua.ai; the row stays
+/// hidden until that design lands (`AccountURLs.billingEnabled`).
+public enum AccountURLs {
+    public static let billing = "https://app.cua.ai/billing"
+    public static let billingEnabled = false
+}
+
 /// Billing has no service behind it: Cua Cloud has ended. It reports "billing
 /// not enabled" with no network call, so Settings hides the row and a refused
 /// cloud Space offers no Add credit.
@@ -372,7 +396,9 @@ public final class LiveBilling: BillingRunning, @unchecked Sendable {
     public init(cua: Cua) { self.cua = cua }
 
     public func status() async throws -> AppBillingStatus {
-        AppBillingStatus(billingEnabled: false, card: nil, credit: nil, billingUrl: nil)
+        AppBillingStatus(
+            billingEnabled: AccountURLs.billingEnabled, card: nil, credit: nil,
+            billingUrl: AccountURLs.billingEnabled ? AccountURLs.billing : nil)
     }
 }
 
@@ -384,7 +410,7 @@ public final class FixtureBilling: BillingRunning, @unchecked Sendable {
         current = AppBillingStatus(
             billingEnabled: enabled, card: nil,
             credit: AppBillingCredit(balanceUsdCents: balanceCents),
-            billingUrl: "https://app.cua.ai/billing")
+            billingUrl: AccountURLs.billing)
     }
 
     public func status() async throws -> AppBillingStatus { current }

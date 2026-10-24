@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! An in-process coordinator and relay for tests (never the real one, which
-//! runs in Cua's relay service). It speaks the same protocol: the challenge, the network
+//! An in-process coordinator and relay for tests (never the real one; that
+//! is `cua-relay`). It speaks the same protocol: the challenge, the network
 //! map, relayed frames, pairing and STUN.
 //!
 //! - [`Mode::Account`]: every client peers with every machine (machines see
-//!   clients with an owner grant).
+//!   clients with an owner grant); with
+//!   [`FakeCoordinator::set_machine_peering`], machines also peer with each
+//!   other, as machines of one account ([`proto::ROLE_MACHINE`]).
 //! - [`Mode::Static`]: clients pair with machines by proof, as in
 //!   production.
 //!
@@ -43,6 +45,9 @@ struct State {
     denied: Mutex<Vec<(String, String)>>,
     /// The relay's mesh is turned off: every connect gets HTTP 404.
     mesh_off: AtomicBool,
+    /// Account mode: machines also peer with each other (one account's
+    /// hosts, as `cua-relay` does).
+    machine_peering: AtomicBool,
 }
 
 /// See the module docs.
@@ -164,7 +169,7 @@ impl FakeCoordinator {
     }
 
     /// Turns the mesh off (`false`: every node is disconnected and each
-    /// reconnect gets HTTP 404, as from a relay that turned its mesh off)
+    /// reconnect gets HTTP 404, as from a relay with `CUA_RELAY_MESH=off`)
     /// or back on.
     pub fn set_mesh(&self, on: bool) {
         self.state.mesh_off.store(!on, Ordering::SeqCst);
@@ -173,6 +178,13 @@ impl FakeCoordinator {
                 let _ = tx.send(WsMessage::Close(None));
             }
         }
+    }
+
+    /// Account mode: machines peer with each other too (true) or only
+    /// with clients (false, the default). Maps are pushed again at once.
+    pub fn set_machine_peering(&self, on: bool) {
+        self.state.machine_peering.store(on, Ordering::SeqCst);
+        push_netmaps(&self.state, self.mode);
     }
 
     /// Nodes connected right now.
@@ -199,13 +211,22 @@ async fn stun_loop(sock: UdpSocket) {
     }
 }
 
+/// Whether two kinds of node peer: a client and a machine always, two
+/// machines with machine peering on (account mode).
+fn kinds_peer(state: &State, mode: Mode, a: NodeKind, b: NodeKind) -> bool {
+    a != b
+        || (a == NodeKind::Machine
+            && mode == Mode::Account
+            && state.machine_peering.load(Ordering::SeqCst))
+}
+
 fn peers_of(state: &State, mode: Mode, me: &PeerInfo) -> Vec<PeerInfo> {
     let nodes = state.nodes.lock().expect("nodes");
     let online = state.conns.lock().expect("conns");
     let pairs = state.pairs.lock().expect("pairs");
     nodes
         .values()
-        .filter(|p| p.node_key != me.node_key && p.kind != me.kind)
+        .filter(|p| p.node_key != me.node_key && kinds_peer(state, mode, me.kind, p.kind))
         .filter(|p| match mode {
             Mode::Account => true,
             Mode::Static => {
@@ -219,7 +240,17 @@ fn peers_of(state: &State, mode: Mode, me: &PeerInfo) -> Vec<PeerInfo> {
         .map(|p| {
             let mut p = p.clone();
             p.online = online.contains_key(&p.node_key);
-            if mode == Mode::Account && me.kind == NodeKind::Machine {
+            if mode == Mode::Account && me.kind == NodeKind::Machine && p.kind == NodeKind::Machine
+            {
+                p.grant = Some(Grant {
+                    user: "acct-1".into(),
+                    account: "acct-1".into(),
+                    email: Some("ada@example.com".into()),
+                    name: Some(p.name.clone()),
+                    role: proto::ROLE_MACHINE.into(),
+                    device: None,
+                });
+            } else if mode == Mode::Account && me.kind == NodeKind::Machine {
                 p.grant = Some(Grant {
                     user: "user-1".into(),
                     account: "acct-1".into(),
@@ -260,7 +291,7 @@ fn may_relay(state: &State, mode: Mode, a: &PublicKey, b: &PublicKey) -> bool {
     let (Some(x), Some(y)) = (nodes.get(a), nodes.get(b)) else {
         return false;
     };
-    if x.kind == y.kind {
+    if !kinds_peer(state, mode, x.kind, y.kind) {
         return false;
     }
     match mode {

@@ -235,6 +235,13 @@ pub(crate) fn build_channel(cfg: &ChannelConfig, transport: Transport) -> Result
     }))
 }
 
+/// HTTP/2 receive window per stream (native gRPC).
+pub const STREAM_WINDOW: u32 = 4 * 1024 * 1024;
+/// HTTP/2 receive window per connection (native gRPC).
+pub const CONNECTION_WINDOW: u32 = 16 * 1024 * 1024;
+/// Largest HTTP/2 frame this client accepts (native gRPC).
+pub const MAX_FRAME: u32 = 1024 * 1024;
+
 fn native_channel(cfg: &ChannelConfig) -> Result<RawChannel> {
     use tonic::transport::{Channel, ClientTlsConfig};
     let mut ep = Channel::from_shared(cfg.endpoint.origin())
@@ -245,7 +252,13 @@ fn native_channel(cfg: &ChannelConfig) -> Result<RawChannel> {
         .keep_alive_while_idle(true)
         .tcp_keepalive(Some(cfg.keepalive.interval))
         .tcp_nodelay(true)
-        .http2_adaptive_window(true);
+        // Bulk transfers (files, streamed output) at the link's speed: the
+        // driver advertises 4 MiB stream and 16 MiB connection windows and
+        // 1 MiB frames; receive the same way instead of starting at 64 KiB
+        // and 16 KiB frames.
+        .initial_stream_window_size(STREAM_WINDOW)
+        .initial_connection_window_size(CONNECTION_WINDOW)
+        .max_frame_size(MAX_FRAME);
     if cfg.endpoint.is_tls() {
         ep = ep
             .tls_config(
@@ -492,6 +505,9 @@ impl HeaderInjector {
         }
         if let Some(p) = self.principal.clone().or_else(process_principal) {
             headers.insert(metadata::PRINCIPAL_BIN, p);
+        }
+        for (name, value) in &self.extra {
+            headers.insert(name.clone(), value.clone());
         }
         for (name, value) in &self.extra {
             headers.insert(name.clone(), value.clone());

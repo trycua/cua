@@ -604,14 +604,82 @@ actor FakeSpacesBackend: SpacesTransport {
                             "checks": .array([.object(["name": "credentials", "ok": true, "detail": "account 1"])])])
         case "cloud_disconnect":
             return .object(["provider": arguments["provider"] ?? "aws", "disconnected": true, "left": .array([])])
+        case "cloud_audit":
+            return .array([.object(["ts": "2026-10-21T00:00:00Z", "action": "resource_deleted",
+                                    "provider": "aws", "kind": "instance", "id": "i-9", "space": "space-1",
+                                    "actor": "sweep", "outcome": "ok", "detail": "expired"])])
         case "cloud_sweep":
             return .object(["dry_run": arguments["dry_run"] ?? true,
                             "resources": .array([.object(["provider": "aws", "id": "i-9", "type": "instance",
                                                           "action": "delete", "reason": "expired"])])])
 
+        // --- The elastic pool (shapes as the Rust structs serialize) ---------
+        case "cloud_hosts", "cloud_add_host":
+            return .array([.object(Self.elasticHost(arguments["instance_type"]?.stringValue ?? "cax41"))])
+        case "cloud_remove_host":
+            return .object(["removed": arguments["names"] ?? .array([]),
+                            "failed": .array([.object(["name": "ghost-9", "error": "not found"])])])
+        case "cloud_budget":
+            return .object(["policy": .object(["autoscale": arguments["autoscale"] ?? true,
+                                               "max_usd_per_hour": arguments["max_usd_per_hour"] ?? .number(2.0),
+                                               "monthly_usd": .number(300.0), "max_new_hosts": 8, "warm": true,
+                                               "interactive_slo_secs": 30, "routed": true]),
+                            "month_usd": .number(12.5), "running_usd_per_hour": .number(0.0684), "hosts": 1])
+        case "cloud_plan":
+            return .object([
+                "plan": .object([
+                    "assignments": .array([
+                        .object(["group": "request-0", "target": .object(["on": "host", "name": "studio"]),
+                                 "count": 8, "sync": false]),
+                        .object(["group": "request-0", "target": .object(["on": "new", "index": 0]),
+                                 "count": 24, "sync": true]),
+                    ]),
+                    "new_hosts": .array([.object(["provider": "hetzner", "type_name": "cax41", "region": "fsn1",
+                                                  "usd_per_hour": .number(0.0684), "boot_secs": 75, "billed_secs": 3600,
+                                                  "one_space": false])]),
+                    "unplaced": .array([.object(["group": "request-0", "count": 2, "reason": "cap"])]),
+                    "added_usd_per_hour": .number(0.0684), "projected_usd": .number(0.0684), "lower_bound_usd": .number(0.05),
+                    "solver": "exact", "ready_in_secs": 75, "explain": .array(["8 x request-0 -> studio"]),
+                ]),
+                "groups": .array([]), "pool": .object([:]),
+                "added": arguments["apply"]?.boolValue == true
+                    ? .array([.object(Self.elasticHost("cax41"))]) : .array([]),
+            ])
+        case "prewarm":
+            return .object(Self.prewarm(arguments["image"]?.stringValue ?? "linux",
+                                        count: arguments["count"]?.intValue ?? 1))
+        case "prewarm_list":
+            return .array([.object(Self.prewarm("linux", count: 8))])
+        case "prewarm_remove":
+            return .object(["removed": .bool(arguments["id"]?.stringValue == "pw-abc123")])
+        case "cloud_reconcile":
+            return .array([
+                .object(["host": "hetzner-1", "action": .object(["action": "remove", "reason": "idle",
+                                                                 "saves_usd": .number(0.07)])]),
+                .object(["host": "hetzner-2", "action": .object(["action": "keep", "until": 1_800_000_000,
+                                                                 "reason": "paid time left"])]),
+            ])
+
         default:
             throw SpacesError.toolFailed(tool: name, message: "error: unknown tool \(name)")
         }
+    }
+
+    /// A prewarm exactly as `cua_spaces::prewarm::Prewarm` serializes.
+    static func prewarm(_ image: String, count: Int) -> [String: JSONValue] {
+        ["id": "pw-abc123", "image": .string(image), "kind": "container", "cpus": 1, "memory_mb": 512,
+         "count": .number(Double(count)), "ready": .number(Double(count)),
+         "placements": .array([.object(["host": "aws-1", "machine": "m-1",
+                                        "count": .number(Double(count)), "ready": .number(Double(count))])]),
+         "expires_at": 1_800_000_000, "new_hosts": .array(["aws-1"])]
+    }
+
+    /// A `cloud_hosts` row exactly as `cua_sandbox_core::byoc::CloudHost` serializes.
+    static func elasticHost(_ type: String) -> [String: JSONValue] {
+        ["name": "hetzner-1", "provider": "hetzner", "type_name": .string(type), "region": "fsn1",
+         "id": "42", "machine": "m-1", "state": "joined", "started": 1_700_000_000,
+         "expires": 1_700_086_400, "usd_per_hour": .number(0.0684), "billing_step_secs": 3600,
+         "billing_min_secs": 3600, "pinned": false]
     }
 
     /// Just enough shell to make cleanup and existence checks real.

@@ -4,19 +4,52 @@ version.workspace = true
 edition = "2024"
 license.workspace = true
 repository = "https://github.com/trycua/cua"
-description = "Local sandbox runtimes for the cua SDK: Lume, QEMU and OCI containers (gVisor)."
+description = "Local sandbox runtimes for the cua SDK: Lume, QEMU, OCI containers (gVisor) and microVMs (Firecracker, Virtualization.framework, Apple Containerization)."
 
 [features]
-default = ["lume", "qemu", "container", "vnc"]
+default = ["lume", "qemu", "container", "vnc", "microvm", "containerization"]
 lume = ["dep:reqwest"]
 # Agentless screenshots over a VMM's VNC endpoint (`vnc::capture_png`).
 vnc = ["dep:vnc", "dep:png"]
-qemu = []
-container = ["dep:bollard", "dep:bytes"]
+qemu = ["dep:cua-spacesd-client"]
+# microVMs on macOS 26 (Apple silicon): Apple's Containerization through its
+# `container` CLI, cua's own pinned copy.
+containerization = ["dep:reqwest"]
+# Memory checkpoints of gVisor containers give a restored Space its identity
+# through cua-spacesd's `Init`.
+container = ["dep:bollard", "dep:bytes", "dep:tar", "dep:cua-spacesd-client", "dep:pbjson-types"]
+# microVMs: Firecracker on Linux/KVM (pasta networking, snapshots over the
+# Firecracker API) and Virtualization.framework on macOS (the cua-vz monitor,
+# gvproxy networking, saved machine states); OCI rootfs as squashfs, the
+# guest init over vsock.
+microvm = [
+    "dep:backhand",
+    "dep:cua-microvm-init",
+    "dep:cua-spacesd-client",
+    "dep:reqwest",
+    "dep:hyper",
+    "dep:hyper-util",
+    "dep:http-body-util",
+    "dep:tar",
+    "dep:flate2",
+]
 
 [dependencies]
+cua-microvm-init = { workspace = true, optional = true }
+cua-spacesd-client = { workspace = true, optional = true }
+pbjson-types = { workspace = true, optional = true }
+hyper = { version = "1", features = ["client", "http1"], optional = true }
+hyper-util = { version = "0.1", features = ["tokio"], optional = true }
+http-body-util = { version = "0.1", optional = true }
+tar = { version = "0.4", optional = true }
+# Squashfs written in-process where `sqfstar` is missing (macOS microVMs).
+# MIT OR Apache-2.0.
+backhand = { version = "0.25", default-features = false, features = ["zstd", "parallel"], optional = true }
+flate2 = { version = "1", optional = true }
 # Scratch file for the disk-architecture probe (qemu-img dd).
 tempfile = "3"
+# The host's open-file table (`cua_home::filetable`).
+cua-home.workspace = true
 async-trait = "0.1"
 cua-create-failure.workspace = true
 base64 = "0.22"
@@ -40,7 +73,7 @@ png = { version = "0.18", optional = true }
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_LibraryLoader", "Win32_System_Threading"] }
 
 [dev-dependencies]
 # Opt-in QEMU test: the SDK client checks the guest accepts the delivered token.

@@ -60,10 +60,15 @@ jobs:
       - name: Verify source is an exact main commit
         env:
           SOURCE_SHA: ${{ inputs.source_sha }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-          git fetch --no-tags origin main
+          # Checkout does not persist credentials; private repos need an
+          # authenticated fetch, scoped to this one command.
+          AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$AUTH_HEADER"
+          git -c "http.https://github.com/.extraheader=$AUTH_HEADER" fetch --no-tags origin main
           git merge-base --is-ancestor "$SOURCE_SHA" origin/main
 
       - name: Fetch published release inventory
@@ -73,6 +78,24 @@ jobs:
           gh api --paginate --slurp \
             "repos/${{ github.repository }}/releases?per_page=100" \
             | jq 'add' > "$RUNNER_TEMP/releases.json"
+
+      # The first nightly diffs from the component's stable tag, which lives
+      # in trycua/cua, not here (see ensure_upstream_tag.sh).
+      - name: Fetch the stable base tag read-only
+        env:
+          COMPONENT: ${{ inputs.component }}
+        run: |
+          set -euo pipefail
+          BASE_TAG=$(python3 - <<'PY'
+          import os, sys
+          sys.path.insert(0, ".github/scripts")
+          import release_channels as rc
+          c = rc.component_descriptor(os.environ["COMPONENT"])
+          base = rc.repository_path(rc.ROOT, c["versionAuthorityFile"]).read_text(encoding="utf-8").strip()
+          print(rc.format_tag(c, "stable", base))
+          PY
+          )
+          .github/scripts/ensure_upstream_tag.sh "$BASE_TAG"
 
       - name: Plan immutable nightly
         id: plan

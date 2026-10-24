@@ -152,7 +152,10 @@ async fn dial(uri: &Uri) -> std::io::Result<TcpStream> {
         .unwrap_or_default()
         .trim_start_matches('[')
         .trim_end_matches(']');
-    TcpStream::connect((host, uri.port_u16().unwrap_or(80))).await
+    let stream = TcpStream::connect((host, uri.port_u16().unwrap_or(80))).await?;
+    // No Nagle on the tunnel: every relayed call rides it in small frames.
+    stream.set_nodelay(true)?;
+    Ok(stream)
 }
 
 async fn proxy_stream(

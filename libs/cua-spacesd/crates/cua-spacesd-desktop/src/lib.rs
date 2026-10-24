@@ -184,8 +184,10 @@ impl TargetCatalog {
                 continue;
             }
 
-            let handle = TargetHandle(format!("target-{}", uuid::Uuid::new_v4()));
-            let grant = TargetGrant(format!("grant-{}", uuid::Uuid::new_v4()));
+            // From the OS RNG: the workspace's uuid uses a userspace PRNG
+            // whose state a memory snapshot copies into every clone.
+            let handle = TargetHandle(crate::grpc::random_id("target"));
+            let grant = TargetGrant(crate::grpc::random_id("grant"));
             let id = ProviderTargetId {
                 key: BackendTargetKey::new(format!(
                     "macos:{}:{}",

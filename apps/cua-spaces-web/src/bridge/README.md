@@ -283,6 +283,7 @@ under a host-neutral name; nothing here is a new mechanism. Types are in
 | `agents.pause` / `agents.resume` | `{ name }` | `null` | `agent_pause` / `agent_resume` |
 | `agents.setup` | `{}` | `AgentSetupRow[]` | `agent_setup_detect` (`cua agents status`) |
 | `agents.configure` | `{ agents: string[] \| null }` | `AgentSetupRow[]` | `agent_setup_configure` (`cua agents setup`) |
+| `agents.signIn` | `{ agent }` | `AgentSetupRow[]` | unsupported (no command starts an agent's own sign-in) |
 
 Event: `{ type: "agents.changed" }` when an agent is paused, resumed or saved,
 or a run starts or ends. The store refetches `agents.list` and the runs.
@@ -312,6 +313,7 @@ which is the `agent_events` result as is):
 | `agents.events` | `{ spaceId, runId, cursor, max? }` | `agent_events` result | the `agent_events` tool (`AgentRun.events(cursor:)` in the SDK) |
 | `agents.pause` / `agents.resume` | `{ name }` | `null` | `PersistentModel.send(.pause/.resume)` |
 | `agents.setup` / `agents.configure` | `{}` / `{ agents }` | `AgentSettingsRow[]` | the Settings "AI agents" rows |
+| `agents.signIn` | `{ agent }` | `AgentSettingsRow[]` | the agent's own sign-in on this computer (`codex login`; `AgentSetupRunning.signIn`), returning once it runs |
 
 The host sends `agents.changed` when the persistent agents or the AI agents
 rows change. Without the daemon (`persistent_agent_list`, `agent_events`) or

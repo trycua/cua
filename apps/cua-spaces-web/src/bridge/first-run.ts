@@ -2,12 +2,16 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * The first run every host shows (0.10.0): connect your agent, then "Your
- * agent can use this Mac". The words, the rows, when Done is on and the
+ * The first run every host shows (0.10.0): pick any agents (or none), then
+ * "Your agent can use this Mac". The words, the rows, when Done is on and the
  * to-do list on Home are the app core's (`firstRun.view`, `firstRun.todos`,
  * `cua-spaces-app-core/src/first_run.rs`); this module gathers what the
  * core reads (the agent setup, `host.status`, the sign-in, the extra
  * Space's create) and runs the buttons.
+ *
+ * Step 1's ticks, the agents' own sign-ins (`agents.signIn` starts
+ * `codex login` on this computer; `agents.setup` reports `signedIn`) and the
+ * provider keys (`agentKeys.list`) are all per computer, and the page says so.
  *
  * What is real and what isn't (see `first_run.rs` for the detail):
  * - "Cua is in the agent's settings": `agents.setup`'s `configured`. Real.
@@ -45,10 +49,32 @@ import { useFirstSpaceOffers } from "./new-space-hooks";
 import { onboardingInitial, onboardingTelemetry, onboardingView, readSavedOnboarding, writeSavedOnboarding } from "./onboarding";
 import type { OnboardingFlowState } from "./contracts/onboarding";
 import { useRelayUsage } from "./relay-usage";
+import { useAgentKeys } from "./agent-keys";
 import { newPendingId } from "./store";
 import { extraName, spokenName } from "./space-names";
+import { runCreateFix } from "./create-retry";
+import type { CreateFix } from "./contracts/spaces";
 
 export { extraName, spokenName };
+
+/** The troubleshooting page (`creating::TROUBLESHOOT_URL`). */
+const TROUBLESHOOT_URL = "https://cua.ai/docs/spaces/guides/troubleshoot#find-your-reason";
+
+/** The card's input without the page-only `fix` (the core's first-run
+ * input has no such field). */
+function withoutFix(extra: FirstRunExtra & { fix?: CreateFix | null }): FirstRunExtra {
+  const { fix: _fix, ...rest } = extra;
+  return rest;
+}
+
+/** The extra Space failed the same way twice: the card shows the core's fix
+ * for that cause (its sentence, and its button as `fix`) instead of a plain
+ * Try again, as the Space's own page does. */
+function withExtraFix(view: FirstRunView, fix: CreateFix | null): FirstRunView {
+  const card = view.setup?.extra;
+  if (!fix || !view.setup || card?.phase !== "failed") return view;
+  return { ...view, setup: { ...view.setup, extra: { ...card, note: `${card.note} ${fix.text}`, action: { id: "fix", label: fix.label } } } };
+}
 import { spaceState } from "../lib/spaces";
 
 
@@ -85,6 +111,8 @@ function fallbackView(input: FirstRunInput): FirstRunView {
   const place = input.hostOs === "macos" ? "this Mac" : input.hostOs === "windows" ? "this PC" : "this computer";
   const art = { agent: input.agent ?? "claude-code", computer: "on" as const, extra: "outline" as const };
   if (input.step === "connect") {
+    const picked = input.picked ?? (input.agents ?? []).filter((a) => a.installed).map((a) => a.agent);
+    const agents = (input.agents ?? []).map((a) => ({ agent: a.agent, name: a.name, checked: picked.includes(a.agent), installed: a.installed, locked: a.configured, note: null }));
     return {
       step: "connect",
       later: "Skip for now",
@@ -92,13 +120,17 @@ function fallbackView(input: FirstRunInput): FirstRunView {
         title: "A shared Space for every agent.",
         accent: "agent",
         lede: `Connect your agents and give them computers to work on: macOS, Linux or Windows, right here on ${place}.`,
-        primary: { id: "connect", label: `Connect ${name}` },
-        agent: { agent: input.agent ?? "claude-code", name, installed: true },
-        note: `Your agent will use ${place}.`,
-        noteMore: "You can add a separate Space later.",
-        orLabel: "Or",
-        others: [],
-        otherLabel: "Other",
+        intro: "Pick any, or none.",
+        agentsLabel: `On ${place}`,
+        agents,
+        moreLabel: "More agents",
+        more: [],
+        agentsNote: `Cua adds its skills and MCP server to each one you pick, on ${place} only. Your other computers set up their own.`,
+        credentialsLabel: "Sign-ins and keys",
+        credentialsNote: `They stay on ${place}. Other computers keep their own.`,
+        credentials: [],
+        primary: { id: "continue", label: "Continue" },
+        connects: picked,
         busy: input.connecting ? `Adding Cua to ${name}…` : null,
         error: input.connectError,
       },
@@ -138,8 +170,10 @@ function fallbackView(input: FirstRunInput): FirstRunView {
  * to-do list after Finish later). */
 export interface FirstRunSaved {
   step: FirstRunStep;
-  /** The agent connected (setup id). */
+  /** The agent the first request names: the first one connected (setup id). */
   agent: string | null;
+  /** Step 1: the ticks (null: not changed). Step 2: the agents connected. */
+  picked: string[] | null;
   /** When the setup screen first showed (the access log counts from here). */
   setupStartedMs: number | null;
   /** When the agent was first seen using Cua. */
@@ -159,6 +193,7 @@ const KEY = "cua-spaces:first-run";
 const EMPTY: FirstRunSaved = {
   step: "connect",
   agent: null,
+  picked: null,
   setupStartedMs: null,
   usedAtMs: null,
   extraPendingId: null,
@@ -276,9 +311,14 @@ export interface FirstRunHook {
   openUsageLink(): void;
   input: FirstRunInput;
   saved: FirstRunSaved;
-  /** Every agent the setup knows (for "Other"). */
+  /** Every agent the setup knows. */
   agents: AgentSetupRow[];
-  connect(agent?: string): Promise<void>;
+  /** Step 1: tick or untick an agent. */
+  toggle(agent: string, on: boolean): void;
+  /** Step 1's Continue: adds Cua to the ticked agents not set up yet (none: nothing to add), then step 2. */
+  connect(): Promise<void>;
+  /** Starts an agent's own sign-in on this computer (`codex login`). */
+  signIn(agent: string): Promise<void>;
   /** A row's or a to-do's button (`sign-in`, `set-up`, `open-settings`, `restart-check`, `connect`). */
   act(id: string, settingsUrl?: string | null): Promise<void>;
   copyPrompt(): Promise<void>;
@@ -310,6 +350,13 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
   const [connectError, setConnectError] = useState<string | null>(null);
   const [settingUp, setSettingUp] = useState(false);
   const [setupError, setSetupError] = useState<string | null>(null);
+  const [signingAgent, setSigningAgent] = useState<string | null>(null);
+  const [signInError, setSignInError] = useState<string | null>(null);
+  const signingRef = useRef(signingAgent);
+  signingRef.current = signingAgent;
+  // The provider keys saved here (none until read, or where the app can't read them).
+  const agentKeys = useAgentKeys();
+  const keysInput = agentKeys.unsupported || agentKeys.isLoading ? null : agentKeys.input;
   const [tick, setTick] = useState(0);
   const shownRef = useRef(false);
   const agentsRef = useRef(agents);
@@ -323,10 +370,13 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
     if (!active || !adapter) return;
     let live = true;
     let n = 0;
-    const read = () => {
-      // The agent setup runs a command on the host: once connected, it's read now and then.
-      const connected = agentsRef.current?.some((a) => a.agent === (readFirstRun().agent ?? "") && a.configured);
-      if (!connected || n++ % 6 === 0) {
+    const read = (forceAgents = false) => {
+      // The agent setup runs a command on the host: once connected, it's read now and then
+      // (every time while an agent's own sign-in waits for the browser).
+      const saved = readFirstRun();
+      const want = saved.picked ?? (saved.agent ? [saved.agent] : []);
+      const connected = saved.step === "setup" && Boolean(agentsRef.current) && want.every((id) => agentsRef.current!.some((a) => a.agent === id && a.configured));
+      if (forceAgents || signingRef.current || !connected || n++ % 6 === 0) {
         void adapter
           .call("agents.setup", {})
           .then((rows) => live && setAgents(rows))
@@ -340,28 +390,42 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
       }
     };
     read();
-    const timer = setInterval(read, pollMs);
+    const focus = () => read(true);
+    window.addEventListener("focus", focus);
+    const timer = setInterval(() => read(), pollMs);
     return () => {
       live = false;
       clearInterval(timer);
+      window.removeEventListener("focus", focus);
     };
   }, [active, adapter, s.step, s.finishedLater, tick, pollMs]);
 
   const rows: FirstRunAgent[] | null = agents
-    ? agents.map((a) => ({ agent: a.agent, name: a.name, installed: a.installed, configured: a.configured }))
+    ? agents.map((a) => ({ agent: a.agent, name: a.name, installed: a.installed, configured: a.configured, signIn: a.signIn ?? null, signedIn: Boolean(a.signedIn) }))
     : null;
   const lead = core.tryCall<string>("firstRun.leadAgent", { agents: rows ?? [] }) ?? rows?.find((a) => a.installed)?.agent ?? "claude-code";
-  const agentId = s.agent ?? lead;
-  const agentName = rows?.find((a) => a.agent === agentId)?.name ?? null;
+  // Step 2: the agents connected (an older saved run connected one, `agent`).
+  const connectedIds = s.step === "setup" ? (s.picked ?? (s.agent ? [s.agent] : [lead])) : [];
+  const agentId = s.step === "setup" ? (connectedIds[0] ?? null) : (s.agent ?? lead);
+  const agentNames = connectedIds.map((id) => rows?.find((a) => a.agent === id)?.name).filter((n): n is string => Boolean(n));
 
-  // The first time the agent uses Cua since the setup screen opened.
-  const usedMs = s.usedAtMs ?? (s.setupStartedMs && agentName ? agentUsedMs(core, host, s.setupStartedMs, agentName) : null);
+  // The first time a connected agent uses Cua since the setup screen opened.
+  const usedMs =
+    s.usedAtMs ??
+    (s.setupStartedMs && agentNames.length
+      ? agentNames.map((n) => agentUsedMs(core, host, s.setupStartedMs!, n)).reduce<number | null>((a, b) => (b !== null && (a === null || b > a) ? b : a), null)
+      : null);
+
+  // An agent's own sign-in finished (its file is there): stop waiting.
+  useEffect(() => {
+    if (signingAgent && agents?.some((a) => a.agent === signingAgent && a.signedIn)) setSigningAgent(null);
+  }, [signingAgent, agents]);
   useEffect(() => {
     if (usedMs && !s.usedAtMs) writeFirstRun({ usedAtMs: usedMs });
   }, [usedMs, s.usedAtMs]);
 
   // The extra Space, as the Spaces list shows its create.
-  const extra = useMemo<FirstRunExtra>(() => {
+  const extra = useMemo<FirstRunExtra & { fix?: CreateFix | null }>(() => {
     if (s.extraPendingId) {
       const id = store?.createdId(s.extraPendingId) ?? null;
       const row = spaces.data?.find((x) => x.id === (id ?? s.extraPendingId));
@@ -376,7 +440,7 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
             fraction: row.progress ? row.progress.permille / 1000 : null,
           };
         }
-        if (state === "failed") return { phase: "failed", name: spokenName(row.name), os: row.os, error: row.progress?.error ?? null };
+        if (state === "failed") return { phase: "failed", name: spokenName(row.name), os: row.os, error: row.progress?.error ?? null, fix: row.progress?.fix ?? null };
         return { phase: "ready", name: spokenName(row.name), os: row.os };
       }
       // Asked for, not listed yet.
@@ -404,6 +468,10 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
     hostOs: hostOs(),
     agents: rows,
     agent: agentId,
+    picked: s.picked,
+    keys: keysInput,
+    agentSigningIn: signingAgent,
+    agentSignInError: signInError,
     connecting,
     connectError,
     // No process check yet (see the module comment).
@@ -425,7 +493,7 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
     extra,
     plan,
   };
-  const view = firstRunView(core, input);
+  const view = withExtraFix(firstRunView(core, { ...input, extra: withoutFix(extra) }), extra.fix ?? null);
 
   const welcome = settings.data?.telemetry
     ? onboardingView(core, { ...onboardingInitial(core, null), step: "welcome", telemetry: onboardingTelemetry(settings.data.telemetry) })
@@ -483,25 +551,48 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, s.step, signedIn, host?.configured]);
 
-  const connect = async (agent?: string) => {
-      const id = agent ?? agentId;
-      if (!adapter || connecting) return;
-      setConnecting(true);
-      setConnectError(null);
-      writeFirstRun({ agent: id });
-      try {
-        const next = await adapter.call("agents.configure", { agents: [id] });
-        setAgents(next);
-        writeFirstRun({ step: "setup", agent: id, setupStartedMs: readFirstRun().setupStartedMs ?? Date.now() });
-      } catch (e) {
-        setConnectError(e instanceof Error ? e.message : String(e));
-      } finally {
-        setConnecting(false);
-      }
+  // Step 1's ticks as the core decided them (the installed ones until the user changes one).
+  const ticked = (): string[] => {
+    const c = view.connect;
+    return c ? [...c.agents, ...c.more].filter((p) => p.checked).map((p) => p.agent) : (s.picked ?? []);
+  };
+
+  const toggle = (agent: string, on: boolean) => {
+    const now = ticked().filter((id) => id !== agent);
+    writeFirstRun({ picked: on ? [...now, agent] : now });
+  };
+
+  const connect = async () => {
+    if (!adapter || connecting) return;
+    // Step 1: the ticked ones; step 2's Connect: the connected ones still without Cua.
+    const picked = s.step === "connect" ? ticked() : connectedIds;
+    const ids = s.step === "connect" ? (view.connect?.connects ?? picked) : picked.filter((id) => !agents?.some((a) => a.agent === id && a.configured));
+    setConnecting(true);
+    setConnectError(null);
+    try {
+      if (ids.length) setAgents(await adapter.call("agents.configure", { agents: ids }));
+      writeFirstRun({ step: "setup", picked, agent: picked[0] ?? null, setupStartedMs: readFirstRun().setupStartedMs ?? Date.now() });
+    } catch (e) {
+      setConnectError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const signIn = async (agent: string) => {
+    if (!adapter) return;
+    setSignInError(null);
+    setSigningAgent(agent);
+    try {
+      setAgents(await adapter.call("agents.signIn", { agent }));
+    } catch (e) {
+      setSigningAgent(null);
+      setSignInError(e instanceof Error ? e.message : String(e));
+    }
   };
 
   const copyPrompt = async () => {
-    const text = view.setup?.prompt.text ?? firstRunView(core, { ...input, step: "setup" }).setup?.prompt.text ?? "";
+    const text = view.setup?.prompt?.text ?? firstRunView(core, { ...input, step: "setup" }).setup?.prompt?.text ?? "";
     await navigator.clipboard?.writeText(text).catch(() => {});
   };
 
@@ -524,6 +615,14 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
       } else if (id === "retry" && s.extraPendingId) {
         const next = spaces.retryCreate(s.extraPendingId);
         writeFirstRun({ extraPendingId: next ?? null });
+      } else if (id === "fix" && extra.fix) {
+        // It failed the same way twice: that cause's fix (the core's).
+        await runCreateFix(extra.fix, {
+          copy: (text) => navigator.clipboard?.writeText(text),
+          openExternal: (url) => session.openExternal(url),
+          // No review sheet here: the help page says what each reason means.
+          details: () => void session.openExternal(TROUBLESHOOT_URL).catch(() => {}),
+        }).catch(() => {});
       }
   };
 
@@ -537,7 +636,9 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
     input,
     saved: s,
     agents: agents ?? [],
+    toggle,
     connect,
+    signIn,
     copyPrompt,
     extra: extraAct,
     async act(id, settingsUrl) {

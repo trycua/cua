@@ -37,9 +37,19 @@ macOS Space needs an Apple silicon Mac and about 50 GB of free disk.
     ```
   </Tab>
   <Tab value="Windows (preview)">
+    Recommended: run this in PowerShell.
+
     ```powershell skip="host-install"
     irm https://cua.ai/install.ps1 | iex
     ```
+
+    If you download and run the installer from the [download page](https://cua.ai/download)
+    instead, Windows may show a SmartScreen prompt the first time: choose **More info**,
+    then **Run anyway**. The publisher shows as **Cua AI, Inc.**
+
+    Windows 11 Home is supported; Hyper-V is not required. Local Spaces use
+    Docker Desktop on WSL 2 (the app can install it for you) or QEMU with WHPX,
+    which needs the **Windows Hypervisor Platform** feature turned on.
   </Tab>
 </Tabs>
 
@@ -51,8 +61,11 @@ has the details for each system.
 
 Open Cua Spaces. The first screen says "A shared Space for every agent."
 
-Press **Connect Claude Code**. If you use another agent, pick it instead:
-Codex, Hermes, OpenClaw or **Other**. The app adds Cua to that agent's settings.
+Under **Pick any, or none**, tick the agents you use on this computer: Claude
+Code, Codex, Hermes, Cursor, OpenClaw or any other under **More agents**. The
+ones installed here are ticked already. Press **Continue**, and the app adds
+Cua to each ticked agent's settings. You can also tick none and connect agents
+later.
 
 If your agent was already open, close it and open it again so it loads the new
 tools. To connect more agents later, see [Connect your agent](/spaces/guides/connect-your-agent).

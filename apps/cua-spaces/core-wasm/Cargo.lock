@@ -16,14 +16,14 @@ checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
 name = "cua-create-failure"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "cua-home"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "libc",
  "windows-sys",
@@ -31,7 +31,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spaces-app-core"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "cua-create-failure",
  "cua-home",

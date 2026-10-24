@@ -37,6 +37,15 @@ extension WebUIBridge {
              "teleport.icon", "teleport.thumbnail", "teleport.plan", "teleport.run", "teleport.sites", "teleport.remembered",
              "teleport.streamWindow":
             return try await teleport(method, args)
+        // Links to things you run (`cua share`): the daemon's shares.
+        case "links.list":
+            return ["links": try await model.backend.links().map { BridgeValue.encode($0) }] as [String: Any]
+        case "links.create":
+            let ttl = (args["ttlSeconds"] as? NSNumber).map { $0.uint32Value }
+            return BridgeValue.encode(try await model.backend.createLink(
+                target: try string(args, "target"), access: args["access"] as? String, ttlSeconds: ttl, name: args["name"] as? String))
+        case "links.stop":
+            return ["stopped": try await model.backend.stopLink(id: try string(args, "id"))] as [String: Any]
         case "sharing.list":
             return BridgeValue.encode(try await model.backend.shares(id: try spaceId(args)))
         case "sharing.share":
@@ -500,8 +509,13 @@ extension WebUIBridge {
             guard let location = word("location"), let os = word("guestOs"), let kind = word("kind"),
                   let outcome = word("outcome"), let phase = word("failedPhase"), let stalled = flag("stalled"),
                   let elapsed = ms("elapsedMs"), let gpu = flag("gpu"), let errorVariant = variant("errorVariant") else { return nil }
+            // A retried create's final outcome (pages before it send neither).
+            let attempt = (s["retryAttempt"] as? NSNumber).map { CFGetTypeID($0) == CFBooleanGetTypeID() ? 2 : $0.intValue } ?? 0
+            guard attempt == 0 || attempt == 1,
+                  let subclass = s["errorSubclass"] == nil ? "none" : word("errorSubclass") else { return nil }
             return .spaceCreate(location: location, guestOs: os, kind: kind, outcome: outcome, failedPhase: phase,
-                                stalled: stalled, elapsedMs: elapsed, gpu: gpu, errorVariant: errorVariant)
+                                stalled: stalled, elapsedMs: elapsed, gpu: gpu, errorVariant: errorVariant,
+                                retryAttempt: UInt32(attempt), errorSubclass: subclass)
         case "space-create-started":
             guard let location = word("location"), let os = word("guestOs"), let kind = word("kind"),
                   let gpu = flag("gpu") else { return nil }

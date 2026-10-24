@@ -104,6 +104,11 @@ pub fn error_kind(variant: &str) -> &'static str {
         }
         out
     };
+    // A failed create's Local Network cause comes as its subclass word
+    // (`cua_create_failure::create_failure_kind`); its kind is the parent.
+    if matches!(snake.as_str(), "local_network_denied" | "local_network_vpn") {
+        return "local_network";
+    }
     pick(schema::ERROR_KINDS, &snake, "other")
 }
 
@@ -940,6 +945,10 @@ pub struct SpaceCreate<'a> {
     pub gpu: bool,
     /// The error enum's case name (`InsufficientDisk`); empty when the shell had none.
     pub error_variant: &'a str,
+    /// The app ran the create a second time by itself (0 or 1; more is 1).
+    pub retry_attempt: u32,
+    /// The finer cause (`schema::ERROR_SUBCLASSES`); empty is `none`.
+    pub error_subclass: &'a str,
 }
 
 /// `cua_space_create`.
@@ -975,6 +984,14 @@ pub fn space_create(s: &SpaceCreate<'_>, outcome: Outcome, elapsed: Duration) ->
         .b("stalled", s.stalled && outcome == Outcome::Error)
         .s("time_bucket", create_time_bucket(elapsed))
         .b("gpu", s.gpu)
+        .n("retry_attempt", u64::from(s.retry_attempt.min(1)))
+        .s(
+            "error_subclass",
+            match outcome {
+                Outcome::Cancelled => "none",
+                _ => pick(schema::ERROR_SUBCLASSES, s.error_subclass, "none"),
+            },
+        )
 }
 
 /// `cua_space_create_started`.

@@ -530,6 +530,14 @@ pub fn space_host(h: cua_spaces::host_spaces::HostOffer) -> cua_spaces_app_core:
                 reason: l.reason,
             })
             .collect(),
+        load: h.node.map(|n| cua_spaces_app_core::wizard::HostLoad {
+            millicpus_total: n.millicpus_total,
+            millicpus_free: n.millicpus_free,
+            memory_total_mb: n.memory_total_mb,
+            memory_free_mb: n.memory_free_mb,
+            spaces: n.running.values().sum(),
+            problem: n.problem,
+        }),
     }
 }
 

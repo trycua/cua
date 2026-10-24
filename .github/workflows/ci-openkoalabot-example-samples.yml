@@ -18,6 +18,17 @@ on:
       - "docs/content/docs/spaces/guides/**"
       - "docs/content/docs/spaces/examples/**"
       - ".github/workflows/ci-openkoalabot-example-samples.yml"
+  push:
+    branches: [main]
+    paths:
+      - "samples/openkoalabot-example-ts/**"
+      - "samples/openkoalabot-example-swift/**"
+      - "libs/cua/**"
+      - "libs/spaces-sdk-swift/**"
+      - "libs/spaces-app-swift/**"
+      - "docs/content/docs/spaces/guides/**"
+      - "docs/content/docs/spaces/examples/**"
+      - ".github/workflows/ci-openkoalabot-example-samples.yml"
   workflow_dispatch:
 
 permissions:
@@ -25,7 +36,7 @@ permissions:
 
 concurrency:
   group: ci-openkoalabot-example-samples-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_NET_RETRY: "10"
@@ -36,13 +47,30 @@ env:
   DO_NOT_TRACK: "1"
   CARGO_TERM_COLOR: always
   CARGO_BUILD_JOBS: "4"
+  # CI checks behavior, not speed: a cheaper release profile compiles about a
+  # quarter faster and the dev profile drops debug info (the line-table
+  # test binaries filled the runner's disk). Release builds in cd-*.yml keep
+  # the shipped profile.
+  CARGO_PROFILE_RELEASE_OPT_LEVEL: "1"
+  CARGO_PROFILE_RELEASE_DEBUG: "0"
+  CARGO_PROFILE_RELEASE_LTO: "off"
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+  CARGO_PROFILE_DEV_DEBUG: "0"
 
 jobs:
   typescript:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: openkoalabot-example-ts (npm test)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
+      # The native + wasm SDK builds (plus the restored rust-cache) overflow the
+      # runner's ~14 GB free disk ("No space left on device"); drop unused
+      # preinstalled toolchains first.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
+          df -h /
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
@@ -52,7 +80,7 @@ jobs:
         uses: dtolnay/rust-toolchain@1.97.1
         with:
           targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
           key: openkoalabot-example-ts
@@ -85,6 +113,7 @@ jobs:
           npm run build:web
 
   swift:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: openkoalabot-example-swift (swift test)
     runs-on: macos-26
     timeout-minutes: 60
@@ -96,7 +125,7 @@ jobs:
         uses: ./.github/actions/setup-protoc
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
           key: openkoalabot-example-swift

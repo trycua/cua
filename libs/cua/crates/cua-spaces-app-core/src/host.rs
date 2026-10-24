@@ -318,7 +318,8 @@ pub const DEFAULT_RELAY_URL: &str = "https://relay.cua.ai";
 
 /// The relay host setup joins unless the form names another:
 /// `CUA_RELAY_URL`, else the relay of `CUA_ENV` ([`DEFAULT_RELAY_URL`] in
-/// production).
+/// production). For native callers: the form does not prefill it, because
+/// this core also runs in the page (wasm), which has no environment.
 pub fn default_relay_url() -> String {
     cua_home::env::relay_url()
 }
@@ -1496,7 +1497,11 @@ impl Default for HostFormState {
             advanced: false,
             direct: false,
             listen: DEFAULT_LISTEN.into(),
-            relay_url: default_relay_url(),
+            // Empty: the form leaves the relay to the host, which resolves it
+            // from its own `CUA_RELAY_URL` / `CUA_ENV`. This core also runs
+            // in the page (wasm), which has no environment and would name
+            // the production relay under `CUA_ENV=staging` (CUA-1610).
+            relay_url: String::new(),
             busy: false,
             error: None,
             spare: false,
@@ -1644,7 +1649,9 @@ fn form_request(s: &HostFormState) -> Result<HostSetupRequest, String> {
         provide_spaces: None,
     })
     .and_then(|r| {
-        if r.mode == "relay" && r.relay_url.is_none() {
+        // Only self-hosting (Advanced) must name its relay; otherwise an
+        // empty relay means "the host decides".
+        if r.mode == "relay" && s.advanced && r.relay_url.is_none() {
             Err("relay URL needed".into())
         } else {
             Ok(r)
@@ -2268,6 +2275,33 @@ mod tests {
         let mut other = me.clone();
         other.id = "local:x".into();
         assert_eq!(connected_now(&other), 0);
+    }
+
+    #[test]
+    fn the_form_leaves_the_relay_to_the_host_unless_named() {
+        // CUA-1610: the page's core has no `CUA_ENV`; a prefilled prod relay
+        // was sent with the staging token. Empty means "the host decides".
+        let s = form_initial();
+        assert_eq!(s.relay_url, "");
+        let r = form_view(&s, None).request.expect("valid");
+        assert_eq!(r.mode, "relay");
+        assert_eq!(r.relay_url, None);
+        // Self-hosting (Advanced) must name its relay; naming one sends it.
+        let own = form_reduce(
+            &s,
+            &HostFormAction::SetProfile {
+                profile: SELF_HOSTED_PROFILE.into(),
+            },
+        );
+        assert!(form_view(&own, None).request.is_none());
+        let named = form_reduce(
+            &own,
+            &HostFormAction::SetRelayUrl {
+                url: " https://relay.example/ ".into(),
+            },
+        );
+        let r = form_view(&named, None).request.expect("valid");
+        assert_eq!(r.relay_url.as_deref(), Some("https://relay.example"));
     }
 
     #[test]

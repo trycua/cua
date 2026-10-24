@@ -29,7 +29,7 @@ Every create takes the same three choices, all optional:
 
 | Axis | SDK | CLI | Values | Default |
 | --- | --- | --- | --- | --- |
-| Where | `on=` (cua-sandbox also `local=True`) | `--on` | `local`, `aws`, `gcp`, `modal` ([your cloud](/cua-sdk/guides/local-runtimes#your-own-cloud)), `direct:<addr>` (an existing machine running cua-spacesd), a registered provider | `default.on`, else `local` |
+| Where | `on=` (cua-sandbox also `local=True`) | `--on` | `local`, `aws`, `gcp`, `modal` ([your cloud](/cua-sdk/guides/your-cloud)), `direct:<addr>` (an existing machine running cua-spacesd), a registered provider | `default.on`, else `local` |
 | What kind | `kind=` | `--kind` | `auto`, `container`, `vm` | `auto` |
 | Which engine | `runtime=` | `--runtime` | `auto` or an engine below | `auto` |
 
@@ -50,6 +50,15 @@ Defaults resolve in this order, first match wins:
 2. env: `CUA_DEFAULT_ON`, `CUA_DEFAULT_KIND`, `CUA_DEFAULT_RUNTIME`
 3. config: `$CUA_HOME/config.toml` (`cua config set default.on aws`)
 4. built-in: `local`, `auto`, `auto`
+
+With no location given and none configured, a Space goes to this machine.
+When you have linked a cloud and set a budget (`cua cloud budget
+--max-per-hour 2`), it goes to this machine first and overflows into your
+clouds once this machine is full, never past the budget; the Space then
+says so (`cloud`, `cloud_place`, and a line from `cua spaces create`).
+`cua config set placement.overflow off` keeps it on this machine. An
+explicit `local` never overflows; `auto`, a host or a cloud keep their
+meaning.
 
 A default kind or runtime that does not fit an explicit request is skipped.
 See [Choose where sandboxes run by default](/cua-sdk/guides/local-runtimes#change-the-default).

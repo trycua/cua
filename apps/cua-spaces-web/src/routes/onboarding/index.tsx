@@ -2,10 +2,12 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { CheckIcon, CopyIcon, PlusIcon } from "lucide-react";
+import { CheckIcon, ChevronRightIcon, CopyIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { useFirstRun, type FirstRunArt, type FirstRunExtraView, type FirstRunHook, type FirstRunRow, type FirstRunUpsell, type FirstRunView } from "@/bridge";
+import { useAgentKeys, useFirstRun, type FirstRunAgentPick, type FirstRunArt, type FirstRunCredential, type FirstRunExtraView, type FirstRunHook, type FirstRunRow, type FirstRunUpsell, type FirstRunView } from "@/bridge";
+import { KeySheet } from "@/components/agents/key-sheet";
+import { Checkbox } from "@/components/ui/checkbox";
 import { CuaKey } from "@/components/cua-key";
 import { CuaLogo } from "@/components/cua-logo";
 import { OsIcon } from "@/components/os-icon";
@@ -18,8 +20,8 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/onboarding/")({ component: OnboardingPage });
 
 /**
- * The first run, the same on macOS, Windows and Linux: connect your agent,
- * then "Your agent can use this Mac". Every word and state is the app
+ * The first run, the same on macOS, Windows and Linux: pick any agents (or
+ * none), then "Your agent can use this Mac". Every word and state is the app
  * core's (`firstRun.view`, through `useFirstRun`); this file places them
  * beside the keycap art.
  */
@@ -83,22 +85,34 @@ const MARKS: Record<string, string> = {
   openclaw: "/onboarding/marks/mark-openclaw.svg",
 };
 
-function AgentMark({ agent, className }: { agent: string; className?: string }) {
+function AgentMark({ agent, name, className }: { agent: string; name?: string; className?: string }) {
   const src = MARKS[agent];
-  if (!src) return <PlusIcon className={cn("size-4", className)} aria-hidden />;
+  if (!src)
+    return (
+      <span aria-hidden className={cn("flex size-4 shrink-0 items-center justify-center rounded-[4px] bg-foreground/10 text-[9px] font-semibold text-muted-foreground", className)}>
+        {(name ?? agent).trim().charAt(0).toUpperCase()}
+      </span>
+    );
   return <img src={src} alt="" aria-hidden className={cn("size-4 shrink-0 object-contain", agent !== "claude-code" && agent !== "openclaw" && "dark:invert", className)} draggable={false} />;
 }
 
 function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
   const c = view.connect!;
-  const [others, setOthers] = useState(false);
+  const keys = useAgentKeys();
+  const [moreOpen, setMoreOpen] = useState(false);
   const [before, after] = c.title.split(c.accent);
+  const busy = Boolean(c.busy);
+  // A ticked agent from "More agents" stays in view.
+  const more = moreOpen ? c.more : [];
+  // The picker draws once the agents and keys are read, all at once, so nothing on the page moves while
+  // they load (and the page isn't centred vertically: a growing block would move the heading).
+  const ready = fr.input.agents !== null && !keys.isLoading;
   return (
-    <div className="my-auto flex max-w-[620px] flex-col py-8" data-first-run="connect">
+    <div className="flex max-w-[560px] flex-col py-8" data-first-run="connect">
       <h1
         tabIndex={-1}
         data-onboarding-heading=""
-        className="font-display text-[clamp(40px,6vw,64px)] leading-[1.02] font-semibold tracking-[-0.03em] text-balance outline-none"
+        className="font-display text-[clamp(36px,5vw,56px)] leading-[1.02] font-semibold tracking-[-0.03em] text-balance outline-none"
       >
         {before}
         {after !== undefined ? (
@@ -108,92 +122,145 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
           </>
         ) : null}
       </h1>
-      <p className="mt-5 max-w-[520px] text-[16px] leading-relaxed text-muted-foreground">{c.lede}</p>
-      <div className="mt-10">
-        <Button
-          size="lg"
-          className="h-12 gap-2.5 rounded-full px-6 text-[15px]"
-          data-onboarding-primary=""
-          data-first-run-connect={c.agent.agent}
-          disabled={Boolean(c.busy)}
-          autoFocus
-          onClick={() => void fr.connect()}
-        >
-          <AgentMark agent={c.agent.agent} className={c.agent.agent === "claude-code" ? "" : "invert dark:invert-0"} />
-          {c.busy ?? c.primary.label}
-        </Button>
-      </div>
-      {c.error ? (
-        <p role="alert" className="mt-3 text-[13px] text-destructive">
-          {c.error}
-        </p>
-      ) : null}
-      <p className="mt-6 flex flex-wrap items-center gap-x-2 text-[13px]">
-        <span>{c.note}</span>
-        <span className="text-muted-foreground">{c.noteMore}</span>
-      </p>
-      {fr.usage ? (
-        <div className="mt-8 flex max-w-[520px] flex-col gap-3 text-[13px] text-muted-foreground" data-first-run-usage="">
-          <p>
-            {fr.usage.notice}{" "}
-            <button type="button" className="underline hover:text-foreground" onClick={fr.openUsageLink}>
-              {fr.usage.linkLabel}
-            </button>
+      <p className="mt-4 max-w-[520px] text-[15px] leading-relaxed text-muted-foreground">{c.lede}</p>
+      {ready ? (
+        <>
+          <p className="mt-7 text-[14px] font-medium" data-first-run-intro="">
+            {c.intro}
           </p>
-          <label className="flex items-center gap-2.5 text-foreground">
-            <Switch
-              checked={fr.usage.on}
-              disabled={!fr.usage.enabled}
-              onCheckedChange={(on) => void fr.setUsage(on).catch(() => {})}
-              aria-label={fr.usage.label}
-            />
-            <span>{fr.usage.label}</span>
-            {fr.usage.help ? <span className="text-muted-foreground">{fr.usage.help}</span> : null}
-          </label>
-        </div>
+
+          <section className="mt-3" data-first-run-agents="">
+            <h2 className="mb-1.5 px-1 text-xs font-semibold text-muted-foreground">{c.agentsLabel}</h2>
+            <Card className="p-1.5">
+              {[...c.agents, ...more].map((p) => (
+                <AgentPickRow key={p.agent} pick={p} disabled={busy} onChange={(on) => fr.toggle(p.agent, on)} />
+              ))}
+              {c.more.length ? (
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-1.5 rounded-lg px-3 py-1.5 text-left text-[13px] text-muted-foreground hover:text-foreground"
+                  aria-expanded={moreOpen}
+                  data-first-run-more=""
+                  onClick={() => setMoreOpen((v) => !v)}
+                >
+                  <ChevronRightIcon className={cn("size-3.5 transition-transform", moreOpen && "rotate-90")} aria-hidden />
+                  {c.moreLabel} ({c.more.length})
+                </button>
+              ) : null}
+            </Card>
+            <p className="mt-2 px-1 text-xs text-muted-foreground" data-first-run-agents-note="">
+              {c.agentsNote}
+            </p>
+          </section>
+
+          {c.credentials.length ? (
+            <section className="mt-6" data-first-run-credentials="">
+              <h2 className="mb-1.5 px-1 text-xs font-semibold text-muted-foreground">{c.credentialsLabel}</h2>
+              <Card className="divide-y p-0">
+                {c.credentials.map((r) => (
+                  <CredentialRowView
+                    key={r.id}
+                    row={r}
+                    onAct={() => {
+                      if (r.action?.id === "agent-sign-in" && r.agent) void fr.signIn(r.agent);
+                      else if (r.action?.id === "add-key" && (r.provider === "anthropic" || r.provider === "openai")) keys.openSheet(r.provider);
+                    }}
+                  />
+                ))}
+              </Card>
+              <p className="mt-2 px-1 text-xs text-muted-foreground" data-first-run-credentials-note="">
+                {c.credentialsNote}
+              </p>
+            </section>
+          ) : null}
+
+          <div className="mt-8 flex items-center gap-4">
+            <Button
+              size="lg"
+              className="h-11 min-w-28 rounded-full px-6 text-[15px]"
+              data-onboarding-primary=""
+              data-first-run-continue={c.connects.join(",")}
+              disabled={busy}
+              autoFocus
+              onClick={() => void fr.connect()}
+            >
+              {c.busy ?? c.primary.label}
+            </Button>
+          </div>
+          {c.error ? (
+            <p role="alert" className="mt-3 text-[13px] text-destructive">
+              {c.error}
+            </p>
+          ) : null}
+          {fr.usage ? (
+            <div className="mt-8 flex max-w-[520px] flex-col gap-3 text-[13px] text-muted-foreground" data-first-run-usage="">
+              <p>
+                {fr.usage.notice}{" "}
+                <button type="button" className="underline hover:text-foreground" onClick={fr.openUsageLink}>
+                  {fr.usage.linkLabel}
+                </button>
+              </p>
+              <label className="flex items-center gap-2.5 text-foreground">
+                <Switch
+                  checked={fr.usage.on}
+                  disabled={!fr.usage.enabled}
+                  onCheckedChange={(on) => void fr.setUsage(on).catch(() => {})}
+                  aria-label={fr.usage.label}
+                />
+                <span>{fr.usage.label}</span>
+                {fr.usage.help ? <span className="text-muted-foreground">{fr.usage.help}</span> : null}
+              </label>
+            </div>
+          ) : null}
+        </>
       ) : null}
-      <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-2 text-[13px]">
-        <span className="text-muted-foreground">{c.orLabel}</span>
-        {c.others.map((o) => (
-          <button
-            key={o.agent}
-            type="button"
-            className="flex items-center gap-1.5 hover:underline disabled:opacity-50"
-            disabled={Boolean(c.busy)}
-            data-first-run-other={o.agent}
-            onClick={() => void fr.connect(o.agent)}
-          >
-            <AgentMark agent={o.agent} />
-            {o.name}
-          </button>
-        ))}
-        <button type="button" className="flex items-center gap-1.5 hover:underline" aria-expanded={others} onClick={() => setOthers((v) => !v)}>
-          <PlusIcon className="size-3.5" aria-hidden />
-          {c.otherLabel}
-        </button>
-      </div>
-      {others ? <OtherAgents fr={fr} known={[c.agent.agent, ...c.others.map((o) => o.agent)]} /> : null}
+      {keys.sheet ? <KeySheet key={keys.sheet.provider} keys={keys} provider={keys.sheet.provider} env={keys.sheet.env} /> : null}
     </div>
   );
 }
 
-/** "Other": every other agent the setup knows, installed ones first. */
-function OtherAgents({ fr, known }: { fr: FirstRunHook; known: string[] }) {
-  const rest = fr.agents.filter((a) => !known.includes(a.agent)).sort((a, b) => Number(b.installed) - Number(a.installed));
+/** One agent: the box toggles, and so does a click anywhere on the row. */
+function AgentPickRow({ pick: p, disabled, onChange }: { pick: FirstRunAgentPick; disabled: boolean; onChange: (on: boolean) => void }) {
+  const off = p.locked || disabled;
   return (
-    <div className="mt-4 max-w-[520px] rounded-xl border bg-card p-1.5" data-first-run-others="">
-      {rest.length === 0 ? <p className="px-3 py-2 text-[13px] text-muted-foreground">No other agents found on this computer.</p> : null}
-      {rest.map((a) => (
-        <div key={a.agent} className="flex items-center justify-between gap-3 px-3 py-1.5">
-          <div className="min-w-0">
-            <div className="text-[13px] font-medium">{a.name}</div>
-            <div className="truncate text-xs text-muted-foreground">{a.installed ? (a.configured ? "Already uses Cua" : "Installed") : "Not installed"}</div>
+    <div
+      className={cn("flex min-h-9 items-center gap-3 rounded-lg px-3 py-1.5", !off && "cursor-default hover:bg-foreground/[0.03]")}
+      data-first-run-pick={p.agent}
+      data-checked={String(p.checked)}
+      onClick={(e) => {
+        if (!off && !(e.target as HTMLElement).closest('[data-slot="checkbox"]')) onChange(!p.checked);
+      }}
+    >
+      <Checkbox checked={p.checked} disabled={off} aria-label={p.name} onCheckedChange={(on) => onChange(Boolean(on))} />
+      <AgentMark agent={p.agent} name={p.name} />
+      <span className="min-w-0 flex-1 text-[14px] select-none">{p.name}</span>
+      {p.note ? <span className="shrink-0 text-xs text-muted-foreground">{p.note}</span> : null}
+    </div>
+  );
+}
+
+function CredentialRowView({ row: r, onAct }: { row: FirstRunCredential; onAct: () => void }) {
+  return (
+    <div className="flex items-center gap-3 px-4 py-2.5" data-first-run-credential={r.id}>
+      <div className="min-w-0 flex-1">
+        <div className="text-[14px]">{r.title}</div>
+        <div className="text-xs text-muted-foreground">{r.note}</div>
+        {r.error ? (
+          <div role="alert" className="mt-0.5 text-xs text-destructive">
+            {r.error}
           </div>
-          <Button variant="outline" size="sm" disabled={!a.installed} onClick={() => void fr.connect(a.agent)}>
-            Connect
-          </Button>
-        </div>
-      ))}
+        ) : null}
+      </div>
+      {r.status ? (
+        <span className={cn("shrink-0 text-xs", r.ok ? "rounded-full bg-[#1f9d55]/10 px-2 py-0.5 font-medium text-[#1f9d55]" : "text-muted-foreground")} data-first-run-credential-status="">
+          {r.status}
+        </span>
+      ) : null}
+      {r.action ? (
+        <Button size="sm" variant="outline" className="shrink-0 rounded-full" onClick={onAct} data-first-run-credential-action={r.action.id}>
+          {r.action.label}
+        </Button>
+      ) : null}
     </div>
   );
 }
@@ -219,19 +286,23 @@ function Setup({ fr, view, onFinish }: { fr: FirstRunHook; view: FirstRunView; o
         ))}
       </Card>
 
-      <h2 className="mt-7 text-[14px] font-semibold">{s.prompt.heading}</h2>
-      {s.prompt.copy ? (
-        <Card className="mt-2 flex items-center justify-between gap-3 py-2.5 pr-2.5">
-          <span className="min-w-0 text-[14px] select-text">“{s.prompt.text}”</span>
-          <Button variant="outline" size="sm" className="shrink-0 gap-1.5 rounded-full" onClick={() => void copy()} data-first-run-copy="">
-            {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
-            {copied ? "Copied" : s.prompt.copy}
-          </Button>
-        </Card>
-      ) : (
-        <p className="mt-1.5 text-[14px] select-text">“{s.prompt.text}”</p>
-      )}
-      <p className="mt-2 text-[13px] text-muted-foreground">{s.prompt.note}</p>
+      {s.prompt ? (
+        <>
+          <h2 className="mt-7 text-[14px] font-semibold">{s.prompt.heading}</h2>
+          {s.prompt.copy ? (
+            <Card className="mt-2 flex items-center justify-between gap-3 py-2.5 pr-2.5">
+              <span className="min-w-0 text-[14px] select-text">“{s.prompt.text}”</span>
+              <Button variant="outline" size="sm" className="shrink-0 gap-1.5 rounded-full" onClick={() => void copy()} data-first-run-copy="">
+                {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+                {copied ? "Copied" : s.prompt.copy}
+              </Button>
+            </Card>
+          ) : (
+            <p className="mt-1.5 text-[14px] select-text">“{s.prompt.text}”</p>
+          )}
+          <p className="mt-2 text-[13px] text-muted-foreground">{s.prompt.note}</p>
+        </>
+      ) : null}
 
       <ExtraCard extra={s.extra} fr={fr} />
       {s.upsell ? <UpsellCard card={s.upsell} fr={fr} /> : null}
@@ -252,7 +323,7 @@ function Setup({ fr, view, onFinish }: { fr: FirstRunHook; view: FirstRunView; o
       </div>
       {view.setup && !fr.saved.usedAtMs ? (
         <button type="button" onClick={fr.back} className="mt-5 self-start text-xs text-muted-foreground hover:text-foreground">
-          Use a different agent
+          Change agents
         </button>
       ) : null}
     </div>

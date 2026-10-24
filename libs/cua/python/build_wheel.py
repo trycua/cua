@@ -6,11 +6,15 @@ The native library comes from `--library` (a CI artifact or a local
 `cargo build --release -p cua-sdk`) and the CLI from `--cli` (`cargo build
 --release -p cua-cli`); by default the host builds under
 libs/cua/target/release are used. The CLI is installed as the `cua` console
-command. The wheel is tagged for the library's platform, the same way
+command. Linux wheels also carry the static cua-spacesd (`--spacesd`, the
+`cua-spacesd-linux-<arch>` that .github/scripts/fetch_static_spacesd.sh
+fetches) next to it in `cua/bin/`, where `cua` and the in-process SDK find
+it to inject into images that lack one. The wheel is tagged for the library's platform, the same way
 libs/cua-driver/python/build_wheel.py does it.
 
 Usage:
     python build_wheel.py [--library PATH] [--cli PATH|--no-cli]
+                          [--spacesd PATH|--no-spacesd]
                           [--platform darwin|linux|windows]
                           [--arch x86_64|arm64|universal] [--out-dir DIR]
 """
@@ -65,6 +69,16 @@ def main() -> None:
     parser.add_argument("--library", type=Path)
     parser.add_argument("--cli", type=Path, help="the built `cua` CLI binary")
     parser.add_argument("--no-cli", action="store_true", help="build without the CLI binary")
+    parser.add_argument(
+        "--spacesd",
+        type=Path,
+        help="the static cua-spacesd-linux-<arch> (required for Linux wheels with the CLI)",
+    )
+    parser.add_argument(
+        "--no-spacesd",
+        action="store_true",
+        help="build a Linux wheel without it (test builds: images without cua-spacesd fail)",
+    )
     parser.add_argument("--platform", choices=sorted(LIB_NAMES))
     parser.add_argument("--arch", choices=["x86_64", "arm64", "universal"])
     parser.add_argument("--out-dir", type=Path, default=HERE / "dist")
@@ -98,6 +112,16 @@ def main() -> None:
         bin_dir.mkdir()
         shutil.copy2(cli, bin_dir / exe)
         (bin_dir / exe).chmod(0o755)
+    if system == "linux" and not args.no_cli and not args.no_spacesd:
+        name = f"cua-spacesd-linux-{'aarch64' if arch == 'arm64' else 'x86_64'}"
+        if args.spacesd is None:
+            raise SystemExit(f"a Linux wheel needs --spacesd PATH (the static {name})")
+        if not args.spacesd.is_file():
+            raise SystemExit(f"missing static cua-spacesd {args.spacesd}")
+        shutil.copy2(args.spacesd, bin_dir / name)
+        (bin_dir / name).chmod(0o755)
+    elif args.spacesd is not None:
+        raise SystemExit("--spacesd is for Linux wheels with the CLI")
 
     env = dict(os.environ, CUA_SDK_WHEEL_TAG=wheel_tag(system, arch))
     args.out_dir.mkdir(parents=True, exist_ok=True)

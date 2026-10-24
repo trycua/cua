@@ -5,8 +5,9 @@
 import Foundation
 import Testing
 
-/// `CUA_ENV`: production changes nothing; staging gets its own home; a beta
-/// build's bundle default applies only when `CUA_ENV` is unset.
+/// `CUA_ENV`: production changes nothing; staging gets its own home; a
+/// bundle's `CuaEnv` default (a development build can set it) applies only when
+/// `CUA_ENV` is unset.
 @Suite("Target environment")
 struct TargetEnvironmentTests {
     @Test func productionChangesNothing() {
@@ -21,7 +22,7 @@ struct TargetEnvironmentTests {
             .isEmpty)
     }
 
-    @Test func betaBundleDefaultsToStaging() {
+    @Test func bundleDefaultStagingAppliesWhenCuaEnvIsUnset() {
         #expect(TargetEnvironment.pinned(env: [:], bundleEnv: "staging", home: "/Users/ada")
             == ["CUA_ENV": "staging", "CUA_HOME": "/Users/ada/.cua/envs/staging"])
     }
@@ -95,7 +96,7 @@ struct LocalChannelTargetEnvironmentTests {
         #expect(pinned(bundleChannel: "stable", bundleEnv: nil, bundleHome: nil).isEmpty)
         #expect(pinned(env: ["CUA_ENV": "staging"], bundleChannel: nil, bundleEnv: nil, bundleHome: nil)
             == ["CUA_HOME": "/Users/ada/.cua/envs/staging"])
-        // A beta bundle: the existing behaviour.
+        // A bundle with a staging default (a development build): the existing behaviour.
         #expect(pinned(bundleChannel: nil, bundleHome: nil)
             == ["CUA_ENV": "staging", "CUA_HOME": "/Users/ada/.cua/envs/staging"])
     }

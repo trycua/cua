@@ -82,7 +82,8 @@ runs:
       working-directory: libs/cua
       env:
         CARGO_BUILD_JOBS: 4
-        # build-release.sh's stable channel (--channel is not passed).
+        # Release builds, betas included, default to production
+        # (build-release.sh sets the same empty default).
         CUA_DEFAULT_ENV: ""
         TRIPLE: ${{ inputs.triple }}
       run: cargo build --locked --release -p cua-spaces-ffi -p cua-spaces-cli --target "$TRIPLE"

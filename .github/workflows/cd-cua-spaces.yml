@@ -25,7 +25,10 @@ name: "CD: Cua Spaces"
 # item is the notarized DMG of a release, EdDSA-signed by Sparkle's
 # generate_appcast (apps/cua-spaces-macos/scripts/make-appcast.sh, checked
 # by verify-appcast.sh). X.Y.Z-suffix versions go to the `beta` channel
-# (apps set to "Update to: Beta"). Only with the CUA_SPACES_SPARKLE_ED_PRIVATE_KEY
+# (apps set to "Update to: Beta"). A beta is a production build with a
+# prerelease version, not a staging build: it is built exactly like a stable
+# release, so it talks to production (CUA_ENV=staging at launch selects
+# staging for any build). Only with the CUA_SPACES_SPARKLE_ED_PRIVATE_KEY
 # secret and a Developer ID build: without it no appcast is made or
 # published and every other step is unchanged. The macOS job writes the
 # appcast (merged into the published one) as a workflow artifact; the last
@@ -499,7 +502,8 @@ jobs:
           identity="-"
           [ "$SIGNED" = true ] && identity="Developer ID Application: $DEVELOPER_NAME ($TEAM_ID)"
           # The updater's feed is this repository's (staging updates from
-          # staging).
+          # staging). Stable and beta versions are built the same way, and
+          # production is the build default.
           apps/cua-spaces-macos/scripts/build-release.sh --version "$VERSION" \
             --build-number "$GITHUB_RUN_NUMBER" --arch universal --skip-cargo \
             --sign "$identity" --out "$RUNNER_TEMP/spaces-app" \

@@ -19,8 +19,9 @@ import Foundation
 ///     `~/.cua-local`, whatever `CUA_ENV` is, so it never shares Stable's
 ///     home, daemon or sockets;
 /// - on Stable, `CUA_ENV` unset: the bundle's `CuaEnv` Info.plist value, which
-///   a beta channel build sets to `staging` (`scripts/build-release.sh` with
-///   `CUA_CHANNEL=beta`); release builds have none (production);
+///   a development build can set to `staging`; release builds, betas
+///   included, have none (`scripts/build-release.sh` removes it), so they use
+///   production;
 /// - on Stable, `CUA_HOME` unset under staging: `~/.cua/envs/staging`, so the
 ///   daemon it supervises and every file it reads use the same home as the
 ///   SDK.

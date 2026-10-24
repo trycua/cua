@@ -128,7 +128,9 @@ jobs:
         # macOS 26: the ScreenCaptureKit dependency compiles Metal bindings for
         # macOS 26 APIs and needs that SDK.
         os: ${{ fromJSON(needs.changes.outputs.matrix) }}
-    runs-on: ${{ matrix.os }}
+    # The matrix keeps the standard labels (they name the job); the larger
+    # runners are mapped here.
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && 'cua-linux-16core' || matrix.os == 'macos-26' && 'macos-26-xlarge' || matrix.os == 'windows-latest' && 'cua-windows-8core' || matrix.os }}
     timeout-minutes: 60
     defaults:
       run:
@@ -282,7 +284,7 @@ jobs:
     name: relay e2e (docker)
     needs: changes
     if: needs.changes.outputs.run == 'true' && contains(needs.changes.outputs.matrix, 'ubuntu')
-    runs-on: ubuntu-latest
+    runs-on: cua-linux-16core
     timeout-minutes: 90
     defaults:
       run:

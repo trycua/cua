@@ -144,11 +144,14 @@ jobs:
     name: build / release SDK
     needs: changes
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule') && needs.changes.outputs.run != 'false' }}
-    runs-on: ubuntu-24.04
+    runs-on: cua-linux-16core
     timeout-minutes: 240
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
       CARGO_INCREMENTAL: "0"
+      # One rustc per core of the 16-core runner (the workflow default of 4 is
+      # for the standard 4-core one).
+      CARGO_BUILD_JOBS: "16"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: ./.github/actions/linux-rust-prep
@@ -183,11 +186,14 @@ jobs:
     name: build / debug CLI, TypeScript, wasm
     needs: changes
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule') && needs.changes.outputs.run != 'false' }}
-    runs-on: ubuntu-24.04
+    runs-on: cua-linux-16core
     timeout-minutes: 240
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
       CARGO_INCREMENTAL: "0"
+      # One rustc per core of the 16-core runner (the workflow default of 4 is
+      # for the standard 4-core one).
+      CARGO_BUILD_JOBS: "16"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Unit-test the shard planner and the runner helpers
@@ -228,11 +234,14 @@ jobs:
     name: build / fixtures, static cua-spacesd
     needs: changes
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule') && needs.changes.outputs.run != 'false' }}
-    runs-on: ubuntu-24.04
+    runs-on: cua-linux-16core
     timeout-minutes: 240
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
       CARGO_INCREMENTAL: "0"
+      # One rustc per core of the 16-core runner (the workflow default of 4 is
+      # for the standard 4-core one).
+      CARGO_BUILD_JOBS: "16"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: ./.github/actions/linux-rust-prep
@@ -277,11 +286,14 @@ jobs:
     name: build / Rust test binaries
     needs: changes
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule') && needs.changes.outputs.run != 'false' }}
-    runs-on: ubuntu-24.04
+    runs-on: cua-linux-16core
     timeout-minutes: 240
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
       CARGO_INCREMENTAL: "0"
+      # One rustc per core of the 16-core runner (the workflow default of 4 is
+      # for the standard 4-core one).
+      CARGO_BUILD_JOBS: "16"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: ./.github/actions/linux-rust-prep
@@ -315,7 +327,7 @@ jobs:
     name: build / reference images
     needs: changes
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'schedule') && needs.changes.outputs.run != 'false' }}
-    runs-on: ubuntu-24.04
+    runs-on: cua-linux-16core
     timeout-minutes: 120
     env:
       # Optional: an authenticated Docker Hub keeps anonymous pull rate limits

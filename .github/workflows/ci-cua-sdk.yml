@@ -143,7 +143,9 @@ jobs:
   rust:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: rust (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    # The matrix keeps the standard labels (they name the job); the larger
+    # runners are mapped here.
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && 'cua-linux-16core' || matrix.os == 'macos-26' && 'macos-26-xlarge' || matrix.os == 'windows-latest' && 'cua-windows-8core' || matrix.os }}
     # Tests only: lint runs in rust-lint, in parallel.
     timeout-minutes: 90
     strategy:
@@ -210,7 +212,7 @@ jobs:
   crates-dry-run:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: crates.io dry run
-    runs-on: ubuntu-latest
+    runs-on: cua-linux-16core
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

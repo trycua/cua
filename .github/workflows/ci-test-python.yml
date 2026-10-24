@@ -122,11 +122,11 @@ jobs:
     # hermetic suite never touches the host or a cloud;
     # the live runtime suites are excluded (they are gated separately).
     name: Test cua-sandbox (hermetic, on the cua SDK)
-    runs-on: ubuntu-latest
+    runs-on: cua-linux-16core
     timeout-minutes: 60
     env:
       CARGO_TERM_COLOR: always
-      CARGO_BUILD_JOBS: "4"
+      CARGO_BUILD_JOBS: "16"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

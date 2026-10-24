@@ -97,7 +97,7 @@ The shipped executable is:
 
 It reuses `scripts/ci/linux/run-rust-e2e.sh` through `CUA_E2E_INTERNAL_LANE=verify` and `CUA_E2E_ARTIFACT_DIR`; the runner is responsible for strict fixtures, preflight, recordings and report validation. Each desktop run is bounded to 1200 seconds internally. No bench code or second harness is involved.
 
-## macOS / Windows — unverified
+## macOS and Windows: unverified
 
 macOS needs the installed TCC-authorized daemon (`libs/cua-driver/scripts/install-local.sh`, `cua-driver permissions grant`) and Accessibility/Screen Recording consent; its tests use the existing daemon proxy rather than Linux Xvfb. Windows needs an interactive desktop, native UIA and named-pipe transport; testkit uses Job Objects for ownership. Use their existing CI recipes and recording paths. Neither platform was run here; Linux's unrestricted testkit mode does not prove their production permission paths.
 

@@ -59,6 +59,7 @@
 //! decision: Local's home is `~/.cua-local` itself (the app pins `CUA_HOME`
 //! to it), not `~/.cua-local/envs/staging`.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use crate::env::{CUA_ENV_VAR, CuaEnv};
@@ -117,17 +118,34 @@ impl CuaChannel {
     }
 
     /// Whether `path` is a Local executable: it is named `cua-local`
-    /// (`cua-local.exe`), or it sits inside `Cua Spaces Local.app`.
+    /// (`cua-local.exe`), or it sits inside `Cua Spaces Local.app`. File
+    /// names are compared case-insensitively on Windows, where
+    /// `CUA-LOCAL.EXE` is the same file.
     pub fn path_is_local(path: &Path) -> bool {
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default();
-        name == LOCAL_CLI_NAME
-            || name == format!("{LOCAL_CLI_NAME}.exe")
+        Self::path_is_local_with(path, cfg!(windows))
+    }
+
+    /// [`CuaChannel::path_is_local`], with the case rule given (for tests).
+    fn path_is_local_with(path: &Path, ignore_case: bool) -> bool {
+        let fold = |s: &str| {
+            if ignore_case {
+                s.to_ascii_lowercase()
+            } else {
+                s.to_string()
+            }
+        };
+        let name = fold(
+            path.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default(),
+        );
+        let cli = fold(LOCAL_CLI_NAME);
+        let app = fold(LOCAL_APP_DIR_NAME);
+        name == cli
+            || name == format!("{cli}.exe")
             || path
                 .components()
-                .any(|c| c.as_os_str() == LOCAL_APP_DIR_NAME)
+                .any(|c| c.as_os_str().to_str().is_some_and(|c| fold(c) == app))
     }
 
     /// The resolution order, with its three inputs given (for tests and for
@@ -138,9 +156,9 @@ impl CuaChannel {
     ///    ones;
     /// 2. `build_default`, the compile-time `CUA_DEFAULT_CHANNEL` value
     ///    (an unknown value is ignored);
-    /// 3. `exe_paths`, the paths the running executable is known by (as
-    ///    started, and with symlinks resolved): Local if any
-    ///    [`CuaChannel::path_is_local`];
+    /// 3. `exe_paths`, the paths the running executable is known by
+    ///    (`current_exe()`, that with symlinks resolved, and the invocation
+    ///    path `argv[0]`): Local if any is [`CuaChannel::path_is_local`];
     /// 4. else Stable.
     pub fn resolve(
         env_value: Option<&str>,
@@ -445,20 +463,59 @@ impl CuaChannel {
     }
 }
 
-/// The paths this executable is known by: as started, and with symlinks
-/// resolved (`~/.local/bin/cua-local` may link into the app bundle, and a
-/// `cua-local` link may point at a binary of another name).
+/// The paths this executable is known by, for [`CuaChannel::resolve`]:
+///
+/// - `current_exe()`, which is the file itself on Linux (the kernel resolves
+///   symlinks), so a `cua-local` link to `target/debug/cua` loses its name;
+/// - that path with symlinks resolved (`~/.local/bin/cua-local` may link
+///   into the app bundle);
+/// - the invocation path, `argv[0]` (a bare name resolved through `PATH`),
+///   which keeps the name the process was started under, links included.
 fn current_exe_paths() -> Vec<PathBuf> {
-    let Ok(exe) = std::env::current_exe() else {
-        return Vec::new();
-    };
-    let mut paths = vec![exe.clone()];
-    if let Ok(real) = exe.canonicalize()
-        && real != exe
-    {
-        paths.push(real);
+    let argv0 = std::env::args_os().next();
+    let invoked = invocation_path(argv0.as_deref(), std::env::var_os("PATH").as_deref());
+    let exe = std::env::current_exe().ok();
+    let real = exe.as_ref().and_then(|e| e.canonicalize().ok());
+    collect_exe_paths(exe, real, invoked)
+}
+
+/// The distinct paths among the three (see [`current_exe_paths`]).
+fn collect_exe_paths(
+    exe: Option<PathBuf>,
+    real: Option<PathBuf>,
+    invoked: Option<PathBuf>,
+) -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = Vec::new();
+    for p in [exe, real, invoked].into_iter().flatten() {
+        if !paths.contains(&p) {
+            paths.push(p);
+        }
     }
     paths
+}
+
+/// Where the process was started from: `argv[0]` when it has a directory
+/// part; a bare name is looked up in `path_var` like a shell does (the first
+/// directory with a file of that name), and stays as the bare name when none
+/// has one. `None` for an empty `argv[0]`.
+fn invocation_path(argv0: Option<&OsStr>, path_var: Option<&OsStr>) -> Option<PathBuf> {
+    let argv0 = argv0.filter(|a| !a.is_empty())?;
+    let arg = Path::new(argv0);
+    if arg.components().count() > 1 {
+        return Some(arg.to_path_buf());
+    }
+    let names: &[&str] = if cfg!(windows) { &["", ".exe"] } else { &[""] };
+    let found = path_var
+        .into_iter()
+        .flat_map(std::env::split_paths)
+        .find_map(|dir| {
+            names.iter().find_map(|ext| {
+                let mut file = argv0.to_os_string();
+                file.push(ext);
+                Some(dir.join(file)).filter(|p| p.is_file())
+            })
+        });
+    Some(found.unwrap_or_else(|| arg.to_path_buf()))
 }
 
 /// The user's home directory (`$HOME`, else `%USERPROFILE%`), the same
@@ -517,6 +574,116 @@ mod tests {
         ] {
             assert!(!CuaChannel::path_is_local(Path::new(p)), "{p}");
         }
+    }
+
+    #[test]
+    fn windows_names_are_case_insensitive() {
+        // Windows compares file names without case: `CUA-LOCAL.EXE` is
+        // `cua-local.exe`.
+        for p in [
+            "C:/tools/CUA-LOCAL.EXE",
+            "C:/tools/Cua-Local.Exe",
+            "C:/tools/cua-local.exe",
+            "C:/tools/CUA-LOCAL",
+            "C:/Users/ada/Applications/CUA SPACES LOCAL.APP/cua.exe",
+        ] {
+            assert!(CuaChannel::path_is_local_with(Path::new(p), true), "{p}");
+        }
+        for p in [
+            "C:/tools/CUA.EXE",
+            "C:/tools/CUA-LOCAL-OLD.EXE",
+            "C:/tools/cua-local.exe.bak",
+            "C:/Users/ada/Cua Spaces.app/cua.exe",
+        ] {
+            assert!(!CuaChannel::path_is_local_with(Path::new(p), true), "{p}");
+        }
+        // Elsewhere file names are case-sensitive.
+        assert!(CuaChannel::path_is_local_with(
+            Path::new("/bin/cua-local"),
+            false
+        ));
+        for p in [
+            "/bin/CUA-LOCAL",
+            "/bin/Cua-Local.exe",
+            "/x/CUA SPACES LOCAL.APP/cua",
+        ] {
+            assert!(!CuaChannel::path_is_local_with(Path::new(p), false), "{p}");
+        }
+        // This platform's rule is the one `path_is_local` applies.
+        assert_eq!(
+            CuaChannel::path_is_local(Path::new("/bin/CUA-LOCAL")),
+            cfg!(windows)
+        );
+    }
+
+    #[test]
+    fn a_link_named_cua_local_stays_local_when_current_exe_resolves_it() {
+        // Linux: `current_exe()` is the file, `target/debug/cua`, not the
+        // `cua-local` link the process was started through.
+        let real = PathBuf::from("/work/target/debug/cua");
+        let link = PathBuf::from("/home/ada/.local/bin/cua-local");
+        let known = collect_exe_paths(Some(real.clone()), Some(real.clone()), Some(link.clone()));
+        assert_eq!(known, vec![real.clone(), link.clone()]);
+        assert_eq!(
+            CuaChannel::resolve(None, None, &known),
+            Ok(CuaChannel::Local)
+        );
+        // Without the invocation path the name is lost.
+        let lost = collect_exe_paths(Some(real.clone()), Some(real.clone()), None);
+        assert_eq!(lost, vec![real.clone()]);
+        assert_eq!(
+            CuaChannel::resolve(None, None, &lost),
+            Ok(CuaChannel::Stable)
+        );
+        // A Stable binary started as `cua` stays Stable.
+        let stable = collect_exe_paths(Some(real.clone()), None, Some(PathBuf::from("cua")));
+        assert_eq!(
+            CuaChannel::resolve(None, None, &stable),
+            Ok(CuaChannel::Stable)
+        );
+    }
+
+    #[test]
+    fn the_invocation_path_is_argv0_and_a_bare_name_is_looked_up_in_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let bin = dir.path().join(if cfg!(windows) {
+            "cua-local.exe"
+        } else {
+            "cua-local"
+        });
+        std::fs::write(&bin, b"").unwrap();
+        let path = std::env::join_paths([other.path(), dir.path()]).unwrap();
+
+        // A bare name: the first PATH directory that has the file.
+        let found = invocation_path(Some(OsStr::new("cua-local")), Some(path.as_os_str()));
+        assert_eq!(found, Some(bin.clone()));
+        // Not on PATH, or no PATH: the bare name stays (its file name still
+        // says Local).
+        let lost = invocation_path(
+            Some(OsStr::new("cua-local")),
+            Some(other.path().as_os_str()),
+        );
+        assert_eq!(lost, Some(PathBuf::from("cua-local")));
+        assert_eq!(
+            invocation_path(Some(OsStr::new("cua-local")), None),
+            Some(PathBuf::from("cua-local"))
+        );
+        // A name with a directory part is used as it is, PATH or not.
+        assert_eq!(
+            invocation_path(Some(OsStr::new("./bin/cua-local")), Some(path.as_os_str())),
+            Some(PathBuf::from("./bin/cua-local"))
+        );
+        assert_eq!(
+            invocation_path(Some(bin.as_os_str()), None),
+            Some(bin.clone())
+        );
+        // Nothing to go on.
+        assert_eq!(
+            invocation_path(Some(OsStr::new("")), Some(path.as_os_str())),
+            None
+        );
+        assert_eq!(invocation_path(None, Some(path.as_os_str())), None);
     }
 
     #[test]

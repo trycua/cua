@@ -1,8 +1,11 @@
 //! `cua agents ...` and the `cua auth login` flows (browser PKCE with a
 //! loopback redirect, device code, the automatic fallback) with the agent
 //! onboarding, against a fake OIDC issuer in a temporary HOME. PATH is
-//! reduced to system dirs so no real agent CLI is ever found or run, and
-//! app bundles are hidden (`CUA_AGENT_APP_DIRS`).
+//! reduced to system dirs and the fallback install dirs (`/opt/homebrew/bin`,
+//! `/usr/local/bin`, ...) are dropped (`CUA_AGENT_BIN_DIRS`), so no real
+//! agent CLI is ever found or run, and app bundles are hidden
+//! (`CUA_AGENT_APP_DIRS`). The result does not depend on what is installed
+//! on the machine running the tests.
 
 mod common;
 use common::*;
@@ -17,7 +20,9 @@ use tokio::io::AsyncBufReadExt;
 /// A home with no ambient agents.
 fn home() -> Home {
     let mut h = Home::new();
-    h.set("PATH", "/usr/bin:/bin").set("CUA_AGENT_APP_DIRS", "");
+    h.set("PATH", "/usr/bin:/bin")
+        .set("CUA_AGENT_BIN_DIRS", "")
+        .set("CUA_AGENT_APP_DIRS", "");
     h
 }
 

@@ -21,6 +21,8 @@
 #   - ~/.local/bin/cua-local
 #   - ~/.cua-local (the Local sign-in, host and Spaces state)
 #     and ~/Library/Application Support/com.trycua.spaces.local
+#   - what macOS keeps for the Local bundle id under ~/Library: its preferences,
+#     caches, web view data, cookies and saved window state
 #   - the Local Keychain items (ai.cua.session.local, ai.cua.session.local.staging)
 #   - optionally lume-local (libs/lume/scripts/uninstall-local.sh)
 # It keeps the Cua Volume Local folder and the permissions macOS granted the
@@ -111,6 +113,7 @@ echo "  helper login item:  $LOCAL_HELPER_LABEL"
 echo "  app:                $APP_DEST"
 echo "  CLI:                $CLI_LINK"
 echo "  state:              $LOCAL_HOME and $LOCAL_APP_SUPPORT"
+echo "  macOS leftovers:    the $LOCAL_BUNDLE_ID preferences, caches, web view data and window state in ~/Library"
 echo "  Keychain items:     ${LOCAL_KEYCHAIN_SERVICES[*]}"
 if [ "$YES" != 1 ]; then
     confirm "Remove them?" || { log "cancelled, nothing was removed"; exit 0; }
@@ -176,6 +179,21 @@ if [ -d "$LOCAL_APP_SUPPORT" ]; then
     rm -rf "$LOCAL_APP_SUPPORT"
     log "removed $LOCAL_APP_SUPPORT"
 fi
+
+# What macOS keeps for the Local bundle id (every name carries it; Stable's
+# folders have its own id and are never listed). The app is stopped above, so
+# it cannot write them back.
+for leaf in "${LOCAL_LIBRARY_LEAVES[@]}"; do
+    case "$leaf" in
+        *"$LOCAL_BUNDLE_ID"*) ;;
+        *) die "internal error: $leaf is not a Local path" ;;
+    esac
+    leftover="$HOME/Library/$leaf"
+    if [ -e "$leftover" ] || [ -L "$leftover" ]; then
+        rm -rf "$leftover"
+        log "removed $leftover"
+    fi
+done
 
 # The Keychain tool deletes one item per call and has no wildcard: repeat per
 # service (one item per account) until none is left. Local services only.

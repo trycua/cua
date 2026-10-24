@@ -6,7 +6,8 @@
 //!
 //!     cargo run -p cua-vmm --example lume_warm -- REF [--cpus N] [--memory-mb M] [--settle-secs S]
 //!
-//! Uses the `lume serve` of `LUME_API` (default `http://127.0.0.1:7777`) and
+//! Uses the `lume serve` of `LUME_API` (default `http://127.0.0.1:7777`, or
+//! `http://127.0.0.1:7787` on the Local channel) and
 //! the `CUA_HOME` the daemon uses. Prints one JSON line with the states made
 //! and how long it took.
 

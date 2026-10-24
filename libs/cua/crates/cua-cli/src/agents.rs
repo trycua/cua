@@ -236,18 +236,21 @@ fn discard_typeahead() {
 
 /// The MCP server agents should launch.
 pub fn mcp_server(setup: &AgentSetup, command: Option<&str>) -> McpServer {
+    // The channel's own server (`cua`, or `cua-local` when this is the Local
+    // CLI), launching the channel's own binary.
+    let channel = setup.env().channel;
     if let Some(c) = command {
-        return McpServer::new(c);
+        return McpServer::for_channel(channel, c);
     }
-    if setup.env().which("cua").is_some() {
+    if setup.env().which(channel.cli_name()).is_some() {
         return McpServer::default_for(setup.env());
     }
     let exe = std::env::current_exe()
         .ok()
         .and_then(|p| p.canonicalize().ok())
         .map(|p| p.display().to_string())
-        .unwrap_or_else(|| "cua".into());
-    McpServer::new(exe)
+        .unwrap_or_else(|| channel.cli_name().into());
+    McpServer::for_channel(channel, exe)
 }
 
 fn print_agents(setup: &AgentSetup, statuses: &[AgentStatus], out: &mut dyn Write) {

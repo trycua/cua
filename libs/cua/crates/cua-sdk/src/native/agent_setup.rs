@@ -204,8 +204,10 @@ impl AgentSetup {
     fn server(&self, s: Option<AgentMcpServer>) -> cua_agent_setup::McpServer {
         match s {
             Some(s) => cua_agent_setup::McpServer {
+                // No name: the channel's (`cua`, or `cua-local` for the
+                // Local app), so the Local app never writes Stable's entry.
                 name: if s.name.trim().is_empty() {
-                    cua_agent_setup::MCP_SERVER_NAME.into()
+                    self.inner.env().channel.mcp_server_name().into()
                 } else {
                     s.name
                 },
@@ -291,7 +293,8 @@ impl AgentSetup {
     }
 
     /// Configures the MCP server (default: `cua mcp`, `cua` resolved on
-    /// PATH) for `agents`.
+    /// PATH; `cua-local mcp` named `cua-local` for the Local app) for
+    /// `agents`. A server without a name gets the channel's.
     pub async fn configure_mcp(
         &self,
         agents: Vec<String>,
@@ -415,6 +418,63 @@ mod tests {
         assert!(!s.onboarding_declined());
         s.set_onboarding_declined(true).unwrap();
         assert!(s.onboarding_declined());
+    }
+
+    #[tokio::test]
+    async fn sdk_local_agent_setup_registers_cua_local_beside_stables_cua() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join(".codex")).unwrap();
+        let env = cua_agent_setup::HostEnv::isolated(d.path());
+        let stable = AgentSetup::with_env(env.clone());
+        let local = AgentSetup::with_env(env.with_channel(cua_agent_setup::CuaChannel::Local));
+        let server = |command: &str| AgentMcpServer {
+            // No name: each channel registers its own.
+            name: String::new(),
+            command: command.into(),
+            args: vec!["mcp".into()],
+            env: HashMap::new(),
+        };
+        let out = stable
+            .configure_mcp(
+                vec!["codex".into()],
+                Some(server("/Applications/Cua Spaces.app/Contents/MacOS/cua")),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            (out[0].item.as_str(), out[0].change),
+            ("cua", AgentSetupChange::Created)
+        );
+        let local_cua = "/Users/a/Applications/Cua Spaces Local.app/Contents/MacOS/cua";
+        let out = local
+            .configure_mcp(vec!["codex".into()], Some(server(local_cua)))
+            .await
+            .unwrap();
+        assert_eq!(
+            (out[0].item.as_str(), out[0].change),
+            ("cua-local", AgentSetupChange::Created)
+        );
+        let toml = std::fs::read_to_string(d.path().join(".codex/config.toml")).unwrap();
+        assert!(toml.contains("[mcp_servers.cua]"), "{toml}");
+        assert!(toml.contains("[mcp_servers.cua-local]"), "{toml}");
+        assert!(toml.contains("/Applications/Cua Spaces.app/Contents/MacOS/cua"));
+        assert!(toml.contains(local_cua));
+        // Each reads its own entry as its own.
+        let st = |s: &Arc<AgentSetup>| s.status().into_iter().find(|a| a.id == "codex").unwrap();
+        assert!(st(&stable).cua_configured && st(&local).cua_configured);
+        // Local's skills are `-local` copies beside Stable's.
+        let skills: Vec<String> = local.skills().into_iter().map(|s| s.name).collect();
+        assert!(skills.iter().all(|n| n.ends_with("-local")), "{skills:?}");
+        local
+            .install_skills(vec!["codex".into()], vec![], false)
+            .await
+            .unwrap();
+        assert!(
+            d.path()
+                .join(".agents/skills/cua-spaces-local/SKILL.md")
+                .is_file()
+        );
+        assert!(!d.path().join(".agents/skills/cua-spaces").exists());
     }
 
     #[tokio::test]

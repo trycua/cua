@@ -353,10 +353,17 @@ def test_every_path_matches_itself_and_nothing_wider():
 
 def test_workflow_wiring():
     jobs = WORKFLOW["jobs"]
-    changes, local, live = jobs["changes"], jobs["local"], jobs["live"]
-    assert local["needs"] == "changes"
-    # Only an explicit `false` skips the suite.
-    assert "needs.changes.outputs.run != 'false'" in local["if"]
+    changes, live = jobs["changes"], jobs["live"]
+    # The suite is five build jobs, the test shards that need all of them, and
+    # the merge job that needs the shards: skipping the builds skips the rest.
+    builds = ["build-sdk", "build-cli", "build-fixtures", "build-rust-tests", "build-images"]
+    for name in builds:
+        assert jobs[name]["needs"] == "changes", name
+        # Only an explicit `false` skips the suite.
+        assert "needs.changes.outputs.run != 'false'" in jobs[name]["if"], name
+    assert sorted(jobs["shard"]["needs"]) == sorted(builds)
+    assert jobs["matrix"]["needs"] == "shard"
+    assert "needs" not in jobs["shard"].get("if", "")
     assert changes["outputs"] == {"run": "${{ steps.scope.outputs.run }}"}
     checkout = changes["steps"][0]
     assert checkout["with"]["fetch-depth"] == 2

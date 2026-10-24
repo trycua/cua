@@ -951,6 +951,42 @@ pub enum ProtectedResourceOwnership {
     DriverOwned,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProtectedResourceScopeError {
+    pub code: Option<&'static str>,
+    pub message: String,
+}
+
+impl From<String> for ProtectedResourceScopeError {
+    fn from(message: String) -> Self {
+        Self {
+            code: None,
+            message,
+        }
+    }
+}
+
+impl From<&str> for ProtectedResourceScopeError {
+    fn from(message: &str) -> Self {
+        Self::from(message.to_owned())
+    }
+}
+
+impl From<crate::browser::BrowserRefusal> for ProtectedResourceScopeError {
+    fn from(refusal: crate::browser::BrowserRefusal) -> Self {
+        Self {
+            code: Some(refusal.code.as_str()),
+            message: refusal.message,
+        }
+    }
+}
+
+impl std::fmt::Display for ProtectedResourceScopeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
 /// A callable tool handler. Object-safe — uses `Box<dyn Tool>`.
 #[async_trait]
 pub trait Tool: Send + Sync {
@@ -985,7 +1021,7 @@ pub trait Tool: Send + Sync {
         &self,
         _adapter_id: &str,
         _args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, ProtectedResourceScopeError> {
         Ok(None)
     }
 
@@ -996,11 +1032,11 @@ pub trait Tool: Send + Sync {
         adapter_id: &str,
         args: &Value,
         approved_scope: &Value,
-    ) -> Result<(), String> {
+    ) -> Result<(), ProtectedResourceScopeError> {
         match self.protected_resource_scope(adapter_id, args).await? {
             Some(current) if current == *approved_scope => Ok(()),
-            Some(_) => Err("the protected resource identity changed before dispatch".to_owned()),
-            None => Err("the protected resource identity cannot be re-proven".to_owned()),
+            Some(_) => Err("the protected resource identity changed before dispatch".into()),
+            None => Err("the protected resource identity cannot be re-proven".into()),
         }
     }
 
@@ -2513,7 +2549,7 @@ impl ToolRegistry {
                 && tool
                     .protected_resource_scope("private_observation", args)
                     .await
-                    .map_err(crate::consent::ConsentError::Provider)?
+                    .map_err(crate::consent::ConsentError::ProtectedScope)?
                     .is_none()
             {
                 return Err(crate::consent::ConsentError::Provider(
@@ -2529,7 +2565,7 @@ impl ToolRegistry {
         let browser_scope = if history_resource.is_none() {
             tool.protected_resource_scope("private_observation", args)
                 .await
-                .map_err(crate::consent::ConsentError::Provider)?
+                .map_err(crate::consent::ConsentError::ProtectedScope)?
         } else {
             None
         };
@@ -2998,7 +3034,7 @@ impl ToolRegistry {
         let mut resource = tool
             .protected_resource_scope(adapter_id, args)
             .await
-            .map_err(|message| protected_scope_refusal(&message))?
+            .map_err(|error| protected_scope_error_refusal(&error))?
             .ok_or_else(|| {
                 protected_scope_refusal(
                     "the concrete tool cannot attest an exact protected resource scope",
@@ -3049,10 +3085,12 @@ impl ToolRegistry {
                 scope.remove("driver_owned");
             }
         }
-        if let Err(message) = tool
+        if let Err(error) = tool
             .validate_protected_resource_scope(adapter_id, args, &validation_scope)
             .await
         {
+            // Any validation error revokes the grant, whatever code it carries:
+            // a CDP timeout here still means the caller must re-bind, not wait.
             if let Some(grant) = self.protected_resource_grants.revoke_resource(
                 context,
                 lifecycle_session,
@@ -3062,8 +3100,8 @@ impl ToolRegistry {
                 self.approval_broker.revoke(&grant).await;
             }
             return Err(protected_refusal(
-                "protected_resource_scope_stale",
-                &message,
+                error.code.unwrap_or("protected_resource_scope_stale"),
+                &error.message,
             ));
         }
         Ok(())
@@ -3693,7 +3731,7 @@ mod runtime_isolation_tests {
             &self,
             _adapter_id: &str,
             _args: &serde_json::Value,
-        ) -> Result<Option<serde_json::Value>, String> {
+        ) -> Result<Option<serde_json::Value>, super::ProtectedResourceScopeError> {
             Ok(Some(self.scope.clone()))
         }
 
@@ -3702,14 +3740,14 @@ mod runtime_isolation_tests {
             _adapter_id: &str,
             _args: &serde_json::Value,
             approved_scope: &serde_json::Value,
-        ) -> Result<(), String> {
+        ) -> Result<(), super::ProtectedResourceScopeError> {
             if self.stale_before_dispatch {
-                return Err("synthetic process identity changed".to_owned());
+                return Err("synthetic process identity changed".into());
             }
             if *approved_scope == self.scope {
                 Ok(())
             } else {
-                Err("synthetic scope mismatch".to_owned())
+                Err("synthetic scope mismatch".into())
             }
         }
 
@@ -3746,6 +3784,29 @@ mod runtime_isolation_tests {
                 "window_id": args["window_id"].as_u64().unwrap_or(7),
                 "snapshot_id": "synthetic-snapshot", "elements": []
             }))
+        }
+    }
+
+    struct StringScopeProbe {
+        def: super::ToolDef,
+    }
+
+    #[async_trait::async_trait]
+    impl super::Tool for StringScopeProbe {
+        fn def(&self) -> &super::ToolDef {
+            &self.def
+        }
+
+        async fn protected_resource_scope(
+            &self,
+            _adapter_id: &str,
+            _args: &serde_json::Value,
+        ) -> Result<Option<serde_json::Value>, super::ProtectedResourceScopeError> {
+            Err("synthetic scope lookup failed".into())
+        }
+
+        async fn invoke(&self, _args: serde_json::Value) -> crate::protocol::ToolResult {
+            crate::protocol::ToolResult::text("must not run")
         }
     }
 
@@ -5524,6 +5585,51 @@ resources:
     }
 
     #[tokio::test]
+    async fn a_plain_string_scope_error_keeps_the_generic_refusal_codes() {
+        for (name, read_only, code) in [
+            ("get_browser_state", true, "authorization_host_failed"),
+            ("browser_click", false, "protected_resource_scope_invalid"),
+        ] {
+            let mut registry = super::ToolRegistry::new_with_protected_consent_provider(Some(
+                Arc::new(AcceptingProvider {
+                    requests: AtomicUsize::new(0),
+                }),
+            ));
+            registry.register(Box::new(StringScopeProbe {
+                def: super::ToolDef {
+                    name: name.to_owned(),
+                    description: "test string scope error".into(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    read_only,
+                    destructive: false,
+                    idempotent: read_only,
+                    open_world: true,
+                },
+            }));
+            let result = registry
+                .invoke_with_context(
+                    name,
+                    serde_json::json!({
+                        "target_id": "target-1",
+                        "tab_id": "tab-1",
+                        "session": "browser"
+                    }),
+                    standard_context(),
+                )
+                .await;
+            assert_eq!(
+                result
+                    .structured_content
+                    .as_ref()
+                    .and_then(|value| value.pointer("/refusal/code"))
+                    .and_then(serde_json::Value::as_str),
+                Some(code),
+                "{name}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn browser_observation_without_a_live_origin_attestation_fails_closed() {
         let hits = Arc::new(AtomicUsize::new(0));
         let provider = Arc::new(AcceptingProvider {
@@ -6130,6 +6236,9 @@ fn protected_consent_refusal(error: crate::consent::ConsentError) -> ToolResult 
         crate::consent::ConsentError::DigestMismatch => "authorization_scope_mismatch",
         crate::consent::ConsentError::Expired => "authorization_expired",
         crate::consent::ConsentError::Provider(_) => "authorization_host_failed",
+        crate::consent::ConsentError::ProtectedScope(error) => {
+            error.code.unwrap_or("authorization_host_failed")
+        }
         crate::consent::ConsentError::BoundedResource(_) => "bounded_resource_outside_manifest",
     };
     let message = error.to_string();
@@ -6144,6 +6253,13 @@ fn protected_consent_refusal(error: crate::consent::ConsentError) -> ToolResult 
 
 fn protected_scope_refusal(message: &str) -> ToolResult {
     protected_refusal("protected_resource_scope_invalid", message)
+}
+
+fn protected_scope_error_refusal(error: &ProtectedResourceScopeError) -> ToolResult {
+    protected_refusal(
+        error.code.unwrap_or("protected_resource_scope_invalid"),
+        &error.message,
+    )
 }
 
 /// Recovery text for a call on an ended lifecycle episode. A named session is

@@ -756,7 +756,7 @@ impl Tool for BrowserPointerTool {
         &self,
         adapter_id: &str,
         args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, crate::tool::ProtectedResourceScopeError> {
         if adapter_id == "browser_bound_input" {
             browser_protected_resource_scope(&self.engine, args, "browser_pointer").await
         } else {

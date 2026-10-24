@@ -94,6 +94,8 @@ pub enum ConsentError {
     Canceled,
     #[error("confirmation provider failed: {0}")]
     Provider(String),
+    #[error("{0}")]
+    ProtectedScope(crate::tool::ProtectedResourceScopeError),
     #[error("confirmation response did not match the exact request digest")]
     DigestMismatch,
     #[error("confirmation expired before activation")]

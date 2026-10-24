@@ -264,16 +264,23 @@ nested_bundles() {
 
 # One codesign call, with its output kept for the failure message. Each piece
 # keeps the identifier (and entitlements) build-app.sh gave it, such as
-# com.trycua.cua-env-driver for cua-spacesd; only the identity changes.
+# com.trycua.cua-env-driver for cua-spacesd; only the identity changes. The
+# call is bounded (a Keychain prompt nobody answers would wait forever), and a
+# Mac that stalls for that long (a full disk, a busy trustd) gets a second try.
 sign_piece() {
-    local identity="$1" target="$2" preserve="$3" out
+    local identity="$1" target="$2" preserve="$3" out="" status=0
     local args=(--force --sign "$identity")
     [ -z "$preserve" ] || args+=("--preserve-metadata=$preserve")
-    if ! out="$(codesign_bounded 20 "${args[@]}" "$target" 2>&1)"; then
-        err "codesign failed for $target"
-        printf '%s\n' "$out" >&2
-        return 1
-    fi
+    for _ in 1 2; do
+        out="$(codesign_bounded 20 "${args[@]}" "$target" 2>&1)" && return 0
+        status=$?
+    done
+    err "codesign failed for $target"
+    case "$status" in
+        124|137|142) err "it did not finish in 20 s, twice (a Keychain prompt waiting for you, or a Mac too busy or too full to sign)" ;;
+    esac
+    [ -z "$out" ] || printf '%s\n' "$out" >&2
+    return 1
 }
 
 # Signs the staged app with `identity`, inside out: the nested code, the nested

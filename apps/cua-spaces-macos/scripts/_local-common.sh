@@ -214,17 +214,23 @@ stable_owned_paths() {
 
 # Fails, saying why, when `path` (canonical; `label` names it) is or is inside
 # anything the released Cua Spaces owns, or inside /Applications, where
-# Cua Spaces Local never goes.
+# Cua Spaces Local never goes. Each owned path is resolved the same way as
+# `path` before they are compared, and checked as written too: ~/.lume may be a
+# symlink to /Volumes/VMs, and then /Volumes/VMs is the Stable Lume folder.
+# (The identity check below uses lstat, so it cannot see through a link itself.)
 reject_stable_overlap() {
-    local label="$1" path="$2" home owned
+    local label="$1" path="$2" home owned resolved
     home="$(canonicalize_path "$HOME")" || { err "cannot resolve HOME ($HOME)"; return 1; }
     while IFS= read -r owned; do
-        if paths_overlap "$path" "$owned"; then
+        resolved="$(canonicalize_path "$owned")" || { err "refusing: cannot resolve $owned (a symlink loop?), which belongs to the released Cua Spaces."; return 1; }
+        if paths_overlap "$path" "$owned" || paths_overlap "$path" "$resolved"; then
+            if [ "$resolved" != "$owned" ]; then owned="$owned (a link to $resolved)"; fi
             err "refusing: the $label path $path is, or is inside, $owned, which belongs to the released Cua Spaces. Pick another --prefix."
             return 1
         fi
     done < <(stable_owned_paths "$home")
-    if paths_overlap "$path" "$STABLE_APP_PARENT"; then
+    resolved="$(canonicalize_path "$STABLE_APP_PARENT")" || resolved="$STABLE_APP_PARENT"
+    if paths_overlap "$path" "$STABLE_APP_PARENT" || paths_overlap "$path" "$resolved"; then
         err "refusing: the $label path $path is inside $STABLE_APP_PARENT, where the released Cua Spaces lives. Cua Spaces Local goes under ~/Applications; pick another --prefix."
         return 1
     fi

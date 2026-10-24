@@ -231,10 +231,17 @@ if [ "$1" = delete-generic-password ] && [ "$2" = -s ]; then
   : > "$marker"; exit 0
 fi
 exit 0'
-# codesign: the real one, except that it can be made to fail verifying one path.
+# codesign: the real one, except that it can be made to fail verifying one
+# path, to stall (exit like a killed-by-alarm process, no output) on its first
+# signing call only (CODESIGN_STALL_ONCE=1) or on every one (CODESIGN_STALL=1).
 write_shim codesign 'if [ -n "${FAIL_VERIFY_PATH:-}" ]; then
   verifying=0; for a in "$@"; do [ "$a" = --verify ] && verifying=1; done
   for a in "$@"; do if [ "$verifying" = 1 ] && [ "$a" = "$FAIL_VERIFY_PATH" ]; then echo "shim: verify failed" >&2; exit 1; fi; done
+fi
+signing=0; for a in "$@"; do [ "$a" = --sign ] && signing=1; done
+if [ "$signing" = 1 ]; then
+  if [ "${CODESIGN_STALL:-0}" = 1 ]; then exit 142; fi
+  if [ "${CODESIGN_STALL_ONCE:-0}" = 1 ] && [ ! -e "$SHIM_STATE/stalled" ]; then : > "$SHIM_STATE/stalled"; exit 142; fi
 fi
 exec /usr/bin/codesign "$@"'
 
@@ -536,6 +543,50 @@ check "and the link target is the resolved app" '[ "$(readlink "$WORK/ok/.local/
 uninstall --yes --prefix "$LINKS/to-ok"
 check "uninstall with the same symlinked --prefix removes it" '[ "$RC" = 0 ] && [ ! -e "$WORK/ok/Applications/Cua Spaces Local.app" ] && [ ! -L "$WORK/ok/.local/bin/cua-local" ]'
 
+# --- 3d. A Stable folder that is itself a symlink ------------------------------------------------
+
+# ~/.lume may be a link to another volume (/Volumes/VMs): that volume is the
+# Stable Lume folder, and a --prefix there must be refused. The same for every
+# Stable-owned path, and for the Stable CLI, a link to the real binary.
+echo "== a Stable-owned path that is a symlink: its target is Stable's too =="
+for owned in ".lume" ".cua" "Cua Volume" "Library/Application Support/com.trycua.spaces.macos"; do
+    reset_fixture
+    target="$WORK/elsewhere/$(printf '%s' "$owned" | tr ' /' '__')"
+    rm -rf "$WORK/elsewhere"
+    mkdir -p "$target"
+    cp -R "$FAKE_HOME/$owned/." "$target/"
+    rm -rf "${FAKE_HOME:?}/$owned"
+    ln -s "$target" "$FAKE_HOME/$owned"
+    ALL_BEFORE="$(snap_all)"
+    TARGET_BEFORE="$(find "$target" | LC_ALL=C sort)"
+    for prefix in "$target" "$target/deeper/still" "$target/x/.."; do
+        : > "$BUILD_LOG"; : > "$CARGO_LOG"
+        install --prefix "$prefix"
+        check "install refuses --prefix $prefix: ~/$owned is a symlink to it" \
+            '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep >/dev/null "refusing" && [ ! -s "$BUILD_LOG" ] && [ ! -s "$CARGO_LOG" ] && [ "$(snap_all)" = "$ALL_BEFORE" ] && [ "$(find "$target" | LC_ALL=C sort)" = "$TARGET_BEFORE" ]'
+        : > "$SHIM_LOG"
+        uninstall --yes --prefix "$prefix"
+        check "uninstall refuses --prefix $prefix too" \
+            '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep >/dev/null "refusing" && [ ! -s "$SHIM_LOG" ] && [ "$(find "$target" | LC_ALL=C sort)" = "$TARGET_BEFORE" ]'
+    done
+done
+unset owned target prefix
+
+reset_fixture
+cp "$FAKE_HOME/.local/bin/cua" "$WORK/cua-real"
+rm "$FAKE_HOME/.local/bin/cua"
+ln -s "$WORK/cua-real" "$FAKE_HOME/.local/bin/cua"
+ALL_BEFORE="$(snap_all)"
+install
+check "a Stable cua that is a symlink does not stop an install (cua-local is another name)" '[ "$RC" = 0 ] && [ -d "$LOCAL_APP" ] && [ "$(readlink "$FAKE_HOME/.local/bin/cua")" = "$WORK/cua-real" ]'
+install --prefix "$WORK/cua-real"
+check "but the file it links to is Stable's: --prefix there is refused" '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep >/dev/null "refusing"'
+reset_fixture
+mkdir -p "$WORK/safe-vms"
+ln -s "$WORK/safe-vms" "$WORK/safe-link"
+install --prefix "$WORK/safe-link"
+check "a symlinked --prefix that Stable does not own is still fine (status $RC)" '[ "$RC" = 0 ] && [ -d "$WORK/safe-vms/Applications/Cua Spaces Local.app" ]'
+
 # --- 4. Refusals ------------------------------------------------------------------------------
 
 echo "== refusals =="
@@ -595,6 +646,19 @@ check "a copy that does not verify fails the install (status $RC)" '[ "$RC" != 0
 check "the previous Local app is back, byte for byte" '[ "$(snap "Applications/Cua Spaces Local.app")" = "$OLD_APP" ]'
 check "no backup is left behind" '! ls "$FAKE_HOME"/Applications/*.install-backup.* >/dev/null 2>&1'
 check "Stable files are byte-identical after the rollback" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
+
+# --- 5b. A stalled codesign -----------------------------------------------------------------------
+
+echo "== a codesign that stalls =="
+reset_fixture
+ALL_BEFORE="$(snap_all)"
+CODESIGN_STALL_ONCE=1 install
+check "a codesign that stalls once is tried again, and the install succeeds (status $RC)" '[ "$RC" = 0 ] && [ -d "$LOCAL_APP" ] && [ -e "$SHIM_STATE/stalled" ]'
+reset_fixture
+ALL_BEFORE="$(snap_all)"
+CODESIGN_STALL=1 install
+check "a codesign that always stalls fails the install with a clear message, and nothing is installed" \
+    '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep >/dev/null "did not finish in 20 s" && [ "$(snap_all)" = "$ALL_BEFORE" ]'
 
 # --- 6. Signing --------------------------------------------------------------------------------------
 

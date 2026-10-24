@@ -1488,7 +1488,54 @@ pub fn build_registry_with_provider(
 }
 
 #[cfg(test)]
-mod cursor_key_resolution_tests;
+mod cursor_key_resolution_tests {
+    use super::{resolve_cursor_key, NO_CURSOR};
+    use serde_json::json;
+
+    /// Precedence is core `tool_args::session_key`'s contract; Windows only
+    /// owns the cursor-less fallback for a direct call without lifecycle
+    /// metadata.
+    #[test]
+    fn anonymous_direct_call_is_cursor_less() {
+        assert_eq!(resolve_cursor_key(&json!({ "pid": 1 })), NO_CURSOR);
+        assert_eq!(
+            resolve_cursor_key(&json!({ "session": "", "cursor_id": "" })),
+            NO_CURSOR
+        );
+        assert_eq!(
+            resolve_cursor_key(&json!({ "_session_id": "mcp-1-2" })),
+            "mcp-1-2"
+        );
+    }
+}
 
 #[cfg(test)]
-mod pid_window_target_tests;
+mod pid_window_target_tests {
+    use super::*;
+    use cua_driver_core::window_target::{resolve_pid_window_target, PidWindowTargetResolution};
+
+    fn window(hwnd: u64, pid: u32) -> crate::win32::WindowInfo {
+        crate::win32::WindowInfo {
+            hwnd,
+            pid,
+            title: format!("Document {hwnd}"),
+            x: 0,
+            y: 0,
+            width: 640,
+            height: 480,
+            is_on_screen: true,
+            minimized: false,
+        }
+    }
+
+    #[test]
+    fn same_pid_sibling_windows_are_ambiguous() {
+        let candidates =
+            window_target_candidates_for_pid([window(7, 42), window(8, 42), window(9, 99)], 42);
+        assert!(matches!(
+            resolve_pid_window_target(candidates),
+            PidWindowTargetResolution::Ambiguous(windows)
+                if windows.iter().map(|window| window.window_id).collect::<Vec<_>>() == [7, 8]
+        ));
+    }
+}

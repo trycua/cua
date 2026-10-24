@@ -1269,10 +1269,225 @@ impl Tool for ClickTool {
 }
 
 #[cfg(test)]
-mod pixel_click_transport_tests;
+mod pixel_click_transport_tests {
+    use super::{finish_pixel_uia_attempt, posted_pixel_click_result};
+    use crate::uia::windows_enum::PointInvokeOutcome;
+    use cua_driver_core::action_record::{
+        ActionExecutionRecord, ActionTransport, ActualDelivery, RequestedDelivery,
+    };
+
+    #[test]
+    fn uia_unavailable_errors_advertise_foreground_escalation() {
+        use cua_driver_core::action_record::EscalationKind;
+        use cua_driver_core::protocol::Content;
+        for (outcome, status) in [
+            (PointInvokeOutcome::Busy, "busy"),
+            (PointInvokeOutcome::Timeout, "timeout"),
+            (PointInvokeOutcome::Unavailable, "unavailable"),
+        ] {
+            let result = finish_pixel_uia_attempt(outcome, 7, 3, 4)
+                .expect("unavailable UIA must stop the route without fallback");
+            assert!(result.is_error.unwrap_or(false), "{outcome:?}");
+            let data = result
+                .structured_content
+                .as_ref()
+                .expect("structured error");
+            assert_eq!(data["code"], "background_unavailable");
+            assert_eq!(data["uia_status"], status);
+            assert_eq!(data["path"], "ax");
+            assert_eq!(data["effect"], "unverifiable");
+            assert_eq!(
+                data["suggestion"].as_str(),
+                Some("Retry this action with delivery_mode:\"foreground\"."),
+                "{outcome:?}"
+            );
+            assert_eq!(
+                data["escalation"]["recommended"].as_str(),
+                Some("foreground"),
+                "{outcome:?}"
+            );
+            let reason = data["escalation"]["reason"]
+                .as_str()
+                .expect("escalation reason");
+            assert!(
+                reason.contains(status),
+                "reason must name the UIA status: {reason}"
+            );
+            assert!(
+                reason.contains("delivery_mode:\"foreground\""),
+                "reason must name the next rung: {reason}"
+            );
+            let text = match &result.content[0] {
+                Content::Text { text, .. } => text,
+                _ => panic!("expected text content for {outcome:?}"),
+            };
+            assert!(
+                text.contains("No fallback input was sent"),
+                "text must keep the no-replay guarantee: {text}"
+            );
+            assert!(
+                text.contains("delivery_mode:\"foreground\""),
+                "text must surface the escalation: {text}"
+            );
+            let record = ActionExecutionRecord::from_legacy(
+                "click",
+                &serde_json::json!({ "delivery_mode": "background" }),
+                data,
+            )
+            .expect("UIA refusal should normalize into the public action contract");
+            let public = serde_json::to_value(record.public_result().expect("valid ActionResult"))
+                .expect("serialize ActionResult");
+            assert_eq!(public["effect"], "unverifiable", "{outcome:?}");
+        }
+        // The completed-miss boundary is unchanged: only Miss falls through,
+        // and a delivered Invoke carries no escalation hint.
+        assert!(finish_pixel_uia_attempt(PointInvokeOutcome::Miss, 7, 3, 4).is_none());
+        let ok = finish_pixel_uia_attempt(PointInvokeOutcome::Invoked, 7, 3, 4)
+            .expect("invoked click reports success");
+        assert!(!ok.is_error.unwrap_or(false));
+        let ok_data = ok.structured_content.as_ref().expect("structured success");
+        assert_eq!(ok_data["path"], "ax");
+        assert!(ok_data.get("escalation").is_none());
+        assert!(ok_data.get("suggestion").is_none());
+        let ok_record = ActionExecutionRecord::from_legacy(
+            "click",
+            &serde_json::json!({ "delivery_mode": "background" }),
+            ok_data,
+        )
+        .expect("UIA invoke should normalize into the public action contract");
+        let ok_public =
+            serde_json::to_value(ok_record.public_result().expect("valid ActionResult"))
+                .expect("serialize ActionResult");
+        assert_eq!(ok_public["effect"], "unverifiable");
+        // The hint must flow into the existing escalation pipeline, not sit
+        // as inert metadata: Timeout (the #3621 case) normalizes to a
+        // foreground-delivery escalation on the internal record.
+        let timeout_data = finish_pixel_uia_attempt(PointInvokeOutcome::Timeout, 7, 3, 4)
+            .expect("timeout stops the route")
+            .structured_content
+            .expect("structured error");
+        let timeout_record = ActionExecutionRecord::from_legacy(
+            "click",
+            &serde_json::json!({ "delivery_mode": "background" }),
+            &timeout_data,
+        )
+        .expect("UIA timeout should normalize into the public action contract");
+        assert_eq!(
+            timeout_record.escalation.map(|escalation| escalation.kind),
+            Some(EscalationKind::RetryWithForegroundDelivery)
+        );
+    }
+
+    #[test]
+    fn post_message_pixel_click_reports_synthetic_transport() {
+        let result = posted_pixel_click_result(42, "click");
+        let structured = result
+            .structured_content
+            .as_ref()
+            .expect("posted click should expose legacy transport metadata");
+        assert_eq!(structured["path"], "post_message");
+
+        let record = ActionExecutionRecord::from_legacy(
+            "click",
+            &serde_json::json!({ "delivery_mode": "background" }),
+            structured,
+        )
+        .expect("posted click should normalize into the public action contract");
+        assert_eq!(record.transport, ActionTransport::WindowsPostMessage);
+        assert_eq!(record.requested_delivery, RequestedDelivery::Background);
+        assert_eq!(record.actual_delivery, Some(ActualDelivery::Background));
+
+        let public = serde_json::to_value(record.public_result().expect("valid ActionResult"))
+            .expect("serialize ActionResult");
+        assert_eq!(public["route"], "synthetic_events");
+        assert_eq!(public["delivery"]["mode"], "background");
+    }
+}
 
 #[cfg(test)]
-mod background_element_click_record_tests;
+mod background_element_click_record_tests {
+    use super::{background_element_click_result, ActionTransport};
+
+    #[test]
+    fn raw_fallback_reports_its_physical_transport() {
+        for (transport, path) in [
+            (ActionTransport::WindowsTargetedInjection, "pixel"),
+            (ActionTransport::WindowsPostMessage, "post_message"),
+        ] {
+            let result = background_element_click_result(
+                "physical fallback".into(),
+                transport,
+                vec![ActionTransport::WindowsUiaInvoke],
+            );
+            assert_eq!(result.structured_content.as_ref().unwrap()["path"], path);
+            let record = result.action_record.unwrap();
+            assert_eq!(record.transport, transport);
+            let truth = record.debug_json();
+            assert_ne!(truth["route"], "accessibility");
+            assert_eq!(
+                record.attempts[0].transport,
+                ActionTransport::WindowsUiaInvoke
+            );
+            assert_eq!(record.fallbacks[0].to, transport);
+        }
+    }
+
+    #[test]
+    fn failed_provider_calls_disqualify_single_action_marker_exemption() {
+        let result = background_element_click_result(
+            "semantic success after provider failure".into(),
+            ActionTransport::WindowsUiaToggle,
+            vec![ActionTransport::WindowsUiaInvoke],
+        );
+        let record = result.action_record.unwrap();
+        assert_eq!(record.transport, ActionTransport::WindowsUiaToggle);
+        assert_eq!(record.attempts.len(), 1);
+        assert_eq!(record.fallbacks.len(), 1);
+        assert_eq!(record.fallbacks[0].from, ActionTransport::WindowsUiaInvoke);
+        assert_eq!(record.fallbacks[0].to, ActionTransport::WindowsUiaToggle);
+        // Point-free recording requires an empty fallback journal.
+        assert!(!record.debug_json()["fallbacks"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn single_provider_success_has_no_invented_attempts() {
+        for transport in [
+            ActionTransport::WindowsUiaInvoke,
+            ActionTransport::WindowsUiaToggle,
+            ActionTransport::WindowsUiaSelection,
+            ActionTransport::WindowsUiaExpandCollapse,
+        ] {
+            let result =
+                background_element_click_result("semantic success".into(), transport, vec![]);
+            assert_eq!(result.structured_content.as_ref().unwrap()["path"], "ax");
+            let record = result.action_record.unwrap();
+            assert_eq!(record.transport, transport);
+            assert!(record.attempts.is_empty());
+            assert!(record.fallbacks.is_empty());
+        }
+    }
+}
 
 #[cfg(test)]
-mod click_capture_id_schema_tests;
+mod click_capture_id_schema_tests {
+    use super::ClickTool;
+    use cua_driver_core::tool::Tool;
+
+    /// The portable click contract pins `button` and the other accepted
+    /// fields. A live schema may broaden `capture_id`, which the subset gate
+    /// allows, so the non-empty bound is pinned here.
+    #[test]
+    fn schema_requires_non_empty_capture_id() {
+        let tool = ClickTool {
+            state: super::ToolState::new(None),
+        };
+        let d = tool.def();
+        let props = d.input_schema.get("properties").expect("properties");
+        let capture_id = props.get("capture_id").expect("capture_id field present");
+        assert_eq!(capture_id["type"], "string");
+        assert_eq!(capture_id["minLength"], 1);
+    }
+}

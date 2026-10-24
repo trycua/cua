@@ -9,7 +9,46 @@ use std::sync::Arc;
 use super::impl_::{bitmap_to_screen, is_chromium_browser_target, ToolState};
 
 #[cfg(test)]
-mod get_window_state_actions_tests;
+mod get_window_state_actions_tests {
+    use super::*;
+    use crate::uia::UiaNode;
+
+    fn node(actions: Vec<String>) -> UiaNode {
+        UiaNode {
+            element_index: Some(1),
+            control_type: "Button".to_owned(),
+            name: Some("OK".to_owned()),
+            value: None,
+            automation_id: None,
+            help_text: None,
+            actions,
+            enabled: Some(true),
+            selected: None,
+            element_ptr: 0,
+            center_x: 0,
+            center_y: 0,
+            rect: None,
+            msaa_role: None,
+            depth: 0,
+            parent_element_index: None,
+            in_web_content: false,
+        }
+    }
+
+    #[test]
+    fn element_entry_includes_actions_when_present() {
+        let n = node(vec!["invoke".to_owned(), "toggle".to_owned()]);
+        let entry = build_element_entry(&n, None).unwrap();
+        assert_eq!(entry["actions"], json!(["invoke", "toggle"]));
+    }
+
+    #[test]
+    fn element_entry_omits_actions_when_empty() {
+        let n = node(Vec::new());
+        let entry = build_element_entry(&n, None).unwrap();
+        assert!(entry.get("actions").is_none());
+    }
+}
 
 // ── get_window_state ─────────────────────────────────────────────────────────
 
@@ -771,4 +810,40 @@ fn is_standalone_chromium_browser_process(pid: u32) -> bool {
 }
 
 #[cfg(test)]
-mod display_only_tests;
+mod display_only_tests {
+    use super::{GetWindowStateTool, ToolState};
+    use cua_driver_core::tool::Tool;
+
+    // T3 Code feature-detects the preview mode from this schema property.
+    #[test]
+    fn display_only_is_advertised() {
+        let tool = GetWindowStateTool {
+            state: ToolState::new(None),
+        };
+        assert_eq!(
+            tool.def().input_schema["properties"]["display_only"]["type"],
+            "boolean"
+        );
+    }
+
+    #[tokio::test]
+    async fn display_only_refuses_accessibility_snapshot_requests() {
+        let tool = GetWindowStateTool {
+            state: ToolState::new(None),
+        };
+        for tree in [None, Some(true)] {
+            let mut args = serde_json::json!({"pid": 42, "window_id": 7, "display_only": true});
+            if let Some(tree) = tree {
+                args["include_accessibility_tree"] = serde_json::json!(tree);
+            }
+            let result = tool.invoke(args).await;
+            assert_eq!(
+                serde_json::to_value(result).unwrap(),
+                serde_json::to_value(cua_driver_core::protocol::ToolResult::error(
+                    "display_only requires include_accessibility_tree:false"
+                ))
+                .unwrap()
+            );
+        }
+    }
+}

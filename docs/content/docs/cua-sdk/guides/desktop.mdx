@@ -150,6 +150,13 @@ cua sb create linux --name desk2 --view # open it when the sandbox is ready
 cua viewer                              # one local page for every sandbox (Cua Spaces)
 ```
 
+Browsers only enable WebCodecs on HTTPS or loopback pages. For a sandbox at a
+plain-HTTP address other than loopback, such as a local Lume VM, `cua sb view`
+prints a `127.0.0.1` link served through a proxy and keeps running until
+Ctrl-C, `--no-open` included. The MCP `sandbox_view` tool and
+`cua skills record --sandbox` do the same; their link works while the MCP
+server or the recording runs.
+
 ```python test="container" id="desktop-viewer-url"
 from cua_sandbox import Image, Sandbox
 

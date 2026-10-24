@@ -394,7 +394,7 @@ Permission: `sandbox:delete`.
 
 ### `sandbox_view`
 
-Get a browser link to the sandbox desktop in the cua-spacesd HTML5 viewer (video, audio, input, clipboard, files). The link expires after an hour.
+Get a browser link to the sandbox desktop in the cua-spacesd HTML5 viewer (video, audio, input, clipboard, files). The link expires after an hour. A sandbox at a plain-HTTP address other than loopback (a local Lume VM) gets a 127.0.0.1 link through a proxy that lasts while this server runs.
 
 Permission: `sandbox:view`.
 

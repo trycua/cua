@@ -68,10 +68,10 @@ jobs:
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
-          key: vm-density-unit
+          shared-key: libs-cua-vmm
       - name: Accounting, admission, QEMU arguments, profiles, placement
         run: >
           cargo test --locked -p cua-vmm --lib -- density:: qemu::
@@ -92,12 +92,12 @@ jobs:
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: |
             libs/cua
             libs/cua-spacesd
-          key: vm-density-kvm
+          shared-key: libs-cua-qemu-tests
       - name: QEMU, KVM and the Linux reference disk
         run: |
           sudo apt-get update -qq

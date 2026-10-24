@@ -26,10 +26,15 @@ import Testing
             lock.withLock { process = p }
         }
         var pid: Int32? { lock.withLock { process.flatMap { $0.isRunning ? $0.processIdentifier : nil } } }
-        /// The supervisor's `daemonPid`: it watches the pid this returns.
+        /// The supervisor's `daemonPid`: it watches the pid this returns. The
+        /// pid is captured and the read counted under one lock, so a test
+        /// that sees the count cannot kill the daemon before the pid is
+        /// captured (which would return nil and arm no watch).
         func watchedPid() -> Int32? {
-            lock.withLock { pidReads += 1 }
-            return pid
+            lock.withLock {
+                pidReads += 1
+                return process.flatMap { $0.isRunning ? $0.processIdentifier : nil }
+            }
         }
         func kill() { lock.withLock { process }?.terminate() }
         func stop() { lock.withLock { process }?.terminate() }

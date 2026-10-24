@@ -173,6 +173,9 @@ fn help_advanced_follows_the_channel() {
     assert!(!stable.contains("cua-local"), "{stable}");
     let local = rig.run("cua-local", None, None, &["help", "advanced"]);
     assert!(local.contains("cua-local host setup --relay"), "{local}");
+    // And a command named in a sentence, not only the examples.
+    assert!(local.contains("Works with cua-local host setup"), "{local}");
+    assert!(stable.contains("Works with cua host setup"), "{stable}");
     assert!(
         !local.lines().any(|l| l.trim_start().starts_with("cua ")),
         "{local}"

@@ -446,10 +446,13 @@ fn keys_lines(k: &Value, width: Option<usize>) -> Vec<String> {
         .map(|a| a.iter().filter_map(Value::as_str).collect())
         .unwrap_or_default();
     let mut out = Vec::new();
+    // The command is spelled with this build's CLI name, not rewritten with the
+    // line: the device names in it are the user's.
+    let cli = crate::util::cli();
     match k["waiting"].as_str() {
         Some(_) if !holders.is_empty() => {
             out.push(format!(
-                "Not shared with this device yet. Your pool keys are on: {}; at least one must be online to add a new device (open Cua on one of them), or revoke the ones you no longer have (`cua devices revoke <id>`).",
+                "Not shared with this device yet. Your pool keys are on: {}; at least one must be online to add a new device (open Cua on one of them), or revoke the ones you no longer have (`{cli} devices revoke <id>`).",
                 holders.join(", ")
             ));
         }
@@ -466,10 +469,7 @@ fn keys_lines(k: &Value, width: Option<usize>) -> Vec<String> {
             ));
         }
     }
-    // Named for this build's CLI before it wraps, so a command is not split.
-    out.iter()
-        .flat_map(|l| fit_line(&crate::util::hint(l), width))
-        .collect()
+    out.iter().flat_map(|l| fit_line(l, width)).collect()
 }
 
 /// `just now`, `5 min ago`, `3 h ago`, `12 days ago`.

@@ -2739,6 +2739,16 @@ fn localize_examples(text: &str, name: &str) -> String {
     out
 }
 
+/// The text of `cua help advanced` for `channel`: Local's names its own CLI in
+/// the examples and wherever a command is named in a sentence.
+fn advanced_help_for(channel: cua_home::channel::CuaChannel) -> String {
+    if !channel.is_local() {
+        return ADVANCED_HELP.to_string();
+    }
+    let examples = localize_examples(ADVANCED_HELP, channel.cli_name());
+    util::localize_for(channel, &examples, &util::verbs_of(&cli_command(true)))
+}
+
 /// `cua help advanced`, answered before clap: it is a help topic, not a
 /// command.
 fn is_advanced_help(args: &[std::ffi::OsString]) -> bool {
@@ -2756,11 +2766,7 @@ pub fn main() {
     keep_stdio_out_of_children();
     let channel = cua_home::channel::CuaChannel::current();
     if is_advanced_help(&std::env::args_os().skip(1).collect::<Vec<_>>()) {
-        if channel.is_local() {
-            print!("{}", localize_examples(ADVANCED_HELP, channel.cli_name()));
-        } else {
-            print!("{ADVANCED_HELP}");
-        }
+        print!("{}", advanced_help_for(channel));
         return;
     }
     promote_spacesd_env_vars();
@@ -3748,6 +3754,27 @@ mod tests {
                 .iter()
                 .any(|(_, t)| t.contains("`cua ")),
             "Stable help has backticked commands"
+        );
+    }
+
+    /// `cua help advanced` is a help topic printed before clap runs, so the help
+    /// tree above does not cover it: Local's names `cua-local` in its examples
+    /// and in its sentences, Stable's is the text as written.
+    #[test]
+    fn help_advanced_follows_the_channel() {
+        use cua_home::channel::CuaChannel;
+        assert_eq!(advanced_help_for(CuaChannel::Stable), ADVANCED_HELP);
+        let local = advanced_help_for(CuaChannel::Local);
+        assert!(local.contains("Works with cua-local host setup"), "{local}");
+        let verbs = util::verbs_of(&cli_command(true));
+        assert_eq!(
+            util::localize_for(CuaChannel::Local, &local, &verbs),
+            local,
+            "nothing left that names the Stable `cua`"
+        );
+        assert!(
+            !local.lines().any(|l| l.trim_start().starts_with("cua ")),
+            "{local}"
         );
     }
 

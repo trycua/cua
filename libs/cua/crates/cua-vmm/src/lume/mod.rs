@@ -314,9 +314,15 @@ pub fn lume_cmd_for(channel: CuaChannel) -> Result<Option<LumeCmd>> {
     }
 }
 
-/// State for Linux disk conversions and seeds (default `~/.cua/vmm/lume`).
+/// State for Linux disk conversions and seeds, and the private config and
+/// temp directories of Local's Lume: `<cua home>/vmm/lume`.
 fn default_root() -> PathBuf {
-    host::cua_home().join("vmm").join("lume")
+    root_in(&host::cua_home())
+}
+
+/// [`default_root`] under the cua home `home`.
+pub(crate) fn root_in(home: &std::path::Path) -> PathBuf {
+    home.join("vmm").join("lume")
 }
 
 /// Locate the `lume` binary for the `runtime.lume` setting: this Mac's
@@ -655,12 +661,13 @@ impl LumeRuntime {
             );
             *self.old_lume.lock().unwrap_or_else(|e| e.into_inner()) = Some(v);
         }
+        std::fs::create_dir_all(&self.cfg.root)?;
+        let lume = LumeCmd::new(self.cfg.channel, &self.cfg.root, &bin)?;
         // No `lume serve` answers, so none of its pulls runs: a pull a
         // killed serve left half-made in its temp dir is only taking space.
-        sweep_stale_pull_dirs(&lume_temp_dir(), STALE_PULL_DIR_IDLE);
-        std::fs::create_dir_all(&self.cfg.root)?;
+        sweep_pull_dirs_for(&lume, &lume_temp_dir(), STALE_PULL_DIR_IDLE);
         let log = std::fs::File::create(self.cfg.root.join("serve.log"))?;
-        let mut cmd = LumeCmd::new(self.cfg.channel, &self.cfg.root, &bin)?.command();
+        let mut cmd = lume.command();
         cmd.args(["serve", "--port", &self.port().to_string()])
             .stdin(std::process::Stdio::null())
             .stdout(log.try_clone()?)
@@ -1273,6 +1280,13 @@ fn lume_temp_dir() -> PathBuf {
         }
     }
     std::env::temp_dir()
+}
+
+/// [`sweep_stale_pull_dirs`] in the temp directory `lume` pulls into: its
+/// private one (Local's), else `shared`, the user's. Local never looks in
+/// the shared one, where Stable's running Lume may be mid-pull.
+fn sweep_pull_dirs_for(lume: &LumeCmd, shared: &std::path::Path, idle: Duration) -> usize {
+    sweep_stale_pull_dirs(lume.temp_dir().unwrap_or(shared), idle)
 }
 
 /// Removes the `lume_vm_*` dirs in `temp` (a pull's half-made VM, left by a
@@ -2374,13 +2388,62 @@ mod tests {
         }
     }
 
-    /// A stand-in `lume` that finds VMs the way the pinned Lume 0.6.0 does:
-    /// the default location in `$XDG_CONFIG_HOME/lume/config.yaml`, else
-    /// `stable_dir`. It ignores `LUME_HOME`, as 0.6.0 does for VMs.
+    fn pull_dir(parent: &std::path::Path, name: &str) {
+        let d = parent.join(name);
+        std::fs::create_dir_all(d.join("sub")).unwrap();
+        std::fs::write(d.join("sub/disk.img"), b"x").unwrap();
+    }
+
+    /// Starting Local's Lume sweeps its own temp directory, never the
+    /// shared one where Stable's running Lume may be mid-pull. Stable's
+    /// sweep is as it was.
+    #[test]
+    fn local_s_start_up_sweep_leaves_stable_s_pull_dirs_alone() {
+        let t = tempfile::tempdir().unwrap();
+        let shared = t.path().join("shared-tmp");
+        let root = t.path().join("cua-local/vmm/lume");
+        let vms = t.path().join(".lume-local");
+        std::fs::create_dir_all(&shared).unwrap();
+        // Stable's Lume is pulling (quiet for longer than the sweep's idle
+        // time, as a pull waiting on the network can be).
+        pull_dir(&shared, "lume_vm_stable-pull");
+        let local = LumeCmd::with_vm_dir(CuaChannel::Local, &root, "/opt/lume", &vms).unwrap();
+        let stable = LumeCmd::with_vm_dir(CuaChannel::Stable, &root, "/opt/lume", &vms).unwrap();
+        // Local's Lume pulls into a temp directory of its own, under its home.
+        let private = local.temp_dir().expect("Local has its own temp dir");
+        assert!(private.starts_with(&root) && private.is_dir());
+        assert!(
+            local
+                .env()
+                .iter()
+                .any(|(k, v)| *k == "TMPDIR" && v == private.as_os_str())
+        );
+        assert_eq!(stable.temp_dir(), None);
+        assert!(stable.env().iter().all(|(k, _)| *k != "TMPDIR"));
+        pull_dir(private, "lume_vm_local-pull");
+
+        // Local's sweep (everything counts as stale) removes its own only.
+        assert_eq!(sweep_pull_dirs_for(&local, &shared, Duration::ZERO), 1);
+        assert!(
+            shared.join("lume_vm_stable-pull").exists(),
+            "Stable's pull was swept"
+        );
+        assert!(!private.join("lume_vm_local-pull").exists());
+
+        // Stable's sweep still covers the shared directory.
+        assert_eq!(sweep_pull_dirs_for(&stable, &shared, Duration::ZERO), 1);
+        assert!(!shared.join("lume_vm_stable-pull").exists());
+    }
+
+    /// A stand-in Lume that finds VMs the way Lume does: the default
+    /// location in `$XDG_CONFIG_HOME/lume/config.yaml`, else `stable_dir`.
+    /// Named `lume` (the bundled one, Stable's; 0.6.0 and newer), it ignores
+    /// `LUME_HOME` for VMs; named `lume-local` it follows it (#5804).
     #[cfg(unix)]
-    fn fake_pinned_lume(dir: &std::path::Path, stable_dir: &std::path::Path) -> PathBuf {
+    fn fake_lume_named(name: &str, dir: &std::path::Path, stable_dir: &std::path::Path) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
-        let bin = dir.join("lume");
+        let follows_lume_home = name == CuaChannel::Local.lume_bin_name();
+        let bin = dir.join(name);
         std::fs::write(
             &bin,
             format!(
@@ -2390,6 +2453,7 @@ mod tests {
                  if [ -n \"$cfg\" ] && [ -f \"$cfg\" ]; then\n\
                    vms=$(sed -n 's/^ *path: *\"\\(.*\\)\"$/\\1/p' \"$cfg\" | head -n 1)\n\
                  fi\n\
+                 {home_rule}\
                  sub=\"$1\"; shift\n\
                  case \"$sub\" in\n\
                    get) [ -f \"$vms/$1/config.json\" ] || {{ echo \"Error: Virtual machine not found: $1\"; exit 1; }}\n\
@@ -2402,12 +2466,54 @@ mod tests {
                         /bin/sh -c \"$2\" 2>&1; rc=$?; echo; exit $rc ;;\n\
                    *) exit 64 ;;\n\
                  esac\n",
-                stable = stable_dir.display()
+                stable = stable_dir.display(),
+                home_rule = if follows_lume_home {
+                    "[ -n \"$LUME_HOME\" ] && vms=\"$LUME_HOME\"\n"
+                } else {
+                    ""
+                }
             ),
         )
         .unwrap();
         std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
         bin
+    }
+
+    /// A Lume named `lume-local` (an installed one, which Local prefers)
+    /// follows `LUME_HOME`; the same environment keeps it in Local's
+    /// directory too (#5804).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_lume_local_named_binary_stays_in_local_s_vm_directory() {
+        let t = tempfile::tempdir().unwrap();
+        let stable_dir = t.path().join(".lume");
+        let local_dir = t.path().join(".lume-local");
+        for (dir, vm) in [(&stable_dir, "stable-vm"), (&local_dir, "local-vm")] {
+            std::fs::create_dir_all(dir.join(vm)).unwrap();
+            std::fs::write(dir.join(vm).join("config.json"), "{}").unwrap();
+        }
+        let bin = fake_lume_named(CuaChannel::Local.lume_bin_name(), t.path(), &stable_dir);
+        let local = LumeCmd::with_vm_dir(
+            CuaChannel::Local,
+            &t.path().join("cua-root"),
+            &bin,
+            &local_dir,
+        )
+        .unwrap();
+        assert_eq!(
+            cli_status(&local, "local-vm").await.unwrap(),
+            Status::Stopped
+        );
+        assert!(matches!(
+            cli_status(&local, "stable-vm").await,
+            Err(VmmError::NotFound(_))
+        ));
+        // Without the environment it would use Stable's, as a `lume` does.
+        let bare = LumeCmd::plain(&bin);
+        assert_eq!(
+            cli_status(&bare, "stable-vm").await.unwrap(),
+            Status::Stopped
+        );
     }
 
     /// Both channels' VM directories hold a VM. Every Lume CLI path (`get`,
@@ -2425,7 +2531,7 @@ mod tests {
             std::fs::create_dir_all(dir.join(vm)).unwrap();
             std::fs::write(dir.join(vm).join("config.json"), "{}").unwrap();
         }
-        let bin = fake_pinned_lume(t.path(), &stable_dir);
+        let bin = fake_lume_named("lume", t.path(), &stable_dir);
         let root = t.path().join("cua-root");
         let stable = LumeCmd::with_vm_dir(CuaChannel::Stable, &root, &bin, &stable_dir).unwrap();
         let local = LumeCmd::with_vm_dir(CuaChannel::Local, &root, &bin, &local_dir).unwrap();
@@ -2435,8 +2541,8 @@ mod tests {
             (&local, "local-vm", "stable-vm"),
         ];
 
-        // The stand-in does what the pinned Lume does without the
-        // environment: Local would land in Stable's directory.
+        // The stand-in does what Lume does without the environment: Local
+        // would land in Stable's directory.
         let bare = LumeCmd::plain(&bin);
         assert_eq!(
             cli_status(&bare, "stable-vm").await.unwrap(),
@@ -2446,6 +2552,19 @@ mod tests {
             cli_status(&bare, "local-vm").await,
             Err(VmmError::NotFound(_))
         ));
+        // The contract (#5804): a Lume named `lume` takes `LUME_HOME` for
+        // its release-channel file only, so `LUME_HOME` alone does not move
+        // its VMs. The config under `XDG_CONFIG_HOME` is what does.
+        let only_home = std::process::Command::new(&bin)
+            .args(["get", "local-vm", "--format", "json"])
+            .env("LUME_HOME", &local_dir)
+            .output()
+            .unwrap();
+        assert!(
+            !only_home.status.success(),
+            "LUME_HOME alone isolated a `lume`"
+        );
+        assert!(local.env().iter().any(|(k, _)| *k == "XDG_CONFIG_HOME"));
 
         for (lume, mine, other) in own {
             // `lume get`

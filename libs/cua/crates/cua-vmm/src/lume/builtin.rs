@@ -116,7 +116,12 @@ pub fn dir() -> PathBuf {
 
 /// `$CUA_HOME/runtimes/lume`: every built-in Lume version.
 pub fn root() -> PathBuf {
-    host::cua_home().join("runtimes").join("lume")
+    root_in(&host::cua_home())
+}
+
+/// [`root`] under the cua home `home`.
+pub fn root_in(home: &Path) -> PathBuf {
+    home.join("runtimes").join("lume")
 }
 
 /// The built-in Lume's executable, when it is installed and was verified.
@@ -381,6 +386,10 @@ pub fn remove() -> Result<()> {
     }
 }
 
+/// Lume's switch for its product telemetry (`false` turns it off for the
+/// process; it wins over the config file).
+const TELEMETRY_VAR: &str = "LUME_TELEMETRY_ENABLED";
+
 /// A Lume to run for a channel: its binary and the environment every
 /// process started from it needs. **Every** Lume subprocess goes through
 /// one of these (`serve`, `pull`, `get`, `run`, `ssh`, `attach`), so none of
@@ -391,17 +400,31 @@ pub fn remove() -> Result<()> {
 /// Local's Lume keeps its VMs in `~/.lume-local`
 /// ([`crate::storage::lume_dir_for`]) whichever Lume runs it, so it gets:
 ///
-/// * `LUME_HOME`: the VM directory, for a Lume that reads it (`lume-local`,
-///   and releases after the pinned one);
 /// * `XDG_CONFIG_HOME`: a config directory of its own under `config_root`,
 ///   with a `lume/config.yaml` that makes the VM directory the default
-///   location. A Lume that does not read `LUME_HOME` yet (the pinned one)
-///   reads this, so it never reads or writes Stable's `~/.lume` or
-///   `~/.config/lume`.
+///   location. **This is the isolation for any Lume named `lume`**, the
+///   bundled one included, so it never reads or writes Stable's `~/.lume` or
+///   `~/.config/lume`;
+/// * `LUME_HOME`: the VM directory. **Contract with Lume (#5804):** a Lume
+///   named `lume-local` relocates its VMs, cache and settings through
+///   `LUME_HOME`; one named `lume` (Stable's, and the bundled one, on 0.6.0
+///   and on newer releases alike) uses `LUME_HOME` only for its
+///   release-channel file. So `LUME_HOME` alone does not isolate the
+///   bundled `lume`: never drop the config above. It is set for
+///   `lume-local`, and so the release-channel file is Local's own;
+/// * `TMPDIR`: a private temp directory under `config_root`, where Lume
+///   pulls images (`lume_vm_*`), so Local's start-up sweep and Stable's
+///   never see each other's half-made pulls;
+/// * `LUME_TELEMETRY_ENABLED=false` (and `telemetryEnabled: false` in the
+///   config): the pinned Lume writes its telemetry identity, locks and
+///   markers under `~/.lume` whatever `LUME_HOME` says, which is Stable's.
+///   Local's Lume has none until the pin supports an isolated home.
 #[derive(Clone, Debug)]
 pub struct LumeCmd {
     bin: PathBuf,
     env: Vec<(&'static str, std::ffi::OsString)>,
+    /// The private temp directory its `TMPDIR` names (Local's).
+    temp: Option<PathBuf>,
 }
 
 impl LumeCmd {
@@ -410,6 +433,7 @@ impl LumeCmd {
         Self {
             bin: bin.into(),
             env: Vec::new(),
+            temp: None,
         }
     }
 
@@ -440,13 +464,24 @@ impl LumeCmd {
         }
         let xdg = config_root.join("xdg");
         seed_config(&xdg.join("lume").join("config.yaml"), vm_dir)?;
+        let temp = config_root.join("tmp");
+        std::fs::create_dir_all(&temp)?;
         Ok(Self {
             bin,
             env: vec![
                 (crate::storage::LUME_HOME_VAR, vm_dir.as_os_str().to_owned()),
                 ("XDG_CONFIG_HOME", xdg.into_os_string()),
+                ("TMPDIR", temp.as_os_str().to_owned()),
+                (TELEMETRY_VAR, "false".into()),
             ],
+            temp: Some(temp),
         })
+    }
+
+    /// The temp directory this Lume pulls into, when it has a private one
+    /// (Local's). Stable's is the user's shared temp directory.
+    pub fn temp_dir(&self) -> Option<&Path> {
+        self.temp.as_deref()
     }
 
     /// The Lume binary.
@@ -509,7 +544,7 @@ pub fn config_yaml(vm_dir: &str) -> String {
          defaultLocationName: \"home\"\n\
          cacheDirectory: \"{vm_dir}/cache\"\n\
          cachingEnabled: false\n\
-         telemetryEnabled: true\n\
+         telemetryEnabled: false\n\
          \n\
          vmLocations:\n\
          \x20 - name: \"home\"\n\
@@ -518,7 +553,7 @@ pub fn config_yaml(vm_dir: &str) -> String {
 }
 
 /// Writes the Local Lume's `config.yaml` at `file` unless it already makes
-/// `vm_dir` the default location.
+/// `vm_dir` the default location with telemetry off.
 fn seed_config(file: &Path, vm_dir: &Path) -> std::io::Result<()> {
     let dir = vm_dir
         .to_str()
@@ -530,11 +565,10 @@ fn seed_config(file: &Path, vm_dir: &Path) -> std::io::Result<()> {
             )
         })?;
     let current = std::fs::read_to_string(file).ok();
-    if current
-        .as_deref()
-        .and_then(crate::storage::lume_default_location)
-        .is_some_and(|p| p == dir)
-    {
+    if current.as_deref().is_some_and(|y| {
+        crate::storage::lume_default_location(y).is_some_and(|p| p == dir)
+            && y.lines().any(|l| l.trim() == "telemetryEnabled: false")
+    }) {
         return Ok(());
     }
     if let Some(parent) = file.parent() {
@@ -846,7 +880,8 @@ mod tests {
     fn stable_s_lume_is_started_as_it_always_was() {
         let dir = tempfile::tempdir().unwrap();
         let cmd = lume_for(CuaChannel::Stable, dir.path(), Path::new("/h/.lume")).unwrap();
-        assert!(cmd.env().is_empty());
+        assert!(cmd.env().is_empty(), "no telemetry or temp dir overrides");
+        assert_eq!(cmd.temp_dir(), None);
         assert_eq!(cmd.wrapped(), ("/opt/lume".to_string(), Vec::new()));
         assert_eq!(cmd.argv(["get", "vm"]), ["/opt/lume", "get", "vm"]);
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
@@ -877,6 +912,12 @@ mod tests {
             !yaml.contains("\"~/.lume\""),
             "never Stable's default location"
         );
+        // The pinned Lume writes its telemetry identity under ~/.lume
+        // whatever LUME_HOME says: Local's has telemetry off, by the
+        // environment (which wins) and in its config.
+        assert!(yaml.contains("telemetryEnabled: false"));
+        assert_eq!(get("LUME_TELEMETRY_ENABLED"), Some("false".into()));
+        assert_eq!(get("TMPDIR"), Some(dir.path().join("tmp").into()));
         // Where only a program and arguments can be given, the same
         // environment goes through `env`.
         let argv = cmd.argv(["attach", "vm"]);
@@ -911,6 +952,21 @@ mod tests {
             crate::storage::lume_default_location(&std::fs::read_to_string(&file).unwrap())
                 .as_deref(),
             Some("/Users/a/.lume-local")
+        );
+        // An older config of Local's that left telemetry on: rewritten.
+        std::fs::write(
+            &file,
+            format!(
+                "defaultLocationName: \"home\"\ntelemetryEnabled: true\nvmLocations:\n  - name: \"home\"\n    path: \"{}\"\n",
+                vms.display()
+            ),
+        )
+        .unwrap();
+        lume_for(CuaChannel::Local, dir.path(), vms).unwrap();
+        assert!(
+            std::fs::read_to_string(&file)
+                .unwrap()
+                .contains("telemetryEnabled: false")
         );
         // A directory that cannot be written into a YAML string is refused.
         assert!(lume_for(CuaChannel::Local, dir.path(), Path::new("/a\"b")).is_err());

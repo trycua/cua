@@ -425,7 +425,7 @@ impl GetBrowserStateTool {
                 opaque continuation. Never performs setup: a browser that is not \
                 attached yet refuses with browser_consent_required or \
                 browser_requires_setup, and detail.next_call names the browser_prepare call \
-                that attaches it. Use this route for any web page in Chrome, Edge or Brave; \
+                that attaches it. Use this route for any web page in Chrome, Edge, Brave or Dia; \
                 desktop pointer tools move the user's pointer."
                 .into(),
             input_schema: json!({
@@ -759,7 +759,7 @@ impl BrowserPrepareTool {
         let def = ToolDef {
             name: "browser_prepare".into(),
             description: "Attach the browser tools to a browser. For a page in the user's \
-                running Chrome, Edge or Brave, call it once with pid, window_id, session and \
+                running Chrome, Edge, Brave or Dia (macOS), call it once with pid, window_id, session and \
                 strategy {\"kind\":\"existing_profile\"} when get_browser_state refuses with \
                 browser_consent_required or browser_requires_setup; then call \
                 get_browser_state again and act with browser_click, browser_type or \

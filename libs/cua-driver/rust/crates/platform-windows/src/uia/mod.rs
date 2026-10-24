@@ -360,6 +360,27 @@ unsafe fn walk_tree_unsafe(
         return crate::msaa::walk_msaa_tree_budgeted(hwnd, budget);
     }
 
+    // Issue #5783: layered + noactivate + toolwindow surfaces such as
+    // Wails floating balls are reported by list_windows (EnumWindows) but
+    // walking their UIA provider can crash uiautomationcore.dll, which
+    // kills the whole daemon. Skip the UIA walk entirely and fall back to
+    // MSAA, which does not enter the crashing BuildUpdatedCache path for
+    // these overlay-style windows. A tree with zero actionable rows is
+    // expected here — callers should treat them as pixel-only surfaces.
+    let is_overlay_style_window: bool = {
+        use windows::Win32::UI::WindowsAndMessaging::{GetWindowLongPtrW, GWL_EXSTYLE};
+        const WS_EX_LAYERED_ISIZE: isize = 0x0008_0000;
+        const WS_EX_NOACTIVATE_ISIZE: isize = 0x0800_0000;
+        const WS_EX_TOOLWINDOW_ISIZE: isize = 0x0000_0080;
+        let style = GetWindowLongPtrW(hwnd_win, GWL_EXSTYLE);
+        style & WS_EX_LAYERED_ISIZE != 0
+            && style & WS_EX_NOACTIVATE_ISIZE != 0
+            && style & WS_EX_TOOLWINDOW_ISIZE != 0
+    };
+    if is_overlay_style_window {
+        return crate::msaa::walk_msaa_tree_budgeted(hwnd, budget);
+    }
+
     // Two-call sequence (ElementFromHandle + BuildUpdatedCache) instead of
     // the atomic ElementFromHandleBuildCache. Empirically, the single-call
     // batched variant hangs against SAL even in CLI in-process tests;

@@ -50,15 +50,14 @@ fn private_copy(src: &Path) -> Result<(TempDir, PathBuf), TeleportError> {
         let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
     }
     let dst = dir.join("Favicons");
-    std::fs::copy(src, &dst)
-        .map_err(|e| TeleportError::Provider(format!("copying Favicons failed: {e}")))?;
+    crate::plain_copy::copy_named("Favicons", src, &dst)?;
     // Recent commits live in the sidecars of a WAL or journal database.
     for ext in ["-wal", "-shm", "-journal"] {
         let mut from = src.as_os_str().to_owned();
         from.push(ext);
         let mut to = dst.as_os_str().to_owned();
         to.push(ext);
-        let _ = std::fs::copy(PathBuf::from(from), PathBuf::from(to));
+        let _ = crate::plain_copy::copy_data_only(Path::new(&from), Path::new(&to));
     }
     Ok((guard, dst))
 }

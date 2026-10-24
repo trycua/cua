@@ -573,12 +573,11 @@ fn tempfile_copy(src: &Path) -> Result<TempCopy, TeleportError> {
         from.push(suffix);
         let from = PathBuf::from(from);
         if from.is_file() {
-            let _ = std::fs::copy(&from, dir.join(format!("Cookies{suffix}")));
+            let _ = crate::plain_copy::copy_data_only(&from, &dir.join(format!("Cookies{suffix}")));
         }
     }
-    std::fs::copy(src, &dst).map_err(|e| {
+    crate::plain_copy::copy_named("Cookies", src, &dst).inspect_err(|_| {
         let _ = std::fs::remove_dir_all(&dir);
-        TeleportError::Provider(format!("copying Cookies failed: {e}"))
     })?;
     Ok(TempCopy(dst))
 }
@@ -725,6 +724,62 @@ fn write_cookies_db_at(
 
 #[cfg(test)]
 mod tests {
+
+    #[cfg(target_os = "macos")]
+    fn set_xattr(path: &Path, name: &str, value: &[u8]) -> i32 {
+        use std::os::unix::ffi::OsStrExt;
+        let p = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        let n = std::ffi::CString::new(name).unwrap();
+        unsafe {
+            libc::setxattr(
+                p.as_ptr(),
+                n.as_ptr(),
+                value.as_ptr().cast(),
+                value.len(),
+                0,
+                0,
+            )
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn list_xattrs(path: &Path) -> Vec<String> {
+        use std::os::unix::ffi::OsStrExt;
+        let p = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        let mut buf = vec![0u8; 4096];
+        let n = unsafe { libc::listxattr(p.as_ptr(), buf.as_mut_ptr().cast(), buf.len(), 0) };
+        assert!(n >= 0);
+        buf[..n as usize]
+            .split(|b| *b == 0)
+            .filter(|s| !s.is_empty())
+            .map(|s| String::from_utf8_lossy(s).into_owned())
+            .collect()
+    }
+
+    /// macOS 27 refuses (EPERM) the metadata-preserving copy of a Cookies file
+    /// that carries `com.apple.provenance` / `com.apple.quarantine`, while a
+    /// plain read+write succeeds. A user-set xattr stands in for those: the
+    /// export copy must be data only, so none of them may travel into it.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_cookies_copy_carries_no_xattrs_from_the_source() {
+        let src_dir = tempfile::tempdir().unwrap();
+        let src = src_dir.path().join("Cookies");
+        std::fs::write(&src, b"SQLite format 3\0 not really").unwrap();
+        for attr in ["com.apple.quarantine", "user.cua-test"] {
+            assert_eq!(set_xattr(&src, attr, b"0081;00000000;Chrome;"), 0, "{attr}");
+        }
+        let copy = tempfile_copy(&src).unwrap();
+        assert_eq!(
+            std::fs::read(copy.path()).unwrap(),
+            std::fs::read(&src).unwrap()
+        );
+        let listed = list_xattrs(copy.path());
+        assert!(
+            listed.is_empty(),
+            "the export copy carries xattrs: {listed:?}"
+        );
+    }
 
     #[test]
     fn a_chrome_130_value_loses_its_host_key_digest() {

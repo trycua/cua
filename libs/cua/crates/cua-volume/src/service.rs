@@ -15,11 +15,18 @@
 //! | macOS | `nfs` | a localhost NFSv3 server, mounted with the system's `mount_nfs` (feature `nfs`) |
 //! | Linux | `fuse` | FUSE through `/dev/fuse` and `fusermount3` (feature `fuse`) |
 //! | other | none | reported as `unsupported` |
+//!
+//! The volume is mounted on `~/Cua Volume` (macOS) or `~/cua-volume`
+//! (elsewhere), named "Cua Volume". A Cua Spaces Local build
+//! ([`cua_home::channel::CuaChannel::Local`]) uses `~/Cua Volume Local` and
+//! "Cua Volume Local" instead, so it never shares a folder with the Stable
+//! app on the same Mac. `CUA_DRIVE_MOUNT_PATH` moves either.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use cua_home::channel::CuaChannel;
 use serde::{Deserialize, Serialize};
 
 use crate::backend::{Backend, Condition};
@@ -29,8 +36,8 @@ use crate::feed::{DeviceId, Feed, SyncEvent, SyncStatus};
 use crate::vfs::Vfs;
 use crate::{Context, Drive, Error, Result, new_id};
 
-/// The Finder volume's name.
-pub const VOLUME_NAME: &str = "Cua Volume";
+/// The environment variable that overrides where the volume mounts.
+pub const MOUNT_PATH_VAR: &str = "CUA_DRIVE_MOUNT_PATH";
 
 /// Where S3 keys are kept (never in `config.json`).
 pub trait KeyStore: Send + Sync {
@@ -207,6 +214,9 @@ pub struct DriveService {
     vfs: Arc<Vfs>,
     mount: tokio::sync::Mutex<MountState>,
     settings: std::sync::Mutex<MountSettings>,
+    /// Which Cua Spaces build this is: it names the volume and where it
+    /// mounts by default (Stable `~/Cua Volume`, Local `~/Cua Volume Local`).
+    channel: CuaChannel,
 }
 
 impl std::fmt::Debug for DriveService {
@@ -236,9 +246,52 @@ pub fn mount_method() -> &'static str {
     }
 }
 
+/// Where the volume mounts: `env_path` (`CUA_DRIVE_MOUNT_PATH`) when set,
+/// else the user's saved `saved` path, else the channel's default under
+/// `user_home` (see [`default_mount_path`]).
+fn resolve_mount_path(
+    env_path: Option<&std::ffi::OsStr>,
+    saved: Option<&Path>,
+    channel: CuaChannel,
+    user_home: &Path,
+    macos: bool,
+) -> PathBuf {
+    if let Some(p) = env_path.filter(|p| !p.is_empty()) {
+        return PathBuf::from(p);
+    }
+    if let Some(p) = saved {
+        return p.to_path_buf();
+    }
+    default_mount_path(channel, user_home, macos)
+}
+
+/// The default mount folder under `user_home`: the channel's volume name on
+/// macOS (`Cua Volume`, `Cua Volume Local`), that name in lower case with
+/// dashes elsewhere (`cua-volume`, `cua-volume-local`).
+fn default_mount_path(channel: CuaChannel, user_home: &Path, macos: bool) -> PathBuf {
+    if macos {
+        user_home.join(channel.volume_name())
+    } else {
+        user_home.join(channel.volume_name().to_lowercase().replace(' ', "-"))
+    }
+}
+
 impl DriveService {
-    /// The service for `drive` (whose state lives in `<home>/volume`).
+    /// The service for `drive` (whose state lives in `<home>/volume`), for
+    /// the channel of this process ([`CuaChannel::current`]).
     pub fn new(drive: Drive, home: &Path, keys: Arc<dyn KeyStore>) -> Result<Arc<DriveService>> {
+        Self::new_for_channel(drive, home, keys, CuaChannel::current())
+    }
+
+    /// [`DriveService::new`] for an explicit channel: Local names the volume
+    /// "Cua Volume Local" and mounts it on `~/Cua Volume Local`, so it never
+    /// touches the Stable volume's folder.
+    pub fn new_for_channel(
+        drive: Drive,
+        home: &Path,
+        keys: Arc<dyn KeyStore>,
+        channel: CuaChannel,
+    ) -> Result<Arc<DriveService>> {
         let state = state_dir(home);
         std::fs::create_dir_all(&state)?;
         let settings: MountSettings = std::fs::read(settings_path(home))
@@ -269,6 +322,7 @@ impl DriveService {
                 error: None,
             }),
             settings: std::sync::Mutex::new(settings),
+            channel,
         }))
     }
 
@@ -471,24 +525,22 @@ impl DriveService {
     // -- Mount ---------------------------------------------------------
 
     fn mount_path(&self) -> PathBuf {
-        if let Some(p) = std::env::var_os("CUA_DRIVE_MOUNT_PATH").filter(|p| !p.is_empty()) {
-            return PathBuf::from(p);
-        }
-        if let Some(p) = self.settings.lock().unwrap().path.clone() {
-            return p;
-        }
         let home = std::env::var_os("HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("."));
-        if cfg!(target_os = "macos") {
-            home.join(VOLUME_NAME)
-        } else {
-            home.join("cua-volume")
-        }
+        resolve_mount_path(
+            std::env::var_os(MOUNT_PATH_VAR).as_deref(),
+            self.settings.lock().unwrap().path.as_deref(),
+            self.channel,
+            &home,
+            cfg!(target_os = "macos"),
+        )
     }
 
-    /// Where the volume mounts (`None`: the default, `~/Cua Volume` on
-    /// macOS, `~/cua-volume` elsewhere). Takes effect on the next mount.
+    /// Where the volume mounts (`None`: the channel's default, `~/Cua Volume`
+    /// on macOS and `~/cua-volume` elsewhere for Stable; `~/Cua Volume Local`
+    /// and `~/cua-volume-local` for Local). `CUA_DRIVE_MOUNT_PATH` still
+    /// overrides both. Takes effect on the next mount.
     pub fn set_mount_path(&self, path: Option<PathBuf>) -> Result<()> {
         self.settings.lock().unwrap().path = path;
         self.save_settings()
@@ -516,7 +568,7 @@ impl DriveService {
             state: state.into(),
             method: method.into(),
             path,
-            volume_name: VOLUME_NAME.into(),
+            volume_name: self.channel.volume_name().into(),
             detail,
             settings_url: None,
         }
@@ -874,6 +926,103 @@ mod tests {
         assert_eq!(m.volume_name, "Cua Volume");
     }
 
+    #[test]
+    fn the_default_mount_folder_follows_the_channel() {
+        let home = Path::new("/Users/ada");
+        // Stable is what it always was.
+        assert_eq!(
+            default_mount_path(CuaChannel::Stable, home, true),
+            home.join("Cua Volume")
+        );
+        assert_eq!(
+            default_mount_path(CuaChannel::Stable, home, false),
+            home.join("cua-volume")
+        );
+        // Local has its own folder beside it, on every platform.
+        assert_eq!(
+            default_mount_path(CuaChannel::Local, home, true),
+            home.join("Cua Volume Local")
+        );
+        assert_eq!(
+            default_mount_path(CuaChannel::Local, home, false),
+            home.join("cua-volume-local")
+        );
+        for macos in [true, false] {
+            let stable = default_mount_path(CuaChannel::Stable, home, macos);
+            let local = default_mount_path(CuaChannel::Local, home, macos);
+            assert_ne!(stable, local);
+            assert!(!local.starts_with(&stable) && !stable.starts_with(&local));
+        }
+        // On macOS the channel's own mount path is this default.
+        if let Some(user_home) = std::env::var_os("HOME").filter(|h| !h.is_empty()) {
+            for c in CuaChannel::ALL {
+                assert_eq!(
+                    default_mount_path(c, Path::new(&user_home), true),
+                    c.volume_mount_path()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_mount_path_override_beats_a_saved_path_and_the_channel() {
+        use std::ffi::OsStr;
+        let home = Path::new("/Users/ada");
+        let saved = Path::new("/Volumes/Big/Cua");
+        for c in CuaChannel::ALL {
+            // CUA_DRIVE_MOUNT_PATH wins over everything, for both channels.
+            assert_eq!(
+                resolve_mount_path(Some(OsStr::new("/mnt/x")), Some(saved), c, home, true),
+                Path::new("/mnt/x")
+            );
+            // Then the path saved in the app's settings.
+            assert_eq!(resolve_mount_path(None, Some(saved), c, home, true), saved);
+            // An empty override is no override.
+            assert_eq!(
+                resolve_mount_path(Some(OsStr::new("")), None, c, home, true),
+                default_mount_path(c, home, true)
+            );
+            assert_eq!(
+                resolve_mount_path(None, None, c, home, true),
+                default_mount_path(c, home, true)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn each_channel_names_and_mounts_its_own_volume() {
+        // The default mount of this process, unless the environment moves it.
+        let moved = std::env::var_os(MOUNT_PATH_VAR).is_some_and(|p| !p.is_empty());
+        let user_home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."));
+        for (channel, name) in [
+            (CuaChannel::Stable, "Cua Volume"),
+            (CuaChannel::Local, "Cua Volume Local"),
+        ] {
+            let home = tempfile::tempdir().unwrap();
+            let drive = Drive::open_local(home.path());
+            let svc = DriveService::new_for_channel(drive, home.path(), Arc::new(EnvKeys), channel)
+                .unwrap();
+            assert_eq!(svc.mount_status().await.volume_name, name);
+            if !moved {
+                assert_eq!(
+                    svc.mount_path(),
+                    default_mount_path(channel, &user_home, cfg!(target_os = "macos"))
+                );
+                // A path the user chose still wins.
+                let chosen = home.path().join("elsewhere");
+                svc.set_mount_path(Some(chosen.clone())).unwrap();
+                assert_eq!(svc.mount_path(), chosen);
+                svc.set_mount_path(None).unwrap();
+                assert_eq!(
+                    svc.mount_path(),
+                    default_mount_path(channel, &user_home, cfg!(target_os = "macos"))
+                );
+            }
+        }
+    }
+
     /// Opt-in (CUA_DRIVE_NFS_TEST=1, macOS): mounts through the service,
     /// uses the volume like any program, unmounts.
     #[cfg(all(feature = "nfs", target_os = "macos"))]
@@ -885,7 +1034,7 @@ mod tests {
         }
         let base = PathBuf::from(std::env::var("CUA_DRIVE_TEST_DIR").expect("CUA_DRIVE_TEST_DIR"));
         let home = base.join(format!("svc-{}", new_id()));
-        let mnt = home.join("mnt").join(VOLUME_NAME);
+        let mnt = home.join("mnt").join(CuaChannel::Stable.volume_name());
         let drive = Drive::open_local(&home);
         let svc = DriveService::new(drive.clone(), &home, Arc::new(EnvKeys)).unwrap();
         svc.set_mount_path(Some(mnt.clone())).unwrap();

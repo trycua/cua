@@ -2544,6 +2544,7 @@ impl AppCliInstaller {
     ) -> Arc<Self> {
         Arc::new(Self {
             inner: core::installer::CliInstaller {
+                channel: cua_home::channel::CuaChannel::Stable,
                 bundled: bundled.map(PathBuf::from),
                 bin_dir: bin_dir.into(),
                 path_env,

@@ -5,18 +5,15 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowDownCircleIcon, KeyRoundIcon, LoaderCircleIcon, MonitorIcon, PlusIcon, PowerIcon, SearchIcon } from "lucide-react";
 import { useEffect, useRef, useState, type DragEvent } from "react";
 
-import { emptyHome, spaceResources, useAgents, useBridge, useChecklist, useResources, useFirstSpaceOffers, useMachines, useNewSpaceWizard, useSpaceAccess, useSpaceFiles, useSpaces, useSpaceThumbnail, useWindowDropTarget, type Space, type SpaceResources } from "@/bridge";
+import { emptyHome, spaceResources, useAgents, useBridge, useChecklist, useResources, useFirstSpaceOffers, useMachines, useNewSpaceWizard, useSpaceAccess, useSpaceFiles, useSpaces, useSpaceThumbnail, useWindowDropTarget, type Space } from "@/bridge";
 import { EmptyHome } from "@/components/empty-home";
 import { ConnectAgentDialog } from "@/components/agents/connect-dialog";
 import { RunAgentDialog } from "@/components/agents/run-agent-dialog";
-import { GettingStarted } from "@/components/getting-started";
 import { SpaceReadyCard, useAgentOffer } from "@/components/space-ready-card";
 import { useFirstRunStep, useFirstSpaceMilestones } from "@/components/first-run-guide";
-import { FirstRunTodosCard, useFirstRunTodosShown } from "@/components/first-run-todos";
 import { OsIcon } from "@/components/os-icon";
 import { EmptyState, Page, PageHeader } from "@/components/page";
-import { ComputersResources } from "@/components/resources/computer-resources";
-import { CompactMeters } from "@/components/resources/meters";
+import { ComputerWarnings } from "@/components/resources/computer-resources";
 import { SpaceCanvas } from "@/components/space-canvas";
 import { StateLabel } from "@/components/state-dot";
 import { useTileVideo } from "@/components/video/tile-video";
@@ -28,7 +25,6 @@ import { Segmented } from "@/components/ui/segmented";
 import { toast, toastError } from "@/components/ui/toast";
 import { creatingLine, thisComputerText } from "@/lib/host-labels";
 import { plural } from "@/lib/plural";
-import { spaceMeters } from "@/lib/resources";
 import { cn } from "@/lib/utils";
 import { createError, createProgress, machineName, matchesQuery, powerButton, powerError, realSpaces, spacePlace, spaceState, visibleSpaces, type SpaceFilter } from "@/lib/spaces";
 
@@ -67,7 +63,6 @@ function SpacesPage() {
   const access = useSpaceAccess(spaces);
   const running = spaces.filter((s) => spaceState(s) === "running").length;
   // After the first run's Finish later, its to-do list stands in for the checklist.
-  const firstRunTodos = useFirstRunTodosShown();
   // The first Space is ready and no agent has worked in it yet: one action, "Run an agent here".
   const { state: checklist } = useChecklist();
   const { data: agents, isLoading: agentsLoading } = useAgents();
@@ -106,7 +101,6 @@ function SpacesPage() {
         <>
       {/* No Spaces yet: the guided first run comes first, above the checklist and computers (CUA-2062). */}
       {guide ? <EmptyHome home={guide} unread={Boolean(listNotice)} /> : null}
-      <FirstRunTodosCard />
       {runHere ? <SpaceReadyCard
           space={runHere}
           onRun={(task) => {
@@ -117,14 +111,13 @@ function SpacesPage() {
           }}
           onDismiss={offer.dismiss}
         /> : null}
-      {firstRunTodos ? null : <GettingStarted onRunAgent={runHere ? () => { setRunPrompt(undefined); setRunOpen(true); } : undefined} />}
       {readySpace ? (
         <>
           <RunAgentDialog open={runOpen} space={readySpace} prompt={runPrompt} onOpenChange={setRunOpen} onManual={() => setConnectOpen(true)} onConnected={offer.completed} />
           <ConnectAgentDialog open={connectOpen} onOpenChange={setConnectOpen} />
         </>
       ) : null}
-      <ComputersResources snapshot={resources} machines={machines} />
+      <ComputerWarnings snapshot={resources} machines={machines} />
       {sort === "size" ? (
         <p data-sorted-by-size="" className="mb-3 flex items-center gap-2 px-1 text-xs text-muted-foreground">
           Biggest first, by how much space each one uses on its computer.
@@ -183,7 +176,7 @@ function SpacesPage() {
         <ul className="grid grid-cols-[repeat(auto-fill,minmax(232px,1fr))] gap-4">
           {shown.map((space) => (
             <li key={space.id}>
-              <SpaceTile space={space} machine={machineName(machines, space)} resources={spaceResources(resources, space.id)} accessKey={access.signedIn.has(space.id) ? access.accessKey(space.id) : undefined} />
+              <SpaceTile space={space} machine={machineName(machines, space)} accessKey={access.signedIn.has(space.id) ? access.accessKey(space.id) : undefined} />
             </li>
           ))}
         </ul>
@@ -194,7 +187,7 @@ function SpacesPage() {
   );
 }
 
-function SpaceTile({ space, machine, resources, accessKey }: { space: Space; machine: string; resources: SpaceResources | null; accessKey?: string | null }) {
+function SpaceTile({ space, machine, accessKey }: { space: Space; machine: string; accessKey?: string | null }) {
   const drop = useTileDrop(space);
   // A real window dragged over this tile (the host hit-tests the tiles' boxes and says which; macOS only).
   const windowOver = useWindowDropTarget() === space.id;
@@ -207,7 +200,7 @@ function SpaceTile({ space, machine, resources, accessKey }: { space: Space; mac
       data-window-over={windowOver || undefined}
       {...drop.handlers}
     >
-      <SpaceLink space={space} machine={machine} resources={resources} windowOver={windowOver} />
+      <SpaceLink space={space} machine={machine} windowOver={windowOver} />
       {drop.over ? <DropOverlay space={space} accepts={drop.over === "accept"} /> : null}
       {/* A drop on the tile still going in: the core's "Sending …" line. */}
       {drop.status?.kind === "working" && !drop.over ? (
@@ -328,7 +321,7 @@ function TilePower({ space }: { space: Space }) {
   );
 }
 
-function SpaceLink({ space, machine, resources = null, windowOver = false }: { space: Space; machine: string; resources?: SpaceResources | null; windowOver?: boolean }) {
+function SpaceLink({ space, machine, windowOver = false }: { space: Space; machine: string; windowOver?: boolean }) {
   return (
     <Link
       to="/spaces/$spaceId"
@@ -369,7 +362,6 @@ function SpaceLink({ space, machine, resources = null, windowOver = false }: { s
         <StateLabel state={spaceState(space)} space={space} className="mt-px shrink-0" />
       </div>
       {/* What it was given and uses now, when its computer says. */}
-      {resources && (spaceState(space) === "running" || spaceState(space) === "stopped") ? <CompactMeters meters={spaceMeters(resources)} className="px-1.5 pt-1 pb-1.5" /> : null}
     </Link>
   );
 }

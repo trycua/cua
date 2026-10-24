@@ -10140,6 +10140,10 @@ pub struct AppChecklistState {
     pub dismissed: bool,
     /// It was on screen once (`checklist_shown` was recorded).
     pub shown: bool,
+    /// Steps skipped ("Skip"), each once, in checklist order: they count as
+    /// done for the progress and for `complete`, and a skipped step done
+    /// later shows as done.
+    pub skipped: Vec<AppChecklistStep>,
 }
 
 /// `checklist::ChecklistAction`.
@@ -10153,7 +10157,12 @@ pub enum AppChecklistAction {
     },
     /// The checklist is on screen.
     Shown,
-    /// Closed with ×.
+    /// "Skip" on a step: not for this person; it counts as done.
+    Skip {
+        /// The step.
+        step: AppChecklistStep,
+    },
+    /// Closed with × ("Hide", or "Done" once complete).
     Dismiss,
     /// Getting Started (the palette, the Help menu): open it again.
     Reopen,
@@ -10214,6 +10223,8 @@ pub struct AppChecklistRow {
     pub action: String,
     /// Done (ticked, struck through).
     pub done: bool,
+    /// Skipped (struck through, not ticked); never with `done`.
+    pub skipped: bool,
 }
 
 /// The checklist as drawn.
@@ -10232,6 +10243,10 @@ pub struct AppChecklistView {
     pub progress: String,
     /// The close button's accessibility label.
     pub close_label: String,
+    /// "Skip", on each step not done or skipped.
+    pub skip_label: String,
+    /// "Hide", or "Done" once complete: closes the checklist.
+    pub hide_label: String,
     /// The steps in order.
     pub rows: Vec<AppChecklistRow>,
 }

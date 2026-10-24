@@ -701,10 +701,13 @@ remove_agent_integrations() {
     fi
     if [ "$dry_run" = 1 ]; then
         say "[dry-run] cua $* --dry-run:"
-        if bounded 60 env CUA_TELEMETRY=0 DO_NOT_TRACK=1 "$cua_bin" "$@" --dry-run >"$tmp/agents-plan" 2>&1; then
-            sed -e '/^Dry run:/d' -e 's/^/[dry-run] /' "$tmp/agents-plan"
-        else
-            warn "'cua $* --dry-run' did not finish; the agent entries could not be listed"
+        planned=0
+        bounded 60 env CUA_TELEMETRY=0 DO_NOT_TRACK=1 "$cua_bin" "$@" --dry-run >"$tmp/agents-plan" 2>&1 || planned=$?
+        # Whatever it listed, even when one agent's config could not be read:
+        # a real run removes the rows that did not fail.
+        sed -e '/^Dry run:/d' -e 's/^/[dry-run] /' "$tmp/agents-plan"
+        if [ "$planned" != 0 ]; then
+            warn "'cua $* --dry-run' reported a problem (see above), so the list may be incomplete"
         fi
         return 0
     fi

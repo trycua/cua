@@ -70,6 +70,7 @@ Describe 'Invoke-CuaUninstall' {
         $script:Calls = New-Object System.Collections.Generic.List[string]
         $script:SpacesText = ''
         $script:OldCua = $false
+        $script:PlanFails = $false
         $script:Credentials = @('cua-cli.run.cua.ai', 'cua-cli.device-key.run.cua.ai', 'vault-1.Cua Keyvault', 'git:https://github.com')
         $script:UserPath = "C:\Windows;$(Join-Path $script:Local 'Programs\cua\bin');C:\Tools"
 
@@ -114,7 +115,9 @@ Describe 'Invoke-CuaUninstall' {
                 return [pscustomobject]@{ ExitCode = 0; Output = "Usage: cua agents remove [OPTIONS]`n$flags`n" }
             }
             if ($args1 -like 'agents remove * --dry-run') {
-                return [pscustomobject]@{ ExitCode = 0; Output = "Dry run: nothing is changed.`n  would remove MCP server cua: ~/.claude.json`n  MCP server cua-driver: ~/.claude.json kept (Cua Driver's; --include-cua-driver removes it)`n" }
+                # One agent's config unreadable: the other rows are still listed, and the exit status is 1.
+                $failed = if ($script:PlanFails) { "  FAILED MCP server cua: ~/.codex/config.toml (left unchanged)`n" } else { '' }
+                return [pscustomobject]@{ ExitCode = [int][bool]$script:PlanFails; Output = "Dry run: nothing is changed.`n  would remove MCP server cua: ~/.claude.json`n  MCP server cua-driver: ~/.claude.json kept (Cua Driver's; --include-cua-driver removes it)`n$failed" }
             }
             if ($args1 -eq 'sandbox ls --local --no-size') { return [pscustomobject]@{ ExitCode = 0; Output = $script:SpacesText } }
             if ($args1 -eq 'host remove --force --uninstalling') { Remove-Item -Recurse -Force -LiteralPath (Join-Path $env:CUA_HOME 'host') }
@@ -201,6 +204,15 @@ Describe 'Invoke-CuaUninstall' {
         $global:LASTEXITCODE | Should -Be 1
         $global:LASTEXITCODE = 0
         $script:Failed = $false
+    }
+
+    It 'still lists the rows in a dry run when one agent''s config cannot be read' {
+        $DryRun = [switch]$true
+        $script:PlanFails = $true
+        $out = Invoke-CuaUninstall *>&1 | Out-String
+        $out | Should -Match '\[dry-run\]   would remove MCP server cua: ~/.claude.json'
+        $out | Should -Match '\[dry-run\]   FAILED MCP server cua: ~/.codex/config.toml'
+        $out | Should -Match 'reported a problem \(see above\), so the list may be incomplete'
     }
 
     It 'says so in a dry run when cua is too old to list the agent entries' {

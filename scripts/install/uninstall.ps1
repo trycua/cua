@@ -239,11 +239,12 @@ function Remove-AgentIntegrations {
     if ($DryRun) {
         Write-Host "[dry-run] cua $($agentArgs -join ' ') --dry-run:"
         $plan = Invoke-Bounded $script:Cua ($agentArgs + '--dry-run') 60
-        if ($plan.ExitCode -ne 0) {
-            Write-Warn "'cua $($agentArgs -join ' ') --dry-run' did not finish; the agent entries could not be listed"
-            return
-        }
+        # Whatever it listed, even when one agent's config could not be read:
+        # a real run removes the rows that did not fail.
         foreach ($row in @("$($plan.Output)" -split "`r?`n" | Where-Object { $_.Trim() -and $_ -notlike 'Dry run:*' })) { Write-Host "[dry-run] $row" }
+        if ($plan.ExitCode -ne 0) {
+            Write-Warn "'cua $($agentArgs -join ' ') --dry-run' reported a problem (see above), so the list may be incomplete"
+        }
         return
     }
     $null = Invoke-Cua 'removing the Cua Spaces skills and MCP entries from your agents' 60 ($agentArgs + '--yes')

@@ -1347,11 +1347,13 @@ impl AgentSetup {
             .owner_cli
             .filter(|_| self.env.run_agent_clis)
             .and_then(|c| self.env.which(c.bin()).map(|bin| (c, bin)));
-        if dry_run {
-            // Same checks as a real run, no write.
-        } else if let (Some((cli, bin)), None) = (via_cli, &r.previous) {
-            run_cli(&bin, &cli.remove_args(&r.name))?;
+        if let (Some((cli, bin)), None) = (via_cli, &r.previous) {
+            if !dry_run {
+                run_cli(&bin, &cli.remove_args(&r.name))?;
+            }
         } else {
+            // The edit is worked out on a dry run too: one the format cannot
+            // make without losing comments fails here, as it does for real.
             let new = match &r.previous {
                 Some(prev) => {
                     let fields: edit::Fields = prev
@@ -1364,7 +1366,7 @@ impl AgentSetup {
                 }
                 None => edit::remove(m.format, file, &text, m.key_path, &r.name)?,
             };
-            if let Some(new) = new {
+            if let (Some(new), false) = (new, dry_run) {
                 fsutil::atomic_write(file, new.as_bytes())?;
             }
         }

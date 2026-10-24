@@ -475,3 +475,54 @@ fn a_dry_run_on_a_clean_home_has_nothing_to_remove() {
     assert_eq!(h.snapshot(), before);
     assert!(!Path::new(&h.path.join(".cua/agent-setup.json")).exists());
 }
+
+/// A dry run works the edit out as a real run does: a managed entry the format
+/// cannot be edited around without losing the user's comments (a flow-style
+/// YAML mapping beside comments) fails in both, and the file is not touched.
+#[test]
+fn a_dry_run_reports_the_same_failure_as_the_real_run_for_an_edit_the_format_refuses() {
+    let h = Home::new();
+    let config = ".hermes/config.yaml";
+    h.write(
+        config,
+        "# my hermes config\nmcp_servers:\n  other:\n    command: other-mcp  # mine\n    args: []\n",
+    );
+    let s = h.setup(CuaChannel::Stable);
+    s.configure_mcp(&ids(&["hermes"]), &McpServer::new("/opt/cua/bin/cua"))
+        .unwrap();
+    // The user tidies the whole mapping into one flow-style line, keeping the
+    // entry's value and the comment.
+    let written = h.read(config);
+    assert!(
+        written.contains("  cua:\n    command: /opt/cua/bin/cua\n    args:\n      - mcp\n"),
+        "{written}"
+    );
+    let reflowed = "# my hermes config\nmcp_servers: {other: {command: other-mcp, args: []}, cua: {command: /opt/cua/bin/cua, args: [mcp]}}\n".to_string();
+    h.write(config, &reflowed);
+    let state = h.read(".cua/agent-setup.json");
+
+    let plan = s
+        .remove_with(
+            &ids(&["hermes"]),
+            Parts::ALL,
+            RemoveOptions {
+                include_cua_driver: false,
+                dry_run: true,
+            },
+        )
+        .unwrap();
+    assert_eq!(h.read(config), reflowed);
+    assert_eq!(h.read(".cua/agent-setup.json"), state);
+    let real = s.remove(&ids(&["hermes"]), Parts::ALL).unwrap();
+    assert_eq!(h.read(config), reflowed, "the real run left the file alone");
+    assert_eq!(rows(&plan), rows(&real));
+    let cua = |out: &[Outcome]| {
+        out.iter()
+            .find(|o| o.target == Target::Mcp && o.item == "cua")
+            .cloned()
+            .unwrap()
+    };
+    assert_eq!(cua(&real).change, Change::Failed, "{real:#?}");
+    assert_eq!(cua(&plan).change, Change::Failed, "{plan:#?}");
+    assert_eq!(cua(&plan).detail, cua(&real).detail);
+}

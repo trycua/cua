@@ -49,6 +49,11 @@ case "$*" in
     echo "  would remove MCP server cua: ~/.claude.json"
     echo "  would remove skill cua-spaces: ~/.claude/skills/cua-spaces"
     echo "  - MCP server cua-driver: ~/.claude.json kept (Cua Driver's; --include-cua-driver removes it)"
+    if [ -n "${FAKE_CUA_PLAN_FAILS:-}" ]; then
+        # One agent's config is unreadable: the others are still listed, and the exit status is 1.
+        echo "  FAILED MCP server cua: ~/.codex/config.toml (left unchanged)"
+        exit 1
+    fi
     ;;
 esac
 exit 0
@@ -316,6 +321,16 @@ class UninstallMacTest(unittest.TestCase):
                 # Without --all, Cua Driver's skill and MCP entries stay, and the plan says so.
                 self.assertFalse([c for c in box.call_log() if "--include-cua-driver" in c])
                 self.assertIn("Cua Driver's skill and MCP server in your agents", result.stdout)
+
+    def test_a_dry_run_still_lists_the_rows_when_one_agents_config_cannot_be_read(self):
+        box = self.box()
+        installed_mac(box)
+        result = box.run("--dry-run", env={"FAKE_CUA_PLAN_FAILS": "1"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("[dry-run]   would remove MCP server cua: ~/.claude.json", result.stdout)
+        self.assertIn("[dry-run]   would remove skill cua-spaces: ~/.claude/skills/cua-spaces", result.stdout)
+        self.assertIn("[dry-run]   FAILED MCP server cua: ~/.codex/config.toml", result.stdout)
+        self.assertIn("reported a problem (see above), so the list may be incomplete", result.stderr)
 
     def test_a_cua_too_old_to_leave_cua_driver_alone_skips_the_agent_step_and_finishes_the_rest(self):
         """An older `cua agents remove` also strips the `cua-driver` skill and MCP server and

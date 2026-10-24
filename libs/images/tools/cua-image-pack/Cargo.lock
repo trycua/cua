@@ -391,14 +391,14 @@ dependencies = [
 
 [[package]]
 name = "cua-create-failure"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "cua-home"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
@@ -406,7 +406,7 @@ dependencies = [
 
 [[package]]
 name = "cua-image"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -440,7 +440,7 @@ dependencies = [
 
 [[package]]
 name = "cua-microvm-init"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "base64 0.22.1",
  "libc",
@@ -450,7 +450,7 @@ dependencies = [
 
 [[package]]
 name = "cua-proto"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "pbjson-build",
  "pbjson-types",
@@ -464,7 +464,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-client"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -501,7 +501,7 @@ dependencies = [
 
 [[package]]
 name = "cua-vmm"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "async-trait",
  "backhand",

@@ -244,6 +244,7 @@ POST /lume/vms/clone
 | `newName` | `string` | required | Name for the cloned VM. |
 | `sourceLocation` | `string` |  | Source VM storage location. |
 | `destLocation` | `string` |  | Destination VM storage location. |
+| `withSavedState` | `boolean` | `false` | Clone the source's saved machine state too (see suspend): the clone keeps the source's MAC address and machine identifier, which the state is bound to, and its first run resumes the saved guest. |
 
 **Example request**
 
@@ -474,6 +475,109 @@ const data = await response.json();
 
 - `200`: VM stopped successfully.
 - `400`: Stop operation failed.
+
+### Suspend a running virtual machine to disk (its next run resumes it)
+
+```http output
+POST /lume/vms/:name/suspend
+```
+
+**Parameters**
+
+| Parameter | In | Type | Default | Description |
+| --- | --- | --- | --- | --- |
+| `name` | path | `string` | required | Name of the VM to suspend. |
+
+**Example request**
+
+<Tabs groupId="language" persist items={['Curl', 'Python', 'TypeScript']}>
+  <Tab value="Curl">
+```bash
+curl -X POST "http://localhost:7777/lume/vms/my-vm/suspend"
+```
+  </Tab>
+  <Tab value="Python">
+```python
+import requests
+
+response = requests.post("http://localhost:7777/lume/vms/my-vm/suspend")
+print(response.json())
+```
+  </Tab>
+  <Tab value="TypeScript">
+```typescript
+const response = await fetch(`http://localhost:7777/lume/vms/my-vm/suspend`);
+const data = await response.json();
+```
+  </Tab>
+</Tabs>
+
+**Response**
+
+- `200`: The VM's memory and device state were saved next to its disk (macOS 14 or later) and the VM stopped; a run resumes it, a cold boot discards the state.
+- `400`: The VM does not run in this lume serve, or the save failed (the VM keeps running).
+
+### Rename a virtual machine, running or stopped
+
+```http output
+POST /lume/vms/:name/rename
+```
+
+**Parameters**
+
+| Parameter | In | Type | Default | Description |
+| --- | --- | --- | --- | --- |
+| `name` | path | `string` | required | Name of the VM to rename. |
+
+**Request body**
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `newName` | `string` | required | The VM's new name. |
+| `storage` | `string` |  | VM storage location. |
+
+**Example request**
+
+<Tabs groupId="language" persist items={['Curl', 'Python', 'TypeScript']}>
+  <Tab value="Curl">
+```bash
+curl -X POST "http://localhost:7777/lume/vms/my-vm/rename" \
+  -H "Content-Type: application/json" \
+  -d '{
+  "newName": "example"
+}'
+```
+  </Tab>
+  <Tab value="Python">
+```python
+import requests
+
+data = {
+    "newName": "example",
+}
+
+response = requests.post("http://localhost:7777/lume/vms/my-vm/rename", json=data)
+print(response.json())
+```
+  </Tab>
+  <Tab value="TypeScript">
+```typescript
+const response = await fetch(`http://localhost:7777/lume/vms/my-vm/rename`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    newName: "example",
+  }),
+});
+const data = await response.json();
+```
+  </Tab>
+</Tabs>
+
+**Response**
+
+- `200`: VM renamed (a running VM keeps running).
+- `400`: The name is taken or invalid, or the VM runs in another process than this lume serve.
 
 ## Image Management
 

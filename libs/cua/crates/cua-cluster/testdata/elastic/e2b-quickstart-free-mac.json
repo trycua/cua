@@ -1,0 +1,25 @@
+{
+  "assignments": [
+    {
+      "group": "e2b-quickstart",
+      "target": {
+        "on": "host",
+        "name": "studio"
+      },
+      "count": 1,
+      "sync": false
+    }
+  ],
+  "new_hosts": [],
+  "unplaced": [],
+  "added_usd_per_hour": 0.0,
+  "projected_usd": 0.0,
+  "lower_bound_usd": 0.0,
+  "solver": "exact",
+  "elapsed_us": 0,
+  "relay_after": 0,
+  "ready_in_secs": 0,
+  "explain": [
+    "1 x e2b-quickstart -> studio (your device, free)"
+  ]
+}

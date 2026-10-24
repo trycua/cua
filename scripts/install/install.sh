@@ -1012,11 +1012,95 @@ To use cua, run this one line, then open a new Terminal window:
     fi
 }
 
+# version_gt A B: succeeds when cua version A is strictly newer than B (semver:
+# a pre-release sorts before its release; a dev build, 0.0.0 or one naming
+# "dev", counts as older than any release of the same or a later version).
+# Fails when either does not parse. Mirrors cua-home's version.rs.
+version_gt() {
+    awk -v a="$1" -v b="$2" '
+    function parse(v, o,    p, n, pre, k) {
+        sub(/^v/, "", v)
+        o["dev"] = (v ~ /dev/) ? 1 : 0
+        sub(/\+.*/, "", v)
+        pre = ""
+        k = index(v, "-")
+        if (k > 0) { pre = substr(v, k + 1); v = substr(v, 1, k - 1) }
+        n = split(v, p, ".")
+        if (n != 3 || v !~ /^[0-9]+\.[0-9]+\.[0-9]+$/) return 0
+        o["c"] = p[1] * 1000000000000 + p[2] * 1000000 + p[3]
+        if (o["c"] == 0) o["dev"] = 1
+        o["pre"] = pre
+        return 1
+    }
+    function cmppre(x, y,    xs, ys, nx, ny, i, m) {
+        if (x == "" && y == "") return 0
+        if (x == "") return 1
+        if (y == "") return -1
+        nx = split(x, xs, "."); ny = split(y, ys, ".")
+        m = nx < ny ? nx : ny
+        for (i = 1; i <= m; i++) {
+            if (xs[i] == ys[i]) continue
+            if (xs[i] ~ /^[0-9]+$/ && ys[i] ~ /^[0-9]+$/) return (xs[i] + 0 > ys[i] + 0) ? 1 : -1
+            if (xs[i] ~ /^[0-9]+$/) return -1
+            if (ys[i] ~ /^[0-9]+$/) return 1
+            return (xs[i] > ys[i]) ? 1 : -1
+        }
+        return (nx > ny) ? 1 : (nx < ny ? -1 : 0)
+    }
+    BEGIN {
+        if (!parse(a, A) || !parse(b, B)) exit 1
+        if (A["dev"] && !B["dev"]) exit !(A["c"] > B["c"])
+        if (!A["dev"] && B["dev"]) exit !(A["c"] >= B["c"])
+        if (A["c"] != B["c"]) exit !(A["c"] > B["c"])
+        exit !(cmppre(A["pre"], B["pre"]) > 0)
+    }'
+}
+
+# running_daemon_version CUA: the version of the daemon this cua finds running
+# (the one named by its daemon.json), or nothing. `cua daemon status` prints
+# "cua daemon X.Y.Z (pid N) ..." only when one is up.
+running_daemon_version() {
+    [ -x "$1" ] || return 0
+    "$1" daemon status 2>/dev/null </dev/null | sed -n 's/^cua daemon \([^ ]*\) (pid .*/\1/p' | head -n 1
+}
+
+# restart_old_daemon NEWCUA OLDVERSION: after the binary was replaced, stop a
+# daemon of an older version gracefully with the NEW cua (it reads daemon.json
+# and signals only that daemon) and start the new one. Local containers and
+# VMs run on in their own processes, so they survive. Never a broad kill.
+restart_old_daemon() {
+    [ -n "$2" ] || return 0
+    new_version="$("$1" --version 2>/dev/null </dev/null | sed -n 's/^cua \([^ ]*\).*/\1/p' | head -n 1)"
+    [ -n "$new_version" ] && [ "$new_version" != "$2" ] || return 0
+    if "$1" daemon stop >/dev/null 2>&1 </dev/null; then
+        if "$1" daemon start >/dev/null 2>&1 </dev/null; then
+            say "restarted the cua daemon ($2 -> $new_version); your Spaces keep running"
+        else
+            warn "stopped the old cua daemon ($2); it starts again with the next cua command"
+        fi
+    else
+        warn "the cua daemon $2 is still running; run 'cua daemon stop' to finish updating to $new_version"
+    fi
+}
+
 install_cli() {
     bindir="$(cli_bin_dir)"
     target="$bindir/cua"
     if ! confirm "Install the command-line tools to $target?" y; then
         die "cancelled; rerun with --prefix DIR to choose another location"
+    fi
+    # Never a downgrade: a newer cua already there (a build the user made, or
+    # one from a later release than the manifest's) stays, unless this run
+    # asked for a version (--version rolls back on purpose).
+    if [ -z "$version" ] && [ -x "$target" ]; then
+        have="$("$target" --version 2>/dev/null | sed -n '1s/^cua  *\([^ ]*\).*/\1/p')"
+        want="$(json_field "$(manifest_entry cli tar.gz)" version)"
+        if [ -n "$have" ] && [ -n "$want" ] && version_gt "$have" "$want"; then
+            say "kept $target (cua $have is newer than the release's $want; use --version $want to go back)"
+            cua_bin="$target"
+            ensure_path "$bindir"
+            return
+        fi
     fi
     step "Installing the command-line tools to $target"
     download cli tar.gz
@@ -1028,9 +1112,24 @@ install_cli() {
         src="$(find "$tmp/cli" -type f -name cua | head -n 1)"
         [ -n "$src" ] || die "no cua binary inside ${artifact##*/}"
         mkdir -p "$bindir" || die "cannot create $bindir (try --prefix or run as root)"
+        # A daemon already running keeps serving the old binary after the swap
+        # (its exe shows "(deleted)"); note its version now, from the old cua.
+        old_daemon="$(running_daemon_version "$target")"
         cp "$src" "$bindir/.cua.tmp.$$"
         chmod 0755 "$bindir/.cua.tmp.$$"
         mv -f "$bindir/.cua.tmp.$$" "$target"
+        info "installed $target"
+        # macOS microVMs: the monitor and the guest init ship with the CLI
+        # and are found next to it, as is the static cua-spacesd injected
+        # into OCI images that carry none.
+        for extra in cua-vz cua-microvm-init cua-spacesd-linux-aarch64 cua-spacesd-linux-x86_64; do
+            xsrc="$(find "$tmp/cli" -type f -name "$extra" | head -n 1)"
+            [ -n "$xsrc" ] || continue
+            cp "$xsrc" "$bindir/.$extra.tmp.$$"
+            chmod 0755 "$bindir/.$extra.tmp.$$"
+            mv -f "$bindir/.$extra.tmp.$$" "$bindir/$extra"
+        done
+        restart_old_daemon "$target" "$old_daemon"
         did_cli="$target"
     fi
     cua_bin="$target"

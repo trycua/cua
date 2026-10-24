@@ -183,6 +183,20 @@ def _text_of(content: Any) -> str:
     return "\n".join(parts)
 
 
+TOOL_SETUP_PATTERNS = [
+    (name, re.compile(r"\b" + words.replace(" ", "[ _-]") + r"\b", re.I))
+    for name, words in [
+        ("screencapture", "could not create image from window"),
+        ("permissions_pending", "permissions pending"),
+        ("screen_recording", "screen recording permission denied"),
+        ("accessibility", "accessibility permission denied"),
+        ("tcc", "tcc permission denied"),
+        ("daemon_not_running", "Cua Driver daemon is not running"),
+        ("helper_exited", "helper exited during"),
+    ]
+]
+
+
 def summarize(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
     """Counts, usage, cost, errors and quota state from one trial's stream."""
     events = list(events)
@@ -193,6 +207,7 @@ def summarize(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
     per_message: dict[str, dict[str, int]] = {}
     message_order: list[str] = []
     quota_events: list[dict[str, Any]] = []
+    tool_setup_failure = None
     control_requests = 0
     api_retries: list[dict[str, Any]] = []
     stamps: list[float] = []
@@ -236,6 +251,12 @@ def summarize(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
         elif kind == "user":
             for block in (event.get("message") or {}).get("content") or []:
                 if isinstance(block, dict) and block.get("type") == "tool_result":
+                    if block.get("is_error") and tool_setup_failure is None:
+                        text = _text_of(block.get("content"))
+                        for name, pattern in TOOL_SETUP_PATTERNS:
+                            if pattern.search(text):
+                                tool_setup_failure = {"pattern": name, "message": text[:300]}
+                                break
                     results[block.get("tool_use_id", "")] = {
                         "is_error": bool(block.get("is_error")),
                         "ms": event.get("_ms"),
@@ -321,6 +342,7 @@ def summarize(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
     tools = list(init.get("tools") or [])
     mcp_tools = [t for t in tools if t.startswith("mcp__")]
     summary = {
+        "tool_setup_failure": tool_setup_failure,
         "has_init": bool(init),
         "has_result": result is not None,
         "init": {
@@ -414,6 +436,9 @@ def classify_failure(
         if status in (401, 403) or AUTH_TEXT.search(text):
             out.update(kind="auth", message=text.strip()[:300])
             return out
+    if summary.get("tool_setup_failure"):
+        out.update(kind="tool_setup", **summary["tool_setup_failure"])
+        return out
     servers = (summary.get("init") or {}).get("mcp_servers") or []
     bad = [
         s for s in servers if isinstance(s, dict) and s.get("status") not in ("connected", "ready")

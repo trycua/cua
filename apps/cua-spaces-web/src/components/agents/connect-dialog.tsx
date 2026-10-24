@@ -148,11 +148,11 @@ function SetupRow({ row }: { row: AgentSetupRow }) {
     <li className="flex items-center gap-3 px-3 py-2">
       <div className="min-w-0 flex-1">
         <div className={cn("text-[13px]", !row.installed && "text-muted-foreground")}>{row.name}</div>
-        {row.installed && row.mcpConfig ? <div className="truncate font-mono text-2xs text-muted-foreground">{row.mcpConfig}</div> : null}
+        {(row.installed || row.configured) && row.mcpConfig ? <div className="truncate font-mono text-2xs text-muted-foreground">{row.mcpConfig}</div> : null}
       </div>
       <span className={cn("inline-flex shrink-0 items-center gap-1 text-xs", row.configured ? "text-foreground" : "text-muted-foreground")}>
         {row.configured ? <CheckIcon className="size-3.5 text-success" aria-hidden /> : null}
-        {!row.installed ? "Not installed" : row.configured ? "Set up" : "Not set up"}
+        {row.configured ? "Set up" : !row.installed ? "Not installed" : "Not set up"}
       </span>
     </li>
   );

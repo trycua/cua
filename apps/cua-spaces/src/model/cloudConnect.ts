@@ -41,6 +41,7 @@ export type CloudConnectAction =
   | { type: 'set-value'; text: string }
   | { type: 'set-profile'; text: string }
   | { type: 'set-make-default'; on: boolean }
+  | { type: 'set-token-entered'; entered: boolean }
   | { type: 'test' }
   | { type: 'tested'; ok: boolean; account: string; checks: CloudCheckInput[] }
   | { type: 'connect' }
@@ -53,6 +54,8 @@ export interface CloudTargetArgs {
   region?: string;
   project?: string;
   environment?: string;
+  /** Hetzner: attach the API token the sheet holds (the token is never in the core). */
+  uses_token?: boolean;
 }
 
 export type CloudConnectRequest =
@@ -71,6 +74,8 @@ export interface CloudConnectView {
   rows: { id: string; title: string; detail: string; found: boolean; selected: boolean }[];
   field: CloudField | null;
   profileField: CloudField | null;
+  /** Hetzner's masked API token field; the sheet keeps its text. */
+  tokenField: CloudField | null;
   checks: { ok: boolean; text: string }[];
   result: string | null;
   touches: string[];

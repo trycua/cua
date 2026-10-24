@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.7.0...cua-spacesd-v0.8.0) (2026-10-24)
+
+
+### Features
+
+* compat gateways for E2B and Daytona, Hetzner as your own cloud, the elastic pool, cua share and the public relay ([#5778](https://github.com/trycua/cua/issues/5778)) ([d4f3f80](https://github.com/trycua/cua/commit/d4f3f8063d7b30a3b3bda2b4c05c565a9dfcb460))
+
 ## [0.7.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.6.0...cua-spacesd-v0.7.0) (2026-10-21)
 
 

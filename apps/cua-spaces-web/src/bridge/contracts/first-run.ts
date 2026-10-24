@@ -14,6 +14,9 @@ export interface FirstRunAgent {
   name: string;
   installed: boolean;
   configured: boolean;
+  /** The account it signs in with on its own (`ChatGPT` for Codex). */
+  signIn?: string | null;
+  signedIn?: boolean;
 }
 
 export interface FirstRunPermission {
@@ -63,6 +66,13 @@ export interface FirstRunInput {
   hostOs: string;
   agents: FirstRunAgent[] | null;
   agent: string | null;
+  /** Step 1: the ticks (null: not changed, so the installed ones). Step 2: the agents connected. */
+  picked: string[] | null;
+  /** The provider keys saved on this computer (null: not read, or this app can't). */
+  keys: { keys: { provider: string; env: string; last4: string; addedMs: number }[]; unavailable?: string | null; error?: string | null } | null;
+  /** The agent whose own sign-in is waiting for the browser. */
+  agentSigningIn: string | null;
+  agentSignInError: string | null;
   connecting: boolean;
   connectError: string | null;
   agentOpenBeforeSetup: boolean | null;
@@ -81,23 +91,49 @@ export interface FirstRunButton {
   label: string;
 }
 
-export interface FirstRunAgentChoice {
+/** An agent on step 1. */
+export interface FirstRunAgentPick {
   agent: string;
   name: string;
+  checked: boolean;
   installed: boolean;
+  /** Cua is in its settings already: it stays ticked. */
+  locked: boolean;
+  note: string | null;
+}
+
+/** A sign-in or a provider key on step 1. */
+export interface FirstRunCredential {
+  /** `sign-in:codex`, `key:anthropic`, `key:openai`. */
+  id: string;
+  title: string;
+  note: string;
+  status: string | null;
+  /** The status is a done one ("Signed in", "Saved"), not a wait. */
+  ok: boolean;
+  /** `agent-sign-in` (with `agent`) or `add-key` (with `provider`). */
+  action: FirstRunButton | null;
+  agent: string | null;
+  provider: string | null;
+  error: string | null;
 }
 
 export interface FirstRunConnectView {
   title: string;
   accent: string;
   lede: string;
+  intro: string;
+  agentsLabel: string;
+  agents: FirstRunAgentPick[];
+  moreLabel: string;
+  more: FirstRunAgentPick[];
+  agentsNote: string;
+  credentialsLabel: string;
+  credentialsNote: string;
+  credentials: FirstRunCredential[];
   primary: FirstRunButton;
-  agent: FirstRunAgentChoice;
-  note: string;
-  noteMore: string;
-  orLabel: string;
-  others: FirstRunAgentChoice[];
-  otherLabel: string;
+  /** The agents Continue connects. */
+  connects: string[];
   busy: string | null;
   error: string | null;
 }
@@ -158,7 +194,8 @@ export interface FirstRunPrimary {
 export interface FirstRunSetupView {
   title: string;
   rows: FirstRunRow[];
-  prompt: FirstRunPromptView;
+  /** None when no agent was picked. */
+  prompt: FirstRunPromptView | null;
   extra: FirstRunExtraView;
   upsell: FirstRunUpsell | null;
   primary: FirstRunPrimary;

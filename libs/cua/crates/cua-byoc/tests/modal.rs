@@ -26,6 +26,8 @@ struct FakeModal {
     requests: Mutex<Vec<(Value, bool)>>,
     sandboxes: Mutex<BTreeMap<String, Value>>,
     relay: Mutex<Option<Arc<FakeRelay>>>,
+    /// Answer this op with "unavailable" this many more times.
+    unavailable: Mutex<(String, u32)>,
 }
 
 #[async_trait]
@@ -35,6 +37,15 @@ impl HelperTransport for FakeModal {
             .lock()
             .unwrap()
             .push((req.clone(), profile_only));
+        {
+            let mut u = self.unavailable.lock().unwrap();
+            if u.1 > 0 && req["op"] == u.0.as_str() {
+                u.1 -= 1;
+                return Ok(
+                    json!({"error": {"kind": "unavailable", "message": "rpc error: code = Unavailable"}}),
+                );
+            }
+        }
         let mut sbs = self.sandboxes.lock().unwrap();
         Ok(match req["op"].as_str().unwrap_or_default() {
             "check" if req["environment"] == "missing" => {
@@ -207,8 +218,25 @@ async fn a_modal_sandbox_joins_the_relay_and_is_deleted_with_its_machine() {
     assert_eq!(req["tags"]["cua-managed"], "true");
     assert!(req["tags"]["cua-created"].as_str().is_some());
 
+    // `--kind microvm` is the same engine: Modal's VM runtime.
+    let mut micro = create("micro");
+    micro.kind = cua_sandbox_core::placement::Kind::MicroVm;
+    sandboxes.create(micro).await.unwrap();
+    let last_create = fake
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|(r, _)| r["op"] == "create")
+        .unwrap()
+        .0
+        .clone();
+    assert_eq!(last_create["runtime"], "vm");
+
+    // Firecracker is a local microVM engine, not Modal's.
     let mut bad = create("bad");
-    bad.runtime = Runtime::Other("firecracker".into());
+    bad.runtime = Runtime::Firecracker;
     let err = sandboxes.create(bad).await.unwrap_err();
     assert!(
         matches!(err, cua_sandbox_core::Error::InvalidPlacement(ref p) if p.valid.contains(&"microvm".to_string())),
@@ -242,4 +270,54 @@ async fn a_modal_sandbox_joins_the_relay_and_is_deleted_with_its_machine() {
     );
     // Deleting the (already swept) sandbox by name is fine.
     sandboxes.delete("box").await.unwrap();
+}
+
+fn target() -> Target {
+    Target {
+        provider: "modal".into(),
+        environment: Some("cua-byoc".into()),
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn a_throttled_modal_call_is_retried_a_few_times_but_a_create_never() {
+    let (_dir, fake, sandboxes) = world().await;
+    let clouds = sandboxes.clouds().unwrap();
+    // Two "unavailable" answers, then it works.
+    *fake.unavailable.lock().unwrap() = ("check".into(), 2);
+    clouds.connect(&target(), false, None).await.unwrap();
+    let checks = |f: &FakeModal| {
+        f.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(r, _)| r["op"] == "check")
+            .count()
+    };
+    assert_eq!(checks(&fake), 3);
+    // Always unavailable: gives up after the retries, with the reason.
+    *fake.unavailable.lock().unwrap() = ("check".into(), 100);
+    let before = checks(&fake);
+    let e = clouds.test(&target()).await.unwrap();
+    assert!(!e.ok, "{e:?}");
+    assert_eq!(checks(&fake) - before, 4, "one try and three retries");
+    // A create may have happened before the answer: never repeated.
+    *fake.unavailable.lock().unwrap() = ("create".into(), 1);
+    let before_create = fake
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(r, _)| r["op"] == "create")
+        .count();
+    assert!(sandboxes.create(create("retry-me")).await.is_err());
+    let after_create = fake
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(r, _)| r["op"] == "create")
+        .count();
+    assert_eq!(after_create - before_create, 1);
 }

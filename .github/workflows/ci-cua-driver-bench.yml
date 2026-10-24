@@ -21,6 +21,7 @@ concurrency:
 
 jobs:
   harness:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Harness tests (no GUI, no model)
     # The harness is macOS-only (sw_vers, AppKit apps); BenchLab targets macOS 26.
     runs-on: macos-26
@@ -45,6 +46,7 @@ jobs:
           python -m pytest -q tests probes/tests swift/tests
 
   taskpack:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Task pack tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -65,6 +67,7 @@ jobs:
         run: |
           set -euo pipefail
           for task in */; do
+            [ -f "$task/task.cuabench.json" ] || continue
             echo "::group::${task%/}"
             (cd "$task" && uv run --no-project --python 3.12 python -m unittest discover -s tests)
             (cd "$task" && python3 tools/refresh_manifest_digests.py --check)
@@ -91,6 +94,7 @@ jobs:
           python tools/check_pack_pins.py
 
   lint:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Python lint and format
     runs-on: ubuntu-latest
     timeout-minutes: 10

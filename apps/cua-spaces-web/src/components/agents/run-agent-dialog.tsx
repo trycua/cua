@@ -20,7 +20,7 @@ export const runAgentPrompt = (spaceName: string) => `Open the Cua Space "${spac
  * first (one button) and then shows the request. The agent's work shows up
  * on the Agents page.
  */
-export function RunAgentDialog({ open, space, onOpenChange, onManual, onConnected }: { open: boolean; space: Space; onOpenChange: (open: boolean) => void; onManual?: () => void; onConnected?: () => void }) {
+export function RunAgentDialog({ open, space, onOpenChange, onManual, onConnected, prompt: asked }: { open: boolean; space: Space; onOpenChange: (open: boolean) => void; onManual?: () => void; onConnected?: () => void; /** The request to show; the default only looks at the screen. */ prompt?: string }) {
   const { agentSetup, configureAgents } = useAgents();
   const navigate = useNavigate();
   const [rows, setRows] = useState<AgentSetupRow[] | null>(null);
@@ -41,9 +41,9 @@ export function RunAgentDialog({ open, space, onOpenChange, onManual, onConnecte
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const ready = (rows ?? []).filter((r) => r.installed && r.configured);
+  const ready = (rows ?? []).filter((r) => r.configured);
   const pending = (rows ?? []).filter((r) => r.installed && !r.configured);
-  const prompt = runAgentPrompt(space.name);
+  const prompt = asked ?? runAgentPrompt(space.name);
   const first = ready[0];
   const toSet = pending[0];
 
@@ -52,7 +52,7 @@ export function RunAgentDialog({ open, space, onOpenChange, onManual, onConnecte
     configureAgents()
       .then((r) => {
         setRows(r);
-        if (r.some((x) => x.installed && x.configured)) onConnected?.();
+        if (r.some((x) => x.configured)) onConnected?.();
       })
       .catch((e: unknown) => toast("Couldn't connect your agent", { description: e instanceof Error ? e.message : String(e) }))
       .finally(() => setBusy(false));

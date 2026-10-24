@@ -26,6 +26,8 @@ use std::path::PathBuf;
 
 #[cfg(feature = "client")]
 pub mod client;
+#[cfg(feature = "byoc")]
+mod cloud_sweep;
 mod convert;
 pub mod doctor;
 /// Extension points for the Keyvault, the Cua Volume and teleport (Cua
@@ -34,6 +36,8 @@ pub mod doctor;
 pub mod extension;
 #[cfg(feature = "test-fixtures")]
 pub mod fixtures;
+pub mod guard;
+pub mod guest_identity;
 #[cfg(all(feature = "server", feature = "spaces"))]
 mod host_svc;
 pub mod identity;
@@ -43,10 +47,21 @@ pub mod machine_doctor;
 pub mod maintenance;
 #[cfg(feature = "server")]
 mod passthrough;
+pub mod pool;
+#[cfg(all(feature = "server", feature = "spaces"))]
+mod prewarm_pools;
 mod runtime;
 #[cfg(feature = "server")]
 pub mod server;
+pub mod share_types;
 pub mod shares;
+pub use share_types::{ShareAccess, ShareCheck, ShareInfo, ShareTarget};
+#[cfg(feature = "spaces")]
+pub mod share_hub;
+#[cfg(feature = "spaces")]
+mod share_link;
+#[cfg(feature = "server")]
+mod share_svc;
 #[cfg(feature = "server")]
 mod spaces_svc;
 pub mod storage;
@@ -60,8 +75,8 @@ pub use cua_spaces;
 #[cfg(feature = "server")]
 pub use passthrough::space_key;
 pub use runtime::{
-    CreateRequest, ForwardInfo, LIST_CLOUD_TIMEOUT, Listing, Runtime, RuntimeConfig, SandboxRecord,
-    SpacesdAttachment, contrib_provider_names, location_of,
+    CreateRequest, ForwardInfo, LIST_CLOUD_TIMEOUT, Listing, PoolInfo, Runtime, RuntimeConfig,
+    SandboxRecord, SpacesdAttachment, contrib_provider_names, location_of,
 };
 
 /// The released cua SDK version this daemon was built as (reported by
@@ -147,6 +162,10 @@ pub enum Error {
     /// Not enough free disk space for a pull, build or VM create.
     #[error("insufficient disk: {0}")]
     InsufficientDisk(String),
+    /// This host has no room for another Space now (VM memory or CPU
+    /// limit, or the machine is low on memory).
+    #[error("host capacity: {0}")]
+    HostCapacity(String),
     /// The create was cancelled; what it made is gone.
     #[error("cancelled: {0}")]
     Cancelled(String),
@@ -180,6 +199,7 @@ impl Error {
             Error::HostCapabilityMissing(_) => R::HostCapabilityMissing,
             Error::TeleportRefused(_) => R::TeleportRefused,
             Error::InsufficientDisk(_) => R::InsufficientDisk,
+            Error::HostCapacity(_) => R::HostCapacity,
             Error::Cancelled(_) => R::Cancelled,
             Error::Transport(_) | Error::DaemonNotRunning(_) | Error::Internal(_) => R::Internal,
         }
@@ -205,6 +225,7 @@ impl Error {
             | Error::HostCapabilityMissing(m)
             | Error::TeleportRefused(m)
             | Error::InsufficientDisk(m)
+            | Error::HostCapacity(m)
             | Error::Cancelled(m)
             | Error::Internal(m)
             | Error::AmbiguousSandbox { message: m, .. }
@@ -270,6 +291,7 @@ impl Error {
             R::HostCapabilityMissing => Error::HostCapabilityMissing(m),
             R::TeleportRefused => Error::TeleportRefused(m),
             R::InsufficientDisk => Error::InsufficientDisk(m),
+            R::HostCapacity => Error::HostCapacity(m),
             R::Cancelled => Error::Cancelled(m),
             R::Internal | R::Unspecified => Error::Internal(m),
         }
@@ -291,7 +313,7 @@ impl Error {
                 Code::FailedPrecondition
             }
             Error::TeleportRefused(_) => Code::PermissionDenied,
-            Error::InsufficientDisk(_) => Code::ResourceExhausted,
+            Error::InsufficientDisk(_) | Error::HostCapacity(_) => Code::ResourceExhausted,
             Error::Cancelled(_) => Code::Cancelled,
             Error::Cloud(_) | Error::Runtime(_) | Error::Env(_) | Error::Http(_) => Code::Aborted,
             Error::Transport(_) | Error::DaemonNotRunning(_) | Error::Internal(_) => Code::Internal,
@@ -390,6 +412,7 @@ impl From<cua_sandbox_core::Error> for Error {
             E::Runtime(cua_sandbox_core::RuntimeError::InsufficientDisk(d)) => {
                 Error::InsufficientDisk(d)
             }
+            E::Runtime(cua_sandbox_core::RuntimeError::HostCapacity(m)) => Error::HostCapacity(m),
             E::Runtime(r @ cua_sandbox_core::RuntimeError::Unsupported { .. }) => {
                 Error::Unsupported(r.to_string())
             }
@@ -438,9 +461,9 @@ impl From<cua_spaces::Error> for Error {
             E::InvalidArgument(a) => Error::InvalidArgument(a),
             E::NotFound(_) => Error::NotFound(m),
             E::SpacesdNotAvailable { .. } => Error::SpacesdNotAvailable(m),
-            E::CapabilityMissing { .. } => Error::CapabilityMissing(m),
+            E::CapabilityMissing { .. } | E::HostTooOld(_) => Error::CapabilityMissing(m),
             E::HostCapabilityMissing { .. } => Error::HostCapabilityMissing(m),
-            E::WrongProvider { .. } => Error::Unsupported(m),
+            E::WrongProvider { .. } | E::Unsupported(_) => Error::Unsupported(m),
             // Both are a consent gate saying no; the message names which (a
             // teleport's own words: this error says "teleport refused:" itself).
             E::TeleportRefused(why) => Error::TeleportRefused(why),
@@ -450,6 +473,9 @@ impl From<cua_spaces::Error> for Error {
             E::Env(env) => Error::from(env),
             E::Sandbox(s) => Error::from(s),
             E::Transfer(_) | E::Agent(_) | E::Stream(_) => Error::Env(m),
+            // A build step failed: the message has its command, exit code
+            // and last output.
+            E::Build { .. } => Error::Runtime(m),
             E::Io(_) | E::Json(_) => Error::Internal(m),
             E::Mcp(_) => Error::Http(m),
             E::Relay(r) => match r {
@@ -915,6 +941,7 @@ mod tests {
             Error::ProviderNotConfigured("local".into()),
             Error::Timeout("t".into()),
             Error::InsufficientDisk("needs 3 GiB".into()),
+            Error::HostCapacity("this machine has no room".into()),
             Error::AmbiguousSandbox {
                 message: "\"box\" names 2 sandboxes; use one of: local:box, cloud:box".into(),
                 candidates: vec!["local:box".into(), "cloud:box".into()],
@@ -922,6 +949,23 @@ mod tests {
         ] {
             assert_eq!(Error::from_status(&e.to_status()), e);
         }
+    }
+
+    #[cfg(feature = "spaces")]
+    #[test]
+    fn a_full_machine_is_resource_exhausted_not_not_found() {
+        let err = Error::from(cua_spaces::Error::Sandbox(
+            cua_sandbox_core::Error::Runtime(cua_sandbox_core::RuntimeError::HostCapacity(
+                "this machine has no room for a 2-CPU, 4 GiB Space now. fix: delete a Space".into(),
+            )),
+        ));
+        assert!(matches!(err, Error::HostCapacity(_)), "{err:?}");
+        let status = err.to_status();
+        assert_eq!(status.code(), tonic::Code::ResourceExhausted);
+        assert!(matches!(
+            Error::from_status(&status),
+            Error::HostCapacity(m) if m.contains("no room")
+        ));
     }
 
     #[test]

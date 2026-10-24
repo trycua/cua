@@ -270,14 +270,19 @@ impl McpServer {
 
     /// `tools/list` result: the contract tools, then the extensions'.
     pub fn tools_list(&self) -> Value {
+        // A Space's runtime may be a local runtime provider installed on
+        // this machine: tools that take one name them.
+        let providers = cua_sandbox_core::external::Registry::global().providers();
         let mut tools: Vec<Value> = cua_spaces_contract::tools()
             .into_iter()
             .filter(|t| self.exposes(t.name))
             .map(|t| {
+                let mut schema = t.input_schema.clone();
+                cua_sandbox_core::external::annotate_runtime_schema(&mut schema, &providers);
                 json!({
                     "name": t.name,
                     "description": t.mcp_description(),
-                    "inputSchema": t.input_schema,
+                    "inputSchema": schema,
                     "annotations": {
                         "readOnlyHint": t.annotations.read_only,
                         "destructiveHint": t.annotations.destructive,

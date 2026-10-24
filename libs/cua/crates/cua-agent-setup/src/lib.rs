@@ -137,19 +137,6 @@ pub struct HostEnv {
     pub run_agent_clis: bool,
 }
 
-/// Where coding-agent CLIs usually install, searched after `$PATH`.
-fn well_known_bin_dirs(home: &Path) -> Vec<PathBuf> {
-    vec![
-        home.join(".local/bin"),
-        home.join(".claude/local"),
-        home.join(".npm-global/bin"),
-        home.join(".bun/bin"),
-        home.join(".cargo/bin"),
-        PathBuf::from("/opt/homebrew/bin"),
-        PathBuf::from("/usr/local/bin"),
-    ]
-}
-
 const VARS: &[&str] = &[
     "XDG_CONFIG_HOME",
     "APPDATA",
@@ -167,6 +154,32 @@ const VARS: &[&str] = &[
 ];
 
 impl HostEnv {
+    /// Ordered fallback binary directories for this environment's OS, searched after PATH.
+    pub fn well_known_bin_dirs(&self) -> Vec<PathBuf> {
+        if self.os == Os::Windows {
+            let appdata = self
+                .var("APPDATA")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| self.home.join("AppData/Roaming"));
+            vec![
+                self.home.join(".local/bin"),
+                appdata.join("npm"),
+                self.home.join(".bun/bin"),
+                self.home.join(".cargo/bin"),
+            ]
+        } else {
+            vec![
+                self.home.join(".local/bin"),
+                self.home.join(".claude/local"),
+                self.home.join(".npm-global/bin"),
+                self.home.join(".bun/bin"),
+                self.home.join(".cargo/bin"),
+                PathBuf::from("/opt/homebrew/bin"),
+                PathBuf::from("/usr/local/bin"),
+            ]
+        }
+    }
+
     /// The real environment: `$HOME` (or `%USERPROFILE%`), `$PATH`, the
     /// agent override variables, `/Applications` and `~/Applications`
     /// (or `$CUA_AGENT_APP_DIRS`).
@@ -180,19 +193,9 @@ impl HostEnv {
             .filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v)))
             .collect();
         let os = Os::current();
-        let mut path: Vec<PathBuf> = std::env::var_os("PATH")
+        let path: Vec<PathBuf> = std::env::var_os("PATH")
             .map(|p| std::env::split_paths(&p).collect())
             .unwrap_or_default();
-        // A GUI app (Cua Spaces from the Dock) runs without the user's
-        // shell PATH, so an agent installed under a user bin dir would look
-        // missing. Search the usual install dirs after the real PATH.
-        if os != Os::Windows {
-            for d in well_known_bin_dirs(&home) {
-                if !path.contains(&d) {
-                    path.push(d);
-                }
-            }
-        }
         // `CUA_AGENT_APP_DIRS` (a path list, empty for none) replaces the
         // app folders, so hermetic runs do not see the host's apps.
         let app_dirs = match std::env::var_os("CUA_AGENT_APP_DIRS") {
@@ -204,14 +207,23 @@ impl HostEnv {
             }
             None => vec![],
         };
-        HostEnv {
+        let mut env = HostEnv {
             home,
             vars,
             path,
             app_dirs,
             os,
             run_agent_clis: true,
+        };
+        // A GUI app (Cua Spaces from the Dock) runs without the user's
+        // shell PATH, so an agent installed under a user bin dir would look
+        // missing. Search the usual install dirs after the real PATH.
+        for dir in env.well_known_bin_dirs() {
+            if !env.path.contains(&dir) {
+                env.path.push(dir);
+            }
         }
+        env
     }
 
     /// A hermetic environment rooted at `home`: no variables, no PATH, apps
@@ -402,6 +414,11 @@ pub struct AgentStatus {
     pub error: Option<String>,
     /// What could not be verified from official docs.
     pub unverified: Option<String>,
+    /// The account the agent signs in with on its own ("ChatGPT"), when
+    /// cua can see that sign-in ([`registry::LoginSpec`]).
+    pub sign_in: Option<String>,
+    /// That sign-in is on this computer (its file is there and not empty).
+    pub signed_in: bool,
 }
 
 /// What happened to one target.
@@ -567,6 +584,68 @@ impl AgentSetup {
             .collect()
     }
 
+    /// Starts `agent`'s own sign-in on this computer (`codex login`: the
+    /// browser opens, and the agent keeps the sign-in in its own file). It
+    /// returns once the command is running; [`AgentSetup::detect`] reports
+    /// `signed_in` when it is done. cua never reads or copies the sign-in,
+    /// so every computer signs in on its own. A sign-in already waiting for
+    /// the browser is not started twice.
+    pub fn sign_in(&self, agent: &str) -> Result<()> {
+        let a = registry::find(agent)
+            .ok_or_else(|| Error::InvalidArgument(format!("unknown agent {agent:?}")))?;
+        let login = a.login.ok_or_else(|| {
+            Error::InvalidArgument(format!("{} has no sign-in cua can start", a.name))
+        })?;
+        if !self.env.run_agent_clis {
+            return Err(Error::InvalidArgument(
+                "agent commands are off in this environment".into(),
+            ));
+        }
+        let bin = a
+            .bins
+            .iter()
+            .find_map(|b| self.env.which(b))
+            .ok_or_else(|| {
+                Error::InvalidArgument(format!("{} isn't installed on this computer", a.name))
+            })?;
+        static WAITING: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+        let mut waiting = WAITING.lock().unwrap_or_else(|e| e.into_inner());
+        if waiting.contains(&a.id) {
+            return Ok(());
+        }
+        let program = cmd_shim_target(&bin).unwrap_or_else(|| bin.clone());
+        let mut cmd = std::process::Command::new(&program);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        // A GUI app has no shell PATH: an npm-installed CLI needs `node`
+        // from the same dirs the agent was found in.
+        if let Ok(path) = std::env::join_paths(&self.env.path) {
+            cmd.env("PATH", path);
+        }
+        let mut child = cmd
+            .args(login.args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| Error::io(&bin, e))?;
+        waiting.push(a.id);
+        let id = a.id;
+        // Reaped in the background: the sign-in waits for the browser.
+        std::thread::spawn(move || {
+            let _ = child.wait();
+            WAITING
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .retain(|w| *w != id);
+        });
+        Ok(())
+    }
+
     /// Alias of [`AgentSetup::detect`].
     pub fn status(&self) -> Vec<AgentStatus> {
         self.detect()
@@ -626,6 +705,11 @@ impl AgentSetup {
             skills_outdated,
             error: None,
             unverified: (!a.unverified.is_empty()).then(|| a.unverified.to_string()),
+            sign_in: a.login.map(|l| l.label.to_string()),
+            signed_in: a.login.is_some_and(|l| {
+                std::fs::metadata(l.file.resolve(&self.env))
+                    .is_ok_and(|m| m.is_file() && m.len() > 0)
+            }),
         };
         if let Some(m) = &a.mcp {
             let file = self.mcp_file(m);
@@ -1346,7 +1430,7 @@ fn run_cli(bin: &Path, args: &[String]) -> Result<()> {
 
 #[cfg(test)]
 mod cmd_shim_tests {
-    use super::{HostEnv, Os, cmd_shim_target};
+    use super::{HostEnv, cmd_shim_target};
 
     /// What `npm i -g @anthropic-ai/claude-code` writes (cmd-shim).
     const NATIVE_SHIM: &str = "@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n\"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe\"   %*\r\n";
@@ -1367,13 +1451,8 @@ mod cmd_shim_tests {
     #[test]
     fn the_current_env_also_searches_the_usual_install_dirs() {
         let env = HostEnv::current();
-        if env.os != Os::Windows {
-            let home = env.home.clone();
-            assert!(env.path.contains(&home.join(".local/bin")));
-            assert!(
-                env.path
-                    .contains(&std::path::PathBuf::from("/opt/homebrew/bin"))
-            );
+        for dir in env.well_known_bin_dirs() {
+            assert!(env.path.contains(&dir), "{}", dir.display());
         }
     }
 

@@ -73,6 +73,7 @@ pub mod first_run;
 pub mod host;
 pub mod installer;
 pub mod keyvault;
+pub mod local_network;
 pub mod login_item;
 pub mod machines;
 pub mod machines_health;

@@ -52,14 +52,16 @@ pub mod spaces_api;
 pub mod testing;
 #[cfg(test)]
 mod tests;
+pub mod uv;
 
 pub use device::{DeviceAuth, DeviceKey, FileKeySlot, KeySlot, MemoryKeySlot, PendingCode};
 pub use helper_migration::{ServiceMigration, VerifyTiming};
 pub use host::SetupStage;
 pub use host::{
     DirectHosting, Host, HostConfig, HostMode, HostPaths, HostPolicy, HostSettingsChange,
-    HostStatus, META_ARCH, META_OS, META_PROVIDES_SPACES, PermissionHint, RELAY_HICCUP_GRACE,
-    SetupOptions, SpacesDaemon, local_network_hint, permission_hints,
+    HostStatus, META_ARCH, META_CLOUD, META_OS, META_PROVIDES_SPACES, PermissionHint,
+    RELAY_HICCUP_GRACE, SetupOptions, SpacesDaemon, StaticRelay, local_network_hint,
+    permission_hints,
 };
 pub use machine::machine_id;
 pub use pairing::{
@@ -71,8 +73,8 @@ pub use provided::{
 };
 pub use relay::{
     AccountTokens, AuditEvent, ConnectedClient, DEFAULT_RELAY_URL, DeviceListing, DeviceState,
-    DeviceView, Enrollment, Identity, Machine, MachinePatch, NoAccount, RelayClient, RelayUsage,
-    RelayUsageTeam, StaticToken, relay_url_from_env,
+    DeviceView, Enrollment, Identity, LinkProbe, Machine, MachinePatch, NoAccount, RelayClient,
+    RelayUsage, RelayUsageTeam, StaticToken, relay_url_from_env,
 };
 pub use service::{RunnerKind, ServiceManager, ServiceSpec, ServiceState};
 

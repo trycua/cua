@@ -84,3 +84,9 @@ async def test_contrib_image_refs_keep_the_variant():
     )
     vm = Image.from_registry("ghcr.io/trycua/linux:24.04", kind="vm")
     assert await rt._image_ref(vm, "x") == "vm:ghcr.io/trycua/linux:24.04"
+
+
+def test_the_known_words_include_every_own_cloud():
+    # The offline fallback list mirrors cua_sandbox_core::CLOUD_LOCATIONS.
+    for word in ("aws", "gcp", "hetzner"):
+        assert word in contrib._KNOWN

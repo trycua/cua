@@ -66,6 +66,11 @@ public protocol SpacesBackend: AnyObject, Sendable {
     func linuxSource() async -> String?
     /// Sets `runtime.linux`.
     func setLinuxSource(_ value: String) async throws
+    /// Whether Spaces created without a location overflow into your linked
+    /// clouds when this Mac is full (`placement.overflow`), when known.
+    func placementOverflow() async -> Bool?
+    /// Sets `placement.overflow`.
+    func setPlacementOverflow(_ on: Bool) async throws
     /// Free space where local Spaces are written and which images are
     /// pulled (`local().storage()`), when known.
     func localStorage() async -> LocalStorage?
@@ -108,6 +113,41 @@ public protocol SpacesBackend: AnyObject, Sendable {
     func share(id: String, who: String, role: String) async throws -> [AppShareEntryInput]
     /// Stops sharing with `who` (`unshare_space`).
     func unshare(id: String, who: String) async throws -> [AppShareEntryInput]
+    /// Links to things you run (`cua share`), owned by the cua daemon.
+    func links() async throws -> [ShareLink]
+    /// Shares `target` (a port, `space:NAME:PORT`, or an absolute path) and returns the link.
+    func createLink(target: String, access: String?, ttlSeconds: UInt32?, name: String?) async throws -> ShareLink
+    /// Stops one link by id, or every link for `"all"`; the ids stopped.
+    func stopLink(id: String) async throws -> [String]
+}
+
+/// A link to something you run, as the page's `links.*` operations carry it.
+public struct ShareLink: Codable, Equatable, Sendable {
+    public var id: String
+    public var url: String
+    public var name: String?
+    public var access: String
+    public var kind: String
+    public var target: String
+    public var owner: String
+    public var createdAtUnix: Int64?
+    public var expiresAtUnix: Int64?
+
+    public init(id: String, url: String, name: String?, access: String, kind: String, target: String, owner: String, createdAtUnix: Int64?, expiresAtUnix: Int64?) {
+        (self.id, self.url, self.name, self.access, self.kind, self.target, self.owner) = (id, url, name, access, kind, target, owner)
+        (self.createdAtUnix, self.expiresAtUnix) = (createdAtUnix, expiresAtUnix)
+    }
+
+    init(_ s: Share) {
+        let access: String
+        switch s.access {
+        case .private: access = "private"
+        case .team: access = "team"
+        case .public: access = "public"
+        }
+        self.init(id: s.id, url: s.url, name: s.name, access: access, kind: s.kind, target: s.target, owner: s.owner,
+                  createdAtUnix: s.createdAtUnix, expiresAtUnix: s.expiresAtUnix)
+    }
 }
 
 public extension SpacesBackend {
@@ -125,6 +165,11 @@ public extension SpacesBackend {
     func shares(id: String) async throws -> [AppShareEntryInput] { [] }
     func share(id: String, who: String, role: String) async throws -> [AppShareEntryInput] { [] }
     func unshare(id: String, who: String) async throws -> [AppShareEntryInput] { [] }
+    func links() async throws -> [ShareLink] { [] }
+    func createLink(target: String, access: String?, ttlSeconds: UInt32?, name: String?) async throws -> ShareLink {
+        throw FixtureError(message: "Links are not available here")
+    }
+    func stopLink(id: String) async throws -> [String] { [] }
     func agentEvents(id: String, runId: String, cursor: UInt64) async throws -> String {
         throw FixtureError(message: "This Space's runs can't be read here")
     }
@@ -139,6 +184,8 @@ public extension SpacesBackend {
     func setLumeSource(_ value: String) async throws {}
     func linuxSource() async -> String? { nil }
     func setLinuxSource(_ value: String) async throws {}
+    func placementOverflow() async -> Bool? { nil }
+    func setPlacementOverflow(_ on: Bool) async throws {}
 }
 
 /// The wizard's GPU choices from the SDK's `gpu_support`: the first option
@@ -367,6 +414,10 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
             try await cua.local().doctor()
         }
         guard case .success(let report) = result else { return nil }
+        // External runtime providers installed on this Mac join the New
+        // Space catalog (none: nothing changes). Their doctor check is
+        // named after them, so a ready one is among the ready names.
+        _ = appWizardUseDoctorReport(reportJson: report.reportJson)
         // Lume and the built-in Linux runtime count as ready when cua sets
         // them up by itself on the first create that needs them (or boots
         // them): nothing for the person to do.
@@ -393,6 +444,14 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
 
     public func setLinuxSource(_ value: String) async throws {
         _ = try configSet(key: "runtime.linux", value: value)
+    }
+
+    public func placementOverflow() async -> Bool? {
+        (try? configGet(key: "placement.overflow")).map { $0.value != "off" }
+    }
+
+    public func setPlacementOverflow(_ on: Bool) async throws {
+        _ = try configSet(key: "placement.overflow", value: on ? "on" : "off")
     }
 
     public func localStorage() async -> LocalStorage? {
@@ -453,6 +512,22 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
 
     public func shares(id: String) async throws -> [AppShareEntryInput] {
         appShareRows(try await cua.spaces().space(space: id).shares())
+    }
+
+    public func links() async throws -> [ShareLink] { try await cua.shares().map(ShareLink.init) }
+
+    public func createLink(target: String, access: String?, ttlSeconds: UInt32?, name: String?) async throws -> ShareLink {
+        let a: ShareAccess?
+        switch access {
+        case "team": a = .team
+        case "public": a = .public
+        default: a = nil
+        }
+        return ShareLink(try await cua.share(target: target, access: a, ttlSeconds: ttlSeconds, name: name))
+    }
+
+    public func stopLink(id: String) async throws -> [String] {
+        id == "all" ? try await cua.stopAllShares() : try await cua.stopShare(id: id)
     }
 
     public func share(id: String, who: String, role: String) async throws -> [AppShareEntryInput] {
@@ -638,6 +713,7 @@ extension AppLocation {
         case .local: "local"
         case .yours: "yours"
         case .host: "host"
+        case .auto: "auto"
         }
     }
 }
@@ -662,6 +738,7 @@ extension AppRuntime {
         case .qemu: return "qemu"
         case .lume: return "lume"
         case .kubevirt: return "kubevirt"
+        case .other(let name): return name
         }
     }
 }
@@ -676,6 +753,24 @@ public struct FixtureError: Error, CustomStringConvertible {
 /// contacts anything. Its state lives on the main actor: the async calls
 /// hop there, so a test reading it races nothing.
 public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
+    public private(set) var fixtureLinks: [ShareLink] = []
+    /// Refuse a new link as a machine that is not on the relay does.
+    public var linksNeedRelay = false
+    public func links() async throws -> [ShareLink] { fixtureLinks }
+    public func createLink(target: String, access: String?, ttlSeconds: UInt32?, name: String?) async throws -> ShareLink {
+        if linksNeedRelay { throw FixtureError(message: "this machine is not on your cua.ai relay. Run `cua host setup`") }
+        let id = "share-\(String(format: "%012x", fixtureLinks.count + 1))"
+        let link = ShareLink(id: id, url: "https://s\(id).m.relay.example/", name: name, access: access ?? "private",
+                             kind: target.hasPrefix("space:") ? "space_port" : "port", target: target, owner: "ada@example.com",
+                             createdAtUnix: 1_000, expiresAtUnix: ttlSeconds.map { 1_000 + Int64($0) })
+        fixtureLinks.insert(link, at: 0)
+        return link
+    }
+    public func stopLink(id: String) async throws -> [String] {
+        let gone = fixtureLinks.filter { id == "all" || $0.id == id }.map(\.id)
+        fixtureLinks.removeAll { gone.contains($0.id) }
+        return gone
+    }
     public var fixtureRows: [AppSpaceRow]
     public private(set) var created: [AppCreateSpaceArgs] = []
     public private(set) var added: [String] = []
@@ -707,6 +802,8 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
     }
     /// The fixture cloud is connected (`cloud_connect` ran).
     public var fixtureCloudConnected = false
+    /// The elastic pool has two cloud hosts (`cloud_hosts`).
+    public var fixtureElastic = false
     /// The cloud tools called, in order.
     public internal(set) var fixtureCloudCalls: [String] = []
 
@@ -924,6 +1021,10 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
     public var fixtureLinuxSource: String? = "auto"
     public func linuxSource() async -> String? { await MainActor.run { fixtureLinuxSource } }
     public func setLinuxSource(_ value: String) async throws { await MainActor.run { fixtureLinuxSource = value } }
+    /// The fixture Mac's `placement.overflow`.
+    public var fixturePlacementOverflow: Bool? = true
+    public func placementOverflow() async -> Bool? { await MainActor.run { fixturePlacementOverflow } }
+    public func setPlacementOverflow(_ on: Bool) async throws { await MainActor.run { fixturePlacementOverflow = on } }
     public func localBackends() async -> [String]? { await MainActor.run { fixtureBackends } }
     /// The fixture Mac's free space and pulled images (none: the wizard
     /// shows no room lines).

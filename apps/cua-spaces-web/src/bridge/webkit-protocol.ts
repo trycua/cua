@@ -68,6 +68,7 @@ export const WEBKIT_METHODS = [
   "agents.resume",
   "agents.setup",
   "agents.configure",
+  "agents.signIn",
   ...AGENT_DETAIL_WEBKIT_METHODS,
   ...AGENT_KEYS_WEBKIT_METHODS,
   ...KEYVAULT_SETUP_WEBKIT_METHODS,
@@ -166,6 +167,9 @@ export const WEBKIT_METHODS = [
   "machines.checkHealth",
   "checklist.get",
   "checklist.send",
+  "links.list",
+  "links.create",
+  "links.stop",
 ] as const;
 
 export type WebkitMethod = (typeof WEBKIT_METHODS)[number];

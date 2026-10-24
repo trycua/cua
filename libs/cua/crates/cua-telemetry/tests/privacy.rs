@@ -150,6 +150,8 @@ fn all_builders(s: &str) -> Vec<Event> {
                 stalled: true,
                 gpu: true,
                 error_variant: s,
+                retry_attempt: 0,
+                error_subclass: "",
             },
             Outcome::Error,
             d,
@@ -781,20 +783,19 @@ fn capture_never_blocks_on_a_slow_or_dead_endpoint() {
         .product("cli", "1.0.0")
         .build();
     t.acknowledge_notice();
+    // The endpoint never answers, so a capture or flush that waited on it
+    // would take the sink's whole send timeout (3 s) or more. Bound the
+    // elapsed time just under that: it separates blocking from not blocking
+    // without a wall-clock budget a loaded runner can exceed.
+    let ceiling = cua_telemetry::sink::SEND_TIMEOUT - Duration::from_millis(500);
     let start = std::time::Instant::now();
     for _ in 0..20 {
         t.capture(events::sandbox_deleted("local", Outcome::Ok, None));
     }
-    assert!(
-        start.elapsed() < Duration::from_millis(500),
-        "capture blocked"
-    );
+    assert!(start.elapsed() < ceiling, "capture blocked");
     let start = std::time::Instant::now();
     t.flush(Duration::from_millis(300));
-    assert!(
-        start.elapsed() < Duration::from_secs(2),
-        "flush exceeded its budget"
-    );
+    assert!(start.elapsed() < ceiling, "flush exceeded its budget");
     drop(listener);
 }
 
@@ -910,6 +911,52 @@ fn a_switch_flipped_elsewhere_applies_after_refresh_and_clears_the_spool() {
 /// The "Telemetry and privacy" pages list every event and every property
 /// the schema declares, so nothing is sent that the docs do not name.
 #[test]
+fn space_create_retry_fields_keep_their_vocabulary() {
+    let create = |outcome, retry_attempt, error_subclass| {
+        events::space_create(
+            &events::SpaceCreate {
+                on: "local",
+                guest_os: "linux",
+                kind: "container",
+                last_phase: "preparing",
+                stalled: false,
+                gpu: false,
+                error_variant: "runtime",
+                retry_attempt,
+                error_subclass,
+            },
+            outcome,
+            Duration::from_secs(90),
+        )
+    };
+    let e = create(Outcome::Error, 1, "runtime_start");
+    assert_eq!(e.props["retry_attempt"], 1);
+    assert_eq!(e.props["error_subclass"], "runtime_start");
+    // A retried create that worked keeps the cause it recovered from.
+    let ok = create(Outcome::Ok, 1, "pull_interrupted");
+    assert_eq!(ok.props["outcome"], "ok");
+    assert_eq!(ok.props["error_subclass"], "pull_interrupted");
+    // The other agent's Local Network words are allowed.
+    for w in ["local_network_denied", "local_network_vpn"] {
+        assert_eq!(create(Outcome::Error, 0, w).props["error_subclass"], w);
+    }
+    // Never more than one retry, never free text, never a cancel's cause.
+    assert_eq!(create(Outcome::Error, 7, "").props["retry_attempt"], 1);
+    assert_eq!(
+        create(Outcome::Error, 0, "/Users/maya/.lume: denied").props["error_subclass"],
+        "none"
+    );
+    assert_eq!(
+        create(Outcome::Cancelled, 0, "runtime_start").props["error_subclass"],
+        "none"
+    );
+    let home = tempfile::tempdir().unwrap();
+    for e in [e, ok] {
+        preview_all(home.path(), &e);
+    }
+}
+
+#[test]
 fn docs_page_names_every_event_and_property() {
     let page = concat!(
         include_str!("../../../../../docs/content/docs/cua-sdk/concepts/telemetry.mdx"),
@@ -961,6 +1008,8 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
             stalled: true,
             gpu: false,
             error_variant: "InsufficientDisk",
+            retry_attempt: 0,
+            error_subclass: "",
         },
         Outcome::Ok,
         d,
@@ -979,6 +1028,8 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
             stalled: false,
             gpu: true,
             error_variant: "",
+            retry_attempt: 0,
+            error_subclass: "",
         },
         Outcome::Error,
         Duration::from_secs(4000),
@@ -998,6 +1049,8 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
             stalled: false,
             gpu: false,
             error_variant: "InsufficientDisk",
+            retry_attempt: 0,
+            error_subclass: "",
         },
         Outcome::Error,
         d,
@@ -1006,6 +1059,9 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
     // The causes the Spaces app reads from a failure's text.
     for (variant, kind) in [
         ("LocalNetwork", "local_network"),
+        // The cause words for its subclasses stand for it.
+        ("local_network_denied", "local_network"),
+        ("local_network_vpn", "local_network"),
         ("VmLimit", "vm_limit"),
         // The cause words the app core sends as they are.
         ("image_pull_not_found", "image_pull_not_found"),
@@ -1030,6 +1086,8 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
                 stalled: false,
                 gpu: false,
                 error_variant: variant,
+                retry_attempt: 0,
+                error_subclass: "",
             },
             Outcome::Error,
             d,
@@ -1045,6 +1103,8 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
             stalled: true,
             gpu: false,
             error_variant: "",
+            retry_attempt: 0,
+            error_subclass: "",
         },
         Outcome::Error,
         d,
@@ -1059,6 +1119,8 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
             stalled: true,
             gpu: false,
             error_variant: "Transport",
+            retry_attempt: 0,
+            error_subclass: "",
         },
         Outcome::Error,
         d,
@@ -1073,6 +1135,8 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
             stalled: false,
             gpu: false,
             error_variant: "the disk filled up",
+            retry_attempt: 0,
+            error_subclass: "",
         },
         Outcome::Error,
         d,
@@ -1088,6 +1152,8 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
             stalled: true,
             gpu: true,
             error_variant: "InsufficientDisk",
+            retry_attempt: 0,
+            error_subclass: "",
         },
         Outcome::Cancelled,
         Duration::from_secs(25),

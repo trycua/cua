@@ -62,6 +62,7 @@ import type { RelayUsage } from "../ops/relay-usage";
 import type { RiskyRequest } from "../ops/nudges";
 import type { ResourcesSnapshot } from "../ops/resources";
 import type { HostChecklistState } from "../ops/checklist";
+import type { LinkCreate, ShareLink } from "../ops/links";
 import { unsupportedPresenceOps, type PresenceJoinInfo } from "../ops/presence";
 import { unsupportedRuntimeFixOps } from "../ops/runtime-fix";
 import type { SpaceRow } from "../contracts/spaces";
@@ -658,6 +659,7 @@ export function createWebkitAdapter(
     },
     "agents.setup": async () => list(await request("agents.setup")) as AgentSetupRow[],
     "agents.configure": async ({ agents }) => list(await request("agents.configure", { agents: agents ?? null })) as AgentSetupRow[],
+    "agents.signIn": async ({ agent }) => list(await request("agents.signIn", { agent })) as AgentSetupRow[],
     "session.openExternal": async ({ url }) => {
       win.open?.(url, "_blank", "noopener");
       return null;
@@ -693,6 +695,9 @@ export function createWebkitAdapter(
     },
     "checklist.get": () => request<{ state: HostChecklistState }>("checklist.get"),
     "checklist.send": ({ action }) => request<{ state: HostChecklistState }>("checklist.send", { action }),
+    "links.list": () => request<{ links: ShareLink[] }>("links.list"),
+    "links.create": (a: LinkCreate) => request<ShareLink>("links.create", a as unknown as Record<string, unknown>),
+    "links.stop": ({ id }) => request<{ stopped: string[] }>("links.stop", { id }),
     // Presence over the page's own video: the Mac app draws it natively.
     ...(electron
       ? {

@@ -473,10 +473,22 @@ impl Connection {
         self.call_object("cloud_test", target)
     }
 
-    /// `cloud_disconnect`: forgets a connected cloud (nothing in it is
-    /// deleted).
-    pub fn cloud_disconnect(&self, provider: &str) -> Result<Map<String, Value>> {
-        self.call_object("cloud_disconnect", json!({ "provider": provider }))
+    /// `cloud_disconnect`: forgets a connected cloud. Refused while Cua
+    /// resources still run there; with `delete`, deletes everything Cua
+    /// created there first and disconnects once the cloud confirms.
+    pub fn cloud_disconnect(&self, provider: &str, delete: bool) -> Result<Map<String, Value>> {
+        self.call_object(
+            "cloud_disconnect",
+            json!({ "provider": provider, "delete": delete }),
+        )
+    }
+
+    /// `cloud_audit`: the newest `limit` entries of the cloud audit log,
+    /// newest last (each `ts`, `action`, `provider`, `kind`, `id`, `space`,
+    /// `actor`, `outcome`, `detail`).
+    pub fn cloud_audit(&self, limit: u32) -> Result<Vec<Value>> {
+        let payload = self.call("cloud_audit", json!({ "limit": limit }))?;
+        Ok(expect_array(&payload, None))
     }
 
     /// `cloud_sweep`: what Cua left in your clouds; deletes it unless
@@ -491,6 +503,57 @@ impl Connection {
             "cloud_sweep",
             json!({ "provider": provider, "dry_run": dry_run, "all": all }),
         )
+    }
+
+    /// `cloud_plan`: what the elastic pool would do for some Spaces (and
+    /// with `"apply": true`, adds the machines).
+    pub fn cloud_plan(&self, request: Value) -> Result<Map<String, Value>> {
+        self.call_object("cloud_plan", request)
+    }
+
+    /// `cloud_hosts`: the hosts the elastic pool added in your clouds.
+    pub fn cloud_hosts(&self) -> Result<Value> {
+        self.call("cloud_hosts", json!({}))
+    }
+
+    /// `cloud_add_host`: adds hosts by hand in a linked cloud.
+    pub fn cloud_add_host(&self, provider: &str, instance_type: &str, count: u32) -> Result<Value> {
+        self.call(
+            "cloud_add_host",
+            json!({ "provider": provider, "instance_type": instance_type, "count": count }),
+        )
+    }
+
+    /// `cloud_remove_host`: removes hosts this home added.
+    pub fn cloud_remove_host(&self, names: &[&str]) -> Result<Map<String, Value>> {
+        self.call_object("cloud_remove_host", json!({ "names": names }))
+    }
+
+    /// `cloud_budget`: reads the elastic pool's budget, setting the fields
+    /// given.
+    pub fn cloud_budget(&self, update: Value) -> Result<Map<String, Value>> {
+        self.call_object("cloud_budget", update)
+    }
+
+    /// `prewarm`: keep Spaces of one shape ready (`args` as the tool takes
+    /// them).
+    pub fn prewarm(&self, args: Value) -> Result<Value> {
+        self.call("prewarm", args)
+    }
+
+    /// `prewarm_list`: the prewarms and how many are ready.
+    pub fn prewarm_list(&self) -> Result<Value> {
+        self.call("prewarm_list", json!({}))
+    }
+
+    /// `prewarm_remove`: end a prewarm.
+    pub fn prewarm_remove(&self, id: &str) -> Result<Value> {
+        self.call("prewarm_remove", json!({ "id": id }))
+    }
+
+    /// `cloud_reconcile`: one scale-in pass now.
+    pub fn cloud_reconcile(&self) -> Result<Value> {
+        self.call("cloud_reconcile", json!({}))
     }
 
     // -- Snapshot memory --------------------------------------------------

@@ -20,6 +20,8 @@ use cua_sandbox_core::provider::{
 use cua_sandbox_core::{Error, ServiceEndpoint, Status};
 
 use crate::api::{CloudApi, Result};
+use crate::audit;
+use crate::bootlog;
 use crate::bootstrap::{VmBoot, cloud_init};
 use crate::model::{self, Connection, ProvisionSpec, Resource, Tier, now};
 use crate::relay::RelayAccess;
@@ -169,7 +171,7 @@ impl CloudSandboxes {
     async fn alive(&self, conn: &Connection, r: &Resource) -> Result<()> {
         match self.api.describe(conn, r).await {
             Ok(Some((state, _))) if is_dead(&state) => Err(Error::Cloud(format!(
-                "{}: {} {} is {state} before its sandbox came online (see its boot log)",
+                "{}: {} {} is {state} before its sandbox came online (its boot log is saved before cleanup)",
                 self.api.name(),
                 r.resource_type,
                 r.id
@@ -199,8 +201,22 @@ impl CloudSandboxes {
             match self.api.delete(conn, r, owner).await {
                 Ok(()) => {
                     let _ = self.store.forget(r);
+                    self.store.audit(audit::of_resource(
+                        "resource_deleted",
+                        r,
+                        "rollback",
+                        "ok",
+                        "the create failed",
+                    ));
                 }
                 Err(e) => {
+                    self.store.audit(audit::of_resource(
+                        "resource_deleted",
+                        r,
+                        "rollback",
+                        "failed",
+                        &e.to_string(),
+                    ));
                     // Kept, marked: the sweeper deletes it at once (no grace
                     // period for a create that already failed).
                     tracing::warn!(resource = %r.id, "rollback left it for the sweeper: {e}");
@@ -213,6 +229,46 @@ impl CloudSandboxes {
         if !machine.is_empty() {
             self.forget_machine(machine).await;
         }
+    }
+
+    /// Reads `r`'s boot log (bounded, never failing), keeps the filtered
+    /// tail under `<home>/cloud/boot-logs/` and returns what the error
+    /// should add (`None`: the cloud had nothing to show).
+    async fn keep_boot_log(
+        &self,
+        conn: &Connection,
+        r: &Resource,
+        secrets: &[&str],
+    ) -> Option<String> {
+        let raw = match tokio::time::timeout(bootlog::FETCH_TIMEOUT, self.api.boot_log(conn, r))
+            .await
+        {
+            Ok(Ok(Some(raw))) => raw,
+            Ok(Ok(None)) => return None,
+            Ok(Err(e)) => {
+                tracing::warn!(resource = %r.id, "boot log not read: {e}");
+                return None;
+            }
+            Err(_) => {
+                tracing::warn!(resource = %r.id, "boot log not read: the cloud did not answer in time");
+                return None;
+            }
+        };
+        let lines = bootlog::filter(&raw, secrets);
+        if lines.is_empty() {
+            return None;
+        }
+        let path = self
+            .store
+            .home()
+            .and_then(|h| match bootlog::save(&h, &r.id, &lines) {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    tracing::warn!(resource = %r.id, "boot log not saved: {e}");
+                    None
+                }
+            });
+        Some(bootlog::summary(path.as_deref(), &lines))
     }
 
     /// Removes a relay machine; when the relay cannot be reached it is
@@ -235,6 +291,16 @@ impl CloudSandboxes {
 }
 
 /// A state a machine does not come back from on its own.
+/// `e` with the boot log evidence appended to its message.
+fn with_evidence(e: Error, evidence: Option<String>) -> Error {
+    let Some(ev) = evidence else { return e };
+    match e {
+        Error::Timeout(m) => Error::Timeout(format!("{m}\n{ev}")),
+        Error::Cloud(m) => Error::Cloud(format!("{m}\n{ev}")),
+        other => other,
+    }
+}
+
 pub(crate) fn is_dead(state: &str) -> bool {
     matches!(
         state,
@@ -370,6 +436,15 @@ impl cua_sandbox_core::Provider for CloudSandboxes {
             .relay
             .register_with(&machine, &spec.name, self.meta(&conn, &spec.name, &owner))
             .await?;
+        // The relay must be readable by this device before anything is
+        // created: a sign-in or enrollment problem found after the cloud
+        // call would bill a machine for nothing.
+        if let Err(e) = self.relay.online(&machine).await
+            && crate::relay::is_fatal(&e)
+        {
+            self.forget_machine(&machine).await;
+            return Err(e);
+        }
         let mut rec = Resource {
             provider: self.api.name().into(),
             resource_type: match self.api.tier() {
@@ -400,6 +475,13 @@ impl cua_sandbox_core::Provider for CloudSandboxes {
         );
         // 2. Recorded before the cloud call.
         self.store.record(rec.clone()).map_err(Self::io)?;
+        self.store.audit(audit::of_resource(
+            "resource_recorded",
+            &rec,
+            "user",
+            "ok",
+            "recorded before the cloud call",
+        ));
         let mut provision = ProvisionSpec {
             name: resource_name,
             family: family.into(),
@@ -437,6 +519,13 @@ impl cua_sandbox_core::Provider for CloudSandboxes {
         let made = match self.api.provision(&conn, &provision).await {
             Ok(m) => m,
             Err(e) => {
+                self.store.audit(audit::of_resource(
+                    "resource_created",
+                    &rec,
+                    "user",
+                    "failed",
+                    &e.to_string(),
+                ));
                 self.rollback(&conn, &owner, &[rec], &machine).await;
                 return Err(e);
             }
@@ -452,6 +541,13 @@ impl cua_sandbox_core::Provider for CloudSandboxes {
                 r
             };
             self.store.record(r.clone()).map_err(Self::io)?;
+            self.store.audit(audit::of_resource(
+                "resource_created",
+                &r,
+                "user",
+                "ok",
+                "the cloud created it",
+            ));
             all.push(r);
         }
         // 4. The guest boots and joins the relay.
@@ -461,11 +557,23 @@ impl cua_sandbox_core::Provider for CloudSandboxes {
             .wait_online(&machine, budget, || self.alive(&conn, &rec))
             .await;
         if let Err(e) = joined {
+            // The evidence first: the rollback deletes the machine and its
+            // log with it.
+            let mut secrets: Vec<&str> = vec![&join.machine_token, &join.jwks_json];
+            secrets.extend(spec.env.values().map(String::as_str));
+            let evidence = self.keep_boot_log(&conn, &all[0], &secrets).await;
             self.rollback(&conn, &owner, &all[..1], &machine).await;
-            return Err(e);
+            return Err(with_evidence(e, evidence));
         }
         rec.state = "running".into();
         self.store.record(rec.clone()).map_err(Self::io)?;
+        self.store.audit(audit::of_resource(
+            "resource_confirmed",
+            &rec,
+            "user",
+            "ok",
+            "joined the relay",
+        ));
         Ok(self.instance(&rec, Status::Running, &conn))
     }
 
@@ -517,8 +625,24 @@ impl cua_sandbox_core::Provider for CloudSandboxes {
                 }
             }
         };
-        self.api.delete(&conn, &rec, &owner).await?;
+        if let Err(e) = self.api.delete(&conn, &rec, &owner).await {
+            self.store.audit(audit::of_resource(
+                "resource_deleted",
+                &rec,
+                "user",
+                "failed",
+                &e.to_string(),
+            ));
+            return Err(e);
+        }
         self.store.forget(&rec).map_err(Self::io)?;
+        self.store.audit(audit::of_resource(
+            "resource_deleted",
+            &rec,
+            "user",
+            "ok",
+            "deleted with its sandbox",
+        ));
         if !rec.machine.is_empty() {
             self.forget_machine(&rec.machine).await;
         }

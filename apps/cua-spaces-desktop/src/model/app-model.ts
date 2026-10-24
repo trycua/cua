@@ -160,7 +160,7 @@ export class AppModel {
   readonly thumbnails: SpaceThumbnails;
   /** The notch's indicator: the hotspot, a transfer running (a teleport, files dropped on the notch). */
   readonly activity = new NotchActivity();
-  creates: AppCreatesState = { pending: [], deleting: [], powering: [] };
+  creates: AppCreatesState = { pending: [], deleting: [], powering: [], streaks: [] };
   /** macOS VMs running on this Mac, as New Space last read them. */
   runningMacosVms: number | null = null;
   lumeSource: string | null = null;
@@ -682,9 +682,29 @@ export class AppModel {
    * registry's row when it is ready; returns its id. A failure stays on its
    * row; a cancelled create only leaves the list. Either way it throws.
    */
-  async runCreate(args: AppCreateSpaceArgs, os: AppSpaceOs, pendingId: string, progress?: (p: SpaceCreateProgress) => void): Promise<string> {
+  async runCreate(
+    args: AppCreateSpaceArgs,
+    os: AppSpaceOs,
+    pendingId: string,
+    progress?: (p: SpaceCreateProgress) => void,
+    retrying?: (error: string, errorVariant: string) => void,
+  ): Promise<string> {
     this.startCreate(args, os, pendingId);
-    return this.followCreate(args, pendingId, progress);
+    // A failure that usually passes (the core's `fail_decision`: a runtime
+    // that did not start this time, a network drop during the download, a
+    // VM that did not answer in time) runs the create once more by itself,
+    // the row saying "Retrying…"; `retrying` hears of it first (the page
+    // applies the same failure). Only the final outcome throws.
+    for (;;) {
+      try {
+        return await this.followCreate(args, pendingId, progress);
+      } catch (error) {
+        if (isCancelled(error)) throw error;
+        const row = this.creates.pending.find((p) => p.id === pendingId);
+        if (!row?.retryPending || row.cancelling) throw error;
+        retrying?.(words(error), createErrorVariant(error));
+      }
+    }
   }
 
   /** A new pending id (`pending:<uuid>`). */
@@ -747,7 +767,7 @@ export class AppModel {
       return id;
     } catch (error) {
       if (isCancelled(error)) this.sendCreate(new this.native.AppCreateAction.CancelDone({ id: pendingId }));
-      else this.sendCreate(new this.native.AppCreateAction.Fail({ id: pendingId, error: words(error), errorVariant: createErrorVariant(error) }));
+      else this.sendCreate(new this.native.AppCreateAction.Fail({ id: pendingId, error: words(error), errorVariant: createErrorVariant(error), now: AppModel.nowMs() }));
       throw error;
     }
   }

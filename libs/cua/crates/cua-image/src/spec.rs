@@ -1,8 +1,8 @@
 //! `images.cua.ai/v1alpha1` Image resource, the Rust source of truth for the
-//! schema published at `libs/python/cua-sandbox/schemas/image-v1alpha1.schema.json`
+//! schema published at `libs/cua/crates/cua-image/schema/image-v1alpha1.schema.json`
 //! (JSON Schema generated with `schemars`, the same pattern as the Fleet SDK's
 //! sdk-schema → CRD generation). A test checks the generated schema stays
-//! compatible with the checked-in Python schema.
+//! compatible with the checked-in schema.
 
 use std::collections::BTreeMap;
 
@@ -572,8 +572,10 @@ mod tests {
 
     fn python_schema() -> Value {
         let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../python/cua-sandbox/schemas/image-v1alpha1.schema.json");
-        serde_json::from_slice(&std::fs::read(p).expect("python schema present")).unwrap()
+            .join("schema/image-v1alpha1.schema.json");
+        // The checked-in, published schema (the Python SDK that also shipped
+        // a copy is gone).
+        serde_json::from_slice(&std::fs::read(p).expect("published schema present")).unwrap()
     }
 
     /// Resolve `$ref` (local `#/$defs/...`) against `root`.

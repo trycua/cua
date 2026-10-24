@@ -35,7 +35,9 @@ use cua_sandbox_core::Error;
 use cua_sandbox_core::byoc::{CloudCredentials, CloudKind};
 
 use crate::api::{CloudApi, Result, Target, Tested, cloud_err};
-use crate::model::{self, Connection, ProvisionSpec, Resource, Tier, tag};
+use crate::model::{
+    self, Billing, Capabilities, Connection, HostType, ProvisionSpec, Resource, Supplies, Tier, tag,
+};
 
 /// The region when neither the target nor the profile names one.
 pub const DEFAULT_REGION: &str = "us-west-2";
@@ -43,10 +45,32 @@ pub const DEFAULT_REGION: &str = "us-west-2";
 /// Canonical's AWS account (the Ubuntu images).
 pub const CANONICAL: &str = "099720109477";
 
+/// The `cua-group` tag value of the pool hosts' group.
+pub const POOL_GROUP: &str = "pool-hosts";
+
 /// The instance type for Linux sandboxes on arm64 (and its amd64 twin).
 pub const LINUX_TYPE: (&str, &str) = ("t4g.medium", "t3.medium");
 /// The instance type for the slim Linux image.
 pub const SLIM_TYPE: (&str, &str) = ("t4g.small", "t3.small");
+
+/// The public SSM parameter of a pool host's image: Canonical Ubuntu 24.04
+/// for CPU types, the AWS Deep Learning Base OSS Nvidia Driver GPU image
+/// (Ubuntu 24.04: NVIDIA driver, CUDA, Docker with the NVIDIA container
+/// toolkit) for GPU types; `arch` is `amd64` or `arm64`.
+pub fn host_image_parameter(gpu: bool, arch: &str) -> String {
+    let arm = arch == "arm64";
+    if gpu {
+        format!(
+            "/aws/service/deeplearning/ami/{}/base-oss-nvidia-driver-gpu-ubuntu-24.04/latest/ami-id",
+            if arm { "arm64" } else { "x86_64" }
+        )
+    } else {
+        format!(
+            "/aws/service/canonical/ubuntu/server/24.04/stable/current/{}/hvm/ebs-gp3/ami-id",
+            if arm { "arm64" } else { "amd64" }
+        )
+    }
+}
 
 /// On-demand Linux prices in us-west-2 (US dollars per hour), 2026-09.
 fn price(instance_type: &str) -> f64 {
@@ -57,6 +81,90 @@ fn price(instance_type: &str) -> f64 {
         "t3.medium" => 0.0416,
         _ => 0.0,
     }
+}
+
+/// Regions elastic hosts may be added in besides the connection's.
+pub const HOST_REGIONS: &[&str] = &["us-west-2", "us-east-1", "us-east-2", "eu-west-1"];
+
+/// An elastic host's boot disk (one shared base image, per-Space overlays).
+pub const HOST_DISK_GB: u32 = 60;
+
+/// Machine types offered to the elastic pool: name, arch, vCPUs, GiB,
+/// on-demand Linux USD per hour in us-west-2 (AWS Price List, 2026-10-21),
+/// whether it has `/dev/kvm` (bare metal), and its GPU (empty: none).
+pub const HOST_TYPES: &[(&str, &str, u32, u64, f64, bool, &str)] = &[
+    ("t3.medium", "amd64", 2, 4, 0.0416, false, ""),
+    ("t3.large", "amd64", 2, 8, 0.0832, false, ""),
+    ("c7g.large", "arm64", 2, 4, 0.0725, false, ""),
+    ("c7g.xlarge", "arm64", 4, 8, 0.145, false, ""),
+    ("c7g.2xlarge", "arm64", 8, 16, 0.29, false, ""),
+    ("c7g.4xlarge", "arm64", 16, 32, 0.58, false, ""),
+    ("m7g.large", "arm64", 2, 8, 0.0816, false, ""),
+    ("m7g.xlarge", "arm64", 4, 16, 0.1632, false, ""),
+    ("m7g.2xlarge", "arm64", 8, 32, 0.3264, false, ""),
+    ("c7i.large", "amd64", 2, 4, 0.08925, false, ""),
+    ("c7i.xlarge", "amd64", 4, 8, 0.1785, false, ""),
+    ("c7i.2xlarge", "amd64", 8, 16, 0.357, false, ""),
+    ("c7i.4xlarge", "amd64", 16, 32, 0.714, false, ""),
+    ("m7i.large", "amd64", 2, 8, 0.1008, false, ""),
+    ("m7i.xlarge", "amd64", 4, 16, 0.2016, false, ""),
+    ("m7i.2xlarge", "amd64", 8, 32, 0.4032, false, ""),
+    ("r7i.large", "amd64", 2, 16, 0.1323, false, ""),
+    ("c6g.metal", "arm64", 64, 128, 2.176, true, ""),
+    ("g4dn.xlarge", "amd64", 4, 16, 0.526, false, "nvidia:T4"),
+    ("g5.xlarge", "amd64", 4, 16, 1.006, false, "nvidia:A10G"),
+    ("g5.2xlarge", "amd64", 8, 32, 1.212, false, "nvidia:A10G"),
+    ("g5.12xlarge", "amd64", 48, 192, 5.672, false, "nvidia:A10G"),
+    ("g6.xlarge", "amd64", 4, 16, 0.8048, false, "nvidia:L4"),
+    ("g6.2xlarge", "amd64", 8, 32, 0.9776, false, "nvidia:L4"),
+    ("g6.4xlarge", "amd64", 16, 64, 1.3232, false, "nvidia:L4"),
+    ("g6.12xlarge", "amd64", 48, 192, 4.6016, false, "nvidia:L4"),
+    ("g6e.xlarge", "amd64", 4, 32, 1.861, false, "nvidia:L40S"),
+    ("g6e.2xlarge", "amd64", 8, 64, 2.24208, false, "nvidia:L40S"),
+    (
+        "g6e.12xlarge",
+        "amd64",
+        48,
+        384,
+        10.49264,
+        false,
+        "nvidia:L40S",
+    ),
+    (
+        "p4d.24xlarge",
+        "amd64",
+        96,
+        1152,
+        21.95764,
+        false,
+        "nvidia:A100",
+    ),
+    (
+        "p5.48xlarge",
+        "amd64",
+        192,
+        2048,
+        55.04,
+        false,
+        "nvidia:H100",
+    ),
+];
+
+/// Whether `instance_type` has a GPU: a GPU row of [`HOST_TYPES`], or
+/// a type of the g or p families (`g6.xlarge`, `p5.48xlarge`; `gr6`).
+pub fn is_gpu_type(instance_type: &str) -> bool {
+    if HOST_TYPES
+        .iter()
+        .any(|t| t.0 == instance_type && !t.6.is_empty())
+    {
+        return true;
+    }
+    let family = instance_type.split('.').next().unwrap_or_default();
+    let letters: String = family
+        .chars()
+        .take_while(|c| c.is_ascii_alphabetic())
+        .collect();
+    matches!(letters.as_str(), "g" | "p" | "gr") && family.len() > letters.len()
 }
 
 /// A gp3 volume's cost per hour ($0.08 per GiB-month) plus the public IPv4
@@ -156,6 +264,48 @@ fn tags_of(tags: &[Tag]) -> BTreeMap<String, String> {
             ))
         })
         .collect()
+}
+
+/// The pool group's ingress: members of group `id` reach each other on
+/// TCP `ports` and on every UDP port (the mesh's direct path), nothing
+/// else. Rules already there are left as they are.
+async fn open_to_group(ec2: &aws_sdk_ec2::Client, id: &str, ports: (u16, u16)) -> Result<()> {
+    let from_group = || {
+        aws_sdk_ec2::types::UserIdGroupPair::builder()
+            .group_id(id)
+            .build()
+    };
+    let rules = [
+        aws_sdk_ec2::types::IpPermission::builder()
+            .ip_protocol("tcp")
+            .from_port(i32::from(ports.0))
+            .to_port(i32::from(ports.1))
+            .user_id_group_pairs(from_group())
+            .build(),
+        aws_sdk_ec2::types::IpPermission::builder()
+            .ip_protocol("udp")
+            .from_port(0)
+            .to_port(65535)
+            .user_id_group_pairs(from_group())
+            .build(),
+    ];
+    for rule in rules {
+        match ec2
+            .authorize_security_group_ingress()
+            .group_id(id)
+            .ip_permissions(rule)
+            .send()
+            .await
+        {
+            Ok(_) => {}
+            Err(e)
+                if e.as_service_error()
+                    .and_then(aws_sdk_ec2::error::ProvideErrorMetadata::code)
+                    == Some("InvalidPermission.Duplicate") => {}
+            Err(e) => return Err(aws_err("open the pool hosts to each other", e)),
+        }
+    }
+    Ok(())
 }
 
 fn filter(name: &str, values: &[&str]) -> Filter {
@@ -342,12 +492,39 @@ impl Aws {
             })
     }
 
-    /// This home's security group in `vpc`, if it exists.
+    /// The default subnets (one per zone) of the default VPC, as (zone,
+    /// subnet id) in zone order.
+    async fn default_subnets(&self, ec2: &aws_sdk_ec2::Client) -> Result<Vec<(String, String)>> {
+        let vpc = self.default_vpc(ec2).await?;
+        let out = ec2
+            .describe_subnets()
+            .filters(filter("vpc-id", &[&vpc]))
+            .filters(filter("default-for-az", &["true"]))
+            .send()
+            .await
+            .map_err(|e| aws_err("list the default subnets", e))?;
+        let mut v: Vec<(String, String)> = out
+            .subnets()
+            .iter()
+            .filter_map(|s| {
+                Some((
+                    s.availability_zone()?.to_string(),
+                    s.subnet_id()?.to_string(),
+                ))
+            })
+            .collect();
+        v.sort();
+        Ok(v)
+    }
+
+    /// This home's security group in `vpc` for `peer_ports` (the
+    /// outbound-only one, or the pool hosts' one), if it exists.
     async fn find_group(
         &self,
         ec2: &aws_sdk_ec2::Client,
         vpc: &str,
         owner: &str,
+        pool: bool,
     ) -> Result<Option<aws_sdk_ec2::types::SecurityGroup>> {
         let mut req = ec2
             .describe_security_groups()
@@ -362,24 +539,45 @@ impl Aws {
         Ok(out
             .security_groups()
             .iter()
-            .find(|g| model::is_ours(&tags_of(g.tags()), owner))
+            .find(|g| {
+                let t = tags_of(g.tags());
+                model::is_ours(&t, owner)
+                    && (t.get(tag::GROUP).map(String::as_str) == Some(POOL_GROUP)) == pool
+            })
             .cloned())
     }
 
-    /// Finds or creates this home's outbound-only security group; returns
-    /// its id and, when it was created now, its record.
+    /// Finds or creates this home's group: outbound only, or (with
+    /// `peer_ports`) for pool hosts, which may reach each other on those
+    /// TCP ports (and UDP, the mesh's direct path between them) and
+    /// nothing else: no address outside the group gets in. An existing pool
+    /// group gets the rules it lacks (an older one opened fewer ports). Returns its id and, when it was created
+    /// now, its record.
     async fn ensure_group(
         &self,
         ec2: &aws_sdk_ec2::Client,
         conn: &Connection,
         owner: &str,
+        peer_ports: Option<(u16, u16)>,
     ) -> Result<(String, Option<Resource>)> {
         let vpc = self.default_vpc(ec2).await?;
-        if let Some(g) = self.find_group(ec2, &vpc, owner).await? {
-            return Ok((g.group_id().unwrap_or_default().to_string(), None));
+        let pool = peer_ports.is_some();
+        if let Some(g) = self.find_group(ec2, &vpc, owner, pool).await? {
+            let id = g.group_id().unwrap_or_default().to_string();
+            if let Some(ports) = peer_ports {
+                open_to_group(ec2, &id, ports).await?;
+            }
+            return Ok((id, None));
         }
-        let name = format!("cua-sandboxes-{}", model::label_value(owner));
-        let tags = model::tags(owner, "", "", 0);
+        let name = if pool {
+            format!("cua-pool-hosts-{}", model::label_value(owner))
+        } else {
+            format!("cua-sandboxes-{}", model::label_value(owner))
+        };
+        let mut tags = model::tags(owner, "", "", 0);
+        if pool {
+            tags.insert(tag::GROUP.into(), POOL_GROUP.into());
+        }
         let mut spec = TagSpecification::builder().resource_type(ResourceType::SecurityGroup);
         for (k, v) in tags.iter().chain([(&"Name".to_string(), &name)]) {
             spec = spec.tags(Tag::builder().key(k).value(v).build());
@@ -387,27 +585,35 @@ impl Aws {
         let out = ec2
             .create_security_group()
             .group_name(&name)
-            .description("Cua sandboxes: no inbound; the guest dials out to the cua.ai relay")
+            .description(if pool {
+                "Cua pool hosts: no inbound from anywhere but each other (gang ports); they dial out to the cua.ai relay"
+            } else {
+                "Cua sandboxes: no inbound; the guest dials out to the cua.ai relay"
+            })
             .vpc_id(&vpc)
             .tag_specifications(spec.build())
             .send()
             .await
             .map_err(|e| aws_err("create the Cua security group", e))?;
         let id = out.group_id().unwrap_or_default().to_string();
-        Ok((
-            id.clone(),
-            Some(Resource {
-                provider: "aws".into(),
-                id,
-                resource_type: "security_group".into(),
-                name,
-                region: conn.region.clone(),
-                created: model::now(),
-                tags,
-                state: "available".into(),
-                ..Default::default()
-            }),
-        ))
+        let record = Resource {
+            provider: "aws".into(),
+            id: id.clone(),
+            resource_type: "security_group".into(),
+            name,
+            region: conn.region.clone(),
+            created: model::now(),
+            tags,
+            state: "available".into(),
+            ..Default::default()
+        };
+        if let Some(ports) = peer_ports
+            && let Err(e) = open_to_group(ec2, &id, ports).await
+        {
+            let _ = ec2.delete_security_group().group_id(&id).send().await;
+            return Err(e);
+        }
+        Ok((id, Some(record)))
     }
 
     /// The RunInstances call of `spec` (without sending it), for a create
@@ -520,6 +726,25 @@ impl Aws {
                 Ok(Some(state))
             }
         }
+    }
+}
+
+/// Whether a RunInstances error is about the zone it landed in (no
+/// capacity there, or the type is not offered there), so another zone may
+/// work.
+fn zone_bound(code: Option<&str>) -> bool {
+    matches!(code, Some("InsufficientInstanceCapacity" | "Unsupported"))
+}
+
+/// An EC2 error as `Code: message`.
+fn err_detail<E, R>(e: &aws_sdk_ec2::error::SdkError<E, R>) -> String
+where
+    aws_sdk_ec2::error::SdkError<E, R>: ProvideErrorMetadata,
+{
+    match (e.code(), e.message()) {
+        (Some(c), Some(m)) if m != c => format!("{c}: {m}"),
+        (Some(c), _) => c.to_string(),
+        _ => "no answer from EC2".to_string(),
     }
 }
 
@@ -745,16 +970,23 @@ impl CloudApi for Aws {
             tags: model::tags(owner, "dry-run", "", 0),
             ..Default::default()
         };
-        let group = match self.find_group(&c.ec2, &vpc, owner).await {
+        let group = match self.find_group(&c.ec2, &vpc, owner, false).await {
             Ok(Some(g)) => g.group_id().map(str::to_string),
             _ => None,
         };
+        // Tagged like the real create: the least-privilege policy only
+        // allows a security group created with the managed tag.
+        let mut sg_tags = TagSpecification::builder().resource_type(ResourceType::SecurityGroup);
+        for (k, v) in &spec.tags {
+            sg_tags = sg_tags.tags(Tag::builder().key(k).value(v).build());
+        }
         let sg_dry = c
             .ec2
             .create_security_group()
             .group_name("cua-sandboxes-dry-run")
             .description("dry run")
             .vpc_id(&vpc)
+            .tag_specifications(sg_tags.build())
             .dry_run(true)
             .send()
             .await;
@@ -789,17 +1021,38 @@ impl CloudApi for Aws {
             if sg_ok && run_ok {
                 "RunInstances and CreateSecurityGroup would succeed (dry run)".to_string()
             } else {
-                [sg_detail, run_detail]
+                let mut why = [sg_detail, run_detail]
                     .into_iter()
                     .filter(|s| !s.is_empty())
                     .collect::<Vec<_>>()
-                    .join("; ")
+                    .join("; ");
+                let denied = |code: Option<&str>| code.is_some_and(|c| c.contains("Unauthorized"));
+                if sg_dry.as_ref().err().is_some_and(|e| denied(e.code()))
+                    || run_dry.as_ref().err().is_some_and(|e| denied(e.code()))
+                {
+                    why.push_str(&format!(
+                        "; attach Cua's least-privilege policy to this identity: {}",
+                        crate::policy::DOCS_URL
+                    ));
+                }
+                why
             },
         );
         t
     }
 
     async fn provision(&self, conn: &Connection, spec: &ProvisionSpec) -> Result<Vec<Resource>> {
+        // A host may go to another region than the connection's.
+        let in_region;
+        let conn = if spec.region.is_empty() || spec.region == conn.region {
+            conn
+        } else {
+            in_region = Connection {
+                region: spec.region.clone(),
+                ..conn.clone()
+            };
+            &in_region
+        };
         let c = self.clients(conn).await;
         let owner = spec
             .tags
@@ -812,14 +1065,76 @@ impl CloudApi for Aws {
             spec.arch.as_str()
         };
         let itype = for_arch(&spec.machine_type, arch);
-        let (image, root) = self.ubuntu(&c.ec2, arch).await?;
-        let (group, made_group) = self.ensure_group(&c.ec2, conn, &owner).await?;
-        let out = self
+        // A public SSM parameter names the image: EC2 resolves it in the
+        // create itself. Canonical's and the Deep Learning images both
+        // boot from /dev/sda1.
+        // A GPU host boots the Deep Learning image (driver, CUDA, Docker
+        // with the NVIDIA toolkit) unless asked otherwise.
+        let image_parameter =
+            if spec.image_parameter.is_empty() && spec.is_host() && is_gpu_type(&itype) {
+                host_image_parameter(true, arch)
+            } else {
+                spec.image_parameter.clone()
+            };
+        let (image, root) = if image_parameter.is_empty() {
+            self.ubuntu(&c.ec2, arch).await?
+        } else {
+            if !image_parameter.starts_with("/aws/service/") {
+                return Err(Error::InvalidArgument(format!(
+                    "aws: {image_parameter} is not a public /aws/service/ image parameter"
+                )));
+            }
+            (
+                format!("resolve:ssm:{image_parameter}"),
+                "/dev/sda1".to_string(),
+            )
+        };
+        let (group, made_group) = self
+            .ensure_group(&c.ec2, conn, &owner, spec.peer_ports)
+            .await?;
+        let mut sent = self
             .run_request(&c.ec2, spec, &image, &root, Some(&group), &itype)
             .client_token(&spec.name)
             .send()
-            .await
-            .map_err(|e| aws_err("start the instance", e))?;
+            .await;
+        // No capacity for this type where EC2 put it (or the type is not
+        // offered there): try each zone of the default VPC (GPU types often
+        // have room in another one). Every attempt and why it failed goes
+        // into the error, so nobody has to guess which zones were tried.
+        let mut tried = Vec::new();
+        if let Err(e) = &sent
+            && zone_bound(e.code())
+        {
+            tried.push(format!("EC2's pick of zone: {}", err_detail(e)));
+            for (i, (zone, subnet)) in self.default_subnets(&c.ec2).await?.iter().enumerate() {
+                sent = self
+                    .run_request(&c.ec2, spec, &image, &root, Some(&group), &itype)
+                    .subnet_id(subnet)
+                    .client_token(format!("{}-z{i}", spec.name))
+                    .send()
+                    .await;
+                match &sent {
+                    Err(e) => {
+                        tried.push(format!("{zone} ({subnet}): {}", err_detail(e)));
+                        if !zone_bound(e.code()) {
+                            break;
+                        }
+                    }
+                    Ok(_) => break,
+                }
+            }
+        }
+        let out = match sent {
+            Ok(out) => out,
+            Err(e) if tried.is_empty() => return Err(aws_err("start the instance", e)),
+            Err(_) => {
+                return Err(cloud_err(
+                    "aws",
+                    &format!("start a {itype} in {}", conn.region),
+                    format!("tried {} placements: {}", tried.len(), tried.join("; ")),
+                ));
+            }
+        };
         let inst = out
             .instances()
             .first()
@@ -837,7 +1152,10 @@ impl CloudApi for Aws {
             ..Default::default()
         };
         r.extra.insert("instance_type".into(), itype);
-        r.extra.insert("image".into(), image);
+        r.extra.insert(
+            "image".into(),
+            inst.image_id().map(str::to_string).unwrap_or(image),
+        );
         r.extra.insert("security_group".into(), group);
         let mut all = vec![r];
         all.extend(made_group);
@@ -944,6 +1262,41 @@ impl CloudApi for Aws {
         }
     }
 
+    async fn boot_log(&self, conn: &Connection, r: &Resource) -> Result<Option<String>> {
+        if r.id.is_empty() || r.resource_type == "security_group" {
+            return Ok(None);
+        }
+        let c = self.clients(conn).await;
+        // `latest` returns the newest output (Nitro instances only); the
+        // plain call returns the last 64 KiB and works everywhere.
+        let out = match c
+            .ec2
+            .get_console_output()
+            .instance_id(&r.id)
+            .latest(true)
+            .send()
+            .await
+        {
+            Ok(o) => o,
+            Err(_) => c
+                .ec2
+                .get_console_output()
+                .instance_id(&r.id)
+                .send()
+                .await
+                .map_err(|e| aws_err("read the console output", e))?,
+        };
+        Ok(out.output().filter(|o| !o.trim().is_empty()).map(|o| {
+            use base64::Engine as _;
+            let compact: String = o.split_whitespace().collect();
+            base64::engine::general_purpose::STANDARD
+                .decode(compact.as_bytes())
+                .ok()
+                .map(|b| String::from_utf8_lossy(&b).into_owned())
+                .unwrap_or_else(|| o.to_string())
+        }))
+    }
+
     async fn list_owned(&self, conn: &Connection, owner: &str) -> Result<Vec<Resource>> {
         let c = self.clients(conn).await;
         let mut out = Vec::new();
@@ -1002,6 +1355,61 @@ impl CloudApi for Aws {
         }
         Ok(out)
     }
+
+    fn capabilities(&self, conn: &Connection) -> Capabilities {
+        let mut regions = vec![conn.region.clone()];
+        for r in HOST_REGIONS {
+            if !regions.iter().any(|x| x == r) {
+                regions.push((*r).to_string());
+            }
+        }
+        regions.retain(|r| !r.is_empty());
+        Capabilities {
+            supplies: Supplies::Hosts,
+            billing: Billing {
+                granularity_secs: 1,
+                minimum_secs: 60,
+                stopped_bills: false,
+            },
+            regions,
+            max_machines: 20,
+            // Instances shut down from inside are terminated.
+            vcpu_quotas: Default::default(),
+            self_deletes: true,
+        }
+    }
+
+    async fn host_types(&self, conn: &Connection) -> Result<Vec<HostType>> {
+        let regions = self.capabilities(conn).regions;
+        let mut v: Vec<HostType> = HOST_TYPES
+            .iter()
+            .map(|(name, arch, cpus, gb, usd, kvm, gpu)| HostType {
+                name: (*name).into(),
+                arch: (*arch).into(),
+                vcpus: *cpus,
+                memory_mb: gb * 1024,
+                disk_gb: if gpu.is_empty() { HOST_DISK_GB } else { 100 },
+                kvm: *kvm,
+                gpu: (*gpu).into(),
+                usd_per_hour: ((usd + extras_per_hour(HOST_DISK_GB)) * 10_000.0).round() / 10_000.0,
+                regions: regions.clone(),
+                boot_secs: if *kvm { 300 } else { 90 },
+                // EC2's on-demand vCPU quotas: standard families, G, P.
+                quota_pool: match name.chars().next() {
+                    Some('g') if !gpu.is_empty() => "g",
+                    Some('p') if !gpu.is_empty() => "p",
+                    _ => "standard",
+                }
+                .into(),
+            })
+            .collect();
+        v.sort_by(|a, b| {
+            a.usd_per_hour
+                .total_cmp(&b.usd_per_hour)
+                .then(a.name.cmp(&b.name))
+        });
+        Ok(v)
+    }
 }
 
 #[cfg(test)]
@@ -1018,5 +1426,18 @@ mod tests {
         let linux = k.iter().find(|k| k.image == "linux").unwrap();
         assert!(linux.supported && linux.usd_per_hour > 0.03 && linux.usd_per_hour < 0.05);
         assert!(!k.iter().find(|k| k.image == "macos").unwrap().supported);
+    }
+
+    #[test]
+    fn host_images_are_public_ssm_parameters() {
+        assert_eq!(
+            host_image_parameter(false, "amd64"),
+            "/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id"
+        );
+        assert_eq!(
+            host_image_parameter(true, "amd64"),
+            "/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-24.04/latest/ami-id"
+        );
+        assert!(host_image_parameter(true, "arm64").contains("/ami/arm64/"));
     }
 }

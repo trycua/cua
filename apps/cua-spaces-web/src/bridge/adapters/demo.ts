@@ -51,6 +51,7 @@ import { demoVolumeHandlers, demoVolumeState, type DemoVolumeState } from "./dem
 import { demoHostSetupHandlers, demoHostSetupState, type DemoHostSetupState } from "./demo/host-setup";
 import { demoSpaceDetailHandlers, demoSpaceDetailState, type DemoSpaceDetailState } from "./demo/space-detail";
 import { demoTelemetryHandlers, demoTelemetryState, type DemoTelemetryState } from "./demo/telemetry";
+import { demoLinksHandlers, demoLinksState, type DemoLinksState } from "./demo/links";
 import { demoResourcesHandlers, demoResourcesState, type DemoResourcesState } from "./demo/resources";
 import { demoRelayUsageHandlers, demoRelayUsageNamed, demoRelayUsageState, type DemoRelayUsageState } from "./demo/relay-usage";
 import { demoStartupHandlers, demoStartupState, type DemoStartupState } from "./demo/startup";
@@ -88,7 +89,18 @@ export interface DemoOptions {
   update?: Partial<UpdateState>;
   /** A This Mac prompt to show (`?demo=nudge-second-agent`, `?demo=nudge-risky`). */
   nudge?: "second-agent" | "risky";
+  /** Creates fail as a real host's do: `runtime-once` (the first create's
+   * built-in Linux runtime does not start; later attempts work,
+   * `?demo=create-fail-runtime`) or `disk` (every create is short of disk
+   * space, `?demo=create-fail-disk`). */
+  failCreates?: "runtime-once" | "disk";
 }
+
+/** The SDK's words for the failures `failCreates` plays. */
+export const DEMO_CREATE_FAILURES = {
+  runtime: "local runtime: the built-in Linux runtime did not start: exiting, status 1",
+  disk: "not enough disk space to pull ghcr.io/trycua/macos:26: it needs about 30.0 GB and cua keeps 5.0 GB free, but only 12.4 GB is available on /Users/me/.lume (run `cua cache prune` to free space, or lower CUA_DISK_MIN_FREE)",
+} as const;
 
 const DEMO_NOTES = "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3";
 
@@ -114,6 +126,7 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     usage: (["idle", "warn", "limit", "pro", "teams"] as const).find((u) => flags.has(`usage-${u}`)),
     nudge: (["second-agent", "risky"] as const).find((n) => flags.has(`nudge-${n}`)),
     disk: flags.has("disk-full") ? "full" : flags.has("low-disk") ? "low" : undefined,
+    failCreates: flags.has("create-fail-runtime") ? "runtime-once" : flags.has("create-fail-disk") ? "disk" : undefined,
     ...(flags.has("update-ready")
       ? { update: { status: "downloaded" as const, version: "0.9.3", percent: 100, notesUrl: DEMO_NOTES } }
       : flags.has("update-downloading")
@@ -174,6 +187,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     volume: demoVolumeState(now(), options.onboarded !== false, options.platform),
     ...demoTelemetryState(),
     ...demoRelayUsageState(),
+    links: demoLinksState(),
     ...demoResourcesState(options.disk ?? "healthy"),
     ...(options.usage ? { relayUsage: demoRelayUsageNamed(options.usage) } : {}),
     ...demoSpaceDetailState(),
@@ -262,6 +276,8 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
   };
 
   const ctx = { state, now, wait, emit, findRow, stepMs: step };
+  // Creates asked for so far (`failCreates: "runtime-once"` fails the first).
+  let createAttempts = 0;
   const handlers: { [K in OpName]: Handler<K> } = {
     "spaces.list": () => state.rows.map((r) => ({ ...r })),
 
@@ -276,6 +292,16 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       const job = { cancelled: false };
       state.creates.set(pendingId, job);
       try {
+        // A failure the options ask for, after the create starts preparing.
+        const failure =
+          options.failCreates === "disk" ? DEMO_CREATE_FAILURES.disk : options.failCreates === "runtime-once" && createAttempts++ === 0 ? DEMO_CREATE_FAILURES.runtime : null;
+        if (failure) {
+          for (const fraction of [0, 0.3]) {
+            emit({ type: "spaces.createProgress", progress: { pendingId, phase: "preparing", fraction, detail: "preparing", space: id } });
+            await wait(step / 2);
+          }
+          throw new HostError(failure, "runtime");
+        }
         for (const phase of CREATE_PHASES) {
           for (const fraction of [0, 0.5]) {
             if (job.cancelled) throw new HostError("cancelled: the create was stopped and what it made was removed", "cancelled");
@@ -519,6 +545,16 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       return null;
     },
     "agents.setup": () => state.agentSetup.map((r) => ({ ...r })),
+    // The demo's browser sign-in finishes a moment later.
+    "agents.signIn": async ({ agent }) => {
+      const row = state.agentSetup.find((r) => r.agent === agent);
+      if (!row?.signIn) throw new Error(`${row?.name ?? agent} has no sign-in Cua can start`);
+      if (!row.installed) throw new Error(`${row.name} isn't installed on this computer`);
+      setTimeout(() => {
+        state.agentSetup = state.agentSetup.map((r) => (r.agent === agent ? { ...r, signedIn: true } : r));
+      }, step * 40);
+      return state.agentSetup.map((r) => ({ ...r }));
+    },
     "agents.configure": async ({ agents }) => {
       await wait(step);
       const wanted = (r: AgentSetupRow) => r.installed && (agents === null || agents.includes(r.agent));
@@ -544,6 +580,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...createDemoSettings({ now, wait, emit, stepMs: step, platform: state.platform, unenrolled: options.unenrolled, update: options.update, experiments: state.volume.experiments, signedIn: () => Boolean(state.identity), settings: () => state.settings, setSettings: (p) => ((state.settings = { ...state.settings, ...p }), emit({ type: "settings.changed" })), addMachine: (m) => ((state.paired = [...state.paired, m]), emit({ type: "machines.changed" })) }),
     ...demoTelemetryHandlers(ctx),
     ...demoRelayUsageHandlers(ctx),
+    ...demoLinksHandlers(ctx),
     "nudges.pending": () => risky.filter((r) => r.expiresMs > now()).map((r) => ({ ...r })),
     "nudges.answer": ({ id }) => {
       risky = risky.filter((r) => r.id !== id);
@@ -579,7 +616,11 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
   };
 }
 
-export interface DemoState extends DemoTelemetryState, DemoRelayUsageState, DemoResourcesState, DemoSpaceDetailState, DemoHostSetupState, DemoStartupState, DemoNewSpaceState, DemoKeyvaultSetupState, DemoKeyvaultManageState {
+interface DemoLinksStateField {
+  links: DemoLinksState;
+}
+
+export interface DemoState extends DemoLinksStateField, DemoTelemetryState, DemoRelayUsageState, DemoResourcesState, DemoSpaceDetailState, DemoHostSetupState, DemoStartupState, DemoNewSpaceState, DemoKeyvaultSetupState, DemoKeyvaultManageState {
   rows: SpaceRow[];
   items: KvItem[];
   keyvaultLocked: boolean;

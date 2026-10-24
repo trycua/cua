@@ -122,7 +122,7 @@ pub fn load(path: &Path) -> AppSettings {
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
-    migrate_sharing(path, &mut s);
+    migrate_defaults(path, &mut s);
     if s.new_ui.is_none() && s.experiments.web_ui {
         s.new_ui = Some(true);
     }
@@ -137,28 +137,45 @@ fn migrations_path(path: &Path) -> std::path::PathBuf {
     path.with_file_name("settings-migrations.json")
 }
 
-/// Sharing became on by default in 0.9.1 (CUA-1668). 0.9.0 saved
-/// `sharing: false` for anyone who toggled any experiment, without them
-/// choosing it, and left no record of an explicit choice. The first load
-/// without the marker turns a stored `false` on once and writes the marker
-/// (also on a fresh install, so a later "off" is never overridden); from then
-/// on the stored value is the user's. Best effort: a failed write only
-/// repeats the migration on the next load.
-fn migrate_sharing(path: &Path, s: &mut AppSettings) {
+/// Defaults that turned on after releases saved them as off. Each one has a
+/// key in the migration marker.
+const MIGRATIONS: [&str; 2] = ["sharingDefaultOn", "yourCloudDefaultOn"];
+
+/// Sharing became on by default in 0.9.1 (CUA-1668) and Your cloud later
+/// (a linked cloud showed under Run on only after digging into Settings).
+/// Earlier builds saved `false` for anyone who toggled any experiment,
+/// without them choosing it, and left no record of an explicit choice. The
+/// first load without a switch's marker turns a stored `false` on once and
+/// writes the marker (also on a fresh install, so a later "off" is never
+/// overridden); from then on the stored value is the user's. A missing key
+/// already reads as on. Best effort: a failed write only repeats the
+/// migration on the next load.
+fn migrate_defaults(path: &Path, s: &mut AppSettings) {
     let marker = migrations_path(path);
-    if marker.exists() {
+    let mut done: serde_json::Map<String, serde_json::Value> = std::fs::read_to_string(&marker)
+        .ok()
+        .and_then(|m| serde_json::from_str(&m).ok())
+        .unwrap_or_default();
+    let pending = |k: &str| done.get(k) != Some(&serde_json::Value::Bool(true));
+    if !MIGRATIONS.iter().any(|k| pending(k)) {
         return;
     }
-    if !s.experiments.sharing {
-        s.experiments.sharing = true;
+    let turn_sharing_on = pending(MIGRATIONS[0]) && !s.experiments.sharing;
+    let turn_cloud_on = pending(MIGRATIONS[1]) && !s.experiments.your_cloud;
+    if turn_sharing_on || turn_cloud_on {
+        s.experiments.sharing |= turn_sharing_on;
+        s.experiments.your_cloud |= turn_cloud_on;
         if path.exists() && save(path, s).is_err() {
             return;
         }
     }
+    for k in MIGRATIONS {
+        done.insert(k.into(), true.into());
+    }
     if let Some(dir) = marker.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let _ = std::fs::write(&marker, r#"{"sharingDefaultOn":true}"#);
+    let _ = std::fs::write(&marker, serde_json::Value::Object(done).to_string());
 }
 
 /// `settings` with the New UI as this launch shows it: the user's choice,
@@ -400,6 +417,10 @@ pub struct SettingsInput {
     /// `builtin`, `system`); none: no Linux row.
     #[serde(default)]
     pub linux_source: Option<String>,
+    /// Overflow into your clouds when this machine is full
+    /// (`placement.overflow`); none: no row.
+    #[serde(default)]
+    pub overflow: Option<bool>,
 }
 
 impl Default for SettingsInput {
@@ -427,6 +448,7 @@ impl Default for SettingsInput {
             auto_connect: None,
             lume_source: None,
             linux_source: None,
+            overflow: None,
         }
     }
 }
@@ -453,6 +475,27 @@ pub fn auto_connect_row(on: bool) -> SettingsRow {
         "Opening a running Space shows its live desktop".into()
     } else {
         "Opening a running Space shows a preview and a Connect button".into()
+    });
+    r
+}
+
+/// The overflow switch's label.
+pub const OVERFLOW_LABEL: &str = "Overflow into your clouds when this Mac is full";
+
+/// Settings, General: whether Spaces created without a location go to your
+/// linked clouds once this machine is full (`placement.overflow`; only with
+/// a budget set on the Machines page).
+pub fn overflow_row(on: bool) -> SettingsRow {
+    let mut r = row(
+        "placement-overflow",
+        SettingsRowKind::Toggle,
+        OVERFLOW_LABEL,
+    );
+    r.options = vec![opt("on", "On", on), opt("off", "Off", !on)];
+    r.help = Some(if on {
+        "With a linked cloud and a budget, new Spaces go there when this Mac is full".into()
+    } else {
+        "New Spaces stay on this Mac".into()
     });
     r
 }
@@ -738,6 +781,9 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
     general.push(notch);
     if let Some(on) = input.auto_connect {
         general.push(auto_connect_row(on));
+    }
+    if let Some(on) = input.overflow {
+        general.push(overflow_row(on));
     }
     // Where New Space starts: only a choice while the apps offer Cua Cloud.
     if crate::model::CLOUD_SPACES_OFFERED {
@@ -1233,6 +1279,18 @@ mod tests {
                 .iter()
                 .any(|r| r.id == "auto-connect")
         );
+        // The overflow switch shows when the app passes it, with its state.
+        assert!(
+            !general(&SettingsInput::default())
+                .iter()
+                .any(|r| r.id == "placement-overflow")
+        );
+        let rows = general(&SettingsInput {
+            overflow: Some(false),
+            ..Default::default()
+        });
+        let o = rows.iter().find(|r| r.id == "placement-overflow").unwrap();
+        assert!(o.options.iter().any(|x| x.id == "off" && x.active));
         let rows = general(&SettingsInput {
             auto_connect: Some(true),
             ..Default::default()
@@ -1478,6 +1536,57 @@ mod tests {
         let (dir, path) = temp_settings("sharing-true");
         std::fs::write(&path, r#"{"experiments":{"sharing":true}}"#).unwrap();
         assert!(load(&path).experiments.sharing);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn your_cloud_on_by_default_migrates_a_stored_false_once() {
+        // Fresh install: on, and an "off" afterwards survives restarts.
+        let (dir, path) = temp_settings("cloud-fresh");
+        let s = load(&path);
+        assert!(s.experiments.your_cloud);
+        save(
+            &path,
+            &choose_experiment(&s, "experiment:your_cloud", "off"),
+        )
+        .unwrap();
+        assert!(!load(&path).experiments.your_cloud);
+        assert!(!load(&path).experiments.your_cloud, "and again");
+        let _ = std::fs::remove_dir_all(dir);
+
+        // No value stored: on. An older build's saved false (no marker for
+        // it, though the sharing marker exists): on once, then the user's.
+        let (dir, path) = temp_settings("cloud-old");
+        std::fs::write(&path, r#"{"experiments":{"cuaVolume":true}}"#).unwrap();
+        std::fs::write(
+            path.with_file_name("settings-migrations.json"),
+            r#"{"sharingDefaultOn":true}"#,
+        )
+        .unwrap();
+        assert!(load(&path).experiments.your_cloud, "never set reads as on");
+        std::fs::write(
+            &path,
+            r#"{"experiments":{"yourCloud":false,"sharing":false}}"#,
+        )
+        .unwrap();
+        std::fs::remove_file(path.with_file_name("settings-migrations.json")).unwrap();
+        std::fs::write(
+            path.with_file_name("settings-migrations.json"),
+            r#"{"sharingDefaultOn":true}"#,
+        )
+        .unwrap();
+        let s = load(&path);
+        assert!(s.experiments.your_cloud, "the saved default, not a choice");
+        assert!(
+            !s.experiments.sharing,
+            "sharing's own marker kept its choice"
+        );
+        save(
+            &path,
+            &choose_experiment(&s, "experiment:your_cloud", "off"),
+        )
+        .unwrap();
+        assert!(!load(&path).experiments.your_cloud);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

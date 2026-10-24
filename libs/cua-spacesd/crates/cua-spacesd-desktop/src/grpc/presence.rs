@@ -203,6 +203,17 @@ impl Member {
     }
 }
 
+/// The cursor flusher's lifecycle. It runs only while the hub has members, so
+/// an idle Space (nobody joined, no agent cursor) has no 10 ms timer waking
+/// the runtime.
+#[derive(Default)]
+struct Flusher {
+    running: bool,
+    /// The runtime the flusher runs on, remembered so a member added from a
+    /// thread outside it (an agent cursor from the driver) can restart it.
+    handle: Option<tokio::runtime::Handle>,
+}
+
 #[derive(Default)]
 struct HubState {
     members: HashMap<String, Member>,
@@ -219,7 +230,7 @@ pub struct PresenceHub {
     /// leading edge instead of waiting for their next tick.
     cursor_changed: tokio::sync::Notify,
     state: Mutex<HubState>,
-    flusher: Mutex<bool>,
+    flusher: Mutex<Flusher>,
     shapes: Mutex<Option<Arc<dyn ShapeRequests>>>,
     timings: HubTimings,
     me: Weak<PresenceHub>,
@@ -234,7 +245,7 @@ impl PresenceHub {
         Arc::new_cyclic(|me| Self {
             cursor_changed: tokio::sync::Notify::new(),
             state: Mutex::new(HubState::default()),
-            flusher: Mutex::new(false),
+            flusher: Mutex::new(Flusher::default()),
             shapes: Mutex::new(None),
             timings,
             me: me.clone(),
@@ -252,16 +263,23 @@ impl PresenceHub {
         *self.shapes.lock().unwrap() = Some(sink);
     }
 
-    /// Start the cursor flusher (idempotent; needs a tokio runtime).
+    /// Start the cursor flusher (idempotent; needs a tokio runtime, now or
+    /// on an earlier call). It stops on its own once the hub has no members;
+    /// whoever adds a member calls this again after inserting it.
     pub fn spawn_flusher(&self) {
-        let mut started = self.flusher.lock().unwrap();
-        if *started {
+        let mut flusher = self.flusher.lock().unwrap();
+        if flusher.running {
             return;
         }
-        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+        let Some(handle) = tokio::runtime::Handle::try_current()
+            .ok()
+            .or_else(|| flusher.handle.clone())
+        else {
             return;
         };
-        *started = true;
+        flusher.handle = Some(handle.clone());
+        flusher.running = true;
+        drop(flusher);
         let hub = self.me.clone();
         let interval = self.timings.cursor_interval;
         handle.spawn(async move {
@@ -279,11 +297,27 @@ impl PresenceHub {
                 };
                 if step % STEPS == 0 {
                     hub.tick();
+                    if hub.stop_flusher_if_empty() {
+                        return;
+                    }
                 } else {
                     hub.flush();
                 }
             }
         });
+    }
+
+    /// Stop the flusher when nobody is present. Holding the flusher lock
+    /// across the membership check pairs with members being inserted before
+    /// `spawn_flusher` is called: either this sees the new member, or the
+    /// later `spawn_flusher` sees `running == false` and restarts it.
+    fn stop_flusher_if_empty(&self) -> bool {
+        let mut flusher = self.flusher.lock().unwrap();
+        if !self.state.lock().unwrap().members.is_empty() {
+            return false;
+        }
+        flusher.running = false;
+        true
     }
 
     fn assign_color(state: &HubState, requested: &str) -> String {
@@ -383,7 +417,6 @@ impl PresenceHub {
         Vec<ParticipantCursor>,
         mpsc::Receiver<JoinResponse>,
     ) {
-        self.spawn_flusher();
         let (sender, receiver) = mpsc::channel(SUBSCRIBER_QUEUE);
         let mut state = self.state.lock().unwrap();
         principal.color = Self::assign_color(&state, &principal.color);
@@ -414,6 +447,9 @@ impl PresenceHub {
             Self::new_member(participant.clone(), Some(sender), options, false, slot),
         );
         state.slot_generation += 1;
+        drop(state);
+        // After the insert: see `stop_flusher_if_empty`.
+        self.spawn_flusher();
         (participant, roster, receiver)
     }
 
@@ -511,7 +547,6 @@ impl PresenceHub {
         window: Option<(String, u64)>,
         normalized: (f64, f64),
     ) {
-        self.spawn_flusher();
         let cursor = CursorPosition {
             display_id: display_id.to_owned(),
             window: window.map(|(id, epoch)| WindowRef { id, epoch }),
@@ -558,6 +593,8 @@ impl PresenceHub {
         }
         let request = Self::shape_request(&state, &participant_id);
         drop(state);
+        // After the insert: see `stop_flusher_if_empty`.
+        self.spawn_flusher();
         self.request_shape(request);
         self.flush();
     }
@@ -1414,6 +1451,60 @@ mod tests {
         }
         samples.sort();
         samples[samples.len() / 2]
+    }
+
+    fn flusher_running(hub: &PresenceHub) -> bool {
+        hub.flusher.lock().unwrap().running
+    }
+
+    async fn wait_for_flusher(hub: &PresenceHub, running: bool) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while flusher_running(hub) != running {
+            assert!(
+                Instant::now() < deadline,
+                "flusher never became running={running}"
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_flusher_runs_only_while_someone_is_present() {
+        let hub = PresenceHub::with_timings(fast());
+        // Nobody present: started, then stops on its first tick.
+        hub.spawn_flusher();
+        wait_for_flusher(&hub, false).await;
+
+        let (alice, _, _alice_rx) = hub.join(principal("alice", ""));
+        assert!(flusher_running(&hub), "a join starts the flusher");
+        let (_, _, mut bob_rx) = hub.join(principal("bob", ""));
+        drain(&mut bob_rx);
+        hub.update_cursor(&alice.participant_id, at(0.5, 0.5));
+        let moved = tokio::time::timeout(Duration::from_secs(2), bob_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            moved.event,
+            Some(join_response::Event::CursorMoved(_))
+        ));
+        hub.leave(&alice.participant_id, LeaveReason::Left);
+        let bob_id = hub.state.lock().unwrap().members.keys().next().cloned();
+        hub.leave(&bob_id.unwrap(), LeaveReason::Left);
+        wait_for_flusher(&hub, false).await;
+
+        // An agent cursor from a thread outside the runtime restarts it on
+        // the remembered runtime, and the idle agent still times out.
+        let remote = hub.clone();
+        std::thread::spawn(move || {
+            remote.agent_cursor("agent-1", "Agent", "display:0", None, (0.1, 0.1));
+        })
+        .join()
+        .unwrap();
+        assert!(flusher_running(&hub), "an agent cursor starts the flusher");
+        assert_eq!(hub.participant_count(), 1);
+        wait_for_flusher(&hub, false).await;
+        assert_eq!(hub.participant_count(), 0, "the idle agent left");
     }
 
     #[tokio::test]

@@ -983,6 +983,60 @@ async fn direct_mode_hosts_spaces_with_a_local_policy() {
     );
 }
 
+/// A direct host can also join a self-hosted relay in static-token mode
+/// (a cluster node behind NAT): the driver joins the relay and serves its
+/// direct listener with the same host policy, the relay token is a 0600
+/// file, and setting up again without the relay removes it.
+#[tokio::test]
+async fn a_direct_host_also_joins_a_static_relay() {
+    let f = fixture();
+    let host = f.host();
+    let mut opts =
+        SetupOptions::direct("0.0.0.0:3211".parse().unwrap()).profile(HostProfile::Spare);
+    opts.driver_bin = Some(f.driver.clone());
+    opts.static_relay = Some(crate::StaticRelay {
+        url: "http://relay.lan:8080/".into(),
+        token: "relay-secret".into(),
+    });
+    host.setup(opts.clone(), &NoAccount).await.unwrap();
+    let config = host.config().unwrap().unwrap();
+    assert_eq!(config.mode, "direct");
+    assert_eq!(
+        config.static_relay.as_deref(),
+        Some("http://relay.lan:8080")
+    );
+    let machine = config.machine_id.clone().unwrap();
+    let args = spec_args(&f);
+    assert_eq!(&args[..3], ["join", "--relay", "http://relay.lan:8080"]);
+    let at = |flag: &str| args[args.iter().position(|a| a == flag).unwrap() + 1].clone();
+    assert_eq!(
+        at("--relay-token-file"),
+        host.paths().relay_token().to_string_lossy()
+    );
+    assert_eq!(at("--host-policy"), host.paths().policy().to_string_lossy());
+    assert_eq!(at("--listen"), "0.0.0.0:3211");
+    assert!(args.iter().any(|a| a == "--token-file"));
+    let token_file = host.paths().relay_token();
+    assert_eq!(
+        std::fs::read_to_string(&token_file).unwrap().trim(),
+        "relay-secret"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&token_file).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+    assert!(host.policy().unwrap().unwrap().direct.is_some());
+    // The same machine id when set up again; without the relay it serves.
+    host.setup(opts.clone(), &NoAccount).await.unwrap();
+    assert_eq!(host.config().unwrap().unwrap().machine_id.unwrap(), machine);
+    opts.static_relay = None;
+    host.setup(opts, &NoAccount).await.unwrap();
+    assert_eq!(spec_args(&f)[0], "serve");
+    assert!(!token_file.exists());
+}
+
 /// A direct desktop host runs its driver as before; turning Spaces on
 /// writes the policy flag and restarts the driver with it.
 #[tokio::test]
@@ -1031,7 +1085,7 @@ async fn a_direct_desktop_host_starts_providing_spaces() {
 
 /// Turning both settings off while sharing over the relay stops
 /// advertising (the relay lists it as not sharing) and keeps the setup;
-/// with one on again, Resume sharing shares again.
+/// with one on again it shares again; a stop the owner asked for stays.
 #[tokio::test]
 async fn both_settings_off_stops_relay_sharing_and_one_on_can_resume() {
     let relay = FakeRelay::start().await;
@@ -1061,19 +1115,30 @@ async fn both_settings_off_stops_relay_sharing_and_one_on_can_resume() {
     assert!(!host.policy().unwrap().unwrap().sharing);
     assert!(host.start_sharing().await.is_err(), "nothing to share yet");
 
+    // It stopped only because there was nothing to share: turning Spaces
+    // on again shares again.
+    let status = host
+        .configure(HostSettingsChange {
+            provide_spaces: Some(true),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(status.sharing && status.service.running);
+    assert!(relay.machine(&id).unwrap().sharing);
+
+    // A stop the owner asked for stays through setting changes.
+    host.stop_sharing().await.unwrap();
     host.configure(HostSettingsChange {
-        provide_spaces: Some(true),
+        share_desktop: Some(true),
         ..Default::default()
     })
     .await
     .unwrap();
-    assert!(
-        !host.status().await.unwrap().sharing,
-        "stays stopped until resumed"
-    );
+    assert!(!host.status().await.unwrap().sharing, "stays stopped");
+    assert!(!relay.machine(&id).unwrap().sharing);
     let status = host.start_sharing().await.unwrap();
-    assert!(status.sharing && status.service.running);
-    assert!(relay.machine(&id).unwrap().sharing);
+    assert!(status.sharing);
 }
 
 /// A relay registration can name the host a Space belongs to; only an
@@ -1459,8 +1524,10 @@ async fn retrying_a_change_starts_a_service_that_is_down() {
 }
 
 /// A probe that reports the driver's permissions.
+#[cfg(target_os = "macos")]
 struct GrantsProbe(Option<(bool, bool)>);
 
+#[cfg(target_os = "macos")]
 impl SessionProbe for GrantsProbe {
     fn gui_session(&self, _uid: u32) -> bool {
         true
@@ -1705,6 +1772,41 @@ fn the_service_gets_cua_mesh_only_when_setup_was_given_it() {
     let back: crate::HostConfig =
         serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
     assert_eq!(back.mesh.as_deref(), Some("prefer"));
+}
+
+/// A cloud host's price per hour, given at setup, reaches the service (the
+/// pool shows it); an owned machine's service has none.
+#[test]
+fn the_service_gets_the_hosts_price_only_when_setup_was_given_it() {
+    let home = tempfile::tempdir().unwrap();
+    let host = Host::new(home.path());
+    let config = crate::HostConfig {
+        mode: "relay".into(),
+        relay_url: Some("https://relay.example".into()),
+        machine_id: Some("machine-0001".into()),
+        ..Default::default()
+    };
+    let spec = host.service_spec(&config);
+    assert!(
+        !spec
+            .env
+            .iter()
+            .any(|(k, _)| k == crate::host::HOST_USD_PER_HOUR)
+    );
+    let json = serde_json::to_string(&config).unwrap();
+    assert!(!json.contains("usd_per_hour"), "{json}");
+    let config = crate::HostConfig {
+        usd_per_hour: Some("0.8048".into()),
+        ..config
+    };
+    let spec = host.service_spec(&config);
+    assert!(
+        spec.env
+            .contains(&("CUA_HOST_USD_PER_HOUR".to_string(), "0.8048".to_string()))
+    );
+    let back: crate::HostConfig =
+        serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+    assert_eq!(back.usd_per_hour.as_deref(), Some("0.8048"));
 }
 
 /// A machine renamed on the relay from an enrolled device: this machine's

@@ -3,13 +3,14 @@
 
 //! Settings, Experiments: features still being built, one switch each, all
 //! off by default except Sharing (on, as cua.ai/pricing lists it for every
-//! plan) and the New UI, which [`new_ui_default`] turns on for the Beta
-//! channel and then for every release.
+//! plan), Your cloud (on, so a linked cloud shows under Run on) and the New
+//! UI, which [`new_ui_default`] turns on for the Beta channel and then for
+//! every release.
 //!
 //! - Cua Volume ([`Experiment::CuaVolume`]): the first run's Volume page
 //!   (and its Done line) and Settings' Storage section;
 //! - Your cloud ([`Experiment::YourCloud`]): the New Space wizard's
-//!   connected clouds (AWS, Google Cloud, Modal), "Connect a cloud…" and a
+//!   connected clouds (AWS, Google Cloud, Hetzner, Modal), "Connect a cloud…" and a
 //!   default location in a cloud;
 //! - Sharing ([`Experiment::Sharing`]): a Space's Share button;
 //! - New UI ([`Experiment::WebUi`]): the shared web UI as the main window
@@ -22,8 +23,8 @@
 //! the switch on again shows them as they are.
 //!
 //! The switches live in the app's settings ([`crate::settings::AppSettings`],
-//! `experiments`): one key per experiment, missing keys read as off and
-//! unknown ones are ignored, so an older or newer build reads the file.
+//! `experiments`): one key per experiment, missing keys read as their default (off, but on for Sharing and
+//! Your cloud) and unknown ones are ignored, so an older or newer build reads the file.
 //!
 //! The New UI is the one switch with a default of its own: `web_ui` is
 //! what this launch shows, the user's own choice lives in
@@ -58,7 +59,7 @@ impl Default for Experiments {
     fn default() -> Self {
         Self {
             cua_volume: false,
-            your_cloud: false,
+            your_cloud: true,
             sharing: true,
             web_ui: false,
         }
@@ -119,7 +120,7 @@ impl Experiment {
         match self {
             Experiment::CuaVolume => "Memory and files your agents share across every Space.",
             Experiment::YourCloud => {
-                "Create Spaces in your own AWS, Google Cloud or Modal account."
+                "Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account."
             }
             Experiment::Sharing => "Share a Space with other Cua accounts.",
             Experiment::WebUi => "The Spaces window built on the shared web UI.",
@@ -369,7 +370,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_experiment_but_sharing_is_off_by_default_with_one_line_each() {
+    fn every_experiment_but_sharing_and_your_cloud_is_off_by_default_with_one_line_each() {
         let p = page(&Experiments::default());
         assert_eq!(p.title, "Experiments");
         let ids: Vec<&str> = p.sections[0].rows.iter().map(|r| r.id.as_str()).collect();
@@ -388,7 +389,10 @@ mod tests {
         );
         for r in switches(&p) {
             // Off, the New UI shows as "Use classic UI" on.
-            let shown = if r.id == CLASSIC_UI_ROW || r.id == "experiment:sharing" {
+            let shown = if r.id == CLASSIC_UI_ROW
+                || r.id == "experiment:sharing"
+                || r.id == "experiment:your_cloud"
+            {
                 "on"
             } else {
                 "off"
@@ -414,10 +418,10 @@ mod tests {
         };
         let x = choose(&off, "experiment:sharing", "on");
         assert_eq!(x, Experiments::default());
-        assert_eq!(x.on_ids(), ["sharing"]);
+        assert_eq!(x.on_ids(), ["your_cloud", "sharing"]);
         assert_eq!(choose(&x, "experiment:sharing", "off"), off);
         let v = choose(&x, "experiment:cua_volume", "on");
-        assert_eq!(v.on_ids(), ["cua_volume", "sharing"]);
+        assert_eq!(v.on_ids(), ["cua_volume", "your_cloud", "sharing"]);
         assert_eq!(choose(&x, "notch", "on"), x, "other rows change nothing");
         assert_eq!(choose(&x, "experiment:nope", "on"), x);
         assert_eq!(
@@ -530,12 +534,15 @@ mod tests {
     fn stored_keys_are_forward_compatible() {
         let x: Experiments =
             serde_json::from_str(r#"{"cuaVolume":true,"someFutureExperiment":true}"#).unwrap();
-        assert!(x.cua_volume && !x.your_cloud && x.sharing && !x.web_ui);
+        assert!(x.cua_volume && x.your_cloud && x.sharing && !x.web_ui);
         let back = serde_json::to_value(x).unwrap();
         assert_eq!(
             back,
-            serde_json::json!({"cuaVolume": true, "yourCloud": false, "sharing": true, "webUi": false})
+            serde_json::json!({"cuaVolume": true, "yourCloud": true, "sharing": true, "webUi": false})
         );
+        // An explicit off is kept.
+        let off: Experiments = serde_json::from_str(r#"{"yourCloud":false}"#).unwrap();
+        assert!(!off.your_cloud);
         // Sharing is on unless the key says off (a missing key is not off).
         let off: Experiments = serde_json::from_str(r#"{"sharing":false}"#).unwrap();
         assert!(!off.sharing);

@@ -14,6 +14,13 @@ on:
       - "libs/cua/**"
       - "libs/cua-spacesd/**"
       - ".github/workflows/ci-openkoalabot-example-tauri.yml"
+  push:
+    branches: [main]
+    paths:
+      - "samples/openkoalabot-example-tauri/**"
+      - "libs/cua/**"
+      - "libs/cua-spacesd/**"
+      - ".github/workflows/ci-openkoalabot-example-tauri.yml"
   workflow_dispatch:
 
 permissions:
@@ -21,7 +28,7 @@ permissions:
 
 concurrency:
   group: ci-openkoalabot-example-tauri-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
   run:
@@ -37,6 +44,7 @@ env:
 
 jobs:
   check:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: cargo check + core tests + vitest
     runs-on: ubuntu-22.04
     timeout-minutes: 60

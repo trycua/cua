@@ -1332,7 +1332,7 @@ dependencies = [
 
 [[package]]
 name = "cua-agent-setup"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "chrono",
  "hex",
@@ -1348,23 +1348,26 @@ dependencies = [
 
 [[package]]
 name = "cua-agents"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
+ "base64 0.22.1",
  "cua-agent-setup",
  "cua-proto",
  "cua-spacesd-client",
+ "flate2",
  "hex",
  "rand 0.9.5",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tar",
  "thiserror 2.0.20",
  "tokio",
 ]
 
 [[package]]
 name = "cua-chromium-storage"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "base64 0.22.1",
  "cua-teleport-bundle",
@@ -1457,7 +1460,7 @@ dependencies = [
 
 [[package]]
 name = "cua-home"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
@@ -1465,7 +1468,7 @@ dependencies = [
 
 [[package]]
 name = "cua-hotspot"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "futures-util",
  "tokio",
@@ -1473,7 +1476,7 @@ dependencies = [
 
 [[package]]
 name = "cua-icon-cache"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "cua-home",
  "hex",
@@ -1485,7 +1488,7 @@ dependencies = [
 
 [[package]]
 name = "cua-machine-seal"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "chacha20poly1305 0.11.0",
  "cua-home",
@@ -1499,7 +1502,7 @@ dependencies = [
 
 [[package]]
 name = "cua-mesh"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "base64 0.22.1",
  "boringtun",
@@ -1511,6 +1514,7 @@ dependencies = [
  "hmac 0.12.1",
  "http",
  "if-addrs",
+ "libc",
  "quinn",
  "rand 0.9.5",
  "rcgen",
@@ -1529,7 +1533,7 @@ dependencies = [
 
 [[package]]
 name = "cua-proto"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "pbjson-build",
  "pbjson-types",
@@ -1543,12 +1547,13 @@ dependencies = [
 
 [[package]]
 name = "cua-relay"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
  "bytes",
  "clap",
+ "cua-mesh",
  "futures-util",
  "hex",
  "http",
@@ -1557,6 +1562,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "jsonwebtoken",
+ "libc",
  "rand 0.8.8",
  "reqwest",
  "ring",
@@ -1574,13 +1580,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-snapshot-sync"
+version = "0.8.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "base64 0.22.1",
+ "hex",
+ "hmac 0.12.1",
+ "http",
+ "libc",
+ "rand 0.9.5",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "cua-spacesd-client"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
  "cua-proto",
  "futures-util",
+ "h2",
  "hex",
  "http",
  "http-body",
@@ -1611,7 +1639,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-html5"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "axum",
  "http",
@@ -1619,7 +1647,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-server"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1633,6 +1661,7 @@ dependencies = [
  "cua-mesh",
  "cua-proto",
  "cua-relay",
+ "cua-snapshot-sync",
  "cua-spacesd-html5",
  "cua-spacesd-socks",
  "cua-spacesd-teleport",
@@ -1675,7 +1704,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-socks"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "cua-hotspot",
  "futures-util",
@@ -1685,7 +1714,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-teleport"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "cua-chromium-storage",
  "cua-teleport-bundle",
@@ -1701,7 +1730,7 @@ dependencies = [
 
 [[package]]
 name = "cua-telemetry"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "hex",
  "rand 0.9.5",
@@ -1714,7 +1743,7 @@ dependencies = [
 
 [[package]]
 name = "cua-teleport"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "aes 0.8.4",
  "block2 0.6.2",
@@ -1753,7 +1782,7 @@ dependencies = [
 
 [[package]]
 name = "cua-teleport-bundle"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "aes 0.8.4",
  "aes-gcm",
@@ -5545,6 +5574,7 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
  "digest 0.10.7",
+ "sha2-asm",
 ]
 
 [[package]]
@@ -5556,6 +5586,15 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.3.1",
  "digest 0.11.3",
+]
+
+[[package]]
+name = "sha2-asm"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b845214d6175804686b2bd482bcffe96651bb2d1200742b712003504a2dac1ab"
+dependencies = [
+ "cc",
 ]
 
 [[package]]

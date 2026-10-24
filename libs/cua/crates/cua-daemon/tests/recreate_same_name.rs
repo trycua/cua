@@ -296,3 +296,37 @@ async fn another_sandboxes_state_file_does_not_drop_a_live_connection() {
         only.addr.port()
     );
 }
+
+#[tokio::test]
+async fn a_create_over_an_existing_name_keeps_the_recorded_token() {
+    // A second create of a name that already has a sandbox must not mint a
+    // new token: the running guest keeps the one it was started with, so a
+    // new one in the record locks the Space out of itself (F56).
+    let f = fixture();
+    let only = MockServer::start(MockAuth::default()).await;
+    f.rt.point_at(&only);
+    create(&f.daemon, "again").await;
+    let first = f
+        .daemon
+        .sandboxes()
+        .recorded_env_token("again")
+        .expect("the first create records a token");
+    // The result does not matter (the sandbox exists); the record does.
+    let _ = f
+        .daemon
+        .spaces()
+        .create(SpaceCreate {
+            on: Some(On::Local),
+            image: Some(IMAGE.into()),
+            spacesd: Some(true),
+            name: Some("again".into()),
+            timeout: Some(Duration::from_secs(30)),
+            ..Default::default()
+        })
+        .await;
+    assert_eq!(
+        f.daemon.sandboxes().recorded_env_token("again").as_deref(),
+        Some(first.as_str()),
+        "a create over an existing name keeps its token"
+    );
+}

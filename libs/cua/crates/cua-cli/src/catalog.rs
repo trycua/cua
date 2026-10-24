@@ -74,10 +74,54 @@ fn row(image: &Value, all: &[Value]) -> Value {
     v
 }
 
-/// The catalog rows matching `f`, in file order.
+/// The catalog rows matching `f`, in file order, then the images of the
+/// local runtime providers installed on this machine.
 pub fn list(f: &Filter) -> Vec<Value> {
+    list_with(
+        f,
+        &cua_sandbox_core::external::Registry::global().providers(),
+    )
+}
+
+/// The rows of `providers`' images: each runs locally on its provider, as
+/// the kind the provider presents as. They are Spaces images (they run
+/// cua-spacesd).
+fn provider_rows(
+    providers: &[std::sync::Arc<cua_sandbox_core::external::ExternalProvider>],
+) -> Vec<Value> {
+    let mut out = vec![];
+    for p in providers {
+        for i in &p.manifest.images {
+            let r = i.reference.as_str();
+            out.push(json!({
+                "ref": r,
+                "os": p.manifest.os.first().cloned().unwrap_or_default(),
+                "variant": p.kind.as_str(),
+                "local": p.name(),
+                "runtime": p.name(),
+                "provider": p.manifest.label(),
+                "summary": if i.title.is_empty() { p.manifest.label().to_string() } else { i.title.clone() },
+                "default": i.default,
+                "published": true,
+                "spacesd": true,
+                "browsers": [],
+                "browser_tools": false,
+                "variants": [],
+                "create": [format!("cua sb create {r} --runtime {}", p.name())],
+            }));
+        }
+    }
+    out
+}
+
+/// [`list`] with these providers' images.
+fn list_with(
+    f: &Filter,
+    providers: &[std::sync::Arc<cua_sandbox_core::external::ExternalProvider>],
+) -> Vec<Value> {
     let c = catalog();
     let all: Vec<Value> = c["images"].as_array().cloned().unwrap_or_default();
+    let extra = provider_rows(providers);
     all.iter()
         .filter(|i| f.all || i["published"].as_bool() == Some(true))
         .filter(|i| {
@@ -86,6 +130,12 @@ pub fn list(f: &Filter) -> Vec<Value> {
         })
         .filter(|i| !f.browser || browser_tools(i))
         .map(|i| row(i, &all))
+        .chain(extra.into_iter().filter(|i| {
+            !f.browser
+                && f.os
+                    .as_deref()
+                    .is_none_or(|os| i["os"].as_str() == Some(os.to_ascii_lowercase().as_str()))
+        }))
         .collect()
 }
 
@@ -123,11 +173,13 @@ pub fn mcp_result(f: &Filter) -> Value {
     })
 }
 
-fn local_runtime(i: &Value) -> &'static str {
+fn local_runtime(i: &Value) -> &str {
     match i["local"].as_str() {
         Some("container") => "container",
         Some("qemu") => "qemu vm",
         Some("lume") => "lume vm",
+        // A local runtime provider's image: its runtime word.
+        Some(other) if i["runtime"].as_str() == Some(other) => other,
         _ => "-",
     }
 }
@@ -176,7 +228,7 @@ pub fn print_list(f: &Filter, json: bool, out: &mut dyn Write) -> Result<i32, Cu
     );
     line(
         out,
-        "\nWeb browsing: `cua sb create linux --browser` (Chromium, driven by the cua-driver browser tools).\nTiers: `cua sb create linux --tier slim` (full is the default; macOS also has --tier xcode).",
+        "\nWeb browsing: `cua sb create linux --browser` (Chromium, driven by the cua-driver browser tools).\nTiers: `cua sb create linux --tier slim` (full is the default; Linux also has --tier docker, a VM with dockerd; macOS --tier xcode).",
     );
     Ok(0)
 }
@@ -234,6 +286,42 @@ mod tests {
         let (default_linux, _) =
             crate::sandbox::resolve_image_with("linux", None, |_| None).unwrap();
         assert!(rows.iter().any(|r| r["ref"] == default_linux.as_str()));
+    }
+
+    #[test]
+    fn provider_images_are_listed_only_when_a_provider_is_installed() {
+        use cua_sandbox_core::external::ExternalProvider;
+        let f = Filter::default();
+        let alone = list_with(&f, &[]);
+        assert!(
+            alone.iter().all(|r| r.get("runtime").is_none()),
+            "no provider: the catalog alone"
+        );
+        let p = std::sync::Arc::new(ExternalProvider {
+            manifest: serde_json::from_value(json!({
+                "protocol": 1, "name": "acme", "display_name": "macOS VMs", "kind": "vm",
+                "os": ["macos"],
+                "images": [{"reference": "registry.example/acme/macos:15", "title": "macOS 15", "default": true}]
+            }))
+            .unwrap(),
+            path: "/x/cua-runtime-acme".into(),
+            kind: cua_sandbox_core::placement::Kind::Vm,
+        });
+        let rows = list_with(&f, std::slice::from_ref(&p));
+        let row = rows.last().unwrap();
+        assert_eq!(row["ref"], "registry.example/acme/macos:15");
+        assert_eq!(row["local"], "acme");
+        assert_eq!(row["variant"], "vm");
+        assert_eq!(
+            row["create"][0],
+            "cua sb create registry.example/acme/macos:15 --runtime acme"
+        );
+        assert_eq!(local_runtime(row), "acme");
+        let linux = Filter {
+            os: Some("linux".into()),
+            ..Default::default()
+        };
+        assert!(list_with(&linux, &[p]).iter().all(|r| r["os"] == "linux"));
     }
 
     #[test]

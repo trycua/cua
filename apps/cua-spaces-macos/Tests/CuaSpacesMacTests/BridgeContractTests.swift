@@ -129,6 +129,11 @@ struct BridgeContractTests {
         }
         func cancelCreate(createId: String) async throws { try await inner.cancelCreate(createId: createId) }
         func gpuChoices() async -> [AppGpuChoice]? { await inner.gpuChoices() }
+        func links() async throws -> [ShareLink] { try await inner.links() }
+        func createLink(target: String, access: String?, ttlSeconds: UInt32?, name: String?) async throws -> ShareLink {
+            try await inner.createLink(target: target, access: access, ttlSeconds: ttlSeconds, name: name)
+        }
+        func stopLink(id: String) async throws -> [String] { try await inner.stopLink(id: id) }
         func hosts() async -> [AppSpaceHost] { await inner.hosts() }
         func reportedHostname(id: String) -> String? { inner.reportedHostname(id: id) }
         func add(url: String, token: String?, name: String?) async throws { try await inner.add(url: url, token: token, name: name) }
@@ -200,10 +205,10 @@ struct BridgeContractTests {
     func cases(space: String) -> [(String, [String: Any])] {
         [
             // The relay allowance before the sign-out below (signed out, it is null).
-            ("app.info", [:]), ("session.get", [:]), ("relay.usage", [:]), ("session.signOut", [:]),
             // No request is waiting on the fixtures: an answer to none is left alone.
             ("nudges.pending", [:]), ("nudges.answer", ["id": "risky-1-1", "choice": "here"]),
             ("app.info", [:]), ("session.get", [:]), ("relay.usage", [:]), ("resources.get", ["visible": true]), ("session.signOut", [:]),
+            ("links.list", [:]), ("links.create", ["target": "space:dev:3000"]), ("links.stop", ["id": "all"]),
             ("checklist.get", [:]), ("checklist.send", ["action": ["type": "done", "step": "teleport"]]),
             ("spaces.list", [:]),
             ("spaces.createOptions", [:]), ("spaces.cancelCreate", ["pendingId": "pending:none"]),
@@ -211,7 +216,7 @@ struct BridgeContractTests {
             ("spaces.open", ["id": space]),
             ("machines.list", [:]), ("host.status", [:]),
             ("agents.list", [:]), ("agents.runs", ["spaceId": "local:aurora"]), ("agents.setup", [:]),
-            ("agents.configure", ["agents": ["claude-code"]]),
+            ("agents.configure", ["agents": ["claude-code"]]), ("agents.signIn", ["agent": "codex"]),
             ("agents.detail", ["name": "ada"]), ("agents.readFile", ["path": "agents/ada/hermes/MEMORY.md"]),
             ("agents.restoreFile", ["path": "agents/ada/hermes/MEMORY.md", "version": "v1"]),
             ("agents.addRoutine", ["agent": "ada", "title": "Inbox", "prompt": "Sort my inbox", "everyMinutes": NSNull(),

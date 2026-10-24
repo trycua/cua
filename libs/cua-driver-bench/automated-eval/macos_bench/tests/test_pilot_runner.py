@@ -5,11 +5,15 @@
 
 from __future__ import annotations
 
+import argparse
 import json
+import os
+import tomllib
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
@@ -167,30 +171,85 @@ class CodexEventsTest(unittest.TestCase):
             self.assertIsNone(codex_events.rollout_usage(Path(tmp) / "missing"))
 
 
-_CODEX_NODE_REPL_DOC = Path(
-    "/Applications/ChatGPT.app/Contents/Resources/plugins/openai-bundled/plugins/computer-use/.codex-plugin/computer-use-node-repl.md"
-)
-
-
 class ArmsTest(unittest.TestCase):
-    @unittest.skipUnless(
-        _CODEX_NODE_REPL_DOC.exists(), "needs the ChatGPT app's bundled computer-use plugin"
-    )
+    def test_gateway_common_config_matches_original_text(self) -> None:
+        with mock.patch.dict(os.environ, {"CDB_CODEX_AUTH": "gateway"}):
+            self.assertEqual(
+                arms.common_config("m", "high"),
+                """model = "m"
+model_provider = "litellm"
+model_reasoning_effort = "high"
+approval_policy = "never"
+sandbox_mode = "workspace-write"
+mcp_optional_startup_grace_ms = 30000
+
+""",
+            )
+
     def test_arm_homes_differ_only_in_tool_layer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            cua = Path(tmp) / "cua"
-            native = Path(tmp) / "native"
-            arms.render_home("cua-driver-mcp", cua, "m", "high")
-            arms.render_home("codex-native-cu", native, "m", "high")
-            common = arms.common_config("m", "high")
-            for home in (cua, native):
-                text = (home / ".codex" / "config.toml").read_text("utf-8")
-                self.assertTrue(text.startswith(common))
-                self.assertIn('default_tools_approval_mode = "approve"', text)
-            self.assertIn("[mcp_servers.cua]", (cua / ".codex/config.toml").read_text("utf-8"))
-            self.assertIn(
-                "[mcp_servers.node_repl]", (native / ".codex/config.toml").read_text("utf-8")
-            )
+            root = Path(tmp)
+            for name in ("skills/computer-use/SKILL.md", ".codex-plugin/computer-use-node-repl.md"):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("fixture")
+            source = root / ".codex/auth.json"
+            source.parent.mkdir()
+            source.write_bytes(b"private")
+            source.chmod(0o000)
+            before = source.stat().st_mtime_ns
+            with mock.patch.multiple(
+                arms,
+                CODEX_APP_RESOURCES=root,
+                CODEX_CU_PLUGIN=root,
+                CUA_DRIVER_SKILL=root / "skills/computer-use",
+            ):
+                for arm in arms.ARMS:
+                    configs = {}
+                    for mode in ("gateway", "chatgpt"):
+                        home = root / f"{arm}-{mode}"
+                        with mock.patch.dict(
+                            os.environ,
+                            {
+                                "CDB_CODEX_AUTH": mode,
+                                "CDB_CODEX_AUTH_FILE": str(source),
+                                "LITELLM_MASTER_KEY": "secret",
+                                "CDB_PILOT_PASS_GATEWAY_KEY": "1",
+                            },
+                        ):
+                            env = arms.render_home(arm, home, "m", "high")
+                            text = (home / ".codex/config.toml").read_text()
+                            self.assertTrue(text.startswith(arms.common_config("m", "high")))
+                            self.assertEqual("LITELLM_MASTER_KEY" in env, mode == "gateway")
+                            link = home / ".codex/auth.json"
+                            self.assertEqual(link.is_symlink(), mode == "chatgpt")
+                            if mode == "chatgpt":
+                                self.assertEqual(os.readlink(link), str(source))
+                            configs[mode] = tomllib.loads(text)
+                    gateway = configs["gateway"]
+                    self.assertEqual(gateway.pop("model_provider"), "litellm")
+                    gateway.pop("model_providers")
+                    self.assertNotIn("cli_auth_credentials_store", gateway)
+                    self.assertEqual(configs["chatgpt"].pop("cli_auth_credentials_store"), "file")
+                    self.assertEqual(gateway, configs["chatgpt"])
+                    if arm == "codex-native-cu":
+                        self.assertIn("notify", gateway)
+                with mock.patch.dict(
+                    os.environ, {"CDB_CODEX_AUTH": "chatgpt", "HOME": tmp}, clear=True
+                ):
+                    env = arms.render_home("cua-driver-mcp", root / "default", "m", "high")
+                    link = Path(env["CODEX_HOME"]) / "auth.json"
+                    self.assertTrue(link.is_symlink())
+                    self.assertEqual(os.readlink(link), str(source))
+                self.assertEqual(source.stat().st_mtime_ns, before)
+                source.chmod(0o600)
+                self.assertEqual(source.read_bytes(), b"private")
+                source.unlink()
+                with mock.patch.dict(
+                    os.environ, {"CDB_CODEX_AUTH": "chatgpt", "CDB_CODEX_AUTH_FILE": str(source)}
+                ):
+                    with self.assertRaises(FileNotFoundError):
+                        arms.render_home("cua-driver-mcp", root / "missing", "m", "high")
 
     def test_exec_flags_are_identical_across_arms(self) -> None:
         argv = arms.codex_argv(Path("/w"), "m")
@@ -202,6 +261,57 @@ class ArmsTest(unittest.TestCase):
 
 
 class ScheduleTest(unittest.TestCase):
+    def test_pilot_rows_and_manifest_record_auth_mode(self) -> None:
+        import run_pilot
+
+        args = argparse.Namespace(
+            model="m", effort="high", idle_min=0, max_idle_wait_h=1, no_sentinel=True
+        )
+        task = argparse.Namespace(id="T", group="bench", tags=[], timeout_s=60)
+        for mode, replaced in (("gateway", False), ("chatgpt", False), ("chatgpt", True)):
+
+            def fail_setup(compare, task, trial_dir, workspace):
+                home = trial_dir / "home/.codex"
+                home.mkdir(parents=True)
+                arms.link_chatgpt_auth(home)
+                if replaced:
+                    (home / "auth.json").unlink()
+                    (home / "auth.json").write_text("FAKE_TOKEN")
+                raise RuntimeError("unavailable fixture")
+
+            with (
+                tempfile.TemporaryDirectory() as tmp,
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "CDB_CODEX_AUTH": mode,
+                        "CDB_CODEX_AUTH_FILE": str(Path(tmp) / "shared-auth.json"),
+                    },
+                ),
+                mock.patch.object(run_pilot, "wait_for_idle", return_value=1000),
+                mock.patch.object(run_pilot, "Sentinel") as sentinel,
+                mock.patch.object(run_pilot, "prepare_bench", side_effect=fail_setup),
+                mock.patch.object(run_pilot, "sweep_processes"),
+                mock.patch.object(run_pilot.subprocess, "run") as command,
+            ):
+                source = Path(tmp) / "shared-auth.json"
+                source.write_text("FAKE_TOKEN")
+                sentinel.return_value.enabled = False
+                sentinel.return_value.summary.return_value = {}
+                command.return_value.stdout = "version"
+                row = run_pilot.run_trial(
+                    args, None, task, "codex-native-cu", 1, 0, Path(tmp), None
+                )
+                manifest = run_pilot.environment_manifest(args)
+                self.assertEqual(row["codex_auth"], mode)
+                self.assertEqual(manifest["codex_auth"], mode)
+                saved = json.loads(next((Path(tmp) / "trials").glob("*/trial.json")).read_text())
+                self.assertEqual(saved["codex_auth"], mode)
+                if replaced:
+                    self.assertIn("symlink replaced", row["notes"])
+                for secret in (str(source), "FAKE_TOKEN", "http://127.0.0.1:4000/v1"):
+                    self.assertNotIn(secret, json.dumps([row, manifest, saved]))
+
     def test_schedule_is_deterministic_and_balanced(self) -> None:
         sys.path.insert(0, str(HERE.parent))
         import run_pilot

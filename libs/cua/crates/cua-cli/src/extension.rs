@@ -199,6 +199,56 @@ pub fn spaces_cli() -> Option<PathBuf> {
         })
 }
 
+/// What `cua --version` of `helper` prints as a version (`None` when it does
+/// not run in five seconds or prints none).
+fn helper_version(helper: &Path) -> Option<String> {
+    let mut child = std::process::Command::new(helper)
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        match child.try_wait().ok()? {
+            Some(status) if status.success() => break,
+            Some(_) => return None,
+            None if std::time::Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            None => std::thread::sleep(std::time::Duration::from_millis(20)),
+        }
+    }
+    let mut text = String::new();
+    std::io::Read::read_to_string(&mut child.stdout.take()?, &mut text).ok()?;
+    text.lines().next().map(|l| l.trim().to_string())
+}
+
+/// The Cua Spaces `cua` a `cua daemon start` may hand the daemon to: the
+/// one [`spaces_cli`] finds, unless it is older than this `cua` (an app
+/// not updated yet), whose daemon would be a downgrade of the CLI the user
+/// upgraded. `Err` says why, so the caller can tell the user. A helper whose
+/// version cannot be read is used, as before.
+pub fn spaces_cli_not_older() -> Result<Option<PathBuf>, String> {
+    let Some(helper) = spaces_cli() else {
+        return Ok(None);
+    };
+    Ok(match helper_version(&helper) {
+        Some(v) if cua_home::version::is_newer(cua_daemon::VERSION, &v) => {
+            return Err(format!(
+                "the Cua Spaces app's cua at {} is {v}, older than this cua {}; starting this cua's daemon \
+                 instead. Update Cua Spaces to use its features",
+                helper.display(),
+                cua_daemon::VERSION
+            ));
+        }
+        _ => Some(helper),
+    })
+}
+
 fn app_bundle_candidates() -> Vec<PathBuf> {
     let mut out = Vec::new();
     if cfg!(target_os = "macos") {
@@ -250,6 +300,18 @@ pub(crate) async fn missing_daemon_extensions() -> Vec<String> {
                 .any(|f| f.strip_prefix(cua_daemon::extension::FEATURE_PREFIX) == Some(name))
         })
         .collect()
+}
+
+/// The running daemon's version when it is strictly newer than this
+/// `cua` (so it is never replaced by it), else `None`.
+pub(crate) async fn newer_daemon_version() -> Option<String> {
+    let info = cua_daemon::client::existing_daemon()
+        .await
+        .ok()?
+        .info()
+        .await
+        .ok()?;
+    cua_home::version::is_newer(&info.version, cua_daemon::VERSION).then_some(info.version)
 }
 
 /// How long [`stop_daemon`] waits for the daemon to go: one with Spaces
@@ -367,5 +429,32 @@ mod tests {
             .expect("the stuck daemon is ended");
         assert!(!reaper.join().unwrap().success());
         assert!(!cua_daemon::pid_alive(pid));
+    }
+
+    /// UL2: a `cua daemon start` does not hand the daemon to an app's cua
+    /// that is older than itself.
+    #[cfg(unix)]
+    #[test]
+    fn a_helper_older_than_this_cua_is_not_handed_the_daemon() {
+        use std::os::unix::fs::PermissionsExt;
+        let _env = crate::util::test_env::isolated();
+        let dir = tempfile::tempdir().unwrap();
+        let helper = dir.path().join("helper-cua");
+        let write = |version: &str| {
+            let _ = std::fs::remove_file(&helper);
+            std::fs::write(&helper, format!("#!/bin/sh\necho 'cua {version}'\n")).unwrap();
+            std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        // SAFETY: the test holds the environment lock.
+        unsafe { std::env::set_var(ENV_SPACES_CLI, &helper) };
+        write("0.0.1-old");
+        let err = spaces_cli_not_older().unwrap_err();
+        assert!(err.contains("older than this cua"), "{err}");
+        write("99.0.0");
+        assert_eq!(spaces_cli_not_older().unwrap(), Some(helper.clone()));
+        write(cua_daemon::VERSION);
+        assert_eq!(spaces_cli_not_older().unwrap(), Some(helper.clone()));
+        // SAFETY: as above.
+        unsafe { std::env::remove_var(ENV_SPACES_CLI) };
     }
 }

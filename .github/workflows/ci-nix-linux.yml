@@ -60,6 +60,7 @@ env:
 
 jobs:
   rust-source:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: Nix / ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 60

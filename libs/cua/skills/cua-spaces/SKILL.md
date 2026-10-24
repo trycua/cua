@@ -85,3 +85,10 @@ running at that address (`add_space`) and cannot host new ones.
 - Only start a hotspot when the Space needs the host's network (VPN,
   intranet), and stop it afterwards.
 - Name the Space you used in your answer.
+
+## Links to things you ran
+
+Any link to something you ran (preview, dashboard, file): use `cua share`, never localhost; open it once to check it works before sending.
+
+The `share` tool (or `cua share 3000`, `cua share space:dev:3000`, `cua share ./report.html`) returns a link that opens on the user's other signed-in devices, phone included. It checks the link loads and reports `check.ok`; do not send a link whose check failed. Links are private by default; use `access: "public"` with a `ttl` only when the user wants anyone to open it. `share_list` and `share_stop` manage them.
+

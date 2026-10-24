@@ -86,6 +86,10 @@ export interface CreateProgress {
   bytesPerSecond?: number | null;
   /** The id the Space will have, when known. */
   space?: string | null;
+  /** The host's create failed for a reason that usually passes and the
+   * host runs it once more by itself: the page applies the same failure
+   * (its core then shows "Retrying…"). Never on a final failure. */
+  retry?: { error: string; errorVariant?: string } | null;
 }
 
 /** What turning a Space off or on did (the SDK's `SpacePower`). */

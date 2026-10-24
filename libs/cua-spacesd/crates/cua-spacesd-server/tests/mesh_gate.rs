@@ -64,6 +64,8 @@ fn config(relay: &str, dir: &std::path::Path, on: Arc<AtomicBool>) -> MeshHostCo
             }
         }),
         recheck: Duration::from_millis(50),
+        gang_home: None,
+        gang_wait: cua_spacesd_server::mesh_host::GANG_WAIT,
     }
 }
 

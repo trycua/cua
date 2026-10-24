@@ -3,24 +3,85 @@
   "frames": [
     {
       "art": "claude-code on none",
-      "case": "01 connect",
+      "case": "01 agents, nothing changed: the installed ones ticked",
       "connect": {
+        "agents": "On this Mac: [=] Claude Code (Already uses Cua), [x] Codex, [ ] Hermes, [ ] Cursor, [ ] OpenClaw",
+        "agentsNote": "Cua adds its skills and MCP server to each one you pick, on this Mac only. Your other computers set up their own.",
+        "busy": null,
+        "connects": "codex",
+        "credentials": "Sign-ins and keys (They stay on this Mac. Other computers keep their own.): Anthropic key — For Claude Code in your Spaces [Saved] / OpenAI key — For Codex in your Spaces (add-key:Add key)",
+        "intro": "Pick any, or none.",
         "lede": "Connect your agents and give them computers to work on: macOS, Linux or Windows, right here on this Mac.",
-        "note": "Your agent will use this Mac. You can add a separate Space later.",
-        "others": "Codex, Hermes, OpenClaw",
-        "primary": "connect:Connect Claude Code",
+        "more": "More agents: ",
+        "primary": "continue:Continue",
         "title": "A shared Space for every agent."
       },
       "step": "connect"
     },
     {
       "art": "codex on none",
-      "case": "01 connect, only Codex installed",
+      "case": "01 agents, only Codex installed",
       "connect": {
+        "agents": "On this Mac: [ ] Claude Code, [x] OpenAI Codex, [ ] Hermes, [ ] Cursor, [ ] OpenClaw",
+        "agentsNote": "Cua adds its skills and MCP server to each one you pick, on this Mac only. Your other computers set up their own.",
+        "busy": null,
+        "connects": "codex",
+        "credentials": "Sign-ins and keys (They stay on this Mac. Other computers keep their own.): ChatGPT sign-in — OpenAI Codex uses it on this Mac (agent-sign-in:Sign in)",
+        "intro": "Pick any, or none.",
         "lede": "Connect your agents and give them computers to work on: macOS, Linux or Windows, right here on this Mac.",
-        "note": "Your agent will use this Mac. You can add a separate Space later.",
-        "others": "Claude Code, Hermes, OpenClaw",
-        "primary": "connect:Connect Codex",
+        "more": "More agents: ",
+        "primary": "continue:Continue",
+        "title": "A shared Space for every agent."
+      },
+      "step": "connect"
+    },
+    {
+      "art": "claude-code on none",
+      "case": "01 agents, none picked",
+      "connect": {
+        "agents": "On this Mac: [=] Claude Code (Already uses Cua), [ ] Codex, [ ] Hermes, [ ] Cursor, [ ] OpenClaw",
+        "agentsNote": "Cua adds its skills and MCP server to each one you pick, on this Mac only. Your other computers set up their own.",
+        "busy": null,
+        "connects": "",
+        "credentials": null,
+        "intro": "Pick any, or none.",
+        "lede": "Connect your agents and give them computers to work on: macOS, Linux or Windows, right here on this Mac.",
+        "more": "More agents: ",
+        "primary": "continue:Continue",
+        "title": "A shared Space for every agent."
+      },
+      "step": "connect"
+    },
+    {
+      "art": "codex on none",
+      "case": "01 agents, Codex only, signing in",
+      "connect": {
+        "agents": "On this Mac: [ ] Claude Code, [x] OpenAI Codex, [ ] Hermes, [ ] Cursor, [ ] OpenClaw",
+        "agentsNote": "Cua adds its skills and MCP server to each one you pick, on this Mac only. Your other computers set up their own.",
+        "busy": null,
+        "connects": "codex",
+        "credentials": "Sign-ins and keys (They stay on this Mac. Other computers keep their own.): ChatGPT sign-in — OpenAI Codex uses it on this Mac [Finish in your browser…] / OpenAI key — For OpenAI Codex in your Spaces (add-key:Add key)",
+        "intro": "Pick any, or none.",
+        "lede": "Connect your agents and give them computers to work on: macOS, Linux or Windows, right here on this Mac.",
+        "more": "More agents: [ ] Goose (Not found on this Mac)",
+        "primary": "continue:Continue",
+        "title": "A shared Space for every agent."
+      },
+      "step": "connect"
+    },
+    {
+      "art": "codex on none",
+      "case": "01 agents, several, Claude Code already set up",
+      "connect": {
+        "agents": "On this Mac: [=] Claude Code (Already uses Cua), [x] OpenAI Codex, [x] Hermes, [ ] Cursor, [ ] OpenClaw",
+        "agentsNote": "Cua adds its skills and MCP server to each one you pick, on this Mac only. Your other computers set up their own.",
+        "busy": "Adding Cua to OpenAI Codex and Hermes…",
+        "connects": "codex, hermes",
+        "credentials": "Sign-ins and keys (They stay on this Mac. Other computers keep their own.): ChatGPT sign-in — OpenAI Codex uses it on this Mac [Signed in] / Anthropic key — For Claude Code in your Spaces [Saved] / OpenAI key — For OpenAI Codex in your Spaces (add-key:Add key)",
+        "intro": "Pick any, or none.",
+        "lede": "Connect your agents and give them computers to work on: macOS, Linux or Windows, right here on this Mac.",
+        "more": "More agents: ",
+        "primary": "continue:Continue",
         "title": "A shared Space for every agent."
       },
       "step": "connect"
@@ -364,6 +425,79 @@
         "upsell": null
       },
       "step": "setup"
+    },
+    {
+      "art": "other on outline",
+      "case": "no agent picked, ready",
+      "setup": {
+        "extra": {
+          "action": "not-now:Not now",
+          "choices": [
+            "macOS: 22 GB download · 10 to 30 min the first time",
+            "Linux: Ready in about 2 min"
+          ],
+          "footnote": null,
+          "note": "A fresh computer inside this Mac, so your agent can't touch your files or your mouse.",
+          "phase": "choose",
+          "title": "Give your agent its own Space"
+        },
+        "primary": "done:Done",
+        "prompt": null,
+        "rows": [
+          "[ok] This Mac is your first Space — Ready now. Your agent can see the screen, click and type."
+        ],
+        "title": "This Mac is ready.",
+        "upsell": null
+      },
+      "step": "setup",
+      "todos": {
+        "complete": true,
+        "items": [
+          "[x] Make this Mac your first Space — Ready now. Your agent can see the screen, click and type.",
+          "[ ] Give your agent its own Space (optional) — A fresh computer inside this Mac, away from your files and your mouse. (add:Add a Space)",
+          "[x] Sign in — Signed in to Cua."
+        ],
+        "lede": "You're all set.",
+        "progress": "2 of 3 done"
+      }
+    },
+    {
+      "art": "claude-code on outline",
+      "case": "two agents picked, one not set up",
+      "setup": {
+        "extra": {
+          "action": "not-now:Not now",
+          "choices": [
+            "macOS: 22 GB download · 10 to 30 min the first time",
+            "Linux: Ready in about 2 min"
+          ],
+          "footnote": null,
+          "note": "A fresh computer inside this Mac, so your agent can't touch your files or your mouse.",
+          "phase": "choose",
+          "title": "Give your agent its own Space"
+        },
+        "primary": "finish-later:Finish later",
+        "prompt": "Try this in Claude Code or Codex: List my computers and tell me what's on this Mac / This works now, on this Mac.",
+        "rows": [
+          "[fix] Connect Codex — Cua isn't in Codex's settings yet. (connect:Connect)",
+          "[ok] This Mac is your first Space — Ready now. Your agent can see the screen, click and type."
+        ],
+        "title": "One step left.",
+        "upsell": null
+      },
+      "step": "setup",
+      "todos": {
+        "complete": false,
+        "items": [
+          "[ ] Connect Codex — Cua isn't in Codex's settings yet. (connect:Connect)",
+          "[x] Make this Mac your first Space — Ready now. Your agent can see the screen, click and type.",
+          "[ ] Try your first request — Ask Claude Code or Codex: “List my computers and tell me what's on this Mac” (copy:Copy)",
+          "[ ] Give your agent its own Space (optional) — A fresh computer inside this Mac, away from your files and your mouse. (add:Add a Space)",
+          "[x] Sign in — Signed in to Cua."
+        ],
+        "lede": "A couple of things are left.",
+        "progress": "2 of 5 done"
+      }
     }
   ]
 }

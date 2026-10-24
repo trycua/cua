@@ -115,7 +115,7 @@ export interface Space {
   /** Whether and how it turns off and on (the SDK's `power`), with a power
    * action in flight; absent when it cannot (a cloud Space). */
   power?: SpacePower;
-  /** For a Space in your cloud: the provider word (`aws`, `gcp`, `modal`),
+  /** For a Space in your cloud: the provider word (`aws`, `gcp`, `hetzner`, `modal`),
    * its account and region in words ("AWS · us-west-2"), and where Delete
    * Permanently can delete it (`here`, `host:<machine>`, `elsewhere`). */
   cloud?: string;

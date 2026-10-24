@@ -1,10 +1,15 @@
 {
   "title": "Spaces",
   "pages": [
+    "lifetime",
     "space",
+    "elastic",
+    "build",
+    "channel",
     "volume",
     "streams",
     "resources",
+    "agents",
     "persistent-agents",
     "host"
   ]

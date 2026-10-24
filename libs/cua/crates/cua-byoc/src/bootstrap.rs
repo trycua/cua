@@ -184,7 +184,8 @@ pub fn cloud_init(boot: &VmBoot<'_>) -> String {
             b64(content)
         )
     };
-    let mut y = String::from("#cloud-config\n");
+    // No password logins on a machine whose only access is the relay.
+    let mut y = String::from("#cloud-config\nssh_pwauth: false\n");
     y.push_str("write_files:\n");
     y.push_str(&file(
         "/etc/cua/relay/machine-token",

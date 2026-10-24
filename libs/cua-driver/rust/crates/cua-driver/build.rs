@@ -62,7 +62,7 @@ fn embed_git_sha() {
             };
             rerun_if_exists(&common.join("packed-refs"));
             if let Some(reference) = git(&["symbolic-ref", "-q", "HEAD"]) {
-                rerun_if_exists(&common.join(reference));
+                rerun_if_ref_changes(&common, &reference);
             }
         }
     }
@@ -72,6 +72,27 @@ fn embed_git_sha() {
 fn rerun_if_exists(path: &std::path::Path) {
     if path.exists() {
         println!("cargo:rerun-if-changed={}", path.display());
+    }
+}
+
+/// Watches the branch ref `reference` (for example `refs/heads/main`). While
+/// it is a loose file, watch that file. When it is packed, git writes a new
+/// loose file at the next commit without touching HEAD, the reflog (it may be
+/// disabled) or packed-refs, so watch the nearest existing directory above it
+/// instead: creating the file changes that directory. Paths that do not exist
+/// are never watched (Cargo would treat them as always changed).
+fn rerun_if_ref_changes(common: &std::path::Path, reference: &str) {
+    let refs = common.join("refs");
+    let mut path = common.join(reference);
+    loop {
+        if path.exists() {
+            println!("cargo:rerun-if-changed={}", path.display());
+            return;
+        }
+        match path.parent() {
+            Some(parent) if parent.starts_with(&refs) => path = parent.to_path_buf(),
+            _ => return,
+        }
     }
 }
 

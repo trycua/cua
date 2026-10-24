@@ -67,5 +67,49 @@ class VerdictTests(unittest.TestCase):
         self.assertLess((predicted - measured) / measured, 0.5)
 
 
+class WarmOnlyTests(unittest.TestCase):
+    WARM_LOG = (
+        "2026-10-24T05:00:00.1Z Compile requests executed          1968\n"
+        "2026-10-24T05:00:00.1Z Cache hits                         1955\n"
+        "2026-10-24T05:00:00.1Z Average compiler                  1.631 s\n"
+        "    Finished `dev` profile [unoptimized] target(s) in 41.0s\n"
+    )
+    COLD_LOG = (
+        "2026-10-24T04:00:00.1Z Compile requests executed          1968\n"
+        "2026-10-24T04:00:00.1Z Cache hits                            0\n"
+        "2026-10-24T04:00:00.1Z Average compiler                  1.523 s\n"
+        "    Finished `dev` profile [unoptimized] target(s) in 1500.0s\n"
+    )
+
+    def test_a_warm_run_is_not_a_cold_compile(self):
+        profile = audit.log_profile(self.WARM_LOG)
+        self.assertTrue(profile["warm"])
+        self.assertIsNone(profile["sccache_cold"])
+
+    def test_all_warm_logs_give_no_cold_evidence_and_no_drop(self):
+        cold, basis = audit.combine([audit.log_profile(self.WARM_LOG)] * 3)
+        self.assertEqual(basis, "warm-only")
+        self.assertEqual(
+            audit.verdict(audit.estimate(cold), 5, 0, 0.0, samples=12, min_runs=3, basis=basis),
+            "insufficient cold evidence",
+        )
+
+    def test_one_cold_log_among_warm_ones_is_enough(self):
+        cold, basis = audit.combine([audit.log_profile(self.WARM_LOG), audit.log_profile(self.COLD_LOG)])
+        self.assertEqual(basis, "sccache")
+        self.assertGreater(cold, 800)
+
+    def test_a_swatinem_restore_is_warm_but_a_miss_is_cold(self):
+        warm = audit.log_profile("Cache restored from key: v0-rust-x\n    Finished `dev` profile target(s) in 20.0s\n")
+        miss = audit.log_profile("No cache found.\n    Finished `dev` profile target(s) in 90.0s\n")
+        self.assertTrue(warm["warm"])
+        self.assertFalse(miss["warm"])
+        self.assertEqual(audit.combine([warm, miss]), (90.0, "cargo"))
+        self.assertEqual(audit.combine([warm]), (0.0, "warm-only"))
+
+    def test_no_logs_is_not_warm_only(self):
+        self.assertEqual(audit.combine([]), (0.0, "cargo"))
+
+
 if __name__ == "__main__":
     unittest.main()

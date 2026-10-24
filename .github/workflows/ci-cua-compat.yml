@@ -95,6 +95,8 @@ jobs:
 
   surface:
     name: E2B SDK surface
+    # Not on main pushes: those exist to keep the hermetic job's Rust cache warm.
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -108,7 +110,7 @@ jobs:
           /tmp/pinned/bin/pip install -q "e2b==$(cat tests/compat/e2b/PINNED)"
           /tmp/pinned/bin/python tests/compat/e2b/surface.py --diff "tests/compat/e2b/fixtures/surface-$(cat tests/compat/e2b/PINNED).json"
       - name: Latest SDK matches the newest snapshot (drift)
-        if: github.event_name != 'pull_request'
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
           python -m venv /tmp/latest
           /tmp/latest/bin/pip install -q -U e2b
@@ -117,7 +119,9 @@ jobs:
 
   live-e2b:
     name: live E2B conformance (drift)
-    if: github.event_name != 'pull_request'
+    # Paid E2B sandboxes and a live provider: the weekly run and manual runs only,
+    # never the main pushes that keep the Rust cache warm.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:

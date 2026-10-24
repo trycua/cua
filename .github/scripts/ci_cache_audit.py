@@ -20,7 +20,10 @@ prints, per job that has a rust-cache step (Swatinem/rust-cache or
              warm), or 55% x 85% of the cargo wall time when there are no
              sccache statistics. The cargo figure runs high when a job's cargo
              invocations overlap (22 minutes predicted for the same job).
-  verdict    keep when benefit >= 2 x cost and >= 45 s, otherwise drop?
+  verdict    keep when benefit >= 2 x cost and >= 45 s, otherwise drop?; "insufficient
+             cold evidence" when every sampled log came from a run that hit a
+             warm cache (its compile times are warm times, not what the cache
+             saves): sample older runs or run the job cold before judging it
 
 The audit cannot see whether anything saves the family it restores: a workflow
 that runs only on tags or pull requests, with a family no main run saves, never
@@ -98,17 +101,44 @@ def cargo_seconds(log: str) -> float:
     return total
 
 
-def sccache_cold_seconds(log: str) -> float | None:
-    """Wall seconds of compile work a warm cache would skip, from the sccache
-    statistics at the end of a log; None unless the run mostly missed (a run
-    that mostly hit reports an average over its few misses)."""
+def log_profile(log: str) -> dict:
+    """What one job log says about cold compile time.
+
+    cargo        sum of cargo's compile wall times in the log
+    sccache_cold wall seconds of compile work a warm cache would skip (executed
+                 requests times their average compile time), only from a run
+                 that mostly missed
+    warm         the run hit a warm cache (sccache hit rate above 50%, or a
+                 Swatinem restore), so its timings are warm timings"""
     text = ANSI.sub("", log)
+    profile = {"cargo": cargo_seconds(text), "sccache_cold": None, "warm": False}
     executed, hits, average = (pattern.findall(text) for pattern in (SCCACHE_EXECUTED, SCCACHE_HITS, SCCACHE_AVERAGE))
-    if not (executed and hits and average) or int(executed[-1]) == 0:
-        return None
-    if int(hits[-1]) / int(executed[-1]) > 0.5:
-        return None
-    return int(executed[-1]) * float(average[-1]) / EFFECTIVE_CORES
+    if executed and hits and average and int(executed[-1]):
+        if int(hits[-1]) / int(executed[-1]) > 0.5:
+            profile["warm"] = True
+        else:
+            profile["sccache_cold"] = int(executed[-1]) * float(average[-1]) / EFFECTIVE_CORES
+    elif "Cache restored from key" in text:
+        profile["warm"] = True
+    return profile
+
+
+def sccache_cold_seconds(log: str) -> float | None:
+    return log_profile(log)["sccache_cold"]
+
+
+def combine(profiles: list[dict]) -> tuple[float, str]:
+    """Cold compile seconds over the sampled logs, and the basis: "sccache"
+    (statistics from a run that mostly missed), "cargo" (cargo timings of runs
+    that did not hit a cache) or "warm-only" (every sampled run was warm, so
+    there is no cold evidence)."""
+    cold = [p["sccache_cold"] for p in profiles if p["sccache_cold"]]
+    if cold:
+        return max(cold), "sccache"
+    unwarmed = [p["cargo"] for p in profiles if not p["warm"]]
+    if unwarmed:
+        return max(unwarmed), "cargo"
+    return 0.0, "warm-only" if profiles else "cargo"
 
 
 def estimate(cold_s: float, from_sccache: bool = False) -> float:
@@ -116,10 +146,13 @@ def estimate(cold_s: float, from_sccache: bool = False) -> float:
     return HIT_RATE * cold_s if from_sccache else SAVED_FRACTION * HIT_RATE * cold_s
 
 
-def verdict(benefit_s: float, restore_s: float, save_s: float, save_share: float, samples: int, min_runs: int) -> str:
+def verdict(benefit_s: float, restore_s: float, save_s: float, save_share: float, samples: int, min_runs: int,
+            basis: str = "cargo") -> str:
     cost = restore_s + save_s * save_share
     if samples < min_runs:
         return "few runs"
+    if basis == "warm-only":
+        return "insufficient cold evidence"
     if benefit_s >= MIN_BENEFIT_S and benefit_s >= MIN_RATIO * cost:
         return "keep"
     return "drop?"
@@ -158,18 +191,17 @@ def collect_jobs(repo: str, workflow: str, runs: int) -> list[dict]:
     return rows
 
 
-def cold_compile(repo: str, samples: list[dict]) -> tuple[float, bool]:
-    """Cold compile seconds over the shortest, median and longest job of the
-    group, and whether the figure comes from sccache statistics."""
+def cold_compile(repo: str, samples: list[dict]) -> tuple[float, str]:
+    """Cold compile seconds and their basis, from the logs of the shortest,
+    median and longest job of the group."""
     ordered = sorted(samples, key=lambda x: x["total"])
     picks = {job["job_id"]: job for job in (ordered[0], ordered[len(ordered) // 2], ordered[-1])}
-    cargo, cache = 0.0, 0.0
+    profiles = []
     for job in picks.values():
         log = gh_api(f"repos/{repo}/actions/jobs/{job['job_id']}/logs", raw=True)
         if log:
-            cargo = max(cargo, cargo_seconds(log))
-            cache = max(cache, sccache_cold_seconds(log) or 0.0)
-    return (cache, True) if cache else (cargo, False)
+            profiles.append(log_profile(log))
+    return combine(profiles)
 
 
 def audit(repo: str, workflows: list[str], runs: int, min_runs: int, workers: int) -> list[dict]:
@@ -183,20 +215,21 @@ def audit(repo: str, workflows: list[str], runs: int, min_runs: int, workers: in
         keys = list(groups)
         colds = list(pool.map(lambda k: cold_compile(repo, groups[k]), keys))
     report = []
-    for key, (cold, from_sccache) in zip(keys, colds):
+    for key, (cold, basis) in zip(keys, colds):
         samples = groups[key]
         saves = [x["save"] for x in samples if x["save"] > SAVE_STEP_MIN_S]
         restore = statistics.median(x["restore"] for x in samples)
         save = statistics.median(saves) if saves else 0.0
         share = len(saves) / len(samples)
-        benefit = estimate(cold, from_sccache)
+        benefit = estimate(cold, basis == "sccache")
         report.append({
             "workflow": key[0], "job": key[1], "runs": len(samples),
             "restore_s": round(restore), "save_s": round(save), "save_share": round(share, 2),
-            "cold_compile_s": round(cold), "basis": "sccache" if from_sccache else "cargo", "benefit_s": round(benefit),
-            "verdict": verdict(benefit, restore, save, share, len(samples), min_runs),
+            "cold_compile_s": round(cold), "basis": basis, "benefit_s": round(benefit),
+            "verdict": verdict(benefit, restore, save, share, len(samples), min_runs, basis),
         })
-    return sorted(report, key=lambda r: (r["verdict"] != "drop?", r["workflow"], r["job"]))
+    order = {"drop?": 0, "insufficient cold evidence": 1}
+    return sorted(report, key=lambda r: (order.get(r["verdict"], 2), r["workflow"], r["job"]))
 
 
 def markdown(report: list[dict]) -> str:

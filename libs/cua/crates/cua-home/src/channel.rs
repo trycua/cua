@@ -12,9 +12,10 @@
 //! | Bundle id             | `com.trycua.spaces.macos` (see below)         | `com.trycua.spaces.local`                        |
 //! | App                   | `/Applications/Cua Spaces.app`                | `~/Applications/Cua Spaces Local.app`            |
 //! | CLI                   | `~/.local/bin/cua`                            | `~/.local/bin/cua-local`                         |
-//! | Cua home              | `~/.cua`                                      | `~/.cua-local`                                   |
+//! | Cua home              | `~/.cua` (`envs/staging` below it on staging) | `~/.cua-local` (`envs/prod` below it on prod)    |
 //! | Default environment   | prod                                          | staging (`CUA_ENV=prod` opts in)                 |
 //! | Sign-in Keychain      | `ai.cua.session` (`.staging`)                 | `ai.cua.session.local` (`.staging`)              |
+//! | Legacy Keychain       | `run.cua.ai` (`staging.run.cua.ai`), moved once | none: Local never had one, nothing is moved    |
 //! | App helper            | `com.trycua.spaces.helper`                    | `com.trycua.spaces.local.helper`                 |
 //! | Helper spec           | `~/.cua/helper/service.json`                  | `~/.cua-local/helper/service.json`               |
 //! | Plain host runner     | `com.trycua.spacesd.host`                     | `com.trycua.spacesd.host.local`                  |
@@ -55,8 +56,21 @@
 //! The environment follows the channel everywhere: [`CuaEnv::build_default`],
 //! [`CuaEnv::current`], `Endpoints::from_lookup` (which reads `CUA_CHANNEL`
 //! from its lookup, so tests stay hermetic) and [`crate::cua_home`] all go
-//! through this module. Local's home is `~/.cua-local` itself, not
-//! `~/.cua-local/envs/staging`; the app pins `CUA_HOME` to it.
+//! through this module. The home follows both:
+//!
+//! | Channel | Environment | Home                      |
+//! |---------|-------------|---------------------------|
+//! | Stable  | prod        | `~/.cua`                  |
+//! | Stable  | staging     | `~/.cua/envs/staging`     |
+//! | Local   | staging     | `~/.cua-local`            |
+//! | Local   | prod        | `~/.cua-local/envs/prod`  |
+//!
+//! Each channel keeps its own folder for the environment it is made for
+//! (Stable for prod, Local for staging) and puts the other one below it
+//! (Stable's staging, Local's prod), so a Local build that opts in to
+//! production never shares a session, registry or socket with its staging
+//! state, or with Stable. The app pins `CUA_HOME` to it. Each of the four
+//! also has its own Keychain service ([`CuaChannel::keychain_service`]).
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -345,21 +359,68 @@ impl CuaChannel {
         }
     }
 
+    /// The link that opens the Keyvault page of this channel's app:
+    /// `cua://keyvault`, or `cua-local://keyvault` for Local. Every link a
+    /// Rust crate hands out to the app goes through [`CuaChannel::url_scheme`],
+    /// so a Local build never opens the released app.
+    pub fn keyvault_url(self) -> String {
+        format!("{}://keyvault", self.url_scheme())
+    }
+
+    /// [`CuaChannel::keyvault_url`] for this process's channel.
+    pub fn current_keyvault_url() -> String {
+        Self::current().keyvault_url()
+    }
+
     // ----- the cua home, sign-in and the CLI -------------------------------
 
     /// The channel's cua home: `~/.cua` or `~/.cua-local`. This is the base:
-    /// `CUA_HOME` overrides it, and a non-production [`CuaEnv`] moves
-    /// Stable's default below it (`crate::cua_home`).
+    /// `CUA_HOME` overrides it, and the environment that is not the
+    /// channel's own moves the default below it ([`CuaChannel::env_home_dir`]).
     pub fn home_dir(self) -> PathBuf {
-        user_home().join(match self {
+        user_home().join(self.home_dir_name())
+    }
+
+    /// The folder name of the channel's cua home below the user's home:
+    /// `.cua` or `.cua-local`.
+    pub fn home_dir_name(self) -> &'static str {
+        match self {
             Self::Stable => ".cua",
             Self::Local => ".cua-local",
-        })
+        }
+    }
+
+    /// The folder below [`CuaChannel::home_dir`] that `env` uses, or `None`
+    /// for the home itself. Stable keeps `~/.cua` for production and puts
+    /// staging in `envs/staging` ([`CuaEnv::home_subdir`], as it always
+    /// has); Local keeps `~/.cua-local` for staging, its default, and puts
+    /// production in `envs/prod`. So the four (channel, environment) pairs
+    /// never share a home, and no Local home is inside Stable's.
+    pub fn home_subdir(self, env: CuaEnv) -> Option<&'static str> {
+        match (self, env) {
+            (Self::Stable, env) => env.home_subdir(),
+            (Self::Local, CuaEnv::Staging) => None,
+            (Self::Local, CuaEnv::Prod) => Some("envs/prod"),
+        }
+    }
+
+    /// The cua home of this channel for `env` when `CUA_HOME` is not set:
+    /// [`CuaChannel::home_dir`] plus [`CuaChannel::home_subdir`]
+    /// (`~/.cua`, `~/.cua/envs/staging`, `~/.cua-local`,
+    /// `~/.cua-local/envs/prod`).
+    pub fn env_home_dir(self, env: CuaEnv) -> PathBuf {
+        let base = self.home_dir();
+        match self.home_subdir(env) {
+            Some(sub) => base.join(sub),
+            None => base,
+        }
     }
 
     /// The OS credential vault service the session and the device key are
     /// stored under, for `env`. Stable's are [`CuaEnv::keyring_service`];
-    /// Local adds `.local` before the `.staging` suffix.
+    /// Local adds `.local` before the `.staging` suffix. One service per
+    /// (channel, environment) pair, so a Local build on staging never reads
+    /// or replaces the sign-in of a Stable app on staging.
     pub fn keychain_service(self, env: CuaEnv) -> &'static str {
         match (self, env) {
             (Self::Stable, CuaEnv::Prod) => "ai.cua.session",
@@ -367,6 +428,41 @@ impl CuaChannel {
             (Self::Local, CuaEnv::Prod) => "ai.cua.session.local",
             (Self::Local, CuaEnv::Staging) => "ai.cua.session.local.staging",
         }
+    }
+
+    /// The service older builds stored the Stable session under, which a
+    /// build moves an item out of once ([`CuaEnv::legacy_keyring_service`]).
+    /// `None` for Local: it is new, has no legacy items, and must never
+    /// read, move or delete anything under a name Stable owns.
+    pub fn legacy_keychain_service(self, env: CuaEnv) -> Option<&'static str> {
+        match self {
+            Self::Stable => Some(env.legacy_keyring_service()),
+            Self::Local => None,
+        }
+    }
+
+    /// The channel and deployment of this process, resolved together (one
+    /// look at the executable path): [`CuaChannel::current`] and
+    /// [`CuaChannel::current_env`].
+    pub fn current_with_env() -> (Self, CuaEnv) {
+        let channel = Self::current();
+        let env = channel.env_or_fallback(std::env::var(CUA_ENV_VAR).ok().as_deref());
+        (channel, env)
+    }
+
+    /// The Keychain service of this process: [`CuaChannel::keychain_service`]
+    /// for [`CuaChannel::current_with_env`].
+    pub fn current_keychain_service() -> &'static str {
+        let (channel, env) = Self::current_with_env();
+        channel.keychain_service(env)
+    }
+
+    /// The legacy Keychain service of this process, if its channel has one:
+    /// [`CuaChannel::legacy_keychain_service`] for
+    /// [`CuaChannel::current_with_env`].
+    pub fn current_legacy_keychain_service() -> Option<&'static str> {
+        let (channel, env) = Self::current_with_env();
+        channel.legacy_keychain_service(env)
     }
 
     /// The CLI's file name: `cua` or `cua-local`.
@@ -845,7 +941,18 @@ mod tests {
         assert_eq!(s.telemetry_channel(), "prod");
         for env in [CuaEnv::Prod, CuaEnv::Staging] {
             assert_eq!(s.keychain_service(env), env.keyring_service());
+            assert_eq!(
+                s.legacy_keychain_service(env),
+                Some(env.legacy_keyring_service())
+            );
+            assert_eq!(s.home_subdir(env), env.home_subdir());
         }
+        assert_eq!(s.home_dir_name(), ".cua");
+        assert_eq!(s.env_home_dir(CuaEnv::Prod), user_home().join(".cua"));
+        assert_eq!(
+            s.env_home_dir(CuaEnv::Staging),
+            user_home().join(".cua/envs/staging")
+        );
     }
 
     #[test]
@@ -892,6 +999,68 @@ mod tests {
             l.keychain_service(CuaEnv::Staging),
             "ai.cua.session.local.staging"
         );
+        // Local is new: no legacy Keychain service to move from.
+        for env in [CuaEnv::Prod, CuaEnv::Staging] {
+            assert_eq!(l.legacy_keychain_service(env), None);
+        }
+    }
+
+    #[test]
+    fn the_keyvault_link_follows_the_channel_scheme() {
+        assert_eq!(CuaChannel::Stable.keyvault_url(), "cua://keyvault");
+        assert_eq!(CuaChannel::Local.keyvault_url(), "cua-local://keyvault");
+        for c in CuaChannel::ALL {
+            assert!(
+                c.keyvault_url()
+                    .starts_with(&format!("{}://", c.url_scheme()))
+            );
+        }
+        // This test binary is Stable unless the environment says otherwise.
+        if std::env::var_os(CUA_CHANNEL_VAR).is_none() && CuaChannel::build_default().is_none() {
+            assert_eq!(CuaChannel::current_keyvault_url(), "cua://keyvault");
+        }
+    }
+
+    #[test]
+    fn local_prod_has_a_home_of_its_own_below_local() {
+        let l = CuaChannel::Local;
+        assert_eq!(l.home_dir_name(), ".cua-local");
+        // Local's default environment is staging: the home itself.
+        assert_eq!(l.home_subdir(CuaEnv::Staging), None);
+        assert_eq!(
+            l.env_home_dir(CuaEnv::Staging),
+            user_home().join(".cua-local")
+        );
+        // Production is the opt-in, one level down, as Stable's staging is.
+        assert_eq!(l.home_subdir(CuaEnv::Prod), Some("envs/prod"));
+        assert_eq!(
+            l.env_home_dir(CuaEnv::Prod),
+            user_home().join(".cua-local/envs/prod")
+        );
+        // The channel base is unchanged by the environment (the helper's
+        // spec lives there).
+        assert_eq!(l.home_dir(), user_home().join(".cua-local"));
+    }
+
+    #[test]
+    fn no_channel_and_environment_pair_shares_a_home_or_a_keychain_service() {
+        let pairs: Vec<(CuaChannel, CuaEnv)> = CuaChannel::ALL
+            .into_iter()
+            .flat_map(|c| [CuaEnv::Prod, CuaEnv::Staging].map(|e| (c, e)))
+            .collect();
+        assert_eq!(pairs.len(), 4);
+        for (i, (c1, e1)) in pairs.iter().enumerate() {
+            for (c2, e2) in &pairs[i + 1..] {
+                let what = format!("{c1:?}/{e1:?} and {c2:?}/{e2:?}");
+                assert_ne!(c1.env_home_dir(*e1), c2.env_home_dir(*e2), "{what}");
+                assert_ne!(c1.keychain_service(*e1), c2.keychain_service(*e2), "{what}");
+                // Across channels no home is inside the other's.
+                if c1 != c2 {
+                    let (h1, h2) = (c1.env_home_dir(*e1), c2.env_home_dir(*e2));
+                    assert!(!h1.starts_with(&h2) && !h2.starts_with(&h1), "{what}");
+                }
+            }
+        }
     }
 
     #[test]

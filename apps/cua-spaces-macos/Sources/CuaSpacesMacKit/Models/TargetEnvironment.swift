@@ -16,8 +16,11 @@ import Foundation
 ///   - `CUA_ENV` unset: the bundle's `CuaEnv` (`staging`), else `staging`:
 ///     Local never talks to production unless `CUA_ENV=prod` says so;
 ///   - `CUA_HOME` unset: the bundle's `CuaHome` (`~/.cua-local`), else
-///     `~/.cua-local`, whatever `CUA_ENV` is, so it never shares Stable's
-///     home, daemon or sockets;
+///     `~/.cua-local`, for its default environment (staging), and
+///     `<that>/envs/prod` under the `CUA_ENV=prod` opt-in, as Stable keeps
+///     `~/.cua/envs/staging`, so it never shares Stable's home, daemon or
+///     sockets, and its production state never shares its staging home
+///     (`CuaChannel::env_home_dir` in cua-home);
 /// - on Stable, `CUA_ENV` unset: the bundle's `CuaEnv` Info.plist value, which
 ///   a development build can set to `staging`; release builds, betas
 ///   included, have none (`scripts/build-release.sh` removes it), so they use
@@ -43,6 +46,13 @@ public enum TargetEnvironment {
         trimmed(value).isEmpty
     }
 
+    /// Whether a `CUA_ENV` value names production (`prod` or `production`,
+    /// any case), as `CuaEnv::parse` does.
+    private static func isProduction(_ value: String) -> Bool {
+        let name = value.trimmingCharacters(in: .whitespaces).lowercased()
+        return name == "prod" || name == "production"
+    }
+
     /// `path` with a leading `~/` replaced by `home`.
     private static func expand(_ path: String, home: String) -> String {
         path.hasPrefix("~/")
@@ -65,11 +75,22 @@ public enum TargetEnvironment {
             if bundle == "local" { out["CUA_CHANNEL"] = bundle }
         }
         if name == "local" {
+            // The deployment this Local app runs against, as cua-home reads
+            // it: `CUA_ENV` when set, else the bundle's, else staging.
+            let envValue: String
             if isBlank(env["CUA_ENV"]) {
-                out["CUA_ENV"] = isBlank(bundleEnv) ? "staging" : trimmed(bundleEnv)
+                envValue = isBlank(bundleEnv) ? "staging" : trimmed(bundleEnv)
+                out["CUA_ENV"] = envValue
+            } else {
+                envValue = trimmed(env["CUA_ENV"])
             }
             if isBlank(env["CUA_HOME"]) {
-                out["CUA_HOME"] = expand(isBlank(bundleHome) ? "~/.cua-local" : trimmed(bundleHome), home: home)
+                let base = expand(isBlank(bundleHome) ? "~/.cua-local" : trimmed(bundleHome), home: home)
+                // An unknown value is staging on Local, never production.
+                out["CUA_HOME"] = isProduction(envValue)
+                    ? URL(fileURLWithPath: base, isDirectory: true)
+                        .appendingPathComponent("envs/prod", isDirectory: true).path
+                    : base
             }
             return out
         }

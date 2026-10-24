@@ -965,7 +965,10 @@ impl AgentSetup {
                 o.detail = e.to_string();
             }
             out.push(o);
-            if server.name != LEGACY_SPACES_MCP_NAME {
+            // The old entry is the released app's to clean up. Local never
+            // wrote it, and removing it would break a Stable setup that
+            // still has it.
+            if server.name != LEGACY_SPACES_MCP_NAME && self.env.channel == CuaChannel::Stable {
                 out.extend(self.drop_legacy_spaces_mcp(&mut state, a, m, &file));
             }
         }

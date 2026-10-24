@@ -62,7 +62,8 @@
 # codesign may use its key. When that is the case the script says so and, once
 # you agree (or with --setup-signing), does it: macOS asks for your password
 # once to trust the certificate, and the Keychain password is asked here once
-# (not stored) if codesign still needs the key. Where it cannot ask (no
+# (not stored) if codesign still needs the key, which is opened for that one
+# key only (never every signing key in the Keychain). Where it cannot ask (no
 # terminal, no screen) it prints the exact commands instead. It never trusts
 # anything without that, never changes which certificate is used, and a
 # certificate-backed signature is still what it checks for.
@@ -428,6 +429,17 @@ sign_bundle_with() {
     codesign --verify --deep --strict "$app" 2>/dev/null
 }
 
+# Lets codesign use the private key of the stable local certificate without a
+# prompt. `-l` limits it to the key labelled with the certificate's name
+# ($CUA_LOCAL_SIGN_CN; the label the helper gives it when it imports the
+# identity), and `-t private` to private keys: without them `-s` would change
+# the access rules of every signing key in the Keychain, the login Keychain's
+# other keys included. When no key has that label the tool fails and changes
+# nothing. Prints nothing and takes the Keychain password as $2.
+open_key_to_codesign() {
+    security set-key-partition-list -S apple-tool:,apple:,codesign: -s -t private -l "$CUA_LOCAL_SIGN_CN" -k "$2" "$1" >/dev/null 2>&1
+}
+
 # Whether `keychain` is in the user's Keychain search list.
 keychain_listed() {
     security list-keychains -d user 2>/dev/null | tr -d ' "' | grep -qxF "$1"
@@ -460,7 +472,8 @@ print_signing_bootstrap() {
         echo "  security list-keychains -d user -s \"$kc\" \"$HOME/Library/Keychains/login.keychain-db\"" >&2
     fi
     echo "  read -r -s -p 'Keychain password: ' KCPW; echo" >&2
-    echo "  security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k \"\$KCPW\" \"$kc\" >/dev/null; unset KCPW" >&2
+    echo "  security set-key-partition-list -S apple-tool:,apple:,codesign: -s -t private -l \"$CUA_LOCAL_SIGN_CN\" -k \"\$KCPW\" \"$kc\" >/dev/null; unset KCPW" >&2
+    echo "      (-l limits it to that certificate's key; do not drop it: without it every signing key in the Keychain is changed)" >&2
     echo "then run this script again, or run it with --setup-signing and it does this for you." >&2
 }
 
@@ -570,7 +583,7 @@ make_signing_identity_usable() {
         printf 'Password of the Keychain %s (used once, not stored): ' "$kc"
         read -r -s pw || pw=""
         echo
-        if [ -n "$pw" ] && security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$pw" "$kc" >/dev/null 2>&1; then
+        if [ -n "$pw" ] && open_key_to_codesign "$kc" "$pw"; then
             pw=""
             if signing_probe "$identity" "$macho"; then
                 ok "codesign can use the stable local certificate"

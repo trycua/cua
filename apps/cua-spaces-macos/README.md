@@ -395,7 +395,8 @@ codesign may use its key. The script checks that with a real signing. When it
 does not work it says so and, once you agree at a terminal (or with
 `--setup-signing`), sets it up: macOS asks for your password once to trust the
 certificate, and the Keychain password is asked once (not stored) if codesign
-still needs the key. Without a terminal or a screen (SSH, a VM) it prints the
+still needs the key, which is opened for that certificate's key only (`-t
+private -l <its name>`; never every signing key in your Keychain). Without a terminal or a screen (SSH, a VM) it prints the
 exact commands, `sudo` variant included, and does nothing. It never trusts
 anything unasked, never changes a certificate you chose with
 `CUA_DRIVER_LOCAL_SIGNING_IDENTITY`, and still requires a certificate-backed

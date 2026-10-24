@@ -265,7 +265,10 @@ if [ "${SHIM_FRESH_KEYCHAIN:-0}" = 1 ]; then
     add-trusted-cert)
       if [ "${SHIM_TRUST_FAILS:-0}" = 1 ]; then echo "SecTrustSettingsSetTrustSettings: no user interaction was possible" >&2; exit 1; fi
       : > "$SHIM_STATE/trusted"; exit 0 ;;
-    set-key-partition-list) : > "$SHIM_STATE/partition"; exit 0 ;;
+    set-key-partition-list)
+      # SHIM_PARTITION_FAILS=1: no key matched the filter (the tool says so and changes nothing).
+      if [ "${SHIM_PARTITION_FAILS:-0}" = 1 ]; then echo "security: SecItemCopyMatching: The specified item could not be found in the keychain." >&2; exit 1; fi
+      : > "$SHIM_STATE/partition"; exit 0 ;;
   esac
 fi
 exit 0'
@@ -861,7 +864,7 @@ FRESH_ARGS=""
 fresh_install
 check "without consent it changes no trust setting and no search list" '! security_calls | grep >/dev/null -e "add-trusted-cert" -e "list-keychains .*-s " -e "set-key-partition-list"'
 check "it says codesign cannot use the certificate yet, and prints the exact steps (trust, sudo variant, key access)" \
-    'printf "%s" "$OUT" | grep -F >/dev/null "codesign cannot use the stable local certificate yet" && printf "%s" "$OUT" | grep -F >/dev/null "security add-trusted-cert -r trustRoot -p codeSign -k \"$FAKE_KEYCHAIN\"" && printf "%s" "$OUT" | grep -F >/dev/null "sudo security add-trusted-cert -d -r trustRoot -p codeSign" && printf "%s" "$OUT" | grep -F >/dev/null "security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k"'
+    'printf "%s" "$OUT" | grep -F >/dev/null "codesign cannot use the stable local certificate yet" && printf "%s" "$OUT" | grep -F >/dev/null "security add-trusted-cert -r trustRoot -p codeSign -k \"$FAKE_KEYCHAIN\"" && printf "%s" "$OUT" | grep -F >/dev/null "sudo security add-trusted-cert -d -r trustRoot -p codeSign" && printf "%s" "$OUT" | grep -F >/dev/null "security set-key-partition-list -S apple-tool:,apple:,codesign: -s -t private -l \"CuaDriver Local Signing (cua-driver-rs)\" -k"'
 check "the steps are printed once" '[ "$(printf "%s\n" "$OUT" | grep -c "one-time setup")" = 1 ]'
 check "the install is ad hoc, reported, as before (status $RC)" '[ "$RC" = 0 ] && printf "%s" "$OUT" | grep -F >/dev/null "signed ad hoc"'
 
@@ -898,7 +901,96 @@ fresh_fixture
 FRESH_ARGS="--setup-signing"
 fresh_install SHIM_NEED_PARTITION=1
 check "when codesign still cannot use the key and there is no terminal, it prints the key-access command rather than asking" \
-    '! grep >/dev/null "set-key-partition-list" "$SHIM_LOG" && printf "%s" "$OUT" | grep -F >/dev/null "asked at a terminal" && printf "%s" "$OUT" | grep -F >/dev/null "security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k"'
+    '! grep >/dev/null "set-key-partition-list" "$SHIM_LOG" && printf "%s" "$OUT" | grep -F >/dev/null "asked at a terminal" && printf "%s" "$OUT" | grep -F >/dev/null "security set-key-partition-list -S apple-tool:,apple:,codesign: -s -t private -l \"CuaDriver Local Signing (cua-driver-rs)\" -k"'
+
+# The key access is opened for the Local certificate's key only. `-s` alone
+# changes every signing key in the Keychain (the login Keychain's other keys
+# included), so the call carries `-t private -l <the certificate's name>`. The
+# password is asked at a terminal, so these run under a pty that answers it.
+cat > "$WORK/pty-run.py" <<'EOF'
+import os, pty, select, sys
+answer, prompt = os.environ.pop("PTY_ANSWER", ""), os.environ.pop("PTY_PROMPT", "")
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp(sys.argv[1], sys.argv[1:])
+out, sent = b"", False
+while True:
+    try:
+        ready, _, _ = select.select([fd], [], [], 60)
+        if not ready:
+            os.kill(pid, 9)
+            break
+        data = os.read(fd, 4096)
+    except OSError:
+        break
+    if not data:
+        break
+    out += data
+    if not sent and prompt.encode() in out:
+        os.write(fd, (answer + "\n").encode())
+        sent = True
+_, status = os.waitpid(pid, 0)
+sys.stdout.write(out.decode(errors="replace").replace("\r\n", "\n"))
+sys.exit(os.waitstatus_to_exitcode(status))
+EOF
+tty_install() { run env PTY_ANSWER=kc-secret PTY_PROMPT="Password of the Keychain" /usr/bin/python3 -I "$WORK/pty-run.py" env SHIM_FRESH_KEYCHAIN=1 "$@" "$FAKE_SCRIPTS/install-local.sh" --no-launch --setup-signing; }
+KEY_CN="CuaDriver Local Signing (cua-driver-rs)"
+
+fresh_fixture
+tty_install SHIM_NEED_PARTITION=1
+check "at a terminal it asks for the Keychain password and opens the key for the Local certificate only: -s -t private -l <its name>, once" \
+    '[ "$(grep -c "^security set-key-partition-list" "$SHIM_LOG")" = 1 ] && grep -F >/dev/null "security set-key-partition-list -S apple-tool:,apple:,codesign: -s -t private -l $KEY_CN -k kc-secret $FAKE_KEYCHAIN" "$SHIM_LOG"'
+check "after that codesign works and it says so (status $RC)" '[ "$RC" = 0 ] && printf "%s" "$OUT" | grep -F >/dev/null "codesign can use the stable local certificate"'
+
+fresh_fixture
+tty_install SHIM_NEED_PARTITION=1 SHIM_PARTITION_FAILS=1
+check "when no key matches the label it does not widen the filter: one call, then the exact steps" \
+    '[ "$(grep -c "^security set-key-partition-list" "$SHIM_LOG")" = 1 ] && ! grep -v -e "-l $KEY_CN" "$SHIM_LOG" | grep >/dev/null "set-key-partition-list" && printf "%s" "$OUT" | grep -F >/dev/null "codesign still cannot use the certificate"'
+
+fresh_fixture
+tty_install
+check "with the key already usable after the trust it asks for no password and calls no set-key-partition-list" '! grep >/dev/null "set-key-partition-list" "$SHIM_LOG" && ! printf "%s" "$OUT" | grep -F >/dev/null "Password of the Keychain"'
+
+# The real `security`, on a throwaway Keychain (not in the search list, no trust
+# change): the function the script runs matches the Local certificate's key and
+# no other signing key, and changes nothing when there is no such key.
+echo "== the key access, on a real throwaway Keychain =="
+if command -v openssl >/dev/null 2>&1; then
+    KCDIR="$WORK/kc"; mkdir -p "$KCDIR"
+    KCFILE="$KCDIR/test.keychain-db"
+    /usr/bin/security create-keychain -p kc-secret "$KCFILE" >/dev/null 2>&1 && /usr/bin/security unlock-keychain -p kc-secret "$KCFILE" >/dev/null 2>&1
+    add_signing_key() {
+        printf '[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n[dn]\nCN=%s\n[ext]\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=critical,codeSigning\n' "$1" > "$KCDIR/req.cnf"
+        openssl req -x509 -newkey rsa:2048 -keyout "$KCDIR/k.pem" -out "$KCDIR/c.pem" -days 2 -nodes -config "$KCDIR/req.cnf" >/dev/null 2>&1 || return 1
+        { openssl pkcs12 -export -legacy -inkey "$KCDIR/k.pem" -in "$KCDIR/c.pem" -out "$KCDIR/id.p12" -passout pass:x -name "$1" >/dev/null 2>&1 \
+            || openssl pkcs12 -export -inkey "$KCDIR/k.pem" -in "$KCDIR/c.pem" -out "$KCDIR/id.p12" -passout pass:x -name "$1" >/dev/null 2>&1; } || return 1
+        /usr/bin/security import "$KCDIR/id.p12" -k "$KCFILE" -P x -A -T /usr/bin/codesign >/dev/null 2>&1
+    }
+    if add_signing_key "Somebody Else's Signing Key" && add_signing_key "$KEY_CN"; then
+        # The script's own function; `security` is a wrapper that keeps the keys
+        # the tool says it matched (it prints each) in a file.
+        MATCHED="$WORK/matched.txt"
+        key_access() (
+            CUA_LOCAL_SIGN_CN="$1"
+            security() { /usr/bin/security "$@" > "$MATCHED" 2>&1; }
+            eval "$(sed -n '/^open_key_to_codesign()/,/^}/p' "$SCRIPTS_DIR/install-local.sh")"
+            open_key_to_codesign "$KCFILE" kc-secret
+        )
+        key_access "$KEY_CN"
+        check "the function opens the Local certificate's key (status $?)" '[ -s "$MATCHED" ] && grep -F >/dev/null "\"$KEY_CN\"" "$MATCHED"'
+        check "and that is the only key it matched: not the other signing key in the same Keychain" '! grep -F >/dev/null "Somebody Else" "$MATCHED" && [ "$(grep -c "^class: 0x00000010" "$MATCHED")" = 1 ]'
+        key_access "No such certificate"
+        check "with no key of that name it fails and matches nothing" '[ $? != 0 ] || ! grep >/dev/null "^class:" "$MATCHED"'
+        # The unscoped call it replaced, to show the test would catch it.
+        /usr/bin/security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k kc-secret "$KCFILE" > "$MATCHED" 2>&1
+        check "(for reference) the unscoped -s call matches both keys, which is what the scoping prevents" '[ "$(grep -c "^class: 0x00000010" "$MATCHED")" = 2 ]'
+    else
+        note "SKIP: could not make test keys in a throwaway Keychain"
+    fi
+    /usr/bin/security delete-keychain "$KCFILE" >/dev/null 2>&1 || true
+else
+    note "SKIP: no openssl for the throwaway Keychain checks"
+fi
 
 fresh_fixture
 FRESH_ARGS="--setup-signing"

@@ -365,3 +365,52 @@ fn the_state_folder_follows_the_channel_unless_cua_home_is_set() {
     );
     assert_eq!(env.cua_home(), f.home.join("pinned"));
 }
+
+/// Stable's setup removes a stale `cua-spaces` entry that still launches the
+/// retired `spaces_mcp.py`; that is the released app's cleanup. Local's setup
+/// must leave it (and a user's own `cua-spaces`) exactly as it is.
+#[test]
+fn local_setup_leaves_stables_legacy_cua_spaces_entry_alone() {
+    let f = Fixture::new();
+    let legacy = r#"{"mcpServers": {"cua-spaces": {"command": "python3", "args": ["/x/apps/cua-spaces/mcp/spaces_mcp.py"]}, "other": {"command": "o"}}}"#;
+    write(&f.home, ".cursor/mcp.json", legacy);
+
+    let local = f.setup(CuaChannel::Local);
+    let out = local
+        .configure_mcp(
+            &ids(&["cursor"]),
+            &McpServer::for_channel(CuaChannel::Local, "cua-local"),
+        )
+        .unwrap();
+    assert!(
+        out.iter().all(|o| o.item != "cua-spaces"),
+        "Local touched the legacy entry: {out:#?}"
+    );
+    let cursor = json(&f.read(".cursor/mcp.json"));
+    assert_eq!(
+        cursor["mcpServers"]["cua-spaces"]["args"][0],
+        "/x/apps/cua-spaces/mcp/spaces_mcp.py"
+    );
+    assert!(cursor["mcpServers"]["cua-local"].is_object());
+    // Local's remove and update leave it too.
+    local.remove(&ids(&["cursor"]), Parts::ALL).unwrap();
+    local
+        .update(Some(&McpServer::for_channel(
+            CuaChannel::Local,
+            "cua-local",
+        )))
+        .unwrap();
+    let cursor = json(&f.read(".cursor/mcp.json"));
+    assert!(cursor["mcpServers"]["cua-spaces"].is_object(), "{cursor}");
+    assert!(cursor["mcpServers"]["cua-local"].is_null());
+
+    // Stable's setup still removes it, as before.
+    let out = f
+        .setup(CuaChannel::Stable)
+        .configure_mcp(&ids(&["cursor"]), &McpServer::new(STABLE_CUA))
+        .unwrap();
+    let removed: Vec<&Outcome> = out.iter().filter(|o| o.item == "cua-spaces").collect();
+    assert_eq!(removed.len(), 1, "{out:#?}");
+    assert_eq!(removed[0].change, Change::Removed);
+    assert!(json(&f.read(".cursor/mcp.json"))["mcpServers"]["cua-spaces"].is_null());
+}

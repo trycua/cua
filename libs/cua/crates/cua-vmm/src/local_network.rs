@@ -271,9 +271,18 @@ fn subnet_host(ip: u32, mask: u32) -> Option<String> {
     Some(std::net::Ipv4Addr::from(target).to_string())
 }
 
-/// The `lume serve` this host's runtimes talk to.
+/// The `lume serve` this host's runtimes talk to: `$LUME_API`, else the
+/// default of this process's channel (Stable's `:7777`, Local's `:7787`).
 pub fn lume_base() -> String {
-    std::env::var("LUME_API").unwrap_or_else(|_| "http://127.0.0.1:7777".into())
+    lume_base_with(
+        cua_home::channel::CuaChannel::current(),
+        std::env::var("LUME_API").ok().as_deref(),
+    )
+}
+
+/// [`lume_base`] for `channel`, with `$LUME_API`'s value given (pure).
+pub fn lume_base_with(channel: cua_home::channel::CuaChannel, lume_api: Option<&str>) -> String {
+    lume_api.map_or_else(|| channel.lume_api().to_string(), str::to_string)
 }
 
 impl ResponsibleApp {
@@ -449,6 +458,25 @@ mod tests {
         assert_eq!(json["app"]["name"], "Cua Spaces");
         let back: Report = serde_json::from_value(json).unwrap();
         assert_eq!(back, r);
+    }
+
+    #[test]
+    fn the_lume_server_comes_from_the_channel_unless_lume_api_says_otherwise() {
+        use cua_home::channel::CuaChannel;
+        assert_eq!(
+            lume_base_with(CuaChannel::Stable, None),
+            "http://127.0.0.1:7777"
+        );
+        assert_eq!(
+            lume_base_with(CuaChannel::Local, None),
+            "http://127.0.0.1:7787"
+        );
+        for c in CuaChannel::ALL {
+            assert_eq!(
+                lume_base_with(c, Some("http://10.0.0.5:9000")),
+                "http://10.0.0.5:9000"
+            );
+        }
     }
 
     #[cfg(target_os = "macos")]

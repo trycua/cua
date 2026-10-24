@@ -1851,7 +1851,7 @@ pub async fn run_host(
                     })?;
                     Some(cua_host::direct::authority(
                         ip,
-                        cua_proto::SPACESD_DEFAULT_PORT,
+                        cua_home::channel::CuaChannel::current().ports().tcp,
                     ))
                 }
                 (None, false) => None,

@@ -24325,7 +24325,8 @@ export interface AgentSetupLike {
 
 /**
  * Configures the MCP server (default: `cua mcp`, `cua` resolved on
- * PATH) for `agents`.
+ * PATH; `cua-local mcp` named `cua-local` for the Local app) for
+ * `agents`. A server without a name gets the channel's.
  */
     configureMcp(agents: Array<string>, server: AgentMcpServer | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<AgentSetupOutcome>>;
 /**
@@ -24405,7 +24406,8 @@ private constructor(pointer: UniffiHandle) {
 
 /**
  * Configures the MCP server (default: `cua mcp`, `cua` resolved on
- * PATH) for `agents`.
+ * PATH; `cua-local mcp` named `cua-local` for the Local app) for
+ * `agents`. A server without a name gets the channel's.
  */
     async configureMcp(agents: Array<string>, server: AgentMcpServer | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<Array<AgentSetupOutcome>> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -44125,7 +44127,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_agentrun_wait() !== 14426) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_agentrun_wait");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp() !== 62628) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp() !== 53713) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_agentsetup_configure_mcp");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_agentsetup_detect() !== 59369) {

@@ -29,14 +29,17 @@ public protocol AgentSetupRunning: AnyObject, Sendable {
 }
 
 /// The SDK's `AgentSetup`, registering the app's own `cua` as the MCP
-/// server when the bundle carries one.
+/// server when the bundle carries one. The server has no name here: the
+/// SDK names it for the app's channel (`cua`, `cua-local` for Cua Spaces
+/// Local), so the Local app never writes over the released app's entry, and
+/// it installs the channel's skill copies (`cua-spaces-local`).
 public final class LiveAgentSetup: AgentSetupRunning, @unchecked Sendable {
     let inner: CuaSDK.AgentSetup
     let server: AgentMcpServer?
 
     public init(inner: CuaSDK.AgentSetup, cuaBinary: String?) {
         self.inner = inner
-        self.server = cuaBinary.map { AgentMcpServer(name: "cua", command: $0, args: ["mcp"], env: [:]) }
+        self.server = cuaBinary.map { AgentMcpServer(name: "", command: $0, args: ["mcp"], env: [:]) }
     }
 
     public func statuses() async -> [AppAgentSetupStatus] { inner.detect().map { appAgentSetupStatus(info: $0) } }

@@ -32,6 +32,8 @@ on:
       - "libs/cua/crates/cua-teleport/**"
       - "libs/cua/crates/cua-keyvault/**"
       - "libs/cua/crates/cua-sdk/**"
+      # The channel names the Local bundle is stamped from (CuaChannel).
+      - "libs/cua/crates/cua-home/**"
       - "libs/cua/scripts/generate-app-core-ffi.py"
       - "libs/cua/swift/**"
       - "libs/spaces-sdk-swift/**"
@@ -56,6 +58,8 @@ on:
       - "libs/cua/crates/cua-teleport/**"
       - "libs/cua/crates/cua-keyvault/**"
       - "libs/cua/crates/cua-sdk/**"
+      # The channel names the Local bundle is stamped from (CuaChannel).
+      - "libs/cua/crates/cua-home/**"
       - "libs/cua/scripts/generate-app-core-ffi.py"
       - "libs/cua/swift/**"
       - "libs/spaces-sdk-swift/**"
@@ -184,6 +188,12 @@ jobs:
       - name: Swift tests (view models, parity, snapshots)
         working-directory: apps/cua-spaces-macos
         run: scripts/test.sh
+      # install-local.sh and uninstall-local.sh against a fake HOME and a fake
+      # build: a Stable install stays byte-identical, a wrong bundle id is
+      # refused. Needs no build, certificate or network.
+      - name: install-local and uninstall-local (fake HOME)
+        working-directory: apps/cua-spaces-macos
+        run: scripts/tests/install-local-test.sh
       # BridgeContractTests (above) checked every answer against
       # apps/cua-spaces-web/src/bridge/contracts/bridge-shapes.json; its
       # answers then go through the web UI's webkit adapter.
@@ -274,6 +284,29 @@ jobs:
       - name: Build the app bundle (and its launch check)
         working-directory: apps/cua-spaces-macos
         run: scripts/build-app.sh release
+      # Cua Spaces Local (--channel local) runs beside an installed Cua
+      # Spaces and must not be able to touch it (CUA-1776): the Local bundle
+      # id, helper, URL scheme and home, staging, and no Sparkle feed. The
+      # build ends with scripts/check-local-bundle.sh; the second step proves
+      # the check fails on the production bundle (its id, its feed, its
+      # `cua` scheme).
+      - name: Build the Local bundle (Cua Spaces Local) and check it
+        working-directory: apps/cua-spaces-macos
+        run: |
+          scripts/build-app.sh --channel local release "$RUNNER_TEMP/local-app"
+          scripts/check-local-bundle.sh "$RUNNER_TEMP/local-app/Cua Spaces Local.app"
+      - name: The Local check rejects the production bundle
+        working-directory: apps/cua-spaces-macos
+        run: |
+          if scripts/check-local-bundle.sh ".build/app/Cua Spaces.app" 2>"$RUNNER_TEMP/local-check.log"; then
+            echo "check-local-bundle.sh accepted the production bundle" >&2
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/local-check.log"
+          for want in "production one" "SUFeedURL is set" "'cua' URL scheme is registered"; do
+            grep -F "$want" "$RUNNER_TEMP/local-check.log" >/dev/null ||
+              { echo "the check did not report: $want" >&2; exit 1; }
+          done
       # With the release key only (it is absent on forks): two fake releases
       # through make-appcast.sh, checked with Sparkle's sign_update and the
       # public key the app ships (catches a secret that does not match it).

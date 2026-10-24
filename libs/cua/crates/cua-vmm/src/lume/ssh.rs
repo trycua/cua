@@ -21,14 +21,28 @@ use crate::exec::{ExecChunk, ExecOutput, ExecRequest, GuestExec, shell_quote};
 pub struct LumeSshExec {
     /// The `lume` binary.
     pub program: String,
+    /// Arguments before `lume`'s own: `lume`'s environment, when it needs
+    /// one, through `env` ([`super::LumeCmd::wrapped`]).
+    pub prefix: Vec<String>,
     /// VM name.
     pub vm: String,
 }
 
 impl LumeSshExec {
+    /// `lume ssh` run as `lume` runs it: for the channel's own VM directory.
+    pub fn from_lume(lume: &super::LumeCmd, vm: impl Into<String>) -> Self {
+        let (program, prefix) = lume.wrapped();
+        Self {
+            program,
+            prefix,
+            vm: vm.into(),
+        }
+    }
+
     pub fn new(program: impl Into<String>, vm: impl Into<String>) -> Self {
         Self {
             program: program.into(),
+            prefix: Vec::new(),
             vm: vm.into(),
         }
     }
@@ -170,7 +184,12 @@ impl GuestExec for LumeSshExec {
             });
         }
         let nonce = nonce();
-        let argv = self.argv(&req, &nonce);
+        let argv: Vec<String> = self
+            .prefix
+            .iter()
+            .cloned()
+            .chain(self.argv(&req, &nonce))
+            .collect();
         let (raw_tx, mut raw_rx) = mpsc::channel::<ExecChunk>(64);
         let program = self.program.clone();
         let timeout = req.timeout;

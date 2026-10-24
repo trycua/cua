@@ -504,16 +504,18 @@ pub(crate) fn teleport_outcome(e: &CuaError) -> events::TeleportOutcome {
 }
 
 /// Whether an error message is the Keyvault's `RequiresCuaApp` (its
-/// install and open links are fixed constants).
+/// install link is fixed, and its open link is the app's own: `cua://` for
+/// the released app, `cua-local://` for Cua Spaces Local).
 pub(crate) fn requires_cua_app(message: &str) -> bool {
     message.contains(cua_keyvault_links::INSTALL_URL)
-        || message.contains(cua_keyvault_links::OPEN_URL)
+        || cua_home::channel::CuaChannel::ALL
+            .iter()
+            .any(|c| message.contains(&c.keyvault_url()))
 }
 
-/// The fixed links `RequiresCuaApp` carries (cua-keyvault `embedded`).
+/// The fixed link `RequiresCuaApp` carries (cua-keyvault `embedded`).
 mod cua_keyvault_links {
     pub const INSTALL_URL: &str = "https://cua.ai/download";
-    pub const OPEN_URL: &str = "cua://keyvault";
 }
 
 #[cfg(test)]
@@ -593,6 +595,18 @@ mod tests {
             teleport_outcome(&CuaError::TeleportRefused("no".into())),
             events::TeleportOutcome::ConsentDenied
         );
+    }
+
+    #[test]
+    fn requires_cua_app_knows_each_channels_open_link() {
+        // "Installed, not running" carries the app's open link: the released
+        // app's `cua://`, or Cua Spaces Local's `cua-local://`.
+        for link in ["cua://keyvault", "cua-local://keyvault"] {
+            let m = format!("Teleport needs the Cua app running: open Cua ({link}) and try again.");
+            assert!(requires_cua_app(&m), "{link}");
+        }
+        assert!(!requires_cua_app("no display"));
+        assert!(!requires_cua_app("open cua-other://keyvault"));
     }
 
     fn summary() -> StreamSummary {

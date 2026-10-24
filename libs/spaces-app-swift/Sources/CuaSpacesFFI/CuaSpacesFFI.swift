@@ -7160,7 +7160,8 @@ public struct AppCliInstallPlan: Equatable, Hashable {
      */
     public var bundledVersion: String?
     /**
-     * Another `cua` found earlier on PATH (it would shadow `target`).
+     * Another CLI of the same name found earlier on PATH (it would shadow
+     * `target`).
      */
     public var shadowedBy: String?
     /**
@@ -7176,9 +7177,10 @@ public struct AppCliInstallPlan: Equatable, Hashable {
      */
     public var pathLine: String?
     /**
-     * A working `cua` CLI already on this machine: `target`, else the
-     * first in the usual install folders or on PATH (a Finder-launched
+     * A working CLI of this channel already on this machine: `target`, else
+     * the first in the usual install folders or on PATH (a Finder-launched
      * app's PATH lacks `~/.local/bin`, so the folders are searched too).
+     * Local looks for `cua-local` only: a Stable `cua` is not its CLI.
      */
     public var found: String?
 
@@ -7210,7 +7212,8 @@ public struct AppCliInstallPlan: Equatable, Hashable {
          * `cua --version` of the bundled CLI.
          */bundledVersion: String?,
         /**
-         * Another `cua` found earlier on PATH (it would shadow `target`).
+         * Another CLI of the same name found earlier on PATH (it would shadow
+         * `target`).
          */shadowedBy: String?,
         /**
          * `bin_dir` is already on PATH.
@@ -7222,9 +7225,10 @@ public struct AppCliInstallPlan: Equatable, Hashable {
          * The line that would be added to `path_profile`.
          */pathLine: String?,
         /**
-         * A working `cua` CLI already on this machine: `target`, else the
-         * first in the usual install folders or on PATH (a Finder-launched
+         * A working CLI of this channel already on this machine: `target`, else
+         * the first in the usual install folders or on PATH (a Finder-launched
          * app's PATH lacks `~/.local/bin`, so the folders are searched too).
+         * Local looks for `cua-local` only: a Stable `cua` is not its CLI.
          */found: String?) {
         self.source = source
         self.target = target

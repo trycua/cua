@@ -18,6 +18,12 @@ if CommandLine.arguments.dropFirst().first == "--check-launch-only" {
     exit(0)
 }
 
+// A Local build ("Cua Spaces Local", Info.plist CuaChannel=local) settles
+// CUA_CHANNEL, CUA_ENV and CUA_HOME first, before anything else starts, so the
+// helper below, cua-spacesd and every other child inherit them. A Stable
+// build changes nothing here.
+TargetEnvironment.pinChannel()
+
 // The host service, run by this same executable so every permission is the
 // app's ("Cua Spaces"; ServiceLauncher.swift), before anything else:
 //  * `--service-helper run`: the service itself (the login item launchd
@@ -25,7 +31,8 @@ if CommandLine.arguments.dropFirst().first == "--check-launch-only" {
 //  * `check-permissions`: cua-spacesd's permission check, answered for the
 //    app;
 //  * `--service-helper register|unregister|status`: the login item
-//    (Contents/Library/LaunchAgents/com.trycua.spaces.helper.plist) through
+//    (Contents/Library/LaunchAgents/<CuaHelperLabel>.plist, by default
+//    com.trycua.spaces.helper.plist) through
 //    SMAppService, which only this bundle's own code may register. cua-host's
 //    app-helper runner runs it (from the app's SDK and from the `cua` CLI);
 //    prints `{"status": ...}` (and `"error"`).
@@ -38,7 +45,8 @@ if launchArgs.first == "check-permissions" {
     ServiceLauncher.passthrough(launchArgs)
 }
 
-// `CUA_ENV=staging`: this process and the daemon use the staging home.
+// `CUA_ENV=staging`: this process and the daemon use the staging home (a
+// Local build already settled its three variables above).
 TargetEnvironment.pin()
 
 // Teleport, the Cua Volume, persistent agents and the Keyvault for every

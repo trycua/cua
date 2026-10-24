@@ -3,7 +3,9 @@
 //! [`cua_home`] is `$CUA_HOME`, else `$HOME/.cua` (`%USERPROFILE%\.cua` on
 //! Windows): the directory that holds the Spaces registry, sandbox state,
 //! env tokens and credentials. A non-production `CUA_ENV` (see [`env`])
-//! moves the default below it (`~/.cua/envs/staging`).
+//! moves the default below it (`~/.cua/envs/staging`). The Local channel
+//! (see [`channel`]) has a home of its own, `~/.cua-local`, with no
+//! environment below it.
 //!
 //! [`guard_write`] refuses a write under the user's *real* `~/.cua` (the
 //! passwd home, or on Windows the account's profile directory; never
@@ -83,10 +85,16 @@ pub fn bundled_cua_of(exe: &Path) -> Option<PathBuf> {
 }
 
 /// The cua home: `$CUA_HOME`, else `~/.cua` (production) or
-/// `~/.cua/envs/<env>` (another `CUA_ENV`).
+/// `~/.cua/envs/<env>` (another `CUA_ENV`); for the Local channel
+/// `~/.cua-local` whatever the environment is (`CUA_ENV=prod` included: it
+/// is an opt-in to the production deployment, not to Stable's home).
 pub fn cua_home() -> PathBuf {
     if let Some(h) = std::env::var_os("CUA_HOME").filter(|v| !v.is_empty()) {
         return PathBuf::from(h);
+    }
+    let channel = channel::CuaChannel::current();
+    if channel.is_local() {
+        return channel.home_dir();
     }
     let home = std::env::var_os("HOME")
         .filter(|v| !v.is_empty())

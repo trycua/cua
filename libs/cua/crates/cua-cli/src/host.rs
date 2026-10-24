@@ -1951,10 +1951,10 @@ pub async fn run_host(
                 && let Ok(Some((cpus, mem))) =
                     cua_vmm::managed::dedicate_to_spaces(&cua_sandbox_core::settings::config_path())
             {
-                let note = format!(
+                let note = crate::util::hint(&format!(
                     "Linux Spaces here share a {cpus}-CPU, {mem} GiB runtime VM \
                      (cua config set runtime.linux_memory_gib N to change it)."
-                );
+                ));
                 if json {
                     eprintln!("{note}");
                 } else {
@@ -2892,11 +2892,14 @@ pub async fn run_add_host(
             serde_json::json!({ "host": host, "space": info.id, "via": "direct" }).to_string(),
         );
     } else {
-        hint_line(
+        // The command is spelled with this build's CLI name here, not rewritten
+        // afterwards: the host's name is the user's, and may read "cua host".
+        line(
             out,
             format!(
-                "Added host {host:?} ({}, direct). Create Spaces on it with `cua spaces create --on \"host:{host}\"`.",
-                info.id
+                "Added host {host:?} ({}, direct). Create Spaces on it with `{} spaces create --on \"host:{host}\"`.",
+                info.id,
+                crate::util::cli()
             ),
         );
     }

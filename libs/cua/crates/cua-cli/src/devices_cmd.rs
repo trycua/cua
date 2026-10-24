@@ -191,7 +191,9 @@ pub async fn after_login(home: &Path, out: &mut dyn Write) {
         ),
         Ok(Ok(r)) => {
             if let Some(code) = r.code {
-                hint_line(
+                // The command runs on another, enrolled device, which may have
+                // either CLI: it is not renamed.
+                line(
                     out,
                     format!(
                         "This device is waiting for approval (code {code}): approve it from an enrolled device with `cua devices approve {code}` or in the Cua Spaces app."
@@ -342,7 +344,7 @@ pub async fn run_with(
                 }
             }
             if let Some(p) = pending {
-                hint_line(
+                line(
                     out,
                     format!(
                         "  approve it from an enrolled device: `cua devices approve {}` (code expires {})",
@@ -388,7 +390,7 @@ pub async fn run_with(
                     out,
                     format!("Approve this device from an enrolled device with the code {code}:"),
                 );
-                hint_line(out, format!("  cua devices approve {code}"));
+                line(out, format!("  cua devices approve {code}"));
                 line(
                     out,
                     format!(

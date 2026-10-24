@@ -178,8 +178,7 @@ pub fn self_login(status_json: &str) -> Option<String> {
 /// token, the tailnet login is the credential.
 pub fn tailnet_pairing_command(address: &str, name: &str, host: bool) -> String {
     format!(
-        "{} spaces add {}{} --name {}",
-        crate::cli(),
+        "cua spaces add {}{} --name {}",
         shell_quote(address),
         if host { " --host" } else { "" },
         shell_quote(name),
@@ -188,8 +187,7 @@ pub fn tailnet_pairing_command(address: &str, name: &str, host: bool) -> String 
 
 pub fn pairing_command(address: &str, name: &str, token: &str, host: bool) -> String {
     format!(
-        "{} spaces add {}{} --name {} --token {}",
-        crate::cli(),
+        "cua spaces add {}{} --name {} --token {}",
         shell_quote(address),
         if host { " --host" } else { "" },
         shell_quote(name),

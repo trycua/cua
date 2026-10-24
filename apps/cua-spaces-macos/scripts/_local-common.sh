@@ -192,6 +192,16 @@ local_helper_enabled() {
     CUA_CHANNEL=local "$app/Contents/MacOS/CuaSpacesMac" --service-helper status 2>/dev/null | grep -q '"status":"enabled"'
 }
 
+# Registers the helper login item of the Local app at `app` (the app does it
+# itself: only a bundle's own code may), best effort. `what` names the app in
+# the warning.
+register_local_helper() {
+    local app="$1" what="$2"
+    [ -x "$app/Contents/MacOS/CuaSpacesMac" ] || return 0
+    CUA_CHANNEL=local "$app/Contents/MacOS/CuaSpacesMac" --service-helper register >/dev/null 2>&1 \
+        || warn "$what's helper login item could not be registered; open the app and set up this Mac again."
+}
+
 # Puts back what `retire_local_app` took from an old Local app that is restored
 # after a failed install: LaunchServices knows it again and, when `helper_was_enabled`
 # is 1, its helper login item is registered again (best effort).
@@ -200,9 +210,8 @@ restore_retired_local_app() {
     if [ -x "$LSREGISTER" ]; then
         "$LSREGISTER" -f "$app" >/dev/null 2>&1 || true
     fi
-    if [ "$helper_was_enabled" = 1 ] && [ -x "$app/Contents/MacOS/CuaSpacesMac" ]; then
-        CUA_CHANNEL=local "$app/Contents/MacOS/CuaSpacesMac" --service-helper register >/dev/null 2>&1 \
-            || warn "the previous app's helper login item could not be registered again; open the app and set up this Mac again."
+    if [ "$helper_was_enabled" = 1 ]; then
+        register_local_helper "$app" "the previous app"
     fi
 }
 

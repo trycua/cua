@@ -89,9 +89,12 @@ cat > "$WORK/stub.c" <<'EOF'
 #include <string.h>
 int main(int argc, char **argv) {
     const char *log = getenv("STUB_LOG");
-    // `CuaSpacesMac --service-helper status`: the login item is registered.
-    if (argc >= 3 && strcmp(argv[1], "--service-helper") == 0 && strcmp(argv[2], "status") == 0)
-        printf("{\"status\":\"enabled\"}\n");
+    // `CuaSpacesMac --service-helper status`: the login item is registered
+    // (STUB_HELPER_STATUS=not-registered: it is not).
+    if (argc >= 3 && strcmp(argv[1], "--service-helper") == 0 && strcmp(argv[2], "status") == 0) {
+        const char *status = getenv("STUB_HELPER_STATUS");
+        printf("{\"status\":\"%s\"}\n", status ? status : "enabled");
+    }
     FILE *f = log ? fopen(log, "a") : NULL;
     if (f) {
         const char *channel = getenv("CUA_CHANNEL");
@@ -925,7 +928,8 @@ check "installing over an app with the old id succeeds (status $RC)" '[ "$RC" = 
 check "the old id is gone: the app at the Local path has the new Local id" '[ "$(installed_id "$LOCAL_APP")" = com.trycua.spaces.macos.local ] && /usr/bin/codesign --verify --deep --strict "$LOCAL_APP" 2>/dev/null'
 check "it says so in one plain line" \
     '[ "$(printf "%s\n" "$OUT" | grep -c "found the old Cua Spaces Local")" = 1 ] && printf "%s\n" "$OUT" | grep "found the old" | grep >/dev/null "found the old Cua Spaces Local (bundle id com.trycua.spaces.local): replacing it with the renamed app (com.trycua.spaces.macos.local)"'
-check "the old app was asked to unregister its login item" 'grep >/dev/null -- "--service-helper unregister \[CUA_CHANNEL=local\]" "$STUB_LOG"'
+check "the old app was asked to unregister its login item, and the new app registers its own (it was enabled)" \
+    'grep >/dev/null -- "--service-helper unregister \[CUA_CHANNEL=local\]" "$STUB_LOG" && [ "$(grep -n -- "--service-helper unregister" "$STUB_LOG" | head -1 | cut -d: -f1)" -lt "$(grep -n -- "--service-helper register" "$STUB_LOG" | head -1 | cut -d: -f1)" ]'
 check "launchd was asked about the Local helper label only" \
     '[ "$(grep -c "^launchctl" "$SHIM_LOG")" = 1 ] && grep >/dev/null "bootout gui/[0-9]*/com.trycua.spaces.local.helper$" "$SHIM_LOG"'
 check "LaunchServices forgot the old registration, then registered the new app" \
@@ -940,6 +944,14 @@ check "cua-local links to the new app's cua" '[ "$(readlink "$LOCAL_CLI")" = "$L
 install
 check "the next install is a plain rebuild: no migration line, nothing about the old id" \
     '[ "$RC" = 0 ] && ! printf "%s" "$OUT" | grep >/dev/null "found the old" && ! grep >/dev/null "service-helper" "$STUB_LOG"'
+
+# An old app whose login item was not registered gets none registered for the new one.
+reset_fixture
+make_legacy_local
+: > "$STUB_LOG"
+STUB_HELPER_STATUS=not-registered install
+check "an old Local without a registered login item: replaced, and no login item is registered (status $RC)" \
+    '[ "$RC" = 0 ] && [ "$(installed_id "$LOCAL_APP")" = com.trycua.spaces.macos.local ] && ! grep >/dev/null -- "--service-helper register" "$STUB_LOG"'
 
 # A build that is refused leaves the old app, its settings and its login item alone.
 reset_fixture

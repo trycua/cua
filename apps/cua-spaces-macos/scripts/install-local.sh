@@ -56,8 +56,9 @@
 # An old Cua Spaces Local (the bundle id com.trycua.spaces.local, before the
 # rename to com.trycua.spaces.macos.local) at the Local path is replaced: its
 # login item is unregistered, the app is removed, and once the new app is
-# installed its old settings in ~/Library go too (a failed copy puts the old app
-# and its login item back). ~/.cua-local (the sign-in) and Cua Volume Local stay.
+# installed its old settings in ~/Library go too, and its helper login item is
+# registered again for the new app (a failed copy puts the old app and its login
+# item back). ~/.cua-local (the sign-in) and Cua Volume Local stay.
 # macOS asks for the renamed app's permissions once; the old id's permission rows
 # stay in macOS's list (macOS cannot clear them for an app that is gone), unused.
 #
@@ -837,6 +838,12 @@ if [ -x "$LSREGISTER" ]; then
     "$LSREGISTER" -f "$APP_DEST" >/dev/null 2>&1 || true
 fi
 reset_spaces_local_tcc "$PREVIOUS_REQUIREMENT" "$INSTALLED_REQUIREMENT"
+# The old app's helper login item was enabled and was unregistered above: enable
+# the renamed app's (the same label), so the host is back at the next login
+# whether or not the app is opened now.
+if [ "$LEGACY_HELPER_WAS_ENABLED" = 1 ]; then
+    register_local_helper "$APP_DEST" "the new app"
+fi
 
 # --- The CLI -----------------------------------------------------------------------
 

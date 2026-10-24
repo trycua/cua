@@ -133,7 +133,124 @@ fn xdg_open_failure(mut child: std::process::Child) -> Option<String> {
 }
 
 #[cfg(test)]
-mod launch_app_tests;
+mod launch_app_tests {
+    use super::*;
+    use crate::installed_apps::InstalledApp;
+
+    fn app(name: &str, bundle_id: &str, launch_path: &str) -> InstalledApp {
+        InstalledApp {
+            name: name.to_owned(),
+            bundle_id: bundle_id.to_owned(),
+            launch_path: launch_path.to_owned(),
+            last_used: None,
+            startup_wm_class: None,
+        }
+    }
+
+    fn fixture() -> Vec<InstalledApp> {
+        vec![
+            app("Galculator", "galculator", "galculator"),
+            app(
+                "Google Chrome",
+                "google-chrome",
+                "/usr/bin/google-chrome-stable",
+            ),
+            app("File Manager", "thunar", "thunar"),
+            app(
+                "File Manager Settings",
+                "thunar-settings",
+                "thunar-settings",
+            ),
+        ]
+    }
+
+    /// Process state letter from `/proc/<pid>/stat`, or `None` once the entry
+    /// is gone. `comm` may itself contain spaces and parentheses, so the state
+    /// is read after the final `)` rather than by splitting from the left.
+    fn proc_state(pid: u32) -> Option<char> {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        let after_comm = stat.rsplit_once(')')?.1;
+        after_comm.split_whitespace().next()?.chars().next()
+    }
+
+    #[test]
+    fn launched_children_are_reaped_instead_of_lingering_as_zombies() {
+        // A launched app that exits must not stay in the process table. The
+        // driver never waits on what it launches, so without an explicit
+        // reaper every launch leaked a pid slot for the daemon's lifetime and
+        // left "does this pid exist" liveness checks reporting a terminated
+        // app as still running.
+        // `/bin/sh` rather than a richer coreutils binary: it is the one
+        // executable POSIX and the Nix build sandbox both guarantee, and the
+        // sandbox has no `/bin/true`.
+        let pid = spawn_launch_command("/bin/sh -c exit", &[]).expect("/bin/sh should spawn");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            match proc_state(pid) {
+                None => break,                    // reaped, entry gone
+                Some(state) if state != 'Z' => {} // still running or exiting
+                Some(_) => {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "pid {pid} was still a zombie after the reaper deadline"
+                    );
+                }
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "pid {pid} was never reaped"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+    }
+
+    #[test]
+    fn matches_exact_display_name_case_insensitively() {
+        let apps = fixture();
+        let hit = match_installed_app(&apps, "google chrome").expect("should match");
+        assert_eq!(hit.bundle_id, "google-chrome");
+    }
+
+    #[test]
+    fn matches_desktop_file_id_and_exec_basename() {
+        let apps = fixture();
+        assert_eq!(
+            match_installed_app(&apps, "galculator").unwrap().name,
+            "Galculator"
+        );
+        assert_eq!(
+            match_installed_app(&apps, "google-chrome-stable")
+                .unwrap()
+                .name,
+            "Google Chrome"
+        );
+    }
+
+    #[test]
+    fn matches_unambiguous_display_name_substring() {
+        let apps = fixture();
+        assert_eq!(
+            match_installed_app(&apps, "chrome").unwrap().name,
+            "Google Chrome"
+        );
+    }
+
+    #[test]
+    fn refuses_ambiguous_substring_and_unknown_names() {
+        let apps = fixture();
+        // "file manager" is a substring of two entries — refuse to guess.
+        // ("File Manager" itself still resolves via the exact-name rung.)
+        assert!(match_installed_app(&apps, "file man").is_none());
+        assert_eq!(
+            match_installed_app(&apps, "file manager")
+                .unwrap()
+                .bundle_id,
+            "thunar"
+        );
+        assert!(match_installed_app(&apps, "gnome-calculator").is_none());
+        assert!(match_installed_app(&apps, "").is_none());
+    }
+}
 
 #[async_trait]
 impl Tool for LaunchAppTool {
@@ -509,4 +626,108 @@ fn settle_launch(
 }
 
 #[cfg(test)]
-mod launch_resolution_tests;
+mod launch_resolution_tests {
+    use super::*;
+
+    fn window(class: &str) -> crate::x11::WindowInfo {
+        crate::x11::WindowInfo {
+            xid: 1,
+            pid: Some(7),
+            app_name: class.into(),
+            title: "t".into(),
+            is_on_screen: true,
+            z_index: None,
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+        }
+    }
+
+    #[test]
+    fn launch_queries_match_window_classes() {
+        assert!(window_matches_launch(
+            &window("org.gnome.Nautilus"),
+            "nautilus"
+        ));
+        assert!(window_matches_launch(
+            &window("org.gnome.Nautilus"),
+            "org.gnome.Nautilus"
+        ));
+        assert!(window_matches_launch(
+            &window("Gnome-terminal"),
+            "gnome-terminal"
+        ));
+        assert!(window_matches_launch(
+            &window("Gnome-control-center"),
+            "gnome-control-center"
+        ));
+        assert!(window_matches_launch(
+            &window("Org.gnome.Nautilus"),
+            "org.gnome.Nautilus.desktop"
+        ));
+        assert!(window_matches_launch(
+            &window("Org.gnome.Nautilus"),
+            "Files\u{0}org.gnome.Nautilus\u{0}nautilus --new-window"
+        ));
+        assert!(window_matches_launch(
+            &window("Gnome-control-center"),
+            "Settings\u{0}Settings\u{0}gnome-control-center"
+        ));
+        assert!(!window_matches_launch(&window("Gedit"), "nautilus"));
+        assert!(!window_matches_launch(&window(""), "nautilus"));
+    }
+
+    fn owned(xid: u64, pid: u32, class: &str) -> crate::x11::WindowInfo {
+        crate::x11::WindowInfo {
+            xid,
+            pid: Some(pid),
+            ..window(class)
+        }
+    }
+
+    #[test]
+    fn a_launcher_splash_waits_for_the_app_window() {
+        let splash = owned(10, 377, "libreoffice");
+        let calc = owned(20, 398, "libreoffice-calc");
+        let none = std::collections::HashSet::new();
+        let is_splash = |w: &crate::x11::WindowInfo| w.xid == 10;
+
+        assert!(settle_launch(&[splash.clone()], 377, "libreoffice", &none, is_splash).is_none());
+
+        let launched =
+            settle_launch(&[splash, calc], 377, "libreoffice", &none, is_splash).unwrap();
+        assert_eq!(launched.pid, Some(398));
+        assert_eq!(
+            launched.windows.iter().map(|w| w.xid).collect::<Vec<_>>(),
+            [20]
+        );
+
+        let gimp = owned(30, 377, "gimp");
+        let launched = settle_launch(&[gimp], 377, "gimp", &none, is_splash).unwrap();
+        assert_eq!((launched.pid, launched.handed_off), (Some(377), false));
+    }
+
+    #[test]
+    fn a_missing_process_counts_as_exited() {
+        assert!(process_exited(u32::MAX - 1));
+        assert!(!process_exited(std::process::id()));
+    }
+
+    #[test]
+    fn a_handoff_timeout_is_a_refusal_not_a_null_pid_success() {
+        let result = launch_handoff_timeout_result("Nautilus", 4242, 8);
+        assert_eq!(
+            result.is_error,
+            Some(true),
+            "a hand-off timeout must be reported as an error, not success"
+        );
+        let s = result.structured_content.unwrap();
+        assert_eq!(s["code"], "launch_handoff_timeout");
+        assert_eq!(s["effect"], "refused");
+        assert_eq!(s["pid"], Value::Null);
+        assert_eq!(s["running"], Value::Null);
+        assert_eq!(s["launcher_pid"], 4242);
+        assert_eq!(s["waited_secs"], 8);
+    }
+}

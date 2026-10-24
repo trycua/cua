@@ -148,7 +148,103 @@ fn pid_fallback_window_resolver() -> cua_driver_core::window_target::PidFallback
 }
 
 #[cfg(test)]
-mod pid_window_resolver_tests;
+mod pid_window_resolver_tests {
+    use super::*;
+
+    fn win(xid: u64, z: Option<usize>, on_screen: bool, w: u32, h: u32) -> crate::x11::WindowInfo {
+        crate::x11::WindowInfo {
+            xid,
+            pid: Some(7),
+            app_name: "gimp".into(),
+            title: format!("w{xid}"),
+            is_on_screen: on_screen,
+            z_index: z,
+            x: 0,
+            y: 0,
+            width: w,
+            height: h,
+        }
+    }
+
+    #[test]
+    fn point_resolver_prefers_the_topmost_window_by_stacking_position() {
+        // Main window listed last (as `_NET_CLIENT_LIST_STACKING` bottom-up
+        // enumeration does when a dialog sits above it); the dialog wins.
+        let dialog = crate::x11::WindowInfo {
+            z_index: Some(5),
+            ..win(2, None, true, 400, 300)
+        };
+        let main = crate::x11::WindowInfo {
+            z_index: Some(3),
+            ..win(1, None, true, 1920, 1080)
+        };
+        assert_eq!(
+            topmost_window_at(&[main.clone(), dialog.clone()], 7, 100.0, 100.0),
+            Some(2)
+        );
+        assert_eq!(topmost_window_at(&[dialog, main], 7, 100.0, 100.0), Some(2));
+    }
+
+    #[test]
+    fn point_resolver_ignores_windows_without_a_stacking_position_when_one_has_it() {
+        let ranked = win(2, Some(0), true, 400, 300);
+        let unranked = win(1, None, true, 1920, 1080);
+        assert_eq!(
+            topmost_window_at(&[ranked, unranked], 7, 10.0, 10.0),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn pid_only_resolver_orders_focus_then_dialog_then_active_then_largest() {
+        let main = win(1, Some(1), true, 1920, 1080);
+        let dialog = win(2, Some(2), true, 400, 300);
+        let dock = win(3, Some(0), true, 200, 900);
+        let hidden = win(4, None, false, 3000, 3000);
+        let windows = vec![main, dialog, dock, hidden];
+        let transient = |xid: u64| (xid == 2).then_some(1u64);
+        // 1. core focus inside the pid wins outright (even over a dialog).
+        assert_eq!(
+            crate::x11::pick_pid_window(&windows, Some(3), transient, Some(1)),
+            Some(3)
+        );
+        // 2. no focus in the pid: its topmost transient dialog.
+        assert_eq!(
+            crate::x11::pick_pid_window(&windows, None, transient, Some(1)),
+            Some(2)
+        );
+        // 3. no dialog: the WM's active window when it is the pid's.
+        assert_eq!(
+            crate::x11::pick_pid_window(&windows, None, |_| None, Some(3)),
+            Some(3)
+        );
+        // 4. otherwise the largest mapped toplevel (never the unmapped one).
+        assert_eq!(
+            crate::x11::pick_pid_window(&windows, None, |_| None, None),
+            Some(1)
+        );
+        assert_eq!(
+            crate::x11::pick_pid_window(&windows, None, |_| None, Some(99)),
+            Some(1)
+        );
+        // A focused window that is not the pid's is ignored.
+        assert_eq!(
+            crate::x11::pick_pid_window(&windows, Some(42), |_| None, None),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn pid_only_resolver_skips_unmapped_dialogs() {
+        let main = win(1, Some(1), true, 800, 600);
+        let unmapped_dialog = win(2, Some(2), false, 400, 300);
+        let windows = vec![main, unmapped_dialog];
+        assert_eq!(
+            crate::x11::pick_pid_window(&windows, None, |xid| (xid == 2).then_some(1u64), None),
+            Some(1)
+        );
+    }
+}
 
 type PidWindowGuardParts = (
     WindowTargetCandidates,
@@ -356,7 +452,110 @@ pub(crate) fn visible_live_desktop_windows(
 }
 
 #[cfg(test)]
-mod list_windows_tests;
+mod list_windows_tests {
+    use super::*;
+
+    #[test]
+    fn record_has_bounds_and_flat_legacy_fields() {
+        let w = crate::x11::WindowInfo {
+            xid: 42,
+            pid: Some(1234),
+            app_name: "example-app".to_owned(),
+            title: "Example".to_owned(),
+            is_on_screen: true,
+            z_index: Some(3),
+            x: 10,
+            y: 20,
+            width: 300,
+            height: 400,
+        };
+        let rec = window_record_json(&w);
+
+        // Canonical cross-platform shape: nested `bounds` object.
+        let bounds = rec
+            .get("bounds")
+            .expect("record must carry a `bounds` object");
+        assert_eq!(bounds["x"], json!(10));
+        assert_eq!(bounds["y"], json!(20));
+        assert_eq!(bounds["width"], json!(300));
+        assert_eq!(bounds["height"], json!(400));
+
+        // Legacy alias: flat fields must still be present.
+        assert_eq!(rec["x"], json!(10));
+        assert_eq!(rec["y"], json!(20));
+        assert_eq!(rec["width"], json!(300));
+        assert_eq!(rec["height"], json!(400));
+
+        // Cross-platform companions.
+        assert_eq!(rec["app_name"], json!("example-app"));
+        assert_eq!(rec["is_on_screen"], json!(true));
+        assert_eq!(rec["z_index"], json!(3));
+        assert_eq!(rec["window_id"], json!(42));
+        assert_eq!(rec["title"], json!("Example"));
+    }
+
+    #[test]
+    fn unavailable_wayland_order_serializes_as_null() {
+        let w = crate::x11::WindowInfo {
+            xid: 43,
+            pid: Some(1234),
+            app_name: "native-wayland-app".to_owned(),
+            title: "Example".to_owned(),
+            is_on_screen: true,
+            z_index: None,
+            x: 0,
+            y: 0,
+            width: 300,
+            height: 400,
+        };
+
+        assert_eq!(window_record_json(&w)["z_index"], Value::Null);
+    }
+
+    #[test]
+    fn desktop_discovery_retains_only_visible_windows_with_live_or_unknown_owners() {
+        let window = |xid, pid, is_on_screen| crate::x11::WindowInfo {
+            xid,
+            pid,
+            app_name: "native-wayland-app".to_owned(),
+            title: "Example".to_owned(),
+            is_on_screen,
+            z_index: None,
+            x: 10,
+            y: 20,
+            width: 300,
+            height: 400,
+        };
+        let windows = visible_live_desktop_windows(vec![
+            window(1, Some(std::process::id()), true),
+            window(2, Some(std::process::id()), false),
+            window(3, Some(u32::MAX), true),
+            window(4, None, true),
+            window(5, None, false),
+        ]);
+
+        assert_eq!(
+            windows.iter().map(|w| w.xid).collect::<Vec<_>>(),
+            vec![1, 4]
+        );
+        let record = window_record_json(&windows[0]);
+        assert_eq!(
+            record["bounds"],
+            json!({"x": 10, "y": 20, "width": 300, "height": 400})
+        );
+        assert_eq!(record["app_name"], json!("native-wayland-app"));
+        assert_eq!(record["is_on_screen"], json!(true));
+        assert_eq!(record["z_index"], Value::Null);
+    }
+
+    #[test]
+    fn chromium_launch_detection_uses_executable_basename() {
+        assert!(chromium_family_program("/usr/bin/google-chrome-stable"));
+        assert!(chromium_family_program("CuaTestHarness.Electron"));
+        assert!(chromium_family_program("chromium-browser"));
+        assert!(!chromium_family_program("/usr/bin/gnome-text-editor"));
+    }
+}
 
 /// Roles a popup's rows carry: menu entries, and the list / tree / table
 /// rows of a combo list, a completer or a chooser popover.
@@ -987,7 +1186,109 @@ pub(crate) fn require_point_args(tool: &str, args: &Value) -> Option<ToolResult>
 }
 
 #[cfg(test)]
-mod pointer_argument_tests;
+mod pointer_argument_tests {
+    use super::*;
+
+    #[test]
+    fn pid_only_pointer_call_is_refused_not_clicked_at_origin() {
+        let refusal = require_point_args("click", &json!({"target_id": "s1:147", "pid": 1867}))
+            .expect("refused");
+        assert_eq!(refusal.is_error, Some(true));
+        let structured = refusal.structured_content.expect("structured");
+        assert_eq!(structured["code"], "invalid_arguments");
+        assert_eq!(structured["effect"], "refused");
+        assert!(structured["accepted_forms"].as_array().unwrap().len() == 3);
+    }
+
+    #[test]
+    fn complete_point_passes() {
+        assert!(require_point_args(
+            "click",
+            &json!({"pid": 1, "window_id": 2, "x": 3, "y": 4.5})
+        )
+        .is_none());
+        assert!(require_point_args("click", &json!({"x": 1, "y": null})).is_some());
+        assert!(require_point_args("click", &json!({"y": 1})).is_some());
+    }
+
+    #[test]
+    fn foreground_report_becomes_evidence() {
+        let report = crate::input::ForegroundReport {
+            already_active: false,
+            retried_activation: false,
+            confirm_ms: 12,
+            focus_after: crate::input::FocusAfter::SamePid,
+            window_change: Some("appeared: window 9 \"Brightness-Contrast\"".into()),
+            window_change_owned: true,
+        };
+        let v = foreground_structured("x11_xtest_fg", report, serde_json::Map::new());
+        assert_eq!(v["effect"], "confirmed");
+        assert_eq!(v["focus_after"], "same_pid");
+        assert_eq!(v["evidence"][0]["kind"], "window_change");
+        let quiet = crate::input::ForegroundReport {
+            already_active: true,
+            retried_activation: false,
+            confirm_ms: 0,
+            focus_after: crate::input::FocusAfter::Target,
+            window_change: None,
+            window_change_owned: false,
+        };
+        let v = foreground_structured("x11_xtest_fg", quiet, serde_json::Map::new());
+        assert_eq!(v["effect"], "unverifiable");
+        assert_eq!(v["evidence"][0]["kind"], "native_api_result");
+        let closed = crate::input::ForegroundReport {
+            already_active: true,
+            retried_activation: false,
+            confirm_ms: 0,
+            focus_after: crate::input::FocusAfter::Unknown,
+            window_change: Some("closed: window 3 \"Format Cells\"".into()),
+            window_change_owned: true,
+        };
+        let v = foreground_structured("x11_xtest_fg", closed, serde_json::Map::new());
+        assert_eq!(v["effect"], "confirmed");
+        assert_eq!(v["evidence"][0]["kind"], "window_change");
+        // A popup that names no pid is listed in the target's window set (a VCL
+        // menu carries none), but it may be another client's: once the focus
+        // left the target process its change is no confirmation.
+        let unattributed = |focus_after| crate::input::ForegroundReport {
+            already_active: true,
+            retried_activation: false,
+            confirm_ms: 0,
+            focus_after,
+            window_change: Some("appeared: popup window 7 (200x300 at 1,2)".into()),
+            window_change_owned: false,
+        };
+        let v = foreground_structured(
+            "x11_xtest_fg",
+            unattributed(crate::input::FocusAfter::Elsewhere),
+            serde_json::Map::new(),
+        );
+        assert_eq!(v["effect"], "suspected_noop");
+        let v = foreground_structured(
+            "x11_xtest_fg",
+            unattributed(crate::input::FocusAfter::Unknown),
+            serde_json::Map::new(),
+        );
+        assert_eq!(v["effect"], "unverifiable");
+        assert_eq!(v["evidence"][0]["kind"], "native_api_result");
+        let v = foreground_structured(
+            "x11_xtest_fg",
+            unattributed(crate::input::FocusAfter::SamePid),
+            serde_json::Map::new(),
+        );
+        assert_eq!(v["effect"], "confirmed");
+        let lost = crate::input::ForegroundReport {
+            already_active: true,
+            retried_activation: false,
+            confirm_ms: 0,
+            focus_after: crate::input::FocusAfter::Elsewhere,
+            window_change: None,
+            window_change_owned: false,
+        };
+        let v = foreground_structured("x11_xtest_fg", lost, serde_json::Map::new());
+        assert_eq!(v["effect"], "suspected_noop");
+    }
+}
 
 pub(crate) fn parse_mouse_button(name: &str) -> u8 {
     match name {
@@ -4079,16 +4380,293 @@ pub fn build_registry_with_provider(
 }
 
 #[cfg(test)]
-mod pid_window_target_tests;
+mod pid_window_target_tests {
+    use super::*;
+    use cua_driver_core::window_target::{resolve_pid_window_target, PidWindowTargetResolution};
+
+    fn window(xid: u64, pid: u32) -> crate::x11::WindowInfo {
+        crate::x11::WindowInfo {
+            xid,
+            pid: Some(pid),
+            app_name: "editor".into(),
+            title: format!("Document {xid}"),
+            is_on_screen: true,
+            z_index: Some(1),
+            x: 0,
+            y: 0,
+            width: 640,
+            height: 480,
+        }
+    }
+
+    #[test]
+    fn same_pid_sibling_windows_are_ambiguous() {
+        let candidates =
+            window_target_candidates_for_pid([window(7, 42), window(8, 42), window(9, 99)], 42);
+        assert!(matches!(
+            resolve_pid_window_target(candidates),
+            PidWindowTargetResolution::Ambiguous(windows)
+                if windows.iter().map(|window| window.window_id).collect::<Vec<_>>() == [7, 8]
+        ));
+    }
+}
 
 #[cfg(test)]
-mod desktop_capture_frame_tests;
+mod desktop_capture_frame_tests {
+    use super::{capture_admission_error, normalize_desktop_capture_for_action_frame};
+
+    fn png(width: u32, height: u32) -> Vec<u8> {
+        let rgba = vec![0x7f; (width * height * 4) as usize];
+        cua_driver_core::image_utils::encode_rgba_to_png(&rgba, width, height)
+            .expect("encode fixture")
+    }
+
+    #[test]
+    fn native_wayland_capture_is_resized_to_the_reported_action_frame() {
+        let (normalized, width, height, scale) =
+            normalize_desktop_capture_for_action_frame(png(3200, 2000), 1600, 1000)
+                .expect("normalize 2x capture");
+
+        assert_eq!((width, height), (1600, 1000));
+        assert_eq!(
+            cua_driver_core::image_utils::png_dimensions(&normalized).unwrap(),
+            (1600, 1000)
+        );
+        assert_eq!(scale, 2.0);
+    }
+
+    #[test]
+    fn nonuniform_capture_mapping_fails_instead_of_distorting_coordinates() {
+        let error = normalize_desktop_capture_for_action_frame(png(3200, 2000), 1600, 1200)
+            .expect_err("nonuniform mapping must fail closed");
+        assert!(error.to_string().contains("cannot be mapped uniformly"));
+    }
+
+    #[test]
+    fn capture_refusal_exposes_specific_code_and_refused_effect() {
+        let refusal = capture_admission_error(anyhow::Error::new(
+            cua_driver_core::capture_runtime::CaptureActionError::NativeActionFrameMismatch,
+        ));
+        let structured = refusal.structured_content.unwrap();
+        assert_eq!(structured["code"], "capture_frame_mismatch");
+        assert_eq!(structured["effect"], "refused");
+    }
+}
 
 #[cfg(test)]
-mod background_keyboard_route_tests;
+mod background_keyboard_route_tests {
+    use super::{element_needs_real_click, split_key_combo, wm_chord_kind, WmChord};
+
+    #[test]
+    fn key_combos_split_into_modifiers_and_key() {
+        assert_eq!(
+            split_key_combo("alt+F4"),
+            (vec!["alt".to_owned()], "F4".to_owned())
+        );
+        assert_eq!(
+            split_key_combo("ctrl+shift+t"),
+            (vec!["ctrl".to_owned(), "shift".to_owned()], "t".to_owned())
+        );
+        assert_eq!(split_key_combo("+"), (vec![], "+".to_owned()));
+        assert_eq!(
+            split_key_combo("ctrl++"),
+            (vec!["ctrl".to_owned()], "+".to_owned())
+        );
+        assert_eq!(split_key_combo("Return"), (vec![], "Return".to_owned()));
+        // Not a modifier prefix: left untouched for the keysym resolver.
+        assert_eq!(split_key_combo("a+b"), (vec![], "a+b".to_owned()));
+    }
+
+    #[test]
+    fn wm_chords_are_recognised() {
+        let m = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            wm_chord_kind("F4", &m(&["alt"])),
+            Some(WmChord::CloseWindow)
+        );
+        assert_eq!(
+            wm_chord_kind("f4", &m(&["Alt_L"])),
+            Some(WmChord::CloseWindow)
+        );
+        assert_eq!(
+            wm_chord_kind("Tab", &m(&["alt"])),
+            Some(WmChord::Unavailable)
+        );
+        assert_eq!(
+            wm_chord_kind("Tab", &m(&["alt", "shift"])),
+            Some(WmChord::Unavailable)
+        );
+        assert_eq!(
+            wm_chord_kind("a", &m(&["super"])),
+            Some(WmChord::Unavailable)
+        );
+        assert_eq!(
+            wm_chord_kind("t", &m(&["ctrl", "alt"])),
+            Some(WmChord::Unavailable)
+        );
+        assert_eq!(
+            wm_chord_kind("F4", &m(&["ctrl", "alt"])),
+            Some(WmChord::Unavailable)
+        );
+        // Application chords stay with the application.
+        assert_eq!(wm_chord_kind("c", &m(&["ctrl"])), None);
+        assert_eq!(wm_chord_kind("F4", &m(&["ctrl"])), None);
+        assert_eq!(wm_chord_kind("f", &m(&["alt"])), None);
+        assert_eq!(wm_chord_kind("F4", &m(&[])), None);
+        assert_eq!(wm_chord_kind("s", &m(&["ctrl", "shift"])), None);
+    }
+
+    #[test]
+    fn focus_taking_roles_need_a_real_click() {
+        for role in ["spin button", "Text", "entry", "slider", "combo box"] {
+            assert!(element_needs_real_click(role), "{role}");
+        }
+        for role in ["menu item", "push button", "menu", "check box", "page tab"] {
+            assert!(!element_needs_real_click(role), "{role}");
+        }
+    }
+}
 
 #[cfg(test)]
-mod visibility_tests;
+mod visibility_tests {
+    use super::*;
+
+    #[test]
+    fn framed_elements_lead_and_keep_their_relative_order() {
+        let elements = vec![
+            json!({"element_index": 0, "role": "menu"}),
+            json!({"element_index": 1, "role": "push button", "frame": {"x": 1, "y": 1, "w": 2, "h": 2}}),
+            json!({"element_index": 2, "role": "menu"}),
+            json!({"element_index": 3, "role": "paragraph", "frame": {"x": 1, "y": 9, "w": 2, "h": 2}}),
+        ];
+        let ordered: Vec<u64> = framed_elements_first(elements)
+            .iter()
+            .map(|e| e["element_index"].as_u64().unwrap())
+            .collect();
+        assert_eq!(ordered, vec![1, 3, 0, 2]);
+    }
+
+    #[test]
+    fn a_frameless_popup_returns_only_the_menu_entries_drawn_inside_it() {
+        let elements = vec![
+            json!({"element_index": 1, "role": "push button", "frame": {"x": 5, "y": 5, "w": 20, "h": 20}}),
+            json!({"element_index": 2, "role": "menu item", "label": "Paragraph...", "frame": {"x": 2, "y": 30, "w": 180, "h": 22}}),
+            json!({"element_index": 3, "role": "menu item", "label": "elsewhere", "frame": {"x": 400, "y": 30, "w": 180, "h": 22}}),
+            json!({"element_index": 4, "role": "menu", "label": "Format"}),
+        ];
+        let kept: Vec<u64> = popup_menu_elements(elements.clone(), (0, 0), 200, 400)
+            .iter()
+            .map(|e| e["element_index"].as_u64().unwrap())
+            .collect();
+        assert_eq!(kept, vec![2]);
+        assert_eq!(
+            popup_menu_elements(elements[..1].to_vec(), (0, 0), 200, 400).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_combo_popup_returns_the_rows_of_the_list_that_fills_it() {
+        // Qt: the combo list lives under the combo box inside the dialog; the
+        // main window's menubar entries are elsewhere on the screen.
+        let elements = vec![
+            json!({"element_index": 1, "role": "menu", "label": "Audio", "frame": {"x": -600, "y": -300, "w": 50, "h": 20}}),
+            json!({"element_index": 7, "role": "list", "frame": {"x": 1, "y": 1, "w": 198, "h": 118}}),
+            json!({"element_index": 8, "role": "list item", "label": "Desktop", "parent_index": 7, "frame": {"x": 2, "y": 2, "w": 190, "h": 22}}),
+            json!({"element_index": 9, "role": "list item", "label": "user", "parent_index": 7, "frame": {"x": 2, "y": 26, "w": 190, "h": 22}}),
+            json!({"element_index": 12, "role": "push button", "label": "Open", "frame": {"x": 20, "y": 20, "w": 60, "h": 20}}),
+        ];
+        let kept: Vec<u64> = popup_menu_elements(elements, (0, 0), 200, 120)
+            .iter()
+            .map(|e| e["element_index"].as_u64().unwrap())
+            .collect();
+        assert_eq!(kept, vec![8, 9]);
+    }
+
+    #[test]
+    fn a_list_popup_without_an_indexed_container_keeps_its_item_rows_only() {
+        let elements = vec![
+            json!({"element_index": 1, "role": "menu", "label": "Audio", "frame": {"x": 1, "y": 1, "w": 50, "h": 20}}),
+            json!({"element_index": 8, "role": "list item", "label": "Desktop", "frame": {"x": 2, "y": 2, "w": 190, "h": 22}}),
+            json!({"element_index": 9, "role": "tree item", "label": "user", "frame": {"x": 2, "y": 26, "w": 190, "h": 22}}),
+            json!({"element_index": 12, "role": "push button", "label": "Open", "frame": {"x": 20, "y": 20, "w": 60, "h": 20}}),
+        ];
+        let kept: Vec<u64> = popup_menu_elements(elements, (0, 0), 200, 120)
+            .iter()
+            .map(|e| e["element_index"].as_u64().unwrap())
+            .collect();
+        assert_eq!(kept, vec![8, 9]);
+    }
+
+    #[test]
+    fn menu_roles_take_the_real_press() {
+        for role in ["menu", "Menu Item", "check menu item", "radio menu item"] {
+            assert!(element_is_menu_role(role), "{role}");
+        }
+        for role in ["menu bar", "push button", "text"] {
+            assert!(!element_is_menu_role(role), "{role}");
+        }
+    }
+
+    #[test]
+    fn overlays_name_the_follow_up_call_per_dialog_and_popup() {
+        let overlays = WindowOverlays {
+            dialogs: vec![json!({
+                "window_id": 71, "title": "Position and Size", "transient_for": 3, "modal": true,
+                "bounds": {"x": 100, "y": 100, "width": 400, "height": 300}
+            })],
+            popups: vec![json!({
+                "window_id": 72, "title": "", "pid": 5,
+                "bounds": {"x": 10, "y": 30, "width": 200, "height": 400}
+            })],
+            covers_window: true,
+            window_rect: Some((0, 0, 800, 600)),
+        };
+        let note = overlays.follow_up(5).unwrap();
+        assert!(
+            note.contains(
+                "dialog \"Position and Size\" (window_id 71, transient of window 3, modal)"
+            ),
+            "{note}"
+        );
+        assert!(
+            note.contains("get_window_state(pid=5, window_id=71)"),
+            "{note}"
+        );
+        assert!(
+            note.contains("popup (window_id 72, bounds x=10 y=30 200x400)"),
+            "{note}"
+        );
+        assert!(rects_intersect((0, 0, 800, 600), (100, 100, 400, 300)));
+        assert!(!rects_intersect((0, 0, 800, 600), (800, 0, 10, 10)));
+    }
+
+    #[test]
+    fn a_cross_process_dialog_names_its_real_owning_pid_in_the_follow_up() {
+        // GIMP's "Export Image as JPEG" dialog spawned as a separate process
+        // (owning_pid 999) but is transient-for the target pid (5)'s window.
+        let overlays = WindowOverlays {
+            dialogs: vec![json!({
+                "window_id": 90, "title": "Export Image as JPEG", "transient_for": 10,
+                "modal": false,
+                "bounds": {"x": 0, "y": 0, "width": 300, "height": 200},
+                "owning_pid": 999,
+            })],
+            popups: vec![],
+            covers_window: false,
+            window_rect: Some((0, 0, 800, 600)),
+        };
+        let note = overlays.follow_up(5).unwrap();
+        assert!(
+            note.contains("owned by a different process pid 999, not pid 5"),
+            "{note}"
+        );
+        assert!(
+            note.contains("get_window_state(pid=5, window_id=90)"),
+            "{note}"
+        );
+    }
+}
 
 #[cfg(test)]
 mod cursor_hook_emission_tests {

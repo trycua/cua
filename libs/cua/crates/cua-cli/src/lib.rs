@@ -2657,6 +2657,61 @@ Examples:
   cua host setup --direct 100.101.102.103:3211 --profile spare
 ";
 
+/// The command `cua` parses with, named for `channel`. Stable's is `cli`
+/// untouched. A Local build ("Cua Spaces Local", CUA-1776) installs its CLI as
+/// `cua-local`, so its help says so: usage lines print `cua-local` (the
+/// bundled copy is a file named `cua` inside the app, which clap would name
+/// `cua`), and an example that starts with `cua` starts with `cua-local`, so
+/// pasting it does not run the Stable CLI.
+fn channel_command(cli: clap::Command, channel: cua_home::channel::CuaChannel) -> clap::Command {
+    if !channel.is_local() {
+        return cli;
+    }
+    let name = channel.cli_name();
+    localize_help(cli.bin_name(name), name)
+}
+
+/// `cmd` and its subcommands with the examples in their after-help run as
+/// `name` (see [`localize_examples`]).
+fn localize_help(cmd: clap::Command, name: &str) -> clap::Command {
+    let after = cmd
+        .get_after_help()
+        .map(|h| localize_examples(&h.to_string(), name));
+    let after_long = cmd
+        .get_after_long_help()
+        .map(|h| localize_examples(&h.to_string(), name));
+    let mut cmd = cmd;
+    if let Some(h) = after {
+        cmd = cmd.after_help(h);
+    }
+    if let Some(h) = after_long {
+        cmd = cmd.after_long_help(h);
+    }
+    cmd.mut_subcommands(|sub| localize_help(sub, name))
+}
+
+/// `text` with every line that is a `cua ...` example (it starts with `cua `
+/// once indented) starting with `name` instead.
+fn localize_examples(text: &str, name: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 16);
+    for (i, line) in text.split('\n').enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        let body = line.trim_start();
+        match body.strip_prefix("cua ") {
+            Some(rest) => {
+                out.push_str(&line[..line.len() - body.len()]);
+                out.push_str(name);
+                out.push(' ');
+                out.push_str(rest);
+            }
+            None => out.push_str(line),
+        }
+    }
+    out
+}
+
 /// `cua help advanced`, answered before clap: it is a help topic, not a
 /// command.
 fn is_advanced_help(args: &[std::ffi::OsString]) -> bool {
@@ -2672,8 +2727,13 @@ fn fallback_notice(n: &cua_spaces::mesh::FallbackNotice) {
 pub fn main() {
     #[cfg(windows)]
     keep_stdio_out_of_children();
+    let channel = cua_home::channel::CuaChannel::current();
     if is_advanced_help(&std::env::args_os().skip(1).collect::<Vec<_>>()) {
-        print!("{ADVANCED_HELP}");
+        if channel.is_local() {
+            print!("{}", localize_examples(ADVANCED_HELP, channel.cli_name()));
+        } else {
+            print!("{ADVANCED_HELP}");
+        }
         return;
     }
     promote_spacesd_env_vars();
@@ -2687,7 +2747,11 @@ pub fn main() {
     // `CUA_HOME` for a non-production `CUA_ENV` so every component and
     // child process (the daemon) uses that environment's home.
     unsafe { cua_home::env::pin_home() };
-    let matches = cli_command(cua_home::experimental::teams_enabled()).get_matches();
+    let matches = channel_command(
+        cli_command(cua_home::experimental::teams_enabled()),
+        channel,
+    )
+    .get_matches();
     let command = command_path(&matches);
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
     let daemon_process = matches!(cli.command, Command::Daemon(DaemonCmd::Start { .. }));
@@ -3575,6 +3639,81 @@ mod tests {
             );
             assert!(String::from_utf8(out).unwrap().contains("last"));
         }
+    }
+
+    /// Every command of the tree with its rendered long help.
+    fn all_help(cmd: &mut clap::Command) -> Vec<(String, String)> {
+        let mut out = vec![(
+            cmd.get_bin_name().unwrap_or(cmd.get_name()).to_string(),
+            cmd.render_long_help().to_string(),
+        )];
+        for name in cmd
+            .get_subcommands()
+            .map(|c| c.get_name().to_string())
+            .collect::<Vec<_>>()
+        {
+            let sub = cmd.find_subcommand_mut(&name).unwrap();
+            out.extend(all_help(sub));
+        }
+        out
+    }
+
+    /// CUA-1776: the Local CLI (`cua-local`) says `cua-local` in its usage
+    /// and examples, so nothing it prints sends the user to Stable's `cua`.
+    #[test]
+    fn local_help_says_cua_local() {
+        use cua_home::channel::CuaChannel;
+        let mut local = channel_command(cli_command(true), CuaChannel::Local);
+        local.build();
+        let help = all_help(&mut local);
+        assert!(help.len() > 20, "the whole tree is rendered");
+        assert!(help[0].1.contains("Usage: cua-local "), "{}", help[0].1);
+        for (name, text) in &help {
+            assert!(name.starts_with("cua-local"), "{name}");
+            for line in text.lines() {
+                let l = line.trim_start();
+                assert!(
+                    !l.starts_with("cua ") && !l.starts_with("Usage: cua "),
+                    "{name}: {line}"
+                );
+            }
+        }
+        // The examples are still there, renamed.
+        assert!(
+            help.iter().any(|(_, t)| t
+                .lines()
+                .any(|l| l.trim_start().starts_with("cua-local host setup"))),
+            "host setup example"
+        );
+        // The version line is still `cua <version>`: the app checks it to
+        // recognise its CLI.
+        assert_eq!(
+            local.render_version().trim(),
+            format!("cua {}", cua_sdk::VERSION)
+        );
+    }
+
+    /// Stable's command and its help are exactly what they were.
+    #[test]
+    fn stable_help_is_unchanged() {
+        use cua_home::channel::CuaChannel;
+        for teams in [true, false] {
+            let mut plain = cli_command(teams);
+            let mut stable = channel_command(cli_command(teams), CuaChannel::Stable);
+            plain.build();
+            stable.build();
+            assert_eq!(all_help(&mut plain), all_help(&mut stable));
+        }
+    }
+
+    #[test]
+    fn examples_are_renamed_line_by_line() {
+        let text = "Examples:\n  cua host setup\n  # cua is a comment\nthe cua daemon\n    cua sb ls  # list\ncua\n";
+        assert_eq!(
+            localize_examples(text, "cua-local"),
+            "Examples:\n  cua-local host setup\n  # cua is a comment\nthe cua daemon\n    cua-local sb ls  # list\ncua\n"
+        );
+        assert_eq!(localize_examples("", "cua-local"), "");
     }
 
     #[tokio::test]

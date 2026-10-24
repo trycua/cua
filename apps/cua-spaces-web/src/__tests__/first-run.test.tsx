@@ -128,7 +128,7 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     expect(calls.some((c) => c.op === "session.signIn")).toBe(false);
     const prompt = document.querySelector<HTMLTextAreaElement>("textarea[data-first-run-prompt]")!;
     expect(prompt.readOnly).toBe(true);
-    expect(prompt.value).toMatch(/^Make a Linux Space on this (Mac|PC|computer) and run my tests there\.$/);
+    expect(prompt.value).toMatch(/^Make a Linux Space on this (Mac|PC|computer) and stream the desktop in a new window\.$/);
     expect(document.querySelector("[data-first-run-copy]")).toBeTruthy();
     // A Codex user never sees Claude or its key first.
     expect(document.body.textContent).not.toMatch(/Claude|Anthropic/);
@@ -137,6 +137,31 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     expect(primary()!.disabled).toBe(false);
     fireEvent.click(primary()!);
     await waitFor(() => expect(calls.find((c) => c.op === "session.completeOnboarding")).toBeTruthy());
+  });
+
+  it("Back works from every step after Welcome, all the way to Welcome, keeping what was picked", async () => {
+    const calls = await mount();
+    await waitFor(() => expect(heading()).toBe("Your agents get their own computer."));
+    expect(document.querySelector("[data-first-run-back]")).toBeNull();
+    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toBe("Pick your agent."));
+    click('[data-first-run-connect="codex"]');
+    await waitFor(() => expect(readFirstRun().picked).toEqual(["codex"]));
+    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toBe("Connect your other devices."));
+    click("[data-first-run-secondary]");
+    await waitFor(() => expect(heading()).toBe("Try it in OpenAI Codex."));
+    // Try it → Connect your devices → Pick your agent → Welcome.
+    click("[data-first-run-back]");
+    await waitFor(() => expect(heading()).toBe("Connect your other devices."));
+    click("[data-first-run-back]");
+    await waitFor(() => expect(heading()).toBe("Pick your agent."));
+    expect(document.querySelector<HTMLElement>('[data-first-run-agent="codex"]')!.dataset.connected).toBe("true");
+    click("[data-first-run-back]");
+    await waitFor(() => expect(heading()).toBe("Your agents get their own computer."));
+    // Going back only navigates: nothing was connected again or undone.
+    expect(readFirstRun().picked).toEqual(["codex"]);
+    expect(calls.filter((c) => c.op === "agents.configure")).toHaveLength(1);
   });
 
   it("Codex: its ChatGPT sign-in and OpenAI key follow it, and the sign-in starts on this computer", async () => {

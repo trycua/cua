@@ -55,9 +55,11 @@ const FIRST_PROMPT_OTHER: &str = "List my computers and tell me what's on this c
 const FIRST_PROMPT_PC: &str = "List my computers and tell me what's on this PC";
 
 /// The try screen's request: the agent makes a Space on this computer.
-pub const TRY_PROMPT: &str = "Make a Linux Space on this Mac and run my tests there.";
-const TRY_PROMPT_OTHER: &str = "Make a Linux Space on this computer and run my tests there.";
-const TRY_PROMPT_PC: &str = "Make a Linux Space on this PC and run my tests there.";
+pub const TRY_PROMPT: &str =
+    "Make a Linux Space on this Mac and stream the desktop in a new window.";
+const TRY_PROMPT_OTHER: &str =
+    "Make a Linux Space on this computer and stream the desktop in a new window.";
+const TRY_PROMPT_PC: &str = "Make a Linux Space on this PC and stream the desktop in a new window.";
 
 /// The same first Space from a terminal (no agent found).
 pub const CLI_FIRST_SPACE: &str = "cua spaces create linux";
@@ -402,6 +404,24 @@ pub struct PromptView {
     pub note: String,
     /// "Copy".
     pub copy: Option<String>,
+    /// The same request for each system a first Space can run (macOS only
+    /// on a Mac), shown as tabs over the text; `text` is the selected one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tabs: Vec<PromptTab>,
+    /// The tab `text` shows (`linux`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected: Option<String>,
+}
+
+/// One system's version of the try request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptTab {
+    /// `macos`, `linux`, `omarchy`.
+    pub id: String,
+    /// "macOS", "Linux", "Omarchy".
+    pub label: String,
+    pub text: String,
 }
 
 /// A choice on the first Space card.
@@ -578,6 +598,25 @@ pub fn try_prompt(os: &str) -> &'static str {
         "windows" => TRY_PROMPT_PC,
         _ => TRY_PROMPT_OTHER,
     }
+}
+
+/// The try request for each system a first Space can run here: macOS (on a
+/// Mac only), Linux and Omarchy. Linux comes selected: it is ready fastest.
+pub fn try_prompt_tabs(os: &str) -> Vec<PromptTab> {
+    let place = this_computer(os);
+    let mut tabs = Vec::new();
+    if os == "macos" {
+        tabs.push(("macos", "macOS", "a macOS"));
+    }
+    tabs.push(("linux", "Linux", "a Linux"));
+    tabs.push(("omarchy", "Omarchy", "an Omarchy"));
+    tabs.into_iter()
+        .map(|(id, label, kind)| PromptTab {
+            id: id.into(),
+            label: label.into(),
+            text: format!("Make {kind} Space on {place} and stream the desktop in a new window."),
+        })
+        .collect()
 }
 
 fn default_name(agent: &str) -> &'static str {
@@ -1258,6 +1297,8 @@ fn setup_view(input: &FirstRunInput) -> SetupView {
             text: try_prompt(&input.host_os).into(),
             note: format!("It runs on {place}."),
             copy: Some("Copy".into()),
+            tabs: try_prompt_tabs(&input.host_os),
+            selected: Some("linux".into()),
         }),
         status: Some(status),
         extra: None,
@@ -1877,6 +1918,50 @@ mod tests {
         assert_eq!(view(&i).art.extra, "on");
         i.host_os = "windows".into();
         assert_eq!(view(&i).setup.unwrap().prompt.unwrap().text, TRY_PROMPT_PC);
+    }
+
+    #[test]
+    fn the_try_request_has_a_tab_per_system_with_linux_selected() {
+        let i = FirstRunInput {
+            picked: Some(vec!["hermes".into()]),
+            ..input(FirstRunStep::Setup, vec![hermes()])
+        };
+        let p = view(&i).setup.unwrap().prompt.unwrap();
+        let tabs: Vec<(&str, &str)> = p
+            .tabs
+            .iter()
+            .map(|t| (t.id.as_str(), t.text.as_str()))
+            .collect();
+        assert_eq!(
+            tabs,
+            [
+                (
+                    "macos",
+                    "Make a macOS Space on this Mac and stream the desktop in a new window."
+                ),
+                (
+                    "linux",
+                    "Make a Linux Space on this Mac and stream the desktop in a new window."
+                ),
+                (
+                    "omarchy",
+                    "Make an Omarchy Space on this Mac and stream the desktop in a new window."
+                ),
+            ]
+        );
+        assert_eq!(p.selected.as_deref(), Some("linux"));
+        assert_eq!(p.text, p.tabs[1].text);
+        // macOS Spaces need a Mac: no macOS tab elsewhere.
+        let i = FirstRunInput {
+            host_os: "windows".into(),
+            ..i
+        };
+        let p = view(&i).setup.unwrap().prompt.unwrap();
+        assert_eq!(
+            p.tabs.iter().map(|t| t.label.as_str()).collect::<Vec<_>>(),
+            ["Linux", "Omarchy"]
+        );
+        assert_eq!(p.text, TRY_PROMPT_PC);
     }
 
     #[test]

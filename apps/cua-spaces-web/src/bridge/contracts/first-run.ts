@@ -179,11 +179,24 @@ export interface FirstRunRow {
   settingsUrl: string | null;
 }
 
+export interface FirstRunPromptTab {
+  /** `macos`, `linux`, `omarchy`. */
+  id: string;
+  /** "macOS", "Linux", "Omarchy". */
+  label: string;
+  text: string;
+}
+
 export interface FirstRunPromptView {
   heading: string;
+  /** The selected tab's request (or the only one). */
   text: string;
   note: string;
   copy: string | null;
+  /** The request per system a first Space can run here (macOS only on a Mac). */
+  tabs?: FirstRunPromptTab[];
+  /** The tab `text` shows. */
+  selected?: string | null;
 }
 
 export interface FirstRunExtraChoice {

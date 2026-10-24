@@ -4,6 +4,8 @@
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { createDemoAdapter } from "../adapters/demo";
+import { spaceToRow } from "../adapters/webkit";
+import type { WkSpace } from "../webkit-protocol";
 import type { CoreClient } from "../core";
 import {
   BridgeProvider,
@@ -162,5 +164,25 @@ describe.skipIf(!wasmBuilt)("Settings and Notifications through the core", () =>
     expect(texts.find((t) => t.startsWith("Couldn't create boom: "))).toMatch(/This Mac is already running/);
     await hooks.notifications.markAllRead();
     await waitFor(() => expect(hooks.notifications.data?.unread).toBe(0));
+  });
+
+  it("names an unnamed Space that became ready by its name, not its id (CUA-1672)", async () => {
+    const { hooks, adapter } = mount(await testCore());
+    const call = adapter.call.bind(adapter);
+    // The Mac app and Electron answer a create they can't list yet with the
+    // id as its name (WebUIBridge `create`), as the WebKit adapter reads it.
+    const id = "local:space-51e8a1e198";
+    const row = spaceToRow({ id, name: id, os: "linux", status: "running", detail: "", lastUsedAt: 0 } as WkSpace);
+    adapter.call = ((op: string, args: never) =>
+      op === "spaces.create" ? Promise.resolve(row) : call(op as never, args)) as typeof adapter.call;
+    await waitFor(() => expect(hooks.notifications.data?.unread).toBe(2));
+    const space = await hooks.spaces.createSpace({ image: "ubuntu-xfce", os: "linux" });
+    expect(space.name).toBe("space-51e8a1e198");
+    // Open Space still goes by the id.
+    expect(space.id).toBe(id);
+    await waitFor(() => expect(hooks.notifications.data?.unread).toBe(3));
+    const texts = hooks.notifications.data!.view!.rows.map((r) => r.text);
+    expect(texts).toContain("space-51e8a1e198 is ready");
+    expect(texts.some((t) => t.includes("local:"))).toBe(false);
   });
 });

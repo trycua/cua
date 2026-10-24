@@ -309,6 +309,7 @@ pub fn onboarding_skipped(s: &OnboardingState) -> Vec<TelemetrySignal> {
         run_started(s)
     };
     out.push(page(page_name(s.step), "skipped", "later"));
+    out.push(sign_in_left(s));
     out.push(step("onboarding_skipped", true));
     out
 }
@@ -367,6 +368,7 @@ pub fn onboarding_finished(s: &OnboardingState) -> Vec<TelemetrySignal> {
     }
     vec![
         page("done", "completed", "none"),
+        sign_in_left(s),
         step("onboarding_completed", true),
     ]
 }
@@ -423,10 +425,29 @@ fn run_started(after: &OnboardingState) -> Vec<TelemetrySignal> {
         step("onboarding_shown", true),
         page("welcome", "shown", "none"),
     ];
-    if after.identity.as_deref().is_some_and(|i| !i.is_empty()) {
+    if signed_in(after) {
         out.push(step("signed_in", true));
+    } else {
+        out.push(step("signin_shown", true));
     }
     out
+}
+
+fn signed_in(s: &OnboardingState) -> bool {
+    s.identity.as_deref().is_some_and(|i| !i.is_empty())
+}
+
+/// How the first run's Cua sign-in was left: `signin_completed` or
+/// `signin_skipped`.
+fn sign_in_left(s: &OnboardingState) -> TelemetrySignal {
+    step(
+        if signed_in(s) {
+            "signin_completed"
+        } else {
+            "signin_skipped"
+        },
+        true,
+    )
 }
 
 /// The events one first-run step means: the page left (completed, skipped
@@ -1263,7 +1284,7 @@ mod tests {
     fn welcome_counts_when_shown_once_the_notice_was_shown() {
         let s = loaded(true, true);
         let shown = onboarding(&s, &OnboardingAction::WelcomeShown);
-        assert_eq!(steps_of(&shown), ["onboarding_shown"]);
+        assert_eq!(steps_of(&shown), ["onboarding_shown", "signin_shown"]);
         assert_eq!(pages(&shown), ["welcome shown none"]);
         let s = reduce(&s, &OnboardingAction::WelcomeShown);
         // Shown again (a re-render, Back): not counted twice.
@@ -1285,7 +1306,7 @@ mod tests {
         let s = reduce(&s, &OnboardingAction::WelcomeShown);
         assert!(!s.run_counted);
         let left = onboarding(&s, &OnboardingAction::Start);
-        assert_eq!(steps_of(&left), ["onboarding_shown"]);
+        assert_eq!(steps_of(&left), ["onboarding_shown", "signin_shown"]);
         // Usage data off: nothing when shown, nothing when left.
         let off = loaded(false, true);
         assert!(onboarding(&off, &OnboardingAction::WelcomeShown).is_empty());
@@ -1315,10 +1336,29 @@ mod tests {
         let s = reduce(&loaded(true, false), &OnboardingAction::Start);
         let v = onboarding_skipped(&s);
         assert_eq!(pages(&v), ["signin skipped later"]);
-        assert_eq!(steps_of(&v), ["onboarding_skipped"]);
+        assert_eq!(steps_of(&v), ["signin_skipped", "onboarding_skipped"]);
         // From Welcome, the run's start comes first.
         let w = onboarding_skipped(&loaded(true, false));
-        assert_eq!(steps_of(&w), ["onboarding_shown", "onboarding_skipped"]);
+        assert_eq!(
+            steps_of(&w),
+            [
+                "onboarding_shown",
+                "signin_shown",
+                "signin_skipped",
+                "onboarding_skipped"
+            ]
+        );
+        // Signed in by then: the sign-in counts as completed.
+        let mut signed = s.clone();
+        signed.identity = Some("ada@example.com".into());
+        assert_eq!(
+            steps_of(&onboarding_skipped(&signed)),
+            ["signin_completed", "onboarding_skipped"]
+        );
+        assert_eq!(
+            steps_of(&onboarding_finished(&signed)),
+            ["signin_completed", "onboarding_completed"]
+        );
         assert!(onboarding_skipped(&loaded(false, true)).is_empty());
     }
 

@@ -117,16 +117,25 @@ class Lab {
     })
     this.proc.stderr.on("data", (d) => this.stderr.push(d.toString("utf8")))
     this.exited = new Promise((resolve) => this.proc.on("exit", resolve))
+    // "close" comes after the stderr stream is drained: an exit message that names EADDRINUSE must not be cut short.
+    const closed = new Promise((resolve) => this.proc.on("close", resolve))
+    // The coordinator says so on stderr once it has bound the port (the real lab and the stand-in both do). A connection that
+    // succeeds before that line may be some other process's listener on a port taken after the probe, so it does not count.
+    const announced = `lab control: 127.0.0.1:${this.port}`
     const deadline = Date.now() + Number(process.env.CRASH_LAB_START_S ?? 300) * 1000
     for (;;) {
-      if (this.proc.exitCode !== null) throw new Error(`the lab coordinator exited ${this.proc.exitCode}: ${this.stderr.join("").slice(-1500)}`)
-      try {
-        await this.connect()
-        return
-      } catch {
-        if (Date.now() > deadline) throw new Error(`the lab coordinator never listened on ${this.port}: ${this.stderr.join("").slice(-1500)}`)
-        await sleep(300)
+      if (this.proc.exitCode !== null) {
+        await closed
+        throw new Error(`the lab coordinator exited ${this.proc.exitCode}: ${this.stderr.join("").slice(-1500)}`)
       }
+      if (this.stderr.join("").includes(announced)) {
+        try {
+          await this.connect()
+          return
+        } catch {}
+      }
+      if (Date.now() > deadline) throw new Error(`the lab coordinator never listened on ${this.port}: ${this.stderr.join("").slice(-1500)}`)
+      await sleep(100)
     }
   }
 

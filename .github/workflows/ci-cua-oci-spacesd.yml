@@ -60,10 +60,10 @@ jobs:
           targets: x86_64-unknown-linux-musl
       - name: musl toolchain
         run: sudo apt-get update -qq && sudo apt-get install -y -qq musl-tools
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-spacesd -> target"
-          key: oci-static-musl
+          shared-key: libs-cua-spacesd-static
       - name: Build
         working-directory: libs/cua-spacesd
         run: cargo build --locked --profile static --target x86_64-unknown-linux-musl -p cua-spacesd --bin cua-spacesd
@@ -95,10 +95,6 @@ jobs:
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
-        with:
-          workspaces: "tests/e2e/local-runtimes -> target"
-          key: oci-any
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: cua-spacesd-linux-x86_64

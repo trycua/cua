@@ -13,8 +13,8 @@
 //                                       (by default ~/.cua/helper/
 //                                       service.json; written by cua-host:
 //                                       args, env, log, working directory)
-//                                       and runs Contents/MacOS/cua-spacesd
-//                                       with it
+//                                       and runs Contents/Helpers/
+//                                       cua-spacesd with it
 //   CuaSpacesMac check-permissions      `cua-spacesd check-permissions` with
 //                                       this terminal's stdio: the app's own
 //                                       permission state (cua-host's
@@ -49,12 +49,13 @@ private func specPath() -> String? {
     return HelperService.specPath(info: Bundle.main.infoDictionary, home: home)
 }
 
-/// `cua-spacesd` next to this executable (never a path from the spec: only
-/// the code sealed in this app runs with the app's permissions).
+/// This app's `Contents/Helpers/cua-spacesd` (never a path from the spec:
+/// only the code sealed in this app runs with the app's permissions). Not
+/// `Contents/MacOS`: from there it would register with LaunchServices as
+/// the app itself (see `HelperService.daemonInContents`).
 private func daemonPath() -> String {
     let me = Bundle.main.executablePath ?? CommandLine.arguments[0]
-    return URL(fileURLWithPath: me).resolvingSymlinksInPath()
-        .deletingLastPathComponent().appendingPathComponent("cua-spacesd").path
+    return HelperService.daemonPath(executable: URL(fileURLWithPath: me)).path
 }
 
 private func log(_ message: String) {

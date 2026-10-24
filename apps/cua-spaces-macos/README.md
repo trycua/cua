@@ -440,8 +440,13 @@ and a Developer ID signature with the hardened runtime from the inside out
 (Sparkle.framework in Sparkle's documented order: `Installer.xpc`,
 `Downloader.xpc`, `Autoupdate`, `Updater.app`, the framework; then
 `libcua_sdk.dylib`, then `Contents/MacOS/cua` as `com.trycua.cua` with
-`Support/cua.entitlements`, then the app as `com.trycua.spaces.macos` with
-`Support/CuaSpacesMac.entitlements`). It ends with `scripts/check-launch.sh`:
+`Support/cua.entitlements`, the host service `Contents/Helpers/cua-spacesd` as
+`com.trycua.cua-env-driver`, then the app as `com.trycua.spaces.macos` with
+`Support/CuaSpacesMac.entitlements`). `scripts/check-bundle-layout.sh` keeps
+everything but the app and the command-line tools out of `Contents/MacOS`: a
+process there that starts AppKit (cua-spacesd does, for its cursor overlay)
+registers with LaunchServices as the app itself, and opening Cua Spaces then
+activates that windowless process instead of showing a window. It ends with `scripts/check-launch.sh`:
 every library resolves inside the bundle and passes library validation, and
 `CuaSpacesMac --check-launch-only` starts and exits. The workflow notarizes
 and staples the app, packs it with `scripts/package-dmg.sh` into

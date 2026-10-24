@@ -48,4 +48,16 @@ struct HelperServiceTests {
         #expect(HelperService.specPath(info: ["CuaChannel": "local", "CuaHome": "cua-local"], home: home) == nil)
         #expect(HelperService.specPath(info: ["CuaHome": "cua-local"], home: home) == nil)
     }
+
+    /// The host service runs from Contents/Helpers, outside Contents/MacOS:
+    /// from Contents/MacOS, AppKit (its cursor overlay) registered it with
+    /// LaunchServices as the app itself, and opening Cua Spaces activated
+    /// the windowless helper instead of showing a window.
+    @Test func theHostServiceRunsFromContentsHelpers() {
+        let exe = URL(fileURLWithPath: "/Applications/Cua Spaces.app/Contents/MacOS/CuaSpacesMac")
+        let daemon = HelperService.daemonPath(executable: exe)
+        #expect(daemon.path == "/Applications/Cua Spaces.app/Contents/Helpers/cua-spacesd")
+        #expect(!daemon.path.contains("/Contents/MacOS/"))
+        #expect(HelperService.daemonInContents == "Helpers/cua-spacesd")
+    }
 }

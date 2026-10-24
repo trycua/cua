@@ -159,10 +159,11 @@ pub fn locate(explicit: Option<&Path>) -> Result<DriverSource> {
     if let Ok(exe) = std::env::current_exe()
         && let Some(dir) = exe.parent()
     {
-        // Next to the CLI, or in a macOS bundle's Contents/MacOS or
-        // Contents/Resources.
+        // Next to the CLI (also a Cua Spaces app before 0.15), or in a macOS
+        // bundle's Contents/Helpers (the app's own) or Contents/Resources.
         for candidate in [
             dir.join(binary_name()),
+            dir.join("../Helpers").join(binary_name()),
             dir.join("../Resources").join(binary_name()),
         ] {
             if candidate.is_file() {

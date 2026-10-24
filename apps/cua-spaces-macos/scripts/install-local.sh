@@ -706,9 +706,9 @@ EOF
 
     # The host service is this checkout's build, not the pinned release (which
     # would ignore the Local ports and take the released app's).
-    if [ ! -x "$app/Contents/MacOS/cua-spacesd" ]; then
-        bad "it has no Contents/MacOS/cua-spacesd"
-    elif [ "$(code_hash "$app/Contents/MacOS/cua-spacesd" || true)" != "$SPACESD_CODE_HASH" ]; then
+    if [ ! -x "$app/Contents/Helpers/cua-spacesd" ]; then
+        bad "it has no Contents/Helpers/cua-spacesd"
+    elif [ "$(code_hash "$app/Contents/Helpers/cua-spacesd" || true)" != "$SPACESD_CODE_HASH" ]; then
         bad "the bundled cua-spacesd is not the build of this checkout ($SPACESD_BIN), probably the pinned release, which ignores the Local ports. build-app.sh must bundle \$CUA_SPACESD_BIN."
     fi
 

@@ -477,7 +477,9 @@ async fn invoke_daemon_tool(
     });
 
     if let Some(sid) = &effective_session {
-        if !is_session_lifecycle_tool(&tool_name) && sdk.is_session_ended(sid) {
+        if !is_session_lifecycle_tool(&tool_name)
+            && sdk.is_session_ended(sid, req.session_id.as_deref())
+        {
             observe_daemon_error(observation, 1);
             // An unnamed call's lifecycle id is the transport session, which
             // is not a label the caller can pass back to start_session.
@@ -2886,6 +2888,135 @@ mod gate_tests {
             client_kind: None,
         };
         let _ = tokio::task::spawn_blocking(move || send_request(&socket5, &shutdown)).await;
+        let _ = server.await;
+        let _ = std::fs::remove_file(&socket);
+    }
+
+    /// Each `cua-driver mcp` process is its own transport. A label its
+    /// sessions used must not stay poisoned for the next process once that
+    /// one has closed, while a live owner keeps its labels and its explicit
+    /// ends, and a label it ended explicitly still needs `start_session`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_closed_transports_session_labels_are_reusable() {
+        let _runtime_guard = crate::test_runtime_lock().lock().await;
+        PROBE_INVOCATIONS.store(0, Ordering::SeqCst);
+
+        let driver =
+            cua_driver_sdk::CuaDriver::create_for_host(cua_driver_sdk::DriverHostOptions {
+                cursor: cursor_overlay::CursorConfig {
+                    enabled: false,
+                    ..cursor_overlay::CursorConfig::default()
+                },
+                host_owns_permission_ux: false,
+                host_bundle_id: None,
+                claude_code_compatibility: false,
+                prepare_desktop_environment: false,
+                register_host_tools: Some(register_probe),
+                authorization_host: None,
+                activity_observer: None,
+            });
+        let sdk = crate::sdk_adapter::SdkAdapter::load(driver)
+            .await
+            .expect("SDK adapter");
+        let socket = format!(
+            "/tmp/cua-driver-label-test-{}-{}.sock",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let socket_for_server = socket.clone();
+        let server = tokio::spawn(async move {
+            let _ = run_serve(sdk, &socket_for_server, None).await;
+        });
+        for _ in 0..100 {
+            if std::path::Path::new(&socket).exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+
+        let send = |method: &str, name: Option<&str>, label: Option<&str>, transport: &str| {
+            let socket = socket.clone();
+            let request = DaemonRequest {
+                method: method.into(),
+                name: name.map(str::to_owned),
+                args: label.map(|label| serde_json::json!({ "session": label })),
+                session_id: Some(transport.to_owned()),
+                observation_origin: None,
+                client_kind: None,
+            };
+            async move {
+                tokio::task::spawn_blocking(move || send_request(&socket, &request))
+                    .await
+                    .unwrap()
+                    .expect("daemon response")
+            }
+        };
+        let ran = |resp: &cua_driver_core::daemon::DaemonResponse| {
+            resp.ok
+                && resp
+                    .result
+                    .as_ref()
+                    .and_then(|result| result.get("isError"))
+                    != Some(&serde_json::Value::Bool(true))
+        };
+        let (a, b, c) = (
+            "label-test-transport-a",
+            "label-test-transport-b",
+            "label-test-transport-c",
+        );
+
+        // Transport A uses two labels and explicitly ends one of them.
+        assert!(ran(&send("call", Some("probe"), Some("calc"), a).await));
+        assert!(ran(&send("call", Some("probe"), Some("done"), a).await));
+        assert!(ran(
+            &send("call", Some("end_session"), Some("done"), a).await
+        ));
+        let ended = send("call", Some("probe"), Some("done"), a).await;
+        assert!(
+            !ended.ok,
+            "an explicit end stays terminal for its live owner"
+        );
+        assert!(ended.error.as_deref().unwrap_or("").contains("has ended"));
+
+        // A's process exits: its control connection ends its transport.
+        assert!(send("session_end", None, None, a).await.ok);
+        let late = send("call", Some("probe"), Some("calc"), a).await;
+        assert!(
+            !late.ok,
+            "a late call from the closed transport stays refused"
+        );
+        assert_eq!(PROBE_INVOCATIONS.load(Ordering::SeqCst), 2);
+
+        // The next transport reuses the label A never ended.
+        assert!(ran(&send("call", Some("probe"), Some("calc"), b).await));
+        assert_eq!(PROBE_INVOCATIONS.load(Ordering::SeqCst), 3);
+
+        // The label A ended explicitly stays refused for ordinary calls after
+        // A closed, and any other transport may restart it with start_session.
+        let still_ended = send("call", Some("probe"), Some("done"), b).await;
+        assert!(!still_ended.ok, "{:?}", still_ended.result);
+        assert!(still_ended
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("start_session"));
+        assert!(ran(
+            &send("call", Some("start_session"), Some("done"), b).await
+        ));
+        assert!(ran(&send("call", Some("probe"), Some("done"), b).await));
+        assert_eq!(PROBE_INVOCATIONS.load(Ordering::SeqCst), 4);
+
+        // A label held by a live transport is not available to another one.
+        let foreign = send("call", Some("probe"), Some("calc"), c).await;
+        assert!(!ran(&foreign), "{:?}", foreign.result);
+        let foreign_start = send("call", Some("start_session"), Some("calc"), c).await;
+        assert!(!ran(&foreign_start), "{:?}", foreign_start.result);
+        assert_eq!(PROBE_INVOCATIONS.load(Ordering::SeqCst), 4);
+
+        let _ = send("shutdown", None, None, a).await;
         let _ = server.await;
         let _ = std::fs::remove_file(&socket);
     }

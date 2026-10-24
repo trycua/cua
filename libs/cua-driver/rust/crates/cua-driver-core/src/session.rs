@@ -350,6 +350,9 @@ struct LifecycleRecord {
     idle_ttl: Option<Duration>,
     in_flight: usize,
     pending_end: Option<SessionEndReason>,
+    /// Whether an `end_session` asked for the pending end. A transport close
+    /// or the idle sweep never sets it, whatever its reason.
+    pending_explicit_end: bool,
 }
 
 static LIFECYCLE_RECORDS: OnceLock<Mutex<HashMap<String, LifecycleRecord>>> = OnceLock::new();
@@ -394,11 +397,16 @@ impl Drop for SessionDispatchGuard {
                 .unwrap()
                 .insert(self.session_id.clone(), Instant::now());
             (record.in_flight == 0)
-                .then(|| record.pending_end.take())
+                .then(|| {
+                    record
+                        .pending_end
+                        .take()
+                        .map(|reason| (reason, record.pending_explicit_end))
+                })
                 .flatten()
         };
-        if let Some(reason) = pending {
-            finish_session_end(&self.session_id, reason);
+        if let Some((reason, explicit)) = pending {
+            finish_session_end(&self.session_id, reason, explicit);
         }
     }
 }
@@ -459,8 +467,10 @@ fn begin_session_dispatch_inner(
     }
     // An unnamed transport session reclaimed by the idle sweep starts a new
     // lifecycle episode on its owner's next call instead of refusing every
-    // later call. Its cleanup must have finished first, so snapshots, element
-    // tokens, grants, and recordings from the ended episode stay retired.
+    // later call, and so does a label whose owner transport has closed, for
+    // any other transport, unless the label was ended with `end_session`. Its
+    // cleanup must have finished first, so snapshots, element tokens, grants,
+    // and recordings from the ended episode stay retired.
     let recreate = recreates_on_next_call(session_id, owner_transport);
     if recreate && !retry_session_cleanup(session_id).complete {
         return Err("session cleanup is incomplete; retry the call");
@@ -476,10 +486,11 @@ fn begin_session_dispatch_inner(
         let recreated = ended.contains_key(session_id);
         if recreated
             && !(recreate
-                && idle_ended.contains(session_id)
-                && ended
-                    .get(session_id)
-                    .is_some_and(|owner| owner.as_deref() == Some(owner_transport)))
+                && ((idle_ended.contains(session_id)
+                    && ended
+                        .get(session_id)
+                        .is_some_and(|owner| owner.as_deref() == Some(owner_transport)))
+                    || released_to_next_call(&ended, session_id, owner_transport)))
         {
             return Err("session has ended");
         }
@@ -496,6 +507,7 @@ fn begin_session_dispatch_inner(
                 idle_ttl,
                 in_flight: 0,
                 pending_end: None,
+                pending_explicit_end: false,
             });
         if record.owner_transport != owner_transport {
             return Err("session is not available to this transport");
@@ -508,7 +520,7 @@ fn begin_session_dispatch_inner(
         }
         record.in_flight += 1;
         if recreated {
-            ended.remove(session_id);
+            remove_tombstone(&mut ended, &records, session_id);
             idle_ended.remove(session_id);
         }
         recreated
@@ -604,6 +616,7 @@ fn activate_session_inner(
                     idle_ttl,
                     in_flight: 0,
                     pending_end: None,
+                    pending_explicit_end: false,
                 },
             );
         }
@@ -639,7 +652,10 @@ pub fn activate_or_revive_session_for_owner(
     let needs_cleanup = {
         let ended = ended_sessions().lock().unwrap();
         match ended.get(session_id) {
-            Some(Some(owner)) if owner != owner_transport => {
+            Some(Some(owner))
+                if owner != owner_transport
+                    && !released_to(&ended, session_id, owner_transport) =>
+            {
                 return Err("session is not available to this transport");
             }
             Some(None) if owner_transport != session_id => {
@@ -657,7 +673,10 @@ pub fn activate_or_revive_session_for_owner(
     let revived = {
         let mut ended = ended_sessions().lock().unwrap();
         let revived = match ended.get(session_id) {
-            Some(Some(owner)) if owner != owner_transport => {
+            Some(Some(owner))
+                if owner != owner_transport
+                    && !released_to(&ended, session_id, owner_transport) =>
+            {
                 return Err("session is not available to this transport");
             }
             Some(None) if owner_transport != session_id => {
@@ -688,11 +707,12 @@ pub fn activate_or_revive_session_for_owner(
                     idle_ttl,
                     in_flight: 0,
                     pending_end: None,
+                    pending_explicit_end: false,
                 },
             );
         }
         if revived {
-            ended.remove(session_id);
+            remove_tombstone(&mut ended, &records, session_id);
             idle_ended_implicit_sessions()
                 .lock()
                 .unwrap()
@@ -837,16 +857,30 @@ pub fn list_session_snapshots_with_prefix(
         .collect()
 }
 
+/// End every session an owner transport holds because that transport has
+/// closed. The labels it owned are released once their episodes end: another
+/// transport's next call starts a fresh episode, except on a label it ended
+/// with `end_session` earlier, which any other transport may claim only with
+/// `start_session`. The closed transport itself stays refused. These ends are
+/// never explicit, whatever `reason` the transport reports.
 pub fn end_sessions_for_owner(owner_transport: &str, reason: SessionEndReason) -> usize {
-    let ids = lifecycle_records()
-        .lock()
-        .unwrap()
-        .iter()
-        .filter(|(_, record)| record.owner_transport == owner_transport)
-        .map(|(id, _)| id.clone())
-        .collect::<Vec<_>>();
+    let ids = {
+        let ended = ended_sessions().lock().unwrap();
+        let records = lifecycle_records().lock().unwrap();
+        if is_trackable(owner_transport) && names_labels_of(&ended, &records, owner_transport) {
+            closed_transports()
+                .lock()
+                .unwrap()
+                .insert(owner_transport.to_owned());
+        }
+        records
+            .iter()
+            .filter(|(_, record)| record.owner_transport == owner_transport)
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>()
+    };
     for id in &ids {
-        end_session_with_reason(id, reason);
+        end_session_with_reason(id, reason, false);
     }
     ids.len()
 }
@@ -993,11 +1027,36 @@ fn capture_modality_for(tool_name: &str, args: &serde_json::Value) -> Option<Cap
 /// be idempotent because the overlay Remove + recording stop must run exactly
 /// once. Growth is bounded (one short string per ended session over the
 /// daemon's lifetime); eviction is a deliberate non-blocking follow-up.
+///
+/// A tombstone also refuses later calls on its id, so a stray late action
+/// cannot recreate session-owned state. A `start_session` from the owner
+/// transport lifts it, and so does the owner's next call after the idle sweep
+/// reclaimed its own unnamed session. Once the owner transport has closed,
+/// its labels are free: another transport's next call starts a fresh episode,
+/// except on a label ended with `end_session`, which stays refused until a
+/// `start_session` from any transport.
 static ENDED_SESSIONS: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
 /// Tombstoned unnamed transport sessions whose episode ended only because the
 /// idle sweep reclaimed it. Mutated only while holding the `ENDED_SESSIONS`
 /// lock, and meaningful only while the matching tombstone exists.
 static IDLE_ENDED_IMPLICIT_SESSIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+/// Tombstoned sessions ended with `end_session` (the tool or an operator
+/// revocation) rather than by their transport closing or the idle sweep.
+/// Such a label stays refused for ordinary calls until a `start_session`,
+/// also after its owner transport has closed. Mutated only while holding the
+/// `ENDED_SESSIONS` lock, and meaningful only while the matching tombstone
+/// exists.
+static EXPLICITLY_ENDED_SESSIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+/// Owner transports whose connection has closed ([`end_sessions_for_owner`])
+/// while a labelled episode, live or tombstoned, still names them. Their
+/// labels are released: another transport's next call starts a fresh episode
+/// instead of inheriting a refusal it cannot recover from, and its
+/// `start_session` claims a label ended with `end_session`. The closed owner
+/// itself stays refused, so a late call from the dead connection resurrects
+/// nothing. An owner is forgotten once no labelled episode names it, so the
+/// set never outgrows the tombstones and live episodes. Mutated and read only
+/// while holding the `ENDED_SESSIONS` lock.
+static CLOSED_TRANSPORTS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 /// Runtime generations that have received terminal revoke-all.
 ///
 /// This latch is intentionally independent of grants and public session
@@ -1023,6 +1082,86 @@ fn ended_sessions() -> &'static Mutex<HashMap<String, Option<String>>> {
 
 fn idle_ended_implicit_sessions() -> &'static Mutex<HashSet<String>> {
     IDLE_ENDED_IMPLICIT_SESSIONS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn explicitly_ended_sessions() -> &'static Mutex<HashSet<String>> {
+    EXPLICITLY_ENDED_SESSIONS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn closed_transports() -> &'static Mutex<HashSet<String>> {
+    CLOSED_TRANSPORTS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Whether `owner_transport` may claim the tombstoned `session_id` with
+/// `start_session` because the transport that owned it has closed. Only a
+/// labelled episode is released (never a transport's own unnamed id), and
+/// never to the closed owner itself. The caller holds the `ENDED_SESSIONS`
+/// lock and passes its map.
+fn released_to(
+    ended: &HashMap<String, Option<String>>,
+    session_id: &str,
+    owner_transport: &str,
+) -> bool {
+    let Some(Some(owner)) = ended.get(session_id) else {
+        return false;
+    };
+    owner != session_id
+        && owner != owner_transport
+        && closed_transports().lock().unwrap().contains(owner)
+}
+
+/// [`released_to`] for an ordinary call, which starts a fresh episode on the
+/// label. A label ended with `end_session` stays refused until a
+/// `start_session` claims it.
+fn released_to_next_call(
+    ended: &HashMap<String, Option<String>>,
+    session_id: &str,
+    owner_transport: &str,
+) -> bool {
+    released_to(ended, session_id, owner_transport)
+        && !explicitly_ended_sessions()
+            .lock()
+            .unwrap()
+            .contains(session_id)
+}
+
+/// Whether a labelled episode, live or tombstoned, still names `owner` as its
+/// transport. Its own unnamed id never counts, because it is never released.
+fn names_labels_of(
+    ended: &HashMap<String, Option<String>>,
+    records: &HashMap<String, LifecycleRecord>,
+    owner: &str,
+) -> bool {
+    ended
+        .iter()
+        .any(|(id, ended_owner)| id != owner && ended_owner.as_deref() == Some(owner))
+        || records
+            .iter()
+            .any(|(id, record)| id != owner && record.owner_transport == owner)
+}
+
+/// Drop a tombstone that a new episode or a revival replaces, and forget its
+/// closed owner once no labelled episode names it. Returns whether a
+/// tombstone existed. The caller holds the `ENDED_SESSIONS` and lifecycle
+/// record locks and passes both maps.
+fn remove_tombstone(
+    ended: &mut HashMap<String, Option<String>>,
+    records: &HashMap<String, LifecycleRecord>,
+    session_id: &str,
+) -> bool {
+    explicitly_ended_sessions()
+        .lock()
+        .unwrap()
+        .remove(session_id);
+    let Some(owner) = ended.remove(session_id) else {
+        return false;
+    };
+    if let Some(owner) = owner {
+        if !names_labels_of(ended, records, &owner) {
+            closed_transports().lock().unwrap().remove(&owner);
+        }
+    }
+    true
 }
 
 fn suspended_runtime_scopes() -> &'static Mutex<HashSet<String>> {
@@ -1235,6 +1374,16 @@ pub fn release_process_state_for_shutdown() {
             idle_ended.clear();
             idle_ended.shrink_to_fit();
         }
+        if let Some(explicitly_ended) = EXPLICITLY_ENDED_SESSIONS.get() {
+            let mut explicitly_ended = explicitly_ended.lock().unwrap();
+            explicitly_ended.clear();
+            explicitly_ended.shrink_to_fit();
+        }
+        if let Some(closed) = CLOSED_TRANSPORTS.get() {
+            let mut closed = closed.lock().unwrap();
+            closed.clear();
+            closed.shrink_to_fit();
+        }
     }
     if let Some(scopes) = SUSPENDED_RUNTIME_SCOPES.get() {
         let mut scopes = scopes.lock().unwrap();
@@ -1256,7 +1405,12 @@ pub fn fire_session_end(session_id: &str) -> bool {
 }
 
 fn fire_session_end_for_owner(session_id: &str, owner_transport: Option<&str>) -> bool {
-    let first_fire = mark_session_ended(session_id, owner_transport, SessionEndReason::Unknown);
+    let first_fire = mark_session_ended(
+        session_id,
+        owner_transport,
+        SessionEndReason::Unknown,
+        false,
+    );
     if first_fire {
         initialize_session_cleanup(session_id);
     }
@@ -1273,22 +1427,30 @@ fn mark_session_ended(
     session_id: &str,
     owner_transport: Option<&str>,
     reason: SessionEndReason,
+    explicit: bool,
 ) -> bool {
     activity().lock().unwrap().remove(session_id);
     let mut ended = ended_sessions().lock().unwrap();
     let record = lifecycle_records().lock().unwrap().remove(session_id);
     // Only the transport's own unnamed session, reclaimed for inactivity, is
     // recreated on its next call. Named sessions and every other end reason
-    // keep the resurrection guard until an explicit start_session.
+    // keep the resurrection guard until an explicit start_session, except
+    // that a label not ended with end_session is released to other
+    // transports once its owner transport closes.
     let idle_implicit = reason == SessionEndReason::IdleTimeout
         && record
             .as_ref()
             .is_some_and(|record| record.implicit && record.owner_transport == session_id);
     let mut idle_ended = idle_ended_implicit_sessions().lock().unwrap();
+    let mut explicitly_ended = explicitly_ended_sessions().lock().unwrap();
     if ended.contains_key(session_id) {
-        // A later explicit or transport end makes an idle end terminal.
+        // A later explicit or transport end makes an idle end terminal, and a
+        // later end_session also keeps the label from being released.
         if reason != SessionEndReason::IdleTimeout {
             idle_ended.remove(session_id);
+        }
+        if explicit {
+            explicitly_ended.insert(session_id.to_owned());
         }
         false
     } else {
@@ -1302,6 +1464,11 @@ fn mark_session_ended(
             idle_ended.insert(session_id.to_owned());
         } else {
             idle_ended.remove(session_id);
+        }
+        if explicit {
+            explicitly_ended.insert(session_id.to_owned());
+        } else {
+            explicitly_ended.remove(session_id);
         }
         true
     }
@@ -1445,9 +1612,10 @@ pub fn revoke_sessions_with_prefix(prefix: &str) -> usize {
 }
 
 /// Forget terminal tombstones owned by a runtime generation that is itself
-/// being destroyed. Live runtimes must retain tombstones until an explicit
-/// `start_session` revival; otherwise an operator revocation could be bypassed
-/// by reusing the same public session label on another transport.
+/// being destroyed. Live runtimes must retain tombstones until a revival or a
+/// released label's next episode lifts them (see `ENDED_SESSIONS`); otherwise
+/// an operator revocation could be bypassed by reusing the same public session
+/// label on another transport.
 pub fn forget_ended_sessions_with_prefix(prefix: &str) -> usize {
     let mut ended = ended_sessions().lock().unwrap();
     let before = ended.len();
@@ -1457,6 +1625,14 @@ pub fn forget_ended_sessions_with_prefix(prefix: &str) -> usize {
         .lock()
         .unwrap()
         .retain(|session| !session.starts_with(prefix));
+    explicitly_ended_sessions()
+        .lock()
+        .unwrap()
+        .retain(|session| !session.starts_with(prefix));
+    closed_transports()
+        .lock()
+        .unwrap()
+        .retain(|owner| !owner.starts_with(prefix));
     drop(ended);
     cleanup_progress()
         .lock()
@@ -1473,15 +1649,21 @@ pub fn is_session_ended(session_id: &str) -> bool {
     ended_sessions().lock().unwrap().contains_key(session_id)
 }
 
-/// Whether an ended lifecycle id is the owner transport's unnamed session,
-/// reclaimed only by the idle sweep, so that transport's next
-/// session-requiring call recreates it instead of being refused. Named
-/// sessions, explicit ends, and transport exits always return `false`.
+/// Whether `owner_transport`'s next session-requiring call recreates the
+/// ended lifecycle id instead of being refused: the transport's own unnamed
+/// session reclaimed only by the idle sweep, or, for any other transport, a
+/// label whose owner transport has since closed and that was not ended with
+/// `end_session`. Every other ended id returns `false`, including a label
+/// ended with `end_session` (only `start_session` claims it) and every call
+/// from the closed transport itself.
 pub fn recreates_on_next_call(session_id: &str, owner_transport: &str) -> bool {
+    let ended = ended_sessions().lock().unwrap();
+    if released_to_next_call(&ended, session_id, owner_transport) {
+        return true;
+    }
     if session_id != owner_transport {
         return false;
     }
-    let ended = ended_sessions().lock().unwrap();
     ended
         .get(session_id)
         .is_some_and(|owner| owner.as_deref() == Some(owner_transport))
@@ -1517,8 +1699,10 @@ pub fn is_session_ending(session_id: &str) -> bool {
 /// This is the deliberate, EXPLICIT counterpart to the resurrection guard. The
 /// guard exists so a *stray late action* on a dead id can't silently re-create
 /// session-owned state; reviving requires an explicit `start_session` re-declare
-/// of the same id, which is exactly what a caller reusing an id intends. No-op
-/// for the anonymous fallback (`"default"` / empty), which is never tracked.
+/// of the same id, which is exactly what a caller reusing an id intends. The
+/// exceptions, such as a label released by its closed owner transport, are
+/// listed on `ENDED_SESSIONS`. No-op for the anonymous fallback (`"default"` /
+/// empty), which is never tracked.
 pub fn revive_session(session_id: &str) -> bool {
     if !is_trackable(session_id) {
         return false;
@@ -1531,13 +1715,14 @@ pub fn revive_session(session_id: &str) -> bool {
         .lock()
         .unwrap()
         .remove(session_id);
-    ended.remove(session_id).is_some()
+    remove_tombstone(&mut ended, &lifecycle_records().lock().unwrap(), session_id)
 }
 
 /// Owner-checked revival used by the public `start_session` tool. A public
 /// label is never proof that a new transport owns a prior episode: only the
 /// transport that ended the episode may revive it without a separate trusted
-/// host resume proof.
+/// host resume proof, unless that transport has closed and released the
+/// label.
 pub fn revive_session_for_owner(
     session_id: &str,
     owner_transport: &str,
@@ -1555,7 +1740,10 @@ pub fn revive_session_for_owner(
             return Ok(false);
         };
         match ended_owner.as_deref() {
-            Some(owner) if owner != owner_transport => {
+            Some(owner)
+                if owner != owner_transport
+                    && !released_to(&ended, session_id, owner_transport) =>
+            {
                 return Err("session is not available to this transport");
             }
             // Legacy tombstones did not retain ownership. Allow only the
@@ -1579,12 +1767,14 @@ pub fn revive_session_for_owner(
         return Ok(false);
     };
     match ended_owner.as_deref() {
-        Some(owner) if owner != owner_transport => {
+        Some(owner)
+            if owner != owner_transport && !released_to(&ended, session_id, owner_transport) =>
+        {
             Err("session is not available to this transport")
         }
         None if owner_transport != session_id => Err("session is not available to this transport"),
         _ => {
-            ended.remove(session_id);
+            remove_tombstone(&mut ended, &lifecycle_records().lock().unwrap(), session_id);
             idle_ended_implicit_sessions()
                 .lock()
                 .unwrap()
@@ -1627,12 +1817,14 @@ pub fn session_idle_duration(session_id: &str) -> Option<Duration> {
 /// End a session explicitly (the `end_session` tool / `session end` CLI verb):
 /// drop its idle-TTL entry and fan `fire_session_end` out to every cleanup hook
 /// (overlay remove, recording stop, config-override clear). Idempotent via
-/// `fire_session_end`'s dedupe. No-op for the anonymous fallback.
+/// `fire_session_end`'s dedupe. No-op for the anonymous fallback. A label
+/// ended this way stays refused for ordinary calls until a `start_session`,
+/// also after its owner transport closes.
 pub fn end_session(session_id: &str) {
-    end_session_with_reason(session_id, SessionEndReason::Explicit);
+    end_session_with_reason(session_id, SessionEndReason::Explicit, true);
 }
 
-fn end_session_with_reason(session_id: &str, reason: SessionEndReason) {
+fn end_session_with_reason(session_id: &str, reason: SessionEndReason, explicit: bool) {
     if !is_trackable(session_id) {
         return;
     }
@@ -1641,6 +1833,7 @@ fn end_session_with_reason(session_id: &str, reason: SessionEndReason) {
         match records.get_mut(session_id) {
             Some(record) if record.in_flight > 0 => {
                 record.pending_end.get_or_insert(reason);
+                record.pending_explicit_end |= explicit;
                 true
             }
             _ => false,
@@ -1649,11 +1842,11 @@ fn end_session_with_reason(session_id: &str, reason: SessionEndReason) {
     if defer {
         return;
     }
-    finish_session_end(session_id, reason);
+    finish_session_end(session_id, reason, explicit);
 }
 
-fn finish_session_end(session_id: &str, reason: SessionEndReason) {
-    let first_fire = mark_session_ended(session_id, None, reason);
+fn finish_session_end(session_id: &str, reason: SessionEndReason, explicit: bool) {
+    let first_fire = mark_session_ended(session_id, None, reason, explicit);
     let mut cursor_readers = CURSOR_OUTCOME_READERS
         .get()
         .map(|readers| {
@@ -1713,7 +1906,7 @@ pub fn evict_idle(ttl: Duration) -> Vec<String> {
             .collect()
     };
     for id in &stale {
-        end_session_with_reason(id, SessionEndReason::IdleTimeout);
+        end_session_with_reason(id, SessionEndReason::IdleTimeout, false);
     }
     stale
 }
@@ -1741,7 +1934,7 @@ pub fn evict_idle_with_prefix(ttl: Duration, prefix: &str) -> Vec<String> {
             .collect()
     };
     for id in &stale {
-        end_session_with_reason(id, SessionEndReason::IdleTimeout);
+        end_session_with_reason(id, SessionEndReason::IdleTimeout, false);
     }
     stale
 }
@@ -2061,6 +2254,169 @@ mod tests {
 
         assert_eq!(revive_session_for_owner(sid, owner_a), Ok(true));
         assert_eq!(cleanup_calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_closed_transport_releases_its_labels_to_other_transports() {
+        let label = "test-closed-owner-label-C1D2E3";
+        let ended_label = "test-closed-owner-ended-C1D2E3";
+        let pending_label = "test-closed-owner-pending-C1D2E3";
+        let owner_a = "test-closed-owner-transport-a";
+        let owner_b = "test-closed-owner-transport-b";
+        let owner_c = "test-closed-owner-transport-c";
+        let begin = |sid: &str, owner: &str| {
+            begin_session_dispatch(
+                sid,
+                (sid != owner).then_some("label"),
+                owner,
+                sid == owner,
+                SessionTransport::McpStdio,
+                SessionClientKind::Mcp,
+            )
+        };
+        let start = |sid: &str, owner: &str| {
+            activate_or_revive_session_for_owner(
+                sid,
+                Some("label"),
+                owner,
+                false,
+                SessionTransport::McpStdio,
+                SessionClientKind::Mcp,
+                None,
+            )
+        };
+        drop(begin(owner_a, owner_a).unwrap());
+        drop(begin(label, owner_a).unwrap());
+        drop(begin(ended_label, owner_a).unwrap());
+        assert!(end_session_for_owner(ended_label, owner_a));
+        // An end_session that waits for an in-flight call is just as explicit
+        // when the transport closes before that call returns.
+        let in_flight = begin(pending_label, owner_a).unwrap();
+        assert!(end_session_for_owner(pending_label, owner_a));
+
+        // While A is live its labels stay its own, including the one it ended.
+        assert_eq!(
+            begin(label, owner_b).err(),
+            Some("session is not available to this transport")
+        );
+        assert_eq!(begin(ended_label, owner_b).err(), Some("session has ended"));
+        assert_eq!(begin(ended_label, owner_a).err(), Some("session has ended"));
+        assert_eq!(
+            start(ended_label, owner_b),
+            Err("session is not available to this transport")
+        );
+
+        assert_eq!(
+            end_sessions_for_owner(owner_a, SessionEndReason::ProcessExit),
+            3
+        );
+        drop(in_flight);
+        assert!(is_session_ended(pending_label));
+        // A late call from the closed transport resurrects nothing, and its
+        // own unnamed id is never released.
+        assert!(!recreates_on_next_call(label, owner_a));
+        assert_eq!(begin(label, owner_a).err(), Some("session has ended"));
+        assert_eq!(begin(owner_a, owner_b).err(), Some("session has ended"));
+
+        // Another transport starts a fresh episode on a label A did not end.
+        assert!(recreates_on_next_call(label, owner_b));
+        drop(begin(label, owner_b).expect("a released label starts fresh"));
+        assert!(!is_session_ended(label));
+        assert!(session_snapshot(label, owner_b, DEFAULT_SESSION_IDLE_TTL).is_some());
+
+        // A label A ended with end_session stays refused for ordinary calls,
+        // but any other transport may now restart it with start_session.
+        for ended in [ended_label, pending_label] {
+            assert!(!recreates_on_next_call(ended, owner_b));
+            assert_eq!(begin(ended, owner_b).err(), Some("session has ended"));
+            assert!(is_session_ended(ended));
+        }
+        assert_eq!(start(ended_label, owner_b), Ok(true));
+        assert_eq!(start(pending_label, owner_b), Ok(true));
+        drop(begin(ended_label, owner_b).expect("a restarted label runs"));
+
+        // The new owner holds them like any live transport.
+        assert_eq!(
+            begin(label, owner_c).err(),
+            Some("session is not available to this transport")
+        );
+        assert!(end_session_for_owner(label, owner_b));
+        assert_eq!(begin(label, owner_c).err(), Some("session has ended"));
+        assert_eq!(
+            end_sessions_for_owner(owner_b, SessionEndReason::ProcessExit),
+            2
+        );
+    }
+
+    #[test]
+    fn a_closed_transport_is_forgotten_once_no_tombstone_names_it() {
+        let label = "test-forgotten-owner-label-F7A8B9";
+        let ended_label = "test-forgotten-owner-ended-F7A8B9";
+        let owner_a = "test-forgotten-owner-transport-a";
+        let owner_b = "test-forgotten-owner-transport-b";
+        let unnamed_only = "test-forgotten-owner-transport-unnamed";
+        let begin = |sid: &str, owner: &str| {
+            begin_session_dispatch(
+                sid,
+                (sid != owner).then_some("label"),
+                owner,
+                sid == owner,
+                SessionTransport::McpStdio,
+                SessionClientKind::Mcp,
+            )
+        };
+        let closed = |owner: &str| closed_transports().lock().unwrap().contains(owner);
+
+        // A transport that closes without a labelled episode, like a one-shot
+        // CLI call, is never recorded: it has no label to release.
+        drop(begin(unnamed_only, unnamed_only).unwrap());
+        assert_eq!(
+            end_sessions_for_owner(unnamed_only, SessionEndReason::ProcessExit),
+            1
+        );
+        assert!(!closed(unnamed_only));
+
+        drop(begin(owner_a, owner_a).unwrap());
+        drop(begin(label, owner_a).unwrap());
+        drop(begin(ended_label, owner_a).unwrap());
+        assert!(end_session_for_owner(ended_label, owner_a));
+        assert_eq!(
+            end_sessions_for_owner(owner_a, SessionEndReason::ProcessExit),
+            2
+        );
+        assert!(closed(owner_a));
+
+        // Each claim drops one of A's tombstones. A stays recorded while one
+        // still names it, and is forgotten with the last.
+        drop(begin(label, owner_b).unwrap());
+        assert!(closed(owner_a));
+        assert_eq!(
+            activate_or_revive_session_for_owner(
+                ended_label,
+                Some("label"),
+                owner_b,
+                false,
+                SessionTransport::McpStdio,
+                SessionClientKind::Mcp,
+                None,
+            ),
+            Ok(true)
+        );
+        assert!(!closed(owner_a));
+
+        // Forgetting A loosens nothing: its own unnamed id and its late calls
+        // stay refused.
+        assert!(is_session_ended(owner_a));
+        assert_eq!(begin(owner_a, owner_b).err(), Some("session has ended"));
+        assert_eq!(begin(owner_a, owner_a).err(), Some("session has ended"));
+        assert_eq!(
+            begin(label, owner_a).err(),
+            Some("session is not available to this transport")
+        );
+        assert_eq!(
+            end_sessions_for_owner(owner_b, SessionEndReason::ProcessExit),
+            2
+        );
     }
 
     #[test]
@@ -2486,7 +2842,7 @@ mod tests {
             SessionClientKind::Mcp,
         )
         .unwrap();
-        end_session_with_reason(idle, SessionEndReason::IdleTimeout);
+        end_session_with_reason(idle, SessionEndReason::IdleTimeout, false);
 
         let revived = "test-observer-revived-MN34";
         touch_session(revived);

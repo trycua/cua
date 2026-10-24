@@ -108,6 +108,9 @@ def timeline(tmp_path, snapshots):
     ('1\t11\tbuild\tcancelled\tcompleted\n1\t10\tbuild\tsuccess\tcompleted', 'test\tcancelled', None, 1, 'build: fail'),
     ('1\t11\tbuild\tsuccess\tcompleted\n1\t10\tbuild\tfailure\tcompleted', '', 'test\tfailure', 1, 'build: fail'),
     ('1\t11\tbuild\tskipped\tcompleted', '', None, 0, 'build: skipped'),
+    # A scoped macOS sample build: the scope job ran, the sample job was skipped
+    # (the jobs API reports it as skipped and the gate ignores it), so the run passes.
+    ('1\t11\tinfinite-canvas\tsuccess\tcompleted', 'scope (macOS Swift sample)\tsuccess', None, 0, 'infinite-canvas: pass'),
     ('1\t11\tbuild\tsuccess\tcompleted', 'distro-smoke\tfailure', None, 0, 'build: pass'),
     ('1\t11\tbuild\tfailure\tcompleted', 'test\tfailure', None, 1, 'build: fail'),
     ('1\t11\tbuild\tneutral\tcompleted', 'test\tneutral', None, 0, 'build: pass'),

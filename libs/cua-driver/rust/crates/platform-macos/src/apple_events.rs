@@ -10,21 +10,28 @@
 //! touching the pointer, so these routes keep the user's front app untouched.
 //!
 //! Apple Events need the user's Automation consent for each target app. The
-//! permission is read first without asking. When macOS has never asked, it
-//! shows its consent prompt once, on the first route that needs that app.
-//! When the user has turned it off, the caller gets an honest refusal.
+//! permission is read first without asking. By default, ungranted permission
+//! may trigger a consent prompt. With `serve --no-automation-prompts`, only
+//! explicitly granted targets may receive scripting actions.
 
 use std::ffi::c_void;
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
+
+static REFUSE_UNGRANTED_AUTOMATION: AtomicBool = AtomicBool::new(false);
+
+pub fn refuse_ungranted_automation(refuse: bool) {
+    REFUSE_UNGRANTED_AUTOMATION.store(refuse, Ordering::Release);
+}
 
 /// Whether this process may send Apple Events to an app.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AutomationPermission {
     Granted,
-    /// macOS has not asked the user yet; the first event shows its prompt.
+    /// macOS has not asked the user yet; sending an event may show its prompt.
     NeedsConsent,
     /// The user turned it off in System Settings > Privacy & Security >
     /// Automation.
@@ -177,10 +184,22 @@ fn script_error_refusal(stderr: &str) -> ScriptRefusal {
     }
 }
 
-/// Check the permission before a route runs: refuse when the user turned it
-/// off, so no event is sent.
-fn ensure_permitted(bundle_id: &str, app_name: &str) -> Result<(), ScriptRefusal> {
-    match automation_permission(bundle_id) {
+pub(crate) fn ensure_permitted(bundle_id: &str, app_name: &str) -> Result<(), ScriptRefusal> {
+    check_permission(
+        automation_permission(bundle_id),
+        REFUSE_UNGRANTED_AUTOMATION.load(Ordering::Acquire),
+        bundle_id,
+        app_name,
+    )
+}
+
+fn check_permission(
+    permission: AutomationPermission,
+    refuse_ungranted: bool,
+    bundle_id: &str,
+    app_name: &str,
+) -> Result<(), ScriptRefusal> {
+    match permission {
         AutomationPermission::Denied => Err(ScriptRefusal {
             code: "automation_denied",
             reason: format!(
@@ -192,7 +211,23 @@ fn ensure_permitted(bundle_id: &str, app_name: &str) -> Result<(), ScriptRefusal
             code: "automation_failed",
             reason: format!("{app_name} is not running"),
         }),
-        // NeedsConsent: macOS shows its prompt once, on this event.
+        AutomationPermission::NeedsConsent | AutomationPermission::Unknown(_)
+            if refuse_ungranted =>
+        {
+            let detail = match permission {
+                AutomationPermission::Unknown(status) => {
+                    format!(" (permission status {status}; consent has not been established)")
+                }
+                _ => String::new(),
+            };
+            Err(ScriptRefusal {
+                code: "automation_consent_required",
+                reason: format!(
+                    "Automation permission for {app_name} ({bundle_id}) is not granted{detail}. \
+                     No scripting action was sent. Grant access in System Settings > Privacy & Security > Automation."
+                ),
+            })
+        }
         _ => Ok(()),
     }
 }
@@ -471,6 +506,41 @@ mod tests {
             permission_from_status(-50),
             AutomationPermission::Unknown(-50)
         );
+    }
+
+    #[test]
+    fn unattended_actions_require_explicit_automation_consent() {
+        for refuse in [false, true] {
+            for (permission, expected) in [
+                (AutomationPermission::Granted, None),
+                (AutomationPermission::Denied, Some("automation_denied")),
+                (AutomationPermission::NotRunning, Some("automation_failed")),
+                (
+                    AutomationPermission::NeedsConsent,
+                    refuse.then_some("automation_consent_required"),
+                ),
+                (
+                    AutomationPermission::Unknown(-50),
+                    refuse.then_some("automation_consent_required"),
+                ),
+            ] {
+                let result = check_permission(permission, refuse, "com.apple.TextEdit", "TextEdit");
+                assert_eq!(result.as_ref().err().map(|r| r.code), expected);
+                if expected == Some("automation_consent_required") {
+                    let reason = result.unwrap_err().reason;
+                    for text in [
+                        "TextEdit",
+                        "com.apple.TextEdit",
+                        "System Settings > Privacy & Security > Automation",
+                    ] {
+                        assert!(reason.contains(text), "{reason}");
+                    }
+                    if let AutomationPermission::Unknown(status) = permission {
+                        assert!(reason.contains(&status.to_string()));
+                    }
+                }
+            }
+        }
     }
 
     #[test]

@@ -69,6 +69,7 @@ pub enum Command {
         /// (checked inside the gate itself), so the flag is only one of
         /// two opt-out signals.
         no_permissions_gate: bool,
+        no_automation_prompts: bool,
         /// True when `--claude-code-computer-use-compat` is on argv. The MCP
         /// proxy forwards this flag to a daemon it auto-launches (see
         /// `launch_daemon_and_wait`) so that daemon registers the requested
@@ -273,6 +274,7 @@ const SERVE_ONLY_AUTHORIZATION_FLAGS: &[&str] = &[
     "--approve-session-policy",
     "--dangerously-bypass-approvals",
     "--no-permissions-gate",
+    "--no-automation-prompts",
 ];
 
 fn serve_only_authorization_flag(args: &[String]) -> Option<&'static str> {
@@ -621,6 +623,7 @@ pub fn parse_command() -> Command {
         println!("  The capture file supplies source metadata only; the image is never registered as a reusable capture.");
         println!();
         println!("agent authorization (serve only):");
+        println!("  --no-automation-prompts        Refuse scripting actions without granted macOS Automation consent.");
         println!("  --permission-mode <mode>        standard (default), bounded, or unrestricted.");
         println!(
             "  --grant existing-profile       Pre-authorize existing logged-in Chromium attachment"
@@ -799,7 +802,10 @@ pub fn parse_command() -> Command {
     if matches!(positionals.first().copied(), None | Some("mcp")) {
         if let Some(flag) = serve_only_authorization_flag(&args) {
             eprintln!("cua-driver mcp does not accept {flag}; authorization flags belong to `cua-driver serve`.");
-            eprintln!("For direct MCP, use CUA_DRIVER_PERMISSION_MODE and the related CUA_DRIVER_* environment variables.");
+            if flag == "--no-automation-prompts" {
+                eprintln!("Start `cua-driver serve --no-automation-prompts` before connecting MCP; an auto-started daemon does not enable this protection.");
+            }
+            eprintln!("For direct MCP authorization, use CUA_DRIVER_PERMISSION_MODE and the related CUA_DRIVER_* environment variables.");
             eprintln!("Otherwise start a configured daemon and connect with `cua-driver mcp --socket <path>`." );
             process::exit(64);
         }
@@ -868,6 +874,7 @@ pub fn parse_command() -> Command {
                 .any(|a| a == "--approve-capability-manifest" || a == "--approve-session-policy"),
             // Bare flag — present anywhere on argv counts as "skip the gate".
             no_permissions_gate: args.iter().any(|a| a == "--no-permissions-gate"),
+            no_automation_prompts: args.iter().any(|a| a == "--no-automation-prompts"),
             claude_code_compat,
             grants,
             experimental_history: args.iter().any(|a| a == "--experimental-history"),
@@ -1792,6 +1799,9 @@ fn append_daemon_launch_state(
     if state.no_permissions_gate {
         args.push("--no-permissions-gate".to_owned());
     }
+    if state.no_automation_prompts {
+        args.push("--no-automation-prompts".to_owned());
+    }
     if state.claude_code_compat {
         args.push("--claude-code-computer-use-compat".to_owned());
     }
@@ -2050,6 +2060,7 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--session-policy", "type": "string", "description": "Deprecated alias for --capability-manifest." },
                   { "name": "--approve-session-policy", "type": "flag", "description": "Deprecated alias for --approve-capability-manifest." },
                   { "name": "--no-permissions-gate", "type": "flag", "description": "Skip the macOS TCC first-launch gate." },
+                  { "name": "--no-automation-prompts", "type": "flag", "description": "Refuse scripting actions without granted macOS Automation consent." },
                   { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Forwarded by the MCP proxy when the client asked for the compat surface." },
                   { "name": "--embedded", "type": "flag", "description": "Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1." },
                   { "name": "--host-bundle-id", "type": "string", "description": "Advisory host bundle id label echoed in check_permissions output." }
@@ -4440,6 +4451,7 @@ fn cli_docs_literal() -> serde_json::Value {
                     {"name":"approve-capability-manifest","short_name":null,"help":"Trusted-launcher confirmation that the exact capability manifest was reviewed.","default_value":false},
                     {"name":"approve-session-policy","short_name":null,"help":"Deprecated alias for approve-capability-manifest.","default_value":false},
                     {"name":"no-permissions-gate","short_name":null,"help":"Skip the macOS first-launch permissions gate.","default_value":false},
+                    {"name":"no-automation-prompts","short_name":null,"help":"Refuse scripting actions without granted macOS Automation consent.","default_value":false},
                     {"name":"embedded","short_name":null,"help":"Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1.","default_value":false},
                     {"name":"no-overlay","short_name":null,"help":"Disable the agent cursor overlay for this daemon.","default_value":false},
                     {"name":"experimental-history","short_name":null,"help":"Admit the encrypted local Computer History early preview for this daemon launch.","default_value":false}
@@ -5777,6 +5789,7 @@ mod tests {
             capability_manifest: Some("/tmp/capabilities.yaml".to_owned()),
             approve_capability_manifest: true,
             no_permissions_gate: true,
+            no_automation_prompts: true,
             claude_code_compat: true,
             grants,
         };
@@ -5797,6 +5810,19 @@ mod tests {
             .any(|pair| { pair == ["--capability-manifest", "/tmp/capabilities.yaml"] }));
         assert!(launch.contains(&"--approve-capability-manifest".to_owned()));
         assert!(launch.contains(&"--no-permissions-gate".to_owned()));
+        assert!(launch.contains(&"--no-automation-prompts".to_owned()));
+        let encoded = serde_json::to_value(&state).unwrap();
+        let restored: crate::history_runtime::DaemonLaunchState =
+            serde_json::from_value(encoded.clone()).unwrap();
+        assert!(restored.no_automation_prompts);
+        let mut legacy = encoded;
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("no_automation_prompts");
+        let restored: crate::history_runtime::DaemonLaunchState =
+            serde_json::from_value(legacy).unwrap();
+        assert!(!restored.no_automation_prompts);
         assert!(launch.contains(&"--claude-code-computer-use-compat".to_owned()));
         assert!(launch.contains(&"--experimental-history".to_owned()));
         assert!(launch
@@ -5833,6 +5859,14 @@ mod tests {
     }
 
     #[test]
+    fn automation_prompt_flag_is_serve_only() {
+        assert_eq!(
+            serve_only_authorization_flag(&args(&["mcp", "--no-automation-prompts"])),
+            Some("--no-automation-prompts")
+        );
+    }
+
+    #[test]
     fn history_relaunch_preserves_explicit_unrestricted_approval() {
         let state = crate::history_runtime::DaemonLaunchState {
             permission_mode: Some("unrestricted".to_owned()),
@@ -5845,6 +5879,8 @@ mod tests {
             .windows(2)
             .any(|pair| { pair == ["--permission-mode", "unrestricted"] }));
         assert!(launch.contains(&"--dangerously-bypass-approvals".to_owned()));
+        assert!(!state.no_automation_prompts);
+        assert!(!launch.contains(&"--no-automation-prompts".to_owned()));
     }
 
     #[test]

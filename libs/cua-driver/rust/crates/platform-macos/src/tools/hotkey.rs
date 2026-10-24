@@ -45,7 +45,9 @@ fn def() -> &'static ToolDef {
                front, that menu item runs through accessibility instead (a disabled \
                Save is saved through the app's scripting interface and verified on \
                disk); a menu item macOS keeps disabled in the background is refused \
-               with `background_unavailable`, and no keys are sent.\n\
+               with `background_unavailable`. With serve --no-automation-prompts, \
+               scripting without granted consent refuses with `automation_consent_required`, \
+               without keyboard fallback.\n\
              • `foreground`: briefly front the window (NSMenu path, < 1 ms via \
                SLPSSetFrontProcessWithOptions) so native menu key-equivalents \
                (Cmd+Z, Cmd+W) dispatch, then restore the prior frontmost — the \
@@ -639,7 +641,11 @@ mod tests {
 
     #[test]
     fn menu_safety_refusals_do_not_fall_back_to_keys() {
-        for code in ["window_not_key", "background_unavailable"] {
+        for code in [
+            "window_not_key",
+            "background_unavailable",
+            "automation_consent_required",
+        ] {
             let result =
                 ToolResult::error("refused").with_structured(serde_json::json!({ "code": code }));
             assert_eq!(

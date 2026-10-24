@@ -8,20 +8,42 @@ description: >-
   that main already built restores the slice instead of compiling for 33 to
   60 minutes. The key is the git blob list of the inputs of the build: the
   Rust workspace without documentation and the non-Rust language packages,
-  the cua-spacesd pin, the target and the toolchain. A miss builds (with the
-  Rust dependency cache) and saves. Signing and verification of the app stay
-  in cd-cua-spaces.yml and run on whatever this action leaves in place. Run
-  after actions/checkout.
+  every file outside it that the crates of the build read at compile time
+  (found by .github/scripts/spaces_rust_slice_inputs.py from their
+  `include_str!` calls and build scripts: the image catalog, the shared
+  keybindings, the cua-spacesd pin, the skills, the cargo config), the target
+  and the toolchain. A miss builds (with the Rust dependency cache) and
+  saves. Signing and verification of the app stay in cd-cua-spaces.yml and
+  run on whatever this action leaves in place. Run after actions/checkout.
+
+  With `build: "false"` the action only restores (ci-cua-spaces-macos.yml:
+  a pull request that does not change the Rust inputs takes main's compiled
+  library and skips the 30 to 60 minute build; one that does falls back to
+  its own build). Same key either way, so there is one definition of it.
 
 inputs:
   triple:
     description: "Rust target triple (aarch64-apple-darwin or x86_64-apple-darwin)."
     required: true
+  build:
+    description: >-
+      "true" (default): build on a miss and save, as the producer and the
+      release do. "false": restore only; on a miss nothing is built or saved
+      and the caller builds for itself.
+    required: false
+    default: "true"
+  verify-key:
+    description: >-
+      "true": after a build, fail if the compiler or a build script read a
+      tracked file the cache key does not hash (the producer does this; the
+      release does not, so a stale key can never block a release).
+    required: false
+    default: "false"
 
 outputs:
   cache-hit:
     description: "true when the slice came from the cache."
-    value: ${{ steps.cache.outputs.cache-hit }}
+    value: ${{ steps.cache.outputs.cache-hit || steps.restore.outputs.cache-hit }}
   key:
     description: "The cache key."
     value: ${{ steps.key.outputs.key }}
@@ -36,18 +58,26 @@ runs:
         TRIPLE: ${{ inputs.triple }}
       run: |
         set -euo pipefail
-        # Hash the staged blobs (mode, object id, path) of what the build
-        # reads. Documentation and the Kotlin, Python and TypeScript packages
+        # Hash the staged blobs (mode, object id, path) of everything the
+        # build reads: libs/cua and the files outside it that its crates
+        # embed. Documentation and the Kotlin, Python and TypeScript packages
         # are not inputs: a changelog or README edit must not cost a rebuild.
-        inputs_hash="$( { git ls-files -s -- libs/cua libs/cua-spacesd/VERSION \
-          ':(exclude)libs/cua/kotlin' ':(exclude)libs/cua/python' \
-          ':(exclude)libs/cua/typescript' ':(exclude)libs/cua/skills' \
-          ':(exclude,glob)**/*.md'; } | git hash-object --stdin)"
+        inputs_hash="$(python3 .github/scripts/spaces_rust_slice_inputs.py key)"
         repo="${CUA_RELEASE_REPOSITORY//\//-}"
-        echo "key=swiftui-rust-v2-${TRIPLE}-rust1.97.1-${repo}-${inputs_hash}" >> "$GITHUB_OUTPUT"
+        echo "key=swiftui-rust-v3-${TRIPLE}-rust1.97.1-${repo}-${inputs_hash}" >> "$GITHUB_OUTPUT"
     - name: Restore the compiled slice
       id: cache
+      if: inputs.build == 'true'
       uses: actions/cache@v4
+      with:
+        path: |
+          libs/cua/target/${{ inputs.triple }}/release/libcua_spaces_ffi.dylib
+          libs/cua/target/${{ inputs.triple }}/release/cua-spaces-cli
+        key: ${{ steps.key.outputs.key }}
+    - name: Restore the compiled slice (restore only)
+      id: restore
+      if: inputs.build != 'true'
+      uses: actions/cache/restore@v4
       with:
         path: |
           libs/cua/target/${{ inputs.triple }}/release/libcua_spaces_ffi.dylib
@@ -56,17 +86,17 @@ runs:
     - name: Report the cache
       shell: bash
       env:
-        HIT: ${{ steps.cache.outputs.cache-hit || 'false' }}
+        HIT: ${{ steps.cache.outputs.cache-hit || steps.restore.outputs.cache-hit || 'false' }}
         KEY: ${{ steps.key.outputs.key }}
       run: echo "::notice::SwiftUI Rust slice cache hit = ${HIT} (${KEY})"
-    - if: steps.cache.outputs.cache-hit != 'true'
+    - if: inputs.build == 'true' && steps.cache.outputs.cache-hit != 'true'
       uses: dtolnay/rust-toolchain@1.97.1
       with:
         targets: ${{ inputs.triple }}
-    - if: steps.cache.outputs.cache-hit != 'true'
+    - if: inputs.build == 'true' && steps.cache.outputs.cache-hit != 'true'
       name: Install protoc
       uses: ./.github/actions/setup-protoc
-    - if: steps.cache.outputs.cache-hit != 'true'
+    - if: inputs.build == 'true' && steps.cache.outputs.cache-hit != 'true'
       uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
       with:
         workspaces: libs/cua -> target
@@ -76,7 +106,7 @@ runs:
         # within the hour. Only the default branch saves it.
         save-if: ${{ github.ref == 'refs/heads/main' }}
         cache-on-failure: true
-    - if: steps.cache.outputs.cache-hit != 'true'
+    - if: inputs.build == 'true' && steps.cache.outputs.cache-hit != 'true'
       name: Build the slice
       shell: bash
       working-directory: libs/cua
@@ -87,7 +117,15 @@ runs:
         CUA_DEFAULT_ENV: ""
         TRIPLE: ${{ inputs.triple }}
       run: cargo build --locked --release -p cua-spaces-ffi -p cua-spaces-cli --target "$TRIPLE"
+    # Ground truth for the key: what rustc and the build scripts really read.
+    - if: inputs.build == 'true' && inputs.verify-key == 'true' && steps.cache.outputs.cache-hit != 'true'
+      name: The cache key covers every file the build read
+      shell: bash
+      env:
+        TRIPLE: ${{ inputs.triple }}
+      run: python3 .github/scripts/spaces_rust_slice_inputs.py verify "libs/cua/target/${TRIPLE}/release"
     - name: Check the slice
+      if: inputs.build == 'true' || steps.restore.outputs.cache-hit == 'true'
       shell: bash
       env:
         TRIPLE: ${{ inputs.triple }}

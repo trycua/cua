@@ -25,7 +25,7 @@
 #     caches, web view data, cookies and saved window state
 #   - the same for the old Local bundle id (com.trycua.spaces.local, before the
 #     rename to com.trycua.spaces.macos.local): an app with that id at the Local
-#     path, its ~/Library files and its permission rows
+#     path and its ~/Library files
 #   - the Local Keychain items (ai.cua.session.local, ai.cua.session.local.staging)
 #   - optionally lume-local (libs/lume/scripts/uninstall-local.sh)
 # It keeps the Cua Volume Local folder and the permissions macOS granted the
@@ -135,9 +135,7 @@ fi
 # Only this bundle's own code may unregister its login item, so ask the app
 # (the same call the host setup makes). Without the app, stop the job. An app
 # with the old Local id at this path is handled the same way.
-LEGACY_FOUND=0
 if is_legacy_local_bundle "$APP_DEST"; then
-    LEGACY_FOUND=1
     log "found the old ${LOCAL_APP_DIR_NAME%.app} (bundle id $LOCAL_LEGACY_BUNDLE_ID); removing it too"
 fi
 if [ -x "$APP_DEST/Contents/MacOS/CuaSpacesMac" ]; then
@@ -206,12 +204,8 @@ done < <(library_leaves "$LOCAL_BUNDLE_ID")
 # of files under the old id (none is a name of the current id or Stable's).
 while IFS= read -r leftover; do
     [ -n "$leftover" ] || continue
-    LEGACY_FOUND=1
     log "removed $leftover"
 done < <(remove_legacy_local_data)
-if [ "$LEGACY_FOUND" = 1 ]; then
-    clear_legacy_local_permissions
-fi
 
 # The Keychain tool deletes one item per call and has no wildcard: repeat per
 # service (one item per account) until none is left. Local services only.

@@ -428,10 +428,12 @@ plus `.local`; the launchd ids, ports, `cua-local` and `~/.cua-local` did not
 change). `install-local.sh` finds an app with the old id at the Local path,
 unregisters its helper login item, removes it, installs the renamed app, and
 then removes what the old id left in `~/Library` (its Application Support
-folder, preferences, caches, web view data, cookies and window state) and its
-permission rows. It says so in one line. Your sign-in (`~/.cua-local`) and
-`~/Cua Volume Local` stay, and macOS asks for the renamed app's permissions
-once. `uninstall-local.sh` removes both ids' leftovers. Neither touches
+folder, preferences, caches, web view data, cookies and window state). It says
+so in one line. If the new copy fails to verify, the old app and its login item
+are put back. Your sign-in (`~/.cua-local`) and `~/Cua Volume Local` stay, and
+macOS asks for the renamed app's permissions once; the old id's permission rows
+stay in macOS's list unused (`tccutil` cannot clear them for an app that is
+gone). `uninstall-local.sh` removes both ids' leftovers. Neither touches
 anything Stable owns. Because the new id is Stable's plus a suffix, compare
 bundle ids whole, never by prefix.
 

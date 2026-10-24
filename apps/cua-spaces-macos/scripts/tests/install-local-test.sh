@@ -86,8 +86,12 @@ WEB_LOG="$WORK/web.log"
 cat > "$WORK/stub.c" <<'EOF'
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 int main(int argc, char **argv) {
     const char *log = getenv("STUB_LOG");
+    // `CuaSpacesMac --service-helper status`: the login item is registered.
+    if (argc >= 3 && strcmp(argv[1], "--service-helper") == 0 && strcmp(argv[2], "status") == 0)
+        printf("{\"status\":\"enabled\"}\n");
     FILE *f = log ? fopen(log, "a") : NULL;
     if (f) {
         const char *channel = getenv("CUA_CHANNEL");
@@ -177,12 +181,18 @@ cat > "$app/Contents/Info.plist" <<PLIST
 $feed
 </dict></plist>
 PLIST
+# launchd takes AssociatedBundleIdentifiers as an array or as one string.
+if [ "${FAKE_BUILD_ASSOCIATED_SCALAR:-0}" = 1 ]; then
+  assoc_xml="<key>AssociatedBundleIdentifiers</key><string>$associated</string>"
+else
+  assoc_xml="<key>AssociatedBundleIdentifiers</key><array><string>$associated</string></array>"
+fi
 cat > "$app/Contents/Library/LaunchAgents/$helper.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0"><dict>
 <key>Label</key><string>$helper</string>
 <key>BundleProgram</key><string>Contents/MacOS/CuaSpacesMac</string>
-<key>AssociatedBundleIdentifiers</key><array><string>$associated</string></array>
+$assoc_xml
 </dict></plist>
 PLIST
 /usr/bin/codesign -s - -f -i "$id" "$app/Contents/Helpers/cua-spacesd" >/dev/null 2>&1
@@ -768,7 +778,8 @@ for variant in "FAKE_BUILD_ID=com.trycua.spaces.macos|bundle id" \
     "FAKE_BUILD_SCHEME=cua|URL scheme" \
     "FAKE_BUILD_CHANNEL=stable|CuaChannel" \
     "FAKE_BUILD_HELPER_LABEL=com.trycua.spaces.helper|Stable helper label" \
-    "FAKE_BUILD_ASSOCIATED=com.trycua.spaces.macos|associated with the Stable app"; do
+    "FAKE_BUILD_ASSOCIATED=com.trycua.spaces.macos|associated with the Stable app" \
+    "FAKE_BUILD_ASSOCIATED_SCALAR=1 FAKE_BUILD_ASSOCIATED=com.trycua.spaces.macos|associated with the Stable app"; do
     var="${variant%%|*}"
     what="${variant#*|}"
     reset_fixture
@@ -778,6 +789,9 @@ for variant in "FAKE_BUILD_ID=com.trycua.spaces.macos|bundle id" \
     check "$var: refused ($what), and the installed Local app is unchanged" \
         '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep -i >/dev/null "$what" && [ "$(snap_all)" = "$ALL_BEFORE" ]'
 done
+reset_fixture
+FAKE_BUILD_ASSOCIATED_SCALAR=1 install
+check "a login item associated with the Local id, as one string or as an array, is accepted (status $RC)" '[ "$RC" = 0 ] && [ "$(installed_id "$LOCAL_APP")" = com.trycua.spaces.macos.local ]'
 reset_fixture
 ALL_BEFORE="$(snap_all)"
 FAKE_BUILD_APP_NAME="Cua Spaces" install
@@ -917,8 +931,7 @@ check "launchd was asked about the Local helper label only" \
 check "LaunchServices forgot the old registration, then registered the new app" \
     'grep >/dev/null "^lsregister -u $LOCAL_APP\$" "$SHIM_LOG" && grep >/dev/null "^lsregister -f $LOCAL_APP\$" "$SHIM_LOG"'
 check "the old id's settings, preferences, caches, web view data, cookies and window state are gone" 'legacy_data_gone'
-check "only the old id's permission rows were cleared" \
-    'grep >/dev/null "^tccutil reset All com.trycua.spaces.local\$" "$SHIM_LOG" && [ "$(grep -c "^tccutil" "$SHIM_LOG")" = 1 ]'
+check "no permission rows were reset (tccutil cannot resolve an app that is gone, so none is attempted)" '! grep >/dev/null "^tccutil" "$SHIM_LOG"'
 check "the sign-in, the helper spec and Cua Volume Local are untouched" '[ "$(snap .cua-local "Cua Volume Local")" = "$KEPT_BEFORE" ]'
 check "Stable files are byte-identical" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
 check "no backup is left behind" '! ls "$FAKE_HOME"/Applications/*.install-backup.* >/dev/null 2>&1'
@@ -926,7 +939,7 @@ check "cua-local links to the new app's cua" '[ "$(readlink "$LOCAL_CLI")" = "$L
 : > "$SHIM_LOG"; : > "$STUB_LOG"
 install
 check "the next install is a plain rebuild: no migration line, nothing about the old id" \
-    '[ "$RC" = 0 ] && ! printf "%s" "$OUT" | grep >/dev/null "found the old" && ! grep >/dev/null "tccutil reset All" "$SHIM_LOG" && ! grep >/dev/null "service-helper" "$STUB_LOG"'
+    '[ "$RC" = 0 ] && ! printf "%s" "$OUT" | grep >/dev/null "found the old" && ! grep >/dev/null "service-helper" "$STUB_LOG"'
 
 # A build that is refused leaves the old app, its settings and its login item alone.
 reset_fixture
@@ -940,9 +953,12 @@ check "a bad build over the old Local is refused and nothing of the old Local ch
 # A copy that fails to verify puts the old app back, and its settings were not touched.
 reset_fixture
 make_legacy_local
+: > "$SHIM_LOG"; : > "$STUB_LOG"
 FAKE_BUILD_SALT=3 FAIL_VERIFY_PATH="$LOCAL_APP" install
 check "a copy that does not verify restores the old app (the old id, not the new one)" \
     '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep >/dev/null "restored the previous" && [ "$(installed_id "$LOCAL_APP")" = "$LEGACY_ID" ] && ! ls "$FAKE_HOME"/Applications/*.install-backup.* >/dev/null 2>&1'
+check "and the old app is known to LaunchServices again and its login item is registered again" \
+    'grep >/dev/null -- "--service-helper register \[CUA_CHANNEL=local\]" "$STUB_LOG" && [ "$(grep -n "^lsregister -u $LOCAL_APP\$" "$SHIM_LOG" | tail -1 | cut -d: -f1)" -lt "$(grep -n "^lsregister -f $LOCAL_APP\$" "$SHIM_LOG" | tail -1 | cut -d: -f1)" ]'
 check "and the old id's settings are still there" '[ -f "$FAKE_HOME/Library/Application Support/$LEGACY_ID/settings.json" ] && [ -f "$FAKE_HOME/Library/Preferences/$LEGACY_ID.plist" ]'
 
 # Old settings without an old app (it was deleted by hand) are not touched by an install:
@@ -1248,8 +1264,7 @@ uninstall --yes
 check "uninstall removes an old-id app at the Local path (status $RC)" '[ "$RC" = 0 ] && [ ! -e "$LOCAL_APP" ] && printf "%s" "$OUT" | grep >/dev/null "found the old"'
 check "the old app unregistered its login item, and launchd was asked about the two Local labels only" \
     'grep >/dev/null -- "--service-helper unregister \[CUA_CHANNEL=local\]" "$STUB_LOG" && [ "$(grep -c "^launchctl" "$SHIM_LOG")" = 2 ] && grep >/dev/null "bootout gui/[0-9]*/com.trycua.spaces.local.helper$" "$SHIM_LOG" && grep >/dev/null "bootout gui/[0-9]*/com.trycua.spacesd.host.local$" "$SHIM_LOG"'
-check "its settings, preferences, caches, web view data, cookies and window state are gone, and its permission rows cleared" \
-    'legacy_data_gone && grep >/dev/null "^tccutil reset All com.trycua.spaces.local\$" "$SHIM_LOG" && [ "$(grep -c "^tccutil" "$SHIM_LOG")" = 1 ]'
+check "its settings, preferences, caches, web view data, cookies and window state are gone" 'legacy_data_gone'
 check "the Local home is gone, Cua Volume Local is kept" '[ ! -e "$FAKE_HOME/.cua-local" ] && [ "$(cat "$FAKE_HOME/Cua Volume Local/note.txt")" = "my local files" ]'
 check "Stable files are byte-identical" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
 
@@ -1265,11 +1280,7 @@ uninstall --yes
 check "uninstall removes the leftovers of both ids when no app is installed (status $RC)" \
     '[ "$RC" = 0 ] && legacy_data_gone && [ ! -e "$FAKE_HOME/Library/Application Support/com.trycua.spaces.macos.local" ] && [ ! -e "$FAKE_HOME/Library/Caches/com.trycua.spaces.macos.local" ]'
 check "and Stable files, whose names the new Local id extends, are byte-identical" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
-reset_fixture
-install
-: > "$SHIM_LOG"
-uninstall --yes
-check "with no old id anywhere, uninstall does not touch the permission rows" '[ "$RC" = 0 ] && ! grep >/dev/null "^tccutil" "$SHIM_LOG"'
+check "uninstall never resets permission rows (macOS keeps them for a reinstall)" '! grep >/dev/null "^tccutil" "$SHIM_LOG"'
 
 echo "== install, then uninstall, leaves the HOME as it was =="
 reset_fixture

@@ -184,11 +184,26 @@ remove_legacy_local_data() {
     done < <(printf '%s\n' "Application Support/$LOCAL_LEGACY_BUNDLE_ID"; library_leaves "$LOCAL_LEGACY_BUNDLE_ID")
 }
 
-# Clears the permissions macOS granted the old bundle id (best effort): that
-# app is gone, so the rows would only linger in System Settings.
-clear_legacy_local_permissions() {
-    command -v tccutil >/dev/null 2>&1 || return 0
-    tccutil reset All "$LOCAL_LEGACY_BUNDLE_ID" >/dev/null 2>&1 || true
+# Succeeds when the Local app at `app` has its helper login item registered
+# and enabled (what `--service-helper status` reports).
+local_helper_enabled() {
+    local app="$1"
+    [ -x "$app/Contents/MacOS/CuaSpacesMac" ] || return 1
+    CUA_CHANNEL=local "$app/Contents/MacOS/CuaSpacesMac" --service-helper status 2>/dev/null | grep -q '"status":"enabled"'
+}
+
+# Puts back what `retire_local_app` took from an old Local app that is restored
+# after a failed install: LaunchServices knows it again and, when `helper_was_enabled`
+# is 1, its helper login item is registered again (best effort).
+restore_retired_local_app() {
+    local app="$1" helper_was_enabled="$2"
+    if [ -x "$LSREGISTER" ]; then
+        "$LSREGISTER" -f "$app" >/dev/null 2>&1 || true
+    fi
+    if [ "$helper_was_enabled" = 1 ] && [ -x "$app/Contents/MacOS/CuaSpacesMac" ]; then
+        CUA_CHANNEL=local "$app/Contents/MacOS/CuaSpacesMac" --service-helper register >/dev/null 2>&1 \
+            || warn "the previous app's helper login item could not be registered again; open the app and set up this Mac again."
+    fi
 }
 
 # --- Where Local may write -----------------------------------------------------

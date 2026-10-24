@@ -1698,11 +1698,10 @@ pub fn with_target_foreground<T>(
     )
 }
 
-/// Query the first `wl_output`'s pixel dimensions via a short Wayland
-/// roundtrip, independent of the virtual-pointer protocol. Used by the libei
-/// fallback (which never opens a `VptrSession`) to reproduce the vptr path's
-/// default-to-centre and clamp behaviour so both backends treat coordinates
-/// identically. Falls back to `(1, 1)` when no output reports a mode.
+/// Query one `wl_output`'s pixel dimensions via a short Wayland roundtrip,
+/// independent of the virtual-pointer protocol. Only used by the libei click to
+/// resolve its `(0, 0)` centre default; it is not the desktop layout, so it
+/// must not bound coordinates. Falls back to `(1, 1)` when no output reports a mode.
 #[cfg(feature = "portal-input")]
 fn output_dimensions() -> anyhow::Result<(u32, u32)> {
     let conn = Connection::connect_to_env()?;
@@ -1715,23 +1714,6 @@ fn output_dimensions() -> anyhow::Result<(u32, u32)> {
         queue.roundtrip(&mut state)?;
     }
     Ok((state.output_w.max(1), state.output_h.max(1)))
-}
-
-/// Reproduce the wlroots vptr path's coordinate handling for the libei
-/// fallback: `(0, 0)` defaults to the output centre, and any value is clamped
-/// to `[0, dim-1]`. Keeps `click(.., 0, 0, ..)` landing on centre rather than
-/// the top-left corner across both backends.
-#[cfg(feature = "portal-input")]
-fn normalize_click_xy(x: i32, y: i32, w: u32, h: u32) -> (i32, i32) {
-    let (px, py) = if x == 0 && y == 0 {
-        ((w / 2) as i32, (h / 2) as i32)
-    } else {
-        (x, y)
-    };
-    (
-        px.clamp(0, (w as i32).saturating_sub(1)),
-        py.clamp(0, (h as i32).saturating_sub(1)),
-    )
 }
 
 /// Map a cua/X11 pointer button (1=left / 2=middle / 3=right) to its evdev
@@ -2638,8 +2620,12 @@ fn libei_wait_keyboard_ready() -> anyhow::Result<()> {
 #[cfg(feature = "portal-input")]
 fn libei_click(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
     let btn = cua_button_to_libei(button);
-    let (w, h) = output_dimensions()?;
-    let (px, py) = normalize_click_xy(x, y, w, h);
+    let (px, py) = if (x, y) == (0, 0) {
+        let (w, h) = output_dimensions()?;
+        ((w / 2) as i32, (h / 2) as i32)
+    } else {
+        (x, y)
+    };
     libei::move_absolute(px as f64, py as f64)?;
     for i in 0..count.max(1) {
         if i > 0 {
@@ -2672,13 +2658,8 @@ fn libei_scroll(direction: &str, amount: u32) -> anyhow::Result<()> {
 
 #[cfg(feature = "portal-input")]
 fn libei_move_absolute(x: i32, y: i32) -> anyhow::Result<()> {
-    // Match `move_cursor_absolute_vptr`: clamp to output bounds (no
-    // default-to-centre — an explicit (0,0) move means the top-left corner).
-    let (w, h) = output_dimensions()?;
-    let px = x.clamp(0, (w as i32).saturating_sub(1));
-    let py = y.clamp(0, (h as i32).saturating_sub(1));
-    libei::move_absolute(px as f64, py as f64)?;
-    record_synth_cursor(px, py);
+    libei::move_absolute(x as f64, y as f64)?;
+    record_synth_cursor(x, y);
     Ok(())
 }
 
@@ -2694,24 +2675,18 @@ fn libei_drag(
 ) -> anyhow::Result<()> {
     // ei_button exposes separate Press/Released states, so the libei worker can
     // hold the button across the interpolated motion — a genuine
-    // press→move→release drag. Clamp both endpoints to the output — but NOT via
-    // `normalize_click_xy`, whose (0,0)→centre convention (for coordinate-free
-    // clicks) is wrong here: a drag endpoint is always explicit and (0,0) is a
-    // valid top-left corner target.
+    // press→move→release drag.
     let btn = cua_button_to_libei(button);
-    let (w, h) = output_dimensions()?;
-    let cx = |x: i32| x.clamp(0, (w as i32).saturating_sub(1));
-    let cy = |y: i32| y.clamp(0, (h as i32).saturating_sub(1));
     libei::drag(
-        cx(from_x) as f64,
-        cy(from_y) as f64,
-        cx(to_x) as f64,
-        cy(to_y) as f64,
+        from_x as f64,
+        from_y as f64,
+        to_x as f64,
+        to_y as f64,
         steps,
         duration_ms,
         btn,
     )?;
-    record_synth_cursor(cx(to_x), cy(to_y));
+    record_synth_cursor(to_x, to_y);
     Ok(())
 }
 

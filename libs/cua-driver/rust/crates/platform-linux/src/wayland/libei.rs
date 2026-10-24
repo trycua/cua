@@ -24,10 +24,10 @@
 //! `~/.config/cua-driver/libei-persistent.token` and reused across daemon
 //! restarts.
 //!
-//! Coordinates: ei_pointer_absolute uses LOGICAL PIXELS inside an
-//! announced ei_device.Region — collected between device creation and
-//! the first device.Done event. Multi-monitor: pick the region
-//! containing the target (x, y).
+//! Coordinates: ei_pointer_absolute takes desktop-layout positions that must
+//! lie inside an announced ei_device.Region — collected between device creation
+//! and the first device.Done event. Multi-monitor: the region containing the
+//! target (x, y) selects the device; the point is sent unchanged.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -1005,13 +1005,13 @@ impl EisState {
                 })?;
             }
             Cmd::Click { x, y, button, .. } => {
-                let (device, rel_x, rel_y) = self.pointer_device_for(*x, *y)?;
+                let device = self.pointer_device_for(*x, *y)?;
                 let serial = self.last_serial;
                 let ptr_abs =
                     require_device_interface::<reis::ei::PointerAbsolute>(&self.devices, &device)?;
                 let btn = require_device_interface::<reis::ei::Button>(&self.devices, &device)?;
 
-                ptr_abs.motion_absolute(rel_x, rel_y);
+                ptr_abs.motion_absolute(*x as f32, *y as f32);
                 btn.button(button.to_evdev(), reis::ei::button::ButtonState::Press);
                 device.frame(serial, event_time_us());
                 btn.button(button.to_evdev(), reis::ei::button::ButtonState::Released);
@@ -1027,24 +1027,21 @@ impl EisState {
                 button,
                 ..
             } => {
-                let (device, from_rx, from_ry) = self.pointer_device_for(*from_x, *from_y)?;
+                let device = self.pointer_device_for(*from_x, *from_y)?;
                 let serial = self.last_serial;
                 let ptr_abs =
                     require_device_interface::<reis::ei::PointerAbsolute>(&self.devices, &device)?;
                 let btn = require_device_interface::<reis::ei::Button>(&self.devices, &device)?;
-                // Map the drag end into the SAME device's region (a single EIS
-                // emulation session can't span devices). Fall back to the start
-                // region's offset when no region of this device contains the end
-                // (single-region device, or a point just off-screen) — this is
-                // correct only within one region, but avoids the cross-monitor
-                // mis-mapping of blindly reusing the start offset.
-                let (to_rx, to_ry) =
-                    self.region_local_on(&device, *to_x, *to_y)
-                        .unwrap_or_else(|| {
-                            let off_x = *from_x as f32 - from_rx;
-                            let off_y = *from_y as f32 - from_ry;
-                            (*to_x as f32 - off_x, *to_y as f32 - off_y)
-                        });
+                // A single EIS emulation session can't span devices: the end
+                // must lie in a region of the device the start resolved to.
+                let regions = self
+                    .devices
+                    .get(&device)
+                    .map(|d| d.regions.as_slice())
+                    .unwrap_or_default();
+                route_absolute([((), regions)], *to_x, *to_y)?;
+                let (from_rx, from_ry) = (*from_x as f32, *from_y as f32);
+                let (to_rx, to_ry) = (*to_x as f32, *to_y as f32);
 
                 ptr_abs.motion_absolute(from_rx, from_ry);
                 device.frame(serial, event_time_us());
@@ -1075,12 +1072,12 @@ impl EisState {
                 device.frame(serial, event_time_us());
             }
             Cmd::MoveAbsolute { x, y, .. } => {
-                let (device, rel_x, rel_y) = self.pointer_device_for(*x, *y)?;
+                let device = self.pointer_device_for(*x, *y)?;
                 let serial = self.last_serial;
                 let ptr_abs =
                     require_device_interface::<reis::ei::PointerAbsolute>(&self.devices, &device)?;
 
-                ptr_abs.motion_absolute(rel_x, rel_y);
+                ptr_abs.motion_absolute(*x as f32, *y as f32);
                 device.frame(serial, event_time_us());
             }
             Cmd::Scroll { dx, dy, .. } => {
@@ -1195,55 +1192,29 @@ impl EisState {
         Ok(())
     }
 
-    /// Pick a pointer device whose announced Region contains `(x, y)`,
-    /// and translate the absolute screen coordinates into the device's
-    /// region-local pixel coordinates.
-    ///
-    /// Multi-monitor seats announce one Region per output; routing each
-    /// (x, y) by containment is what lets a click on monitor #2 actually
-    /// land on monitor #2. When no device's region contains the point —
-    /// e.g. coords just past the edge of an output, or a session with
-    /// a single device that hasn't announced any regions yet — we fall
-    /// back to the first pointer device with the raw coordinates, which
-    /// matches the pre-multi-monitor behaviour.
-    fn pointer_device_for(&self, x: f64, y: f64) -> anyhow::Result<(reis::ei::Device, f32, f32)> {
-        // Absolute motion needs the device that actually carries
-        // ei_pointer_absolute — Mutter/KWin split the relative and absolute
-        // pointers onto separate devices, and only one of them accepts an
-        // absolute warp.
-        for (device, data) in self.devices.iter() {
-            if !data.resumed || !data.interfaces.contains_key("ei_pointer_absolute") {
-                continue;
-            }
-            for region in &data.regions {
-                if region.contains(x, y) {
-                    let rel_x = x as f32 - region.offset_x;
-                    let rel_y = y as f32 - region.offset_y;
-                    return Ok((device.clone(), rel_x, rel_y));
-                }
-            }
+    /// Pick the absolute-pointer device whose announced Region contains
+    /// `(x, y)`. The region only selects the device: coordinates are
+    /// desktop-layout positions and are sent to EIS unchanged. When regions
+    /// were announced but none contains the point this is an error, since EIS
+    /// would silently drop the motion. Only when no region was announced at all
+    /// does it fall back to the first absolute-pointer device.
+    fn pointer_device_for(&self, x: f64, y: f64) -> anyhow::Result<reis::ei::Device> {
+        // Mutter/KWin split the relative and absolute pointers onto separate
+        // devices, and only the absolute one accepts an absolute warp.
+        let candidates = self
+            .devices
+            .iter()
+            .filter(|(_, data)| data.resumed && data.interfaces.contains_key("ei_pointer_absolute"))
+            .map(|(device, data)| (device, data.regions.as_slice()));
+        if let Some(device) = route_absolute(candidates, x, y)? {
+            return Ok(device.clone());
         }
-        // Fallback: first absolute-pointer device, raw coords (single-region).
-        let device = self
-            .device_with_interface("ei_pointer_absolute")
+        self.device_with_interface("ei_pointer_absolute")
             .ok_or_else(|| {
                 anyhow::anyhow!(
                     "no EIS absolute-pointer device negotiated yet — wait for handshake"
                 )
-            })?;
-        Ok((device, x as f32, y as f32))
-    }
-
-    /// Region-local coordinates for absolute `(x, y)` within one of `device`'s
-    /// announced regions, or `None` when no region of that device contains the
-    /// point. Used to map a drag endpoint into the same device the drag start
-    /// resolved to (a single EIS emulation session can't span devices).
-    fn region_local_on(&self, device: &reis::ei::Device, x: f64, y: f64) -> Option<(f32, f32)> {
-        let data = self.devices.get(device)?;
-        data.regions
-            .iter()
-            .find(|r| r.contains(x, y))
-            .map(|r| (x as f32 - r.offset_x, y as f32 - r.offset_y))
+            })
     }
 
     /// The negotiated device that exposes `iface` (e.g. `ei_pointer_absolute`,
@@ -1385,9 +1356,73 @@ fn drag_step_delay(duration_ms: u64, steps: u32) -> std::time::Duration {
     )
 }
 
+/// First candidate whose regions contain `(x, y)`. `Ok(None)` means no
+/// candidate announced any region (caller falls back). Regions that exist but
+/// exclude the point are an error: EIS would silently discard the motion and
+/// the button would land at the stale pointer position.
+fn route_absolute<'a, K>(
+    candidates: impl IntoIterator<Item = (K, &'a [RegionRect])>,
+    x: f64,
+    y: f64,
+) -> anyhow::Result<Option<K>> {
+    let mut announced = false;
+    for (key, regions) in candidates {
+        if regions.iter().any(|r| r.contains(x, y)) {
+            return Ok(Some(key));
+        }
+        announced |= !regions.is_empty();
+    }
+    if announced {
+        anyhow::bail!("libei: ({x}, {y}) lies outside every announced pointer region");
+    }
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn region(offset_x: f32) -> RegionRect {
+        RegionRect {
+            offset_x,
+            offset_y: 0.0,
+            width: 3840.0,
+            height: 2160.0,
+        }
+    }
+
+    #[test]
+    fn absolute_point_on_second_monitor_routes_to_its_region() {
+        let (l, r) = ([region(0.0)], [region(3840.0)]);
+        let one = [("abs", &[l[0], r[0]][..])];
+        assert_eq!(route_absolute(one, 6237.0, 1014.0).unwrap(), Some("abs"));
+        let two = [("left", &l[..]), ("right", &r[..])];
+        assert_eq!(route_absolute(two, 6237.0, 1014.0).unwrap(), Some("right"));
+    }
+
+    #[test]
+    fn point_outside_announced_regions_is_an_error() {
+        let both = [region(0.0), region(3840.0)];
+        assert!(route_absolute([("abs", &both[..])], 8000.0, 100.0).is_err());
+        assert!(route_absolute([("abs", &both[..])], 7680.0, 100.0).is_err());
+    }
+
+    #[test]
+    fn unmatched_point_cannot_escape_through_an_empty_candidate() {
+        let l = [region(0.0)];
+        let none: [RegionRect; 0] = [];
+        let mixed = [("empty", &none[..]), ("left", &l[..])];
+        assert!(route_absolute(mixed, 6237.0, 1014.0).is_err());
+    }
+
+    #[test]
+    fn no_announced_regions_falls_back() {
+        let none: [RegionRect; 0] = [];
+        assert_eq!(
+            route_absolute([("abs", &none[..])], 6237.0, 1.0).unwrap(),
+            None
+        );
+    }
 
     #[test]
     fn key_sequence_accepts_empty_and_maximum_length_requests() {

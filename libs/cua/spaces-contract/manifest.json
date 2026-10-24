@@ -9,7 +9,7 @@
     "mcp_stdio",
     "mcp_streamable_http"
   ],
-  "tool_count": 86,
+  "tool_count": 96,
   "categories": [
     {
       "id": "lifecycle",
@@ -69,7 +69,7 @@
     {
       "id": "cloud",
       "title": "Your cloud",
-      "description": "Create Spaces in your own AWS, Google Cloud or Modal account: connect it, check it, and clean up what Cua created there."
+      "description": "Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account: connect it, check it, and clean up what Cua created there."
     }
   ],
   "error_kinds": [
@@ -122,6 +122,11 @@
       "kind": "limit_exceeded",
       "meaning": "The host is at a capacity limit: two macOS VMs per Mac (Apple's macOS license, enforced by Apple Virtualization) or the host's own Space limit.",
       "fix": "Delete a Space on that host (delete_space), pick another computer, or create a Linux Space instead."
+    },
+    {
+      "kind": "host_capacity",
+      "meaning": "The machine has no room for another Space now: its VMs are at their memory limit (shared snapshot memory counted once) or CPU limit, or it is low on memory. Nothing was started; the message says which limit and by how much.",
+      "fix": "Delete a Space (delete_space), create it smaller (cpus, memory_mb), or create it with on=\"auto\" so another machine takes it."
     },
     {
       "kind": "ambiguous_sandbox",
@@ -180,7 +185,7 @@
     },
     {
       "kind": "cloud",
-      "meaning": "Your cloud account refused or failed a call Cua made for a Space there (AWS, Google Cloud, Modal): a missing permission, a quota, a region without the instance type. The message names the cloud's own error.",
+      "meaning": "Your cloud account refused or failed a call Cua made for a Space there (AWS, Google Cloud, Hetzner, Modal): a missing permission, a quota, a region without the instance type. The message names the cloud's own error.",
       "fix": "Fix what the message names in that account (`cua cloud test <provider>` checks without creating anything), or connect another region or project."
     },
     {
@@ -345,7 +350,7 @@
       "name": "list_spaces",
       "category": "lifecycle",
       "description": "List the Spaces this connection can see.",
-      "instructions": "Every registered Space (cloud, local, direct and relay) with its id (local:<name>, cloud:<name>, direct:<host:port>, relay:<computer-id>), provider, spacesd version (empty without one) and supported features as of the last handshake. The signed-in account's computers on the relay are listed too: those are the names `create_space` accepts as on=\"host:<computer>\". A Space a computer provides carries `host` (that computer's id) and `host_name`; group them under it when you show them. A Space in your cloud carries `cloud` (the provider: aws, gcp, modal), `cloud_place` (account and region, to show with it) and `cloud_delete` (where delete_space can delete it: here, host:<computer>, or elsewhere).",
+      "instructions": "Every registered Space (cloud, local, direct and relay) with its id (local:<name>, cloud:<name>, direct:<host:port>, relay:<computer-id>), provider, spacesd version (empty without one) and supported features as of the last handshake. The signed-in account's computers on the relay are listed too: those are the names `create_space` accepts as on=\"host:<computer>\". A Space a computer provides carries `host` (that computer's id) and `host_name`; group them under it when you show them. A Space in your cloud carries `cloud` (the provider: aws, gcp, modal), `cloud_place` (account and region, to show with it) and `cloud_delete` (where delete_space can delete it: here, host:<computer>, or elsewhere). A durable Space (create_space durable=true) carries `durable` (its name, by which it is found wherever it runs now).",
       "platforms": [
         "macos",
         "windows",
@@ -378,7 +383,15 @@
         "unauthenticated"
       ],
       "input_schema": {
-        "properties": {},
+        "properties": {
+          "labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Only the Spaces that carry every one of these labels (set by\n`create_space`).",
+            "type": "object"
+          }
+        },
         "type": "object"
       }
     },
@@ -386,7 +399,7 @@
       "name": "create_space",
       "category": "lifecycle",
       "description": "Create a Space: a new sandbox on this computer, on one of your computers, or in the cloud.",
-      "instructions": "Creates a new sandbox where `on` says (local: this computer, free; aws, gcp or modal: the user's own cloud account, connected with cloud_connect, billed there; default: the user's default location, else local), waits until it is ready (its spacesd when the image runs one, else its declared services), and registers it as local:<name>. Cua Cloud (on=\"cloud\") has ended and fails with an error that says so. `kind` (auto, container, vm) and `runtime` (auto, or an engine the location offers for the kind) are chosen automatically by default: the canonical Linux image runs as a gVisor container, macOS images as Lume VMs, Windows and disk-only images as VMs (QEMU locally, KubeVirt in the cloud). An impossible combination fails with invalid_placement and lists the valid values. Any image works; without cua-spacesd the capability set is empty. reuse=true returns a reachable registered Space in the same location with the requested services instead of creating one. On the user's own computers: on=\"host:<computer>\" creates the Space on a computer set up with `cua host setup --provide-spaces` (for example \"spin up 2 macOS Spaces on my spare Mac mini\" is on=\"host:spare mac mini\", image=\"macos\", count=2). The computer is matched by id, exact name, or the words of its name; when several fit equally the call fails with ambiguous_host listing them (ask the user which, then pass on=\"host:<id>\"). The host runs it with its own runtimes (Lume for macOS VMs on a Mac, Docker for Linux), the Space joins the relay and is returned as relay:<computer> with `host` set. A Mac runs at most two macOS VMs (Apple's macOS license, enforced by Apple Virtualization); a host at a limit fails with limit_exceeded. Only the computer's owner and the accounts it is shared with as editors can create there, from an enrolled device. on=\"direct:<addr>\" is not accepted here: a direct address is one already-running Space, attached with add_space, not a host this call can create on.",
+      "instructions": "Creates a new sandbox where `on` says (local: this computer, free; aws, gcp, hetzner or modal: the user's own cloud account, connected with cloud_connect, billed there; default: the user's default location, else local; with no location and none configured, when a linked cloud has a budget set with cloud_budget, this computer first and the linked clouds when it is full, never past the budget, unless placement.overflow is off; a Space that landed in the user's cloud carries `cloud` and `cloud_place`, the pool host and its price, so say so), waits until it is ready (its spacesd when the image runs one, else its declared services), and registers it as local:<name>. Cua Cloud (on=\"cloud\") has ended and fails with an error that says so. `kind` (auto, container, vm) and `runtime` (auto, or an engine the location offers for the kind) are chosen automatically by default: the canonical Linux image runs as a gVisor container, macOS images as Lume VMs, Windows and disk-only images as VMs (QEMU locally, KubeVirt in the cloud). An impossible combination fails with invalid_placement and lists the valid values. Any image works; without cua-spacesd the capability set is empty. reuse=true returns a reachable registered Space in the same location with the requested services instead of creating one. On the user's own computers: on=\"auto\" creates it on the least-loaded one that can take it (this computer or one signed in to the user's account that provides Spaces; the host refuses when full and the next is asked); on=\"host:<computer>\" creates the Space on a computer set up with `cua host setup --provide-spaces` (for example \"spin up 2 macOS Spaces on my spare Mac mini\" is on=\"host:spare mac mini\", image=\"macos\", count=2). The computer is matched by id, exact name, or the words of its name; when several fit equally the call fails with ambiguous_host listing them (ask the user which, then pass on=\"host:<id>\"). The host runs it with its own runtimes (Lume for macOS VMs on a Mac, Docker for Linux), the Space joins the relay and is returned as relay:<computer> with `host` set. A Mac runs at most two macOS VMs (Apple's macOS license, enforced by Apple Virtualization); a host at a limit fails with limit_exceeded. Only the computer's owner and the accounts it is shared with as editors can create there, from an enrolled device. on=\"direct:<addr>\" is not accepted here: a direct address is one already-running Space, attached with add_space, not a host this call can create on. durable=true (with on=\"auto\") keeps the Space on the user's computers: when its computer goes away it is created again on another one with the same name (its disk starts fresh), list_spaces shows it with `durable`, and delete_space deletes it for good.",
       "platforms": [
         "macos",
         "windows",
@@ -437,6 +450,10 @@
             "minimum": 0,
             "type": "integer"
           },
+          "durable": {
+            "description": "Keep it on the user's machines (with `on` `auto`): when its machine\ngoes away it is created again on another one, with the same name\n(its disk starts fresh); `list_spaces` shows it with `durable` (its\nname), and `delete_space` deletes it for good. Default false.",
+            "type": "boolean"
+          },
           "env": {
             "additionalProperties": {
               "type": "string"
@@ -446,6 +463,10 @@
           },
           "image": {
             "description": "Guest image. Default: the canonical Linux image\n(`ghcr.io/trycua/linux:24.04`), whose variant follows the kind.",
+            "type": "string"
+          },
+          "instance_type": {
+            "description": "With `on` a linked cloud (`aws`, `hetzner`, ...): the machine type its\nhost must be (`c7g.xlarge`, `cax41`). Default: the elastic pool picks\nthe cheapest that fits (cloud_plan shows it).",
             "type": "string"
           },
           "kind": {
@@ -468,12 +489,23 @@
               }
             ]
           },
+          "labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Labels kept with the Space and shown by `list_spaces` (`labels`): up\nto 64 pairs; keys and values are not empty; keys up to 63 bytes,\nvalues up to 256. Not with `durable` or `reuse`.",
+            "type": "object"
+          },
           "name": {
             "description": "Name. Default: a generated `space-<hex>`.",
             "type": "string"
           },
           "on": {
-            "description": "Where it runs: `local` (this computer, free), `aws`, `gcp` or `modal` (your own\ncloud account, billed there), or `host:<computer>`: one of the user's own computers that\nprovides Spaces (`cua host setup --provide-spaces` on it), named by\nid or by words from its name (\"host:spare mac mini\" matches \"Mac\nmini (spare)\" or `dillons-mac-mini`). Default: the user's default\nlocation (`cua config set default.on`, `CUA_DEFAULT_ON`), else\n`local`. Not `direct:<addr>`: that is one already-running Space at a\nfixed address, attached with `add_space`, not a host this can create\non. An existing computer is added with `add_space`, not created.",
+            "description": "Where it runs: `local` (this computer, free), `auto` (the\nleast-loaded of the user's computers that can take it: this one and\nthe ones signed in to the user's account that provide Spaces, Modal\nonly when connected and no computer has room), `aws`, `gcp` or\n`modal` (your own cloud account, billed there), or `host:<computer>`:\none of the user's own computers that\nprovides Spaces (`cua host setup --provide-spaces` on it), named by\nid or by words from its name (\"host:spare mac mini\" matches \"Mac\nmini (spare)\" or `dillons-mac-mini`). Default: the user's default\nlocation (`cua config set default.on`, `CUA_DEFAULT_ON`), else\n`local`; never `auto` unless asked. Not `direct:<addr>`: that is one already-running Space at a\nfixed address, attached with `add_space`, not a host this can create\non. An existing computer is added with `add_space`, not created.",
+            "type": "string"
+          },
+          "region": {
+            "description": "With `on` a linked cloud: the region (Hetzner location) its host must\nbe in. Default: any the cloud offers.",
             "type": "string"
           },
           "reuse": {
@@ -495,7 +527,7 @@
             "type": "object"
           },
           "spacesd": {
-            "description": "Whether the image runs cua-spacesd. Default: true for the canonical\nimages (and no image), false for any other image. A Space without it\nhas an empty capability set: only its services work.",
+            "description": "Whether the image runs cua-spacesd. Default: true for the canonical\nimages (and no image) and, on this machine's containers and microVMs,\nfor any other image (a static cua-spacesd is put into it); false\nelsewhere. false runs the image as it is. A Space without it has an\nempty capability set: only its services work.",
             "type": "boolean"
           },
           "timeout": {
@@ -564,7 +596,7 @@
       "name": "stop_space",
       "category": "lifecycle",
       "description": "Turn a Space off: suspend it (memory kept) or stop it (disk kept).",
-      "instructions": "Turns a Space off the way its provider can: a local container or QEMU VM is suspended (its memory is kept and it resumes where it was), a local Lume VM is stopped (its disk is kept and it boots again), a Space one of your computers provides is stopped by that computer, which frees its memory, and a Space in your own cloud (on=\"aws\", \"gcp\") is stopped there: compute billing stops, its disk stays (storage is still billed). Anything streaming from the Space and any hotspot on it end first. A Modal sandbox, a Space added by address and your own computers on the relay cannot be turned off (wrong_provider); delete_space deletes a Space instead. start_space turns it on again.",
+      "instructions": "Turns a Space off the way its provider can: a local container or QEMU VM is suspended (its memory is kept and it resumes where it was), a local Lume VM is stopped (its disk is kept and it boots again), a Space one of your computers provides is stopped by that computer, which frees its memory, and a Space in your own cloud (on=\"aws\", \"gcp\") is stopped there: compute billing stops, its disk stays (storage is still billed); a Hetzner server (on=\"hetzner\") is stopped too, but Hetzner keeps billing a stopped server, so delete it to stop the charge. Anything streaming from the Space and any hotspot on it end first. A Modal sandbox, a Space added by address and your own computers on the relay cannot be turned off (wrong_provider); delete_space deletes a Space instead. start_space turns it on again.",
       "platforms": [
         "macos",
         "windows",
@@ -4903,8 +4935,8 @@
     {
       "name": "cloud_status",
       "category": "cloud",
-      "description": "List your clouds (AWS, Google Cloud, Modal): found credentials, the connected account and region, what each can run at what hourly cost, and what Cua created there.",
-      "instructions": "Sandboxes and Spaces can run in the user's own cloud account: on=\"aws\" (EC2), \"gcp\" (Compute Engine) or \"modal\" (Modal Sandboxes). EC2 and Compute Engine start one small VM per sandbox that runs the image with Docker; Modal runs one Modal sandbox. Either way the guest's cua-spacesd dials out to the cua.ai relay as a computer of the signed-in account (no inbound port), and the Space is that computer, relay:<computer>. Each cloud uses its own CLI sign-in; connect it first with cloud_connect (the user decides; it costs money in their account). Everything Cua creates is tagged cua-managed=true with this cua home's cua-owner and an expiry, recorded under the cua home, deleted with its sandbox, and ends itself at its expiry; cloud_sweep removes leftovers.",
+      "description": "List your clouds (AWS, Google Cloud, Hetzner, Modal): found credentials, the connected account and region, what each can run at what hourly cost, and what Cua created there.",
+      "instructions": "Sandboxes and Spaces can run in the user's own cloud account: on=\"aws\" (EC2), \"gcp\" (Compute Engine), \"hetzner\" (Hetzner Cloud) or \"modal\" (Modal Sandboxes). EC2, Compute Engine and Hetzner Cloud start one small VM or server per sandbox that runs the image with Docker; Modal runs one Modal sandbox. Hetzner Cloud servers have no /dev/kvm, so Hetzner runs container images only (Windows and other VM images are refused). Either way the guest's cua-spacesd dials out to the cua.ai relay as a computer of the signed-in account (no inbound port), and the Space is that computer, relay:<computer>. AWS, Google Cloud and Modal use their own CLI sign-in; Hetzner uses a project API token (Read & Write) that cloud_connect saves in the Cua credential store. Connect it first with cloud_connect (the user decides; it costs money in their account). Everything Cua creates is tagged cua-managed=true with this cua home's cua-owner and an expiry, recorded under the cua home, deleted with its sandbox, and ends itself at its expiry (a Hetzner server, which cannot delete itself, shuts down and is billed until cloud_sweep or delete_space removes it); cloud_sweep removes leftovers, and the daemon runs that sweep by itself every 15 minutes (CUA_CLOUD_SWEEP_SECS; 0 turns it off). cloud_disconnect refuses while Cua resources still run there unless delete=true; cloud_audit lists what Cua did.",
       "platforms": [
         "macos",
         "windows",
@@ -4936,7 +4968,7 @@
       "input_schema": {
         "properties": {
           "provider": {
-            "description": "Only this cloud (`aws`, `gcp`, `modal`). Default: every one.",
+            "description": "Only this cloud (`aws`, `gcp`, `hetzner`, `modal`). Default: every one.",
             "type": "string"
           }
         },
@@ -4997,11 +5029,15 @@
             "type": "string"
           },
           "provider": {
-            "description": "`aws`, `gcp` or `modal`.",
+            "description": "`aws`, `gcp`, `hetzner` or `modal`.",
             "type": "string"
           },
           "region": {
-            "description": "AWS region (default: the profile's, else `us-west-2`) or GCP region\n(default `us-central1`).",
+            "description": "AWS region (default: the profile's, else `us-west-2`), Hetzner location\n(default `fsn1`) or GCP region\n(default `us-central1`).",
+            "type": "string"
+          },
+          "token": {
+            "description": "Hetzner only: the project's Read & Write API token (default:\n`HCLOUD_TOKEN`, the saved token, or the `hcloud` CLI's context).\nSecret: never logged; saved in the Cua credential store on connect.",
             "type": "string"
           },
           "ttl_hours": {
@@ -5071,11 +5107,15 @@
             "type": "string"
           },
           "provider": {
-            "description": "`aws`, `gcp` or `modal`.",
+            "description": "`aws`, `gcp`, `hetzner` or `modal`.",
             "type": "string"
           },
           "region": {
-            "description": "AWS region (default: the profile's, else `us-west-2`) or GCP region\n(default `us-central1`).",
+            "description": "AWS region (default: the profile's, else `us-west-2`), Hetzner location\n(default `fsn1`) or GCP region\n(default `us-central1`).",
+            "type": "string"
+          },
+          "token": {
+            "description": "Hetzner only: the project's Read & Write API token (default:\n`HCLOUD_TOKEN`, the saved token, or the `hcloud` CLI's context).\nSecret: never logged; saved in the Cua credential store on connect.",
             "type": "string"
           },
           "zone": {
@@ -5092,8 +5132,8 @@
     {
       "name": "cloud_disconnect",
       "category": "cloud",
-      "description": "Forget a connected cloud account.",
-      "instructions": "Forgets the connection (and `default.on` when it named this cloud). Nothing in the cloud is deleted.",
+      "description": "Forget a connected cloud account (deleting what Cua created there first, with delete=true).",
+      "instructions": "Refuses (a `cloud` error listing them) while Cua-created instances or sandboxes still run in that cloud, because a disconnected cloud is no longer swept and they would bill unseen. With delete=true it first deletes everything Cua created there (the same tag and record checks as cloud_sweep with all=true), then asks the cloud again and forgets the connection (and `default.on` when it named this cloud) only when nothing is left; if something remains it keeps the connection and says what. Nothing that Cua did not create is ever touched.",
       "platforms": [
         "macos",
         "windows",
@@ -5113,19 +5153,25 @@
       "host_requires": [],
       "annotations": {
         "read_only": false,
-        "destructive": false,
-        "idempotent": true,
+        "destructive": true,
+        "idempotent": false,
         "open_world": true
       },
-      "sdk_symbol": "spaces.cloud.disconnect(_:)",
+      "sdk_symbol": "spaces.cloud.disconnect(_:delete:)",
       "rust_symbol": "cua_cloud::Clouds::disconnect",
       "notes": [],
-      "result": "JSON: `provider`, `disconnected` and `left` (resources Cua still records there; delete their Spaces, or cloud_sweep with all=true, to remove them).",
-      "errors": [],
+      "result": "JSON: `provider`, `disconnected`, `deleted` (with delete=true: the receipt, each resource deleted first) and `left` (resources Cua still records there).",
+      "errors": [
+        "cloud"
+      ],
       "input_schema": {
         "properties": {
+          "delete": {
+            "description": "Delete everything Cua created in that cloud first, and disconnect\nonly once the cloud confirms nothing is left. Default false: the\ncall is refused (listing them) while Cua resources still run there.",
+            "type": "boolean"
+          },
           "provider": {
-            "description": "`aws`, `gcp` or `modal`.",
+            "description": "`aws`, `gcp`, `hetzner` or `modal`.",
             "type": "string"
           }
         },
@@ -5183,6 +5229,617 @@
           "provider": {
             "description": "Only this cloud. Default: every connected one.",
             "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "cloud_plan",
+      "category": "cloud",
+      "description": "Show (or apply) the elastic pool's plan for some Spaces: where they go, which machines it adds, and the cost.",
+      "instructions": "The elastic pool places Spaces with on=\"auto\" (or on a linked cloud) by one solve: the user's devices first (free), then cloud hosts already running, then new cloud hosts (provider x type x region) at the least cost that fits the image's needs (kind, KVM, arch, size learned from earlier Spaces), the start-time goal, the relay's machine limit and the budget (cloud_budget). Idle cloud hosts go at the end of their paid time. cloud_plan shows the decision without doing it; pins (provider, region, instance_type, hosts, no_scale, devices_only, max_usd_per_hour) are constraints of the same solve, so an agent can inspect, adjust and apply.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free",
+      "capabilities": [
+        "cloud.read"
+      ],
+      "requires": [],
+      "host_requires": [],
+      "annotations": {
+        "read_only": false,
+        "destructive": true,
+        "idempotent": false,
+        "open_world": true
+      },
+      "sdk_symbol": "spaces.cloud.plan(_:)",
+      "rust_symbol": "Spaces::elastic_plan",
+      "notes": [],
+      "result": "JSON: `plan` (`assignments`: `group`, `target` (`on`: `host` with `name`, or `new` with `index`), `count`; `new_hosts`: `provider`, `type_name`, `region`, `usd_per_hour`, `boot_secs`, `billed_secs`; `unplaced` with `reason`; `added_usd_per_hour`, `projected_usd`, `lower_bound_usd`, `solver`, `ready_in_secs`, `explain`), `groups` (the demand it detected) and `pool` (`hosts`, `cloud`, `offers`, `constraints`, `month_usd`); with apply, `added` (the hosts added).",
+      "errors": [
+        "cloud",
+        "limit_exceeded"
+      ],
+      "input_schema": {
+        "properties": {
+          "apply": {
+            "description": "Add the machines the plan needs (they join the pool; create the\nSpaces with on=\"auto\"). Default false: plan only.",
+            "type": "boolean"
+          },
+          "caller": {
+            "description": "Who asks: `interactive` (one Space someone waits on), `batch`,\n`compat` or `persistent_agent`. Default: interactive for one Space,\nbatch for more.",
+            "type": "string"
+          },
+          "count": {
+            "description": "How many Spaces. Default 1.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "cpus": {
+            "description": "vCPUs each. Default: what Spaces of this image used before, else\nthe image's size.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "devices_only": {
+            "description": "Only the user's own devices.",
+            "type": "boolean"
+          },
+          "duration_secs": {
+            "description": "Expected lifetime, seconds.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "hosts": {
+            "description": "Exactly this many new machines.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "image": {
+            "description": "Image (`linux`, `windows`, an OCI reference). Default: linux.",
+            "type": "string"
+          },
+          "instance_type": {
+            "description": "Only this machine type.",
+            "type": "string"
+          },
+          "kind": {
+            "description": "`container`, `vm` or `microvm`. Default: from the image.",
+            "type": "string"
+          },
+          "max_usd_per_hour": {
+            "description": "A $/hour cap for this plan (default: the budget's).",
+            "format": "double",
+            "type": "number"
+          },
+          "memory_mb": {
+            "description": "Memory each, MiB.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "no_scale": {
+            "description": "Add no machines (place on what runs).",
+            "type": "boolean"
+          },
+          "provider": {
+            "description": "Only this cloud.",
+            "type": "string"
+          },
+          "region": {
+            "description": "Only this region.",
+            "type": "string"
+          },
+          "together": {
+            "description": "Keep them on one machine (forks of one checkpoint).",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "cloud_hosts",
+      "category": "cloud",
+      "description": "List the hosts the elastic pool added in your clouds.",
+      "instructions": "The hosts the elastic pool (or cloud_add_host) added in the user's linked clouds: machines that provide Spaces to the pool, with their live cost.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free",
+      "capabilities": [
+        "cloud.read"
+      ],
+      "requires": [],
+      "host_requires": [],
+      "annotations": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true
+      },
+      "sdk_symbol": "spaces.cloud.hosts()",
+      "rust_symbol": "cua_cloud::Clouds::hosts",
+      "notes": [],
+      "result": "JSON array: each host `name`, `provider`, `type_name`, `region`, `id`, `machine`, `state` (`creating`, `booting`, `joined`, `cordoned`, `offline`, `gone`), `started`, `expires`, `usd_per_hour`, `billing_step_secs`, `billing_min_secs`, `pinned`.",
+      "errors": [
+        "cloud"
+      ],
+      "input_schema": {
+        "properties": {},
+        "type": "object"
+      }
+    },
+    {
+      "name": "cloud_add_host",
+      "category": "cloud",
+      "description": "Add hosts to your pool in a linked cloud.",
+      "instructions": "Adds hosts by hand (pinned: the scaler never removes them); it costs money in the user's account. Each host is tagged and recorded first, installs cua, joins the pool and ends at its TTL. cloud_remove_host removes it.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free",
+      "capabilities": [
+        "cloud.manage"
+      ],
+      "requires": [],
+      "host_requires": [],
+      "annotations": {
+        "read_only": false,
+        "destructive": true,
+        "idempotent": false,
+        "open_world": true
+      },
+      "sdk_symbol": "spaces.cloud.addHost(_:)",
+      "rust_symbol": "cua_cloud::Clouds::add_host",
+      "notes": [],
+      "result": "JSON array: the hosts added (see cloud_hosts).",
+      "errors": [
+        "cloud",
+        "invalid_argument"
+      ],
+      "input_schema": {
+        "properties": {
+          "count": {
+            "description": "How many, 1 to 10. Default 1.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "instance_type": {
+            "description": "Machine type (`cloud_plan` and `cloud_status` list them).",
+            "type": "string"
+          },
+          "provider": {
+            "description": "`aws`, `gcp` or `hetzner`.",
+            "type": "string"
+          },
+          "region": {
+            "description": "Region. Default: the connection's.",
+            "type": "string"
+          },
+          "ttl_hours": {
+            "description": "Hours until each ends on its own, 1 to 168. Default 24.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "provider",
+          "instance_type"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "cloud_remove_host",
+      "category": "cloud",
+      "description": "Remove hosts this home added to your pool.",
+      "instructions": "Deletes the hosts' machines (only ones this cua home added and tagged) and their relay entries. The Spaces on them end.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free",
+      "capabilities": [
+        "cloud.manage"
+      ],
+      "requires": [],
+      "host_requires": [],
+      "annotations": {
+        "read_only": false,
+        "destructive": true,
+        "idempotent": false,
+        "open_world": true
+      },
+      "sdk_symbol": "spaces.cloud.removeHost(_:)",
+      "rust_symbol": "cua_cloud::Clouds::remove_host",
+      "notes": [],
+      "result": "JSON: `removed` (names) and `failed` (each `name`, `error`).",
+      "errors": [
+        "cloud",
+        "not_found"
+      ],
+      "input_schema": {
+        "properties": {
+          "names": {
+            "description": "Their names (`hetzner-1`).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "names"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "cloud_budget",
+      "category": "cloud",
+      "description": "Read or set the elastic pool's budget and autoscale switch.",
+      "instructions": "The caps the elastic pool keeps to: it never adds a machine that would take the clouds' cost over max_usd_per_hour or this month's spend over monthly_usd, and with autoscale false it adds none. Fields given are set; the rest stay.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free",
+      "capabilities": [
+        "cloud.manage"
+      ],
+      "requires": [],
+      "host_requires": [],
+      "annotations": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true
+      },
+      "sdk_symbol": "spaces.cloud.budget(_:)",
+      "rust_symbol": "Spaces::set_elastic_policy",
+      "notes": [],
+      "result": "JSON: `policy` (`autoscale`, `max_usd_per_hour`, `monthly_usd`, `max_new_hosts`, `warm`, `interactive_slo_secs`, `routed`, `allow_metal`), `month_usd` (spent this month on elastic hosts), `running_usd_per_hour` and `hosts` (how many run).",
+      "errors": [
+        "invalid_argument"
+      ],
+      "input_schema": {
+        "properties": {
+          "allow_metal": {
+            "description": "Let one small VM Space buy a KVM metal host (dollars an hour). Off:\nsuch a request is refused with the reason; batches of forks may\nstill buy one.",
+            "type": "boolean"
+          },
+          "autoscale": {
+            "description": "Add and remove cloud hosts by itself.",
+            "type": "boolean"
+          },
+          "max_new_hosts": {
+            "description": "Most hosts one placement adds.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_usd_per_hour": {
+            "description": "Most USD per hour your clouds may cost at once.",
+            "format": "double",
+            "type": "number"
+          },
+          "monthly_usd": {
+            "description": "Most USD per calendar month on elastic hosts.",
+            "format": "double",
+            "type": "number"
+          },
+          "warm": {
+            "description": "Keep an idle host warm when demand predicts a Space soon.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "cloud_reconcile",
+      "category": "cloud",
+      "description": "Run the elastic pool's scale-in pass now.",
+      "instructions": "One scale-in pass now (the daemon runs one every 30 s): idle hosts go at the end of the time already paid, the least-used one is cordoned when the others have room.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free",
+      "capabilities": [
+        "cloud.manage"
+      ],
+      "requires": [],
+      "host_requires": [],
+      "annotations": {
+        "read_only": false,
+        "destructive": true,
+        "idempotent": false,
+        "open_world": true
+      },
+      "sdk_symbol": "spaces.cloud.reconcile()",
+      "rust_symbol": "Spaces::elastic_reconcile",
+      "notes": [],
+      "result": "JSON array: each `host` and `action` (`action`: `keep` with `until` and `reason`, `cordon` with `reason`, or `remove` with `reason` and `saves_usd`).",
+      "errors": [
+        "cloud"
+      ],
+      "input_schema": {
+        "properties": {},
+        "type": "object"
+      }
+    },
+    {
+      "name": "prewarm",
+      "category": "cloud",
+      "description": "Keep Spaces of one shape ready where the elastic pool puts them, so the next creates start in a fraction of a second.",
+      "instructions": "A prewarm keeps count Spaces of one shape (image, kind, cpus, memory_mb) ready on the machines the elastic pool picks (the same solve as on=\"auto\": devices first, then hosts with room, then new cloud machines, under the budget and pins). Any later create of that shape on those machines claims one in a fraction of a second, through every surface, with no extra argument; the pool keeps count ready until ttl_secs. A prewarm the budget, quotas or pins cannot fit is refused and buys nothing. End it with prewarm_remove when the burst is over.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free",
+      "capabilities": [
+        "cloud.manage"
+      ],
+      "requires": [],
+      "host_requires": [],
+      "annotations": {
+        "read_only": false,
+        "destructive": true,
+        "idempotent": false,
+        "open_world": true
+      },
+      "sdk_symbol": "spaces.prewarm(_:)",
+      "rust_symbol": "Spaces::prewarm",
+      "notes": [],
+      "result": "JSON: `id`, `image`, `kind`, `cpus`, `memory_mb`, `count`, `ready`, `placements` (`host`, `machine`, `count`, `ready`), `expires_at` (unix seconds) and `new_hosts` (hosts added for it).",
+      "errors": [
+        "invalid_argument",
+        "limit_exceeded",
+        "cloud"
+      ],
+      "input_schema": {
+        "properties": {
+          "count": {
+            "description": "How many to keep ready, 1 to 256. Default 1.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "cpus": {
+            "description": "vCPUs each. Default: the size Spaces of this image use.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "image": {
+            "description": "Image (`linux`, an OCI reference).",
+            "type": "string"
+          },
+          "instance_type": {
+            "description": "Only this cloud machine type.",
+            "type": "string"
+          },
+          "kind": {
+            "description": "`container`, `vm` or `microvm`. Default: the image's.",
+            "type": "string"
+          },
+          "memory_mb": {
+            "description": "Memory each, MiB.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "on": {
+            "description": "Where: `auto` (default: your devices first, then hosts with room,\nthen new cloud machines), `local`, a linked cloud or `host:<machine>`.",
+            "type": "string"
+          },
+          "region": {
+            "description": "Only this cloud region.",
+            "type": "string"
+          },
+          "ttl_secs": {
+            "description": "Seconds to keep them (default 3600, at most 604800).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "image"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "prewarm_list",
+      "category": "cloud",
+      "description": "List the prewarms and how many Spaces each keeps ready.",
+      "instructions": "A prewarm keeps count Spaces of one shape (image, kind, cpus, memory_mb) ready on the machines the elastic pool picks (the same solve as on=\"auto\": devices first, then hosts with room, then new cloud machines, under the budget and pins). Any later create of that shape on those machines claims one in a fraction of a second, through every surface, with no extra argument; the pool keeps count ready until ttl_secs. A prewarm the budget, quotas or pins cannot fit is refused and buys nothing. End it with prewarm_remove when the burst is over.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free",
+      "capabilities": [
+        "cloud.read"
+      ],
+      "requires": [],
+      "host_requires": [],
+      "annotations": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true
+      },
+      "sdk_symbol": "spaces.prewarms()",
+      "rust_symbol": "Spaces::prewarms",
+      "notes": [],
+      "result": "JSON array of prewarms, as `prewarm` returns them, with `ready` counted now.",
+      "errors": [
+        "cloud"
+      ],
+      "input_schema": {
+        "properties": {},
+        "type": "object"
+      }
+    },
+    {
+      "name": "prewarm_remove",
+      "category": "cloud",
+      "description": "End a prewarm: its ready Spaces go.",
+      "instructions": "A prewarm keeps count Spaces of one shape (image, kind, cpus, memory_mb) ready on the machines the elastic pool picks (the same solve as on=\"auto\": devices first, then hosts with room, then new cloud machines, under the budget and pins). Any later create of that shape on those machines claims one in a fraction of a second, through every surface, with no extra argument; the pool keeps count ready until ttl_secs. A prewarm the budget, quotas or pins cannot fit is refused and buys nothing. End it with prewarm_remove when the burst is over.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free",
+      "capabilities": [
+        "cloud.manage"
+      ],
+      "requires": [],
+      "host_requires": [],
+      "annotations": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true
+      },
+      "sdk_symbol": "spaces.removePrewarm(_:)",
+      "rust_symbol": "Spaces::remove_prewarm",
+      "notes": [],
+      "result": "JSON: `removed` (false when there was no such prewarm).",
+      "errors": [
+        "cloud"
+      ],
+      "input_schema": {
+        "properties": {
+          "id": {
+            "description": "The prewarm (`pw-xxxxxx`).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "cloud_audit",
+      "category": "cloud",
+      "description": "Read the log of what Cua did in your clouds.",
+      "instructions": "Reads the append-only audit log under the cua home (cloud/audit.jsonl, rotated at 5 MB): every connect, disconnect, resource recorded before its create, created, confirmed and deleted (by you, by a sweep, by the automatic sweep, by disconnect with delete). It never holds a secret or a token. Default limit 50.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free",
+      "capabilities": [
+        "cloud.read"
+      ],
+      "requires": [],
+      "host_requires": [],
+      "annotations": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true
+      },
+      "sdk_symbol": "spaces.cloud.audit(limit:)",
+      "rust_symbol": "cua_cloud::Clouds::audit",
+      "notes": [],
+      "result": "JSON array, oldest first, newest last: each `ts` (RFC 3339), `action` (`connect`, `disconnect`, `resource_recorded`, `resource_created`, `resource_confirmed`, `resource_deleted`), `provider`, `kind`, `id`, `space`, `actor` (`user`, `sweep`, `auto-sweep`, `disconnect`, `rollback`), `outcome` (`ok`, `failed`, `refused`) and `detail`.",
+      "errors": [],
+      "input_schema": {
+        "properties": {
+          "limit": {
+            "description": "How many of the newest entries (default 50, at most 1000).",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
           }
         },
         "type": "object"

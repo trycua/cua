@@ -91,7 +91,7 @@ describe.skipIf(!wasmBuilt)("the Machines page and New Space's Run on (wasm core
       },
     };
     const env = wizardEnv(core, { options, clouds: null, defaultLocation: "local", cloudAvailable: false, machines: [] });
-    const [, gamma] = wizardView(core, wizardInitial(core, env), env).placements;
+    const gamma = wizardView(core, wizardInitial(core, env), env).placements.find((p) => p.id === "host:gamma");
     expect(gamma).toMatchObject({ id: "host:gamma", label: "gamma-4 Mac Studio (not sharing)", enabled: false, detail: `${LINE}.` });
   });
 });

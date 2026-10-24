@@ -450,10 +450,13 @@ impl SpacesApiClient {
                 "Spaces API URL {base:?}: use https"
             )));
         }
-        let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(15))
-            .build()
-            .map_err(|e| Error::Internal(e.to_string()))?;
+        // Shared (cua_auth::http): one is made per Teams call (F53).
+        let http = cua_auth::http::shared(cua_auth::http::Shape {
+            connect_timeout: Duration::from_secs(15),
+            timeout: Duration::from_secs(15),
+            user_agent: None,
+        })
+        .map_err(|e| Error::Internal(e.to_string()))?;
         Ok(Self {
             base: base.trim().trim_end_matches('/').to_string(),
             http,

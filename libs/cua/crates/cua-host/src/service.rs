@@ -36,6 +36,39 @@ pub const LAUNCHD_LABEL: &str = "com.trycua.spacesd.host";
 /// Windows task name.
 pub const WINDOWS_TASK_NAME: &str = "Cua\\SpacesdHost";
 
+/// Keeps the services of a separate Cua home apart: with `CUA_HOME` set to
+/// anything but `~/.cua`, the unit and launchd label carry `-<8 hex>` of
+/// that path, so a second install (a cluster host beside a personal one, a
+/// test home) never replaces the first one's service.
+pub fn instance_suffix() -> String {
+    suffix_for(
+        std::env::var_os("CUA_HOME").as_deref(),
+        std::env::var_os("HOME").as_deref(),
+    )
+}
+
+fn suffix_for(cua_home: Option<&std::ffi::OsStr>, user_home: Option<&std::ffi::OsStr>) -> String {
+    use sha2::{Digest, Sha256};
+    let Some(home) = cua_home.filter(|h| !h.is_empty()).map(PathBuf::from) else {
+        return String::new();
+    };
+    let default = user_home.map(|h| PathBuf::from(h).join(".cua"));
+    if Some(&home) == default.as_ref() {
+        return String::new();
+    }
+    let digest = Sha256::digest(home.to_string_lossy().as_bytes());
+    format!("-{}", &hex::encode(digest)[..8])
+}
+
+/// The systemd unit name of this home's host service.
+pub fn service_name() -> String {
+    format!("{SERVICE_NAME}{}", instance_suffix())
+}
+
+/// The launchd label of this home's host service.
+pub fn launchd_label() -> String {
+    format!("{LAUNCHD_LABEL}{}", instance_suffix())
+}
 /// launchd label of the Cua Spaces app's login item ([`AppHelper`]).
 pub const APP_HELPER_LABEL: &str = "com.trycua.spaces.helper";
 /// What macOS shows for it (System Settings: Privacy & Security, Login
@@ -242,6 +275,7 @@ pub fn systemd_unit(spec: &ServiceSpec, system: bool) -> String {
          {env}\
          Restart=always\n\
          RestartSec=2\n\
+         OOMPolicy=continue\n\
          {oom}\
          KillMode=mixed\n\
          TimeoutStopSec=10\n\
@@ -316,7 +350,7 @@ pub fn launchd_plist(spec: &ServiceSpec) -> String {
 </dict>
 </plist>
 "#,
-        label = LAUNCHD_LABEL,
+        label = launchd_label(),
         wd = xml_escape(&spec.working_dir.to_string_lossy()),
     )
 }
@@ -520,7 +554,7 @@ impl Systemd {
     }
 
     fn unit_path(&self) -> PathBuf {
-        self.unit_dir.join(format!("{SERVICE_NAME}.service"))
+        self.unit_dir.join(format!("{}.service", service_name()))
     }
 
     fn remove_legacy(&self) {
@@ -550,17 +584,17 @@ impl ServiceManager for Systemd {
         self.remove_legacy();
         write_file(&self.unit_path(), &systemd_unit(spec, self.system))?;
         run(self.systemctl().arg("daemon-reload"))?;
-        run(self.systemctl().args(["enable", SERVICE_NAME]))?;
+        run(self.systemctl().args(["enable", &service_name()]))?;
         Ok(())
     }
     fn start(&self) -> Result<()> {
-        run(self.systemctl().args(["restart", SERVICE_NAME])).map(drop)
+        run(self.systemctl().args(["restart", &service_name()])).map(drop)
     }
     fn stop(&self) -> Result<()> {
-        run(self.systemctl().args(["stop", SERVICE_NAME])).map(drop)
+        run(self.systemctl().args(["stop", &service_name()])).map(drop)
     }
     fn uninstall(&self) -> Result<()> {
-        let _ = run(self.systemctl().args(["disable", "--now", SERVICE_NAME]));
+        let _ = run(self.systemctl().args(["disable", "--now", &service_name()]));
         let _ = std::fs::remove_file(self.unit_path());
         self.remove_legacy();
         let _ = run(self.systemctl().arg("daemon-reload"));
@@ -570,7 +604,7 @@ impl ServiceManager for Systemd {
         let installed = self.unit_path().exists();
         let active = self
             .systemctl()
-            .args(["is-active", SERVICE_NAME])
+            .args(["is-active", &service_name()])
             .output()
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
             .unwrap_or_default();
@@ -614,11 +648,11 @@ impl Launchd {
     }
 
     fn plist_path(&self) -> PathBuf {
-        self.agents_dir.join(format!("{LAUNCHD_LABEL}.plist"))
+        self.agents_dir.join(format!("{}.plist", launchd_label()))
     }
 
     fn target(&self) -> String {
-        format!("gui/{}/{LAUNCHD_LABEL}", self.uid)
+        format!("gui/{}/{}", self.uid, launchd_label())
     }
 
     fn remove_legacy(&self) {
@@ -1164,17 +1198,37 @@ impl ServiceManager for ProcessRunner {
         };
         #[cfg(unix)]
         {
-            // SAFETY: plain signal delivery to the pid we started.
-            unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+            // `start` made the driver the leader of its own process group:
+            // signal the whole group, so what it started there goes too
+            // (the host's cua daemon, which it starts on the first Space
+            // create; CUA-1804). Only while the pid still leads that group:
+            // a reused pid gets a signal of its own, never its group.
+            // SAFETY: getpgid only reads.
+            let group = unsafe { libc::getpgid(pid as libc::pid_t) } == pid as libc::pid_t;
+            let target = if group {
+                -(pid as libc::pid_t)
+            } else {
+                pid as libc::pid_t
+            };
+            // SAFETY: plain signal delivery to the pid (group) we started.
+            unsafe { libc::kill(target, libc::SIGTERM) };
+            let alive = || {
+                if group {
+                    // SAFETY: signal 0 only checks for existence.
+                    unsafe { libc::kill(target, 0) == 0 }
+                } else {
+                    process_alive(pid)
+                }
+            };
             for _ in 0..50 {
-                if !process_alive(pid) {
+                if !alive() {
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
-            if process_alive(pid) {
+            if alive() {
                 // SAFETY: as above.
-                unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+                unsafe { libc::kill(target, libc::SIGKILL) };
             }
         }
         #[cfg(not(unix))]
@@ -1757,6 +1811,8 @@ mod tests {
         ));
         assert!(user.contains("Environment=CUA_ENV_LOG=info\n"));
         assert!(user.contains("Restart=always"));
+        // A Space or the daemon killed for memory does not stop the service.
+        assert!(user.contains("OOMPolicy=continue\n"));
         assert!(user.contains("StandardOutput=append:/home/ada/.cua/host/driver.log"));
         let system = systemd_unit(&spec(), true);
         assert!(system.contains("WantedBy=multi-user.target"));
@@ -1962,5 +2018,82 @@ mod tests {
         runner.uninstall().unwrap();
         let state = runner.state();
         assert!(!state.installed && !state.running, "{state:?}");
+    }
+
+    /// What the driver starts in its process group (the host's cua
+    /// daemon, which outlives the `cua daemon start` that spawned it) stops
+    /// with it (CUA-1804).
+    #[cfg(unix)]
+    #[test]
+    fn process_runner_stops_what_the_driver_left_running_in_its_group() {
+        let dir = tempfile::tempdir().unwrap();
+        let child_pid = dir.path().join("child.pid");
+        let runner = ProcessRunner {
+            dir: dir.path().join("host"),
+        };
+        // A subshell starts a background `sleep` and exits, as `cua daemon
+        // start` does: the sleep is orphaned, still in the driver's group.
+        let script = format!(
+            "(sleep 300 & echo $! > '{}'); exec sleep 300",
+            child_pid.display()
+        );
+        runner
+            .install(&ServiceSpec {
+                program: "/bin/sh".into(),
+                args: vec!["-c".into(), script],
+                env: vec![],
+                log_path: dir.path().join("host/driver.log"),
+                working_dir: dir.path().into(),
+            })
+            .unwrap();
+        runner.start().unwrap();
+        let mut pid = None;
+        for _ in 0..50 {
+            pid = std::fs::read_to_string(&child_pid)
+                .ok()
+                .and_then(|p| p.trim().parse::<u32>().ok());
+            if pid.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        let pid = pid.expect("the background child started");
+        assert!(process_alive(pid));
+        runner.uninstall().unwrap();
+        // The orphan is reaped by init (launchd) a moment after it dies.
+        let mut alive = true;
+        for _ in 0..50 {
+            alive = process_alive(pid);
+            if !alive {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        if alive {
+            // Never leave it behind, whatever the assertion says.
+            // SAFETY: the pid this test started.
+            unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+        }
+        assert!(!alive, "the driver's background child outlived uninstall");
+    }
+}
+
+#[cfg(test)]
+mod instance_tests {
+    use super::suffix_for;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn a_separate_cua_home_gets_its_own_service_names() {
+        let user = Some(OsStr::new("/home/ada"));
+        assert_eq!(suffix_for(None, user), "");
+        assert_eq!(suffix_for(Some(OsStr::new("")), user), "");
+        assert_eq!(suffix_for(Some(OsStr::new("/home/ada/.cua")), user), "");
+        let a = suffix_for(Some(OsStr::new("/home/ada/fb/home")), user);
+        let b = suffix_for(Some(OsStr::new("/home/ada/other")), user);
+        assert_eq!(a.len(), 9);
+        assert!(a.starts_with('-'));
+        assert_ne!(a, b);
+        assert_eq!(a, suffix_for(Some(OsStr::new("/home/ada/fb/home")), user));
     }
 }

@@ -39,7 +39,7 @@ export interface DemoVolumeState {
 
 export function demoVolumeState(now: number, onboarded: boolean, platform: DemoPlatform = MAC_DEMO_PLATFORM): DemoVolumeState {
   return {
-    experiments: { cuaVolume: true, yourCloud: false, sharing: true, webUi: false },
+    experiments: { cuaVolume: true, yourCloud: true, sharing: true, webUi: false },
     requests: [
       { id: "req-research", principal: "agent:researcher", prefix: "agents/writer/outputs/", mode: "r", reason: "Cite the launch draft in the weekly summary" },
     ],

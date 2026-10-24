@@ -1,0 +1,131 @@
+---
+title: Run Docker Compose stacks in a VM
+description: The docker tier of the Linux image, a VM with dockerd up at boot, and `cua sb bake`, which saves a running Compose stack as a checkpoint that forks start from.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Some workloads are a whole Docker Compose stack, for example an agent container, MCP servers and a
+grader. They need a real Linux kernel: dockerd, kernel modules, iptables. The docker tier of the
+Linux image is a VM built for that, and `cua sb bake` turns a running stack into a checkpoint. Every
+fork of the checkpoint starts with the containers already running.
+
+## The docker tier
+
+`ghcr.io/trycua/linux:24.04-docker-disk` is the slim Linux image plus the Docker engine, as a VM. {/* cua-image-unverified */}
+It contains:
+
+- `docker-ce`, `containerd` and the compose and buildx plugins, from Docker's signed apt repository
+  at pinned versions. `docker-compose` is the compose plugin under its standalone name.
+- dockerd and containerd, which start at boot. `docker-ready` waits until dockerd answers and prints
+  how long after boot that took.
+- The `overlay` and `br_netfilter` kernel modules, loaded at boot. `modprobe` works for other
+  modules.
+- `iptables` and `ip6tables` (the nf_tables backend) for Docker's rules and your own, including
+  `nat` `REDIRECT` and `-m physdev`.
+- The slim tier's desktop and cua-spacesd, so `exec`, file transfer, port forwards and screenshots
+  work as in any Linux Space.
+
+Name it by tier, or pass the reference:
+
+```bash test="cli-shape" id="docker-vm-create"
+cua sb create linux --tier docker --name dockerhost
+cua sb exec dockerhost docker-ready
+cua sb exec dockerhost docker run --rm mirror.gcr.io/library/busybox:1.37 echo hello
+```
+
+```python skip="pseudo"
+from cua import Image
+
+image = Image.linux(tier="docker")  # the docker tier's VM disk
+```
+
+The tier is VM-only: a container Space cannot run dockerd. Its container rootfs (`24.04-docker`)
+exists only as the source the disk is built from.
+
+<Callout type="info">
+Build it locally with `libs/images/build.sh linux --target docker --outputs rootfs,disk`. That
+writes `~/.cache/cua-images/linux-docker/<arch>/disk.img`, and `cua sb create <that path> --kind vm`
+runs it.
+</Callout>
+
+## Bake a Compose stack into a checkpoint
+
+`cua sb bake` (the CLI) and `Sandboxes.bake` (the SDK) do the following:
+
+1. Creates a local VM of the docker tier and waits for dockerd.
+2. Uploads the project directory (and any `--load` image tarballs).
+3. Runs `docker compose up --wait`, which waits for every healthcheck.
+4. Checks the stack: every service is running, and every container is healthy (or running, when it
+   has no healthcheck) and has not restarted. It then runs each `--health` command until it exits 0.
+5. Runs each `--run` command.
+6. Saves a live memory checkpoint of the VM, with the containers running.
+7. With `--verify-fork`, forks the checkpoint once and checks the stack again in the fork.
+8. Deletes the bake Space (`--keep` keeps it).
+
+```bash test="cli-shape" id="docker-vm-bake"
+cua sb bake ./world --checkpoint world-v1 --memory 4GB --verify-fork \
+  --health 'curl -sS -o /dev/null http://127.0.0.1:18000/mcp'
+cua sb fork world-v1 rollout-1
+cua sb exec rollout-1 docker ps
+```
+
+The same bake from the SDK, in any language (`Sandboxes.bake`):
+
+```python skip="local-vm"
+import cua
+
+c = cua.embedded()
+sbx = c.sandboxes()
+baked = await sbx.bake(cua.BakeOptions(
+    project_dir="./world",
+    checkpoint="world-v1",
+    memory_mb=4096,
+    health=["curl -sS -o /dev/null http://127.0.0.1:18000/mcp"],
+    verify_fork=True,
+))
+print(baked.dockerd_ready_s, baked.compose_up_s, baked.checkpoint_s, baked.containers)
+rollout = await sbx.fork("world-v1", "rollout-1")
+```
+
+Forks restore the saved memory, so their containers are already up: the processes, open ports and
+in-memory state are those of the moment of the checkpoint. Each fork is still a new machine, with its
+own token, keys and machine id.
+
+| Option | What it does |
+| --- | --- |
+| `--file`, `-f` | Compose files, relative to the project (repeatable). Default: compose's own lookup. |
+| `--project-name` | The compose project name. Default: the directory name. |
+| `--dest` | Where the project lands in the guest. Default: `/opt/cua-bake/<project>`. |
+| `--load TAR` | A `docker save` tarball to load before `compose up`, for images the guest cannot pull. |
+| `--health CMD` | A shell command that must exit 0 before the checkpoint (retried until `--health-timeout`). |
+| `--run CMD` | A shell command to run after the stack is healthy, for state that forks should start with. |
+| `--image`, `--tier` | Another image. Default: `linux --tier docker`. |
+| `--cpu`, `--memory` | The bake Space's size, which forks keep. |
+| `--verify-fork` | Fork once and check that the stack is live in the fork. |
+| `--json` | Print the summary as JSON: timings, the containers and the checkpoint. |
+
+Each CLI option is a field of `BakeOptions` in the SDK (`compose_files`, `project_name`, `dest`,
+`image_tarballs`, `health`, `health_timeout_s`, `run`, `image`, `cpus`, `memory_mb`, `verify_fork`,
+`keep`).
+
+Guest commands run as root in the project directory. The summary reports the time from boot until
+dockerd was ready, the time of each step, and the containers.
+
+## Measured
+
+On a Mac Studio (M2 Max, HVF), baking `libs/images/linux/tests/compose-world` (an agent container,
+an MCP server built in the guest, and a grader) in a 4 GB, 2-vCPU VM:
+
+| Step | Time |
+| --- | --- |
+| Boot to dockerd ready (guest kernel start to `docker.service` ready) | 4.1 s |
+| `compose up --wait` (pull `python:3.12-slim`, build the MCP image, healthchecks) | 14.5 s |
+| Stack check | 0.15 s |
+| Checkpoint | 0.8 s |
+| Fork of the checkpoint, containers already running | 1.4 s |
+
+The checkpoint takes 1.6 GB on disk: 1.37 GB of memory and device state, and a 253 MB disk layer.
+
+A VM Space of the tier starts in about 1.9 s once the image's first boot has left its golden
+snapshot (a cold first boot takes about 14.5 s).

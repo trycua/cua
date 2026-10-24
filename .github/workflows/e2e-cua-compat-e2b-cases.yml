@@ -1,0 +1,91 @@
+name: "E2E: cua-compat E2B shared cases and overhead guard (QEMU)"
+
+# The shared E2B cases (tests/compat/e2b/cases, Python and TypeScript runners,
+# every claimed SDK version) against `cua compat serve` on real Linux VM Spaces,
+# compared with the recordings from the real E2B; then the overhead guard: the
+# E2B SDK through the gateway against the same operations done directly
+# through the Cua SDK, with a committed baseline and a 1.5x threshold.
+
+on:
+  schedule:
+    - cron: "37 5 * * *"
+  workflow_dispatch:
+    inputs:
+      write_baseline:
+        description: "Write tests/compat/e2b/perf/baseline.json from this run (uploaded as an artifact)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-cua-compat-e2b-cases-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: "4"
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  spaces:
+    name: cases and overhead on QEMU Spaces
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: |
+            libs/cua
+            libs/cua-spacesd
+          key: cua-compat-e2b-cases
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Build cua (Cua Spaces build), the reference images and disks
+        run: |
+          tests/e2e/cua-sdk/ci-setup.sh --images --disks
+          (cd libs/cua && cargo build --locked -p cua-spaces-cli && cargo build --locked -p cua-compat --example bench_direct)
+          echo "CUA=$PWD/libs/cua/target/debug/cua" >>"$GITHUB_ENV"
+          echo "BENCH_DIRECT=$PWD/libs/cua/target/debug/examples/bench_direct" >>"$GITHUB_ENV"
+          arch=$(uname -m); case "$arch" in aarch64|arm64) a=arm64;; *) a=amd64;; esac
+          echo "LINUX_DISK=$HOME/.cache/cua-images-e2e/linux/$a/disk.img" >>"$GITHUB_ENV"
+      - name: Start the daemon
+        run: |
+          "$CUA" daemon start --foreground >"$RUNNER_TEMP/daemon.log" 2>&1 &
+          for i in $(seq 100); do "$CUA" daemon status >/dev/null 2>&1 && break; sleep 0.3; done
+      - name: Shared cases, Python and TypeScript, every claimed SDK version, against the recordings
+        run: |
+          claimed=$(python -c 'import json; d=json.load(open("tests/compat/SDK_VERSIONS.json"))["e2b"]; print(" ".join(d["py"]["claimed"]))')
+          export PY_SDKS="$claimed" TS_SDKS="$claimed" CASES_WORK="$RUNNER_TEMP/cases-e2b"
+          # e2b-code-interpreter against the code-interpreter-v1 template, after the cases
+          python -m venv "$RUNNER_TEMP/ci-venv" && "$RUNNER_TEMP/ci-venv/bin/pip" install -q e2b-code-interpreter
+          # ... and 16 sandboxes at once (asyncio.gather of create + command + file)
+          export CASES_AFTER="$RUNNER_TEMP/ci-venv/bin/python $PWD/tests/compat/e2b/code_interpreter_check.py $PWD/tests/compat/e2b/fixtures/code-interpreter.json && $RUNNER_TEMP/ci-venv/bin/python $PWD/tests/compat/e2b/parallel_check.py 16"
+          tests/compat/run_cases_space.sh --rules tests/compat/e2b/rules-space.json -- --on local --kind vm --image "vm:$LINUX_DISK"
+      - name: Overhead guard (gateway against the direct Cua SDK)
+        env:
+          PERF_WORK: ${{ runner.temp }}/perf-e2b
+        run: |
+          if [ "${{ inputs.write_baseline }}" = true ]; then flag=--write; else flag=""; fi
+          tests/compat/run_perf.sh $flag -- --on local --kind vm --image "vm:$LINUX_DISK" --cpus 2 --memory-mb 2048
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: cua-compat-e2b-cases
+          path: |
+            ${{ runner.temp }}/cases-e2b
+            ${{ runner.temp }}/perf-e2b
+            ${{ runner.temp }}/daemon.log
+            tests/compat/e2b/perf/baseline.json

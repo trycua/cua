@@ -226,12 +226,21 @@ impl CliInstaller {
         } else {
             None
         };
-        // Up to date only when `target` is the bundled CLI and runs as it:
-        // another `cua` there (an old Python cua-cli from `uv tool`, say)
-        // or one that no longer starts gets replaced.
+        let bundled_version = match &self.bundled {
+            Some(src) => cli_version(src).await,
+            None => None,
+        };
+        // Up to date when `target` is the bundled CLI and runs as it, or
+        // when it is a working `cua` that the bundled one would not be
+        // newer than (a CLI the user upgraded with install.sh is never
+        // replaced by an older app's). Another `cua` there that is not a
+        // working one (an old Python cua-cli from `uv tool`, say) or one
+        // that no longer starts gets replaced.
         let up_to_date = match (&self.bundled, installed) {
             (Some(src), true) => {
-                same_file(src, &target) && installed_version.as_deref().is_some_and(is_cua_cli)
+                let runs = installed_version.as_deref().is_some_and(is_cua_cli);
+                runs && (same_file(src, &target)
+                    || keeps_installed(installed_version.as_deref(), bundled_version.as_deref()))
             }
             _ => false,
         };
@@ -267,10 +276,7 @@ impl CliInstaller {
             installed,
             up_to_date,
             installed_version,
-            bundled_version: match &self.bundled {
-                Some(src) => cli_version(src).await,
-                None => None,
-            },
+            bundled_version,
             shadowed_by,
             on_path,
             path_profile,
@@ -286,6 +292,11 @@ impl CliInstaller {
             .as_ref()
             .ok_or("this build of Cua Spaces does not bundle the cua CLI")?;
         let target = self.target();
+        // Never a downgrade: a working `cua` there that the bundled one is
+        // not newer than stays as it is.
+        if self.keeps_newer_installed(source, &target).await {
+            return Ok(self.plan().await);
+        }
         std::fs::create_dir_all(&self.bin_dir)
             .map_err(|e| format!("cannot create {}: {e}", self.bin_dir.display()))?;
         let staging = self.bin_dir.join(format!(".{}.cua-new", cli_file_name()));
@@ -336,6 +347,17 @@ impl CliInstaller {
             plan.path_line = None;
         }
         Ok(plan)
+    }
+
+    /// The `cua` at `target` runs as the cua CLI and `source` would not
+    /// upgrade it ([`keeps_installed`]).
+    async fn keeps_newer_installed(&self, source: &Path, target: &Path) -> bool {
+        if target.symlink_metadata().is_err() || same_file(source, target) {
+            return false;
+        }
+        let installed = cli_version(target).await;
+        installed.as_deref().is_some_and(is_cua_cli)
+            && keeps_installed(installed.as_deref(), cli_version(source).await.as_deref())
     }
 
     fn add_to_path(&self) -> Result<(), String> {
@@ -472,6 +494,21 @@ pub fn is_cua_cli(version_line: &str) -> bool {
         && parts
             .iter()
             .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Whether the installed `cua` (its `--version` line) stays because the
+/// bundled one (its line) would not be an upgrade: the same version or
+/// newer installed, by semver, a dev build counting as older unless it is
+/// the same build. A bundled CLI whose version cannot be read never
+/// replaces a working one.
+pub fn keeps_installed(installed: Option<&str>, bundled: Option<&str>) -> bool {
+    let Some(installed) = installed.filter(|v| is_cua_cli(v)) else {
+        return false;
+    };
+    match bundled {
+        Some(bundled) => !cua_home::version::bundled_replaces(Some(installed), bundled),
+        None => true,
+    }
 }
 
 /// `ETXTBSY` ("text file busy") on Linux and macOS.
@@ -650,8 +687,16 @@ mod tests {
         let done = cli.install(&CliInstallRequest::default()).await.unwrap();
         assert!(done.up_to_date, "{done:?}");
         assert_eq!(done.installed_version.as_deref(), Some("cua 1.2.3"));
-        // A bundled CLI that does not run as cua is not reported installed.
+        // A bundled CLI that does not run as cua is not reported installed
+        // (and never replaces a working one).
         std::fs::write(&cua, "#!/bin/sh\nexit 1\n").unwrap();
+        assert!(
+            cli.install(&CliInstallRequest::default())
+                .await
+                .unwrap()
+                .up_to_date
+        );
+        std::fs::remove_file(home.join(".local/bin/cua")).unwrap();
         assert!(cli.install(&CliInstallRequest::default()).await.is_err());
         // Without a bundled CLI there is nothing to install.
         let none = CliInstaller {
@@ -659,5 +704,105 @@ mod tests {
             ..cli
         };
         assert!(none.install(&CliInstallRequest::default()).await.is_err());
+    }
+
+    #[cfg(unix)]
+    fn script(path: &Path, version: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::remove_file(path);
+        std::fs::write(path, format!("#!/bin/sh\necho \"{version}\"\n")).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// UL2: an app bundling an older cua never replaces a newer one a user
+    /// installed with install.sh; it upgrades an older one, and a dev build
+    /// counts as older unless it is the same build.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_app_never_downgrades_the_installed_cli() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = tmp.path().join("opt/Cua Spaces");
+        std::fs::create_dir_all(&app).unwrap();
+        let exe = app.join("cua-spaces");
+        std::fs::write(&exe, "").unwrap();
+        let bundled = app.join(cli_file_name());
+        script(&bundled, "cua 0.6.0");
+        let home = tmp.path().join("home");
+        let cli = CliInstaller {
+            bundled: bundled_cli(&exe),
+            bin_dir: default_bin_dir(&home, None),
+            path_env: "/usr/bin:/bin".into(),
+            profile: profile_for_shell(&home, Some("/bin/zsh"), None),
+            prefer_symlink: true,
+            search_dirs: vec![],
+        };
+        let target = cli.target();
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        let installed = |v: &str| script(&target, v);
+        let content = || std::fs::read_to_string(&target).unwrap();
+
+        // Newer CLI on disk (0.7.99), app bundles 0.6.0: left alone.
+        script(&bundled, "cua 0.6.0");
+        installed("cua 0.7.99");
+        let before = content();
+        let plan = cli.plan().await;
+        assert!(plan.up_to_date, "{plan:?}");
+        let done = cli.install(&CliInstallRequest::default()).await.unwrap();
+        assert!(done.up_to_date);
+        assert_eq!(content(), before);
+        assert!(!target.symlink_metadata().unwrap().file_type().is_symlink());
+
+        // The same version: left alone.
+        script(&bundled, "cua 0.7.99");
+        installed("cua 0.7.99 (other build)");
+        let before = content();
+        cli.install(&CliInstallRequest::default()).await.unwrap();
+        assert_eq!(content(), before);
+
+        // Older CLI on disk: the newer app upgrades it.
+        script(&bundled, "cua 0.7.0");
+        installed("cua 0.6.0");
+        assert!(!cli.plan().await.up_to_date);
+        let done = cli.install(&CliInstallRequest::default()).await.unwrap();
+        assert!(done.up_to_date);
+        assert!(target.symlink_metadata().unwrap().file_type().is_symlink());
+        assert_eq!(done.installed_version.as_deref(), Some("cua 0.7.0"));
+
+        // A dev build on disk is older than a release; a release on disk is
+        // not replaced by a dev build.
+        installed("cua 0.7.0-dev");
+        assert!(!cli.plan().await.up_to_date);
+        script(&bundled, "cua 0.7.0-dev");
+        installed("cua 0.7.0");
+        assert!(cli.plan().await.up_to_date);
+        let before = content();
+        cli.install(&CliInstallRequest::default()).await.unwrap();
+        assert_eq!(content(), before);
+        // The same dev build counts as the same.
+        installed("cua 0.7.0-dev");
+        assert!(cli.plan().await.up_to_date);
+
+        // None there: installed.
+        std::fs::remove_file(&target).unwrap();
+        assert!(!cli.plan().await.up_to_date);
+        assert!(
+            cli.install(&CliInstallRequest::default())
+                .await
+                .unwrap()
+                .up_to_date
+        );
+    }
+
+    #[test]
+    fn keeps_installed_decides_by_version() {
+        assert!(keeps_installed(Some("cua 0.7.99"), Some("cua 0.6.0")));
+        assert!(keeps_installed(Some("cua 0.7.0"), Some("cua 0.7.0")));
+        assert!(!keeps_installed(Some("cua 0.6.0"), Some("cua 0.7.0")));
+        assert!(!keeps_installed(None, Some("cua 0.7.0")));
+        assert!(!keeps_installed(
+            Some("cua, version 0.1.9"),
+            Some("cua 0.7.0")
+        ));
+        assert!(keeps_installed(Some("cua 0.7.0"), None));
     }
 }

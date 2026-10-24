@@ -1,0 +1,115 @@
+name: "CI: cua-compat Daytona SDK conformance"
+
+# The unmodified Daytona SDKs (Python sync and async, TypeScript; pinned and,
+# off pull requests, latest) against the cua-compat gateway: the shared cases
+# over mock Spaces, property tests, the coverage matrix check, and the
+# overhead guard.
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua/crates/cua-compat/**"
+      - "libs/cua/crates/cua-spacesd-client/**"
+      - "tests/compat/daytona/**"
+      - ".github/workflows/ci-cua-compat-daytona.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua/crates/cua-compat/**"
+      - "tests/compat/daytona/**"
+  schedule:
+    - cron: "43 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cua-compat-daytona-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: "4"
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  conformance:
+    name: shared cases (pinned SDK)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: cua-compat-daytona
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Coverage matrix matches the SDK surface and the case catalogue
+        run: |
+          python -m venv /tmp/cov
+          /tmp/cov/bin/pip install -q "daytona==$(cat tests/compat/daytona/PINNED)"
+          (cd tests/compat/daytona/ts && npm ci --no-audit --no-fund -q)
+          /tmp/cov/bin/python tests/compat/daytona/surface.py --check
+          /tmp/cov/bin/python tests/compat/daytona/catalogue.py
+          /tmp/cov/bin/python tests/compat/daytona/surface.py --markdown /tmp/matrix.md
+          diff -u libs/cua/crates/cua-compat/maps/daytona-coverage.md /tmp/matrix.md
+      - name: Wire tests, unit tests and property tests (bounded)
+        working-directory: libs/cua
+        env:
+          PROPTEST_CASES: "64"
+        run: |
+          cargo fmt -p cua-compat -p cua-spacesd-client -- --check
+          cargo clippy --locked -p cua-compat -p cua-spacesd-client --features cua-compat/testing --all-targets -- -D warnings
+          cargo test --locked -p cua-compat -p cua-spacesd-client --features cua-compat/testing
+      - name: Python sync, Python async and TypeScript over mock Spaces, with hypothesis
+        env:
+          HYPOTHESIS_MAX_EXAMPLES: "25"
+        run: tests/compat/daytona/run_hermetic.sh
+
+  drift:
+    name: latest SDK (drift)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: cua-compat-daytona
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Latest SDK surface is covered
+        run: |
+          python -m venv /tmp/latest
+          /tmp/latest/bin/pip install -q -U daytona
+          mkdir -p /tmp/tslatest && cp tests/compat/daytona/ts/package.json /tmp/tslatest/
+          (cd /tmp/tslatest && npm install --no-audit --no-fund -q @daytonaio/sdk@latest)
+          # the surface script reads node_modules next to it
+          rm -rf tests/compat/daytona/ts/node_modules && cp -r /tmp/tslatest/node_modules tests/compat/daytona/ts/node_modules
+          /tmp/latest/bin/python tests/compat/daytona/surface.py --check
+      - name: Latest SDKs over mock Spaces
+        run: tests/compat/daytona/run_hermetic.sh --latest
+      - name: Overhead guard (1.5x the committed baseline)
+        run: PERF_CHECK=1 tests/compat/daytona/run_hermetic.sh

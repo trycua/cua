@@ -253,6 +253,14 @@ mod tests {
             cloud_delete: String::new(),
             status: String::new(),
             stop_reason: String::new(),
+            durable: String::new(),
+            labels: Default::default(),
+            expires_at_unix: 0,
+            on_expire: String::new(),
+            created_at_unix: 0,
+            egress: Default::default(),
+            egress_enforced: None,
+            volumes: Vec::new(),
         }
     }
 

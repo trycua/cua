@@ -463,7 +463,9 @@ public struct NewSpaceWizardView: View {
         case "qemu": return .qemu
         case "lume": return .lume
         case "kubevirt": return .kubevirt
-        default: return .auto
+        // An external runtime provider's name.
+        case "", "auto": return .auto
+        default: return .other(word)
         }
     }
 }

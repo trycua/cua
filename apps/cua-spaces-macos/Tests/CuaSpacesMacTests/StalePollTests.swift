@@ -39,11 +39,41 @@ import Testing
             await withCheckedContinuation { c in lock.withLock { hung.append(c) } }
         }
 
+        /// The next list read reads the rows, then answers only on
+        /// `answerHeldRead()` (a read that is slow to come back).
+        private var holdNext = false
+        private var heldRead: CheckedContinuation<Void, Never>?
+        private var answerHeld = false
+        func holdNextRead() { lock.withLock { holdNext = true } }
+        func answerHeldRead() {
+            let c = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+                answerHeld = true
+                defer { heldRead = nil }
+                return heldRead
+            }
+            c?.resume()
+        }
+
         func rows() async throws -> [AppSpaceRow] {
-            lock.withLock { listCalls += 1 }
+            let hold = lock.withLock { () -> Bool in
+                listCalls += 1
+                defer { holdNext = false }
+                return holdNext
+            }
             if wedged { await hang() }
             if let refusal = lock.withLock({ refusal }) { throw refusal }
-            return try await inner.rows()
+            let rows = try await inner.rows()
+            if hold {
+                await withCheckedContinuation { c in
+                    let now = lock.withLock { () -> Bool in
+                        if answerHeld { return true }
+                        heldRead = c
+                        return false
+                    }
+                    if now { c.resume() }
+                }
+            }
+            return rows
         }
 
         func create(_ args: AppCreateSpaceArgs, createId: String,
@@ -245,7 +275,10 @@ import Testing
 
     // MARK: - Creates
 
-    @Test func aCreateTheDaemonNeverTakesFailsFastAndTryAgainWorks() async throws {
+    /// What the model said it retried (`runCreate`'s `retrying`).
+    final class Retries: @unchecked Sendable { var errors: [String] = [] }
+
+    @Test func aCreateTheDaemonNeverTakesIsRetriedOnceOverTheNewConnection() async throws {
         let first = Connection(rows: [])
         let gate = LiveGate<LiveServices>()
         gate.resolve(LiveServices(backend: first))
@@ -255,27 +288,69 @@ import Testing
         first.wedge()
 
         let started = Date()
+        let retries = Retries()
+        // The daemon never takes it: the create fails fast, the connection
+        // is made again, and the model runs the create once more by itself
+        // (the row says "Retrying…"), over the new connection.
+        let id = try await model.runCreate(args("e2e-1005-linux"), os: .linux, pendingId: "pending:one",
+                                           retrying: { error, _ in retries.errors.append(error) })
+        #expect(Date().timeIntervalSince(started) < 60)
+        #expect(retries.errors.count == 1)
+        #expect(retries.errors.first?.contains("didn't start this create") == true)
+        #expect(model.reconnects == 1)
+        #expect(id == "local:e2e-1005-linux")
+        #expect(second.createCalls == 1)
+        // The first attempt's cancel went to its own (hung) connection,
+        // never to the new one, where it would cancel the retry.
+        #expect(second.inner.cancelRequests.isEmpty)
+        // Listed, by the create's own read or (a loaded run) the poll's.
+        let poll = model.startListPoll(every: .milliseconds(50))
+        defer { poll.cancel() }
+        #expect(await eventually { model.spaces.contains { $0.id == id } })
+    }
+
+    /// A list read still in flight when a create finished was read before
+    /// it: the create's own read is a new one (the Space is listed when
+    /// the create returns), and the older answer, coming in later, does
+    /// not take the Space off the list.
+    @Test func theListAfterACreateIsReadAfterIt() async throws {
+        let connection = Connection(rows: [Self.row("local:a")])
+        let gate = LiveGate<LiveServices>()
+        gate.resolve(LiveServices(backend: connection))
+        let model = makeModel(gate: gate) { nil }
+        model.listStaleAfter = 600
+        // The early refresh still waits when its read answers (a minute
+        // only bounds a run where the create's refresh joined that read).
+        model.listTimeout = 60
+        connection.holdNextRead()
+        let early = Task { await model.refresh() }
+        #expect(await eventually { connection.listCalls == 1 })
+
+        let id = try await model.runCreate(args("made"), os: .linux, pendingId: "pending:made")
+        #expect(model.spaces.contains { $0.id == id })
+        connection.answerHeldRead()
+        await early.value
+        #expect(model.spaces.contains { $0.id == id })
+        #expect(model.spaces.contains { $0.id == "local:a" })
+    }
+
+    @Test func aCreateTheDaemonNeverTakesTwiceFailsWithItsFix() async throws {
+        let connection = Connection(rows: [])
+        let gate = LiveGate<LiveServices>()
+        gate.resolve(LiveServices(backend: connection))
+        // The new connection is wedged too.
+        let model = makeModel(gate: gate) { connection }
+        model.listStaleAfter = 600
+        connection.wedge()
         do {
             _ = try await model.runCreate(args("e2e-1005-linux"), os: .linux, pendingId: "pending:one")
             Issue.record("the create should have failed")
-        } catch let e as AppModel.CreateNotAccepted {
-            #expect(e.seconds == 2)
-        }
-        #expect(Date().timeIntervalSince(started) < 60)
-        let row = model.creates.pending.first { $0.id == "pending:one" }
-        #expect(row?.error?.contains("didn't start this create") == true)
-        #expect(row?.error?.contains("Try again") == true)
-        // The connection is made again for the next try.
-        #expect(await eventually { model.reconnects == 1 })
-
-        model.delete(try #require(model.spaces.first { $0.id == "pending:one" }))
-        // A loaded run must not fail the healthy create or its list read.
-        model.createAcceptTimeout = 60
-        model.listTimeout = 60
-        let id = try await model.runCreate(args("e2e-1005-linux"), os: .linux, pendingId: "pending:two")
-        #expect(id == "local:e2e-1005-linux")
-        #expect(second.createCalls == 1)
-        #expect(model.spaces.contains { $0.id == id })
+        } catch is AppModel.CreateNotAccepted {}
+        let row = try #require(model.creates.pending.first { $0.id == "pending:one" })
+        #expect(row.attempt == 1)
+        #expect(row.error?.contains("didn't start this create") == true)
+        // The same failure twice: its fix, not a plain Try again.
+        #expect(row.fix?.value == "cua doctor")
     }
 
     @Test func aTakenCreateMayRunLongerThanTheWatchdog() async throws {

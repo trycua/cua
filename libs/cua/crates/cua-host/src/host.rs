@@ -90,9 +90,33 @@ pub struct SetupOptions {
     /// Tailscale and private LAN addresses, and allow a public listen
     /// address (see [`crate::direct`]). Default off.
     pub allow_any_address: bool,
+    /// Direct mode: also join this relay in static-token mode (a
+    /// self-hosted `cua-relay --tokens ...`), so callers that cannot reach
+    /// the direct address reach this machine at `<relay>/m/<machine id>`
+    /// with its env token. No account is involved.
+    pub static_relay: Option<StaticRelay>,
+    /// Direct mode on your own tailnet (Tailscale or Headscale): callers
+    /// are identified by their tailnet login (the owner is this machine's
+    /// tailnet user; `allow` names other tailnet users), so they need no
+    /// env token. See [`crate::direct::tailnet_login`].
+    pub tailnet: bool,
     /// Install the driver before registering (a single-use pairing code is
     /// then spent only once the download worked). Default off.
     pub download_first: bool,
+    /// The machine exists only for Cua work (a cloud instance made for it,
+    /// such as a `cua cloud add aws` host): it offers its own Space to jobs
+    /// (`kind = "machine"`), where they run with its GPU and drivers as
+    /// they are. Never for a computer you also use; default off.
+    pub dedicated: bool,
+}
+
+/// A relay in static-token mode ([`SetupOptions::static_relay`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StaticRelay {
+    /// Relay base URL.
+    pub url: String,
+    /// One of its machine-registration tokens.
+    pub token: String,
 }
 
 impl SetupOptions {
@@ -109,7 +133,10 @@ impl SetupOptions {
             max_spaces: None,
             cua_bin: None,
             allow_any_address: false,
+            static_relay: None,
+            tailnet: false,
             download_first: false,
+            dedicated: false,
         }
     }
 
@@ -132,7 +159,10 @@ impl SetupOptions {
             max_spaces: None,
             cua_bin: None,
             allow_any_address: false,
+            static_relay: None,
+            tailnet: false,
             download_first: false,
+            dedicated: false,
         }
     }
 }
@@ -181,6 +211,25 @@ pub struct HostPolicy {
     /// this machine's address on a forwarded port. `None` in relay mode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub direct: Option<DirectHosting>,
+    /// Identify tailnet callers by their tailnet login (`--tailnet`): the
+    /// owner email and `allow` / `viewers` then name tailnet users.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tailnet_identity: bool,
+    /// The machine exists only for Cua work (`--dedicated`, which `cua cloud add
+    /// aws` hosts are set up with): jobs may run in its own Space
+    /// (`kind = "machine"`). Off by default, and never on a computer you
+    /// also use.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dedicated: bool,
+    /// Forward `/share/...` requests to the cua daemon's share gateway
+    /// (`cua share`): links to ports, files and folders the owner shares,
+    /// reached through the relay. Off until the first `cua share` (or a
+    /// relay-mode setup) turns it on; it takes effect on the next request.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub shares: bool,
+    /// The daemon's share gateway socket (`<cua home>/share/gateway.sock`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shares_gateway: Option<String>,
 }
 
 /// How a host in direct mode provides Spaces (see [`crate::direct`]).
@@ -272,9 +321,13 @@ pub struct HostConfig {
     pub listen: Option<String>,
     /// Display name.
     pub name: String,
-    /// Machine id (relay mode).
+    /// Machine id (relay mode, and direct mode with a static relay).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub machine_id: Option<String>,
+    /// Direct mode: the static-token relay this machine also joins
+    /// ([`SetupOptions::static_relay`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub static_relay: Option<String>,
     /// Runner (`systemd`, `launchd`, `windows-task`, `process`).
     pub runner: String,
     /// Installed driver binary.
@@ -296,11 +349,25 @@ pub struct HostConfig {
     /// [`Host::resume_signed_in`] can bring it back.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub paused_signed_out: bool,
+    /// Sharing stopped because both settings were turned off (nothing to
+    /// share): turning either on again shares again.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stopped_for_nothing: bool,
+    /// Direct mode on the owner's tailnet with tailnet identity
+    /// (`--tailnet`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tailnet: bool,
     /// `CUA_MESH` as it was set where `cua host setup` ran (an explicit
     /// opt-in to the WireGuard®-based mesh, or out of it): passed on to the
     /// service. Unset, the service follows its own default (prefer).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mesh: Option<String>,
+    /// `CUA_HOST_USD_PER_HOUR` as it was set where `cua host setup` ran:
+    /// what this machine costs per hour (a cloud host's on-demand price),
+    /// passed on to the service, which shows it to the pool. Unset: an owned
+    /// machine ($0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usd_per_hour: Option<String>,
 }
 
 /// `CUA_MESH` where setup runs, when set.
@@ -422,6 +489,22 @@ pub const META_OS: &str = "cua.host.os";
 /// `amd64`: the names Spaces use), as of its last setup.
 pub const META_ARCH: &str = "cua.host.arch";
 
+/// The relay machine meta key with the cloud a pool host runs in
+/// (`hetzner`, `aws`...), from `CUA_HOST_CLOUD` where `cua host setup` ran
+/// (the cloud-init of a machine the pool added sets it). Whichever machine
+/// coordinates the pool places `--on <cloud>` work on it by this.
+pub const META_CLOUD: &str = "cua.host.cloud";
+
+/// `CUA_HOST_CLOUD`, when it names a cloud (lowercase letters and digits).
+fn host_cloud() -> Option<String> {
+    cloud_word(std::env::var("CUA_HOST_CLOUD").ok())
+}
+
+fn cloud_word(v: Option<String>) -> Option<String> {
+    let v = v?.trim().to_ascii_lowercase();
+    (!v.is_empty() && v.len() <= 32 && v.chars().all(|c| c.is_ascii_alphanumeric())).then_some(v)
+}
+
 /// This build's OS family, as Spaces name it.
 fn os_family() -> &'static str {
     match std::env::consts::OS {
@@ -451,6 +534,9 @@ fn host_meta(provide_spaces: bool) -> std::collections::BTreeMap<String, String>
         if !value.is_empty() {
             meta.insert(key.to_string(), value.to_string());
         }
+    }
+    if let Some(cloud) = host_cloud() {
+        meta.insert(META_CLOUD.to_string(), cloud);
     }
     meta
 }
@@ -572,6 +658,10 @@ impl HostPaths {
     pub fn env_token(&self) -> PathBuf {
         self.dir.join("env-token")
     }
+    /// `relay-token` (0600): a static relay's registration token.
+    pub fn relay_token(&self) -> PathBuf {
+        self.dir.join("relay-token")
+    }
     /// `relay-jwks.json`: the relay keys returned at registration.
     pub fn relay_jwks(&self) -> PathBuf {
         self.dir.join("relay-jwks.json")
@@ -685,6 +775,21 @@ fn valid_machine_id(id: &str) -> bool {
         && !id.ends_with('-')
 }
 
+/// The environment variable with this machine's cost per hour (US
+/// dollars), passed on to the host service.
+pub const HOST_USD_PER_HOUR: &str = "CUA_HOST_USD_PER_HOUR";
+
+/// [`HOST_USD_PER_HOUR`] where setup runs, when it is a non-negative
+/// number.
+fn host_usd_per_hour() -> Option<String> {
+    let v = std::env::var(HOST_USD_PER_HOUR).ok()?;
+    let v = v.trim();
+    v.parse::<f64>()
+        .ok()
+        .filter(|p| p.is_finite() && *p >= 0.0)
+        .map(|_| v.to_string())
+}
+
 /// Loads `path` or creates a random id there (same format as the driver).
 fn load_or_create_machine_id(path: &Path) -> Result<String> {
     if let Ok(existing) = std::fs::read_to_string(path) {
@@ -757,13 +862,7 @@ fn strip_local_suffix(host: &str) -> String {
     host.to_string()
 }
 
-/// The LAN address a direct client would use for an unspecified bind.
-fn lan_ip() -> Option<std::net::IpAddr> {
-    // No packet is sent: connecting a UDP socket only picks a route.
-    let s = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
-    s.connect("192.0.2.1:9").ok()?;
-    s.local_addr().ok().map(|a| a.ip())
-}
+use crate::direct::lan_ip;
 
 fn direct_url(listen: &str) -> Option<String> {
     let addr: SocketAddr = listen.parse().ok()?;
@@ -976,6 +1075,24 @@ impl Host {
                     .flatten(),
             )
             .collect(),
+            _ if config.static_relay.is_some() => {
+                // Direct and through a static relay at once: the driver
+                // serves its direct listener and joins the relay, with the
+                // policy that makes it a host on both.
+                vec![
+                    "join".into(),
+                    "--relay".into(),
+                    config.static_relay.clone().unwrap_or_default(),
+                    "--relay-token-file".into(),
+                    s(p.relay_token()),
+                    "--host-policy".into(),
+                    s(p.policy()),
+                    "--machine-id-file".into(),
+                    s(p.machine_id.clone()),
+                    "--listen".into(),
+                    config.listen.clone().unwrap_or_default(),
+                ]
+            }
             _ => {
                 let mut args: Vec<String> = vec![
                     "serve".into(),
@@ -988,6 +1105,11 @@ impl Host {
                 // driver that predates the flag.
                 if config.provide_spaces && p.policy().is_file() {
                     args.extend(["--direct-host-policy".to_string(), s(p.policy())]);
+                }
+                // Your tailnet vouches for who calls (Tailscale or
+                // Headscale `whois`), per the policy's owner and shares.
+                if config.tailnet && p.policy().is_file() {
+                    args.extend(["--tailnet-identity-policy".to_string(), s(p.policy())]);
                 }
                 args
             }
@@ -1011,6 +1133,9 @@ impl Host {
         let mut env = vec![("CUA_ENV_LOG".into(), "info".into())];
         if let Some(mesh) = &config.mesh {
             env.push(("CUA_MESH".into(), mesh.clone()));
+        }
+        if let Some(usd) = &config.usd_per_hour {
+            env.push((HOST_USD_PER_HOUR.into(), usd.clone()));
         }
         ServiceSpec {
             program: config.driver_bin.clone(),
@@ -1123,6 +1248,7 @@ impl Host {
             share_desktop: opts.share_desktop,
             provide_spaces: opts.provide_spaces,
             mesh: mesh_env(),
+            usd_per_hour: host_usd_per_hour(),
             ..Default::default()
         };
         if opts.download_first && helper_launcher.is_none() {
@@ -1176,6 +1302,10 @@ impl Host {
                         max_macos_vms: crate::provided::MACOS_VM_LICENSE_LIMIT,
                         spaces_daemon: Some(self.spaces_daemon(opts.cua_bin.as_deref())),
                         direct: None,
+                        tailnet_identity: false,
+                        dedicated: opts.dedicated,
+                        shares: true,
+                        shares_gateway: Some(self.shares_gateway()),
                     },
                 )?;
                 config.mode = "relay".into();
@@ -1195,15 +1325,41 @@ impl Host {
                 }
                 policy.share_desktop = opts.share_desktop;
                 policy.provide_spaces = opts.provide_spaces;
+                policy.dedicated = opts.dedicated;
                 if let Some(m) = opts.max_spaces {
                     policy.max_spaces = m;
                 }
+                if opts.tailnet {
+                    // The tailnet's identity: this machine's tailnet user
+                    // owns it, `--allow` names other tailnet users.
+                    policy.tailnet_identity = true;
+                    policy.owner_email = crate::direct::tailnet_login();
+                    policy.allow = opts.allow.clone();
+                    config.tailnet = true;
+                }
                 write_json(&self.paths.policy(), &policy)?;
+                match &opts.static_relay {
+                    Some(r) => {
+                        write_secret(&self.paths.relay_token(), &r.token)?;
+                        config.static_relay = Some(r.url.trim_end_matches('/').to_string());
+                        config.machine_id =
+                            Some(load_or_create_machine_id(&self.paths.machine_id)?);
+                    }
+                    None => {
+                        let _ = std::fs::remove_file(self.paths.relay_token());
+                    }
+                }
             }
         }
         if !opts.download_first && helper_launcher.is_none() {
             *stage = SetupStage::Download;
             install_driver(opts.driver_bin.as_deref(), &config.driver_bin).await?;
+        }
+        // Before a service is installed to restart it forever: a binary
+        // whose shared libraries are missing never starts.
+        let missing = missing_libraries(&config.driver_bin);
+        if !missing.is_empty() {
+            return Err(Error::Service(missing_libraries_message(&missing)));
         }
         *stage = SetupStage::Service;
         write_json(&self.paths.config(), &config)?;
@@ -1215,12 +1371,23 @@ impl Host {
         let manager = self.manager(runner);
         manager.install(&self.service_spec(&config))?;
         manager.start()?;
+        if let Err(e) = confirm_running(manager.as_ref(), &self.paths.log()).await {
+            let _ = manager.stop();
+            return Err(e);
+        }
         let _ = crate::provided::audit(
             &self.paths.dir,
             "config",
             "local",
             &config.name,
-            &settings_detail(config.share_desktop, config.provide_spaces),
+            &if opts.dedicated {
+                format!(
+                    "{} dedicated=on",
+                    settings_detail(config.share_desktop, config.provide_spaces)
+                )
+            } else {
+                settings_detail(config.share_desktop, config.provide_spaces)
+            },
         );
         self.status().await
     }
@@ -1245,6 +1412,10 @@ impl Host {
                 listen: listen.to_string(),
                 allow_any_address: false,
             }),
+            tailnet_identity: false,
+            dedicated: false,
+            shares: false,
+            shares_gateway: None,
         }
     }
 
@@ -1275,6 +1446,15 @@ impl Host {
         } else {
             listen.ip()
         };
+        if config.tailnet {
+            // Tailnet identity: whoever the policy names adds it without a
+            // token (their tailnet login is the credential).
+            return Ok(Some(crate::direct::tailnet_pairing_command(
+                &crate::direct::authority(ip, listen.port()),
+                &config.name,
+                config.provide_spaces,
+            )));
+        }
         let token = read_secret(&self.paths.env_token())?;
         Ok(Some(crate::direct::pairing_command(
             &crate::direct::authority(ip, listen.port()),
@@ -1293,6 +1473,46 @@ impl Host {
             cua_home: self.home.to_string_lossy().into_owned(),
             cua_bin: find_cua_bin(cua_bin).map(|p| p.to_string_lossy().into_owned()),
         }
+    }
+
+    /// The socket of the cua daemon's share gateway in this cua home.
+    pub fn shares_gateway(&self) -> String {
+        self.home
+            .join("share")
+            .join("gateway.sock")
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    /// Turns on forwarding of `/share/...` to the daemon's share gateway
+    /// (`cua share`). The driver reads the policy on every request, so no
+    /// restart is needed. Only a machine on the relay can share links: a
+    /// machine that is not set up (or is in direct mode without a relay)
+    /// gets an error that says how to join one. Returns whether the policy
+    /// changed.
+    pub fn enable_shares(&self) -> Result<bool> {
+        let config = self.config()?.ok_or_else(|| {
+            Error::NotFound(
+                "this machine is not on your cua.ai relay; set it up with `cua host setup`".into(),
+            )
+        })?;
+        if config.mode != "relay" {
+            return Err(Error::InvalidArgument(
+                "this machine is not on your cua.ai relay (direct mode); links need the relay: `cua host setup`"
+                    .into(),
+            ));
+        }
+        let mut policy = self.policy()?.ok_or_else(|| {
+            Error::NotFound("this machine has no host policy; run `cua host setup`".into())
+        })?;
+        let gateway = self.shares_gateway();
+        if policy.shares && policy.shares_gateway.as_deref() == Some(gateway.as_str()) {
+            return Ok(false);
+        }
+        policy.shares = true;
+        policy.shares_gateway = Some(gateway);
+        write_json(&self.paths.policy(), &policy)?;
+        Ok(true)
     }
 
     /// Changes this machine's Spaces settings (`cua host config`, the app's
@@ -1388,7 +1608,16 @@ impl Host {
         if nothing && config.sharing {
             // Stop advertising: the relay lists it as not sharing (other
             // devices say it shares neither its desktop nor Spaces).
+            config.stopped_for_nothing = true;
+            write_json(&self.paths.config(), &config)?;
             return self.stop_sharing().await;
+        }
+        if !nothing && !config.sharing && config.stopped_for_nothing {
+            // It stopped only because there was nothing to share: there is
+            // again, so it shares again (a stop the owner asked for stays).
+            config.stopped_for_nothing = false;
+            write_json(&self.paths.config(), &config)?;
+            return self.start_sharing().await;
         }
         self.status().await
     }
@@ -1600,6 +1829,7 @@ impl Host {
                 self.set_policy_sharing(true)?;
                 // An explicit start (`cua host start`) ends a pause too.
                 config.paused_signed_out = false;
+                config.stopped_for_nothing = false;
                 // The service stays up while sharing is stopped; one that
                 // went down (a failed start) is started again here.
                 let manager = self.manager_for_config(&config);
@@ -2150,6 +2380,76 @@ pub fn owned_by(policy: &HostPolicy, account: &str) -> bool {
             .is_some_and(|e| e.eq_ignore_ascii_case(account))
 }
 
+/// Shared libraries `bin` needs and the system lacks (Linux, via `ldd`);
+/// empty where that cannot be checked.
+fn missing_libraries(bin: &Path) -> Vec<String> {
+    if !cfg!(target_os = "linux") {
+        return vec![];
+    }
+    match std::process::Command::new("ldd").arg(bin).output() {
+        Ok(o) => parse_missing_libraries(&String::from_utf8_lossy(&o.stdout)),
+        Err(_) => vec![],
+    }
+}
+
+/// The `name => not found` lines of `ldd` output.
+fn parse_missing_libraries(ldd: &str) -> Vec<String> {
+    ldd.lines()
+        .filter(|l| l.contains("not found"))
+        .filter_map(|l| l.split("=>").next())
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty())
+        .collect()
+}
+
+fn missing_libraries_message(missing: &[String]) -> String {
+    let hint = if missing
+        .iter()
+        .any(|m| m.starts_with("libX") || m.starts_with("libxcb"))
+    {
+        " On Debian or Ubuntu: sudo apt install libxi6 libxtst6 libx11-6 libxcb1 (the host service links the X libraries even without a desktop)."
+    } else {
+        ""
+    };
+    format!(
+        "cua-spacesd cannot start: this machine lacks {}.{hint} Install them and run `cua host setup` again.",
+        missing.join(", ")
+    )
+}
+
+/// After starting the service: it must still be running a few seconds
+/// later (a service that exits at once is restarted by its runner and looks
+/// "activating"), or setup fails with the reason instead of reporting
+/// success.
+async fn confirm_running(manager: &dyn crate::service::ServiceManager, log: &Path) -> Result<()> {
+    if manager.state().kind == "fake" {
+        return Ok(());
+    }
+    let settle = std::env::var("CUA_HOST_START_SETTLE_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(4000);
+    let step = std::time::Duration::from_millis((settle / 3).max(1));
+    for _ in 0..3 {
+        tokio::time::sleep(step).await;
+        let st = manager.state();
+        if !st.running {
+            let tail = std::fs::read_to_string(log)
+                .map(|t| {
+                    let lines: Vec<&str> = t.lines().rev().take(3).collect();
+                    lines.into_iter().rev().collect::<Vec<_>>().join(" | ")
+                })
+                .unwrap_or_default();
+            return Err(Error::Service(format!(
+                "the host service did not stay running ({}); last log lines: {}",
+                st.detail.trim(),
+                if tail.is_empty() { "none" } else { &tail }
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Locates (or downloads) cua-spacesd and installs it at `dest`.
 async fn install_driver(explicit: Option<&Path>, dest: &Path) -> Result<()> {
     let source = driver::locate(explicit)?;
@@ -2183,7 +2483,28 @@ async fn remove_dir_retrying(dir: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn missing_libraries_are_read_from_ldd() {
+        let out = "\tlinux-vdso.so.1 (0x00007ffd)\n\tlibXi.so.6 => not found\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x1)\n\tlibXtst.so.6 => not found\n";
+        assert_eq!(
+            super::parse_missing_libraries(out),
+            vec!["libXi.so.6", "libXtst.so.6"]
+        );
+        let m = super::missing_libraries_message(&["libXi.so.6".into()]);
+        assert!(m.contains("libXi.so.6") && m.contains("apt install"));
+        assert!(super::parse_missing_libraries("\tlibc.so.6 => /lib/libc.so.6\n").is_empty());
+    }
+
+    #[test]
     fn a_host_registers_its_os_and_arch() {
+        // A pool host's cloud, as its cloud-init names it; anything else is
+        // left out.
+        assert_eq!(
+            super::cloud_word(Some(" Hetzner ".into())).as_deref(),
+            Some("hetzner")
+        );
+        assert_eq!(super::cloud_word(Some("aws; rm".into())), None);
+        assert_eq!(super::cloud_word(Some(String::new())), None);
+        assert_eq!(super::cloud_word(None), None);
         let meta = super::host_meta(true);
         assert_eq!(meta[super::META_PROVIDES_SPACES], "on");
         #[cfg(target_os = "macos")]

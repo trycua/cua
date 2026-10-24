@@ -12,6 +12,7 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
+use crate::audit::{AuditLog, CloudAuditEntry};
 use crate::model::{Connection, Resource};
 
 /// The file's content.
@@ -31,6 +32,7 @@ struct State {
 pub struct Store {
     path: PathBuf,
     lock: Mutex<()>,
+    audit: AuditLog,
 }
 
 impl Store {
@@ -39,7 +41,32 @@ impl Store {
         Store {
             path: home.join("cloud").join("state.json"),
             lock: Mutex::new(()),
+            audit: AuditLog::new(home),
         }
+    }
+
+    /// Rotates the audit log at `bytes` instead of 5 MB (tests).
+    pub fn with_audit_rotation(mut self, bytes: u64) -> Self {
+        self.audit = self.audit.rotating_at(bytes);
+        self
+    }
+
+    /// Appends `e` to the audit log. The log is a record, not a gate: a
+    /// write that fails is logged and never fails the action it describes.
+    pub fn audit(&self, e: CloudAuditEntry) {
+        if let Err(err) = self.audit.append(e) {
+            tracing::warn!(path = %self.audit.path().display(), "cloud audit log not written: {err}");
+        }
+    }
+
+    /// The newest `limit` audit entries, newest last.
+    pub fn audit_entries(&self, limit: usize) -> std::io::Result<Vec<CloudAuditEntry>> {
+        self.audit.read(limit)
+    }
+
+    /// Where the audit log lives.
+    pub fn audit_path(&self) -> &Path {
+        self.audit.path()
     }
 
     /// Where it lives.

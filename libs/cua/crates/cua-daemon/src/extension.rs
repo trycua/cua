@@ -90,6 +90,19 @@ pub trait AttachedExtension: Send + Sync + 'static {
         Box::pin(async {})
     }
 
+    /// Batch runs on the account's machines (`SpaceService.PoolRequest`):
+    /// the answer to one request when this extension coordinates them
+    /// (`target` `local` or `pool`; status and JSON body).
+    fn pool_request<'a>(
+        &'a self,
+        target: &'a str,
+        method: &'a str,
+        params: serde_json::Value,
+    ) -> Option<cua_spaces::extension::BoxFuture<'a, (u16, serde_json::Value)>> {
+        let _ = (target, method, params);
+        None
+    }
+
     /// For [`crate::Runtime::attached`] (downcasting to the concrete type).
     fn as_any(&self) -> &dyn Any;
 }

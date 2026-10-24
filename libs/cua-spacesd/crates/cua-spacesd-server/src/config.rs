@@ -90,6 +90,20 @@ pub struct ServerConfig {
     /// never write into a real data dir; the `cua-spacesd` binary turns it
     /// on unless `--no-access-log`.
     pub access_log: bool,
+    /// The machine-id files `Init{new_machine}` rewrites. Empty by default
+    /// so embedders and tests never touch the machine they run on; the
+    /// `cua-spacesd` binary sets systemd's and dbus's
+    /// ([`crate::identity::MACHINE_ID_PATHS`]) on Linux.
+    pub machine_id_files: Vec<PathBuf>,
+    /// The cua-spacesd executable `FilesystemService` starts as
+    /// `cua-spacesd fs-as --user NAME` to act as another user. `None`: this
+    /// executable when it is cua-spacesd. Only for embedders and tests whose
+    /// own executable is not cua-spacesd; not a command-line option.
+    pub fs_helper_exe: Option<PathBuf>,
+    /// Serve `run_as` for the user the agent already is through a helper too
+    /// (so tests can exercise the helper path without a second account).
+    /// Not a command-line option.
+    pub fs_helper_for_self: bool,
 }
 
 impl ServerConfig {
@@ -136,6 +150,9 @@ impl Default for ServerConfig {
             shutdown_grace: Duration::from_secs(5),
             cursor_probe: true,
             access_log: false,
+            machine_id_files: Vec::new(),
+            fs_helper_exe: None,
+            fs_helper_for_self: false,
         }
     }
 }

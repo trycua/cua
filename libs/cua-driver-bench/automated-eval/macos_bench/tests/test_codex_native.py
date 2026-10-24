@@ -16,6 +16,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HERE))
 
@@ -25,7 +27,8 @@ import claude_events  # noqa: E402
 import codex_native as cxn  # noqa: E402
 
 
-def test_browser_cli_translation_and_rejections():
+@pytest.mark.parametrize("output", ["OUTPUT" * 1000, "short output"], ids=["truncated", "short"])
+def test_browser_cli_translation_and_rejections(output):
     import browser_use_cli as bu
 
     assert bu.ARM in arms.ALL_ARMS and bu.ARM in cxn.ARMS
@@ -44,7 +47,7 @@ def test_browser_cli_translation_and_rejections():
                     **item,
                     "status": "completed",
                     "exitCode": 0,
-                    "aggregatedOutput": "OUTPUT" * 1000,
+                    "aggregatedOutput": output,
                 }
             },
         )
@@ -57,7 +60,7 @@ def test_browser_cli_translation_and_rejections():
         ]
         result = events[-1]["message"]["content"][0]
         assert result["tool_use_id"] == "cli1" and not result["is_error"]
-        assert result["content"].startswith("OUTPUT") and len(result["content"]) == 2000
+        assert result["content"] == output[:2000]
         assert tr.non_gui == []
     for text in (
         "browser-use open x; curl x",
@@ -545,6 +548,38 @@ for line in sys.stdin:
 
 
 class TranslatorTest(unittest.TestCase):
+    def test_completed_mcp_is_error_becomes_setup_failure(self) -> None:
+        tr = cxn.Translator()
+        events = tr.feed("thread/started", {"thread": {"id": "t"}})
+        events += tr.feed(
+            "item/completed",
+            {
+                "item": {
+                    "id": "tool",
+                    "type": "mcpToolCall",
+                    "server": "cua",
+                    "tool": "screenshot",
+                    "status": "completed",
+                    "result": {
+                        "isError": True,
+                        "content": [
+                            {"type": "image", "data": "SECRET"},
+                            {
+                                "type": "text",
+                                "text": "screen_recording_permission_denied" + "!" * 500,
+                            },
+                        ],
+                    },
+                }
+            },
+        )
+        summary = claude_events.summarize(events)
+        self.assertEqual(claude_events.classify_failure(summary)["kind"], "tool_setup")
+        block = events[-1]["message"]["content"][0]
+        self.assertTrue(block["is_error"])
+        self.assertLessEqual(len(block["content"]), 300)
+        self.assertNotIn("SECRET", json.dumps(events))
+
     def run_events(self, events: list[tuple[str, dict]]) -> tuple[list[dict], cxn.Translator]:
         tr = cxn.Translator()
         out: list[dict] = []

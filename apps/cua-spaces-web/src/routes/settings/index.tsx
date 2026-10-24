@@ -24,6 +24,7 @@ import { writeSavedOnboarding } from "@/bridge/onboarding";
 import { SettingsGroup, SettingsRow } from "@/components/settings-group";
 import { AdvancedSection } from "@/components/settings/advanced-section";
 import { AgentsSettingsSection } from "@/components/settings/agents-section";
+import { SharedLinks } from "@/components/links/shared-links";
 import { CoreSettingsRow, CoreSettingsSection } from "@/components/settings/core-section";
 import { Button } from "@/components/ui/button";
 import { Shortcut } from "@/components/ui/kbd";
@@ -166,6 +167,8 @@ function CoreGeneralPage({ page }: { page: CorePage }) {
           <DriverSettingsCard />
         </Suspense>
       </SettingsGroup>
+
+      <SharedLinks />
 
       <SettingsGroup title="Keyboard shortcuts">
         {DEFAULT_KEYBINDINGS.map((b) => (

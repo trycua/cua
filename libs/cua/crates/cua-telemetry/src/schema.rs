@@ -176,6 +176,7 @@ pub const ERROR_KINDS: &[&str] = &[
     "internal",
     "ambiguous_sandbox",
     "insufficient_disk",
+    "host_capacity",
     // A Spaces-app create the app explained from the error's text: macOS
     // Local Network privacy blocked the new VM; Apple's two macOS VMs
     // were already running.
@@ -422,6 +423,19 @@ pub const CREATE_PHASES: &[&str] = &[
     "waiting_for_services",
     "connecting",
     "other",
+];
+/// The finer cause of a failed Space create, where `error_kind` alone is
+/// too coarse (`cua_create_failure::retry::Subclass`): a local runtime that
+/// did not start this time, Cua's service that did not take the create, an
+/// image download that stopped partway, macOS Local Network privacy off, a
+/// VPN routing the VM's network away. `none` when there is nothing finer.
+pub const ERROR_SUBCLASSES: &[&str] = &[
+    "none",
+    "runtime_start",
+    "daemon_unresponsive",
+    "pull_interrupted",
+    "local_network_denied",
+    "local_network_vpn",
 ];
 /// Time from create to ready (or to the failure), bucketed finely enough
 /// for median and p90 estimates.
@@ -1234,7 +1248,7 @@ pub const EVENTS: &[EventSpec] = &[
     },
     EventSpec {
         name: event::SPACE_CREATE,
-        version: 3,
+        version: 4,
         tier: Tier::Usage,
         sample_rate: 1.0,
         products: &["spaces_app"],
@@ -1260,8 +1274,18 @@ pub const EVENTS: &[EventSpec] = &[
                 "Time from pressing Create to ready, to the failure, or to the cancel finishing, bucketed.",
             ),
             p("gpu", Kind::Bool, "GPU acceleration was turned on."),
+            p(
+                "retry_attempt",
+                Kind::Count { max: 1 },
+                "1 when the app ran the create a second time by itself after a passing failure (the event is the create's final outcome, sent once), else 0.",
+            ),
+            p(
+                "error_subclass",
+                Kind::Enum(ERROR_SUBCLASSES),
+                "The finer cause of the failure (runtime_start, daemon_unresponsive, pull_interrupted, local_network_denied, local_network_vpn); on a retried create that succeeded, the cause of the failure it recovered from; none otherwise. Never the message.",
+            ),
         ],
-        purpose: "Activation and reliability: Space create success, failure and cancel rates by kind, location and GPU, time to ready or to cancel, which phase fails or is cancelled, stall timeouts.",
+        purpose: "Activation and reliability: Space create success, failure and cancel rates by kind, location and GPU, time to ready or to cancel, which phase fails or is cancelled, stall timeouts, and how often one automatic retry saves a create.",
     },
     EventSpec {
         name: event::VOLUME_SETUP,

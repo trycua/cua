@@ -124,7 +124,7 @@
     },
     "your-cloud": {
       "owner": "docs",
-      "why": "creates billable resources in the reader's own cloud account (AWS, Google Cloud, Modal); cua-byoc's hermetic tests (a scripted cloud and the fake relay) and the manual cloud conformance suite (apps/cua-spaces-macos/scripts/reliability/cloud_suite.py) cover these calls"
+      "why": "creates billable resources in the reader's own cloud account (AWS, Google Cloud, Hetzner, Modal); cua-byoc's hermetic tests (a scripted cloud and the fake relay) and the manual cloud conformance suite (apps/cua-spaces-macos/scripts/reliability/cloud_suite.py) cover these calls"
     }
   },
   "schemas": {

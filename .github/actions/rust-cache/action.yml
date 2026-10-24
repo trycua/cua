@@ -1,0 +1,118 @@
+name: "Rust build cache"
+description: >-
+  Drop-in replacement for Swatinem/rust-cache in Cua workflows.
+
+  rust-cache stores a whole target directory per job (1-3 GB each) and always
+  drops the workspace crates, so every job rebuilt them and the 10 GB Actions
+  cache budget was evicted within minutes. This action routes rustc through
+  sccache instead. sccache is content addressed: a fresh checkout still reuses
+  every unchanged crate, in every workflow and job. The cache directory is one
+  size-capped entry per OS and workspace family, restored by every run and
+  saved by main (pull requests restore main's entry; they save their own only
+  when the pr-save input is "true"). sccache runs from a local directory, not its GitHub
+  backend: that backend writes thousands of small objects and GitHub
+  rate-limits most of them (measured: 70% of writes failed), which left the
+  cache empty. When sccache cannot start, cargo simply compiles.
+
+  Do not use this action in release builds that must be reproducible from
+  scratch; those keep their own explicit cache settings.
+
+inputs:
+  workspaces:
+    description: "Cargo workspaces of the job (as for rust-cache). The first one names the cache family."
+    default: ""
+  key:
+    description: "Accepted for compatibility and ignored: Swatinem keyed one cache per job; sccache shares one directory per family."
+    default: ""
+  shared-key:
+    description: >-
+      Cache family; defaults to the first workspace. Jobs that compile
+      different unit kinds (clippy `check` units versus builds and tests) use
+      different families so the entry a run saves holds what its siblings need.
+    default: ""
+  save-if:
+    description: "Set to 'false' to restore only."
+    default: ""
+  cache-on-failure:
+    description: "Accepted for compatibility with Swatinem/rust-cache (ignored: the cache is saved only after success)."
+    default: ""
+  pr-save:
+    description: >-
+      "true" lets Linux pull request runs save their own cache entry. Off by
+      default: with the repository's 10 GB Actions cache limit every PR entry
+      evicts main's. Flip this default once the limit is raised.
+    default: "false"
+  size:
+    description: "Cap of the sccache directory."
+    default: "2G"
+
+runs:
+  using: composite
+  steps:
+    - name: Plan the cache
+      id: plan
+      shell: bash
+      env:
+        WORKSPACES: ${{ inputs.workspaces }}
+        PR_SAVE: ${{ inputs.pr-save }}
+        SHARED: ${{ inputs.shared-key }}
+        SAVE_IF: ${{ inputs.save-if }}
+        EVENT: ${{ github.event_name }}
+        REF: ${{ github.ref }}
+      run: |
+        set -eu
+        fam="$SHARED"
+        if [ -z "$fam" ]; then
+          first="$(printf '%s\n' "$WORKSPACES" | sed -n '/[^[:space:]]/{p;q;}' | sed 's/->.*//; s/[[:space:]]//g')"
+          fam="${first:-root}"
+        fi
+        fam="$(printf '%s' "$fam" | tr -c 'A-Za-z0-9\n' '-' | cut -c1-60)"
+        # main saves on every OS. Pull requests restore main's cache and save
+        # only when the pr-save input is "true" (set it
+        # once the Actions cache limit is large enough for one entry per
+        # push), and then only on Linux.
+        save=false
+        if [ "$REF" = refs/heads/main ]; then save=true
+        elif [ "$PR_SAVE" = true ] && [ "$RUNNER_OS" = Linux ]; then save=true; fi
+        [ "$SAVE_IF" = false ] && save=false
+        dir="$RUNNER_TEMP/sccache"
+        echo "family=$fam" >> "$GITHUB_OUTPUT"
+        echo "save=$save" >> "$GITHUB_OUTPUT"
+        echo "dir=$dir" >> "$GITHUB_OUTPUT"
+        echo "prefix=sccache-v1-$RUNNER_OS-$RUNNER_ARCH-$fam-" >> "$GITHUB_OUTPUT"
+    - name: Install sccache
+      uses: mozilla-actions/sccache-action@fd02668681acd5f960e1372061bee5e3e987195c # v0.0.11
+    - name: Restore the sccache directory
+      if: steps.plan.outputs.save != 'true'
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ steps.plan.outputs.dir }}
+        key: ${{ steps.plan.outputs.prefix }}${{ github.sha }}
+        restore-keys: ${{ steps.plan.outputs.prefix }}
+    - name: Restore and later save the sccache directory
+      if: steps.plan.outputs.save == 'true'
+      uses: actions/cache@v4
+      with:
+        path: ${{ steps.plan.outputs.dir }}
+        key: ${{ steps.plan.outputs.prefix }}${{ github.sha }}
+        restore-keys: ${{ steps.plan.outputs.prefix }}
+    - name: Route rustc through sccache
+      shell: bash
+      env:
+        DIR: ${{ steps.plan.outputs.dir }}
+        SIZE: ${{ inputs.size }}
+      run: |
+        mkdir -p "$DIR"
+        export SCCACHE_DIR="$DIR" SCCACHE_CACHE_SIZE="$SIZE"
+        if sccache --start-server >/dev/null 2>&1; then
+          {
+            echo "SCCACHE_DIR=$DIR"
+            echo "SCCACHE_CACHE_SIZE=$SIZE"
+            echo "RUSTC_WRAPPER=sccache"
+            # Incremental artifacts cannot be cached and bloat the target dir.
+            echo "CARGO_INCREMENTAL=0"
+          } >> "$GITHUB_ENV"
+          echo "sccache enabled, dir $DIR ($(du -sh "$DIR" | cut -f1) restored)"
+        else
+          echo "::warning::sccache did not start; compiling without it"
+        fi

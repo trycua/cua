@@ -1,0 +1,86 @@
+name: "Nightly: RL-rollout Spaces perf guard"
+
+# Headless gVisor Spaces for RL rollouts (libs/cua/bench/e2b-rollouts):
+# cold start (headless vs desktop), warm-pool claims, an idle Space's
+# cua-spacesd CPU and a rollout-shaped load, checked by check.py against
+# invariants and baseline/linux-arm64-ci.json (1.5x threshold).
+#
+#   pull_request  the checker's unit tests.
+#   nightly       the guard on an arm64 Linux runner (Docker + gVisor).
+#   dispatch      both (and a pull request labelled ci:e2b-rollouts).
+#
+# A Mac (built-in Linux runtime, Apple microVMs) has no hosted runner with
+# nested virtualization: run guard.sh there by hand; baseline/macos-*.json
+# holds a Mac's numbers.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    paths:
+      - "libs/cua/bench/e2b-rollouts/**"
+      - "libs/cua/crates/cua-sdk/examples/rollout_bench.rs"
+      - ".github/workflows/nightly-e2b-rollouts.yml"
+  schedule:
+    - cron: "41 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-e2b-rollouts-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  CARGO_TERM_COLOR: never
+  CARGO_BUILD_JOBS: "4"
+
+jobs:
+  checker:
+    name: checker unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Test check.py
+        working-directory: libs/cua/bench/e2b-rollouts
+        run: |
+          python3 -m pip install --quiet pytest
+          python3 -m pytest -q test_check.py
+
+  guard:
+    name: guard (gVisor, arm64)
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:e2b-rollouts')
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua -> target
+      - name: Install build deps and gVisor
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends protobuf-compiler libprotobuf-dev cmake nasm clang pkg-config libssl-dev libdbus-1-dev
+          scripts/images/install-gvisor.sh
+          docker info --format '{{json .Runtimes}}'
+      - name: Build cua and rollout_bench
+        working-directory: libs/cua
+        run: cargo build --release --locked -p cua-cli --bin cua -p cua-sdk --example rollout_bench
+      - name: Run the guard
+        env:
+          CUA: ${{ github.workspace }}/libs/cua/target/release/cua
+          ROLLOUT_BENCH: ${{ github.workspace }}/libs/cua/target/release/examples/rollout_bench
+          OUT: ${{ runner.temp }}/e2b-rollouts
+          BENCH_HOST: linux-arm64-ci
+          CUA_DISK_MIN_FREE: 2GiB
+        run: bash libs/cua/bench/e2b-rollouts/guard.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: e2b-rollouts-guard
+          path: ${{ runner.temp }}/e2b-rollouts

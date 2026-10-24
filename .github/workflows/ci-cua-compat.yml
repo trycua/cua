@@ -1,0 +1,133 @@
+name: "CI: cua-compat"
+
+# cua-compat runs other providers' SDKs unchanged on Cua Spaces
+# (libs/cua/crates/cua-compat, `cua compat serve`).
+#
+#   pull_request  Rust tests (wire level, mock Spaces), then the unmodified
+#                 E2B and Daytona SDKs (pinned version and latest) against
+#                 the gateway over mock Spaces, and the pinned E2B SDK's
+#                 surface against the committed snapshot.
+#   weekly        Drift: the latest E2B SDK's surface against the committed
+#                 snapshot, and, when the E2B_API_KEY secret is set, the
+#                 conformance suite against live E2B (pinned and latest)
+#                 compared with the committed fixtures. Fails loudly on any
+#                 new or changed call, return shape or error.
+#
+# Real Spaces: the same conformance suite runs through the gateway against
+# Linux vm Spaces in the nightly QEMU lane of e2e-cua-sdk.yml.
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua/crates/cua-compat/**"
+      - "libs/cua/crates/cua-cli/src/compat_cmd.rs"
+      - "libs/cua/crates/cua-spacesd-client/src/testing.rs"
+      - "tests/compat/**"
+      - ".github/workflows/ci-cua-compat.yml"
+  schedule:
+    - cron: "41 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cua-compat-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_BUILD_JOBS: "4"
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  hermetic:
+    name: hermetic (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-26]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: cua-compat
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - name: Format and clippy
+        if: runner.os == 'Linux'
+        working-directory: libs/cua
+        run: |
+          cargo fmt -p cua-compat -- --check
+          cargo clippy --locked -p cua-compat --features testing --all-targets -- -D warnings
+      - name: Rust tests (wire level, mock Spaces)
+        working-directory: libs/cua
+        run: cargo test --locked -p cua-compat --features testing
+      - name: E2B SDK (pinned and latest) over mock Spaces
+        run: tests/compat/run_hermetic.sh e2b
+      - name: Daytona SDK (pinned and latest) over mock Spaces
+        run: tests/compat/run_hermetic.sh daytona
+
+  surface:
+    name: E2B SDK surface
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - name: Pinned SDK matches its snapshot
+        run: |
+          python -m venv /tmp/pinned
+          /tmp/pinned/bin/pip install -q "e2b==$(cat tests/compat/e2b/PINNED)"
+          /tmp/pinned/bin/python tests/compat/e2b/surface.py --diff "tests/compat/e2b/fixtures/surface-$(cat tests/compat/e2b/PINNED).json"
+      - name: Latest SDK matches the newest snapshot (drift)
+        if: github.event_name != 'pull_request'
+        run: |
+          python -m venv /tmp/latest
+          /tmp/latest/bin/pip install -q -U e2b
+          newest=$(ls tests/compat/e2b/fixtures/surface-*.json | sort -V | tail -1)
+          /tmp/latest/bin/python tests/compat/e2b/surface.py --diff "$newest"
+
+  live-e2b:
+    name: live E2B conformance (drift)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - name: Pinned and latest SDK against live E2B
+        if: env.E2B_API_KEY != ''
+        run: |
+          set -e
+          pinned=$(cat tests/compat/e2b/PINNED)
+          newest=$(ls tests/compat/e2b/fixtures/e2b-*.json | sort -V | tail -1)
+          for spec in "e2b==$pinned" "e2b"; do
+            python -m venv "/tmp/v-$spec"
+            "/tmp/v-$spec/bin/pip" install -q -U "$spec"
+            "/tmp/v-$spec/bin/python" tests/compat/e2b/conformance.py > "/tmp/run-$spec.json"
+          done
+          python tests/compat/e2b/compare.py "tests/compat/e2b/fixtures/e2b-$pinned.json" "/tmp/run-e2b==$pinned.json"
+          python tests/compat/e2b/compare.py "$newest" "/tmp/run-e2b.json"
+      - name: No E2B_API_KEY secret
+        if: env.E2B_API_KEY == ''
+        run: echo "::warning::E2B_API_KEY is not set; the live E2B drift check was skipped"

@@ -252,6 +252,7 @@ describe('app core parity flows (webview)', () => {
       'checklist',
       'create-stages',
       'first-run',
+      'create-retry',
     ]);
   });
 

@@ -121,6 +121,21 @@ def local_runtime() -> Any:
     return runtime(state_dir=sandbox_state.state_dir())
 
 
+def daemon_runtime() -> Any:
+    """The running ``cua daemon`` (it keeps the pools of
+    :mod:`cua_sandbox.sandbox_pool`). It shares the state directory
+    of :func:`local_runtime`, so a Space it creates connects like any other
+    local one. Raises a clear error when no daemon runs."""
+    n = native()
+    try:
+        return n.Cua.connect(None, None)
+    except Exception as error:  # noqa: BLE001 - say what to do instead
+        raise n.CuaError.Unsupported(
+            "pools are kept by `cua daemon`: start it (`cua daemon start`) "
+            f"and try again ({error})"
+        ) from error
+
+
 def _private_state_dir() -> Path:
     """A private SDK state directory for direct URLs.
 

@@ -325,12 +325,17 @@ SKILL_PROMPT_HEADER = (
 )
 
 
-def system_prompt_for(arm: str) -> str:
+def system_prompt_for(arm: str, *, browser: bool = False) -> str:
     """The shared SYSTEM_PROMPT; for a skill-in-prompt arm, followed by its build's SKILL.md, verbatim."""
+    prompt = SYSTEM_PROMPT
+    if browser:
+        prompt = prompt.replace(
+            "Do not use the network.",
+            "Do not use the internet; the task's localhost site is allowed.",
+        )
     build = CUA_BUILDS.get(arm)
     if build is None:
-        return SYSTEM_PROMPT
-    prompt = SYSTEM_PROMPT
+        return prompt
     if build.skill_in_prompt:
         prompt += (
             SKILL_PROMPT_HEADER + (build.skills / "SKILL.md").read_text("utf-8").strip() + "\n"

@@ -34,7 +34,9 @@ use cua_sandbox_core::byoc::{CloudCredentials, CloudKind};
 use serde_json::{Value, json};
 
 use crate::api::{CloudApi, Result, Target, Tested, cloud_err};
-use crate::model::{self, Connection, ProvisionSpec, Resource, Tier};
+use crate::model::{
+    self, Billing, Capabilities, Connection, HostType, ProvisionSpec, Resource, Supplies, Tier,
+};
 
 /// The Compute Engine API root.
 pub const COMPUTE: &str = "https://compute.googleapis.com/compute/v1";
@@ -52,7 +54,7 @@ const OFFERS: &[(&str, &str, f64)] = &[
     ("linux-slim", "e2-small", 0.01675 + 0.0041 + 0.005),
 ];
 
-/// The permissions a create, stop, start and delete use.
+/// The permissions a create, stop, start, delete and boot log read use.
 pub const PERMISSIONS: &[&str] = &[
     "compute.instances.create",
     "compute.instances.delete",
@@ -62,6 +64,7 @@ pub const PERMISSIONS: &[&str] = &[
     "compute.instances.stop",
     "compute.instances.setMetadata",
     "compute.instances.setLabels",
+    "compute.instances.getSerialPortOutput",
     "compute.disks.create",
     "compute.networks.create",
     "compute.networks.get",
@@ -195,6 +198,8 @@ impl Gcp {
         what: &str,
     ) -> Result<Option<Value>> {
         let mut retried = false;
+        let mut throttled = 0;
+        let idempotent = matches!(method, reqwest::Method::GET | reqwest::Method::DELETE);
         let resp = loop {
             let token = self.token(conn).await?;
             let mut req = self.http.request(method.clone(), url).bearer_auth(token);
@@ -215,6 +220,15 @@ impl Gcp {
                 retried = true;
                 self.cache.lock().await.remove(&conn.profile);
                 continue;
+            }
+            // Rate limited or briefly unavailable: wait and ask again, a
+            // few times.
+            if crate::api::retryable_status(resp.status().as_u16(), idempotent) {
+                throttled += 1;
+                if let Some(wait) = crate::api::retry_backoff(throttled) {
+                    tokio::time::sleep(wait).await;
+                    continue;
+                }
             }
             break resp;
         };
@@ -889,6 +903,19 @@ impl CloudApi for Gcp {
         }
     }
 
+    async fn boot_log(&self, conn: &Connection, r: &Resource) -> Result<Option<String>> {
+        if r.id.is_empty() || r.resource_type == "network" {
+            return Ok(None);
+        }
+        // Port 1 is the console; Compute returns up to 1 MiB of it.
+        let url = format!("{}/serialPort?port=1", self.instance_url(conn, &r.id));
+        Ok(self
+            .get(conn, &url, "read the serial port output")
+            .await?
+            .and_then(|v| v["contents"].as_str().map(str::to_string))
+            .filter(|c| !c.trim().is_empty()))
+    }
+
     async fn stop(&self, conn: &Connection, r: &Resource, owner: &str) -> Result<()> {
         self.instance_op(conn, r, owner, "stop").await
     }
@@ -989,6 +1016,63 @@ impl CloudApi for Gcp {
             }
         }
         Ok(out)
+    }
+
+    fn capabilities(&self, conn: &Connection) -> Capabilities {
+        Capabilities {
+            supplies: Supplies::Hosts,
+            billing: Billing {
+                granularity_secs: 1,
+                minimum_secs: 60,
+                stopped_bills: false,
+            },
+            // Hosts go to the connection's zone.
+            regions: vec![if conn.zone.is_empty() {
+                conn.region.clone()
+            } else {
+                conn.zone.clone()
+            }],
+            max_machines: 20,
+            vcpu_quotas: Default::default(),
+            self_deletes: false,
+        }
+    }
+
+    async fn host_types(&self, conn: &Connection) -> Result<Vec<HostType>> {
+        let regions = self.capabilities(conn).regions;
+        // On-demand us-central1 prices (cloud.google.com/compute/vm-instance-pricing,
+        // 2026-10-21) plus a 60 GiB balanced disk ($0.10/GiB-month).
+        let disk = 60.0 * 0.10 / 730.0;
+        let table: &[(&str, &str, u32, u64, f64)] = &[
+            ("e2-standard-2", "amd64", 2, 8, 0.067),
+            ("e2-standard-4", "amd64", 4, 16, 0.134),
+            ("e2-standard-8", "amd64", 8, 32, 0.268),
+            ("t2a-standard-2", "arm64", 2, 8, 0.077),
+            ("t2a-standard-4", "arm64", 4, 16, 0.154),
+            ("t2a-standard-8", "arm64", 8, 32, 0.308),
+        ];
+        let mut v: Vec<HostType> = table
+            .iter()
+            .map(|(name, arch, cpus, gb, usd)| HostType {
+                name: (*name).into(),
+                arch: (*arch).into(),
+                vcpus: *cpus,
+                memory_mb: gb * 1024,
+                disk_gb: 60,
+                kvm: false,
+                gpu: String::new(),
+                usd_per_hour: ((usd + disk) * 10_000.0).round() / 10_000.0,
+                regions: regions.clone(),
+                boot_secs: 90,
+                quota_pool: "cpus".into(),
+            })
+            .collect();
+        v.sort_by(|a, b| {
+            a.usd_per_hour
+                .total_cmp(&b.usd_per_hour)
+                .then(a.name.cmp(&b.name))
+        });
+        Ok(v)
     }
 }
 

@@ -2,13 +2,14 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 //! Your own cloud account as a sandbox location: `--on aws`, `gcp`,
-//! `modal` for sandboxes (the SDK, `cua sb`, cua-bench) and, on top, for
+//! `modal`, `hetzner` for sandboxes (the SDK, `cua sb`, cua-bench) and, on top, for
 //! Spaces.
 //!
 //! | Provider | How a sandbox runs | Credentials |
 //! |---|---|---|
 //! | `aws` (EC2) | one small VM per sandbox; Docker runs the image | the AWS CLI's profiles, SSO, assume-role |
 //! | `gcp` (Compute Engine) | the same | the gcloud CLI's sign-in |
+//! | `hetzner` (Cloud) | one small server per sandbox; Docker runs the image (containers only: no `/dev/kvm`) | a project API token in the Cua credential store |
 //! | `modal` (Sandboxes) | one Modal sandbox (gVisor, or Modal's VM runtime) | `~/.modal.toml` profiles |
 //!
 //! Every cloud sandbox's cua-spacesd dials out to the cua.ai relay as a
@@ -28,15 +29,24 @@ use std::path::Path;
 use std::sync::Arc;
 
 pub mod api;
+pub mod audit;
+pub mod autosweep;
 #[cfg(feature = "aws")]
 pub mod aws;
+pub mod bootlog;
 pub mod bootstrap;
+#[cfg(any(test, feature = "testing"))]
+pub mod conformance;
 #[cfg(feature = "gcp")]
 pub mod gcp;
+#[cfg(feature = "hetzner")]
+pub mod hetzner;
+pub mod hosts;
 pub mod manager;
 #[cfg(feature = "modal")]
 pub mod modal;
 pub mod model;
+pub mod policy;
 pub mod provider;
 pub mod relay;
 pub mod state;
@@ -46,7 +56,9 @@ pub mod testing;
 
 pub use api::{CloudApi, Result, Target, Tested};
 pub use manager::Clouds;
-pub use model::{Connection, ProvisionSpec, Resource, Tier};
+pub use model::{
+    Billing, Capabilities, Connection, HostType, ProvisionSpec, Resource, Supplies, Tier,
+};
 pub use provider::CloudSandboxes;
 pub use relay::{Join, RelayAccess};
 pub use state::Store;
@@ -62,6 +74,8 @@ pub fn builtin_apis() -> Vec<Arc<dyn CloudApi>> {
     v.push(Arc::new(modal::ModalApi::from_env()));
     #[cfg(feature = "gcp")]
     v.push(Arc::new(gcp::Gcp::new()));
+    #[cfg(feature = "hetzner")]
+    v.push(Arc::new(hetzner::Hetzner::new()));
     v
 }
 
@@ -112,10 +126,7 @@ pub fn install_with(
                 cua_sandbox_core::placement::Capabilities {
                     name: a.name().into(),
                     description: format!("your {} account", a.title()),
-                    kinds: vec![cua_sandbox_core::placement::KindSupport {
-                        kind: cua_sandbox_core::placement::Kind::Container,
-                        runtimes,
-                    }],
+                    kinds: cloud_kinds(runtimes),
                 },
             );
         }
@@ -125,4 +136,30 @@ pub fn install_with(
         builder = builder.provider(p);
     }
     builder.clouds(manager)
+}
+
+/// A cloud's engines by kind: a microVM engine (Modal's VM runtime, wire
+/// word `microvm`, or Firecracker) runs `--kind microvm`; the rest run
+/// containers.
+pub fn cloud_kinds(
+    runtimes: Vec<cua_sandbox_core::placement::Runtime>,
+) -> Vec<cua_sandbox_core::placement::KindSupport> {
+    use cua_sandbox_core::placement::{Kind, KindSupport, Runtime};
+    let (micro, containers): (Vec<Runtime>, Vec<Runtime>) = runtimes
+        .into_iter()
+        .partition(|r| r.as_str() == "microvm" || *r == Runtime::Firecracker);
+    let mut kinds = Vec::new();
+    if !containers.is_empty() {
+        kinds.push(KindSupport {
+            kind: Kind::Container,
+            runtimes: containers,
+        });
+    }
+    if !micro.is_empty() {
+        kinds.push(KindSupport {
+            kind: Kind::MicroVm,
+            runtimes: micro,
+        });
+    }
+    kinds
 }

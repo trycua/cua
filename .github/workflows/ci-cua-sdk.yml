@@ -12,9 +12,11 @@ on:
   pull_request:
     paths:
       - "libs/cua/**"
+      - "libs/python/cua-e2b/**"
       - "libs/spaces-sdk-swift/**"
       - "libs/cua-spacesd/tests/spaces-e2e/**"
       - ".github/workflows/ci-cua-sdk.yml"
+      - ".github/actions/linux-rust-prep/**"
   push:
     branches: [main]
     paths:
@@ -24,6 +26,7 @@ on:
       - "libs/cua-spacesd/**"
       - "libs/cua-driver/rust/**"
       - ".github/workflows/ci-cua-sdk.yml"
+      - ".github/actions/linux-rust-prep/**"
   schedule:
     - cron: "41 18 * * *"
   workflow_dispatch:
@@ -46,21 +49,29 @@ env:
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
   CARGO_TERM_COLOR: always
-  # Big debug test binaries (Spaces, conformance) exhaust link memory with
-  # full debug info; line tables keep backtraces useful.
-  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  # CI checks behavior, not speed: a cheaper release profile compiles about a
+  # quarter faster and the dev profile drops debug info (the line-table
+  # test binaries filled the runner's disk). Release builds in cd-*.yml keep
+  # the shipped profile.
+  CARGO_PROFILE_RELEASE_OPT_LEVEL: "1"
+  CARGO_PROFILE_RELEASE_DEBUG: "0"
+  CARGO_PROFILE_RELEASE_LTO: "off"
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+  CARGO_PROFILE_DEV_DEBUG: "0"
   CARGO_BUILD_JOBS: "4"
 
 jobs:
-  rust:
+  rust-lint:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
-    name: rust (${{ matrix.os }})
+    name: rust lint (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    # Windows clippy runs on every pull request: Windows-only compile errors
+    # used to surface only on release PRs.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON((github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-please--') || contains(github.event.pull_request.labels.*.name, 'ci:full')) && '["ubuntu-latest","macos-26","windows-latest"]' || '["ubuntu-latest"]') }}
+        os: ${{ fromJSON((github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-please--') || contains(github.event.pull_request.labels.*.name, 'ci:full')) && '["ubuntu-latest","macos-26","windows-latest"]' || '["ubuntu-latest","windows-latest"]') }}
     defaults:
       run:
         working-directory: libs/cua
@@ -75,54 +86,36 @@ jobs:
         with:
           components: clippy, rustfmt
           targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
-          key: cua-sdk
+          shared-key: libs-cua-lint
       - name: Format
         if: runner.os == 'Linux'
-        run: cargo fmt -p cua-sdk -p cua-daemon -p cua-cli -p cua-bindgen -p cua-spacesd-client -p cua-media-protocol -p cua-media-transport -p cua-media-codec -p cua-media-client -p cua-viewer -p cua-logging -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli -- --check
+        run: cargo fmt -p cua-sdk -p cua-daemon -p cua-cli -p cua-cluster -p cua-spaces-cluster -p cua-bindgen -p cua-spacesd-client -p cua-media-protocol -p cua-media-transport -p cua-media-codec -p cua-media-client -p cua-viewer -p cua-logging -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli -- --check
       - name: Clippy (native)
         run: >
           cargo clippy --locked -p cua-sdk -p cua-daemon -p cua-cli -p cua-bindgen -p cua-spacesd-client
+          -p cua-cluster -p cua-spaces-cluster
           -p cua-media-protocol -p cua-media-transport -p cua-media-client -p cua-viewer -p cua-logging
           -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-volume
           -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli
-          --all-targets --features cua-daemon/test-fixtures,cua-media-client/media-decode -- -D warnings
+          --all-targets --features cua-daemon/test-fixtures,cua-media-client/media-decode,cua-spaces-cli/contrib-modal -- -D warnings
       - name: Clippy (browser API, host metadata build)
         if: runner.os == 'Linux'
         run: cargo clippy --locked -p cua-sdk --no-default-features --features web -- -D warnings
       - name: Build (wasm32)
         if: runner.os == 'Linux'
         run: cargo build --locked -p cua-sdk --target wasm32-unknown-unknown --no-default-features
-      - name: Test Spaces discovery and post-create directory failures
-        run: cargo test --locked -p cua-spaces --test relay --test cloud_discovery -- --test-threads=4
-      - name: Test (embedded, daemon over UDS and loopback, CLI, Cua Spaces extensions)
-        run: >
-          cargo test --locked --no-fail-fast -p cua-sdk -p cua-daemon -p cua-cli -p cua-spacesd-client
-          -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-volume
-          -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli -- --test-threads=4
-        env:
-          # Teleport send acts only on fake hosts in tests; anything that
-          # reaches the real host fails closed.
-          CUA_ENV_TEST_SANDBOX: "1"
-          # Test threads get 8 MiB, like the CLI's runtime: unoptimized
-          # Windows frames are large and the CLI tests drive whole commands.
-          RUST_MIN_STACK: "8388608"
-      - name: Test (shared media crates and clients)
-        run: >
-          cargo test --locked --no-fail-fast -p cua-media-protocol -p cua-media-transport -p cua-media-client -p cua-viewer -p cua-logging
-          --features cua-media-client/media-decode,cua-media-transport/quic -- --test-threads=4
       # cua-media-codec's ScreenCaptureKit audio needs the macOS 26 SDK (the
-      # spacesd CI builds it on macos-26); test the rest here.
-      - name: Clippy and test (cua-media-codec)
+      # spacesd CI builds it on macos-26); lint the rest here.
+      - name: Clippy (cua-media-codec)
         run: |
           features=()
           if [ "$RUNNER_OS" = "macOS" ]; then
             features=(--no-default-features --features "openh264,opus,hw")
           fi
           cargo clippy --locked -p cua-media-codec "${features[@]}" --all-targets -- -D warnings
-          cargo test --locked --no-fail-fast -p cua-media-codec "${features[@]}" -- --test-threads=4
       # The streaming bench (libs/cua/bench/streaming, its own workspace) is
       # otherwise built only by the nightly bench; lint it with the SDK.
       - name: Format and clippy (streaming bench)
@@ -147,6 +140,67 @@ jobs:
             exit 1
           fi
 
+  rust:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    name: rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # Tests only: lint runs in rust-lint, in parallel.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON((github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-please--') || contains(github.event.pull_request.labels.*.name, 'ci:full')) && '["ubuntu-latest","macos-26","windows-latest"]' || '["ubuntu-latest"]') }}
+    defaults:
+      run:
+        working-directory: libs/cua
+        shell: bash
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      # Its debug test binaries outgrow the default cleanup's 43 GB.
+      - uses: ./.github/actions/linux-rust-prep
+        with:
+          free-more: "true"
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: clippy, rustfmt
+          targets: wasm32-unknown-unknown
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: libs/cua
+          shared-key: libs-cua-test
+      - name: Test Spaces discovery and post-create directory failures
+        run: cargo test --locked -p cua-spaces --test relay --test cloud_discovery -- --test-threads=4
+      - name: Test (embedded, daemon over UDS and loopback, CLI, cluster, Cua Spaces extensions)
+        run: >
+          cargo test --locked --no-fail-fast -p cua-sdk -p cua-daemon -p cua-cli -p cua-spacesd-client
+          -p cua-cluster -p cua-spaces-cluster
+          -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-volume
+          -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli -- --test-threads=4
+        env:
+          # Teleport send acts only on fake hosts in tests; anything that
+          # reaches the real host fails closed.
+          CUA_ENV_TEST_SANDBOX: "1"
+          # Test threads get 8 MiB, like the CLI's runtime: unoptimized
+          # Windows frames are large and the CLI tests drive whole commands.
+          RUST_MIN_STACK: "8388608"
+      - name: Test (shared media crates and clients)
+        run: >
+          cargo test --locked --no-fail-fast -p cua-media-protocol -p cua-media-transport -p cua-media-client -p cua-viewer -p cua-logging
+          --features cua-media-client/media-decode,cua-media-transport/quic -- --test-threads=4
+      - name: Test (cua-media-codec)
+        run: |
+          features=()
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            features=(--no-default-features --features "openh264,opus,hw")
+          fi
+          cargo test --locked --no-fail-fast -p cua-media-codec "${features[@]}" -- --test-threads=4
+      - name: Disk left after the build
+        if: always() && runner.os == 'Linux'
+        run: df -h / && du -sh target
+
   # What a release publishes to crates.io (cd-cua-sdk.yml): cua-sdk,
   # cua-spacesd-client and every workspace crate they need, packaged and
   # built from their .crate files the way crates.io users get them, with no
@@ -163,9 +217,10 @@ jobs:
       - uses: ./.github/actions/linux-rust-prep
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
+          shared-key: libs-cua-crates-dry-run
       - name: cargo publish --dry-run
         run: |
           if command -v protoc; then echo "protoc must not be installed here" >&2; exit 1; fi
@@ -195,7 +250,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua-spacesd/tests/spaces-e2e
           key: cua-spaces-e2e
@@ -208,6 +263,10 @@ jobs:
         run: cargo test --locked -- --test-threads=4
         env:
           CUA_ENV_TEST_SANDBOX: "1"
+          # The in-process daemon tests drive whole Spaces calls on the test
+          # thread; their unoptimized futures outgrow the 2 MiB default on
+          # Linux (sdk_spaces overflowed it). Same as the SDK job above.
+          RUST_MIN_STACK: "8388608"
 
   bindings:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
@@ -224,7 +283,7 @@ jobs:
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
           key: cua-sdk-bindings
@@ -257,10 +316,102 @@ jobs:
       - name: Compile the generated Kotlin binding
         run: gradle --no-daemon -p libs/cua/kotlin compileKotlin
 
+  # The Linux smoke jobs share three builds made once per run, in parallel on
+  # separate runners (python smoke, node smoke and browser smoke each used to
+  # compile all of them: 45-55 minutes cold on a 2-vCPU runner). macOS and
+  # Windows legs (ci:full) still build their own.
+  build-sdk:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    name: build SDK (linux, release)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+        working-directory: libs/cua
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: libs/cua
+          shared-key: libs-cua-build-sdk
+      - name: Build
+        run: cargo build --locked --release -p cua-sdk
+      - run: tar -C target -cf "$RUNNER_TEMP/sdk-linux.tar" release/libcua_sdk.so
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdk-linux
+          path: ${{ runner.temp }}/sdk-linux.tar
+          retention-days: 1
+          compression-level: 1
+
+  build-fixtures:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    name: build test fixtures (linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+        working-directory: libs/cua
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: libs/cua
+          shared-key: libs-cua-build-fixtures
+      - name: Build
+        run: scripts/build-test-fixtures.sh
+      - run: tar -C target -cf "$RUNNER_TEMP/fixtures-linux.tar" debug/cua-test-fixtures
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fixtures-linux
+          path: ${{ runner.temp }}/fixtures-linux.tar
+          retention-days: 1
+          compression-level: 1
+
+  build-cli:
+    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    name: build cua and cua-spaces CLIs (linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+        working-directory: libs/cua
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: libs/cua
+          shared-key: libs-cua-build-cli
+      - name: Build
+        run: cargo build --locked -p cua-cli -p cua-spaces-cli
+      - run: tar -C target -cf "$RUNNER_TEMP/cli-linux.tar" debug/cua debug/cua-spaces-cli
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-linux
+          path: ${{ runner.temp }}/cli-linux.tar
+          retention-days: 1
+          compression-level: 1
+
   python:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: python smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    needs: [build-sdk, build-fixtures, build-cli]
     # A cold Windows run builds cua-sdk (release), the fixtures and the CLI:
     # it passed 45 minutes still compiling.
     timeout-minutes: 90
@@ -274,10 +425,26 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: ./.github/actions/linux-rust-prep
+      - name: Fetch the shared Linux builds
+        if: runner.os == 'Linux'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '*-linux'
+          path: ${{ runner.temp }}/sdk
+      - name: Unpack the shared Linux build
+        if: runner.os == 'Linux'
+        working-directory: libs/cua
+        run: |
+          mkdir -p target
+          for t in "$RUNNER_TEMP"/sdk/*/*.tar; do tar -C target -xf "$t"; done
+          chmod +x target/debug/cua target/debug/cua-spaces-cli target/debug/cua-test-fixtures
       - name: Install protoc
+        if: runner.os != 'Linux'
         uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        if: runner.os != 'Linux'
+      - uses: ./.github/actions/rust-cache
+        if: runner.os != 'Linux'
         with:
           workspaces: libs/cua
           key: cua-sdk-python
@@ -285,26 +452,39 @@ jobs:
       # The wheel ships the MIT `cua`; the suite also runs the daemon of the
       # Cua Spaces build (cua-spaces-cli), a Unix-socket test skipped on Windows.
       - name: Build the SDK, fixtures and CLIs
+        if: runner.os != 'Linux'
         working-directory: libs/cua
         run: |
           cargo build --locked --release -p cua-sdk
           scripts/build-test-fixtures.sh
           cargo build --locked -p cua-cli
           if [ "$RUNNER_OS" != Windows ]; then cargo build --locked -p cua-spaces-cli; fi
-          node scripts/stage-uniffi-library.mjs --only=python
+      - name: Stage the SDK library
+        working-directory: libs/cua
+        run: node scripts/stage-uniffi-library.mjs --only=python
       - name: Build the platform wheel
         working-directory: libs/cua/python
-        run: uv run --no-project --python 3.12 --with build python build_wheel.py --cli ../target/debug/cua --out-dir dist
+        run: uv run --no-project --python 3.12 --with build python build_wheel.py --cli ../target/debug/cua --no-spacesd --out-dir dist
       - name: Smoke-test the installed wheel
         working-directory: libs/cua/python
         run: |
           WHEEL=$(ls dist/*.whl)
           uv run --no-project --isolated --python 3.12 --with pytest --with "$WHEEL" pytest -q -p no:cacheprovider tests
+      # cua-e2b (the e2b-compatible module) through this wheel against the
+      # fixture's cua-spacesd, compared with the e2b 2.42 behaviour golden.
+      - name: cua-e2b conformance against cua-spacesd
+        if: runner.os == 'Linux'
+        working-directory: libs/python/cua-e2b
+        run: |
+          WHEEL=$(ls ../../cua/python/dist/*.whl)
+          uv run --no-project --isolated --python 3.12 --with pytest --with pytest-asyncio \
+            --with "$WHEEL" --with-editable . pytest -q -p no:cacheprovider tests/test_conformance.py
 
   node:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: node smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    needs: [build-sdk, build-fixtures, build-cli]
     # A cold macOS run (release cua-sdk, fixtures, both CLIs) passed 45
     # minutes still compiling, as python smoke did on Windows.
     timeout-minutes: 90
@@ -321,7 +501,7 @@ jobs:
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
           key: cua-sdk-node
@@ -330,20 +510,42 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: libs/cua/typescript/package-lock.json
-      - name: Build and stage
+      - name: Fetch the shared Linux builds
+        if: runner.os == 'Linux'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '*-linux'
+          path: ${{ runner.temp }}/sdk
+      - name: Unpack the shared Linux build
+        if: runner.os == 'Linux'
         run: |
-          npm --prefix typescript ci --ignore-scripts
+          mkdir -p target
+          for t in "$RUNNER_TEMP"/sdk/*/*.tar; do tar -C target -xf "$t"; done
+          chmod +x target/debug/cua target/debug/cua-spaces-cli target/debug/cua-test-fixtures
+      - name: Build (macOS; Linux uses the shared build)
+        if: runner.os != 'Linux'
+        run: |
           cargo build --locked --release -p cua-sdk
           scripts/build-test-fixtures.sh
           cargo build --locked -p cua-cli -p cua-spaces-cli
+      - name: Stage
+        run: |
+          npm --prefix typescript ci --ignore-scripts
           node scripts/stage-uniffi-library.mjs --only=node
       - name: Test
         run: npm --prefix typescript test
+      # @trycua/pi-durable (Pi Durable on Spaces): unit tests; its Space,
+      # conformance and crash-injection suites are opt-in (Docker).
+      - name: Test pi-durable integration
+        run: |
+          npm --prefix typescript/integrations/pi-durable ci --ignore-scripts
+          npm --prefix typescript/integrations/pi-durable test
 
   browser:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
     name: browser (wasm32) build + smoke
     runs-on: ubuntu-latest
+    needs: build-fixtures
     timeout-minutes: 45
     defaults:
       run:
@@ -356,7 +558,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.97.1
         with:
           targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
           key: cua-sdk-browser
@@ -365,15 +567,21 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: libs/cua/typescript/package-lock.json
-      - name: Install wasm-bindgen 0.2.126 and UBRN
-        run: |
-          cargo install wasm-bindgen-cli --version 0.2.126 --locked
-          npm --prefix typescript ci --ignore-scripts
+      - uses: ./.github/actions/wasm-bindgen
+      - name: Install UBRN
+        run: npm --prefix typescript ci --ignore-scripts
       - name: Build @trycua/cua/browser
         run: node scripts/build-wasm.mjs
+      - name: Fetch the shared fixture server
+        uses: actions/download-artifact@v4
+        with:
+          name: fixtures-linux
+          path: ${{ runner.temp }}/sdk
       - name: Smoke-test the wasm build over gRPC-Web
         run: |
-          scripts/build-test-fixtures.sh
+          mkdir -p target
+          tar -C target -xf "$RUNNER_TEMP/sdk/fixtures-linux.tar"
+          chmod +x target/debug/cua-test-fixtures
           cd typescript && node --test test/browser.test.mjs
 
   swift:
@@ -390,7 +598,7 @@ jobs:
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@1.97.1
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua
           key: cua-sdk-swift

@@ -212,6 +212,10 @@ pub struct RelayCaller {
     /// for the call carry it, so the relay can refuse one that predates a
     /// revoke of this account.
     pub issued_at: u64,
+    /// Teams (or organizations) the relay admitted the account through;
+    /// empty for the owner and a direct share. Share links to a team check
+    /// these.
+    pub teams: Vec<String>,
 }
 
 /// The only calls a relayed caller may make on a machine that does not
@@ -226,7 +230,24 @@ pub const HOST_ONLY_GRPC_METHODS: &[&str] = &[
     "/cua.env.v1.HostSpacesService/DeleteHostSpace",
     "/cua.env.v1.HostSpacesService/CancelHostSpace",
     "/cua.env.v1.HostSpacesService/SetHostSpacePower",
+    "/cua.env.v1.HostSpacesService/SetHostWarm",
     "/cua.env.v1.HostSpacesService/DeleteCloudSpace",
+    "/cua.env.v1.HostSpacesService/SetHostSpaceEgress",
+    "/cua.env.v1.HostJobsService/RunHostJobs",
+    "/cua.env.v1.HostJobsService/GetHostJob",
+    "/cua.env.v1.HostJobsService/ListHostJobs",
+    "/cua.env.v1.HostJobsService/CancelHostJob",
+    "/cua.env.v1.HostSnapshotsService/ListHostSnapshots",
+    "/cua.env.v1.HostSnapshotsService/ExportHostSnapshot",
+    "/cua.env.v1.HostSnapshotsService/PullHostSnapshot",
+    "/cua.env.v1.HostSnapshotsService/PublishHostSnapshot",
+    // A Space this host provides routed (reached through the host, with no
+    // relay machine of its own): the forward is checked to be to that
+    // Space's loopback port ([`crate::host_spaces::routed_port_allowed`]).
+    "/cua.env.v1.TunnelService/Forward",
+    "/cua.env.v1.TunnelService/CloseForward",
+    "/cua.env.v1.HostSnapshotsService/CreateHostSnapshot",
+    "/cua.env.v1.HostSnapshotsService/DeleteHostSnapshot",
     "/cua.env.v1.HostSpacesService/DiagnoseHost",
 ];
 
@@ -281,12 +302,23 @@ pub trait ExternalAuthenticator: Send + Sync {
     /// token). `Some(Ok(grant))`: authorized as `grant.principal`, view-only
     /// when `grant.view_only`. `Some(Err(reason))`: presented but refused.
     fn authenticate(&self, headers: &http::HeaderMap) -> Option<Result<ExternalGrant, String>>;
+
+    /// The cua daemon's share gateway socket while the host policy turns
+    /// shares on (`/share/*`), else `None`. `Err` when the policy cannot be
+    /// read or the machine stopped sharing (fail closed).
+    fn share_gateway(&self) -> Result<Option<std::path::PathBuf>, String> {
+        Ok(None)
+    }
 }
 
 /// Holds the root token and derives every HMAC key.
 pub struct Auth {
     token: RwLock<Option<Arc<str>>>,
-    boot_secret: [u8; 32],
+    /// Keys tickets while no token is configured. From the OS randomness;
+    /// replaced by [`Auth::renew_boot_secret`] when the guest becomes a new
+    /// machine (a memory snapshot would otherwise share it with every
+    /// clone).
+    boot_secret: RwLock<[u8; 32]>,
     external: RwLock<Option<Arc<dyn ExternalAuthenticator>>>,
     access_log: RwLock<Option<Arc<crate::access_log::AccessLog>>>,
 }
@@ -294,15 +326,19 @@ pub struct Auth {
 impl Auth {
     /// Creates the store with an optional initial token (empty → none).
     pub fn new(token: Option<String>) -> Self {
-        use rand::RngCore as _;
-        let mut boot_secret = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut boot_secret);
         Self {
             token: RwLock::new(token.filter(|t| !t.is_empty()).map(Arc::from)),
-            boot_secret,
+            boot_secret: RwLock::new(crate::identity::fresh_secret(b"boot-secret", &[])),
             external: RwLock::new(None),
             access_log: RwLock::new(None),
         }
+    }
+
+    /// Replaces the per-boot ticket secret (this guest became a new
+    /// machine). Tickets minted without a token stop validating.
+    pub fn renew_boot_secret(&self, extra: &[u8]) {
+        *self.boot_secret.write().expect("boot secret lock") =
+            crate::identity::fresh_secret(b"boot-secret", extra);
     }
 
     /// Records every authorized remote access in `log` from now on.
@@ -353,11 +389,13 @@ impl Auth {
     pub fn record_headers(&self, headers: &http::HeaderMap, what: &str) {
         match self.authenticate_external(headers) {
             Some(Ok(g)) if g.view_only => self.record_access(
-                "relay",
+                via_of(&g.principal),
                 &principal_label(&g.principal),
                 &format!("refused {what} (view-only share)"),
             ),
-            Some(Ok(g)) => self.record_access("relay", &principal_label(&g.principal), what),
+            Some(Ok(g)) => {
+                self.record_access(via_of(&g.principal), &principal_label(&g.principal), what)
+            }
             Some(Err(_)) => {}
             None if self.has_token() => {
                 self.record_access("token", &token_label(principal_from_headers(headers)), what)
@@ -374,6 +412,15 @@ impl Auth {
     /// Removes the external authenticator (a relay was detached).
     pub fn clear_external(&self) {
         *self.external.write().expect("external lock") = None;
+    }
+
+    /// The share gateway socket the external authenticator's host policy
+    /// names (`shares` on), if any.
+    pub fn share_gateway(&self) -> Result<Option<std::path::PathBuf>, String> {
+        match self.external.read().expect("external lock").clone() {
+            Some(external) => external.share_gateway(),
+            None => Ok(None),
+        }
     }
 
     /// Runs the external authenticator, if any.
@@ -471,9 +518,13 @@ impl Auth {
     /// Derives a purpose-specific HMAC key from the token (or boot secret).
     pub fn derive_key(&self, purpose: &str) -> [u8; 32] {
         let token = self.token();
+        let boot_secret;
         let base: &[u8] = match &token {
             Some(token) => token.as_bytes(),
-            None => &self.boot_secret,
+            None => {
+                boot_secret = *self.boot_secret.read().expect("boot secret lock");
+                &boot_secret
+            }
         };
         let mut mac = HmacSha256::new_from_slice(base).expect("hmac accepts any key");
         mac.update(b"cua-spacesd/");
@@ -672,6 +723,16 @@ pub fn encode_principal(principal: &Principal) -> String {
 }
 
 /// `name (id)` of a verified principal, or the id alone.
+/// Who vouched for an external grant, for the access log: the host's tailnet
+/// (`tailnet:` principals) or the relay (an assertion, also over the mesh).
+pub fn via_of(p: &Principal) -> &'static str {
+    if p.id.starts_with("tailnet:") {
+        "tailnet"
+    } else {
+        "relay"
+    }
+}
+
 pub fn principal_label(p: &Principal) -> String {
     if p.display_name.is_empty() || p.display_name == p.id {
         p.id.clone()
@@ -755,6 +816,8 @@ pub const BACKGROUND_GRPC_METHODS: &[&str] = &[
     "/cua.env.v1.StreamService/ListTargets",
     "/cua.env.v1.ComputerService/ListDisplays",
     "/cua.env.v1.HostSpacesService/GetHostSpaces",
+    "/cua.env.v1.HostJobsService/ListHostJobs",
+    "/cua.env.v1.HostJobsService/GetHostJob",
     "/cua.env.v1.TunnelService/ListForwards",
     "/cua.env.v1.TunnelService/GetHotspotStatus",
     "/cua.env.v1.VolumeService/GetVolumeStatus",
@@ -945,7 +1008,7 @@ where
                     let who = principal_label(&grant.principal);
                     if !SHARED_VIEWER_GRPC_METHODS.contains(&path.as_str()) {
                         self.auth.record_access(
-                            "relay",
+                            via_of(&grant.principal),
                             &who,
                             &format!("refused {} (view-only share)", grpc_service(&path)),
                         );
@@ -960,7 +1023,7 @@ where
                     }
                     if grant.host_only && !HOST_ONLY_GRPC_METHODS.contains(&path.as_str()) {
                         self.auth.record_access(
-                            "relay",
+                            via_of(&grant.principal),
                             &who,
                             &format!("refused {} (desktop not shared)", grpc_service(&path)),
                         );
@@ -976,8 +1039,13 @@ where
                         .into_http::<R>();
                         return Box::pin(async move { Ok(response) });
                     }
-                    self.auth
-                        .record_call(req.extensions_mut(), "relay", &who, &path, false);
+                    self.auth.record_call(
+                        req.extensions_mut(),
+                        via_of(&grant.principal),
+                        &who,
+                        &path,
+                        false,
+                    );
                     let viewer = Arc::new(grant.viewer_grant());
                     req.extensions_mut().insert(CallerIdentity {
                         principal: Some(grant.principal),
@@ -996,7 +1064,7 @@ where
                     if grant.host_only && !HOST_ONLY_GRPC_METHODS.contains(&path.as_str()) {
                         let who = principal_label(&grant.principal);
                         self.auth.record_access(
-                            "relay",
+                            via_of(&grant.principal),
                             &who,
                             &format!("refused {} (desktop not shared)", grpc_service(&path)),
                         );
@@ -1024,7 +1092,7 @@ where
                     };
                     self.auth.record_call(
                         req.extensions_mut(),
-                        "relay",
+                        via_of(&grant.principal),
                         &format!("{}{session}", principal_label(&grant.principal)),
                         &path,
                         owner,

@@ -1371,6 +1371,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn mounted_volumes_appear_in_the_view_and_read_only_ones_refuse_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = Drive::new(
+            Arc::new(FsBackend::new(dir.path().join("data"))),
+            dir.path().join("state"),
+        );
+        let user = d.session(Context::user());
+        for k in [
+            "volumes/rw/a.txt",
+            "volumes/ro/b.txt",
+            "volumes/hidden/c.txt",
+        ] {
+            user.write(k, b"x".to_vec(), crate::Condition::None)
+                .await
+                .unwrap();
+        }
+        let ctx = Context::space("local:lab").with_mounts(vec![
+            crate::acl::MountAccess {
+                prefix: "volumes/rw/".into(),
+                mode: Mode::ReadWrite,
+            },
+            crate::acl::MountAccess {
+                prefix: "volumes/ro/".into(),
+                mode: Mode::Read,
+            },
+        ]);
+        let v = Vfs::new(&d, ctx, None, None, &dir.path().join("m")).unwrap();
+        let list = |ino| {
+            let v = v.clone();
+            async move {
+                v.readdir(ino)
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .map(|(n, _)| n)
+                    .collect::<Vec<_>>()
+            }
+        };
+        assert_eq!(list(ROOT).await, ["public", "spaces", "volumes"]);
+        let vols = find(&v, "volumes").await.unwrap();
+        assert_eq!(list(vols.ino).await, ["ro", "rw"]);
+        assert!(find(&v, "volumes/hidden").await.is_err());
+        let rw = find(&v, "volumes/rw").await.unwrap();
+        let n = v.create(rw.ino, "new.txt").await.unwrap();
+        v.write(n.ino, 0, b"hi").await.unwrap();
+        v.flush("volumes/rw/new.txt").await.unwrap();
+        assert_eq!(
+            user.read("volumes/rw/new.txt", None).await.unwrap().0,
+            b"hi"
+        );
+        let ro = find(&v, "volumes/ro").await.unwrap();
+        assert!(v.create(ro.ino, "no.txt").await.is_err());
+        let b = find(&v, "volumes/ro/b.txt").await.unwrap();
+        assert_eq!(v.read(b.ino, 0, 10).await.unwrap().0, b"x");
+        assert!(v.write(b.ino, 0, b"y").await.is_err());
+    }
+
+    #[tokio::test]
     async fn files_round_trip_through_the_filesystem() {
         let dir = tempfile::tempdir().unwrap();
         let (d, _f, v) = home(dir.path(), "a", &dir.path().join("data"));

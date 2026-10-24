@@ -1,0 +1,527 @@
+---
+title: Durable agents with Pi Durable
+description: 'Run Pi Durable tools in a Cua Space and keep the sandbox consistent with the conversation log across crashes: idempotent commands, fencing, and checkpoint-based recovery.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+[Pi Durable](https://github.com/earendil-works/pi/tree/main/packages/durable)
+records every step of an agent in a durable log, so a crashed worker resumes
+where it stopped. The log is only half of the state, though: the tools change
+files and processes in a sandbox, and a crash between a tool's start and its
+committed result leaves the sandbox in an unknown state. On its own, Pi then
+reports the call as `interrupted` and the sandbox keeps whatever the crash
+left behind.
+
+`@trycua/pi-durable` (MIT, in `libs/cua/typescript/integrations/pi-durable`)
+runs Pi Durable's tools in a Space and closes that gap.
+
+## Set it up
+
+```ts skip="no-runner"
+import { embedded, SandboxCreateOptions } from "@trycua/cua"
+import { createRegistry, Harness } from "@earendil-works/pi-durable"
+import { CodingTools } from "@earendil-works/pi-durable/tools"
+import {
+  CuaSandboxSpaces,
+  DirectoryCheckpointStore,
+  durableSpaces,
+  WorkspaceSnapshots,
+} from "@trycua/pi-durable"
+
+const spaces = new CuaSandboxSpaces({
+  sandboxes: embedded().sandboxes(),
+  createOptions: (name) => SandboxCreateOptions.create({ image: "linux", name }),
+})
+const durable = durableSpaces({
+  spaces,
+  snapshots: new WorkspaceSnapshots({
+    spaces,
+    root: "/home/cua/work",
+    // Optional: a copy of every checkpoint outside the Space, so a lost Space
+    // is rebuilt from its newest checkpoint, on this machine or another.
+    store: new DirectoryCheckpointStore("/srv/agent-checkpoints"),
+  }),
+  cwd: "/home/cua/work",
+})
+
+const registry = createRegistry()
+registry.install(CodingTools)
+registry.install(durable.extension) // wraps bash, write and edit
+const harness = await Harness.open(storage, { models, registry, env: durable.env }, context)
+```
+
+Each conversation gets its own Space, named from the conversation id.
+`durable.env` is the Harness's `env` factory; `durable.extension` wraps the
+mutating tools. The Space needs a cua-spacesd that reports the
+`process.exec_ledger` capability.
+
+<Callout type="warn">
+Fencing and the exec ledger need `ProcessService/AdvanceEpoch` in the cua SDK
+you call cua-spacesd with. The published `@trycua/cua` releases through 0.6.0
+do not include it (checked in the native library of 0.5.0 and 0.6.0), so the
+fenced modes need an SDK built from this repository's `main` until the next
+release carries it. With an SDK that lacks it the adapter stops with a
+permanent error (exit code 78) before running any call; it never records the
+missing method as a tool result.
+</Callout>
+
+### Whole-machine checkpoints
+
+`WorkspaceSnapshots` captures one directory. On a microVM Space, checkpoint
+the whole machine instead: `SandboxSnapshots` uses the cua daemon's
+checkpoints (`cua sb checkpoint` / `fork`), which hold memory and disk, so a
+restore brings back running processes (servers, browsers, shells) exactly as
+they were, and the checkpoints live with the daemon, outside the Space.
+
+```ts skip="no-runner"
+import { connect, SandboxCreateOptions } from "@trycua/cua"
+import { CuaSandboxSpaces, durableSpaces, SandboxSnapshots } from "@trycua/pi-durable"
+
+const sandboxes = connect().sandboxes() // the cua daemon owns the microVMs
+const spaces = new CuaSandboxSpaces({
+  sandboxes,
+  createOptions: (name) =>
+    SandboxCreateOptions.create({ image: "linux", name, kind: "microvm" }),
+})
+const durable = durableSpaces({
+  spaces,
+  snapshots: new SandboxSnapshots({ sandboxes }),
+  cwd: "/home/cua/work",
+})
+```
+
+A restore replaces the Space with a fork of the checkpoint under the same
+name. Use the daemon (`connect()`), not an embedded runtime, so the Spaces
+outlive the process that runs the Harness.
+
+## Modes: transactional and checkpoint
+
+`durableSpaces({ mode })` chooses how a Space is kept consistent with the
+log. The default is `"auto"`.
+
+- **`checkpoint`**: a checkpoint of the Space (or its workspace) after every
+  call, as described under "How it works".
+- **`transactional`**: no per-call checkpoint. The log holds a
+  content-addressed image of the workspace (`cua.space.image`: a path table
+  and the bytes of each distinct file). Before a call the adapter scans the
+  workspace (`find`, `stat`, `sha256sum` through cua-spacesd) and commits any
+  change made outside the calls together with the call's start mark; after
+  the call it commits the call's diff in the same log transaction as its
+  outcome. The image is always the workspace as of the last committed call.
+  After a crash the Space is made equal to it again: files that are missing or
+  differ are written back and files the log does not have are deleted. A
+  Space that was lost is rebuilt from the log alone.
+- **`auto`**: transactional when all of these hold, otherwise checkpoint:
+
+  | Condition | Transactional | Checkpoint |
+  | --- | --- | --- |
+  | Space kind | container, gvisor, or any kind with only workspace checkpoints available | `microvm` or `vm` when the snapshot provider is whole-machine (`SandboxSnapshots`), or an unknown kind with such a provider |
+  | Workspace | at most `transactional.maxFiles` (1000) files and `maxBytes` (16 MiB) | larger |
+  | Processes | no wrapped `bash` call left a process running in the workspace | a call left one (Linux, read from `/proc`) |
+  | Tooling | `find`, `stat`, `xargs`, `sha256sum`; no name with a backslash or newline | missing |
+  | History | new conversation, or one already using the image | a conversation that already has checkpoints |
+
+  The limits are checked at every call boundary. The first time one is
+  crossed (before a call, or by what a call did) the conversation switches to
+  checkpoint mode permanently, the reason is recorded in the `cua.space`
+  document (`mode`, `modeReason`) and reported as a `mode` recovery event.
+  When a call crosses the limit, its outcome and the switch are committed
+  together and the checkpoint follows.
+
+`mode: "transactional"` never falls back: a workspace over the limits is
+refused before the call, and one that outgrows them during a call marks the
+image stale, so the next call fails with an error telling you to use
+`checkpoint`. Tune the limits with `transactional: { maxFiles, maxBytes,
+exclude }` (`exclude` lists workspace-relative paths left out of the image).
+
+What a call costs in transactional mode: two scans of the workspace (a few
+milliseconds for hundreds of files) and, in the log, only the bytes that
+changed (base64, plus the path table). The first call stores the whole
+workspace once, up to about 21 MiB at the default limit. Rewindable history
+keeps each call's delta, so the log grows with the amount of change, not with
+the number of calls times the workspace size.
+
+Recovery in transactional mode, per call:
+
+| What is known | What happens |
+| --- | --- |
+| The outcome was recorded | It is adopted. The Space already has the diff (it is rebuilt from the image if the Space was replaced). |
+| The command exited cleanly (exit code, no signal) under the epoch the call started in | The recorded outcome is replayed; the diff is taken against the image. |
+| The command is still running in the current epoch | The call reattaches. |
+| Anything else after a start: a file tool cut off mid-write, a command killed or lost, a command cut off when a newer driver advanced the epoch | The new epoch is committed with the decision, older processes are killed, the Space is made equal to the image, and the call runs again (all tools by default; `rerun` overrides). Effects outside the workspace are not undone. |
+
+Every `RecoveryEvent` carries the `mode` it was decided in; transactional mode
+adds `reverted` and `reimaged` events.
+
+## Fencing
+
+A session's epoch is a number that only grows: the coordinator issues one for
+every drive attempt (see the driver below). Each resource a driver writes to
+refuses epochs below its floor, and the new driver raises the floor when it
+starts, which cuts off the older one:
+
+- **The Space.** Commands carry at least the session epoch (`epoch` option or
+  `CUA_SESSION_EPOCH`); the Space is advanced to it on first use (or earlier
+  with `durable.raiseEpoch(name)`), killing older processes.
+- **The log.** `openFencedSqliteStorage(path, epoch)` (or
+  `openFencedSqlite`, which also returns the fence) returns a Pi
+  `SqliteStorage` whose every commit first reads a one-row floor table
+  (`cua_fence`) inside the same SQLite transaction, so a write with an older
+  epoch is refused atomically and a newer epoch raises the floor.
+  `FencedFileSystem` does the same for a `JsonlStorage` or a log on a volume,
+  with epoch marker files, but a filesystem has no transaction: a stale writer
+  that passed the check just before the floor was raised can still land one
+  write, and it learns of the refusal on the check after it. Prefer SQLite.
+- **The stream.** Live output and details are not forwarded once the fence
+  reports a newer epoch (the check is throttled to 200 ms, so a chunk or two
+  can still go out).
+
+A refusal is a `StaleEpochError`, never a tool result: it is thrown up through
+the wrapped tool, `durableSpaces({ onStale })` is called, and `exec` no longer
+maps it to an `aborted` result. Pi itself records a throwing tool as an error
+result, which is why the log must be fenced too: that write is refused and
+the stale driver can never add to the conversation. A driver stops when it sees
+a `StaleEpochError` or the `onStale` callback.
+
+## The driver entry
+
+`runDurableSession` is the process a coordinator (re)launches for each attempt
+of a durable session (`cua agent run --durable`). It reads this environment:
+
+| Variable | Meaning |
+| --- | --- |
+| `CUA_SESSION` | Session name |
+| `CUA_SESSION_EPOCH` | This attempt's epoch (the fencing token) |
+| `CUA_SESSION_ATTEMPT` | Attempt number |
+| `CUA_SESSION_RESUME` | `1` when a journal exists or the epoch is above 1 |
+| `CUA_SESSION_SPACE` | The durable Space's name, may be empty |
+| `CUA_SESSION_SPACE_ADDR`, `_TOKEN`, `_LEASE` | How to reach the Space and its lease fence token, passed through to your callback |
+| `CUA_SESSION_STATE_DIR` | Where the journal lives; empty means `$CUA_JOB_DATA/session` |
+
+It opens the fenced log in the state directory, raises the Space's epoch, and
+calls your `start` to build the Harness (models and providers stay yours),
+then waits for the submission to settle. Exit codes: `0` finished, `78`
+permanent failure (a `PermanentFailure`, a bad environment, or a submission
+that ended `unanswered`), `75` fenced (a newer epoch exists; ignore this
+process), anything else crashed and is resumed with backoff.
+
+```ts skip="no-runner"
+import { durableSpaces, PermanentFailure, runDurableSession } from "@trycua/pi-durable"
+
+const durable = durableSpaces({ spaces, snapshots, cwd: "/home/cua/work" /* epoch from CUA_SESSION_EPOCH */ })
+process.exit(
+  await runDurableSession({
+    durable,
+    start: async ({ session, log, fence, onStale }) => {
+      // durableSpaces({ fence, onStale }) is rebuilt here if you need the fence on the extension
+      const harness = await Harness.open(log.storage, { models, registry, env: durable.env }, context)
+      harness.resume()
+      const root = await harness.root(context, { agent })
+      // A fixed request id: resuming (or a retry of the whole job) never admits the input twice.
+      const submission = await root.submit({ type: "input", content: input, requestId: session.name }, context)
+      return { wait: () => submission.wait(context), close: () => harness.close(context) }
+    },
+  }),
+)
+```
+
+Pass `onHalt` as well: when the Space or the SDK cannot raise the epoch
+(for example a `@trycua/cua` whose JSON method table lacks
+`ProcessService/AdvanceEpoch`) the adapter throws a `HaltError` (permanent
+when the capability is missing, so the driver exits `78`; otherwise exit `1`
+to retry), and the driver halts the log's fence so Pi cannot record that
+failure as a tool result. The epoch operation is also probed when a Space is
+first opened, so this fails before any call. Return `ensureSpace: () =>
+durable.ensureSpace(harness, root.id, context)` from `start`: the driver calls
+it after the run settles, so a Space lost after the last call is rebuilt (from
+the newest checkpoint, or from the log's image in transactional mode) before
+the session is reported done.
+
+Pass `fence` and `onStale` to `durableSpaces` so the call-level checks and the
+stream fence are active; a stale commit by Pi's own scheduler is caught by the
+fence as well, and `runDurableSession` returns `75` as soon as the log's
+fence is refused, even if the run never settles.
+
+## How it works
+
+- **Commands.** `SpacesExecutionEnv` runs each command as a cua-spacesd
+  process with an idempotency key, `<conversation>:<call>:<n>@<epoch>`, and
+  the Space's fencing epoch. cua-spacesd writes the key to its exec ledger
+  and syncs it before the process starts. Starting a known key again does not
+  run the command: it reattaches to the running process, or replays the
+  recorded exit status and the last 64 KiB of output.
+- **Files.** File operations go to Pi's own `pi-env` daemon, which runs in
+  the Space and is reached over a byte pipe through cua-spacesd. File behavior
+  is Pi's; the adapter passes Pi's `ExecutionEnv` conformance suite.
+- **Checkpoints.** Wrapped calls run one at a time per Space. After a call's
+  effects, and before Pi commits its result entry, the adapter records the
+  outcome, checkpoints the Space, and records `{callId, checkpointId}` (and,
+  once committed, the result `entryId`) in the conversation's `cua.space`
+  document. The state before any call is therefore the newest recorded
+  checkpoint.
+- **Recovery.** When Pi resumes an interrupted call, the wrapper decides:
+
+  | What is known | What happens |
+  | --- | --- |
+  | The outcome was recorded | It is adopted; the checkpoint is taken if the crash prevented it. |
+  | The command is running | The call reattaches to it. |
+  | The command exited | The recorded outcome is replayed; the command does not run again. |
+  | The command never started | It runs. |
+  | Unknown: the command was lost with the Space's daemon, or a file tool was cut off mid-write | The Space is restored to the checkpoint before the call under a new epoch. `write` and `edit` (and any tool declared `replay: "safe"`) then run again; other tools end with an `interrupted` result that says the sandbox was restored, so the model can decide. |
+
+- **Fencing.** A restore first raises the epoch. cua-spacesd kills every
+  process started with an older epoch, including a stale worker's commands
+  and file daemon, and refuses new requests that carry it.
+- **Forks.** A conversation forked at an entry gets its own Space, forked
+  from the checkpoint its parent had recorded at that entry. The `cua.space`
+  document is rewindable and copied `asOf` the fork entry, so the fork sees
+  exactly that checkpoint.
+- **Lost Spaces.** Machine checkpoints live with the cua daemon; with
+  `WorkspaceSnapshots`, a `CheckpointStore` keeps a copy of every checkpoint
+  outside the Space. When a conversation's Space no longer exists (its
+  machine is gone, or the Space provider now points at another machine), the
+  next tool call recreates it and restores the newest recorded checkpoint.
+  A call whose effects were recorded only in the lost Space is treated as
+  unknown: `write` and `edit` run again, other tools end `interrupted`.
+
+## Review what an agent changed
+
+The log and the checkpoints together are a reviewable history. Every
+mutating call has a checkpoint of the workspace taken right after it,
+recorded in `cua.space` with the call and its result entry. A person can
+compare the workspace between two entries, inspect the state the agent saw
+before a decision, or fork the conversation at an entry and continue by hand
+in a Space built from exactly that state.
+
+## Guarantees
+
+For the wrapped tools, after recovery completes:
+
+- The workspace equals the state implied by the committed log: every call
+  with a result entry took effect exactly once, in order, and a call that
+  ended `interrupted` left nothing behind.
+- A shell command that started is never started a second time by recovery:
+  its outcome is adopted, or the call ends `interrupted` (a new call by the
+  model may run it again).
+- Before a restore changes any file, every command and file daemon the
+  adapter started under an older epoch is killed, and requests that carry an
+  older epoch are refused.
+- A driver with an older epoch cannot add to the log (the fenced log refuses
+  its commit atomically) and its refusal by the Space halts it with
+  `StaleEpochError`; it is never recorded as a tool result.
+- In transactional mode the same holds without a per-call checkpoint: the
+  workspace equals the image in the log, which equals the committed calls.
+
+Transactional mode is checked by `test/crash-tx.test.mjs`: a driver process is
+`SIGKILL`ed after each step of a call (call, start mark, command spawn,
+running, exit, tool return, outcome commit, plus crashes during recovery), a
+new driver with the next epoch takes over the same log and Space, and the
+finished workspace must equal an uninterrupted run's and the log's image, with
+no call ending in error. It runs against a local stand-in for cua-spacesd's
+ledger and epoch; the real-Space tests are opt-in.
+
+A crash-injection test checks the first two for checkpoint mode: a scripted agent does writes,
+edits and appending shell commands while the runner kills the worker with
+`SIGKILL` at random points (before a command starts, mid-command, after it
+exits but before its result is committed, during a checkpoint, during a
+restore), sometimes restarts the Space's machine too or deletes the Space
+outright; after each run the workspace hash must equal the one the committed
+transcript implies. In one campaign of 250 runs of 10 calls each, with 629
+kills, 116 Space restarts and 65 lost Spaces, every run met that invariant
+(recovery adopted 263 outcomes, reattached 42 running commands, restored 158
+times and ended 50 calls `interrupted`).
+
+The same campaign on microVM Spaces managed by the cua daemon (120 runs of
+10 calls per provider, 292 kills each):
+
+| | `SandboxSnapshots` (memory and disk) | `WorkspaceSnapshots` + host store |
+| --- | --- | --- |
+| Runs consistent | 120 of 120 | 120 of 120 |
+| Space restarts / lost Spaces | 61 / 27 | 58 / 22 |
+| Outcomes adopted | 148 | 152 |
+| Running commands reattached | 20 | 19 |
+| Restores | 50 | 46 |
+| Spaces rebuilt | 26 | 21 |
+| Calls ended `interrupted` | 26 | 15 |
+| Run time, median (runs without faults) | 20.7 s (16.7 s) | 8.6 s (5.8 s) |
+
+A separate check kills a process after a machine checkpoint and restores:
+the same process (same pid) runs again, counting on from the checkpoint, and
+a file written after the checkpoint is gone.
+
+### Crash campaign
+
+The campaign lives in `libs/cua/typescript/integrations/pi-durable/test/crash/`.
+`CRASH_MODE` selects what it attacks; every mode reports a `SUMMARY` line
+(runs, ok, failed, kills, per-fault counts, recoveries) and exits non-zero if
+a single run was inconsistent. The pass condition is always the same: the
+workspace equals what the committed log implies, every step applied exactly
+once, no step ended in an error other than `interrupted`.
+
+| Mode | npm script | What it does |
+| --- | --- | --- |
+| `checkpoint` (default) | `npm run test:crash:checkpoint` | Kills the worker (`SIGKILL`) at the fault points of checkpoint mode, restarts it with the next epoch; also restarts or deletes the Space. |
+| `transactional` | `npm run test:crash:transactional` | The same for transactional mode: faults before the command, mid-command, after exit, after the diff is computed, after the outcome and diff are committed, and while undoing. Also checks that the log's image equals the workspace. |
+| `auto` | `npm run test:crash:auto` | Transactional with the fall back to checkpoints; both fault sets. |
+| `stale` | `npm run test:crash:stale` | Freezes a driver (`SIGSTOP`) mid-call, starts a driver with the next epoch, wakes the first one: it must exit 75 and none of its writes may land in the log or the Space. |
+| `redrive` | `npm run test:crash:redrive` | The coordinator's re-driver is the system under test: a real session in real Spaces on a lab coordinator (`CRASH_LAB_BIN`), with the driver killed at fault points, its container removed, the coordinator killed during a backoff and restarted, and the driver frozen (ended by stall detection: the history must show `stalled`, no timeout involved). Checks that the session reaches `done`, drives equal kills plus one, epochs strictly increase, one driver is alive at a time, and a session that outlasts `max_attempts` ends `failed` (exhausted) with an error. Reports the time from a kill to the next driver's first step. |
+| `redrive` with `CRASH_REDRIVE_FLAVORS=lease` | `CRASH_REDRIVE_FLAVORS=lease npm run test:crash:redrive` | The same coordinator, but the session is bound to a durable Space the coordinator itself placed on a real host (`spec.space`, `CUA_LAB_DIRECT_IP`): every drive takes the Space's lease and gets its address, token and lease token. Rotates over driver kills, the Space's container removed after a driver kill or under a live driver (the durable loop places generation 2, restored from scratch, and the next drive follows the new address and token), a coordinator restart in a backoff, and two sessions racing for one Space. Checks that each epoch is `max(previous + 1, lease token)`, lease tokens only grow, a superseded token is refused by `durable_renew`, `durable_connection` and `durable_release`, exactly one session holds the Space (the other waits with a "held by" reason), and the workspace still equals the log after a from-scratch Space. |
+| `acp` | `npm run test:crash:acp` | The ACP durable driver of [Durable agents](/spaces/guides/durable-agents) is the system under test: real harnesses (Claude Code, Codex, Hermes, OpenCode) with a mock model, in Docker. Kills the runner or the harness mid tool call, removes the container, or starts the next epoch while the old driver still runs. Checks that every scripted effect appears exactly once or the recovery note names the call as possibly half-run, and that no tool call gets two approved intents. Needs Docker and the harness image, so it is not in the CI subset. |
+
+`CRASH_BACKEND` chooses the Space: `docker` (default; needs the `cua-pi-space`
+image, see `test/crash/Dockerfile`), `microvm`, or `local`, a stand-in for
+cua-spacesd that runs commands on the same machine with the daemon's exec
+ledger and epoch fence on disk. `CRASH_SEED_BASE` makes a run reproducible.
+`redrive` needs the lab coordinator (`crates/cua-spaces-cluster/tests/lab_coordinator_live.rs`)
+and a container engine, so it runs on a machine you control, not in CI. The lab
+node provides Spaces like a `cua host setup --direct --provide-spaces` machine
+when `CUA_LAB_DIRECT_IP` is set (use the container bridge address, for example
+`172.17.0.1`): a real host service answers `HostSpacesService` over gRPC and
+forwards a port per Space, so `durable_create` places a durable Space with a
+direct address and token, the path the `lease` flavor exercises. Without it the
+node runs jobs only and the other flavors make their Space themselves
+(`CRASH_REDRIVE_SPACE=docker`).
+
+What the `lease` flavor measured (AWS c7g.2xlarge, Ubuntu 24.04 arm64, Docker runc
+Spaces, cua-spacesd from this tree, 6 steps per run, transactional mode): 40
+runs, 40 consistent, in five kinds of eight: driver kills (16 kills), a Space
+removed right after a driver kill (8 kills, 8 removals), a Space removed under a
+live driver (8 removals, the driver halts), the coordinator killed in a backoff and
+restarted (8 kills, 8 restarts), and two sessions racing for one Space (8 kills in
+the first). In all: 40 driver kills, 16 Spaces removed and each placed again by the
+coordinator as generation 2 `from-scratch` (the next drive got the new address and
+token every time), 96 drives, no spurious resume, no epoch or lease violation.
+Every epoch equalled `max(previous + 1, lease token)`; 72 superseded lease tokens
+were refused by `durable_renew`, `durable_connection` and `durable_release`
+(and the 40 current ones accepted); in every race the second session sat
+`pending` with `held by session:<first>` and started within 20 ms of the first
+ending, with the next lease token (3 after 1 and 2). In every run the workspace
+equalled the log with every step once, including after a from-scratch Space: in
+transactional mode the log carries the workspace image, so the empty new Space is
+rebuilt from it before the next call. Resume after a driver kill took 6.7 s at p50
+and 10.9 s at p95 in the kill kind, 5.3 s after a Space removal (kill to the next
+driver's first step; it includes the 2 s and 4 s backoffs and, after a removal,
+the placement of the new copy).
+
+Real problems this found, all fixed:
+
+- A coordinator never learned that a durable Space was gone from a host that
+  was up: the host kept listing a Space whose container someone removed. The host
+  service now drops provided Spaces whose sandbox is definitely gone, and a
+  session asks the Space's host before each drive instead of waiting up to 15 s
+  for the durable loop (before: 3 of 40 runs started a driver on a dead address
+  and lost an attempt).
+- A call that failed because the Space vanished under it was recorded as a tool
+  error, every later call failed the same way, and the session ended `done` with
+  the work undone (35 steps lost in 8 runs). The driver now halts (exit 1) when a
+  failed call finds the Space unreachable, and the re-driver resumes it on the
+  new Space.
+- A new log on a durable Space an earlier session had bumped to exactly the new
+  session's epoch ran at that epoch, did not fence the other driver's processes,
+  and its command keys could meet the other log's (the Space replayed the other
+  session's results instead of running the commands; 1 of 10 runs of the first
+  race attempt). The driver now runs one above such an epoch.
+
+A limit it confirmed, not a bug: in **checkpoint** mode the checkpoints of a
+`WorkspaceSnapshots` without a `CheckpointStore` live inside the Space, so a
+Space the coordinator places again from scratch has nothing to restore. The
+driver stops with `failed` / `permanent` after two drives and the error says
+"use a CheckpointStore or mode transactional" (before: it crashed and was
+retried until `max_attempts`; 10 of 10 runs, with `CRASH_DURABLE_MODE=checkpoint`).
+A `CheckpointStore` the drivers can all reach (an S3 bucket, a shared directory) or
+transactional mode is what lets a replaced Space come back with its work.
+Processes and state outside the workspace are never restored, in either mode.
+
+CI runs a fast subset, `npm run test:crash:ci`: transactional, auto, checkpoint
+and stale on the `local` backend with real SQLite, real child processes and
+fixed seeds, in a few minutes and without Docker. The re-driver's own
+guarantees (exactly one resumer per epoch, backoff, the attempt cap,
+coordinator restarts) are covered in CI by the Rust session tests
+(`cargo test -p cua-spaces-cluster --test sessions`).
+
+## Cost
+
+Measured on one Space (a Docker container with cua-spacesd, on an 8-vCPU
+Linux host, client on the same host), median of 20:
+
+| Step | Latency |
+| --- | --- |
+| A command (`echo`) without a key | 1.9 ms |
+| The same with a key (two synced ledger writes) | 4.7 ms |
+| Replaying a known key | 0.7 ms |
+| Checkpoint, 10 files of 4 KiB | 6 ms |
+| Checkpoint, 500 files of 16 KiB (8 MiB) | 67 ms |
+| The same with a copy in a `CheckpointStore` on the host | 128 ms |
+| Restore, 500 files of 16 KiB | 63 ms |
+
+On a microVM Space (2 vCPU, 2 GiB, a 32-vCPU host), median of 10, 10 files
+of 4 KiB:
+
+| Provider | Checkpoint | Restore, until the Space answers |
+| --- | --- | --- |
+| `WorkspaceSnapshots` | 54 ms | 129 ms |
+| `WorkspaceSnapshots` with a host copy | 93 ms | 179 ms |
+| `SandboxSnapshots` (memory and disk) | 1.56 s | 0.64 s |
+
+A checkpoint is taken after every wrapped call: a workspace checkpoint grows
+with the workspace, a machine checkpoint with the Space's memory.
+
+## Limits
+
+- A durable Space the coordinator places again (its host went down or lost it)
+  is a fresh Space of the same image (`restored: "from-scratch"`). Transactional
+  mode rebuilds the workspace from the log; checkpoint mode needs a
+  `CheckpointStore` reachable from every driver, otherwise the session ends
+  `failed` (permanent) with that reason. Only hosts that provide Spaces
+  directly (`cua host setup --direct --provide-spaces`) can hold a durable
+  Space; the lease path was measured against such a host on Linux with Docker
+  (runc), not on macOS or microVM hosts.
+- A session holds its durable Space's lease from each drive until the session
+  ends; a second session for the same Space stays `pending` ("held by
+  session:...") until then. The lease runs for seven days, so a session whose
+  coordinator never comes back leaves the Space held until it runs out.
+- A session driver that freezes is replaced by the coordinator when its
+  output stops growing for `stall_secs` (default 120): `runDurableSession`
+  prints `CUA-HEARTBEAT <epoch> <unix_ms>` every `stall_secs / 4` seconds
+  (`CUA_SESSION_HEARTBEAT_SECS`) from a timer of its own, so a frozen process
+  falls silent and a busy one does not. A driver whose event loop is blocked
+  for longer than `stall_secs` is also replaced, and one that keeps
+  heartbeating while making no progress is not.
+- `WorkspaceSnapshots` captures one directory tree through cua-spacesd. State
+  outside it (installed packages, other directories) and process memory are
+  not captured. Without a `CheckpointStore` its checkpoints live only in the
+  Space and are lost with it. `SandboxSnapshots` captures the whole machine
+  but costs about a second per call.
+- Machine checkpoints are local to the cua daemon that took them: rebuilding
+  a lost Space on another machine needs `WorkspaceSnapshots` with a shared
+  `CheckpointStore`.
+- Effects outside the Space (network requests, pushes) are not undone by a
+  restore. Keep such tools out of `rerun`; they end `interrupted` with the
+  Space restored.
+- Only wrapped tools are covered. Unwrapped tools that write to the Space run
+  without the ledger and checkpoints.
+- The file daemon pipe is fenced (a stale daemon is killed by the epoch
+  advance); individual file operations are not, and file tools are recovered
+  by restoring and rerunning, not by a ledger.
+- Between restoring a whole-machine checkpoint and raising the epoch again,
+  the restored daemon has the checkpoint's older epoch; the adapter raises it
+  before running anything, but a stale worker that is still alive in that
+  window is not fenced.
+- Transactional mode tracks regular files (content, mode) and symlinks.
+  Empty directories, ownership, timestamps, extended attributes, special
+  files and file names containing a backslash or newline are not tracked
+  (the last are refused). Processes are not captured: a call that leaves one
+  running makes `auto` switch to checkpoint mode, and under explicit
+  `transactional` its state is lost on a crash. After an undo, effects outside
+  the workspace are not undone and the call may repeat them.
+- Transactional mode needs a Linux-like Space (GNU or BSD `find`, `stat`,
+  `xargs`, `sha256sum`). It stores the workspace in the log, so the log is as
+  sensitive as the workspace.
+- `FencedFileSystem` is a best-effort fence (see above); the SQLite fence is
+  exact. The stream fence lags by up to 200 ms.
+- A call whose command was started under an older session epoch is adopted
+  only if it exited cleanly; one cut off when a newer driver advanced the
+  epoch is undone and rerun (transactional) or ends `interrupted` (checkpoint).
+- Pi Durable is labeled experimental; the adapter targets
+  `@earendil-works/pi-durable` 1.0.

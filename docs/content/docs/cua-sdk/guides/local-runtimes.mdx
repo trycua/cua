@@ -1,6 +1,6 @@
 ---
 title: Choose where sandboxes run
-description: Run sandboxes on this machine, in your own AWS, Google Cloud or Modal account, or on E2B, Daytona or Modal. Check the host, pick a runtime, and set the default.
+description: Run sandboxes on this machine, in your own AWS, Google Cloud, Hetzner or Modal account, or on E2B, Daytona or Modal. Check the host, pick a runtime, and set the default.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -12,7 +12,7 @@ machine.
 | Where | `on` | What you set up |
 | --- | --- | --- |
 | [This machine](#this-machine) | `local` (the default) | A container engine, QEMU or Lume, with `cua runtime setup` |
-| [Your own cloud](#your-own-cloud) | `aws`, `gcp`, `modal` | `cua cloud connect` |
+| [Your own cloud](#your-own-cloud) | `aws`, `gcp`, `hetzner`, `modal` | `cua cloud connect` |
 | [Another provider](#other-sandbox-providers) | `e2b`, `daytona`, `modal` | The provider's API key, and a `cua` build with `--features contrib` |
 | A machine that runs cua-spacesd | `direct:<host:port>` | [Attach to or run cua-spacesd](/cua-sdk/guides/spacesd) |
 
@@ -39,6 +39,10 @@ cua runtime setup               # install what is missing; or name qemu, lume, c
 ```
 
 `cua doctor` checks the host, an image and a sandbox's guest in one report.
+
+A runtime installed separately from cua (an
+[external runtime provider](/cua-sdk/guides/external-runtimes)) adds its own
+row to `cua runtime doctor` and its own `--runtime` word.
 
 <Callout type="warn">
   Not supported locally: macOS containers, macOS images that are not Lume
@@ -78,214 +82,91 @@ runtime="qemu")`); cua-sandbox still accepts a `Runtime` object
 - Image layers build into your container engine before boot. VM images apply
   them after boot through cua-spacesd.
 - A sandbox runs until you delete it. `keep_alive` raises.
-- Images without cua-spacesd fall back to the runtime's agentless path (QMP,
+- Any OCI image is a full Space on containers and microVMs. An image that
+  carries no cua-spacesd (`alpine:3.20`, `node:20`, `python:3.12-slim`) gets a
+  static one put in, started beside the image's own command with its user and
+  working directory, so exec, files and ports work. `spacesd=False` (`--no-spacesd`
+  on the CLI) runs the image as it is. A VM needs a Cua disk image: for a bare
+  OCI image use kind `container` or `microvm`, or `cua build` FROM a Cua image.
+- VM images without cua-spacesd fall back to the runtime's agentless path (QMP,
   VNC, SSH or ADB) where there is one.
+
+## Many VMs on one machine
+
+Local QEMU VMs (`kind="vm"`) are admitted by what they really use, not by
+their reserved size. VMs started from one snapshot (warm starts and forks)
+share its unwritten memory, which is counted once. A new VM starts when:
+
+- the VMs together stay under `CUA_VM_MAX_RSS_FRACTION` of physical memory
+  (default `0.8`);
+- the machine keeps `CUA_VM_MIN_AVAILABLE_MB` available for everything else
+  (default an eighth of memory, 1 to 8 GiB) and its memory pressure is not
+  critical;
+- their vCPUs stay within `CUA_VM_VCPU_OVERCOMMIT` times the machine's CPUs
+  (default `8`, because rollouts and agents mostly wait).
+- on a Mac, the hypervisor has a free VM slot. macOS runs at most 128 VMs at
+  once (`sysctl kern.hv.max_address_spaces`), counting every QEMU and Apple
+  Virtualization VM on the machine.
+
+Past a limit, the create fails with `HostCapacity` and nothing starts. The
+message names the limit and by how much it was exceeded. With
+`on="auto"`, the next machine is tried. Hosts report the same measurements
+to placement, so `on="auto"` sends a VM where it fits.
+
+For RL rollouts and agent episodes, pass `profile="rollout"` (`cua sb create
+--profile rollout`): 1 vCPU, 1 GiB and no desktop. A VM then gets no display
+or input hardware. Exec, files, ports and processes work as usual, but
+screenshots and input do not. Explicit `cpus` and `memory_mb` still apply.
+
+On Linux hosts, a VM booted without a snapshot also reports the memory its
+guest frees (virtio-balloon free page reporting), and the host takes it back.
+On macOS, QEMU's discard leaves freed pages charged to QEMU, so this is off
+there (`CUA_QEMU_FREE_PAGE_REPORTING=1` turns it on).
 
 Images, VM disks and logs take disk space under `~/.cua`. See
 [Disk usage and cleanup](/cua-sdk/guides/lifecycle#disk-usage-and-cleanup).
 
+## The Linux runtime on a Mac
+
+A Mac with no container engine runs Linux Spaces and jobs in one Linux VM
+that cua sets up and boots itself. It is shared by every Linux Space of your
+cua home. By default it may use up to 75% of the Mac's memory (at most
+32 GiB, at least 4 GiB) and up to 4 CPUs; the Mac backs that memory only as
+the guest touches it. `cua config set runtime.linux_memory_gib` and
+`runtime.linux_cpus` (or `CUA_RUNTIME_LINUX_MEMORY_GIB` and
+`CUA_RUNTIME_LINUX_CPUS`) set a size; it applies when the VM next starts. It
+stops when none of its Spaces runs:
+
+- **After the last Space.** The VM stops about two minutes after the last
+  Linux Space is deleted or stopped (`CUA_RUNTIME_LINUX_IDLE_SECS`, default
+  `120`), and boots again on the next one.
+- **With the daemon.** `cua daemon stop` stops the VM too. If Linux Spaces
+  still run, the VM stays up and the command says so: `the Linux runtime
+  keeps running for 2 Spaces; it stops when they do`. A daemon that starts
+  and finds the VM running with no Space in it stops it, and checks again
+  every five minutes. A Space the host keeps warm on purpose (`pool.warm`)
+  holds the VM up.
+- **Open files.** A VM that shares host folders holds a host file descriptor
+  for each file its guest has cached, and macOS has one table of about
+  262,000 for the whole machine. cua keeps that bounded: the VM gives the
+  guest's cached files back after each job and when the count grows, so the
+  count follows the work in progress instead of every file ever read.
+  Before it starts a VM or a job, cua checks that at least 10 % of the
+  table is free (`CUA_FILE_TABLE_MIN_FREE_PCT`, `0` turns the check off).
+  When less is free it first stops this home's idle runtime VM, and if that
+  is not enough it refuses with `HostCapacity`, naming the processes that
+  hold the most descriptors. Fix it by stopping Spaces or VMs you do not use.
+
 ## Your own cloud
 
 Sandboxes and Spaces can run in a cloud account you own: `--on aws` (EC2),
-`--on gcp` (Compute Engine) or `--on modal` (Modal Sandboxes). The same images,
-SDK calls and `cua-bench` runs work there, and you pay the cloud directly.
-
-Each sandbox dials out to the cua.ai relay as a machine of your account, so
-nothing in your cloud listens on the internet. Your laptop, your agents and the
-Cua Spaces app reach it wherever they are. Streams, files and presence pass
-through relay.cua.ai, and only your devices and the accounts you share a Space
-with can reach the sandbox. The guest holds only its own machine token, never
-your account credentials. An account holds at most 32 machines, and each cloud
-sandbox uses one until you delete it.
-
-<Callout type="warn">
-  Everything here creates resources that your cloud account bills for. Cua
-  gives each one a time limit (8 hours by default) and cleans up after itself,
-  but set a budget in your cloud first.
-</Callout>
-
-### What you need
-
-- The cloud's own CLI, signed in. Cua uses its credentials where they are and
-  stores only the names:
-  - **AWS**: a profile in `~/.aws` (access keys, SSO or an assumed role).
-  - **Google Cloud**: `gcloud auth login` and a project with the Compute Engine
-    API enabled.
-  - **Modal**: a profile in `~/.modal.toml` (`modal token new`).
-- A cua.ai sign-in (`cua auth login`). Each cloud sandbox joins the relay as a
-  machine of your account.
-
-### Connect a cloud
-
-`cua cloud status` shows each cloud, whether its credentials were found on this
-machine, and what it can run at what hourly cost:
-
-```bash test="cli-shape" id="cua-cloud-status"
-cua cloud status
-```
-
-`cua cloud test` checks an account without creating anything. It checks the
-credentials, runs a dry run of a create, and reads the quota, the region and
-the machine types:
-
-```bash test="cli-shape" id="cua-cloud-test"
-cua cloud test aws --profile default --region us-west-2
-```
-
-`cua cloud connect` runs the same checks and connects only when they pass.
-`--default` also makes the cloud the default location, so `cua sb create` and
-`create_space` go there when you give no location:
-
-```bash test="cli-shape" id="cua-cloud-connect"
-cua cloud connect aws --region us-west-2 --default
-cua cloud connect gcp --project my-project --region us-central1
-cua cloud connect modal --environment sandboxes
-```
-
-`--ttl-hours` sets how long each sandbox there lives before it deletes itself
-(default 8; `0` keeps it until you delete it; Modal caps a sandbox at 24):
-
-```bash test="cli-shape" id="cua-cloud-connect-ttl"
-cua cloud connect aws --ttl-hours 2
-```
-
-The Cua Spaces app does the same from **New Space**, **Your cloud**,
-**Connect a cloud**.
-
-### Create sandboxes and Spaces
-
-A sandbox:
-
-```bash test="cli-shape" id="cua-sb-create-aws"
-cua sb create linux --on aws --name research
-cua sb exec aws:research -- uname -a
-cua sb delete aws:research
-```
-
-From Python, including `cua-bench` runs:
-
-```python skip="your-cloud" id="your-cloud-python"
-from cua_sandbox import Image, Sandbox
-
-async with Sandbox.ephemeral(Image.linux(), on="aws") as sb:
-    print(await sb.shell.run("uname -a"))
-    await sb.screenshot()
-```
-
-```bash test="cli-shape" id="cb-run-aws"
-cb run cua-bench-basic --on aws
-```
-
-A Space is a cloud sandbox shown as the relay machine it joined as,
-`relay:<machine>`. Stop and start keep its disk (on AWS and Google Cloud):
-
-```bash test="cli-shape" id="cua-spaces-create-aws"
-cua spaces create linux --on aws --name research
-cua spaces stop relay:cloud-0123456789abcdef
-cua spaces start relay:cloud-0123456789abcdef
-cua spaces delete relay:cloud-0123456789abcdef --force
-```
-
-Agents use the same `create_space` tool with `on="aws"`, and `cloud_status`,
-`cloud_test`, `cloud_connect` and `cloud_sweep` from the
-[Spaces contract](/spaces/reference/spaces#your-cloud).
-
-### What Cua creates
-
-| Cloud | Per sandbox | Shared |
-|---|---|---|
-| AWS | One EC2 instance and its disk. Docker runs the image on it. | One security group with no inbound rules, in the region's default VPC. |
-| Google Cloud | One Compute Engine instance and its disk. Docker runs the image on it. | A network with no inbound rules, so the project's default firewall rules never apply to it. |
-| Modal | One Modal sandbox running the image. | Nothing. |
-
-- Nothing else is created: no IAM users or keys, and no change to existing
-  networks, security groups or firewall rules.
-- The VM installs only Docker. The image carries its own cua-spacesd.
-- Every resource carries these tags (labels on Google Cloud):
-
-  | Tag | Value |
-  |---|---|
-  | `cua-managed` | `true` |
-  | `cua-owner` | This cua home's owner id |
-  | `cua-space` | The sandbox's name |
-  | `cua-machine` | Its relay machine |
-  | `cua-created-by` | The cua version |
-  | `cua-expires` | When it expires (Unix seconds) |
-
-- Cua records every resource in `~/.cua/cloud/state.json` before the cloud
-  call, with its cloud id once it has one.
-
-### Costs
-
-`cua cloud status` shows the estimated on-demand price of each image family
-per hour while it runs (compute and disk, not network). A stopped VM bills only
-its disk.
-
-| Cloud | `linux` | `linux-slim` |
-|---|---|---|
-| AWS | `t4g.medium` (arm64), about $0.04/hour | `t4g.small`, about $0.03/hour |
-| Google Cloud | `e2-medium`, about $0.04/hour | `e2-small`, about $0.03/hour |
-| Modal | 1 core (2 vCPU) and 4 GiB, about $0.24/hour | the same |
-
-- Windows and Omarchy are not offered yet. They run as VMs inside the cloud's
-  VM, which needs a nested-virtualization machine type. `cua cloud status`
-  says so next to them.
-- macOS is not offered. On AWS it would need an EC2 Mac dedicated host, which
-  has a 24-hour minimum.
-
-### Notes for each cloud
-
-- **AWS**:
-  - One region per connection (`--region`, else the profile's). Profiles, SSO
-    and assume-role profiles from `~/.aws` work as the AWS CLI's do.
-  - The instance allows only IMDSv2 with a hop limit of 1, so the sandbox's
-    containers cannot read the instance's metadata (or its user data). It has
-    no key pair and no instance profile.
-  - A new account's vCPU quota may be low. `cua cloud test aws` does not read
-    it yet, and a create past it fails with AWS's own message.
-- **Google Cloud**:
-  - One project and zone per connection (`--project`, `--region`, `--zone`).
-  - The instance has no service account, so nothing on it can call Google
-    APIs. Its containers reach the metadata server only for DNS.
-  - `cua cloud test gcp` says when the Compute Engine API is disabled.
-- **Modal**:
-  - One environment per connection (`--environment`) and a `~/.modal.toml`
-    profile (`--profile`).
-  - Sandboxes run under gVisor by default. `--runtime microvm` uses Modal's VM
-    runtime. Neither has `/dev/kvm`, so only Linux images run.
-  - A sandbox cannot be stopped and started, and lives at most 24 hours.
-  - Cua talks to Modal through `cua-modal-helper`, which uses Modal's official
-    Go SDK. Build it with `go build` in
-    `libs/cua/crates/cua-contrib/modal-helper`, and put it next to `cua`, on
-    `PATH`, or in `CUA_MODAL_HELPER`.
-
-### Time limits and cleanup
-
-Three things end a sandbox that nobody deleted:
-
-- **It shuts itself down.** A VM runs `shutdown` at its time limit and checks
-  it again after every reboot or start. Shutting down deletes it (AWS
-  terminates on shutdown; Google Cloud's run limit deletes it). Modal ends a
-  sandbox at its timeout.
-- **A failed create cleans up.** Whatever it made is deleted, and its relay
-  machine is removed.
-- **`cua cloud sweep`** lists expired sandboxes and anything Cua created whose
-  sandbox is gone. With `--delete` it deletes them. `--all` includes every Cua
-  resource in that cloud.
-
-```bash test="cli-shape" id="cua-cloud-sweep"
-cua cloud sweep
-cua cloud sweep aws --delete
-cua cloud sweep --all --delete
-```
-
-The sweeper touches only a resource that the cloud shows with
-`cua-managed=true` and this home's `cua-owner`, and that this home recorded or
-that carries its owner id. It never matches by name. Untagged resources and
-other owners' resources are never deleted, whatever they are called.
-
-`cua cloud disconnect` forgets a cloud and deletes nothing. It lists what Cua
-still records there.
+`--on gcp` (Compute Engine), `--on hetzner` (Hetzner Cloud servers) or
+`--on modal` (Modal Sandboxes). The same images, SDK calls and `cua-bench`
+runs work there, each sandbox dials out to the cua.ai relay as a machine of
+your account, and you pay the cloud directly. Connect one with
+`cua cloud connect`; [Use your own cloud](/cua-sdk/guides/your-cloud) covers
+what you need, what Cua creates there, costs, notes for each cloud and
+cleanup.
 
 ## Other sandbox providers
 
@@ -328,7 +209,7 @@ cua doctor e2b:demo --strict
 cua sb delete e2b:demo
 ```
 
-The ref is `<provider>:<name>` (`e2b:demo`, `daytona:demo`). `--claim-ttl` sets
+The ref is `<provider>:<name>` (`e2b:demo`, `daytona:demo`). `--ttl` sets
 the platform's lifetime backstop (default one hour).
 
 ```python test="contrib" id="contrib-python" prelude="contrib"

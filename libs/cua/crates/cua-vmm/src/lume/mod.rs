@@ -41,6 +41,51 @@ pub use ssh::LumeSshExec;
 /// `/Volumes/My Shared Files/env-token`).
 pub const MACOS_SETUP_TOKEN_FILE: &str = "env-token";
 
+/// Where a macOS guest on Lume sees shared directories: each one under its
+/// name (the host directory's last path component). The setup share is
+/// `setup`; [`crate::StartSpec::mounts`] add more.
+pub const MACOS_SHARE_ROOT: &str = "/Volumes/My Shared Files";
+
+/// Where a macOS guest sees the shared host directory `host`.
+pub fn macos_share_path(host: &std::path::Path) -> String {
+    format!(
+        "{MACOS_SHARE_ROOT}/{}",
+        host.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    )
+}
+
+/// The shared directories for `mounts` of a macOS guest: each one's guest
+/// path must be where Lume shares it ([`macos_share_path`]), and no name
+/// may repeat (or be the setup share's).
+fn macos_mount_shares(mounts: &[crate::Mount]) -> Result<Vec<SharedDir>> {
+    crate::types::check_mounts(BackendKind::Lume, mounts)?;
+    let mut names = std::collections::BTreeSet::from(["setup".to_string()]);
+    let mut out = Vec::new();
+    for m in mounts {
+        let at = macos_share_path(&m.host);
+        if m.guest.trim_end_matches('/') != at {
+            return Err(VmmError::invalid(format!(
+                "a macOS guest sees the shared directory {} at {at:?}, not {:?}",
+                m.host.display(),
+                m.guest
+            )));
+        }
+        let name = at.rsplit('/').next().unwrap_or_default().to_string();
+        if !names.insert(name.clone()) {
+            return Err(VmmError::invalid(format!(
+                "two shared directories named {name:?} (a macOS guest tells them apart by name)"
+            )));
+        }
+        out.push(SharedDir {
+            host_path: m.host.display().to_string(),
+            read_only: m.read_only,
+        });
+    }
+    Ok(out)
+}
+
 /// Official installer (same one the docs and the Python SDK point to).
 pub const INSTALL_URL: &str =
     "https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh";
@@ -167,6 +212,70 @@ pub fn base_vm_name(reference: &str) -> String {
     let d = Sha256::digest(reference.as_bytes());
     let hex: String = d.iter().map(|b| format!("{b:02x}")).collect();
     format!("cua-base-{}", &hex[..12])
+}
+
+/// The warm VMs of base VM `base` (`cua-base-<sha12>` →
+/// `cua-warm-<sha12>` and `cua-warm-<sha12>-2`): the image booted to
+/// readiness with no identity and saved ([`LumeRuntime::prepare_warm`]).
+/// Two, each with its own MAC address, because macOS runs at most two
+/// macOS guests per host and every resume of one state has its address.
+pub fn warm_vm_names(base: &str) -> [String; 2] {
+    let first = match base.strip_prefix("cua-base-") {
+        Some(id) => format!("cua-warm-{id}"),
+        None => format!("{base}-warm"),
+    };
+    let second = format!("{first}-2");
+    [first, second]
+}
+
+/// Sets the macOS guest `vm`'s host names (computer, local and DNS) to
+/// `name` ([`macos_hostname`]) in the background, through `lume ssh` and
+/// the image's `lume` account: a VM resumed from a state other VMs share
+/// (a warm state, a checkpoint) or a claimed pool member would otherwise
+/// keep the name it was saved with. Bounded retries while SSH comes up;
+/// failures are logged, never fatal.
+fn set_macos_hostname_later(vm: &str, name: &str) {
+    let Some(bin) = lume_bin() else { return };
+    let host = macos_hostname(name);
+    let exec = PrefixExec {
+        program: bin.display().to_string(),
+        prefix: vec!["ssh".into(), vm.to_string()],
+    };
+    let vm = vm.to_string();
+    crate::cleanup::spawn(async move {
+        let script = format!(
+            "for k in ComputerName LocalHostName HostName; do \
+             printf '%s\\n' lume | sudo -S -p '' scutil --set $k {host}; done"
+        );
+        // A restore can take tens of seconds before SSH answers.
+        for attempt in 0..20 {
+            if attempt > 0 {
+                tokio::time::sleep(Duration::from_secs(3)).await;
+            }
+            let req = crate::exec::ExecRequest::sh(script.clone()).timeout(Duration::from_secs(30));
+            match exec.exec(req).await {
+                Ok(out) if out.exit_code == 0 => {
+                    tracing::info!(%vm, %host, "set the guest's hostname");
+                    return;
+                }
+                Ok(out) => tracing::debug!(%vm, code = out.exit_code, "hostname not set yet"),
+                Err(e) => tracing::debug!(%vm, error = %e, "hostname not set yet"),
+            }
+        }
+        tracing::warn!(%vm, %host, "could not set the guest's hostname");
+    });
+}
+
+/// `name` as a macOS host name: letters, digits and `-` (what
+/// `LocalHostName` allows), at most 63 characters, never empty.
+pub fn macos_hostname(name: &str) -> String {
+    let mut h: String = name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .take(63)
+        .collect();
+    h = h.trim_matches('-').to_string();
+    if h.is_empty() { "space".into() } else { h }
 }
 
 /// Locate the `lume` binary for the `runtime.lume` setting: this Mac's
@@ -732,28 +841,28 @@ impl LumeRuntime {
     /// at `/Volumes/My Shared Files`, holding `env-token` (0600) when the start
     /// spec carries `CUA_ENV_TOKEN`. The golden's spacesd launcher copies
     /// it to `~/.cua/spacesd/token` before serving, so the driver starts
-    /// with this token instead of in bootstrap mode. Returns the directories
-    /// to share (the existing share when `spec` is `None`, e.g. a restart).
+    /// with this token instead of in bootstrap mode. The directory is
+    /// shared on every run, empty when there is no token: a saved machine
+    /// state restores only into the same shared directories (by name), so
+    /// a VM suspended without a token resumes with one and the other way
+    /// round. `spec` is `None` for a restart, which keeps what is there.
     fn macos_setup_share(&self, name: &str, spec: Option<&StartSpec>) -> Result<Vec<SharedDir>> {
         let dir = self.cfg.root.join(name).join("setup");
+        std::fs::create_dir_all(&dir)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+        }
         if let Some(spec) = spec {
             match spec
                 .env
                 .get(crate::cloudinit::ENV_TOKEN_VAR)
                 .filter(|t| !t.is_empty())
             {
+                // Owner-only from creation (never briefly world-readable).
                 Some(token) => {
-                    std::fs::create_dir_all(&dir)?;
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::PermissionsExt;
-                        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
-                    }
-                    // Owner-only from creation (never briefly world-readable).
-                    crate::host::write_private(
-                        &dir.join(MACOS_SETUP_TOKEN_FILE),
-                        token.as_bytes(),
-                    )?;
+                    crate::host::write_private(&dir.join(MACOS_SETUP_TOKEN_FILE), token.as_bytes())?
                 }
                 // No token in this spec: never share a stale one.
                 None => {
@@ -761,14 +870,10 @@ impl LumeRuntime {
                 }
             }
         }
-        Ok(if dir.join(MACOS_SETUP_TOKEN_FILE).is_file() {
-            vec![SharedDir {
-                host_path: dir.display().to_string(),
-                read_only: true,
-            }]
-        } else {
-            Vec::new()
-        })
+        Ok(vec![SharedDir {
+            host_path: dir.display().to_string(),
+            read_only: true,
+        }])
     }
 
     fn macos_run(&self, name: &str, spec: Option<&StartSpec>) -> Result<RunVm> {
@@ -778,9 +883,13 @@ impl LumeRuntime {
                 op: "a sandbox command on a macOS guest (bake it into the image)",
             });
         }
+        let mut shared_directories = self.macos_setup_share(name, spec)?;
+        if let Some(spec) = spec {
+            shared_directories.extend(macos_mount_shares(&spec.mounts)?);
+        }
         Ok(RunVm {
             no_display: true,
-            shared_directories: self.macos_setup_share(name, spec)?,
+            shared_directories,
             ..Default::default()
         })
     }
@@ -1288,8 +1397,15 @@ pub const LUME_DAEMON_LOGS: [&str; 2] = ["/tmp/lume_daemon.log", "/tmp/lume_daem
 /// An OCI image is one (Lume pulls and clones macOS bases; a Linux guest
 /// boots from a disk image), even when the caller left `os` at its Linux
 /// default, as the Spaces app's create does (CUA-1778).
+/// Whether `spec` boots a macOS guest: Lume pulls macOS images from OCI
+/// registries (a Linux guest boots from a disk), whatever `os` says (the
+/// Spaces app's create leaves it at its default).
+fn macos_guest(spec: &StartSpec) -> bool {
+    spec.os == GuestOs::Macos || matches!(spec.image, ImageSource::Oci { .. })
+}
+
 fn gpu_offered(spec: &StartSpec) -> &'static [&'static str] {
-    if spec.os == GuestOs::Macos || matches!(spec.image, ImageSource::Oci { .. }) {
+    if macos_guest(spec) {
         &[crate::gpu::PARAVIRTUAL]
     } else {
         &[]
@@ -1310,6 +1426,14 @@ impl LumeRuntime {
             return Err(VmmError::invalid(why));
         }
         crate::types::reject_restricted_network(BackendKind::Lume, spec)?;
+        crate::types::reject_injection(BackendKind::Lume, spec)?;
+        crate::egress::check(BackendKind::Lume, &spec.egress)?;
+        if macos_guest(spec) {
+            macos_mount_shares(&spec.mounts)?;
+        } else {
+            // Linux guests on Lume boot from a disk with no shared folders.
+            crate::types::reject_mounts(BackendKind::Lume, spec)?;
+        }
         self.ensure_serving().await?;
         // Linux disk VMs always get SSH access: the caller's or a managed
         // per-instance key (seeded through cloud-init).
@@ -1330,6 +1454,11 @@ impl LumeRuntime {
             spec
         };
         let existing = self.client.get(&spec.name).await?;
+        // A stopped VM with a saved state (a fork of a checkpoint, a
+        // suspended Space) resumes with the host name it was saved with.
+        let resumes_state = existing
+            .as_ref()
+            .is_some_and(|vm| vm.saved_state && vm.status != "running");
         let mut macos_booted = false;
         match (&existing, &spec.image) {
             (Some(vm), _) if vm.status == "running" => {}
@@ -1351,6 +1480,9 @@ impl LumeRuntime {
                         let run = self.macos_run(&spec.name, Some(spec))?;
                         self.before_macos_boot(&spec.name)?;
                         self.client.run(&spec.name, &run).await?;
+                        if resumes_state {
+                            self.wait_restored(&spec.name).await;
+                        }
                         macos_booted = true;
                     }
                 }
@@ -1365,6 +1497,36 @@ impl LumeRuntime {
                     crate::disk::VM_CREATE_ESTIMATE,
                     &format!("create VM {}", spec.name),
                 )?;
+                // A warm state of this image (booted to readiness, no
+                // identity, saved; [`LumeRuntime::prepare_warm`]) resumes in
+                // seconds instead of booting macOS: use it when it fits.
+                if let Some(warm) = self.usable_warm(&base, spec).await? {
+                    crate::progress::report(crate::progress::Progress::phase(
+                        crate::progress::Phase::Creating,
+                    ));
+                    let mut made = CloneGuard::new(self.client.clone(), &spec.name, &self.cfg.root);
+                    self.client
+                        .clone_vm_with_state(&warm, &spec.name)
+                        .await
+                        .inspect_err(|_| made.done())?;
+                    *created = true;
+                    OwnedVms::default().mark(&spec.name, OwnedKind::Instance, Some(&base));
+                    OwnedVms::default().touch(&base);
+                    let run = self.macos_run(&spec.name, Some(spec))?;
+                    crate::progress::report(crate::progress::Progress::phase(
+                        crate::progress::Phase::Booting,
+                    ));
+                    self.client
+                        .run(&spec.name, &run)
+                        .await
+                        .inspect_err(|_| made.done())?;
+                    made.done();
+                    self.wait_restored(&spec.name).await;
+                    tracing::info!(vm = %spec.name, warm = %warm, "resumed a new Space from the image's warm state");
+                    let inst = self.finish_start(spec, true).await?;
+                    set_macos_hostname_later(&spec.name, &spec.name);
+                    return Ok(inst);
+                }
                 // APFS clonefile: copy-on-write, so the clone costs only what
                 // the guest writes.
                 crate::progress::report(crate::progress::Progress::phase(
@@ -1448,6 +1610,16 @@ impl LumeRuntime {
                     .await?;
             }
         }
+        let inst = self.finish_start(spec, macos_booted).await?;
+        if resumes_state && macos_booted {
+            set_macos_hostname_later(&spec.name, &spec.name);
+        }
+        Ok(inst)
+    }
+
+    /// The rest of a start once the VM runs: its address, a macOS guest's
+    /// environment, the published ports and the readiness probes.
+    async fn finish_start(&self, spec: &StartSpec, macos_booted: bool) -> Result<Instance> {
         crate::progress::report(crate::progress::Progress::phase(
             crate::progress::Phase::Booting,
         ));
@@ -1506,6 +1678,191 @@ impl LumeRuntime {
         }
     }
 
+    /// A warm VM of base `base` a start of `spec` can resume from: it
+    /// exists, holds a saved state, has the CPU, memory and disk the spec
+    /// asks for (a saved state restores only into the configuration it was
+    /// saved from) and its MAC address is not in use by a running VM (every
+    /// resume of one state has that state's address). `None` when there is
+    /// none, or the spec needs a GPU (a warm state is saved without one).
+    async fn usable_warm(&self, base: &str, spec: &StartSpec) -> Result<Option<String>> {
+        // A saved state restores only into the shared directories it was
+        // saved with: a start with mounts boots cold.
+        if spec.gpu.is_some() || !spec.mounts.is_empty() {
+            return Ok(None);
+        }
+        let mut fits = Vec::new();
+        for warm in warm_vm_names(base) {
+            if let Some(vm) = self.client.get(&warm).await?
+                && vm.saved_state
+                && vm.status == "stopped"
+                && clone_resources(&vm, spec).is_empty()
+            {
+                fits.push(vm);
+            }
+        }
+        if fits.is_empty() {
+            return Ok(None);
+        }
+        let in_use: Vec<String> = self
+            .client
+            .list()
+            .await?
+            .iter()
+            .filter(|v| v.status == "running")
+            .filter_map(|v| v.mac_address.as_deref().map(str::to_ascii_lowercase))
+            .collect();
+        Ok(fits
+            .into_iter()
+            .find(|vm| {
+                vm.mac_address
+                    .as_deref()
+                    .is_some_and(|m| !in_use.contains(&m.to_ascii_lowercase()))
+            })
+            .map(|vm| vm.name))
+    }
+
+    /// Makes the warm states of `spec.image` (an OCI macOS image): for each
+    /// of [`warm_vm_names`], a clone of its base VM with `spec`'s CPU,
+    /// memory and disk, booted with no identity (no Spaces token: a Spaces
+    /// image's cua-spacesd waits for one in bootstrap mode), waited on until
+    /// `spec.probes` pass and `settle` more, then saved and stopped. From
+    /// then on a start of that image with the same resources resumes a
+    /// copy-on-write clone of one instead of booting macOS, and the SDK
+    /// installs the Space's token with its first `Init`, as for any driver
+    /// in bootstrap mode. Every resume of a state has the MAC address it
+    /// was saved with, so there are as many states as macOS lets a host run
+    /// guests (two), each with its own address. Existing warm states are
+    /// replaced. It runs one macOS VM at a time while it works.
+    pub async fn prepare_warm(&self, spec: &StartSpec, settle: Duration) -> Result<Vec<String>> {
+        let ImageSource::Oci { reference } = &spec.image else {
+            return Err(VmmError::invalid(
+                "a warm state is made from an OCI macOS image",
+            ));
+        };
+        if spec.os != GuestOs::Macos {
+            return Err(VmmError::invalid("warm states are for macOS images"));
+        }
+        self.ensure_serving().await?;
+        let base = base_vm_name(reference);
+        self.ensure_base_with(&spec.image, &base, spec.registry_auth.as_ref())
+            .await?;
+        let mut made = Vec::new();
+        for warm in warm_vm_names(&base) {
+            self.prepare_one_warm(spec, reference, &base, &warm, settle)
+                .await?;
+            made.push(warm);
+        }
+        Ok(made)
+    }
+
+    /// One warm state of [`Self::prepare_warm`], built under a temporary
+    /// name and cloned into place only once saved, so a start never resumes
+    /// a half-made one.
+    async fn prepare_one_warm(
+        &self,
+        spec: &StartSpec,
+        reference: &str,
+        base: &str,
+        warm: &str,
+        settle: Duration,
+    ) -> Result<()> {
+        let building = format!("{warm}-new");
+        for stale in [building.as_str(), warm] {
+            if self.client.get(stale).await?.is_some() {
+                let _ = self.client.stop_for_delete(stale).await;
+                self.client.delete(stale).await?;
+                OwnedVms::default().forget(stale);
+            }
+        }
+        let started = std::time::Instant::now();
+        self.client.clone_vm(base, &building).await?;
+        OwnedVms::default().mark(&building, OwnedKind::Base, Some(reference));
+        let made = async {
+            let mut boot = spec.clone();
+            boot.name = building.clone();
+            boot.env.clear();
+            self.apply_clone_resources(&boot).await?;
+            self.before_macos_boot(&building)?;
+            // The same run options as a Space's (the setup share, empty):
+            // the state restores only into the devices it was saved with.
+            let run = self.macos_run(&building, Some(&boot))?;
+            self.client.run(&building, &run).await?;
+            let vm = self.wait_for_ip(&building).await?;
+            let inst = Self::instance(&vm, None, &spec.ports);
+            crate::probe::wait_all(&building, &inst.endpoints, &spec.probes, spec.ready_timeout)
+                .await?;
+            tokio::time::sleep(settle).await;
+            let ready = started.elapsed();
+            self.client.suspend(&building).await?;
+            tracing::info!(
+                vm = %building,
+                ready_ms = ready.as_millis() as u64,
+                total_ms = started.elapsed().as_millis() as u64,
+                "saved a warm state"
+            );
+            self.client.clone_vm_with_state(&building, warm).await
+        }
+        .await;
+        let _ = self.client.stop_for_delete(&building).await;
+        let _ = self.client.delete(&building).await;
+        OwnedVms::default().forget(&building);
+        let _ = std::fs::remove_dir_all(self.cfg.root.join(&building));
+        made?;
+        OwnedVms::default().mark(warm, OwnedKind::Base, Some(reference));
+        Ok(())
+    }
+
+    /// After `lume run` of a VM with a saved state: waits (bounded) until
+    /// Lume has restored it, which it reports by dropping the state (or
+    /// booting instead, when the state did not restore). Until then the
+    /// guest is paused, so probes against it would only time out.
+    async fn wait_restored(&self, name: &str) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(180);
+        while tokio::time::Instant::now() < deadline {
+            match self.client.get(name).await {
+                Ok(Some(vm)) if vm.saved_state && vm.status != "stopped" => {}
+                _ => return,
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    }
+
+    /// [`Runtime::checkpoint`] of the running macOS VM `name` with its
+    /// memory: Lume saves its state and stops it (`suspend`), the state is
+    /// cloned with the disk (copy-on-write) into `checkpoint`, and `name`
+    /// resumes from its own state. `name` keeps running whatever happens
+    /// after the save: it is resumed even when the clone fails.
+    /// [`VmmError::Unsupported`] (nothing done) from a Lume without saved
+    /// states.
+    async fn checkpoint_running(&self, name: &str, checkpoint: &str) -> Result<CheckpointInfo> {
+        if self.client.get(checkpoint).await?.is_some() {
+            return Err(VmmError::AlreadyExists(checkpoint.into()));
+        }
+        let started = std::time::Instant::now();
+        self.client.suspend(name).await?;
+        let saved = started.elapsed();
+        let cloned = self.client.clone_vm_with_state(name, checkpoint).await;
+        if cloned.is_ok() {
+            OwnedVms::default().mark(checkpoint, OwnedKind::Checkpoint, Some(name));
+        }
+        let run = self.macos_run(name, None)?;
+        self.before_macos_boot(name)?;
+        self.client.run(name, &run).await?;
+        cloned?;
+        tracing::info!(
+            vm = name,
+            checkpoint,
+            save_ms = saved.as_millis() as u64,
+            total_ms = started.elapsed().as_millis() as u64,
+            "checkpointed a running VM with its memory"
+        );
+        Ok(CheckpointInfo::now(
+            checkpoint,
+            BackendKind::Lume,
+            Some(name.into()),
+        ))
+    }
+
     /// `e`, naming the too-old Lume `runtime.lume = system` made cua use.
     fn name_old_lume(&self, e: VmmError) -> VmmError {
         let old = self
@@ -1559,16 +1916,32 @@ impl Runtime for LumeRuntime {
         self.stop_vm(name).await
     }
 
-    /// Lume has no in-memory pause: suspending stops the VM (its disk and
-    /// setup share stay) and [`Runtime::resume`] boots it again, so `cua sb
-    /// suspend` / `resume` work for macOS Spaces as they do for the others.
+    /// A running macOS VM is suspended to disk: Lume saves its memory and
+    /// device state next to its disk and stops it, and [`Runtime::resume`]
+    /// restores it where it was (no RAM is held meanwhile). Where that is
+    /// not possible (a Linux disk VM, which `lume run` hosts, or a Lume
+    /// without saved states) suspending stops the VM (its disk and setup
+    /// share stay) and resume boots it again, so `cua sb suspend` / `resume`
+    /// work for macOS Spaces as they do for the others.
     async fn suspend(&self, name: &str) -> Result<()> {
+        self.ensure_serving().await?;
+        let vm = self
+            .client
+            .get(name)
+            .await?
+            .ok_or_else(|| VmmError::NotFound(name.into()))?;
+        if vm.status == "running" && self.linux_state(name).is_none() {
+            match self.client.suspend(name).await {
+                Err(VmmError::Unsupported { .. }) => {}
+                other => return other,
+            }
+        }
         self.stop(name).await
     }
 
-    /// Boots a stopped VM again (Lume has no in-memory pause, so a stopped
-    /// VM is what a `lume stop` or a host reboot leaves): the way `start`
-    /// boots an existing VM, with its setup share (the env token the last
+    /// Boots a stopped VM again, or resumes it from the state
+    /// [`Runtime::suspend`] saved (Lume restores a saved state on run): the
+    /// way `start` boots an existing VM, with its setup share (the env token the last
     /// start wrote) for a macOS guest and its disk and seed for a Linux disk
     /// VM. Returns once the guest has an IP. A running VM is returned as is.
     async fn resume(&self, name: &str) -> Result<Instance> {
@@ -1587,12 +1960,66 @@ impl Runtime for LumeRuntime {
                 None => {
                     let run = self.macos_run(name, None)?;
                     self.before_macos_boot(name)?;
-                    self.client.run(name, &run).await?
+                    self.client.run(name, &run).await?;
+                    if vm.saved_state {
+                        self.wait_restored(name).await;
+                    }
                 }
             }
         }
         let vm = self.wait_for_ip(name).await?;
         Ok(Self::instance(&vm, None, &self.load_ports(name)))
+    }
+
+    /// Binds the running pool member `member` to a Space: Lume renames
+    /// the running VM to `new_name` (the guest keeps running; only its
+    /// directory moves), cua's own state for it moves along, and a macOS
+    /// guest gets `identity.hostname` (default `new_name`) in the
+    /// background through `lume ssh` (the image's `lume` account). The
+    /// Spaces token, machine-seal keys and entropy reach cua-spacesd with
+    /// the caller's `Init{new_machine}`: a member runs with no token (its
+    /// driver in bootstrap mode). [`VmmError::Unsupported`] from a Lume
+    /// without renames.
+    async fn claim(
+        &self,
+        member: &str,
+        new_name: &str,
+        identity: &ClaimIdentity,
+    ) -> Result<Instance> {
+        validate_name(new_name)?;
+        self.ensure_serving().await?;
+        let vm = self
+            .client
+            .get(member)
+            .await?
+            .ok_or_else(|| VmmError::NotFound(member.into()))?;
+        if vm.status != "running" {
+            return Err(VmmError::invalid(format!(
+                "pool member '{member}' is not running ({})",
+                vm.status
+            )));
+        }
+        if self.client.get(new_name).await?.is_some() {
+            return Err(VmmError::AlreadyExists(new_name.into()));
+        }
+        self.client.rename(member, new_name).await?;
+        let (from, to) = (self.cfg.root.join(member), self.cfg.root.join(new_name));
+        if from.exists() {
+            std::fs::rename(&from, &to)?;
+        }
+        let owned = OwnedVms::default();
+        let source = owned.get(member).and_then(|r| r.source);
+        owned.forget(member);
+        owned.mark(new_name, OwnedKind::Instance, source.as_deref());
+        let vm = self
+            .client
+            .get(new_name)
+            .await?
+            .ok_or_else(|| VmmError::NotFound(new_name.into()))?;
+        if vm.os.eq_ignore_ascii_case("macos") {
+            set_macos_hostname_later(new_name, identity.hostname.as_deref().unwrap_or(new_name));
+        }
+        Ok(Self::instance(&vm, None, &self.load_ports(new_name)))
     }
 
     async fn fork(&self, source: &str, new_name: &str) -> Result<()> {
@@ -1610,7 +2037,13 @@ impl Runtime for LumeRuntime {
         if self.client.get(new_name).await?.is_some() {
             return Err(VmmError::AlreadyExists(new_name.into()));
         }
-        self.client.clone_vm(source, new_name).await?;
+        // A source with a saved machine state (a checkpoint of a running
+        // VM) forks with it: the fork's first run resumes the saved guest.
+        if vm.saved_state {
+            self.client.clone_vm_with_state(source, new_name).await?;
+        } else {
+            self.client.clone_vm(source, new_name).await?;
+        }
         OwnedVms::default().mark(new_name, OwnedKind::Checkpoint, Some(source));
         // Linux disk VMs keep their disk outside lume: copy it (APFS clonefile
         // via `cp -c` keeps this instant and copy-on-write).
@@ -1631,8 +2064,13 @@ impl Runtime for LumeRuntime {
         Ok(())
     }
 
-    /// Stop → clone into `checkpoint` → restart (clean, stopped-state clone,
-    /// the same contract as cloud snapshots).
+    /// A running macOS VM: save its machine state (memory included) →
+    /// clone it with that state into `checkpoint` → resume it from its own
+    /// state, so the checkpoint and every fork of it start where the guest
+    /// was ([`Self::checkpoint_running`]). Otherwise (a stopped VM, a Linux
+    /// disk VM `lume run` hosts, or a Lume without saved states): stop →
+    /// clone → restart, a clean stopped-state clone, the same contract as
+    /// cloud snapshots.
     async fn checkpoint(&self, name: &str, checkpoint: &str) -> Result<CheckpointInfo> {
         let vm = self
             .client
@@ -1640,6 +2078,18 @@ impl Runtime for LumeRuntime {
             .await?
             .ok_or_else(|| VmmError::NotFound(name.into()))?;
         let was_running = vm.status == "running";
+        if was_running && self.linux_state(name).is_none() {
+            validate_name(checkpoint)?;
+            match self.checkpoint_running(name, checkpoint).await {
+                Err(VmmError::Unsupported { .. }) => {
+                    tracing::info!(
+                        vm = name,
+                        "this Lume cannot save VM states; checkpointing the stopped disk"
+                    );
+                }
+                other => return other,
+            }
+        }
         if was_running {
             self.client.stop(name).await?;
         }
@@ -1692,9 +2142,11 @@ impl Runtime for LumeRuntime {
             // something starts it). The `lume` CLI reads the VM's state from
             // its directory without a server, so a status check does not have
             // to start one.
-            Err(e @ VmmError::Missing { .. }) => match lume_bin() {
+            Err(VmmError::Missing { .. }) => match lume_bin() {
                 Some(bin) => cli_status(&bin, name).await,
-                None => Err(e),
+                // No Lume on this machine at all (the built-in one is set
+                // up on first use): it runs no VM, so none has this name.
+                None => Err(VmmError::NotFound(name.into())),
             },
             Err(e) => Err(e),
         }
@@ -2053,34 +2505,324 @@ mod tests {
         (url, seen)
     }
 
-    /// `cua sb suspend` on a macOS Space: Lume cannot pause in memory, so a
-    /// suspend stops the VM (resume boots it again) instead of failing with
-    /// "lume does not support suspend".
+    /// A fake `lume serve` with VMs: GET `/lume/vms[/:name]` answers from
+    /// `vms` (a missing VM is Lume's JSON not-found error), a POST to a path
+    /// ending in one of `missing` gets the router's bare "Not found" (an
+    /// older Lume), every other request 200 `{}`; a stop or suspend marks
+    /// the VM stopped and a run running. Records "METHOD PATH BODY" for
+    /// each request.
+    async fn fake_lume_vms(
+        vms: Vec<serde_json::Value>,
+        missing: &'static [&'static str],
+    ) -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        super::client::tests::temp_home();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = seen.clone();
+        let vms = Arc::new(std::sync::Mutex::new(vms));
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                let (log, vms) = (log.clone(), vms.clone());
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 16384];
+                    let n = sock.read(&mut buf).await.unwrap_or(0);
+                    let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                    let line = req.lines().next().unwrap_or("").to_string();
+                    let mut parts = line.split_whitespace();
+                    let (method, path) = (
+                        parts.next().unwrap_or("").to_string(),
+                        parts.next().unwrap_or("").to_string(),
+                    );
+                    let body = req.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
+                    log.lock()
+                        .unwrap()
+                        .push(format!("{method} {path} {body}").trim().to_string());
+                    let (code, out) = {
+                        let mut vms = vms.lock().unwrap();
+                        if method == "GET" && path == "/lume/vms" {
+                            (200, serde_json::Value::Array(vms.to_vec()).to_string())
+                        } else if method == "GET" && path.starts_with("/lume/vms/") {
+                            let name = &path["/lume/vms/".len()..];
+                            match vms.iter().find(|v| v["name"] == name) {
+                                Some(v) => (200, v.to_string()),
+                                None => (
+                                    400,
+                                    format!(r#"{{"message":"Virtual machine not found: {name}"}}"#),
+                                ),
+                            }
+                        } else if method == "POST" && missing.iter().any(|m| path.ends_with(m)) {
+                            (404, "Not found".to_string())
+                        } else {
+                            let set = |vms: &mut Vec<serde_json::Value>, verb: &str, to: &str| {
+                                if let Some(name) = path
+                                    .strip_prefix("/lume/vms/")
+                                    .and_then(|p| p.strip_suffix(verb))
+                                    && let Some(v) = vms.iter_mut().find(|v| v["name"] == name)
+                                {
+                                    v["status"] = to.into();
+                                }
+                            };
+                            set(&mut vms, "/stop", "stopped");
+                            set(&mut vms, "/suspend", "stopped");
+                            set(&mut vms, "/run", "running");
+                            (200, "{}".to_string())
+                        }
+                    };
+
+                    let resp = format!(
+                        "HTTP/1.1 {code} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{out}",
+                        out.len()
+                    );
+                    let _ = sock.write_all(resp.as_bytes()).await;
+                });
+            }
+        });
+        (url, seen)
+    }
+
+    fn mac_vm(name: &str, status: &str, saved: bool, mac: &str) -> serde_json::Value {
+        serde_json::json!({
+            "name": name, "os": "macOS", "status": status, "savedState": saved,
+            "macAddress": mac, "cpuCount": 4, "memorySize": 8u64 << 30,
+            "diskSize": {"total": 160u64 << 30, "allocated": 1}
+        })
+    }
+
+    fn rt_at(url: String, root: &std::path::Path) -> LumeRuntime {
+        LumeRuntime::new(LumeConfig {
+            url,
+            spawn_serve: false,
+            root: root.to_path_buf(),
+            ..LumeConfig::default()
+        })
+    }
+
+    fn posts(seen: &Arc<std::sync::Mutex<Vec<String>>>) -> Vec<String> {
+        seen.lock()
+            .unwrap()
+            .iter()
+            .filter(|l| l.starts_with("POST") || l.starts_with("DELETE"))
+            .cloned()
+            .collect()
+    }
+
+    /// Suspending a running macOS Space saves its memory (Lume's suspend,
+    /// which also stops it); a Lume without saved states gets a stop, and
+    /// a stopped VM nothing.
     #[tokio::test]
-    async fn suspend_stops_a_lume_vm_and_is_a_no_op_when_stopped() {
+    async fn suspend_saves_a_running_vm_and_falls_back_to_a_stop() {
         let dir = tempfile::tempdir().unwrap();
-        for (status, stops) in [("running", 1), ("stopped", 0)] {
-            let (url, seen) = fake_lume(status).await;
-            let rt = LumeRuntime::new(LumeConfig {
-                url,
-                spawn_serve: false,
-                root: dir.path().to_path_buf(),
-                ..LumeConfig::default()
-            });
-            Runtime::suspend(&rt, "m").await.unwrap();
-            let posts = seen
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|l| l.starts_with("POST /lume/vms/m/stop"))
-                .count();
-            assert_eq!(posts, stops, "{status}: {:?}", seen.lock().unwrap());
-            // It made sure `lume serve` answers first (and would start it).
-            assert_eq!(
-                seen.lock().unwrap().first().map(String::as_str),
-                Some("GET /lume/host/status HTTP/1.1")
-            );
-        }
+        let (url, seen) = fake_lume_vms(
+            vec![mac_vm("m", "running", false, "aa:00:00:00:00:01")],
+            &[],
+        )
+        .await;
+        Runtime::suspend(&rt_at(url, dir.path()), "m")
+            .await
+            .unwrap();
+        assert_eq!(posts(&seen), ["POST /lume/vms/m/suspend {}"]);
+        let (url, seen) = fake_lume_vms(
+            vec![mac_vm("m", "running", false, "aa:00:00:00:00:01")],
+            &["/suspend"],
+        )
+        .await;
+        Runtime::suspend(&rt_at(url, dir.path()), "m")
+            .await
+            .unwrap();
+        assert_eq!(
+            posts(&seen),
+            ["POST /lume/vms/m/suspend {}", "POST /lume/vms/m/stop {}"]
+        );
+    }
+
+    /// A checkpoint of a running macOS VM keeps its memory: save, clone
+    /// with the state, resume the source from its own state. A fork of a
+    /// checkpoint with a state carries the state.
+    #[tokio::test]
+    async fn checkpoint_of_a_running_vm_saves_its_memory_and_forks_carry_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (url, seen) = fake_lume_vms(
+            vec![
+                mac_vm("m", "running", false, "aa:00:00:00:00:01"),
+                mac_vm("ck", "stopped", true, "aa:00:00:00:00:01"),
+            ],
+            &[],
+        )
+        .await;
+        let rt = rt_at(url, dir.path());
+        // "ck" exists in the fake, so checkpoint into a fresh name.
+        Runtime::checkpoint(&rt, "m", "ck2").await.unwrap();
+        let p = posts(&seen);
+        assert_eq!(p[0], "POST /lume/vms/m/suspend {}");
+        assert!(p[1].starts_with("POST /lume/vms/clone"), "{p:?}");
+        assert!(p[1].contains(r#""withSavedState":true"#), "{p:?}");
+        assert!(p[1].contains(r#""newName":"ck2""#), "{p:?}");
+        assert!(p[2].starts_with("POST /lume/vms/m/run"), "{p:?}");
+        assert_eq!(p.len(), 3, "{p:?}");
+        seen.lock().unwrap().clear();
+        Runtime::fork(&rt, "ck", "f1").await.unwrap();
+        let p = posts(&seen);
+        assert_eq!(p.len(), 1, "{p:?}");
+        assert!(p[0].contains(r#""withSavedState":true"#), "{p:?}");
+    }
+
+    /// An older Lume (no saved states): the checkpoint stops, clones and
+    /// restarts the VM as before.
+    #[tokio::test]
+    async fn checkpoint_falls_back_to_a_stopped_clone_on_an_older_lume() {
+        let dir = tempfile::tempdir().unwrap();
+        let (url, seen) = fake_lume_vms(
+            vec![mac_vm("m", "running", false, "aa:00:00:00:00:01")],
+            &["/suspend"],
+        )
+        .await;
+        Runtime::checkpoint(&rt_at(url, dir.path()), "m", "ck2")
+            .await
+            .unwrap();
+        let p = posts(&seen);
+        assert_eq!(p[0], "POST /lume/vms/m/suspend {}");
+        assert_eq!(p[1], "POST /lume/vms/m/stop {}");
+        assert!(p[2].starts_with("POST /lume/vms/clone"), "{p:?}");
+        assert!(!p[2].contains("withSavedState"), "{p:?}");
+        assert!(p[3].starts_with("POST /lume/vms/m/run"), "{p:?}");
+    }
+
+    /// A start resumes a warm state only when one fits: saved, stopped,
+    /// the spec's resources, and a MAC address no running VM has (each
+    /// resume of a state has the state's address).
+    #[tokio::test]
+    async fn warm_states_are_used_only_when_they_fit_and_their_address_is_free() {
+        let dir = tempfile::tempdir().unwrap();
+        let [a, b] = warm_vm_names("cua-base-0123456789ab");
+        assert_eq!(a, "cua-warm-0123456789ab");
+        assert_eq!(b, "cua-warm-0123456789ab-2");
+        let spec = StartSpec::new("s1", ImageSource::oci("ghcr.io/trycua/macos:26"))
+            .cpus(4)
+            .memory_mb(8192);
+        let (url, _) = fake_lume_vms(
+            vec![
+                mac_vm(&a, "stopped", true, "aa:00:00:00:00:0a"),
+                mac_vm(&b, "stopped", true, "aa:00:00:00:00:0b"),
+            ],
+            &[],
+        )
+        .await;
+        let rt = rt_at(url, dir.path());
+        let base = "cua-base-0123456789ab";
+        assert_eq!(rt.usable_warm(base, &spec).await.unwrap(), Some(a.clone()));
+        // Other resources: no warm state fits.
+        let big = spec.clone().memory_mb(16384);
+        assert_eq!(rt.usable_warm(base, &big).await.unwrap(), None);
+        // A GPU: never warm.
+        let mut gpu = spec.clone();
+        gpu.gpu = Some(crate::gpu::PARAVIRTUAL.into());
+        assert_eq!(rt.usable_warm(base, &gpu).await.unwrap(), None);
+        // The first state's address is in use: the second one.
+        let (url, _) = fake_lume_vms(
+            vec![
+                mac_vm(&a, "stopped", true, "aa:00:00:00:00:0a"),
+                mac_vm(&b, "stopped", true, "aa:00:00:00:00:0b"),
+                mac_vm("s0", "running", false, "AA:00:00:00:00:0A"),
+            ],
+            &[],
+        )
+        .await;
+        let rt = rt_at(url, dir.path());
+        assert_eq!(rt.usable_warm(base, &spec).await.unwrap(), Some(b.clone()));
+        // Both in use, or no saved state: none.
+        let (url, _) = fake_lume_vms(
+            vec![
+                mac_vm(&a, "stopped", true, "aa:00:00:00:00:0a"),
+                mac_vm(&b, "stopped", false, "aa:00:00:00:00:0b"),
+                mac_vm("s0", "running", false, "aa:00:00:00:00:0a"),
+            ],
+            &[],
+        )
+        .await;
+        assert_eq!(
+            rt_at(url, dir.path())
+                .usable_warm(base, &spec)
+                .await
+                .unwrap(),
+            None
+        );
+    }
+
+    /// Claiming a running pool member renames the running VM in Lume and
+    /// moves cua's own state for it; a Lume without renames says so.
+    #[tokio::test]
+    async fn claim_renames_the_running_member_and_moves_its_state() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("pool-1")).unwrap();
+        std::fs::write(dir.path().join("pool-1").join("ports.json"), b"[3211]").unwrap();
+        let (url, seen) = fake_lume_vms(
+            vec![
+                mac_vm("pool-1", "running", false, "aa:00:00:00:00:01"),
+                mac_vm("space-1", "running", false, "aa:00:00:00:00:01"),
+            ],
+            &[],
+        )
+        .await;
+        let rt = rt_at(url, dir.path());
+        // The fake already has "space-1": a name in use is refused.
+        let err = Runtime::claim(&rt, "pool-1", "space-1", &ClaimIdentity::default())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, VmmError::AlreadyExists(_)), "{err}");
+        let (url, seen2) = fake_lume_vms(
+            vec![mac_vm("pool-1", "running", false, "aa:00:00:00:00:01")],
+            &[],
+        )
+        .await;
+        let rt = rt_at(url, dir.path());
+        // The fake never shows the new name, so the final lookup fails
+        // after the rename; what matters is the requests and the move.
+        let _ = Runtime::claim(&rt, "pool-1", "space-2", &ClaimIdentity::default()).await;
+        let p = posts(&seen2);
+        assert_eq!(p, [r#"POST /lume/vms/pool-1/rename {"newName":"space-2"}"#]);
+        assert!(dir.path().join("space-2").join("ports.json").exists());
+        assert!(!dir.path().join("pool-1").exists());
+        drop(seen);
+        let (url, _) = fake_lume_vms(
+            vec![mac_vm("pool-1", "running", false, "aa:00:00:00:00:01")],
+            &["/rename"],
+        )
+        .await;
+        let err = Runtime::claim(
+            &rt_at(url, dir.path()),
+            "pool-1",
+            "space-3",
+            &ClaimIdentity::default(),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, VmmError::Unsupported { .. }), "{err}");
+    }
+
+    #[test]
+    fn macos_hostnames_are_valid_labels() {
+        assert_eq!(macos_hostname("my_space.1"), "my-space-1");
+        assert_eq!(macos_hostname("--"), "space");
+        assert_eq!(macos_hostname(&"a".repeat(80)).len(), 63);
+    }
+
+    /// Suspending a stopped VM does nothing, after making sure `lume
+    /// serve` answers (it would start it).
+    #[tokio::test]
+    async fn suspend_is_a_no_op_when_stopped() {
+        let dir = tempfile::tempdir().unwrap();
+        let (url, seen) = fake_lume("stopped").await;
+        Runtime::suspend(&rt_at(url, dir.path()), "m")
+            .await
+            .unwrap();
+        let seen = seen.lock().unwrap();
+        assert!(!seen.iter().any(|l| l.starts_with("POST")), "{seen:?}");
+        assert_eq!(
+            seen.first().map(String::as_str),
+            Some("GET /lume/host/status HTTP/1.1")
+        );
     }
 
     /// Deleting a macOS Space when `lume serve` is gone starts it (here,
@@ -2267,6 +3009,83 @@ mod tests {
     }
 
     #[test]
+    fn an_oci_image_on_lume_is_a_macos_guest_whatever_os_says() {
+        let oci = StartSpec::new(
+            "m",
+            ImageSource::Oci {
+                reference: "ghcr.io/trycua/macos:26".into(),
+            },
+        );
+        assert_eq!(oci.os, GuestOs::Linux);
+        assert!(macos_guest(&oci));
+        let disk = StartSpec::new(
+            "l",
+            ImageSource::Disk {
+                path: "/tmp/linux.qcow2".into(),
+            },
+        );
+        assert!(!macos_guest(&disk));
+    }
+
+    #[test]
+    fn a_macos_guest_gets_its_mounts_as_named_shares_next_to_the_setup_share() {
+        let dir = tempfile::tempdir().unwrap();
+        let rt = LumeRuntime::new(LumeConfig {
+            root: dir.path().join("lume"),
+            ..LumeConfig::default()
+        });
+        let job = dir.path().join("cj-0123-1");
+        let data = dir.path().join("run-data");
+        std::fs::create_dir_all(&job).unwrap();
+        std::fs::create_dir_all(&data).unwrap();
+        let mut spec = StartSpec::new("cj-0123-1", ImageSource::Existing);
+        spec.os = GuestOs::Macos;
+        spec.mounts = vec![
+            crate::Mount {
+                host: job.clone(),
+                guest: macos_share_path(&job),
+                read_only: false,
+            },
+            crate::Mount {
+                host: data.clone(),
+                guest: macos_share_path(&data),
+                read_only: true,
+            },
+        ];
+        assert_eq!(spec.mounts[0].guest, "/Volumes/My Shared Files/cj-0123-1");
+        let run = rt.macos_run("cj-0123-1", Some(&spec)).unwrap();
+        let shares: Vec<(String, bool)> = run
+            .shared_directories
+            .iter()
+            .map(|d| (d.host_path.clone(), d.read_only))
+            .collect();
+        assert_eq!(shares.len(), 3, "{shares:?}");
+        assert!(shares[0].0.ends_with("/setup"));
+        assert_eq!(shares[1], (job.display().to_string(), false));
+        assert_eq!(shares[2], (data.display().to_string(), true));
+        // A guest path Lume does not share it at, a repeated name, and a
+        // missing directory are refused before anything starts.
+        let mut wrong = spec.clone();
+        wrong.mounts[0].guest = "/cua/job".into();
+        let e = rt.macos_run("x", Some(&wrong)).unwrap_err().to_string();
+        assert!(e.contains("/Volumes/My Shared Files/cj-0123-1"), "{e}");
+        let setup = dir.path().join("setup");
+        std::fs::create_dir_all(&setup).unwrap();
+        let mut clash = spec.clone();
+        clash.mounts[1] = crate::Mount {
+            host: setup.clone(),
+            guest: macos_share_path(&setup),
+            read_only: false,
+        };
+        let e = rt.macos_run("x", Some(&clash)).unwrap_err().to_string();
+        assert!(e.contains("two shared directories named \"setup\""), "{e}");
+        let mut gone = spec.clone();
+        gone.mounts[0].host = dir.path().join("missing");
+        gone.mounts[0].guest = macos_share_path(&gone.mounts[0].host);
+        assert!(rt.macos_run("x", Some(&gone)).is_err());
+    }
+
+    #[test]
     fn macos_setup_share_carries_the_env_token_only_when_given() {
         let dir = tempfile::tempdir().unwrap();
         let rt = LumeRuntime::new(LumeConfig {
@@ -2275,20 +3094,19 @@ mod tests {
         });
         let mut spec = StartSpec::new("cua-e2e-mac", ImageSource::Existing);
         spec.os = GuestOs::Macos;
-        // No token: nothing shared.
-        assert!(
-            rt.macos_run("cua-e2e-mac", Some(&spec))
-                .unwrap()
-                .shared_directories
-                .is_empty()
-        );
+        // No token: the share is there (a saved state needs the same
+        // shares on every run), and empty.
+        let run = rt.macos_run("cua-e2e-mac", Some(&spec)).unwrap();
+        assert_eq!(run.shared_directories.len(), 1);
+        let share = std::path::PathBuf::from(&run.shared_directories[0].host_path);
+        assert_eq!(share.file_name().unwrap(), "setup");
+        assert_eq!(std::fs::read_dir(&share).unwrap().count(), 0);
 
         spec.env
             .insert(crate::cloudinit::ENV_TOKEN_VAR.into(), "tok-1".into());
         let run = rt.macos_run("cua-e2e-mac", Some(&spec)).unwrap();
         assert_eq!(run.shared_directories.len(), 1);
         assert!(run.shared_directories[0].read_only);
-        let share = std::path::PathBuf::from(&run.shared_directories[0].host_path);
         let token = share.join(MACOS_SETUP_TOKEN_FILE);
         assert_eq!(std::fs::read_to_string(&token).unwrap(), "tok-1");
         #[cfg(unix)]
@@ -2306,7 +3124,7 @@ mod tests {
         let body = serde_json::to_value(&run).unwrap();
         assert_eq!(body["sharedDirectories"][0]["readOnly"], true);
 
-        // A restart without a spec reuses the share.
+        // A restart without a spec reuses the share and its token.
         assert_eq!(
             rt.macos_run("cua-e2e-mac", None)
                 .unwrap()
@@ -2314,13 +3132,15 @@ mod tests {
                 .len(),
             1
         );
+        assert!(token.exists());
         // A later start without a token never shares the stale one.
         spec.env.clear();
-        assert!(
+        assert_eq!(
             rt.macos_run("cua-e2e-mac", Some(&spec))
                 .unwrap()
                 .shared_directories
-                .is_empty()
+                .len(),
+            1
         );
         assert!(!token.exists());
     }

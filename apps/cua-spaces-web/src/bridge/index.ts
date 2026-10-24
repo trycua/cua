@@ -108,6 +108,7 @@ export {
   type NewSpaceWizardHook,
   type RuntimeFixHook,
 } from "./new-space-hooks";
+export { runCreateFix, type CreateFixActions } from "./create-retry";
 export { createFailedText, emptyHome, type EmptyHome, type EmptyTile, type FirstSpaceOffer } from "./new-space";
 export type * from "./contracts/volume";
 export * from "./volume";
@@ -148,6 +149,9 @@ export {
   type RelayUsage,
   type RelayUsageView,
 } from "./relay-usage";
+
+export { linkEnds, needsRelaySetup, useLinks, type LinksHook } from "./links";
+export type { LinkAccess, LinkCreate, ShareLink } from "./ops/links";
 export {
   useResources,
   hostResources,

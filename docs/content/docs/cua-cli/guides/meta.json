@@ -1,6 +1,7 @@
 {
   "title": "Guides",
   "pages": [
+    "install-spaces",
     "authentication",
     "mcp-server",
     "share-a-link"

@@ -185,7 +185,7 @@ final class Server: @unchecked Sendable {
 
     // MARK: - Initialization
 
-    init(port: UInt16 = 7777) {
+    init(port: UInt16 = LumeChannel.current.lumePort) {
         self.portNumber = port
         self.controller = LumeController()
         self.routes = []

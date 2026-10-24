@@ -8,18 +8,22 @@
 #   curl -fsSL https://cua.ai/uninstall.sh | sh -s -- --all
 #
 # By default it removes the Cua Spaces app, the cua CLI and its PATH line, the
-# host service (`cua host remove --uninstalling`), your agents' Cua skills and
-# MCP entries (`cua agents remove`), launch at login, your sign-in and device
-# key (macOS Keychain, including the old run.cua.ai item), and Cua's settings,
-# caches and logs. It never deletes a Space or its data: that needs
-# --delete-spaces. Run `uninstall.sh --help` for the options.
+# host service (`cua host remove --uninstalling`), your agents' Cua Spaces
+# skills and MCP entries (`cua agents remove`: the `cua` server and the Cua
+# Spaces skills; Cua Driver's `cua-driver` entries and other tools' stay),
+# launch at login, your sign-in and device key (macOS Keychain, including the
+# old run.cua.ai item), and Cua's settings, caches and logs. It never deletes a
+# Space or its data: that needs --delete-spaces. Run `uninstall.sh --help` for
+# the options.
 set -eu
 
 usage() {
     cat <<'EOF'
 Cua uninstaller: removes the Cua Spaces app, the cua CLI, the host service,
-agent integrations, sign-in and Cua's settings. Spaces and their data stay
-unless you ask for them to go.
+Cua Spaces' agent skills and MCP entries, sign-in and Cua's settings. Spaces
+and their data stay unless you ask for them to go. Cua Driver's skill and MCP
+server in your agents, and other tools' entries, stay too (--all removes Cua
+Driver's).
 
 Options:
   --keep-data        keep ~/.cua (settings, the Spaces registry, caches, the
@@ -29,12 +33,14 @@ Options:
                      (Space disks, the local Cua Volume files, the Keyvault).
                      Running Spaces are listed and stopped first. Cannot be
                      undone; asks you to type "delete" unless --yes is given
-  --all              also run the Cua Driver and Lume uninstallers
+  --all              also run the Cua Driver and Lume uninstallers, and remove
+                     Cua Driver's skill and MCP server from your agents
                      (Lume keeps your VMs unless --delete-spaces is given too)
   --prefix DIR       also remove what install.sh --prefix DIR put there
                      (DIR/bin, DIR/Applications)
   --no-modify-path   never edit your shell profile
-  --dry-run          print what would be removed, change nothing
+  --dry-run          print what would be removed, change nothing (it lists
+                     the agent skills and MCP entries one by one)
   -y, --yes          accept every prompt (non-interactive)
   -h, --help         show this help
 
@@ -654,9 +660,53 @@ EOF
     fi
 }
 
+# Whether this cua removes only Cua Spaces' entries from agents (`cua agents
+# remove`: its own `cua` server and skills) and can preview that
+# (`--dry-run`). Older builds removed every entry cua ever wrote, Cua Driver's
+# `cua-driver` server and skill included, and had neither flag. The new flag
+# in its help is the test.
+cua_scopes_agents_remove() {
+    [ -n "$cua_bin" ] || return 1
+    bounded 20 env CUA_TELEMETRY=0 DO_NOT_TRACK=1 "$cua_bin" agents remove --help >"$tmp/agents-remove-help" 2>/dev/null || return 1
+    grep -e '--include-cua-driver' "$tmp/agents-remove-help" >/dev/null 2>&1
+}
+
+# Stops before anything is removed when this cua is too old to leave Cua
+# Driver's agent entries alone: running its `agents remove` would strip them,
+# and the uninstaller deletes the record of what cua wrote (~/.cua) afterwards,
+# so the entries could not be removed later.
+require_scoped_agents_remove() {
+    [ "$dry_run" = 0 ] || return 0
+    [ -n "$cua_bin" ] || return 0
+    cua_scopes_agents_remove && return 0
+    die "this cua is older than the version that removes only Cua Spaces' entries from your agents. Its 'cua agents remove' would also take Cua Driver's skill and MCP server out of Claude Code, Codex, Cursor and your other agents. Nothing was removed. Update cua, then run this uninstaller again: curl -fsSL https://cua.ai/install.sh | sh -s -- --cli-only --yes"
+}
+
+# Removes the Cua Spaces skills and MCP entries (the `cua` server, `cua-local`
+# for Local) from the agents. Cua Driver's `cua-driver` skill and server, and
+# every other tool's entries, stay, unless --all asked for Cua Driver to go.
+# With --dry-run it runs the same command with --dry-run, so the list is what
+# the real run removes.
 remove_agent_integrations() {
     [ -n "$cua_bin" ] || return 0
-    run_cua "removing the Cua skills and MCP entries from your agents" 60 agents remove --agents all --yes
+    set -- agents remove --agents all
+    if [ "$all_tools" = 1 ]; then
+        set -- "$@" --include-cua-driver
+    fi
+    if [ "$dry_run" = 1 ]; then
+        if ! cua_scopes_agents_remove; then
+            say "[dry-run] cua $*: this cua is too old to list it; the real run stops and asks you to update cua first"
+            return 0
+        fi
+        say "[dry-run] cua $* --dry-run:"
+        if bounded 60 env CUA_TELEMETRY=0 DO_NOT_TRACK=1 "$cua_bin" "$@" --dry-run >"$tmp/agents-plan" 2>&1; then
+            sed -e '/^Dry run:/d' -e 's/^/[dry-run] /' "$tmp/agents-plan"
+        else
+            warn "'cua $* --dry-run' did not finish; the agent entries could not be listed"
+        fi
+        return 0
+    fi
+    run_cua "removing the Cua Spaces skills and MCP entries from your agents" 60 "$@" --yes
 }
 
 stop_daemon() {
@@ -1091,8 +1141,11 @@ remove_other_tools() {
 confirm_plan() {
     [ "$dry_run" = 0 ] || return 0
     say ""
-    say "This removes Cua Spaces, the cua CLI, the host service, your agents' Cua skills and MCP"
-    say "entries, launch at login and your sign-in."
+    say "This removes Cua Spaces, the cua CLI, the host service, Cua Spaces' skills and MCP"
+    say "entry in your agents, launch at login and your sign-in."
+    if [ "$all_tools" = 0 ]; then
+        say "Cua Driver's skill and MCP server in your agents, and other tools' entries, stay."
+    fi
     if [ "$keep_data" = 1 ]; then
         say "It keeps $cua_home and the Cua Volume cache (--keep-data)."
     elif [ "$delete_spaces" = 1 ]; then
@@ -1101,7 +1154,8 @@ confirm_plan() {
         say "It also deletes Cua's settings and caches, but keeps your Spaces and their data."
     fi
     if [ "$all_tools" = 1 ]; then
-        say "It also runs the Cua Driver and Lume uninstallers (--all)."
+        say "It also runs the Cua Driver and Lume uninstallers, and removes Cua Driver's skill and"
+        say "MCP server from your agents (--all)."
     fi
     if [ "$assume_yes" = 0 ] && ! tty_ok; then
         die "no terminal to ask on; rerun with --yes (or --dry-run to see what would be removed)"
@@ -1143,6 +1197,7 @@ main() {
         info "dry run: nothing will be changed"
     fi
     recognise_home
+    require_scoped_agents_remove
     spaces="$(local_spaces)"
     confirm_plan
     quit_app

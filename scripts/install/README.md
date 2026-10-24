@@ -100,20 +100,20 @@ It lists what it found, asks once (`--yes` skips the question; without a termina
 
 | install.sh | install.ps1 | Effect |
 |---|---|---|
-| (default) | (default) | Removes the app, the CLI, the host service, the agent integrations, launch at login, your sign-in and Cua's settings and caches. Keeps Spaces and their data |
+| (default) | (default) | Removes the app, the CLI, the host service, Cua Spaces' agent skills and MCP entry, launch at login, your sign-in and Cua's settings and caches. Keeps Spaces and their data, and Cua Driver's and other tools' entries in your agents |
 | `--keep-data` | `-KeepData` | Keeps `~/.cua` (settings, the Spaces registry, the Cua Volume cache, the device key) and the app's settings. Still removes programs, services, integrations and the sign-in |
 | `--delete-spaces` | `-DeleteSpaces` | Also deletes the Spaces on this computer and their data: Space disks, the local Cua Volume files, the Keyvault. Running Spaces are listed and stopped first; asks you to type `delete` (not with `--yes`). Cannot be combined with `--keep-data` |
-| `--all` | `-All` | Also runs the Cua Driver uninstaller (`cua.ai/driver/uninstall.sh` / `.ps1`) and, on macOS, Lume's (`cua.ai/lume/uninstall.sh`). Lume keeps your VMs unless `--delete-spaces` is given too |
+| `--all` | `-All` | Also runs the Cua Driver uninstaller (`cua.ai/driver/uninstall.sh` / `.ps1`), takes Cua Driver's skill and MCP server out of your agents (`cua agents remove --include-cua-driver`) and, on macOS, runs Lume's uninstaller (`cua.ai/lume/uninstall.sh`). Lume keeps your VMs unless `--delete-spaces` is given too |
 | `--prefix DIR` | `-Prefix DIR` | Also removes what `install.sh --prefix DIR` put under `DIR/bin` and `DIR/Applications` |
 | `--no-modify-path` | `-NoModifyPath` | Never edits your shell profile (user PATH on Windows) |
-| `--dry-run` | `-DryRun` | Prints what would be removed, changes nothing |
+| `--dry-run` | `-DryRun` | Prints what would be removed, changes nothing. It runs `cua agents remove --dry-run` to list the agent skills and MCP entries one by one |
 | `--yes` | `-Yes` | Accepts every prompt |
 
 What it removes, in this order (each step is best effort and bounded, so one failure never stops the rest):
 
 1. Quits the Cua Spaces app, lists the Spaces on this computer and stops the running ones (their disks stay).
 2. `cua host remove --force --uninstalling`: unregisters this computer from the relay and removes the host service. When `cua` is not there to do it, it removes the service itself (launchd `com.trycua.spacesd.host` on macOS, the systemd unit `cua-spacesd-host` on Linux, the `Cua\SpacesdHost` scheduled task on Windows, and the names used before the rename).
-3. `cua agents remove --agents all --yes`: the Cua skills and MCP entries (including the cua-driver ones Cua added) in your agents.
+3. `cua agents remove --agents all --yes`: the Cua Spaces skills and the `cua` MCP server (`cua-local` for Local) in your agents. The `cua-driver` skill and MCP server (`cua-driver-local` for Local) and every other tool's entries stay, unless `--all` adds `--include-cua-driver`. A `cua` older than the version with `--include-cua-driver` and `--dry-run` would also strip Cua Driver's entries, so the script stops before removing anything and says how to update `cua` (a dry run says so and carries on).
 4. `cua daemon stop`, and the Cua Volume mount (`~/Cua Volume` on macOS, `~/cua-volume` on Linux) is unmounted before any file is deleted.
 5. Signs out (`cua auth logout`, which revokes the session) and removes a leftover `credentials.json`.
 6. The app: `Cua Spaces.app` in `/Applications` and `~/Applications` (macOS, only when its bundle id is Cua's); the `cua-spaces` package with apt (Linux .deb), the AppImage, its desktop entry and autostart entry; on Windows the app's own uninstaller (silent), which also removes launch at login. On macOS the app registered itself as a login item, which a script cannot unregister: with the app gone it has nothing to start, and System Settings, Login Items shows how to remove a leftover row.

@@ -35,6 +35,21 @@ case "$*" in
     if [ -f "$FAKE_SPACES" ]; then cat "$FAKE_SPACES"; else echo "No sandboxes found."; fi
     ;;
 "host remove --force --uninstalling") rm -rf "${CUA_HOME:-$HOME/.cua}/host" ;;
+"agents remove --help")
+    # A cua before the agents fix has neither --include-cua-driver nor --dry-run.
+    echo "Usage: cua agents remove [OPTIONS]"
+    echo "      --agents <AGENTS>  --skills-only  --mcp-only  -y, --yes"
+    if [ -z "${FAKE_CUA_OLD_AGENTS:-}" ]; then
+        echo "      --include-cua-driver  Also remove Cua Driver's skill and MCP server"
+        echo "      --dry-run             List exactly what would be removed"
+    fi
+    ;;
+"agents remove --agents all --dry-run" | "agents remove --agents all --include-cua-driver --dry-run")
+    echo "Dry run: nothing is changed."
+    echo "  would remove MCP server cua: ~/.claude.json"
+    echo "  would remove skill cua-spaces: ~/.claude/skills/cua-spaces"
+    echo "  - MCP server cua-driver: ~/.claude.json kept (Cua Driver's; --include-cua-driver removes it)"
+    ;;
 esac
 exit 0
 """
@@ -246,14 +261,23 @@ class UninstallMacTest(unittest.TestCase):
                 self.assertIn("[dry-run] remove", result.stdout)
                 self.assertIn("cua host remove --force --uninstalling", result.stdout)
                 self.assertIn("[dry-run] bash lume-uninstall.sh --force --purge", result.stdout)
+                # The agent entries are listed one by one, by the command the real run uses with --dry-run.
+                self.assertIn("[dry-run] cua agents remove --agents all --include-cua-driver --dry-run:", result.stdout)
+                self.assertIn("[dry-run]   would remove MCP server cua: ~/.claude.json", result.stdout)
+                self.assertIn("[dry-run]   would remove skill cua-spaces: ~/.claude/skills/cua-spaces", result.stdout)
                 self.assertEqual(before, sorted(str(p) for p in box.home.rglob("*")))
                 self.assertEqual(zshrc, (box.home / ".zshrc").read_text())
                 self.assertEqual(len(box.keychain_items()), 6)
                 log = "\n".join(box.call_log())
                 # The timeout watchdog polls with one-second sleeps, so nothing is left parked.
                 self.assertEqual(sorted({l for l in log.splitlines() if l.startswith("sleep:")} - {"sleep: 1"}), [])
-                for destructive in ("delete-generic-password", "bootout", "agents remove", "daemon stop", "host remove"):
+                for destructive in ("delete-generic-password", "bootout", "daemon stop", "host remove"):
                     self.assertNotIn(destructive, log)
+                # `agents remove` runs only to read its help and to preview with --dry-run.
+                agent_calls = [l for l in log.splitlines() if "agents remove" in l]
+                self.assertTrue(agent_calls)
+                for call in agent_calls:
+                    self.assertTrue(call.endswith("--help") or call.endswith("--dry-run"), call)
 
     def test_default_removes_programs_and_settings_and_keeps_spaces_data(self):
         for shell in shells():
@@ -289,6 +313,32 @@ class UninstallMacTest(unittest.TestCase):
                 self.assertTrue(all(i >= 0 for i in indexes), box.call_log())
                 self.assertEqual(indexes, sorted(indexes))
                 self.assertGreaterEqual(box.index("launchctl: bootout"), 0)
+                # Without --all, Cua Driver's skill and MCP entries stay, and the plan says so.
+                self.assertFalse([c for c in box.call_log() if "--include-cua-driver" in c])
+                self.assertIn("Cua Driver's skill and MCP server in your agents", result.stdout)
+
+    def test_a_cua_too_old_to_leave_cua_driver_alone_stops_the_uninstall_before_removing_anything(self):
+        """An older `cua agents remove` also strips the `cua-driver` skill and MCP server and
+        has no --dry-run. The uninstaller then stops with nothing removed (it deletes ~/.cua,
+        the record of what cua wrote, so the entries could not be removed later)."""
+        box = self.box()
+        installed_mac(box)
+        before = sorted(str(p) for p in box.home.rglob("*"))
+        result = box.run("--yes", env={"FAKE_CUA_OLD_AGENTS": "1"})
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("older than the version that removes only Cua Spaces' entries", result.stderr)
+        self.assertIn("Nothing was removed", result.stderr)
+        self.assertIn("install.sh | sh -s -- --cli-only --yes", result.stderr)
+        self.assertEqual(before, sorted(str(p) for p in box.home.rglob("*")))
+        self.assertEqual(len(box.keychain_items()), 6)
+        log = box.call_log()
+        self.assertEqual([c for c in log if "agents remove" in c and not c.endswith("--help")], [])
+        self.assertEqual([c for c in log if "host remove" in c or "auth logout" in c or "daemon stop" in c], [])
+        # A dry run says so and carries on with the rest of the plan.
+        result = box.run("--dry-run", env={"FAKE_CUA_OLD_AGENTS": "1"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("this cua is too old to list it", result.stdout)
+        self.assertIn("cua host remove --force --uninstalling", result.stdout)
 
     def test_the_app_helper_goes_but_its_permissions_stay(self):
         box = self.box()
@@ -526,6 +576,19 @@ class OtherToolsTest(unittest.TestCase):
         result = box.run("--yes", "--all", env=self.env())
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.log.read_text().splitlines(), ["driver ", "lume --force"])
+
+    def test_all_also_removes_cua_drivers_agent_entries_and_without_all_they_stay(self):
+        box = Sandbox(tempfile.mkdtemp(dir=self.tmp.name), "Darwin")
+        box.cli()
+        result = box.run("--yes", "--all", env=self.env())
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertGreaterEqual(box.index("agents remove --agents all --include-cua-driver --yes"), 0, box.call_log())
+        box = Sandbox(tempfile.mkdtemp(dir=self.tmp.name), "Darwin")
+        box.cli()
+        result = box.run("--yes", env=self.env())
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertGreaterEqual(box.index("agents remove --agents all --yes"), 0, box.call_log())
+        self.assertEqual([c for c in box.call_log() if "--include-cua-driver" in c], [])
 
     def test_all_with_delete_spaces_purges_lume(self):
         box = Sandbox(tempfile.mkdtemp(dir=self.tmp.name), "Darwin")

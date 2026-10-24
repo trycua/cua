@@ -24,7 +24,8 @@ again any time: a computer that has nothing left, or only part of Cua, is fine.
 </Tabs>
 
 To see what it would do first, add `--dry-run` (`-DryRun` on Windows). It prints
-every step and changes nothing:
+every step, lists the skills and MCP entries it would take out of each of your AI
+agents, and changes nothing:
 
 ```bash skip="destructive"
 curl -fsSL https://cua.ai/uninstall.sh | sh -s -- --dry-run
@@ -37,8 +38,9 @@ curl -fsSL https://cua.ai/uninstall.sh | sh -s -- --dry-run
   PATH on Windows).
 - The host service, after `cua host remove`, so this computer no longer shows up
   as a computer in your account.
-- The Cua skills and MCP entries in your AI agents, the way `cua agents remove`
-  does. Entries from other tools stay.
+- The Cua Spaces skills and the `cua` MCP server in your AI agents, the way
+  `cua agents remove` does. Entries from other tools stay, and so do Cua Driver's
+  `cua-driver` skill and MCP server (see [Other Cua tools](#other-cua-tools)).
 - Launch at login.
 - Your sign-in and the device key: macOS Keychain items (including the old
   `run.cua.ai` one), Windows Credential Manager entries.
@@ -74,7 +76,7 @@ It lists the Spaces, stops the running ones, and asks you to type `delete`.
 |-----------------|---------|--------|
 | `--keep-data` | `-KeepData` | Keep `~/.cua` and the app's settings. |
 | `--delete-spaces` | `-DeleteSpaces` | Also delete Spaces and their data (not together with `--keep-data`). |
-| `--all` | `-All` | Also run the Cua Driver uninstaller and, on macOS, the Lume one. Lume keeps your VMs unless `--delete-spaces` is given too. |
+| `--all` | `-All` | Also run the Cua Driver uninstaller (and take its skill and MCP server out of your agents) and, on macOS, the Lume uninstaller. Lume keeps your VMs unless `--delete-spaces` is given too. |
 | `--prefix DIR` | `-Prefix DIR` | Also remove what `install.sh --prefix DIR` installed. |
 | `--no-modify-path` | `-NoModifyPath` | Never edit your shell profile or user PATH. |
 | `--dry-run` | `-DryRun` | Print what would be removed, change nothing. |
@@ -83,7 +85,9 @@ It lists the Spaces, stops the running ones, and asks you to type `delete`.
 ## Other Cua tools
 
 Cua Driver and Lume are separate products. The command above leaves them alone
-and says so. Add `--all` to remove them too, or run their own uninstallers:
+and says so, and that includes the `cua-driver` skill and MCP server in your AI
+agents: Claude Code, Codex, Cursor and the others keep using Cua Driver. Add
+`--all` to remove them too, or run their own uninstallers:
 
 ```bash skip="destructive"
 /bin/bash -c "$(curl -fsSL https://cua.ai/driver/uninstall.sh)"
@@ -93,6 +97,10 @@ and says so. Add `--all` to remove them too, or run their own uninstallers:
 The Cua Driver uninstaller keeps its macOS permissions (Accessibility and Screen
 Recording), so installing it again needs no new approval. To revoke them as
 well, add `--reset-permissions` to its command.
+
+To remove the same entries without the uninstaller, run
+`cua agents remove --dry-run` to see them, then `cua agents remove`. Add
+`--include-cua-driver` to take Cua Driver's skill and MCP server out as well.
 
 ## If a step needs your attention
 
@@ -107,6 +115,11 @@ non-zero status.
   left in System Settings, Login Items, switch it off there.
 - **A `cua` from pip, npm or Homebrew** is not touched. Remove it with the tool
   that installed it.
+- **An older `cua`.** Before the version that added `cua agents remove
+  --dry-run`, `cua agents remove` also took out Cua Driver's skill and MCP
+  server. The uninstaller stops before it removes anything and says how to update
+  `cua` (`curl -fsSL https://cua.ai/install.sh | sh -s -- --cli-only --yes`);
+  run it again after that.
 - **The `.deb` on Linux** needs root: `sudo apt-get remove cua-spaces`.
 
 To install again: `curl -fsSL https://cua.ai/install.sh | sh`. See

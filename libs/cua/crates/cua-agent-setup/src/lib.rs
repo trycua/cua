@@ -339,6 +339,17 @@ pub const DRIVER_MCP_SERVER_NAME: &str = "cua-driver";
 /// The bundled skill that teaches agents cua-driver.
 pub const DRIVER_SKILL: &str = "cua-driver";
 
+/// Whether `name` (an MCP server or a skill folder) belongs to Cua Driver,
+/// not to Cua Spaces: `cua-driver`, and its siblings `cua-driver-local` (the
+/// Local channel's skill copy and driver) and `cua-driver-rs` (the old skill
+/// pack name). `cua agents remove` leaves them in place unless asked
+/// ([`RemoveOptions::include_cua_driver`]): Cua Driver is a separate product
+/// with its own uninstaller, and uninstalling Cua Spaces must not break the
+/// user's agents' computer-use.
+pub fn is_cua_driver_name(name: &str) -> bool {
+    name == DRIVER_MCP_SERVER_NAME || name.starts_with("cua-driver-")
+}
+
 /// The name the retired Spaces Python MCP server (`spaces_mcp.py`, replaced
 /// by `cua daemon mcp`) was registered under by older Spaces app builds.
 pub const LEGACY_SPACES_MCP_NAME: &str = "cua-spaces";
@@ -536,6 +547,20 @@ impl Parts {
         skills: true,
         mcp: true,
     };
+}
+
+/// The `Skipped` detail of a Cua Driver entry `remove` leaves in place.
+pub const KEPT_CUA_DRIVER: &str = "Cua Driver's; --include-cua-driver removes it";
+
+/// How [`AgentSetup::remove_with`] runs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RemoveOptions {
+    /// Also remove Cua Driver's entries (the `cua-driver` MCP server and
+    /// skill, [`is_cua_driver_name`]). Off by default: they are not Cua
+    /// Spaces', and they stay.
+    pub include_cua_driver: bool,
+    /// Change nothing: return the outcomes a real run would produce.
+    pub dry_run: bool,
 }
 
 /// The onboarding engine.
@@ -1146,11 +1171,27 @@ impl AgentSetup {
         Ok(())
     }
 
-    /// Undoes what cua wrote for `agents`: MCP entries that still hold the
-    /// exact value cua wrote (the entry that was there before, if any, is
-    /// restored), and skill folders cua installed and nobody edited (a
-    /// folder shared with an agent not being removed stays).
+    /// Undoes what cua wrote for `agents`, for Cua Spaces only: MCP entries
+    /// that still hold the exact value cua wrote (the entry that was there
+    /// before, if any, is restored), and skill folders cua installed and
+    /// nobody edited (a folder shared with an agent not being removed stays).
+    /// Cua Driver's entries (`cua-driver`) stay; see
+    /// [`AgentSetup::remove_with`] to remove them too.
     pub fn remove(&self, agents: &[String], parts: Parts) -> Result<Vec<Outcome>> {
+        self.remove_with(agents, parts, RemoveOptions::default())
+    }
+
+    /// [`AgentSetup::remove`] with options: `include_cua_driver` removes the
+    /// `cua-driver` server and skill too (otherwise each gets a `Skipped` row
+    /// that says it was kept), and `dry_run` writes nothing and returns the
+    /// rows a real run would produce, so a preview lists exactly what the
+    /// run removes.
+    pub fn remove_with(
+        &self,
+        agents: &[String],
+        parts: Parts,
+        opts: RemoveOptions,
+    ) -> Result<Vec<Outcome>> {
         let specs = self.specs(agents)?;
         let mut state = State::load(&self.state_path)?;
         let mut out = Vec::new();
@@ -1176,7 +1217,14 @@ impl AgentSetup {
                         detail: String::new(),
                         backup: None,
                     };
-                    if let Err(e) = self.remove_mcp(&mut state, a, m, &file, &name, &mut o) {
+                    if is_cua_driver_name(&name) && !opts.include_cua_driver {
+                        o.detail = KEPT_CUA_DRIVER.into();
+                        out.push(o);
+                        continue;
+                    }
+                    if let Err(e) =
+                        self.remove_mcp(&mut state, a, m, &file, &name, opts.dry_run, &mut o)
+                    {
                         o.change = Change::Failed;
                         o.detail = e.to_string();
                     }
@@ -1204,7 +1252,6 @@ impl AgentSetup {
                 if removing.is_empty() {
                     continue;
                 }
-                r.agents.retain(|x| !ids.contains(x));
                 let mut o = Outcome {
                     agents: removing,
                     target: Target::Skill,
@@ -1214,6 +1261,12 @@ impl AgentSetup {
                     detail: String::new(),
                     backup: None,
                 };
+                if is_cua_driver_name(&r.skill) && !opts.include_cua_driver {
+                    o.detail = KEPT_CUA_DRIVER.into();
+                    out.push(o);
+                    continue;
+                }
+                r.agents.retain(|x| !ids.contains(x));
                 if !r.agents.is_empty() {
                     o.detail = format!(
                         "kept for {}",
@@ -1227,16 +1280,23 @@ impl AgentSetup {
                             o.detail = "already gone".into();
                             state.skills.remove(&dest);
                         }
-                        Some(h) if h == r.hash => match std::fs::remove_dir_all(&dest) {
-                            Ok(()) => {
-                                o.change = Change::Removed;
-                                state.skills.remove(&dest);
+                        Some(h) if h == r.hash => {
+                            let gone = if opts.dry_run {
+                                Ok(())
+                            } else {
+                                std::fs::remove_dir_all(&dest)
+                            };
+                            match gone {
+                                Ok(()) => {
+                                    o.change = Change::Removed;
+                                    state.skills.remove(&dest);
+                                }
+                                Err(e) => {
+                                    o.change = Change::Failed;
+                                    o.detail = e.to_string();
+                                }
                             }
-                            Err(e) => {
-                                o.change = Change::Failed;
-                                o.detail = e.to_string();
-                            }
-                        },
+                        }
                         Some(_) => {
                             o.detail = "edited since cua installed it; left in place".into();
                             state.skills.remove(&dest);
@@ -1246,7 +1306,9 @@ impl AgentSetup {
                 out.push(o);
             }
         }
-        state.save(&self.state_path)?;
+        if !opts.dry_run {
+            state.save(&self.state_path)?;
+        }
         Ok(out)
     }
 
@@ -1257,6 +1319,7 @@ impl AgentSetup {
         m: &McpSpec,
         file: &Path,
         name: &str,
+        dry_run: bool,
         o: &mut Outcome,
     ) -> Result<()> {
         // `cua`'s record may carry another name (older states).
@@ -1285,7 +1348,9 @@ impl AgentSetup {
             .owner_cli
             .filter(|_| self.env.run_agent_clis)
             .and_then(|c| self.env.which(c.bin()).map(|bin| (c, bin)));
-        if let (Some((cli, bin)), None) = (via_cli, &r.previous) {
+        if dry_run {
+            // Same checks as a real run, no write.
+        } else if let (Some((cli, bin)), None) = (via_cli, &r.previous) {
             run_cli(&bin, &cli.remove_args(&r.name))?;
         } else {
             let new = match &r.previous {

@@ -9,9 +9,11 @@ Cua uninstaller for Windows: removes what install.ps1 and the Cua Spaces app put
 
 By default it removes the Cua Spaces app (through its own uninstaller), the cua
 CLI and its user PATH entry, the host service (`cua host remove --uninstalling`),
-your agents' Cua skills and MCP entries (`cua agents remove`), launch at login,
-your sign-in and device key (Windows Credential Manager), and Cua's settings and
-caches. It never deletes a Space or its data: that needs -DeleteSpaces.
+your agents' Cua Spaces skills and MCP entries (`cua agents remove`: the `cua`
+server and the Cua Spaces skills; Cua Driver's `cua-driver` entries and other
+tools' stay), launch at login, your sign-in and device key (Windows Credential
+Manager), and Cua's settings and caches. It never deletes a Space or its data:
+that needs -DeleteSpaces.
 
 .PARAMETER KeepData
 Keep %USERPROFILE%\.cua (settings, the Spaces registry, caches, the Cua Volume
@@ -21,13 +23,15 @@ Also delete the Spaces on this PC and their data (Space disks, the local Cua
 Volume files, the Keyvault). Running Spaces are listed and stopped first. This
 cannot be undone; you are asked to type "delete" unless -Yes is given.
 .PARAMETER All
-Also run the Cua Driver uninstaller.
+Also run the Cua Driver uninstaller, and remove Cua Driver's skill and MCP
+server from your agents.
 .PARAMETER Prefix
 Also remove what install.ps1 -Prefix put there (Prefix\bin).
 .PARAMETER NoModifyPath
 Do not edit the user PATH.
 .PARAMETER DryRun
-Print what would be removed; change nothing.
+Print what would be removed; change nothing. It lists the agent skills and MCP
+entries one by one.
 .PARAMETER Yes
 Accept every prompt (non-interactive).
 #>
@@ -197,6 +201,52 @@ function Invoke-Cua([string]$Label, [int]$Seconds, [string[]]$Arguments, [hashta
     } finally {
         foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k]) }
     }
+}
+
+# Whether this cua removes only Cua Spaces' entries from agents (`cua agents
+# remove`: its own `cua` server and skills) and can preview that (--dry-run).
+# Older builds removed every entry cua ever wrote, Cua Driver's `cua-driver`
+# server and skill included, and had neither flag. The new flag in its help is
+# the test.
+function Test-CuaScopesAgentsRemove {
+    if (-not $script:Cua) { return $false }
+    $result = Invoke-Bounded $script:Cua @('agents', 'remove', '--help') 20
+    return ($result.ExitCode -eq 0 -and "$($result.Output)" -match '--include-cua-driver')
+}
+
+# Stops before anything is removed when this cua is too old to leave Cua
+# Driver's agent entries alone: running its `agents remove` would strip them,
+# and the uninstaller deletes the record of what cua wrote (%USERPROFILE%\.cua)
+# afterwards, so the entries could not be removed later.
+function Test-ScopedAgentsRemove {
+    if ($DryRun -or -not $script:Cua) { return }
+    if (Test-CuaScopesAgentsRemove) { return }
+    Stop-Uninstall 'this cua is older than the version that removes only Cua Spaces'' entries from your agents. Its ''cua agents remove'' would also take Cua Driver''s skill and MCP server out of Claude Code, Codex, Cursor and your other agents. Nothing was removed. Update cua, then run this uninstaller again: & ([scriptblock]::Create((irm https://cua.ai/install.ps1))) -CliOnly -Yes'
+}
+
+# Removes the Cua Spaces skills and MCP entries (the `cua` server, `cua-local`
+# for Local) from the agents. Cua Driver's `cua-driver` skill and server, and
+# every other tool's entries, stay, unless -All asked for Cua Driver to go.
+# With -DryRun it runs the same command with --dry-run, so the list is what the
+# real run removes.
+function Remove-AgentIntegrations {
+    $agentArgs = @('agents', 'remove', '--agents', 'all')
+    if ($All) { $agentArgs += '--include-cua-driver' }
+    if ($DryRun) {
+        if (-not (Test-CuaScopesAgentsRemove)) {
+            Write-Host "[dry-run] cua $($agentArgs -join ' '): this cua is too old to list it; the real run stops and asks you to update cua first"
+            return
+        }
+        Write-Host "[dry-run] cua $($agentArgs -join ' ') --dry-run:"
+        $plan = Invoke-Bounded $script:Cua ($agentArgs + '--dry-run') 60
+        if ($plan.ExitCode -ne 0) {
+            Write-Warn "'cua $($agentArgs -join ' ') --dry-run' did not finish; the agent entries could not be listed"
+            return
+        }
+        foreach ($row in @("$($plan.Output)" -split "`r?`n" | Where-Object { $_.Trim() -and $_ -notlike 'Dry run:*' })) { Write-Host "[dry-run] $row" }
+        return
+    }
+    $null = Invoke-Cua 'removing the Cua Spaces skills and MCP entries from your agents' 60 ($agentArgs + '--yes')
 }
 
 # The cua homes: the main one and one per environment (~/.cua/envs/staging).
@@ -476,16 +526,18 @@ function Invoke-CuaUninstall {
     }
     if ($DryRun) { Write-Info 'dry run: nothing will be changed' }
     Test-HomeRecognised
+    Test-ScopedAgentsRemove
     $spaces = @(Get-LocalSpaces)
 
     if (-not $DryRun) {
         Write-Host ''
-        Write-Host 'This removes Cua Spaces, the cua CLI, the host service, your agents'' Cua skills and MCP entries,'
-        Write-Host 'launch at login and your sign-in.'
+        Write-Host 'This removes Cua Spaces, the cua CLI, the host service, Cua Spaces'' skills and MCP entry in your'
+        Write-Host 'agents, launch at login and your sign-in.'
+        if (-not $All) { Write-Host 'Cua Driver''s skill and MCP server in your agents, and other tools'' entries, stay.' }
         if ($KeepData) { Write-Host "It keeps $cuaHome and the Cua Volume cache (-KeepData)." }
         elseif ($DeleteSpaces) { Write-Host 'It also deletes Cua''s settings and caches.' }
         else { Write-Host 'It also deletes Cua''s settings and caches, but keeps your Spaces and their data.' }
-        if ($All) { Write-Host 'It also runs the Cua Driver uninstaller (-All).' }
+        if ($All) { Write-Host 'It also runs the Cua Driver uninstaller, and removes Cua Driver''s skill and MCP server from your agents (-All).' }
         if (-not $Yes -and -not (Test-Interactive)) {
             Stop-Uninstall 'no terminal to ask on; rerun with -Yes (or -DryRun to see what would be removed)'
         }
@@ -525,7 +577,7 @@ function Invoke-CuaUninstall {
                 $null = Invoke-Cua "turning off hosting ($h)" 150 @('host', 'remove', '--force', '--uninstalling') @{ CUA_HOME = $h }
             }
         }
-        $null = Invoke-Cua 'removing the Cua skills and MCP entries from your agents' 60 @('agents', 'remove', '--agents', 'all', '--yes')
+        Remove-AgentIntegrations
         foreach ($h in Get-CuaHomes) { $null = Invoke-Cua 'stopping the cua daemon' 30 @('daemon', 'stop') @{ CUA_HOME = $h } }
         $null = Invoke-Cua 'signing out (cua auth logout)' 60 @('auth', 'logout')
         if (Test-Path -LiteralPath (Join-Path $cuaHome 'envs\staging')) {

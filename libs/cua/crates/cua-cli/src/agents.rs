@@ -3,7 +3,9 @@
 
 use crate::util::{self, internal, line};
 use clap::{Args, Subcommand};
-use cua_agent_setup::{AgentSetup, AgentStatus, Change, McpServer, Outcome, Parts, Target};
+use cua_agent_setup::{
+    AgentSetup, AgentStatus, Change, McpServer, Outcome, Parts, RemoveOptions, Target,
+};
 use cua_sdk::CuaError;
 use std::{
     collections::BTreeSet,
@@ -34,10 +36,14 @@ pub enum AgentsCmd {
     #[command(after_help = "Examples:
   cua agents status")]
     Status,
-    /// Remove the skills and MCP entries cua added (nothing else).
+    /// Remove the Cua Spaces skills and MCP entries cua added (nothing else).
     #[command(after_help = "Examples:
+  # See what would be removed, change nothing
+  cua agents remove --dry-run
   cua agents remove
-  cua agents remove --agents codex --skills-only -y")]
+  cua agents remove --agents codex --skills-only -y
+  # Cua Driver's skill and MCP server too (they stay otherwise)
+  cua agents remove --include-cua-driver")]
     Remove(RemoveArgs),
     /// Refresh installed cua skills and managed MCP entries to this version.
     #[command(after_help = "Examples:
@@ -96,6 +102,14 @@ pub struct RemoveArgs {
     /// Do not ask for confirmation.
     #[arg(long, short = 'y')]
     pub yes: bool,
+    /// Also remove Cua Driver's skill and MCP server (`cua-driver`). Without
+    /// it only Cua Spaces' own entries go: the `cua` server (`cua-local` for
+    /// Local) and the Cua Spaces skills.
+    #[arg(long)]
+    pub include_cua_driver: bool,
+    /// List exactly what would be removed and change nothing.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 fn err(e: cua_agent_setup::Error) -> CuaError {
@@ -741,27 +755,40 @@ pub fn cmd_remove(args: &RemoveArgs, json: bool, out: &mut dyn Write) -> Result<
         skills: !args.mcp_only,
         mcp: !args.skills_only,
     };
-    let prompt = Prompt::new(args.yes || json);
-    if !prompt.confirm(
-        out,
-        "Remove the cua skills and MCP entries that cua added?",
-        false,
-    ) {
-        if !stdin_is_tty() && !args.yes {
-            line(out, "Pass --yes to remove without a prompt.");
+    let opts = RemoveOptions {
+        include_cua_driver: args.include_cua_driver,
+        dry_run: args.dry_run,
+    };
+    if !args.dry_run {
+        let prompt = Prompt::new(args.yes || json);
+        let question = if args.include_cua_driver {
+            "Remove the Cua Spaces and Cua Driver skills and MCP entries that cua added?"
+        } else {
+            "Remove the Cua Spaces skills and MCP entries that cua added?"
+        };
+        if !prompt.confirm(out, question, false) {
+            if !stdin_is_tty() && !args.yes {
+                line(out, "Pass --yes to remove without a prompt.");
+            }
+            return Ok(1);
         }
-        return Ok(1);
     }
-    let res = setup.remove(&ids, parts).map_err(err)?;
+    let res = setup.remove_with(&ids, parts, opts).map_err(err)?;
     let failed = res.iter().any(Outcome::failed);
     if json {
-        util::json_line(out, &serde_json::json!({"outcomes": res}));
+        util::json_line(
+            out,
+            &serde_json::json!({"dry_run": args.dry_run, "outcomes": res}),
+        );
         return Ok(fail_line(&res.iter().collect::<Vec<_>>()));
     }
     let touched: Vec<&Outcome> = res
         .iter()
         .filter(|o| !(o.change == Change::Skipped && o.detail == "not configured by cua"))
         .collect();
+    if args.dry_run {
+        line(out, "Dry run: nothing is changed.");
+    }
     if touched.is_empty() {
         line(out, "Nothing to remove.");
     }
@@ -770,6 +797,24 @@ pub fn cmd_remove(args: &RemoveArgs, json: bool, out: &mut dyn Write) -> Result<
             Target::Skill => format!("skill {}", o.item),
             Target::Mcp => format!("MCP server {}", o.item),
         };
+        let place = tilde(&setup, &o.path);
+        if o.change == Change::Skipped && o.detail == cua_agent_setup::KEPT_CUA_DRIVER {
+            line(out, format!("  - {what}: {place} kept ({})", o.detail));
+            continue;
+        }
+        if args.dry_run && o.change == Change::Removed {
+            if o.detail == "already gone" {
+                line(out, format!("  - {what}: {place} already gone"));
+            } else if o.detail == "restored the previous entry" {
+                line(
+                    out,
+                    format!("  would restore the previous entry of {what}: {place}"),
+                );
+            } else {
+                line(out, format!("  would remove {what}: {place}"));
+            }
+            continue;
+        }
         let detail = if o.detail.is_empty() || o.detail == "removed" {
             String::new()
         } else {
@@ -777,12 +822,7 @@ pub fn cmd_remove(args: &RemoveArgs, json: bool, out: &mut dyn Write) -> Result<
         };
         line(
             out,
-            format!(
-                "  {} {what}: {} {}{detail}",
-                mark(o),
-                tilde(&setup, &o.path),
-                change_word(o)
-            ),
+            format!("  {} {what}: {place} {}{detail}", mark(o), change_word(o)),
         );
     }
     Ok(i32::from(failed))

@@ -508,8 +508,8 @@
      "usage": "cua agents status [OPTIONS]"
     },
     {
-     "abstract": "Remove the skills and MCP entries cua added (nothing else)",
-     "after_help": "Examples:\n  cua agents remove\n  cua agents remove --agents codex --skills-only -y",
+     "abstract": "Remove the Cua Spaces skills and MCP entries cua added (nothing else)",
+     "after_help": "Examples:\n  # See what would be removed, change nothing\n  cua agents remove --dry-run\n  cua agents remove\n  cua agents remove --agents codex --skills-only -y\n  # Cua Driver's skill and MCP server too (they stay otherwise)\n  cua agents remove --include-cua-driver",
      "aliases": [],
      "arguments": [],
      "flags": [
@@ -544,6 +544,28 @@
        "name": "yes",
        "repeatable": false,
        "short_name": "y",
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Also remove Cua Driver's skill and MCP server (`cua-driver`). Without it only Cua Spaces' own entries go: the `cua` server (`cua-local` for Local) and the Cua Spaces skills",
+       "hidden": false,
+       "name": "include-cua-driver",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "List exactly what would be removed and change nothing",
+       "hidden": false,
+       "name": "dry-run",
+       "repeatable": false,
+       "short_name": null,
        "takes_value": false
       }
      ],

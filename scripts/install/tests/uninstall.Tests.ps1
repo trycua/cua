@@ -69,6 +69,7 @@ Describe 'Invoke-CuaUninstall' {
         $NoModifyPath = [switch]$false; $DryRun = [switch]$false; $Yes = [switch]$false; $Prefix = ''
         $script:Calls = New-Object System.Collections.Generic.List[string]
         $script:SpacesText = ''
+        $script:OldCua = $false
         $script:Credentials = @('cua-cli.run.cua.ai', 'cua-cli.device-key.run.cua.ai', 'vault-1.Cua Keyvault', 'git:https://github.com')
         $script:UserPath = "C:\Windows;$(Join-Path $script:Local 'Programs\cua\bin');C:\Tools"
 
@@ -107,6 +108,14 @@ Describe 'Invoke-CuaUninstall' {
                 return [pscustomobject]@{ ExitCode = 0; Output = "something else 9.9`n" }
             }
             $script:Calls.Add("cua[$env:CUA_HOME] $args1")
+            # A cua before the agents fix has neither --include-cua-driver nor --dry-run.
+            if ($args1 -eq 'agents remove --help') {
+                $flags = if ($script:OldCua) { '--agents --skills-only --mcp-only --yes' } else { '--agents --skills-only --mcp-only --yes --include-cua-driver --dry-run' }
+                return [pscustomobject]@{ ExitCode = 0; Output = "Usage: cua agents remove [OPTIONS]`n$flags`n" }
+            }
+            if ($args1 -like 'agents remove * --dry-run') {
+                return [pscustomobject]@{ ExitCode = 0; Output = "Dry run: nothing is changed.`n  would remove MCP server cua: ~/.claude.json`n  MCP server cua-driver: ~/.claude.json kept (Cua Driver's; --include-cua-driver removes it)`n" }
+            }
             if ($args1 -eq 'sandbox ls --local --no-size') { return [pscustomobject]@{ ExitCode = 0; Output = $script:SpacesText } }
             if ($args1 -eq 'host remove --force --uninstalling') { Remove-Item -Recurse -Force -LiteralPath (Join-Path $env:CUA_HOME 'host') }
             return [pscustomobject]@{ ExitCode = 0; Output = '' }
@@ -125,12 +134,19 @@ Describe 'Invoke-CuaUninstall' {
         $out | Should -Match 'Found on this PC'
         $out | Should -Match '\[dry-run\] remove'
         $out | Should -Match '\[dry-run\] cua host remove --force --uninstalling'
+        # The agent entries are listed by the same command a real run uses, with --dry-run.
+        $out | Should -Match '\[dry-run\] cua agents remove --agents all --include-cua-driver --dry-run:'
+        $out | Should -Match '\[dry-run\]   would remove MCP server cua: ~/.claude.json'
+        $out | Should -Match 'MCP server cua-driver: ~/.claude.json kept'
         Test-Path (Join-Path $script:Bin 'cua.exe') | Should -BeTrue
         Test-Path (Join-Path $script:CuaHome 'config.toml') | Should -BeTrue
         Test-Path (Join-Path $script:Roaming 'Cua Spaces\settings.json') | Should -BeTrue
         $script:Calls | Should -Not -Contain 'app-uninstaller'
-        # Only the read-only listing of Spaces runs.
-        @($script:Calls | Where-Object { $_ -like 'credential *' -or $_ -like 'user-path *' -or ($_ -like 'cua*' -and $_ -notlike '*sandbox ls --local*') }) | Should -BeNullOrEmpty
+        # Only read-only commands run: the listing of Spaces, and the help and the preview of `agents remove`.
+        @($script:Calls | Where-Object {
+                $_ -like 'credential *' -or $_ -like 'user-path *' -or
+                ($_ -like 'cua*' -and $_ -notlike '*sandbox ls --local*' -and $_ -notlike '*agents remove --help' -and $_ -notlike '*agents remove * --dry-run')
+            }) | Should -BeNullOrEmpty
     }
 
     It 'removes programs and settings by default and keeps Spaces data' {
@@ -160,6 +176,30 @@ Describe 'Invoke-CuaUninstall' {
         $indexes = $steps | ForEach-Object { $s = $_; [array]::FindIndex($script:Calls.ToArray(), [Predicate[string]] { param($c) $c -like "*$s*" }) }
         $indexes | Should -Not -Contain -1
         ($indexes -join ',') | Should -Be (($indexes | Sort-Object) -join ',')
+        # Cua Driver's skill and MCP entries stay: its flag is only passed with -All.
+        @($script:Calls | Where-Object { $_ -like '*--include-cua-driver*' }) | Should -BeNullOrEmpty
+    }
+
+    It 'removes Cua Driver''s agent entries too only with -All' {
+        $Yes = [switch]$true; $All = [switch]$true
+        Mock Invoke-OtherUninstaller { param($Name) $script:Calls.Add("other-uninstaller $Name") }
+        Invoke-CuaUninstall *>&1 | Out-Null
+        $script:Calls | Should -Contain "cua[$script:CuaHome] agents remove --agents all --include-cua-driver --yes"
+        $script:Calls | Should -Contain 'other-uninstaller cua-driver'
+    }
+
+    It 'stops before removing anything when cua is too old to leave Cua Driver''s entries alone' {
+        $Yes = [switch]$true
+        $script:OldCua = $true
+        { Invoke-CuaUninstall *>&1 | Out-Null } | Should -Throw '*older than the version that removes only Cua Spaces*'
+        Test-Path (Join-Path $script:Bin 'cua.exe') | Should -BeTrue
+        Test-Path (Join-Path $script:CuaHome 'config.toml') | Should -BeTrue
+        @($script:Calls | Where-Object { $_ -like '*agents remove --agents all*' -and $_ -notlike '*--help' }) | Should -BeNullOrEmpty
+        $script:Calls | Should -Not -Contain 'app-uninstaller'
+        # A dry run says so and carries on.
+        $DryRun = [switch]$true
+        $out = Invoke-CuaUninstall *>&1 | Out-String
+        $out | Should -Match 'this cua is too old to list it'
     }
 
     It 'keeps the cua home and the device key with -KeepData but still signs out' {

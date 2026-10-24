@@ -49,7 +49,7 @@ description: "Run coding agents in a sandbox, set up your AI agents, the stdio M
 | [`cua agents detect`](#cua-agents-detect) | List supported AI coding agents and which are installed (read-only). |
 | [`cua agents setup`](#cua-agents-setup) | Install the default cua skills and configure the cua MCP server. |
 | [`cua agents status`](#cua-agents-status) | What cua configured for each agent. |
-| [`cua agents remove`](#cua-agents-remove) | Remove the skills and MCP entries cua added (nothing else). |
+| [`cua agents remove`](#cua-agents-remove) | Remove the Cua Spaces skills and MCP entries cua added (nothing else). |
 | [`cua agents update`](#cua-agents-update) | Refresh installed cua skills and managed MCP entries to this version. |
 | [`cua mcp`](#cua-mcp) | Stdio MCP server exposing sandboxes, computer control and skills. |
 | [`cua skills`](#cua-skills) | Recorded demonstrations (skills) for agents. |
@@ -816,7 +816,7 @@ cua agents status
 
 ### `cua agents remove`
 
-Remove the skills and MCP entries cua added (nothing else).
+Remove the Cua Spaces skills and MCP entries cua added (nothing else).
 
 ```text output
 cua agents remove [OPTIONS]
@@ -828,12 +828,19 @@ cua agents remove [OPTIONS]
 | <span id="cua-agents-remove--skills-only"></span>`--skills-only` |  | boolean | `false` | Only remove skills. |
 | <span id="cua-agents-remove--mcp-only"></span>`--mcp-only` |  | boolean | `false` | Only remove the MCP entry. |
 | <span id="cua-agents-remove--yes"></span>`--yes` | `-y` | boolean | `false` | Do not ask for confirmation. |
+| <span id="cua-agents-remove--include-cua-driver"></span>`--include-cua-driver` |  | boolean | `false` | Also remove Cua Driver's skill and MCP server (`cua-driver`). Without it only Cua Spaces' own entries go: the `cua` server (`cua-local` for Local) and the Cua Spaces skills. |
+| <span id="cua-agents-remove--dry-run"></span>`--dry-run` |  | boolean | `false` | List exactly what would be removed and change nothing. |
 
 **Examples**
 
 ```bash test="cli-shape" id="ref-cua-agents-remove"
+# See what would be removed, change nothing
+cua agents remove --dry-run
 cua agents remove
 cua agents remove --agents codex --skills-only -y
+
+# Cua Driver's skill and MCP server too (they stay otherwise)
+cua agents remove --include-cua-driver
 ```
 
 ### `cua agents update`

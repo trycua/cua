@@ -62,10 +62,11 @@ To connect an agent later, or to remove one, open **Settings, AI agents**:
 server to each agent you name.
 
 ```bash test="cli-shape" id="cua-agents-detect"
-cua agents detect          # read-only: which supported agents are installed
+cua agents detect             # read-only: which supported agents are installed
 cua agents setup --agents claude,codex --yes
-cua agents status          # what Cua configured for each agent
-cua agents remove          # removes only what Cua added
+cua agents status             # what Cua configured for each agent
+cua agents remove --dry-run   # lists what it would remove
+cua agents remove             # removes only what Cua Spaces added (Cua Driver's entries stay)
 ```
 
 The [supported agents](/cua-cli/guides/mcp-server#supported-agents) include

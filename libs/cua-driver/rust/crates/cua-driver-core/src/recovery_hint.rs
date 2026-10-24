@@ -792,9 +792,9 @@ fn background_unavailable(c: &Ctx) -> RecoveryHint {
              `cua-driver serve`) and retry.",
         ),
         ("invoke_menu", _) => RecoveryHint::new(format!(
-            "macOS keeps this menu item disabled while the app is behind the user's window. Use the same \
-             control in the window (get_window_state, then click by element_token). bring_to_front first \
-             {FOREGROUND_CONDITION}."
+            "macOS keeps this menu item disabled while its window is behind the user's window. Use the \
+             same control in the window (get_window_state, then click by element_token). bring_to_front \
+             first {FOREGROUND_CONDITION}."
         ))
         .call(c.read_window()),
         ("browser_prepare", _) => RecoveryHint::new(format!(

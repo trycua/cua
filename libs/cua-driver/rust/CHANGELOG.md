@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.39.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.38.0...cua-driver-rs-v0.39.0) (2026-10-24)
+
+
+### Features
+
+* compat gateways for E2B and Daytona, Hetzner as your own cloud, the elastic pool, cua share and the public relay ([#5778](https://github.com/trycua/cua/issues/5778)) ([d4f3f80](https://github.com/trycua/cua/commit/d4f3f8063d7b30a3b3bda2b4c05c565a9dfcb460))
+
+
+### Bug Fixes
+
+* **cua-driver:** guard Space-free background window enumeration ([#5712](https://github.com/trycua/cua/issues/5712)) ([2d5d5d6](https://github.com/trycua/cua/commit/2d5d5d64637d2d2f8f2561c8301403515df826c2))
+* **cua-driver:** keys for a popup an MPX click opened go through the master keyboard of the session that clicked ([#5652](https://github.com/trycua/cua/issues/5652)) ([d51eb65](https://github.com/trycua/cua/commit/d51eb65f3322ac9a731e587ae59cee604a547eb1))
+* **cua-driver:** the macOS WindowServer health check treats any app-bundle host as bundled ([#5680](https://github.com/trycua/cua/issues/5680)) ([88b4b63](https://github.com/trycua/cua/commit/88b4b63fdf36b611bbc00c287840e821b649c193))
+* **cua:** stabilize the known flaky release-gate tests ([#5538](https://github.com/trycua/cua/issues/5538)) ([c3b557e](https://github.com/trycua/cua/commit/c3b557e1dced1238bf5b479af876aad9ea409498))
+
 ## [0.38.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.37.0...cua-driver-rs-v0.38.0) (2026-10-20)
 
 

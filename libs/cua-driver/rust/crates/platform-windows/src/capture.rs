@@ -524,6 +524,40 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(
     let w = geometry.width;
     let h = geometry.height;
 
+    // Issue #5783: `WS_EX_LAYERED` windows (the Wails floating ball is one)
+    // are not drawn through the ordinary GDI window surface. Calling
+    // PrintWindow on them drives the compositor into a path that kills the
+    // whole process, so a window screenshot of a layered overlay never
+    // returns. Route those to the screen-region BitBlt path, which reads
+    // the composited desktop pixels and cannot touch the broken path.
+    // The capture is the overlay as it appears on screen — which is the
+    // only truthful image of a layered surface anyway.
+    let is_layered: bool = unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetWindowLongPtrW, GWL_EXSTYLE, WS_EX_LAYERED,
+        };
+        (GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32 & WS_EX_LAYERED.0 as u32) != 0
+    };
+    if is_layered {
+        let occluded = target_is_obscured(hwnd);
+        match screenshot_via_screen_region(hwnd) {
+            Ok((pixels, width, height, geometry)) => {
+                return Ok((
+                    cua_driver_core::image_utils::encode_bgra_to_png(
+                        &pixels,
+                        width as u32,
+                        height as u32,
+                    )?,
+                    occluded,
+                    Some(geometry),
+                ));
+            }
+            Err(e) => {
+                bail!("layered-window capture failed via screen region: {e}");
+            }
+        }
+    }
+
     let screen_dc = GetWindowDC(hwnd);
     let mem_dc = CreateCompatibleDC(screen_dc);
     let bitmap = CreateCompatibleBitmap(screen_dc, w, h);

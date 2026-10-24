@@ -1011,8 +1011,8 @@ extension Server {
     func handleGetLogs(type: String?, lines: Int?) async throws -> HTTPResponse {
         do {
             let logType = type?.lowercased() ?? "all"
-            let infoPath = "/tmp/lume_daemon.log"
-            let errorPath = "/tmp/lume_daemon.error.log"
+            let infoPath = LumeChannel.current.lumeDaemonLogPath
+            let errorPath = LumeChannel.current.lumeDaemonErrorLogPath
 
             let fileManager = FileManager.default
             var response: [String: String] = [:]

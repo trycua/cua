@@ -129,7 +129,7 @@ struct Logs: ParsableCommand {
         var follow: Bool = false
         
         func run() throws {
-            let logPath = LumeChannel.current.lumeDaemonLogPath
+            let logPath = LumeChannel.current.lumeDaemonLogPath()
             
             print("=== Info Logs ===")
             
@@ -159,7 +159,7 @@ struct Logs: ParsableCommand {
         var follow: Bool = false
         
         func run() throws {
-            let logPath = LumeChannel.current.lumeDaemonErrorLogPath
+            let logPath = LumeChannel.current.lumeDaemonErrorLogPath()
             
             print("=== Error Logs ===")
             
@@ -368,8 +368,8 @@ struct Logs: ParsableCommand {
         }
         
         func run() throws {
-            let infoLogPath = LumeChannel.current.lumeDaemonLogPath
-            let errorLogPath = LumeChannel.current.lumeDaemonErrorLogPath
+            let infoLogPath = LumeChannel.current.lumeDaemonLogPath()
+            let errorLogPath = LumeChannel.current.lumeDaemonErrorLogPath()
             
             if follow {
                 // Use custom tailing implementation for both logs

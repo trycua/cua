@@ -22,10 +22,12 @@ set -e
 #   LUME_LOCAL_HOME         home and VM directory (default: ~/.lume-local)
 #   LUME_LOCAL_INSTALL_DIR  where the `lume-local` command goes
 #                           (default: ~/.local/bin)
-#   LUME_LOCAL_LOG_DIR      where the daemon logs go (default: /tmp)
+#   LUME_LOCAL_LOG_DIR      where the daemon logs go (default: /tmp). The daemon
+#                           and the `lume-local` command both get it, so
+#                           `lume-local logs` reads where the daemon writes.
 # LUME_HOME is deliberately ignored: it may point at the released Lume's home.
-# The `lume-local` command sets LUME_HOME to the home above, overriding any value
-# it inherits, so the CLI and the daemon always use the same home.
+# The `lume-local` command sets LUME_HOME (and LUME_LOCAL_LOG_DIR) to the values
+# above, overriding any it inherits, so the CLI and the daemon always agree.
 #
 # Every path is canonicalised (`.`, `..` and symlinks resolved) and refused if it
 # equals, sits inside, or contains a path the released Lume owns
@@ -173,6 +175,8 @@ fi
 # Canonicalise every path this script writes, and refuse any that reaches the
 # released Lume. From here on these are the canonical forms.
 LUME_LOCAL_HOME="$(lume_local_check "LUME_LOCAL_HOME" "$LUME_LOCAL_HOME")" || exit 2
+lume_local_no_edge_space "--install-dir" "$INSTALL_DIR" || exit 2
+lume_local_no_edge_space "LUME_LOCAL_LOG_DIR" "$LOG_DIR" || exit 2
 case "$INSTALL_DIR" in
   /*) ;;
   *) echo "${RED}Error: --install-dir must be an absolute path, got '$INSTALL_DIR'.${NORMAL}" >&2; exit 2 ;;
@@ -186,6 +190,8 @@ APP_INSTALL_DIR="$(lume_local_check "the lume-local files directory" "$APP_INSTA
 PLIST_PATH="$(lume_local_check "the lume-local LaunchAgent plist" "$HOME/Library/LaunchAgents/$SERVICE_NAME.plist")" || exit 2
 LOG_FILE="$(lume_local_check "the lume-local daemon log" "$LOG_DIR/lume_daemon.local.log")" || exit 2
 ERROR_LOG_FILE="$(lume_local_check "the lume-local daemon error log" "$LOG_DIR/lume_daemon.local.error.log")" || exit 2
+# The directory the logs are read from; the daemon and the command both get it.
+LOG_DIR="$(lume_local_canon "$LOG_DIR")" || exit 2
 WRAPPER_MARKER="# lume-local wrapper, managed by libs/lume/scripts/install-local.sh"
 
 echo "${BOLD}${BLUE}"
@@ -334,13 +340,16 @@ install_binary() {
   # directory the released Lume shares.
   # It sets LUME_HOME to the validated Local home, overriding whatever the
   # caller exported (often the released Lume's), so every command uses the same
-  # home as the daemon, including with a custom LUME_LOCAL_HOME.
+  # home as the daemon, including with a custom LUME_LOCAL_HOME. It sets
+  # LUME_LOCAL_LOG_DIR the same way, so `lume-local logs` reads the directory the
+  # daemon writes to.
   rm -f "$LOCAL_BIN"
   {
     printf '#!/bin/sh\n'
     printf '%s\n' "$WRAPPER_MARKER"
     printf 'LUME_HOME=%q\n' "$LUME_LOCAL_HOME"
-    printf 'export LUME_HOME\n'
+    printf 'LUME_LOCAL_LOG_DIR=%q\n' "$LOG_DIR"
+    printf 'export LUME_HOME LUME_LOCAL_LOG_DIR\n'
     printf 'exec %q "$@"\n' "$REAL_BIN"
   } > "$LOCAL_BIN"
   chmod +x "$LOCAL_BIN"
@@ -413,6 +422,8 @@ setup_background_service() {
         <string>$HOME</string>
         <key>LUME_HOME</key>
         <string>$LUME_LOCAL_HOME</string>
+        <key>LUME_LOCAL_LOG_DIR</key>
+        <string>$LOG_DIR</string>
     </dict>
     <key>StandardOutPath</key>
     <string>$LOG_FILE</string>

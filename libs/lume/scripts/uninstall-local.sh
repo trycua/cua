@@ -9,6 +9,7 @@ set -e
 #   ~/.local/share/lume-local            the binary and its resources
 #   ~/Library/LaunchAgents/com.trycua.lume_daemon.local.plist
 #   /tmp/lume_daemon.local*.log          the daemon logs
+#   ~/Library/Logs/lume-local            logs of detached runs (`run --detach`)
 #   ~/.lume-local                        home: VMs, settings, cache (asks first)
 #
 # The released Lume (~/.local/bin/lume, ~/.local/share/lume, ~/.lume, the
@@ -21,7 +22,7 @@ set -e
 # `--yes` can never delete the released Lume's VMs through an alias such as
 # `$HOME/./.lume` or a symlink to it (scripts/_lume-local-common.sh).
 #
-# Environment (all optional, as for install-local.sh):
+# Environment (all optional; give the same values you gave install-local.sh):
 #   LUME_LOCAL_HOME, LUME_LOCAL_INSTALL_DIR, LUME_LOCAL_LOG_DIR
 # LUME_HOME is deliberately ignored: it may point at the released Lume's home.
 
@@ -90,6 +91,8 @@ done
 # and refuse any that equals, sits inside, or contains a path the released Lume
 # owns. From here on these are the canonical forms.
 LUME_LOCAL_HOME="$(lume_local_check "LUME_LOCAL_HOME" "$LUME_LOCAL_HOME")" || exit 2
+lume_local_no_edge_space "--install-dir" "$INSTALL_DIR" || exit 2
+lume_local_no_edge_space "LUME_LOCAL_LOG_DIR" "$LOG_DIR" || exit 2
 case "$INSTALL_DIR" in
   /*) ;;
   *) echo "${RED}Error: --install-dir must be an absolute path, got '$INSTALL_DIR'.${NORMAL}" >&2; exit 2 ;;
@@ -101,6 +104,7 @@ APP_INSTALL_DIR="$(lume_local_check "the lume-local files directory" "$APP_INSTA
 PLIST_PATH="$(lume_local_check "the lume-local LaunchAgent plist" "$HOME/Library/LaunchAgents/$SERVICE_NAME.plist")" || exit 2
 LOG_FILE="$(lume_local_check "the lume-local daemon log" "$LOG_DIR/lume_daemon.local.log")" || exit 2
 ERROR_LOG_FILE="$(lume_local_check "the lume-local daemon error log" "$LOG_DIR/lume_daemon.local.error.log")" || exit 2
+RUN_LOG_DIR="$(lume_local_check "the lume-local run logs directory" "$HOME/Library/Logs/lume-local")" || exit 2
 
 # Ask a yes/no question. Defaults to no. --yes answers yes.
 confirm() {
@@ -194,6 +198,11 @@ for logfile in "$LOG_FILE" "$ERROR_LOG_FILE"; do
     echo "  ${GREEN}Removed $logfile${NORMAL}"
   fi
 done
+
+if [ -d "$RUN_LOG_DIR" ]; then
+  rm -rf "$RUN_LOG_DIR"
+  echo "  ${GREEN}Removed $RUN_LOG_DIR${NORMAL}"
+fi
 
 if [ "$DELETE_HOME" = true ]; then
   rm -rf "$LUME_LOCAL_HOME"

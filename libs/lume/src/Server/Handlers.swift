@@ -1010,45 +1010,13 @@ extension Server {
 
     func handleGetLogs(type: String?, lines: Int?) async throws -> HTTPResponse {
         do {
-            let logType = type?.lowercased() ?? "all"
-            let infoPath = LumeChannel.current.lumeDaemonLogPath
-            let errorPath = LumeChannel.current.lumeDaemonErrorLogPath
-
-            let fileManager = FileManager.default
-            var response: [String: String] = [:]
-
-            // Function to read log files
-            func readLogFile(path: String) -> String? {
-                guard fileManager.fileExists(atPath: path) else {
-                    return nil
-                }
-
-                do {
-                    let content = try String(contentsOfFile: path, encoding: .utf8)
-
-                    // If lines parameter is provided, return only the specified number of lines from the end
-                    if let lineCount = lines {
-                        let allLines = content.components(separatedBy: .newlines)
-                        let startIndex = max(0, allLines.count - lineCount)
-                        let lastLines = Array(allLines[startIndex...])
-                        return lastLines.joined(separator: "\n")
-                    }
-
-                    return content
-                } catch {
-                    return "Error reading log file: \(error.localizedDescription)"
-                }
-            }
-
-            // Get logs based on requested type
-            if logType == "info" || logType == "all" {
-                response["info"] = readLogFile(path: infoPath) ?? "Info log file not found"
-            }
-
-            if logType == "error" || logType == "all" {
-                response["error"] = readLogFile(path: errorPath) ?? "Error log file not found"
-            }
-
+            let channel = LumeChannel.current
+            let response = DaemonLogs.response(
+                type: type,
+                lines: lines,
+                infoPath: channel.lumeDaemonLogPath(),
+                errorPath: channel.lumeDaemonErrorLogPath()
+            )
             return try .json(response)
         } catch {
             return .badRequest(message: error.localizedDescription)

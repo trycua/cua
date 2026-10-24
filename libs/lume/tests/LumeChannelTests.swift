@@ -22,8 +22,9 @@ struct LumeChannelTests {
         #expect(c.lumeAPI == "http://127.0.0.1:7777")
         #expect(c.lumeDir(userHome: fakeHome).path == "/Users/dev/.lume")
         #expect(c.lumeDaemonLabel == "com.trycua.lume_daemon")
-        #expect(c.lumeDaemonLogPath == "/tmp/lume_daemon.log")
-        #expect(c.lumeDaemonErrorLogPath == "/tmp/lume_daemon.error.log")
+        #expect(c.lumeDaemonLogPath(environment: [:]) == "/tmp/lume_daemon.log")
+        #expect(c.lumeDaemonErrorLogPath(environment: [:]) == "/tmp/lume_daemon.error.log")
+        #expect(c.lumeLogDir(userHome: fakeHome).path == "/Users/dev/Library/Logs/lume")
         #expect(c.supportsSelfUpdate)
     }
 
@@ -35,8 +36,9 @@ struct LumeChannelTests {
         #expect(c.lumeAPI == "http://127.0.0.1:7787")
         #expect(c.lumeDir(userHome: fakeHome).path == "/Users/dev/.lume-local")
         #expect(c.lumeDaemonLabel == "com.trycua.lume_daemon.local")
-        #expect(c.lumeDaemonLogPath == "/tmp/lume_daemon.local.log")
-        #expect(c.lumeDaemonErrorLogPath == "/tmp/lume_daemon.local.error.log")
+        #expect(c.lumeDaemonLogPath(environment: [:]) == "/tmp/lume_daemon.local.log")
+        #expect(c.lumeDaemonErrorLogPath(environment: [:]) == "/tmp/lume_daemon.local.error.log")
+        #expect(c.lumeLogDir(userHome: fakeHome).path == "/Users/dev/Library/Logs/lume-local")
         #expect(!c.supportsSelfUpdate)
     }
 
@@ -54,8 +56,9 @@ struct LumeChannelTests {
                 c.lumeBinName,
                 c.lumeDir(userHome: fakeHome).path,
                 c.lumeDaemonLabel,
-                c.lumeDaemonLogPath,
-                c.lumeDaemonErrorLogPath,
+                c.lumeDaemonLogPath(environment: [:]),
+                c.lumeDaemonErrorLogPath(environment: [:]),
+                c.lumeLogDir(userHome: fakeHome).path,
                 String(c.lumePort),
                 LumeLayout.resolve(channel: c, environment: [:], userHome: fakeHome)
                     .releaseChannelFile.path,
@@ -230,6 +233,87 @@ struct LumeChannelTests {
             #expect(local.homeDir.path == "/Users/dev/.lume-local")
             #expect(local.configInHome == true)
         }
+    }
+
+    @Test("Local uses LUME_HOME verbatim: a trailing or leading space never becomes Stable's home")
+    func localLumeHomeIsNotTrimmed() {
+        let stableHome = LumeChannel.stable.lumeDir(userHome: fakeHome).path
+        for raw in ["/Users/dev/.lume ", "/Users/dev/.lume\t", "/Users/dev/.lume\n", " /Users/dev/.lume", "/Users/dev/.lume  "] {
+            let l = LumeLayout.resolve(
+                channel: .local, environment: ["LUME_HOME": raw], userHome: fakeHome)
+            #expect(l.homeDir.path != stableHome, "LUME_HOME=\(raw.debugDescription) resolved to Stable's home")
+            #expect(l.homeSetting != stableHome)
+            #expect(l.configDir.path != LumeLayout.resolve(
+                channel: .stable, environment: [:], userHome: fakeHome).configDir.path)
+            #expect(l.homeDir.path.contains(".lume"))
+        }
+        // The guard-accepted spelling keeps its space.
+        #expect(
+            LumeLayout.resolve(
+                channel: .local, environment: ["LUME_HOME": "/Users/dev/.lume "], userHome: fakeHome
+            ).homeDir.lastPathComponent == ".lume ")
+    }
+
+    // MARK: - Daemon logs and detached-run logs
+
+    @Test("Local reads its daemon logs from LUME_LOCAL_LOG_DIR; Stable ignores it")
+    func localDaemonLogDir() {
+        let env = ["LUME_LOCAL_LOG_DIR": "/var/tmp/lume-logs"]
+        #expect(LumeChannel.local.lumeDaemonLogDir(environment: env) == "/var/tmp/lume-logs")
+        #expect(
+            LumeChannel.local.lumeDaemonLogPath(environment: env)
+                == "/var/tmp/lume-logs/lume_daemon.local.log")
+        #expect(
+            LumeChannel.local.lumeDaemonErrorLogPath(environment: env)
+                == "/var/tmp/lume-logs/lume_daemon.local.error.log")
+        // A trailing slash does not double up.
+        #expect(
+            LumeChannel.local.lumeDaemonLogPath(environment: ["LUME_LOCAL_LOG_DIR": "/var/tmp/lume-logs/"])
+                == "/var/tmp/lume-logs/lume_daemon.local.log")
+        // Unset, empty or relative falls back to /tmp.
+        for value in [nil, "", "relative/logs"] {
+            var e: [String: String] = [:]
+            if let value { e["LUME_LOCAL_LOG_DIR"] = value }
+            #expect(LumeChannel.local.lumeDaemonLogDir(environment: e) == "/tmp")
+        }
+        // Stable's logs do not move.
+        #expect(LumeChannel.stable.lumeDaemonLogDir(environment: env) == "/tmp")
+        #expect(LumeChannel.stable.lumeDaemonLogPath(environment: env) == "/tmp/lume_daemon.log")
+        #expect(LumeChannel.stable.lumeDaemonErrorLogPath(environment: env) == "/tmp/lume_daemon.error.log")
+    }
+
+    @Test("The logs readers (API and CLI) follow a custom Local log directory")
+    func logReadersFollowACustomLogDir() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lume-logs-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let custom = root.appendingPathComponent("custom", isDirectory: true)
+        try FileManager.default.createDirectory(at: custom, withIntermediateDirectories: true)
+        try "one\ntwo\nthree".write(
+            to: custom.appendingPathComponent("lume_daemon.local.log"), atomically: true, encoding: .utf8)
+        try "boom".write(
+            to: custom.appendingPathComponent("lume_daemon.local.error.log"), atomically: true, encoding: .utf8)
+
+        let env = ["LUME_LOCAL_LOG_DIR": custom.path]
+        let info = LumeChannel.local.lumeDaemonLogPath(environment: env)
+        let error = LumeChannel.local.lumeDaemonErrorLogPath(environment: env)
+
+        // GET /lume/logs
+        let all = DaemonLogs.response(type: nil, lines: nil, infoPath: info, errorPath: error)
+        #expect(all["info"] == "one\ntwo\nthree")
+        #expect(all["error"] == "boom")
+        let tail = DaemonLogs.response(type: "info", lines: 2, infoPath: info, errorPath: error)
+        #expect(tail["info"] == "two\nthree")
+        #expect(tail["error"] == nil)
+
+        // lume-local logs info|error|all
+        #expect(Logs.readLogFile(path: info) == "one\ntwo\nthree")
+        #expect(Logs.readLogFile(path: error) == "boom")
+
+        // Without the variable the same readers look in /tmp, not in the custom directory.
+        let fallback = LumeChannel.local.lumeDaemonLogPath(environment: [:])
+        #expect(fallback == "/tmp/lume_daemon.local.log")
+        #expect(!fallback.hasPrefix(custom.path))
     }
 
     // MARK: - Settings

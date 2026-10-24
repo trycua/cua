@@ -72,20 +72,47 @@ enum LumeChannel: String, CaseIterable, Sendable {
         }
     }
 
+    /// The environment variable that moves the Local daemon's logs. The
+    /// installer sets it (in the LaunchAgent and in the `lume-local` command)
+    /// when the logs go somewhere other than `/tmp`. Stable ignores it.
+    static let localLogDirVariable = "LUME_LOCAL_LOG_DIR"
+
+    /// The directory the daemon's LaunchAgent writes its logs in, and where
+    /// `logs` and the logs API read them: `/tmp`, or for Local the absolute
+    /// `LUME_LOCAL_LOG_DIR` when set.
+    func lumeDaemonLogDir(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> String {
+        guard self == .local,
+            let dir = environment[Self.localLogDirVariable],
+            dir.hasPrefix("/")
+        else { return "/tmp" }
+        return URL(fileURLWithPath: dir, isDirectory: true).standardizedFileURL.path
+    }
+
     /// The daemon's stdout log, as written by its LaunchAgent.
-    var lumeDaemonLogPath: String {
-        switch self {
-        case .stable: return "/tmp/lume_daemon.log"
-        case .local: return "/tmp/lume_daemon.local.log"
-        }
+    func lumeDaemonLogPath(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> String {
+        let name = self == .stable ? "lume_daemon.log" : "lume_daemon.local.log"
+        return "\(lumeDaemonLogDir(environment: environment))/\(name)"
     }
 
     /// The daemon's stderr log, as written by its LaunchAgent.
-    var lumeDaemonErrorLogPath: String {
-        switch self {
-        case .stable: return "/tmp/lume_daemon.error.log"
-        case .local: return "/tmp/lume_daemon.local.error.log"
-        }
+    func lumeDaemonErrorLogPath(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> String {
+        let name = self == .stable ? "lume_daemon.error.log" : "lume_daemon.local.error.log"
+        return "\(lumeDaemonLogDir(environment: environment))/\(name)"
+    }
+
+    /// Where `run --detach` writes `<vm>.log` by default:
+    /// `~/Library/Logs/lume` or `~/Library/Logs/lume-local`.
+    func lumeLogDir(
+        userHome: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> URL {
+        userHome.appendingPathComponent("Library/Logs", isDirectory: true)
+            .appendingPathComponent(self == .stable ? "lume" : "lume-local", isDirectory: true)
     }
 
     /// Whether this Lume can update itself. A source build has no release to
@@ -193,10 +220,14 @@ struct LumeLayout: Equatable, Sendable {
                 releaseChannelFile: channelDir.appendingPathComponent(LumeReleaseChannel.fileName)
             )
         case .local:
-            let raw = environment["LUME_HOME"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+            // LUME_HOME is used exactly as given, whitespace included. Trimming
+            // it here would turn a path the installer's guard accepted
+            // ("~/.lume ", with a trailing space) into the released Lume's
+            // home. A value of only whitespace counts as unset.
+            let raw = environment["LUME_HOME"]
             let home: URL
             let setting: String
-            if let raw, !raw.isEmpty {
+            if let raw, !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 home = URL(fileURLWithPath: expandTilde(raw, userHome: userHome)).standardizedFileURL
                 setting = home.path
             } else {

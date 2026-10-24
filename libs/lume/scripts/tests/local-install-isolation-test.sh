@@ -58,7 +58,7 @@ cat > ".build/$config/lume" <<'LUME'
 #!/bin/sh
 case "$1" in
   --version) echo "lume version 0.0.0-test" ;;
-  *) echo "stub-lume name=$(basename "$0") args=$* LUME_HOME=${LUME_HOME-unset}" ;;
+  *) echo "stub-lume name=$(basename "$0") args=$* LUME_HOME=${LUME_HOME-unset} LUME_LOCAL_LOG_DIR=${LUME_LOCAL_LOG_DIR-unset}" ;;
 esac
 LUME
 chmod +x ".build/$config/lume"
@@ -140,7 +140,8 @@ stable_paths() {
     "$1/.local/bin/lume_lume.bundle" \
     "$1/Library/LaunchAgents/com.trycua.lume_daemon.plist" \
     "$LOGS/lume_daemon.log" \
-    "$LOGS/lume_daemon.error.log"
+    "$LOGS/lume_daemon.error.log" \
+    "$1/Library/Logs/lume"
 }
 
 seed_stable() { # home
@@ -158,6 +159,8 @@ seed_stable() { # home
   printf '<plist>stable daemon 7777</plist>\n' > "$home/Library/LaunchAgents/com.trycua.lume_daemon.plist"
   printf 'stable log\n' > "$LOGS/lume_daemon.log"
   printf 'stable err\n' > "$LOGS/lume_daemon.error.log"
+  mkdir -p "$home/Library/Logs/lume"
+  printf 'released detached run\n' > "$home/Library/Logs/lume/vm1.log"
   # An old mtime, so any write shows up as a change.
   find "$home" "$LOGS" -type f -exec touch -t 202001010000 {} +
 }
@@ -237,6 +240,7 @@ check "plist serves on 7787" test "$(plist_port "$PLIST")" = 7787
 check "plist runs lume-local" grep -q "<string>$H/.local/bin/lume-local</string>" "$PLIST"
 check "plist sets LUME_HOME to the local home" test "$(plist_env "$PLIST" LUME_HOME)" = "$H/.lume-local"
 check "plist logs to the .local logs" grep -q "<string>$LOGS/lume_daemon.local.log</string>" "$PLIST"
+check "plist tells the daemon where its logs are" test "$(plist_env "$PLIST" LUME_LOCAL_LOG_DIR)" = "$LOGS"
 check "plist never names port 7777" bash -c "! grep -q 7777 '$PLIST'"
 check "stable plist content is unchanged" grep -q 'stable daemon 7777' "$H/Library/LaunchAgents/com.trycua.lume_daemon.plist"
 
@@ -258,13 +262,13 @@ wrapper() { # [VAR=value...] wrapper-path args...
   env -i PATH="$BIN:/usr/bin:/bin:/usr/sbin:/sbin" ${extra[@]+"${extra[@]}"} "$@"
 }
 check "the wrapper runs the lume-local binary with the Local home" test \
-  "$(wrapper HOME="$H" "$H/.local/bin/lume-local" serve 2>&1)" = "stub-lume name=lume-local args=serve LUME_HOME=$H/.lume-local"
+  "$(wrapper HOME="$H" "$H/.local/bin/lume-local" serve 2>&1)" = "stub-lume name=lume-local args=serve LUME_HOME=$H/.lume-local LUME_LOCAL_LOG_DIR=$LOGS"
 check "the wrapper overrides an inherited released-Lume LUME_HOME" test \
-  "$(wrapper HOME="$H" LUME_HOME="$H/.lume" "$H/.local/bin/lume-local" serve 2>&1)" = "stub-lume name=lume-local args=serve LUME_HOME=$H/.lume-local"
+  "$(wrapper HOME="$H" LUME_HOME="$H/.lume" "$H/.local/bin/lume-local" serve 2>&1)" = "stub-lume name=lume-local args=serve LUME_HOME=$H/.lume-local LUME_LOCAL_LOG_DIR=$LOGS"
 check "the wrapper overrides an inherited LUME_HOME that points elsewhere" test \
-  "$(wrapper HOME="$H" LUME_HOME=/somewhere/else "$H/.local/bin/lume-local" ls 2>&1)" = "stub-lume name=lume-local args=ls LUME_HOME=$H/.lume-local"
+  "$(wrapper HOME="$H" LUME_HOME=/somewhere/else "$H/.local/bin/lume-local" ls 2>&1)" = "stub-lume name=lume-local args=ls LUME_HOME=$H/.lume-local LUME_LOCAL_LOG_DIR=$LOGS"
 check "the wrapper passes arguments through untouched" test \
-  "$(wrapper HOME="$H" "$H/.local/bin/lume-local" run 'a b' --x=1 2>&1)" = "stub-lume name=lume-local args=run a b --x=1 LUME_HOME=$H/.lume-local"
+  "$(wrapper HOME="$H" "$H/.local/bin/lume-local" run 'a b' --x=1 2>&1)" = "stub-lume name=lume-local args=run a b --x=1 LUME_HOME=$H/.lume-local LUME_LOCAL_LOG_DIR=$LOGS"
 
 # ---- 2. install again, on another port: idempotent, still only .local --------
 
@@ -375,6 +379,17 @@ ALIASES=(
   "$H4/.config/lume/sub"
   "$H4/Library"
   "$H4/Library/LaunchAgents/com.trycua.lume_daemon.plist"
+  "$H4/Library/Logs/lume"
+  "$H4/Library/Logs"
+  "$H4/Library/Logs/lume/vm1.log"
+  # Leading or trailing whitespace: the Swift runtime must never see a path
+  # that the guard read as a different directory from the one it uses.
+  "$H4/.lume "
+  "$H4/.lume   "
+  "$H4/.lume"$'\t'
+  "$H4/.lume"$'\n'
+  "$H4/.lume/vm1 "
+  "$H4/alias-to-stable "
 )
 for alias_path in "${ALIASES[@]}"; do
   expect_refused "install with LUME_LOCAL_HOME=${alias_path#$H4}" LUME_LOCAL_HOME="$alias_path" install-local.sh
@@ -392,6 +407,10 @@ expect_refused "install with --install-dir through a symlink to the released hom
 expect_refused "install with --install-dir at the released files" install-local.sh --install-dir "$H4/.local/share/lume"
 expect_refused "uninstall --yes with --install-dir at the released command" uninstall-local.sh --yes --install-dir "$H4/.local/bin/lume"
 expect_refused "install with the log directory inside the released home" LUME_LOCAL_LOG_DIR="$H4/alias-to-stable" LUME_LOCAL_HOME="$H4/safe-home" install-local.sh
+expect_refused "install with whitespace around --install-dir" LUME_LOCAL_HOME="$H4/safe-home" install-local.sh --install-dir "$H4/bin "
+expect_refused "uninstall --yes with whitespace around --install-dir" LUME_LOCAL_HOME="$H4/safe-home" uninstall-local.sh --yes --install-dir "$H4/bin "
+expect_refused "install with whitespace around LUME_LOCAL_LOG_DIR" LUME_LOCAL_HOME="$H4/safe-home" LUME_LOCAL_LOG_DIR="$LOGS " install-local.sh
+expect_refused "uninstall --yes with whitespace around LUME_LOCAL_LOG_DIR" LUME_LOCAL_HOME="$H4/safe-home" LUME_LOCAL_LOG_DIR="$LOGS "$'\t' uninstall-local.sh --yes
 expect_refused "install with a relative LUME_LOCAL_HOME" LUME_LOCAL_HOME="relative/.lume" install-local.sh
 expect_refused "install with a relative --install-dir" LUME_LOCAL_HOME="$H4/safe-home" install-local.sh --install-dir relative/bin
 
@@ -431,6 +450,11 @@ ln -s lume_daemon.error.log "$LOGS/lume_daemon.local.error.log"
 expect_refused "install when the .local daemon error log is a symlink to the released one" install-local.sh
 expect_refused "uninstall --yes when the .local daemon error log is a symlink to the released one" uninstall-local.sh --yes
 rm "$LOGS/lume_daemon.local.error.log"
+ln -s lume "$H5/Library/Logs/lume-local"                  # the run-logs directory is the released one
+I5_BEFORE="$(inventory "$H5")"
+expect_refused "uninstall --yes when the lume-local run-logs directory is a symlink to the released one" uninstall-local.sh --yes
+rm "$H5/Library/Logs/lume-local"
+I5_BEFORE="$(inventory "$H5")"
 same "planted symlinks: nothing was written" "$I5_BEFORE" "$(inventory "$H5")"
 same "planted symlinks: the released Lume is untouched" "$S5_BEFORE" "$(fingerprint $(stable_paths "$H5"))"
 
@@ -440,23 +464,35 @@ H6="$TMP/home6"
 mkdir -p "$H6/real-vms"
 seed_stable "$H6"
 ln -s real-vms "$H6/vms-link"
+mkdir -p "$H6/real-logs"
+ln -s real-logs "$H6/logs-link"
 S6_BEFORE="$(fingerprint $(stable_paths "$H6"))"
 H="$H6"
-run LUME_LOCAL_HOME="$H6/./vms-link/../vms-link/local home" install-local.sh >/dev/null 2>&1
-check "install with a custom home (through a symlink, with a space) succeeds" test $? -eq 0
+run LUME_LOCAL_HOME="$H6/./vms-link/../vms-link/local home" LUME_LOCAL_LOG_DIR="$H6/./logs-link/../logs-link/run logs" install-local.sh >/dev/null 2>&1
+check "install with a custom home and log directory (through symlinks, with spaces) succeeds" test $? -eq 0
+LOGS6="$H6/real-logs/run logs"
 P6="$H6/Library/LaunchAgents/com.trycua.lume_daemon.local.plist"
 check "the custom home is canonical in the plist" test "$(plist_env "$P6" LUME_HOME)" = "$H6/real-vms/local home"
 check "the custom home exists and has its release-channel" test -f "$H6/real-vms/local home/release-channel"
 check "no default Local home was made beside it" test ! -e "$H6/.lume-local"
+# The configured log directory is persisted for the readers: the daemon gets it
+# (so the logs API reads where it writes) and so does the command (`lume-local logs`).
+check "the custom log directory is canonical in the plist's environment" test "$(plist_env "$P6" LUME_LOCAL_LOG_DIR)" = "$LOGS6"
+check "the plist writes the daemon log in the custom directory" grep -q "<string>$LOGS6/lume_daemon.local.log</string>" "$P6"
+check "the plist writes the daemon error log in the custom directory" grep -q "<string>$LOGS6/lume_daemon.local.error.log</string>" "$P6"
+check "the daemon logs exist in the custom directory" test -f "$LOGS6/lume_daemon.local.log" -a -f "$LOGS6/lume_daemon.local.error.log"
+check "the wrapper overrides an inherited LUME_LOCAL_LOG_DIR with the configured one" test \
+  "$(wrapper HOME="$H6" LUME_LOCAL_LOG_DIR=/somewhere/else "$H6/.local/bin/lume-local" logs 2>&1)" = "stub-lume name=lume-local args=logs LUME_HOME=$H6/real-vms/local home LUME_LOCAL_LOG_DIR=$LOGS6"
 check "the wrapper uses the custom home, not an inherited released-Lume LUME_HOME" test \
-  "$(wrapper HOME="$H6" LUME_HOME="$H6/.lume" "$H6/.local/bin/lume-local" ls 2>&1)" = "stub-lume name=lume-local args=ls LUME_HOME=$H6/real-vms/local home"
+  "$(wrapper HOME="$H6" LUME_HOME="$H6/.lume" "$H6/.local/bin/lume-local" ls 2>&1)" = "stub-lume name=lume-local args=ls LUME_HOME=$H6/real-vms/local home LUME_LOCAL_LOG_DIR=$LOGS6"
 check "the wrapper uses the custom home when LUME_HOME is unset" test \
-  "$(wrapper HOME="$H6" "$H6/.local/bin/lume-local" ls 2>&1)" = "stub-lume name=lume-local args=ls LUME_HOME=$H6/real-vms/local home"
+  "$(wrapper HOME="$H6" "$H6/.local/bin/lume-local" ls 2>&1)" = "stub-lume name=lume-local args=ls LUME_HOME=$H6/real-vms/local home LUME_LOCAL_LOG_DIR=$LOGS6"
 same "install with a custom home left the released Lume alone" "$S6_BEFORE" "$(fingerprint $(stable_paths "$H6"))"
 mkdir -p "$H6/real-vms/local home/vm-x"
 printf '{}\n' > "$H6/real-vms/local home/vm-x/config.json"
-run LUME_LOCAL_HOME="$H6/vms-link/local home" uninstall-local.sh --yes >/dev/null 2>&1
+run LUME_LOCAL_HOME="$H6/vms-link/local home" LUME_LOCAL_LOG_DIR="$H6/logs-link/run logs" uninstall-local.sh --yes >/dev/null 2>&1
 check "uninstall --yes with the same custom home succeeds" test $? -eq 0
+check "uninstall removed the daemon logs from the custom directory" test ! -e "$LOGS6/lume_daemon.local.log" -a ! -e "$LOGS6/lume_daemon.local.error.log"
 check "uninstall removed the custom home" test ! -e "$H6/real-vms/local home"
 check "uninstall kept the directory that held it" test -d "$H6/real-vms"
 same "uninstall of the custom home left the released Lume alone" "$S6_BEFORE" "$(fingerprint $(stable_paths "$H6"))"
@@ -480,7 +516,7 @@ if [ -x /usr/libexec/PlistBuddy ]; then
   check "bridged app executable is lume-local" test \
     "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")" = lume-local
   check "bridged wrapper runs the app's lume-local with the Local home" test \
-    "$(wrapper HOME="$H3" LUME_HOME="$H3/.lume" "$H3/.local/bin/lume-local" ls 2>&1)" = "stub-lume name=lume-local args=ls LUME_HOME=$H3/.lume-local"
+    "$(wrapper HOME="$H3" LUME_HOME="$H3/.lume" "$H3/.local/bin/lume-local" ls 2>&1)" = "stub-lume name=lume-local args=ls LUME_HOME=$H3/.lume-local LUME_LOCAL_LOG_DIR=$LOGS"
   check "bridged install leaves no stale standalone binary" test ! -e "$H3/.local/share/lume-local/lume-local"
   same "bridged install left the released Lume alone" \
     "$S3_BEFORE" "$(fingerprint $(stable_paths "$H3"))"
@@ -502,12 +538,18 @@ mkdir -p "$H/.lume-local/vm-local"
 printf '{"name":"vm-local"}\n' > "$H/.lume-local/vm-local/config.json"
 printf 'disk\n' > "$H/.lume-local/vm-local/disk.img"
 reset_logs
+# Logs of a detached `lume-local run`: lume-local's own directory, beside (not in) the released Lume's.
+mkdir -p "$H/Library/Logs/lume-local"
+printf 'local detached run\n' > "$H/Library/Logs/lume-local/vm-local.log"
+check "the released Lume's detached-run log is in a different directory" test "$(cat "$H/Library/Logs/lume/vm1.log")" = "released detached run"
 printf 'y\nn\n' | run uninstall-local.sh >/dev/null 2>&1
 check "uninstall keeping VMs succeeds" test $? -eq 0
 check "uninstall removed the command" test ! -e "$H/.local/bin/lume-local"
 check "uninstall removed the files" test ! -e "$H/.local/share/lume-local"
 check "uninstall removed the .local plist" test ! -e "$PLIST"
 check "uninstall removed the .local logs" test ! -e "$LOGS/lume_daemon.local.log"
+check "uninstall removed lume-local's detached-run logs" test ! -e "$H/Library/Logs/lume-local"
+check "uninstall kept the released Lume's detached-run logs" test -f "$H/Library/Logs/lume/vm1.log"
 check "uninstall kept the local VMs" test -f "$H/.lume-local/vm-local/config.json"
 check "launchctl only saw the .local plist on uninstall" bash -c "! grep -v 'com.trycua.lume_daemon.local.plist' '$STUB_LOG_DIR/launchctl.log'"
 same "uninstall left every released-Lume path untouched" \

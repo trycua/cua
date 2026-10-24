@@ -50,6 +50,18 @@ lume_local_canon() {
   printf '%s\n' "${resolved:-/}"
 }
 
+# lume_local_no_edge_space LABEL VALUE: refuse a value that starts or ends with
+# whitespace. The Swift runtime uses LUME_HOME exactly as given, but a path such
+# as "$HOME/.lume " is one typo away from the released Lume's home and no one
+# means it, so it is an error here rather than a quiet near-miss.
+lume_local_no_edge_space() {
+  local label="$1" value="$2" edge='^[[:space:]]|[[:space:]]$'
+  if [[ "$value" =~ $edge ]]; then
+    echo "${RED}Error: $label has leading or trailing whitespace: '$value'.${NORMAL}" >&2
+    return 2
+  fi
+}
+
 # Lower-case $1. APFS is case-insensitive by default, so "$HOME/.LUME" is
 # "$HOME/.lume"; comparing lower-cased also refuses it on a case-sensitive
 # volume, where it would be a different directory nobody needs.
@@ -68,6 +80,7 @@ lume_local_stable_paths() {
     "$HOME/.local/bin/lume-update" \
     "$HOME/.local/bin/lume_lume.bundle" \
     "$HOME/.local/share/lume" \
+    "$HOME/Library/Logs/lume" \
     "$HOME/Library/LaunchAgents/com.trycua.lume_daemon.plist" \
     "$HOME/Library/LaunchAgents/com.trycua.lume_updater.plist" \
     "/tmp/lume_daemon.log" \
@@ -108,6 +121,7 @@ lume_local_within() {
 lume_local_check() {
   local label="$1" raw="$2" canon canon_lc i
   local stable_list stable_lc_list
+  lume_local_no_edge_space "$label" "$raw" || return 2
   case "$raw" in
     /*) ;;
     *)

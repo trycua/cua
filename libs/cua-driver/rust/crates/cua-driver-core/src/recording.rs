@@ -2594,15 +2594,16 @@ mod tests {
         .actual_delivery(crate::action_record::ActualDelivery::Background)
         .build()
         .unwrap();
+        // Avoid the (pid 1, window 2) target whose screenshot phase another test counts.
         let pending = |root: &Path| PendingTurn {
             generation: 0,
             turn_dir: root.to_path_buf(),
             tool_name: "click".into(),
-            args: serde_json::json!({"pid": 1, "window_id": 2, "x": 0, "y": 0}),
+            args: serde_json::json!({"pid": 41, "window_id": 42, "x": 0, "y": 0}),
             start_ms: 0,
             session_start_ms: 0,
-            window_id: Some(2),
-            pid: Some(1),
+            window_id: Some(42),
+            pid: Some(41),
             click_point: None,
             capture_visual_state: true,
             state_budget: Some(StateCaptureBudget::default()),

@@ -23,6 +23,8 @@
 
 use std::path::{Path, PathBuf};
 
+use cua_home::channel::CuaChannel;
+
 use crate::error::{Result, VmmError};
 use crate::host;
 
@@ -114,7 +116,12 @@ pub fn dir() -> PathBuf {
 
 /// `$CUA_HOME/runtimes/lume`: every built-in Lume version.
 pub fn root() -> PathBuf {
-    host::cua_home().join("runtimes").join("lume")
+    root_in(&host::cua_home())
+}
+
+/// [`root`] under the cua home `home`.
+pub fn root_in(home: &Path) -> PathBuf {
+    home.join("runtimes").join("lume")
 }
 
 /// The built-in Lume's executable, when it is installed and was verified.
@@ -127,18 +134,39 @@ pub fn installed() -> Option<PathBuf> {
 /// Written last, once the unpacked Lume passed every check.
 const VERIFIED: &str = ".verified";
 
-/// The Lume to run for `source`: this Mac's own (`system`, or `auto` when
-/// it has one at least [`MIN_VERSION`]), else the built-in one when
-/// installed.
+/// The Lume to run for `source` on this process's channel
+/// ([`resolve_for`]).
 pub fn resolve(source: LumeSource) -> Option<PathBuf> {
-    let system = || host::which("lume").filter(|p| !p.starts_with(root()));
+    resolve_for(CuaChannel::current(), source)
+}
+
+/// The Lume to run for `source` on `channel`: this Mac's own (`system`, or
+/// `auto` when it has one at least [`MIN_VERSION`]), else the built-in one
+/// when installed.
+///
+/// This Mac's own Lume is the one the channel names
+/// ([`CuaChannel::lume_bin_name`]): Stable's `lume`, Local's `lume-local`.
+/// Local never picks up Stable's `lume`, which keeps its VMs in `~/.lume`
+/// and its server on port 7777.
+pub fn resolve_for(channel: CuaChannel, source: LumeSource) -> Option<PathBuf> {
+    let system = || system_lume(channel, host::which, &root());
     match source {
         LumeSource::System => system(),
         LumeSource::Builtin => installed(),
         LumeSource::Auto => system()
-            .filter(|p| system_binary_usable(source, binary_version(p).as_deref()))
+            .filter(|p| system_binary_usable(source, binary_version_for(channel, p).as_deref()))
             .or_else(installed),
     }
+}
+
+/// This Mac's own Lume for `channel`, looked up with `which` by the name
+/// the channel gives it; never the built-in one under `builtin_root`.
+fn system_lume(
+    channel: CuaChannel,
+    which: impl Fn(&str) -> Option<PathBuf>,
+    builtin_root: &Path,
+) -> Option<PathBuf> {
+    which(channel.lume_bin_name()).filter(|p| !p.starts_with(builtin_root))
 }
 
 /// The oldest Lume cua runs macOS Spaces on. Lume 0.6.0 is the first
@@ -211,9 +239,33 @@ pub fn system_binary_usable(source: LumeSource, version: Option<&str>) -> bool {
 
 /// The ports tried, in order, for a current Lume when the configured one
 /// is taken by an old server: the next nine. Fixed, so every cua process
-/// on this Mac finds the same one.
+/// on this Mac finds the same one. Stable's walk (`fallback_ports_for`).
 pub fn fallback_ports(port: u16) -> impl Iterator<Item = u16> {
-    (1..=9u16).filter_map(move |d| port.checked_add(d))
+    fallback_ports_for(CuaChannel::Stable, port)
+}
+
+/// How many ports after its own one a channel's Lume may move to.
+pub const FALLBACK_SPAN: u16 = 9;
+
+/// The ports a channel's Lume may use: its own and the nine after it
+/// (Stable's `7777..=7786`, Local's `7787..=7796`).
+pub fn port_range(channel: CuaChannel) -> std::ops::RangeInclusive<u16> {
+    let p = channel.lume_port();
+    p..=p.saturating_add(FALLBACK_SPAN)
+}
+
+/// [`fallback_ports`] for `channel`: the next nine ports after `port`,
+/// except any in another channel's range, so a Local Lume never walks into
+/// Stable's ports (and Stable's never into Local's).
+pub fn fallback_ports_for(channel: CuaChannel, port: u16) -> impl Iterator<Item = u16> {
+    let others: Vec<_> = CuaChannel::ALL
+        .into_iter()
+        .filter(move |c| *c != channel)
+        .map(port_range)
+        .collect();
+    (1..=FALLBACK_SPAN)
+        .filter_map(move |d| port.checked_add(d))
+        .filter(move |p| !others.iter().any(|r| r.contains(p)))
 }
 
 /// `url` with its port replaced by `port`.
@@ -238,9 +290,32 @@ pub fn is_loopback(url: &str) -> bool {
     matches!(host, "127.0.0.1" | "localhost" | "::1")
 }
 
-/// `bin --version` (cached per binary and modification time; bounded to
-/// five seconds).
-pub fn binary_version(bin: &Path) -> Option<String> {
+/// `lume --version`, run as `lume` runs (its channel's environment: the
+/// pinned Lume initialises its settings and telemetry before it parses
+/// `--version`, so a bare run would touch Stable's `~/.config/lume` and
+/// `~/.lume`). Cached per binary and modification time; bounded to five
+/// seconds.
+pub fn binary_version(lume: &LumeCmd) -> Option<String> {
+    cached_version(lume.bin(), || run_version(lume))
+}
+
+/// [`binary_version`] of `bin` for `channel`, preparing the channel's
+/// environment under `config_root` only when the version is not cached.
+pub fn binary_version_in(channel: CuaChannel, config_root: &Path, bin: &Path) -> Option<String> {
+    cached_version(bin, || {
+        let lume = LumeCmd::new(channel, config_root, bin)
+            .inspect_err(|e| tracing::warn!(error = %e, "could not prepare the Lume environment"))
+            .ok()?;
+        run_version(&lume)
+    })
+}
+
+/// [`binary_version_in`] under the default Lume state directory.
+pub fn binary_version_for(channel: CuaChannel, bin: &Path) -> Option<String> {
+    binary_version_in(channel, &super::default_root(), bin)
+}
+
+fn cached_version(bin: &Path, run: impl FnOnce() -> Option<String>) -> Option<String> {
     use std::collections::HashMap;
     use std::sync::Mutex;
     /// Binary -> (its modification time, its version).
@@ -257,7 +332,7 @@ pub fn binary_version(bin: &Path) -> Option<String> {
     {
         return v.clone();
     }
-    let v = run_version(&bin);
+    let v = run();
     SEEN.lock()
         .unwrap_or_else(|e| e.into_inner())
         .get_or_insert_with(HashMap::new)
@@ -265,10 +340,11 @@ pub fn binary_version(bin: &Path) -> Option<String> {
     v
 }
 
-fn run_version(bin: &Path) -> Option<String> {
+fn run_version(lume: &LumeCmd) -> Option<String> {
     use std::io::Read as _;
-    use std::process::{Command, Stdio};
-    let mut child = Command::new(bin)
+    use std::process::Stdio;
+    let mut child = lume
+        .command()
         .arg("--version")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -332,6 +408,203 @@ pub fn remove() -> Result<()> {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
         _ => Ok(()),
     }
+}
+
+/// Lume's switch for its product telemetry (`false` turns it off for the
+/// process; it wins over the config file).
+const TELEMETRY_VAR: &str = "LUME_TELEMETRY_ENABLED";
+
+/// A Lume to run for a channel: its binary and the environment every
+/// process started from it needs. **Every** Lume subprocess goes through
+/// one of these (`serve`, `pull`, `get`, `run`, `ssh`, `attach`), so none of
+/// them can fall back to Stable's VM directory.
+///
+/// Stable's has no environment: its Lume runs as it always did.
+///
+/// Local's Lume keeps its VMs in `~/.lume-local`
+/// ([`crate::storage::lume_dir_for`]) whichever Lume runs it, so it gets:
+///
+/// * `XDG_CONFIG_HOME`: a config directory of its own under `config_root`,
+///   with a `lume/config.yaml` that makes the VM directory the default
+///   location. **This is the isolation for any Lume named `lume`**, the
+///   bundled one included, so it never reads or writes Stable's `~/.lume` or
+///   `~/.config/lume`;
+/// * `LUME_HOME`: the VM directory. **Contract with Lume (#5804):** a Lume
+///   named `lume-local` relocates its VMs, cache and settings through
+///   `LUME_HOME`; one named `lume` (Stable's, and the bundled one, on 0.6.0
+///   and on newer releases alike) uses `LUME_HOME` only for its
+///   release-channel file. So `LUME_HOME` alone does not isolate the
+///   bundled `lume`: never drop the config above. It is set for
+///   `lume-local`, and so the release-channel file is Local's own;
+/// * `TMPDIR`: a private temp directory under `config_root`, where Lume
+///   pulls images (`lume_vm_*`), so Local's start-up sweep and Stable's
+///   never see each other's half-made pulls;
+/// * `LUME_TELEMETRY_ENABLED=false` (and `telemetryEnabled: false` in the
+///   config): the pinned Lume writes its telemetry identity, locks and
+///   markers under `~/.lume` whatever `LUME_HOME` says, which is Stable's.
+///   Local's Lume has none until the pin supports an isolated home.
+#[derive(Clone, Debug)]
+pub struct LumeCmd {
+    bin: PathBuf,
+    env: Vec<(&'static str, std::ffi::OsString)>,
+    /// The private temp directory its `TMPDIR` names (Local's).
+    temp: Option<PathBuf>,
+}
+
+impl LumeCmd {
+    /// `bin` with no extra environment (Stable's, and tests').
+    pub fn plain(bin: impl Into<PathBuf>) -> Self {
+        Self {
+            bin: bin.into(),
+            env: Vec::new(),
+            temp: None,
+        }
+    }
+
+    /// `bin` for `channel`; Local's writes its config under `config_root`.
+    pub fn new(
+        channel: CuaChannel,
+        config_root: &Path,
+        bin: impl Into<PathBuf>,
+    ) -> std::io::Result<Self> {
+        Self::with_vm_dir(
+            channel,
+            config_root,
+            bin,
+            &crate::storage::lume_dir_for(channel),
+        )
+    }
+
+    /// [`LumeCmd::new`] with the VM directory given.
+    pub fn with_vm_dir(
+        channel: CuaChannel,
+        config_root: &Path,
+        bin: impl Into<PathBuf>,
+        vm_dir: &Path,
+    ) -> std::io::Result<Self> {
+        let bin = bin.into();
+        if !channel.is_local() {
+            return Ok(Self::plain(bin));
+        }
+        let xdg = config_root.join("xdg");
+        seed_config(&xdg.join("lume").join("config.yaml"), vm_dir)?;
+        let temp = config_root.join("tmp");
+        std::fs::create_dir_all(&temp)?;
+        Ok(Self {
+            bin,
+            env: vec![
+                (crate::storage::LUME_HOME_VAR, vm_dir.as_os_str().to_owned()),
+                ("XDG_CONFIG_HOME", xdg.into_os_string()),
+                ("TMPDIR", temp.as_os_str().to_owned()),
+                (TELEMETRY_VAR, "false".into()),
+            ],
+            temp: Some(temp),
+        })
+    }
+
+    /// The temp directory this Lume pulls into, when it has a private one
+    /// (Local's). Stable's is the user's shared temp directory.
+    pub fn temp_dir(&self) -> Option<&Path> {
+        self.temp.as_deref()
+    }
+
+    /// The Lume binary.
+    pub fn bin(&self) -> &Path {
+        &self.bin
+    }
+
+    /// The environment it runs with (empty for Stable).
+    pub fn env(&self) -> &[(&'static str, std::ffi::OsString)] {
+        &self.env
+    }
+
+    /// A command for it, with the environment set.
+    pub fn command(&self) -> std::process::Command {
+        let mut cmd = std::process::Command::new(&self.bin);
+        cmd.envs(self.env.iter().map(|(k, v)| (k, v)));
+        cmd
+    }
+
+    /// [`LumeCmd::command`] for `tokio`.
+    pub fn tokio_command(&self) -> tokio::process::Command {
+        tokio::process::Command::from(self.command())
+    }
+
+    /// The program and leading arguments that run it with its environment
+    /// when only a program and arguments can be given (`PrefixExec`,
+    /// [`super::LumeSshExec`], a command for another process to run): the
+    /// binary itself for Stable, `env K=V... <bin>` for Local.
+    pub fn wrapped(&self) -> (String, Vec<String>) {
+        if self.env.is_empty() {
+            return (self.bin.display().to_string(), Vec::new());
+        }
+        let mut lead: Vec<String> = self
+            .env
+            .iter()
+            .map(|(k, v)| format!("{k}={}", v.to_string_lossy()))
+            .collect();
+        lead.push(self.bin.display().to_string());
+        ("/usr/bin/env".into(), lead)
+    }
+
+    /// [`LumeCmd::wrapped`] followed by `args`, as one argv.
+    pub fn argv<I, S>(&self, args: I) -> Vec<String>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let (program, lead) = self.wrapped();
+        let mut argv = vec![program];
+        argv.extend(lead);
+        argv.extend(args.into_iter().map(Into::into));
+        argv
+    }
+}
+
+/// Lume's `config.yaml` that makes `vm_dir` the one VM location.
+pub fn config_yaml(vm_dir: &str) -> String {
+    format!(
+        "# Written by Cua Spaces Local: its Lume keeps VMs apart from the released Cua Spaces.\n\
+         defaultLocationName: \"home\"\n\
+         cacheDirectory: \"{vm_dir}/cache\"\n\
+         cachingEnabled: false\n\
+         telemetryEnabled: false\n\
+         \n\
+         vmLocations:\n\
+         \x20 - name: \"home\"\n\
+         \x20   path: \"{vm_dir}\"\n"
+    )
+}
+
+/// Writes the Local Lume's `config.yaml` at `file` unless it already makes
+/// `vm_dir` the default location with telemetry off.
+fn seed_config(file: &Path, vm_dir: &Path) -> std::io::Result<()> {
+    let dir = vm_dir
+        .to_str()
+        .filter(|d| !d.contains(['"', '\n']))
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("{} cannot be a Lume VM directory", vm_dir.display()),
+            )
+        })?;
+    let current = std::fs::read_to_string(file).ok();
+    if current.as_deref().is_some_and(|y| {
+        crate::storage::lume_default_location(y).is_some_and(|p| p == dir)
+            && y.lines().any(|l| l.trim() == "telemetryEnabled: false")
+    }) {
+        return Ok(());
+    }
+    let parent = file.parent().unwrap_or(Path::new("."));
+    std::fs::create_dir_all(parent)?;
+    // Written whole to a temp file beside it and renamed over it: a Lume
+    // started meanwhile reads the old config or the new one, never an
+    // empty or partial file (which the pinned Lume answers with `~/.lume`).
+    let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
+    std::io::Write::write_all(&mut tmp, config_yaml(dir).as_bytes())?;
+    tmp.as_file().sync_all()?;
+    tmp.persist(file).map_err(|e| e.error)?;
+    Ok(())
 }
 
 /// One install at a time in this process (a second create waits for it).
@@ -567,6 +840,313 @@ mod tests {
         assert!(is_loopback("http://localhost:7777/"));
         assert!(is_loopback("http://[::1]:7777"));
         assert!(!is_loopback("http://10.0.0.5:7777"));
+    }
+
+    #[test]
+    fn stable_keeps_its_ports_and_local_has_a_range_of_its_own() {
+        use CuaChannel::{Local, Stable};
+        assert_eq!(Stable.lume_port(), 7777);
+        assert_eq!(Local.lume_port(), 7787);
+        assert_eq!(port_range(Stable), 7777..=7786);
+        assert_eq!(port_range(Local), 7787..=7796);
+        // Stable is unchanged.
+        let stable: Vec<u16> = fallback_ports_for(Stable, 7777).collect();
+        assert_eq!(stable, (7778..=7786).collect::<Vec<_>>());
+        assert_eq!(fallback_ports(7777).collect::<Vec<_>>(), stable);
+        // Local walks 7788-7796 from its own port.
+        assert_eq!(
+            fallback_ports_for(Local, 7787).collect::<Vec<_>>(),
+            (7788..=7796).collect::<Vec<_>>()
+        );
+        // Neither walks into the other's range, even from an overridden port.
+        for from in 7770..7800 {
+            assert!(
+                fallback_ports_for(Local, from).all(|p| !port_range(Stable).contains(&p)),
+                "Local from {from}"
+            );
+            assert!(
+                fallback_ports_for(Stable, from).all(|p| !port_range(Local).contains(&p)),
+                "Stable from {from}"
+            );
+        }
+        assert_eq!(fallback_ports_for(Local, u16::MAX).count(), 0);
+    }
+
+    #[test]
+    fn each_channel_looks_for_its_own_lume_binary() {
+        use CuaChannel::{Local, Stable};
+        let root = Path::new("/h/.cua/runtimes/lume");
+        let on_path = |names: &'static [&'static str]| {
+            move |n: &str| {
+                names
+                    .contains(&n)
+                    .then(|| PathBuf::from("/Users/a/.local/bin").join(n))
+            }
+        };
+        // Local prefers an installed `lume-local`, and never takes `lume`.
+        assert_eq!(
+            system_lume(Local, on_path(&["lume", "lume-local"]), root),
+            Some(PathBuf::from("/Users/a/.local/bin/lume-local"))
+        );
+        assert_eq!(system_lume(Local, on_path(&["lume"]), root), None);
+        // Stable is unchanged: `lume`.
+        assert_eq!(
+            system_lume(Stable, on_path(&["lume", "lume-local"]), root),
+            Some(PathBuf::from("/Users/a/.local/bin/lume"))
+        );
+        assert_eq!(system_lume(Stable, on_path(&["lume-local"]), root), None);
+        // The built-in one is not "this Mac's own".
+        assert_eq!(
+            system_lume(Local, |_| Some(root.join("0.6.0/lume-local")), root),
+            None
+        );
+    }
+
+    fn lume_for(channel: CuaChannel, root: &Path, vms: &Path) -> std::io::Result<LumeCmd> {
+        LumeCmd::with_vm_dir(channel, root, "/opt/lume", vms)
+    }
+
+    #[test]
+    fn stable_s_lume_is_started_as_it_always_was() {
+        let dir = tempfile::tempdir().unwrap();
+        let cmd = lume_for(CuaChannel::Stable, dir.path(), Path::new("/h/.lume")).unwrap();
+        assert!(cmd.env().is_empty(), "no telemetry or temp dir overrides");
+        assert_eq!(cmd.temp_dir(), None);
+        assert_eq!(cmd.wrapped(), ("/opt/lume".to_string(), Vec::new()));
+        assert_eq!(cmd.argv(["get", "vm"]), ["/opt/lume", "get", "vm"]);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn local_s_lume_is_started_on_its_own_vm_directory_and_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let vms = Path::new("/Users/a/.lume-local");
+        let cmd = lume_for(CuaChannel::Local, dir.path(), vms).unwrap();
+        let get = |k: &str| {
+            cmd.env()
+                .iter()
+                .find(|(n, _)| *n == k)
+                .map(|(_, v)| v.clone())
+        };
+        assert_eq!(get("LUME_HOME"), Some(vms.into()));
+        let xdg = PathBuf::from(get("XDG_CONFIG_HOME").unwrap());
+        assert!(xdg.starts_with(dir.path()));
+        // A Lume that does not read LUME_HOME yet reads this config instead.
+        let yaml = std::fs::read_to_string(xdg.join("lume/config.yaml")).unwrap();
+        assert_eq!(
+            crate::storage::lume_default_location(&yaml).as_deref(),
+            Some("/Users/a/.lume-local")
+        );
+        assert!(yaml.contains("cacheDirectory: \"/Users/a/.lume-local/cache\""));
+        assert!(
+            !yaml.contains("\"~/.lume\""),
+            "never Stable's default location"
+        );
+        // The pinned Lume writes its telemetry identity under ~/.lume
+        // whatever LUME_HOME says: Local's has telemetry off, by the
+        // environment (which wins) and in its config.
+        assert!(yaml.contains("telemetryEnabled: false"));
+        assert_eq!(get("LUME_TELEMETRY_ENABLED"), Some("false".into()));
+        assert_eq!(get("TMPDIR"), Some(dir.path().join("tmp").into()));
+        // Where only a program and arguments can be given, the same
+        // environment goes through `env`.
+        let argv = cmd.argv(["attach", "vm"]);
+        assert_eq!(argv[0], "/usr/bin/env");
+        assert!(argv.contains(&"LUME_HOME=/Users/a/.lume-local".to_string()));
+        assert!(argv.iter().any(|a| a.starts_with("XDG_CONFIG_HOME=")));
+        assert_eq!(&argv[argv.len() - 3..], ["/opt/lume", "attach", "vm"]);
+    }
+
+    #[test]
+    fn the_local_config_is_kept_while_it_is_right_and_fixed_when_it_is_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("xdg/lume/config.yaml");
+        let vms = Path::new("/Users/a/.lume-local");
+        lume_for(CuaChannel::Local, dir.path(), vms).unwrap();
+        // Right: left alone (Lume may have added its own settings).
+        let kept = format!(
+            "{}# added by Lume\n",
+            std::fs::read_to_string(&file).unwrap()
+        );
+        std::fs::write(&file, &kept).unwrap();
+        lume_for(CuaChannel::Local, dir.path(), vms).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), kept);
+        // Wrong (say it still names Stable's directory): rewritten.
+        std::fs::write(
+            &file,
+            "defaultLocationName: \"home\"\nvmLocations:\n  - name: \"home\"\n    path: \"~/.lume\"\n",
+        )
+        .unwrap();
+        lume_for(CuaChannel::Local, dir.path(), vms).unwrap();
+        assert_eq!(
+            crate::storage::lume_default_location(&std::fs::read_to_string(&file).unwrap())
+                .as_deref(),
+            Some("/Users/a/.lume-local")
+        );
+        // An older config of Local's that left telemetry on: rewritten.
+        std::fs::write(
+            &file,
+            format!(
+                "defaultLocationName: \"home\"\ntelemetryEnabled: true\nvmLocations:\n  - name: \"home\"\n    path: \"{}\"\n",
+                vms.display()
+            ),
+        )
+        .unwrap();
+        lume_for(CuaChannel::Local, dir.path(), vms).unwrap();
+        assert!(
+            std::fs::read_to_string(&file)
+                .unwrap()
+                .contains("telemetryEnabled: false")
+        );
+        // A directory that cannot be written into a YAML string is refused.
+        assert!(lume_for(CuaChannel::Local, dir.path(), Path::new("/a\"b")).is_err());
+    }
+
+    /// A stand-in `lume` that prints a version and records the environment
+    /// it was run with (the pinned Lume initialises settings and telemetry
+    /// before it parses `--version`).
+    #[cfg(unix)]
+    fn recording_lume(dir: &Path) -> (PathBuf, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(dir).unwrap();
+        let bin = dir.join("lume");
+        let seen = dir.join("seen");
+        std::fs::write(
+            &bin,
+            format!(
+                "#!/bin/sh\n[ \"$1\" = --version ] || exit 64\n\
+                 printf '%s\\n' \"xdg=$XDG_CONFIG_HOME\" \"telemetry=$LUME_TELEMETRY_ENABLED\" \"tmp=$TMPDIR\" \"home=$LUME_HOME\" > '{}'\n\
+                 echo 0.6.0\n",
+                seen.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (bin, seen)
+    }
+
+    /// The version probes (the doctor's and the one that picks a Lume) run
+    /// Lume with its channel's environment, so Local's never touches
+    /// Stable's `~/.config/lume` or `~/.lume`; Stable's run as they did.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn version_probes_run_with_the_channel_s_environment() {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path().join("cua-local/vmm/lume");
+        let (local_bin, local_seen) = recording_lume(&t.path().join("local-bin"));
+        let (stable_bin, stable_seen) = recording_lume(&t.path().join("stable-bin"));
+        let (text_bin, text_seen) = recording_lume(&t.path().join("text-bin"));
+
+        // `builtin::binary_version_in` (server and system-Lume probes).
+        assert_eq!(
+            binary_version_in(CuaChannel::Local, &root, &local_bin).as_deref(),
+            Some("0.6.0")
+        );
+        let seen = std::fs::read_to_string(&local_seen).unwrap();
+        assert!(
+            seen.contains(&format!("xdg={}", root.join("xdg").display())),
+            "{seen}"
+        );
+        assert!(seen.contains("telemetry=false"), "{seen}");
+        assert!(
+            seen.contains(&format!("tmp={}", root.join("tmp").display())),
+            "{seen}"
+        );
+        assert!(seen.contains("home="), "{seen}");
+        assert!(!seen.contains("home=\n"), "LUME_HOME unset: {seen}");
+
+        // Stable's probe has no overrides.
+        assert_eq!(
+            binary_version_in(CuaChannel::Stable, &root, &stable_bin).as_deref(),
+            Some("0.6.0")
+        );
+        let seen = std::fs::read_to_string(&stable_seen).unwrap();
+        assert!(
+            !seen.contains(&root.display().to_string()) && !seen.contains("telemetry=false"),
+            "Stable's probe got Local's environment: {seen}"
+        );
+
+        // The doctor's probe (`crate::lume::version_text`).
+        let cmd = LumeCmd::with_vm_dir(
+            CuaChannel::Local,
+            &root,
+            &text_bin,
+            Path::new("/Users/a/.lume-local"),
+        )
+        .unwrap();
+        assert_eq!(
+            crate::lume::version_text(&cmd).await.as_deref(),
+            Some("0.6.0")
+        );
+        let seen = std::fs::read_to_string(&text_seen).unwrap();
+        assert!(
+            seen.contains("telemetry=false") && seen.contains("xdg="),
+            "{seen}"
+        );
+        assert!(!seen.contains("xdg=\n"), "{seen}");
+    }
+
+    /// Local's `config.yaml` is replaced atomically: a Lume started while it
+    /// is rewritten reads the old config or the new one, never an empty or
+    /// cut-off file (the pinned Lume answers one with `~/.lume`).
+    #[test]
+    fn a_reader_never_sees_a_partial_local_config() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("xdg/lume/config.yaml");
+        let a = Path::new("/Users/a/.lume-local");
+        let b = Path::new("/Users/b/.lume-local");
+        seed_config(&file, a).unwrap();
+        let done = AtomicBool::new(false);
+        let reads = std::sync::atomic::AtomicUsize::new(0);
+        std::thread::scope(|s| {
+            let readers: Vec<_> = (0..3)
+                .map(|_| {
+                    s.spawn(|| {
+                        while !done.load(Ordering::Relaxed) {
+                            let yaml = std::fs::read_to_string(&file).expect("always there");
+                            let at = crate::storage::lume_default_location(&yaml);
+                            assert!(
+                                matches!(
+                                    at.as_deref(),
+                                    Some("/Users/a/.lume-local" | "/Users/b/.lume-local")
+                                ),
+                                "a partial config: {yaml:?}"
+                            );
+                            reads.fetch_add(1, Ordering::Relaxed);
+                        }
+                    })
+                })
+                .collect();
+            // Each writer finds the other's directory in the file, so every
+            // call rewrites it.
+            let writers: Vec<_> = [a, b]
+                .into_iter()
+                .map(|vm| {
+                    let file = &file;
+                    s.spawn(move || {
+                        for _ in 0..1500 {
+                            seed_config(file, vm).unwrap();
+                        }
+                    })
+                })
+                .collect();
+            for w in writers {
+                w.join().unwrap();
+            }
+            done.store(true, Ordering::Relaxed);
+            for r in readers {
+                r.join().unwrap();
+            }
+        });
+        assert!(reads.load(Ordering::Relaxed) > 0);
+        // No temp files left beside it.
+        let left: Vec<_> = std::fs::read_dir(file.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name())
+            .collect();
+        assert_eq!(left, [std::ffi::OsString::from("config.yaml")]);
     }
 
     #[test]

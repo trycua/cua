@@ -293,6 +293,66 @@ class DesktopRuntimeTest(unittest.TestCase):
                 self.assertEqual(checks[name].status, "pass", checks[name].detail)
 
     @unittest.skipUnless(_x11_ready() and _has_gi(), "headless X11 session with GTK required")
+    def test_consent_dialog_survives_window_close(self) -> None:
+        script = r"""
+import argparse, json, sys, tempfile
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import gi
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk
+import benchlab
+
+def pump(n=60):
+    for _ in range(n):
+        while Gtk.events_pending():
+            Gtk.main_iteration_do(False)
+        import time; time.sleep(0.01)
+
+def dlg():
+    for w in Gtk.Window.list_toplevels():
+        if w.get_title() == "Cookie preferences" and w.get_visible():
+            return w
+    return None
+
+with tempfile.TemporaryDirectory() as tmp:
+    lab = benchlab.Lab(argparse.Namespace(
+        mode="irconsent", seed=7, state=Path(tmp) / "s.json", events=Path(tmp) / "e.jsonl"))
+    lab.fields["email"].set_text("a@example.com")
+    for _ in range(100):
+        pump(5)
+        if dlg():
+            break
+    d = dlg()
+    out = {"opened": d is not None}
+    d.close(); pump()
+    out["after_close"] = [dlg() is not None, lab.state["consent_shown"], list(lab.state["consent_answers"])]
+    d.response(-1); d.response(99); pump()
+    out["after_invalid"] = [dlg() is not None, list(lab.state["consent_answers"])]
+    d.response(0); pump()
+    out["after_button"] = [dlg() is not None, list(lab.state["consent_answers"])]
+    lab.signup(); pump()
+    out["submit"] = [lab.state["submit_count"], lab.state["submits_blocked"]]
+    print(json.dumps(out))
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = subprocess.run(
+                [sys.executable, "-c", script, str(HERE.parent / "linux")],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                cwd=tmp,
+            )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = json.loads(proc.stdout.strip().splitlines()[-1])
+        self.assertTrue(out["opened"])
+        self.assertEqual(out["after_close"], [True, True, []])
+        self.assertEqual(out["after_invalid"], [True, []])
+        self.assertFalse(out["after_button"][0])
+        self.assertEqual([a["answer"] for a in out["after_button"][1]], ["reject"])
+        self.assertEqual(out["submit"], [1, 0])
+
+    @unittest.skipUnless(_x11_ready() and _has_gi(), "headless X11 session with GTK required")
     def test_real_gtk_interactions_are_accepted_by_unchanged_evaluators(self) -> None:
         import desktop_runtime as desktop
         import run_pilot as pilot
@@ -684,6 +744,69 @@ class CodexEventsTest(unittest.TestCase):
                 {"input": 250, "cached_input": 125, "output": 7, "reasoning": 2},
             )
             self.assertIsNone(codex_events.rollout_usage(Path(tmp) / "missing"))
+
+
+class RecorderTest(unittest.TestCase):
+    def setUp(self) -> None:
+        import recorder
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.video = Path(self.tmp.name) / "v.mp4"
+        self.video.write_bytes(b"x")
+        self.rec = recorder.CuaRecorder(Path("/nonexistent"), "sock", {})
+        self.rec.active_dir = Path(self.tmp.name)
+        self.outcomes: list = []
+        self.calls: dict[str, int] = {}
+        self.closed = 0
+        test = self
+
+        class Fake:
+            def call_tool(self, name, args, timeout=0):
+                test.calls[name] = test.calls.get(name, 0) + 1
+                if name == "get_recording_state":
+                    raise TimeoutError("state")
+                outcome = test.outcomes.pop(0)
+                if isinstance(outcome, type):
+                    raise outcome("boom")
+                return outcome
+
+            def close(self):
+                test.closed += 1
+
+        def connect():
+            self.rec.client = Fake()
+            return self.rec.client
+
+        self.rec._connect = connect
+
+    def test_stop_retries_after_transient_failure(self) -> None:
+        self.outcomes = [TimeoutError, {"last_video_path": str(self.video)}]
+        self.assertIsNone(self.rec.stop())
+        self.assertIsNotNone(self.rec.active_dir)
+        self.assertTrue(self.rec.last_error.startswith("TimeoutError"))
+        self.assertEqual(self.rec.stop(), self.video)
+        self.assertIsNone(self.rec.active_dir)
+        self.rec.close()
+        self.assertEqual(self.calls["stop_recording"], 2)
+        self.assertEqual(self.closed, 1)
+
+    def test_close_retries_unconfirmed_stop(self) -> None:
+        self.outcomes = [TimeoutError, TimeoutError, {"last_video_path": str(self.video)}]
+        self.rec.stop()
+        self.rec.stop()
+        self.rec.close()
+        self.assertEqual(self.calls["stop_recording"], 3)
+        self.assertEqual(self.rec.last_video, self.video)
+        self.assertIsNone(self.rec.active_dir)
+        self.assertEqual(self.closed, 1)
+
+    def test_state_lookup_failure_after_confirmed_stop_clears_state(self) -> None:
+        self.outcomes = [{}]
+        self.assertIsNone(self.rec.stop())
+        self.assertIsNone(self.rec.active_dir)
+        self.rec.close()
+        self.assertEqual(self.calls["stop_recording"], 1)
 
 
 class ArmsTest(unittest.TestCase):

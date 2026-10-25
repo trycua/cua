@@ -185,6 +185,7 @@ class CuaRecorder:
         try:
             client = self._connect()
             state = client.call_tool("stop_recording", {}, timeout=60)
+            self.active_dir = None
             path = state.get("last_video_path")
             if not path:
                 state = client.call_tool("get_recording_state", {}, timeout=15)
@@ -196,8 +197,6 @@ class CuaRecorder:
         except (OSError, TimeoutError, RuntimeError) as error:
             self.last_error = f"{type(error).__name__}: {error}"
             self.client = None
-        finally:
-            self.active_dir = None
         return None
 
     def close(self) -> None:

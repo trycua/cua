@@ -356,6 +356,7 @@ class ArgvAndScanTest(unittest.TestCase):
 
 
 class WebWiringTest(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "darwin", "vendor browser arm requires macOS")
     def test_browser_selection_row_manifest_and_dry_run_prompt(self) -> None:
         import contextlib
         import hashlib
@@ -442,6 +443,7 @@ class WebWiringTest(unittest.TestCase):
         ]
         self.assertEqual(rb.evaluator_peeks(events, []), ["Read:oracle", "Read:/__state"])
 
+    @unittest.skipUnless(sys.platform == "darwin", "WEB task pack ships macOS descriptors only")
     def test_setup_brief_and_profile_reset(self) -> None:
         import subprocess
 

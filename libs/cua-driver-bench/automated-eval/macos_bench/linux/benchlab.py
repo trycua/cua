@@ -125,9 +125,10 @@ class Lab:
             dialog.add_button(text, index)
 
         def response(widget, code):
+            if not 0 <= code < len(buttons):
+                return  # a window-manager close or other non-button response is not an answer
             widget.destroy()
-            if 0 <= code < len(buttons):
-                callback(buttons[code][1])
+            callback(buttons[code][1])
 
         dialog.connect("response", response)
         # Window-manager close is not an answer; keep the dialog until a button is used.

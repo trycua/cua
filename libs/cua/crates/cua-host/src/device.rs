@@ -236,16 +236,36 @@ pub struct DeviceAuth {
     name: String,
     machine_id: std::sync::OnceLock<Option<String>>,
     session: tokio::sync::Mutex<Option<(String, u64)>>,
-    /// The key the cached session was opened with, and when the slot was
-    /// last looked at again (see [`DeviceAuth::key_changed`]).
-    session_key: std::sync::Mutex<Option<(String, std::time::Instant)>>,
-    key_recheck: std::time::Duration,
+    /// A hash of the key the cached session was opened with (0: none), when
+    /// the slot was last looked at again (unix milliseconds) and how often
+    /// to (milliseconds); see [`DeviceAuth::key_changed`]. Flat atomics:
+    /// this struct sits inside the SDK's deep futures, whose layout check
+    /// has a fixed depth budget.
+    session_key: std::sync::atomic::AtomicU64,
+    key_checked_ms: std::sync::atomic::AtomicU64,
+    key_recheck_ms: u64,
     pending_file: Option<PathBuf>,
 }
 
 /// How often a long-lived [`DeviceAuth`] (the daemon's) looks at its key
 /// slot again while it holds a session.
 const KEY_RECHECK: std::time::Duration = std::time::Duration::from_secs(5);
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// A nonzero hash of a key id, to tell one key from another in this
+/// process.
+fn key_hash(id: &str) -> u64 {
+    use std::hash::{Hash as _, Hasher as _};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    id.hash(&mut h);
+    h.finish() | 1
+}
 
 /// The one-time code this device last showed, remembered (in
 /// `~/.cua/device-pending.json`) so `cua devices status` can show it again
@@ -324,8 +344,9 @@ impl DeviceAuth {
             name: name.into(),
             machine_id: std::sync::OnceLock::new(),
             session: tokio::sync::Mutex::new(None),
-            session_key: std::sync::Mutex::new(None),
-            key_recheck: KEY_RECHECK,
+            session_key: std::sync::atomic::AtomicU64::new(0),
+            key_checked_ms: std::sync::atomic::AtomicU64::new(0),
+            key_recheck_ms: KEY_RECHECK.as_millis() as u64,
             pending_file: None,
         })
     }
@@ -333,7 +354,7 @@ impl DeviceAuth {
     /// Looks at the key slot again at most every `every` while a session
     /// is held (default a few seconds).
     pub fn with_key_recheck(mut self, every: std::time::Duration) -> Self {
-        self.key_recheck = every;
+        self.key_recheck_ms = every.as_millis() as u64;
         self
     }
 
@@ -343,16 +364,18 @@ impl DeviceAuth {
     /// relay refuses the old key's session, so the cached one must not be
     /// used. Looked at most every `key_recheck`.
     fn key_changed(&self) -> bool {
-        let mut known = self.session_key.lock().expect("session key");
-        let Some((id, checked)) = known.as_mut() else {
-            return false;
-        };
-        if checked.elapsed() < self.key_recheck {
+        use std::sync::atomic::Ordering::Relaxed;
+        let known = self.session_key.load(Relaxed);
+        if known == 0 {
             return false;
         }
-        *checked = std::time::Instant::now();
+        let now = now_ms();
+        if now.saturating_sub(self.key_checked_ms.load(Relaxed)) < self.key_recheck_ms {
+            return false;
+        }
+        self.key_checked_ms.store(now, Relaxed);
         match self.key() {
-            Ok(Some(k)) => k.id() != *id,
+            Ok(Some(k)) => key_hash(&k.id()) != known,
             Ok(None) => true,
             // Unreadable now (a locked vault): keep what works.
             Err(_) => false,
@@ -618,8 +641,10 @@ impl DeviceAuth {
         })?;
         let token = self.tokens.access_token().await?;
         let session = self.open_session(&token, &key).await?;
-        *self.session_key.lock().expect("session key") =
-            Some((key.id(), std::time::Instant::now()));
+        self.session_key
+            .store(key_hash(&key.id()), std::sync::atomic::Ordering::Relaxed);
+        self.key_checked_ms
+            .store(now_ms(), std::sync::atomic::Ordering::Relaxed);
         *cached = Some(session.clone());
         Ok(session.0)
     }

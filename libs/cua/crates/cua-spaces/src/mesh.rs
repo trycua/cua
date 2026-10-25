@@ -476,7 +476,9 @@ async fn start_dialer(
     identity: Option<std::path::PathBuf>,
 ) -> Result<Dialer, String> {
     let wait = Duration::from_secs(10);
-    match Dialer::start(url, auth.clone(), identity.clone(), wait).await {
+    // Boxed: the SDK's futures nest deeply, and their layout check has a
+    // fixed depth budget.
+    match Box::pin(Dialer::start(url, auth.clone(), identity.clone(), wait)).await {
         Err(cua_mesh::Error::Refused(why))
             if why.contains(cua_mesh::coord::KEY_OWNED_BY_ANOTHER) && identity.is_some() =>
         {
@@ -491,7 +493,7 @@ async fn start_dialer(
                     _ => Err(e),
                 })
                 .map_err(|e| format!("could not replace the mesh key: {e}"))?;
-            Dialer::start(url, auth, identity, wait)
+            Box::pin(Dialer::start(url, auth, identity, wait))
                 .await
                 .map_err(|e| e.to_string())
         }

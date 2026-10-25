@@ -457,7 +457,10 @@ extension WebUIBridge {
     static func leftWelcome(_ raw: Any) -> Bool {
         guard let s = raw as? [String: Any] else { return false }
         switch s["type"] as? String {
-        case "onboarding-page": return !(s["page"] as? String == "welcome" && s["action"] as? String == "shown")
+        case "onboarding-page":
+            // Welcome being shown (`shown`, or the funnel's `step_viewed`) is before the notice.
+            let action = s["action"] as? String
+            return !(s["page"] as? String == "welcome" && (action == "shown" || action == "step_viewed"))
         case "step": return s["step"] as? String == "onboarding_skipped"
         default: return false
         }

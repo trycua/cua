@@ -59436,13 +59436,17 @@ public enum AppTelemetrySignal: Equatable, Hashable {
     case onboardingPage(
         /**
          * `welcome`, `signin`, `agents`, `presentation`, `volume`,
-         * `this_machine` or `done`.
+         * `this_machine` or `done`; or, with a `step_*` action, one of
+         * `schema::FIRST_RUN_STEPS` (`connect_agent`, `terminal`, ...).
          */page: String,
         /**
-         * `shown`, `completed`, `skipped` or `back`.
+         * `shown`, `completed`, `skipped` or `back`; or `step_viewed`,
+         * `step_completed`, `step_failed` or `step_skipped`, which send
+         * `cua_onboarding_step_*` and `cua_onboarding_skipped`.
          */action: String,
         /**
-         * The page's answer as a fixed word, or `none`.
+         * The page's answer as a fixed word, or `none`; for
+         * `step_failed`, the reason (`timeout`, `install_failed`, ...).
          */choice: String
     )
     /**

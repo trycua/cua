@@ -36,7 +36,7 @@ import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore 
 import { BridgeContext } from "./BridgeProvider";
 import type { CoreClient } from "./core";
 import type { AgentSetupRow } from "./contracts/agents";
-import type { HostStatus } from "./contracts/host";
+import type { HostStatus, SignInFailure } from "./contracts/host";
 import type {
   CliInstallPlan,
   FirstRunAgent,
@@ -425,6 +425,30 @@ export interface FirstRunUsage {
   help: string | null;
 }
 
+/** The usage data's name for each screen (`schema::FIRST_RUN_STEPS`). */
+export const FUNNEL_STEP: Record<FirstRunStep, string> = {
+  welcome: "welcome",
+  connect: "connect_agent",
+  cli: "terminal",
+  devices: "sign_in",
+  permissions: "permissions",
+  setup: "create_space",
+};
+
+/** When "Skip for now" was last pressed (the page may mount again as it leaves, under a second later). */
+let leftAtMs = 0;
+
+/** A sign-in's failure as the funnel's reason (`sign_in::error_kind`). */
+const SIGN_IN_REASON: Record<SignInFailure, string> = {
+  notConfirmed: "timeout",
+  declined: "permission_denied",
+  codeRejected: "unauthenticated",
+  offline: "transport",
+  serviceUnavailable: "http",
+  couldNotSave: "internal",
+  unknown: "other",
+};
+
 const STEPS: FirstRunStep[] = ["welcome", "connect", "cli", "devices", "permissions", "setup"];
 
 export interface FirstRunHook {
@@ -739,7 +763,42 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
   // The screens this run shows (the core's): the CLI's only while it is missing.
   const shown = view.steps?.length ? view.steps : firstRunSteps(input);
   const at = Math.max(shown.indexOf(view.step), 0);
-  const forward = () => go(shown[Math.min(at + 1, shown.length - 1)]!);
+  const funnel = (action: string, detail = "none", of: FirstRunStep = view.step) => {
+    if (active && store) track(() => store.trackFirstRunStep(FUNNEL_STEP[of], action, detail));
+  };
+  const forward = (how: "completed" | "skipped" = "completed") => {
+    if (how === "completed") funnel("step_completed");
+    else funnel("step_skipped", "step");
+    go(shown[Math.min(at + 1, shown.length - 1)]!);
+  };
+
+  // Each screen is counted when it shows (once per arrival).
+  useEffect(() => {
+    // Leaving with "Skip for now" can mount the page again as it goes, within a second or two: not a view.
+    if (Date.now() - leftAtMs < 2_000) return;
+    if (active && store) track(() => store.trackFirstRunStep(FUNNEL_STEP[view.step], "step_viewed"));
+  }, [active, store, view.step]);
+
+  // A screen's failure is counted once each time it appears.
+  const signInPhase = session.data?.signIn;
+  const on = view.step;
+  const failure: { step: FirstRunStep; reason: string } | null =
+    on === "devices" && signInPhase?.kind === "failed"
+      ? { step: on, reason: SIGN_IN_REASON[signInPhase.reason ?? "unknown"] ?? "other" }
+      : on === "cli" && cli.state.error
+        ? { step: on, reason: "install_failed" }
+        : on === "connect" && (connectError || signInError)
+          ? { step: on, reason: "connect_failed" }
+          : (on === "devices" || on === "permissions" || on === "setup") && setupError
+            ? { step: on, reason: "setup_failed" }
+            : on === "setup" && extra.phase === "failed"
+              ? { step: on, reason: "create_failed" }
+              : null;
+  const failureKey = failure ? `${failure.step}:${failure.reason}` : "";
+  useEffect(() => {
+    if (failure) funnel("step_failed", failure.reason, failure.step);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [failureKey]);
 
   const setUpThisComputer = async () => {
     if (!store || settingUp) return;
@@ -808,6 +867,7 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
       await spaces.cancelCreate(s.extraPendingId).catch(() => {});
       writeFirstRun({ extraPendingId: null, extraOs: null });
     } else if (id === "not-now") {
+      funnel("step_skipped", "step");
       writeFirstRun({ extraNotNow: true });
     } else if (id === "add") {
       writeFirstRun({ extraNotNow: false, extraPendingId: null, extraOs: null });
@@ -844,9 +904,11 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
       switch (id) {
         case "start":
         case "continue":
+          forward();
+          break;
         case "skip":
         case "not-now":
-          forward();
+          forward("skipped");
           break;
         case "install":
           await cli.install();
@@ -878,11 +940,15 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
       refresh();
     },
     async finish() {
+      // "Not now" on the first Space card already counted that screen as skipped.
+      if (extra.phase !== "not-now") funnel("step_completed");
       if (store) track(() => store.trackOnboardingFinished(telemetryState()));
       await session.completeOnboarding(host?.configured ? "host" : "client");
       writeFirstRun({ finishedLater: false, todosClosed: false });
     },
     later() {
+      funnel("step_skipped", "later");
+      leftAtMs = Date.now();
       if (store) track(() => store.trackOnboardingSkipped(telemetryState()));
       store?.cancelSignIn();
       // The shell stops opening it (the sidebar offers it again).

@@ -130,7 +130,8 @@ export function hostRecorded(raw: unknown): boolean {
 export function leftWelcome(raw: unknown): boolean {
   if (!raw || typeof raw !== "object") return false;
   const s = raw as Record<string, unknown>;
-  if (s.type === "onboarding-page") return !(s.page === "welcome" && s.action === "shown");
+  // Welcome being shown (the old `shown`, the funnel's `step_viewed`) is before the notice.
+  if (s.type === "onboarding-page") return !(s.page === "welcome" && (s.action === "shown" || s.action === "step_viewed"));
   return s.type === "step" && s.step === "onboarding_skipped";
 }
 

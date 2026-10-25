@@ -335,6 +335,15 @@ export class BridgeStore {
     void this.telemetry.track(seen);
   }
 
+  /** One first-run funnel event (`cua_onboarding_step_*`, `cua_onboarding_skipped`):
+   * `step` is one of the app core's funnel steps, `action` `step_viewed`,
+   * `step_completed`, `step_failed` or `step_skipped`, `detail` the failure's
+   * reason or how it was skipped. Fixed words only; the host checks the
+   * switch again and fills the step's index, the version, OS and app version. */
+  trackFirstRunStep(step: string, action: string, detail = "none"): void {
+    void this.telemetry.track([{ type: "onboarding-page", page: step, action, choice: detail }]);
+  }
+
   /** "Set up later": the first run left for now, on its current page. */
   trackOnboardingSkipped(state: OnboardingFlowState): void {
     void this.telemetry.track(telemetryOnboardingSkipped(this.core, state));

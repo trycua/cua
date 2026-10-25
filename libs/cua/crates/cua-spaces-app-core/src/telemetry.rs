@@ -63,11 +63,15 @@ pub enum TelemetrySignal {
     /// A first-run page was shown or left (`cua_onboarding_page`).
     OnboardingPage {
         /// `welcome`, `signin`, `agents`, `presentation`, `volume`,
-        /// `this_machine` or `done`.
+        /// `this_machine` or `done`; or, with a `step_*` action, one of
+        /// `schema::FIRST_RUN_STEPS` (`connect_agent`, `terminal`, ...).
         page: String,
-        /// `shown`, `completed`, `skipped` or `back`.
+        /// `shown`, `completed`, `skipped` or `back`; or `step_viewed`,
+        /// `step_completed`, `step_failed` or `step_skipped`, which send
+        /// `cua_onboarding_step_*` and `cua_onboarding_skipped`.
         action: String,
-        /// The page's answer as a fixed word, or `none`.
+        /// The page's answer as a fixed word, or `none`; for
+        /// `step_failed`, the reason (`timeout`, `install_failed`, ...).
         choice: String,
     },
     /// The New Space panel (`cua_space_wizard`).
@@ -906,7 +910,13 @@ pub fn record(t: &cua_telemetry::Telemetry, signals: &[TelemetrySignal]) -> usiz
                 page,
                 action,
                 choice,
-            } => events::onboarding_page(page, action, choice).map(|e| t.capture(e)),
+            } => if action.starts_with("step_") {
+                // The first run's funnel (`first_run_step`): its own events.
+                events::first_run_step(page, action, choice)
+            } else {
+                events::onboarding_page(page, action, choice)
+            }
+            .map(|e| t.capture(e)),
             TelemetrySignal::SpaceWizard { action } => {
                 events::space_wizard(action).map(|e| t.capture(e))
             }
@@ -1919,6 +1929,65 @@ mod tests {
             active["properties"]["experiments_on"],
             "cua_volume+your_cloud+sharing"
         );
+    }
+
+    /// A `step_*` onboarding-page signal sends the first-run funnel events
+    /// with the machine's OS and app version, and an old page still sends
+    /// `cua_onboarding_page`.
+    #[cfg(feature = "telemetry")]
+    #[test]
+    fn first_run_step_signals_record_the_funnel_events() {
+        use std::sync::Arc;
+        let home = tempfile::tempdir().unwrap();
+        let sink = Arc::new(cua_telemetry::sink::MemorySink::new());
+        let t = cua_telemetry::Telemetry::builder()
+            .env(|k| (k == "CUA_TELEMETRY_FORBID_NETWORK").then(|| "1".into()))
+            .home(home.path())
+            .sink(sink.clone())
+            .product("spaces_app", "0.12.0")
+            .foreground()
+            .build();
+        t.acknowledge_notice();
+        let sig = |page: &str, action: &str, choice: &str| TelemetrySignal::OnboardingPage {
+            page: page.into(),
+            action: action.into(),
+            choice: choice.into(),
+        };
+        let signals = [
+            sig("sign_in", "step_viewed", "none"),
+            sig("sign_in", "step_failed", "timeout"),
+            sig("sign_in", "step_completed", "none"),
+            sig("terminal", "step_skipped", "none"),
+            sig("welcome", "shown", "none"),
+            sig("/Users/alice", "step_viewed", "none"),
+        ];
+        assert_eq!(record(&t, &signals), 5, "the unknown step is dropped");
+        t.flush(std::time::Duration::from_secs(2));
+        let names: Vec<String> = sink
+            .events()
+            .iter()
+            .map(|e| e["event"].as_str().unwrap().to_string())
+            .filter(|n| n.starts_with("cua_onboarding"))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "cua_onboarding_step_viewed",
+                "cua_onboarding_step_failed",
+                "cua_onboarding_step_completed",
+                "cua_onboarding_skipped",
+                "cua_onboarding_page"
+            ]
+        );
+        let events = sink.events();
+        let failed = events
+            .iter()
+            .find(|e| e["event"] == "cua_onboarding_step_failed")
+            .unwrap();
+        assert_eq!(failed["properties"]["reason"], "timeout");
+        assert_eq!(failed["properties"]["step_index"], 4);
+        assert_eq!(failed["properties"]["product_version"], "0.12.0");
+        assert!(failed["properties"]["os_family"].is_string());
     }
 
     /// Every signal the parity flow derives is a valid event: each one is

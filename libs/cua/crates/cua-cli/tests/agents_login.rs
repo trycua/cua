@@ -376,7 +376,10 @@ async fn agents_commands_round_trip_and_protect_malformed_files() {
     o.ok();
     let codex = std::fs::read_to_string(h.dir.path().join(".codex/config.toml")).unwrap();
     assert_eq!(codex, "# mine\n[mcp_servers.other]\ncommand = \"o\"\n");
-    assert!(!h.dir.path().join(".agents/skills/cua-driver").exists());
+    // The default skills include Cua Driver's: it is not Cua Spaces', so it
+    // stays; the Spaces skills go.
+    assert!(!h.dir.path().join(".agents/skills/cua-spaces").exists());
+    assert!(h.dir.path().join(".agents/skills/cua-driver").is_dir());
 
     // Unknown agents are a usage error.
     let o = h
@@ -765,12 +768,191 @@ async fn agents_setup_cua_driver_adds_the_driver_skill_and_server() {
     };
     assert!(o.stdout.contains(hint), "{o:?}");
 
-    // `cua agents remove` undoes it.
+    // Plain `cua agents remove` leaves it: it removes Cua Spaces' entries
+    // only. `--include-cua-driver` undoes it.
     let o = h.run(&["agents", "remove", "--yes"]).await;
+    o.ok();
+    let codex = std::fs::read_to_string(h.dir.path().join(".codex/config.toml")).unwrap();
+    assert!(codex.contains("[mcp_servers.cua-driver]"), "{codex}");
+    assert!(h.dir.path().join(".claude/skills/cua-driver").is_dir());
+    let o = h
+        .run(&["agents", "remove", "--include-cua-driver", "--yes"])
+        .await;
     o.ok();
     let codex = std::fs::read_to_string(h.dir.path().join(".codex/config.toml")).unwrap();
     assert_eq!(codex, "[mcp_servers.other]\ncommand = \"o\"\n");
     assert!(!h.dir.path().join(".claude/skills/cua-driver").exists());
+}
+
+/// `cua agents remove` (what the uninstaller runs) takes Cua Spaces' `cua`
+/// server and skills and leaves Cua Driver's `cua-driver` server and skill,
+/// in the configs of Claude Code, Codex and Cursor; `--dry-run` lists exactly
+/// that and changes nothing; `--include-cua-driver` takes Cua Driver's too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn agents_remove_keeps_cua_driver_and_dry_run_lists_what_it_removes() {
+    let h = home();
+    mkdirs(&h, &[".claude", ".codex", ".cursor"]);
+    let at = |rel: &str| h.dir.path().join(rel);
+    std::fs::write(
+        at(".claude.json"),
+        "{\"mcpServers\": {\"other\": {\"command\": \"o\"}}}",
+    )
+    .unwrap();
+    std::fs::write(
+        at(".codex/config.toml"),
+        "[mcp_servers.other]\ncommand = \"o\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        at(".cursor/mcp.json"),
+        "{\"mcpServers\": {\"other\": {\"command\": \"o\"}}}",
+    )
+    .unwrap();
+    let agents = "claude,codex,cursor";
+    h.run(&[
+        "agents",
+        "setup",
+        "--agents",
+        agents,
+        "--yes",
+        "--mcp-command",
+        "/opt/cua/bin/cua",
+    ])
+    .await
+    .ok();
+    h.run(&[
+        "agents",
+        "setup",
+        "--cua-driver",
+        "--agents",
+        agents,
+        "--yes",
+        "--mcp-command",
+        "/opt/drv/cua-driver",
+    ])
+    .await
+    .ok();
+    let configs = [".claude.json", ".codex/config.toml", ".cursor/mcp.json"];
+    let read = |rel: &str| std::fs::read_to_string(at(rel)).unwrap();
+    for c in configs {
+        let text = read(c);
+        assert!(text.contains("/opt/cua/bin/cua"), "{c}: {text}");
+        assert!(text.contains("/opt/drv/cua-driver"), "{c}: {text}");
+    }
+    let state = at(".cua/agent-setup.json");
+    let snapshot = || -> Vec<String> {
+        configs
+            .iter()
+            .map(|c| read(c))
+            .chain([std::fs::read_to_string(&state).unwrap()])
+            .chain(["cua-spaces", "cua-volume", "cua-driver"].map(|s| {
+                std::fs::read_to_string(at(&format!(".claude/skills/{s}/SKILL.md"))).unwrap()
+            }))
+            .collect()
+    };
+    let before = snapshot();
+
+    // The preview needs no --yes, lists each entry and skill it would
+    // remove, names what it keeps, and writes nothing.
+    let o = h.run(&["agents", "remove", "--dry-run"]).await;
+    o.ok();
+    assert_eq!(snapshot(), before, "{o:?}");
+    let out = &o.stdout;
+    assert!(out.contains("Dry run: nothing is changed."), "{o:?}");
+    for (cfg, shown) in [
+        (".claude.json", "~/.claude.json"),
+        (".codex/config.toml", "~/.codex/config.toml"),
+        (".cursor/mcp.json", "~/.cursor/mcp.json"),
+    ] {
+        let _ = cfg;
+        assert!(
+            out.contains(&format!("would remove MCP server cua: {shown}")),
+            "{o:?}"
+        );
+        assert!(
+            out.contains(&format!("MCP server cua-driver: {shown} kept")),
+            "{o:?}"
+        );
+    }
+    for skill in [
+        "cua-spaces",
+        "cua-volume",
+        "cua-sandboxes",
+        "gui-automation",
+    ] {
+        assert!(
+            out.contains(&format!(
+                "would remove skill {skill}: ~/.claude/skills/{skill}"
+            )),
+            "{o:?}"
+        );
+    }
+    assert!(
+        out.contains("skill cua-driver: ~/.claude/skills/cua-driver kept"),
+        "{o:?}"
+    );
+    assert!(!out.contains("would remove MCP server cua-driver"), "{o:?}");
+    assert!(!out.contains("would remove skill cua-driver"), "{o:?}");
+
+    // The JSON preview carries the same rows.
+    let o = h.run(&["--json", "agents", "remove", "--dry-run"]).await;
+    o.ok();
+    let v = o.json();
+    assert_eq!(v["dry_run"], true, "{v}");
+    let removed: Vec<&str> = v["outcomes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|x| x["change"] == "removed")
+        .map(|x| x["item"].as_str().unwrap())
+        .collect();
+    assert!(removed.contains(&"cua"), "{v}");
+    assert!(!removed.contains(&"cua-driver"), "{v}");
+    assert_eq!(snapshot(), before);
+
+    // The real run removes what the preview listed, and only that.
+    let o = h.run(&["agents", "remove", "--yes"]).await;
+    o.ok();
+    assert!(
+        !o.stdout.contains("cua-driver: ~/.claude.json removed"),
+        "{o:?}"
+    );
+    for c in configs {
+        let text = read(c);
+        assert!(!text.contains("/opt/cua/bin/cua"), "{c}: {text}");
+        assert!(text.contains("/opt/drv/cua-driver"), "{c}: {text}");
+        assert!(text.contains("other"), "{c}: {text}");
+    }
+    assert!(!at(".claude/skills/cua-spaces").exists());
+    assert!(at(".claude/skills/cua-driver/SKILL.md").is_file());
+    let o = h.run(&["agents", "remove", "--dry-run"]).await;
+    o.ok();
+    assert!(!o.stdout.contains("would remove"), "{o:?}");
+
+    // Asked for, Cua Driver's go too; the previews say so first.
+    let o = h
+        .run(&["agents", "remove", "--include-cua-driver", "--dry-run"])
+        .await;
+    o.ok();
+    assert!(
+        o.stdout
+            .contains("would remove MCP server cua-driver: ~/.codex/config.toml"),
+        "{o:?}"
+    );
+    assert!(
+        o.stdout
+            .contains("would remove skill cua-driver: ~/.claude/skills/cua-driver"),
+        "{o:?}"
+    );
+    h.run(&["agents", "remove", "--include-cua-driver", "--yes"])
+        .await
+        .ok();
+    for c in configs {
+        let text = read(c);
+        assert!(!text.contains("cua-driver"), "{c}: {text}");
+        assert!(text.contains("other"), "{c}: {text}");
+    }
+    assert!(!at(".claude/skills/cua-driver").exists());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

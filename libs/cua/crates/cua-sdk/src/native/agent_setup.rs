@@ -403,9 +403,19 @@ mod tests {
         assert!(st.cua_configured && st.cua_managed);
         let out = s.update(Some(server)).await.unwrap();
         assert!(out.iter().all(|o| o.change == AgentSetupChange::Unchanged));
+        // Cua Spaces' entries go; the cua-driver skill (one of the bundled
+        // ones) is Cua Driver's and stays.
         let out = s.remove(vec!["codex".into()], true, true).await.unwrap();
         assert!(
-            out.iter().all(|o| o.change == AgentSetupChange::Removed),
+            out.iter()
+                .filter(|o| o.item != "cua-driver")
+                .all(|o| o.change == AgentSetupChange::Removed),
+            "{out:?}"
+        );
+        assert!(
+            out.iter()
+                .filter(|o| o.item == "cua-driver")
+                .all(|o| o.change == AgentSetupChange::Skipped),
             "{out:?}"
         );
         assert!(

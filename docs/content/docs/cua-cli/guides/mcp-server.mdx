@@ -25,7 +25,10 @@ can pass its own `sandbox`. Every tool is listed in
 
 `cua agents setup --agents <id>` installs the cua skills and adds the `cua`
 server to these user-level configs. It keeps your other servers and comments,
-and `cua agents remove` takes out only what cua added.
+and `cua agents remove` takes out only what cua added for Cua Spaces: the `cua`
+server and the Cua Spaces skills. Cua Driver's `cua-driver` server and skill stay
+(`--include-cua-driver` removes them too), and `cua agents remove --dry-run` lists
+exactly what it would remove.
 
 | Agent | id | Skills | MCP config |
 |-------|----|--------|------------|

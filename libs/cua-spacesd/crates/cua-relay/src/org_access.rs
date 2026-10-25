@@ -1046,6 +1046,19 @@ fn machine_ids(v: &serde_json::Value) -> Vec<String> {
     .unwrap_or_default()
 }
 
+/// An error with its causes ("error sending request: operation timed out"),
+/// so the log says whether a lookup timed out, was refused or was reset.
+fn error_chain(e: &dyn std::error::Error) -> String {
+    let mut out = e.to_string();
+    let mut src = e.source();
+    while let Some(s) = src {
+        out.push_str(": ");
+        out.push_str(&s.to_string());
+        src = s.source();
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1240,17 +1253,4 @@ mod tests {
         is_send(o.decide("a", "o", &[], "m", None, true));
         is_send(o.org_machines("o"));
     }
-}
-
-/// An error with its causes ("error sending request: operation timed out"),
-/// so the log says whether a lookup timed out, was refused or was reset.
-fn error_chain(e: &dyn std::error::Error) -> String {
-    let mut out = e.to_string();
-    let mut src = e.source();
-    while let Some(s) = src {
-        out.push_str(": ");
-        out.push_str(&s.to_string());
-        src = s.source();
-    }
-    out
 }

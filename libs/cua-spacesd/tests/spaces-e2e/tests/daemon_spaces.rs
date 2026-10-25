@@ -463,7 +463,10 @@ async fn space_service_lists_the_accounts_relay_machines() {
         .unwrap()
         .into_inner();
     assert!(known.spaces.iter().any(|s| s.id == row.id), "{known:?}");
-    assert!(!known.incomplete && !known.stale && known.notice.is_empty(), "{known:?}");
+    assert!(
+        !known.incomplete && !known.stale && known.notice.is_empty(),
+        "{known:?}"
+    );
     // A configured account that loses authentication must not look like
     // successful empty discovery.
     rt.spaces().set_relay(Some(cua_spaces::RelayAccount::new(

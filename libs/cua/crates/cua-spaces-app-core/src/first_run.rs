@@ -1553,7 +1553,7 @@ pub fn cli_view(input: &FirstRunInput) -> CliView {
     let can_install = !installed && cli.plan.as_ref().is_some_and(|p| p.source.is_some());
     CliView {
         title: if installed {
-            "The Cua CLI is installed.".into()
+            "Cua is ready in Terminal.".into()
         } else {
             "Use Cua from the Terminal.".into()
         },
@@ -2433,7 +2433,7 @@ mod tests {
         assert!(v.steps.contains(&FirstRunStep::Cli));
         let c = v.cli.unwrap();
         assert!(c.installed);
-        assert_eq!(c.title, "The Cua CLI is installed.");
+        assert_eq!(c.title, "Cua is ready in Terminal.");
         assert_eq!(c.status, "Installed at ~/.local/bin/cua.");
         assert_eq!(c.try_command.as_deref(), Some("cua spaces ls"));
         assert_eq!(c.primary, Some(button("continue", "Continue")));

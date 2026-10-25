@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * Settings → Command line: the app's bundled CLI, as the first run's
- * "Install the Cua CLI" screen words it (`firstRun.cli`): where it is, or
+ * Settings → Terminal: the app's bundled `cua`, as the first run's
+ * "Use Cua from the Terminal" screen words it (`firstRun.cli`): where it is, or
  * the exact file Install writes, and Install. Shown where the host can read
  * the install plan (`cli.plan`).
  */
@@ -31,7 +31,7 @@ export function CliSettingsSection() {
     <SettingsGroup title="Terminal">
       <div data-settings-cli={view.installed ? "installed" : "missing"}>
         <SettingsRow
-          label="Cua CLI"
+          label="Cua in Terminal"
           description={
             <>
               {view.status}

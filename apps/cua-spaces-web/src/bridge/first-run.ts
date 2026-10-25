@@ -166,7 +166,7 @@ function fallbackView(input: FirstRunInput): FirstRunView {
       return {
         ...base,
         cli: {
-          title: present ? "The Cua CLI is installed." : "Use Cua from the Terminal.",
+          title: present ? "Cua is ready in Terminal." : "Use Cua from the Terminal.",
           lede: `Type ${name} in Terminal to make and use Spaces, for you and your agents.`,
           name,
           facts: plan ? [{ label: present ? "Installed at" : "Installs", value: input.cli?.installed ?? plan.target }] : [],

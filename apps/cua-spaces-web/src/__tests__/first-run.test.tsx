@@ -231,7 +231,7 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     // Nothing is written before Install.
     expect(calls.some((c) => c.op === "cli.install")).toBe(false);
     click('[data-first-run-cli-primary="install"]');
-    await waitFor(() => expect(heading()).toBe("The Cua CLI is installed."));
+    await waitFor(() => expect(heading()).toBe("Cua is ready in Terminal."));
     expect(calls.find((c) => c.op === "cli.install")?.args).toEqual({ modifyPath: true });
     expect(document.querySelector("[data-first-run-cli-done]")!.textContent).toMatch(/cua spaces ls/);
     await waitFor(() => expect(document.querySelector('[data-first-run-cli-primary="continue"]')!.textContent).toBe("Continue"));
@@ -239,7 +239,7 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     await waitFor(() => expect(heading()).toBe("Connect your other devices."));
     // Back shows the result again.
     click("[data-first-run-back]");
-    await waitFor(() => expect(heading()).toBe("The Cua CLI is installed."));
+    await waitFor(() => expect(heading()).toBe("Cua is ready in Terminal."));
   });
 
   it("Not now leaves the CLI as it is; with the CLI already installed there is no such screen", async () => {

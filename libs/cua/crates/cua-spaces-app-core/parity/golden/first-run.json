@@ -436,7 +436,7 @@
         "primary": "continue:Continue",
         "secondary": "",
         "status": "Installed at ~/.local/bin/cua.",
-        "title": "The Cua CLI is installed.",
+        "title": "Cua is ready in Terminal.",
         "try": "cua spaces ls"
       },
       "step": "cli",

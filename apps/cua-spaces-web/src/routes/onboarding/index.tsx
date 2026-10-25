@@ -79,7 +79,7 @@ function OnboardingPage() {
   }, [canGoBack, fr.back]);
 
   return (
-    <div className="relative flex h-full flex-col overflow-hidden bg-[#F4F5F7] [--ob-x:clamp(40px,8vw,96px)] [--ob-art-h:min(58vh,560px)] [--ob-head-y:calc(var(--titlebar-height)+max(20px,4vh)+190px)] dark:bg-[#07080a]" data-step={view.step}>
+    <div className="relative flex h-full flex-col overflow-hidden bg-[#F4F5F7] [--ob-x:clamp(40px,8vw,96px)] [--ob-art-h:min(58vh,560px)] dark:bg-[#07080a]" data-step={view.step}>
       <Backdrop />
       <Art art={view.art} step={view.step} />
       <header className="relative z-30 flex shrink-0 items-center justify-between pr-10 pl-[var(--ob-x)] pt-[calc(var(--titlebar-height)+12px)] pb-2">
@@ -89,7 +89,9 @@ function OnboardingPage() {
         </button>
       </header>
       <div className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto pr-10 pb-6 pl-[var(--ob-x)] [@media(min-width:1000px)]:pr-[46%]">
-        <div className="flex w-full max-w-[520px] flex-col pt-[clamp(8px,2vh,32px)] pb-6">
+        {/* Centre the step on the window, a little above true centre (about 45% from the top). The min heights keep a gap under the logo bar and above the progress dots; tall steps scroll. */}
+        <div aria-hidden data-onboarding-spacer-top="" className="min-h-[clamp(8px,2vh,32px)] shrink-0 grow-[33] basis-0" />
+        <div className="flex w-full max-w-[520px] shrink-0 flex-col">
           {view.welcome ? <Welcome fr={fr} view={view} /> : null}
           {view.connect ? <Connect fr={fr} view={view} /> : null}
           {view.cli ? <CommandLine fr={fr} view={view} /> : null}
@@ -97,6 +99,7 @@ function OnboardingPage() {
           {view.permissions ? <Permissions fr={fr} view={view} /> : null}
           {view.setup ? <Setup fr={fr} view={view} onFinish={() => void finish()} /> : null}
         </div>
+        <div aria-hidden data-onboarding-spacer-bottom="" className="min-h-6 shrink-0 grow-[67] basis-0" />
       </div>
       <Dots view={view} />
     </div>
@@ -639,7 +642,7 @@ function Art({ art, step }: { art: FirstRunArt; step: FirstRunView["step"] }) {
     <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 hidden w-[46%] [@media(min-width:1000px)]:block" data-first-run-art={`${art.agent} ${art.computer} ${art.extra}`}>
       <div
         className="absolute left-1/2 aspect-[6/7] -translate-x-1/2"
-        style={{ height: "var(--ob-art-h)", top: "clamp(64px, calc(var(--ob-head-y) - var(--ob-art-h) / 2), calc(100% - var(--ob-art-h) - 24px))" }}
+        style={{ height: "var(--ob-art-h)", top: "clamp(64px, calc(45% - var(--ob-art-h) / 2), calc(100% - var(--ob-art-h) - 24px))" }}
       >
         <img
           src={`/onboarding/agent-${agent}.webp`}

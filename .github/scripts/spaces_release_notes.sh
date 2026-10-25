@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: FSL-1.1-MIT
-# Copyright (c) 2026 Cua AI, Inc.
 # Prints the real notes for a Cua Spaces version on stdout.
 #
 #   spaces_release_notes.sh <version>      (GH_TOKEN and GITHUB_REPOSITORY set)

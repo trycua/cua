@@ -50,7 +50,7 @@ describe.skipIf(!wasmBuilt)("Agents page", () => {
   });
 
   it("asks to set up once in place when coding apps are found but Cua is not in them", { timeout: 20_000 }, async () => {
-    await mountApp("/agents", { ...host, intercept: noRuns, demo: { onboarded: false } });
+    await mountApp("/agents", { ...host, intercept: noRuns, demo: { agents: "unset" } });
     await waitFor(() => expect(document.querySelector("[data-agents-empty]")).not.toBeNull(), { timeout: 8000 });
     await waitFor(() => expect(document.querySelector("[data-agents-empty]")?.getAttribute("data-agents-empty")).toBe("setup"), { timeout: 8000 });
     const setup = await waitFor(() => {

@@ -85,8 +85,8 @@ export interface DemoOptions {
   /** The relay allowance: `idle` (free, no live session, so prompts can show),
    * `warn` (80% of the hours), `limit` (used up), `pro` or `teams`. */
   usage?: "idle" | "warn" | "limit" | "pro" | "teams";
-  /** Which agents are on this computer (`?demo=agents-none`, `?demo=agents-codex`); all of them by default. */
-  agents?: "none" | "codex";
+  /** Which agents are on this computer (`?demo=agents-none`, `?demo=agents-codex`); all of them by default. `unset`: all found, none set up for Cua yet, without the first-run onboarding. */
+  agents?: "none" | "codex" | "unset";
   /** This Mac's free disk: `low` (`?demo=low-disk`) or `full` (`?demo=disk-full`). */
   disk?: "low" | "full";
   /** The machine the demo runs on: a Mac on Apple silicon unless set (the
@@ -193,7 +193,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     agents: demoPersistentAgents(now()),
     // A named allowance is for showing the prompts, which wait for no agent run.
     runs: options.usage ? [] : demoRunRecords(now()),
-    agentSetup: demoAgentSetup(options.onboarded === false, options.agents === "none" ? [] : options.agents === "codex" ? ["codex"] : null),
+    agentSetup: demoAgentSetup(options.onboarded === false || options.agents === "unset", options.agents === "none" ? [] : options.agents === "codex" ? ["codex"] : null),
     platform: options.platform ?? MAC_DEMO_PLATFORM,
     paired: [],
     renamed: {},

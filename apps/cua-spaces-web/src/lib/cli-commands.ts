@@ -29,9 +29,9 @@ export function shellWord(word: string): string {
   return `'${word.replaceAll("'", `'\\''`)}'`;
 }
 
-/** The empty state's create for one system: `cua spaces create linux` (the CLI's image alias). */
+/** The empty state's create for one system: `cua spaces create linux --on local` (the CLI's image alias). */
 export function createAliasCommand(cli: string, os: "linux" | "macos"): string {
-  return `${cli} spaces create ${os}`;
+  return `${cli} spaces create ${os} --on local`;
 }
 
 /**

@@ -94,14 +94,14 @@ describe("the empty home's terminal line", () => {
 
   it("offers each system's create, copyable, under the released app's CLI", async () => {
     mount(stubCore(), emptyHome(stubCore(), "arm64", "macos")!);
-    await waitFor(() => expect(commands()).toEqual(["cua spaces create linux", "cua spaces create macos"]));
+    await waitFor(() => expect(commands()).toEqual(["cua spaces create linux --on local", "cua spaces create macos --on local"]));
     expect(screen.getByText("Prefer the terminal?")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Copy cua spaces create linux" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copy cua spaces create linux --on local" })).toBeTruthy();
   });
 
   it("names a Local build's CLI, as its host reports it", async () => {
     mount(stubCore(), emptyHome(stubCore(), "amd64", "linux")!, "local");
-    await waitFor(() => expect(commands()).toEqual(["cua-local spaces create linux"]));
+    await waitFor(() => expect(commands()).toEqual(["cua-local spaces create linux --on local"]));
   });
 
   it("stays hidden while the CLI is not installed", async () => {

@@ -92,7 +92,7 @@
         "agents": [],
         "alternatives": [
           "install: Install an agent — Hermes, Claude Code, OpenAI Codex or Cursor, then come back here. <https://cua.ai/docs/spaces/guides/connect-your-agent>",
-          "cli: Use the CLI — Make a Space on this Mac from a terminal. `cua spaces create linux`"
+          "cli: Use the CLI — Make a Space on this Mac from a terminal. `cua spaces create linux --on local`"
         ],
         "credentials": null,
         "error": null,
@@ -497,7 +497,7 @@
         "agents": [],
         "alternatives": [
           "install: Install an agent — Hermes, Claude Code, Codex or Cursor, then come back here. <https://cua.ai/docs/spaces/guides/connect-your-agent>",
-          "cli: Use the CLI — Make a Space on this Mac from a terminal. `cua-local spaces create linux`"
+          "cli: Use the CLI — Make a Space on this Mac from a terminal. `cua-local spaces create linux --on local`"
         ],
         "credentials": null,
         "error": null,

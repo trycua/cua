@@ -324,7 +324,7 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     expect(agents()).toEqual([]);
     const alts = [...document.querySelectorAll<HTMLElement>("[data-first-run-alternative]")].map((e) => e.dataset.firstRunAlternative);
     expect(alts).toEqual(["install", "cli"]);
-    expect(document.querySelector('[data-first-run-alternative="cli"]')!.textContent).toMatch(/cua spaces create linux/);
+    expect(document.querySelector('[data-first-run-alternative="cli"]')!.textContent).toMatch(/cua spaces create linux --on local/);
     click("[data-onboarding-primary]");
     await waitFor(() => expect(heading()).toBe("Connect your other devices."));
     click("[data-first-run-secondary]");

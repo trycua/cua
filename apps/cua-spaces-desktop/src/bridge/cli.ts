@@ -5,7 +5,7 @@
 // ops/cli.ts): the first run's "Install the Cua CLI" screen and Settings'
 // Command line row, as the SwiftUI host answers them
 // (`WebUIBridge+Cli.swift`). Both run the app core's installer
-// (`AppCliInstaller`, as `installCliSilently` does): the plan writes
+// (`AppCliInstaller`): the plan writes
 // nothing; Install writes the channel's CLI (`cua`, or `cua-local`) and adds
 // its folder to PATH only when asked. `settings.get`'s `cli` names it from
 // the last plan read.
@@ -13,6 +13,7 @@ import path from "node:path";
 
 import type { AppCliInstallPlan } from "../native/generated/index";
 import type { AppModel } from "../model/app-model";
+import { recordCliInstall } from "../model/cli-record";
 import { bool } from "./args";
 import type { BridgeContext } from "./context";
 import { Failure, type Handlers } from "./host";
@@ -57,7 +58,13 @@ export function cliMethods(ctx: BridgeContext): Handlers {
       const modifyPath = bool(args, "modifyPath");
       const installer = cliInstaller(ctx);
       if (!installer) throw Failure.unsupported("This build has no bundled cua to install.");
-      return note(await installer.install({ modifyPath }));
+      const planned = await installer.plan();
+      const installed = await installer.install({ modifyPath });
+      // Windows: the uninstaller removes what this install added (the PATH entry only when it was added now).
+      await recordCliInstall(installed.target, modifyPath && !planned.onPath, ctx.platform).catch((error) =>
+        console.warn(`[cua-spaces] could not record the cua command for the uninstaller: ${String(error)}`),
+      );
+      return note(installed);
     },
   };
 }

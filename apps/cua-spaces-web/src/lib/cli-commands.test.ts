@@ -28,10 +28,10 @@ describe("shownCli", () => {
 
 describe("the empty state's creates", () => {
   it("use the CLI's image aliases, under the channel's name", () => {
-    expect(createAliasCommand(STABLE, "linux")).toBe("cua spaces create linux");
-    expect(createAliasCommand(STABLE, "macos")).toBe("cua spaces create macos");
-    expect(createAliasCommand(LOCAL, "linux")).toBe("cua-local spaces create linux");
-    expect(createAliasCommand(LOCAL, "macos")).toBe("cua-local spaces create macos");
+    expect(createAliasCommand(STABLE, "linux")).toBe("cua spaces create linux --on local");
+    expect(createAliasCommand(STABLE, "macos")).toBe("cua spaces create macos --on local");
+    expect(createAliasCommand(LOCAL, "linux")).toBe("cua-local spaces create linux --on local");
+    expect(createAliasCommand(LOCAL, "macos")).toBe("cua-local spaces create macos --on local");
   });
 });
 

@@ -80,10 +80,10 @@ fn default_cli_name() -> &'static str {
 }
 
 /// The same first Space from a terminal (no agent found), under the CLI
-/// name of the app's channel: `cua spaces create linux`, or
-/// `cua-local spaces create linux` in Cua Spaces Local.
+/// name of the app's channel: `cua spaces create linux --on local`, or
+/// `cua-local spaces create linux --on local` in Cua Spaces Local.
 pub fn cli_first_space(cli: &str) -> String {
-    format!("{cli} spaces create linux")
+    format!("{cli} spaces create linux --on local")
 }
 
 /// Where to get an agent (none found).
@@ -2134,7 +2134,7 @@ mod tests {
         );
         assert_eq!(
             c.alternatives[1].command.as_deref(),
-            Some("cua spaces create linux")
+            Some("cua spaces create linux --on local")
         );
         // Still looking: no alternatives yet.
         let looking = connect(&FirstRunInput {
@@ -2700,7 +2700,7 @@ mod tests {
         let c = connect(&named);
         assert_eq!(
             c.alternatives[1].command.as_deref(),
-            Some("cua-local spaces create linux")
+            Some("cua-local spaces create linux --on local")
         );
         // ...or its install plan's file does.
         let planned = FirstRunInput {
@@ -2728,7 +2728,7 @@ mod tests {
         assert_eq!(cli_name(&FirstRunInput::default()), "cua");
         assert_eq!(
             cli_first_space("cua-local"),
-            "cua-local spaces create linux"
+            "cua-local spaces create linux --on local"
         );
     }
 }

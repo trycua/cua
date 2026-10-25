@@ -39,6 +39,7 @@ pub const SPACES_TOOL_METHODS: &[(&str, &str)] = &[
     ("delete_space", "Spaces.delete"),
     ("stop_space", "Spaces.stop"),
     ("start_space", "Spaces.start"),
+    ("resize_space", "Spaces.resize"),
     ("space_bash", "Space.bash"),
     ("space_write", "Space.write"),
     ("upload", "Space.upload"),
@@ -2025,9 +2026,28 @@ pub struct SpacePowerReport {
     pub space: String,
     /// `running`, `suspended` or `stopped`: the state it is in now.
     pub state: String,
-    /// How it turns off: `suspend` (its memory is kept) or `stop` (its
-    /// disk is kept).
+    /// How it was turned off: `suspend` (its memory is kept, and still in
+    /// use) or `stop` (its disk is kept; its memory is freed).
     pub power: String,
+    /// What happened, for people.
+    #[serde(default)]
+    pub message: String,
+}
+
+/// What [`Spaces::resize`] did: the shape the Space has now.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct SpaceResizeReport {
+    /// The Space.
+    pub space: String,
+    /// vCPUs (when changed).
+    #[serde(default)]
+    pub cpus: Option<u32>,
+    /// Memory in MiB (when changed).
+    #[serde(default)]
+    pub memory_mb: Option<u64>,
+    /// Disk in GiB (when grown).
+    #[serde(default)]
+    pub disk_gb: Option<u32>,
     /// What happened, for people.
     #[serde(default)]
     pub message: String,
@@ -3692,16 +3712,57 @@ impl Spaces {
     }
 
     /// Turns a Space off the way its provider can (`SpaceInfo.power`):
-    /// suspends it, keeping its memory (a local container or QEMU VM), or
-    /// stops it, keeping its disk (a local Lume VM; a Space one of your
-    /// machines provides, which that machine stops). A cloud Space, a Space
-    /// added by address and your own computers cannot be turned off.
+    /// stops it, keeping its disk and freeing its memory (a local VM; a
+    /// Space one of your machines provides, which that machine stops), or
+    /// suspends it, keeping its memory (a local container that cannot
+    /// stop). [`Spaces::suspend`] suspends a local container or QEMU VM on
+    /// purpose. A Space added by address and your own computers cannot be
+    /// turned off.
     pub async fn stop(&self, space: String) -> Result<SpacePowerReport> {
         let host = self.host.clone();
         run(async move {
             parse(
                 host.tool_value("stop_space", json!({"space": space}))
                     .await?,
+            )
+        })
+        .await
+    }
+
+    /// Suspends a local Space (a container or a QEMU VM), keeping its
+    /// memory: it resumes where it was, and its memory stays in use until
+    /// then. [`Spaces::stop`] stops it instead and frees its memory.
+    pub async fn suspend(&self, space: String) -> Result<SpacePowerReport> {
+        let host = self.host.clone();
+        run(async move {
+            parse(
+                host.tool_value("stop_space", json!({"space": space, "suspend": true}))
+                    .await?,
+            )
+        })
+        .await
+    }
+
+    /// Gives a local VM Space another shape: `cpus` vCPUs, `memory_mb` MiB
+    /// of memory, a disk grown to `disk_gb` GiB (each `None` keeps it). It
+    /// shuts down and boots again from its own disk (a stopped one boots),
+    /// so its files stay and its memory and processes do not. Returns once
+    /// it is ready again.
+    pub async fn resize(
+        &self,
+        space: String,
+        cpus: Option<u32>,
+        memory_mb: Option<u64>,
+        disk_gb: Option<u32>,
+    ) -> Result<SpaceResizeReport> {
+        let host = self.host.clone();
+        run(async move {
+            parse(
+                host.tool_value(
+                    "resize_space",
+                    json!({"space": space, "cpus": cpus, "memory_mb": memory_mb, "disk_gb": disk_gb}),
+                )
+                .await?,
             )
         })
         .await

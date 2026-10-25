@@ -1543,6 +1543,8 @@ external fun uniffi_cua_sdk_checksum_method_spaces_relay_unregister(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_remove(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_spaces_resize(
+): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_resolve(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_resources(
@@ -1556,6 +1558,8 @@ external fun uniffi_cua_sdk_checksum_method_spaces_space(
 external fun uniffi_cua_sdk_checksum_method_spaces_start(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_stop(
+): Short
+external fun uniffi_cua_sdk_checksum_method_spaces_suspend(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_volume_approve(
 ): Short
@@ -2564,6 +2568,8 @@ external fun uniffi_cua_sdk_fn_method_spaces_relay_unregister(`ptr`: Long,`space
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_remove(`ptr`: Long,`space`: RustBuffer.ByValue,
 ): Long
+external fun uniffi_cua_sdk_fn_method_spaces_resize(`ptr`: Long,`space`: RustBuffer.ByValue,`cpus`: RustBuffer.ByValue,`memoryMb`: RustBuffer.ByValue,`diskGb`: RustBuffer.ByValue,
+): Long
 external fun uniffi_cua_sdk_fn_method_spaces_resolve(`ptr`: Long,`space`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_resources(`ptr`: Long,`visible`: Byte,
@@ -2577,6 +2583,8 @@ external fun uniffi_cua_sdk_fn_method_spaces_space(`ptr`: Long,`space`: RustBuff
 external fun uniffi_cua_sdk_fn_method_spaces_start(`ptr`: Long,`space`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_stop(`ptr`: Long,`space`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cua_sdk_fn_method_spaces_suspend(`ptr`: Long,`space`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_volume_approve(`ptr`: Long,`requestId`: RustBuffer.ByValue,`expiresInSecs`: RustBuffer.ByValue,
 ): Long
@@ -4147,6 +4155,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_spaces_remove() != 23086.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_resize() != 2886.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_resolve() != 9986.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -4165,7 +4176,10 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_spaces_start() != 32898.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_spaces_stop() != 64586.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_stop() != 59057.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_suspend() != 23817.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_volume_approve() != 8640.toShort()) {
@@ -20504,6 +20518,15 @@ public interface SpacesInterface {
     suspend fun `remove`(`space`: kotlin.String)
 
     /**
+     * Gives a local VM Space another shape: `cpus` vCPUs, `memory_mb` MiB
+     * of memory, a disk grown to `disk_gb` GiB (each `None` keeps it). It
+     * shuts down and boots again from its own disk (a stopped one boots),
+     * so its files stay and its memory and processes do not. Returns once
+     * it is ready again.
+     */
+    suspend fun `resize`(`space`: kotlin.String, `cpus`: kotlin.UInt?, `memoryMb`: kotlin.ULong?, `diskGb`: kotlin.UInt?): SpaceResizeReport
+
+    /**
      * Resolves an id, legacy id, URL or display name.
      */
     suspend fun `resolve`(`space`: kotlin.String): SpaceInfo
@@ -20549,12 +20572,21 @@ public interface SpacesInterface {
 
     /**
      * Turns a Space off the way its provider can (`SpaceInfo.power`):
-     * suspends it, keeping its memory (a local container or QEMU VM), or
-     * stops it, keeping its disk (a local Lume VM; a Space one of your
-     * machines provides, which that machine stops). A cloud Space, a Space
-     * added by address and your own computers cannot be turned off.
+     * stops it, keeping its disk and freeing its memory (a local VM; a
+     * Space one of your machines provides, which that machine stops), or
+     * suspends it, keeping its memory (a local container that cannot
+     * stop). [`Spaces::suspend`] suspends a local container or QEMU VM on
+     * purpose. A Space added by address and your own computers cannot be
+     * turned off.
      */
     suspend fun `stop`(`space`: kotlin.String): SpacePowerReport
+
+    /**
+     * Suspends a local Space (a container or a QEMU VM), keeping its
+     * memory: it resumes where it was, and its memory stays in use until
+     * then. [`Spaces::stop`] stops it instead and frees its memory.
+     */
+    suspend fun `suspend`(`space`: kotlin.String): SpacePowerReport
 
     /**
      * `volume_approve`: the request becomes a grant (with presence).
@@ -22177,6 +22209,34 @@ open class Spaces: Disposable, AutoCloseable, SpacesInterface
 
 
     /**
+     * Gives a local VM Space another shape: `cpus` vCPUs, `memory_mb` MiB
+     * of memory, a disk grown to `disk_gb` GiB (each `None` keeps it). It
+     * shuts down and boots again from its own disk (a stopped one boots),
+     * so its files stay and its memory and processes do not. Returns once
+     * it is ready again.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `resize`(`space`: kotlin.String, `cpus`: kotlin.UInt?, `memoryMb`: kotlin.ULong?, `diskGb`: kotlin.UInt?) : SpaceResizeReport {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_spaces_resize(
+                uniffiHandle,
+                FfiConverterString.lower(`space`),FfiConverterOptionalUInt.lower(`cpus`),FfiConverterOptionalULong.lower(`memoryMb`),FfiConverterOptionalUInt.lower(`diskGb`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeSpaceResizeReport.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
      * Resolves an id, legacy id, URL or display name.
      */
     @Throws(CuaException::class)
@@ -22337,10 +22397,12 @@ open class Spaces: Disposable, AutoCloseable, SpacesInterface
 
     /**
      * Turns a Space off the way its provider can (`SpaceInfo.power`):
-     * suspends it, keeping its memory (a local container or QEMU VM), or
-     * stops it, keeping its disk (a local Lume VM; a Space one of your
-     * machines provides, which that machine stops). A cloud Space, a Space
-     * added by address and your own computers cannot be turned off.
+     * stops it, keeping its disk and freeing its memory (a local VM; a
+     * Space one of your machines provides, which that machine stops), or
+     * suspends it, keeping its memory (a local container that cannot
+     * stop). [`Spaces::suspend`] suspends a local container or QEMU VM on
+     * purpose. A Space added by address and your own computers cannot be
+     * turned off.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -22348,6 +22410,32 @@ open class Spaces: Disposable, AutoCloseable, SpacesInterface
         return uniffiRustCallAsync(
         callWithHandle { uniffiHandle ->
             UniffiLib.uniffi_cua_sdk_fn_method_spaces_stop(
+                uniffiHandle,
+                FfiConverterString.lower(`space`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeSpacePowerReport.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Suspends a local Space (a container or a QEMU VM), keeping its
+     * memory: it resumes where it was, and its memory stays in use until
+     * then. [`Spaces::stop`] stops it instead and frees its memory.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `suspend`(`space`: kotlin.String) : SpacePowerReport {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_spaces_suspend(
                 uniffiHandle,
                 FfiConverterString.lower(`space`),
             )
@@ -42430,8 +42518,8 @@ data class SpacePowerReport (
     var `state`: kotlin.String
     ,
     /**
-     * How it turns off: `suspend` (its memory is kept) or `stop` (its
-     * disk is kept).
+     * How it was turned off: `suspend` (its memory is kept, and still in
+     * use) or `stop` (its disk is kept; its memory is freed).
      */
     var `power`: kotlin.String
     ,
@@ -42545,6 +42633,77 @@ public object FfiConverterTypeSpaceRelayRegistration: FfiConverterRustBuffer<Spa
             FfiConverterString.write(value.`machine`, buf)
             FfiConverterString.write(value.`url`, buf)
             FfiConverterBoolean.write(value.`online`, buf)
+    }
+}
+
+
+
+/**
+ * What [`Spaces::resize`] did: the shape the Space has now.
+ */
+data class SpaceResizeReport (
+    /**
+     * The Space.
+     */
+    var `space`: kotlin.String
+    ,
+    /**
+     * vCPUs (when changed).
+     */
+    var `cpus`: kotlin.UInt?
+    ,
+    /**
+     * Memory in MiB (when changed).
+     */
+    var `memoryMb`: kotlin.ULong?
+    ,
+    /**
+     * Disk in GiB (when grown).
+     */
+    var `diskGb`: kotlin.UInt?
+    ,
+    /**
+     * What happened, for people.
+     */
+    var `message`: kotlin.String
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSpaceResizeReport: FfiConverterRustBuffer<SpaceResizeReport> {
+    override fun read(buf: ByteBuffer): SpaceResizeReport {
+        return SpaceResizeReport(
+            FfiConverterString.read(buf),
+            FfiConverterOptionalUInt.read(buf),
+            FfiConverterOptionalULong.read(buf),
+            FfiConverterOptionalUInt.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SpaceResizeReport) = (
+            FfiConverterString.allocationSize(value.`space`) +
+            FfiConverterOptionalUInt.allocationSize(value.`cpus`) +
+            FfiConverterOptionalULong.allocationSize(value.`memoryMb`) +
+            FfiConverterOptionalUInt.allocationSize(value.`diskGb`) +
+            FfiConverterString.allocationSize(value.`message`)
+    )
+
+    override fun write(value: SpaceResizeReport, buf: ByteBuffer) {
+            FfiConverterString.write(value.`space`, buf)
+            FfiConverterOptionalUInt.write(value.`cpus`, buf)
+            FfiConverterOptionalULong.write(value.`memoryMb`, buf)
+            FfiConverterOptionalUInt.write(value.`diskGb`, buf)
+            FfiConverterString.write(value.`message`, buf)
     }
 }
 

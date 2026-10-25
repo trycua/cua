@@ -1725,6 +1725,8 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             | host::SpacesCmd::Gpus { .. }
             | host::SpacesCmd::Delete { .. }
             | host::SpacesCmd::Stop { .. }
+            | host::SpacesCmd::Suspend { .. }
+            | host::SpacesCmd::Resize { .. }
             | host::SpacesCmd::Start { .. }
             | host::SpacesCmd::Egress { .. }
             | host::SpacesCmd::Prewarm { .. }

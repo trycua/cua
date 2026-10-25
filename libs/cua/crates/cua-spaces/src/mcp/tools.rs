@@ -300,8 +300,20 @@ async fn dispatch(
             Ok(ToolOutcome::text(spaces.delete(&a.space).await?))
         }
         "stop_space" => {
-            let a: i::SpaceOnly = args(tool, a)?;
-            Ok(ToolOutcome::json(&spaces.stop(&a.space).await?))
+            let a: i::StopSpace = args(tool, a)?;
+            if a.suspend.unwrap_or(false) {
+                Ok(ToolOutcome::json(&spaces.suspend(&a.space).await?))
+            } else {
+                Ok(ToolOutcome::json(&spaces.stop(&a.space).await?))
+            }
+        }
+        "resize_space" => {
+            let a: i::ResizeSpace = args(tool, a)?;
+            Ok(ToolOutcome::json(
+                &spaces
+                    .resize(&a.space, a.cpus, a.memory_mb, a.disk_gb)
+                    .await?,
+            ))
         }
         "start_space" => {
             let a: i::SpaceOnly = args(tool, a)?;

@@ -13,7 +13,7 @@ description: "The Spaces registry: create, add, resolve, delete and remove Space
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-`cua.spaces()` returns the `Spaces` registry. Create a Space where `on` says (local or cloud), or add an existing machine by URL, then open a [`Space`](/cua-sdk/reference/spaces/space).
+`cua.spaces()` returns the `Spaces` registry. Create a Space where `on` says (local or cloud), or add an existing machine by URL, then open a [`Space`](/cua-sdk/reference/spaces/space). See [resize](/cua-sdk/reference/spaces/resize) to change a local VM's shape.
 
 ## `Spaces`
 
@@ -42,7 +42,8 @@ Returned by [`Cua.spaces`](/cua-sdk/reference/cua#cua).
 | [`resolve`](#spacesresolve) | Resolves an id, legacy id, URL or display name. |
 | [`space`](#spacesspace) | A connected handle to a registered Space. |
 | [`start`](#spacesstart) | Turns a Space on again: resumes a suspended one, boots a stopped one (a Space one of your machines provides joins the relay again), and leaves a running one as it is. |
-| [`stop`](#spacesstop) | Turns a Space off the way its provider can (`SpaceInfo.power`): suspends it, keeping its memory (a local container or QEMU VM), or stops it, keeping its disk (a local Lume VM; a Space one of your machines provides, which that machine stops). |
+| [`stop`](#spacesstop) | Turns a Space off the way its provider can (`SpaceInfo.power`): stops it, keeping its disk and freeing its memory (a local VM; a Space one of your machines provides, which that machine stops), or suspends it, keeping its memory (a local container that cannot stop). `Spaces.suspend` suspends a local container or QEMU VM on purpose. |
+| [`suspend`](#spacessuspend) | Suspends a local Space (a container or a QEMU VM), keeping its memory: it resumes where it was, and its memory stays in use until then. `Spaces.stop` stops it instead and frees its memory. |
 | [`agent_capabilities`](/cua-sdk/reference/spaces/agents#spacesagent_capabilities) | What every agent harness is and cannot do (`agent_capabilities`), as JSON. |
 | [`agent_pause`](/cua-sdk/reference/spaces/persistent-agents#spacesagent_pause) | Pauses a persistent agent: run, routines and (local) Space. |
 | [`agent_resume`](/cua-sdk/reference/spaces/persistent-agents#spacesagent_resume) | Resumes a paused persistent agent; with `prompt`, starts a run. |
@@ -80,6 +81,7 @@ Returned by [`Cua.spaces`](/cua-sdk/reference/cua#cua).
 | [`prewarm`](/cua-sdk/reference/spaces/elastic#spacesprewarm) | Keeps Spaces of `image` ready where the elastic pool puts them (the same solve as `on` `auto`, under the budget and pins), so the next creates of that shape start in a fraction of a second. |
 | [`prewarms`](/cua-sdk/reference/spaces/elastic#spacesprewarms) | The prewarms, with how many each keeps ready now. |
 | [`remove_prewarm`](/cua-sdk/reference/spaces/elastic#spacesremove_prewarm) | Ends prewarm `id` (its ready Spaces go). |
+| [`resize`](/cua-sdk/reference/spaces/resize#spacesresize) | Gives a local VM Space another shape: `cpus` vCPUs, `memory_mb` MiB of memory, a disk grown to `disk_gb` GiB (each `None` keeps it). |
 | [`resources`](/cua-sdk/reference/spaces/resources#spacesresources) | What this Mac, its extra Spaces and your other computers use now: processor, memory and disk, as one snapshot (a few seconds old at most). |
 | [`routine_add`](/cua-sdk/reference/spaces/persistent-agents#spacesroutine_add) | Adds a routine. |
 | [`routine_remove`](/cua-sdk/reference/spaces/persistent-agents#spacesroutine_remove) | Deletes a routine. |
@@ -1082,10 +1084,12 @@ pub async fn start(&self, space: String) -> Result<SpacePowerReport, CuaError>
 ### `Spaces.stop`
 
 Turns a Space off the way its provider can (`SpaceInfo.power`):
-suspends it, keeping its memory (a local container or QEMU VM), or
-stops it, keeping its disk (a local Lume VM; a Space one of your
-machines provides, which that machine stops). A cloud Space, a Space
-added by address and your own computers cannot be turned off.
+stops it, keeping its disk and freeing its memory (a local VM; a
+Space one of your machines provides, which that machine stops), or
+suspends it, keeping its memory (a local container that cannot
+stop). `Spaces.suspend` suspends a local container or QEMU VM on
+purpose. A Space added by address and your own computers cannot be
+turned off.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -1121,6 +1125,57 @@ suspend fun stop(space: String): SpacePowerReport
 
 ```rust
 pub async fn stop(&self, space: String) -> Result<SpacePowerReport, CuaError>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `space` | `String` | required |
+
+**Returns** [`SpacePowerReport`](#spacepowerreport-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+
+### `Spaces.suspend`
+
+Suspends a local Space (a container or a QEMU VM), keeping its
+memory: it resumes where it was, and its memory stays in use until
+then. `Spaces.stop` stops it instead and frees its memory.
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+async def suspend(self, space: str) -> SpacePowerReport
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+suspend(space: string, asyncOpts_?: { signal: AbortSignal }): Promise<SpacePowerReport>
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func suspend(space: String) async throws -> SpacePowerReport
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+@Throws(CuaException::class)
+suspend fun suspend(space: String): SpacePowerReport
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub async fn suspend(&self, space: String) -> Result<SpacePowerReport, CuaError>
 ```
 
 </Tab>
@@ -1189,13 +1244,13 @@ Returned by [`Spaces.list_known`](#spaceslist_known).
 
 What `Spaces.stop` or `Spaces.start` did.
 
-Returned by [`Spaces.start`](#spacesstart), [`Spaces.stop`](#spacesstop).
+Returned by [`Spaces.start`](#spacesstart), [`Spaces.stop`](#spacesstop), [`Spaces.suspend`](#spacessuspend).
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `space` | `String` |  | The Space. |
 | `state` | `String` |  | `running`, `suspended` or `stopped`: the state it is in now. |
-| `power` | `String` |  | How it turns off: `suspend` (its memory is kept) or `stop` (its disk is kept). |
+| `power` | `String` |  | How it was turned off: `suspend` (its memory is kept, and still in use) or `stop` (its disk is kept; its memory is freed). |
 | `message` | `String` |  | What happened, for people. |
 
 ## `spaces_tool_methods`

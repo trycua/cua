@@ -11231,6 +11231,15 @@ public protocol SpacesProtocol: AnyObject, Sendable {
     func remove(space: String) async throws
 
     /**
+     * Gives a local VM Space another shape: `cpus` vCPUs, `memory_mb` MiB
+     * of memory, a disk grown to `disk_gb` GiB (each `None` keeps it). It
+     * shuts down and boots again from its own disk (a stopped one boots),
+     * so its files stay and its memory and processes do not. Returns once
+     * it is ready again.
+     */
+    func resize(space: String, cpus: UInt32?, memoryMb: UInt64?, diskGb: UInt32?) async throws  -> SpaceResizeReport
+
+    /**
      * Resolves an id, legacy id, URL or display name.
      */
     func resolve(space: String) async throws  -> SpaceInfo
@@ -11276,12 +11285,21 @@ public protocol SpacesProtocol: AnyObject, Sendable {
 
     /**
      * Turns a Space off the way its provider can (`SpaceInfo.power`):
-     * suspends it, keeping its memory (a local container or QEMU VM), or
-     * stops it, keeping its disk (a local Lume VM; a Space one of your
-     * machines provides, which that machine stops). A cloud Space, a Space
-     * added by address and your own computers cannot be turned off.
+     * stops it, keeping its disk and freeing its memory (a local VM; a
+     * Space one of your machines provides, which that machine stops), or
+     * suspends it, keeping its memory (a local container that cannot
+     * stop). [`Spaces::suspend`] suspends a local container or QEMU VM on
+     * purpose. A Space added by address and your own computers cannot be
+     * turned off.
      */
     func stop(space: String) async throws  -> SpacePowerReport
+
+    /**
+     * Suspends a local Space (a container or a QEMU VM), keeping its
+     * memory: it resumes where it was, and its memory stays in use until
+     * then. [`Spaces::stop`] stops it instead and frees its memory.
+     */
+    func suspend(space: String) async throws  -> SpacePowerReport
 
     /**
      * `volume_approve`: the request becomes a grant (with presence).
@@ -12648,6 +12666,30 @@ open func remove(space: String)async throws   {
 }
 
     /**
+     * Gives a local VM Space another shape: `cpus` vCPUs, `memory_mb` MiB
+     * of memory, a disk grown to `disk_gb` GiB (each `None` keeps it). It
+     * shuts down and boots again from its own disk (a stopped one boots),
+     * so its files stay and its memory and processes do not. Returns once
+     * it is ready again.
+     */
+open func resize(space: String, cpus: UInt32?, memoryMb: UInt64?, diskGb: UInt32?)async throws  -> SpaceResizeReport  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_resize(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(space),FfiConverterOptionUInt32.lower(cpus),FfiConverterOptionUInt64.lower(memoryMb),FfiConverterOptionUInt32.lower(diskGb)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSpaceResizeReport_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * Resolves an id, legacy id, URL or display name.
      */
 open func resolve(space: String)async throws  -> SpaceInfo  {
@@ -12783,16 +12825,40 @@ open func start(space: String)async throws  -> SpacePowerReport  {
 
     /**
      * Turns a Space off the way its provider can (`SpaceInfo.power`):
-     * suspends it, keeping its memory (a local container or QEMU VM), or
-     * stops it, keeping its disk (a local Lume VM; a Space one of your
-     * machines provides, which that machine stops). A cloud Space, a Space
-     * added by address and your own computers cannot be turned off.
+     * stops it, keeping its disk and freeing its memory (a local VM; a
+     * Space one of your machines provides, which that machine stops), or
+     * suspends it, keeping its memory (a local container that cannot
+     * stop). [`Spaces::suspend`] suspends a local container or QEMU VM on
+     * purpose. A Space added by address and your own computers cannot be
+     * turned off.
      */
 open func stop(space: String)async throws  -> SpacePowerReport  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_cua_sdk_fn_method_spaces_stop(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(space)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSpacePowerReport_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Suspends a local Space (a container or a QEMU VM), keeping its
+     * memory: it resumes where it was, and its memory stays in use until
+     * then. [`Spaces::stop`] stops it instead and frees its memory.
+     */
+open func suspend(space: String)async throws  -> SpacePowerReport  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_suspend(
                     self.uniffiCloneHandle(),
                     FfiConverterString.lower(space)
                 )
@@ -36969,8 +37035,8 @@ public struct SpacePowerReport: Equatable, Hashable {
      */
     public var state: String
     /**
-     * How it turns off: `suspend` (its memory is kept) or `stop` (its
-     * disk is kept).
+     * How it was turned off: `suspend` (its memory is kept, and still in
+     * use) or `stop` (its disk is kept; its memory is freed).
      */
     public var power: String
     /**
@@ -36988,8 +37054,8 @@ public struct SpacePowerReport: Equatable, Hashable {
          * `running`, `suspended` or `stopped`: the state it is in now.
          */state: String,
         /**
-         * How it turns off: `suspend` (its memory is kept) or `stop` (its
-         * disk is kept).
+         * How it was turned off: `suspend` (its memory is kept, and still in
+         * use) or `stop` (its disk is kept; its memory is freed).
          */power: String,
         /**
          * What happened, for people.
@@ -37143,6 +37209,105 @@ public func FfiConverterTypeSpaceRelayRegistration_lift(_ buf: RustBuffer) throw
 #endif
 public func FfiConverterTypeSpaceRelayRegistration_lower(_ value: SpaceRelayRegistration) -> RustBuffer {
     return FfiConverterTypeSpaceRelayRegistration.lower(value)
+}
+
+
+/**
+ * What [`Spaces::resize`] did: the shape the Space has now.
+ */
+public struct SpaceResizeReport: Equatable, Hashable {
+    /**
+     * The Space.
+     */
+    public var space: String
+    /**
+     * vCPUs (when changed).
+     */
+    public var cpus: UInt32?
+    /**
+     * Memory in MiB (when changed).
+     */
+    public var memoryMb: UInt64?
+    /**
+     * Disk in GiB (when grown).
+     */
+    public var diskGb: UInt32?
+    /**
+     * What happened, for people.
+     */
+    public var message: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The Space.
+         */space: String,
+        /**
+         * vCPUs (when changed).
+         */cpus: UInt32?,
+        /**
+         * Memory in MiB (when changed).
+         */memoryMb: UInt64?,
+        /**
+         * Disk in GiB (when grown).
+         */diskGb: UInt32?,
+        /**
+         * What happened, for people.
+         */message: String) {
+        self.space = space
+        self.cpus = cpus
+        self.memoryMb = memoryMb
+        self.diskGb = diskGb
+        self.message = message
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SpaceResizeReport: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpaceResizeReport: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpaceResizeReport {
+        return
+            try SpaceResizeReport(
+                space: FfiConverterString.read(from: &buf),
+                cpus: FfiConverterOptionUInt32.read(from: &buf),
+                memoryMb: FfiConverterOptionUInt64.read(from: &buf),
+                diskGb: FfiConverterOptionUInt32.read(from: &buf),
+                message: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SpaceResizeReport, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.space, into: &buf)
+        FfiConverterOptionUInt32.write(value.cpus, into: &buf)
+        FfiConverterOptionUInt64.write(value.memoryMb, into: &buf)
+        FfiConverterOptionUInt32.write(value.diskGb, into: &buf)
+        FfiConverterString.write(value.message, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceResizeReport_lift(_ buf: RustBuffer) throws -> SpaceResizeReport {
+    return try FfiConverterTypeSpaceResizeReport.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceResizeReport_lower(_ value: SpaceResizeReport) -> RustBuffer {
+    return FfiConverterTypeSpaceResizeReport.lower(value)
 }
 
 
@@ -49676,6 +49841,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_spaces_remove() != 23086) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_spaces_resize() != 2886) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_spaces_resolve() != 9986) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -49694,7 +49862,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_spaces_start() != 32898) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_spaces_stop() != 64586) {
+    if (uniffi_cua_sdk_checksum_method_spaces_stop() != 59057) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_suspend() != 23817) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_volume_approve() != 8640) {

@@ -7,7 +7,7 @@ use crate::error::{Error, Result};
 use crate::id::{Provider, SpaceId, authority};
 use crate::operator::{ControlServerDisplay, OperatorDisplay};
 use crate::registry::{Credential, Registry, cua_home};
-use crate::space::{Gateway, Space, SpaceInfo, SpacePower};
+use crate::space::{Gateway, Space, SpaceInfo, SpacePower, SpaceResize};
 use crate::space::{ServiceSource, SpaceService};
 use cua_proto::daemon::v1 as dpb;
 use cua_sandbox_core::placement::{Kind, On, Runtime};
@@ -3346,6 +3346,96 @@ impl Spaces {
         self.set_power(space, true).await
     }
 
+    /// Suspends a local Space, keeping its memory (it resumes where it
+    /// was, and its memory stays in use meanwhile): a container or a QEMU
+    /// VM. [`Self::stop`] stops it instead and frees its memory. Other
+    /// Spaces are refused.
+    pub async fn suspend(&self, space: &str) -> Result<SpacePower> {
+        let id = self.resolve(space)?;
+        let SpaceId::Local { name } = &id else {
+            return Err(Error::WrongProvider {
+                op: "Suspending".into(),
+                provider: format!("{} (only a Space on this computer)", id.provider()),
+            });
+        };
+        let sandboxes = &self.inner.sandboxes;
+        if sandboxes.power_control(name).is_none() {
+            return Err(Error::invalid(format!("{space} cannot be suspended")));
+        }
+        self.drop_connection(&id).await;
+        let state = sandboxes
+            .power_off_as(name, cua_sandbox_core::PowerControl::Suspend)
+            .await?;
+        Ok(SpacePower::new(
+            &id.to_string(),
+            cua_sandbox_core::PowerControl::Suspend,
+            state,
+        ))
+    }
+
+    /// Gives a local VM Space another shape: `cpus` vCPUs, `memory_mb` MiB
+    /// of memory, a disk grown to `disk_gb` GiB (each `None` keeps it). The
+    /// VM shuts down and boots again from its own disk (a stopped one
+    /// boots), so its files stay and its memory and processes do not.
+    /// Returns once it is ready again. Other Spaces are refused.
+    pub async fn resize(
+        &self,
+        space: &str,
+        cpus: Option<u32>,
+        memory_mb: Option<u64>,
+        disk_gb: Option<u32>,
+    ) -> Result<SpaceResize> {
+        if cpus.is_none() && memory_mb.is_none() && disk_gb.is_none() {
+            return Err(Error::invalid(
+                "say what to change: cpus, memory_mb or disk_gb",
+            ));
+        }
+        let id = self.resolve(space)?;
+        let SpaceId::Local { name } = &id else {
+            return Err(Error::WrongProvider {
+                op: "Resizing".into(),
+                provider: format!(
+                    "{} (only a VM on this computer; resize it on the computer that runs it)",
+                    id.provider()
+                ),
+            });
+        };
+        self.drop_connection(&id).await;
+        let shape = cua_sandbox_core::Resize {
+            cpus,
+            memory_mb,
+            disk_gb,
+            probes: Vec::new(),
+        };
+        self.inner.sandboxes.resize(name, &shape).await?;
+        #[cfg(feature = "mcp")]
+        self.notify_connected(&id);
+        // It booted again: a Space that was on the relay goes back on it.
+        #[cfg(feature = "spaces-agents")]
+        self.reattach_relay_after_boot(&id).await;
+        let mut what = Vec::new();
+        if let Some(c) = cpus {
+            what.push(format!("{c} vCPUs"));
+        }
+        if let Some(m) = memory_mb {
+            what.push(format!("{m} MiB of memory"));
+        }
+        if let Some(d) = disk_gb {
+            what.push(format!("a {d} GiB disk"));
+        }
+        Ok(SpaceResize {
+            space: id.to_string(),
+            cpus,
+            memory_mb,
+            disk_gb,
+            message: format!(
+                "{} now has {}; it booted again from its disk.",
+                id,
+                what.join(", ")
+            ),
+        })
+    }
+
     async fn set_power(&self, space: &str, on: bool) -> Result<SpacePower> {
         let id = self.resolve(space)?;
         let cloud = self.cloud_sandbox_of(&id.to_string())?;
@@ -3366,6 +3456,9 @@ impl Spaces {
                     // again now, not only when something next connects.
                     #[cfg(feature = "mcp")]
                     self.notify_connected(&id);
+                    // A guest that booted again forgot its relay attachment.
+                    #[cfg(feature = "spaces-agents")]
+                    self.reattach_relay_after_boot(&id).await;
                     cua_sandbox_core::PowerState::Running
                 } else {
                     sandboxes.power_off(name).await?

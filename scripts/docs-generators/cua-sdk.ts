@@ -487,8 +487,17 @@ export const PAGES: PageSpec[] = [
     title: 'Spaces',
     description: 'The Spaces registry: create, add, resolve, delete and remove Spaces, their create options, and agent runs in a Space.',
     intro:
-      '`cua.spaces()` returns the `Spaces` registry. Create a Space where `on` says (local or cloud), or add an existing machine by URL, then open a [`Space`](/cua-sdk/reference/spaces/space).',
+      '`cua.spaces()` returns the `Spaces` registry. Create a Space where `on` says (local or cloud), or add an existing machine by URL, then open a [`Space`](/cua-sdk/reference/spaces/space). See [resize](/cua-sdk/reference/spaces/resize) to change a local VM\'s shape.',
     items: ['Spaces', 'SpaceInfo', 'SpaceList', 'SpacePowerReport', 'spaces_tool_methods', 'SpacesToolMethod'],
+  },
+  {
+    slug: 'spaces/resize',
+    title: 'Resize a Space',
+    description: 'Change a local VM\'s CPU, memory or disk while keeping its files.',
+    intro:
+      '`Spaces.resize` boots a stopped local VM from its own disk after changing its shape. The disk can grow; its files stay in place.',
+    items: ['SpaceResizeReport'],
+    members: [{ object: 'Spaces', title: 'Resize', methods: ['resize'] }],
   },
   {
     slug: 'spaces/lifetime',

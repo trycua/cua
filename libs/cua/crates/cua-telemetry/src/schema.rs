@@ -336,6 +336,15 @@ pub const FEATURES: &[&str] = &[
     "upsell_card_machines_shown",
     "upsell_card_machines_click",
     "upsell_card_machines_dismiss",
+    // Sign-in recovery (CUA-2285): how a sign-in ran and where it got stuck.
+    // The reason a sign-in failed stays in `error_kind`; these add the way
+    // (the browser, or a code to enter on any device).
+    "sign_in_started_browser",
+    "sign_in_started_code",
+    "sign_in_still_waiting",
+    "sign_in_code_instead",
+    "sign_in_failed_browser",
+    "sign_in_failed_code",
 ];
 /// Install steps live in [`INSTALLER_STEPS`] (`cua_installer_step`): the
 /// installers send them before any Cua program is on the machine.

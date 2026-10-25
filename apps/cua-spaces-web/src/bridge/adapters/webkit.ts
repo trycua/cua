@@ -634,8 +634,8 @@ export function createWebkitAdapter(
       const [s, onboarding] = await Promise.all([request<WkSession>("session.get"), request<WkOnboarding>("onboarding.get").catch(() => null)]);
       return toSessionSnapshot(s, onboarding);
     },
-    "session.signIn": async () => {
-      const s = await request<WkSession>("session.signIn");
+    "session.signIn": async (args) => {
+      const s = await request<WkSession>("session.signIn", args?.code ? { code: true } : {});
       const userCode = typeof s.signIn === "object" ? opt(s.signIn.userCode) : undefined;
       return { method: userCode ? "device" : "browser", userCode, verificationUri: opt(s.signInUrl) ?? "" };
     },

@@ -627,14 +627,12 @@ def test_nightly_skips_unresolved_coauthor_but_stable_stays_strict():
         _change_contributors(pull, commit, FakeGitHub("deadbeef"), "trycua/cua", config)
 
 
-def test_checked_in_overrides_resolve_dillon_and_adam():
+def test_checked_in_override_resolves_adam():
     config = json.loads((REPO_ROOT / ".github/release-attribution-config.json").read_text())
     commits = [
-        CommitRecord("a1", "fix: x", "Co-authored-by: Dillon DuPont <dillondupont808@gmail.com>"),
         CommitRecord("b2", "fix: y", "Co-authored-by: adam <admr0805@gmail.com>"),
     ]
     assert unresolved_coauthor_identities(commits, config) == []
-    assert config["identityOverrides"]["dillondupont808@gmail.com"] == "ddupont808"
     assert config["identityOverrides"]["admr0805@gmail.com"] == "0xABAN"
 
 

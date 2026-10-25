@@ -26,6 +26,10 @@
 //! runtime owned by this crate (callers never provide one); foreign
 //! callbacks ([`FrameSink`], [`AudioSink`]) must not block.
 
+// The runtime's futures nest deeply (the device and host calls among them);
+// their layout check needs more than the default recursion depth.
+#![recursion_limit = "256"]
+
 mod json;
 mod types;
 pub use json::{JSON_STREAM_METHODS, JSON_UNARY_METHODS, TYPED_ONLY_METHODS};

@@ -6876,6 +6876,10 @@ export enum AppAboutLinkId {
      */
     Terms = "terms",
     /**
+     * The public status page.
+     */
+    Status = "status",
+    /**
      * A new issue.
      */
     Issue = "issue"
@@ -6890,7 +6894,8 @@ const FfiConverterTypeAppAboutLinkId = (() => {
                 case 1: return AppAboutLinkId.Acknowledgements;
                 case 2: return AppAboutLinkId.Privacy;
                 case 3: return AppAboutLinkId.Terms;
-                case 4: return AppAboutLinkId.Issue;
+                case 4: return AppAboutLinkId.Status;
+                case 5: return AppAboutLinkId.Issue;
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -6899,7 +6904,8 @@ const FfiConverterTypeAppAboutLinkId = (() => {
                 case AppAboutLinkId.Acknowledgements: return ordinalConverter.write(1, into);
                 case AppAboutLinkId.Privacy: return ordinalConverter.write(2, into);
                 case AppAboutLinkId.Terms: return ordinalConverter.write(3, into);
-                case AppAboutLinkId.Issue: return ordinalConverter.write(4, into);
+                case AppAboutLinkId.Status: return ordinalConverter.write(4, into);
+                case AppAboutLinkId.Issue: return ordinalConverter.write(5, into);
             }
         }
         allocationSize(value: TypeName): number {
@@ -7143,7 +7149,7 @@ export type AppAboutView = {
      */
     versionLine: string,
     /**
-     * Acknowledgements, Privacy Policy, Terms of Service, Report an Issue.
+     * Acknowledgements, Privacy Policy, Terms of Service, System Status, Report an Issue.
      */
     links: Array<AppAboutLink>,
     /**

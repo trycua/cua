@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use cua_driver_core::bundle_identity::{LOCAL_BUNDLE_ID, RELEASE_BUNDLE_ID};
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{ProtectedResourceOwnership, Tool, ToolDef},
@@ -42,9 +43,9 @@ pub async fn request_from_launchservices_host(probe_direct_capture: bool) -> Too
 
 fn driver_bundle_id_for_executable(executable: &str) -> Option<&'static str> {
     if executable.contains("/CuaDriverLocal.app/Contents/MacOS/") {
-        Some("com.trycua.driver.local")
+        Some(LOCAL_BUNDLE_ID)
     } else if executable.contains("/CuaDriver.app/Contents/MacOS/") {
-        Some("com.trycua.driver")
+        Some(RELEASE_BUNDLE_ID)
     } else {
         None
     }
@@ -68,8 +69,8 @@ fn direct_capture_evidence_store_for_identity(
     }
     let bundle_id = driver_bundle_id_for_executable(executable)?;
     let state_directory = match bundle_id {
-        "com.trycua.driver.local" => ".cua-driver-local",
-        "com.trycua.driver" => ".cua-driver",
+        LOCAL_BUNDLE_ID => ".cua-driver-local",
+        RELEASE_BUNDLE_ID => ".cua-driver",
         _ => return None,
     };
     Some(DirectCaptureEvidenceStore::new(
@@ -547,13 +548,13 @@ mod tests {
             driver_bundle_id_for_executable(
                 "/Applications/CuaDriver.app/Contents/MacOS/cua-driver"
             ),
-            Some("com.trycua.driver")
+            Some(RELEASE_BUNDLE_ID)
         );
         assert_eq!(
             driver_bundle_id_for_executable(
                 "/Applications/CuaDriverLocal.app/Contents/MacOS/cua-driver-local"
             ),
-            Some("com.trycua.driver.local")
+            Some(LOCAL_BUNDLE_ID)
         );
         assert_eq!(
             driver_bundle_id_for_executable("/Users/test/.local/bin/cua-driver-local"),

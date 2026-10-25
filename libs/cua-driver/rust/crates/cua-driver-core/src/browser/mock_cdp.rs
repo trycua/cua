@@ -46,6 +46,15 @@ impl MockReply {
         }
     }
 
+    /// A command whose reply never comes; any attached events still go out.
+    pub fn hang() -> Self {
+        Self {
+            events: Vec::new(),
+            result: Ok(json!({})),
+            suppress_response: true,
+        }
+    }
+
     pub fn err(code: i64, message: &str) -> Self {
         Self {
             events: Vec::new(),
@@ -117,9 +126,6 @@ impl MockCdpServer {
                                 .map(str::to_owned),
                         };
                         let reply = handler(&call);
-                        if reply.suppress_response {
-                            continue;
-                        }
                         for event in reply.events {
                             let mut frame =
                                 json!({ "method": event.method, "params": event.params });
@@ -129,6 +135,9 @@ impl MockCdpServer {
                             if ws.send(Message::Text(frame.to_string())).await.is_err() {
                                 return;
                             }
+                        }
+                        if reply.suppress_response {
+                            continue;
                         }
                         let mut response = match reply.result {
                             Ok(result) => json!({ "id": id, "result": result }),

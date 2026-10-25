@@ -18,7 +18,7 @@ import type {
 } from "../native/generated/index";
 import type { LiveSpacesBackend, SpacesBackend } from "./backend";
 import type { AgentSetupRunning } from "./agents";
-import type { AccountProfile, AccountRunning, SignInAttempt } from "./services";
+import type { AccountProfile, AccountRunning, SignInAttempt, SignInOptions } from "./services";
 
 /** A value set once, which callers wait for. */
 export class LiveGate<T> {
@@ -143,10 +143,10 @@ export class PendingAccount implements AccountRunning {
     return this.gate.current?.account?.profile() ?? null;
   }
 
-  async beginSignIn(): Promise<SignInAttempt> {
+  async beginSignIn(opts?: SignInOptions): Promise<SignInAttempt> {
     const account = (await this.gate.wait()).account;
     if (!account) throw new NotStarted("Signing in");
-    return account.beginSignIn();
+    return account.beginSignIn(opts);
   }
 
   async signOut(): Promise<void> {

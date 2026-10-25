@@ -196,8 +196,9 @@ export interface StoreOptions {
 }
 
 /** A device code lives about this long; a sign-in still waiting after it
- * will not finish. */
-const SIGN_IN_TIMEOUT_MS = 10 * 60_000;
+ * will not finish. A native host ends its own wait at 10 minutes and says
+ * why; this safety net comes after it, so one failure is counted once. */
+const SIGN_IN_TIMEOUT_MS = 11 * 60_000;
 
 const CREATE_TICK_MS = 1_000;
 /** How often a watched run is read while a turn runs, and while it waits. */
@@ -261,6 +262,8 @@ export class BridgeStore {
   private agentsPending: string[] = [];
   private signInUrl: string | null = null;
   private signInTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The sign-in in progress asked for a code instead of the browser's way back. */
+  private signInByCode = false;
   /** Counts `session.signIn` answers: a session read started before the
    * latest one says nothing about it (an earlier attempt's failure). */
   private signInEpoch = 0;
@@ -961,12 +964,15 @@ export class BridgeStore {
     // The host's sign-in failed (the browser never confirmed, the network
     // dropped, the keychain refused): say why now, never keep waiting.
     if (failure) {
-      this.signInFailed({
-        kind: "failed",
-        reason: (failure.reason as SignInFailure) || "unknown",
-        message: failure.message,
-        detail: failure.detail,
-      });
+      this.signInFailed(
+        {
+          kind: "failed",
+          reason: (failure.reason as SignInFailure) || "unknown",
+          message: failure.message,
+          detail: failure.detail,
+        },
+        true,
+      );
       return;
     }
     if (!waiting) return;
@@ -982,11 +988,16 @@ export class BridgeStore {
     this.publishSettings();
   }
 
-  async signIn(): Promise<SignInStart> {
+  /** `code`: sign in with a code to enter on any device, for when the
+   * browser never gets back to the app. */
+  async signIn(opts: { code?: boolean } = {}): Promise<SignInStart> {
     this.stopSignInTimer();
+    this.signInByCode = opts.code === true;
+    this.trackFeature(opts.code ? "sign_in_code_instead" : "sign_in_started_browser");
+    if (opts.code) this.trackFeature("sign_in_started_code");
     this.setSignIn({ kind: "starting" });
     try {
-      const start = await this.adapter.call("session.signIn", {});
+      const start = await this.adapter.call("session.signIn", opts.code ? { code: true } : {});
       this.signInEpoch += 1;
       // Cancelled while it started: leave it.
       if (this.signInPhase.kind !== "starting") return start;
@@ -1014,10 +1025,17 @@ export class BridgeStore {
 
   /** A sign-in failed: shown with its reason, and counted by its kind
    * (never its words). */
-  private signInFailed(phase: FailedPhase): void {
+  private signInFailed(phase: FailedPhase, counted = false): void {
     this.stopSignInTimer();
-    void this.telemetry.track(telemetrySignInFailure(this.core, phase.reason ?? "unknown"));
+    // The reason's kind, and the way it was tried (browser or code). A host
+    // that ran the sign-in has counted the reason itself.
+    if (!counted) void this.telemetry.track(telemetrySignInFailure(this.core, phase.reason ?? "unknown"));
+    this.trackFeature(this.signInByCode ? "sign_in_failed_code" : "sign_in_failed_browser");
     this.setSignIn(phase);
+  }
+
+  private trackFeature(feature: string): void {
+    void this.telemetry.track([{ type: "feature", feature }]);
   }
 
   private stopSignInTimer(): void {

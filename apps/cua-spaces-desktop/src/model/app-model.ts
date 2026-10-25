@@ -47,7 +47,7 @@ import { NotchActivity } from "./activity";
 import { createErrorVariant, daemonAnswered, isCancelled, sdkErrorKind, words } from "./errors";
 import type { HostModel } from "./host";
 import { KeyvaultModel } from "./keyvault";
-import type { AccountRunning, TelemetryRunning } from "./services";
+import type { AccountRunning, SignInOptions, TelemetryRunning } from "./services";
 import type { StartupModel } from "./startup";
 import { SignInRuns, type SignInEnd } from "./sign-in";
 import { SpaceThumbnails } from "./thumbnails";
@@ -908,9 +908,9 @@ export class AppModel {
   /** "Sign in": the browser flow (opened by the account), the code while it
    * waits. Starting again while it waits is a retry: a new attempt, and
    * whichever attempt the browser finishes signs the app in. */
-  async beginSignIn(): Promise<void> {
+  async beginSignIn(opts?: SignInOptions): Promise<void> {
     if (!this.account || this.signInPhase() === "Starting") return;
-    await this.signIns.begin();
+    await this.signIns.begin(opts);
   }
 
   /** A session is stored (by a sign-in here or `cua auth login`). */

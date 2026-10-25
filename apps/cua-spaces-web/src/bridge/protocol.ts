@@ -259,7 +259,7 @@ export interface HostOperations
   "keyvault.revokeGrant": { args: { id: string }; result: number };
 
   "session.get": { args: Record<string, never>; result: SessionSnapshot };
-  "session.signIn": { args: Record<string, never>; result: SignInStart };
+  "session.signIn": { args: { code?: boolean }; result: SignInStart };
   "session.signOut": { args: Record<string, never>; result: null };
   /** `launchAtLogin`: Done's checkbox, where the host draws it (Electron). */
   "session.completeOnboarding": { args: { mode: OnboardingMode; launchAtLogin?: boolean }; result: null };

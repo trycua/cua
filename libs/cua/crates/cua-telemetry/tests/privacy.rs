@@ -1859,6 +1859,8 @@ fn runtime_failures_keep_the_parent_class_and_add_a_sub_kind() {
                 stalled: false,
                 gpu: false,
                 error_variant: variant,
+                retry_attempt: 0,
+                error_subclass: "",
             },
             outcome,
             Duration::from_secs(3),

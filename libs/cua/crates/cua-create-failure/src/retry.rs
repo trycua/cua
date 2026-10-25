@@ -81,6 +81,11 @@ impl Subclass {
 /// A kind word in snake case (`InsufficientDisk` -> `insufficient_disk`),
 /// as `create_failure_kind` may return the caller's enum case.
 pub fn snake(kind: &str) -> String {
+    // `runtime.<sub-kind>` (a `runtime_kind` split) is still the parent
+    // class `runtime` here: the retry rules read the cause from the text.
+    if kind.trim().starts_with("runtime.") {
+        return "runtime".into();
+    }
     let mut out = String::new();
     for (i, c) in kind.trim().chars().enumerate() {
         if c.is_ascii_uppercase() {

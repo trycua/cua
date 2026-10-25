@@ -1608,7 +1608,12 @@ mod tests {
                     error_subclass.as_str(),
                     error_variant.as_str()
                 ),
-                ("error", 1, "runtime_start", "Runtime")
+                (
+                    "error",
+                    1,
+                    "runtime_start",
+                    "runtime.linux_runtime_start_failed"
+                )
             ),
             other => panic!("{other:?}"),
         }

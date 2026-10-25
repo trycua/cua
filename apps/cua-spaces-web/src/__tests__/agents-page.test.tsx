@@ -53,7 +53,12 @@ describe.skipIf(!wasmBuilt)("Agents page", () => {
     await mountApp("/agents", { ...host, intercept: noRuns, demo: { onboarded: false } });
     await waitFor(() => expect(document.querySelector("[data-agents-empty]")).not.toBeNull(), { timeout: 8000 });
     await waitFor(() => expect(document.querySelector("[data-agents-empty]")!.getAttribute("data-agents-empty")).toBe("setup"));
-    fireEvent.click(document.querySelector("[data-agents-setup]")!);
+    const setup = await waitFor(() => {
+      const b = document.querySelector("[data-agents-setup]");
+      expect(b).not.toBeNull();
+      return b!;
+    });
+    fireEvent.click(setup);
     await waitFor(() => expect(document.querySelector("[data-agents-empty]")!.getAttribute("data-agents-empty")).toBe("ready"));
   });
 

@@ -1327,6 +1327,7 @@ async fn sign_in_as_another_account_replaces_the_key_of_the_previous_one() {
     let r = as_b.enroll_after_sign_in().await.unwrap();
     assert_eq!(r.device.state, DeviceState::Enrolled);
     assert_ne!(r.device.id, old);
+    assert_eq!(r.device.name, "Mac");
     assert_eq!(as_b.device_id().unwrap().unwrap(), r.device.id);
     assert!(as_b.session().await.is_ok());
 }

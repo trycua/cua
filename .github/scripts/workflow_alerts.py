@@ -121,7 +121,9 @@ def build_alert(run: dict, name: str, repo: str, environment: str, now: dt.datet
 
 def http_json(url: str, token: str = "", data: object = None, attempts: int = 3, extra_headers: dict | None = None):
     body = None if data is None else json.dumps(data).encode()
-    headers = {"Accept": "application/vnd.github+json", "User-Agent": "workflow-alerts"}
+    # The repository is part of the agent so the alert intake log says which repo posted.
+    agent = "workflow-alerts-" + os.environ.get("GITHUB_REPOSITORY", "local").replace("/", "-")
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": agent}
     if body is not None:
         headers["Content-Type"] = "application/json"
     if token:

@@ -148,6 +148,7 @@ service SpaceService {
   rpc WatchSpaces(WatchSpacesRequest) returns (stream WatchSpacesResponse);
 }
 
+// `SpaceService.WatchSpaces` takes no arguments.
 message WatchSpacesRequest {}
 
 // One event of `SpaceService.WatchSpaces`.

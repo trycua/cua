@@ -38,13 +38,13 @@ describe("useInView", () => {
     // A grid of many Spaces: an off-screen tile asks for nothing.
     expect(result.current).toBe(false);
     expect(observers).toHaveLength(1);
-    expect(observers[0].margin).toBe("400px");
-    act(() => observers[0].cb([{ isIntersecting: true }]));
+    expect(observers[0]!.margin).toBe("400px");
+    act(() => observers[0]!.cb([{ isIntersecting: true }]));
     expect(result.current).toBe(true);
-    act(() => observers[0].cb([{ isIntersecting: false }]));
+    act(() => observers[0]!.cb([{ isIntersecting: false }]));
     expect(result.current).toBe(false);
     unmount();
-    expect(observers[0].disconnected).toBe(true);
+    expect(observers[0]!.disconnected).toBe(true);
   });
 
   it("is true where the page cannot tell", () => {

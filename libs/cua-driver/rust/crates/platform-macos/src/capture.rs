@@ -23,8 +23,10 @@
 //! `screencapture` always runs from `/usr/sbin`, never through `PATH`. It
 //! is a separate Apple tool entitled to record audio whose privacy access
 //! macOS judges against the host app, so it can raise prompts the in-process
-//! path never does (#5938). A host sets `CUA_DRIVER_DISABLE_SCREENCAPTURE=1`
-//! to keep the driver from starting it at all.
+//! path never does, and it writes the window to a temporary PNG the host's
+//! user can read (#5938). `CUA_DRIVER_DISABLE_SCREENCAPTURE=1` keeps the
+//! driver from starting it at all; an embedded driver (`--embedded`) keeps it
+//! off unless the host sets the variable to `0`.
 //!
 //! ## Windows on another Space (CUA-1351)
 //!
@@ -907,21 +909,36 @@ fn unpremultiply_rgba(rgba: &mut [u8]) -> bool {
 /// pick another program.
 const SCREENCAPTURE: &str = "/usr/sbin/screencapture";
 
-/// Set to `1` by a host that must never have the driver start `screencapture`.
+/// `1` keeps the driver from starting `screencapture`, `0` allows it. Unset, an
+/// embedded driver keeps it off and a standalone one allows it.
 pub const DISABLE_SCREENCAPTURE_ENV: &str = "CUA_DRIVER_DISABLE_SCREENCAPTURE";
 
-fn screencapture_disabled_by(value: Option<&std::ffi::OsStr>) -> bool {
-    value.is_some_and(|value| value == "1")
+/// An embedded host cannot always pass the variable (an SDK whose environment
+/// allowlist predates it drops it), and the tool's privacy prompts and
+/// temporary capture files land under the host's identity, so embedded
+/// drivers keep it off unless the host explicitly allows it.
+fn screencapture_disabled_by(value: Option<&std::ffi::OsStr>, embedded: bool) -> bool {
+    match value.and_then(std::ffi::OsStr::to_str) {
+        Some("1") => true,
+        Some("0") => false,
+        _ => embedded,
+    }
 }
 
 fn screencapture_disabled() -> bool {
-    screencapture_disabled_by(std::env::var_os(DISABLE_SCREENCAPTURE_ENV).as_deref())
+    screencapture_disabled_by(
+        std::env::var_os(DISABLE_SCREENCAPTURE_ENV).as_deref(),
+        cua_driver_core::embedded_mode(),
+    )
 }
 
-/// The command for `screencapture`, or an error when the host turned it off.
+/// The command for `screencapture`, or an error when it is off.
 fn screencapture_command(disabled: bool) -> anyhow::Result<Command> {
     if disabled {
-        anyhow::bail!("the host turned off screencapture ({DISABLE_SCREENCAPTURE_ENV}=1)");
+        anyhow::bail!(
+            "screencapture is off for this driver (embedded hosts by default, or \
+             {DISABLE_SCREENCAPTURE_ENV}=1)"
+        );
     }
     Ok(Command::new(SCREENCAPTURE))
 }
@@ -1238,13 +1255,39 @@ mod tests {
     fn a_host_can_turn_screencapture_off() {
         let error = screencapture_command(true).expect_err("turned off");
         assert!(error.to_string().contains(DISABLE_SCREENCAPTURE_ENV));
-        assert!(screencapture_disabled_by(Some(std::ffi::OsStr::new("1"))));
+        assert!(screencapture_disabled_by(
+            Some(std::ffi::OsStr::new("1")),
+            false
+        ));
         for value in [None, Some(""), Some("0"), Some("true")] {
             assert!(
-                !screencapture_disabled_by(value.map(std::ffi::OsStr::new)),
+                !screencapture_disabled_by(value.map(std::ffi::OsStr::new), false),
                 "{value:?} keeps screencapture on"
             );
         }
+    }
+
+    /// #5938: an embedded host cannot always pass the variable (an SDK whose
+    /// environment allowlist predates it drops it), and the tool's privacy
+    /// prompts and temporary files land under the host's identity. Embedded
+    /// drivers therefore keep `screencapture` off unless the host sets `0`.
+    #[test]
+    fn an_embedded_driver_keeps_screencapture_off_unless_the_host_allows_it() {
+        let os = |value: &'static str| Some(std::ffi::OsStr::new(value));
+        assert!(screencapture_disabled_by(None, true), "embedded default");
+        assert!(
+            screencapture_disabled_by(os(""), true),
+            "empty value keeps the default"
+        );
+        assert!(screencapture_disabled_by(os("1"), true));
+        assert!(
+            !screencapture_disabled_by(os("0"), true),
+            "explicit opt back in"
+        );
+        assert!(
+            !screencapture_disabled_by(None, false),
+            "standalone default unchanged"
+        );
     }
 
     /// #5938: with the tool off, whole-display captures (recording snapshots,

@@ -2303,6 +2303,7 @@ dependencies = [
  "hmac 0.12.1",
  "image",
  "jsonschema",
+ "keyring 4.2.0",
  "libc",
  "regex",
  "regorus",
@@ -6191,9 +6192,7 @@ dependencies = [
  "dirs",
  "evdev",
  "futures-util",
- "getrandom 0.4.3",
  "image",
- "keyring 4.2.0",
  "libc",
  "memmap2",
  "meval",
@@ -6215,7 +6214,6 @@ dependencies = [
  "x11",
  "x11rb",
  "zbus",
- "zeroize",
 ]
 
 [[package]]
@@ -6269,7 +6267,6 @@ dependencies = [
  "cursor-overlay",
  "getrandom 0.4.3",
  "image",
- "keyring 4.2.0",
  "pip-preview",
  "serde",
  "serde_json",

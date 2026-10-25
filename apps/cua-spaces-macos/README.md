@@ -497,11 +497,14 @@ the key was, so installing is dragging the key into its place.
 `package-dmg.sh` lays the window out with a pinned
 [dmgbuild](https://github.com/dmgbuild/dmgbuild) (`scripts/dmg-settings.py`)
 and makes the alias with `scripts/make-alias.swift`. The art in
-`Support/dmg` and the app icon `Support/AppIcon.icns` (the key with the Spaces
-mark, the Cua mark in stacked squares, on a slate tile) are drawn from the site's keycap sprites by
-`scripts/dmg-art/render.sh` (headless Chrome), which also writes the same icon
-to `apps/cua-spaces/src-tauri/icons` for the other apps; rerun it only when
-the art changes.
+`Support/dmg` is drawn from the site's keycap sprites by
+`scripts/dmg-art/render.sh` (headless Chrome). The app icon
+`Support/AppIcon.icns` (the terracotta koala keycap) is not drawn: it is built
+from the chosen PNGs in `scripts/dmg-art/src` (`app-icon-1024.png`, plus
+`app-icon-small-1024.png` with a larger print for 16 to 64 px) by
+`render.sh`, which also writes the same icon to `apps/cua-spaces/src-tauri/icons`
+for the other apps. `render.sh --app-icon-only` rebuilds just the icons; rerun
+it only when the art changes.
 
 ## Updates (Sparkle)
 

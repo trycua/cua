@@ -33,6 +33,19 @@ struct WebUIHostTests {
         #expect(WebUISchemeHandler.mime("wasm") == "application/wasm")
     }
 
+    /// About's Acknowledgements reads the app's bundled notices at
+    /// `/__app/THIRD_PARTY_NOTICES.md`; no other app file is reachable.
+    @Test func theSchemeHandlerServesTheBundledNoticesAndNothingElseOfTheApp() {
+        let notices = URL(fileURLWithPath: "/tmp/THIRD_PARTY_NOTICES.md")
+        let h = WebUISchemeHandler(root: nil, appFiles: ["THIRD_PARTY_NOTICES.md": notices])
+        #expect(h.appFile("/__app/THIRD_PARTY_NOTICES.md") == notices)
+        #expect(h.appFile("/__app/../Info.plist") == nil)
+        #expect(h.appFile("/__app/Info.plist") == nil)
+        #expect(h.appFile("/THIRD_PARTY_NOTICES.md") == nil)
+        // A debug build finds the checkout's copy.
+        #expect(WebUISchemeHandler.bundledAppFiles()["THIRD_PARTY_NOTICES.md"] != nil)
+    }
+
     @Test func coreRecordsEncodeAsPlainValues() {
         let x = AppExperiments(cuaVolume: true, yourCloud: false, sharing: false, webUi: true)
         let v = BridgeValue.encode(x) as? [String: Any]

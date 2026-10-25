@@ -137,6 +137,7 @@ jobs:
       # A warning only: the nightly build continues. Stable releases still
       # fail closed on unresolved attribution.
       - name: Create or refresh the attribution warning
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           COMPONENT: ${{ inputs.component }}

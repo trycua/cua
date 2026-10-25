@@ -9,7 +9,7 @@
     "mcp_stdio",
     "mcp_streamable_http"
   ],
-  "tool_count": 96,
+  "tool_count": 97,
   "categories": [
     {
       "id": "lifecycle",
@@ -815,6 +815,86 @@
           "space",
           "path",
           "content"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "space_sync",
+      "category": "commands-and-files",
+      "description": "Make a folder in the Space match a folder on this computer, sending only what changed.",
+      "instructions": "Makes `dest` in the Space hold what the host folder `path` holds now, sending only the files that changed since the last sync to it, as one compressed archive. Like git: files .gitignore leaves out and .git stay behind (gitignore=false, include_git=true change that). Changed files get the time of the sync in the Space, so incremental builds (cargo, make, tsc) rebuild exactly what changed; unchanged files keep theirs. Files an earlier sync put there that are gone here are deleted (delete=false keeps them); anything else in `dest` (target/, node_modules/) is never touched. Linux and macOS Spaces.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free",
+      "capabilities": [
+        "space.files.write",
+        "space.files.transfer",
+        "space.exec"
+      ],
+      "requires": [],
+      "host_requires": [],
+      "annotations": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true
+      },
+      "sdk_symbol": "Spaces.sync(space, path, dest, options)",
+      "rust_symbol": "Spaces::sync",
+      "notes": [],
+      "result": "JSON: `space`, `dest`, `files`, `sent`, `sent_bytes`, `transferred_bytes`, `deleted`, `unchanged` and `seconds`.",
+      "errors": [
+        "invalid_argument",
+        "io"
+      ],
+      "input_schema": {
+        "properties": {
+          "delete": {
+            "description": "Delete files an earlier sync put there that are gone from the host\nfolder. Default true.",
+            "type": "boolean"
+          },
+          "dest": {
+            "description": "Folder in the Space: absolute, or relative to the Space user's home.",
+            "type": "string"
+          },
+          "exclude": {
+            "description": "More to leave out: gitignore-style patterns.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "gitignore": {
+            "description": "Leave out what `.gitignore` leaves out. Default true.",
+            "type": "boolean"
+          },
+          "include_git": {
+            "description": "Take the `.git` directory too. Default false.",
+            "type": "boolean"
+          },
+          "path": {
+            "description": "Host folder.",
+            "type": "string"
+          },
+          "space": {
+            "description": "Space id or name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "space",
+          "path",
+          "dest"
         ],
         "type": "object"
       }

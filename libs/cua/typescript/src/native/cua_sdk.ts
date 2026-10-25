@@ -19684,6 +19684,177 @@ const FfiConverterTypeSpaceStreamTicket = (() => {
 })();
 
 /**
+ * What [`Spaces::sync`] takes from the folder.
+ */
+export type SpaceSyncOptions = {
+    /**
+     * Leave out what `.gitignore` leaves out.
+     */
+    gitignore: boolean,
+    /**
+     * Take the `.git` directory too.
+     */
+    includeGit: boolean,
+    /**
+     * Delete files an earlier sync put there that are gone here.
+     */
+    delete: boolean,
+    /**
+     * More to leave out: gitignore-style patterns.
+     */
+    exclude: Array<string>
+}
+
+/**
+ * Generated factory for {@link SpaceSyncOptions} record objects.
+ */
+export const SpaceSyncOptions = (() => {
+    const defaults = () => ({
+        gitignore: true,
+        includeGit: false,
+        delete: true,
+        exclude: []
+    });
+    const create = (() => {
+        return uniffiCreateRecord<SpaceSyncOptions, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<SpaceSyncOptions>,
+    });
+})();
+
+const FfiConverterTypeSpaceSyncOptions = (() => {
+    type TypeName = SpaceSyncOptions;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                gitignore: FfiConverterBool.read(from),
+                includeGit: FfiConverterBool.read(from),
+                delete: FfiConverterBool.read(from),
+                exclude: FfiConverterSequenceString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterBool.write(value.gitignore, into);
+            FfiConverterBool.write(value.includeGit, into);
+            FfiConverterBool.write(value.delete, into);
+            FfiConverterSequenceString.write(value.exclude, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterBool.allocationSize(value.gitignore) +
+             FfiConverterBool.allocationSize(value.includeGit) +
+             FfiConverterBool.allocationSize(value.delete) +
+             FfiConverterSequenceString.allocationSize(value.exclude);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * What [`Spaces::sync`] did.
+ */
+export type SpaceSyncReport = {
+    /**
+     * The Space.
+     */
+    space: string,
+    /**
+     * The folder in it.
+     */
+    dest: string,
+    /**
+     * Files the host folder has.
+     */
+    files: bigint,
+    /**
+     * Files sent (new or changed).
+     */
+    sent: bigint,
+    /**
+     * Their bytes, before compression.
+     */
+    sentBytes: bigint,
+    /**
+     * Bytes that went over the wire.
+     */
+    transferredBytes: bigint,
+    /**
+     * Files deleted in the Space.
+     */
+    deleted: bigint,
+    /**
+     * Files already up to date.
+     */
+    unchanged: bigint,
+    /**
+     * Seconds it took.
+     */
+    seconds: number
+}
+
+/**
+ * Generated factory for {@link SpaceSyncReport} record objects.
+ */
+export const SpaceSyncReport = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<SpaceSyncReport, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<SpaceSyncReport>,
+    });
+})();
+
+const FfiConverterTypeSpaceSyncReport = (() => {
+    type TypeName = SpaceSyncReport;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                space: FfiConverterString.read(from),
+                dest: FfiConverterString.read(from),
+                files: FfiConverterUInt64.read(from),
+                sent: FfiConverterUInt64.read(from),
+                sentBytes: FfiConverterUInt64.read(from),
+                transferredBytes: FfiConverterUInt64.read(from),
+                deleted: FfiConverterUInt64.read(from),
+                unchanged: FfiConverterUInt64.read(from),
+                seconds: FfiConverterFloat64.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.space, into);
+            FfiConverterString.write(value.dest, into);
+            FfiConverterUInt64.write(value.files, into);
+            FfiConverterUInt64.write(value.sent, into);
+            FfiConverterUInt64.write(value.sentBytes, into);
+            FfiConverterUInt64.write(value.transferredBytes, into);
+            FfiConverterUInt64.write(value.deleted, into);
+            FfiConverterUInt64.write(value.unchanged, into);
+            FfiConverterFloat64.write(value.seconds, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.space) +
+             FfiConverterString.allocationSize(value.dest) +
+             FfiConverterUInt64.allocationSize(value.files) +
+             FfiConverterUInt64.allocationSize(value.sent) +
+             FfiConverterUInt64.allocationSize(value.sentBytes) +
+             FfiConverterUInt64.allocationSize(value.transferredBytes) +
+             FfiConverterUInt64.allocationSize(value.deleted) +
+             FfiConverterUInt64.allocationSize(value.unchanged) +
+             FfiConverterFloat64.allocationSize(value.seconds);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
  * A Space's latest thumbnail, from the cache every client on this machine
  * shares ([`crate::native::spaces::Space::thumbnail`]).
  */
@@ -38588,6 +38759,15 @@ export interface SpacesLike {
  */
     stop(space: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpacePowerReport>;
 /**
+ * Makes `dest` in Space `space` hold what the host folder `path` holds
+ * now, sending only what changed since the last sync to it (`.gitignore`
+ * and `.git` left out by default). Changed files get the time of the
+ * sync, so incremental builds rebuild exactly them; files an earlier
+ * sync put there that are gone here are deleted; nothing else in
+ * `dest` is touched.
+ */
+    sync(space: string, path: string, dest: string, options: SpaceSyncOptions | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpaceSyncReport>;
+/**
  * `volume_approve`: the request becomes a grant (with presence).
  */
     volumeApprove(requestId: string, expiresInSecs: bigint | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<DriveGrant>;
@@ -40978,6 +41158,46 @@ private constructor(pointer: UniffiHandle) {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterTypeSpacePowerReport.lift.bind(FfiConverterTypeSpacePowerReport),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * Makes `dest` in Space `space` hold what the host folder `path` holds
+ * now, sending only what changed since the last sync to it (`.gitignore`
+ * and `.git` left out by default). Changed files get the time of the
+ * sync, so incremental builds rebuild exactly them; files an earlier
+ * sync put there that are gone here are deleted; nothing else in
+ * `dest` is touched.
+ */
+    async sync(space: string, path: string, dest: string, options: SpaceSyncOptions | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<SpaceSyncReport> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_spaces_sync(
+                    uniffiTypeSpacesObjectFactory.clonePointer(this),FfiConverterString.lower(space, nativeModule().rustbuffer_alloc),FfiConverterString.lower(path, nativeModule().rustbuffer_alloc),FfiConverterString.lower(dest, nativeModule().rustbuffer_alloc),FfiConverterOptionalTypeSpaceSyncOptions.lower(options, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeSpaceSyncReport.lift.bind(FfiConverterTypeSpaceSyncReport),
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
@@ -43889,6 +44109,9 @@ const FfiConverterSequenceTypePrewarm = new FfiConverterArray(FfiConverterTypePr
 // FfiConverter for Array<RoutineInfo>
 const FfiConverterSequenceTypeRoutineInfo = new FfiConverterArray(FfiConverterTypeRoutineInfo);
 
+// FfiConverter for SpaceSyncOptions | undefined
+const FfiConverterOptionalTypeSpaceSyncOptions = new FfiConverterOptional(FfiConverterTypeSpaceSyncOptions);
+
 // FfiConverter for DriveView | undefined
 const FfiConverterOptionalTypeDriveView = new FfiConverterOptional(FfiConverterTypeDriveView);
 
@@ -45099,6 +45322,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_stop() !== 64586) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_stop");
     }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_sync() !== 3019) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_sync");
+    }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_volume_approve() !== 8640) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_volume_approve");
     }
@@ -45626,6 +45852,8 @@ export default Object.freeze({
     FfiConverterTypeSpaceStreamSession,
     FfiConverterTypeSpaceStreamStats,
     FfiConverterTypeSpaceStreamTicket,
+    FfiConverterTypeSpaceSyncOptions,
+    FfiConverterTypeSpaceSyncReport,
     FfiConverterTypeSpaceThumbnail,
     FfiConverterTypeSpaceToolInfo,
     FfiConverterTypeSpaceToolResult,

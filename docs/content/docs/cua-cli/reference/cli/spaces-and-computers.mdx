@@ -22,6 +22,7 @@ description: "Your Spaces and machines, unattended access on this machine, devic
 | [`cua spaces gpus`](#cua-spaces-gpus) | The GPU options each runtime offers on this computer (or in your own cloud account). |
 | [`cua spaces delete`](#cua-spaces-delete) | Delete a Space's sandbox (on this computer, on the computer that provides it, or in your own cloud account) and forget it (asks first). |
 | [`cua spaces stop`](#cua-spaces-stop) | Turn a Space off: a local container or QEMU VM is suspended (its memory is kept), a Lume VM or a Space one of your computers provides is stopped (its disk is kept), and so is a Space in your own cloud (`--on aws`, `gcp`: compute billing stops; `hetzner`: still billed). |
+| [`cua spaces sync`](#cua-spaces-sync) | Make a folder in a Space hold what a folder on this computer holds now, sending only what changed since the last sync (`cua sync`). |
 | [`cua spaces start`](#cua-spaces-start) | Turn a Space back on: resume a suspended one or boot a stopped one. |
 | [`cua spaces rm`](#cua-spaces-rm) | Forget a registered Space and its stored token. |
 | [`cua spaces share`](#cua-spaces-share) | Let someone in your team watch (viewer) or use (editor) a Space, through the relay. |
@@ -29,6 +30,7 @@ description: "Your Spaces and machines, unattended access on this machine, devic
 | [`cua spaces shares`](#cua-spaces-shares) | Who a Space is shared with, and who of them is connected now. |
 | [`cua spaces relay-register`](#cua-spaces-relay-register) | Publish a Space on the relay for your other devices (a phone off this network): its own driver dials out, as `cua host setup` does for this computer. |
 | [`cua spaces relay-unregister`](#cua-spaces-relay-unregister) | Take a Space off the relay (every share with it ends). |
+| [`cua sync`](#cua-sync) | Make a folder in a Space hold what a folder here holds now, sending only what changed since the last sync: `cua sync ./repo builder:/src/repo`. |
 | [`cua host`](#cua-host) | Unattended access to this computer (setup, status, stop, start, remove). |
 | [`cua host setup`](#cua-host-setup) | Set this computer up for unattended access: install cua-spacesd as a service that joins the cua.ai relay as your account (default) or serves on a direct ip:port. |
 | [`cua host pair`](#cua-host-pair) | Make a one-time code (with a link and the install command) that adds another computer to your account: run the command it prints on that computer. |
@@ -351,6 +353,33 @@ cua spaces stop local:studio
 cua spaces stop relay:space-0123456789abcdef --json
 ```
 
+### `cua spaces sync`
+
+Make a folder in a Space hold what a folder on this computer holds now, sending only what changed since the last sync (`cua sync`).
+
+```text output
+cua spaces sync [OPTIONS] <LOCAL> <TARGET>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<LOCAL>` | string | required | The folder on this computer. |
+| `<TARGET>` | string | required | `SPACE:DEST`: the Space (id or name) and the folder in it, absolute or relative to the Space user's home (`builder:/src/repo`, `relay:space-0123…:work`). |
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-spaces-sync--exclude"></span>`--exclude` | string |  | Leave this out too: a gitignore-style pattern (repeatable). |
+| <span id="cua-spaces-sync--no-gitignore"></span>`--no-gitignore` | boolean | `false` | Take files `.gitignore` leaves out too. |
+| <span id="cua-spaces-sync--include-git"></span>`--include-git` | boolean | `false` | Take the `.git` directory too. |
+| <span id="cua-spaces-sync--no-delete"></span>`--no-delete` | boolean | `false` | Keep files an earlier sync put there that are gone here. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-spaces-sync"
+cua spaces sync ./my-repo builder:/src/my-repo
+cua spaces sync . relay:space-0123456789abcdef:work --exclude '*.mp4'
+```
+
 ### `cua spaces start`
 
 Turn a Space back on: resume a suspended one or boot a stopped one.
@@ -501,6 +530,33 @@ cua spaces relay-unregister [OPTIONS] <SPACE>
 ```bash test="cli-shape" id="ref-cua-spaces-relay-unregister"
 cua spaces relay-unregister local:studio
 cua spaces relay-unregister relay:space-0123abcd4567ef89
+```
+
+## `cua sync`
+
+Make a folder in a Space hold what a folder here holds now, sending only what changed since the last sync: `cua sync ./repo builder:/src/repo`. Like git, `.gitignore`d files and `.git` stay behind; changed files get the time of the sync, so incremental builds rebuild exactly them.
+
+```text output
+cua sync [OPTIONS] <LOCAL> <TARGET>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<LOCAL>` | string | required | The folder on this computer. |
+| `<TARGET>` | string | required | `SPACE:DEST`: the Space (id or name) and the folder in it, absolute or relative to the Space user's home (`builder:/src/repo`, `relay:space-0123…:work`). |
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-sync--exclude"></span>`--exclude` | string |  | Leave this out too: a gitignore-style pattern (repeatable). |
+| <span id="cua-sync--no-gitignore"></span>`--no-gitignore` | boolean | `false` | Take files `.gitignore` leaves out too. |
+| <span id="cua-sync--include-git"></span>`--include-git` | boolean | `false` | Take the `.git` directory too. |
+| <span id="cua-sync--no-delete"></span>`--no-delete` | boolean | `false` | Keep files an earlier sync put there that are gone here. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-sync"
+cua sync ./my-repo builder:/src/my-repo
+cua sync . relay:space-0123456789abcdef:work --exclude '*.mp4' --json
 ```
 
 ## `cua host`

@@ -42,6 +42,7 @@ pub const SPACES_TOOL_METHODS: &[(&str, &str)] = &[
     ("space_bash", "Space.bash"),
     ("space_write", "Space.write"),
     ("upload", "Space.upload"),
+    ("space_sync", "Spaces.sync"),
     ("send_file", "Space.send_file"),
     ("download", "Space.download"),
     ("stream_endpoint", "Space.open_stream"),
@@ -2013,6 +2014,57 @@ pub struct SpacePowerReport {
     pub message: String,
 }
 
+/// What [`Spaces::sync`] takes from the folder.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SpaceSyncOptions {
+    /// Leave out what `.gitignore` leaves out.
+    #[uniffi(default = true)]
+    pub gitignore: bool,
+    /// Take the `.git` directory too.
+    #[uniffi(default = false)]
+    pub include_git: bool,
+    /// Delete files an earlier sync put there that are gone here.
+    #[uniffi(default = true)]
+    pub delete: bool,
+    /// More to leave out: gitignore-style patterns.
+    #[uniffi(default = [])]
+    pub exclude: Vec<String>,
+}
+
+impl Default for SpaceSyncOptions {
+    fn default() -> Self {
+        SpaceSyncOptions {
+            gitignore: true,
+            include_git: false,
+            delete: true,
+            exclude: Vec::new(),
+        }
+    }
+}
+
+/// What [`Spaces::sync`] did.
+#[derive(Debug, Clone, PartialEq, uniffi::Record, Deserialize, Serialize)]
+pub struct SpaceSyncReport {
+    /// The Space.
+    pub space: String,
+    /// The folder in it.
+    pub dest: String,
+    /// Files the host folder has.
+    pub files: u64,
+    /// Files sent (new or changed).
+    pub sent: u64,
+    /// Their bytes, before compression.
+    pub sent_bytes: u64,
+    /// Bytes that went over the wire.
+    pub transferred_bytes: u64,
+    /// Files deleted in the Space.
+    pub deleted: u64,
+    /// Files already up to date.
+    pub unchanged: u64,
+    /// Seconds it took.
+    pub seconds: f64,
+}
+
 /// Result of [`Space::agent_start`].
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct AgentStartReport {
@@ -3639,6 +3691,39 @@ impl Spaces {
             parse(
                 host.tool_value("stop_space", json!({"space": space}))
                     .await?,
+            )
+        })
+        .await
+    }
+
+    /// Makes `dest` in Space `space` hold what the host folder `path` holds
+    /// now, sending only what changed since the last sync to it (`.gitignore`
+    /// and `.git` left out by default). Changed files get the time of the
+    /// sync, so incremental builds rebuild exactly them; files an earlier
+    /// sync put there that are gone here are deleted; nothing else in
+    /// `dest` is touched.
+    pub async fn sync(
+        &self,
+        space: String,
+        path: String,
+        dest: String,
+        options: Option<SpaceSyncOptions>,
+    ) -> Result<SpaceSyncReport> {
+        let host = self.host.clone();
+        let o = options.unwrap_or_default();
+        // The daemon may run with another working directory.
+        let path = std::fs::canonicalize(&path)
+            .map(|p| p.to_string_lossy().into_owned())
+            .map_err(|e| CuaError::InvalidArgument(format!("{path}: {e}")))?;
+        run(async move {
+            parse(
+                host.tool_value(
+                    "space_sync",
+                    json!({"space": space, "path": path, "dest": dest,
+                        "gitignore": o.gitignore, "include_git": o.include_git,
+                        "delete": o.delete, "exclude": o.exclude}),
+                )
+                .await?,
             )
         })
         .await

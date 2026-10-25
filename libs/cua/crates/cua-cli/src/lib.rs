@@ -141,6 +141,15 @@ enum Command {
     /// signed-in devices (never localhost): `cua share 3000`, `cua share
     /// ./report.html`, `cua share ls`, `cua share stop ID`.
     Share(share_cmd::ShareArgs),
+    /// Make a folder in a Space hold what a folder here holds now, sending
+    /// only what changed since the last sync: `cua sync ./repo
+    /// builder:/src/repo`. Like git, `.gitignore`d files and `.git` stay
+    /// behind; changed files get the time of the sync, so incremental
+    /// builds rebuild exactly them.
+    #[command(after_help = "Examples:
+  cua sync ./my-repo builder:/src/my-repo
+  cua sync . relay:space-0123456789abcdef:work --exclude '*.mp4' --json")]
+    Sync(host::SyncArgs),
     /// Run coding agents inside a sandbox: run, ls, logs, send, interrupt, stop.
     #[command(subcommand)]
     Agent(agent_cmd::AgentCmd),
@@ -1257,7 +1266,11 @@ async fn env_at(
     cua.spacesd(url.to_string(), token).await
 }
 
-async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
+async fn run(mut cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
+    // `cua sync` is `cua spaces sync`.
+    if let Command::Sync(a) = &cli.command {
+        cli.command = Command::Spaces(host::SpacesCmd::Sync(a.clone()));
+    }
     let json = cli.json;
     // Teams turned off (CUA_EXPERIMENTAL_TEAMS=0): refused before any
     // sign-in, daemon or relay call.
@@ -1726,6 +1739,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             | host::SpacesCmd::Delete { .. }
             | host::SpacesCmd::Stop { .. }
             | host::SpacesCmd::Start { .. }
+            | host::SpacesCmd::Sync(_)
             | host::SpacesCmd::Egress { .. }
             | host::SpacesCmd::Prewarm { .. }
             | host::SpacesCmd::Share { .. }
@@ -1749,6 +1763,8 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                     // your cloud, is turned off and on through the relay.
                     | host::SpacesCmd::Stop { .. }
                     | host::SpacesCmd::Start { .. }
+                    // A Space on the relay is synced through it.
+                    | host::SpacesCmd::Sync(_)
                     | host::SpacesCmd::Egress { .. }
                     | host::SpacesCmd::Prewarm { .. }
             );
@@ -2158,6 +2174,7 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         | Command::Jobs(_)
         | Command::Computers
         | Command::Spaces(_)
+        | Command::Sync(_)
         | Command::Cloud(_)
         | Command::Devices(_)
         | Command::Team(_)

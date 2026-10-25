@@ -100,6 +100,17 @@
       "metering": "free"
     },
     {
+      "tool": "space_sync",
+      "sdk_symbol": "Space::sync",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
       "tool": "upload",
       "sdk_symbol": "Space::upload",
       "providers": [

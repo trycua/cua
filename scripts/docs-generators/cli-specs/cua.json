@@ -768,6 +768,92 @@
    "usage": "cua share [OPTIONS] <TARGET>\n       cua share <COMMAND>"
   },
   {
+   "abstract": "Make a folder in a Space hold what a folder here holds now, sending only what changed since the last sync: `cua sync ./repo builder:/src/repo`. Like git, `.gitignore`d files and `.git` stay behind; changed files get the time of the sync, so incremental builds rebuild exactly them",
+   "after_help": "Examples:\n  cua sync ./my-repo builder:/src/my-repo\n  cua sync . relay:space-0123456789abcdef:work --exclude '*.mp4' --json",
+   "aliases": [],
+   "arguments": [
+    {
+     "default_value": null,
+     "help": "The folder on this computer",
+     "hidden": false,
+     "is_optional": false,
+     "name": "LOCAL",
+     "possible_values": [],
+     "repeatable": false,
+     "type": "string"
+    },
+    {
+     "default_value": null,
+     "help": "`SPACE:DEST`: the Space (id or name) and the folder in it, absolute or relative to the Space user's home (`builder:/src/repo`, `relay:space-0123…:work`)",
+     "hidden": false,
+     "is_optional": false,
+     "name": "TARGET",
+     "possible_values": [],
+     "repeatable": false,
+     "type": "string"
+    }
+   ],
+   "flags": [
+    {
+     "aliases": [],
+     "default_value": false,
+     "env": null,
+     "help": "Take files `.gitignore` leaves out too",
+     "hidden": false,
+     "name": "no-gitignore",
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": false
+    },
+    {
+     "aliases": [],
+     "default_value": false,
+     "env": null,
+     "help": "Take the `.git` directory too",
+     "hidden": false,
+     "name": "include-git",
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": false
+    },
+    {
+     "aliases": [],
+     "default_value": false,
+     "env": null,
+     "help": "Keep files an earlier sync put there that are gone here",
+     "hidden": false,
+     "name": "no-delete",
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": false
+    }
+   ],
+   "hidden": false,
+   "hidden_aliases": [],
+   "name": "sync",
+   "options": [
+    {
+     "aliases": [],
+     "default_value": null,
+     "env": null,
+     "help": "Leave this out too: a gitignore-style pattern (repeatable)",
+     "hidden": false,
+     "is_optional": true,
+     "multiple_values": false,
+     "name": "exclude",
+     "possible_values": [],
+     "repeatable": true,
+     "short_name": null,
+     "takes_value": true,
+     "type": "string",
+     "value_name": "PATTERN"
+    }
+   ],
+   "subcommand_optional": false,
+   "subcommands": [],
+   "usage": "cua sync [OPTIONS] <LOCAL> <TARGET>"
+  },
+  {
    "abstract": "Run coding agents inside a sandbox: run, ls, logs, send, interrupt, stop",
    "aliases": [],
    "arguments": [],
@@ -13333,6 +13419,92 @@
      "subcommand_optional": false,
      "subcommands": [],
      "usage": "cua spaces stop [OPTIONS] <SPACE>"
+    },
+    {
+     "abstract": "Make a folder in a Space hold what a folder on this computer holds now, sending only what changed since the last sync (`cua sync`)",
+     "after_help": "Examples:\n  cua spaces sync ./my-repo builder:/src/my-repo\n  cua spaces sync . relay:space-0123456789abcdef:work --exclude '*.mp4'",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "The folder on this computer",
+       "hidden": false,
+       "is_optional": false,
+       "name": "LOCAL",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      },
+      {
+       "default_value": null,
+       "help": "`SPACE:DEST`: the Space (id or name) and the folder in it, absolute or relative to the Space user's home (`builder:/src/repo`, `relay:space-0123…:work`)",
+       "hidden": false,
+       "is_optional": false,
+       "name": "TARGET",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Take files `.gitignore` leaves out too",
+       "hidden": false,
+       "name": "no-gitignore",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Take the `.git` directory too",
+       "hidden": false,
+       "name": "include-git",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Keep files an earlier sync put there that are gone here",
+       "hidden": false,
+       "name": "no-delete",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "sync",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Leave this out too: a gitignore-style pattern (repeatable)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "exclude",
+       "possible_values": [],
+       "repeatable": true,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "PATTERN"
+      }
+     ],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua spaces sync [OPTIONS] <LOCAL> <TARGET>"
     },
     {
      "abstract": "Turn a Space back on: resume a suspended one or boot a stopped one",

@@ -86,6 +86,7 @@ Returned by [`Cua.spaces`](/cua-sdk/reference/cua#cua).
 | [`routines`](/cua-sdk/reference/spaces/persistent-agents#spacesroutines) | Routines (of one agent, or all). |
 | [`set_egress`](/cua-sdk/reference/spaces/lifetime#spacesset_egress) | Replaces a Space's egress policy; an empty one removes it (see `EgressPolicy`). |
 | [`set_lifetime`](/cua-sdk/reference/spaces/lifetime#spacesset_lifetime) | Gives a Space a lifetime of `seconds` from now, replacing any earlier one: when it passes, the cua daemon deletes the Space (`on_expire` `"delete"`, the default) or turns it off (`"suspend"`), whether or not this process is still running. |
+| [`sync`](/cua-sdk/reference/spaces/sync#spacessync) | Makes `dest` in Space `space` hold what the host folder `path` holds now, sending only what changed since the last sync to it (`.gitignore` and `.git` left out by default). |
 | [`volume_approve`](/cua-sdk/reference/spaces/volume#spacesvolume_approve) | `volume_approve`: the request becomes a grant (with presence). |
 | [`volume_audit`](/cua-sdk/reference/spaces/volume#spacesvolume_audit) | `volume_audit`: the newest events (default 50) and whether the log verified. |
 | [`volume_cache_clear`](/cua-sdk/reference/spaces/volume#spacesvolume_cache_clear) | `volume_cache_clear`: drops every cached block. |

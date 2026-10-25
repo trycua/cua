@@ -42,6 +42,7 @@ Full entries: [Commands and files](/spaces/reference/spaces#commands-and-files).
 | --- | --- |
 | <span id="space_bash"></span>[`space_bash`](/spaces/reference/spaces#space_bash) | Run a shell command inside the Space. |
 | <span id="space_write"></span>[`space_write`](/spaces/reference/spaces#space_write) | Write literal text to a path inside the Space. |
+| <span id="space_sync"></span>[`space_sync`](/spaces/reference/spaces#space_sync) | Make a folder in the Space match a folder on this computer, sending only what changed. |
 | <span id="upload"></span>[`upload`](/spaces/reference/spaces#upload) | Send a local file or folder into the Space. |
 | <span id="send_file"></span>[`send_file`](/spaces/reference/spaces#send_file) | Send a host file or folder into the Space's Downloads, verified by sha256 on arrival. |
 | <span id="download"></span>[`download`](/spaces/reference/spaces#download) | Fetch a file or folder out of the Space. |
@@ -1181,5 +1182,5 @@ Tools are gated by `--permissions` (or `CUA_MCP_PERMISSIONS`), a comma-separated
 | `sandbox:all` | 11 permissions | `sandbox:list`, `sandbox:get` |
 | `share:all` | `share:create`, `share:read`, `share:stop` | `share:read` |
 | `skills:all` | `skills:list`, `skills:read`, `skills:record`, `skills:delete` | `skills:list`, `skills:read` |
-| `spaces:all` | 96 permissions | 31 permissions |
+| `spaces:all` | 97 permissions | 31 permissions |
 | `teleport:all` | `teleport:browser` | none |

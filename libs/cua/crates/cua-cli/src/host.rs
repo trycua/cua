@@ -533,6 +533,12 @@ Examples:
         /// Space id or name.
         space: String,
     },
+    /// Make a folder in a Space hold what a folder on this computer holds
+    /// now, sending only what changed since the last sync (`cua sync`).
+    #[command(after_help = "Examples:
+  cua spaces sync ./my-repo builder:/src/my-repo
+  cua spaces sync . relay:space-0123456789abcdef:work --exclude '*.mp4'")]
+    Sync(SyncArgs),
     /// Turn a Space back on: resume a suspended one or boot a stopped one.
     #[command(after_help = "Examples:
   cua spaces start local:studio
@@ -836,6 +842,83 @@ fn cloud_summary(placed: &[(String, String)], total: usize) -> Option<String> {
     ))
 }
 
+/// `cua sync` / `cua spaces sync`.
+#[derive(clap::Args, Debug, Clone)]
+pub struct SyncArgs {
+    /// The folder on this computer.
+    pub local: String,
+    /// `SPACE:DEST`: the Space (id or name) and the folder in it, absolute
+    /// or relative to the Space user's home (`builder:/src/repo`,
+    /// `relay:space-0123…:work`).
+    pub target: String,
+    /// Take files `.gitignore` leaves out too.
+    #[arg(long)]
+    pub no_gitignore: bool,
+    /// Take the `.git` directory too.
+    #[arg(long)]
+    pub include_git: bool,
+    /// Keep files an earlier sync put there that are gone here.
+    #[arg(long)]
+    pub no_delete: bool,
+    /// Leave this out too: a gitignore-style pattern (repeatable).
+    #[arg(long = "exclude", value_name = "PATTERN")]
+    pub exclude: Vec<String>,
+}
+
+/// `SPACE:DEST` split at its last colon (a Space ref has colons of its own;
+/// a destination has none).
+pub fn split_sync_target(target: &str) -> Result<(String, String), CuaError> {
+    match target.rsplit_once(':') {
+        Some((space, dest)) if !space.is_empty() && !dest.is_empty() => {
+            Ok((space.to_string(), dest.to_string()))
+        }
+        _ => Err(CuaError::InvalidArgument(format!(
+            "{target}: use SPACE:DEST, for example builder:/src/repo"
+        ))),
+    }
+}
+
+pub(crate) async fn sync_line(
+    spaces: &cua_sdk::Spaces,
+    a: SyncArgs,
+    json: bool,
+    out: &mut dyn Write,
+) -> Result<i32, CuaError> {
+    let (space, dest) = split_sync_target(&a.target)?;
+    let r = spaces
+        .sync(
+            space,
+            a.local,
+            dest,
+            Some(cua_sdk::SpaceSyncOptions {
+                gitignore: !a.no_gitignore,
+                include_git: a.include_git,
+                delete: !a.no_delete,
+                exclude: a.exclude,
+            }),
+        )
+        .await?;
+    if json {
+        line(out, serde_json::to_string(&r).unwrap_or_default());
+    } else {
+        line(
+            out,
+            format!(
+                "Synced {} files to {}:{} in {:.1}s: {} sent ({} KiB over the wire), {} deleted, {} unchanged",
+                r.files,
+                r.space,
+                r.dest,
+                r.seconds,
+                r.sent,
+                r.transferred_bytes / 1024,
+                r.deleted,
+                r.unchanged
+            ),
+        );
+    }
+    Ok(0)
+}
+
 fn power_line(r: cua_sdk::SpacePowerReport, json: bool, out: &mut dyn Write) {
     if json {
         line(
@@ -969,6 +1052,7 @@ pub async fn run_spaces_sdk(
                 line(out, format!("{space} was not on the relay."));
             }
         }
+        SpacesCmd::Sync(a) => return sync_line(&spaces, a, json, out).await,
         SpacesCmd::Stop { space } => power_line(spaces.stop(space).await?, json, out),
         SpacesCmd::Start { space } => power_line(spaces.start(space).await?, json, out),
         SpacesCmd::Prewarm {

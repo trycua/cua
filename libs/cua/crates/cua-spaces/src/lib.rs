@@ -95,6 +95,7 @@ pub mod services;
 pub mod snapshots;
 mod space;
 mod spaces;
+pub mod sync;
 pub mod thumbnails;
 
 #[cfg(feature = "spaces-agents")]

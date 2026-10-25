@@ -714,6 +714,17 @@ impl Space {
         })
     }
 
+    /// `space_sync`: makes `dest` in this Space hold what the host folder
+    /// `local_path` holds, sending only what changed since the last sync
+    /// (`.gitignore` and `.git` left out). Returns the sync report
+    /// (`files`, `sent`, `deleted`, `unchanged`, ...).
+    pub fn sync(&self, local_path: &str, dest: &str) -> Result<Map<String, Value>> {
+        self.call_object(
+            "space_sync",
+            self.arguments(json!({ "path": local_path, "dest": dest })),
+        )
+    }
+
     /// `upload`. Reports the path it actually wrote — `FRICTION.md` §13:
     /// *"`upload` overwrites its destination silently … and no returned
     /// path"*. The collision-safe placement keeps the user's filename intact

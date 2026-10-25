@@ -582,6 +582,20 @@ async fn dispatch(
                 r.path, r.bytes, r.sha256
             )))
         }
+        "space_sync" => {
+            let a: i::SpaceSync = args(tool, a)?;
+            let opts = crate::sync::SyncOptions {
+                gitignore: a.gitignore.unwrap_or(true),
+                include_git: a.include_git.unwrap_or(false),
+                delete: a.delete.unwrap_or(true),
+                exclude: a.exclude,
+            };
+            Ok(ToolOutcome::json(
+                &spaces
+                    .sync(&a.space, &expand_host_path(&a.path), &a.dest, &opts)
+                    .await?,
+            ))
+        }
         #[cfg(feature = "spaces-files")]
         "upload" => {
             let a: i::Upload = args(tool, a)?;

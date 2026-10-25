@@ -268,6 +268,37 @@ pub struct SpacesdFeature {
 }
 ```
 
+### `SpaceSyncOptions`
+
+What `Spaces::sync` takes from the folder.
+
+```rust
+pub struct SpaceSyncOptions {
+  pub gitignore: bool,
+  pub include_git: bool,
+  pub delete: bool,
+  pub exclude: Vec<String>,
+}
+```
+
+### `SpaceSyncReport`
+
+What `Spaces::sync` did.
+
+```rust
+pub struct SpaceSyncReport {
+  pub space: String,
+  pub dest: String,
+  pub files: u64,
+  pub sent: u64,
+  pub sent_bytes: u64,
+  pub transferred_bytes: u64,
+  pub deleted: u64,
+  pub unchanged: u64,
+  pub seconds: f64,
+}
+```
+
 ### `SpaceThumbnail`
 
 A Space's latest thumbnail, from the cache every client ...

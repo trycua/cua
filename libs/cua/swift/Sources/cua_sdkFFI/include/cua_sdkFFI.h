@@ -2308,6 +2308,11 @@ uint64_t uniffi_cua_sdk_fn_method_spaces_start(uint64_t ptr, RustBuffer space
 uint64_t uniffi_cua_sdk_fn_method_spaces_stop(uint64_t ptr, RustBuffer space
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_SYNC
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_SYNC
+uint64_t uniffi_cua_sdk_fn_method_spaces_sync(uint64_t ptr, RustBuffer space, RustBuffer path, RustBuffer dest, RustBuffer options
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_VOLUME_APPROVE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_VOLUME_APPROVE
 uint64_t uniffi_cua_sdk_fn_method_spaces_volume_approve(uint64_t ptr, RustBuffer request_id, RustBuffer expires_in_secs
@@ -5654,6 +5659,12 @@ uint16_t uniffi_cua_sdk_checksum_method_spaces_start(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_STOP
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_STOP
 uint16_t uniffi_cua_sdk_checksum_method_spaces_stop(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_SYNC
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_SYNC
+uint16_t uniffi_cua_sdk_checksum_method_spaces_sync(void
 
 );
 #endif

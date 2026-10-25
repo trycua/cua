@@ -210,6 +210,11 @@ local_home_is_isolated() {
     links_are_isolated "$home" 3 1 || return 1
     links_are_isolated "$home/host" 3 4 || return 1
     links_are_isolated "$home/helper" 3 4 || return 1
+    # The helper's spec is shared by every environment: it lives in the Local
+    # home itself, and `host remove` deletes it whichever environment it runs for.
+    resolved="$(canonicalize_path "$LOCAL_HOME/helper")" || return 1
+    reject_stable_overlap "Local state" "$resolved" >/dev/null 2>&1 || return 1
+    links_are_isolated "$LOCAL_HOME/helper" 3 4 || return 1
 }
 
 # Takes this Mac off the relay, while the sign-in and the host's machine token

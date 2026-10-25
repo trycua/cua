@@ -1160,13 +1160,20 @@ impl AgentSetup {
                 let file = self.mcp_file(m);
                 // The channel's server (`cua`, or `cua-local`) always gets a
                 // row; other servers (`cua-driver`) only when cua registered
-                // them there.
+                // them there, and never for Local (below).
                 let mut names = state.names_in(&file);
                 let own = self.env.channel.mcp_server_name();
                 if state.record(own, &file).is_none() {
                     names.insert(0, own.to_string());
                 }
                 for name in names {
+                    // Local removes its own server and no other: `cua` is the
+                    // released app's and `cua-driver` is Cua Driver's, names
+                    // Local does not own even when its record says it wrote
+                    // the entry first (CUA-1776).
+                    if self.env.channel.is_local() && name != own {
+                        continue;
+                    }
                     let mut o = Outcome {
                         agents: vec![a.id.into()],
                         target: Target::Mcp,

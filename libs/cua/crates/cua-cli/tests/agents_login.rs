@@ -589,6 +589,69 @@ async fn the_local_cli_removes_only_its_own_entries_and_leaves_stables_cua_and_c
     );
 }
 
+/// The other order: Local registered `cua-driver` first and the released app
+/// later set up the same command. Local's record still says it wrote the entry,
+/// but the name is Cua Driver's, so removing Local's setup leaves it, and the
+/// released app's `cua-driver` skill, alone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_local_cli_leaves_cua_driver_alone_even_when_it_registered_it_first() {
+    let mut h = home();
+    mkdirs(&h, &[".cursor"]);
+    let cursor = h.dir.path().join(".cursor/mcp.json");
+    let root = h.dir.path().to_path_buf();
+    let skill = move |name: &str| root.join(".agents/skills").join(name);
+    let driver = [
+        "agents",
+        "setup",
+        "--cua-driver",
+        "--agents",
+        "cursor",
+        "--yes",
+        "--mcp-command",
+        "/opt/drv/cua-driver",
+    ];
+
+    let local_home = h.dir.path().join(".cua-local");
+    h.set("CUA_CHANNEL", "local")
+        .set("CUA_HOME", local_home.display().to_string());
+    h.run(&driver).await.ok();
+    h.run(&[
+        "agents",
+        "setup",
+        "--agents",
+        "cursor",
+        "--yes",
+        "--mcp-command",
+        "/opt/cua-local/bin/cua-local",
+    ])
+    .await
+    .ok();
+    // Then the released app, its own home, the same command.
+    let stable_home = h.dir.path().join(".cua").display().to_string();
+    h.set("CUA_CHANNEL", "stable").set("CUA_HOME", stable_home);
+    h.run(&driver).await.ok();
+    assert!(skill("cua-driver").join("SKILL.md").is_file());
+
+    h.set("CUA_CHANNEL", "local")
+        .set("CUA_HOME", local_home.display().to_string());
+    h.run(&["agents", "remove", "--yes"]).await.ok();
+    let left: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&cursor).unwrap()).unwrap();
+    assert!(left["mcpServers"]["cua-local"].is_null(), "{left}");
+    assert_eq!(
+        left["mcpServers"]["cua-driver"]["command"], "/opt/drv/cua-driver",
+        "Cua Driver's server stays: {left}"
+    );
+    assert!(
+        skill("cua-driver").join("SKILL.md").is_file(),
+        "the released app's cua-driver skill stays"
+    );
+    assert!(
+        !skill("cua-driver-local").exists() && !skill("cua-spaces-local").exists(),
+        "Local's own skills went"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn agents_setup_cua_driver_adds_the_driver_skill_and_server() {
     let h = home();

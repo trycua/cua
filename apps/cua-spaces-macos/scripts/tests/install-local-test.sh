@@ -1361,7 +1361,7 @@ check "Stable files, library folders included, are byte-identical" '[ "$(snap_st
 # A Local home that is a link into the released Cua Spaces' folders: the CLI
 # would unregister Stable's host and delete its state, so it is not asked, and
 # only the link is removed.
-for linked in home host host-config host-token host-spaces helper-spec credentials host-elsewhere; do
+for linked in home host host-config host-token host-spaces helper-spec credentials host-elsewhere shared-helper; do
     reset_fixture
     mkdir -p "$FAKE_HOME/.cua/host"
     echo '{"stable":true}' > "$FAKE_HOME/.cua/host/config.json"
@@ -1386,6 +1386,12 @@ for linked in home host host-config host-token host-spaces helper-spec credentia
                 host-token) ln -s "$FAKE_HOME/.cua/host/machine-token" "$FAKE_HOME/.cua-local/host/machine-token" ;;
                 host-spaces) ln -s "$FAKE_HOME/.cua/host/provided-spaces.json" "$FAKE_HOME/.cua-local/host/provided-spaces.json" ;;
             esac ;;
+        shared-helper)
+            # The helper folder is shared by every environment, so a link in it
+            # into Stable's counts for the prod home too.
+            mkdir -p "$FAKE_HOME/.cua-local/envs/prod"
+            echo '{}' > "$FAKE_HOME/.cua-local/envs/prod/credentials.json"
+            ln -s "$FAKE_HOME/.cua/helper" "$FAKE_HOME/.cua-local/helper" ;;
         host-elsewhere)
             # The host folder is a link to a folder of its own that holds the
             # link into Stable's host folder: one indirection more.

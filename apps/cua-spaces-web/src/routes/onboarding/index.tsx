@@ -244,6 +244,9 @@ function AgentMark({ agent, name, className }: { agent: string; name?: string; c
 }
 
 /** The prompt "done" hands over: a real job where a fresh computer matters. */
+/** First letter up: "your 5 coding apps can use Cua." as a sentence. */
+const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
 const FIRST_PROMPT = "Reproduce the crash from issue #4821 on a fresh Windows 11 Space and show me a recording.";
 
 /** The coding apps named when none is installed, in this order. */
@@ -362,11 +365,13 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
   }
 
   const all = pending.length === 0;
+  // Up to three names read well in a heading; more are "your 5 coding apps" and the rows name them.
+  const phrase = (list: { name: string }[]) => (list.length <= 3 ? listNames(list.map((a) => a.name)) : `your ${list.length} coding apps`);
   const title = all
-    ? `${listNames(rows.map((a) => a.name))} can use Cua.`
+    ? sentence(`${phrase(rows)} can use Cua.`)
     : failed.length
-      ? `${ready.length ? `${listNames(ready.map((a) => a.name))} can use Cua. ` : ""}${listNames(failed.map((a) => a.name))} needs a hand.`
-      : `Let ${listNames(rows.map((a) => a.name))} use Cua?`;
+      ? `${ready.length ? sentence(`${phrase(ready)} can use Cua.`) + " " : ""}${sentence(`${phrase(failed)} ${failed.length === 1 ? "needs" : "need"} a hand.`)}`
+      : `Let ${phrase(rows)} use Cua?`;
 
   return (
     <Step id="connect" onBack={fr.back}>

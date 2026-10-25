@@ -112,7 +112,7 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     const calls = await mount();
     await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
     click("[data-onboarding-primary]");
-    await waitFor(() => expect(heading()).toBe("Let Hermes, Claude Code, OpenAI Codex, Cursor and OpenClaw use Cua?"));
+    await waitFor(() => expect(heading()).toBe("Let your 5 coding apps use Cua?"));
     // The apps found here, most preferred first; nothing connected by itself, no per-app buttons or file paths.
     await waitFor(() => expect(agents()).toEqual(["hermes", "claude-code", "codex", "cursor", "openclaw"]));
     expect([...document.querySelectorAll<HTMLElement>("[data-first-run-agent]")].every((e) => e.dataset.connected === "false")).toBe(true);
@@ -124,7 +124,7 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     expect(connectedAppsState().auto).toBeNull();
     click("[data-first-run-set-up]");
     await waitFor(() => expect(calls.filter((c) => c.op === "agents.configure").map((c) => (c.args as { agents: string[] }).agents)).toHaveLength(5));
-    await waitFor(() => expect(heading()).toBe("Hermes, Claude Code, OpenAI Codex, Cursor and OpenClaw can use Cua."));
+    await waitFor(() => expect(heading()).toBe("Your 5 coding apps can use Cua."));
     expect(document.querySelector("[data-first-run-prompt]")!.textContent).toBe("Reproduce the crash from issue #4821 on a fresh Windows 11 Space and show me a recording.");
     expect(document.body.textContent).toMatch(/restart it first/);
     expect(connectedAppsState().auto).toBe(true);

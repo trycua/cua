@@ -251,7 +251,7 @@ export interface EmptyTile {
   os: "linux" | "macos";
   /** "Linux", "macOS". */
   name: string;
-  /** "About 1 minute · 3.2–7.1 GB of disk", "About 22 GB download". */
+  /** "About 3 minutes · 3.3–7.3 GB of disk", "About 22 GB download". */
   detail: string;
 }
 

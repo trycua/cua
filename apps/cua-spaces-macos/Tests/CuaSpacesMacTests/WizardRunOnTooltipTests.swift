@@ -29,7 +29,7 @@ struct WizardRunOnTooltipTests {
             #expect(v.placementId == "local")
             seen[os] = NewSpaceWizardView.runOnHelp(v)
         }
-        #expect(seen[.linux] == "Container on this Mac (gVisor when installed)")
+        #expect(seen[.linux] == "Linux, on this Mac")
         #expect(seen[.windows] == "QEMU virtual machine on this Mac")
         #expect(seen[.macos] == "Lume virtual machine (Apple silicon)")
     }

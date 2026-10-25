@@ -272,13 +272,29 @@ const CODE_REUSE_MARGIN_SECS: u64 = 60;
 /// relay's default bootstrap window).
 const FRESH_SIGN_IN_SECS: u64 = 600;
 
-/// The unverified `auth_time` claim of a JWT access token (display and
-/// local decisions only; the relay verifies).
-fn token_auth_time(token: &str) -> Option<u64> {
+/// The unverified claims of a JWT access token (display and local
+/// decisions only; the relay verifies).
+fn token_claims(token: &str) -> Option<serde_json::Value> {
     let payload = token.split('.').nth(1)?;
     let bytes = b64().decode(payload.trim_end_matches('=')).ok()?;
-    let claims: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-    claims.get("auth_time")?.as_u64()
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// The unverified `auth_time` claim of a JWT access token.
+fn token_auth_time(token: &str) -> Option<u64> {
+    token_claims(token)?.get("auth_time")?.as_u64()
+}
+
+/// The unverified `sub` claim of a JWT access token: which account it is
+/// for. A long-running process compares it to the account it started
+/// state for (a mesh node, a pool agent) to notice a sign-in as another
+/// account; the relay still verifies every token.
+pub fn token_subject(token: &str) -> Option<String> {
+    token_claims(token)?
+        .get("sub")?
+        .as_str()
+        .map(str::to_owned)
+        .filter(|s| !s.is_empty())
 }
 
 impl std::fmt::Debug for DeviceAuth {

@@ -85,11 +85,16 @@ enum Slot {
         dialer: Arc<Dialer>,
         /// Held while the node lives: one persistent identity per home.
         _lock: Option<std::fs::File>,
+        /// The account the node connected for (an account node).
+        account: Option<String>,
     },
     /// The mesh cannot be used (the relay has none, or refused this
-    /// device), and why; checked again after a while.
-    Unsupported(Instant, String),
+    /// device), and why; checked again after a while (or at once when
+    /// another account signs in).
+    Unsupported(Instant, String, Option<String>),
 }
+
+use crate::relay::account_changed;
 
 const RECHECK: Duration = Duration::from_secs(600);
 
@@ -307,7 +312,28 @@ impl MeshClients {
     }
 
     async fn dialer(&self, via: &Via<'_>) -> Result<Arc<Dialer>, String> {
-        let key = key_of(via);
+        let account = match via {
+            Via::Account(a) => a.account_subject().await,
+            Via::Static { .. } => None,
+        };
+        self.dialer_with(key_of(via), account, || start(via)).await
+    }
+
+    /// The node for `key`, started by `start` when there is none, it can
+    /// no longer be used, or another account is signed in than the one it
+    /// connected for (its connection to the relay is that account's until
+    /// it reconnects, so Spaces of the new account would not be on its
+    /// map and would take the relay's HTTPS path).
+    async fn dialer_with<F, Fut>(
+        &self,
+        key: Key,
+        account: Option<String>,
+        start: F,
+    ) -> Result<Arc<Dialer>, String>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<(Dialer, Option<std::fs::File>), String>>,
+    {
         let mut nodes = self.nodes.lock().await;
         match nodes.get(&key) {
             // A node the relay no longer coordinates (mesh turned off, or
@@ -318,13 +344,24 @@ impl MeshClients {
                 dialer.mesh().shutdown();
                 nodes.remove(&key);
             }
+            Some(Slot::Ready {
+                dialer,
+                account: started,
+                ..
+            }) if account_changed(started, &account) => {
+                tracing::info!("another account signed in: starting the mesh node again for it");
+                dialer.mesh().shutdown();
+                nodes.remove(&key);
+            }
             Some(Slot::Ready { dialer, .. }) => return Ok(dialer.clone()),
-            Some(Slot::Unsupported(at, why)) if at.elapsed() < RECHECK => {
+            Some(Slot::Unsupported(at, why, started))
+                if at.elapsed() < RECHECK && !account_changed(started, &account) =>
+            {
                 return Err(why.clone());
             }
             _ => {}
         }
-        match start(via).await {
+        match start().await {
             Ok((d, lock)) => {
                 let d = Arc::new(d);
                 nodes.insert(
@@ -332,12 +369,13 @@ impl MeshClients {
                     Slot::Ready {
                         dialer: d.clone(),
                         _lock: lock,
+                        account,
                     },
                 );
                 Ok(d)
             }
             Err(e) => {
-                nodes.insert(key, Slot::Unsupported(Instant::now(), e.clone()));
+                nodes.insert(key, Slot::Unsupported(Instant::now(), e.clone(), account));
                 Err(e)
             }
         }
@@ -651,6 +689,7 @@ mod tests {
             Slot::Ready {
                 dialer: Arc::new(dialer),
                 _lock: None,
+                account: None,
             },
         );
         clients
@@ -700,6 +739,60 @@ mod tests {
         );
     }
 
+    fn as_account(token: &'static str) -> cua_mesh::AuthProvider {
+        cua_mesh::static_auth(vec![(
+            "x-cua-relay-authorization".into(),
+            format!("Bearer {token}"),
+        )])
+    }
+
+    /// The daemon's node is connected as the account that was signed in
+    /// when it started. When another account signs in, the node is started
+    /// again for it (with a new key), instead of staying on the previous
+    /// account's map where the new account's computers are missing.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_running_node_is_replaced_when_another_account_signs_in() {
+        let coord = cua_mesh::testing::FakeCoordinator::start(cua_mesh::Mode::Account).await;
+        let dir = tempfile::tempdir().unwrap();
+        let identity = dir.path().join("client.json");
+        let clients = MeshClients::default();
+        let key = Key::Account(coord.url.clone());
+        let starter = |token: &'static str| {
+            let (url, identity) = (coord.url.clone(), identity.clone());
+            move || async move {
+                let d = start_dialer(&url, as_account(token), Some(identity)).await?;
+                Ok::<_, String>((d, None))
+            }
+        };
+        let a = clients
+            .dialer_with(key.clone(), Some("sub-a".into()), starter("a"))
+            .await
+            .unwrap();
+        let key_a = a.mesh().node_key();
+        // The same account again: the same node.
+        let again = clients
+            .dialer_with(key.clone(), Some("sub-a".into()), starter("a"))
+            .await
+            .unwrap();
+        assert!(Arc::ptr_eq(&a, &again));
+        // A session that does not say who it is never restarts the node.
+        let unknown = clients
+            .dialer_with(key.clone(), None, starter("a"))
+            .await
+            .unwrap();
+        assert!(Arc::ptr_eq(&a, &unknown));
+
+        // Another account signs in.
+        let b = clients
+            .dialer_with(key.clone(), Some("sub-b".into()), starter("b"))
+            .await
+            .unwrap();
+        assert!(!Arc::ptr_eq(&a, &b), "a new node for the new account");
+        assert_ne!(b.mesh().node_key(), key_a, "with a new key");
+        assert!(b.mesh().unusable().is_none());
+        b.mesh().shutdown();
+    }
+
     /// Signing in as another account on this computer: the saved node key
     /// belongs to the previous account, so it is rotated and the node joins
     /// the mesh as the new account.
@@ -708,12 +801,6 @@ mod tests {
         let coord = cua_mesh::testing::FakeCoordinator::start(cua_mesh::Mode::Account).await;
         let dir = tempfile::tempdir().unwrap();
         let identity = dir.path().join("client.json");
-        let as_account = |token: &'static str| -> cua_mesh::AuthProvider {
-            cua_mesh::static_auth(vec![(
-                "x-cua-relay-authorization".into(),
-                format!("Bearer {token}"),
-            )])
-        };
         // Signed in as A: the node registers its key.
         let a = start_dialer(&coord.url, as_account("a"), Some(identity.clone()))
             .await
@@ -762,6 +849,7 @@ mod tests {
             Slot::Ready {
                 dialer: Arc::new(dialer),
                 _lock: None,
+                account: None,
             },
         );
         clients.note_fallback("relay:late", &Via::Account(&a), "late");

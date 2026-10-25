@@ -1449,7 +1449,9 @@ class VM {
             sharedDirectories: sharedDirectories,
             mount: mount,
             hardwareModel: vmDirContext.config.hardwareModel,
-            machineIdentifier: vmDirContext.config.machineIdentifier,
+            machineIdentifier: getOSType() == "linux"
+                ? vmDirContext.dir.linuxMachineIdentifier()
+                : vmDirContext.config.machineIdentifier,
             macAddress: vmDirContext.config.macAddress!,
             diskPath: vmDirContext.diskPath,
             nvramPath: vmDirContext.nvramPath,

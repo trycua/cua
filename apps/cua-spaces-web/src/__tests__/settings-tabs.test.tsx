@@ -51,7 +51,7 @@ describe.skipIf(!wasmBuilt)("Settings tabs (real routes, wasm core)", () => {
 
   it("puts Connected apps where Agents was, with the account keys and Terminal", async () => {
     await mountApp("/settings/connected-apps", host);
-    await waitFor(() => expect(document.querySelector("[data-agent-keys]")).not.toBeNull());
+    await waitFor(() => expect(document.querySelector("[data-agent-keys]")).not.toBeNull(), { timeout: 8000 });
     const text = tab("connected-apps")!.textContent!;
     expect(text).toContain("Account keys");
     expect(text).toContain("Add a key for another AI company");

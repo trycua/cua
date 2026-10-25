@@ -13,7 +13,7 @@ use std::sync::Arc;
 use clap::{Args, Subcommand};
 use cua_sdk::{Cua, CuaError, DriveView};
 
-use crate::util::line;
+use crate::util::{hint_line, line};
 
 /// Whose view of the drive a command takes.
 #[derive(Args, Debug, Clone, Default)]
@@ -332,7 +332,7 @@ pub async fn run(
                     .collect();
                 line(out, json!({ "volumes": v }).to_string());
             } else if vols.is_empty() {
-                line(
+                hint_line(
                     out,
                     "No named volumes. Make one with `cua volume named create NAME`.",
                 );

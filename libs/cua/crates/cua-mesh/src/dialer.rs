@@ -110,11 +110,11 @@ impl Dialer {
         env_token: Option<&str>,
         wait: Duration,
     ) -> Result<Route> {
-        let mut forwards = self.forwards.lock().await;
-        if let Some(e) = forwards.get(machine_id)
-            && self.mesh.machine(machine_id).map(|p| p.node_key) == Some(e.route.peer)
-        {
-            return Ok(e.route.clone());
+        // The lock is held only to read and write the table, never across
+        // a wait: one machine missing from the map, or slow to pair, must
+        // not hold up routes to the others.
+        if let Some(route) = self.cached(machine_id).await {
+            return Ok(route);
         }
         // A static relay's machine is in the map only once paired: pair
         // right away instead of waiting for a map that will not have it.
@@ -140,6 +140,14 @@ impl Dialer {
                 crate::VERSION
             )));
         }
+        // The coordinator says it is not connected: say so now, so the
+        // caller moves on (or falls back) instead of waiting on a connect
+        // that cannot answer.
+        if !peer.online {
+            return Err(Error::Unreachable(format!(
+                "computer {machine_id} is offline"
+            )));
+        }
         // Account relays: the machine vouches for this device only on
         // requests carrying the forward's key. Static relays: the env token
         // in each request is the credential.
@@ -156,6 +164,14 @@ impl Dialer {
             session,
             peer: peer.node_key,
         };
+        let mut forwards = self.forwards.lock().await;
+        // Two callers raced to the same machine: the first forward stands
+        // (its session may already be in use); this one is dropped.
+        if let Some(e) = forwards.get(machine_id)
+            && e.route.peer == peer.node_key
+        {
+            return Ok(e.route.clone());
+        }
         forwards.insert(
             machine_id.to_owned(),
             Entry {
@@ -164,6 +180,13 @@ impl Dialer {
             },
         );
         Ok(route)
+    }
+
+    async fn cached(&self, machine_id: &str) -> Option<Route> {
+        let forwards = self.forwards.lock().await;
+        let e = forwards.get(machine_id)?;
+        (self.mesh.machine(machine_id).map(|p| p.node_key) == Some(e.route.peer))
+            .then(|| e.route.clone())
     }
 
     /// Drops the forward to `machine_id` (its path stopped answering).

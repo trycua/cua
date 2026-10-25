@@ -3328,7 +3328,7 @@ public struct AppAboutView: Equatable, Hashable {
      */
     public var versionLine: String
     /**
-     * Acknowledgements, Privacy Policy, Terms of Service, Report an Issue.
+     * Acknowledgements, Privacy Policy, Terms of Service, System Status, Report an Issue.
      */
     public var links: [AppAboutLink]
     /**
@@ -3350,7 +3350,7 @@ public struct AppAboutView: Equatable, Hashable {
          * "Version 0.2.0 (0.2.0.123)".
          */versionLine: String,
         /**
-         * Acknowledgements, Privacy Policy, Terms of Service, Report an Issue.
+         * Acknowledgements, Privacy Policy, Terms of Service, System Status, Report an Issue.
          */links: [AppAboutLink],
         /**
          * "© 2026 Cua AI, Inc. All rights reserved."
@@ -48421,6 +48421,10 @@ public enum AppAboutLinkId: Equatable, Hashable {
      */
     case terms
     /**
+     * The public status page.
+     */
+    case status
+    /**
      * A new issue.
      */
     case issue
@@ -48451,7 +48455,9 @@ public struct FfiConverterTypeAppAboutLinkId: FfiConverterRustBuffer {
 
         case 3: return .terms
 
-        case 4: return .issue
+        case 4: return .status
+
+        case 5: return .issue
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -48473,8 +48479,12 @@ public struct FfiConverterTypeAppAboutLinkId: FfiConverterRustBuffer {
             writeInt(&buf, Int32(3))
 
 
-        case .issue:
+        case .status:
             writeInt(&buf, Int32(4))
+
+
+        case .issue:
+            writeInt(&buf, Int32(5))
 
         }
     }
@@ -59586,13 +59596,17 @@ public enum AppTelemetrySignal: Equatable, Hashable {
     case onboardingPage(
         /**
          * `welcome`, `signin`, `agents`, `presentation`, `volume`,
-         * `this_machine` or `done`.
+         * `this_machine` or `done`; or, with a `step_*` action, one of
+         * `schema::FIRST_RUN_STEPS` (`connect_agent`, `terminal`, ...).
          */page: String,
         /**
-         * `shown`, `completed`, `skipped` or `back`.
+         * `shown`, `completed`, `skipped` or `back`; or `step_viewed`,
+         * `step_completed`, `step_failed` or `step_skipped`, which send
+         * `cua_onboarding_step_*` and `cua_onboarding_skipped`.
          */action: String,
         /**
-         * The page's answer as a fixed word, or `none`.
+         * The page's answer as a fixed word, or `none`; for
+         * `step_failed`, the reason (`timeout`, `install_failed`, ...).
          */choice: String
     )
     /**

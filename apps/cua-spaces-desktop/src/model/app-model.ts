@@ -10,6 +10,7 @@
 import { randomUUID } from "node:crypto";
 import type { Native } from "../native/load";
 import type {
+  AppCliInstallPlan,
   AppCreateAction,
   AppCreatesState,
   AppCreateSpaceArgs,
@@ -46,7 +47,7 @@ import { NotchActivity } from "./activity";
 import { createErrorVariant, daemonAnswered, isCancelled, sdkErrorKind, words } from "./errors";
 import type { HostModel } from "./host";
 import { KeyvaultModel } from "./keyvault";
-import type { AccountRunning, TelemetryRunning } from "./services";
+import type { AccountRunning, SignInOptions, TelemetryRunning } from "./services";
 import type { StartupModel } from "./startup";
 import { SignInRuns, type SignInEnd } from "./sign-in";
 import { SpaceThumbnails } from "./thumbnails";
@@ -130,6 +131,8 @@ export class AppModel {
   roster: AppRosterState;
   /** The selected Space (the sidebar's selection). */
   selectedSpaceId: string | null = null;
+  /** The bundled CLI's install plan as last read (`cli.plan`, `settings.get`'s `cli`). */
+  cliPlan: AppCliInstallPlan | null = null;
   loaded = false;
   /** The last list read failed: the page says so above every page, and the
    * rows already listed stay (the SwiftUI app's `rosterError`). Never the
@@ -950,9 +953,9 @@ export class AppModel {
   /** "Sign in": the browser flow (opened by the account), the code while it
    * waits. Starting again while it waits is a retry: a new attempt, and
    * whichever attempt the browser finishes signs the app in. */
-  async beginSignIn(): Promise<void> {
+  async beginSignIn(opts?: SignInOptions): Promise<void> {
     if (!this.account || this.signInPhase() === "Starting") return;
-    await this.signIns.begin();
+    await this.signIns.begin(opts);
   }
 
   /** A session is stored (by a sign-in here or `cua auth login`). */

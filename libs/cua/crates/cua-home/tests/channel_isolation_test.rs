@@ -96,6 +96,10 @@ fn identifiers(c: CuaChannel) -> Vec<(String, String)> {
     ] {
         ids.push((format!("agent skill {skill}"), c.skill_install_name(skill)));
     }
+    // The bundle id a channel used before, which its installers move from.
+    if let Some(legacy) = c.legacy_bundle_id() {
+        ids.push(("legacy bundle id".to_string(), legacy.to_string()));
+    }
     for env in ENVS {
         ids.push((
             format!("keychain service ({})", env.name()),
@@ -155,6 +159,29 @@ fn stable_and_local_paths_never_overlap() {
             );
         }
     }
+}
+
+/// Local's bundle id is Stable's plus `.local`, so a test that takes one
+/// whole id for a prefix of the other would confuse them. The two must stay
+/// different as whole ids, as folder names and as file names in `~/Library`
+/// (`<id>.plist`, `<id>.binarycookies`, `<id>.savedState`).
+#[test]
+fn local_bundle_id_extends_stable_by_a_suffix_and_stays_a_different_name() {
+    let (stable, local) = (
+        CuaChannel::Stable.bundle_id(),
+        CuaChannel::Local.bundle_id(),
+    );
+    assert_eq!(local, format!("{stable}.local"));
+    assert_ne!(stable, local);
+    for ext in ["plist", "binarycookies", "savedState"] {
+        assert_ne!(format!("{stable}.{ext}"), format!("{local}.{ext}"));
+    }
+    // The id Local used before is no extension of Stable's.
+    let legacy = CuaChannel::Local
+        .legacy_bundle_id()
+        .expect("Local has a legacy id");
+    assert!(!legacy.starts_with(stable) && legacy != local);
+    assert_eq!(CuaChannel::Stable.legacy_bundle_id(), None);
 }
 
 #[test]

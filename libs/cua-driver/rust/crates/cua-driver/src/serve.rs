@@ -2317,32 +2317,34 @@ pub fn run_stop_cmd(socket_path: &str) {
         client_kind: None,
     };
     match send_request(socket_path, &req) {
-        Ok(_) => {
-            // Poll until daemon stops responding (up to 2 seconds).
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-            loop {
-                // On Windows the pipe path isn't a filesystem file; probe liveness instead.
-                let gone = if std::path::Path::new(socket_path).exists() {
-                    false
-                } else {
-                    !is_daemon_listening(socket_path)
-                };
-                if gone {
-                    // Swift's `stop` exits silently on success (no stdout
-                    // line) — match that for byte-for-byte parity.
-                    return;
-                }
-                if std::time::Instant::now() >= deadline {
-                    eprintln!("Cua Driver daemon did not release socket within 2s");
-                    std::process::exit(1);
-                }
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-        }
+        Ok(_) => wait_for_release(socket_path),
         Err(e) => {
             eprintln!("stop: {e}");
             std::process::exit(1);
         }
+    }
+}
+
+/// Poll until the daemon stops responding (up to 2 seconds); exit 1 otherwise.
+pub(crate) fn wait_for_release(socket_path: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        // On Windows the pipe path isn't a filesystem file; probe liveness instead.
+        let gone = if std::path::Path::new(socket_path).exists() {
+            false
+        } else {
+            !is_daemon_listening(socket_path)
+        };
+        if gone {
+            // Swift's `stop` exits silently on success (no stdout
+            // line) — match that for byte-for-byte parity.
+            return;
+        }
+        if std::time::Instant::now() >= deadline {
+            eprintln!("Cua Driver daemon did not release socket within 2s");
+            std::process::exit(1);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
     }
 }
 
@@ -2545,6 +2547,13 @@ pub fn run_revoke_cmd(socket_path: &str, session: Option<&str>, all: bool) {
 
 #[cfg(all(test, unix))]
 mod socket_tests {
+    #[test]
+    fn wait_for_release_accepts_an_absent_socket() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("absent.sock");
+        super::wait_for_release(socket.to_str().unwrap());
+    }
+
     use super::{remove_owned_socket, secure_local_socket, socket_identity};
     use std::os::unix::fs::PermissionsExt as _;
 

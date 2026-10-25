@@ -137,6 +137,8 @@ public final class AppModel {
     public var signInTimeout: Duration = .seconds(600)
     /// Tells one sign-in from the next (a timeout of an old one is ignored).
     private var signInAttempt = 0
+    /// The attempt in progress asked for a code instead of the browser's way back.
+    private var signInByCode = false
     public private(set) var telemetryInput: AppTelemetryInput?
     /// The account's Cua Cloud billing (Settings, Billing), once read.
     public private(set) var billingStatus: AppBillingStatus?
@@ -1485,11 +1487,19 @@ public final class AppModel {
         await runSignIn(current)
     }
 
+    /// "Get a code instead": a code to enter on any device, for when the
+    /// browser never gets back to the app.
+    public func beginSignIn(code: Bool) async {
+        guard let current = startSignIn(code: code) else { return }
+        await runSignIn(current)
+    }
+
     /// Marks a sign-in as starting, now (the web page reads it at once), and
     /// returns its attempt; nil when one is already starting.
     @discardableResult
-    public func startSignIn() -> Int? {
+    public func startSignIn(code: Bool = false) -> Int? {
         guard account != nil, signIn != .starting else { return nil }
+        signInByCode = code
         signIn = .starting
         signInURL = nil
         signInAttempt += 1
@@ -1501,7 +1511,7 @@ public final class AppModel {
     func runSignIn(_ current: Int) async {
         guard let account else { return }
         do {
-            let attempt = try await account.beginSignIn()
+            let attempt = signInByCode ? try await account.beginSignIn(code: true) : try await account.beginSignIn()
             // Cancelled, retried or signed in while it started.
             guard signInAttempt == current, signIn == .starting else { return }
             signIn = .waiting(userCode: attempt.userCode, opened: attempt.opened)
@@ -1763,6 +1773,14 @@ public final class AppModel {
             saveSettings()
         }
         readLoginItem()
+    }
+
+    /// Reads the usage-data switch alone. The web page gets it with its
+    /// Settings snapshot (`settings.get`) and drops every usage signal while
+    /// that has none, so it cannot wait for the native Settings view's
+    /// `loadSettings` (the page runs signed out, before any Settings view).
+    public func refreshTelemetry() {
+        telemetryInput = telemetry?.status()
     }
 
     /// Reads what Settings shows (telemetry, the coding agents).

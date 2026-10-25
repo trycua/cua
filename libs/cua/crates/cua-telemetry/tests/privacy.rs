@@ -194,6 +194,8 @@ fn all_builders(s: &str) -> Vec<Event> {
         events::onboarding_step(s, Outcome::Ok),
         events::onboarding_page(s, "shown", "none"),
         events::onboarding_page("welcome", s, "none"),
+        events::first_run_step(s, "step_viewed", "none"),
+        events::first_run_step("welcome", s, "none"),
         events::space_wizard(s),
         events::persistent_agent(s, Some(s), Outcome::Ok, Some(s)),
         events::share(s, s, Outcome::Ok, "none", "none"),
@@ -214,6 +216,14 @@ fn all_builders(s: &str) -> Vec<Event> {
     v.push(events::sign_in_failed(s));
     // Known names with caller text wherever else a builder takes it.
     v.push(events::onboarding_page("volume", "completed", s).unwrap());
+    for action in [
+        "step_viewed",
+        "step_completed",
+        "step_failed",
+        "step_skipped",
+    ] {
+        v.push(events::first_run_step("create_space", action, s).unwrap());
+    }
     v.push(events::space_wizard("cancelled").unwrap());
     v.push(events::persistent_agent("create", Some(s), Outcome::Error, Some(s)).unwrap());
     v.push(events::share("share", s, Outcome::Ok, s, s).unwrap());
@@ -1256,6 +1266,32 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
     );
     assert_eq!(Outcome::from_word("cancelled"), Outcome::Cancelled);
     assert_eq!(Outcome::from_word("/Users/alice"), Outcome::Error);
+}
+
+/// The first-run funnel: the step fixes its index and version, a failure
+/// names a fixed reason, and caller text never gets through.
+#[test]
+fn first_run_funnel_events_carry_step_index_version_and_a_fixed_reason() {
+    let e = events::first_run_step("sign_in", "step_viewed", "none").unwrap();
+    assert_eq!(e.name, "cua_onboarding_step_viewed");
+    assert_eq!(e.props["step"], "sign_in");
+    assert_eq!(e.props["step_index"], 4);
+    assert_eq!(e.props["onboarding_version"], 2);
+    assert!(!e.props.contains_key("reason"));
+    let f = events::first_run_step("terminal", "step_failed", "/Users/alice").unwrap();
+    assert_eq!(f.name, "cua_onboarding_step_failed");
+    assert_eq!(f.props["step_index"], 3);
+    assert_eq!(f.props["reason"], "other");
+    let f = events::first_run_step("terminal", "step_failed", "install_failed").unwrap();
+    assert_eq!(f.props["reason"], "install_failed");
+    assert_eq!(
+        events::first_run_step("welcome", "step_skipped", "none")
+            .unwrap()
+            .name,
+        "cua_onboarding_skipped"
+    );
+    // An old-flow action is not a funnel event.
+    assert!(events::first_run_step("welcome", "shown", "none").is_none());
 }
 
 /// Retention: one `cua_app_active` per install per UTC day, none while

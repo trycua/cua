@@ -314,10 +314,13 @@ pub const METHODS: &[&str] = &[
     "resources.warning",
     "upsell.prompt",
     "upsell.allows",
+    "upsell.card",
     "firstRun.view",
     "firstRun.todos",
+    "firstRun.permissions",
     "firstRun.agentUsed",
     "firstRun.leadAgent",
+    "firstRun.cli",
     "telemetry.upsell",
     "nudge.secondAgent",
     "nudge.riskyAction",
@@ -551,8 +554,21 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             ))
         }
         "upsell.allows" => out(upsell::allows(&a.get("state")?)),
+        "upsell.card" => {
+            let app = a
+                .get::<Option<String>>("accountApp")?
+                .filter(|u| u.starts_with("https://"))
+                .unwrap_or_else(cua_home::env::account_app_url);
+            out(upsell::card(
+                &a.get::<String>("reason")?,
+                &a.get("usage")?,
+                &app,
+            ))
+        }
         "firstRun.view" => out(crate::first_run::view(&a.get("input")?)),
+        "firstRun.cli" => out(crate::first_run::cli_view(&a.get("input")?)),
         "firstRun.todos" => out(crate::first_run::todos(&a.get("input")?)),
+        "firstRun.permissions" => out(crate::first_run::permissions_view(&a.get("input")?)),
         "firstRun.agentUsed" => out(crate::first_run::agent_used(
             &a.get::<Vec<crate::first_run::AccessLine>>("lines")?,
             a.get::<u64>("sinceMs")?,

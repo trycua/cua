@@ -2055,7 +2055,7 @@ impl PendingLogin {
                 let secs = std::env::var("CUA_OIDC_LOGIN_TIMEOUT_SECS")
                     .ok()
                     .and_then(|s| s.parse::<u64>().ok())
-                    .unwrap_or(300);
+                    .unwrap_or(600);
                 let to = self.return_to.as_ref();
                 let (code, mut browser) = tokio::time::timeout(
                     Duration::from_secs(secs),

@@ -12,7 +12,7 @@ use std::sync::Arc;
 use clap::{Args, Subcommand};
 use cua_sdk::{CloudTarget, Cua, CuaError};
 
-use crate::util::line;
+use crate::util::{hint_line, line};
 
 /// Where in a cloud account Spaces go.
 #[derive(Args, Debug, Clone, Default)]
@@ -423,7 +423,7 @@ pub async fn run(
             for c in &c.checks {
                 line(out, check_line(c));
             }
-            line(
+            hint_line(
                 out,
                 format!(
                     "Connected {}{}. Create a sandbox there: cua sb create linux --on {} (a Space: cua spaces create --on {})",
@@ -492,7 +492,7 @@ pub async fn run(
                 },
             );
             if !d.left.is_empty() {
-                line(
+                hint_line(
                     out,
                     "Still recorded for that account (`cua cloud sweep --all --delete` after reconnecting removes them):",
                 );
@@ -627,7 +627,7 @@ pub async fn run(
                 return Ok(0);
             }
             if hosts.is_empty() {
-                line(
+                hint_line(
                     out,
                     "No elastic hosts (they are added when your machines are full, or with cua cloud hosts add).",
                 );

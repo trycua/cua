@@ -25,8 +25,15 @@ public enum MainUIRoute: Equatable, Sendable {
     /// A page path as given (`/machines?join=<CODE>` from a `cua://add` link).
     case path(String)
 
-    /// The first run: the shared web onboarding.
+    /// The first run, asked for by a person (Settings, Welcome): the shared
+    /// web onboarding, always shown.
     static let onboarding = MainUIRoute.path("/onboarding")
+
+    /// The first run, opened because it is not done (a launch, or the window
+    /// opening again): the same page, which goes to Spaces instead when the
+    /// person chose "Skip for now", so the welcome does not come back at every
+    /// launch. The page keeps that choice, `due` asks it to honour it.
+    static let firstRunDue = MainUIRoute.path("/onboarding?due=1")
 
     /// The page's path, query included.
     var webPath: String {
@@ -130,6 +137,13 @@ enum MainWindowSwitch {
         opensFirstRun(ready: model.startup.isReady, onboarded: model.onboarding.completed)
     }
 
+    /// Where a window opens while the first run may be due: its page until it
+    /// is done (`.firstRunDue`, which keeps a "Skip for now"), else nil, the
+    /// app as it was. The launch and the native window's replacement both ask.
+    static func firstRunRoute(onboarded: Bool) -> MainUIRoute? {
+        onboarded ? nil : .firstRunDue
+    }
+
     /// The native window is up while the first run is due (and the launch is
     /// ready): the web onboarding opens in its frame and it closes.
     static func firstRunAppeared(_ window: NSWindow?, model: AppModel, web: ((NSRect?) -> Void)? = nil) {
@@ -183,8 +197,8 @@ enum MainWindowSwitch {
 
     private static func show(_ model: AppModel, frame: NSRect?) {
         // The first run opens on its page; the rest is the app as it was.
-        if !model.onboarding.completed {
-            WebUIWindowController.show(model: model, at: .onboarding, frame: frame)
+        if let route = firstRunRoute(onboarded: model.onboarding.completed) {
+            WebUIWindowController.show(model: model, at: route, frame: frame)
         } else {
             WebUIWindowController.show(model: model, frame: frame)
         }

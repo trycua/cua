@@ -380,7 +380,12 @@ export interface AgentSetupRunning {
   signIn(agent: string): Promise<void>;
 }
 
-/** The SDK's `AgentSetup`, registering the app's own `cua` as the MCP server. */
+/**
+ * The SDK's `AgentSetup`, registering the app's own `cua` as the MCP server.
+ * The server has no name here: the SDK names it for the app's channel (`cua`,
+ * `cua-local` for Cua Spaces Local), so a Local app never writes over the
+ * released app's entry, and it installs the channel's skill copies.
+ */
 export class LiveAgentSetup implements AgentSetupRunning {
   private readonly server: AgentMcpServer | undefined;
 
@@ -389,7 +394,7 @@ export class LiveAgentSetup implements AgentSetupRunning {
     private readonly inner: AgentSetupLike,
     cuaBinary: string | null,
   ) {
-    this.server = cuaBinary ? { name: "cua", command: cuaBinary, args: ["mcp"], env: new Map() } : undefined;
+    this.server = cuaBinary ? { name: "", command: cuaBinary, args: ["mcp"], env: new Map() } : undefined;
   }
 
   private outcomes(list: AgentSetupOutcome[]): AppAgentSetupOutcomeInput[] {

@@ -123,10 +123,19 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "checklist.get", "checklist.send",
         // Links to things you run (WebUIBridge+Pages.swift).
         "links.list", "links.create", "links.stop",
+        // The bundled CLI on PATH (WebUIBridge+Cli.swift).
+        "cli.plan", "cli.install",
     ]
 
     let model: AppModel
     var actions: WebUIActions?
+    /// The app core's CLI installer for this app (tests give their own paths).
+    var makeCliInstaller: () -> AppCliInstaller = {
+        AppCliInstaller.forExecutable(executable: Bundle.main.executablePath ?? "")
+    }
+    /// The CLI's install plan as last read (`settings.get`'s `cli`).
+    var cliPlan: AppCliInstallPlan?
+    var cliPlanRequested = false
     weak var host: WebUIWindowController?
     /// What each `followChanges` event last saw.
     private var signatures: [String: String] = [:]
@@ -256,7 +265,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             // The browser flow can take minutes: answer now (already
             // "starting", so an earlier failure never reads as this one's),
             // and `session.changed` follows each step until it ends.
-            if let current = model.startSignIn() {
+            // `code`: the page's "Get a code instead" (the browser never got back to the app).
+            if let current = model.startSignIn(code: (args["code"] as? Bool) == true) {
                 Task { @MainActor in await model.runSignIn(current) }
             }
             return session()
@@ -311,7 +321,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
              "agents.removeRoutine", "agents.allowComputer", "agents.revokeComputer":
             return try await agentDetail(method, args)
 
-        case "settings.get": return settings()
+        case "settings.get":
+            model.refreshTelemetry()
+            return settings()
         case "settings.choose":
             let row = try string(args, "row"), option = try string(args, "option")
             if row == "update-channel" {
@@ -402,6 +414,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             if let result = try await routeFiles(method, args) { return result }
             if let result = try await routePage(method, args) { return result }
             if let result = try routeNudges(method, args) { return result }
+            if let result = try await routeCli(method, args) { return result }
             throw Failure.unimplemented(method)
         }
     }
@@ -523,6 +536,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             // The account app (CUA_ENV, CUA_ACCOUNT_APP_URL): the page's core
             // has no environment, so Upgrade's billing fallback names this one.
             "accountUrl": appAccountAppUrl(),
+            // The CLI this app installs and whether it is here (WebUIBridge+Cli.swift).
+            "cli": cliSetting(),
         ]
     }
 
@@ -833,6 +848,10 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         guard let state = model.host.state, var out = BridgeValue.encode(state) as? [String: Any] else { return NSNull() }
         out["machineId"] = model.host.machineId ?? NSNull()
         out["progress"] = model.host.progress ?? NSNull()
+        // The name System Settings lists this app under ("Cua Spaces Local"),
+        // for the permissions screen's words.
+        out["appName"] = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+            ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? NSNull()
         // Before setup the host has no name yet: the web UI's setup form
         // starts with what the system calls this Mac, as the native one does.
         if !state.configured, (out["name"] as? String)?.isEmpty ?? true, let name = model.host.computerName() {

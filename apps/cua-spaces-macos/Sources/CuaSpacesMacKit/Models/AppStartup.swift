@@ -698,6 +698,10 @@ public final class PendingAccount: AccountRunning, @unchecked Sendable {
         guard let account = await gate.wait().account else { throw NotStarted(what: "Signing in") }
         return try await account.beginSignIn()
     }
+    public func beginSignIn(code: Bool) async throws -> SignInAttempt {
+        guard let account = await gate.wait().account else { throw NotStarted(what: "Signing in") }
+        return try await account.beginSignIn(code: code)
+    }
     public func signOut() async throws { try await gate.wait().account?.signOut() }
 }
 

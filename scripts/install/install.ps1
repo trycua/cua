@@ -345,9 +345,9 @@ function Get-CuaSelection {
     if ($App -and ($extra -contains 'cua-driver' -or $extra -contains 'host')) { Stop-Install '-AppOnly skips the CLI, which cua-driver and host need' }
     $sel = [ordered]@{ cli = -not $App; spaces = $false; 'cua-driver' = $false; host = $false }
     $list = if ($OnlyList -or $Cli) { $OnlyList } else { $SelectList }
-    # The app is a default, as on macOS and Linux (not with -Only, -CliOnly
-    # or a pairing code, which adds a host machine).
-    if (-not ($OnlyList -or $Cli -or $Pair)) { $sel.spaces = $true }
+    # The app is a default, as on macOS and Linux (not with -Only, -CliOnly,
+    # -Select naming items, or a pairing code, which adds a host machine).
+    if (-not ($OnlyList -or $Cli -or $Pair -or "$SelectList".Trim(' ', ',', "`t"))) { $sel.spaces = $true }
     foreach ($item in @(ConvertTo-CuaItems $list)) { $sel[$item] = $true }
     # A pairing code adds this machine: the CLI and host setup.
     if ($Pair) {
@@ -913,7 +913,9 @@ function Invoke-CuaInstallSteps($sel) {
         $script:TelStage = 'driver'
         if ($sel['cua-driver']) { Install-CuaDriver $cua $tmp $manifestUrl }
         $script:TelStage = 'sign_in'
-        if ($cua -and -not $Pair -and -not $CliOnly -and -not $NoOnboarding -and -not $DryRun -and (Test-Interactive)) {
+        # Cua Driver on its own: sign-in would run the Cua Spaces agent onboarding, which was not picked.
+        $driverOnly = $sel['cua-driver'] -and -not $sel.spaces -and -not $sel.host
+        if ($cua -and -not $Pair -and -not $CliOnly -and -not $NoOnboarding -and -not $DryRun -and -not $driverOnly -and (Test-Interactive)) {
             Write-Host ''
             Write-Step 'Signing in to Cua'
             & $cua auth login

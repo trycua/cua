@@ -6498,6 +6498,8 @@ pub enum AppAboutLinkId {
     Privacy,
     /// The terms of service.
     Terms,
+    /// The public status page.
+    Status,
     /// A new issue.
     Issue,
 }
@@ -6550,7 +6552,7 @@ pub struct AppAboutView {
     pub title: String,
     /// "Version 0.2.0 (0.2.0.123)".
     pub version_line: String,
-    /// Acknowledgements, Privacy Policy, Terms of Service, Report an Issue.
+    /// Acknowledgements, Privacy Policy, Terms of Service, System Status, Report an Issue.
     pub links: Vec<AppAboutLink>,
     /// "© 2026 Cua AI, Inc. All rights reserved."
     pub copyright: String,
@@ -9612,11 +9614,15 @@ pub enum AppTelemetrySignal {
     /// A first-run page was shown or left (`cua_onboarding_page`).
     OnboardingPage {
         /// `welcome`, `signin`, `agents`, `presentation`, `volume`,
-        /// `this_machine` or `done`.
+        /// `this_machine` or `done`; or, with a `step_*` action, one of
+        /// `schema::FIRST_RUN_STEPS` (`connect_agent`, `terminal`, ...).
         page: String,
-        /// `shown`, `completed`, `skipped` or `back`.
+        /// `shown`, `completed`, `skipped` or `back`; or `step_viewed`,
+        /// `step_completed`, `step_failed` or `step_skipped`, which send
+        /// `cua_onboarding_step_*` and `cua_onboarding_skipped`.
         action: String,
-        /// The page's answer as a fixed word, or `none`.
+        /// The page's answer as a fixed word, or `none`; for
+        /// `step_failed`, the reason (`timeout`, `install_failed`, ...).
         choice: String,
     },
     /// The New Space panel (`cua_space_wizard`).

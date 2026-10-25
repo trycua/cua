@@ -11,7 +11,7 @@ render and do platform glue.
 | Main window | Sidebar with Spaces (one section per location; a dragged window drops on a row) and the Keyvault (All, Waiting, Access, Recent, one row per site) with the global Keyvault switch; Space detail with the live desktop, per-window streams, picture in picture, agent runs and the Teleport drop well |
 | New Space | Step-by-step sheet: System, Resources, Options, Summary; Connect by address |
 | Keyvault | Sidebar and list: categories, a site's accounts with their unattended switches, approval sheets |
-| Onboarding | The shared web onboarding (`/onboarding` in `apps/cua-spaces-web`), in the New UI window, whether or not the New UI setting is on; the app draws none of its own. The page asks and finishes it through `onboarding.get` and `onboarding.complete` (the state is `onboarding.json`); a Space it creates posts a "<Space> is ready" notification (`notifyWhenReady`) that opens the Space. With the New UI off, the window gives way to the native one when the first run ends |
+| Onboarding | The shared web onboarding (`/onboarding` in `apps/cua-spaces-web`), in the New UI window, whether or not the New UI setting is on; the app draws none of its own. The page asks and finishes it through `onboarding.get` and `onboarding.complete` (the state is `onboarding.json`); a Space it creates posts a "<Space> is ready" notification (`notifyWhenReady`) that opens the Space. With the New UI off, the window gives way to the native one when the first run ends. A launch (or a window that opens again) while it is not done opens `/onboarding?due=1`: the page goes to Spaces instead when the person chose "Skip for now" (kept in the page's storage), so the welcome does not come back at every launch; Settings → Welcome and the sidebar's "Finish setting up" open it without `due` and always show it |
 | Devices | Settings → Devices: this Mac's enrollment (enrolled until, grace ends, needs enrollment), the account's devices with Rename and Revoke, Recent Access; the Enroll sheet (sign in again, or a one-time code approved from an enrolled device), the approval sheet for a device asking to join (a notification too; Approve asks for Touch ID or the login password), and a banner in the main window when this Mac needs enrolling |
 | Menu bar | The Cua mark (template); status line, Open, New Space, Settings, Quit |
 | Launch at login | Settings → General: `SMAppService.mainApp`, showing what macOS reports (on, off, waiting for approval with a button to Login Items, not found); the first run's Done page (the web onboarding's) ticks it. A login launch opens without the main window, and the app's daemon (host Spaces, persistent agents, Cua Volume) starts with it |
@@ -68,12 +68,12 @@ prints them), so nothing here hard-codes one.
 | | Stable | Local |
 |---|---|---|
 | App | `Cua Spaces.app` | `Cua Spaces Local.app` |
-| Bundle id | `com.trycua.spaces.macos` | `com.trycua.spaces.local` |
+| Bundle id | `com.trycua.spaces.macos` | `com.trycua.spaces.macos.local` |
 | Info.plist | no channel keys | `CuaChannel=local`, `CuaEnv=staging`, `CuaHome=~/.cua-local`, `CuaHelperLabel`, `CuaUrlScheme` |
 | Cua deployment | prod (`CUA_ENV` picks another) | staging (`CUA_ENV=prod` opts in) |
 | Cua home | `~/.cua` (`~/.cua/envs/staging` on staging) | `~/.cua-local` on staging; `~/.cua-local/envs/prod` under the `CUA_ENV=prod` opt-in |
 | Sign-in Keychain service | `ai.cua.session` (`.staging` on staging) | `ai.cua.session.local` (`.staging` on staging) |
-| Helper login item | `com.trycua.spaces.helper` | `com.trycua.spaces.local.helper` (plist file and `AssociatedBundleIdentifiers` stamped to match) |
+| Helper login item | `com.trycua.spaces.helper` | `com.trycua.spaces.local.helper` (plist file stamped to match; `AssociatedBundleIdentifiers` is the Local bundle id) |
 | URL scheme | `cua://` | `cua-local://` |
 | Updater | Sparkle feed and key | none (`SUFeedURL`, `SUPublicEDKey` removed): it never offers or installs an update |
 
@@ -356,7 +356,7 @@ The Local build shares nothing with the released app. Every name comes from
 | | Cua Spaces | Cua Spaces Local |
 |---|---|---|
 | App | `/Applications/Cua Spaces.app` | `~/Applications/Cua Spaces Local.app` |
-| Bundle id | `com.trycua.spaces.macos` | `com.trycua.spaces.local` |
+| Bundle id | `com.trycua.spaces.macos` | `com.trycua.spaces.macos.local` |
 | CLI | `~/.local/bin/cua` | `~/.local/bin/cua-local` |
 | Home | `~/.cua` | `~/.cua-local` |
 | Backend | production | staging (`CUA_ENV=prod` opts in) |
@@ -379,7 +379,12 @@ not verify it puts the previous Local app back. It refuses to replace anything
 at the Local path that is not a Cua Spaces Local bundle, and it never writes to
 `/Applications/Cua Spaces.app`, `~/.local/bin/cua`, `~/.cua` or `~/.lume`.
 `cua-local` is a link to the `cua` inside the app; no shell profile is edited,
-so put `~/.local/bin` on your PATH.
+so put `~/.local/bin` on your PATH. It names itself in what it prints: its help,
+its hints and its error messages tell you to run `cua-local host setup`, never
+`cua host setup` (which would run the released CLI). The code writes each hint
+for the released CLI and `cua-cli` renames it where it is printed (`util::hint`,
+and for a message that holds a name the user chose, `util::cli`); a message
+that names a command goes through one of them.
 
 **Permissions survive a rebuild** when the app is signed with the stable local
 certificate that Cua Driver's local install uses
@@ -422,13 +427,28 @@ It unregisters the Local helper login item and removes the app, `cua-local`,
 (`ai.cua.session.local*`). It keeps `~/Cua Volume Local` and the permissions
 macOS granted.
 
+**The Local bundle id changed.** The first Local builds were
+`com.trycua.spaces.local`; Local is now `com.trycua.spaces.macos.local` (Stable
+plus `.local`; the launchd ids, ports, `cua-local` and `~/.cua-local` did not
+change). `install-local.sh` finds an app with the old id at the Local path,
+unregisters its helper login item, removes it, installs the renamed app, and
+then removes what the old id left in `~/Library` (its Application Support
+folder, preferences, caches, web view data, cookies and window state). It says
+so in one line. If the new copy fails to verify, the old app and its login item
+are put back. Your sign-in (`~/.cua-local`) and `~/Cua Volume Local` stay, and
+macOS asks for the renamed app's permissions once; the old id's permission rows
+stay in macOS's list unused (`tccutil` cannot clear them for an app that is
+gone). `uninstall-local.sh` removes both ids' leftovers. Neither touches
+anything Stable owns. Because the new id is Stable's plus a suffix, compare
+bundle ids whole, never by prefix.
+
 There is one Local slot per Mac: an Internal build from CI uses the same
 identity, so it and a build from source replace each other.
 
 `scripts/tests/install-local-test.sh` checks all of this against a fake `HOME`
 and a fake build: a Stable install is byte-identical before and after install,
 rebuild and uninstall, a wrong bundle id is refused, a failed copy is rolled
-back. `CUA_TEST_SIGNING_KEYCHAIN=<keychain>` adds the certificate-signing checks.
+back, an app with the old Local id is replaced and its leftovers removed. `CUA_TEST_SIGNING_KEYCHAIN=<keychain>` adds the certificate-signing checks.
 
 ## Release
 
@@ -477,11 +497,14 @@ the key was, so installing is dragging the key into its place.
 `package-dmg.sh` lays the window out with a pinned
 [dmgbuild](https://github.com/dmgbuild/dmgbuild) (`scripts/dmg-settings.py`)
 and makes the alias with `scripts/make-alias.swift`. The art in
-`Support/dmg` and the app icon `Support/AppIcon.icns` (the key with the Spaces
-mark, the Cua mark in stacked squares, on a slate tile) are drawn from the site's keycap sprites by
-`scripts/dmg-art/render.sh` (headless Chrome), which also writes the same icon
-to `apps/cua-spaces/src-tauri/icons` for the other apps; rerun it only when
-the art changes.
+`Support/dmg` is drawn from the site's keycap sprites by
+`scripts/dmg-art/render.sh` (headless Chrome). The app icon
+`Support/AppIcon.icns` (the terracotta koala keycap) is not drawn: it is built
+from the chosen PNGs in `scripts/dmg-art/src` (`app-icon-1024.png`, plus
+`app-icon-small-1024.png` with a larger print for 16 to 64 px) by
+`render.sh`, which also writes the same icon to `apps/cua-spaces/src-tauri/icons`
+for the other apps. `render.sh --app-icon-only` rebuilds just the icons; rerun
+it only when the art changes.
 
 ## Updates (Sparkle)
 

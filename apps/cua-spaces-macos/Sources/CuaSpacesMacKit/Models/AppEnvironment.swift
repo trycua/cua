@@ -20,8 +20,8 @@ public enum AppEnvironment {
 
     /// The bundle identity (the Keyvault's trusted-caller requirement names
     /// it; see README "Keyvault identity"). A Local build keeps its settings
-    /// in its own folder, `com.trycua.spaces.local`, never Stable's.
-    public static let bundleIdentifier = isLocalChannel ? "com.trycua.spaces.local" : "com.trycua.spaces.macos"
+    /// in its own folder, `com.trycua.spaces.macos.local`, never Stable's.
+    public static let bundleIdentifier = isLocalChannel ? "com.trycua.spaces.macos.local" : "com.trycua.spaces.macos"
 
     /// `$HOME`, so a temp HOME (tests, captures) keeps every file away from
     /// the account's real Library (`FileManager` ignores `$HOME`).

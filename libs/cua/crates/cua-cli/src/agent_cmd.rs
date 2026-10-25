@@ -447,8 +447,11 @@ async fn start(
             }
         }
         eprintln!(
-            "{run_id} started ({harness}); follow with: cua agent logs {} {run_id} -f",
-            a.sandbox
+            "{}",
+            crate::util::hint(&format!(
+                "{run_id} started ({harness}); follow with: cua agent logs {} {run_id} -f",
+                a.sandbox
+            ))
         );
     }
     if !a.follow {
@@ -522,11 +525,14 @@ async fn start_direct(
         );
     } else {
         eprintln!(
-            "{} started ({}); follow with: cua agent logs {} {} -f",
-            run.run_id(),
-            run.harness(),
-            a.sandbox,
-            run.run_id()
+            "{}",
+            crate::util::hint(&format!(
+                "{} started ({}); follow with: cua agent logs {} {} -f",
+                run.run_id(),
+                run.harness(),
+                a.sandbox,
+                run.run_id()
+            ))
         );
     }
     if a.follow {

@@ -6,6 +6,7 @@ import { useEffect } from "react";
 import {
   teamName,
   useFeatureRecorded,
+  useFlag,
   useSession,
   useShareSheet,
   useTeamChoices,
@@ -14,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { UpgradeCard } from "@/components/upgrade-card";
 import { UpsellPrompt } from "@/components/upsell-prompt";
 import { cn } from "@/lib/utils";
 
@@ -32,6 +34,7 @@ export default function ShareSheet() {
   const choices = useTeamChoices(Boolean(session?.input.signedIn && session.input.shareable));
   const { openExternal } = useSession();
   const { hasTeam } = choices;
+  const cards = useFlag("upsell_cards");
   useEffect(() => {
     sharing?.setHasTeam(hasTeam);
   }, [sharing, hasTeam, session?.input.spaceId]);
@@ -60,12 +63,13 @@ export default function ShareSheet() {
           <DialogTitle className="text-[15px] font-semibold" data-share-title>
             {v.title}
           </DialogTitle>
-          {v.disabledReason || gate ? (
+          {gate && !v.disabledReason && cards ? <UpgradeCard reason="invite" className="mt-3" /> : null}
+          {(v.disabledReason || gate) && !(cards && gate && !v.disabledReason) ? (
             <p className="mt-1.5 text-[13px] text-muted-foreground" data-share-disabled>
               {v.disabledReason ?? gate?.reason}
             </p>
           ) : null}
-          {!v.disabledReason && gate ? (
+          {!v.disabledReason && gate && !cards ? (
             <Button size="sm" variant="outline" className="mt-2" onClick={() => void openExternal(gate.action.url).catch(() => {})} data-share-action>
               {gate.action.label}
             </Button>

@@ -44,6 +44,12 @@ if launchArgs.first == "--service-helper" {
 if launchArgs.first == "check-permissions" {
     ServiceLauncher.passthrough(launchArgs)
 }
+// A new process's Screen Recording and Accessibility answers, for
+// PermissionGuide to close its panel once access is granted.
+if launchArgs.first == "preflight-permissions" {
+    print(PermissionGuide.preflightReport())
+    exit(0)
+}
 
 // `CUA_ENV=staging`: this process and the daemon use the staging home (a
 // Local build already settled its three variables above).
@@ -54,4 +60,10 @@ TargetEnvironment.pin()
 cuaSpacesRegister()
 // `CUA_SPACES_OFFSCREEN=1` (debug): an accessory app, for captures nobody sees.
 OffscreenRun.prepare()
+// The app runs with its window here: it asks for Screen Recording and
+// Accessibility itself (its first run and Settings, PermissionGuide), so the
+// host service no longer shows macOS's own prompts (ServiceLauncher).
+if let spec = HelperService.specPath(info: Bundle.main.infoDictionary, home: NSHomeDirectory()) {
+    PermissionGuide.noteAppAsks(specPath: spec)
+}
 CuaSpacesMacApp.main()

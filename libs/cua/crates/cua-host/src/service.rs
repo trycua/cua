@@ -1667,8 +1667,9 @@ impl ServiceManager for MissingAppHelper {
 fn missing_app() -> Error {
     Error::Service(format!(
         "{name} lives in the Cua Spaces app, which is not installed; install it \
-         again, or run `cua host setup --runner launchd`",
-        name = app_helper_name()
+         again, or run `{cli} host setup --runner launchd`",
+        name = app_helper_name(),
+        cli = crate::cli()
     ))
 }
 

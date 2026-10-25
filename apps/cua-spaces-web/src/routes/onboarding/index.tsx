@@ -1,25 +1,41 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { CheckIcon, CopyIcon } from "lucide-react";
+import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
+import { ArrowLeftIcon, CheckIcon, CopyIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { useAgentKeys, useFirstRun, type FirstRunArt, type FirstRunCredential, type FirstRunExtraView, type FirstRunHook, type FirstRunRow, type FirstRunView } from "@/bridge";
+import { readSavedOnboarding } from "@/bridge/onboarding";
 import { KeySheet } from "@/components/agents/key-sheet";
 import { CuaLogo } from "@/components/cua-logo";
 import { OsIcon } from "@/components/os-icon";
 import { Button } from "@/components/ui/button";
+import { Segmented } from "@/components/ui/segmented";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
 import { RuntimeFixRow } from "@/components/new-space/runtime-fix";
 import { cn } from "@/lib/utils";
 
-export const Route = createFileRoute("/onboarding/")({ component: OnboardingPage });
+export const Route = createFileRoute("/onboarding/")({
+  // `?due=1` is a host opening the first run because it is not done (the Mac
+  // app at launch, or when its window opens again). The page keeps to what
+  // the person chose: after "Skip for now" it goes to Spaces instead, as the
+  // root route does for a host that opens the app at `/`. Every other way in
+  // (the sidebar's "Finish setting up", Settings, the command palette) has
+  // no `due` and always shows the first run.
+  validateSearch: (s: Record<string, unknown>): { due?: true } => (s.due === 1 || s.due === "1" || s.due === true ? { due: true as const } : {}),
+  beforeLoad: ({ search }) => {
+    if (search.due && readSavedOnboarding().skipped) throw redirect({ to: "/spaces" });
+  },
+  component: OnboardingPage,
+});
 
 /**
  * The first run, the same on macOS, Windows and Linux: Welcome, Pick your
- * agent, Connect your other devices (optional), Try it in your agent. Every
+ * agent, Install the Cua CLI (only while the app's CLI is not on this
+ * computer), Connect your other devices (optional), Share this Mac's screen
+ * (a signed-in Mac that shares it), Try it in your agent. Every
  * word, the agents' order and which button does what are the app core's
  * (`firstRun.view`, through `useFirstRun`); this file places them beside the
  * keycap art, as plain rows.
@@ -47,13 +63,28 @@ function OnboardingPage() {
     document.querySelector<HTMLElement>("[data-onboarding-heading]")?.focus();
   }, [view.step]);
 
+  // Esc goes back a step, like the "Back" link, on every step that has one.
+  // An open sheet or menu keeps its own Esc.
+  const canGoBack = view.step !== "welcome";
+  useEffect(() => {
+    if (!canGoBack) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented || e.isComposing) return;
+      if (document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]')) return;
+      e.preventDefault();
+      fr.back();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [canGoBack, fr.back]);
+
   return (
     <div className="relative flex h-full flex-col overflow-hidden bg-[#F4F5F7] dark:bg-[#07080a]" data-step={view.step}>
       <Backdrop />
       <Art art={view.art} step={view.step} />
       <header className="relative z-30 flex shrink-0 items-center justify-between px-10 pt-[calc(var(--titlebar-height)+12px)] pb-2">
         <CuaWordmark />
-        <button type="button" onClick={leave} className="text-[13px] text-muted-foreground hover:text-foreground" data-onboarding-later="">
+        <button type="button" onClick={leave} className={cn(QUIET_LINK, "text-[13px]")} data-onboarding-later="">
           {view.later}
         </button>
       </header>
@@ -61,7 +92,9 @@ function OnboardingPage() {
         <div className="my-auto flex max-w-[600px] flex-col py-6">
           {view.welcome ? <Welcome fr={fr} view={view} /> : null}
           {view.connect ? <Connect fr={fr} view={view} /> : null}
+          {view.cli ? <CommandLine fr={fr} view={view} /> : null}
           {view.devices ? <Devices fr={fr} view={view} /> : null}
+          {view.permissions ? <Permissions fr={fr} view={view} /> : null}
           {view.setup ? <Setup fr={fr} view={view} onFinish={() => void finish()} /> : null}
         </div>
       </div>
@@ -110,11 +143,39 @@ function Primary({ label, onClick, ...rest }: { label: string; onClick: () => vo
   );
 }
 
-function Quiet({ label, onClick, ...rest }: { label: string; onClick: () => void } & Record<`data-${string}`, string | undefined>) {
+/** The quieter choice beside the primary: the same pill, outlined, lower contrast. */
+function Secondary({ label, onClick, describedBy, ...rest }: { label: string; onClick: () => void; describedBy?: string } & Record<`data-${string}`, string | undefined>) {
   return (
-    <button type="button" className="text-[13px] text-muted-foreground hover:text-foreground" onClick={onClick} {...rest}>
+    <Button
+      size="lg"
+      variant="ghost"
+      className="h-11 rounded-full border-foreground/20 px-6 text-[15px] font-normal text-foreground/75 hover:bg-foreground/[0.06] hover:text-foreground"
+      aria-describedby={describedBy}
+      data-first-run-secondary=""
+      onClick={onClick}
+      {...rest}
+    >
       {label}
-    </button>
+    </Button>
+  );
+}
+
+const QUIET_LINK = "-mx-1.5 rounded-md px-1.5 py-0.5 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60";
+
+/**
+ * A step after Welcome: "Back" sits above the heading, apart from the
+ * step's own choices. It comes last in the page's order, so Tab goes
+ * primary, then secondary, then Back; Esc does the same as Back.
+ */
+function Step({ id, onBack, children }: { id: string; onBack: () => void; children: ReactNode }) {
+  return (
+    <div data-first-run={id} className="flex flex-col">
+      {children}
+      <button type="button" onClick={onBack} aria-keyshortcuts="Escape" className={cn(QUIET_LINK, "order-first mb-5 inline-flex items-center gap-1.5 self-start text-[13px]")} data-first-run-back="">
+        <ArrowLeftIcon aria-hidden className="size-3.5" />
+        Back
+      </button>
+    </div>
   );
 }
 
@@ -176,7 +237,7 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
   const keys = useAgentKeys();
   const [copied, setCopied] = useState(false);
   return (
-    <div data-first-run="connect">
+    <Step id="connect" onBack={fr.back}>
       <Heading>{c.title}</Heading>
       <Lede>{c.lede}</Lede>
       {c.agents.length ? (
@@ -256,9 +317,9 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
           {c.error}
         </p>
       ) : null}
-      <div className="mt-6 flex items-center gap-4">
+      <div className="mt-6 flex flex-wrap items-center gap-3">
         <Primary label={c.primary.label} onClick={() => void fr.act(c.primary.id)} />
-        {c.secondary ? <Quiet label={c.secondary.label} onClick={() => void fr.act(c.secondary!.id)} data-first-run-secondary="" /> : null}
+        {c.secondary ? <Secondary label={c.secondary.label} onClick={() => void fr.act(c.secondary!.id)} /> : null}
       </div>
       {fr.usage ? (
         <label className="mt-5 flex items-center gap-2.5 text-[13px] text-muted-foreground" data-first-run-usage="">
@@ -272,7 +333,7 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
         </label>
       ) : null}
       {keys.sheet ? <KeySheet key={keys.sheet.provider} keys={keys} provider={keys.sheet.provider} env={keys.sheet.env} /> : null}
-    </div>
+    </Step>
   );
 }
 
@@ -307,7 +368,7 @@ function CredentialRowView({ row: r, onAct }: { row: FirstRunCredential; onAct: 
 function Devices({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
   const d = view.devices!;
   return (
-    <div data-first-run="devices">
+    <Step id="devices" onBack={fr.back}>
       <Heading>{d.title}</Heading>
       <Lede>{d.lede}</Lede>
       <Rows className="mt-6" data-first-run-devices="">
@@ -319,35 +380,121 @@ function Devices({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
         ))}
         {d.status ? <StatusLine row={d.status} onAct={() => void fr.act(d.status!.action?.id ?? "")} /> : null}
       </Rows>
-      <div className="mt-7 flex items-center gap-4">
+      <div className="mt-7 flex flex-wrap items-center gap-3">
         <Primary label={d.primary.label} onClick={() => void fr.act(d.primary.id)} data-first-run-devices-primary={d.primary.id} />
-        {d.secondary ? <Quiet label={d.secondary.label} onClick={() => void fr.act(d.secondary!.id)} data-first-run-secondary="" /> : null}
+        {d.secondary ? <Secondary label={d.secondary.label} onClick={() => void fr.act(d.secondary!.id)} describedBy={d.note ? "first-run-devices-note" : undefined} /> : null}
       </div>
-      {d.note ? <p className="mt-4 text-[13px] text-muted-foreground">{d.note}</p> : null}
-    </div>
+      {d.note ? (
+        <p id="first-run-devices-note" className="mt-3 text-[13px] text-muted-foreground" data-first-run-devices-note="">
+          {d.note}
+        </p>
+      ) : null}
+    </Step>
   );
 }
 
-/* ---- 4 · Try it ---------------------------------------------------------------------- */
+/* ---- Install the Cua CLI (only while it is missing) ----------------------------------- */
+
+/** What Install writes (the exact file, and the PATH line when one is
+ * needed), Install or Not now, and the result with a command to try. */
+function CommandLine({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
+  const c = view.cli!;
+  return (
+    <Step id="cli" onBack={fr.back}>
+      <Heading>{c.title}</Heading>
+      <Lede>{c.lede}</Lede>
+      <Rows className="mt-6" data-first-run-cli="">
+        {c.facts.map((f) => (
+          <div key={f.label} className="flex items-baseline gap-3 py-2.5 text-[14px]" data-first-run-cli-fact={f.label}>
+            <span className="w-48 shrink-0">{f.label}</span>
+            <code className="min-w-0 font-mono text-[13px] break-all text-muted-foreground">{f.value}</code>
+          </div>
+        ))}
+        {c.installed && c.tryCommand ? (
+          <div className="flex items-center gap-3 py-2.5" data-first-run-cli-done="">
+            <StateIcon state="ok" />
+            <div className="min-w-0 flex-1 text-[14px]">
+              Open a new terminal window and try <code className="font-mono text-[13px]">{c.tryCommand}</code>
+            </div>
+          </div>
+        ) : null}
+      </Rows>
+      {c.error ? (
+        <p role="alert" className="mt-3 text-[13px] text-destructive" data-first-run-cli-error="">
+          {c.error}
+        </p>
+      ) : null}
+      <div className="mt-7 flex flex-wrap items-center gap-3">
+        {c.primary ? (
+          <Primary label={c.busy ? "Installing…" : c.primary.label} onClick={() => !c.busy && void fr.act(c.primary!.id)} data-first-run-cli-primary={c.primary.id} />
+        ) : null}
+        {c.secondary && !c.busy ? <Secondary label={c.secondary.label} onClick={() => void fr.act(c.secondary!.id)} /> : null}
+      </div>
+    </Step>
+  );
+}
+
+/* ---- 4 · Share this Mac's screen (a signed-in Mac that shares it) ------------------- */
+
+function Permissions({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
+  const p = view.permissions!;
+  return (
+    <Step id="permissions" onBack={fr.back}>
+      <Heading>{p.title}</Heading>
+      <Lede>{p.lede}</Lede>
+      <Rows className="mt-6" data-first-run-permissions="">
+        {p.rows.map((r) => (
+          <StatusLine key={r.id} row={r} onAct={r.action ? () => void fr.act(r.action!.id, r.settingsUrl) : undefined} />
+        ))}
+      </Rows>
+      <p className="mt-3 text-[13px] text-muted-foreground" data-first-run-permissions-note="">
+        {p.note}
+      </p>
+      <div className="mt-7 flex flex-wrap items-center gap-3">
+        {p.primary ? <Primary label={p.primary.label} onClick={() => void fr.act(p.primary!.id)} data-first-run-permissions-primary={p.primary.id} /> : null}
+        {p.secondary ? <Secondary label={p.secondary.label} onClick={() => void fr.act(p.secondary!.id)} data-first-run-permissions-secondary={p.secondary.id} /> : null}
+      </div>
+    </Step>
+  );
+}
+
+/* ---- 5 · Try it ---------------------------------------------------------------------- */
 
 function Setup({ fr, view, onFinish }: { fr: FirstRunHook; view: FirstRunView; onFinish: () => void }) {
   const s = view.setup!;
   const [copied, setCopied] = useState(false);
+  const [tab, setTab] = useState<string | null>(null);
+  const tabs = s.prompt?.tabs ?? [];
+  const shownTab = tabs.find((t) => t.id === (tab ?? s.prompt?.selected));
+  const promptText = shownTab?.text ?? s.prompt?.text ?? "";
   const copy = async () => {
-    await fr.copyPrompt();
+    await fr.copyPrompt(promptText);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
   return (
-    <div data-first-run="setup">
+    <Step id="setup" onBack={fr.back}>
       <Heading>{s.title}</Heading>
       <Lede>{s.lede}</Lede>
+      {s.prompt && tabs.length > 1 ? (
+        <div className="mt-6" data-first-run-prompt-tabs="">
+          <Segmented
+            aria-label="System"
+            value={shownTab?.id ?? tabs[0]!.id}
+            options={tabs.map((t) => ({ value: t.id, label: t.label }))}
+            onValueChange={(v) => {
+              setTab(v);
+              setCopied(false);
+            }}
+          />
+        </div>
+      ) : null}
       {s.prompt ? (
-        <div className="mt-6 flex items-start gap-3">
+        <div className={cn("flex items-start gap-3", tabs.length > 1 ? "mt-3" : "mt-6")}>
           <textarea
             readOnly
             rows={2}
-            value={s.prompt.text}
+            value={promptText}
             aria-label={s.prompt.heading}
             onFocus={(e) => e.currentTarget.select()}
             className="min-w-0 flex-1 resize-none rounded-lg border border-foreground/15 bg-transparent px-3 py-2 font-mono text-[13px] leading-relaxed outline-none select-text focus-visible:ring-2 focus-visible:ring-ring/60"
@@ -367,13 +514,12 @@ function Setup({ fr, view, onFinish }: { fr: FirstRunHook; view: FirstRunView; o
         </div>
       ) : null}
       {s.extra ? <ExtraCard extra={s.extra} fr={fr} /> : null}
-      <div className="mt-8 flex items-center gap-4">
+      <div className="mt-8 flex items-center gap-3">
         <Button size="lg" className="h-11 min-w-28 rounded-full px-6 text-[15px]" disabled={!s.primary.enabled} data-onboarding-primary="" data-first-run-primary={s.primary.id} onClick={onFinish}>
           {s.primary.label}
         </Button>
-        <Quiet label="Back" onClick={fr.back} data-first-run-back="" />
       </div>
-    </div>
+    </Step>
   );
 }
 
@@ -418,7 +564,7 @@ function ExtraCard({ extra, fr }: { extra: FirstRunExtraView; fr: FirstRunHook }
             </button>
           ))}
           {extra.action ? (
-            <button type="button" className="px-2 text-[14px] font-medium underline decoration-foreground/25 underline-offset-4" onClick={() => act(extra.action!.id)}>
+            <button type="button" className="rounded-md px-2 text-[14px] font-medium underline decoration-foreground/25 underline-offset-4 outline-none focus-visible:ring-2 focus-visible:ring-ring/60" onClick={() => act(extra.action!.id)}>
               {extra.action.label}
             </button>
           ) : null}

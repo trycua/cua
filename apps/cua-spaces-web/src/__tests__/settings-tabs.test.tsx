@@ -31,6 +31,20 @@ describe.skipIf(!wasmBuilt)("Settings tabs (real routes, wasm core)", () => {
   });
 
   it.each([
+    ["/settings", "Account"],
+    ["/settings/general", "General"],
+    ["/settings/connected-apps", "Connected apps"],
+    ["/settings/devices", "Trusted devices"],
+    ["/settings/advanced", "Advanced"],
+    ["/settings/about", "About"],
+  ])("marks only the tab for %s as selected (%s)", async (path, label) => {
+    await mountApp(path, host);
+    const tabs = () => [...document.querySelectorAll<HTMLElement>('[role="tablist"][aria-label="Settings"] [role="tab"]')];
+    await waitFor(() => expect(tabs().filter((t) => t.getAttribute("aria-selected") === "true").map((t) => t.textContent)).toEqual([label]));
+    expect(tabs().filter((t) => t.getAttribute("aria-selected") === "false")).toHaveLength(5);
+  });
+
+  it.each([
     ["/settings/agents", "/settings/connected-apps", "connected-apps"],
     ["/settings/experiments", "/settings/advanced", "advanced"],
   ])("sends the old %s to %s", async (from, to, id) => {

@@ -31,14 +31,14 @@ test("Settings: the heading, tab bar and content keep their left edge across tab
   await page.goto("/settings?bridge=demo&parity");
   // The window's own size is the host's (the Electron window ignores the viewport): fix the page's height here.
   await page.addStyleTag({ content: "html, body, #root { height: 760px !important; max-height: 760px !important; overflow: hidden !important; }" });
-  const nav = page.getByRole("navigation", { name: "Settings" });
+  const nav = page.getByRole("tablist", { name: "Settings" });
   await nav.waitFor();
 
   type Edges = { heading: number; nav: number; content: number; scrolls: boolean };
   const edges: Record<string, Edges> = {};
   for (const [label] of TABS) {
-    await nav.getByRole("link", { name: label, exact: true }).click();
-    await expect(nav.getByRole("link", { name: label, exact: true })).toHaveAttribute("data-status", "active");
+    await nav.getByRole("tab", { name: label, exact: true }).click();
+    await expect(nav.getByRole("tab", { name: label, exact: true })).toHaveAttribute("aria-selected", "true");
     await page.waitForTimeout(150);
     edges[label] = await page.evaluate(() => {
       const nav = document.querySelector('nav[aria-label="Settings"]')!;

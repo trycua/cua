@@ -347,7 +347,7 @@ impl WindowCaptureIdentity {
 }
 
 fn current_window_capture_identity(window_id: u32) -> anyhow::Result<WindowCaptureIdentity> {
-    let info = crate::windows::window_info_by_id(window_id)
+    let info = crate::windows::describe_window(window_id)
         .ok_or_else(|| anyhow::anyhow!("WindowServer no longer lists window id {window_id}"))?;
     Ok(WindowCaptureIdentity::new(
         info.pid,

@@ -1391,7 +1391,7 @@ fn await_window_focused(pid: libc::pid_t, window_id: u32) -> bool {
 /// (a closed Chrome omnibox popup) and can never be key. Empty when neither
 /// is proven.
 fn focus_failure_hint(pid: libc::pid_t, target_wid: u32) -> String {
-    let target = crate::windows::window_info_by_id(target_wid);
+    let target = crate::windows::describe_window(target_wid);
     let focused =
         crate::ax::bindings::focused_window_id_of_pid(pid).filter(|focused| *focused != target_wid);
     focus_failure_hint_from(
@@ -1399,7 +1399,7 @@ fn focus_failure_hint(pid: libc::pid_t, target_wid: u32) -> String {
             window.is_on_screen && window.bounds.width >= 2.0 && window.bounds.height >= 2.0
         }),
         focused.map(|window_id| {
-            let title = crate::windows::window_info_by_id(window_id)
+            let title = crate::windows::describe_window(window_id)
                 .map(|window| window.title)
                 .unwrap_or_default();
             (window_id, title)

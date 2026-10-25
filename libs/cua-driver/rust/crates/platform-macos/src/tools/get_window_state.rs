@@ -843,7 +843,7 @@ impl Tool for GetWindowStateTool {
         // names the surface even on the capture-only path, where no AX tree is
         // present to identify it. Omitted per-field when WindowServer reports an
         // empty string.
-        if let Some(info) = crate::windows::window_info_by_id(window_id) {
+        if let Some(info) = crate::windows::describe_window(window_id) {
             if !info.app_name.is_empty() {
                 structured["app_name"] = serde_json::json!(info.app_name);
             }

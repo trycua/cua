@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 pub struct ChromeInput {
     /// The signed-in account.
     pub identity: Option<String>,
-    /// Cua Cloud works (signed in, or client credentials).
+    /// The Cua account works (signed in, or client credentials).
     pub cloud_configured: bool,
     /// Signing in is possible here (the native shell).
     pub can_sign_in: bool,

@@ -16,12 +16,11 @@
       "sidebar": {
         "emptyText": null,
         "sections": [
-          "# spaces.sidebar.section.cloud",
-          "<os-linux> builder | spaces.status.suspended | Unreachable · timed out (dim)",
           "# spaces.sidebar.section.this_mac",
           "<os-linux> aurora | spaces.status.running | This Mac",
           "# spaces.sidebar.section.connected",
           "<os-windows> 10.0.0.5:3211 | spaces.status.running | 10.0.0.5:3211 (selected)",
+          "<os-linux> builder | spaces.status.suspended | Unreachable · timed out (dim)",
           "# spaces.sidebar.section.my_computers",
           "<os-linux> research-box @ AWS · us-west-2 | spaces.status.running | AWS · us-west-2",
           "<os-linux> their-box @ Google Cloud · us-central1 | spaces.status.suspended | Unreachable · offline (dim)"
@@ -47,12 +46,11 @@
       "sidebar": {
         "emptyText": null,
         "sections": [
-          "# spaces.sidebar.section.cloud",
-          "<os-linux> builder | spaces.status.suspended | Unreachable · timed out (dim)",
           "# spaces.sidebar.section.this_mac",
           "<os-linux> aurora | spaces.status.running | This Mac",
           "# spaces.sidebar.section.connected",
           "<os-windows> 10.0.0.5:3211 | spaces.status.running | 10.0.0.5:3211 (selected)",
+          "<os-linux> builder | spaces.status.suspended | Unreachable · timed out (dim)",
           "# spaces.sidebar.section.my_computers",
           "<os-linux> research-box @ AWS · us-west-2 | spaces.status.running | AWS · us-west-2",
           "<os-linux> their-box @ Google Cloud · us-central1 | spaces.status.suspended | Unreachable · offline (dim)"
@@ -86,12 +84,11 @@
       "sidebar": {
         "emptyText": null,
         "sections": [
-          "# spaces.sidebar.section.cloud",
-          "<os-linux> builder | spaces.status.suspended | Unreachable · timed out (dim)",
           "# spaces.sidebar.section.this_mac",
           "<os-linux> aurora | spaces.status.running | This Mac",
           "# spaces.sidebar.section.connected",
           "<os-windows> 10.0.0.5:3211 | spaces.status.running | 10.0.0.5:3211 (selected)",
+          "<os-linux> builder | spaces.status.suspended | Unreachable · timed out (dim)",
           "# spaces.sidebar.section.my_computers",
           "<os-linux> research-box @ AWS · us-west-2 | spaces.status.running | AWS · us-west-2",
           "<os-linux> their-box @ Google Cloud · us-central1 | spaces.status.suspended | Unreachable · offline (dim)"
@@ -122,12 +119,11 @@
       "sidebar": {
         "emptyText": null,
         "sections": [
-          "# spaces.sidebar.section.cloud",
-          "<os-linux> builder | spaces.status.suspended | Unreachable · timed out (dim)",
           "# spaces.sidebar.section.this_mac",
           "<os-linux> aurora | spaces.status.running | This Mac",
           "# spaces.sidebar.section.connected",
           "<os-windows> 10.0.0.5:3211 | spaces.status.running | 10.0.0.5:3211 (selected)",
+          "<os-linux> builder | spaces.status.suspended | Unreachable · timed out (dim)",
           "# spaces.sidebar.section.my_computers",
           "<os-linux> research-box @ AWS · us-west-2 | spaces.status.running | AWS · us-west-2",
           "<os-linux> their-box @ Google Cloud · us-central1 | spaces.status.suspended | Unreachable · offline (dim)"
@@ -272,20 +268,20 @@
       }
     },
     {
-      "detail": "cloud:builder",
+      "detail": "direct:builder",
       "frame": {
         "actions": [
           "teleport: Teleport an app [arrow.down.circle] ?Teleport an app into this Space (disabled)",
           "pip: Picture in picture [pip.enter] ?Picture in picture (disabled)",
           "share: Share [person.badge.plus] ?Share this Space (disabled)",
-          "delete: Delete Space [trash] ?Delete this Space (destructive)",
+          "delete: Remove [trash] ?Remove from the list (destructive)",
           "open: Open [-] ?Open the desktop in its own window (disabled) (primary)"
         ],
         "canStream": false,
-        "confirm": "Delete builder? | Everything inside it, including its files, is deleted and can't be recovered. | Delete Space / Keep",
+        "confirm": "Remove builder? | It is only removed from the list. | Remove / Keep",
         "facts": [
           "Status: Unreachable ?timed out",
-          "Identifier: cloud:builder [copy cloud:builder doc.on.doc Copy / checkmark Copied 1500ms]",
+          "Identifier: direct:builder [copy direct:builder doc.on.doc Copy / checkmark Copied 1500ms]",
           "System: Linux"
         ],
         "isHost": false,

@@ -89,7 +89,7 @@ export interface ViewerConfig {
  */
 export interface SpaceCreateConfig {
   image?: string;
-  /** `local`, `cloud`, or a connected cloud's word (`aws`, `gcp`, `hetzner`, `modal`). */
+  /** `local`, or a connected cloud's word (`aws`, `gcp`, `hetzner`, `modal`). */
   on?: Location | string;
   kind?: SpaceKind | "auto";
   runtime?: Runtime;
@@ -110,7 +110,7 @@ export interface SpaceCreateConfig {
 
 /** Where new Spaces go by default (`default.on`), and where that came from. */
 export interface DefaultLocation {
-  /** `local`, `cloud`, or a connected cloud's word (`aws`). */
+  /** `local`, or a connected cloud's word (`aws`). */
   value: Location | string;
   /** `env` (CUA_DEFAULT_ON, read-only here), `config` or `default`. */
   source: "env" | "config" | "default";
@@ -213,31 +213,9 @@ export interface GpuChoice {
   learnMore?: string | null;
 }
 
-/** This account's Cua Cloud rates (the app core's `CloudPricing`). */
-export interface CloudPricing {
-  /** USD per reserved vCPU per hour. */
-  vcpuHourUsd: number;
-  /** USD per reserved GB of memory per hour. */
-  memoryGibHourUsd: number;
-}
-
-/** The account's Cua Cloud billing (the app core's `billing::BillingStatus`):
- * the credit left and the website billing page. The app takes no payment
- * details; the website does. */
-export interface BillingStatus {
-  billingEnabled: boolean;
-  card: { brand: string; last4: string } | null;
-  credit: { balanceUsdCents: number } | null;
-  billingUrl: string | null;
-}
-
-export interface FleetBridge {
+export interface SpacesBridge {
   readonly isNative: boolean;
   status(): Promise<AccountStatus>;
-  /** Always null in the native app: Cua Cloud has ended, so there are no rates. */
-  cloudPricing?(): Promise<CloudPricing | null>;
-  /** Always null in the native app: Cua Cloud has ended, so there is no billing. */
-  billingStatus?(): Promise<BillingStatus | null>;
   daemonStatus(): Promise<DaemonStatus>;
   ensureDaemon(): Promise<DaemonStatus>;
   localStatus(): Promise<LocalStatus>;
@@ -275,8 +253,6 @@ export interface FleetBridge {
   removeSpace(spaceId: string): Promise<void>;
   /** Where new Spaces go by default. */
   defaultLocation(): Promise<DefaultLocation>;
-  /** Stores the default location in `$CUA_HOME/config.toml`. */
-  setDefaultLocation(on: Location): Promise<DefaultLocation>;
   /** Fires after add/create/delete/remove anywhere in the app. */
   onSpacesChanged(handler: () => void): Promise<() => void>;
   /** Returns a `data:image/…;base64,…` URL. */
@@ -330,7 +306,7 @@ export interface FleetBridge {
 
 const NOT_NATIVE = "Spaces commands need the Tauri shell";
 
-export function createFallbackFleetBridge(): FleetBridge {
+export function createFallbackSpacesBridge(): SpacesBridge {
   const unavailable = () => Promise.reject(new Error(NOT_NATIVE));
   const noopUnsub = async () => () => {};
   return {
@@ -351,7 +327,6 @@ export function createFallbackFleetBridge(): FleetBridge {
     deleteSpace: unavailable,
     removeSpace: unavailable,
     defaultLocation: async () => BUILTIN_DEFAULT_LOCATION,
-    setDefaultLocation: unavailable,
     onSpacesChanged: noopUnsub,
     screenshot: unavailable,
     openStream: unavailable,
@@ -379,7 +354,7 @@ export function createFallbackFleetBridge(): FleetBridge {
   };
 }
 
-export function createTauriFleetBridge(): FleetBridge {
+export function createTauriSpacesBridge(): SpacesBridge {
   // Imported lazily so the browser/test bundle never touches Tauri globals.
   const core = import("@tauri-apps/api/core");
   const event = import("@tauri-apps/api/event");
@@ -391,12 +366,10 @@ export function createTauriFleetBridge(): FleetBridge {
   };
   return {
     isNative: true,
-    status: () => invoke<AccountStatus>("fleet_status"),
+    status: () => invoke<AccountStatus>("account_status"),
     daemonStatus: () => invoke<DaemonStatus>("daemon_status"),
     ensureDaemon: () => invoke<DaemonStatus>("ensure_daemon"),
     localStatus: () => invoke<LocalStatus>("local_status"),
-    cloudPricing: () => invoke<CloudPricing | null>("cloud_pricing"),
-    billingStatus: () => invoke<BillingStatus | null>("billing_status"), // resolves null (no Fleets call)
     listSpaces: () => invoke<SpaceRow[]>("list_spaces"),
     spaceInfo: (spaceId) => invoke<SpaceRow>("space_info", { spaceId }),
     addSpace: (url, token, name) =>
@@ -412,7 +385,6 @@ export function createTauriFleetBridge(): FleetBridge {
     setSpacePower: (spaceId, on) => invoke<SpacePowerReport>("set_space_power", { spaceId, on }),
     removeSpace: (spaceId) => invoke<void>("remove_space", { spaceId }),
     defaultLocation: () => invoke<DefaultLocation>("get_default_location"),
-    setDefaultLocation: (on) => invoke<DefaultLocation>("set_default_location", { on }),
     onSpacesChanged: (handler) => on<unknown>("spaces:changed", () => handler()),
     screenshot: (spaceId, maxDimension) =>
       invoke<string>("space_screenshot", { spaceId, maxDimension: maxDimension ?? null }),
@@ -462,6 +434,6 @@ export function createTauriFleetBridge(): FleetBridge {
   };
 }
 
-export function createFleetBridge(): FleetBridge {
-  return hasTauri() ? createTauriFleetBridge() : createFallbackFleetBridge();
+export function createSpacesBridge(): SpacesBridge {
+  return hasTauri() ? createTauriSpacesBridge() : createFallbackSpacesBridge();
 }

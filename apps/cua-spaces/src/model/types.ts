@@ -53,24 +53,27 @@ export interface SpaceSdkRef {
 }
 
 /**
- * Where a Space runs: the SDK's location words. `cloud` is Cua Cloud,
- * `local` this Mac, `direct` a machine added by address, `relay` a machine
- * of the signed-in account reached through the cua relay.
+ * Where a Space runs: the SDK's location words. `local` is this Mac,
+ * `direct` a machine added by address (or reached directly), `relay` a
+ * machine of the signed-in account reached through the cua relay.
  */
-export type SpaceProvider = "cloud" | "local" | "direct" | "relay";
+export type SpaceProvider = "local" | "direct" | "relay";
 
-/** Where new Spaces can be created (existing machines are added, not created). */
-export type Location = "cloud" | "local";
+/**
+ * Where new Spaces can be created: this Mac, one of your own computers
+ * (your cloud account or a machine of yours), or a machine that provides
+ * Spaces (host).
+ */
+export type Location = "local" | "yours" | "host";
 
 /** What kind of machine a Space is. */
 export type SpaceKind = "container" | "vm";
 
 /**
  * Which engine runs it. Local: `gvisor`, `runc` (containers), `qemu`, `lume`
- * (VMs). Cloud: `gvisor` (containers), `kubevirt` (VMs). `auto` lets the SDK
- * pick for the location and image.
+ * (VMs). `auto` lets the SDK pick for the location and image.
  */
-export type Runtime = "auto" | "gvisor" | "runc" | "qemu" | "lume" | "kubevirt";
+export type Runtime = "auto" | "gvisor" | "runc" | "qemu" | "lume";
 
 export interface Space {
   id: string;
@@ -85,12 +88,10 @@ export interface Space {
    * progress so it doesn't reset when the UI reopens. */
   startedAt?: number;
   scene: ThumbnailScene;
-  /** The group this Space belongs to (a cloud namespace or its location). */
-  fleetId?: string;
   /** Machine size label; undefined for the local Mac. */
   size?: MachineSize;
   region?: RegionId;
-  /** Where this Space runs; treated as "cloud" when omitted. */
+  /** Where this Space runs; treated as "relay" when omitted. */
   provider?: SpaceProvider;
   /** SDK registry facts, when the Space came from the live registry. */
   sdk?: SpaceSdkRef;
@@ -174,52 +175,4 @@ export interface SizeOption {
   memoryGb: number;
   /** Synthetic hourly list price in USD for a Linux computer at this size. */
   linuxHourlyUsd: number;
-}
-
-export type TemplateId = "qa-matrix" | "parallel-build" | "clean-browsers" | "custom";
-
-export interface TemplateMember {
-  name: string;
-  os: SpaceOs;
-  scene: ThumbnailScene;
-}
-
-export interface FleetTemplate {
-  id: TemplateId;
-  name: string;
-  summary: string;
-  description: string;
-  members: TemplateMember[];
-  /** Whether the user may edit the computer count. */
-  adjustable: boolean;
-}
-
-export interface FleetDraft {
-  templateId: TemplateId;
-  region: RegionId;
-  size: MachineSize;
-  autoSuspend: AutoSuspendMinutes;
-  /** Requested number of computers; only honoured for adjustable templates. */
-  count: number;
-  /** OS used for computers beyond the template's explicit members. */
-  customOs: SpaceOs;
-}
-
-export interface Fleet {
-  id: string;
-  name: string;
-  templateId: TemplateId;
-  createdAt: number;
-  spaceIds: string[];
-  region: RegionId;
-  size: MachineSize;
-  autoSuspend: AutoSuspendMinutes;
-}
-
-export interface HourlyEstimate {
-  computers: number;
-  /** Upper bound per hour when every computer is running. */
-  maxHourlyUsd: number;
-  /** Per-OS breakdown for transparency. */
-  breakdown: { os: SpaceOs; count: number; hourlyUsd: number }[];
 }

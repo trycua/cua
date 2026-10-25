@@ -262,7 +262,7 @@ struct SnapshotTests {
     /// "Signed in" beside the Space a Keyvault sign-in is live in.
     @Test func mainWindowSidebarSignedIn() async throws {
         let m = try await model(overview: try signedInOverview())
-        m.select("cloud:builder")
+        m.select("direct:builder")
         try assertSnapshot(Sidebar(model: m).frame(width: 260), "sidebar-signed-in", size: CGSize(width: 260, height: 520))
     }
 
@@ -608,7 +608,7 @@ struct SnapshotTests {
     @Test func notchActivityProvisioning() async throws {
         try await assertNotch("notch-activity-provisioning") { n in
             var s = n.spaces.first { $0.id != "this-mac" }!
-            s.id = "cloud:starter"
+            s.id = "direct:starter"
             s.name = "Starter"
             s.status = .provisioning
             s.startedAt = Int64(Date().timeIntervalSince1970 * 1000) - 40_000

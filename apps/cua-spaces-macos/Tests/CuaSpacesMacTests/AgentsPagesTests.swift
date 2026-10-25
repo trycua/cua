@@ -34,7 +34,7 @@ final class FakeAgentsTools: AgentsToolRunning, @unchecked Sendable {
         case "persistent_agent_list":
             return ["agents": [
                 ["name": "ada", "harness": "hermes", "space": "local:dev", "paused": paused, "run_id": paused ? NSNull() : "run-1", "saved_ms": now - 120_000],
-                ["name": "scout", "harness": "claude-code", "space": "cloud:scout", "paused": true, "space_state": "released", "saved_ms": now - 7_200_000],
+                ["name": "scout", "harness": "claude-code", "space": "direct:scout", "paused": true, "space_state": "released", "saved_ms": now - 7_200_000],
             ]]
         case "agent_pause": paused = true; return [:]
         case "volume_ls":

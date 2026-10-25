@@ -54,7 +54,6 @@ export function createOptions(env: AppWizardEnv, macosVmsRunning: number | null,
       storage: encode(env.storage),
     },
     gpus: encode(env.gpus),
-    cloudPricing: encode(env.cloudPricing),
     experiments: encode(env.experiments),
     maxCpus: env.maxCpus,
     env: encode(env),
@@ -71,7 +70,7 @@ export function createArgs(native: Native, c: BridgeArgs, defaultOn: string): Ap
   const kind = kindOf(native, typeof c.kind === "string" ? c.kind : "");
   if (!kind) throw Failure.badArgs("config.kind: container | vm");
   const runtime = runtimeOf(native, typeof c.runtime === "string" ? c.runtime : "auto");
-  if (!runtime) throw Failure.badArgs("config.runtime: auto | gvisor | runc | qemu | lume | kubevirt | an external runtime's name");
+  if (!runtime) throw Failure.badArgs("config.runtime: auto | gvisor | runc | qemu | lume | an external runtime's name");
   const count = (k: string) => (typeof c[k] === "number" && Number.isFinite(c[k]) && (c[k] as number) >= 0 ? Math.floor(c[k] as number) : undefined);
   const text = (k: string) => (typeof c[k] === "string" && c[k] !== "" ? (c[k] as string) : undefined);
   return {

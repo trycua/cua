@@ -463,7 +463,7 @@ export function useOnboarding(): OnboardingHook {
   const saved = useSavedOnboarding();
   const [hints, setHints] = useState<{ permissions: PermissionHint[]; configured: boolean } | null>(null);
 
-  const identity = session?.signedIn ? (session.fleet.identity ?? null) : null;
+  const identity = session?.signedIn ? (session.account.identity ?? null) : null;
   const ctx = { menuBar: settings?.values.menuBar ?? false, observe: store ? store.trackOnboarding.bind(store) : undefined };
   const state = saved.state;
 

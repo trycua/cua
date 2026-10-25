@@ -90,7 +90,7 @@ describe("demo adapter", () => {
     const a = demo(demoOptionsFromSearch("?demo=fresh,locked"));
     expect((await a.call("keyvault.overview", {})).availability).toBe("locked");
     const s = await a.call("session.get", {});
-    expect(s.fleet.authMode).toBe("none");
+    expect(s.account.authMode).toBe("none");
     expect(s.onboarding.completed).toBe(false);
     await a.call("keyvault.unlock", {});
     expect((await a.call("keyvault.overview", {})).availability).toBe("ready");
@@ -108,6 +108,6 @@ describe("demo adapter", () => {
     expect((await a.call("session.signIn", {})).verificationUri).toMatch(/^https:/);
     await new Promise((r) => setTimeout(r, 30));
     expect(events).toContainEqual({ type: "session.signedIn", identity: "ada@example.com" });
-    expect((await a.call("session.get", {})).fleet.identity).toBe("ada@example.com");
+    expect((await a.call("session.get", {})).account.identity).toBe("ada@example.com");
   });
 });

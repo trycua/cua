@@ -135,7 +135,7 @@ let fixtureNow = Date(timeIntervalSince1970: 1_800_000_000)
 struct ViewModelTests {
     func makeModel(_ backend: SpacesBackend = FixtureSpacesBackend(), kv: KeyvaultClientProtocol? = nil,
                    host: HostRunning? = nil, account: AccountRunning? = nil,
-                   agents: AgentSetupRunning? = nil, billing: BillingRunning? = nil,
+                   agents: AgentSetupRunning? = nil,
                    loginItem: LoginItemControlling? = nil, telemetry: TelemetryRunning = FixtureTelemetry()) -> AppModel {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cua-mac-tests-\(UUID().uuidString)")
         return AppModel(backend: backend,
@@ -143,7 +143,7 @@ struct ViewModelTests {
                         onboarding: OnboardingModel(statePath: dir.appendingPathComponent("onboarding.json").path),
                         settingsPath: dir.appendingPathComponent("settings.json").path,
                         host: host, account: account, telemetry: telemetry, agentSetup: agents,
-                        billing: billing, loginItem: loginItem)
+                        loginItem: loginItem)
     }
 
     @Test func liveKeyvaultSharingShowsInTheNotchAndTheMenu() async throws {
@@ -695,13 +695,13 @@ struct ViewModelTests {
         let model = makeModel()
         await model.refresh()
         let titles = model.sidebar.sections.map(\.title.code)
-        #expect(titles == ["spaces.sidebar.section.cloud", "spaces.sidebar.section.this_mac", "spaces.sidebar.section.connected"])
+        #expect(titles == ["spaces.sidebar.section.this_mac", "spaces.sidebar.section.connected"])
         // The container hostname defers to the name in the id.
         #expect(model.spaces.contains { $0.name == "aurora" })
         // An unreachable Space is dimmed and cannot stream.
-        let builder = model.spaces.first { $0.id == "cloud:builder" }!
+        let builder = model.spaces.first { $0.id == "direct:builder" }!
         #expect(model.detail(builder).canStream == false)
-        #expect(model.sidebar.sections[0].rows[0].dim)
+        #expect(model.sidebar.sections.flatMap(\.rows).first { $0.id == builder.id }?.dim == true)
     }
 
     @Test func searchFiltersThroughTheCore() async {
@@ -776,20 +776,17 @@ struct ViewModelTests {
     }
 
     /// Run on lists this Mac only while no cloud is connected (and with Your
-    /// cloud turned off, no cloud at all); Cua Cloud is never offered, and
-    /// New Space creates on this Mac. Your cloud is on by default, so
-    /// "Connect a cloud" is there until it is turned off.
+    /// cloud turned off, no cloud at all), and New Space creates on this Mac.
+    /// Your cloud is on by default, so "Connect a cloud" is there until it is
+    /// turned off.
     @Test func runOnIsThisMacUntilACloudIsConnected() async {
         let backend = FixtureSpacesBackend()
-        backend.fixtureCloud = true
-        backend.fixturePricing = AppCloudPricing(vcpuHourUsd: 0.044625, memoryGibHourUsd: 0.0223125)
         let model = makeModel(backend)
         await model.openNewSpace()
         let w = model.wizard
         #expect(w.view.placements.map(\.id) == ["local"])
         #expect(w.view.placementId == "local")
         #expect(w.view.fields.contains { $0.id == "connect-cloud" }, "Your cloud is on by default")
-        w.send(.setPlacement(placement: .cloud))
         w.send(.setPlacement(placement: .yours))
         #expect(w.view.plan.placement == .local)
         w.send(.next)
@@ -1241,7 +1238,7 @@ struct ViewModelTests {
         let model = makeModel(backend)
         await model.refresh()
         let row = { (id: String) in model.sidebar.sections.flatMap(\.rows).first { $0.id == id } }
-        #expect(row("cloud:builder")?.power == nil, "a cloud Space cannot be turned off")
+        #expect(row("direct:builder")?.power == nil, "a cloud Space cannot be turned off")
         let aurora = try #require(model.spaces.first { $0.id == "local:aurora" })
         #expect(row(aurora.id)?.power?.help.code == "spaces.power.suspend")
         // Share before power (Sharing is on by default); none with Sharing turned off.
@@ -1536,15 +1533,13 @@ struct ViewModelTests {
         #expect(model.gate?.action.label == "See Teams")
     }
 
-    /// Settings hides Cua Cloud billing and shows the real Teams section
+    /// Settings shows the real Teams section
     /// (the Spaces API: name with alias fallback, members, pending invites
-    /// marked "(Invited)", the account app for invites and billing); a cloud
-    /// create refused for want of credit shows one line and no Add credit.
-    @Test func billingIsHiddenAndTeamsComeFromTheSpacesAPI() async throws {
+    /// marked "(Invited)", the account app for invites and billing).
+    @Test func teamsComeFromTheSpacesAPI() async throws {
         var opened: [URL] = []
         BillingBrowser.open = { opened.append($0) }
-        let model = makeModel(account: FixtureAccount(identity: "you@example.com"),
-                              billing: FixtureBilling(balanceCents: 742))
+        let model = makeModel(account: FixtureAccount(identity: "you@example.com"))
         model.teamsReader = FixtureTeams([
             AppTeamInput(id: "o1", alias: "acme", name: "", role: "owner", plan: "teams", seats: 3,
                          members: [AppTeamPersonInput(email: "you@example.com", role: "owner"),
@@ -1565,16 +1560,6 @@ struct ViewModelTests {
         await model.press(row: "teams-billing")
         #expect(opened.map(\.absoluteString) == ["https://app.cua.ai/team", "https://app.cua.ai/billing"])
 
-        var creates = appCreatesReduce(state: AppCreatesState(pending: [], deleting: [], powering: [], streaks: []),
-                                       action: .start(id: "pending:1", name: "cloud", os: .linux, provider: .cloud,
-                                                      now: 0, image: nil, kind: nil, hostArch: nil, gpu: false,
-                                                      host: nil, hostName: nil))
-        creates = appCreatesReduce(state: creates, action: .fail(
-            id: "pending:1", error: "You're out of Cua Cloud credit. Add credit at https://app.cua.ai/billing",
-            errorVariant: "", now: nil))
-        let space = appCreatesCompose(spaces: [], state: creates)[0]
-        #expect(space.detail == "You're out of Cua Cloud credit.")
-        #expect(appSpaceDetail(space: space).creditNotice == nil)
     }
 }
 

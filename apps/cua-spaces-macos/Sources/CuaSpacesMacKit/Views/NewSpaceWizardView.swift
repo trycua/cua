@@ -462,7 +462,6 @@ public struct NewSpaceWizardView: View {
         case "runc": return .runc
         case "qemu": return .qemu
         case "lume": return .lume
-        case "kubevirt": return .kubevirt
         // An external runtime provider's name.
         case "", "auto": return .auto
         default: return .other(word)

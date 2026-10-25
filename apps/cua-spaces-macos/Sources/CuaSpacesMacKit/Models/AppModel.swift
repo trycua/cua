@@ -124,7 +124,8 @@ public final class AppModel {
     let agentSetup: AgentSetupRunning?
     /// The signed-in account.
     public private(set) var identity: String?
-    /// Cua Cloud can be used.
+    /// The session's `cloudConfigured` field: nothing probes it any more
+    /// (Cua Cloud has ended), so it stays false.
     public private(set) var cloudConfigured = false
     /// The Settings sign-in in progress.
     public private(set) var signIn: AppSignInPhase = .idle
@@ -140,10 +141,6 @@ public final class AppModel {
     /// The attempt in progress asked for a code instead of the browser's way back.
     private var signInByCode = false
     public private(set) var telemetryInput: AppTelemetryInput?
-    /// The account's Cua Cloud billing (Settings, Billing), once read.
-    public private(set) var billingStatus: AppBillingStatus?
-    /// Cua Cloud billing (nil: no Billing row).
-    let billing: BillingRunning?
     /// Reads the account's Teams from the Spaces API (nil: Settings shows
     /// the account app's links only). Set by `AppEnvironment`.
     public var teamsReader: TeamsReading?
@@ -189,7 +186,7 @@ public final class AppModel {
                 onboarding: OnboardingModel, settingsPath: String,
                 host: HostRunning? = nil, account: AccountRunning? = nil,
                 telemetry: TelemetryRunning? = nil, agentSetup: AgentSetupRunning? = nil,
-                billing: BillingRunning? = nil, devices: DevicesRunning? = nil,
+                devices: DevicesRunning? = nil,
                 presence: PresenceChecking = LivePresence(), loginItem: LoginItemControlling? = nil,
                 startup: StartupModel? = nil, appVersion: String? = nil) {
         self.backend = backend
@@ -205,7 +202,6 @@ public final class AppModel {
         let fixtures = backend as? FixtureSpacesBackend
         self.elastic = ElasticModel(tools: backend as? CloudToolRunning,
                                     ledger: fixtures.map { fx in { fx.fixtureElastic ? FixtureSpacesBackend.fixtureLedger() : nil } })
-        self.billing = billing
         self.loginItem = loginItem
         self.host = HostModel(host: host)
         self.account = account
@@ -220,10 +216,10 @@ public final class AppModel {
         if let appVersion { settings = appSettingsResolveNewUi(settings: settings, version: appVersion) }
         self.settings = settings
         self.wizard = WizardModel(env: AppWizardEnv(
-            defaultLocation: settings.defaultLocation, cloudAvailable: false,
+            defaultLocation: settings.defaultLocation,
             localAvailable: true, localReason: nil, localBackends: nil, localDetails: nil,
             maxCpus: UInt32(max(2, min(16, ProcessInfo.processInfo.activeProcessorCount))),
-            hostArch: Self.hostArch, lumeSource: nil, linuxSource: nil, storage: nil, cloudPricing: nil, clouds: [], hosts: [],
+            hostArch: Self.hostArch, lumeSource: nil, linuxSource: nil, storage: nil, clouds: [], hosts: [],
             experiments: settings.experiments, gpus: nil, nameSeed: nil))
         self.notch = NotchModel()
         // The notch tiles and the preview cover read one thumbnail store,
@@ -877,7 +873,6 @@ public final class AppModel {
         // Mac's Spaces show as soon as the daemon lists them, and "This
         // machine" joins them once the host answered (it recomposes then).
         async let hostRead: Void = refreshHostThenRecompose()
-        async let cloud = backend.cloudAvailable()
         defer { followIncompleteList() }
         do {
             let (list, read) = try await readRows(fresh: fresh)
@@ -885,7 +880,6 @@ public final class AppModel {
             lastListAnswer = lastListOk
             // A read from before a newer one already shown is out of date.
             guard read >= rowsShownRead else {
-                cloudConfigured = await cloud
                 await hostRead
                 return
             }
@@ -902,7 +896,6 @@ public final class AppModel {
             // last known ones (this Mac's are current).
             rosterError = list.notice.isEmpty ? nil
                 : "Could not reach your other computers. Their Spaces may be out of date."
-            cloudConfigured = await cloud
             await hostRead
             // Your machines' load for their sidebar lines, every so often
             // (each machine is asked; never holds up the list).
@@ -928,7 +921,6 @@ public final class AppModel {
         } catch TimeoutError.timedOut {
             // The daemon is slow or gone: the list stays as it was, and the
             // poll reconnects when it stays stale (`checkListHealth`).
-            cloudConfigured = await cloud
             await hostRead
         } catch {
             if Self.daemonAnswered(error) { lastListAnswer = listClock() }
@@ -936,7 +928,6 @@ public final class AppModel {
             rosterError = loaded
                 ? "Could not refresh Spaces. Previously loaded rows may be out of date."
                 : "Could not load Spaces. Try refreshing again."
-            cloudConfigured = await cloud
             await hostRead
         }
     }
@@ -1030,27 +1021,25 @@ public final class AppModel {
     public func newSpaceEnv() async -> AppWizardEnv {
         async let runtimesProbe = backend.localRuntimes()
         async let storageProbe = backend.localStorage()
-        async let pricingProbe = backend.cloudPricing()
         async let gpusProbe = backend.gpuChoices()
         async let hostsProbe = backend.hosts()
-        async let cloudProbe = backend.cloudAvailable()
         async let lumeProbe = backend.lumeSource()
         async let linuxProbe = backend.linuxSource()
         async let macosVmsProbe = backend.runningMacosVms()
         await self.cloud.refresh()
-        let (runtimes, storage, pricing, gpus, cloud) = await (runtimesProbe, storageProbe, pricingProbe, gpusProbe, cloudProbe)
+        let (runtimes, storage, gpus) = await (runtimesProbe, storageProbe, gpusProbe)
         (lumeSource, linuxSource) = await (lumeProbe, linuxProbe)
         hosts = await hostsProbe
         // Lume did not answer this time: keep what it said last (a VM that
         // stopped since shows on the next read that answers).
         runningMacosVms = await macosVmsProbe ?? runningMacosVms
-        return wizardEnv(cloud: cloud, runtimes: runtimes, storage: storage, pricing: pricing, gpus: gpus)
+        return wizardEnv(runtimes: runtimes, storage: storage, gpus: gpus)
     }
 
     /// What New Space knows without asking anything (no probe, no wait):
     /// the env New UI gets while the live services are still starting.
     public func knownNewSpaceEnv() -> AppWizardEnv {
-        wizardEnv(cloud: false, runtimes: nil, storage: nil, pricing: nil, gpus: nil)
+        wizardEnv(runtimes: nil, storage: nil, gpus: nil)
     }
 
     /// The live services are in (the launch's stand-ins have them): until
@@ -1141,18 +1130,18 @@ public final class AppModel {
         return e
     }
 
-    private func wizardEnv(cloud available: Bool, runtimes: (ready: [String], details: [String: String])?,
-                           storage: LocalStorage?, pricing: AppCloudPricing?,
+    private func wizardEnv(runtimes: (ready: [String], details: [String: String])?,
+                           storage: LocalStorage?,
                            gpus: [AppGpuChoice]?) -> AppWizardEnv {
         let backends = runtimes?.ready
         return wizardEnv(from: AppWizardEnv(
-            defaultLocation: settings.defaultLocation, cloudAvailable: available,
+            defaultLocation: settings.defaultLocation,
             localAvailable: backends.map { !$0.isEmpty } ?? true,
             localReason: backends?.isEmpty == true ? "No local runtime found (Docker or Lume)." : nil,
             localBackends: backends, localDetails: runtimes?.details, maxCpus: wizard.env.maxCpus,
             hostArch: Self.hostArch, lumeSource: lumeSource, linuxSource: linuxSource,
             storage: storage.map(Self.wizardStorage),
-            cloudPricing: available ? pricing : nil, clouds: [], hosts: [],
+            clouds: [], hosts: [],
             experiments: settings.experiments, gpus: gpus, nameSeed: nil))
     }
 
@@ -1233,7 +1222,7 @@ public final class AppModel {
         // second row next to this one, and a failure names the machine.
         let machine = args.on.hasPrefix("host:") ? String(args.on.dropFirst("host:".count)) : nil
         sendCreate(.start(id: pendingId, name: args.name ?? "", os: os,
-                          provider: args.on == "cloud" ? .cloud : args.on == "local" ? .local : .relay,
+                          provider: args.on == "local" ? .local : .relay,
                           now: Self.nowMs(),
                           image: args.image, kind: args.kind, hostArch: Self.hostArch, gpu: args.gpu != nil,
                           host: machine, hostName: machine.flatMap(machineName(of:))))
@@ -1646,10 +1635,10 @@ public final class AppModel {
     public var settingsPage: AppSettingsPage {
         appSettingsPage(input: AppSettingsInput(
             identity: identity, apiKeyClient: nil, signIn: signIn, canSignOut: account != nil && identity != nil,
-            menuBar: settings.menuBar, defaultLocation: settings.defaultLocation, locationLockedBy: nil,
+            menuBar: settings.menuBar,
             telemetry: telemetryInput, agents: agentRows, agentsBusy: agentsBusy, agentsPending: agentsPending,
             teams: teamsSettingsInput,
-            billing: identity == nil ? nil : billingStatus, loginItem: loginItemInput,
+            loginItem: loginItemInput,
             experiments: settings.experiments, keyvaultAutoWipe: keyvault.autoWipe,
             keyvaultUnlockPrompt: keyvault.unlockPromptShows,
             keyvaultSiteIcons: settings.keyvaultSiteIcons, keyvaultProtection: keyvault.page.protection,
@@ -1830,21 +1819,12 @@ public final class AppModel {
         telemetryInput = telemetry?.status()
         readLoginItem()
         await storage.load()
-        await reloadBilling()
         await reloadTeams()
         await reloadAgents()
         await keyvault.refresh()
     }
 
-    func reloadBilling() async {
-        guard identity != nil, let billing else {
-            billingStatus = nil
-            return
-        }
-        billingStatus = try? await billing.status()
-    }
-
-    /// Opens a website page (Manage billing, Add credit, the account app's Teams page).
+    /// Opens a website page (the account app's Teams page and billing).
     public func openBillingPage(_ raw: String) {
         guard let url = URL(string: raw), url.scheme == "https" || url.scheme == "http" else { return }
         BillingBrowser.open(url)
@@ -1896,9 +1876,6 @@ public final class AppModel {
             } catch {
                 show(error: LiveSpacesBackend.words(error))
             }
-        case "default-location":
-            settings.defaultLocation = .local  // Cua Cloud has ended: only This Mac is a default
-            saveSettings()
         case "auto-connect":
             settings.autoConnect = option == "on"
             saveSettings()
@@ -1941,7 +1918,7 @@ public final class AppModel {
             openOnboarding?()
         case "launch-at-login-approve":
             loginItem?.openSystemSettings()
-        case "billing", "teams-manage", "teams-billing":
+        case "teams-manage", "teams-billing":
             // The account app (app.cua.ai): invites, roles and plans for
             // teams, billing.
             if let url = settingsPage.sections.flatMap(\.rows).first(where: { $0.id == row })?.linkUrl {

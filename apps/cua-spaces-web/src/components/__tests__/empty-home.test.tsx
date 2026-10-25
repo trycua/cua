@@ -138,7 +138,7 @@ describe.skipIf(!wasmBuilt)("the empty home (wasm core)", () => {
 
   it("opens New Space with the tile's system chosen, on this machine, and never creates", async () => {
     const core = await testCore();
-    const env = { defaultLocation: "local", cloudAvailable: false, localAvailable: true, maxCpus: 8 } as const;
+    const env = { defaultLocation: "local", localAvailable: true, maxCpus: 8 } as const;
     for (const [name, os] of [
       [/^Linux, /, "linux"],
       [/^macOS, /, "macos"],

@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowDownCircleIcon, KeyRoundIcon, LoaderCircleIcon, MonitorIcon, PlusIcon, PowerIcon, SearchIcon } from "lucide-react";
 import { useEffect, useRef, useState, type DragEvent } from "react";
 
 import { emptyHome, listView, spaceResources, useAgents, useBridge, useChecklist, useResources, useFirstSpaceOffers, useMachines, useNewSpaceWizard, useSpaceAccess, useSpaceFiles, useSpaces, useSpaceThumbnail, useWindowDropTarget, type Space } from "@/bridge";
 import { EmptyHome } from "@/components/empty-home";
-import { ConnectAgentDialog } from "@/components/agents/connect-dialog";
 import { RunAgentDialog } from "@/components/agents/run-agent-dialog";
 import { SpaceReadyCard, useAgentOffer } from "@/components/space-ready-card";
 import { useFirstRunStep, useFirstSpaceMilestones } from "@/components/first-run-guide";
@@ -87,7 +86,7 @@ function SpacesPage() {
   const [runPrompt, setRunPrompt] = useState<string | undefined>();
   const firstRunStep = useFirstRunStep();
   useFirstSpaceMilestones(spaces);
-  const [connectOpen, setConnectOpen] = useState(false);
+  const navigate = useNavigate();
   // The cards above the list (ready, checklist, computers) and the list come from separate host reads. Draw them
   // together once those have answered, not one by one with the page jumping at each (CUA-1951).
   const settled = useQuiet(
@@ -119,8 +118,7 @@ function SpacesPage() {
         /> : null}
       {readySpace ? (
         <>
-          <RunAgentDialog open={runOpen} space={readySpace} prompt={runPrompt} onOpenChange={setRunOpen} onManual={() => setConnectOpen(true)} onConnected={offer.completed} />
-          <ConnectAgentDialog open={connectOpen} onOpenChange={setConnectOpen} />
+          <RunAgentDialog open={runOpen} space={readySpace} prompt={runPrompt} onOpenChange={setRunOpen} onManual={() => void navigate({ to: "/settings/connected-apps" })} onConnected={offer.completed} />
         </>
       ) : null}
       <ComputerWarnings snapshot={resources} machines={machines} />

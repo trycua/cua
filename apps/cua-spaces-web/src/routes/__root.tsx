@@ -20,6 +20,7 @@ import { UsageLinkNotice } from "@/components/usage-link-notice";
 import { TopBar } from "@/components/shell/top-bar";
 import { ThisMacNudges } from "@/components/this-mac-nudges";
 import { useGlobalKeybindings } from "@/hooks/use-global-keybindings";
+import { useAgentSync } from "@/hooks/use-connected-apps";
 import { useNotificationToasts } from "@/hooks/use-notification-toasts";
 import { useThemeHostSync, useThemeSync } from "@/lib/theme";
 import { useUiStore } from "@/stores/ui";
@@ -40,6 +41,7 @@ function RootLayout() {
   useGlobalKeybindings();
   useFirstRun();
   useNotificationToasts();
+  useAgentSync();
   const sidebarOpen = useUiStore((s) => s.sidebarOpen);
   const { pathname } = useLocation();
   // The app shows as usual until the host says it is still starting.

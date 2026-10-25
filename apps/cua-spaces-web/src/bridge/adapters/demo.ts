@@ -87,6 +87,8 @@ export interface DemoOptions {
   usage?: "idle" | "warn" | "limit" | "pro" | "teams";
   /** Which agents are on this computer (`?demo=agents-none`, `?demo=agents-codex`); all of them by default. `unset`: all found, none set up for Cua yet, without the first-run onboarding. */
   agents?: "none" | "codex" | "unset";
+  /** Coding agents whose config file Cua can't write (setup fails with a permission error), by id. */
+  agentsReadOnly?: string[];
   /** This Mac's free disk: `low` (`?demo=low-disk`) or `full` (`?demo=disk-full`). */
   disk?: "low" | "full";
   /** The machine the demo runs on: a Mac on Apple silicon unless set (the
@@ -119,6 +121,7 @@ const DEMO_NOTES = "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3
  * `?demo=empty` (no Spaces yet), `?demo=keychain` (the startup screen),
  * `?demo=mac-host` (New Space options and the Keyvault's Settings rows in the
  * SwiftUI host's shape), `?demo=unenrolled` (this device not enrolled),
+ * `?demo=agents-readonly` (Cua can't write Hermes's config),
  * `?demo=update-ready` (an update is downloaded), `?demo=update-downloading`,
  * and `?demo=low-disk` / `?demo=disk-full` (This Mac almost out of space). */
 export function demoOptionsFromSearch(search: string): DemoOptions {
@@ -138,6 +141,8 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     unenrolled: flags.has("unenrolled"),
     usage: (["idle", "warn", "limit", "pro", "teams"] as const).find((u) => flags.has(`usage-${u}`)),
     agents: (["none", "codex"] as const).find((a) => flags.has(`agents-${a}`)),
+    // `?demo=agents-readonly`: Hermes's config file can't be written, so setting it up fails.
+    ...(flags.has("agents-readonly") ? { agentsReadOnly: ["hermes"] } : {}),
     nudge: (["second-agent", "risky"] as const).find((n) => flags.has(`nudge-${n}`)),
     disk: flags.has("disk-full") ? "full" : flags.has("low-disk") ? "low" : undefined,
     cli: flags.has("cli-local") ? "local" : flags.has("cli-missing") ? "missing" : undefined,
@@ -193,6 +198,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     agents: demoPersistentAgents(now()),
     // A named allowance is for showing the prompts, which wait for no agent run.
     runs: options.usage ? [] : demoRunRecords(now()),
+    readOnlyAgents: options.agentsReadOnly ?? [],
     agentSetup: demoAgentSetup(options.onboarded === false || options.agents === "unset", options.agents === "none" ? [] : options.agents === "codex" ? ["codex"] : null),
     platform: options.platform ?? MAC_DEMO_PLATFORM,
     paired: [],
@@ -594,7 +600,11 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       await wait(step);
       const wanted = (r: AgentSetupRow) => r.installed && (agents === null || agents.includes(r.agent));
       state.agentSetup = state.agentSetup.map((r) =>
-        wanted(r) ? { ...r, configured: true, skillsInstalled: r.skillsTotal, detail: "Skills and MCP server set up" } : r,
+        wanted(r)
+          ? state.readOnlyAgents.includes(r.agent)
+            ? { ...r, configured: false, skillsInstalled: 0, detail: "Permission denied (os error 13)" }
+            : { ...r, configured: true, skillsInstalled: r.skillsTotal, detail: "Skills and MCP server set up" }
+          : r,
       );
       // The demo plays the agent's first request a little later: a line in this computer's access log.
       const used = state.agentSetup.find(wanted);
@@ -676,6 +686,7 @@ export interface DemoState extends DemoLinksStateField, DemoTelemetryState, Demo
   agents: PersistentAgent[];
   runs: DemoRunRecord[];
   agentSetup: AgentSetupRow[];
+  readOnlyAgents: string[];
   volume: DemoVolumeState;
   platform: DemoPlatform;
   /** Machines added with a pairing code ("Add a machine"). */

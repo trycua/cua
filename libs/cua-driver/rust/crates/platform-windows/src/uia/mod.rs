@@ -43,11 +43,6 @@ pub const DEFAULT_MAX_DEPTH: usize = 25;
 /// Default cap; callers can override via [`walk_tree_bounded`].
 pub const DEFAULT_MAX_TOTAL_ELEMENTS: usize = 5000;
 
-/// A single node in the accessibility tree.
-///
-/// Same shape for the UIA primary path AND the MSAA fallback (used for
-/// SAL/VCL window classes — see `msaa.rs`). MSAA-only fields use the
-/// `_ptr is IAccessible` / `msaa_role = Some(...)` discriminator.
 /// A TogglePattern state as UIA reports it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CheckedState {
@@ -67,6 +62,11 @@ impl CheckedState {
     }
 }
 
+/// A single node in the accessibility tree.
+///
+/// Same shape for the UIA primary path AND the MSAA fallback (used for
+/// SAL/VCL window classes — see `msaa.rs`). MSAA-only fields use the
+/// `_ptr is IAccessible` / `msaa_role = Some(...)` discriminator.
 #[derive(Clone)]
 pub struct UiaNode {
     pub element_index: Option<usize>,

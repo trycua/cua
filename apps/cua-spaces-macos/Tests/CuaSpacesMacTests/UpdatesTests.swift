@@ -80,7 +80,7 @@ struct UpdatesTests {
     @Test func noUpdaterNoControls() {
         let model = UpdatesModel(updater: nil, info: Self.info)
         #expect(model.view.updates == nil)
-        #expect(model.view.links.count == 4)
+        #expect(model.view.links.count == 5)
     }
 
     @Test func theChannelIsSavedAndGivesSparkleItsChannels() {

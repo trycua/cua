@@ -529,14 +529,16 @@ pub fn owned_by(state: &HostState, account: &HostAccount) -> Option<bool> {
 pub enum HostAccountStep {
     /// Nothing to do.
     Keep,
-    /// Pause relay sharing (signed out, or signed in to another account).
+    /// Pause relay sharing (signed out).
     Pause,
-    /// Resume the paused relay sharing (its owner is signed in again).
+    /// Resume relay sharing: its owner is signed in again, or another
+    /// account is, and the host then registers again for that account.
     Resume,
 }
 
-/// Relay sharing follows the sign-in: nobody signed in (or another
-/// account) pauses it, the owner signing in again resumes it. `account` is
+/// Relay sharing follows the sign-in: nobody signed in pauses it, the owner
+/// signing in again resumes it, and another account signing in moves this
+/// computer over to it (the host registers again). `account` is
 /// `None` only when the app knows nobody is signed in (not when it could
 /// not tell, offline). Direct mode does not use the account.
 pub fn account_step(state: &HostState, account: Option<&HostAccount>) -> HostAccountStep {
@@ -545,7 +547,10 @@ pub fn account_step(state: &HostState, account: Option<&HostAccount>) -> HostAcc
     }
     let owner = account.map(|a| owned_by(state, a).unwrap_or(true));
     match (state.paused_signed_out, owner) {
-        (false, None | Some(false)) => HostAccountStep::Pause,
+        (false, None) => HostAccountStep::Pause,
+        // Another account signed in: the host registers again for it
+        // (name and Provide Spaces stay), paused or not.
+        (_, Some(false)) => HostAccountStep::Resume,
         (true, Some(true)) => HostAccountStep::Resume,
         _ => HostAccountStep::Keep,
     }
@@ -1302,10 +1307,19 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
     };
     if relay && s.paused_signed_out {
         match s.account.as_ref().map(|a| owned_by(s, a)) {
-            // Signed in to another account: this registration is not
-            // theirs to share. Removing it, then setting up again, is.
+            // Signed in to another account: the app moves this computer
+            // over by itself (see [`account_step`]); this is the button
+            // when that failed.
             Some(Some(false)) => {
                 v.notice = Some(OTHER_ACCOUNT_NOTICE.into());
+                v.notice_action = Some(HostAction {
+                    id: HostActionId::ResumeSharing,
+                    label: "Share With This Account".into(),
+                    destructive: false,
+                    confirm: None,
+                    enabled: true,
+                    help: None,
+                });
                 v.actions = vec![remove];
             }
             // The owner is signed in again (the app resumes on its own;
@@ -1371,9 +1385,9 @@ pub const NOTHING_TO_SHARE_HELP: &str =
 
 /// The page's line while another account is signed in and this machine's
 /// relay sharing (registered to the account that signed out) is paused.
-pub const OTHER_ACCOUNT_NOTICE: &str = "This Mac is shared with another Cua \
-account, so sharing stays paused. Remove the host setup, then set it up again \
-to share it with yours.";
+pub const OTHER_ACCOUNT_NOTICE: &str = "This Mac was set up with another Cua \
+account, so sharing is paused. Share it with the account you are signed in to \
+now; its name and settings stay.";
 
 /// "Up to 4 Spaces · 2 macOS VMs". The macOS part is for a Mac: a shell on
 /// another system drops it (the web UI's `limitsFor`).
@@ -2490,16 +2504,26 @@ mod tests {
             HostActionId::ResumeSharing
         );
 
-        // Another account: never re-share the old one's registration.
+        // Another account signs in: the host registers again for it, with
+        // no manual step, whether sharing was paused or not.
         let s = owned(true, Some(bob.clone()));
-        assert_eq!(account_step(&s, s.account.as_ref()), HostAccountStep::Keep);
+        assert_eq!(
+            account_step(&s, s.account.as_ref()),
+            HostAccountStep::Resume
+        );
+        // The button, if that failed.
         let v = panel(Some(&s));
         assert_eq!(v.notice.as_deref(), Some(OTHER_ACCOUNT_NOTICE));
-        assert!(v.notice_action.is_none());
+        assert_eq!(
+            v.notice_action.as_ref().unwrap().id,
+            HostActionId::ResumeSharing
+        );
         assert_eq!(v.actions[0].id, HostActionId::Remove);
-        // ...and one signed in while it shares pauses it.
         let s = owned(false, Some(bob));
-        assert_eq!(account_step(&s, s.account.as_ref()), HostAccountStep::Pause);
+        assert_eq!(
+            account_step(&s, s.account.as_ref()),
+            HostAccountStep::Resume
+        );
 
         // Direct mode and a machine that is not set up never follow it.
         let direct = HostState {

@@ -421,10 +421,44 @@ async fn start(via: &Via<'_>) -> Result<(Dialer, Option<std::fs::File>), String>
         Some(lock) => (Some(dir.join(format!("{name}.json"))), Some(lock)),
         None => (None, None),
     };
-    let dialer = Dialer::start(&url, auth, identity, Duration::from_secs(10))
-        .await
-        .map_err(|e| e.to_string())?;
+    let dialer = start_dialer(&url, auth, identity).await?;
     Ok((dialer, lock))
+}
+
+/// Starts the client node. The relay binds a node key to the account that
+/// first used it, for life. After signing in as another account on this
+/// computer the saved key is the previous account's, and the relay refuses
+/// it: the key is rotated (the identity file is replaced by a new one) and
+/// the node starts again, so Spaces keep their mesh path instead of
+/// silently falling back to the relay's HTTPS path. The relay still decides
+/// whether the new key is accepted.
+async fn start_dialer(
+    url: &str,
+    auth: cua_mesh::AuthProvider,
+    identity: Option<std::path::PathBuf>,
+) -> Result<Dialer, String> {
+    let wait = Duration::from_secs(10);
+    match Dialer::start(url, auth.clone(), identity.clone(), wait).await {
+        Err(cua_mesh::Error::Refused(why))
+            if why.contains(cua_mesh::coord::KEY_OWNED_BY_ANOTHER) && identity.is_some() =>
+        {
+            let path = identity.clone().expect("checked");
+            tracing::info!(
+                relay = %url,
+                "this computer's mesh key belongs to the account that was signed in before; making a new one"
+            );
+            std::fs::remove_file(&path)
+                .or_else(|e| match e.kind() {
+                    std::io::ErrorKind::NotFound => Ok(()),
+                    _ => Err(e),
+                })
+                .map_err(|e| format!("could not replace the mesh key: {e}"))?;
+            Dialer::start(url, auth, identity, wait)
+                .await
+                .map_err(|e| e.to_string())
+        }
+        other => other.map_err(|e| e.to_string()),
+    }
 }
 
 fn lock_identity(dir: &std::path::Path, name: &str) -> Option<std::fs::File> {
@@ -664,6 +698,50 @@ mod tests {
                 .await
                 .is_none()
         );
+    }
+
+    /// Signing in as another account on this computer: the saved node key
+    /// belongs to the previous account, so it is rotated and the node joins
+    /// the mesh as the new account.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_node_key_of_the_previous_account_is_rotated() {
+        let coord = cua_mesh::testing::FakeCoordinator::start(cua_mesh::Mode::Account).await;
+        let dir = tempfile::tempdir().unwrap();
+        let identity = dir.path().join("client.json");
+        let as_account = |token: &'static str| -> cua_mesh::AuthProvider {
+            cua_mesh::static_auth(vec![(
+                "x-cua-relay-authorization".into(),
+                format!("Bearer {token}"),
+            )])
+        };
+        // Signed in as A: the node registers its key.
+        let a = start_dialer(&coord.url, as_account("a"), Some(identity.clone()))
+            .await
+            .unwrap();
+        let key_a = a.mesh().node_key();
+        a.mesh().shutdown();
+
+        // The same key as B is refused by the coordinator.
+        let refused = Dialer::start(
+            &coord.url,
+            as_account("b"),
+            Some(identity.clone()),
+            Duration::from_secs(10),
+        )
+        .await;
+        assert!(
+            matches!(&refused, Err(cua_mesh::Error::Refused(m)) if m.contains("another owner")),
+            "{:?}",
+            refused.err()
+        );
+
+        // Starting the way Spaces does rotates the key and joins.
+        let b = start_dialer(&coord.url, as_account("b"), Some(identity.clone()))
+            .await
+            .unwrap();
+        assert_ne!(b.mesh().node_key(), key_a, "a new node key");
+        assert!(b.mesh().unusable().is_none());
+        b.mesh().shutdown();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -136,10 +136,16 @@ public final class FixtureHost: HostRunning, @unchecked Sendable {
 
     public func resumeSignedIn(account: String) async throws -> HostStatus {
         calls.append("resume:\(account)")
-        guard current.pausedSignedOut else { return current }
-        guard account == owner || account.caseInsensitiveCompare(ownerEmail) == .orderedSame else {
-            throw CuaError.InvalidArgument(message: "this computer is shared with another Cua account")
+        let isOwner = account == owner || account.caseInsensitiveCompare(ownerEmail) == .orderedSame
+        // Another account: the host registers again for it (as the real
+        // one does), paused or not.
+        if !isOwner {
+            owner = account
+            ownerEmail = ""
+            current.owner = account
+            current.ownerEmail = nil
         }
+        guard current.pausedSignedOut || !isOwner else { return current }
         current.pausedSignedOut = false
         current.sharing = true
         current.online = true

@@ -1332,6 +1332,61 @@ async fn sign_in_as_another_account_replaces_the_key_of_the_previous_one() {
     assert!(as_b.session().await.is_ok());
 }
 
+/// An account token that changes while the process lives (the daemon's
+/// session, read per call).
+struct SwitchableToken(std::sync::Mutex<String>);
+
+#[async_trait::async_trait]
+impl AccountTokens for SwitchableToken {
+    async fn access_token(&self) -> Result<String> {
+        Ok(self.0.lock().unwrap().clone())
+    }
+
+    async fn signed_in(&self) -> bool {
+        true
+    }
+}
+
+/// A long-running process (the daemon) holds a device session for the key
+/// it started with. When the app enrolls this computer again for another
+/// account with a new key, the daemon picks the new key up without a
+/// restart instead of sending the old session.
+#[tokio::test]
+async fn a_running_daemon_follows_a_new_device_key_after_an_account_switch() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-a", "user-a", Some("a@example.com"));
+    relay.add_account("acct-b", "user-b", Some("b@example.com"));
+    relay.require_devices(true);
+    relay.fresh_sign_in("user-a");
+    relay.fresh_sign_in("user-b");
+    let slot = Arc::new(MemoryKeySlot::default());
+    let tokens = Arc::new(SwitchableToken(std::sync::Mutex::new("acct-a".into())));
+    let device = |tokens: Arc<dyn AccountTokens>| {
+        DeviceAuth::new(&relay.url, tokens, slot.clone(), "Mac")
+            .unwrap()
+            .with_machine_id(Some("mac-1".into()))
+    };
+    // The daemon started signed in as A, with a session open.
+    let daemon = device(tokens.clone()).with_key_recheck(std::time::Duration::ZERO);
+    daemon.enroll_after_sign_in().await.unwrap();
+    let old_session = daemon.session().await.unwrap();
+    let old_id = daemon.device_id().unwrap().unwrap();
+
+    // The app signs in as B and enrolls with a new key (another process).
+    let app = device(Arc::new(StaticToken("acct-b".into())));
+    let enrolled = app.enroll_after_sign_in().await.unwrap();
+    assert_ne!(enrolled.device.id, old_id);
+    // The daemon's own session now reads as B.
+    *tokens.0.lock().unwrap() = "acct-b".into();
+
+    let session = daemon.session().await.unwrap();
+    assert_ne!(session, old_session, "the old key's session is not reused");
+    let listing = daemon.listing().await.unwrap();
+    let current = listing.devices.iter().find(|d| d.current).unwrap();
+    assert_eq!(current.id, enrolled.device.id);
+    assert_eq!(daemon.device_id().unwrap().unwrap(), enrolled.device.id);
+}
+
 /// Two builds on one machine that each made a key end up with one: the key
 /// the relay enrolled wins, the other's record is retired.
 #[tokio::test]
@@ -1740,6 +1795,75 @@ async fn signing_out_pauses_relay_sharing_until_the_owner_signs_in() {
     assert!(host.policy().unwrap().unwrap().sharing);
     let spec = f.manager.spec.lock().unwrap().clone().unwrap();
     assert!(spec.args.join(" ").starts_with("join --relay"));
+}
+
+/// Signing in as another account re-registers this computer for it: a new
+/// machine id and mesh key, while the name and the Provide Spaces setting
+/// stay.
+#[tokio::test]
+async fn signing_in_as_another_account_registers_the_host_again() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-a", "user-1", Some("ada@example.com"));
+    relay.add_account("acct-b", "user-2", Some("bob@example.com"));
+    let f = fixture();
+    let host = f.host();
+    let mut opts = f.relay_opts(&relay.url);
+    opts.provide_spaces = true;
+    let before = host
+        .setup(opts, &StaticToken("acct-a".into()))
+        .await
+        .unwrap();
+    let old_id = before.machine_id.clone().unwrap();
+    let old_token = std::fs::read_to_string(host.paths().machine_token()).unwrap();
+    let mesh = host.paths().driver_data.join("mesh");
+    std::fs::create_dir_all(&mesh).unwrap();
+    std::fs::write(mesh.join("identity.json"), "{}").unwrap();
+    host.pause_signed_out().await.unwrap();
+
+    // The account that signed out is resumed as before.
+    let same = host
+        .resume_or_switch_account("user-1", &StaticToken("acct-a".into()))
+        .await
+        .unwrap();
+    assert_eq!(same.machine_id.as_deref(), Some(old_id.as_str()));
+    host.pause_signed_out().await.unwrap();
+
+    // Another account's sign-in moves it over, with no manual step.
+    f.manager.calls.lock().unwrap().clear();
+    let switched = host
+        .resume_or_switch_account("user-2", &StaticToken("acct-b".into()))
+        .await
+        .unwrap();
+    assert!(!switched.paused_signed_out);
+    assert!(switched.service.installed && switched.service.running);
+    assert!(switched.sharing);
+    assert_ne!(switched.machine_id.as_deref(), Some(old_id.as_str()));
+    assert_eq!(switched.owner.as_deref(), Some("user-2"));
+    assert_eq!(switched.name.as_deref(), Some("mini"));
+    assert!(switched.provide_spaces, "the Provide Spaces setting stays");
+    assert!(host.policy().unwrap().unwrap().provide_spaces);
+    assert!(host.policy().unwrap().unwrap().allow.is_empty());
+    assert_ne!(
+        std::fs::read_to_string(host.paths().machine_token()).unwrap(),
+        old_token
+    );
+    assert!(
+        !mesh.join("identity.json").exists(),
+        "the mesh key bound to the old account is dropped"
+    );
+    // The relay registered the new id to the new account.
+    let on_relay = relay
+        .machine(switched.machine_id.as_deref().unwrap())
+        .expect("registered");
+    assert_eq!(on_relay.owner.id, "user-2");
+
+    // Signed in as the new owner again: a plain resume, no new machine.
+    host.pause_signed_out().await.unwrap();
+    let again = host
+        .resume_or_switch_account("user-2", &StaticToken("acct-b".into()))
+        .await
+        .unwrap();
+    assert_eq!(again.machine_id, switched.machine_id);
 }
 
 /// Stopped sharing stays stopped across a pause, and direct mode (no

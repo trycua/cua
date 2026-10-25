@@ -9,7 +9,7 @@ import Testing
 
 /// Relay sharing follows the sign-in: signed out pauses it (the host leaves
 /// the relay, its setup stays), the owner signing in again resumes it, and
-/// another account is never handed the old account's registration.
+/// another account signing in moves the Mac over to it.
 @MainActor
 @Suite("Relay sharing and the sign-in")
 struct HostSignInSharingTests {
@@ -97,7 +97,9 @@ struct HostSignInSharingTests {
         #expect(!host.calls.contains { $0.hasPrefix("resume") || $0 == "start" })
     }
 
-    @Test func anotherAccountIsNotHandedTheOldRegistration() async {
+    /// Signing in as another account registers this Mac again for it with
+    /// no manual step (the host keeps its name and settings).
+    @Test func anotherAccountSignInMovesTheHostOver() async {
         let host = FixtureHost()
         let (m, account, who) = await sharing(host)
         account.token = nil
@@ -106,21 +108,25 @@ struct HostSignInSharingTests {
         account.signInGives = "tok-bob"
         who.value = Self.bob
         await m.run(.signIn)
-        #expect(!host.calls.contains { $0.hasPrefix("resume") })
-        #expect(host.current.pausedSignedOut)
+        #expect(host.calls.last == "resume:user-2")
+        #expect(host.owner == "user-2")
+        #expect(!host.current.pausedSignedOut)
+        #expect(host.current.sharing && host.current.serviceRunning)
         let panel = m.panel
-        #expect(panel.notice?.contains("another Cua account") == true)
-        #expect(panel.noticeAction == nil)
-        #expect(panel.actions.map(\.id) == [.remove])
+        #expect(panel.notice == nil)
+        #expect(panel.actions.first?.id == .stopSharing)
     }
 
-    @Test func anotherAccountSignedInWhileSharingPausesIt() async {
+    @Test func anotherAccountSignedInWhileSharingMovesTheHostOver() async {
         let host = FixtureHost()
         let (m, account, who) = await sharing(host)
         account.token = "tok-bob"
         who.value = Self.bob
         await m.reconcileAccount()
-        #expect(host.calls.last == "pause")
+        #expect(!host.calls.contains("pause"))
+        #expect(host.calls.last == "resume:user-2")
+        #expect(host.owner == "user-2")
+        #expect(host.current.sharing)
     }
 
     @Test func offlineIsNotSignedOut() async {

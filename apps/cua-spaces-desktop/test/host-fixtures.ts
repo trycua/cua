@@ -103,10 +103,14 @@ export class FixtureHost {
 
   async resumeSignedIn(account: string) {
     this.calls.push(`resume:${account}`);
-    if (!this.current.pausedSignedOut) return this.current;
-    if (account !== this.owner && account.toLowerCase() !== this.ownerEmail.toLowerCase()) {
-      throw sdkError("InvalidArgument", "this machine is shared with another Cua account");
+    const isOwner = account === this.owner || account.toLowerCase() === this.ownerEmail.toLowerCase();
+    // Another account: the host registers again for it, paused or not.
+    if (!isOwner) {
+      this.owner = account;
+      this.ownerEmail = "";
+      this.current = { ...this.current, owner: account, ownerEmail: undefined };
     }
+    if (!this.current.pausedSignedOut && isOwner) return this.current;
     this.current = { ...this.current, pausedSignedOut: false, sharing: true, online: true, serviceInstalled: true, serviceRunning: true };
     return this.current;
   }

@@ -1928,8 +1928,9 @@ impl Host {
     /// Undoes [`Host::pause_signed_out`] once the owner is signed in again:
     /// `account` is the signed-in account's id (or email). Another account
     /// is refused: it cannot use this registration, and sharing the old
-    /// account's machine under it would be wrong; remove the host setup and
-    /// set it up again for that account. Sharing comes back as the owner
+    /// account's machine under it would be wrong
+    /// ([`Host::resume_or_switch_account`] registers it again for that
+    /// account instead). Sharing comes back as the owner
     /// left it (stopped stays stopped, but online).
     pub async fn resume_signed_in(&self, account: &str) -> Result<HostStatus> {
         let mut config = self.require_config()?;
@@ -1941,8 +1942,8 @@ impl Host {
             && !owned_by(p, account)
         {
             return Err(Error::InvalidArgument(
-                "this computer is shared with another Cua account; remove the host setup \
-                 and set it up again to share it with this one"
+                "this computer was set up for another Cua account; sign in to that \
+                 account, or register this computer again for this one"
                     .into(),
             ));
         }
@@ -1961,6 +1962,98 @@ impl Host {
             "local",
             &config.name,
             "relay sharing resumed: signed in",
+        );
+        self.status().await
+    }
+
+    /// [`Host::resume_signed_in`] that also follows a switch of account:
+    /// when `account` is not the machine's owner, this computer is
+    /// registered again for the signed-in account (behind `tokens`), so
+    /// signing in as someone else needs no manual remove and set up. The
+    /// relay still decides: it only accepts the registration of the account
+    /// that signed in. Direct mode is left alone.
+    pub async fn resume_or_switch_account(
+        &self,
+        account: &str,
+        tokens: &dyn AccountTokens,
+    ) -> Result<HostStatus> {
+        let config = self.require_config()?;
+        if config.mode == "relay"
+            && let Some(p) = self.policy()?
+            && !owned_by(&p, account)
+        {
+            return self.switch_account(tokens).await;
+        }
+        self.resume_signed_in(account).await
+    }
+
+    /// Registers this computer again for the account behind `tokens`, which
+    /// is not the one it was set up for. The old registration belongs to
+    /// the previous account (the relay refuses its id, and the machine's
+    /// mesh key was bound to it), so this computer gets a new machine id
+    /// and a new mesh key; its name, what it shares and the Provide Spaces
+    /// setting stay. The previous account's allowlist is not carried over.
+    async fn switch_account(&self, tokens: &dyn AccountTokens) -> Result<HostStatus> {
+        let mut config = self.require_config()?;
+        let (Some(url), Some(mut policy)) = (config.relay_url.clone(), self.policy()?) else {
+            return Err(Error::InvalidArgument(
+                "this computer is not set up on a relay".into(),
+            ));
+        };
+        let relay = RelayClient::new(&url)?;
+        let token = tokens.access_token().await?;
+        // Registered before anything of the old setup is touched: if the
+        // relay refuses, the setup stays as it was.
+        let id = random_hex(16);
+        let reg = relay
+            .register_as_machine(
+                &token,
+                None,
+                &RegisterRequest {
+                    id: id.clone(),
+                    name: config.name.clone(),
+                    allow: vec![],
+                    host: None,
+                    meta: host_meta(config.provide_spaces),
+                },
+            )
+            .await?;
+        write_secret(&self.paths.machine_id, &format!("{id}\n"))?;
+        write_secret(&self.paths.machine_token(), &reg.machine_token)?;
+        if reg.jwks.is_null() {
+            let _ = std::fs::remove_file(self.paths.relay_jwks());
+        } else {
+            write_json(&self.paths.relay_jwks(), &reg.jwks)?;
+        }
+        // The old machine's mesh key is bound to its machine id: a new
+        // machine takes a new one, which the service makes on its start.
+        let _ = std::fs::remove_file(self.paths.driver_data.join("mesh").join("identity.json"));
+        policy.owner = reg.machine.owner.id.clone();
+        policy.owner_email = reg.machine.owner.email.clone();
+        policy.allow = vec![];
+        policy.viewers = vec![];
+        policy.sharing = config.sharing;
+        write_json(&self.paths.policy(), &policy)?;
+        config.machine_id = Some(reg.machine.id.clone());
+        config.paused_signed_out = false;
+        write_json(&self.paths.config(), &config)?;
+        if !config.sharing {
+            // Stopped stays stopped, but online (as after a resume).
+            let _ = relay
+                .stop_sharing(&reg.machine_token, &reg.machine.id)
+                .await;
+        }
+        let manager = self.manager_for_config(&config);
+        // A running service holds the old machine token and mesh key.
+        let _ = manager.stop();
+        manager.install(&self.service_spec(&config))?;
+        manager.start()?;
+        let _ = crate::provided::audit(
+            &self.paths.dir,
+            "config",
+            "local",
+            &config.name,
+            "registered again for the signed-in account",
         );
         self.status().await
     }

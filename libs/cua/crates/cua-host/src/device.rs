@@ -236,8 +236,16 @@ pub struct DeviceAuth {
     name: String,
     machine_id: std::sync::OnceLock<Option<String>>,
     session: tokio::sync::Mutex<Option<(String, u64)>>,
+    /// The key the cached session was opened with, and when the slot was
+    /// last looked at again (see [`DeviceAuth::key_changed`]).
+    session_key: std::sync::Mutex<Option<(String, std::time::Instant)>>,
+    key_recheck: std::time::Duration,
     pending_file: Option<PathBuf>,
 }
+
+/// How often a long-lived [`DeviceAuth`] (the daemon's) looks at its key
+/// slot again while it holds a session.
+const KEY_RECHECK: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// The one-time code this device last showed, remembered (in
 /// `~/.cua/device-pending.json`) so `cua devices status` can show it again
@@ -300,8 +308,39 @@ impl DeviceAuth {
             name: name.into(),
             machine_id: std::sync::OnceLock::new(),
             session: tokio::sync::Mutex::new(None),
+            session_key: std::sync::Mutex::new(None),
+            key_recheck: KEY_RECHECK,
             pending_file: None,
         })
+    }
+
+    /// Looks at the key slot again at most every `every` while a session
+    /// is held (default a few seconds).
+    pub fn with_key_recheck(mut self, every: std::time::Duration) -> Self {
+        self.key_recheck = every;
+        self
+    }
+
+    /// Whether the key in the slot is no longer the one the cached session
+    /// was opened with: another process (the app, the CLI) enrolled this
+    /// device again, for instance after a sign-in as another account. The
+    /// relay refuses the old key's session, so the cached one must not be
+    /// used. Looked at most every `key_recheck`.
+    fn key_changed(&self) -> bool {
+        let mut known = self.session_key.lock().expect("session key");
+        let Some((id, checked)) = known.as_mut() else {
+            return false;
+        };
+        if checked.elapsed() < self.key_recheck {
+            return false;
+        }
+        *checked = std::time::Instant::now();
+        match self.key() {
+            Ok(Some(k)) => k.id() != *id,
+            Ok(None) => true,
+            // Unreadable now (a locked vault): keep what works.
+            Err(_) => false,
+        }
     }
 
     /// Remembers this device's pending code in `path` (see
@@ -551,6 +590,7 @@ impl DeviceAuth {
         let mut cached = self.session.lock().await;
         if let Some((token, expires)) = cached.as_ref()
             && *expires > now_secs() + SESSION_MARGIN_SECS
+            && !self.key_changed()
         {
             return Ok(token.clone());
         }
@@ -562,6 +602,8 @@ impl DeviceAuth {
         })?;
         let token = self.tokens.access_token().await?;
         let session = self.open_session(&token, &key).await?;
+        *self.session_key.lock().expect("session key") =
+            Some((key.id(), std::time::Instant::now()));
         *cached = Some(session.clone());
         Ok(session.0)
     }

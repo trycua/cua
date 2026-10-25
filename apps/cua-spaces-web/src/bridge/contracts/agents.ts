@@ -49,6 +49,8 @@ export interface SpaceAgentRun {
   /** Finer phase (`thinking`, `tool`, `waiting`, ...). */
   phase: string;
   turn: number;
+  /** The run is blocked until the person acts (a sign-in, an approval). A host that cannot tell leaves it out. */
+  needsYou?: { title: string; detail: string } | null;
 }
 
 /** How a conversation view shows an event (`cua_agents::events::CATEGORIES`). */

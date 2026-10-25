@@ -909,6 +909,7 @@ export const OP_SHAPES: Record<OpName, Schema> = {
       createdAt: nullable(num),
       phase: str,
       turn: num,
+      needsYou: optNull(obj<{ title: string; detail: string }>()({ title: str, detail: str })),
     }),
   ),
   "agents.events": obj<AgentEventsPage>()({

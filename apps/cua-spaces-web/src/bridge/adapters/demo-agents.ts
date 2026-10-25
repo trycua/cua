@@ -290,7 +290,7 @@ export function demoRunRecords(t0: number): DemoRunRecord[] {
     ),
     finished(
       "relay:mac-mini/qa-windows",
-      { runId: "run-claw-4", agent: "openclaw", status: "idle", reason: "waiting for a follow-up", summary: "Install the 0.6.1 Windows build and note what breaks", createdAt: Math.floor((t0 - 3 * 60 * MIN) / 1000) },
+      { runId: "run-claw-4", agent: "openclaw", status: "idle", reason: "waiting for a follow-up", summary: "Install the 0.6.1 Windows build and note what breaks", needsYou: { title: "OpenClaw needs you to sign in to GitHub", detail: "It is checking the installer in qa-windows and can't go on until you sign in." }, createdAt: Math.floor((t0 - 3 * 60 * MIN) / 1000) },
       installer,
     ),
   ];

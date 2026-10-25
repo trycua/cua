@@ -233,6 +233,11 @@ fn replace_file(
 ) -> Result<()> {
     if same_bytes(tmp, dest) {
         let _ = std::fs::remove_file(tmp);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(dest, std::fs::Permissions::from_mode(0o755))?;
+        }
         return Ok(());
     }
     let aside = dest.with_extension("old");
@@ -682,6 +687,15 @@ mod tests {
         replace_file(&tmp, &dest, |_, _| panic!("must not rename")).unwrap();
         assert!(!tmp.exists());
         assert_eq!(std::fs::read(&dest).unwrap(), b"same");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o644)).unwrap();
+            std::fs::write(&tmp, b"same").unwrap();
+            replace_file(&tmp, &dest, |_, _| panic!("must not rename")).unwrap();
+            let mode = std::fs::metadata(&dest).unwrap().permissions().mode();
+            assert_eq!(mode & 0o111, 0o111, "execute bits are repaired");
+        }
     }
 
     #[test]

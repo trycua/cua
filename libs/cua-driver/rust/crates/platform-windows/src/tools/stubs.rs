@@ -318,6 +318,9 @@ pub fn build_registry() -> cua_driver_core::tool::ToolRegistry {
     r.register(Box::new(PressKeyTool));
     r.register(Box::new(HotkeyTool));
     r.register(Box::new(SetValueTool));
+    r.register(Box::new(
+        cua_driver_core::text_selection::UnsupportedSelectTextTool::new("Windows"),
+    ));
     r.register(Box::new(InvokeMenuTool));
     r.register(Box::new(ScrollTool));
     r.register(Box::new(ScreenshotTool));

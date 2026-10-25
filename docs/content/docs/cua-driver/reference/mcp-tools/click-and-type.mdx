@@ -18,6 +18,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 | [`double_click`](#double_click) | Double-click at (x, y) or on an AX element identified by element_token. | macOS, Linux, Windows |
 | [`right_click`](#right_click) | Right-click against a target pid. | macOS, Linux, Windows |
 | [`type_text`](#type_text) | Insert text via `AXSetAttribute(kAXSelectedText)` into the element given by `element_token`, or the pid's focused element. | macOS, Linux, Windows |
+| [`select_text`](#select_text) | Select text inside a text element by `element_token`, or place the caret next to it, without typing or fronting the app. | macOS, Linux, Windows |
 | [`press_key`](#press_key) | Press and release one key. | macOS, Linux, Windows |
 | [`hotkey`](#hotkey) | Press a key combination: e.g. | macOS, Linux, Windows |
 | [`set_value`](#set_value) | Set an element's value by `element_token`. | macOS, Linux, Windows |
@@ -296,7 +297,7 @@ Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is requi
 
 ## Typing tools
 
-Type text into a field or window.
+Type text into a field or window, or select text in it.
 
 ### `type_text`
 
@@ -382,6 +383,47 @@ Special keys (Return, Escape, arrows, Tab) go through `press_key` / `hotkey`: th
 | <span id="type_text--target-kind"></span>`target.kind` | `"window" \| "desktop"` |  | window requires pid and window_id; desktop requires display_id. |
 | <span id="type_text--target-pid"></span>`target.pid` | `integer` |  | Process id. Required when kind is window. Minimum: 0. |
 | <span id="type_text--target-window_id"></span>`target.window_id` | `integer` |  | Window id from list_windows. Required when kind is window. Minimum: 0. |
+
+**Example arguments**
+
+```json
+{"text":"<text>"}
+```
+
+### `select_text`
+
+Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
+
+<Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
+<Tab value="macOS">
+
+Select text inside a text element by `element_token`, or place the caret next to it, without typing or fronting the app. Finds `text` (exact, case-sensitive) in the element's AXValue; when it occurs more than once, `prefix`/`suffix` (the text immediately before/after the wanted occurrence) must narrow it to exactly one. `selection_type`: "text" (default) selects the match, "cursor_before"/"cursor_after" put a zero-length caret at its start/end. Sets AXSelectedTextRange (UTF-16 units) and reads it back; `structuredContent` has `range` &#123;location, length&#125;, `selected_text` and `verified`. Refuses with `text_not_found`, `ambiguous_text_match` (with `matches`), `selection_not_settable` (the element has no settable AXSelectedTextRange) or `selection_not_applied` (the read-back differs). Changes only the selection, never the text; follow with type_text or press_key to edit it.
+
+</Tab>
+<Tab value="Linux">
+
+Not supported on Linux: every call refuses with `unsupported_platform`. On macOS, selects text inside a text element by `element_token` (or places the caret next to it). On Linux, click or use press_key/hotkey to move the selection.
+
+</Tab>
+<Tab value="Windows">
+
+Not supported on Windows: every call refuses with `unsupported_platform`. On macOS, selects text inside a text element by `element_token` (or places the caret next to it). On Windows, click or use press_key/hotkey to move the selection.
+
+</Tab>
+</Tabs>
+
+**Parameters on every platform**
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="select_text--element_token"></span>`element_token` | `string` |  | Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is "s0000002a:11" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
+| <span id="select_text--pid"></span>`pid` | `integer` |  | Target process ID. Optional with element_token (the token carries the pid). |
+| <span id="select_text--prefix"></span>`prefix` | `string` |  | Text that must immediately precede the match. Use it (or suffix) to pick one of several occurrences. |
+| <span id="select_text--selection_type"></span>`selection_type` | `"text" \| "cursor_before" \| "cursor_after"` | `"text"` | "text" selects the match; "cursor_before"/"cursor_after" put a zero-length caret at its start/end. |
+| <span id="select_text--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="select_text--suffix"></span>`suffix` | `string` |  | Text that must immediately follow the match. |
+| <span id="select_text--text"></span>`text` | `string` | required | Exact, case-sensitive text to find in the element's value. |
+| <span id="select_text--window_id"></span>`window_id` | `integer` |  | Window ID. Omit with element_token. |
 
 **Example arguments**
 

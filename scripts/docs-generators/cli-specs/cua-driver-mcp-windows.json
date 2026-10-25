@@ -1232,6 +1232,62 @@
    "read_only": false
   },
   {
+   "description": "Not supported on Windows: every call refuses with `unsupported_platform`. On macOS, selects text inside a text element by `element_token` (or places the caret next to it). On Windows, click or use press_key/hotkey to move the selection.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "element_token": {
+      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is \"s0000002a:11\" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "pattern": "^s[0-9a-f]{8}:[0-9]+$",
+      "type": "string"
+     },
+     "pid": {
+      "description": "Target process ID. Optional with element_token (the token carries the pid).",
+      "type": "integer"
+     },
+     "prefix": {
+      "description": "Text that must immediately precede the match. Use it (or suffix) to pick one of several occurrences.",
+      "type": "string"
+     },
+     "selection_type": {
+      "default": "text",
+      "description": "\"text\" selects the match; \"cursor_before\"/\"cursor_after\" put a zero-length caret at its start/end.",
+      "enum": [
+       "text",
+       "cursor_before",
+       "cursor_after"
+      ],
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     },
+     "suffix": {
+      "description": "Text that must immediately follow the match.",
+      "type": "string"
+     },
+     "text": {
+      "description": "Exact, case-sensitive text to find in the element's value.",
+      "minLength": 1,
+      "type": "string"
+     },
+     "window_id": {
+      "description": "Window ID. Omit with element_token.",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "text"
+    ],
+    "type": "object"
+   },
+   "name": "select_text",
+   "read_only": false
+  },
+  {
    "description": "Scroll the target pid's focused region.\n\nWindows transport: WM_VSCROLL / WM_HSCROLL posted to the window — the same events the OS sends when scrollbars or trackpads scroll, so any window that handles scrollbars correctly responds to this. Swift uses synthesized keystrokes (PageDown / arrow keys) via auth-signed SLEventPostToPid; both approaches reach backgrounded windows.\n\nMapping: `by: \"page\"` → SB_PAGEDOWN/UP/LEFT/RIGHT × amount; `by: \"line\"` → SB_LINEDOWN/UP/LEFT/RIGHT × amount.\n\nNote: `element_token` is accepted for cross-platform parity but currently no-op on Windows (UIA SetFocus not wired up yet — same caveat as `press_key`).",
    "destructive": false,
    "idempotent": false,

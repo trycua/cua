@@ -1174,6 +1174,62 @@
    "read_only": false
   },
   {
+   "description": "Select text inside a text element by `element_token`, or place the caret next to it, without typing or fronting the app. Finds `text` (exact, case-sensitive) in the element's AXValue; when it occurs more than once, `prefix`/`suffix` (the text immediately before/after the wanted occurrence) must narrow it to exactly one. `selection_type`: \"text\" (default) selects the match, \"cursor_before\"/\"cursor_after\" put a zero-length caret at its start/end. Sets AXSelectedTextRange (UTF-16 units) and reads it back; `structuredContent` has `range` {location, length}, `selected_text` and `verified`. Refuses with `text_not_found`, `ambiguous_text_match` (with `matches`), `selection_not_settable` (the element has no settable AXSelectedTextRange) or `selection_not_applied` (the read-back differs). Changes only the selection, never the text; follow with type_text or press_key to edit it.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "element_token": {
+      "description": "Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is \"s0000002a:11\" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "pattern": "^s[0-9a-f]{8}:[0-9]+$",
+      "type": "string"
+     },
+     "pid": {
+      "description": "Target process ID. Optional with element_token (the token carries the pid).",
+      "type": "integer"
+     },
+     "prefix": {
+      "description": "Text that must immediately precede the match. Use it (or suffix) to pick one of several occurrences.",
+      "type": "string"
+     },
+     "selection_type": {
+      "default": "text",
+      "description": "\"text\" selects the match; \"cursor_before\"/\"cursor_after\" put a zero-length caret at its start/end.",
+      "enum": [
+       "text",
+       "cursor_before",
+       "cursor_after"
+      ],
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     },
+     "suffix": {
+      "description": "Text that must immediately follow the match.",
+      "type": "string"
+     },
+     "text": {
+      "description": "Exact, case-sensitive text to find in the element's value.",
+      "minLength": 1,
+      "type": "string"
+     },
+     "window_id": {
+      "description": "Window ID. Omit with element_token.",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "text"
+    ],
+    "type": "object"
+   },
+   "name": "select_text",
+   "read_only": false
+  },
+  {
    "description": "Scroll the target pid.\n- Targeted wheel: pass `element_token` (preferred) or window-local `x, y`. Sends a real wheel event at that point, so it scrolls whatever is under it. The only way to scroll nested `overflow:auto` regions in web views.\n- Keystroke: no target, just pid + direction. PageDown/PageUp (by='page') or arrows (by='line') on the focused scroller.\n\nElectron/Chromium windows drop background wheel events: there a background scroll reveals the content just past the edge of the scroll container under the target through accessibility (about `amount` notches); `delivery_mode:\"foreground\"` is the fallback.\n`amount` is wheel notches (targeted) or key repetitions (keystroke).",
    "destructive": false,
    "idempotent": false,

@@ -748,7 +748,6 @@ EOF
 # daemon unmounts it when it stops. Make sure, and never delete files while it
 # is mounted.
 volume_mounted=0
-app_removed=0
 helper_left=0
 unmount_volume() {
     case "$os" in
@@ -835,7 +834,6 @@ remove_app() {
             if is_cua_app "$app"; then
                 reset_app_permissions "$app"
                 rm_path "$app"
-                if [ "$dry_run" = 0 ] && [ ! -e "$app" ]; then app_removed=1; fi
             else
                 info "leaving $app (not the Cua Spaces app)"
             fi

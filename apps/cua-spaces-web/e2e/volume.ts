@@ -164,6 +164,9 @@ async function checkOnboardingDrive(page: Page, cps: ParityCheckpoint[]): Promis
 
 async function checkDriverCard(page: Page, cps: ParityCheckpoint[]): Promise<number> {
   let checked = 0;
+  // Background computer use sits behind "Show all" on Settings, Connected apps.
+  const showAll = page.locator("[data-connected-show-all]");
+  if ((await showAll.count()) > 0 && (await showAll.getAttribute("aria-expanded")) !== "true") await showAll.click();
   const card = page.locator("[data-driver-card]").first();
   for (const c of of(cps, "driver-copy").slice(0, 1)) {
     await expect(card.locator("[data-driver-label]")).toHaveText(c.agentsDriver);

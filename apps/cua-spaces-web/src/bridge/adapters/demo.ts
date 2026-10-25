@@ -87,6 +87,8 @@ export interface DemoOptions {
   usage?: "idle" | "warn" | "limit" | "pro" | "teams";
   /** Which agents are on this computer (`?demo=agents-none`, `?demo=agents-codex`); all of them by default. `unset`: all found, none set up for Cua yet, without the first-run onboarding. */
   agents?: "none" | "codex" | "unset";
+  /** Coding agents whose config file Cua can't write (setup fails with a permission error), by id. */
+  agentsReadOnly?: string[];
   /** This Mac's free disk: `low` (`?demo=low-disk`) or `full` (`?demo=disk-full`). */
   disk?: "low" | "full";
   /** The machine the demo runs on: a Mac on Apple silicon unless set (the
@@ -193,6 +195,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     agents: demoPersistentAgents(now()),
     // A named allowance is for showing the prompts, which wait for no agent run.
     runs: options.usage ? [] : demoRunRecords(now()),
+    readOnlyAgents: options.agentsReadOnly ?? [],
     agentSetup: demoAgentSetup(options.onboarded === false || options.agents === "unset", options.agents === "none" ? [] : options.agents === "codex" ? ["codex"] : null),
     platform: options.platform ?? MAC_DEMO_PLATFORM,
     paired: [],
@@ -594,7 +597,11 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       await wait(step);
       const wanted = (r: AgentSetupRow) => r.installed && (agents === null || agents.includes(r.agent));
       state.agentSetup = state.agentSetup.map((r) =>
-        wanted(r) ? { ...r, configured: true, skillsInstalled: r.skillsTotal, detail: "Skills and MCP server set up" } : r,
+        wanted(r)
+          ? state.readOnlyAgents.includes(r.agent)
+            ? { ...r, configured: false, skillsInstalled: 0, detail: "Permission denied (os error 13)" }
+            : { ...r, configured: true, skillsInstalled: r.skillsTotal, detail: "Skills and MCP server set up" }
+          : r,
       );
       // The demo plays the agent's first request a little later: a line in this computer's access log.
       const used = state.agentSetup.find(wanted);
@@ -676,6 +683,7 @@ export interface DemoState extends DemoLinksStateField, DemoTelemetryState, Demo
   agents: PersistentAgent[];
   runs: DemoRunRecord[];
   agentSetup: AgentSetupRow[];
+  readOnlyAgents: string[];
   volume: DemoVolumeState;
   platform: DemoPlatform;
   /** Machines added with a pairing code ("Add a machine"). */

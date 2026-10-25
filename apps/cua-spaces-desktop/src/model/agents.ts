@@ -25,6 +25,7 @@ import type {
   AppAgentsView,
   AppSpaceAgentRun,
 } from "../native/generated/index";
+import { removeBackups, sweepBackupsOnce } from "./agent-backups";
 import { ToolError } from "./backend";
 import { words } from "./errors";
 import { NotStarted, type LiveGate, type LiveServices } from "./pending";
@@ -378,6 +379,8 @@ export interface AgentSetupRunning {
   remove(agents: string[]): Promise<AppAgentSetupOutcomeInput[]>;
   /** Starts `agent`'s own sign-in on this computer (`codex login`); returns once it runs. */
   signIn(agent: string): Promise<void>;
+  /** Deletes the config copies (`.cua-backup-*`) earlier versions left, once per install. */
+  sweepLeftovers?(): void;
 }
 
 /**
@@ -421,11 +424,27 @@ export class LiveAgentSetup implements AgentSetupRunning {
   }
 
   async remove(agents: string[]): Promise<AppAgentSetupOutcomeInput[]> {
-    return this.outcomes(await this.inner.remove(agents, true, true));
+    const configs = this.configsOf(agents);
+    const out = this.outcomes(await this.inner.remove(agents, true, true));
+    // The copies setup made of each config file are no use once Cua is out of it.
+    for (const c of configs) removeBackups(c);
+    return out;
+  }
+
+  /** The config files Cua edits for `agents` (every agent: none named). */
+  configsOf(agents?: string[]): string[] {
+    return this.inner
+      .detect()
+      .filter((i) => !agents || agents.includes(i.id))
+      .flatMap((i) => (i.mcpConfig ? [i.mcpConfig] : []));
   }
 
   async signIn(agent: string): Promise<void> {
     this.inner.signIn(agent);
+  }
+
+  sweepLeftovers(): void {
+    sweepBackupsOnce(this.configsOf());
   }
 }
 
@@ -451,6 +470,7 @@ export class PendingAgentSetup implements AgentSetupRunning {
   setUpCuaDriver = async (agents: string[]) => (await this.s()).setUpCuaDriver(agents);
   remove = async (agents: string[]) => (await this.s()).remove(agents);
   signIn = async (agent: string) => (await this.s()).signIn(agent);
+  sweepLeftovers = () => this.gate.current?.agentSetup?.sweepLeftovers?.();
 }
 
 /** The Settings rows for the coding agents, and the changes made to them (the SwiftUI app's `AppModel.agentRows`, `configureAllAgents`, `agentAction`). */
@@ -462,6 +482,7 @@ export class CodingAgents {
   pending: string[] = [];
   /** Why the last change failed, per agent. */
   private readonly failures = new Map<string, string>();
+  private swept = false;
   onChange: () => void = () => {};
 
   constructor(
@@ -476,6 +497,15 @@ export class CodingAgents {
       return;
     }
     const rows = this.native.appAgentSettingsRows(await this.setup.statuses(), this.setup.skillsTotal());
+    // Once per run: the copies of config files that setup left behind in earlier versions.
+    if (!this.swept) {
+      this.swept = true;
+      try {
+        this.setup.sweepLeftovers?.();
+      } catch {
+        // Clutter, not a failure.
+      }
+    }
     this.rows = rows.map((r) => {
       const why = this.failures.get(r.agent);
       return why === undefined ? r : { ...r, configured: false, detail: why };

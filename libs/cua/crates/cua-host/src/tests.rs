@@ -1901,6 +1901,81 @@ async fn signing_in_as_another_account_registers_the_host_again() {
     );
 }
 
+/// The Spaces a computer provides belong to the account that signed in when
+/// they were made: another account neither lists nor deletes them, and they
+/// are back when that account signs in again.
+#[tokio::test]
+async fn provided_spaces_stay_with_their_account_across_a_switch() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-a", "user-1", Some("ada@example.com"));
+    relay.add_account("acct-b", "user-2", Some("bob@example.com"));
+    let f = fixture();
+    let host = f.host();
+    host.setup(f.relay_opts(&relay.url), &StaticToken("acct-a".into()))
+        .await
+        .unwrap();
+    let space = crate::provided::ProvidedSpace {
+        relay_machine: "space-1".into(),
+        local_space: "local:one".into(),
+        name: "one".into(),
+        created_by_account: "user-1".into(),
+        ..Default::default()
+    };
+    crate::provided::save_provided(&host.paths().dir, &[space]).unwrap();
+
+    host.resume_or_switch_account("user-2", &StaticToken("acct-b".into()))
+        .await
+        .unwrap();
+    assert!(host.provided_spaces().unwrap().is_empty());
+    // The host cannot be removed behind the previous account's Spaces.
+    let err = host.remove().await.unwrap_err();
+    assert!(err.to_string().contains("still provides 1 Space"), "{err}");
+
+    host.resume_or_switch_account("user-1", &StaticToken("acct-a".into()))
+        .await
+        .unwrap();
+    let back = host.provided_spaces().unwrap();
+    assert_eq!(back.len(), 1);
+    assert_eq!(back[0].local_space, "local:one");
+}
+
+/// What the owner chose for sharing follows the host across accounts: it is
+/// sent to the relay for the registration that takes over.
+#[tokio::test]
+async fn sharing_follows_the_hosts_choice_when_the_account_changes_back() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-a", "user-1", Some("ada@example.com"));
+    relay.add_account("acct-b", "user-2", Some("bob@example.com"));
+    let f = fixture();
+    let host = f.host();
+    let first = host
+        .setup(f.relay_opts(&relay.url), &StaticToken("acct-a".into()))
+        .await
+        .unwrap();
+    host.stop_sharing().await.unwrap();
+    let as_b = StaticToken("acct-b".into());
+    host.resume_or_switch_account("user-2", &as_b)
+        .await
+        .unwrap();
+    // As the second account sharing is turned on again.
+    let started = host.start_sharing().await.unwrap();
+    assert!(started.sharing);
+    // Back to the first account: sharing is on there too (the host's
+    // choice), not left stopped on its old registration.
+    let back = host
+        .resume_or_switch_account("user-1", &StaticToken("acct-a".into()))
+        .await
+        .unwrap();
+    assert_eq!(back.machine_id, first.machine_id);
+    assert!(back.sharing);
+    assert!(
+        relay
+            .machine(first.machine_id.as_deref().unwrap())
+            .unwrap()
+            .sharing
+    );
+}
+
 /// A host the owner had stopped sharing stays stopped (on the relay too)
 /// after a switch of account.
 #[tokio::test]

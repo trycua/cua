@@ -126,7 +126,11 @@ def test_planner_requires_main_ancestry_and_preserves_immutable_evidence():
     assert "attribution_base_tag" in planner
     assert "attribution_issues" in planner
     assert "--attribution-config .github/release-attribution-config.json" in planner
-    assert "needs.plan.outputs.reason == 'held-attribution'" in planner
+    assert "held-attribution" not in planner
+    assert "report-attribution-warning" in planner
+    assert "needs.plan.outputs.attribution_issues != '[]'" in planner
+    assert "GITHUB_STEP_SUMMARY" in planner
+    assert "gh issue comment" in planner
     assert "gh issue create" in planner
     assert "gh issue edit" in planner
     assert "cancel-in-progress: false" in source("nightly-cua-driver.yml")

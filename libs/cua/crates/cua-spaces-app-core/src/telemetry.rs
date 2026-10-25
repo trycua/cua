@@ -565,10 +565,10 @@ pub fn creates(before: &CreatesState, action: &CreateAction, now_ms: i64) -> Vec
                 }
             });
             [feature("space_create_local")]
-            .into_iter()
-            .chain(started)
-            .chain([step("first_space_created", true)])
-            .collect()
+                .into_iter()
+                .chain(started)
+                .chain([step("first_space_created", true)])
+                .collect()
         }
         CreateAction::Finish { id, .. } => match find(id) {
             Some(p) if p.space_id.is_none() => vec![

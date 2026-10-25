@@ -3416,7 +3416,6 @@ pub type AppWizardEnv = core::wizard::WizardEnv;
 pub struct AppWizardEnv {
     /// Where "Run on" starts (Settings, `cua config set default.on`).
     pub default_location: AppLocation,
-    /// Signed in (or client credentials).
     /// A local container backend or Lume exists.
     pub local_available: bool,
     /// Why local is unavailable.
@@ -6771,7 +6770,9 @@ pub struct AppSettings {
     pub menu_bar: bool,
     /// Switcher theme.
     pub theme: AppSwitcherTheme,
-    /// Where New Space starts.
+    /// Where New Space starts. A word this build does not know (the
+    /// retired `cloud`) reads as this Mac, so an old file keeps its other
+    /// settings.
     pub default_location: AppLocation,
     /// Hide the notch over full-screen apps.
     pub hide_in_full_screen: bool,

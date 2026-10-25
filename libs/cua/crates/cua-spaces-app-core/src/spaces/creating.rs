@@ -978,12 +978,7 @@ pub fn failure_cause(raw: &str, phase: Option<&str>, gpu: bool) -> Option<Failur
 /// `services_unreachable`, ...; [`cua_create_failure::create_failure_kind`]),
 /// else what the shell sent (`Runtime`, as most are), else `other`. Only
 /// the word leaves the process, never the text.
-pub fn failure_variant<'a>(
-    raw: &str,
-    phase: Option<&str>,
-    gpu: bool,
-    shell: &'a str,
-) -> &'a str {
+pub fn failure_variant<'a>(raw: &str, phase: Option<&str>, gpu: bool, shell: &'a str) -> &'a str {
     if failure_cause(raw, phase, gpu) == Some(FailureCause::Gpu) {
         return FailureCause::Gpu.variant();
     }
@@ -1014,23 +1009,15 @@ pub struct FailDecision {
 /// enum case `error_variant`). One function for the reducer and for
 /// telemetry, so the event a failure sends matches what the row does.
 pub fn fail_decision(p: &PendingCreate, error: &str, error_variant: &str) -> FailDecision {
-    let kind = retry::snake(failure_variant(
-        error,
-        Some(&p.phase),
-        p.gpu,
-        error_variant,
-    ));
+    let kind = retry::snake(failure_variant(error, Some(&p.phase), p.gpu, error_variant));
     let plain = crate::errors::plain_error(error);
     let subclass = retry::subclass(&kind, &plain);
-    let retry = if p.attempt == 0
-        && !p.cancelling
-        && p.space_id.is_none()
-        && !error.trim().is_empty()
-    {
-        retry::decide(&kind, subclass)
-    } else {
-        Retry::Never
-    };
+    let retry =
+        if p.attempt == 0 && !p.cancelling && p.space_id.is_none() && !error.trim().is_empty() {
+            retry::decide(&kind, subclass)
+        } else {
+            Retry::Never
+        };
     FailDecision {
         kind,
         subclass,
@@ -1328,12 +1315,7 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
                 permille: 0,
                 error: None,
                 space_id: None,
-                emulated: crate::model::emulation_warning(
-                    true,
-                    host,
-                    arch.as_deref(),
-                )
-                .is_some(),
+                emulated: crate::model::emulation_warning(true, host, arch.as_deref()).is_some(),
                 image,
                 kind,
                 arch,
@@ -1513,9 +1495,7 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
                     return next;
                 }
                 // The same failure again: its fix, not a plain Try again.
-                p.fix = (repeats >= 2)
-                    .then(|| fix_for(&decision.kind, p))
-                    .flatten();
+                p.fix = (repeats >= 2).then(|| fix_for(&decision.kind, p)).flatten();
                 p.error = Some(if error.trim().is_empty() {
                     "Could not create the Space".into()
                 } else {

@@ -1957,11 +1957,9 @@ fn rebase(state: &mut WizardState, image_ref: &str) {
     state.memory_gb = default_memory_gb(&next);
     state.disk_gb = None;
     // Follow the image to where it can run (the choice when possible).
-    if !can_place(&next, state.placement) {
-        if can_place(&next, Location::Local) {
-            state.placement = Location::Local;
-            state.picked = true;
-        }
+    if !can_place(&next, state.placement) && can_place(&next, Location::Local) {
+        state.placement = Location::Local;
+        state.picked = true;
     }
 }
 
@@ -4748,11 +4746,7 @@ mod tests {
         assert_eq!(s.placement, Location::Local);
         let v = view(&s, &e);
         let ids: Vec<&str> = v.placements.iter().map(|o| o.id.as_str()).collect();
-        assert_eq!(
-            ids,
-            ["local"],
-            "This Mac only: nothing connected"
-        );
+        assert_eq!(ids, ["local"], "This Mac only: nothing connected");
         assert!(v.placements[0].selected && v.placements[0].enabled);
         assert_eq!(v.placement_id, "local");
         assert!(

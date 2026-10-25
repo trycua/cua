@@ -194,6 +194,9 @@ listed by `pnpm docs:list`); `pnpm docs:check` is the explicit full audit. See
 
 ## Before Opening a Pull Request
 
+The required `ci-gate` check waits only for the workflows of the areas your pull request changes; see
+[CI](CI.md) for the area map and the `urgent` label.
+
 1. Run focused tests while developing.
 2. Run the complete deterministic test owner for every component changed.
 3. Run the affected interactive E2E lane when desktop behavior or its contract changes.

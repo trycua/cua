@@ -9,7 +9,8 @@ import yaml
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOWS = ROOT / '.github/workflows'
 GATE = yaml.safe_load((WORKFLOWS / 'ci-gate.yml').read_text())
-SCRIPT = GATE['jobs']['ci-gate']['steps'][0]['run']
+STEPS = {step.get('name'): step for step in GATE['jobs']['ci-gate']['steps']}
+SCRIPT = STEPS['Wait for every other workflow on the pull request head']['run']
 
 
 @pytest.mark.parametrize('filename', [

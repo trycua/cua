@@ -39,6 +39,26 @@ struct PermissionGuideTests {
         }
     }
 
+    @MainActor
+    @Test func saysSwitchOnWhenTheAppIsListedAndDragWhenItIsNot() {
+        let saved = PermissionGuide.listedStore
+        defer { PermissionGuide.listedStore = saved }
+        let suite = "PermissionGuideTests.\(UUID().uuidString)"
+        let store = UserDefaults(suiteName: suite)!
+        defer { store.removePersistentDomain(forName: suite) }
+        PermissionGuide.listedStore = store
+
+        #expect(!PermissionGuide.isListed(.accessibility))
+        #expect(PermissionGuide.instruction(for: .accessibility, listed: PermissionGuide.isListed(.accessibility)) == .drag)
+        PermissionGuide.markListed(.accessibility)
+        #expect(PermissionGuide.isListed(.accessibility))
+        #expect(!PermissionGuide.isListed(.screenRecording))
+        #expect(PermissionGuide.instruction(for: .accessibility, listed: PermissionGuide.isListed(.accessibility)) == .switchOn)
+        PermissionGuide.markListed(.accessibility, false)
+        #expect(PermissionGuide.instruction(for: .accessibility, listed: PermissionGuide.isListed(.accessibility)) == .drag)
+        #expect(PermissionGuide.switchOnText(appName: "Cua Spaces Local") == "Switch on Cua Spaces Local in the list.")
+    }
+
     @Test func readsWhatAFreshProcessReports() {
         #expect(PermissionGuide.parseGrants("screen-recording=1 accessibility=0\n") == [.screenRecording])
         #expect(PermissionGuide.parseGrants("screen-recording=0 accessibility=1") == [.accessibility])

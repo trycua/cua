@@ -33,6 +33,11 @@ Options:
                      (Space disks, the local Cua Volume files, the Keyvault).
                      Running Spaces are listed and stopped first. Cannot be
                      undone; asks you to type "delete" unless --yes is given
+  --keep-permissions keep the macOS permissions (Screen Recording,
+                     Accessibility, ...) granted to the Cua Spaces app; by
+                     default they are reset while the app is still installed
+                     (macOS cannot reset them once it is gone). Cua Driver's
+                     permissions are never touched
   --all              also run the Cua Driver and Lume uninstallers, and remove
                      Cua Driver's skill and MCP server from your agents
                      (Lume keeps your VMs unless --delete-spaces is given too)
@@ -65,6 +70,7 @@ DISPOSABLE="cache cache.json cua.sock keyvault.sock x.sock daemon.json daemon.st
 SESSION_FILES="credentials.json spaces-session.json spaces-credentials.json"
 
 keep_data=0
+keep_permissions=0
 delete_spaces=0
 all_tools=0
 prefix=""
@@ -97,6 +103,7 @@ parse_args() {
     while [ $# -gt 0 ]; do
         case "$1" in
         --keep-data) keep_data=1 ;;
+        --keep-permissions) keep_permissions=1 ;;
         --delete-spaces) delete_spaces=1 ;;
         --all) all_tools=1 ;;
         --prefix)
@@ -609,7 +616,15 @@ EOF
             if [ "$dry_run" = 1 ]; then
                 say "[dry-run] $app/Contents/MacOS/CuaSpacesMac --service-helper unregister"
             else
-                bounded 30 "$app/Contents/MacOS/CuaSpacesMac" --service-helper unregister >/dev/null 2>&1 || true
+                # A second try, then the state decides: not registered or not
+                # found is gone, whatever the exit status said.
+                bounded 30 "$app/Contents/MacOS/CuaSpacesMac" --service-helper unregister >/dev/null 2>&1 ||
+                    bounded 30 "$app/Contents/MacOS/CuaSpacesMac" --service-helper unregister >/dev/null 2>&1 || true
+                if bounded 30 "$app/Contents/MacOS/CuaSpacesMac" --service-helper status 2>/dev/null |
+                    grep -Eq '"status":"(enabled|requires-approval)"'; then
+                    helper_left=1
+                    warn "could not unregister the Cua Spaces login item; switch it off in System Settings, Login Items"
+                fi
             fi
         done <<EOF
 $(app_candidates)
@@ -620,8 +635,8 @@ EOF
             launchctl bootout "gui/$(id -u)/com.trycua.spaces.helper" >/dev/null 2>&1 || true
         fi
         rm_path "$HOME/.cua/helper"
-        # The privacy permissions macOS keeps for the app stay: an uninstall
-        # never revokes them (see the driver uninstaller, 18 Oct 2026).
+        # The app's privacy permissions are reset in remove_app, while the
+        # app is still installed (--keep-permissions skips that).
         if [ "$old_agent" = 1 ]; then
             info "System Settings may still list \"cua-spacesd\" under Privacy & Security (Screen Recording, Accessibility); select it and click the minus button to remove it"
         fi
@@ -733,7 +748,7 @@ EOF
 # daemon unmounts it when it stops. Make sure, and never delete files while it
 # is mounted.
 volume_mounted=0
-app_removed=0
+helper_left=0
 unmount_volume() {
     case "$os" in
     darwin) mount_point="$HOME/Cua Volume" ;;
@@ -785,6 +800,31 @@ $(cua_homes)
 EOF
 }
 
+# reset_app_permissions APP: clears every macOS privacy permission (Screen
+# Recording, Accessibility, Automation, ...) held by the Cua Spaces app's own
+# bundle id, unless --keep-permissions. `tccutil` resolves a bundle id through
+# LaunchServices and fails with "No such bundle identifier" once the app is
+# gone, so this runs before the app is removed. Only the app's id is named:
+# Cua Driver's permissions are never touched. Best effort.
+reset_app_permissions() {
+    [ "$keep_permissions" = 0 ] || return 0
+    has tccutil || return 0
+    app_id=""
+    if has defaults && [ -f "$1/Contents/Info.plist" ]; then
+        app_id="$(defaults read "$1/Contents/Info" CFBundleIdentifier 2>/dev/null || true)"
+    fi
+    [ "$app_id" = com.trycua.spaces.macos ] || return 0
+    if [ "$dry_run" = 1 ]; then
+        say "[dry-run] tccutil reset All $app_id"
+        return 0
+    fi
+    if bounded 20 tccutil reset All "$app_id" >/dev/null 2>&1; then
+        info "reset the macOS permissions of Cua Spaces (--keep-permissions keeps them)"
+    else
+        warn "could not reset the permissions of $app_id; run: tccutil reset All $app_id"
+    fi
+}
+
 # remove_app: the Cua Spaces app and what it put outside its own folder.
 remove_app() {
     case "$os" in
@@ -792,8 +832,8 @@ remove_app() {
         while IFS= read -r app; do
             [ -n "$app" ] || continue
             if is_cua_app "$app"; then
+                reset_app_permissions "$app"
                 rm_path "$app"
-                if [ "$dry_run" = 0 ] && [ ! -e "$app" ]; then app_removed=1; fi
             else
                 info "leaving $app (not the Cua Spaces app)"
             fi
@@ -1152,6 +1192,13 @@ confirm_plan() {
     if [ "$all_tools" = 0 ]; then
         say "Cua Driver's skill and MCP server in your agents, and other tools' entries, stay."
     fi
+    if [ "$os" = darwin ]; then
+        if [ "$keep_permissions" = 1 ]; then
+            say "It keeps the macOS permissions granted to Cua Spaces (--keep-permissions)."
+        else
+            say "It resets the macOS permissions granted to Cua Spaces (--keep-permissions keeps them)."
+        fi
+    fi
     if [ "$keep_data" = 1 ]; then
         say "It keeps $cua_home and the Cua Volume cache (--keep-data)."
     elif [ "$delete_spaces" = 1 ]; then
@@ -1229,8 +1276,8 @@ main() {
     if [ "$all_tools" = 0 ] && { has cua-driver || [ -e "$HOME/.local/bin/cua-driver" ]; }; then
         info "Cua Driver is separate and was kept; run this with --all to remove it too"
     fi
-    if [ "$app_removed" = 1 ]; then
-        info "the app registered itself as a login item, which a script cannot unregister; if Cua Spaces still shows in System Settings, Login Items, switch it off there"
+    if [ "$helper_left" = 1 ]; then
+        info "the Cua Spaces login item is still registered; switch it off in System Settings, Login Items"
     fi
     if [ "$failed" = 1 ]; then
         info "finished, but some steps need your attention (see the warnings above)"

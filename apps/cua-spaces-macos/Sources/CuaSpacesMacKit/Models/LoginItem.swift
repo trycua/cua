@@ -193,9 +193,13 @@ public enum HelperService {
         case "register":
             do { try service.register() } catch { failure = error.localizedDescription }
         case "unregister":
-            // Not registered is already done.
+            // Not registered is already done. So is an item that ends up
+            // not registered or not found (a bundle moved or replaced since
+            // it registered), even when macOS said no on the way.
             if service.status != .notRegistered {
-                do { try service.unregister() } catch { failure = error.localizedDescription }
+                do { try service.unregister() } catch {
+                    if status() != .notRegistered, status() != .notFound { failure = error.localizedDescription }
+                }
             }
         case "status": break
         default:

@@ -105,6 +105,8 @@ int main(int argc, char **argv) {
         fprintf(f, " [CUA_CHANNEL=%s]\n", channel ? channel : "");
         fclose(f);
     }
+    // STUB_UNREGISTER_FAIL=1: `--service-helper unregister` exits 1.
+    if (argc >= 3 && strcmp(argv[2], "unregister") == 0 && getenv("STUB_UNREGISTER_FAIL")) return 1;
     return 0;
 }
 EOF
@@ -249,7 +251,10 @@ EOF
 # arguments to shim.log.
 write_shim() { printf '#!/bin/bash\n%s\n' "$2" > "$SHIMS/$1"; chmod +x "$SHIMS/$1"; }
 write_shim launchctl 'echo "launchctl $*" >> "$SHIM_LOG"'
-write_shim tccutil 'echo "tccutil $*" >> "$SHIM_LOG"'
+# tccutil, like the real one, can only resolve a bundle id while its app is
+# installed: the second log says whether the Local app was still there.
+write_shim tccutil 'echo "tccutil $*" >> "$SHIM_LOG"
+echo "$* app=$([ -d "$HOME/Applications/Cua Spaces Local.app" ] && echo present || echo gone)" >> "$SHIM_LOG.tcc"'
 write_shim open 'echo "open $*" >> "$SHIM_LOG"'
 write_shim lsregister 'echo "lsregister $*" >> "$SHIM_LOG"'
 # security: a Keychain with one item per service until it is deleted; or the
@@ -1275,19 +1280,23 @@ echo 'state' > "$FAKE_HOME/Library/Saved Application State/com.trycua.spaces.mac
 echo 'mine' > "$FAKE_HOME/Cua Volume Local/keep.txt"
 write_local_cli
 BEFORE_UNINSTALL="$(snap_all)"
-: > "$SHIM_LOG"; : > "$STUB_LOG"
+: > "$SHIM_LOG"; : > "$STUB_LOG"; : > "$SHIM_LOG.tcc"
 
 STDIN_FILE="$WORK/answer-n"; echo n > "$STDIN_FILE"
 uninstall
 check "answering n removes nothing" '[ "$RC" = 0 ] && [ "$(snap_all)" = "$BEFORE_UNINSTALL" ] && printf "%s" "$OUT" | grep >/dev/null cancelled'
 STDIN_FILE=/dev/null
 uninstall
-check "no answer (no terminal) removes nothing" '[ "$(snap_all)" = "$BEFORE_UNINSTALL" ]'
+check "no answer (no terminal) removes nothing" '[ "$(snap_all)" = "$BEFORE_UNINSTALL" ] && [ ! -s "$SHIM_LOG.tcc" ]'
 
 STDIN_FILE="$WORK/answer-y"; echo y > "$STDIN_FILE"
 uninstall
 check "answering y removes Local (status $RC)" '[ "$RC" = 0 ] && [ ! -e "$LOCAL_APP" ] && [ ! -e "$LOCAL_CLI" ] && [ ! -L "$LOCAL_CLI" ]'
 STDIN_FILE=/dev/null
+check "every Local permission was reset in one call, for the Local bundle id only, while the app was still installed" \
+    '[ "$(cat "$SHIM_LOG.tcc")" = "reset All com.trycua.spaces.macos.local app=present" ] && [ "$(grep -c "^tccutil" "$SHIM_LOG")" = 1 ]'
+check "the plan said the permissions are reset, and the closing line no longer says they are kept" \
+    'printf "%s" "$OUT" | grep >/dev/null "permissions:        reset" && ! printf "%s" "$OUT" | grep >/dev/null "and the permissions macOS granted"'
 check "the Local home and its app support folder are gone" '[ ! -e "$FAKE_HOME/.cua-local" ] && [ ! -e "$FAKE_HOME/Library/Application Support/com.trycua.spaces.macos.local" ]'
 check "the Local bundle id's preferences, caches, web view data, cookies and window state are gone" \
     '[ ! -e "$FAKE_HOME/Library/Preferences/com.trycua.spaces.macos.local.plist" ] && [ ! -e "$FAKE_HOME/Library/Caches/com.trycua.spaces.macos.local" ] && [ ! -e "$FAKE_HOME/Library/HTTPStorages/com.trycua.spaces.macos.local" ] && [ ! -e "$FAKE_HOME/Library/WebKit/com.trycua.spaces.macos.local" ] && [ ! -e "$FAKE_HOME/Library/Cookies/com.trycua.spaces.macos.local.binarycookies" ] && [ ! -e "$FAKE_HOME/Library/Saved Application State/com.trycua.spaces.macos.local.savedState" ]'
@@ -1307,6 +1316,28 @@ check "only the Local Keychain services were deleted (both of them)" \
     'grep >/dev/null "^security delete-generic-password -s ai.cua.session.local\$" "$SHIM_LOG" && grep >/dev/null "^security delete-generic-password -s ai.cua.session.local.staging\$" "$SHIM_LOG" && ! grep "^security" "$SHIM_LOG" | grep -v -e "-s ai.cua.session.local\$" -e "-s ai.cua.session.local.staging\$"'
 check "the Local volume folder is kept" '[ "$(cat "$FAKE_HOME/Cua Volume Local/keep.txt")" = mine ]'
 check "Stable files are byte-identical after uninstall" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
+
+echo "== uninstall --keep-permissions, and a login item that will not unregister =="
+reset_fixture
+install
+: > "$SHIM_LOG"; : > "$SHIM_LOG.tcc"
+uninstall --yes --keep-permissions
+check "--keep-permissions removes Local and resets nothing (status $RC)" \
+    '[ "$RC" = 0 ] && [ ! -e "$LOCAL_APP" ] && [ ! -s "$SHIM_LOG.tcc" ] && ! grep >/dev/null "^tccutil" "$SHIM_LOG"'
+check "and it says the permissions are kept" \
+    'printf "%s" "$OUT" | grep >/dev/null "permissions:        kept" && printf "%s" "$OUT" | grep >/dev/null "and the permissions macOS granted"'
+reset_fixture
+install
+: > "$SHIM_LOG.tcc"; : > "$STUB_LOG"
+run env STUB_UNREGISTER_FAIL=1 STUB_HELPER_STATUS=not-registered "$FAKE_SCRIPTS/uninstall-local.sh" --yes
+check "an unregister that exits 1 is retried once, and a login item that is not registered raises no warning (status $RC)" \
+    '[ "$RC" = 0 ] && [ "$(grep -c -- "--service-helper unregister" "$STUB_LOG")" = 2 ] && ! printf "%s" "$OUT" | grep >/dev/null "could not unregister its helper"'
+reset_fixture
+install
+: > "$STUB_LOG"
+run env STUB_UNREGISTER_FAIL=1 STUB_HELPER_STATUS=enabled "$FAKE_SCRIPTS/uninstall-local.sh" --yes
+check "a login item that is still enabled after the retry is reported, and the uninstall goes on" \
+    '[ "$RC" = 0 ] && [ ! -e "$LOCAL_APP" ] && printf "%s" "$OUT" | grep >/dev/null "could not unregister its helper"'
 
 echo "== uninstall and the old Local id =="
 reset_fixture
@@ -1333,7 +1364,7 @@ uninstall --yes
 check "uninstall removes the leftovers of both ids when no app is installed (status $RC)" \
     '[ "$RC" = 0 ] && legacy_data_gone && [ ! -e "$FAKE_HOME/Library/Application Support/com.trycua.spaces.macos.local" ] && [ ! -e "$FAKE_HOME/Library/Caches/com.trycua.spaces.macos.local" ]'
 check "and Stable files, whose names the new Local id extends, are byte-identical" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
-check "uninstall never resets permission rows (macOS keeps them for a reinstall)" '! grep >/dev/null "^tccutil" "$SHIM_LOG"'
+check "with no app installed no permission rows are reset (tccutil cannot resolve a bundle id whose app is gone)" '! grep >/dev/null "^tccutil" "$SHIM_LOG"'
 
 echo "== uninstall takes this Mac off the relay, safely =="
 # A stray environment of the released Cua Spaces in the caller's shell: its

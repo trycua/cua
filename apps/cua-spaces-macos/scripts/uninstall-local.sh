@@ -7,9 +7,12 @@
 # ~/.lume and their launchd jobs and Keychain items have other names and are
 # never reached.
 #
-#   scripts/uninstall-local.sh [--yes] [--with-lume-local] [--prefix DIR]
+#   scripts/uninstall-local.sh [--yes] [--keep-permissions] [--with-lume-local] [--prefix DIR]
 #
 #   --yes, -y            do not ask first
+#   --keep-permissions   keep the permissions macOS granted the app (Screen
+#                        Recording, Accessibility and the rest); without it
+#                        they are reset, before the app goes
 #   --with-lume-local    also remove lume-local (without it, it asks, and with
 #                        --yes it stays); its VMs in ~/.lume-local go with it
 #   --prefix DIR         where install-local.sh put the app and `cua-local`
@@ -24,6 +27,9 @@
 #     the CLI and ~/.cua-local, which records what Local wrote, go; the released
 #     app's entries and `cua-driver` stay
 #   - the Local helper login item (unregistered) and the Local host runner job
+#   - the permissions macOS granted the Local bundle id (`tccutil reset All`,
+#     run while the app is still installed: it cannot resolve an app that is
+#     gone), unless --keep-permissions
 #   - ~/Applications/Cua Spaces Local.app
 #   - ~/.local/bin/cua-local
 #   - ~/.cua-local (the Local sign-in, host and Spaces state)
@@ -35,8 +41,8 @@
 #     path and its ~/Library files
 #   - the Local Keychain items (ai.cua.session.local, ai.cua.session.local.staging)
 #   - optionally lume-local (libs/lume/scripts/uninstall-local.sh)
-# It keeps the Cua Volume Local folder and the permissions macOS granted the
-# app. It refuses, changing nothing, when the app at the Local path is not a
+# It keeps the Cua Volume Local folder (and, with --keep-permissions, the
+# permissions macOS granted the app). It refuses, changing nothing, when the app at the Local path is not a
 # Cua Spaces Local bundle.
 set -euo pipefail
 
@@ -52,6 +58,7 @@ die() { err "$*"; exit 1; }
 YES=0
 PREFIX=""
 WITH_LUME_LOCAL=0
+KEEP_PERMISSIONS=0
 
 usage() { sed -n '/^# Removes Cua Spaces Local/,/^# Cua Spaces Local bundle\./p' "$0" | sed 's/^# \{0,1\}//'; }
 
@@ -59,6 +66,7 @@ while [ "$#" -gt 0 ]; do
     case "$1" in
         --yes|-y) YES=1 ;;
         --with-lume-local) WITH_LUME_LOCAL=1 ;;
+        --keep-permissions) KEEP_PERMISSIONS=1 ;;
         --prefix)
             [ "$#" -ge 2 ] || die "--prefix needs a directory"
             PREFIX="$2"
@@ -125,6 +133,11 @@ echo "  CLI:                $CLI_LINK"
 echo "  state:              $LOCAL_HOME and $LOCAL_APP_SUPPORT"
 echo "  macOS leftovers:    the $LOCAL_BUNDLE_ID preferences, caches, web view data and window state in ~/Library"
 echo "                      (and those of the old id $LOCAL_LEGACY_BUNDLE_ID, if any)"
+if [ "$KEEP_PERMISSIONS" = 1 ]; then
+    echo "  permissions:        kept (--keep-permissions)"
+else
+    echo "  permissions:        reset (Screen Recording, Accessibility and the rest for $LOCAL_BUNDLE_ID)"
+fi
 echo "  Keychain items:     ${LOCAL_KEYCHAIN_SERVICES[*]}"
 echo "  relay:              this Mac's entry, if Local is signed in"
 echo "  coding agents:      Local's MCP server ($LOCAL_CLI_NAME) and its *-local skills; the released app's entries stay"
@@ -278,6 +291,15 @@ if [ -x "$APP_DEST/Contents/MacOS/CuaSpacesMac" ]; then
     log "unregistering the helper login item"
 fi
 retire_local_app "$APP_DEST"
+# Permissions next, while the app is still installed: tccutil resolves the
+# bundle id through the app and fails once it is gone.
+if [ "$KEEP_PERMISSIONS" != 1 ]; then
+    if [ -d "$APP_DEST" ] && [ -f "$APP_DEST/Contents/Info.plist" ]; then
+        reset_local_permissions "$APP_DEST" "$(bundle_id_of "$APP_DEST")"
+    else
+        log "no app is installed, so macOS cannot reset its permissions: install Local again and rerun this to clear them"
+    fi
+fi
 # The plain runner (`cua host setup` without the app) has its own Local label.
 launchctl bootout "$GUI_DOMAIN/$LOCAL_HOST_LABEL" >/dev/null 2>&1 || true
 if [ -f "$HOST_JOB_PLIST" ]; then
@@ -377,4 +399,8 @@ fi
 
 echo ""
 ok "Cua Spaces Local was removed; the released Cua Spaces was left untouched."
-echo "Kept: ~/$LOCAL_VOLUME_NAME (your files) and the permissions macOS granted $LOCAL_BUNDLE_ID."
+if [ "$KEEP_PERMISSIONS" = 1 ]; then
+    echo "Kept: ~/$LOCAL_VOLUME_NAME (your files) and the permissions macOS granted $LOCAL_BUNDLE_ID."
+else
+    echo "Kept: ~/$LOCAL_VOLUME_NAME (your files)."
+fi

@@ -419,7 +419,7 @@ and removing Local's setup removes only Local's. The names come from
 Rebuilding is the same command. To remove it:
 
 ```sh
-scripts/uninstall-local.sh               # asks first; --yes to skip, --with-lume-local to include lume-local
+scripts/uninstall-local.sh               # asks first; --yes to skip, --with-lume-local to include lume-local; --keep-permissions keeps the macOS permissions (reset by default, before the app goes)
 ```
 
 It unregisters the Local helper login item and removes the app, `cua-local`,

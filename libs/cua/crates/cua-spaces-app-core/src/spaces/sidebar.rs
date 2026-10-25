@@ -580,7 +580,7 @@ pub fn desktop_note(space: &Space) -> Option<String> {
 pub fn host_desktop_note(os: crate::model::SpaceOs) -> String {
     format!(
         "This is {}\u{2019}s own screen, so it isn\u{2019}t shown here. \
-         Your other devices see and control it while Share this desktop is on.",
+         Your other devices see and control it while you let them use it.",
         os.this_machine_lower()
     )
 }

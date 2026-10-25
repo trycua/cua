@@ -605,7 +605,7 @@ function fallbackPanel(s: HostStatus | null): HostPanelView {
 const FALLBACK_INTRO =
   "This is the computer you’re using now. Set it up so you, your teammates and your AI agents can use it from other devices. Cua connects them for you, with no network setup.";
 const FALLBACK_CHOICES: HostSetupChoice[] = [
-  { id: "desktop", label: "Use this computer from my other devices", buttonLabel: "Set Up…" },
+  { id: "desktop", label: "Let my other devices use this computer", buttonLabel: "Set Up…" },
   { id: "spare", label: "Run Spaces here and keep its screen private", buttonLabel: "Set Up…" },
 ];
 

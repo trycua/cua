@@ -124,6 +124,12 @@ pub struct SetupOptions {
     /// (`kind = "machine"`), where they run with its GPU and drivers as
     /// they are. Never for a computer you also use; default off.
     pub dedicated: bool,
+    /// This device's relay session, when it is enrolled for the account
+    /// (relay mode). Registering with it is the proof the relay vouches
+    /// for ("an enrolled device's signature"), so the Mac the user just
+    /// signed in on is not listed as a new, unconfirmed computer. `None`
+    /// (not enrolled, or a pairing code) leaves the relay to flag it.
+    pub device_session: Option<String>,
 }
 
 /// A relay in static-token mode ([`SetupOptions::static_relay`]).
@@ -153,6 +159,7 @@ impl SetupOptions {
             tailnet: false,
             download_first: false,
             dedicated: false,
+            device_session: None,
         }
     }
 
@@ -179,6 +186,7 @@ impl SetupOptions {
             tailnet: false,
             download_first: false,
             dedicated: false,
+            device_session: None,
         }
     }
 }
@@ -1311,6 +1319,9 @@ impl Host {
         match &opts.mode {
             HostMode::Relay { url } => {
                 let relay = RelayClient::new(url)?;
+                let relay_with_device = relay
+                    .clone()
+                    .with_device_session(opts.device_session.clone());
                 *stage = SetupStage::Token;
                 let token = tokens.access_token().await?;
                 *stage = SetupStage::Register;
@@ -1319,7 +1330,7 @@ impl Host {
                 // machine token; the account session is used only for this
                 // call and never stored under the host directory.
                 let current = read_secret(&self.paths.machine_token()).ok();
-                let reg = relay
+                let reg = relay_with_device
                     .register_as_machine(
                         &token,
                         current.as_deref(),

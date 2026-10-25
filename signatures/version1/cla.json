@@ -615,6 +615,14 @@
       "created_at": "2026-10-25T06:46:10Z",
       "repoId": 925270205,
       "pullRequestNo": 5742
+    },
+    {
+      "name": "lidge-jun",
+      "id": 243035832,
+      "comment_id": 6395056369,
+      "created_at": "2026-10-25T07:48:53Z",
+      "repoId": 925270205,
+      "pullRequestNo": 5942
     }
   ]
 }

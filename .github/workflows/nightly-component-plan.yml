@@ -127,12 +127,17 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  report-attribution-hold:
+  report-attribution-warning:
     needs: plan
-    if: needs.plan.outputs.reason == 'held-attribution'
+    if: needs.plan.outputs.attribution_issues != '' && needs.plan.outputs.attribution_issues != '[]'
     runs-on: ubuntu-latest
+    permissions:
+      issues: write
     steps:
-      - name: Create or refresh the attribution hold
+      # A warning only: the nightly build continues. Stable releases still
+      # fail closed on unresolved attribution.
+      - name: Create or refresh the attribution warning
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           COMPONENT: ${{ inputs.component }}
@@ -140,10 +145,10 @@ jobs:
           ATTRIBUTION_ISSUES: ${{ needs.plan.outputs.attribution_issues }}
         run: |
           set -euo pipefail
-          TITLE="Nightly ${COMPONENT} held by unresolved contributor attribution"
-          BODY="$RUNNER_TEMP/nightly-attribution-hold.md"
+          TITLE="Nightly ${COMPONENT} has unresolved contributor attribution"
+          BODY="$RUNNER_TEMP/nightly-attribution-warning.md"
           {
-            echo "The nightly planner stopped before the cross-platform build because contributor attribution is unresolved."
+            echo "The nightly build for ${COMPONENT} continued, but some contributors cannot be credited in its notes. A stable release of this range will fail until they are resolved."
             echo
             echo "Source commit: \`$SOURCE_SHA\`"
             echo
@@ -152,12 +157,15 @@ jobs:
             echo
             echo "Resolve each identity by linking the email to GitHub, amending the source commit with a recognized email before merge, or adding a verified \`identityOverrides\` mapping. Do not add wildcard or human-email ignores."
           } > "$BODY"
+          cat "$BODY" >> "$GITHUB_STEP_SUMMARY"
           MATCHES=$(gh issue list --repo "${{ github.repository }}" --state open \
             --search "\"$TITLE\" in:title" --limit 100 --json number,title)
           NUMBER=$(jq -r --arg title "$TITLE" \
             'map(select(.title == $title)) | first | .number // empty' <<<"$MATCHES")
           if [[ -n "$NUMBER" ]]; then
             gh issue edit "$NUMBER" --repo "${{ github.repository }}" --body-file "$BODY"
+            gh issue comment "$NUMBER" --repo "${{ github.repository }}" \
+              --body "Seen again at \`$SOURCE_SHA\`; the nightly build continued."
           else
             gh issue create --repo "${{ github.repository }}" --title "$TITLE" --body-file "$BODY"
           fi

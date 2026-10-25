@@ -166,11 +166,13 @@ nightlies are bounded by the previous published nightly. A component therefore
 needs a reachable stable tag before its nightly channel is enabled.
 
 Before starting platform builds, the nightly planner scans that exact range for
-unresolved human coauthors. It returns `reason=held-attribution` and creates or
-refreshes one component-specific maintainer issue instead of spending build and
-signing capacity on a candidate that cannot be published. Resolve the identity
-through a linked GitHub email or a verified `identityOverrides` entry; never use
-wildcard or human-email ignores to clear a hold.
+unresolved human coauthors. Unresolved attribution never holds a nightly: the
+build continues, the plan carries `attributionWarning=true`, and the planner
+writes a step summary and creates or refreshes one component-specific
+maintainer issue. Nightly notes omit the unresolved coauthor. Stable releases
+stay strict: `release_attribution.py` fails the manifest until the identity
+resolves through a linked GitHub email or a verified `identityOverrides` entry;
+never use wildcard or human-email ignores to clear it.
 
 ## Persistent consumer selection
 

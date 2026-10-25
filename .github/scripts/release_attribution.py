@@ -963,6 +963,8 @@ def _change_contributors(
     github: GitHubClient,
     repository: str,
     config: Mapping[str, Any],
+    *,
+    strict_coauthors: bool = True,
 ) -> tuple[list[dict[str, Any]], list[int], bool]:
     bots = {str(item).lower() for item in config.get("bots", [])}
     overrides = {
@@ -1000,6 +1002,9 @@ def _change_contributors(
             login = merging_maintainer_squash_coauthor(
                 pull, match.group("name"), github, repository, internal
             )
+        if not login and not strict_coauthors:
+            # Nightly notes only: the planner already warned maintainers.
+            continue
         if not login:
             raise ReleaseError(
                 f"commit {commit.sha} has unresolved human coauthor {email}; "
@@ -1177,7 +1182,12 @@ def build_manifest(
             continue
         try:
             contributors, issues, pull_visual = _change_contributors(
-                pull, commit, github, repository, attribution_config
+                pull,
+                commit,
+                github,
+                repository,
+                attribution_config,
+                strict_coauthors=channel == "stable",
             )
         except ReleaseError as error:
             raise ReleaseError(f"pull request #{pull_number}: {error}") from error

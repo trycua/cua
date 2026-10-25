@@ -13,6 +13,7 @@ from release_attribution import (
     PUBLISHED_INSTALLER_BUMP_RE,
     ReleaseError,
     _change_contributors,
+    unresolved_coauthor_identities,
     build_manifest,
     changelog_references_change,
     commits_in_range,
@@ -601,6 +602,38 @@ def test_nightly_manifest_attributes_maintenance_prs_without_a_versioned_changel
             attribution_config=config,
             github=FakeGitHub(commit_sha),
         )
+
+
+def test_nightly_skips_unresolved_coauthor_but_stable_stays_strict():
+    commit = CommitRecord(
+        "deadbeef",
+        "fix(driver): preserve focus",
+        "Co-authored-by: Unknown Person <private@example.com>",
+    )
+    pull = {"user": {"login": "author"}, "author_association": "NONE", "body": "", "labels": []}
+    config = {
+        "bots": [],
+        "coauthorOverrides": {},
+        "ignoredCoauthorEmails": [],
+        "identityOverrides": {},
+        "internalHandles": [],
+        "optOutHandles": [],
+    }
+    contributors, _, _ = _change_contributors(
+        pull, commit, FakeGitHub("deadbeef"), "trycua/cua", config, strict_coauthors=False
+    )
+    assert [item["login"] for item in contributors] == ["author"]
+    with pytest.raises(ReleaseError, match="unresolved human coauthor"):
+        _change_contributors(pull, commit, FakeGitHub("deadbeef"), "trycua/cua", config)
+
+
+def test_checked_in_override_resolves_adam():
+    config = json.loads((REPO_ROOT / ".github/release-attribution-config.json").read_text())
+    commits = [
+        CommitRecord("b2", "fix: y", "Co-authored-by: adam <admr0805@gmail.com>"),
+    ]
+    assert unresolved_coauthor_identities(commits, config) == []
+    assert config["identityOverrides"]["admr0805@gmail.com"] == "0xABAN"
 
 
 def test_unresolved_human_coauthor_fails_closed():

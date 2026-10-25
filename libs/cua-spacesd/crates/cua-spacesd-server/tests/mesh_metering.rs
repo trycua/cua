@@ -309,14 +309,27 @@ async fn mesh_sessions_count_against_the_allowance() {
         .await
         .unwrap();
     // One call sets the path up; then wait for it to go direct, and for
-    // the relayed handshake to fall out of the hours window.
-    let r = w
-        .http
-        .get(format!("http://{}/probe", fwd.local))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(r.text().await.unwrap(), "ok");
+    // the relayed handshake to fall out of the hours window. Being in the
+    // map does not mean the machine's mesh node is serving yet: until it is,
+    // the forward drops the connection (a reset), so the first call retries
+    // until the machine answers. The answer itself is still asserted.
+    let probe = format!("http://{}/probe", fwd.local);
+    let mut answer = None;
+    for _ in 0..300 {
+        // A fresh client each try: never reuse a connection that was reset.
+        let fresh = reqwest::Client::builder()
+            .pool_max_idle_per_host(0)
+            .build()
+            .unwrap();
+        if let Ok(r) = fresh.get(&probe).send().await {
+            if let Ok(text) = r.text().await {
+                answer = Some(text);
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(answer.as_deref(), Some("ok"));
     wait_until("a direct path", || {
         let direct = matches!(ada.path(&peer.node_key), Some(Path::Direct(_)));
         async move { direct }

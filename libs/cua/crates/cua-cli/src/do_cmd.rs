@@ -591,7 +591,7 @@ pub async fn run(cua: &Arc<Cua>, args: DoArgs, out: &mut dyn Write) -> Result<i3
 }
 
 fn fail(msg: &str) -> Result<i32, CuaError> {
-    eprintln!("❌ {msg}");
+    eprintln!("❌ {}", crate::util::hint(msg));
     Ok(1)
 }
 
@@ -618,7 +618,10 @@ impl Run<'_> {
             "host" => {
                 if !consent_path().exists() {
                     eprintln!(
-                        "❌ Warning: you are about to allow an AI to control your host PC directly.\n   This grants full keyboard, mouse, and screen access to your local desktop.\n   To continue, please run: cua do-host-consent"
+                        "{}",
+                        crate::util::hint(
+                            "❌ Warning: you are about to allow an AI to control your host PC directly.\n   This grants full keyboard, mouse, and screen access to your local desktop.\n   To continue, please run: cua do-host-consent"
+                        ),
                     );
                     return Ok(1);
                 }

@@ -546,10 +546,10 @@ impl DeviceAuth {
             return Ok(token.clone());
         }
         let key = self.key()?.ok_or_else(|| {
-            Error::PermissionDenied(
-                "this device is not enrolled for your cua.ai account (run `cua devices enroll`)"
-                    .into(),
-            )
+            Error::PermissionDenied(format!(
+                "this device is not enrolled for your cua.ai account (run `{} devices enroll`)",
+                crate::cli()
+            ))
         })?;
         let token = self.tokens.access_token().await?;
         let session = self.open_session(&token, &key).await?;

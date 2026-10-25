@@ -466,10 +466,11 @@ pub fn local_network_hint(os: &str, provide_spaces: bool, driver: &Path) -> Opti
             "macOS Spaces on this Mac need Local Network access for {d}. When \
              macOS asks \"Allow {short} to find devices on local networks?\" on this Mac's \
              screen, click Allow; or turn on {short} in System Settings → Privacy & \
-             Security → Local Network. If the cua daemon was started from Terminal or over SSH, \
-             run `cua daemon stop` so the host service starts it at the next create (over SSH \
+             Security → Local Network. If the {cli} daemon was started from Terminal or over SSH, \
+             run `{cli} daemon stop` so the host service starts it at the next create (over SSH \
              nothing can grant it). Without it, macOS Space creates fail with \"No route to \
-             host\"; Linux Spaces don't need it."
+             host\"; Linux Spaces don't need it.",
+            cli = crate::cli()
         ),
     })
 }
@@ -1228,11 +1229,11 @@ impl Host {
                 self.helper_app()
                     .map(|app| service::app_helper_launcher(&app))
                     .ok_or_else(|| {
-                        Error::Service(
+                        Error::Service(format!(
                             "the host service runs inside the Cua Spaces app, which is not \
-                             installed; install it, or run `cua host setup --runner launchd`"
-                                .into(),
-                        )
+                             installed; install it, or run `{} host setup --runner launchd`",
+                            crate::cli()
+                        ))
                     })?,
             ),
             _ => None,
@@ -1529,18 +1530,22 @@ impl Host {
     /// changed.
     pub fn enable_shares(&self) -> Result<bool> {
         let config = self.config()?.ok_or_else(|| {
-            Error::NotFound(
-                "this machine is not on your cua.ai relay; set it up with `cua host setup`".into(),
-            )
+            Error::NotFound(format!(
+                "this machine is not on your cua.ai relay; set it up with `{} host setup`",
+                crate::cli()
+            ))
         })?;
         if config.mode != "relay" {
-            return Err(Error::InvalidArgument(
-                "this machine is not on your cua.ai relay (direct mode); links need the relay: `cua host setup`"
-                    .into(),
-            ));
+            return Err(Error::InvalidArgument(format!(
+                "this machine is not on your cua.ai relay (direct mode); links need the relay: `{} host setup`",
+                crate::cli()
+            )));
         }
         let mut policy = self.policy()?.ok_or_else(|| {
-            Error::NotFound("this machine has no host policy; run `cua host setup`".into())
+            Error::NotFound(format!(
+                "this machine has no host policy; run `{} host setup`",
+                crate::cli()
+            ))
         })?;
         let gateway = self.shares_gateway();
         if policy.shares && policy.shares_gateway.as_deref() == Some(gateway.as_str()) {
@@ -1814,7 +1819,10 @@ impl Host {
 
     fn require_config(&self) -> Result<HostConfig> {
         self.config()?.ok_or_else(|| {
-            Error::NotFound("this computer is not set up for access (run `cua host setup`)".into())
+            Error::NotFound(format!(
+                "this computer is not set up for access (run `{} host setup`)",
+                crate::cli()
+            ))
         })
     }
 
@@ -1853,11 +1861,11 @@ impl Host {
     pub async fn start_sharing(&self) -> Result<HostStatus> {
         let mut config = self.require_config()?;
         if !config.share_desktop && !config.provide_spaces {
-            return Err(Error::InvalidArgument(
+            return Err(Error::InvalidArgument(format!(
                 "there is nothing to share: turn on the desktop or Spaces first \
-                 (`cua host config --desktop on` or `--provide-spaces on`)"
-                    .into(),
-            ));
+                 (`{} host config --desktop on` or `--provide-spaces on`)",
+                crate::cli()
+            )));
         }
         match (&config.relay_url, &config.machine_id) {
             (Some(url), Some(id)) => {
@@ -2088,8 +2096,11 @@ impl Host {
             MigrationPlan::Nothing(why) => Ok(ServiceMigration::new("not-needed", why, false)),
             MigrationPlan::KeepAfterFailure => Ok(ServiceMigration::new(
                 "kept",
-                "moving into the Cua Spaces app failed before with this version; the old host \
-                 service keeps running (`cua host migrate --force` tries again)",
+                format!(
+                    "moving into the Cua Spaces app failed before with this version; the old host \
+                     service keeps running (`{} host migrate --force` tries again)",
+                    crate::cli()
+                ),
                 false,
             )),
             MigrationPlan::RemoveLeftovers => {
@@ -2300,7 +2311,7 @@ impl Host {
         let provided = crate::provided::load_provided(&self.paths.dir)?;
         if !provided.is_empty() && !uninstalling {
             return Err(Error::InvalidArgument(format!(
-                "this computer still provides {} Space{} ({}); delete {} first (`cua spaces delete <local:name>`)",
+                "this computer still provides {} Space{} ({}); delete {} first (`{} spaces delete <local:name>`)",
                 provided.len(),
                 if provided.len() == 1 { "" } else { "s" },
                 provided
@@ -2309,6 +2320,7 @@ impl Host {
                     .collect::<Vec<_>>()
                     .join(", "),
                 if provided.len() == 1 { "it" } else { "them" },
+                crate::cli(),
             )));
         }
         let mut relay_error = None;
@@ -2449,8 +2461,9 @@ fn missing_libraries_message(missing: &[String]) -> String {
         ""
     };
     format!(
-        "cua-spacesd cannot start: this machine lacks {}.{hint} Install them and run `cua host setup` again.",
-        missing.join(", ")
+        "cua-spacesd cannot start: this machine lacks {}.{hint} Install them and run `{} host setup` again.",
+        missing.join(", "),
+        crate::cli()
     )
 }
 

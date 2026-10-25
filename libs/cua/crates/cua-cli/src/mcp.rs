@@ -128,7 +128,10 @@ pub fn parse_permissions(s: &str) -> BTreeSet<String> {
                 continue;
             }
             unknown => {
-                eprintln!("cua mcp: unknown permission {unknown:?}");
+                eprintln!(
+                    "{}",
+                    crate::util::hint(&format!("cua mcp: unknown permission {unknown:?}"))
+                );
                 continue;
             }
         };
@@ -1579,9 +1582,9 @@ impl Server {
                 jtext(json!({"success": true, "message": format!("Deleted skill: {n}")}))
             }),
             "skills_record" => jtext(json!({
-                "message": format!("To record skill '{n}', run 'cua skills record --name {n} --sandbox <name>' (or --viewer-url <url>) in a terminal"),
+                "message": crate::util::hint(&format!("To record skill '{n}', run 'cua skills record --name {n} --sandbox <name>' (or --viewer-url <url>) in a terminal")),
                 "instructions": [
-                    format!("1. Run: cua skills record --name {n} --sandbox <name> (or --viewer-url <url>)"),
+                    crate::util::hint(&format!("1. Run: cua skills record --name {n} --sandbox <name> (or --viewer-url <url>)")),
                     "2. Perform the actions you want to record in the viewer",
                     "3. Click 'Stop Recording' when done",
                 ],
@@ -1740,7 +1743,7 @@ impl SdkTools {
         let space = arguments.get("space")?.as_str()?.to_string();
         Some(match self.0.space(space).await {
             Ok(s) => s.call_tool_here(tool, arguments.clone()).await,
-            Err(e) => ToolOutcome::error_message(error_kind(&e), e.to_string()),
+            Err(e) => ToolOutcome::error_message(error_kind(&e), crate::util::hint(&e.to_string())),
         })
     }
 
@@ -1767,7 +1770,7 @@ impl SdkTools {
                     .as_deref()
                     .and_then(|s| serde_json::from_str(s).ok()),
             },
-            Err(e) => ToolOutcome::error_message(error_kind(&e), e.to_string()),
+            Err(e) => ToolOutcome::error_message(error_kind(&e), crate::util::hint(&e.to_string())),
         }
     }
 }
@@ -1824,7 +1827,8 @@ impl cua_spaces::mcp::ToolExtension for Server {
                 cua_sandbox_core::external::annotate_runtime_schema(&mut schema, &providers);
                 json!({
                     "name": t.name,
-                    "description": t.description,
+                    // Its commands are for this build's CLI (`cua-local` on Local).
+                    "description": crate::util::hint(t.description),
                     "inputSchema": schema,
                 })
             })
@@ -1841,7 +1845,9 @@ impl cua_spaces::mcp::ToolExtension for Server {
                     is_error: false,
                     meta: None,
                 },
-                Err(e) => ToolOutcome::error_message(error_kind(&e), e.to_string()),
+                Err(e) => {
+                    ToolOutcome::error_message(error_kind(&e), crate::util::hint(&e.to_string()))
+                }
             }
         };
         Some(bounded(tool, &arguments, run).await)

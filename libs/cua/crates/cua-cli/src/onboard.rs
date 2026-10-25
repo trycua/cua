@@ -317,7 +317,9 @@ pub fn jobs_line(dedicated: bool, accelerators: &[String]) -> String {
     } else {
         "containers"
     };
-    format!("Jobs: run in {kind} here ({gpus}). `cua run` sends Python functions here.")
+    crate::util::hint(&format!(
+        "Jobs: run in {kind} here ({gpus}). `cua run` sends Python functions here."
+    ))
 }
 
 fn pct(free: &Value, total: &Value) -> String {
@@ -375,7 +377,9 @@ pub fn machines_table(v: &Value) -> Vec<String> {
         ));
     }
     if machines.is_empty() {
-        rows.push("No hosts yet: `cua host setup --no-desktop --provide-spaces` here, `cua host pair` for another computer.".into());
+        rows.push(crate::util::hint(
+            "No hosts yet: `cua host setup --no-desktop --provide-spaces` here, `cua host pair` for another computer.",
+        ));
     }
     rows
 }

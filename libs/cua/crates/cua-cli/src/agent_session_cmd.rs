@@ -271,8 +271,11 @@ pub async fn start(a: RunArgs, json: bool, out: &mut dyn Write) -> Result<i32, C
         line(out, v.to_string());
     } else {
         eprintln!(
-            "{name} started as a durable session (epoch {}); follow with: cua agent logs session:{name} -f",
-            v["epoch"]
+            "{}",
+            crate::util::hint(&format!(
+                "{name} started as a durable session (epoch {}); follow with: cua agent logs session:{name} -f",
+                v["epoch"]
+            ))
         );
     }
     if !a.follow {

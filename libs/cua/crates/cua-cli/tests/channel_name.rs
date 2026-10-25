@@ -102,6 +102,9 @@ fn says_local(text: &str) {
         !text.lines().any(|l| l.trim_start().starts_with("cua ")),
         "{text}"
     );
+    // A command named in the middle of a help text (in backticks) too.
+    assert!(text.contains("`cua-local host pair`"), "{text}");
+    assert!(!text.contains("`cua "), "{text}");
 }
 
 fn says_stable(text: &str) {
@@ -112,6 +115,7 @@ fn says_stable(text: &str) {
         "{text}"
     );
     assert!(!text.contains("cua-local"), "{text}");
+    assert!(text.contains("`cua host pair`"), "{text}");
 }
 
 #[test]
@@ -169,9 +173,105 @@ fn help_advanced_follows_the_channel() {
     assert!(!stable.contains("cua-local"), "{stable}");
     let local = rig.run("cua-local", None, None, &["help", "advanced"]);
     assert!(local.contains("cua-local host setup --relay"), "{local}");
+    // And a command named in a sentence, not only the examples.
+    assert!(local.contains("Works with cua-local host setup"), "{local}");
+    assert!(stable.contains("Works with cua host setup"), "{stable}");
     assert!(
         !local.lines().any(|l| l.trim_start().starts_with("cua ")),
         "{local}"
+    );
+}
+
+// ---- Hints and errors name the CLI that printed them --------------------------------
+
+/// `program args...` in a fresh fake `HOME` with a clean environment (and the
+/// file credential store: never the developer's Keychain). Returns the exit
+/// code, stdout and stderr.
+fn run_fresh(rig: &Rig, program: &str, args: &[&str]) -> (Option<i32>, String, String) {
+    let home = tempfile::tempdir_in(rig.dir.path()).unwrap().keep();
+    let out = Command::new(rig.bin(program))
+        .args(args)
+        .env_clear()
+        .env("HOME", &home)
+        .env("PATH", "")
+        .env("CUA_TELEMETRY", "0")
+        .env("CUA_CREDENTIAL_STORE", "file")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run cua");
+    (
+        out.status.code(),
+        String::from_utf8(out.stdout).unwrap(),
+        String::from_utf8(out.stderr).unwrap(),
+    )
+}
+
+/// A hint that tells the reader to run a `cua` command names the CLI the
+/// reader ran: `cua-local` for Local, so pasting it does not run Stable's
+/// `cua`. Stable's output is unchanged.
+#[test]
+fn hints_and_errors_name_the_cli_that_printed_them() {
+    let rig = Rig::new();
+
+    // A hint on stdout: the status of a Mac that is not set up. (The rest of
+    // what it prints, and its exit status, depend on this machine's disk.)
+    let (_, out, _) = run_fresh(&rig, "cua", &["host", "status"]);
+    assert!(
+        out.contains("This computer is not set up for access (run `cua host setup`)."),
+        "{out}"
+    );
+    assert!(!out.contains("cua-local"), "{out}");
+    let (_, out, _) = run_fresh(&rig, "cua-local", &["host", "status"]);
+    assert!(
+        out.contains("This computer is not set up for access (run `cua-local host setup`)."),
+        "{out}"
+    );
+    assert!(!out.contains("`cua "), "{out}");
+
+    // An error on stderr: a command that needs the sign-in. The error line
+    // starts with the name the user ran.
+    let says = |err: &str, line: &str| err.lines().any(|l| l == line);
+    let (stable_code, _, err) = run_fresh(&rig, "cua", &["host", "pair"]);
+    assert!(
+        says(
+            &err,
+            "cua: unauthenticated: not signed in to cua.ai; run `cua auth login` first"
+        ),
+        "{err}"
+    );
+    let (local_code, _, err) = run_fresh(&rig, "cua-local", &["host", "pair"]);
+    assert!(
+        says(
+            &err,
+            "cua-local: unauthenticated: not signed in to cua.ai; run `cua-local auth login` first"
+        ),
+        "{err}"
+    );
+    assert_eq!(
+        local_code, stable_code,
+        "the exit code does not depend on the name"
+    );
+
+    // An error made in `cua-host` (it is shared with the app), not in the CLI.
+    let (stable_code, _, err) = run_fresh(&rig, "cua", &["host", "start"]);
+    assert!(
+        says(
+            &err,
+            "cua: not found: this computer is not set up for access (run `cua host setup`)"
+        ),
+        "{err}"
+    );
+    let (local_code, _, err) = run_fresh(&rig, "cua-local", &["host", "start"]);
+    assert!(
+        says(
+            &err,
+            "cua-local: not found: this computer is not set up for access (run `cua-local host setup`)"
+        ),
+        "{err}"
+    );
+    assert_eq!(
+        local_code, stable_code,
+        "the exit code does not depend on the name"
     );
 }
 

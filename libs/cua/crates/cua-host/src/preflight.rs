@@ -254,7 +254,8 @@ pub fn check(probe: &dyn SessionProbe, driver_bin: &Path) -> Result<PreflightRep
              LaunchAgent needs one for screen sharing and input, and `launchctl bootstrap \
              gui/{uid}` would fail here. Log in at the console once, or turn on automatic \
              login (System Settings > Users & Groups > Login Options > Automatic login), \
-             then run `cua host setup` again."
+             then run `{cli} host setup` again.",
+            cli = crate::cli()
         )));
     }
     let (screen_recording, accessibility) = match probe.permission_status(driver_bin) {

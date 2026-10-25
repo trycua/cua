@@ -141,52 +141,133 @@ fn logical_monitors(state: &State) -> Result<(bool, Vec<LogicalMonitor>)> {
     Ok((layout_logical, out))
 }
 
-fn wayland_socket() -> Result<PathBuf> {
-    let display = std::env::var_os("WAYLAND_DISPLAY").context("missing WAYLAND_DISPLAY")?;
-    let display = PathBuf::from(display);
+/// The Wayland socket this process would connect to. An inherited `WAYLAND_SOCKET` takes
+/// precedence over `WAYLAND_DISPLAY` for the real connection and cannot be attested here, so it is
+/// refused, as in the Hyprland adapter.
+fn wayland_socket(env: impl Fn(&str) -> Option<std::ffi::OsString>) -> Result<PathBuf> {
+    if env("WAYLAND_SOCKET").is_some() {
+        bail!("an inherited WAYLAND_SOCKET cannot be attested");
+    }
+    let display = PathBuf::from(env("WAYLAND_DISPLAY").context("missing WAYLAND_DISPLAY")?);
     if display.is_absolute() {
         return Ok(display);
     }
-    let runtime = std::env::var_os("XDG_RUNTIME_DIR").context("missing XDG_RUNTIME_DIR")?;
-    let runtime = PathBuf::from(runtime);
+    let runtime = PathBuf::from(env("XDG_RUNTIME_DIR").context("missing XDG_RUNTIME_DIR")?);
     if !runtime.is_absolute() {
         bail!("XDG_RUNTIME_DIR must be absolute");
     }
     Ok(runtime.join(display))
 }
 
-/// The desktop frame of the GNOME session this process draws on, attested to its compositor.
-pub fn screen_report() -> Result<(u32, u32, f64, serde_json::Value)> {
-    let socket = UnixStream::connect(wayland_socket()?).context("connect to the Wayland socket")?;
-    let compositor = super::hyprland::peer_pid(socket.as_raw_fd())?;
-    // Own thread and runtime: callers may already be inside Tokio (see kwin_helper).
-    let (owner, state) = std::thread::spawn(|| -> Result<(u32, State)> {
+/// The compositor's pid, from a connection to its socket that cannot hang past the timeout.
+fn compositor_pid(path: PathBuf) -> Result<libc::pid_t> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(
+            UnixStream::connect(path)
+                .map_err(anyhow::Error::from)
+                .and_then(|socket| super::hyprland::peer_pid(socket.as_raw_fd())),
+        );
+    });
+    rx.recv_timeout(CALL_TIMEOUT)
+        .map_err(|_| anyhow!("the Wayland socket did not accept a connection in time"))?
+}
+
+/// The three bus steps of an attested read, so the order can be proven without a bus.
+trait DisplayConfigBus {
+    /// The unique name that owns `org.gnome.Mutter.DisplayConfig` now.
+    fn owner(&self) -> Result<String>;
+    fn pid(&self, unique: &str) -> Result<u32>;
+    fn state(&self, unique: &str) -> Result<State>;
+}
+
+/// Reads the layout from the one connection whose pid was checked: the well-known name can change
+/// hands between the check and the read, its unique owner cannot.
+fn attested_state(bus: &impl DisplayConfigBus, compositor: libc::pid_t) -> Result<State> {
+    let owner = bus.owner()?;
+    if i64::from(bus.pid(&owner)?) != i64::from(compositor) {
+        bail!("org.gnome.Mutter.DisplayConfig is not served by this session's compositor");
+    }
+    bus.state(&owner)
+}
+
+struct SessionBus {
+    // Fields drop in order: the connection must go while its runtime still runs.
+    connection: zbus::Connection,
+    runtime: tokio::runtime::Runtime,
+}
+
+impl SessionBus {
+    fn open() -> Result<Self> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        runtime.block_on(async {
-            let connection = tokio::time::timeout(CALL_TIMEOUT, zbus::Connection::session())
-                .await
-                .context("session bus timed out")??;
-            let dbus = zbus::fdo::DBusProxy::new(&connection).await?;
-            let name = zbus::names::BusName::try_from(DEST)?;
-            let owner =
-                tokio::time::timeout(CALL_TIMEOUT, dbus.get_connection_unix_process_id(name))
-                    .await
-                    .context("DisplayConfig owner lookup timed out")??;
-            let proxy = zbus::Proxy::new(&connection, DEST, PATH, DEST).await?;
-            let state: State =
-                tokio::time::timeout(CALL_TIMEOUT, proxy.call("GetCurrentState", &()))
-                    .await
-                    .context("GetCurrentState timed out")??;
-            Ok((owner, state))
+        // Timers belong to a runtime: every timeout is made inside the future it bounds.
+        let connection = runtime
+            .block_on(async {
+                tokio::time::timeout(CALL_TIMEOUT, zbus::Connection::session()).await
+            })
+            .context("session bus timed out")??;
+        Ok(Self {
+            connection,
+            runtime,
         })
-    })
-    .join()
-    .map_err(|_| anyhow!("GNOME display query thread panicked"))??;
-    if i64::from(owner) != i64::from(compositor) {
-        bail!("org.gnome.Mutter.DisplayConfig is not served by this session's compositor");
     }
+
+    fn timed<T>(
+        &self,
+        what: &str,
+        call: impl std::future::Future<Output = zbus::Result<T>>,
+    ) -> Result<T> {
+        self.runtime
+            .block_on(async { tokio::time::timeout(CALL_TIMEOUT, call).await })
+            .with_context(|| format!("{what} timed out"))?
+            .with_context(|| format!("{what} failed"))
+    }
+
+    fn dbus(&self) -> Result<zbus::fdo::DBusProxy<'static>> {
+        self.timed("DBusProxy", zbus::fdo::DBusProxy::new(&self.connection))
+    }
+}
+
+impl DisplayConfigBus for SessionBus {
+    fn owner(&self) -> Result<String> {
+        let dbus = self.dbus()?;
+        let name = zbus::names::BusName::try_from(DEST)?;
+        let owner = self
+            .runtime
+            .block_on(async { tokio::time::timeout(CALL_TIMEOUT, dbus.get_name_owner(name)).await })
+            .context("GetNameOwner timed out")??;
+        Ok(owner.to_string())
+    }
+
+    fn pid(&self, unique: &str) -> Result<u32> {
+        let dbus = self.dbus()?;
+        let name = zbus::names::BusName::try_from(unique.to_owned())?;
+        Ok(self
+            .runtime
+            .block_on(async {
+                tokio::time::timeout(CALL_TIMEOUT, dbus.get_connection_unix_process_id(name)).await
+            })
+            .context("GetConnectionUnixProcessID timed out")??)
+    }
+
+    fn state(&self, unique: &str) -> Result<State> {
+        let proxy = self.timed(
+            "DisplayConfig proxy",
+            zbus::Proxy::new(&self.connection, unique.to_owned(), PATH, DEST),
+        )?;
+        self.timed("GetCurrentState", proxy.call("GetCurrentState", &()))
+    }
+}
+
+/// The desktop frame of the GNOME session this process draws on, attested to its compositor.
+pub fn screen_report() -> Result<(u32, u32, f64, serde_json::Value)> {
+    let compositor = compositor_pid(wayland_socket(|name| std::env::var_os(name))?)?;
+    // Own thread and runtime: callers may already be inside Tokio (see kwin_helper).
+    let state = std::thread::spawn(move || attested_state(&SessionBus::open()?, compositor))
+        .join()
+        .map_err(|_| anyhow!("GNOME display query thread panicked"))??;
     let (layout_logical, monitors) = logical_monitors(&state)?;
     frame_from_layout(layout_logical, &monitors)
 }
@@ -258,5 +339,88 @@ mod tests {
         assert!(frame_from_layout(true, &[]).is_err());
         assert!(frame_from_layout(true, &[monitor("X", 0, 0, 0.0, (10, 10), 0)]).is_err());
         assert!(frame_from_layout(true, &[monitor("X", 0, 0, 1.0, (0, 10), 0)]).is_err());
+    }
+
+    /// A bus whose well-known name moves to another process after the first lookup.
+    struct HandingOver {
+        asked_state_of: std::cell::RefCell<Vec<String>>,
+        owners: std::cell::RefCell<Vec<&'static str>>,
+    }
+
+    impl DisplayConfigBus for HandingOver {
+        fn owner(&self) -> Result<String> {
+            Ok(self.owners.borrow_mut().remove(0).to_owned())
+        }
+        fn pid(&self, unique: &str) -> Result<u32> {
+            Ok(if unique == ":1.5" { 100 } else { 200 })
+        }
+        fn state(&self, unique: &str) -> Result<State> {
+            self.asked_state_of.borrow_mut().push(unique.to_owned());
+            Ok((0, vec![], vec![], HashMap::new()))
+        }
+    }
+
+    #[test]
+    fn the_layout_comes_from_the_owner_whose_pid_was_checked_even_if_the_name_moves() {
+        let bus = HandingOver {
+            asked_state_of: Default::default(),
+            owners: std::cell::RefCell::new(vec![":1.5", ":1.9"]),
+        };
+        attested_state(&bus, 100).unwrap();
+        assert_eq!(*bus.asked_state_of.borrow(), vec![":1.5".to_owned()]);
+        let other = HandingOver {
+            asked_state_of: Default::default(),
+            owners: std::cell::RefCell::new(vec![":1.9"]),
+        };
+        assert!(attested_state(&other, 100).is_err());
+        assert!(other.asked_state_of.borrow().is_empty());
+    }
+
+    #[test]
+    fn an_inherited_wayland_socket_is_refused_and_a_named_one_resolves() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |name: &str| {
+                pairs
+                    .iter()
+                    .find(|(k, _)| *k == name)
+                    .map(|(_, v)| std::ffi::OsString::from(v))
+            }
+        };
+        assert!(wayland_socket(env(&[
+            ("WAYLAND_SOCKET", "5"),
+            ("WAYLAND_DISPLAY", "wayland-0"),
+            ("XDG_RUNTIME_DIR", "/run/user/1000"),
+        ]))
+        .is_err());
+        assert_eq!(
+            wayland_socket(env(&[
+                ("WAYLAND_DISPLAY", "wayland-0"),
+                ("XDG_RUNTIME_DIR", "/run/user/1000")
+            ]))
+            .unwrap(),
+            PathBuf::from("/run/user/1000/wayland-0")
+        );
+    }
+
+    #[test]
+    fn a_socket_that_never_accepts_returns_an_error_instead_of_blocking() {
+        use std::os::unix::net::UnixListener;
+        let dir = std::env::temp_dir().join(format!("cua-mutter-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("stalled-0");
+        let _ = std::fs::remove_file(&path);
+        let listener = UnixListener::bind(&path).unwrap();
+        // A backlog of zero that is already full: a further connect waits for an accept that
+        // never comes.
+        assert_eq!(unsafe { libc::listen(listener.as_raw_fd(), 0) }, 0);
+        for _ in 0..4 {
+            let path = path.clone();
+            std::thread::spawn(move || UnixStream::connect(path));
+        }
+        std::thread::sleep(Duration::from_millis(200));
+        let started = std::time::Instant::now();
+        assert!(compositor_pid(path.clone()).is_err());
+        assert!(started.elapsed() < CALL_TIMEOUT + Duration::from_secs(1));
+        let _ = std::fs::remove_file(&path);
     }
 }

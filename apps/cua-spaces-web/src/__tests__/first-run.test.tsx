@@ -19,6 +19,7 @@ import type { NewSpaceOptions } from "@/bridge/contracts/new-space";
 import { readFirstRun, resetFirstRunCache, useFirstRun, writeFirstRun } from "@/bridge/first-run";
 import { CLOSED_NEW_SPACE, updateNewSpaceSession } from "@/bridge/new-space";
 import { resetSavedOnboardingCache } from "@/bridge/onboarding";
+import { connectedAppsState, resetConnectedAppsState } from "@/hooks/use-connected-apps";
 import { mountApp, stubBrowserApis } from "./app-harness";
 
 stubBrowserApis();
@@ -27,19 +28,20 @@ beforeEach(() => {
   resetSavedOnboardingCache();
   resetFirstRunCache();
   updateNewSpaceSession(() => CLOSED_NEW_SPACE);
+  resetConnectedAppsState();
 });
 afterEach(cleanup);
 
 type Calls = { op: string; args: unknown }[];
 
-async function mount(opts: { signedIn?: boolean; host?: (h: HostStatus) => HostStatus; local?: (l: NonNullable<NewSpaceOptions["local"]>) => NewSpaceOptions["local"]; agents?: (rows: AgentSetupRow[]) => AgentSetupRow[]; cli?: "missing" | "local" } = {}) {
+async function mount(opts: { signedIn?: boolean; host?: (h: HostStatus) => HostStatus; local?: (l: NonNullable<NewSpaceOptions["local"]>) => NewSpaceOptions["local"]; agents?: (rows: AgentSetupRow[]) => AgentSetupRow[]; cli?: "missing" | "local"; demo?: object } = {}) {
   await testCore();
   const calls: Calls = [];
   await mountApp("/onboarding", {
     failsCreates: false,
     listsGhost: false,
     // A first run: signed out, and Cua in no agent's settings yet.
-    demo: { signedIn: opts.signedIn ?? false, onboarded: false, cli: opts.cli },
+    demo: { signedIn: opts.signedIn ?? false, onboarded: false, cli: opts.cli, ...opts.demo },
     intercept: (op, args) => {
       calls.push({ op, args });
       return undefined;
@@ -97,26 +99,81 @@ describe("first-run detection on window focus", () => {
   });
 });
 
+/** The one question Pick your agent asks (or its answer once every app is ready). */
+const ASK = /^Let .+ use Cua\?$|^.+ can use Cua\.$/;
+const onlyCodex = (rows: AgentSetupRow[]) => rows.map((r) => ({ ...r, installed: r.agent === "codex" }));
 const agents = () => [...document.querySelectorAll<HTMLElement>("[data-first-run-agent]")].map((e) => e.dataset.firstRunAgent);
 const click = (sel: string) => fireEvent.click(document.querySelector<HTMLElement>(sel)!);
 /** No agent on this computer. */
 const noAgents = (rows: AgentSetupRow[]) => rows.map((r) => ({ ...r, installed: false, configured: false }));
 
 describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
-  it("walks Welcome, Pick your agent, Connect your devices and Try it, connecting only what is clicked", async () => {
+  it("asks once, naming the apps found, and connects nothing until Set up", async () => {
     const calls = await mount();
     await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
     click("[data-onboarding-primary]");
-    await waitFor(() => expect(heading()).toBe("Pick your agent."));
-    // The agents found here, most preferred first; nothing connected by itself.
+    await waitFor(() => expect(heading()).toBe("Let Hermes, Claude Code, OpenAI Codex, Cursor and OpenClaw use Cua?"));
+    // The apps found here, most preferred first; nothing connected by itself, no per-app buttons or file paths.
     await waitFor(() => expect(agents()).toEqual(["hermes", "claude-code", "codex", "cursor", "openclaw"]));
     expect([...document.querySelectorAll<HTMLElement>("[data-first-run-agent]")].every((e) => e.dataset.connected === "false")).toBe(true);
+    expect(document.querySelector("[data-first-run-connect]")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/\.hermes|config\.yaml|MCP/);
     expect(calls.some((c) => c.op === "agents.configure")).toBe(false);
-    // Each row names the file Connect changes.
-    expect(document.querySelector('[data-first-run-agent="hermes"]')!.textContent).toMatch(/~\/\.hermes\/config\.yaml/);
-    click('[data-first-run-connect="codex"]');
+    // The consent says it covers apps installed later, and how to undo.
+    expect(document.querySelector("[data-first-run-consent]")!.textContent).toMatch(/Apps you install later are set up the same way, with a notice and Undo\./);
+    expect(connectedAppsState().auto).toBeNull();
+    click("[data-first-run-set-up]");
+    await waitFor(() => expect(calls.filter((c) => c.op === "agents.configure").map((c) => (c.args as { agents: string[] }).agents)).toHaveLength(5));
+    await waitFor(() => expect(heading()).toBe("Hermes, Claude Code, OpenAI Codex, Cursor and OpenClaw can use Cua."));
+    expect(document.querySelector("[data-first-run-prompt]")!.textContent).toBe("Reproduce the crash from issue #4821 on a fresh Windows 11 Space and show me a recording.");
+    expect(document.body.textContent).toMatch(/restart it first/);
+    expect(connectedAppsState().auto).toBe(true);
+    expect(connectedAppsState().known).toEqual(expect.arrayContaining(["hermes", "claude-code", "codex", "cursor", "openclaw"]));
+    expect(readFirstRun().picked).toEqual(expect.arrayContaining(["codex", "claude-code"]));
+  });
+
+  it("Not now moves on and sets up nothing, and Cua never sets up later installs on its own", async () => {
+    const calls = await mount();
+    await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
+    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toMatch(ASK));
+    click("[data-first-run-secondary]");
+    await waitFor(() => expect(heading()).toBe("Add your other computers."));
+    expect(calls.some((c) => c.op === "agents.configure")).toBe(false);
+    expect(connectedAppsState().auto).toBe(false);
+  });
+
+  it("says plainly which app needs a hand, with Try again and the text to paste", { timeout: 30_000 }, async () => {
+    await mount({ demo: { agentsReadOnly: ["cursor"] }, agents: (rows) => rows.map((r) => ({ ...r, installed: ["codex", "cursor"].includes(r.agent) })) });
+    await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
+    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toBe("Let OpenAI Codex and Cursor use Cua?"));
+    click("[data-first-run-set-up]");
+    await waitFor(() => expect(heading()).toBe("OpenAI Codex can use Cua. Cursor needs a hand."), { timeout: 8000 });
+    const row = document.querySelector<HTMLElement>('[data-first-run-agent="cursor"]')!;
+    await waitFor(() => expect(row.textContent).toContain("Couldn't set up Cursor. Cua can't change this file because it is read-only or belongs to another user."), { timeout: 8000 });
+    expect(document.body.textContent).not.toMatch(/os error/);
+    expect(row.querySelector("[data-first-run-retry]")).toBeTruthy();
+    expect(document.querySelector('[data-first-run-agent="codex"]')!.textContent).toContain("Ready");
+    fireEvent.click(screen.getByRole("button", { name: "Add it by hand" }));
+    const hand = await waitFor(() => {
+      const el = document.querySelector("[data-first-run-by-hand]");
+      expect(el, document.body.textContent ?? "").not.toBeNull();
+      return el!;
+    });
+    expect(hand.textContent).toContain("mcpServers");
+    // Continue is still there: Cursor can wait.
+    expect(document.querySelector("[data-onboarding-primary]")!.textContent).toBe("Continue");
+  });
+
+  it("walks Welcome, the question, Connect your devices and Try it, connecting only what is asked", async () => {
+    const calls = await mount({ agents: onlyCodex });
+    await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
+    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toBe("Let OpenAI Codex use Cua?"));
+    click("[data-first-run-set-up]");
     await waitFor(() => expect(calls.find((c) => c.op === "agents.configure")?.args).toEqual({ agents: ["codex"] }));
-    await waitFor(() => expect(document.querySelector<HTMLElement>('[data-first-run-agent="codex"]')!.dataset.connected).toBe("true"));
+    await waitFor(() => expect(heading()).toBe("OpenAI Codex can use Cua."));
     expect(readFirstRun().picked).toEqual(["codex"]);
     expect(calls.filter((c) => c.op === "agents.configure")).toHaveLength(1);
     click("[data-onboarding-primary]");
@@ -149,8 +206,8 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
         .map((s) => `${s.page} ${s.action}${s.choice === "none" ? "" : ` ${s.choice}`}`);
     await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
     click("[data-onboarding-primary]");
-    await waitFor(() => expect(heading()).toBe("Pick your agent."));
-    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toMatch(ASK));
+    click("[data-first-run-secondary]");
     await waitFor(() => expect(heading()).toBe("Add your other computers."));
     click("[data-first-run-secondary]");
     await waitFor(() => expect(document.querySelector("[data-step]")?.getAttribute("data-step")).toBe("setup"));
@@ -161,7 +218,7 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
         "welcome step_viewed",
         "welcome step_completed",
         "connect_agent step_viewed",
-        "connect_agent step_completed",
+        "connect_agent step_skipped step",
         "sign_in step_viewed",
         "sign_in step_skipped step",
         "create_space step_viewed",
@@ -185,19 +242,20 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     });
     await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
     click("[data-onboarding-primary]");
-    await waitFor(() => expect(heading()).toBe("Pick your agent."));
+    await waitFor(() => expect(heading()).toMatch(ASK));
     await new Promise((r) => setTimeout(r, 50));
     expect(calls.some((c) => c.op === "telemetry.track")).toBe(false);
   });
 
   it("Back works from every step after Welcome, all the way to Welcome, keeping what was picked", async () => {
-    const calls = await mount();
+    const calls = await mount({ agents: onlyCodex });
     await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
     expect(document.querySelector("[data-first-run-back]")).toBeNull();
     click("[data-onboarding-primary]");
-    await waitFor(() => expect(heading()).toBe("Pick your agent."));
-    click('[data-first-run-connect="codex"]');
+    await waitFor(() => expect(heading()).toMatch(ASK));
+    click("[data-first-run-set-up]");
     await waitFor(() => expect(readFirstRun().picked).toEqual(["codex"]));
+    await waitFor(() => expect(heading()).toBe("OpenAI Codex can use Cua."));
     click("[data-onboarding-primary]");
     await waitFor(() => expect(heading()).toBe("Add your other computers."));
     click("[data-first-run-secondary]");
@@ -206,7 +264,7 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     click("[data-first-run-back]");
     await waitFor(() => expect(heading()).toBe("Add your other computers."));
     click("[data-first-run-back]");
-    await waitFor(() => expect(heading()).toBe("Pick your agent."));
+    await waitFor(() => expect(heading()).toMatch(ASK));
     expect(document.querySelector<HTMLElement>('[data-first-run-agent="codex"]')!.dataset.connected).toBe("true");
     click("[data-first-run-back]");
     await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
@@ -230,7 +288,7 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     expect(screen.getByRole("button", { name: "Not now" })).toBe(secondary);
     expect(document.getElementById(secondary.getAttribute("aria-describedby")!)?.textContent).toBe("Not now keeps Cua on this Mac only. You can sign in later.");
     fireEvent.keyDown(window, { key: "Escape" });
-    await waitFor(() => expect(heading()).toBe("Pick your agent."));
+    await waitFor(() => expect(heading()).toMatch(ASK));
     fireEvent.keyDown(window, { key: "Escape" });
     await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
     // Welcome has no Back, so Esc stays.
@@ -238,23 +296,12 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     expect(heading()).toBe("Your computers, shared by your team and its agents.");
   });
 
-  it("Codex: its ChatGPT sign-in and OpenAI key follow it, and the sign-in starts on this computer", async () => {
+  it("shows no sign-ins or keys: those live in Settings, Connected apps", async () => {
     writeFirstRun({ step: "connect" });
-    const calls = await mount({ agents: (rows) => rows.map((r) => ({ ...r, installed: r.agent === "codex" })) });
-    await waitFor(() => expect(agents()).toEqual(["codex"]));
+    await mount({ agents: (rows) => rows.map((r) => ({ ...r, installed: r.agent === "codex", configured: r.agent === "codex" })) });
+    await waitFor(() => expect(heading()).toBe("OpenAI Codex can use Cua."));
     expect(document.querySelector("[data-first-run-credentials]")).toBeNull();
-    click('[data-first-run-connect="codex"]');
-    const signIn = await waitFor(() => {
-      const r = document.querySelector('[data-first-run-credential="sign-in:codex"]');
-      expect(r).toBeTruthy();
-      return r!;
-    });
-    expect(signIn.textContent).toMatch(/ChatGPT sign-in/);
-    expect(signIn.textContent).toMatch(/uses it on this (Mac|PC|computer)/);
-    expect(document.querySelector("[data-first-run-credentials-note]")!.textContent).toMatch(/^Sign-ins and keys stay on this (Mac|PC|computer)\.$/);
-    expect(document.querySelector('[data-first-run-credential="key:anthropic"]')).toBeNull();
-    fireEvent.click(signIn.querySelector('[data-first-run-credential-action="agent-sign-in"]')!);
-    await waitFor(() => expect(calls.find((c) => c.op === "agents.signIn")?.args).toEqual({ agent: "codex" }));
+    expect(document.body.textContent).not.toMatch(/ChatGPT sign-in|API key|Sign-ins and keys/);
   });
 
   it("Sign in starts the one sign-in; Not now skips it", async () => {
@@ -270,10 +317,10 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     const calls = await mount({ cli: "missing" });
     await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
     click("[data-onboarding-primary]");
-    await waitFor(() => expect(heading()).toBe("Pick your agent."));
+    await waitFor(() => expect(heading()).toMatch(ASK));
     // The install plan is read: the run has the CLI's screen.
     await waitFor(() => expect(document.querySelector("ol[aria-label]")!.getAttribute("aria-label")).toBe("Step 2 of 5"));
-    click("[data-onboarding-primary]");
+    click("[data-first-run-secondary]");
     await waitFor(() => expect(heading()).toBe("Use Cua from the Terminal."));
     const facts = [...document.querySelectorAll<HTMLElement>("[data-first-run-cli-fact]")].map((e) => e.textContent);
     expect(facts).toEqual(["Installs~/.local/bin/cua", "Adds to PATH~/.local/bin, in ~/.zshrc"]);
@@ -297,10 +344,10 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     const calls = await mount({ cli: "missing" });
     await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
     click("[data-onboarding-primary]");
-    await waitFor(() => expect(heading()).toBe("Pick your agent."));
+    await waitFor(() => expect(heading()).toMatch(ASK));
     // The install plan is read: the run has the CLI's screen.
     await waitFor(() => expect(document.querySelector("ol[aria-label]")!.getAttribute("aria-label")).toBe("Step 2 of 5"));
-    click("[data-onboarding-primary]");
+    click("[data-first-run-secondary]");
     await waitFor(() => expect(heading()).toBe("Use Cua from the Terminal."));
     click("[data-first-run-secondary]");
     await waitFor(() => expect(heading()).toBe("Add your other computers."));
@@ -312,8 +359,8 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     await mount();
     await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
     click("[data-onboarding-primary]");
-    await waitFor(() => expect(heading()).toBe("Pick your agent."));
-    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toMatch(ASK));
+    click("[data-first-run-secondary]");
     await waitFor(() => expect(heading()).toBe("Add your other computers."));
   });
 
@@ -383,12 +430,14 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     const calls = await mount({ agents: noAgents, local: (l) => ({ ...l, backends: ["docker"], macosImage: null, hostArch: "amd64" }) });
     await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
     click("[data-onboarding-primary]");
-    await waitFor(() => expect(heading()).toBe("Connect an agent."));
+    await waitFor(() => expect(heading()).toBe("We didn\u2019t find a coding app yet."));
     expect(agents()).toEqual([]);
-    const alts = [...document.querySelectorAll<HTMLElement>("[data-first-run-alternative]")].map((e) => e.dataset.firstRunAlternative);
-    expect(alts).toEqual(["install", "cli"]);
-    expect(document.querySelector('[data-first-run-alternative="cli"]')!.textContent).toMatch(/cua spaces create linux --on local/);
-    click("[data-onboarding-primary]");
+    const missing = [...document.querySelectorAll<HTMLElement>("[data-first-run-missing]")].map((e) => e.dataset.firstRunMissing);
+    expect(missing).toEqual(["claude-code", "codex", "cursor"]);
+    expect(screen.getAllByRole("button", { name: /Download/ })).toHaveLength(3);
+    expect(document.body.textContent).toMatch(/Spaces work without a coding app\./);
+    expect(screen.getByRole("button", { name: "Check again" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Continue without one" }));
     await waitFor(() => expect(heading()).toBe("Add your other computers."));
     click("[data-first-run-secondary]");
     await waitFor(() => expect(heading()).toBe("Try a first Space."));
@@ -413,7 +462,7 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
   it("says in plain words that usage data is on, and turns it off with one tap", async () => {
     writeFirstRun({ step: "connect" });
     const calls = await mount();
-    await waitFor(() => expect(heading()).toBe("Pick your agent."));
+    await waitFor(() => expect(heading()).toMatch(ASK));
     const note = await waitFor(() => {
       const n = document.querySelector("[data-first-run-usage]");
       expect(n).toBeTruthy();

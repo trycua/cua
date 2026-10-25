@@ -2,12 +2,11 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
-import { ArrowLeftIcon, CheckIcon, CopyIcon } from "lucide-react";
+import { ArrowLeftIcon, CheckIcon, CopyIcon, ExternalLinkIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { useAgentKeys, useFirstRun, type FirstRunArt, type FirstRunCredential, type FirstRunExtraView, type FirstRunHook, type FirstRunRow, type FirstRunView } from "@/bridge";
+import { useBridge, useFirstRun, type FirstRunArt, type FirstRunExtraView, type FirstRunHook, type FirstRunRow, type FirstRunView } from "@/bridge";
 import { readSavedOnboarding } from "@/bridge/onboarding";
-import { KeySheet } from "@/components/agents/key-sheet";
 import { CuaLogo } from "@/components/cua-logo";
 import { OsIcon } from "@/components/os-icon";
 import { Button } from "@/components/ui/button";
@@ -15,6 +14,10 @@ import { Segmented } from "@/components/ui/segmented";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
 import { RuntimeFixRow } from "@/components/new-space/runtime-fix";
+import { Snippet } from "@/components/settings/snippet";
+import { listNames } from "@/components/space-ready-card";
+import { setConnectedAppsState, useConnectedAppsState } from "@/hooks/use-connected-apps";
+import { BY_HAND, failureText, getItUrl } from "@/lib/connected-apps";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/onboarding/")({
@@ -240,133 +243,212 @@ function AgentMark({ agent, name, className }: { agent: string; name?: string; c
   return <img src={src} alt="" aria-hidden className={cn("size-4 shrink-0 object-contain", agent !== "claude-code" && agent !== "openclaw" && "dark:invert", className)} draggable={false} />;
 }
 
+/** The prompt "done" hands over: a real job where a fresh computer matters. */
+const FIRST_PROMPT = "Reproduce the crash from issue #4821 on a fresh Windows 11 Space and show me a recording.";
+
+/** The coding apps named when none is installed, in this order. */
+const HEADLINE_APPS = [
+  { agent: "claude-code", name: "Claude Code" },
+  { agent: "codex", name: "OpenAI Codex" },
+  { agent: "cursor", name: "Cursor" },
+];
+
+/**
+ * 2 · Let your coding apps use Cua: one question, asked once. It names the
+ * coding apps found on this computer; Set up adds Cua to all of them, Not now
+ * moves on. Later installs are set up the same way, with a notice and Undo
+ * (Settings, Connected apps). Which apps there are, and what Connect does for
+ * each, is still the app core's (`firstRun.view`).
+ */
 function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
   const c = view.connect!;
-  const keys = useAgentKeys();
+  const { data } = useBridge();
+  const remembered = useConnectedAppsState();
+  const [tried, setTried] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [byHand, setByHand] = useState(false);
   const [copied, setCopied] = useState(false);
+  const rows = c.agents;
+  const looking = rows.length === 0 && /^Looking/.test(c.lede);
+  const none = rows.length === 0 && !looking;
+  const pending = rows.filter((a) => !a.connected);
+  const ready = rows.filter((a) => a.connected);
+  const working = busy || rows.some((a) => a.note === "Connecting\u2026");
+  const failed = tried && !working ? pending : [];
+  const why = (name: string) => failureText(name, (c.error ?? "").replace(/^Couldn't connect Cua:\s*/, ""));
+  const ids = rows.map((a) => a.agent);
+
+  const setUp = async () => {
+    setTried(true);
+    setBusy(true);
+    // One yes covers these apps and the ones installed later (each with a notice and Undo).
+    setConnectedAppsState({ ...remembered, known: [...new Set([...(remembered.known ?? []), ...ids])], auto: true });
+    try {
+      for (const a of pending) await fr.connect(a.agent);
+      // One consent: they may also use the computer in the background, where Cua Driver is here.
+      if (data) await data.call("agents.setupDriver", { agents: pending.map((a) => a.agent) }).catch(() => {});
+    } finally {
+      setBusy(false);
+    }
+  };
+  const notNow = () => {
+    setConnectedAppsState({ ...remembered, known: [...new Set([...(remembered.known ?? []), ...ids])], auto: false });
+    void fr.act("skip");
+  };
+  const retry = async (agent: string) => {
+    setBusy(true);
+    try {
+      await fr.connect(agent);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const copy = () => {
+    void navigator.clipboard?.writeText(FIRST_PROMPT).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  const usage = fr.usage ? (
+    <label className="mt-5 flex items-center gap-2.5 text-[13px] text-muted-foreground" data-first-run-usage="">
+      <Switch checked={fr.usage.on} disabled={!fr.usage.enabled} onCheckedChange={(on) => void fr.setUsage(on).catch(() => {})} aria-label={fr.usage.label} />
+      <span>
+        {fr.usage.label}.{" "}
+        <button type="button" className="underline hover:text-foreground" onClick={fr.openUsageLink}>
+          {fr.usage.linkLabel}
+        </button>
+      </span>
+    </label>
+  ) : null;
+
+  if (looking) {
+    return (
+      <Step id="connect" onBack={fr.back}>
+        <Heading>Looking for your coding apps…</Heading>
+      </Step>
+    );
+  }
+
+  if (none) {
+    return (
+      <Step id="connect" onBack={fr.back}>
+        <div data-first-run-connect-state="none">
+          <Heading>We didn’t find a coding app yet.</Heading>
+          <Lede>Cua works with coding apps such as Claude Code, Codex and Cursor. Install one and Cua will notice.</Lede>
+          <Rows className="mt-8" data-first-run-agents="">
+            {HEADLINE_APPS.map((a) => {
+              const url = getItUrl(a.agent);
+              return (
+                <div key={a.agent} className="flex min-h-12 items-center gap-3 py-2" data-first-run-missing={a.agent}>
+                  <AgentMark agent={a.agent} name={a.name} />
+                  <span className="min-w-0 flex-1 text-[14px]">{a.name}</span>
+                  {url ? (
+                    <Button variant="outline" className="h-9 shrink-0 gap-1.5 rounded-full border-foreground/25 px-4 text-[13px] font-medium" onClick={() => void fr.openUrl(url)}>
+                      Download <ExternalLinkIcon className="size-3.5" />
+                    </Button>
+                  ) : null}
+                </div>
+              );
+            })}
+          </Rows>
+          <div className="mt-8 flex flex-wrap items-center gap-3">
+            <Primary label="Check again" onClick={() => void fr.act("recheck")} data-first-run-recheck="" />
+            <Secondary label="Continue without one" onClick={() => void fr.act("skip")} />
+          </div>
+          <p className="mt-4 text-[13px] text-muted-foreground">Spaces work without a coding app. You can set one up later in Settings.</p>
+          {usage}
+        </div>
+      </Step>
+    );
+  }
+
+  const all = pending.length === 0;
+  const title = all
+    ? `${listNames(rows.map((a) => a.name))} can use Cua.`
+    : failed.length
+      ? `${ready.length ? `${listNames(ready.map((a) => a.name))} can use Cua. ` : ""}${listNames(failed.map((a) => a.name))} needs a hand.`
+      : `Let ${listNames(rows.map((a) => a.name))} use Cua?`;
+
   return (
     <Step id="connect" onBack={fr.back}>
-      <Heading>{c.title}</Heading>
-      <Lede>{c.lede}</Lede>
-      {c.agents.length ? (
-        <Rows className="mt-8" data-first-run-agents="">
-          {c.agents.map((a) => (
-            <div key={a.agent} className="flex min-h-12 items-center gap-3 py-2" data-first-run-agent={a.agent} data-connected={String(a.connected)}>
-              <AgentMark agent={a.agent} name={a.name} />
-              <div className="min-w-0 flex-1">
-                <span className="text-[14px]">{a.name}</span>
-                {a.file ? <span className="ml-2 font-mono text-[12px] text-muted-foreground">{a.file}</span> : null}
-              </div>
-              {a.note ? (
-                <span className={cn("shrink-0 text-[13px]", a.connected ? "text-[#1f9d55]" : "text-muted-foreground")}>{a.note}</span>
-              ) : null}
-              {a.action ? (
-                <Button variant="outline" className="h-9 shrink-0 rounded-full border-foreground/25 px-4 text-[13px] font-medium" onClick={() => void fr.connect(a.agent)} data-first-run-connect={a.agent}>
-                  {a.action.label}
-                </Button>
-              ) : null}
-            </div>
-          ))}
-        </Rows>
-      ) : null}
-      {c.alternatives.length ? (
-        <Rows className="mt-6" data-first-run-alternatives="">
-          {c.alternatives.map((alt) => (
-            <div key={alt.id} className="flex min-h-16 items-center gap-3 py-2" data-first-run-alternative={alt.id}>
-              <div className="min-w-0 flex-1">
-                <div className="text-[14px]">{alt.title}</div>
-                <div className="text-[13px] text-muted-foreground">{alt.note}</div>
-                {alt.command ? <code className="mt-1 block font-mono text-[12.5px]">{alt.command}</code> : null}
-              </div>
-              {alt.url ? (
-                <Button variant="outline" className="h-9 shrink-0 rounded-full border-foreground/25 px-4 text-[13px] font-medium" onClick={() => void fr.openUrl(alt.url!)}>
-                  Open
-                </Button>
-              ) : alt.command ? (
-                <Button
-                  variant="outline"
-                  className="h-9 shrink-0 gap-1.5 rounded-full border-foreground/25 px-4 text-[13px] font-medium"
-                  onClick={() => {
-                    void navigator.clipboard?.writeText(alt.command!).catch(() => {});
-                    setCopied(true);
-                    setTimeout(() => setCopied(false), 1500);
-                  }}
-                >
-                  {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
-                  {copied ? "Copied" : "Copy"}
-                </Button>
-              ) : null}
-            </div>
-          ))}
-        </Rows>
-      ) : null}
-      {c.credentials.length ? (
-        <>
-          <Rows className="mt-6" data-first-run-credentials="">
-            {c.credentials.map((r) => (
-              <CredentialRowView
-                key={r.id}
-                row={r}
-                onAct={() => {
-                  if (r.action?.id === "agent-sign-in" && r.agent) void fr.signIn(r.agent);
-                  else if (r.action?.id === "add-key" && (r.provider === "anthropic" || r.provider === "openai")) keys.openSheet(r.provider);
-                }}
-              />
-            ))}
-          </Rows>
-          <p className="mt-3 text-xs text-muted-foreground" data-first-run-credentials-note="">
-            {c.credentialsNote}
-          </p>
-        </>
-      ) : null}
-      {c.error ? (
-        <p role="alert" className="mt-3 text-[13px] text-destructive">
-          {c.error}
-        </p>
-      ) : null}
-      <div className="mt-8 flex flex-wrap items-center gap-3">
-        <Primary label={c.primary.label} onClick={() => void fr.act(c.primary.id)} />
-        {c.secondary ? <Secondary label={c.secondary.label} onClick={() => void fr.act(c.secondary!.id)} /> : null}
-      </div>
-      {fr.usage ? (
-        <label className="mt-5 flex items-center gap-2.5 text-[13px] text-muted-foreground" data-first-run-usage="">
-          <Switch checked={fr.usage.on} disabled={!fr.usage.enabled} onCheckedChange={(on) => void fr.setUsage(on).catch(() => {})} aria-label={fr.usage.label} />
-          <span>
-            {fr.usage.label}.{" "}
-            <button type="button" className="underline hover:text-foreground" onClick={fr.openUsageLink}>
-              {fr.usage.linkLabel}
+      <div data-first-run-connect-state={all ? "done" : failed.length ? "failed" : "ask"}>
+        <Heading>{title}</Heading>
+        <Lede>
+          {all
+            ? "If one of them is open, restart it first. Then try this:"
+            : failed.length
+              ? failed.length === 1
+                ? `Cua couldn\u2019t change ${failed[0]!.name}\u2019s settings, so ${failed[0]!.name} can\u2019t use Cua yet.`
+                : `Cua couldn\u2019t change their settings, so ${listNames(failed.map((a) => a.name))} can\u2019t use Cua yet.`
+              : "Then you can ask them for things like \u201cReproduce this bug on a fresh Windows machine.\u201d They create the Space, work in it and tell you what they found."}
+        </Lede>
+        {all ? (
+          <div className="mt-6 flex items-start gap-3 rounded-2xl border border-foreground/15 px-5 py-4" data-first-run-prompt="">
+            <p className="min-w-0 flex-1 text-[15px] leading-relaxed select-text">{FIRST_PROMPT}</p>
+            <button type="button" aria-label="Copy the prompt" onClick={copy} className="mt-0.5 text-muted-foreground hover:text-foreground">
+              {copied ? <CheckIcon className="size-4" /> : <CopyIcon className="size-4" />}
             </button>
-          </span>
-        </label>
-      ) : null}
-      {keys.sheet ? <KeySheet key={keys.sheet.provider} keys={keys} provider={keys.sheet.provider} env={keys.sheet.env} /> : null}
-    </Step>
-  );
-}
-
-function CredentialRowView({ row: r, onAct }: { row: FirstRunCredential; onAct: () => void }) {
-  return (
-    <div className="flex min-h-16 items-center gap-3 py-2" data-first-run-credential={r.id}>
-      <div className="min-w-0 flex-1">
-        <div className="text-[14px]">{r.title}</div>
-        <div className="text-xs text-muted-foreground">{r.note}</div>
-        {r.error ? (
-          <div role="alert" className="mt-0.5 text-xs text-destructive">
-            {r.error}
           </div>
         ) : null}
+        <Rows className="mt-8" data-first-run-agents="">
+          {rows.map((a) => {
+            const bad = failed.some((f) => f.agent === a.agent);
+            return (
+              <div key={a.agent} className="flex min-h-12 items-center gap-3 py-2" data-first-run-agent={a.agent} data-connected={String(a.connected)} data-failed={bad ? "" : undefined}>
+                <AgentMark agent={a.agent} name={a.name} />
+                <div className="min-w-0 flex-1">
+                  <div className="text-[14px]">{a.name}</div>
+                  {bad ? <div className="text-[13px] text-destructive">{why(a.name)}</div> : null}
+                </div>
+                {a.connected ? (
+                  <span className="flex shrink-0 items-center gap-1 text-[13px] text-[#1f9d55] dark:text-[#4ade80]">
+                    <CheckIcon className="size-3.5" /> Ready
+                  </span>
+                ) : bad ? (
+                  <Button variant="outline" disabled={working} className="h-9 shrink-0 rounded-full border-foreground/25 px-4 text-[13px] font-medium" onClick={() => void retry(a.agent)} data-first-run-retry={a.agent}>
+                    Try again
+                  </Button>
+                ) : working ? (
+                  <span className="shrink-0 text-[13px] text-muted-foreground">Setting up…</span>
+                ) : null}
+              </div>
+            );
+          })}
+        </Rows>
+        <div className="mt-8 flex flex-wrap items-center gap-3">
+          {all || failed.length ? (
+            <>
+              <Primary label="Continue" onClick={() => void fr.act(c.primary.id)} />
+              {all ? <Secondary label={copied ? "Copied" : "Copy the prompt"} onClick={copy} /> : <Secondary label="Add it by hand" onClick={() => setByHand(!byHand)} />}
+            </>
+          ) : (
+            <>
+              <Primary label="Set up" onClick={() => void setUp()} data-first-run-set-up="" />
+              <Secondary label="Not now" onClick={notNow} />
+            </>
+          )}
+        </div>
+        {byHand && failed.length ? (
+          <div className="mt-4 space-y-3" data-first-run-by-hand="">
+            {failed.map((a) =>
+              BY_HAND[a.agent] ? (
+                <div key={a.agent}>
+                  <Snippet file={BY_HAND[a.agent]!.file} text={BY_HAND[a.agent]!.snippet} />
+                  <p className="mt-2 text-xs text-muted-foreground">Paste this into the file, then restart {a.name}.</p>
+                </div>
+              ) : null,
+            )}
+          </div>
+        ) : null}
+        <p className="mt-4 max-w-[460px] text-[13px] text-muted-foreground" data-first-run-consent="">
+          {all
+            ? "Cua added itself to each app\u2019s settings and left everything else alone."
+            : failed.length
+              ? `${listNames(ready.map((a) => a.name))} ${ready.length === 1 ? "is" : "are"} done. ${listNames(failed.map((a) => a.name))} can wait: Settings has the same button.`
+              : "Cua adds itself to each app\u2019s settings and leaves everything else alone. Apps you install later are set up the same way, with a notice and Undo. You can turn it off any time in Settings."}
+        </p>
+        {usage}
       </div>
-      {r.status ? (
-        <span className={cn("shrink-0 text-[13px]", r.ok ? "text-[#1f9d55]" : "text-muted-foreground")} data-first-run-credential-status="">
-          {r.status}
-        </span>
-      ) : null}
-      {r.action ? (
-        <Button variant="outline" className="h-9 shrink-0 rounded-full border-foreground/25 px-4 text-[13px] font-medium" onClick={onAct} data-first-run-credential-action={r.action.id}>
-          {r.action.label}
-        </Button>
-      ) : null}
-    </div>
+    </Step>
   );
 }
 
@@ -691,7 +773,7 @@ function Dots({ view }: { view: FirstRunView }) {
   return (
     <ol className="relative z-10 flex shrink-0 justify-start gap-2 pt-4 pb-6 pl-[var(--ob-x)]" aria-label={`Step ${view.current + 1} of ${view.dots}`}>
       {Array.from({ length: view.dots }, (_, i) => (
-        <li key={i} aria-current={i === view.current ? "step" : undefined} className={cn("h-0.5 w-6 rounded-full bg-foreground/20", i <= view.current && "bg-foreground/80")} />
+        <li key={i} aria-current={i === view.current ? "step" : undefined} className={cn("h-1 w-7 rounded-full bg-foreground/30", i <= view.current && "bg-foreground")} />
       ))}
     </ol>
   );

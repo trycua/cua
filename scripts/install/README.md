@@ -26,7 +26,7 @@ In a terminal, install.sh first says what Cua Spaces is, then lists what to add 
 The Cua Spaces app registers the cua-driver skill and MCP server with your agents in its first run, but it does not install or update the Cua Driver program yet (CUA-1440). Until it does, the `cua-driver` item is how the installer puts Cua Driver on this computer.
 
 ```sh
-curl -fsSL https://cua.ai/install.sh | sh -s -- --select cua-driver   # checklist with cua-driver ticked
+curl -fsSL https://cua.ai/install.sh | sh -s -- --select cua-driver   # Cua Driver and the CLI only: no app, no Cua MCP server or skills
 curl -fsSL https://cua.ai/install.sh | sh -s -- --only cua-driver,host # no checklist
 ```
 
@@ -36,7 +36,7 @@ For cua-driver, `--prefix DIR` becomes `--bin-dir DIR/bin`, `--require-signature
 
 | install.sh | install.ps1 | Effect |
 |---|---|---|
-| `--select a,b` | `-Select a,b` | Preselect items (`spaces`, `cua-driver`, `host`); the list still shows |
+| `--select a,b` | `-Select a,b` | Install these items (`spaces`, `cua-driver`, `host`) plus the CLI; the app is not added unless listed. The list still shows |
 | `--only a,b` | `-Only a,b` | Exactly these items plus the CLI, no checklist |
 | `--cli-only` | `-CliOnly` | Only the `cua` CLI (same as `--only cli`) |
 | `--app-only` | `-AppOnly` | Only the Cua Spaces app, no CLI (cannot be combined with `cua-driver` or `host`) |

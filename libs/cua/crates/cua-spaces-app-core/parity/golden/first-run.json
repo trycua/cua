@@ -126,7 +126,7 @@
         "note": "This Mac works without it.",
         "primary": "sign-in:Sign in to connect",
         "rows": [
-          "Your other computers — They join this Mac's pool",
+          "Your other computers — Sign in with the same account",
           "Your cloud — Hetzner, AWS, Google Cloud or Modal"
         ],
         "secondary": "not-now:Not now",
@@ -143,7 +143,7 @@
         "note": "This Mac works without it.",
         "primary": "sign-in:Sign in to connect",
         "rows": [
-          "Your other computers — They join this Mac's pool",
+          "Your other computers — Sign in with the same account",
           "Your cloud — Hetzner, AWS, Google Cloud or Modal"
         ],
         "secondary": "not-now:Not now",
@@ -156,11 +156,11 @@
       "art": "hermes on outline",
       "case": "10 this Mac being added to the account",
       "devices": {
-        "lede": "Sign in on your other computers, and they reach its Spaces.",
+        "lede": "Sign in on your other computers to use its Spaces.",
         "note": null,
         "primary": "continue:Continue",
         "rows": [
-          "Your other computers — They join this Mac's pool",
+          "Your other computers — Sign in with the same account",
           "Your cloud — Hetzner, AWS, Google Cloud or Modal"
         ],
         "secondary": "",
@@ -173,15 +173,15 @@
       "art": "hermes on outline",
       "case": "11 this Mac in the account",
       "devices": {
-        "lede": "Sign in on your other computers, and they reach its Spaces.",
+        "lede": "Sign in on your other computers to use its Spaces.",
         "note": null,
         "primary": "continue:Continue",
         "rows": [
-          "Your other computers — They join this Mac's pool",
+          "Your other computers — Sign in with the same account",
           "Your cloud — Hetzner, AWS, Google Cloud or Modal"
         ],
         "secondary": "",
-        "status": "[ok] This Mac is in your account — Your other computers can reach its Spaces.",
+        "status": "[ok] Ready to share — Its Spaces appear on every computer signed in to your account.",
         "title": "This Mac is in your account."
       },
       "step": "devices"
@@ -512,15 +512,15 @@
       "art": "hermes on outline",
       "case": "19 this Mac in the account, Continue goes to permissions",
       "devices": {
-        "lede": "Sign in on your other computers, and they reach its Spaces.",
+        "lede": "Sign in on your other computers to use its Spaces.",
         "note": null,
         "primary": "continue:Continue",
         "rows": [
-          "Your other computers — They join this Mac's pool",
+          "Your other computers — Sign in with the same account",
           "Your cloud — Hetzner, AWS, Google Cloud or Modal"
         ],
         "secondary": "",
-        "status": "[ok] This Mac is in your account — Your other computers can reach its Spaces.",
+        "status": "[ok] Ready to share — Its Spaces appear on every computer signed in to your account.",
         "title": "This Mac is in your account."
       },
       "step": "devices",
@@ -652,7 +652,7 @@
         "note": "This Mac works without it.",
         "primary": "sign-in:Sign in to connect",
         "rows": [
-          "Your other computers — They join this Mac's pool",
+          "Your other computers — Sign in with the same account",
           "Your cloud — Hetzner, AWS, Google Cloud or Modal"
         ],
         "secondary": "not-now:Not now",
@@ -690,15 +690,15 @@
       "art": "hermes on outline",
       "case": "27 a Windows PC: no permissions screen",
       "devices": {
-        "lede": "Sign in on your other computers, and they reach its Spaces.",
+        "lede": "Sign in on your other computers to use its Spaces.",
         "note": null,
         "primary": "continue:Continue",
         "rows": [
-          "Your other computers — They join this PC's pool",
+          "Your other computers — Sign in with the same account",
           "Your cloud — Hetzner, AWS, Google Cloud or Modal"
         ],
         "secondary": "",
-        "status": "[ok] This PC is in your account — Your other computers can reach its Spaces.",
+        "status": "[ok] Ready to share — Its Spaces appear on every computer signed in to your account.",
         "title": "This PC is in your account."
       },
       "step": "devices",

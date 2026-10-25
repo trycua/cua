@@ -1141,8 +1141,8 @@ fn account_row(input: &FirstRunInput) -> Option<CheckRow> {
     }
     Some(row(
         RowState::Ok,
-        format!("{} is in your account", cap(place)),
-        "Your other computers can reach its Spaces.".into(),
+        "Ready to share".into(),
+        "Its Spaces appear on every computer signed in to your account.".into(),
         None,
     ))
 }
@@ -1152,7 +1152,7 @@ fn devices_view(input: &FirstRunInput) -> DevicesView {
     let rows = vec![
         DeviceRow {
             title: "Your other computers".into(),
-            note: format!("They join {place}'s pool"),
+            note: "Sign in with the same account".into(),
         },
         DeviceRow {
             title: "Your cloud".into(),
@@ -1168,7 +1168,7 @@ fn devices_view(input: &FirstRunInput) -> DevicesView {
             } else {
                 format!("Adding {place} to your account.")
             },
-            lede: "Sign in on your other computers, and they reach its Spaces.".into(),
+            lede: "Sign in on your other computers to use its Spaces.".into(),
             rows,
             status,
             primary: button("continue", "Continue"),
@@ -2221,7 +2221,7 @@ mod tests {
         let ok = d.status.unwrap();
         assert_eq!(
             (ok.state, ok.title.as_str()),
-            (RowState::Ok, "This Mac is in your account")
+            (RowState::Ok, "Ready to share")
         );
 
         // No permission is asked here, even when one is missing.

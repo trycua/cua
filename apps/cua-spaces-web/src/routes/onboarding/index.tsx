@@ -84,7 +84,7 @@ function OnboardingPage() {
       <Art art={view.art} step={view.step} />
       <header className="relative z-30 flex shrink-0 items-center justify-between px-10 pt-[calc(var(--titlebar-height)+12px)] pb-2">
         <CuaWordmark />
-        <button type="button" onClick={leave} className={cn(QUIET_LINK, "text-[13px]")} data-onboarding-later="">
+        <button type="button" onClick={leave} className={SKIP_PILL} data-onboarding-later="">
           {view.later}
         </button>
       </header>
@@ -160,6 +160,9 @@ function Secondary({ label, onClick, describedBy, ...rest }: { label: string; on
   );
 }
 
+/** "Skip for now": a ghost pill, readable on the starfield, quieter than Continue. */
+const SKIP_PILL =
+  "rounded-full border border-foreground/30 px-4 py-1.5 text-[13px] text-foreground/90 outline-none transition-colors hover:border-foreground/50 hover:bg-foreground/10 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60";
 const QUIET_LINK = "-mx-1.5 rounded-md px-1.5 py-0.5 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60";
 
 /**

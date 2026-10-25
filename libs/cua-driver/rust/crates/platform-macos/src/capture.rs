@@ -44,8 +44,9 @@
 //! the Driver's cursor overlay window out
 //! ([`screenshot_display_bytes_excluding_overlay`]); `screencapture` remains
 //! its fallback and reports that it could not exclude the overlay. With
-//! `screencapture` disabled, a display without an overlay is captured through
-//! ScreenCaptureKit as well, and a failed ScreenCaptureKit capture is an error.
+//! `screencapture` disabled, every display capture, recording snapshots
+//! included, goes through ScreenCaptureKit with nothing excluded, the same
+//! image `screencapture -x` takes.
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use objc2::rc::autoreleasepool;
@@ -938,10 +939,38 @@ pub fn screenshot_window(window_id: u32) -> anyhow::Result<(String, u32, u32)> {
 /// Returns raw PNG bytes or an error.
 pub fn screenshot_display_bytes() -> anyhow::Result<Vec<u8>> {
     refuse_without_direct_capture_consent()?;
+    display_capture_with(
+        screencapture_disabled(),
+        screenshot_display_bytes_tool,
+        || {
+            run_native_capture_worker(
+                display_capture_gate(),
+                DISPLAY_CAPTURE_NATIVE_TIMEOUT,
+                || screenshot_main_display_sck_excluding(None),
+            )
+        },
+    )
+}
+
+/// Picks how to capture the whole display: `screencapture`, or ScreenCaptureKit
+/// when the host turned the tool off.
+fn display_capture_with<T, N>(disabled: bool, tool: T, native: N) -> anyhow::Result<Vec<u8>>
+where
+    T: FnOnce() -> anyhow::Result<Vec<u8>>,
+    N: FnOnce() -> anyhow::Result<Vec<u8>>,
+{
+    if disabled {
+        native()
+    } else {
+        tool()
+    }
+}
+
+fn screenshot_display_bytes_tool() -> anyhow::Result<Vec<u8>> {
     let capture = SecureCapturePath::new("display.png")?;
     let tmp_path = capture.file.to_string_lossy().into_owned();
 
-    let output = screencapture_command(screencapture_disabled())?
+    let output = screencapture_command(false)?
         .args(["-x", &tmp_path])
         .output()?;
 
@@ -1020,15 +1049,7 @@ pub fn screenshot_display_bytes_excluding_overlay() -> anyhow::Result<(
     refuse_without_direct_capture_consent()?;
     capture_excluding_overlays(&OverlayExcluder, |overlay| {
         let Some(&overlay_window_id) = overlay else {
-            if !screencapture_disabled() {
-                return Ok((screenshot_display_bytes()?, ResidualCheck::Clean));
-            }
-            let bytes = run_native_capture_worker(
-                display_capture_gate(),
-                DISPLAY_CAPTURE_NATIVE_TIMEOUT,
-                || screenshot_main_display_sck_excluding(None),
-            )?;
-            return Ok((bytes, ResidualCheck::Clean));
+            return Ok((screenshot_display_bytes()?, ResidualCheck::Clean));
         };
         match run_native_capture_worker(
             display_capture_gate(),
@@ -1224,6 +1245,20 @@ mod tests {
                 "{value:?} keeps screencapture on"
             );
         }
+    }
+
+    /// #5938: with the tool off, whole-display captures (recording snapshots,
+    /// picture-in-picture) still get an image, through ScreenCaptureKit.
+    #[test]
+    fn display_capture_without_the_tool_uses_screencapturekit() {
+        let native = display_capture_with(
+            true,
+            || panic!("screencapture must not run when the host turned it off"),
+            || Ok(vec![1]),
+        );
+        assert_eq!(native.expect("native capture"), vec![1]);
+        let tool = display_capture_with(false, || Ok(vec![2]), || panic!("tool path expected"));
+        assert_eq!(tool.expect("tool capture"), vec![2]);
     }
 
     /// Regression for trycua/cua#5476: with the pointer outside the window,

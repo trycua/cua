@@ -1666,7 +1666,7 @@ def report_unresolved_identities(
             {"title": UNRESOLVED_ISSUE_TITLE, "body": body},
         )
         return int(created["number"])
-    except (ReleaseError, OSError, ValueError, KeyError, TypeError) as error:
+    except Exception as error:  # noqa: BLE001 - reporting must never fail a release
         print(f"::warning::could not update the unresolved attribution issue: {error}")
         return None
 
@@ -1711,8 +1711,10 @@ def collect_command(args: argparse.Namespace) -> None:
             f"::warning::{len(unresolved)} contributor identities could not be linked to "
             "GitHub; they are credited by display name without an @-mention"
         )
-        if args.report_issue:
-            report_unresolved_identities(client, args.repository, unresolved, config, args.tag)
+    if args.report_issue:
+        # Also refreshes the rolling issue when nothing is unresolved, so resolved entries drop off.
+        report_unresolved_identities(client, args.repository, unresolved, config, args.tag)
+
 
 
 def report_unresolved_command(args: argparse.Namespace) -> None:

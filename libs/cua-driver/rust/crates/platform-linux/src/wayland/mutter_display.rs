@@ -140,6 +140,13 @@ fn logical_monitors(state: &State) -> Result<(bool, Vec<LogicalMonitor>)> {
     Ok((layout_logical, out))
 }
 
+/// Whether a `/proc/<pid>/environ` block (NUL-separated `NAME=value`) names WAYLAND_SOCKET.
+fn inherited_wayland_socket(environ: &[u8]) -> bool {
+    environ
+        .split(|byte| *byte == 0)
+        .any(|entry| entry.starts_with(b"WAYLAND_SOCKET="))
+}
+
 /// The Wayland socket this process would connect to. An inherited `WAYLAND_SOCKET` takes
 /// precedence over `WAYLAND_DISPLAY` for the real connection and cannot be attested here, so it is
 /// refused, as in the Hyprland adapter.
@@ -165,6 +172,10 @@ fn connect_bounded(path: &std::path::Path, timeout: Duration) -> Result<std::os:
     use std::os::unix::ffi::OsStrExt;
     let bytes = path.as_os_str().as_bytes();
     let mut addr: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    // A NUL would cut the path short, or at the start name an abstract socket instead.
+    if bytes.contains(&0) {
+        bail!("the Wayland socket path contains a NUL byte");
+    }
     if bytes.len() >= addr.sun_path.len() {
         bail!("the Wayland socket path is too long");
     }
@@ -214,7 +225,7 @@ fn connect_bounded(path: &std::path::Path, timeout: Duration) -> Result<std::os:
     let mut so_error: libc::c_int = 0;
     let mut so_len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
     // SAFETY: reads one c_int option into a correctly sized buffer.
-    unsafe {
+    let read = unsafe {
         libc::getsockopt(
             fd.as_raw_fd(),
             libc::SOL_SOCKET,
@@ -223,6 +234,10 @@ fn connect_bounded(path: &std::path::Path, timeout: Duration) -> Result<std::os:
             &mut so_len,
         )
     };
+    if read != 0 || so_len as usize != std::mem::size_of::<libc::c_int>() {
+        return Err(std::io::Error::last_os_error())
+            .context("read the Wayland connection's result");
+    }
     if so_error != 0 {
         return Err(std::io::Error::from_raw_os_error(so_error))
             .context("connect to the Wayland socket");
@@ -326,6 +341,13 @@ impl DisplayConfigBus for SessionBus {
 
 /// The desktop frame of the GNOME session this process draws on, attested to its compositor.
 pub fn screen_report() -> Result<(u32, u32, f64, serde_json::Value)> {
+    // Wayland clients take an inherited WAYLAND_SOCKET and unset it when they connect, so its
+    // absence now proves nothing; the environment this process started with still names it.
+    let started_with = std::fs::read("/proc/self/environ")
+        .context("read the environment this process started with")?;
+    if inherited_wayland_socket(&started_with) {
+        bail!("an inherited WAYLAND_SOCKET cannot be attested");
+    }
     let compositor = compositor_pid(wayland_socket(|name| std::env::var_os(name))?)?;
     // Own thread and runtime: callers may already be inside Tokio (see kwin_helper).
     let state = std::thread::spawn(move || attested_state(&SessionBus::open()?, compositor))
@@ -493,5 +515,25 @@ mod tests {
         assert_eq!(open(), before);
         drop(held);
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_wayland_socket_the_process_started_with_counts_even_after_it_was_unset() {
+        assert!(inherited_wayland_socket(
+            b"PATH=/usr/bin\0WAYLAND_SOCKET=5\0HOME=/h\0"
+        ));
+        assert!(!inherited_wayland_socket(
+            b"PATH=/usr/bin\0WAYLAND_DISPLAY=wayland-0\0"
+        ));
+        assert!(!inherited_wayland_socket(b"NOT_WAYLAND_SOCKET=5\0"));
+    }
+
+    #[test]
+    fn a_path_with_a_nul_byte_is_refused() {
+        use std::os::unix::ffi::OsStrExt;
+        let path = std::path::Path::new(std::ffi::OsStr::from_bytes(b"\0abstract"));
+        assert!(connect_bounded(path, Duration::ZERO).is_err());
+        let path = std::path::Path::new(std::ffi::OsStr::from_bytes(b"/tmp/a\0b"));
+        assert!(connect_bounded(path, Duration::ZERO).is_err());
     }
 }

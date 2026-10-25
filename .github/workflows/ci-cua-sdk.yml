@@ -220,6 +220,12 @@ jobs:
           shared-key: libs-cua-test
       - name: Test Spaces discovery and post-create directory failures
         run: cargo test --locked -p cua-spaces --test relay --test cloud_discovery -- --test-threads=4
+      - name: Test the mesh, and its scale budgets (offline or unresponsive computers never hold up the rest)
+        # The scale scenarios run one at a time: each starts 20 nodes and
+        # asserts wall-clock budgets.
+        run: |
+          cargo test --locked -p cua-mesh --lib --test mesh -- --test-threads=4
+          cargo test --locked -p cua-mesh --test scale -- --test-threads=1 --nocapture
       - name: Test (embedded, daemon over UDS and loopback, CLI, cluster, Cua Spaces extensions)
         run: >
           cargo test --locked --no-fail-fast -p cua-sdk -p cua-daemon -p cua-cli -p cua-spacesd-client

@@ -130,11 +130,9 @@ def test_planner_requires_main_ancestry_and_preserves_immutable_evidence():
     assert "report-attribution-warning" in planner
     assert "needs.plan.outputs.attribution_issues != '[]'" in planner
     assert "GITHUB_STEP_SUMMARY" in planner
-    assert "gh issue comment" in planner
-    # A failed report must never fail the reusable planner the builds depend on.
-    assert "name: Create or refresh the attribution warning\n        continue-on-error: true" in planner
-    assert "gh issue create" in planner
-    assert "gh issue edit" in planner
+    # One rolling issue; a failed report must never fail the reusable planner.
+    assert "name: Refresh the rolling unresolved-attribution issue\n        continue-on-error: true" in planner
+    assert "release_attribution.py report-unresolved" in planner
     assert "cancel-in-progress: false" in source("nightly-cua-driver.yml")
     assert "cancel-in-progress: false" in source("nightly-lume.yml")
 

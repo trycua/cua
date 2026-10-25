@@ -656,7 +656,10 @@ async fn the_local_cli_leaves_cua_driver_alone_even_when_it_registered_it_first(
         skill("cua-driver-local").exists(),
         "Cua Driver's Local skill stays"
     );
-    assert!(!skill("cua-spaces-local").exists(), "Local's own skills went");
+    assert!(
+        !skill("cua-spaces-local").exists(),
+        "Local's own skills went"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -11,17 +11,22 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use cua_sandbox_core::Error;
 use cua_sandbox_core::byoc::{
-    AddHost, CloudAuditEntry, CloudConnected, CloudDisconnected, CloudHost, CloudManager,
-    CloudProvider, CloudStatusReport, CloudSweepItem, CloudSweepReport, CloudTarget,
-    CloudTestReport, HostTypeOffer,
+    AddHost, CloudAuditEntry, CloudCleanup, CloudConnected, CloudDisconnected, CloudHost,
+    CloudManager, CloudProvider, CloudStatusReport, CloudSweepItem, CloudSweepReport,
+    CloudTarget, CloudTestReport, HostTypeOffer, signin as wire_signin,
 };
 
 use crate::api::{CloudApi, Result};
 use crate::audit;
 use crate::model::{self, Connection, Resource};
 use crate::relay::RelayAccess;
-use crate::state::Store;
+use crate::signin;
+use crate::state::{Cleanup, Store};
 use crate::sweep;
+
+/// How long one cloud's sweep pass may take before it is given up (nothing
+/// is assumed about what it did not finish; the next pass picks up).
+pub const SWEEP_PASS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
 
 /// The clouds of one cua home.
 #[derive(Clone)]
@@ -36,6 +41,7 @@ pub struct Clouds {
 impl Clouds {
     /// `apis` with their state under `home`.
     pub fn new(home: &Path, apis: Vec<Arc<dyn CloudApi>>, store: Arc<Store>) -> Self {
+        let apis: Vec<Arc<dyn CloudApi>> = apis.into_iter().map(signin::Guarded::wrap).collect();
         Clouds {
             hosts: Arc::new(crate::hosts::Hosts::new(apis.clone(), store.clone(), None)),
             apis,
@@ -130,7 +136,11 @@ impl Clouds {
     /// `shared`, only what runs and bills: instances and sandboxes.
     async fn live(&self, p: &dyn CloudApi, conn: &Connection, shared: bool) -> Result<Vec<Live>> {
         let owner = self.store.owner_id().map_err(Error::Io)?;
+        // The credentials first: another account's empty listing must never
+        // read as "nothing left".
+        sweep::checked_clock(p, conn).await?;
         let listed = p.list_owned(conn, &owner).await?;
+        let ambiguous = sweep::ambiguous(&self.store, p.name())?;
         let wanted =
             |r: &Resource| shared || matches!(r.resource_type.as_str(), "instance" | "sandbox");
         let t = model::now();
@@ -147,7 +157,7 @@ impl Clouds {
             .resources()
             .map_err(Error::Io)?
             .into_iter()
-            .filter(|r| r.provider == p.name())
+            .filter(|r| sweep::belongs(r, conn, ambiguous))
         {
             if listed.iter().any(|r| sweep::same(&rec, r)) {
                 continue;
@@ -190,6 +200,9 @@ impl Clouds {
                 }
                 match p.describe(&there, &rec).await {
                     Ok(Some((state, _))) if state != "terminated" => None,
+                    Ok(_) if t.saturating_sub(rec.created) < sweep::CONSISTENCY_SECS => Some(
+                        "just created: the cloud may not show it yet".to_string(),
+                    ),
                     Ok(_) => continue,
                     Err(e) => Some(format!(
                         "recorded in {}, could not be checked: {e}",
@@ -206,7 +219,10 @@ impl Clouds {
     }
 
     /// The sweep behind `sweep`, `auto_sweep` and `disconnect --delete`;
-    /// `actor` is what the audit log names.
+    /// `actor` is what the audit log names. It sweeps every connected
+    /// cloud and every cloud disconnected while it could not be checked
+    /// (each with its own connection, never another), under this home's
+    /// sweep lease.
     async fn sweep_as(
         &self,
         provider: Option<&str>,
@@ -217,6 +233,16 @@ impl Clouds {
         if let Some(n) = provider {
             self.api(n)?;
         }
+        let Some(_lease) = self.store.try_sweep_lease().map_err(Error::Io)? else {
+            if actor == sweep::AUTO_ACTOR {
+                tracing::info!("cloud auto-sweep skipped: another sweep of this home is running");
+                return Ok(vec![]);
+            }
+            return Err(Error::Cloud(
+                "Another sweep of this computer's clouds is running. Run this again when it ends."
+                    .into(),
+            ));
+        };
         let mut rows = Vec::new();
         // Host records before the sweep: one it deletes also loses its relay
         // machine (or its unused pairing code).
@@ -225,11 +251,17 @@ impl Clouds {
         } else {
             self.hosts.records().unwrap_or_default()
         };
+        let cleanups = self.store.cleanups().map_err(Error::Io)?;
         for p in &self.apis {
             if provider.is_some_and(|n| !n.eq_ignore_ascii_case(p.name())) {
                 continue;
             }
-            let Some(conn) = self.store.connection(p.name()).map_err(Error::Io)? else {
+            let live = self.store.connection(p.name()).map_err(Error::Io)?;
+            let pending: Vec<&Cleanup> = cleanups
+                .iter()
+                .filter(|c| c.connection.provider == p.name())
+                .collect();
+            if live.is_none() && pending.is_empty() {
                 if provider.is_some() {
                     return Err(Error::ContribNotConfigured(format!(
                         "{} is not connected (`cua cloud connect {}`)",
@@ -238,33 +270,70 @@ impl Clouds {
                     )));
                 }
                 continue;
-            };
-            // One cloud that cannot be reached (signed out, its helper
-            // missing) says so in its row; the others are still swept.
-            let failed_row = |e: &Error| CloudSweepItem {
-                resource: cua_sandbox_core::byoc::CloudResource {
-                    provider: p.name().into(),
-                    resource_type: "account".into(),
-                    region: conn.region.clone(),
-                    ..Default::default()
-                },
-                action: "failed".into(),
-                reason: e.to_string(),
-            };
-            let opts = sweep::SweepOpts {
-                dry_run,
-                all,
-                actor,
-                forget_missing: actor != sweep::AUTO_ACTOR,
-            };
-            match sweep::sweep_provider(p.as_ref(), &conn, &self.store, opts).await {
-                Ok(r) => rows.extend(r),
-                Err(e) if provider.is_none() => rows.push(failed_row(&e)),
-                Err(e) => return Err(e),
+            }
+            let mut passes: Vec<(Connection, bool)> = Vec::new();
+            if let Some(c) = live {
+                passes.push((c, false));
+            }
+            passes.extend(pending.iter().map(|c| (c.connection.clone(), true)));
+            for (conn, cleanup) in passes {
+                // One cloud that cannot be reached (signed out, its helper
+                // missing) says so in its row; the others are still swept.
+                let failed_row = |e: &Error| CloudSweepItem {
+                    resource: cua_sandbox_core::byoc::CloudResource {
+                        provider: p.name().into(),
+                        resource_type: "account".into(),
+                        region: conn.region.clone(),
+                        ..Default::default()
+                    },
+                    action: "failed".into(),
+                    reason: e.to_string(),
+                };
+                let opts = sweep::SweepOpts {
+                    dry_run,
+                    all,
+                    actor,
+                    forget_missing: actor != sweep::AUTO_ACTOR,
+                    cleanup,
+                };
+                let pass = tokio::time::timeout(
+                    SWEEP_PASS_TIMEOUT,
+                    sweep::sweep_provider(p.as_ref(), &conn, &self.store, opts),
+                )
+                .await
+                .unwrap_or_else(|_| {
+                    Err(Error::Timeout(format!(
+                        "{} did not answer within {} s: nothing more was deleted or assumed gone",
+                        p.title(),
+                        SWEEP_PASS_TIMEOUT.as_secs()
+                    )))
+                });
+                let ok = match pass {
+                    Ok(r) => {
+                        rows.extend(r);
+                        true
+                    }
+                    Err(e) if provider.is_none() || cleanup => {
+                        rows.push(failed_row(&e));
+                        false
+                    }
+                    Err(e) => return Err(e),
+                };
+                if cleanup && ok && !dry_run {
+                    rows.extend(self.finish_cleanup(p.as_ref(), &conn, actor).await);
+                }
             }
             match self.sweep_machines(p.name(), dry_run, actor).await {
                 Ok(r) => rows.extend(r),
-                Err(e) if provider.is_none() => rows.push(failed_row(&e)),
+                Err(e) if provider.is_none() => rows.push(CloudSweepItem {
+                    resource: cua_sandbox_core::byoc::CloudResource {
+                        provider: p.name().into(),
+                        resource_type: "account".into(),
+                        ..Default::default()
+                    },
+                    action: "failed".into(),
+                    reason: e.to_string(),
+                }),
                 Err(e) => return Err(e),
             }
         }
@@ -281,6 +350,72 @@ impl Clouds {
             self.hosts.drop_relay(r, &name).await;
         }
         Ok(rows)
+    }
+
+    /// After a cleanup pass of a cloud disconnected while it could not be
+    /// checked: when the cloud, asked again, has nothing of Cua's left for
+    /// that account and no record names it, the entry is done (and its
+    /// saved secret, when no connection uses it, goes). Otherwise it stays.
+    async fn finish_cleanup(
+        &self,
+        p: &dyn CloudApi,
+        conn: &Connection,
+        actor: &str,
+    ) -> Vec<CloudSweepItem> {
+        let left = match self.live(p, conn, true).await {
+            Ok(l) => l,
+            Err(e) => {
+                tracing::warn!(provider = p.name(), "cleanup not confirmed: {e}");
+                return vec![];
+            }
+        };
+        let ambiguous = sweep::ambiguous(&self.store, p.name()).unwrap_or(true);
+        let recorded = self
+            .store
+            .resources()
+            .unwrap_or_default()
+            .iter()
+            .filter(|r| sweep::belongs(r, conn, ambiguous) && r.resource_type != model::RELAY_MACHINE)
+            .count();
+        if !left.is_empty() || recorded > 0 {
+            return vec![];
+        }
+        if let Err(e) = self.store.clear_cleanup(p.name(), &conn.account) {
+            tracing::warn!(provider = p.name(), "cleanup entry not cleared: {e}");
+            return vec![];
+        }
+        if self.store.connection(p.name()).ok().flatten().is_none() {
+            p.forget_secret();
+        }
+        let mut a = audit::entry("cleanup_done", p.name(), actor);
+        a.detail = format!("{}: nothing of Cua's left", conn.label(p.title()));
+        self.store.audit(a);
+        vec![CloudSweepItem {
+            resource: cua_sandbox_core::byoc::CloudResource {
+                provider: p.name().into(),
+                resource_type: "account".into(),
+                region: conn.region.clone(),
+                ..Default::default()
+            },
+            action: "clean".into(),
+            reason: format!("{}: nothing of Cua's is left there", p.title()),
+        }]
+    }
+
+    /// What Cua's records say may still be in `conn`'s account: the line
+    /// apps and `cua cloud status` show.
+    fn cleanup_of(&self, p: &dyn CloudApi, c: &Cleanup) -> CloudCleanup {
+        let ambiguous = sweep::ambiguous(&self.store, p.name()).unwrap_or(true);
+        let recs: Vec<Resource> = self
+            .store
+            .resources()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|r| {
+                sweep::belongs(r, &c.connection, ambiguous) && r.resource_type != model::RELAY_MACHINE
+            })
+            .collect();
+        summarize(p.title(), &c.connection, &recs, c.since, &c.reason)
     }
 
     /// The state.
@@ -345,6 +480,238 @@ impl Clouds {
             kinds: resolved.map(|c| p.kinds(&c)).unwrap_or_default(),
         }
     }
+}
+
+impl Clouds {
+    fn unset_default(&self, provider: &str) {
+        if self.default_on() == provider
+            && let Some(mut s) = self.settings()
+            && let Ok(key) = cua_sandbox_core::settings::key("default.on")
+        {
+            let _ = s.unset(key);
+        }
+    }
+
+    /// A disconnect of a cloud that could not be checked (`e`): refused
+    /// with what Cua's records say is there unless `force`; with `force`,
+    /// the connection becomes a cleanup entry and the records stay.
+    async fn unchecked(
+        &self,
+        p: &dyn CloudApi,
+        conn: Connection,
+        e: Error,
+        force: bool,
+    ) -> Result<CloudDisconnected> {
+        let raw = e.to_string();
+        let sign_in = signin::sign_in_of(p, &conn, &e);
+        let reason = sign_in
+            .as_ref()
+            .map(|s| s.short().to_string())
+            .unwrap_or_else(|| "it did not answer".to_string());
+        let entry = Cleanup {
+            connection: conn.clone(),
+            since: model::now(),
+            reason: sign_in
+                .as_ref()
+                .map(|s| s.line.clone())
+                .unwrap_or_else(|| wire_signin::split(&raw).0.to_string()),
+        };
+        let summary = self.cleanup_of(p, &entry);
+        let t = model::now();
+        let records: Vec<_> = self
+            .store
+            .resources()
+            .map_err(Error::Io)?
+            .into_iter()
+            .filter(|r| r.provider == p.name())
+            .collect();
+        if !force {
+            let mut a = audit::entry("disconnect", p.name(), "user");
+            a.outcome = "refused".into();
+            a.detail = format!("could not check: {reason}");
+            self.store.audit(a);
+            let fix = sign_in
+                .as_ref()
+                .map(|s| format!("{} ", s.line))
+                .unwrap_or_default();
+            let line = unchecked_message(p.title(), p.name(), &reason, &summary, t) + "\n" + &fix
+                + &format!("To disconnect anyway: `cua cloud disconnect {} --force`.", p.name());
+            return Err(Error::Cloud(wire_signin::with_details(
+                &line,
+                wire_signin::split(&raw).1.unwrap_or(&raw),
+            )));
+        }
+        // Forced with nothing recorded there: nothing to clean up later.
+        if summary.resources == 0 {
+            let disconnected = self.store.disconnect(p.name()).map_err(Error::Io)?;
+            p.forget_secret();
+            let mut a = audit::entry("disconnect", p.name(), "user");
+            a.outcome = "forced".into();
+            a.detail = format!("could not check ({reason}); nothing recorded there");
+            self.store.audit(a);
+            self.unset_default(p.name());
+            return Ok(CloudDisconnected {
+                provider: p.name().into(),
+                disconnected,
+                left: vec![],
+                deleted: vec![],
+                cleanup: None,
+            });
+        }
+        // Forced: the connection becomes a cleanup entry (its secret stays
+        // until the cleanup is done) and the records stay, named for it.
+        let disconnected = self
+            .store
+            .disconnect_to_cleanup(entry)
+            .map_err(Error::Io)?;
+        let mut a = audit::entry("disconnect", p.name(), "user");
+        a.outcome = "forced".into();
+        a.detail = format!(
+            "could not check ({reason}); kept {} records for a sweep after sign-in",
+            summary.resources
+        );
+        self.store.audit(a);
+        self.unset_default(p.name());
+        Ok(CloudDisconnected {
+            provider: p.name().into(),
+            disconnected,
+            left: records.iter().map(|r| r.wire(t)).collect(),
+            deleted: vec![],
+            cleanup: Some(summary),
+        })
+    }
+}
+
+/// "in 6 h", "in 25 min", "in 3 days", "already passed".
+pub fn until(expires: u64, now: u64) -> String {
+    if expires <= now {
+        return "already passed".into();
+    }
+    let s = expires - now;
+    match s {
+        0..3600 => format!("in {} min", s.div_ceil(60)),
+        3600..172_800 => format!("in {} h", s.div_ceil(3600)),
+        _ => format!("in {} days", s.div_ceil(86_400)),
+    }
+}
+
+/// What Cua's records say may still be in `conn`'s account.
+pub fn summarize(
+    title: &str,
+    conn: &Connection,
+    recs: &[Resource],
+    since: u64,
+    reason: &str,
+) -> CloudCleanup {
+    let is_space = |r: &Resource| matches!(r.resource_type.as_str(), "instance" | "sandbox");
+    let spaces: Vec<&Resource> = recs.iter().filter(|r| is_space(r)).collect();
+    let mut kinds: std::collections::BTreeMap<String, u32> = Default::default();
+    for r in &spaces {
+        let k = match r.extra.get(crate::provider::detail::MACHINE_TYPE) {
+            Some(t) if !t.is_empty() => format!("{} {t}", r.resource_type),
+            _ => r.resource_type.clone(),
+        };
+        *kinds.entry(k).or_default() += 1;
+    }
+    let types = kinds
+        .iter()
+        .map(|(k, n)| if *n == 1 { k.clone() } else { format!("{k} \u{d7}{n}") })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let latest = spaces.iter().map(|r| r.expires).max().unwrap_or(0);
+    let never = spaces.iter().any(|r| r.expires == 0);
+    let usd: f64 = spaces
+        .iter()
+        .filter_map(|r| r.extra.get(crate::provider::detail::USD_PER_HOUR))
+        .filter_map(|v| v.parse::<f64>().ok())
+        .sum();
+    let message = if spaces.is_empty() {
+        format!(
+            "{title} may still have {} Cua created. Sign in and clean up.",
+            plural(recs.len(), "resource")
+        )
+    } else {
+        format!(
+            "{title} may still have {} Cua started. Sign in and clean up.",
+            plural(spaces.len(), "Space")
+        )
+    };
+    CloudCleanup {
+        provider: conn.provider.clone(),
+        title: title.into(),
+        account: conn.account.clone(),
+        profile: conn.profile.clone(),
+        region: conn.region.clone(),
+        spaces: spaces.len() as u32,
+        resources: recs.len() as u32,
+        types,
+        latest_expires: if latest == 0 {
+            String::new()
+        } else {
+            model::rfc3339(latest)
+        },
+        never_expires: never,
+        usd_per_hour: (usd * 10_000.0).round() / 10_000.0,
+        since: model::rfc3339(since),
+        reason: reason.into(),
+        message,
+    }
+}
+
+/// "1 Space", "2 Spaces".
+fn plural(n: usize, word: &str) -> String {
+    if n == 1 {
+        format!("1 {word}")
+    } else {
+        format!("{n} {word}s")
+    }
+}
+
+/// The refusal of a disconnect that could not check the cloud: what Cua
+/// started there, what keeps billing until when, and how to finish later.
+pub fn unchecked_message(
+    title: &str,
+    name: &str,
+    reason: &str,
+    c: &CloudCleanup,
+    now: u64,
+) -> String {
+    let what = if c.resources == 0 {
+        "nothing".to_string()
+    } else if c.spaces > 0 {
+        format!(
+            "{} ({}{})",
+            plural(c.spaces as usize, "Space"),
+            c.types,
+            if c.usd_per_hour > 0.0 {
+                format!(", about ${:.2}/h", c.usd_per_hour)
+            } else {
+                String::new()
+            }
+        )
+    } else {
+        plural(c.resources as usize, "resource")
+    };
+    let until_line = if c.never_expires {
+        "Anything still running there keeps billing until you delete it (one never expires)".to_string()
+    } else if c.latest_expires.is_empty() {
+        "Anything still running there keeps billing until it shuts itself down at its expiry".to_string()
+    } else {
+        let latest = humantime::parse_rfc3339(&c.latest_expires)
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        format!(
+            "Anything still running there keeps billing until it shuts itself down at its expiry (latest: {})",
+            until(latest, now)
+        )
+    };
+    format!(
+        "{}{title} for Spaces it started ({reason}). Cua's records show {what} there.\n\
+         Disconnect anyway? {until_line}. After you sign in, run `cua cloud sweep {name} --delete`.",
+        wire_signin::UNCHECKED
+    )
 }
 
 #[async_trait]
@@ -420,10 +787,22 @@ impl CloudManager for Clouds {
                 }
             }
         }
+        let cleanup = self
+            .store
+            .cleanups()
+            .map_err(Error::Io)?
+            .iter()
+            .filter(|c| provider.is_none_or(|n| c.connection.provider.eq_ignore_ascii_case(n)))
+            .filter_map(|c| {
+                let p = self.apis.iter().find(|p| p.name() == c.connection.provider)?;
+                Some(self.cleanup_of(p.as_ref(), c))
+            })
+            .collect();
         Ok(CloudStatusReport {
             default_on,
             providers,
             resources,
+            cleanup,
         })
     }
 
@@ -468,6 +847,13 @@ impl CloudManager for Clouds {
             )));
         }
         conn.account = tested.account.clone();
+        // Who the credentials are: every later call checks they still are.
+        conn.identity = p
+            .identity(&conn)
+            .await
+            .ok()
+            .and_then(|i| i.id)
+            .unwrap_or_default();
         conn.ttl_hours = match (p.name(), ttl_hours.unwrap_or(model::DEFAULT_TTL_HOURS)) {
             // A Modal sandbox lives at most 24 hours.
             ("modal", 0) => 24,
@@ -477,6 +863,21 @@ impl CloudManager for Clouds {
         conn.connected_at = model::rfc3339(model::now());
         p.persist_secret()?;
         self.store.connect(conn.clone()).map_err(Error::Io)?;
+        // The same account again: its Spaces from before a forced
+        // disconnect are this connection's again (nothing is deleted;
+        // `cua cloud status` lists them, a sweep handles the expired).
+        let adopted = self
+            .store
+            .cleanups()
+            .map_err(Error::Io)?
+            .into_iter()
+            .any(|c| c.same_account(&conn));
+        if adopted {
+            let _ = self.store.clear_cleanup(p.name(), &conn.account);
+            let mut a = audit::entry("cleanup_adopted", p.name(), "user");
+            a.detail = format!("{} connected again", conn.label(p.title()));
+            self.store.audit(a);
+        }
         let mut a = audit::entry("connect", p.name(), "user");
         a.detail = format!("{} ttl {}h", conn.label(p.title()), conn.ttl_hours);
         self.store.audit(a);
@@ -497,11 +898,21 @@ impl CloudManager for Clouds {
     }
 
     async fn disconnect(&self, provider: &str, delete: bool) -> Result<CloudDisconnected> {
+        self.disconnect_with(provider, delete, false).await
+    }
+
+    async fn disconnect_with(
+        &self,
+        provider: &str,
+        delete: bool,
+        force: bool,
+    ) -> Result<CloudDisconnected> {
         let p = self.api(provider)?;
         let mut deleted = Vec::new();
         if let Some(conn) = self.store.connection(p.name()).map_err(Error::Io)? {
             if delete {
-                // 1. Delete everything Cua created there.
+                // 1. Delete everything Cua created there. A cloud that cannot
+                // be checked cannot be emptied: `--force` does not apply.
                 let rows = self
                     .sweep_as(Some(p.name()), false, true, "disconnect")
                     .await?;
@@ -531,7 +942,10 @@ impl CloudManager for Clouds {
             } else {
                 // Never orphan: running Cua resources would keep billing,
                 // and a sweep skips a cloud that is not connected.
-                let live = self.live(p.as_ref(), &conn, false).await?;
+                let live = match self.live(p.as_ref(), &conn, false).await {
+                    Ok(live) => live,
+                    Err(e) => return self.unchecked(p.as_ref(), conn, e, force).await,
+                };
                 if !live.is_empty() {
                     let mut a = audit::entry("disconnect", p.name(), "user");
                     a.outcome = "refused".into();
@@ -567,12 +981,7 @@ impl CloudManager for Clouds {
             };
             self.store.audit(a);
         }
-        if self.default_on() == p.name()
-            && let Some(mut s) = self.settings()
-            && let Ok(key) = cua_sandbox_core::settings::key("default.on")
-        {
-            let _ = s.unset(key);
-        }
+        self.unset_default(p.name());
         let t = model::now();
         Ok(CloudDisconnected {
             provider: p.name().into(),
@@ -586,6 +995,7 @@ impl CloudManager for Clouds {
                 .map(|r| r.wire(t))
                 .collect(),
             deleted,
+            cleanup: None,
         })
     }
 

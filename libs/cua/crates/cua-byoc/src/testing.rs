@@ -49,6 +49,25 @@ pub struct FakeAccount {
     pub types: Option<Vec<HostType>>,
     /// The type and price `kinds` quotes (default `fake.small`, 0.02).
     pub estimate: Option<(String, f64)>,
+    /// Signed out: every call fails with this raw error (as the cloud's SDK
+    /// words it), `test` included.
+    pub signed_out: Option<String>,
+    /// The account the credentials reach now (default `fake-account`):
+    /// another one is a different profile or account.
+    pub identity: Option<String>,
+    /// The cloud's clock minus this machine's, seconds.
+    pub clock_skew: i64,
+    /// Resources the account has but that its list and describe calls do
+    /// not show yet (eventual consistency), by id.
+    pub invisible: std::collections::BTreeSet<String>,
+    /// The next this many calls fail as rate limited (429).
+    pub throttle: u32,
+    /// Listing never answers (a partition, a half-open connection).
+    pub hang_list: bool,
+    /// Describing fails (the API is briefly unavailable).
+    pub fail_describe: bool,
+    /// Listing fails on its second page: a listing that stopped half way.
+    pub fail_second_page: bool,
 }
 
 /// A scripted provider named `name`.
@@ -92,7 +111,21 @@ impl FakeProvider {
         self.account.lock().unwrap().calls.clone()
     }
 
+    /// The fault a call meets first: signed out, or rate limited.
+    fn fault(&self, call: &str) -> Result<()> {
+        let mut a = self.account.lock().unwrap();
+        if let Some(e) = &a.signed_out {
+            return Err(Error::Cloud(format!("fake: {call}: {e}")));
+        }
+        if a.throttle > 0 {
+            a.throttle -= 1;
+            return Err(Error::Cloud(format!("fake: {call}: HTTP 429 Too Many Requests")));
+        }
+        Ok(())
+    }
+
     fn guard(&self, r: &Resource, owner: &str, verb: &str) -> Result<()> {
+        self.fault(verb)?;
         let a = self.account.lock().unwrap();
         match a.resources.get(&r.id) {
             Some(x) if model::is_ours(&x.tags, owner) => Ok(()),
@@ -172,13 +205,46 @@ impl CloudApi for FakeProvider {
     }
 
     async fn test(&self, conn: &Connection) -> Tested {
+        let (account, signed_out) = {
+            let mut a = self.account.lock().unwrap();
+            a.calls.push("test".into());
+            (
+                a.identity.clone().unwrap_or_else(|| "fake-account".into()),
+                a.signed_out.clone(),
+            )
+        };
         let mut t = Tested {
-            account: "fake-account".into(),
+            account,
             ..Default::default()
         };
-        t.check("credentials", true, format!("fake in {}", conn.region));
-        self.account.lock().unwrap().calls.push("test".into());
+        match signed_out {
+            Some(e) => t.check("credentials", false, format!("fake: identify: {e}")),
+            None => t.check("credentials", true, format!("fake in {}", conn.region)),
+        }
         t
+    }
+
+    async fn identity(&self, _conn: &Connection) -> Result<crate::api::Identity> {
+        self.fault("identify")?;
+        let mut a = self.account.lock().unwrap();
+        a.calls.push("identity".into());
+        Ok(crate::api::Identity {
+            id: Some(a.identity.clone().unwrap_or_else(|| "fake-account".into())),
+            clock: Some(model::now().saturating_add_signed(a.clock_skew)),
+        })
+    }
+
+    fn expected_identity(&self, conn: &Connection) -> String {
+        if conn.identity.is_empty() {
+            conn.account.clone()
+        } else {
+            conn.identity.clone()
+        }
+    }
+
+    fn sign_in_help(&self, _conn: &Connection, error: &str) -> Option<crate::signin::SignIn> {
+        crate::signin::mentions(error, &["not signed in", "session has expired"])
+            .then(|| crate::signin::SignIn::expired("Fake", "fake login"))
     }
 
     async fn provision(&self, conn: &Connection, spec: &ProvisionSpec) -> Result<Vec<Resource>> {
@@ -187,6 +253,7 @@ impl CloudApi for FakeProvider {
                 "fake: runs Spaces itself, no hosts".into(),
             ));
         }
+        self.fault("provision")?;
         let r = {
             let mut a = self.account.lock().unwrap();
             a.calls.push(format!("provision {}", spec.name));
@@ -242,11 +309,15 @@ impl CloudApi for FakeProvider {
         conn: &Connection,
         r: &Resource,
     ) -> Result<Option<(String, BTreeMap<String, String>)>> {
+        self.fault("describe")?;
         // Like a regional cloud API: asked in another region, it is not there.
         let a = self.account.lock().unwrap();
+        if a.fail_describe {
+            return Err(Error::Cloud("fake: describe: HTTP 503 Service Unavailable".into()));
+        }
         Ok(a.resources
             .get(&r.id)
-            .filter(|x| in_region(x, conn))
+            .filter(|x| in_region(x, conn) && !a.invisible.contains(&x.id))
             .map(|x| (x.state.clone(), x.tags.clone())))
     }
 
@@ -297,13 +368,24 @@ impl CloudApi for FakeProvider {
     }
 
     async fn list_owned(&self, conn: &Connection, owner: &str) -> Result<Vec<Resource>> {
+        self.fault("list")?;
+        if self.account.lock().unwrap().hang_list {
+            std::future::pending::<()>().await;
+        }
         let a = self.account.lock().unwrap();
         if a.fail_list {
             return Err(Error::Cloud("fake: not signed in".into()));
         }
+        if a.fail_second_page && a.resources.len() > 1 {
+            return Err(Error::Cloud(
+                "fake: list (page 2): connection reset by peer".into(),
+            ));
+        }
         Ok(a.resources
             .values()
-            .filter(|r| model::is_ours(&r.tags, owner) && in_region(r, conn))
+            .filter(|r| {
+                model::is_ours(&r.tags, owner) && in_region(r, conn) && !a.invisible.contains(&r.id)
+            })
             .cloned()
             .collect())
     }

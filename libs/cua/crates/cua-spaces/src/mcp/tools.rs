@@ -334,7 +334,12 @@ async fn dispatch(
             let a: i::CloudDisconnect = args(tool, a)?;
             let c = spaces.sandboxes().clouds()?;
             Ok(json_of(
-                &c.disconnect(&a.provider, a.delete.unwrap_or(false)).await?,
+                &c.disconnect_with(
+                    &a.provider,
+                    a.delete.unwrap_or(false),
+                    a.force.unwrap_or(false),
+                )
+                .await?,
             ))
         }
         // --- the elastic pool --------------------------------------------

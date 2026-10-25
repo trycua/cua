@@ -20,6 +20,17 @@
 //!   a listing covers one connection's region, so a record from another
 //!   region (an elastic host placed elsewhere) is "not seen", never "gone".
 //!   The automatic sweep never forgets a record at all.
+//! - Delete only when sure: before anything, the credentials must prove
+//!   they reach the account the cloud was connected with
+//!   ([`crate::CloudApi::identity`]); the listing must be complete (every
+//!   page, else the pass fails and deletes nothing); "expired" is judged by
+//!   the earlier of this machine's and the cloud's clock, less
+//!   [`EXPIRY_MARGIN_SECS`]; a resource not in this home's records is never
+//!   deleted unless it expired (or with `all`); a record younger than
+//!   [`CONSISTENCY_SECS`] is never taken for gone (a cloud may not list a
+//!   new resource yet). What cannot be confirmed is kept and reported.
+//! - One sweep at a time per home ([`crate::Store::try_sweep_lease`]); other
+//!   devices have other owner ids and never touch these resources.
 //! - Dry run by default: nothing is deleted.
 
 use std::collections::BTreeMap;
@@ -34,6 +45,30 @@ use crate::state::Store;
 /// A create younger than this is never "orphaned" (it is still booting).
 pub const GRACE_SECS: u64 = 30 * 60;
 
+/// How far past its expiry a resource must be, by both clocks, before a
+/// sweep deletes it for being expired: a clock that runs ahead never ends a
+/// Space early (the machine itself ends at its own expiry anyway).
+pub const EXPIRY_MARGIN_SECS: u64 = 15 * 60;
+
+/// A record younger than this is never taken for gone: a cloud's listing
+/// and describe calls may not show a new resource for a while.
+pub const CONSISTENCY_SECS: u64 = 10 * 60;
+
+/// Which resources a sweep may delete.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scope {
+    /// Expired ones, what a failed create left, and records whose sandbox
+    /// was never created (`cua cloud sweep`, the automatic sweep).
+    Expired,
+    /// The recorded resources of a cloud disconnected while it could not be
+    /// checked (`cua cloud sweep --delete` after sign-in): the forced
+    /// disconnect asked for exactly this. Unrecorded ones keep the
+    /// [`Scope::Expired`] rules.
+    Cleanup,
+    /// Every Cua resource there (`--all`, `disconnect --delete`).
+    All,
+}
+
 /// What to do with one resource.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Verdict {
@@ -45,15 +80,19 @@ pub struct Verdict {
 
 /// The sweeper's decision for `r`, as the cloud shows it with `tags`,
 /// given this home's `records`. Pure, so the rules are tested directly.
+///
+/// `now` is the sweep's conservative clock: the earlier of this machine's
+/// and the cloud's, less [`EXPIRY_MARGIN_SECS`].
 pub fn verdict(
     r: &Resource,
     tags: &BTreeMap<String, String>,
     owner: &str,
     records: &[Resource],
-    all: bool,
+    scope: Scope,
     instances_left: bool,
     now: u64,
 ) -> Verdict {
+    let all = scope == Scope::All;
     let keep = |reason: &str| Verdict {
         delete: false,
         reason: reason.into(),
@@ -76,7 +115,7 @@ pub fn verdict(
         .unwrap_or_else(|| model::tag_expires(tags));
     let shared = !matches!(r.resource_type.as_str(), "instance" | "sandbox");
     if shared {
-        return if all && !instances_left {
+        return if scope != Scope::Expired && !instances_left {
             del("shared resource, no Cua instance left")
         } else {
             keep("shared by Cua sandboxes here")
@@ -87,6 +126,9 @@ pub fn verdict(
     }
     if expires > 0 && now >= expires {
         return del("expired");
+    }
+    if scope == Scope::Cleanup && recorded.is_some() {
+        return del("disconnected while Cua could not check it: cleaned up after sign-in");
     }
     match recorded {
         Some(x) if x.state == "failed" => del("a failed create left it"),
@@ -102,14 +144,10 @@ pub fn verdict(
         }
         Some(x) if now.saturating_sub(x.created) < GRACE_SECS => keep("being created"),
         Some(_) => del("its sandbox was never created"),
-        None => {
-            let created = r.created;
-            if created > 0 && now.saturating_sub(created) < GRACE_SECS {
-                keep("being created elsewhere")
-            } else {
-                del("no sandbox refers to it")
-            }
-        }
+        // Tagged as this home's but not in its records: Cua cannot prove
+        // nothing uses it (its record may be what was lost), so it stays
+        // until it expires; `--all` deletes it.
+        None => keep("not in this computer's records: kept, Cua can't confirm it is unused (--all deletes it)"),
     }
 }
 
@@ -129,6 +167,68 @@ pub struct SweepOpts<'a> {
     /// May forget the record of a resource the cloud confirms is gone.
     /// The automatic sweep never does.
     pub forget_missing: bool,
+    /// Sweeping a cloud disconnected while it could not be checked
+    /// ([`Scope::Cleanup`] unless `all`; the automatic sweep keeps to
+    /// [`Scope::Expired`]).
+    pub cleanup: bool,
+}
+
+impl SweepOpts<'_> {
+    fn scope(&self) -> Scope {
+        if self.all {
+            Scope::All
+        } else if self.cleanup && self.actor != AUTO_ACTOR {
+            Scope::Cleanup
+        } else {
+            Scope::Expired
+        }
+    }
+}
+
+/// Whether record `r` belongs to `conn`'s account: it names that account,
+/// or (a record from before accounts were kept) it names none and the
+/// provider has no other account here (`ambiguous` false).
+pub fn belongs(r: &Resource, conn: &Connection, ambiguous: bool) -> bool {
+    r.provider == conn.provider
+        && if r.account.is_empty() {
+            !ambiguous
+        } else {
+            r.account == conn.account
+        }
+}
+
+/// Proves `conn`'s credentials reach the account it was connected with and
+/// returns the sweep's conservative clock (see [`verdict`]).
+pub async fn checked_clock(provider: &dyn CloudApi, conn: &Connection) -> Result<u64> {
+    let id = provider.identity(conn).await?;
+    let want = provider.expected_identity(conn);
+    if let Some(got) = &id.id
+        && !want.is_empty()
+        && *got != want
+    {
+        let how = if conn.profile.is_empty() {
+            String::new()
+        } else {
+            format!(" (profile {})", conn.profile)
+        };
+        return Err(cua_sandbox_core::Error::Cloud(
+            crate::signin::SignIn::wrong_account(provider.title(), got, &want, &how).line,
+        ));
+    }
+    let local = now();
+    if let Some(cloud) = id.clock
+        && cloud.abs_diff(local) > 60
+    {
+        tracing::warn!(
+            provider = provider.name(),
+            skew_secs = cloud as i64 - local as i64,
+            "this machine's clock and the cloud's differ: expiry is judged by the earlier"
+        );
+    }
+    Ok(id
+        .clock
+        .map_or(local, |c| c.min(local))
+        .saturating_sub(EXPIRY_MARGIN_SECS))
 }
 
 /// Whether the cloud, asked through `conn`, can answer for `rec`: the
@@ -147,18 +247,23 @@ pub async fn sweep_provider(
     store: &Store,
     opts: SweepOpts<'_>,
 ) -> Result<Vec<CloudSweepItem>> {
+    let scope = opts.scope();
     let SweepOpts {
         dry_run,
-        all,
+        all: _,
         actor,
         forget_missing,
+        cleanup: _,
     } = opts;
+    // Nothing before the credentials prove they are the connected account.
+    let t = checked_clock(provider, conn).await?;
     let owner = store.owner_id().map_err(cua_sandbox_core::Error::Io)?;
+    let ambiguous = ambiguous(store, provider.name())?;
     let records: Vec<Resource> = store
         .resources()
         .map_err(cua_sandbox_core::Error::Io)?
         .into_iter()
-        .filter(|r| r.provider == provider.name())
+        .filter(|r| belongs(r, conn, ambiguous))
         .collect();
     // Every region this home recorded something in, and the connection's:
     // a host or group made in another region is listed (and deleted) there,
@@ -208,10 +313,9 @@ pub async fn sweep_provider(
             .find(|c| c.region == region)
             .unwrap_or(conn)
     };
-    let t = now();
     let instances_left = listed.iter().any(|r| {
         matches!(r.resource_type.as_str(), "instance" | "sandbox")
-            && !verdict(r, &r.tags, &owner, &records, all, true, t).delete
+            && !verdict(r, &r.tags, &owner, &records, scope, true, t).delete
             && r.state != "terminated"
     });
     let mut out = Vec::new();
@@ -222,9 +326,9 @@ pub async fn sweep_provider(
         if r.state == "terminated" {
             continue;
         }
-        let v = verdict(r, &r.tags, &owner, &records, all, instances_left, t);
+        let v = verdict(r, &r.tags, &owner, &records, scope, instances_left, t);
         let mut item = CloudSweepItem {
-            resource: r.wire(t),
+            resource: r.wire(now()),
             action: if v.delete {
                 "delete".into()
             } else {
@@ -262,8 +366,9 @@ pub async fn sweep_provider(
                             resource_type: model::RELAY_MACHINE.into(),
                             name: m.clone(),
                             machine: m,
-                            created: t,
+                            created: now(),
                             state: "orphaned".into(),
+                            account: conn.account.clone(),
                             ..Default::default()
                         });
                     }
@@ -294,6 +399,16 @@ pub async fn sweep_provider(
         if listed.iter().any(|r| same(rec, r)) {
             continue;
         }
+        if !rec.id.is_empty() && t.saturating_sub(rec.created) < CONSISTENCY_SECS {
+            // Too new to be judged by its absence: the cloud may not list it
+            // yet.
+            out.push(CloudSweepItem {
+                resource: rec.wire(now()),
+                action: "keep".into(),
+                reason: "just created: the cloud may not list it yet".into(),
+            });
+            continue;
+        }
         // Not in the listing. Gone only if the cloud, asked where the
         // record says it lives, says so; otherwise it is simply not seen
         // and stays recorded.
@@ -305,7 +420,7 @@ pub async fn sweep_provider(
                     Ok(Some((state, _))) => state == "terminated",
                     Err(_) => false,
                 });
-        let mut w = rec.wire(t);
+        let mut w = rec.wire(now());
         if gone && forget_missing {
             if !dry_run {
                 let _ = store.forget(rec);
@@ -351,6 +466,30 @@ pub(crate) fn same(a: &Resource, b: &Resource) -> bool {
         && ((!a.id.is_empty() && a.id == b.id) || (!a.name.is_empty() && a.name == b.name))
 }
 
+/// Whether more than one account of `provider` is known here (a connection
+/// and cleanup entries): records that name no account are then nobody's to
+/// judge.
+pub fn ambiguous(store: &Store, provider: &str) -> Result<bool> {
+    let mut accounts: Vec<String> = store
+        .connections()
+        .map_err(cua_sandbox_core::Error::Io)?
+        .into_iter()
+        .filter(|c| c.provider == provider)
+        .map(|c| c.account)
+        .collect();
+    accounts.extend(
+        store
+            .cleanups()
+            .map_err(cua_sandbox_core::Error::Io)?
+            .into_iter()
+            .filter(|c| c.connection.provider == provider)
+            .map(|c| c.connection.account),
+    );
+    accounts.sort();
+    accounts.dedup();
+    Ok(accounts.len() > 1)
+}
+
 /// A report from the rows of every provider.
 pub fn report(dry_run: bool, resources: Vec<CloudSweepItem>) -> CloudSweepReport {
     CloudSweepReport { dry_run, resources }
@@ -391,9 +530,9 @@ mod tests {
                 expires: 1,
                 ..r.clone()
             }];
-            for all in [false, true] {
-                let v = verdict(&r, &t, "me", &recorded, all, false, NOW);
-                assert!(!v.delete, "{why} all={all}: {v:?}");
+            for scope in [Scope::Expired, Scope::Cleanup, Scope::All] {
+                let v = verdict(&r, &t, "me", &recorded, scope, false, NOW);
+                assert!(!v.delete, "{why} {scope:?}: {v:?}");
             }
         }
     }
@@ -414,23 +553,25 @@ mod tests {
                 &live,
                 "me",
                 std::slice::from_ref(&rec_live),
-                false,
+                Scope::Expired,
                 true,
                 NOW
             )
             .delete
         );
         // Expired: deleted.
-        assert!(verdict(&rec_live, &expired, "me", &[], false, true, NOW).delete);
-        // Unrecorded and old: an orphan of this owner.
+        assert!(verdict(&rec_live, &expired, "me", &[], Scope::Expired, true, NOW).delete);
+        // Unrecorded and old: tagged as ours, but nothing proves it is
+        // unused (its record may be what was lost): kept until it expires.
         let old = inst("i-2", live.clone(), NOW - GRACE_SECS - 1);
-        assert_eq!(
-            verdict(&old, &live, "me", &[], false, true, NOW).reason,
-            "no sandbox refers to it"
-        );
+        let v = verdict(&old, &live, "me", &[], Scope::Expired, true, NOW);
+        assert!(!v.delete, "{v:?}");
+        assert!(v.reason.contains("can't confirm"), "{v:?}");
+        assert!(!verdict(&old, &live, "me", &[], Scope::Cleanup, true, NOW).delete);
+        assert!(verdict(&old, &expired, "me", &[], Scope::Expired, true, NOW).delete);
         // Unrecorded but young: being created.
         let young = inst("i-3", live.clone(), NOW - 5);
-        assert!(!verdict(&young, &live, "me", &[], false, true, NOW).delete);
+        assert!(!verdict(&young, &live, "me", &[], Scope::Expired, true, NOW).delete);
         // all: everything ours.
         assert!(
             verdict(
@@ -438,7 +579,7 @@ mod tests {
                 &live,
                 "me",
                 std::slice::from_ref(&rec_live),
-                true,
+                Scope::All,
                 true,
                 NOW
             )
@@ -459,7 +600,7 @@ mod tests {
             ..inst("171928710", live.clone(), NOW - GRACE_SECS - 60)
         };
         let recs = std::slice::from_ref(&host);
-        let v = verdict(&host, &live, "me", recs, false, true, NOW);
+        let v = verdict(&host, &live, "me", recs, Scope::Expired, true, NOW);
         assert!(!v.delete, "{v:?}");
         let expired = tags("me", "host:hetzner-1", "h", NOW - 1);
         let gone = Resource {
@@ -472,12 +613,29 @@ mod tests {
                 &expired,
                 "me",
                 std::slice::from_ref(&gone),
-                false,
+                Scope::Expired,
                 true,
                 NOW
             )
             .delete
         );
+    }
+
+    /// A forced disconnect asked for its recorded Spaces to go after
+    /// sign-in; a resource it never recorded keeps the usual rules.
+    #[test]
+    fn cleanup_deletes_what_was_recorded_and_nothing_else() {
+        let t = tags("me", "s", "h", NOW + 3600);
+        let rec = Resource {
+            sandbox: "aws:s".into(),
+            state: "running".into(),
+            ..inst("i-1", t.clone(), NOW - 7200)
+        };
+        let recs = std::slice::from_ref(&rec);
+        assert!(!verdict(&rec, &t, "me", recs, Scope::Expired, true, NOW).delete);
+        assert!(verdict(&rec, &t, "me", recs, Scope::Cleanup, true, NOW).delete);
+        let stranger = inst("i-2", t.clone(), NOW - 7200);
+        assert!(!verdict(&stranger, &t, "me", recs, Scope::Cleanup, true, NOW).delete);
     }
 
     #[test]
@@ -489,7 +647,7 @@ mod tests {
             created: NOW - 5,
             ..inst("i-9", t.clone(), NOW - 5)
         };
-        let v = verdict(&r, &t, "me", std::slice::from_ref(&r), false, true, NOW);
+        let v = verdict(&r, &t, "me", std::slice::from_ref(&r), Scope::Expired, true, NOW);
         assert!(v.delete, "{v:?}");
         assert_eq!(v.reason, "a failed create left it");
     }
@@ -503,8 +661,9 @@ mod tests {
             resource_type: "security_group".into(),
             ..Default::default()
         };
-        assert!(!verdict(&sg, &t, "me", &[], false, false, NOW).delete);
-        assert!(!verdict(&sg, &t, "me", &[], true, true, NOW).delete);
-        assert!(verdict(&sg, &t, "me", &[], true, false, NOW).delete);
+        assert!(!verdict(&sg, &t, "me", &[], Scope::Expired, false, NOW).delete);
+        assert!(!verdict(&sg, &t, "me", &[], Scope::All, true, NOW).delete);
+        assert!(verdict(&sg, &t, "me", &[], Scope::All, false, NOW).delete);
+        assert!(verdict(&sg, &t, "me", &[], Scope::Cleanup, false, NOW).delete);
     }
 }

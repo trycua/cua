@@ -247,7 +247,8 @@ async fn disconnect_is_plain_when_nothing_of_cua_s_is_there_or_the_cloud_is_not_
     clouds.connect(&aws(), false, None).await.unwrap();
     w.fake.account.lock().unwrap().fail_list = true;
     let err = clouds.disconnect("aws", false).await.unwrap_err();
-    assert!(err.to_string().contains("not signed in"), "{err}");
+    assert!(err.to_string().contains("Cua couldn't check Fake"), "{err}");
+    assert!(err.to_string().contains("records show nothing there"), "{err}");
     assert!(clouds.status(None).await.unwrap().providers[0].connected);
 }
 
@@ -262,7 +263,8 @@ async fn one_automatic_pass_deletes_only_what_sweep_delete_would() {
     let owner = store.owner_id().unwrap();
     let t = model::now();
     let old = t - 24 * 3600;
-    put(&w, "i-expired", model::tags(&owner, "s1", "c1", t - 1), old);
+    // Past its expiry by more than the safety margin, by both clocks.
+    put(&w, "i-expired", model::tags(&owner, "s1", "c1", t - 3600), old);
     put(&w, "i-live", model::tags(&owner, "s2", "c2", t + 3600), old);
     store
         .record(Resource {

@@ -475,11 +475,18 @@ impl Connection {
 
     /// `cloud_disconnect`: forgets a connected cloud. Refused while Cua
     /// resources still run there; with `delete`, deletes everything Cua
-    /// created there first and disconnects once the cloud confirms.
-    pub fn cloud_disconnect(&self, provider: &str, delete: bool) -> Result<Map<String, Value>> {
+    /// created there first and disconnects once the cloud confirms. With
+    /// `force`, a cloud that cannot be checked (signed out) is disconnected
+    /// anyway and its records kept for a sweep after sign-in.
+    pub fn cloud_disconnect(
+        &self,
+        provider: &str,
+        delete: bool,
+        force: bool,
+    ) -> Result<Map<String, Value>> {
         self.call_object(
             "cloud_disconnect",
-            json!({ "provider": provider, "delete": delete }),
+            json!({ "provider": provider, "delete": delete, "force": force }),
         )
     }
 

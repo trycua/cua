@@ -113,11 +113,15 @@ pub enum CloudCmd {
     },
     /// Forget a connected cloud. Refused while Spaces Cua created there
     /// still run (they would keep billing unseen); add --delete to delete
-    /// everything Cua created there first, then disconnect.
+    /// everything Cua created there first, then disconnect. When the cloud
+    /// can't be checked (you're signed out), it asks whether to disconnect
+    /// anyway; --force does that without asking.
     #[command(after_help = "Examples:
   cua cloud disconnect aws
   # delete everything Cua created in the account, then disconnect
-  cua cloud disconnect aws --delete")]
+  cua cloud disconnect aws --delete
+  # signed out and can't sign in now: disconnect anyway, clean up later
+  cua cloud disconnect aws --force")]
     Disconnect {
         /// `aws`, `gcp`, `hetzner` or `modal`.
         provider: String,
@@ -125,6 +129,12 @@ pub enum CloudCmd {
         /// once the cloud confirms nothing is left.
         #[arg(long)]
         delete: bool,
+        /// Disconnect even when the cloud can't be checked (signed out,
+        /// credentials revoked). Cua keeps its records of what it started
+        /// there: anything still running bills until its expiry, and `cua
+        /// cloud sweep --delete` after you sign in removes it.
+        #[arg(long)]
+        force: bool,
     },
     /// What Cua did in your clouds: connects, disconnects, and every
     /// resource recorded, created, confirmed and deleted (by you, a sweep,
@@ -374,6 +384,18 @@ pub async fn run(
     json: bool,
     out: &mut dyn Write,
 ) -> Result<i32, CuaError> {
+    run_with(cua, cmd, json, out, &|q| crate::util::confirm(q, false)).await
+}
+
+/// [`run`] with `ask` answering the "Disconnect anyway?" question (`None`
+/// when it cannot be asked: not a terminal, or `--json`).
+pub async fn run_with(
+    cua: &Arc<Cua>,
+    cmd: CloudCmd,
+    json: bool,
+    out: &mut dyn Write,
+    ask: &dyn Fn(&str) -> bool,
+) -> Result<i32, CuaError> {
     let spaces = cua.spaces();
     match cmd {
         CloudCmd::Status { provider } => {
@@ -404,6 +426,10 @@ pub async fn run(
                 for r in &s.resources {
                     line(out, resource_line(r));
                 }
+            }
+            for c in &s.cleanup {
+                line(out, "");
+                line(out, cleanup_line(c));
             }
         }
         CloudCmd::Connect {
@@ -461,20 +487,49 @@ pub async fn run(
             }
             return Ok(if r.ok { 0 } else { 1 });
         }
-        CloudCmd::Disconnect { provider, delete } => {
-            let d = spaces
-                .cloud_disconnect(provider.to_ascii_lowercase(), delete)
-                .await?;
+        CloudCmd::Disconnect {
+            provider,
+            delete,
+            force,
+        } => {
+            let provider = provider.to_ascii_lowercase();
+            let d = match spaces
+                .cloud_disconnect(provider.clone(), delete, force)
+                .await
+            {
+                Ok(d) => d,
+                // The cloud can't be checked: ask (a terminal), else say how.
+                Err(CuaError::Cloud(m)) if !force && unchecked(&m) => {
+                    let plain = cua_sdk::cloud_signin_plain(&m);
+                    let interactive = !json && crate::util::interactive();
+                    if !interactive {
+                        return Err(CuaError::Cloud(m));
+                    }
+                    for l in plain.lines() {
+                        if !l.starts_with("To disconnect anyway") {
+                            line(out, l);
+                        }
+                    }
+                    let _ = out.flush();
+                    if !ask("Disconnect anyway?") {
+                        line(out, "Not disconnected. Sign in, then run this again.");
+                        return Ok(1);
+                    }
+                    spaces.cloud_disconnect(provider.clone(), delete, true).await?
+                }
+                Err(e) => return Err(e),
+            };
             if json {
-                json_line(
-                    out,
-                    serde_json::json!({
-                        "provider": d.provider,
-                        "disconnected": d.disconnected,
-                        "deleted": d.deleted.iter().map(resource_json).collect::<Vec<_>>(),
-                        "left": d.left.iter().map(resource_json).collect::<Vec<_>>(),
-                    }),
-                );
+                let mut v = serde_json::json!({
+                    "provider": d.provider,
+                    "disconnected": d.disconnected,
+                    "deleted": d.deleted.iter().map(resource_json).collect::<Vec<_>>(),
+                    "left": d.left.iter().map(resource_json).collect::<Vec<_>>(),
+                });
+                if let Some(c) = &d.cleanup {
+                    v["cleanup"] = cleanup_json(c);
+                }
+                json_line(out, v);
                 return Ok(0);
             }
             if !d.deleted.is_empty() {
@@ -482,6 +537,18 @@ pub async fn run(
                 for r in &d.deleted {
                     line(out, resource_line(r));
                 }
+            }
+            if let Some(c) = &d.cleanup {
+                line(out, format!("Disconnected {}.", c.title));
+                hint_line(
+                    out,
+                    format!(
+                        "{} Cua kept its records: after you sign in, run `cua cloud sweep {} --delete`.",
+                        c.message.trim_end_matches(" Sign in and clean up."),
+                        d.provider
+                    ),
+                );
+                return Ok(0);
             }
             line(
                 out,
@@ -542,6 +609,14 @@ pub async fn run(
             }
             if r.resources.is_empty() {
                 line(out, "Nothing to clean up.");
+            }
+            if r.resources.iter().any(|i| i.action == "clean")
+                && r.resources.iter().all(|i| i.action == "clean")
+            {
+                for i in &r.resources {
+                    line(out, i.reason.clone());
+                }
+                return Ok(0);
             }
             for i in &r.resources {
                 line(
@@ -879,6 +954,44 @@ fn status_json(s: &cua_sdk::CloudStatus) -> serde_json::Value {
         "default_on": s.default_on,
         "providers": s.providers.iter().map(provider_json).collect::<Vec<_>>(),
         "resources": s.resources.iter().map(resource_json).collect::<Vec<_>>(),
+        "cleanup": s.cleanup.iter().map(cleanup_json).collect::<Vec<_>>(),
+    })
+}
+
+/// Whether a `cloud` error is a disconnect refused because the cloud can't
+/// be checked.
+fn unchecked(m: &str) -> bool {
+    cua_sdk::cloud_signin_unchecked(m)
+}
+
+/// "AWS may still have 2 Spaces Cua started. Sign in and clean up. (profile
+/// sandbox, account 1234; latest expiry 2026-10-25T22:00:00Z)"
+fn cleanup_line(c: &cua_sdk::CloudCleanup) -> String {
+    let mut whose = Vec::new();
+    if !c.profile.is_empty() {
+        whose.push(format!("profile {}", c.profile));
+    }
+    if !c.account.is_empty() {
+        whose.push(format!("account {}", c.account));
+    }
+    if c.never_expires {
+        whose.push("one never expires".into());
+    } else if !c.latest_expires.is_empty() {
+        whose.push(format!("latest expiry {}", c.latest_expires));
+    }
+    if whose.is_empty() {
+        c.message.clone()
+    } else {
+        format!("{} ({})", c.message, whose.join("; "))
+    }
+}
+
+fn cleanup_json(c: &cua_sdk::CloudCleanup) -> serde_json::Value {
+    serde_json::json!({
+        "provider": c.provider, "title": c.title, "account": c.account, "profile": c.profile,
+        "region": c.region, "spaces": c.spaces, "resources": c.resources, "types": c.types,
+        "latest_expires": c.latest_expires, "never_expires": c.never_expires,
+        "usd_per_hour": c.usd_per_hour, "since": c.since, "reason": c.reason, "message": c.message,
     })
 }
 
@@ -995,7 +1108,7 @@ mod tests {
         assert!(parse_err(&["add", "aws", "--list", "--down"]));
         assert!(matches!(
             parse(&["disconnect", "AWS"]),
-            CloudCmd::Disconnect { provider, delete: false } if provider == "AWS"
+            CloudCmd::Disconnect { provider, delete: false, force: false } if provider == "AWS"
         ));
         assert!(matches!(
             parse(&["disconnect", "aws", "--delete"]),

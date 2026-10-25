@@ -509,6 +509,47 @@ fn gcloud_active(dir: &std::path::Path) -> (Option<String>, Option<String>) {
     )
 }
 
+/// A Google Cloud error as a sign-in problem, when it is one; `account` is
+/// the gcloud account the connection names (empty: the active one).
+pub fn sign_in_of(account: &str, error: &str) -> Option<crate::signin::SignIn> {
+    use crate::signin::{SignIn, mentions};
+    let adc = mentions(error, &["application-default", "application default credentials"]);
+    let fix = if adc {
+        "gcloud auth application-default login".to_string()
+    } else if account.is_empty() {
+        "gcloud auth login".to_string()
+    } else {
+        format!("gcloud auth login {account}")
+    };
+    if mentions(
+        error,
+        &[
+            "you do not currently have an active account",
+            "no credentialed accounts",
+            "could not automatically determine credentials",
+            "install the google cloud cli",
+        ],
+    ) {
+        return Some(SignIn::missing("Google Cloud", &fix));
+    }
+    if mentions(
+        error,
+        &[
+            "reauthentication",
+            "invalid_grant",
+            "problem refreshing your current auth tokens",
+            "token has been expired or revoked",
+            "request had invalid authentication credentials",
+            "unauthenticated",
+            "gcloud auth login",
+            "no access token",
+        ],
+    ) {
+        return Some(SignIn::expired("Google Cloud", &fix));
+    }
+    None
+}
+
 #[async_trait]
 impl CloudApi for Gcp {
     fn name(&self) -> &'static str {
@@ -542,6 +583,10 @@ impl CloudApi for Gcp {
             },
             _ => CloudCredentials::default(),
         }
+    }
+
+    fn sign_in_help(&self, conn: &Connection, error: &str) -> Option<crate::signin::SignIn> {
+        sign_in_of(&conn.profile, error)
     }
 
     fn resolve(&self, t: &Target) -> Result<Connection> {
@@ -960,10 +1005,18 @@ impl CloudApi for Gcp {
             if let Some(p) = &page {
                 url.query_pairs_mut().append_pair("pageToken", p);
             }
+            // A 404 here is the project or zone, not "no instances": a
+            // listing that did not happen must never read as "all gone".
             let v = self
                 .get(conn, url.as_str(), "list instances")
                 .await?
-                .unwrap_or(Value::Null);
+                .ok_or_else(|| {
+                    cloud_err(
+                        "gcp",
+                        "list instances",
+                        format!("project {} or zone {} not found", conn.project, conn.zone),
+                    )
+                })?;
             for i in v["items"].as_array().into_iter().flatten() {
                 let tags = labels_of(i);
                 // Checked again here: the server filter is not trusted alone.
@@ -1079,6 +1132,19 @@ impl CloudApi for Gcp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gcloud_sign_in_problems_name_the_account_or_adc() {
+        let s = sign_in_of("ada@example.com", "gcp: gcloud sign-in: ERROR: (gcloud.auth.print-access-token) There was a problem refreshing your current auth tokens: Reauthentication failed. (run `gcloud auth login`)").unwrap();
+        assert_eq!(s.kind, crate::signin::Kind::Expired);
+        assert_eq!(s.line, "Your Google Cloud sign-in expired. Sign in with `gcloud auth login ada@example.com`, then run this again.");
+        let m = sign_in_of("", "ERROR: (gcloud.auth.print-access-token) You do not currently have an active account selected.").unwrap();
+        assert_eq!(m.kind, crate::signin::Kind::Missing);
+        assert!(m.line.contains("`gcloud auth login`"));
+        let adc = sign_in_of("", "Could not automatically determine credentials (application default credentials)").unwrap();
+        assert!(adc.line.contains("`gcloud auth application-default login`"), "{}", adc.line);
+        assert_eq!(sign_in_of("", "gcp: create: Quota 'CPUS' exceeded"), None);
+    }
 
     #[test]
     fn description_tags_round_trip_and_states() {

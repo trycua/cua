@@ -19,7 +19,8 @@ use cua_sandbox_core::placement::Kind;
 use cua_sandbox_core::{CreateOptions, ProviderKind};
 
 pub use cua_sandbox_core::byoc::{
-    CloudAuditEntry, CloudCheck, CloudConnected, CloudCredentials, CloudDisconnected, CloudKind,
+    CloudAuditEntry, CloudCheck, CloudCleanup, CloudConnected, CloudCredentials,
+    CloudDisconnected, CloudKind,
     CloudProvider, CloudResource, CloudStatusReport, CloudSweepItem, CloudSweepReport, CloudTarget,
     CloudTestReport,
 };

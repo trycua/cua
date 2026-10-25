@@ -77,6 +77,17 @@ impl Tested {
     }
 }
 
+/// Who a cloud's credentials are, and its clock ([`CloudApi::identity`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Identity {
+    /// The account (or token fingerprint) the credentials reach; `None`:
+    /// the cloud cannot say.
+    pub id: Option<String>,
+    /// The cloud's clock, Unix seconds (its `Date` header); `None`: not
+    /// read.
+    pub clock: Option<u64>,
+}
+
 /// One cloud.
 #[async_trait]
 pub trait CloudApi: Send + Sync + 'static {
@@ -167,6 +178,28 @@ pub trait CloudApi: Send + Sync + 'static {
     /// API has prices, else a built-in table). Default: none.
     async fn host_types(&self, _conn: &Connection) -> Result<Vec<HostType>> {
         Ok(vec![])
+    }
+
+    /// Who `conn`'s credentials are now, and the cloud's clock: one cheap
+    /// read-only call (AWS `sts:GetCallerIdentity`). Every call that lists,
+    /// creates or deletes first checks it against
+    /// [`crate::CloudApi::expected_identity`], so Cua never acts through
+    /// another account or profile (a default profile, keys in the
+    /// environment, another Hetzner token). Default: nothing provable.
+    async fn identity(&self, _conn: &Connection) -> Result<Identity> {
+        Ok(Identity::default())
+    }
+
+    /// The identity `conn` was connected with (empty: none to check).
+    fn expected_identity(&self, conn: &Connection) -> String {
+        conn.identity.clone()
+    }
+
+    /// `error` (a failed call through `conn`) as one plain line with the
+    /// exact fix, when it is a sign-in problem: expired, missing or
+    /// rejected credentials, a revoked token. `None`: anything else.
+    fn sign_in_help(&self, _conn: &Connection, _error: &str) -> Option<crate::signin::SignIn> {
+        None
     }
 
     /// The machine's console or serial log as the cloud has it (`None`: the

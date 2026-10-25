@@ -125,6 +125,10 @@ struct Cli {
     /// Print JSON.
     #[arg(long, global = true)]
     json: bool,
+    /// Also print the raw error a cloud (or other service) returned behind
+    /// a short message.
+    #[arg(long, global = true)]
+    verbose: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -1101,6 +1105,28 @@ pub(crate) const EXIT_CODES: &[(i32, &str)] = &[
         "Cancelled (Ctrl-C during a create): what it made was removed",
     ),
 ];
+
+/// What `cua` prints for `e`: a cloud error that carries a plain line
+/// (a sign-in problem: "Your AWS sign-in expired. Sign in with `aws login`,
+/// then run this again.") prints that line alone, and the cloud's raw error
+/// only with `--verbose` (it is in the logs either way).
+fn error_text(e: &CuaError, verbose: bool) -> String {
+    let CuaError::Cloud(m) = e else {
+        return e.to_string();
+    };
+    let plain = cua_sdk::cloud_signin_plain(m);
+    match cua_sdk::cloud_signin_details(m) {
+        None => e.to_string(),
+        Some(raw) => {
+            let plain = plain.strip_prefix("your cloud: ").unwrap_or(&plain);
+            if verbose {
+                format!("{plain}\n  details: {raw}")
+            } else {
+                plain.to_string()
+            }
+        }
+    }
+}
 
 /// Exit code for an SDK error.
 fn exit_code(e: &CuaError) -> i32 {
@@ -2796,6 +2822,7 @@ pub fn main() {
     );
     let record = records_telemetry(&cli.command);
     let json_output = cli.json;
+    let verbose = cli.verbose;
     telemetry.set_notice_mode(notice_mode(
         std::env::var("CUA_DAEMON_STARTED_BY").ok().as_deref(),
     ));
@@ -2887,7 +2914,11 @@ pub fn main() {
             Ok(c) => c,
             Err(e) => {
                 let _ = out.flush();
-                eprintln!("{}: {}", channel.cli_name(), util::hint(&e.to_string()));
+                eprintln!(
+                    "{}: {}",
+                    channel.cli_name(),
+                    util::hint(&error_text(&e, verbose))
+                );
                 exit_code(&e)
             }
         }
@@ -3244,6 +3275,18 @@ mod tests {
     #[test]
     fn a_full_machine_exits_8_and_not_found_exits_3() {
         assert_eq!(exit_code(&CuaError::HostCapacity("no room".into())), 8);
+        // A sign-in problem prints its one line; the raw error only with
+        // --verbose.
+        let e = CuaError::Cloud(
+            "Your AWS sign-in expired. Sign in with `aws login`, then run this again.\n  details: aws: list Cua instances: dispatch failure".into(),
+        );
+        assert_eq!(
+            error_text(&e, false),
+            "Your AWS sign-in expired. Sign in with `aws login`, then run this again."
+        );
+        assert!(error_text(&e, true).ends_with("details: aws: list Cua instances: dispatch failure"));
+        let plain = CuaError::Cloud("aws: quota".into());
+        assert_eq!(error_text(&plain, false), "your cloud: aws: quota");
         assert_eq!(exit_code(&CuaError::NotFound("x".into())), 3);
         assert!(
             EXIT_CODES

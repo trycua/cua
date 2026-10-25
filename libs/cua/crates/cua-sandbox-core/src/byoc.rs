@@ -172,6 +172,10 @@ pub struct CloudStatusReport {
     /// What Cua created in them.
     #[serde(default)]
     pub resources: Vec<CloudResource>,
+    /// Clouds disconnected while signed out that may still hold Spaces Cua
+    /// started (each until a sweep confirms it is clean).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cleanup: Vec<CloudCleanup>,
 }
 
 /// One check of `cloud_test`.
@@ -225,6 +229,63 @@ pub struct CloudDisconnected {
     /// receipt), each resource as `cloud_status` lists it.
     #[serde(default)]
     pub deleted: Vec<CloudResource>,
+    /// With `force`, when the cloud could not be checked: what Cua's
+    /// records say may still be there, kept until a sweep after sign-in
+    /// confirms the cloud is clean.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cleanup: Option<CloudCleanup>,
+}
+
+/// A cloud that was disconnected while Cua could not check it (signed
+/// out): what Cua's own records say may still run there. It stays listed
+/// in `cloud_status` until a sweep, signed in to the same account,
+/// confirms nothing of Cua's is left (or the same account is connected
+/// again, which takes the records back).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct CloudCleanup {
+    /// `aws`, `gcp`, `hetzner`, `modal`.
+    pub provider: String,
+    /// `AWS`, `Google Cloud`, ...
+    #[serde(default)]
+    pub title: String,
+    /// The account the records belong to (AWS account id, GCP project, ...).
+    #[serde(default)]
+    pub account: String,
+    /// The profile (AWS, Modal) or gcloud account it was connected with:
+    /// the only one a sweep of it ever uses.
+    #[serde(default)]
+    pub profile: String,
+    /// Region.
+    #[serde(default)]
+    pub region: String,
+    /// Spaces (instances and sandboxes) Cua's records say may still run.
+    #[serde(default)]
+    pub spaces: u32,
+    /// Every recorded resource, Spaces included.
+    #[serde(default)]
+    pub resources: u32,
+    /// What they are, for people: "2 instances (t4g.medium)".
+    #[serde(default)]
+    pub types: String,
+    /// The latest expiry among them (RFC 3339; empty: none or never).
+    #[serde(default)]
+    pub latest_expires: String,
+    /// Whether one of them never expires on its own (ttl 0).
+    #[serde(default)]
+    pub never_expires: bool,
+    /// Their recorded cost per hour while they run, US dollars.
+    #[serde(default)]
+    pub usd_per_hour: f64,
+    /// When it was disconnected (RFC 3339).
+    #[serde(default)]
+    pub since: String,
+    /// Why Cua could not check it, one line.
+    #[serde(default)]
+    pub reason: String,
+    /// The line apps and `cua cloud status` show: "AWS may still have 2
+    /// Spaces Cua started. Sign in and clean up."
+    #[serde(default)]
+    pub message: String,
 }
 
 /// One line of the cloud audit log (`cloud_audit`): something Cua did in a
@@ -477,6 +538,24 @@ pub trait CloudManager: Send + Sync + 'static {
     /// nothing is left.
     async fn disconnect(&self, provider: &str, delete: bool) -> Result<CloudDisconnected>;
 
+    /// [`CloudManager::disconnect`]; with `force`, a cloud that cannot be
+    /// checked (signed out, the trust revoked) is disconnected anyway: Cua
+    /// keeps its records as a [`CloudCleanup`] a later sweep finishes.
+    /// Without `force` that case is refused with a `cloud` error starting
+    /// [`signin::UNCHECKED`]. `force` never disconnects a cloud that can be
+    /// checked and still runs Spaces Cua created.
+    async fn disconnect_with(
+        &self,
+        provider: &str,
+        delete: bool,
+        force: bool,
+    ) -> Result<CloudDisconnected> {
+        if force {
+            return Err(not_built());
+        }
+        self.disconnect(provider, delete).await
+    }
+
     /// `cloud_sweep`: dry run unless `dry_run` is false.
     async fn sweep(
         &self,
@@ -524,6 +603,44 @@ pub trait CloudManager: Send + Sync + 'static {
     /// `cloud_audit`: the newest `limit` lines of the audit log, newest
     /// last.
     async fn audit(&self, limit: usize) -> Result<Vec<CloudAuditEntry>>;
+}
+
+/// How a cloud's sign-in problems read: one plain line with the exact fix,
+/// the cloud's raw error after [`signin::DETAILS`] (shown with `--verbose`
+/// and kept in the logs).
+pub mod signin {
+    /// Separates the plain line from the cloud's raw error in a message.
+    pub const DETAILS: &str = "\n  details: ";
+
+    /// How a refused disconnect of a cloud that cannot be checked starts
+    /// (after the error kind's own prefix): the surfaces that can ask
+    /// ("Disconnect anyway?") look for it.
+    pub const UNCHECKED: &str = "Cua couldn't check ";
+
+    /// `line`, with `raw` kept after [`DETAILS`] (once).
+    pub fn with_details(line: &str, raw: &str) -> String {
+        let raw = raw.trim();
+        if raw.is_empty() || line.contains(DETAILS) {
+            line.to_string()
+        } else {
+            format!("{line}{DETAILS}{}", raw.replace('\n', " "))
+        }
+    }
+
+    /// The plain part of `msg` and its raw details, if any.
+    pub fn split(msg: &str) -> (&str, Option<&str>) {
+        match msg.split_once(DETAILS) {
+            Some((plain, raw)) => (plain, Some(raw)),
+            None => (msg, None),
+        }
+    }
+
+    /// Whether `msg` (an error's text, with or without its kind's prefix)
+    /// is a disconnect refused because the cloud could not be checked.
+    pub fn is_unchecked(msg: &str) -> bool {
+        let plain = split(msg).0;
+        plain.starts_with(UNCHECKED) || plain.contains(&format!(": {UNCHECKED}"))
+    }
 }
 
 /// The error a cloud word without a manager in this build gets.

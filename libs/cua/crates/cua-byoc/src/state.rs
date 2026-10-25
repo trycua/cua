@@ -25,6 +25,35 @@ struct State {
     connections: Vec<Connection>,
     #[serde(default)]
     resources: Vec<Resource>,
+    /// Clouds disconnected while they could not be checked, with the
+    /// connection they had: the only credentials a sweep of what they may
+    /// still hold ever uses.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    cleanup: Vec<Cleanup>,
+}
+
+/// A cloud disconnected while it could not be checked (`disconnect
+/// --force`): its connection as it was, until a sweep signed in to the same
+/// account confirms nothing of Cua's is left.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Cleanup {
+    /// The connection it had.
+    pub connection: Connection,
+    /// Unix seconds it was disconnected.
+    #[serde(default)]
+    pub since: u64,
+    /// Why it could not be checked (the plain line).
+    #[serde(default)]
+    pub reason: String,
+}
+
+impl Cleanup {
+    /// Whether `conn` is the same account (and provider).
+    pub fn same_account(&self, conn: &Connection) -> bool {
+        self.connection.provider == conn.provider
+            && !self.connection.account.is_empty()
+            && self.connection.account == conn.account
+    }
 }
 
 /// This home's cloud state. Every change is a read-modify-write under a
@@ -171,6 +200,66 @@ impl Store {
         })
     }
 
+    /// The sweep lease of this home: held (an exclusive file lock on
+    /// `<home>/cloud/sweep.lock`) while a sweep runs, by whichever process
+    /// (the daemon's automatic sweep, a `cua` in process, a second app)
+    /// sweeps, so two never delete side by side. `None`: another holds it.
+    /// The OS drops it when the holder exits, so a crash never leaves it
+    /// held.
+    pub fn try_sweep_lease(&self) -> std::io::Result<Option<std::fs::File>> {
+        let dir = self.path.parent().expect("state dir");
+        std::fs::create_dir_all(dir)?;
+        let f = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(dir.join("sweep.lock"))?;
+        match f.try_lock() {
+            Ok(()) => Ok(Some(f)),
+            Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+            Err(std::fs::TryLockError::Error(e)) => Err(e),
+        }
+    }
+
+    /// Every cloud disconnected while it could not be checked.
+    pub fn cleanups(&self) -> std::io::Result<Vec<Cleanup>> {
+        let _g = self.lock.lock().expect("cloud state lock");
+        Ok(self.read()?.cleanup)
+    }
+
+    /// Forgets the connection of `c.connection.provider` and keeps `c` (one
+    /// per provider and account), stamping its records that name no account
+    /// with this one's, in one write.
+    pub fn disconnect_to_cleanup(&self, c: Cleanup) -> std::io::Result<bool> {
+        self.update(|s| {
+            let p = c.connection.provider.clone();
+            let before = s.connections.len();
+            s.connections.retain(|x| x.provider != p);
+            for r in s
+                .resources
+                .iter_mut()
+                .filter(|r| r.provider == p && r.account.is_empty())
+            {
+                r.account = c.connection.account.clone();
+            }
+            s.cleanup
+                .retain(|x| !(x.connection.provider == p && x.connection.account == c.connection.account));
+            s.cleanup.push(c);
+            before != s.connections.len()
+        })
+    }
+
+    /// Drops the cleanup entry of `provider` and `account`; whether there
+    /// was one.
+    pub fn clear_cleanup(&self, provider: &str, account: &str) -> std::io::Result<bool> {
+        self.update(|s| {
+            let before = s.cleanup.len();
+            s.cleanup
+                .retain(|x| !(x.connection.provider == provider && x.connection.account == account));
+            before != s.cleanup.len()
+        })
+    }
+
     /// Every recorded resource.
     pub fn resources(&self) -> std::io::Result<Vec<Resource>> {
         let _g = self.lock.lock().expect("cloud state lock");
@@ -233,6 +322,52 @@ mod tests {
             let mode = std::fs::metadata(s.path()).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o600);
         }
+    }
+
+    #[test]
+    fn a_forced_disconnect_keeps_the_records_and_names_their_account() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::new(dir.path());
+        let conn = Connection {
+            provider: "aws".into(),
+            account: "111".into(),
+            profile: "sandbox".into(),
+            ..Default::default()
+        };
+        s.connect(conn.clone()).unwrap();
+        s.record(Resource {
+            provider: "aws".into(),
+            id: "i-1".into(),
+            resource_type: "instance".into(),
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(
+            s.disconnect_to_cleanup(Cleanup {
+                connection: conn.clone(),
+                since: 1,
+                reason: "signed out".into(),
+            })
+            .unwrap()
+        );
+        let again = Store::new(dir.path());
+        assert!(again.connection("aws").unwrap().is_none());
+        assert_eq!(again.resources().unwrap()[0].account, "111");
+        assert_eq!(again.cleanups().unwrap()[0].connection.profile, "sandbox");
+        assert!(again.clear_cleanup("aws", "111").unwrap());
+        assert!(again.cleanups().unwrap().is_empty());
+        assert_eq!(again.resources().unwrap().len(), 1, "records outlive the entry");
+    }
+
+    #[test]
+    fn one_sweeper_at_a_time_and_a_dropped_lease_frees_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = Store::new(dir.path());
+        let b = Store::new(dir.path());
+        let held = a.try_sweep_lease().unwrap().expect("first takes it");
+        assert!(b.try_sweep_lease().unwrap().is_none(), "second waits");
+        drop(held);
+        assert!(b.try_sweep_lease().unwrap().is_some());
     }
 
     #[test]

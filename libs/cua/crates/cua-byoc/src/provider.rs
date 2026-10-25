@@ -72,7 +72,11 @@ pub struct CloudSandboxes {
 impl CloudSandboxes {
     /// `api`, recording into `store`, joining its sandboxes to `relay`.
     pub fn new(api: Arc<dyn CloudApi>, store: Arc<Store>, relay: RelayAccess) -> Self {
-        CloudSandboxes { api, store, relay }
+        CloudSandboxes {
+            api: crate::signin::Guarded::wrap(api),
+            store,
+            relay,
+        }
     }
 
     /// The cloud's API.
@@ -85,17 +89,52 @@ impl CloudSandboxes {
     }
 
     fn connection(&self) -> Result<Connection> {
-        self.store
-            .connection(self.api.name())
+        if let Some(c) = self.store.connection(self.api.name()).map_err(Self::io)? {
+            return Ok(c);
+        }
+        let pending = self
+            .store
+            .cleanups()
             .map_err(Self::io)?
-            .ok_or_else(|| {
-                Error::ContribNotConfigured(format!(
-                    "{} is not connected: run `cua cloud connect {}` first (it checks the \
-                     account without creating anything)",
-                    self.api.title(),
-                    self.api.name()
-                ))
-            })
+            .into_iter()
+            .any(|c| c.connection.provider == self.api.name());
+        Err(Error::ContribNotConfigured(if pending {
+            format!(
+                "{} was disconnected while Cua could not check it, and may still run Spaces Cua \
+                 started. Sign in, then run `cua cloud sweep {} --delete`, or connect it again \
+                 (`cua cloud connect {}`) to use them.",
+                self.api.title(),
+                self.api.name(),
+                self.api.name()
+            )
+        } else {
+            format!(
+                "{} is not connected: run `cua cloud connect {}` first (it checks the \
+                 account without creating anything)",
+                self.api.title(),
+                self.api.name()
+            )
+        }))
+    }
+
+    /// The connection, refused for a record of another account than the
+    /// one connected now (acting on it here would ask the wrong account,
+    /// whose "not found" must never read as "deleted").
+    fn connection_for(&self, rec: &Resource) -> Result<Connection> {
+        let conn = self.connection()?;
+        if !rec.account.is_empty() && rec.account != conn.account {
+            return Err(Error::Cloud(format!(
+                "{} {} is in {} account {}, not {} that is connected now. Connect that account \
+                 again (`cua cloud connect {}`), or sign in to it and run `cua cloud sweep --delete`.",
+                rec.resource_type,
+                if rec.id.is_empty() { &rec.name } else { &rec.id },
+                self.api.title(),
+                rec.account,
+                conn.account,
+                self.api.name()
+            )));
+        }
+        Ok(conn)
     }
 
     /// What the sandbox's relay machine says about it (no secrets): every
@@ -192,9 +231,17 @@ impl CloudSandboxes {
     async fn rollback(&self, conn: &Connection, owner: &str, made: &[Resource], machine: &str) {
         for r in made {
             if r.id.is_empty() {
-                let listed = self.api.list_owned(conn, owner).await.unwrap_or_default();
-                if !listed.iter().any(|x| x.name == r.name) {
-                    let _ = self.store.forget(r);
+                match self.api.list_owned(conn, owner).await {
+                    Ok(listed) if !listed.iter().any(|x| x.name == r.name) => {
+                        let _ = self.store.forget(r);
+                    }
+                    // Listed (or the cloud could not be asked): kept, marked,
+                    // so the sweeper finds it by its name; never assumed gone.
+                    _ => {
+                        let mut failed = r.clone();
+                        failed.state = "failed".into();
+                        let _ = self.store.record(failed);
+                    }
                 }
                 continue;
             }
@@ -465,6 +512,7 @@ impl cua_sandbox_core::Provider for CloudSandboxes {
             expires,
             tags: model::tags(&owner, &spec.name, &machine, expires),
             state: "pending".into(),
+            account: conn.account.clone(),
             ..Default::default()
         };
         rec.extra
@@ -526,7 +574,14 @@ impl cua_sandbox_core::Provider for CloudSandboxes {
                     "failed",
                     &e.to_string(),
                 ));
-                self.rollback(&conn, &owner, &[rec], &machine).await;
+                if crate::signin::sign_in_of(self.api.as_ref(), &conn, &e).is_some() {
+                    // Refused before anything was made (signed out, another
+                    // account): nothing to look for.
+                    let _ = self.store.forget(&rec);
+                    self.forget_machine(&machine).await;
+                } else {
+                    self.rollback(&conn, &owner, &[rec], &machine).await;
+                }
                 return Err(e);
             }
         };
@@ -538,7 +593,10 @@ impl cua_sandbox_core::Provider for CloudSandboxes {
                 rec.extra.extend(r.extra.clone());
                 rec.clone()
             } else {
-                r
+                Resource {
+                    account: conn.account.clone(),
+                    ..r
+                }
             };
             self.store.record(r.clone()).map_err(Self::io)?;
             self.store.audit(audit::of_resource(
@@ -578,10 +636,10 @@ impl cua_sandbox_core::Provider for CloudSandboxes {
     }
 
     async fn get(&self, id: &str) -> Result<ProviderInstance> {
-        let conn = self.connection()?;
         let rec = self
             .record_of(id)?
             .ok_or_else(|| Error::NotFound(format!("{}:{id}", self.api.name())))?;
+        let conn = self.connection_for(&rec)?;
         match self.api.describe(&conn, &rec).await? {
             Some((state, _)) => Ok(self.instance(&rec, status_of(&state), &conn)),
             None => Err(Error::NotFound(format!("{}:{id}", self.api.name()))),
@@ -625,6 +683,7 @@ impl cua_sandbox_core::Provider for CloudSandboxes {
                 }
             }
         };
+        let conn = self.connection_for(&rec)?;
         if let Err(e) = self.api.delete(&conn, &rec, &owner).await {
             self.store.audit(audit::of_resource(
                 "resource_deleted",
@@ -684,22 +743,24 @@ impl cua_sandbox_core::Provider for CloudSandboxes {
     }
 
     async fn stop(&self, id: &str) -> Result<()> {
-        let conn = self.connection()?;
+        self.connection()?;
         let owner = self.store.owner_id().map_err(Self::io)?;
         let mut rec = self
             .record_of(id)?
             .ok_or_else(|| Error::NotFound(format!("{}:{id}", self.api.name())))?;
+        let conn = self.connection_for(&rec)?;
         self.api.stop(&conn, &rec, &owner).await?;
         rec.state = "stopped".into();
         self.store.record(rec).map_err(Self::io)
     }
 
     async fn start(&self, id: &str) -> Result<ProviderInstance> {
-        let conn = self.connection()?;
+        self.connection()?;
         let owner = self.store.owner_id().map_err(Self::io)?;
         let mut rec = self
             .record_of(id)?
             .ok_or_else(|| Error::NotFound(format!("{}:{id}", self.api.name())))?;
+        let conn = self.connection_for(&rec)?;
         self.api.start(&conn, &rec, &owner).await?;
         if !rec.machine.is_empty() {
             self.relay

@@ -581,38 +581,27 @@ impl Hosts {
                 (false, Some((true, false))) => "cordoned".into(),
                 _ if r.state == "gone" => "gone".into(),
                 // Not answering: lost when its cloud says the machine is
-                // terminated or not found, or when the relay no longer
-                // knows a machine that had joined (its lease expired).
+                // terminated or not found (and only then).
                 (false, entry) => {
                     let forgotten = entry.is_none() && !h.machine.is_empty() && machines.is_some();
-                    if forgotten || self.terminated(&r, entry.is_some()).await {
+                    // Lost only when its cloud confirms it: a host whose
+                    // relay lease expired may only be cut off (a partition,
+                    // the relay restarting) while it still runs Spaces and
+                    // bills; it reads offline, never gone.
+                    if self.terminated(&r, entry.is_some() || forgotten).await {
                         let mut gone = r.clone();
                         gone.state = "gone".into();
                         if let Err(e) = self.store.record(gone) {
                             tracing::warn!(host = h.name, "lost host not recorded: {e}");
                         }
-                        self.audit(
-                            "host_lost",
-                            &r,
-                            "ok",
-                            if forgotten {
-                                "its relay lease expired"
-                            } else {
-                                "its cloud ended it"
-                            },
-                        );
+                        self.audit("host_lost", &r, "ok", "its cloud ended it");
                         tracing::warn!(
                             host = h.name,
                             machine = h.machine,
-                            "pool host lost ({})",
-                            if forgotten {
-                                "its relay lease expired"
-                            } else {
-                                "its cloud ended it"
-                            }
+                            "pool host lost (its cloud ended it)"
                         );
                         "gone".into()
-                    } else if entry.is_some() {
+                    } else if entry.is_some() || forgotten {
                         "offline".into()
                     } else {
                         "booting".into()
@@ -649,7 +638,8 @@ impl Hosts {
             conn.region = r.region.clone();
         }
         match api.describe(&conn, r).await {
-            Ok(None) => true,
+            // A new machine may not be found yet (eventual consistency).
+            Ok(None) => model::now().saturating_sub(r.created) >= crate::sweep::CONSISTENCY_SECS,
             Ok(Some((state, _))) => matches!(state.as_str(), "terminated" | "gone"),
             Err(e) => {
                 tracing::debug!(id = r.id, "host not described: {e}");
@@ -810,6 +800,7 @@ impl Hosts {
             tags: tags.clone(),
             state: "pending".into(),
             extra: extra.clone(),
+            account: conn.account.clone(),
             ..Default::default()
         };
         // Recorded before the cloud call: a create that dies half way is
@@ -860,7 +851,18 @@ impl Hosts {
         let made = match api.provision(&conn, &spec).await {
             Ok(made) => made,
             Err(e) => {
-                let _ = self.store.forget(&pending);
+                // A refused create made nothing; one that failed half way (a
+                // timeout, a dropped connection) may have: kept, marked, for
+                // the sweeper to find by its name. Never assumed gone.
+                if crate::signin::sign_in_of(api.as_ref(), &conn, &e).is_some()
+                    || matches!(e, Error::InvalidArgument(_))
+                {
+                    let _ = self.store.forget(&pending);
+                } else {
+                    let mut failed = pending.clone();
+                    failed.state = "failed".into();
+                    let _ = self.store.record(failed);
+                }
                 let _ = relay.revoke_pairing_code(&code_id).await;
                 self.audit("host_create_failed", &pending, "failed", &e.to_string());
                 return Err(e);
@@ -869,6 +871,7 @@ impl Hosts {
         let _ = self.store.forget(&pending);
         let mut host = None;
         for mut r in made {
+            r.account = conn.account.clone();
             if r.resource_type == "instance" && host.is_none() {
                 r.sandbox = pending.sandbox.clone();
                 let mut e = extra.clone();

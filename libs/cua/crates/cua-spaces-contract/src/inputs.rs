@@ -1389,6 +1389,15 @@ pub struct CloudDisconnect {
     /// call is refused (listing them) while Cua resources still run there.
     #[serde(default)]
     pub delete: Option<bool>,
+    /// Disconnect even when the cloud cannot be checked (signed out, its
+    /// credentials revoked): Cua keeps its records of what it started there
+    /// so a sweep after sign-in finds and deletes them, and `cloud_status`
+    /// lists the cloud under `cleanup` until then. Default false: that case
+    /// is refused with a `cloud` error starting "Cua couldn't check" that
+    /// says what the records show. Never disconnects a cloud that can be
+    /// checked and still runs Spaces Cua created.
+    #[serde(default)]
+    pub force: Option<bool>,
 }
 
 /// `cloud_audit`: what Cua did in your clouds.

@@ -152,6 +152,39 @@ pub struct Hetzner {
     staged: Mutex<Option<String>>,
     hcloud_config: Option<std::path::PathBuf>,
     poll: Duration,
+    /// The API's clock at its last answer (its `Date` header).
+    clock: Mutex<Option<u64>>,
+}
+
+/// A stable fingerprint of a token (FNV-1a, 64 bits): which token a
+/// connection was made with, never the token.
+pub fn token_fingerprint(token: &str) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in token.trim().bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("token:{:08x}", h >> 32)
+}
+
+/// A Hetzner error as a sign-in problem, when it is one.
+pub fn sign_in_of(error: &str) -> Option<crate::signin::SignIn> {
+    use crate::signin::{SignIn, mentions};
+    const FIX: &str = "cua cloud connect hetzner --token-stdin";
+    if mentions(error, &["no api token"]) {
+        return Some(SignIn::missing("Hetzner", FIX));
+    }
+    if mentions(
+        error,
+        &["unauthorized", "token was not accepted", "invalid token", "token is invalid"],
+    ) {
+        return Some(SignIn::rejected(
+            "Hetzner",
+            "its API token (it was revoked or deleted)",
+            FIX,
+        ));
+    }
+    None
 }
 
 impl Default for Hetzner {
@@ -183,6 +216,7 @@ impl Hetzner {
             staged: Mutex::new(None),
             hcloud_config,
             poll: Duration::from_secs(2),
+            clock: Mutex::new(None),
         }
     }
 
@@ -260,6 +294,14 @@ impl Hetzner {
                 .send()
                 .await
                 .map_err(|e| cloud_err("hetzner", what, e.without_url()))?;
+            if let Some(t) = resp
+                .headers()
+                .get(reqwest::header::DATE)
+                .and_then(|h| h.to_str().ok())
+                .and_then(model::parse_http_date)
+            {
+                *self.clock.lock().unwrap() = Some(t);
+            }
             let status = resp.status();
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS && tries < 6 {
                 tries += 1;
@@ -614,6 +656,23 @@ fn hcloud_active_token(path: &std::path::Path) -> Option<String> {
 impl CloudApi for Hetzner {
     fn name(&self) -> &'static str {
         "hetzner"
+    }
+
+    async fn identity(&self, _conn: &Connection) -> Result<crate::api::Identity> {
+        // Hetzner has no "who am I"; the token is the project. One cheap
+        // read proves it is accepted and reads the API's clock.
+        let token = self.token()?;
+        *self.clock.lock().unwrap() = None;
+        self.get("/locations?per_page=1", "check the API token")
+            .await?;
+        Ok(crate::api::Identity {
+            id: Some(token_fingerprint(&token)),
+            clock: *self.clock.lock().unwrap(),
+        })
+    }
+
+    fn sign_in_help(&self, _conn: &Connection, error: &str) -> Option<crate::signin::SignIn> {
+        sign_in_of(error)
     }
 
     fn title(&self) -> &'static str {
@@ -1134,7 +1193,9 @@ impl CloudApi for Hetzner {
                         &format!("list {kind}"),
                     )
                     .await?
-                    .unwrap_or(Value::Null);
+                    // A listing that did not happen must never read as
+                    // "all gone".
+                    .ok_or_else(|| cloud_err("hetzner", "list", format!("{kind}: not found")))?;
                 for i in v[key].as_array().into_iter().flatten() {
                     let tags = labels_of(i);
                     // Checked again here: the server filter is not trusted alone.
@@ -1184,6 +1245,20 @@ impl CloudApi for Hetzner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_revoked_token_reads_as_one_line_and_fingerprints_differ() {
+        let s = sign_in_of("hetzner: list servers: unable to authenticate (the token was not accepted: create a Read & Write token)").unwrap();
+        assert_eq!(s.kind, crate::signin::Kind::Rejected);
+        assert_eq!(
+            s.line,
+            "Hetzner no longer accepts its API token (it was revoked or deleted). Connect it again with `cua cloud connect hetzner --token-stdin`, then run this again."
+        );
+        assert_eq!(sign_in_of("hetzner: create the server: server limit exceeded"), None);
+        assert_ne!(token_fingerprint("a"), token_fingerprint("b"));
+        assert_eq!(token_fingerprint("a"), token_fingerprint(" a\n"));
+        assert!(!token_fingerprint("secret-token").contains("secret"));
+    }
 
     #[test]
     fn states_labels_and_names() {

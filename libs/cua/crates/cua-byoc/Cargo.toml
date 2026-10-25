@@ -60,4 +60,4 @@ cua-byoc = { path = ".", features = ["testing", "all"] }
 cua-host = { workspace = true, features = ["testing"] }
 cua-spacesd-client = { workspace = true, features = ["testing"] }
 tempfile.workspace = true
-tokio = { workspace = true, features = ["full"] }
+tokio = { workspace = true, features = ["full", "test-util"] }

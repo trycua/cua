@@ -134,6 +134,9 @@ public struct CloudStatus: Sendable, Hashable {
     public let defaultOn: String
     public let providers: [CloudProviderInfo]
     public let resources: [CloudResource]
+    /// Clouds disconnected while they could not be checked that may still
+    /// run Spaces Cua started.
+    public let cleanup: [CloudCleanup]
 
     init(_ d: [String: JSONValue]) {
         defaultOn = d["default_on"]?.stringValue ?? ""
@@ -141,6 +144,44 @@ public struct CloudStatus: Sendable, Hashable {
             .map(CloudProviderInfo.init)
         resources = (d["resources"]?.arrayValue ?? []).compactMap { $0.objectValue }
             .map(CloudResource.init)
+        cleanup = (d["cleanup"]?.arrayValue ?? []).compactMap { $0.objectValue }
+            .map(CloudCleanup.init)
+    }
+}
+
+/// A cloud disconnected while Cua could not check it: what Cua's records
+/// say may still run there, until a sweep after sign-in confirms it clean.
+public struct CloudCleanup: Sendable, Hashable {
+    public let provider: String
+    public let title: String
+    public let account: String
+    public let profile: String
+    public let region: String
+    public let spaces: Int
+    public let resources: Int
+    public let types: String
+    /// RFC 3339; empty: none or never.
+    public let latestExpires: String
+    public let neverExpires: Bool
+    public let usdPerHour: Double
+    public let reason: String
+    /// "AWS may still have 2 Spaces Cua started. Sign in and clean up."
+    public let message: String
+
+    init(_ d: [String: JSONValue]) {
+        provider = d["provider"]?.stringValue ?? ""
+        title = d["title"]?.stringValue ?? ""
+        account = d["account"]?.stringValue ?? ""
+        profile = d["profile"]?.stringValue ?? ""
+        region = d["region"]?.stringValue ?? ""
+        spaces = d["spaces"]?.intValue ?? 0
+        resources = d["resources"]?.intValue ?? 0
+        types = d["types"]?.stringValue ?? ""
+        latestExpires = d["latest_expires"]?.stringValue ?? ""
+        neverExpires = d["never_expires"]?.boolValue ?? false
+        usdPerHour = d["usd_per_hour"]?.doubleValue ?? 0
+        reason = d["reason"]?.stringValue ?? ""
+        message = d["message"]?.stringValue ?? ""
     }
 }
 
@@ -185,12 +226,15 @@ public struct CloudDisconnectReceipt: Sendable, Hashable {
     public let left: [CloudResource]
     /// What was deleted from the account first (with `delete`).
     public let deleted: [CloudResource]
+    /// After a forced disconnect: what may still run there.
+    public let cleanup: CloudCleanup?
 
     init(_ d: [String: JSONValue]) {
         provider = d["provider"]?.stringValue ?? ""
         disconnected = d["disconnected"]?.boolValue ?? false
         left = (d["left"]?.arrayValue ?? []).compactMap { $0.objectValue }.map(CloudResource.init)
         deleted = (d["deleted"]?.arrayValue ?? []).compactMap { $0.objectValue }.map(CloudResource.init)
+        cleanup = d["cleanup"]?.objectValue.map(CloudCleanup.init)
     }
 }
 
@@ -251,11 +295,16 @@ public struct Cloud: Sendable {
     }
 
     /// `cloud_disconnect`: refuses while Cua resources still run in that
-    /// cloud, unless `delete` is true, which deletes them first.
+    /// cloud, unless `delete` is true, which deletes them first. When the
+    /// cloud cannot be checked (signed out) it is refused with an error
+    /// starting "Cua couldn't check"; ask the person, then `force` disconnects
+    /// anyway and keeps Cua's records for a sweep after sign-in.
     @discardableResult
-    public func disconnect(_ provider: String, delete: Bool = false) async throws -> CloudDisconnectReceipt {
+    public func disconnect(_ provider: String, delete: Bool = false,
+                           force: Bool = false) async throws -> CloudDisconnectReceipt {
         var a: [String: JSONValue] = ["provider": .string(provider)]
         if delete { a["delete"] = .bool(true) }
+        if force { a["force"] = .bool(true) }
         return CloudDisconnectReceipt(try await connection.object("cloud_disconnect", a))
     }
 

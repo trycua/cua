@@ -1659,12 +1659,12 @@ pub fn tools() -> Vec<Tool> {
         .with::<i::CloudTest>(),
         Spec {
             category: Category::Cloud,
-            result: "JSON: `provider`, `disconnected`, `deleted` (with delete=true: the receipt, each resource deleted first) and `left` (resources Cua still records there).",
+            result: "JSON: `provider`, `disconnected`, `deleted` (with delete=true: the receipt, each resource deleted first), `left` (resources Cua still records there) and, after a forced disconnect of a cloud that could not be checked, `cleanup` (what Cua's records say may still run there: `spaces`, `types`, `latest_expires`, `message`).",
             errors: &["cloud"],
-            instructions: "Refuses (a `cloud` error listing them) while Cua-created instances or sandboxes still run in that cloud, because a disconnected cloud is no longer swept and they would bill unseen. With delete=true it first deletes everything Cua created there (the same tag and record checks as cloud_sweep with all=true), then asks the cloud again and forgets the connection (and `default.on` when it named this cloud) only when nothing is left; if something remains it keeps the connection and says what. Nothing that Cua did not create is ever touched.",
+            instructions: "Refuses (a `cloud` error listing them) while Cua-created instances or sandboxes still run in that cloud, because a disconnected cloud is no longer swept and they would bill unseen. With delete=true it first deletes everything Cua created there (the same tag and record checks as cloud_sweep with all=true), then asks the cloud again and forgets the connection (and `default.on` when it named this cloud) only when nothing is left; if something remains it keeps the connection and says what. When the cloud cannot be checked (signed out, credentials revoked), the call is refused with a `cloud` error starting \"Cua couldn't check\" that says what Cua's records show and when it expires; ask the person before retrying with force=true, which disconnects anyway and keeps the records until a sweep after sign-in. Sign-in errors are one line naming the exact command (`aws login`, `gcloud auth login`, ...); never switch profiles or accounts to work around one. Nothing that Cua did not create is ever touched.",
             capabilities: &["cloud.manage"],
             annotations: Annotations::mutating(),
-            sdk_symbol: "spaces.cloud.disconnect(_:delete:)",
+            sdk_symbol: "spaces.cloud.disconnect(_:delete:force:)",
             rust_symbol: "cua_cloud::Clouds::disconnect",
             ..Spec::new("cloud_disconnect", "Forget a connected cloud account (deleting what Cua created there first, with delete=true).")
         }

@@ -49,6 +49,7 @@ pub mod model;
 pub mod policy;
 pub mod provider;
 pub mod relay;
+pub mod signin;
 pub mod state;
 pub mod sweep;
 #[cfg(any(test, feature = "testing"))]
@@ -61,7 +62,7 @@ pub use model::{
 };
 pub use provider::CloudSandboxes;
 pub use relay::{Join, RelayAccess};
-pub use state::Store;
+pub use state::{Cleanup, Store};
 
 /// Every cloud this build includes (its cargo features).
 #[allow(clippy::vec_init_then_push)]

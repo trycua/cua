@@ -180,6 +180,13 @@ pub struct Connection {
     /// When it was connected (RFC 3339).
     #[serde(default)]
     pub connected_at: String,
+    /// Who the credentials were at connect, as [`crate::CloudApi::identity`]
+    /// proves it (the AWS account id, a fingerprint of the Hetzner token):
+    /// every later call checks the credentials still reach it and never
+    /// acts through others. Empty: not known (connected before it was
+    /// kept); AWS then checks [`Connection::account`].
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub identity: String,
 }
 
 fn default_ttl() -> u32 {
@@ -252,6 +259,11 @@ pub struct Resource {
     /// Provider details (the security group it uses, the machine type).
     #[serde(default)]
     pub extra: BTreeMap<String, String>,
+    /// The account it was created in ([`Connection::account`] then). Empty
+    /// on records from before it was kept: those belong to the provider's
+    /// one connection, and are left alone when that is ambiguous.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub account: String,
 }
 
 impl Resource {
@@ -373,6 +385,36 @@ pub fn now() -> u64 {
         .unwrap_or(0)
 }
 
+/// An HTTP `Date` header (`Sun, 25 Oct 2026 16:05:43 GMT`) as Unix
+/// seconds: how a cloud's own clock is read.
+pub fn parse_http_date(v: &str) -> Option<u64> {
+    let mut it = v.split_whitespace();
+    let _weekday = it.next()?;
+    let day: i64 = it.next()?.parse().ok()?;
+    let month = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ]
+    .iter()
+    .position(|m| Some(*m) == it.clone().next())? as i64
+        + 1;
+    it.next();
+    let year: i64 = it.next()?.parse().ok()?;
+    let mut hms = it.next()?.split(':').map(|x| x.parse::<i64>().ok());
+    let (h, m, s) = (hms.next()??, hms.next()??, hms.next()??);
+    if it.next()? != "GMT" || !(1..=31).contains(&day) || h > 23 || m > 59 || s > 60 {
+        return None;
+    }
+    // Days from the civil date (Howard Hinnant's algorithm).
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (month + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    u64::try_from(days * 86_400 + h * 3600 + m * 60 + s).ok()
+}
+
 /// Unix seconds as RFC 3339 (UTC, seconds).
 pub fn rfc3339(secs: u64) -> String {
     humantime::format_rfc3339_seconds(UNIX_EPOCH + Duration::from_secs(secs)).to_string()
@@ -465,6 +507,17 @@ mod tests {
             );
         }
         assert!(!t.contains_key(tag::MACHINE));
+    }
+
+    #[test]
+    fn http_dates_read_as_unix_seconds() {
+        let t = parse_http_date("Sun, 25 Oct 2026 16:05:43 GMT").unwrap();
+        assert_eq!(rfc3339(t), "2026-10-25T16:05:43Z");
+        let leap = parse_http_date("Tue, 29 Feb 2028 00:00:00 GMT").unwrap();
+        assert_eq!(rfc3339(leap), "2028-02-29T00:00:00Z");
+        for bad in ["", "yesterday", "Sun, 25 Foo 2026 16:05:43 GMT", "Sun, 25 Oct 2026 16:05:43 PST"] {
+            assert_eq!(parse_http_date(bad), None, "{bad}");
+        }
     }
 
     #[test]

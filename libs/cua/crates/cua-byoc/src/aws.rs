@@ -233,11 +233,20 @@ fn credentials_file() -> Option<std::path::PathBuf> {
 /// names only; no secret is read).
 fn profile_region(profile: &str) -> Option<String> {
     let text = std::fs::read_to_string(config_file()?).ok()?;
-    let want = if profile == "default" {
+    profile_keys(&text, profile)
+        .remove("region")
+        .filter(|v| !v.is_empty())
+}
+
+/// The keys of `profile`'s section in AWS config `text` (names and values
+/// of the config file; the credentials file is never read).
+fn profile_keys(text: &str, profile: &str) -> BTreeMap<String, String> {
+    let want = if profile == "default" || profile.is_empty() {
         "default".to_string()
     } else {
         format!("profile {profile}")
     };
+    let mut out = BTreeMap::new();
     let mut inside = false;
     for line in text.lines() {
         let l = line.trim();
@@ -245,14 +254,122 @@ fn profile_region(profile: &str) -> Option<String> {
             inside = l[1..l.len() - 1].trim() == want;
             continue;
         }
-        if inside
-            && let Some((k, v)) = l.split_once('=')
-            && k.trim() == "region"
-        {
-            return Some(v.trim().to_string()).filter(|v| !v.is_empty());
+        if inside && let Some((k, v)) = l.split_once('=') {
+            out.insert(k.trim().to_string(), v.trim().to_string());
         }
     }
+    out
+}
+
+/// How `profile` signs in, from AWS config `text` (and the error, when the
+/// config does not say): the command that signs it in again.
+pub fn sign_in_command(text: &str, profile: &str, error: &str) -> String {
+    let keys = profile_keys(text, profile);
+    let flag = if profile.is_empty() || profile == "default" {
+        String::new()
+    } else {
+        format!(" --profile {profile}")
+    };
+    let lower = error.to_ascii_lowercase();
+    if keys.contains_key("sso_session") || keys.contains_key("sso_start_url") {
+        format!("aws sso login{flag}")
+    } else if keys.contains_key("login_session") || lower.contains("login token") {
+        format!("aws login{flag}")
+    } else if lower.contains("sso") {
+        format!("aws sso login{flag}")
+    } else if keys.contains_key("aws_access_key_id") || lower.contains("invalidclienttokenid") {
+        format!("aws configure{flag}")
+    } else {
+        format!("aws login{flag}")
+    }
+}
+
+/// An AWS error as a sign-in problem, when it is one.
+pub fn sign_in_of(profile: &str, config: &str, error: &str) -> Option<crate::signin::SignIn> {
+    use crate::signin::{SignIn, mentions};
+    let fix = || sign_in_command(config, profile, error);
+    // A clock off by minutes reads "RequestExpired"/"Signature expired":
+    // not a sign-in problem.
+    if mentions(error, &["requestexpired", "signature expired"]) {
+        return None;
+    }
+    if mentions(
+        error,
+        &[
+            "invalidclienttokenid",
+            "unrecognizedclientexception",
+            "signaturedoesnotmatch",
+            "authfailure",
+            "the security token included in the request is invalid",
+        ],
+    ) {
+        let whose = if profile.is_empty() || profile == "default" {
+            "the default profile's keys".to_string()
+        } else {
+            format!("the keys of profile {profile}")
+        };
+        return Some(SignIn::rejected("AWS", &whose, &fix()));
+    }
+    if mentions(
+        error,
+        &[
+            "expiredtoken",
+            "token has expired",
+            "session has expired",
+            "refresh token has expired",
+            "sso session has expired",
+            "token is expired",
+            "credentials have expired",
+            "expired token",
+        ],
+    ) {
+        return Some(SignIn::expired("AWS", &fix()));
+    }
+    if mentions(
+        error,
+        &[
+            "no credentials",
+            "credentialsnotloaded",
+            "could not load credentials",
+            "no providers in chain provided credentials",
+            "an error occurred while loading credentials",
+            "failed to load credentials",
+            "could not find profile",
+            "profile file",
+            "the credential provider was not enabled",
+            "unable to locate credentials",
+        ],
+    ) {
+        return Some(SignIn::missing("AWS", &fix()));
+    }
     None
+}
+
+/// Reads the `Date` header of the response it watches (the cloud's clock).
+#[derive(Debug, Clone, Default)]
+struct ClockTap(std::sync::Arc<Mutex<Option<u64>>>);
+
+impl aws_sdk_sts::config::Intercept for ClockTap {
+    fn name(&self) -> &'static str {
+        "cua-clock-tap"
+    }
+
+    fn read_after_transmit(
+        &self,
+        context: &aws_sdk_sts::config::interceptors::BeforeDeserializationInterceptorContextRef<'_>,
+        _rc: &aws_sdk_sts::config::RuntimeComponents,
+        _cfg: &mut aws_sdk_sts::config::ConfigBag,
+    ) -> std::result::Result<(), aws_sdk_sts::error::BoxError> {
+        if let Some(t) = context
+            .response()
+            .headers()
+            .get("date")
+            .and_then(model::parse_http_date)
+        {
+            *self.0.lock().expect("clock tap") = Some(t);
+        }
+        Ok(())
+    }
 }
 
 fn tags_of(tags: &[Tag]) -> BTreeMap<String, String> {
@@ -821,6 +938,39 @@ impl CloudApi for Aws {
         }
     }
 
+    async fn identity(&self, conn: &Connection) -> Result<crate::api::Identity> {
+        let c = self.clients(conn).await;
+        let tap = ClockTap::default();
+        let me = c
+            .sts
+            .get_caller_identity()
+            .customize()
+            .interceptor(tap.clone())
+            .send()
+            .await
+            .map_err(|e| sts_err("identify the account", e))?;
+        let clock = *tap.0.lock().expect("clock tap");
+        Ok(crate::api::Identity {
+            id: me.account().map(str::to_string).filter(|a| !a.is_empty()),
+            clock,
+        })
+    }
+
+    fn expected_identity(&self, conn: &Connection) -> String {
+        if conn.identity.is_empty() {
+            conn.account.clone()
+        } else {
+            conn.identity.clone()
+        }
+    }
+
+    fn sign_in_help(&self, conn: &Connection, error: &str) -> Option<crate::signin::SignIn> {
+        let config = config_file()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .unwrap_or_default();
+        sign_in_of(&conn.profile, &config, error)
+    }
+
     fn resolve(&self, target: &Target) -> Result<Connection> {
         let profile = some(&target.profile)
             .or_else(|| env("AWS_PROFILE"))
@@ -1307,11 +1457,15 @@ impl CloudApi for Aws {
         for f in owner_filters(owner) {
             req = req.filters(f);
         }
-        let listed = req
-            .send()
-            .await
-            .map_err(|e| aws_err("list Cua instances", e))?;
-        for i in listed.reservations().iter().flat_map(|x| x.instances()) {
+        // Every page, or an error: a listing that stopped half way must never
+        // read as "the rest is gone".
+        let mut reservations = Vec::new();
+        let mut pages = req.into_paginator().send();
+        while let Some(page) = pages.next().await {
+            let page = page.map_err(|e| aws_err("list Cua instances", e))?;
+            reservations.extend(page.reservations().iter().cloned());
+        }
+        for i in reservations.iter().flat_map(|x| x.instances()) {
             let tags = tags_of(i.tags());
             if !model::is_ours(&tags, owner) {
                 continue;
@@ -1333,11 +1487,13 @@ impl CloudApi for Aws {
         for f in owner_filters(owner) {
             req = req.filters(f);
         }
-        let groups = req
-            .send()
-            .await
-            .map_err(|e| aws_err("list Cua security groups", e))?;
-        for g in groups.security_groups() {
+        let mut groups = Vec::new();
+        let mut pages = req.into_paginator().send();
+        while let Some(page) = pages.next().await {
+            let page = page.map_err(|e| aws_err("list Cua security groups", e))?;
+            groups.extend(page.security_groups().iter().cloned());
+        }
+        for g in &groups {
             let tags = tags_of(g.tags());
             if !model::is_ours(&tags, owner) {
                 continue;
@@ -1415,6 +1571,39 @@ impl CloudApi for Aws {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The error a user hit with an expired `aws login` session.
+    const EXPIRED_LOGIN: &str = "your cloud: aws: list Cua instances: dispatch failure: other: an error occurred while loading credentials: failed to refresh cached Login token: Your session has expired. Please reauthenticate.: AccessDeniedException: The refresh token has expired";
+
+    #[test]
+    fn credential_errors_read_as_one_line_with_the_fix() {
+        let login = "[profile sandbox]\nregion = us-west-2\nlogin_session = arn:aws:iam::1:user/x\n";
+        let sso = "[profile work]\nsso_session = corp\n[sso-session corp]\nsso_start_url = https://x\n";
+        let s = sign_in_of("default", "", EXPIRED_LOGIN).unwrap();
+        assert_eq!(s.kind, crate::signin::Kind::Expired);
+        assert_eq!(
+            s.line,
+            "Your AWS sign-in expired. Sign in with `aws login`, then run this again."
+        );
+        assert_eq!(
+            sign_in_of("sandbox", login, EXPIRED_LOGIN).unwrap().line,
+            "Your AWS sign-in expired. Sign in with `aws login --profile sandbox`, then run this again."
+        );
+        assert_eq!(
+            sign_in_of("work", sso, "ExpiredTokenException: The security token included in the request is expired").unwrap().line,
+            "Your AWS sign-in expired. Sign in with `aws sso login --profile work`, then run this again."
+        );
+        let missing = sign_in_of("gone", "", "dispatch failure: other: no providers in chain provided credentials").unwrap();
+        assert_eq!(missing.kind, crate::signin::Kind::Missing);
+        assert!(missing.line.contains("`aws login --profile gone`"), "{}", missing.line);
+        let rejected = sign_in_of("default", "[default]\naws_access_key_id = x\n", "InvalidClientTokenId: The security token included in the request is invalid").unwrap();
+        assert_eq!(rejected.kind, crate::signin::Kind::Rejected);
+        assert!(rejected.line.contains("`aws configure`"), "{}", rejected.line);
+        // Not sign-in problems.
+        assert_eq!(sign_in_of("default", "", "RequestExpired: Request has expired"), None);
+        assert_eq!(sign_in_of("default", "", "UnauthorizedOperation: not allowed to RunInstances"), None);
+        assert_eq!(sign_in_of("default", "", "InsufficientInstanceCapacity"), None);
+    }
 
     #[test]
     fn types_prices_and_arches() {

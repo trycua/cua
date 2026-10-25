@@ -122,6 +122,81 @@ pub struct CloudStatus {
     pub providers: Vec<CloudProvider>,
     #[serde(default)]
     pub resources: Vec<CloudResource>,
+    /// Clouds disconnected while they could not be checked (signed out)
+    /// that may still run Spaces Cua started, each until a sweep after
+    /// sign-in confirms it clean.
+    #[serde(default)]
+    pub cleanup: Vec<CloudCleanup>,
+}
+
+/// A cloud disconnected while Cua could not check it: what Cua's records
+/// say may still run there.
+#[derive(Debug, Clone, PartialEq, Default, Deserialize, uniffi::Record)]
+pub struct CloudCleanup {
+    pub provider: String,
+    #[serde(default)]
+    pub title: String,
+    /// The account the records belong to.
+    #[serde(default)]
+    pub account: String,
+    /// The profile it was connected with: the only one a sweep of it uses.
+    #[serde(default)]
+    pub profile: String,
+    #[serde(default)]
+    pub region: String,
+    /// Spaces (instances and sandboxes) that may still run.
+    #[serde(default)]
+    pub spaces: u32,
+    /// Every recorded resource, Spaces included.
+    #[serde(default)]
+    pub resources: u32,
+    /// "instance t4g.medium ×2".
+    #[serde(default)]
+    pub types: String,
+    /// RFC 3339; empty: none or never.
+    #[serde(default)]
+    pub latest_expires: String,
+    /// One of them never expires on its own.
+    #[serde(default)]
+    pub never_expires: bool,
+    /// Their recorded cost per hour while they run, US dollars.
+    #[serde(default)]
+    pub usd_per_hour: f64,
+    /// RFC 3339.
+    #[serde(default)]
+    pub since: String,
+    /// Why Cua could not check it.
+    #[serde(default)]
+    pub reason: String,
+    /// "AWS may still have 2 Spaces Cua started. Sign in and clean up."
+    #[serde(default)]
+    pub message: String,
+}
+
+/// A `Cloud` error's message without the cloud's raw error: the plain
+/// line(s) to show people ("Your AWS sign-in expired. Sign in with `aws
+/// login`, then run this again."). The raw part follows `"\n  details: "`
+/// in the message; show it only when asked (`--verbose`).
+#[uniffi::export]
+pub fn cloud_signin_plain(message: &str) -> String {
+    cua_sandbox_core::byoc::signin::split(message).0.to_string()
+}
+
+/// The raw cloud error a `Cloud` error message carries after its plain
+/// line(s), if any.
+#[uniffi::export]
+pub fn cloud_signin_details(message: &str) -> Option<String> {
+    cua_sandbox_core::byoc::signin::split(message)
+        .1
+        .map(str::to_string)
+}
+
+/// Whether a `Cloud` error is a `cloud_disconnect` refused because the
+/// cloud could not be checked (signed out): ask the person "Disconnect
+/// anyway?" and call again with `force` if they agree.
+#[uniffi::export]
+pub fn cloud_signin_unchecked(message: &str) -> bool {
+    cua_sandbox_core::byoc::signin::is_unchecked(message)
 }
 
 /// One check `cloud_test` ran.
@@ -161,6 +236,11 @@ pub struct CloudDisconnected {
     /// With `delete`: what was deleted from the account first.
     #[serde(default)]
     pub deleted: Vec<CloudResource>,
+    /// With `force`, when the cloud could not be checked: what may still
+    /// run there (also in `cloud_status().cleanup` until a sweep confirms
+    /// it clean).
+    #[serde(default)]
+    pub cleanup: Option<CloudCleanup>,
 }
 
 /// One line of the cloud audit log (`cloud_audit`). Never a secret.
@@ -345,19 +425,23 @@ impl Spaces {
 
     /// Forgets a connected cloud. Refused (listing them) while Cua
     /// resources still run there; with `delete_resources`, deletes everything Cua
-    /// created there first and disconnects once the cloud confirms.
-    #[uniffi::method(default(delete_resources = false))]
+    /// created there first and disconnects once the cloud confirms. When the
+    /// cloud cannot be checked (signed out), it is refused with a `Cloud`
+    /// error starting "Cua couldn't check"; ask the person, then `force`
+    /// disconnects anyway and keeps Cua's records for a sweep after sign-in.
+    #[uniffi::method(default(delete_resources = false, force = false))]
     pub async fn cloud_disconnect(
         &self,
         provider: String,
         delete_resources: bool,
+        force: bool,
     ) -> Result<CloudDisconnected> {
         let host = self.tool_caller();
         run(async move {
             parse(
                 host.tool_value(
                     "cloud_disconnect",
-                    json!({"provider": provider, "delete": delete_resources}),
+                    json!({"provider": provider, "delete": delete_resources, "force": force}),
                 )
                 .await?,
             )

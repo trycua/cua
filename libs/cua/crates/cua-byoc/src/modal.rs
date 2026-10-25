@@ -477,10 +477,34 @@ fn ours(tags: &BTreeMap<String, String>, owner: &str, what: &str, id: &str) -> R
     }
 }
 
+/// A Modal error as a sign-in problem, when it is one.
+pub fn sign_in_of(profile: &str, error: &str) -> Option<crate::signin::SignIn> {
+    use crate::signin::{SignIn, mentions};
+    let fix = if profile.is_empty() {
+        "modal token new".to_string()
+    } else {
+        format!("modal token new --profile {profile}")
+    };
+    if mentions(error, &["token missing", "no token", "not configured", "could not find token"]) {
+        return Some(SignIn::missing("Modal", &fix));
+    }
+    if mentions(
+        error,
+        &["modal: sign in:", "unauthenticated", "invalid token", "token expired", "token is invalid", "token_id"],
+    ) {
+        return Some(SignIn::expired("Modal", &fix));
+    }
+    None
+}
+
 #[async_trait]
 impl CloudApi for ModalApi {
     fn name(&self) -> &'static str {
         "modal"
+    }
+
+    fn sign_in_help(&self, conn: &Connection, error: &str) -> Option<crate::signin::SignIn> {
+        sign_in_of(&conn.profile, error)
     }
 
     fn title(&self) -> &'static str {
@@ -851,6 +875,17 @@ impl CloudApi for ModalApi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn modal_sign_in_problems_name_the_profile() {
+        let s = sign_in_of("cuaai", "your cloud: modal: sign in: Token missing (sign in with `modal token new`)").unwrap();
+        assert_eq!(s.kind, crate::signin::Kind::Missing);
+        assert_eq!(s.line, "You're not signed in to Modal here. Sign in with `modal token new --profile cuaai`, then run this again.");
+        let e = sign_in_of("", "modal: sign in: UNAUTHENTICATED: invalid credentials").unwrap();
+        assert_eq!(e.kind, crate::signin::Kind::Expired);
+        assert!(e.line.contains("`modal token new`"));
+        assert_eq!(sign_in_of("", "modal: create: out of capacity"), None);
+    }
 
     #[test]
     fn profiles_and_prices() {

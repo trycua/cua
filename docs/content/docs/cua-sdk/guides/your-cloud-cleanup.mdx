@@ -10,12 +10,46 @@ Details for [Use your own cloud](/cua-sdk/guides/your-cloud) and
 
 While the Cua daemon runs, it does a sweep
 with `--delete` (not `--all`) every 15 minutes, starting a minute after it
-starts, in every connected cloud. It deletes only expired sandboxes and
-resources whose sandbox is gone, never a sandbox that is still within its
-time limit. One cloud that cannot be reached does not stop the others. It
-logs one line when it deletes something and nothing otherwise. Set
-`CUA_CLOUD_SWEEP_SECS` to change the interval in seconds, or to `0` to turn
-it off (then run `cua cloud sweep --delete` yourself).
+starts, in every connected cloud. It deletes only expired sandboxes, what a
+failed create left, and records whose sandbox was never created, never a
+sandbox that is still within its time limit. One cloud that cannot be reached
+does not stop the others. It logs one line when it deletes something and
+nothing otherwise. Set `CUA_CLOUD_SWEEP_SECS` to change the interval in
+seconds, or to `0` to turn it off (then run `cua cloud sweep --delete`
+yourself).
+
+## When a sweep deletes something
+
+A sweep, automatic or not, deletes a resource only when it is sure:
+
+- The credentials must first prove they reach the account the cloud was
+  connected with (on AWS, `sts:GetCallerIdentity`). If a default profile, keys
+  in the environment or another Hetzner token reach another account, the
+  sweep stops and says so. Cua never acts through another account, and never
+  reads another account's silence as "deleted".
+- The cloud's listing must be complete. If any page of it fails, the sweep
+  deletes nothing and forgets nothing.
+- Expiry is judged by the earlier of this computer's clock and the cloud's,
+  and a resource must be 15 minutes past it. A clock that runs ahead never
+  ends a sandbox early.
+- A resource tagged as this computer's but missing from its records is kept
+  until it expires, because Cua can't prove nothing uses it. `--all`
+  deletes it.
+- A record younger than 10 minutes is never taken for gone, because a cloud
+  may not list a new resource yet. A record is forgotten only when the
+  cloud, asked where the record says the resource lives, answers that it is
+  gone.
+- A call that times out, is rate limited or can't reach the cloud is not an
+  answer. What can't be confirmed stays and is reported as kept.
+- One sweep runs at a time on a computer. The automatic sweep waits its turn,
+  and `cua cloud sweep` says another sweep is running. Other computers have
+  their own owner tag and never touch these resources.
+
+A sandbox's data is on its machine's disk, so deleting the machine deletes
+the data. Only three things do that before the sandbox's own time limit:
+deleting the sandbox, `cua cloud sweep --all --delete`, and
+`cua cloud disconnect --delete`. Cua Volume is not on these machines: it lives
+in your own storage or on your Mac.
 
 ## Disconnecting
 
@@ -36,6 +70,39 @@ left, and you can run it again. It prints the ids it deleted. Without
 `--delete` the other way out is `cua cloud sweep --all --delete`, then
 disconnect. Resources that Cua did not create are never touched or counted.
 
+### When you're signed out
+
+If your sign-in for that cloud expired, Cua can't check what is still there.
+It says so in one line, with the command that signs you in again:
+
+```text
+Your AWS sign-in expired. Sign in with `aws login`, then run this again.
+```
+
+The cloud's own error is in the log, and `--verbose` prints it. If you can't
+sign in now, `cua cloud disconnect` tells you what Cua's records show there and
+asks whether to disconnect anyway. Like ejecting a card that is still in use,
+anything still running keeps billing until it shuts itself down at its time
+limit. Every machine Cua starts has that limit and Cua's tags, so it ends even
+if Cua never runs again. In a script, `--force` disconnects without asking.
+Without `--force`, a script gets the same message and the command fails.
+
+```bash test="cli-shape" id="cua-cloud-disconnect-force"
+cua cloud disconnect aws --force
+cua cloud status
+cua cloud sweep aws --delete
+```
+
+After a forced disconnect, Cua keeps its records and the profile and account
+the cloud was connected with. `cua cloud status` and the app show a line such
+as "AWS may still have 2 Spaces Cua started. Sign in and clean up." After you
+sign in, `cua cloud sweep aws --delete` deletes them with that same profile
+and account, never another. The line clears only when the cloud confirms that
+nothing of Cua's is left. If you connect the same account again instead,
+those Spaces become usable again and nothing is deleted. If you connect a
+different account, the first account's records stay separate, and the line
+stays until that account is cleaned up.
+
 ## The audit log
 
 `~/.cua/cloud/state.json` holds only what exists now. The history is in
@@ -52,5 +119,5 @@ cua cloud audit --limit 200 --json
 ```
 
 Each line has `ts`, `action`, `provider`, `kind`, `id`, `space`, `actor`,
-`outcome` (`ok`, `failed` or `refused`) and `detail`. The newest is last.
+`outcome` (`ok`, `failed`, `refused` or `forced`) and `detail`. The newest is last.
 Agents read the same log with the `cloud_audit` tool.

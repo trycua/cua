@@ -121,6 +121,7 @@ const DEMO_NOTES = "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3
  * `?demo=empty` (no Spaces yet), `?demo=keychain` (the startup screen),
  * `?demo=mac-host` (New Space options and the Keyvault's Settings rows in the
  * SwiftUI host's shape), `?demo=unenrolled` (this device not enrolled),
+ * `?demo=agents-readonly` (Cua can't write Hermes's config),
  * `?demo=update-ready` (an update is downloaded), `?demo=update-downloading`,
  * and `?demo=low-disk` / `?demo=disk-full` (This Mac almost out of space). */
 export function demoOptionsFromSearch(search: string): DemoOptions {
@@ -140,6 +141,8 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     unenrolled: flags.has("unenrolled"),
     usage: (["idle", "warn", "limit", "pro", "teams"] as const).find((u) => flags.has(`usage-${u}`)),
     agents: (["none", "codex"] as const).find((a) => flags.has(`agents-${a}`)),
+    // `?demo=agents-readonly`: Hermes's config file can't be written, so setting it up fails.
+    ...(flags.has("agents-readonly") ? { agentsReadOnly: ["hermes"] } : {}),
     nudge: (["second-agent", "risky"] as const).find((n) => flags.has(`nudge-${n}`)),
     disk: flags.has("disk-full") ? "full" : flags.has("low-disk") ? "low" : undefined,
     cli: flags.has("cli-local") ? "local" : flags.has("cli-missing") ? "missing" : undefined,

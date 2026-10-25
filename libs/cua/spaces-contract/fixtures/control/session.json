@@ -67,6 +67,17 @@
       "metering": "free"
     },
     {
+      "tool": "resize_space",
+      "sdk_symbol": "Space::resize",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
       "tool": "start_space",
       "sdk_symbol": "Space::start",
       "providers": [

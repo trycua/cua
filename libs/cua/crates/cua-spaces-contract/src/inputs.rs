@@ -220,6 +220,35 @@ pub struct SpaceOnly {
     pub space: SpaceArg,
 }
 
+/// `stop_space`: turn a Space off.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct StopSpace {
+    /// Space id or name.
+    pub space: SpaceArg,
+    /// Suspend it instead: keep its memory so it resumes where it was (a
+    /// local container or QEMU VM). Default false: stop it, keeping its
+    /// disk and giving its memory back to the machine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suspend: Option<bool>,
+}
+
+/// `resize_space`: give a Space more or fewer vCPUs, more or less memory,
+/// or a bigger disk.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ResizeSpace {
+    /// Space id or name.
+    pub space: SpaceArg,
+    /// vCPUs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpus: Option<u32>,
+    /// Memory in MiB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_mb: Option<u64>,
+    /// Grow the disk to this many GiB (a disk never shrinks).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk_gb: Option<u32>,
+}
+
 /// `space_bash`: run a shell command inside the Space.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SpaceBash {

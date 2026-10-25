@@ -521,17 +521,48 @@ Examples:
         #[arg(long, short)]
         force: bool,
     },
-    /// Turn a Space off: a local container or QEMU VM is suspended (its
-    /// memory is kept), a Lume VM or a Space one of your computers provides
-    /// is stopped (its disk is kept), and so is a Space in your own cloud
-    /// (`--on aws`, `gcp`: compute billing stops; `hetzner`: still billed).
-    /// Modal sandboxes and Spaces added by address cannot be turned off.
+    /// Turn a Space off: a local VM (QEMU or Lume) or a Space one of your
+    /// computers provides is stopped, keeping its disk and freeing its
+    /// memory, and so is a Space in your own cloud (`--on aws`, `gcp`:
+    /// compute billing stops; `hetzner`: still billed). A local container
+    /// is stopped or suspended as its runtime can. `cua spaces suspend`
+    /// keeps a local Space's memory instead. Modal sandboxes and Spaces
+    /// added by address cannot be turned off.
     #[command(after_help = "Examples:
   cua spaces stop local:studio
   cua spaces stop relay:space-0123456789abcdef --json")]
     Stop {
         /// Space id or name.
         space: String,
+    },
+    /// Suspend a local Space (a container or QEMU VM): its memory is kept,
+    /// and stays in use, so it resumes where it was with `cua spaces
+    /// start`. `cua spaces stop` frees the memory instead.
+    #[command(after_help = "Examples:
+  cua spaces suspend local:studio")]
+    Suspend {
+        /// Space id or name.
+        space: String,
+    },
+    /// Give a local VM Space more or fewer vCPUs, more or less memory, or a
+    /// bigger disk. It shuts down and boots again from its own disk (a
+    /// stopped one boots): its files stay, its running processes do not. A
+    /// disk never shrinks.
+    #[command(after_help = "Examples:
+  cua spaces resize local:builder --memory-mb 24576
+  cua spaces resize builder --cpus 8 --disk-gb 200 --json")]
+    Resize {
+        /// Space id or name.
+        space: String,
+        /// vCPUs.
+        #[arg(long)]
+        cpus: Option<u32>,
+        /// Memory in MiB.
+        #[arg(long)]
+        memory_mb: Option<u64>,
+        /// Grow the disk to this many GiB.
+        #[arg(long)]
+        disk_gb: Option<u32>,
     },
     /// Turn a Space back on: resume a suspended one or boot a stopped one.
     #[command(after_help = "Examples:
@@ -970,6 +1001,25 @@ pub async fn run_spaces_sdk(
             }
         }
         SpacesCmd::Stop { space } => power_line(spaces.stop(space).await?, json, out),
+        SpacesCmd::Suspend { space } => power_line(spaces.suspend(space).await?, json, out),
+        SpacesCmd::Resize {
+            space,
+            cpus,
+            memory_mb,
+            disk_gb,
+        } => {
+            let r = spaces.resize(space, cpus, memory_mb, disk_gb).await?;
+            if json {
+                line(
+                    out,
+                    serde_json::json!({"space": r.space, "cpus": r.cpus,
+                        "memory_mb": r.memory_mb, "disk_gb": r.disk_gb, "message": r.message})
+                    .to_string(),
+                );
+            } else {
+                line(out, r.message);
+            }
+        }
         SpacesCmd::Start { space } => power_line(spaces.start(space).await?, json, out),
         SpacesCmd::Prewarm {
             image,

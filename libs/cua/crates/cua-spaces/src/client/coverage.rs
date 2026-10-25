@@ -23,7 +23,7 @@ pub struct ToolCoverage {
 }
 
 /// tool name → the typed Rust path that reaches it.
-const SYMBOLS: [(&str, &str); 96] = [
+const SYMBOLS: [(&str, &str); 97] = [
     ("add_space", "Connection::add_space"),
     ("remove_space", "Connection::remove_space"),
     ("list_spaces", "Connection::spaces"),
@@ -31,6 +31,7 @@ const SYMBOLS: [(&str, &str); 96] = [
     ("delete_space", "Space::delete"),
     ("stop_space", "Space::stop"),
     ("start_space", "Space::start"),
+    ("resize_space", "Space::resize"),
     ("space_bash", "Space::bash"),
     ("space_write", "Space::write_text"),
     ("upload", "Space::upload"),

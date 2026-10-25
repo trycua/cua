@@ -9,7 +9,7 @@
     "mcp_stdio",
     "mcp_streamable_http"
   ],
-  "tool_count": 96,
+  "tool_count": 97,
   "categories": [
     {
       "id": "lifecycle",
@@ -595,8 +595,8 @@
     {
       "name": "stop_space",
       "category": "lifecycle",
-      "description": "Turn a Space off: suspend it (memory kept) or stop it (disk kept).",
-      "instructions": "Turns a Space off the way its provider can: a local container or QEMU VM is suspended (its memory is kept and it resumes where it was), a local Lume VM is stopped (its disk is kept and it boots again), a Space one of your computers provides is stopped by that computer, which frees its memory, and a Space in your own cloud (on=\"aws\", \"gcp\") is stopped there: compute billing stops, its disk stays (storage is still billed); a Hetzner server (on=\"hetzner\") is stopped too, but Hetzner keeps billing a stopped server, so delete it to stop the charge. Anything streaming from the Space and any hotspot on it end first. A Modal sandbox, a Space added by address and your own computers on the relay cannot be turned off (wrong_provider); delete_space deletes a Space instead. start_space turns it on again.",
+      "description": "Turn a Space off: stop it (disk kept, memory freed) or, with suspend, suspend it (memory kept).",
+      "instructions": "Turns a Space off the way its provider can. By default it stops: a local VM (QEMU or Lume) shuts down with its disk kept and gives its memory back to the machine, a local container stops or is suspended as its runtime can, a Space one of your computers provides is stopped by that computer, and a Space in your own cloud (on=\"aws\", \"gcp\") is stopped there: compute billing stops, its disk stays (storage is still billed); a Hetzner server (on=\"hetzner\") is stopped too, but Hetzner keeps billing a stopped server, so delete it to stop the charge. suspend=true suspends a local container or QEMU VM instead: its memory is kept (so it still uses it) and it resumes where it was. Anything streaming from the Space and any hotspot on it end first. A Modal sandbox, a Space added by address and your own computers on the relay cannot be turned off (wrong_provider); delete_space deletes a Space instead. start_space turns it on again.",
       "platforms": [
         "macos",
         "windows",
@@ -635,6 +635,79 @@
       ],
       "input_schema": {
         "properties": {
+          "space": {
+            "description": "Space id or name.",
+            "type": "string"
+          },
+          "suspend": {
+            "description": "Suspend it instead: keep its memory so it resumes where it was (a\nlocal container or QEMU VM). Default false: stop it, keeping its\ndisk and giving its memory back to the machine.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "space"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "resize_space",
+      "category": "lifecycle",
+      "description": "Change a Space's vCPUs, memory or disk size.",
+      "instructions": "Gives a local VM Space (QEMU) another shape: `cpus` vCPUs, `memory_mb` MiB of memory, a disk grown to `disk_gb` GiB; what you leave out stays. The VM shuts down and boots again from its own disk, so its files stay but its memory and running processes do not; a stopped one boots. A disk never shrinks. Returns once it is ready again. Containers, Lume VMs and Spaces on other computers are refused (wrong_provider).",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free",
+      "capabilities": [
+        "space.power"
+      ],
+      "requires": [],
+      "host_requires": [],
+      "annotations": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true
+      },
+      "sdk_symbol": "Spaces.resize(space, cpus, memory_mb, disk_gb)",
+      "rust_symbol": "Spaces::resize",
+      "notes": [],
+      "result": "JSON: `space`, `cpus`, `memory_mb`, `disk_gb` (what it has now) and `message`.",
+      "errors": [
+        "wrong_provider",
+        "sandbox",
+        "invalid_argument",
+        "timeout"
+      ],
+      "input_schema": {
+        "properties": {
+          "cpus": {
+            "description": "vCPUs.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "disk_gb": {
+            "description": "Grow the disk to this many GiB (a disk never shrinks).",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "memory_mb": {
+            "description": "Memory in MiB.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
           "space": {
             "description": "Space id or name.",
             "type": "string"

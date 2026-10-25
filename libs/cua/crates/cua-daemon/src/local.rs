@@ -1987,18 +1987,9 @@ impl LocalRuntime for VmmLocal {
     }
 
     async fn resume(&self, name: &str) -> RuntimeResult<LocalInstance> {
-        let (kind, rt) = self.owner(name).await?;
-        // QEMU resumes a paused VM over QMP; a stopped one has no process
-        // to resume and no start spec to boot from.
-        if kind == BackendKind::Qemu && rt.status(name).await.map_err(rt_err)? == Status::Stopped {
-            return Err(RuntimeError::Unsupported {
-                backend: "qemu".into(),
-                op: format!(
-                    "starting {name} again: a QEMU VM resumes from suspend only, and this one \
-                     was stopped (its disk is kept; delete it and create a new one)"
-                ),
-            });
-        }
+        // A paused QEMU VM runs again over QMP; a stopped one boots again
+        // from its own disk (`QemuRuntime::resume`).
+        let (_, rt) = self.owner(name).await?;
         let inst = rt.resume(name).await.map_err(rt_err)?;
         Ok(LocalInstance {
             backend: runtime_label(&inst),
@@ -2019,19 +2010,22 @@ impl LocalRuntime for VmmLocal {
         })
     }
 
-    /// Containers pause in memory (`docker pause`) and QEMU VMs pause over
-    /// QMP; Lume has no pause, so a Lume VM stops and boots again. On the
+    /// Containers pause in memory (`docker pause`). VMs stop and boot again
+    /// from their disk: turning a VM off gives its memory back to the
+    /// machine (a paused QEMU VM would keep all of it; `Sandboxes::suspend`
+    /// still pauses one when asked), and Lume has no pause at all. On the
     /// built-in Linux runtime containers stop too, so its VM can stop once
     /// no Linux Space runs (a paused one would hold it up).
     fn power_control(&self, runtime_type: &str) -> Option<cua_sandbox_core::PowerControl> {
         use cua_sandbox_core::PowerControl;
         match runtime_type.trim().to_ascii_lowercase().as_str() {
-            // Neither has a pause: the VM stops and boots again.
-            "lume" | "containerization" => Some(PowerControl::Stop),
+            // The VM stops (its memory goes back to the machine) and boots
+            // again from its disk.
+            "lume" | "containerization" | "qemu" => Some(PowerControl::Stop),
             "gvisor" | "runsc" | "runc" | "container" | "docker" if managed::in_use() => {
                 Some(PowerControl::Stop)
             }
-            "gvisor" | "runsc" | "runc" | "container" | "docker" | "qemu-docker" | "qemu"
+            "gvisor" | "runsc" | "runc" | "container" | "docker" | "qemu-docker"
             | "firecracker" | "vz" => Some(PowerControl::Suspend),
             _ => None,
         }
@@ -3215,6 +3209,23 @@ mod tests {
         assert!(local.fork_has_own_identity("runc"));
         // A QEMU fork gets its own through cua-spacesd (memory) or its seed.
         assert!(local.fork_has_own_identity("qemu"));
+    }
+
+    /// Turning a VM off frees its memory: QEMU and Lume VMs stop (their
+    /// disk is kept) and boot again; containers still pause.
+    #[test]
+    fn vms_stop_and_free_their_memory_containers_pause() {
+        use cua_sandbox_core::{LocalRuntime, PowerControl};
+        let local = VmmLocal::default();
+        assert_eq!(local.power_control("qemu"), Some(PowerControl::Stop));
+        assert_eq!(local.power_control("lume"), Some(PowerControl::Stop));
+        if !managed::in_use() {
+            assert_eq!(local.power_control("gvisor"), Some(PowerControl::Suspend));
+        }
+        assert_eq!(
+            local.power_control("firecracker"),
+            Some(PowerControl::Suspend)
+        );
     }
 
     /// A Mac's microVMs under cua-vz: found by their label, paused when

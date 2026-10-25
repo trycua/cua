@@ -18954,8 +18954,8 @@ export type SpacePowerReport = {
      */
     state: string,
     /**
-     * How it turns off: `suspend` (its memory is kept) or `stop` (its
-     * disk is kept).
+     * How it was turned off: `suspend` (its memory is kept, and still in
+     * use) or `stop` (its disk is kept; its memory is freed).
      */
     power: string,
     /**
@@ -19075,6 +19075,79 @@ const FfiConverterTypeSpaceRelayRegistration = (() => {
              FfiConverterString.allocationSize(value.machine) +
              FfiConverterString.allocationSize(value.url) +
              FfiConverterBool.allocationSize(value.online);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * What [`Spaces::resize`] did: the shape the Space has now.
+ */
+export type SpaceResizeReport = {
+    /**
+     * The Space.
+     */
+    space: string,
+    /**
+     * vCPUs (when changed).
+     */
+    cpus?: number,
+    /**
+     * Memory in MiB (when changed).
+     */
+    memoryMb?: bigint,
+    /**
+     * Disk in GiB (when grown).
+     */
+    diskGb?: number,
+    /**
+     * What happened, for people.
+     */
+    message: string
+}
+
+/**
+ * Generated factory for {@link SpaceResizeReport} record objects.
+ */
+export const SpaceResizeReport = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<SpaceResizeReport, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<SpaceResizeReport>,
+    });
+})();
+
+const FfiConverterTypeSpaceResizeReport = (() => {
+    type TypeName = SpaceResizeReport;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                space: FfiConverterString.read(from),
+                cpus: FfiConverterOptionalUInt32.read(from),
+                memoryMb: FfiConverterOptionalUInt64.read(from),
+                diskGb: FfiConverterOptionalUInt32.read(from),
+                message: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.space, into);
+            FfiConverterOptionalUInt32.write(value.cpus, into);
+            FfiConverterOptionalUInt64.write(value.memoryMb, into);
+            FfiConverterOptionalUInt32.write(value.diskGb, into);
+            FfiConverterString.write(value.message, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.space) +
+             FfiConverterOptionalUInt32.allocationSize(value.cpus) +
+             FfiConverterOptionalUInt64.allocationSize(value.memoryMb) +
+             FfiConverterOptionalUInt32.allocationSize(value.diskGb) +
+             FfiConverterString.allocationSize(value.message);
 
         }
     };
@@ -38916,6 +38989,14 @@ export interface SpacesLike {
  */
     removePrewarm(id: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<boolean>;
 /**
+ * Gives a local VM Space another shape: `cpus` vCPUs, `memory_mb` MiB
+ * of memory, a disk grown to `disk_gb` GiB (each `None` keeps it). It
+ * shuts down and boots again from its own disk (a stopped one boots),
+ * so its files stay and its memory and processes do not. Returns once
+ * it is ready again.
+ */
+    resize(space: string, cpus: number | undefined, memoryMb: bigint | undefined, diskGb: number | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpaceResizeReport>;
+/**
  * Resolves an id, legacy id, URL or display name.
  */
     resolve(space: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpaceInfo>;
@@ -38972,12 +39053,20 @@ export interface SpacesLike {
     start(space: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpacePowerReport>;
 /**
  * Turns a Space off the way its provider can (`SpaceInfo.power`):
- * suspends it, keeping its memory (a local container or QEMU VM), or
- * stops it, keeping its disk (a local Lume VM; a Space one of your
- * machines provides, which that machine stops). A cloud Space, a Space
- * added by address and your own computers cannot be turned off.
+ * stops it, keeping its disk and freeing its memory (a local VM; a
+ * Space one of your machines provides, which that machine stops), or
+ * suspends it, keeping its memory (a local container that cannot
+ * stop). [`Spaces::suspend`] suspends a local container or QEMU VM on
+ * purpose. A Space added by address and your own computers cannot be
+ * turned off.
  */
     stop(space: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpacePowerReport>;
+/**
+ * Suspends a local Space (a container or a QEMU VM), keeping its
+ * memory: it resumes where it was, and its memory stays in use until
+ * then. [`Spaces::stop`] stops it instead and frees its memory.
+ */
+    suspend(space: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpacePowerReport>;
 /**
  * `volume_approve`: the request becomes a grant (with presence).
  */
@@ -41037,6 +41126,45 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
+ * Gives a local VM Space another shape: `cpus` vCPUs, `memory_mb` MiB
+ * of memory, a disk grown to `disk_gb` GiB (each `None` keeps it). It
+ * shuts down and boots again from its own disk (a stopped one boots),
+ * so its files stay and its memory and processes do not. Returns once
+ * it is ready again.
+ */
+    async resize(space: string, cpus: number | undefined, memoryMb: bigint | undefined, diskGb: number | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<SpaceResizeReport> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_spaces_resize(
+                    uniffiTypeSpacesObjectFactory.clonePointer(this),FfiConverterString.lower(space, nativeModule().rustbuffer_alloc),FfiConverterOptionalUInt32.lower(cpus, nativeModule().rustbuffer_alloc),FfiConverterOptionalUInt64.lower(memoryMb, nativeModule().rustbuffer_alloc),FfiConverterOptionalUInt32.lower(diskGb, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeSpaceResizeReport.lift.bind(FfiConverterTypeSpaceResizeReport),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
  * Resolves an id, legacy id, URL or display name.
  */
     async resolve(space: string, asyncOpts_?: { signal: AbortSignal }): Promise<SpaceInfo> /*throws*/ {
@@ -41393,10 +41521,12 @@ private constructor(pointer: UniffiHandle) {
 
 /**
  * Turns a Space off the way its provider can (`SpaceInfo.power`):
- * suspends it, keeping its memory (a local container or QEMU VM), or
- * stops it, keeping its disk (a local Lume VM; a Space one of your
- * machines provides, which that machine stops). A cloud Space, a Space
- * added by address and your own computers cannot be turned off.
+ * stops it, keeping its disk and freeing its memory (a local VM; a
+ * Space one of your machines provides, which that machine stops), or
+ * suspends it, keeping its memory (a local container that cannot
+ * stop). [`Spaces::suspend`] suspends a local container or QEMU VM on
+ * purpose. A Space added by address and your own computers cannot be
+ * turned off.
  */
     async stop(space: string, asyncOpts_?: { signal: AbortSignal }): Promise<SpacePowerReport> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -41405,6 +41535,43 @@ private constructor(pointer: UniffiHandle) {
             /*rustCaller:*/ uniffiCaller,
             /*rustFutureFunc:*/ () => {
                 return nativeModule().uniffi_cua_sdk_fn_method_spaces_stop(
+                    uniffiTypeSpacesObjectFactory.clonePointer(this),FfiConverterString.lower(space, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeSpacePowerReport.lift.bind(FfiConverterTypeSpacePowerReport),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * Suspends a local Space (a container or a QEMU VM), keeping its
+ * memory: it resumes where it was, and its memory stays in use until
+ * then. [`Spaces::stop`] stops it instead and frees its memory.
+ */
+    async suspend(space: string, asyncOpts_?: { signal: AbortSignal }): Promise<SpacePowerReport> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_spaces_suspend(
                     uniffiTypeSpacesObjectFactory.clonePointer(this),FfiConverterString.lower(space, nativeModule().rustbuffer_alloc)
                 );
             },
@@ -45529,6 +45696,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_remove_prewarm() !== 56425) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_remove_prewarm");
     }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_resize() !== 2886) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_resize");
+    }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_resolve() !== 9986) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_resolve");
     }
@@ -45559,8 +45729,11 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_start() !== 32898) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_start");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_stop() !== 64586) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_stop() !== 59057) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_stop");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_suspend() !== 23817) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_suspend");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_volume_approve() !== 8640) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_volume_approve");
@@ -46090,6 +46263,7 @@ export default Object.freeze({
     FfiConverterTypeSpacePowerReport,
     FfiConverterTypeSpacePresence,
     FfiConverterTypeSpaceRelayRegistration,
+    FfiConverterTypeSpaceResizeReport,
     FfiConverterTypeSpaceResources,
     FfiConverterTypeSpaceSendFileOptions,
     FfiConverterTypeSpaceSendFileReport,

@@ -1235,6 +1235,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_remove_prewarm() != 56425:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_spaces_resize() != 2886:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_resolve() != 9986:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_resources() != 12146:
@@ -1255,7 +1257,9 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_start() != 32898:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_spaces_stop() != 64586:
+    if lib.uniffi_cua_sdk_checksum_method_spaces_stop() != 59057:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_spaces_suspend() != 23817:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_volume_approve() != 8640:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -4162,6 +4166,14 @@ _UniffiLib.uniffi_cua_sdk_fn_method_spaces_remove_prewarm.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_remove_prewarm.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_resize.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_resize.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_resolve.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -4226,6 +4238,11 @@ _UniffiLib.uniffi_cua_sdk_fn_method_spaces_stop.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_stop.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_suspend.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_suspend.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_volume_approve.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -5877,6 +5894,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_remove.restype = ctypes.c_uint1
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_remove_prewarm.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_remove_prewarm.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_resize.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_resize.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_resolve.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_resolve.restype = ctypes.c_uint16
@@ -5910,6 +5930,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_start.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_stop.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_stop.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_suspend.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_suspend.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_volume_approve.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_volume_approve.restype = ctypes.c_uint16
@@ -23990,6 +24013,63 @@ class _UniffiFfiConverterTypeSpaceRelayRegistration(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.write(value.online, buf)
 
 @dataclass
+class SpaceResizeReport:
+    """
+    What [`Spaces::resize`] did: the shape the Space has now.
+"""
+    def __init__(self, *, space:str, cpus:typing.Optional[int], memory_mb:typing.Optional[int], disk_gb:typing.Optional[int], message:str):
+        self.space = space
+        self.cpus = cpus
+        self.memory_mb = memory_mb
+        self.disk_gb = disk_gb
+        self.message = message
+
+
+
+
+    def __str__(self):
+        return "SpaceResizeReport(space={}, cpus={}, memory_mb={}, disk_gb={}, message={})".format(self.space, self.cpus, self.memory_mb, self.disk_gb, self.message)
+    def __eq__(self, other):
+        if self.space != other.space:
+            return False
+        if self.cpus != other.cpus:
+            return False
+        if self.memory_mb != other.memory_mb:
+            return False
+        if self.disk_gb != other.disk_gb:
+            return False
+        if self.message != other.message:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeSpaceResizeReport(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return SpaceResizeReport(
+            space=_UniffiFfiConverterString.read(buf),
+            cpus=_UniffiFfiConverterOptionalUInt32.read(buf),
+            memory_mb=_UniffiFfiConverterOptionalUInt64.read(buf),
+            disk_gb=_UniffiFfiConverterOptionalUInt32.read(buf),
+            message=_UniffiFfiConverterString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.space)
+        _UniffiFfiConverterOptionalUInt32.check_lower(value.cpus)
+        _UniffiFfiConverterOptionalUInt64.check_lower(value.memory_mb)
+        _UniffiFfiConverterOptionalUInt32.check_lower(value.disk_gb)
+        _UniffiFfiConverterString.check_lower(value.message)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.space, buf)
+        _UniffiFfiConverterOptionalUInt32.write(value.cpus, buf)
+        _UniffiFfiConverterOptionalUInt64.write(value.memory_mb, buf)
+        _UniffiFfiConverterOptionalUInt32.write(value.disk_gb, buf)
+        _UniffiFfiConverterString.write(value.message, buf)
+
+@dataclass
 class SpaceSendFileOptions:
     """
     Options for [`Space::send_file`].
@@ -40557,6 +40637,15 @@ class SpacesProtocol(typing.Protocol):
         Ends prewarm `id` (its ready Spaces go). `false`: no such prewarm.
 """
         raise NotImplementedError
+    async def resize(self, space: str,cpus: typing.Optional[int],memory_mb: typing.Optional[int],disk_gb: typing.Optional[int]) -> SpaceResizeReport:
+        """
+        Gives a local VM Space another shape: `cpus` vCPUs, `memory_mb` MiB
+        of memory, a disk grown to `disk_gb` GiB (each `None` keeps it). It
+        shuts down and boots again from its own disk (a stopped one boots),
+        so its files stay and its memory and processes do not. Returns once
+        it is ready again.
+"""
+        raise NotImplementedError
     async def resolve(self, space: str) -> SpaceInfo:
         """
         Resolves an id, legacy id, URL or display name.
@@ -40625,10 +40714,19 @@ class SpacesProtocol(typing.Protocol):
     async def stop(self, space: str) -> SpacePowerReport:
         """
         Turns a Space off the way its provider can (`SpaceInfo.power`):
-        suspends it, keeping its memory (a local container or QEMU VM), or
-        stops it, keeping its disk (a local Lume VM; a Space one of your
-        machines provides, which that machine stops). A cloud Space, a Space
-        added by address and your own computers cannot be turned off.
+        stops it, keeping its disk and freeing its memory (a local VM; a
+        Space one of your machines provides, which that machine stops), or
+        suspends it, keeping its memory (a local container that cannot
+        stop). [`Spaces::suspend`] suspends a local container or QEMU VM on
+        purpose. A Space added by address and your own computers cannot be
+        turned off.
+"""
+        raise NotImplementedError
+    async def suspend(self, space: str) -> SpacePowerReport:
+        """
+        Suspends a local Space (a container or a QEMU VM), keeping its
+        memory: it resumes where it was, and its memory stays in use until
+        then. [`Spaces::stop`] stops it instead and frees its memory.
 """
         raise NotImplementedError
     async def volume_approve(self, request_id: str,expires_in_secs: typing.Optional[int]) -> DriveGrant:
@@ -42017,6 +42115,39 @@ class Spaces(SpacesProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    async def resize(self, space: str,cpus: typing.Optional[int],memory_mb: typing.Optional[int],disk_gb: typing.Optional[int]) -> SpaceResizeReport:
+        """
+        Gives a local VM Space another shape: `cpus` vCPUs, `memory_mb` MiB
+        of memory, a disk grown to `disk_gb` GiB (each `None` keeps it). It
+        shuts down and boots again from its own disk (a stopped one boots),
+        so its files stay and its memory and processes do not. Returns once
+        it is ready again.
+"""
+
+        _UniffiFfiConverterString.check_lower(space)
+
+        _UniffiFfiConverterOptionalUInt32.check_lower(cpus)
+
+        _UniffiFfiConverterOptionalUInt64.check_lower(memory_mb)
+
+        _UniffiFfiConverterOptionalUInt32.check_lower(disk_gb)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(space),
+            _UniffiFfiConverterOptionalUInt32.lower(cpus),
+            _UniffiFfiConverterOptionalUInt64.lower(memory_mb),
+            _UniffiFfiConverterOptionalUInt32.lower(disk_gb),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeSpaceResizeReport.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_spaces_resize(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     async def resolve(self, space: str) -> SpaceInfo:
         """
         Resolves an id, legacy id, URL or display name.
@@ -42262,10 +42393,12 @@ class Spaces(SpacesProtocol):
     async def stop(self, space: str) -> SpacePowerReport:
         """
         Turns a Space off the way its provider can (`SpaceInfo.power`):
-        suspends it, keeping its memory (a local container or QEMU VM), or
-        stops it, keeping its disk (a local Lume VM; a Space one of your
-        machines provides, which that machine stops). A cloud Space, a Space
-        added by address and your own computers cannot be turned off.
+        stops it, keeping its disk and freeing its memory (a local VM; a
+        Space one of your machines provides, which that machine stops), or
+        suspends it, keeping its memory (a local container that cannot
+        stop). [`Spaces::suspend`] suspends a local container or QEMU VM on
+        purpose. A Space added by address and your own computers cannot be
+        turned off.
 """
 
         _UniffiFfiConverterString.check_lower(space)
@@ -42277,6 +42410,28 @@ class Spaces(SpacesProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_sdk_fn_method_spaces_stop(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def suspend(self, space: str) -> SpacePowerReport:
+        """
+        Suspends a local Space (a container or a QEMU VM), keeping its
+        memory: it resumes where it was, and its memory stays in use until
+        then. [`Spaces::stop`] stops it instead and frees its memory.
+"""
+
+        _UniffiFfiConverterString.check_lower(space)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(space),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeSpacePowerReport.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_spaces_suspend(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
@@ -45278,6 +45433,7 @@ __all__ = [
     "SpaceList",
     "SpacePowerReport",
     "SpaceRelayRegistration",
+    "SpaceResizeReport",
     "SpaceSendFileOptions",
     "SpaceSentFile",
     "SpaceSendFileReport",

@@ -13310,7 +13310,7 @@
      "usage": "cua spaces delete [OPTIONS] <SPACE>"
     },
     {
-     "abstract": "Turn a Space off: a local container or QEMU VM is suspended (its memory is kept), a Lume VM or a Space one of your computers provides is stopped (its disk is kept), and so is a Space in your own cloud (`--on aws`, `gcp`: compute billing stops; `hetzner`: still billed). Modal sandboxes and Spaces added by address cannot be turned off",
+     "abstract": "Turn a Space off: a local VM (QEMU or Lume) or a Space one of your computers provides is stopped, keeping its disk and freeing its memory, and so is a Space in your own cloud (`--on aws`, `gcp`: compute billing stops; `hetzner`: still billed). A local container is stopped or suspended as its runtime can. `cua spaces suspend` keeps a local Space's memory instead. Modal sandboxes and Spaces added by address cannot be turned off",
      "after_help": "Examples:\n  cua spaces stop local:studio\n  cua spaces stop relay:space-0123456789abcdef --json",
      "aliases": [],
      "arguments": [
@@ -13333,6 +13333,105 @@
      "subcommand_optional": false,
      "subcommands": [],
      "usage": "cua spaces stop [OPTIONS] <SPACE>"
+    },
+    {
+     "abstract": "Suspend a local Space (a container or QEMU VM): its memory is kept, and stays in use, so it resumes where it was with `cua spaces start`. `cua spaces stop` frees the memory instead",
+     "after_help": "Examples:\n  cua spaces suspend local:studio",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Space id or name",
+       "hidden": false,
+       "is_optional": false,
+       "name": "SPACE",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "suspend",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua spaces suspend [OPTIONS] <SPACE>"
+    },
+    {
+     "abstract": "Give a local VM Space more or fewer vCPUs, more or less memory, or a bigger disk. It shuts down and boots again from its own disk (a stopped one boots): its files stay, its running processes do not. A disk never shrinks",
+     "after_help": "Examples:\n  cua spaces resize local:builder --memory-mb 24576\n  cua spaces resize builder --cpus 8 --disk-gb 200 --json",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Space id or name",
+       "hidden": false,
+       "is_optional": false,
+       "name": "SPACE",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "resize",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "vCPUs",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "cpus",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "CPUS"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Memory in MiB",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "memory-mb",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "MEMORY_MB"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Grow the disk to this many GiB",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "disk-gb",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "integer",
+       "value_name": "DISK_GB"
+      }
+     ],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua spaces resize [OPTIONS] <SPACE>"
     },
     {
      "abstract": "Turn a Space back on: resume a suspended one or boot a stopped one",

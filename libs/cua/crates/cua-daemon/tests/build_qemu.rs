@@ -126,6 +126,43 @@ async fn builds_caches_forks_and_fails_cleanly() {
     assert_eq!(lines[6], "cua");
     spaces.delete(&created.id).await.unwrap();
 
+    // A Space from the tag with its own size: more memory and a bigger
+    // disk than the build's machine, and still every build step's files.
+    let sized = spaces
+        .create(cua_spaces::SpaceCreate {
+            image: Some(format!("build:{tag}")),
+            name: Some(format!("{tag}-big")),
+            cpus: Some(3),
+            memory_mb: Some(3072),
+            disk_gb: Some(40),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .ready()
+        .unwrap();
+    let space = spaces.space(&sized.id).await.unwrap();
+    let out = space
+        .bash(
+            "nproc; awk '/MemTotal/{print $2}' /proc/meminfo; df -BG --output=size / | tail -1; cat /srv/app/hello.txt",
+            Duration::from_secs(60),
+        )
+        .await
+        .unwrap();
+    assert!(out.success(), "{}", out.render());
+    let lines: Vec<&str> = out.stdout.lines().map(str::trim).collect();
+    assert_eq!(lines[0], "3", "{}", out.stdout);
+    let kib: u64 = lines[1].parse().unwrap();
+    assert!((2_700_000..=3_200_000).contains(&kib), "{}", out.stdout);
+    let disk: u64 = lines[2].trim_end_matches('G').parse().unwrap();
+    assert!(disk >= 35, "{}", out.stdout);
+    assert!(
+        !lines[3].is_empty(),
+        "the build's files are kept: {}",
+        out.stdout
+    );
+    spaces.delete(&sized.id).await.unwrap();
+
     // A changed context file rebuilds the COPY and what follows only.
     std::fs::write(ctx.path().join("hello.txt"), "changed\n").unwrap();
     let changed = spaces

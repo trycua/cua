@@ -2564,6 +2564,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_fn_method_spaces_resize": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_fn_method_spaces_resolve": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -2615,6 +2620,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_sdk_fn_method_spaces_stop": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_method_spaces_suspend": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
@@ -4979,6 +4989,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_spaces_resize": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_spaces_resolve": {
       args: [],
       ret: FfiType.UInt16,
@@ -5030,6 +5045,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_sdk_checksum_method_spaces_stop": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_spaces_suspend": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -6182,6 +6202,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_spaces_relay_unregister(uniffiSelf: bigint, space: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_remove(uniffiSelf: bigint, space: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_remove_prewarm(uniffiSelf: bigint, id: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_spaces_resize(uniffiSelf: bigint, space: Uint8Array, cpus: Uint8Array, memoryMb: Uint8Array, diskGb: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_resolve(uniffiSelf: bigint, space: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_resources(uniffiSelf: bigint, visible: number): bigint;
     uniffi_cua_sdk_fn_method_spaces_routine_add(uniffiSelf: bigint, agent: Uint8Array, title: Uint8Array, prompt: Uint8Array, everyMinutes: Uint8Array, dailyAt: Uint8Array, weeklyOn: Uint8Array): bigint;
@@ -6193,6 +6214,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_spaces_space(uniffiSelf: bigint, space: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_start(uniffiSelf: bigint, space: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_stop(uniffiSelf: bigint, space: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_spaces_suspend(uniffiSelf: bigint, space: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_volume_approve(uniffiSelf: bigint, requestId: Uint8Array, expiresInSecs: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_volume_audit(uniffiSelf: bigint, limit: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_volume_cache_clear(uniffiSelf: bigint): bigint;
@@ -6665,6 +6687,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_spaces_relay_unregister(): number;
     uniffi_cua_sdk_checksum_method_spaces_remove(): number;
     uniffi_cua_sdk_checksum_method_spaces_remove_prewarm(): number;
+    uniffi_cua_sdk_checksum_method_spaces_resize(): number;
     uniffi_cua_sdk_checksum_method_spaces_resolve(): number;
     uniffi_cua_sdk_checksum_method_spaces_resources(): number;
     uniffi_cua_sdk_checksum_method_spaces_routine_add(): number;
@@ -6676,6 +6699,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_spaces_space(): number;
     uniffi_cua_sdk_checksum_method_spaces_start(): number;
     uniffi_cua_sdk_checksum_method_spaces_stop(): number;
+    uniffi_cua_sdk_checksum_method_spaces_suspend(): number;
     uniffi_cua_sdk_checksum_method_spaces_volume_approve(): number;
     uniffi_cua_sdk_checksum_method_spaces_volume_audit(): number;
     uniffi_cua_sdk_checksum_method_spaces_volume_cache_clear(): number;

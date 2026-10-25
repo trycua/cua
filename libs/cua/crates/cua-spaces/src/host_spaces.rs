@@ -2004,9 +2004,8 @@ impl HostSpacesServer {
     }
 
     /// `SetHostSpacePower`: turns a Space this host provides off or on.
-    /// Off stops it with its disk kept, so it frees the host's memory (a
-    /// QEMU VM, which cannot boot again from its state, is suspended
-    /// instead); on boots it again and attaches it to its relay machine
+    /// Off stops it with its disk kept, so it frees the host's memory; on
+    /// boots it again and attaches it to its relay machine
     /// again, with the machine token the host keeps. The owner powers any;
     /// another account only the ones it created.
     pub async fn set_power(
@@ -2047,7 +2046,7 @@ impl HostSpacesServer {
             )));
         };
         let sandboxes = self.spaces.sandboxes();
-        let Some(own) = sandboxes.power_control(name) else {
+        if sandboxes.power_control(name).is_none() {
             // The core's refusal names the runtime that cannot.
             let e = sandboxes
                 .power_off(name)
@@ -2056,11 +2055,8 @@ impl HostSpacesServer {
                 .map(Error::from)
                 .unwrap_or_else(|| Error::invalid("no power control"));
             return Err(self.refuse(caller, &space, e));
-        };
-        let control = match sandboxes.get(name).await.map(|i| i.runtime_type) {
-            Ok(runtime) if runtime == "qemu" => own,
-            _ => cua_sandbox_core::PowerControl::Stop,
-        };
+        }
+        let control = cua_sandbox_core::PowerControl::Stop;
         self.spaces.drop_connection(&id).await;
         let label = record.label();
         // What the audit names it by: its relay machine, or for a direct

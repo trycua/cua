@@ -2294,6 +2294,11 @@ uint64_t uniffi_cua_sdk_fn_method_spaces_relay_unregister(uint64_t ptr, RustBuff
 uint64_t uniffi_cua_sdk_fn_method_spaces_remove(uint64_t ptr, RustBuffer space
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_RESIZE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_RESIZE
+uint64_t uniffi_cua_sdk_fn_method_spaces_resize(uint64_t ptr, RustBuffer space, RustBuffer cpus, RustBuffer memory_mb, RustBuffer disk_gb
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_RESOLVE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_RESOLVE
 uint64_t uniffi_cua_sdk_fn_method_spaces_resolve(uint64_t ptr, RustBuffer space
@@ -2327,6 +2332,11 @@ uint64_t uniffi_cua_sdk_fn_method_spaces_start(uint64_t ptr, RustBuffer space
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_STOP
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_STOP
 uint64_t uniffi_cua_sdk_fn_method_spaces_stop(uint64_t ptr, RustBuffer space
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_SUSPEND
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_SUSPEND
+uint64_t uniffi_cua_sdk_fn_method_spaces_suspend(uint64_t ptr, RustBuffer space
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_VOLUME_APPROVE
@@ -5682,6 +5692,12 @@ uint16_t uniffi_cua_sdk_checksum_method_spaces_remove(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_RESIZE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_RESIZE
+uint16_t uniffi_cua_sdk_checksum_method_spaces_resize(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_RESOLVE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_RESOLVE
 uint16_t uniffi_cua_sdk_checksum_method_spaces_resolve(void
@@ -5721,6 +5737,12 @@ uint16_t uniffi_cua_sdk_checksum_method_spaces_start(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_STOP
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_STOP
 uint16_t uniffi_cua_sdk_checksum_method_spaces_stop(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_SUSPEND
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_SUSPEND
+uint16_t uniffi_cua_sdk_checksum_method_spaces_suspend(void
 
 );
 #endif

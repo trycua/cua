@@ -465,6 +465,7 @@ impl MeshClients {
             Slot::Ready {
                 dialer: Arc::new(dialer),
                 _lock: None,
+                account: None,
             },
         );
     }

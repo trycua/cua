@@ -359,7 +359,11 @@ class CodexAuthPreflightTest(unittest.TestCase):
             stack.enter_context(
                 mock.patch.dict(
                     "os.environ",
-                    {"CDB_CODEX_AUTH": "chatgpt", "CDB_CODEX_AUTH_FILE": str(source)},
+                    {
+                        "CDB_CODEX_AUTH": "chatgpt",
+                        "CDB_CODEX_AUTH_FILE": str(source),
+                        "DISPLAY": ":99",
+                    },
                 )
             )
             ctx.versions["codex_native"] = rb.cxn.observed(Path("/nonexistent"))

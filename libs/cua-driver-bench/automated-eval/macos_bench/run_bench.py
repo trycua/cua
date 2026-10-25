@@ -2299,7 +2299,8 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
         "not applicable on Linux" if desktop.detect_platform() == "linux" else json.dumps(per_name),
     )
     try:
-        subprocess.run(["/usr/bin/open", "-a", "Calculator"], check=True, timeout=30)
+        if desktop.detect_platform() == "macos":
+            subprocess.run(["/usr/bin/open", "-a", "Calculator"], check=True, timeout=30)
         for arm in ctx.arm_names:
             add(*real_capture_check(ctx, arm))
     except (OSError, subprocess.SubprocessError) as error:

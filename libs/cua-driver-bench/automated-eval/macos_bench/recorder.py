@@ -208,7 +208,8 @@ class CuaRecorder:
             self.client = None
 
 
-def capture_detail(path: Path, ffmpeg: str = "/opt/homebrew/bin/ffmpeg") -> str:
+def capture_detail(path: Path, ffmpeg: str | None = None) -> str:
+    ffmpeg = ffmpeg or tool("ffmpeg")
     done = subprocess.run(
         [
             ffmpeg,

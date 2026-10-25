@@ -520,6 +520,25 @@ class DesktopRuntimeTest(unittest.TestCase):
                     other.wait(timeout=5)
 
 
+class SentinelVisibilityTest(unittest.TestCase):
+    @unittest.skipUnless(_has_gi(), "GTK required")
+    def test_only_visible_current_workspace_windows_count(self) -> None:
+        from unittest import mock
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "linux"))
+        import sentinel
+
+        props = {
+            1: {"_NET_WM_DESKTOP": "0", "_NET_WM_STATE": "_NET_WM_STATE_ABOVE"},
+            2: {"_NET_WM_DESKTOP": "1", "_NET_WM_STATE": ""},
+            3: {"_NET_WM_DESKTOP": "4294967295", "_NET_WM_STATE": ""},
+            4: {"_NET_WM_DESKTOP": "0", "_NET_WM_STATE": "_NET_WM_STATE_HIDDEN"},
+        }
+        with mock.patch.object(sentinel, "xprop", lambda _i, w, *_a: props[int(w, 16)]):
+            seen = [w for w in props if sentinel.visible_here(w, "0")]
+        self.assertEqual(seen, [1, 3])
+
+
 class CodexEventsTest(unittest.TestCase):
     def test_classes_latency_and_tokens(self) -> None:
         events = [

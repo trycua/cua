@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: FSL-1.1-MIT
+# Copyright (c) 2026 Cua AI, Inc.
+
 from __future__ import annotations
 
 import argparse
@@ -21,6 +24,13 @@ from gi.repository import Atspi, Gdk, GLib, Gtk
 def xprop(*args: str) -> dict[str, str]:
     done = subprocess.run(["xprop", *args], capture_output=True, text=True, timeout=2)
     return {line.split("(", 1)[0]: line.split(" = ", 1)[-1] for line in done.stdout.splitlines()}
+
+
+def visible_here(window: int, current: str) -> bool:
+    props = xprop("-id", hex(window), "_NET_WM_DESKTOP", "_NET_WM_STATE")
+    return props.get("_NET_WM_DESKTOP", "") in ("4294967295", current) and (
+        "_NET_WM_STATE_HIDDEN" not in props.get("_NET_WM_STATE", "")
+    )
 
 
 def xid(value: str) -> int:
@@ -107,7 +117,11 @@ class Sentinel:
             for v in re.findall(r"0x[0-9a-fA-F]+", root.get("_NET_CLIENT_LIST_STACKING", ""))
         ]
         above = (
-            [self.identity(w)["bid"] for w in stack[stack.index(self.own) + 1 :]]
+            [
+                self.identity(w)["bid"]
+                for w in stack[stack.index(self.own) + 1 :]
+                if visible_here(w, root.get("_NET_CURRENT_DESKTOP", "").strip())
+            ]
             if self.own in stack
             else []
         )

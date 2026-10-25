@@ -159,14 +159,35 @@ pub fn org_claims(claims: &serde_json::Value) -> Vec<OrgClaim> {
     out
 }
 
-/// Minimum time between JWKS refreshes triggered by unknown key ids.
+/// Minimum time between two JWKS fetch attempts, whether the last one
+/// worked or not. A failing issuer is therefore asked about twice a minute,
+/// never once per request.
 const REFRESH_COOLDOWN: Duration = Duration::from_secs(30);
-/// Keys are refreshed at least this often.
-const MAX_KEY_AGE: Duration = Duration::from_secs(3600);
+/// The background refresher renews the keys this often. Requests never wait
+/// for it: they validate against the keys already held (CUA-2323).
+const REFRESH_EVERY: Duration = Duration::from_secs(600);
+/// How often the background refresher checks whether a renewal is due.
+const REFRESH_TICK: Duration = Duration::from_secs(15);
+/// Most a request waits for a JWKS fetch (only when there are no keys at all
+/// or its key id is unknown); also the budget of one whole fetch.
+const FETCH_BUDGET: Duration = Duration::from_secs(6);
 
 struct Keys {
     set: Option<JwkSet>,
     fetched: Option<Instant>,
+    /// Start of the last fetch attempt, successful or not.
+    attempted: Option<Instant>,
+}
+
+/// Why the keys are being fetched.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Why {
+    /// No keys held yet (first request after a start).
+    Missing,
+    /// A token names a key id that is not held.
+    Unknown,
+    /// The background renewal.
+    Scheduled,
 }
 
 /// Validates account tokens.
@@ -191,12 +212,14 @@ impl OidcValidator {
         Self {
             config,
             http: reqwest::Client::builder()
-                .timeout(Duration::from_secs(10))
+                .connect_timeout(Duration::from_secs(2))
+                .timeout(Duration::from_secs(5))
                 .build()
                 .expect("http client"),
             keys: RwLock::new(Keys {
                 set: None,
                 fetched: None,
+                attempted: None,
             }),
             fetch: tokio::sync::Mutex::new(()),
         }
@@ -208,6 +231,7 @@ impl OidcValidator {
         *v.keys.write().expect("keys") = Keys {
             set: Some(jwks),
             fetched: Some(Instant::now() + Duration::from_secs(10 * 365 * 86400)),
+            attempted: None,
         };
         v
     }
@@ -217,17 +241,79 @@ impl OidcValidator {
         &self.config
     }
 
-    async fn refresh(&self, force: bool) -> Result<(), String> {
-        let _guard = self.fetch.lock().await;
-        {
-            let keys = self.keys.read().expect("keys");
-            if let Some(fetched) = keys.fetched {
-                let age = Instant::now().saturating_duration_since(fetched);
-                if (force && age < REFRESH_COOLDOWN) || (!force && age < MAX_KEY_AGE) {
-                    return Ok(());
-                }
+    /// Starts the background renewal of the signing keys. Requests only
+    /// ever read the keys already held, so a slow or unreachable issuer
+    /// costs them nothing (CUA-2323).
+    pub fn spawn_refresher(self: &std::sync::Arc<Self>) {
+        let me = std::sync::Arc::downgrade(self);
+        tokio::spawn(async move {
+            loop {
+                let Some(v) = me.upgrade() else { return };
+                let _ = v.refresh(Why::Scheduled).await;
+                drop(v);
+                tokio::time::sleep(REFRESH_TICK).await;
+            }
+        });
+    }
+
+    /// Whether a fetch for `why` is wanted now. `Err` when there is nothing
+    /// to serve from and a recent attempt failed.
+    fn wanted(&self, why: Why) -> Result<bool, String> {
+        let keys = self.keys.read().expect("keys");
+        let now = Instant::now();
+        if let Some(at) = keys.attempted {
+            if now.saturating_duration_since(at) < REFRESH_COOLDOWN {
+                return match (why, keys.set.is_some()) {
+                    (Why::Missing, false) => {
+                        Err("signing keys unavailable (fetch failed recently)".into())
+                    }
+                    _ => Ok(false),
+                };
             }
         }
+        Ok(match why {
+            Why::Missing => keys.set.is_none(),
+            Why::Unknown => true,
+            Why::Scheduled => keys
+                .fetched
+                .is_none_or(|f| now.saturating_duration_since(f) >= REFRESH_EVERY),
+        })
+    }
+
+    async fn refresh(&self, why: Why) -> Result<(), String> {
+        if !self.wanted(why)? {
+            return Ok(());
+        }
+        let _guard = tokio::time::timeout(FETCH_BUDGET, self.fetch.lock())
+            .await
+            .map_err(|_| "signing keys: a refresh is already running".to_owned())?;
+        // Another caller may have fetched while this one waited.
+        if !self.wanted(why)? {
+            return Ok(());
+        }
+        self.keys.write().expect("keys").attempted = Some(Instant::now());
+        let fetched = tokio::time::timeout(FETCH_BUDGET, self.fetch_keys())
+            .await
+            .unwrap_or_else(|_| Err(format!("timed out after {}s", FETCH_BUDGET.as_secs())));
+        match fetched {
+            Ok(set) => {
+                let mut keys = self.keys.write().expect("keys");
+                keys.set = Some(set);
+                keys.fetched = Some(Instant::now());
+                Ok(())
+            }
+            Err(e) => {
+                tracing::warn!(
+                    issuer = %self.config.issuer,
+                    error = %e,
+                    "signing keys not refreshed; keeping the keys held"
+                );
+                Err(e)
+            }
+        }
+    }
+
+    async fn fetch_keys(&self) -> Result<JwkSet, String> {
         let jwks_url = match &self.config.jwks_url {
             Some(url) => url.clone(),
             None => {
@@ -251,8 +337,7 @@ impl OidcValidator {
                     .to_owned()
             }
         };
-        let set: JwkSet = self
-            .http
+        self.http
             .get(&jwks_url)
             .send()
             .await
@@ -260,12 +345,7 @@ impl OidcValidator {
             .map_err(|e| format!("JWKS {jwks_url}: {e}"))?
             .json()
             .await
-            .map_err(|e| format!("JWKS {jwks_url}: {e}"))?;
-        *self.keys.write().expect("keys") = Keys {
-            set: Some(set),
-            fetched: Some(Instant::now()),
-        };
-        Ok(())
+            .map_err(|e| format!("JWKS {jwks_url}: {e}"))
     }
 
     fn key_for(&self, kid: Option<&str>, alg: Algorithm) -> Option<DecodingKey> {
@@ -329,11 +409,15 @@ impl OidcValidator {
                 "symmetric JWTs are not accepted".into(),
             ));
         }
-        let _ = self.refresh(false).await;
+        // No fetch on the request path while keys are held: the background
+        // refresher renews them. Only a first request (no keys) or an
+        // unknown key id waits, for a bounded time and at most once per
+        // cooldown.
+        let _ = self.refresh(Why::Missing).await;
         let key = match self.key_for(header.kid.as_deref(), header.alg) {
             Some(key) => key,
             None => {
-                self.refresh(true)
+                self.refresh(Why::Unknown)
                     .await
                     .map_err(|e| (Reason::JwksUnavailable, e))?;
                 self.key_for(header.kid.as_deref(), header.alg)
@@ -652,6 +736,48 @@ mod tests {
             .validate(&issuer.token("u1", None, "cua-relay", 300))
             .await
             .is_err());
+    }
+
+    /// CUA-2323: with keys held, validating a token never touches the
+    /// network, even when the issuer's key endpoint hangs.
+    #[tokio::test]
+    async fn held_keys_validate_without_asking_the_issuer() {
+        let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let issuer = FakeIssuer::new("https://auth.example/realms/cua");
+        let mut config = OidcConfig::new(issuer.issuer.clone());
+        config.jwks_url = Some(format!("http://{}/certs", silent.local_addr().unwrap()));
+        let v = OidcValidator::with_jwks(config, issuer.jwks());
+        let started = Instant::now();
+        for _ in 0..20 {
+            v.validate(&issuer.token("u1", None, "cua-relay", 300))
+                .await
+                .unwrap();
+        }
+        assert!(started.elapsed() < Duration::from_millis(500));
+        assert!(v.keys.read().unwrap().attempted.is_none());
+    }
+
+    /// CUA-2323: an issuer that cannot be reached is asked about once per
+    /// cooldown, not once per request.
+    #[tokio::test]
+    async fn a_failed_key_fetch_is_not_repeated_on_every_request() {
+        let closed = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap()
+        };
+        let issuer = FakeIssuer::new("https://auth.example/realms/cua");
+        let mut config = OidcConfig::new(issuer.issuer.clone());
+        config.jwks_url = Some(format!("http://{closed}/certs"));
+        let v = OidcValidator::new(config);
+        let token = issuer.token("u1", None, "cua-relay", 300);
+        assert!(v.validate(&token).await.is_err());
+        let first = v.keys.read().unwrap().attempted.expect("attempted");
+        let started = Instant::now();
+        for _ in 0..20 {
+            assert!(v.validate(&token).await.is_err());
+        }
+        assert!(started.elapsed() < Duration::from_millis(200));
+        assert_eq!(v.keys.read().unwrap().attempted, Some(first));
     }
 
     #[tokio::test]

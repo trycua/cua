@@ -204,11 +204,6 @@ impl FakeCoordinator {
         self.state.welcomes.load(Ordering::SeqCst)
     }
 
-    /// Makes reconnect waits 1000 times shorter, for the whole process.
-    pub fn speed_up_reconnects() {
-        crate::reconnect::speed_up(1000);
-    }
-
     /// Nodes connected right now.
     pub fn connected(&self) -> usize {
         self.state.conns.lock().expect("conns").len()

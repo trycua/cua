@@ -13,22 +13,7 @@
 //! wait also gets [`spread`], so a fleet told to reconnect at one instant
 //! does not do it in the same millisecond.
 
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
-
-/// Tests divide the waits by this (1: real time).
-static SPEEDUP: AtomicU32 = AtomicU32::new(1);
-
-/// Makes every reconnect wait `factor` times shorter (tests only).
-#[cfg(feature = "testing")]
-pub(crate) fn speed_up(factor: u32) {
-    SPEEDUP.store(factor.max(1), Ordering::Relaxed);
-}
-
-/// `wait`, shortened when tests ask for it.
-pub(crate) fn scaled(wait: Duration) -> Duration {
-    wait / SPEEDUP.load(Ordering::Relaxed)
-}
 
 /// The window of the first retry.
 pub(crate) const BASE: Duration = Duration::from_secs(1);

@@ -94,6 +94,8 @@ pub(crate) struct ControlConfig {
     pub approved: Option<Arc<crate::node::Approved>>,
     /// Forgotten by the coordinator on disconnect.
     pub ephemeral: bool,
+    /// Divides the reconnect wait (tests).
+    pub reconnect_speedup: u32,
 }
 
 impl Control {
@@ -347,7 +349,10 @@ pub(crate) async fn run(
         }
         let unit = rand::random_range(0.0..=1.0);
         let mut delay = backoff.next(lived, unit);
-        if ended.by_relay {
+        // A relay close, or any drop after the welcome (a crashed relay
+        // resets the socket without a close frame): all nodes lose it at once.
+        let by_relay = ended.by_relay || (ended.welcomed.is_some() && result.is_err());
+        if by_relay {
             delay += reconnect::spread(rand::random_range(0.0..=1.0));
         }
         if let Some(wait) = ended.retry_after() {
@@ -361,7 +366,7 @@ pub(crate) async fn run(
             server_error = ended.server_error.as_deref(),
             welcomed = ended.welcomed.is_some(),
             lived_ms = lived.as_millis() as u64,
-            by_relay = ended.by_relay,
+            by_relay,
             takeovers,
             retry_in_ms = delay.as_millis() as u64,
             "mesh coordinator session ended"
@@ -371,7 +376,7 @@ pub(crate) async fn run(
             return;
         }
         tokio::select! {
-            _ = tokio::time::sleep(reconnect::scaled(delay)) => {}
+            _ = tokio::time::sleep(delay / cfg.reconnect_speedup.max(1)) => {}
             _ = shutdown.cancelled() => return,
         }
     }

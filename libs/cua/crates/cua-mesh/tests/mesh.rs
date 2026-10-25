@@ -793,19 +793,19 @@ async fn a_forward_carries_bulk_traffic_to_a_local_port() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_node_the_relay_keeps_replacing_stops_retrying_and_says_why() {
-    FakeCoordinator::speed_up_reconnects();
     let dir = tempfile::tempdir().unwrap();
     let coord = FakeCoordinator::start(Mode::Account).await;
     coord.close_after_welcome(Some((
         cua_mesh::proto::CLOSE_REPLACED,
         "replaced: another connection with the same node key took over",
     )));
-    let cfg = MeshConfig::new(
+    let mut cfg = MeshConfig::new(
         coord.url.clone(),
         NodeKind::Client,
         Some(dir.path().join("c.json")),
         static_auth(vec![]),
     );
+    cfg.reconnect_speedup = 1000;
     let client = Mesh::start(cfg).await.unwrap();
     let t = std::time::Instant::now();
     let reason = loop {
@@ -825,19 +825,19 @@ async fn a_node_the_relay_keeps_replacing_stops_retrying_and_says_why() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_node_dropped_for_other_reasons_keeps_reconnecting() {
-    FakeCoordinator::speed_up_reconnects();
     let dir = tempfile::tempdir().unwrap();
     let coord = FakeCoordinator::start(Mode::Account).await;
     coord.close_after_welcome(Some((
         cua_mesh::proto::CLOSE_RELAY_CHANGED,
         "relay changed",
     )));
-    let cfg = MeshConfig::new(
+    let mut cfg = MeshConfig::new(
         coord.url.clone(),
         NodeKind::Client,
         Some(dir.path().join("c.json")),
         static_auth(vec![]),
     );
+    cfg.reconnect_speedup = 1000;
     let client = Mesh::start(cfg).await.unwrap();
     let t = std::time::Instant::now();
     while coord.welcomes() < 5 {

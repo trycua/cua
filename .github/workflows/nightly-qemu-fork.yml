@@ -144,9 +144,20 @@ jobs:
           CUA_QEMU_FREE_PAGE_REPORTING: ${{ matrix.forkable == '0' && '0' || '' }}
         run: libs/cua/bench/fork-fanout/run.sh "$RUNNER_TEMP/fork-fanout.json"
       - name: Perf guard
-        run: >
-          python3 libs/cua/bench/fork-fanout/check.py "$RUNNER_TEMP/fork-fanout.json"
-          libs/cua/bench/fork-fanout/baseline.json --host "linux-kvm-gha-${{ matrix.path }}"
+        # Hosted runners of private repositories have 2 CPUs (public ones 4):
+        # forks are about twice as slow there, so they are checked against
+        # their own measured baseline when one exists.
+        env:
+          HOST_CLASS: linux-kvm-gha-${{ matrix.path }}
+        run: |
+          set -euo pipefail
+          base=libs/cua/bench/fork-fanout/baseline.json
+          host="$HOST_CLASS"
+          if [ "$(nproc)" -lt 4 ] && python3 -c 'import json,sys; sys.exit(0 if sys.argv[2] in json.load(open(sys.argv[1]))["hosts"] else 1)' "$base" "$host-2cpu"; then
+            host="$host-2cpu"
+          fi
+          echo "baseline host class: $host ($(nproc) CPUs)"
+          python3 libs/cua/bench/fork-fanout/check.py "$RUNNER_TEMP/fork-fanout.json" "$base" --host "$host"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:

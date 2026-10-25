@@ -281,7 +281,7 @@ setup. An existing account session is reused.
   macOS 15.5 and later). It lets every app on that Mac reach its virtual
   computers, and it needs a restart:
 
-  ```sh
+  ```sh skip="no-runner"
   sudo defaults write com.apple.network.local-network AllowedEthernetLocalNetworkAddresses -array 192.168.64.0/24
   sudo defaults write com.apple.network.local-network AllowedWiFiLocalNetworkAddresses -array 192.168.64.0/24
   sudo shutdown -r now

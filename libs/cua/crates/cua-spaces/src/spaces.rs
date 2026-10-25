@@ -3410,6 +3410,9 @@ impl Spaces {
         self.inner.sandboxes.resize(name, &shape).await?;
         #[cfg(feature = "mcp")]
         self.notify_connected(&id);
+        // It booted again: a Space that was on the relay goes back on it.
+        #[cfg(feature = "spaces-agents")]
+        self.reattach_relay_after_boot(&id).await;
         let mut what = Vec::new();
         if let Some(c) = cpus {
             what.push(format!("{c} vCPUs"));
@@ -3453,6 +3456,9 @@ impl Spaces {
                     // again now, not only when something next connects.
                     #[cfg(feature = "mcp")]
                     self.notify_connected(&id);
+                    // A guest that booted again forgot its relay attachment.
+                    #[cfg(feature = "spaces-agents")]
+                    self.reattach_relay_after_boot(&id).await;
                     cua_sandbox_core::PowerState::Running
                 } else {
                     sandboxes.power_off(name).await?

@@ -22,6 +22,7 @@ from release_attribution import (
     linked_issue_numbers,
     login_from_email,
     merge_contributors,
+    merge_unresolved_issue_body,
     release_bump,
     release_entries,
     render_body,
@@ -604,27 +605,204 @@ def test_nightly_manifest_attributes_maintenance_prs_without_a_versioned_changel
         )
 
 
-def test_nightly_skips_unresolved_coauthor_but_stable_stays_strict():
-    commit = CommitRecord(
+BEST_EFFORT_CONFIG = {
+    "bots": [],
+    "coauthorOverrides": {},
+    "ignoredCoauthorEmails": [],
+    "identityOverrides": {},
+    "internalHandles": [],
+    "optOutHandles": [],
+}
+UNRESOLVED_COMMIT = CommitRecord(
+    "deadbeef",
+    "fix(driver): preserve focus",
+    "Co-authored-by: Unknown Person <private@example.com>",
+)
+UNRESOLVED_PULL = {
+    "user": {"login": "author"},
+    "author_association": "NONE",
+    "body": "",
+    "labels": [],
+}
+
+
+def test_unresolved_coauthor_is_credited_by_name_without_a_mention():
+    unresolved: list[dict[str, str]] = []
+    contributors, _, _ = _change_contributors(
+        UNRESOLVED_PULL,
+        UNRESOLVED_COMMIT,
+        FakeGitHub("deadbeef"),
+        "trycua/cua",
+        BEST_EFFORT_CONFIG,
+        unresolved=unresolved,
+    )
+    assert contributors == [
+        {"login": "author", "role": "author", "external": True},
+        {"login": "Unknown Person", "role": "coauthor", "external": True, "mention": False},
+    ]
+    assert unresolved == [
+        {"sha": "deadbeef", "name": "Unknown Person", "email": "private@example.com"}
+    ]
+
+
+class LinkedGitHub(FakeGitHub):
+    def __init__(self, commit_sha, *, commits=(), searched=None):
+        super().__init__(commit_sha)
+        self._commits = list(commits)
+        self._searched = searched or {}
+
+    def pull_commits(self, repository, number):
+        return self._commits
+
+    def login_for_email(self, email):
+        return self._searched.get(email)
+
+
+def test_unresolved_coauthor_resolves_through_commits_api_and_email_search():
+    via_commits = LinkedGitHub(
         "deadbeef",
-        "fix(driver): preserve focus",
+        commits=[
+            {
+                "author": {"login": "from-commits"},
+                "commit": {"author": {"email": "private@example.com"}},
+            }
+        ],
+    )
+    contributors, _, _ = _change_contributors(
+        {**UNRESOLVED_PULL, "number": 12}, UNRESOLVED_COMMIT, via_commits, "trycua/cua", BEST_EFFORT_CONFIG
+    )
+    assert {"login": "from-commits", "role": "coauthor", "external": True} in contributors
+
+    via_search = LinkedGitHub("deadbeef", searched={"private@example.com": "from-search"})
+    unresolved: list[dict[str, str]] = []
+    contributors, _, _ = _change_contributors(
+        UNRESOLVED_PULL,
+        UNRESOLVED_COMMIT,
+        via_search,
+        "trycua/cua",
+        BEST_EFFORT_CONFIG,
+        unresolved=unresolved,
+    )
+    assert {"login": "from-search", "role": "coauthor", "external": True} in contributors
+    assert unresolved == []
+
+
+def test_render_credits_unresolved_names_without_mentions():
+    manifest = {
+        "displayName": "Cua Driver",
+        "version": "1.0.0",
+        "tag": "cua-driver-rs-v1.0.0",
+        "repository": "trycua/cua",
+        "previousTag": None,
+        "compareUrl": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v1.0.0",
+        "changes": [
+            {
+                "type": "fix",
+                "summary": "preserve focus",
+                "pr": 12,
+                "contributors": [
+                    {"login": "author", "role": "author", "external": True},
+                    {
+                        "login": "Unknown Person",
+                        "role": "coauthor",
+                        "external": True,
+                        "mention": False,
+                    },
+                ],
+            }
+        ],
+        "contributors": merge_contributors(
+            [
+                {"login": "author", "role": "author", "external": True},
+                {"login": "Unknown Person", "role": "coauthor", "external": True, "mention": False},
+            ]
+        ),
+    }
+    body = render_body(manifest)
+    assert "Thanks @author, Unknown Person." in body
+    assert "Thanks to @author, Unknown Person for contributing" in body
+    assert "@Unknown" not in body
+
+
+def test_stable_release_with_unresolved_coauthor_publishes(tmp_path: Path):
+    """A stable manifest builds, credits by name, and lists the identity for the issue."""
+    root = tmp_path
+    git(root, "init")
+    (root / "libs/cua-driver").mkdir(parents=True)
+    (root / "libs/cua-driver/CHANGELOG.md").write_text(
+        "## 0.8.2\n\n- fix(driver): preserve focus (#12) (abc)\n"
+    )
+    git(root, "add", ".")
+    git(root, "commit", "-m", "chore: start")
+    git(root, "tag", "cua-driver-rs-v0.8.1")
+    (root / "libs/cua-driver/a.txt").write_text("x")
+    git(root, "add", ".")
+    git(
+        root,
+        "commit",
+        "-m",
+        "fix(driver): preserve focus (#12)",
+        "-m",
         "Co-authored-by: Unknown Person <private@example.com>",
     )
-    pull = {"user": {"login": "author"}, "author_association": "NONE", "body": "", "labels": []}
-    config = {
-        "bots": [],
-        "coauthorOverrides": {},
-        "ignoredCoauthorEmails": [],
-        "identityOverrides": {},
-        "internalHandles": [],
-        "optOutHandles": [],
-    }
-    contributors, _, _ = _change_contributors(
-        pull, commit, FakeGitHub("deadbeef"), "trycua/cua", config, strict_coauthors=False
+    sha = git(root, "rev-parse", "HEAD")
+
+    class Hub(FakeGitHub):
+        def pull(self, repository, number):
+            return {
+                "number": 12,
+                "user": {"login": "pr-author"},
+                "author_association": "NONE",
+                "body": "",
+                "labels": [],
+            }
+
+    manifest = build_manifest(
+        repo_root=root,
+        repository="trycua/cua",
+        product="cua-driver-rs",
+        display_name="Cua Driver",
+        version="0.8.2",
+        tag="cua-driver-rs-v0.8.2",
+        release_ref=sha,
+        previous_tag="cua-driver-rs-v0.8.1",
+        expected_sha=sha,
+        paths=("libs/cua-driver",),
+        changelog_path=root / "libs/cua-driver/CHANGELOG.md",
+        attribution_config=BEST_EFFORT_CONFIG,
+        github=Hub(sha),
     )
-    assert [item["login"] for item in contributors] == ["author"]
-    with pytest.raises(ReleaseError, match="unresolved human coauthor"):
-        _change_contributors(pull, commit, FakeGitHub("deadbeef"), "trycua/cua", config)
+
+    assert manifest["unresolvedIdentities"] == [
+        {"sha": sha, "name": "Unknown Person", "email": "private@example.com"}
+    ]
+    assert {"login": "Unknown Person", "roles": ["coauthor"], "external": True, "mention": False} in (
+        manifest["contributors"]
+    )
+    assert "@Unknown" not in render_body(manifest)
+
+
+def test_rolling_issue_body_dedupes_and_drops_resolved_identities():
+    first = merge_unresolved_issue_body(
+        "",
+        [
+            {"sha": "aaa", "name": "Some One", "email": "some@example.com"},
+            {"sha": "bbb", "name": "Some One", "email": "SOME@example.com"},
+            {"sha": "ccc", "name": "Other", "email": "other@example.com"},
+        ],
+        BEST_EFFORT_CONFIG,
+        "v1",
+    )
+    assert first.count("`some@example.com`") == 1
+    assert "`other@example.com`" in first
+    refreshed = merge_unresolved_issue_body(
+        first,
+        [{"sha": "ddd", "name": "New", "email": "new@example.com"}],
+        {**BEST_EFFORT_CONFIG, "identityOverrides": {"other@example.com": "other-login"}},
+        "v2",
+    )
+    assert "`other@example.com`" not in refreshed
+    assert "`some@example.com`" in refreshed and "`new@example.com`" in refreshed
 
 
 def test_checked_in_override_resolves_adam():
@@ -634,35 +812,6 @@ def test_checked_in_override_resolves_adam():
     ]
     assert unresolved_coauthor_identities(commits, config) == []
     assert config["identityOverrides"]["admr0805@gmail.com"] == "0xABAN"
-
-
-def test_unresolved_human_coauthor_fails_closed():
-    commit = CommitRecord(
-        "deadbeef",
-        "fix(driver): preserve focus",
-        "Co-authored-by: Unknown Person <private@example.com>",
-    )
-    pull = {
-        "user": {"login": "author"},
-        "author_association": "NONE",
-        "body": "",
-        "labels": [],
-    }
-    with pytest.raises(ReleaseError, match="unresolved human coauthor"):
-        _change_contributors(
-            pull,
-            commit,
-            FakeGitHub("deadbeef"),
-            "trycua/cua",
-            {
-                "bots": [],
-                "coauthorOverrides": {},
-                "ignoredCoauthorEmails": [],
-                "identityOverrides": {},
-                "internalHandles": [],
-                "optOutHandles": [],
-            },
-        )
 
 
 def test_pr_2805_coauthor_resolves_through_trusted_identity_override():
@@ -802,15 +951,20 @@ def test_pr_4500_squash_trailer_resolves_with_the_checked_in_config():
         ("ddupont808", [("", "Dillon DuPont")]),
     ],
 )
-def test_squash_trailer_without_maintainer_provenance_fails_closed(merger, commits):
-    with pytest.raises(ReleaseError, match="unresolved human coauthor"):
-        _change_contributors(
-            PULL_4500,
-            SQUASH_4500,
-            SquashTrailerGitHub(merger, commits),
-            "trycua/cua",
-            SQUASH_CONFIG,
-        )
+def test_squash_trailer_without_maintainer_provenance_is_credited_by_name(merger, commits):
+    unresolved: list[dict[str, str]] = []
+    contributors, _, _ = _change_contributors(
+        PULL_4500,
+        SQUASH_4500,
+        SquashTrailerGitHub(merger, commits),
+        "trycua/cua",
+        SQUASH_CONFIG,
+        unresolved=unresolved,
+    )
+    assert unresolved
+    assert all(
+        item.get("mention") is False for item in contributors if item["role"] == "coauthor"
+    )
 
 
 def _commit(root: Path, path: str, content: str, subject: str) -> str:

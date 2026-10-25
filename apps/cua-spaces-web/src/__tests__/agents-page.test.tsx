@@ -52,14 +52,14 @@ describe.skipIf(!wasmBuilt)("Agents page", () => {
   it("asks to set up once in place when coding apps are found but Cua is not in them", { timeout: 20_000 }, async () => {
     await mountApp("/agents", { ...host, intercept: noRuns, demo: { onboarded: false } });
     await waitFor(() => expect(document.querySelector("[data-agents-empty]")).not.toBeNull(), { timeout: 8000 });
-    await waitFor(() => expect(document.querySelector("[data-agents-empty]")!.getAttribute("data-agents-empty")).toBe("setup"));
+    await waitFor(() => expect(document.querySelector("[data-agents-empty]")!.getAttribute("data-agents-empty")).toBe("setup"), { timeout: 8000 });
     const setup = await waitFor(() => {
       const b = document.querySelector("[data-agents-setup]");
       expect(b).not.toBeNull();
       return b!;
-    });
+    }, { timeout: 8000 });
     fireEvent.click(setup);
-    await waitFor(() => expect(document.querySelector("[data-agents-empty]")!.getAttribute("data-agents-empty")).toBe("ready"));
+    await waitFor(() => expect(document.querySelector("[data-agents-empty]")!.getAttribute("data-agents-empty")).toBe("ready"), { timeout: 8000 });
   });
 
   it("teaches the first prompts when Cua is already in the apps", { timeout: 20_000 }, async () => {

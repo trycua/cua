@@ -466,12 +466,12 @@ struct ViewModelTests {
         let account = CodeAskingAccount()
         let model = makeModel(account: account)
         let first = Task { await model.beginSignIn() }
-        try await Task.sleep(for: .milliseconds(100))
+        try await waitUntil { account.starts == [false] }
         first.cancel()
         model.cancelSignIn()
         let byCode = Task { await model.beginSignIn(code: true) }
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(account.starts == [false, true])
+        try await waitUntil { account.starts == [false, true] }
+        try await waitUntil { if case .waiting = model.signIn { true } else { false } }
         guard case let .waiting(userCode, _) = model.signIn else {
             Issue.record("expected a waiting sign-in, got \(model.signIn)")
             return

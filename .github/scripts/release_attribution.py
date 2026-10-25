@@ -21,7 +21,7 @@ import re
 import subprocess
 import sys
 import textwrap
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -184,8 +184,15 @@ class GitHubClient:
             try:
                 payload = self.get(f"search/users?q={quote(key + ' in:email', safe='')}&per_page=2")
                 items = list(payload.get("items") or [])
-                if len(items) == 1 and items[0].get("type") == "User":
-                    login = str(items[0].get("login") or "") or None
+                if (
+                    not payload.get("incomplete_results")
+                    and len(items) == 1
+                    and items[0].get("type") == "User"
+                ):
+                    # Trust the match only when the profile's public email is exactly this one.
+                    profile = self.get(f"users/{quote(str(items[0].get('login') or ''), safe='')}")
+                    if str(profile.get("email") or "").strip().lower() == key:
+                        login = str(profile.get("login") or "") or None
             except (ReleaseError, OSError, ValueError, AttributeError):
                 login = None
             cache[key] = login
@@ -1582,9 +1589,18 @@ def merge_unresolved_issue_body(
     identities: Sequence[Mapping[str, str]],
     config: Mapping[str, Any],
     source: str,
+    resolves: Callable[[str], str | None] | None = None,
 ) -> str:
-    """The rolling issue body: deduplicated by email, minus identities now resolved."""
+    """The rolling issue body: deduplicated by email, minus identities now resolved.
+
+    ``resolves`` re-checks every stored email (for example through a GitHub
+    lookup); overrides, coauthor overrides and noreply emails always apply.
+    """
     overrides = _normalized_map(config, "identityOverrides")
+    coauthor_emails = {
+        key.rsplit("<", 1)[-1].rstrip(">").strip()
+        for key in _normalized_map(config, "coauthorOverrides")
+    }
     entries: dict[str, str] = {}
     for line in existing_body.splitlines():
         match = UNRESOLVED_ENTRY_RE.match(line.strip())
@@ -1598,6 +1614,8 @@ def merge_unresolved_issue_body(
         f"- `{email}`: {rest}"
         for email, rest in sorted(entries.items())
         if login_from_email(email, overrides) is None
+        and email not in coauthor_emails
+        and not (resolves and resolves(email))
     ]
     return UNRESOLVED_ISSUE_INTRO + ("\n".join(lines) if lines else "_None right now._") + "\n"
 
@@ -1616,8 +1634,6 @@ def report_unresolved_identities(
             for item in _dedupe_identities(identities)
             if not lookup_email_login(github, item["email"])
         ]
-        if not pending:
-            return None
         found = github.get(
             "search/issues?q="
             + quote(f'repo:{repository} is:issue is:open in:title "{UNRESOLVED_ISSUE_TITLE}"')
@@ -1631,8 +1647,14 @@ def report_unresolved_identities(
             ),
             None,
         )
+        if not existing and not pending:
+            return None
         body = merge_unresolved_issue_body(
-            str((existing or {}).get("body") or ""), pending, config, source
+            str((existing or {}).get("body") or ""),
+            pending,
+            config,
+            source,
+            resolves=lambda email: lookup_email_login(github, email),
         )
         if existing:
             if body != str(existing.get("body") or ""):

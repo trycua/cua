@@ -22,7 +22,9 @@ from release_attribution import (
     linked_issue_numbers,
     login_from_email,
     merge_contributors,
+    GitHubClient,
     merge_unresolved_issue_body,
+    report_unresolved_identities,
     release_bump,
     release_entries,
     render_body,
@@ -803,6 +805,88 @@ def test_rolling_issue_body_dedupes_and_drops_resolved_identities():
     )
     assert "`other@example.com`" not in refreshed
     assert "`some@example.com`" in refreshed and "`new@example.com`" in refreshed
+
+
+class SearchHub:
+    """GitHub client double: fixed GET responses, recorded writes."""
+
+    login_for_email = GitHubClient.login_for_email
+
+    def __init__(self, responses):
+        self.responses = responses
+        self.writes = []
+
+    def get(self, path):
+        return self.responses[path]
+
+    def send(self, method, path, payload):
+        self.writes.append((method, path, payload))
+        return {"number": 77}
+
+
+def _search_path(email):
+    return f"search/users?q={email.replace('@', '%40').replace(':', '%3A')}%20in%3Aemail&per_page=2"
+
+
+def test_email_search_requires_exact_public_email_match():
+    email = "who@example.com"
+    search = {"items": [{"login": "someone", "type": "User"}]}
+    hub = SearchHub({
+        _search_path(email).replace("%20", "%20"): search,
+        "users/someone": {"login": "someone", "email": "other@example.com"},
+    })
+    assert hub.login_for_email(email) is None
+    hub = SearchHub({
+        _search_path(email): search,
+        "users/someone": {"login": "someone", "email": "Who@Example.com"},
+    })
+    assert hub.login_for_email(email) == "someone"
+    hub = SearchHub({_search_path(email): {**search, "incomplete_results": True}})
+    assert hub.login_for_email(email) is None
+
+
+def test_rolling_issue_refresh_clears_entries_that_now_resolve():
+    body = merge_unresolved_issue_body(
+        "",
+        [
+            {"sha": "a", "name": "One", "email": "one@example.com"},
+            {"sha": "b", "name": "Two", "email": "two@example.com"},
+            {"sha": "c", "name": "Three", "email": "three@example.com"},
+        ],
+        BEST_EFFORT_CONFIG,
+        "v1",
+    )
+    config = {**BEST_EFFORT_CONFIG, "coauthorOverrides": {"Two <two@example.com>": "two"}}
+    refreshed = merge_unresolved_issue_body(
+        body, [], config, "v2", resolves=lambda email: "three" if email.startswith("three") else None
+    )
+    assert "`one@example.com`" in refreshed
+    assert "two@example.com" not in refreshed and "three@example.com" not in refreshed
+
+    only_resolved = merge_unresolved_issue_body(
+        body,
+        [],
+        {**config, "identityOverrides": {"one@example.com": "one"}},
+        "v3",
+        resolves=lambda email: "x",
+    )
+    assert "_None right now._" in only_resolved
+
+    hub = SearchHub({
+        "search/issues?q=repo%3Atrycua/cua%20is%3Aissue%20is%3Aopen%20in%3Atitle%20%22Contributor%20attribution%3A%20unresolved%20identities%22&per_page=20": {
+            "items": [
+                {
+                    "number": 5,
+                    "title": "Contributor attribution: unresolved identities",
+                    "body": body,
+                }
+            ]
+        }
+    })
+    report_unresolved_identities(hub, "trycua/cua", [], {**config, "identityOverrides": {
+        "one@example.com": "one", "two@example.com": "two", "three@example.com": "three"}}, "v4")
+    assert hub.writes and hub.writes[0][0] == "PATCH"
+    assert "_None right now._" in hub.writes[0][2]["body"]
 
 
 def test_checked_in_override_resolves_adam():

@@ -9,6 +9,7 @@
     "volume",
     "streams",
     "resources",
+    "list-watch",
     "agents",
     "persistent-agents",
     "host"

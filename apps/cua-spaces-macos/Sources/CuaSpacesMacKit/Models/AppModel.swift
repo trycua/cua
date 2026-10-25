@@ -753,6 +753,43 @@ public final class AppModel {
         }
     }
 
+    /// The daemon's push of list changes (`watchList`), while it is kept.
+    private var listWatch: AnyObject?
+    /// The read a push started, and whether another push came meanwhile.
+    private var listPushRead: Task<Void, Never>?
+    private var listPushedAgain = false
+    /// How long a push waits for the next one before the list is read (a
+    /// computer coming up moves several of its Spaces at once).
+    static let listPushSettleMs = 100
+
+    /// Push: the daemon says when the list changed (a Space started or
+    /// stopped on another computer, one came up or went away), and the list
+    /// is read again then, within a second or two, instead of at the next
+    /// poll. The poll stays as the fallback. Started again after a
+    /// reconnect.
+    public func startListWatch() async {
+        listWatch = await backend.watchList { [weak self] in
+            Task { @MainActor in self?.listPushed() }
+        }
+    }
+
+    /// One read per burst of pushes; a push during a read reads once more.
+    func listPushed() {
+        guard listPushRead == nil else {
+            listPushedAgain = true
+            return
+        }
+        listPushRead = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(Self.listPushSettleMs))
+            while let self {
+                self.listPushedAgain = false
+                await self.refresh(fresh: true)
+                if !self.listPushedAgain { break }
+            }
+            self?.listPushRead = nil
+        }
+    }
+
     /// Reconnects when the list has not been read for `listStaleAfter`
     /// (nothing before the live services are in).
     func checkListHealth(now: Date? = nil) async {
@@ -775,6 +812,8 @@ public final class AppModel {
         let ok = await reconnect()
         listWatchedSince = listClock()
         reconnecting = false
+        // The push came over the old connection: watch on the new one.
+        if ok, listWatch != nil { await startListWatch() }
         if !ok { NSLog("Cua Spaces: the reconnect did not make a new connection; trying again later") }
         await refresh()
     }

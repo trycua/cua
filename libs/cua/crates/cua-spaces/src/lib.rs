@@ -80,6 +80,7 @@ pub mod host_jobs;
 pub mod host_spaces;
 pub mod id;
 pub mod lifetimes;
+pub mod list_watch;
 pub mod listing;
 mod local_load;
 pub mod mesh;

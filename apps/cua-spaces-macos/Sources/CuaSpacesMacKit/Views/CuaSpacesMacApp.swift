@@ -443,6 +443,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // fresh from here rather than from the window.
         // Bounded, and it reconnects to the daemon when the list goes stale.
         _ = model.startListPoll()
+        // ... and the daemon says when it changed, so a Space starting or
+        // stopping on another computer shows within a second or two.
+        Task { @MainActor in await model.startListWatch() }
         // Keyvault access is never silent: the notch indicator and the menu
         // bar line follow live deliveries even with the main window closed.
         Task { @MainActor in

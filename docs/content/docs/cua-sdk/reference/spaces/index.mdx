@@ -113,6 +113,7 @@ Returned by [`Cua.spaces`](/cua-sdk/reference/cua#cua).
 | [`volume_unmount`](/cua-sdk/reference/spaces/volume#spacesvolume_unmount) | `volume_unmount`: turns the mount off; pending uploads land first. |
 | [`volume_write`](/cua-sdk/reference/spaces/volume#spacesvolume_write) | `volume_write`: a new version of a file. |
 | [`volumes`](/cua-sdk/reference/spaces/volume#spacesvolumes) | The named volumes of Cua Volume, by name, with the Spaces that mount each. |
+| [`watch_list`](/cua-sdk/reference/spaces/list-watch#spaceswatch_list) | Tells `listener` when the Space list changed: once at the start, then on every change. |
 | [`watch_resources`](/cua-sdk/reference/spaces/resources#spaceswatch_resources) | The same numbers as events for `listener`: a snapshot first, then an update with only the entries that changed by more than 1 point or 256 MB, and `LowDisk` whenever the warning level changes. |
 
 ### `Spaces.add`

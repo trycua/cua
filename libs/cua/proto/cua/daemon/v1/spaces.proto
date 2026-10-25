@@ -138,6 +138,24 @@ service SpaceService {
   // Cancel the stream to stop; call again with the other `visible` to
   // switch.
   rpc WatchResources(WatchResourcesRequest) returns (stream WatchResourcesResponse);
+  // Says when the Space list changed, so a client reads it again
+  // (`ListSpaces`) when something happened instead of on a timer: one
+  // message at once (the generation now), then one per change. This
+  // computer's Spaces are announced within a second; your other computers
+  // on the mesh within about a second of connecting or going away (the mesh
+  // coordinator pushes it); computers not on the mesh within 10 seconds.
+  // Cancel the stream to stop.
+  rpc WatchSpaces(WatchSpacesRequest) returns (stream WatchSpacesResponse);
+}
+
+// `SpaceService.WatchSpaces` takes no arguments.
+message WatchSpacesRequest {}
+
+// One event of `SpaceService.WatchSpaces`.
+message WatchSpacesResponse {
+  // Moves on every change of the list (only increases while the daemon
+  // runs; a new daemon starts again from 0).
+  uint64 generation = 1;
 }
 
 // A registered Space.

@@ -731,6 +731,15 @@ export const PAGES: PageSpec[] = [
     catalog: true,
   },
   {
+    slug: 'spaces/list-watch',
+    title: 'List changes',
+    description: 'Hear when the Space list changed, so it is read again then instead of on a timer.',
+    intro:
+      '`Spaces.watch_list` calls a `SpacesListListener` once at the start and again whenever the list changes: this computer\'s Spaces within a second, your other computers on the mesh within about a second of connecting or going away, the others within 10 seconds. Read the list again (`Spaces.list`) when it is called. It reopens by itself after a daemon restart; `SpacesListWatch.stop` ends it.',
+    members: [{ object: 'Spaces', title: 'List changes', methods: ['watch_list'] }],
+    items: ['SpacesListListener', 'SpacesListWatch'],
+  },
+  {
     slug: 'spaces/agents',
     title: 'Agents in a Space',
     description: 'Start, follow, message and stop coding-agent runs inside a Space.',

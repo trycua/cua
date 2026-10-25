@@ -138,6 +138,7 @@ pub const SPACES_SDK_ONLY_METHODS: &[&str] = &[
     "Spaces.call_tool_json",
     "Spaces.resources",
     "Spaces.watch_resources",
+    "Spaces.watch_list",
     "Space.home",
     "Space.screenshot",
     "Space.close_stream",
@@ -2449,6 +2450,9 @@ impl ToolOut {
 // generators read `native/*.rs`), included here so they share this module's
 // private `Host` and `daemon_err`.
 include!("spaces_resources.rs");
+
+// The list watch lives in `spaces_list_watch.rs`.
+include!("spaces_list_watch.rs");
 
 /// Where the Spaces runtime lives.
 #[derive(Clone)]

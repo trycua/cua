@@ -370,6 +370,7 @@ impl SpacesBuilder {
                 relay_read: tokio::sync::Mutex::new(None),
                 relay_confirmed: std::sync::atomic::AtomicBool::new(false),
                 rounds: Default::default(),
+                list_watch: Default::default(),
                 site_login: std::sync::RwLock::new(None),
                 pool: std::sync::RwLock::new(None),
                 durable: std::sync::Mutex::new(Vec::new()),
@@ -590,6 +591,9 @@ pub(crate) struct Inner {
     pub(crate) relay_confirmed: std::sync::atomic::AtomicBool,
     /// The read of the account's computers [`Spaces::list_known`] runs.
     pub(crate) rounds: crate::listing::AccountRounds,
+    /// The list's watcher, while anything subscribes
+    /// ([`Spaces::watch_list`]).
+    pub(crate) list_watch: crate::list_watch::ListWatchSlot,
     /// The Keyvault broker `request_site_login` signs in through (the
     /// daemon sets it once its Keyvault is up).
     site_login: std::sync::RwLock<Option<Arc<dyn crate::site_login::SiteLoginBroker>>>,

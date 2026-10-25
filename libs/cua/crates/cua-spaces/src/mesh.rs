@@ -85,13 +85,32 @@ enum Slot {
         dialer: Arc<Dialer>,
         /// Held while the node lives: one persistent identity per home.
         _lock: Option<std::fs::File>,
+        /// The account the node connected for (an account node).
+        account: Option<String>,
     },
     /// The mesh cannot be used (the relay has none, or refused this
-    /// device), and why; checked again after a while.
-    Unsupported(Instant, String),
+    /// device), and why; checked again after a while (or at once when
+    /// another account signs in).
+    Unsupported(Instant, String, Option<String>, Duration),
 }
 
+use crate::relay::account_changed;
+
 const RECHECK: Duration = Duration::from_secs(600);
+
+/// A node the relay refused (not enrolled yet, a key it did not take) is
+/// tried again soon: the cause is often a sign-in whose device enrollment
+/// has not finished, not a relay without a mesh.
+const RECHECK_REFUSED: Duration = Duration::from_secs(5);
+
+/// When to try a node that could not start again.
+fn recheck_after(why: &str) -> Duration {
+    if why.contains("mesh refused") {
+        RECHECK_REFUSED
+    } else {
+        RECHECK
+    }
+}
 
 /// Per-runtime mesh nodes, started on first use.
 #[derive(Default)]
@@ -100,7 +119,10 @@ pub(crate) struct MeshClients {
     /// Spaces connected over the mesh, through which node, and whether one
     /// of your own hosts provides the Space (it then prefers the mesh
     /// without `CUA_MESH`, [`policy_for_provided`]).
-    routed: std::sync::Mutex<HashMap<String, (Key, bool)>>,
+    routed: std::sync::Mutex<HashMap<String, (Key, bool, u64)>>,
+    /// How many nodes each key has had: a Space routed through an earlier
+    /// node holds forwards that ended with it.
+    generations: std::sync::Mutex<HashMap<Key, u64>>,
     /// Spaces that took the relay's HTTPS path although they prefer the
     /// mesh, because their machine was not on it yet (a Space whose driver
     /// joins a moment after its relay connection): its node, machine id and
@@ -215,10 +237,21 @@ fn key_of(via: &Via<'_>) -> Key {
 impl MeshClients {
     /// Records that Space `space` (its id) connected over `via`'s mesh.
     pub(crate) fn note_routed(&self, space: &str, via: &Via<'_>, provided: bool) {
+        let key = key_of(via);
+        let generation = self.generation(&key);
         self.routed
             .lock()
             .expect("routed")
-            .insert(space.to_owned(), (key_of(via), provided));
+            .insert(space.to_owned(), (key, provided, generation));
+    }
+
+    fn generation(&self, key: &Key) -> u64 {
+        self.generations
+            .lock()
+            .expect("generations")
+            .get(key)
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Records that Space `space` (its id) took the relay's HTTPS path
@@ -265,9 +298,14 @@ impl MeshClients {
         space: &str,
         policy: impl FnOnce(bool) -> MeshPolicy,
     ) -> Option<String> {
-        let (key, provided) = self.routed.lock().expect("routed").get(space).cloned()?;
+        let (key, provided, generation) =
+            self.routed.lock().expect("routed").get(space).cloned()?;
         let reason = if !policy(provided).uses_mesh() {
             Some("the mesh was turned off".into())
+        } else if self.generation(&key) != generation {
+            // Another account signed in and the node started again: this
+            // Space's forwards ended with the old node.
+            Some("its mesh node was replaced".into())
         } else {
             None
         };
@@ -285,9 +323,12 @@ impl MeshClients {
     /// by the relay fails a moment before the relay's refusal arrives.
     /// Leaves the Space marked, so its next use reconnects.
     pub(crate) async fn cut_reason(&self, space: &str, wait: Duration) -> Option<String> {
-        let (key, _) = self.routed.lock().expect("routed").get(space).cloned()?;
+        let (key, _, generation) = self.routed.lock().expect("routed").get(space).cloned()?;
         let deadline = Instant::now() + wait;
         loop {
+            if self.generation(&key) != generation {
+                return Some("its mesh node was replaced".into());
+            }
             if let Some(reason) = self.unusable(&key).await {
                 return Some(reason);
             }
@@ -307,7 +348,28 @@ impl MeshClients {
     }
 
     async fn dialer(&self, via: &Via<'_>) -> Result<Arc<Dialer>, String> {
-        let key = key_of(via);
+        let account = match via {
+            Via::Account(a) => a.account_subject().await,
+            Via::Static { .. } => None,
+        };
+        self.dialer_with(key_of(via), account, || start(via)).await
+    }
+
+    /// The node for `key`, started by `start` when there is none, it can
+    /// no longer be used, or another account is signed in than the one it
+    /// connected for (its connection to the relay is that account's until
+    /// it reconnects, so Spaces of the new account would not be on its
+    /// map and would take the relay's HTTPS path).
+    async fn dialer_with<F, Fut>(
+        &self,
+        key: Key,
+        account: Option<String>,
+        start: F,
+    ) -> Result<Arc<Dialer>, String>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<(Dialer, Option<std::fs::File>), String>>,
+    {
         let mut nodes = self.nodes.lock().await;
         match nodes.get(&key) {
             // A node the relay no longer coordinates (mesh turned off, or
@@ -318,26 +380,48 @@ impl MeshClients {
                 dialer.mesh().shutdown();
                 nodes.remove(&key);
             }
+            Some(Slot::Ready {
+                dialer,
+                account: started,
+                ..
+            }) if account_changed(started, &account) => {
+                tracing::info!("another account signed in: starting the mesh node again for it");
+                dialer.mesh().shutdown();
+                nodes.remove(&key);
+            }
             Some(Slot::Ready { dialer, .. }) => return Ok(dialer.clone()),
-            Some(Slot::Unsupported(at, why)) if at.elapsed() < RECHECK => {
+            Some(Slot::Unsupported(at, why, started, every))
+                if at.elapsed() < *every && !account_changed(started, &account) =>
+            {
                 return Err(why.clone());
             }
             _ => {}
         }
-        match start(via).await {
+        match start().await {
             Ok((d, lock)) => {
                 let d = Arc::new(d);
+                *self
+                    .generations
+                    .lock()
+                    .expect("generations")
+                    .entry(key.clone())
+                    .or_default() += 1;
                 nodes.insert(
                     key,
                     Slot::Ready {
                         dialer: d.clone(),
                         _lock: lock,
+                        account,
                     },
                 );
                 Ok(d)
             }
             Err(e) => {
-                nodes.insert(key, Slot::Unsupported(Instant::now(), e.clone()));
+                let every = recheck_after(&e);
+                nodes.insert(
+                    key,
+                    Slot::Unsupported(Instant::now(), e.clone(), account, every),
+                );
                 Err(e)
             }
         }
@@ -421,10 +505,46 @@ async fn start(via: &Via<'_>) -> Result<(Dialer, Option<std::fs::File>), String>
         Some(lock) => (Some(dir.join(format!("{name}.json"))), Some(lock)),
         None => (None, None),
     };
-    let dialer = Dialer::start(&url, auth, identity, Duration::from_secs(10))
-        .await
-        .map_err(|e| e.to_string())?;
+    let dialer = start_dialer(&url, auth, identity).await?;
     Ok((dialer, lock))
+}
+
+/// Starts the client node. The relay binds a node key to the account that
+/// first used it, for life. After signing in as another account on this
+/// computer the saved key is the previous account's, and the relay refuses
+/// it: the key is rotated (the identity file is replaced by a new one) and
+/// the node starts again, so Spaces keep their mesh path instead of
+/// silently falling back to the relay's HTTPS path. The relay still decides
+/// whether the new key is accepted.
+async fn start_dialer(
+    url: &str,
+    auth: cua_mesh::AuthProvider,
+    identity: Option<std::path::PathBuf>,
+) -> Result<Dialer, String> {
+    let wait = Duration::from_secs(10);
+    // Boxed: the SDK's futures nest deeply, and their layout check has a
+    // fixed depth budget.
+    match Box::pin(Dialer::start(url, auth.clone(), identity.clone(), wait)).await {
+        Err(cua_mesh::Error::Refused(why))
+            if why.contains(cua_mesh::coord::KEY_OWNED_BY_ANOTHER) && identity.is_some() =>
+        {
+            let path = identity.clone().expect("checked");
+            tracing::info!(
+                relay = %url,
+                "this computer's mesh key belongs to the account that was signed in before; making a new one"
+            );
+            std::fs::remove_file(&path)
+                .or_else(|e| match e.kind() {
+                    std::io::ErrorKind::NotFound => Ok(()),
+                    _ => Err(e),
+                })
+                .map_err(|e| format!("could not replace the mesh key: {e}"))?;
+            Box::pin(Dialer::start(url, auth, identity, wait))
+                .await
+                .map_err(|e| e.to_string())
+        }
+        other => other.map_err(|e| e.to_string()),
+    }
 }
 
 fn lock_identity(dir: &std::path::Path, name: &str) -> Option<std::fs::File> {
@@ -617,13 +737,14 @@ mod tests {
             Slot::Ready {
                 dialer: Arc::new(dialer),
                 _lock: None,
+                account: None,
             },
         );
         clients
             .routed
             .lock()
             .unwrap()
-            .insert("relay:m1".into(), (key, false));
+            .insert("relay:m1".into(), (key, false, 0));
         assert!(
             clients
                 .stale("relay:m1", |_| MeshPolicy::Prefer)
@@ -666,6 +787,136 @@ mod tests {
         );
     }
 
+    fn as_account(token: &'static str) -> cua_mesh::AuthProvider {
+        cua_mesh::static_auth(vec![(
+            "x-cua-relay-authorization".into(),
+            format!("Bearer {token}"),
+        )])
+    }
+
+    /// The daemon's node is connected as the account that was signed in
+    /// when it started. When another account signs in, the node is started
+    /// again for it (with a new key), instead of staying on the previous
+    /// account's map where the new account's computers are missing.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_running_node_is_replaced_when_another_account_signs_in() {
+        let coord = cua_mesh::testing::FakeCoordinator::start(cua_mesh::Mode::Account).await;
+        let dir = tempfile::tempdir().unwrap();
+        let identity = dir.path().join("client.json");
+        let clients = MeshClients::default();
+        let key = Key::Account(coord.url.clone());
+        let starter = |token: &'static str| {
+            let (url, identity) = (coord.url.clone(), identity.clone());
+            move || async move {
+                let d = start_dialer(&url, as_account(token), Some(identity)).await?;
+                Ok::<_, String>((d, None))
+            }
+        };
+        let a = clients
+            .dialer_with(key.clone(), Some("sub-a".into()), starter("a"))
+            .await
+            .unwrap();
+        let key_a = a.mesh().node_key();
+        // The same account again: the same node.
+        let again = clients
+            .dialer_with(key.clone(), Some("sub-a".into()), starter("a"))
+            .await
+            .unwrap();
+        assert!(Arc::ptr_eq(&a, &again));
+        // A session that does not say who it is never restarts the node.
+        let unknown = clients
+            .dialer_with(key.clone(), None, starter("a"))
+            .await
+            .unwrap();
+        assert!(Arc::ptr_eq(&a, &unknown));
+
+        // Another account signs in.
+        let b = clients
+            .dialer_with(key.clone(), Some("sub-b".into()), starter("b"))
+            .await
+            .unwrap();
+        assert!(!Arc::ptr_eq(&a, &b), "a new node for the new account");
+        assert_ne!(b.mesh().node_key(), key_a, "with a new key");
+        assert!(b.mesh().unusable().is_none());
+
+        // A Space connected through A's node lost its forwards with it:
+        // it reconnects (once), through B's node.
+        clients.routed.lock().unwrap().insert(
+            "relay:m1".into(),
+            (key.clone(), false, 1), // the first node's generation
+        );
+        let why = clients.stale("relay:m1", |_| MeshPolicy::Prefer).await;
+        assert_eq!(why.as_deref(), Some("its mesh node was replaced"));
+        assert!(
+            clients
+                .stale("relay:m1", |_| MeshPolicy::Prefer)
+                .await
+                .is_none()
+        );
+        // A Space routed through B's node is fine, until A signs in again.
+        clients.routed.lock().unwrap().insert(
+            "relay:m2".into(),
+            (key.clone(), false, clients.generation(&key)),
+        );
+        assert!(
+            clients
+                .stale("relay:m2", |_| MeshPolicy::Prefer)
+                .await
+                .is_none()
+        );
+        let a_again = clients
+            .dialer_with(key.clone(), Some("sub-a".into()), starter("a"))
+            .await
+            .unwrap();
+        assert!(!Arc::ptr_eq(&a_again, &b));
+        assert_eq!(
+            clients
+                .stale("relay:m2", |_| MeshPolicy::Prefer)
+                .await
+                .as_deref(),
+            Some("its mesh node was replaced")
+        );
+        a_again.mesh().shutdown();
+    }
+
+    /// Signing in as another account on this computer: the saved node key
+    /// belongs to the previous account, so it is rotated and the node joins
+    /// the mesh as the new account.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_node_key_of_the_previous_account_is_rotated() {
+        let coord = cua_mesh::testing::FakeCoordinator::start(cua_mesh::Mode::Account).await;
+        let dir = tempfile::tempdir().unwrap();
+        let identity = dir.path().join("client.json");
+        // Signed in as A: the node registers its key.
+        let a = start_dialer(&coord.url, as_account("a"), Some(identity.clone()))
+            .await
+            .unwrap();
+        let key_a = a.mesh().node_key();
+        a.mesh().shutdown();
+
+        // The same key as B is refused by the coordinator.
+        let refused = Dialer::start(
+            &coord.url,
+            as_account("b"),
+            Some(identity.clone()),
+            Duration::from_secs(10),
+        )
+        .await;
+        assert!(
+            matches!(&refused, Err(cua_mesh::Error::Refused(m)) if m.contains("another owner")),
+            "{:?}",
+            refused.err()
+        );
+
+        // Starting the way Spaces does rotates the key and joins.
+        let b = start_dialer(&coord.url, as_account("b"), Some(identity.clone()))
+            .await
+            .unwrap();
+        assert_ne!(b.mesh().node_key(), key_a, "a new node key");
+        assert!(b.mesh().unusable().is_none());
+        b.mesh().shutdown();
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_space_that_fell_back_moves_to_the_mesh_once_its_machine_joins() {
         let coord = cua_mesh::testing::FakeCoordinator::start(cua_mesh::Mode::Account).await;
@@ -684,6 +935,7 @@ mod tests {
             Slot::Ready {
                 dialer: Arc::new(dialer),
                 _lock: None,
+                account: None,
             },
         );
         clients.note_fallback("relay:late", &Via::Account(&a), "late");
@@ -743,7 +995,7 @@ mod tests {
         let clients = MeshClients::default();
         clients.routed.lock().unwrap().insert(
             "relay:m1".into(),
-            (Key::Account("http://relay".into()), false),
+            (Key::Account("http://relay".into()), false, 0),
         );
         // Off now (CUA_MESH=off, or the app left the channel that uses it):
         // the cached connection is dropped and reconnects over HTTPS.
@@ -762,6 +1014,12 @@ mod tests {
                 .await
                 .is_none()
         );
+    }
+
+    #[test]
+    fn a_refused_node_is_tried_again_sooner_than_a_relay_without_a_mesh() {
+        assert!(recheck_after("mesh refused: HTTP 403: not enrolled") < RECHECK);
+        assert_eq!(recheck_after("the relay has no mesh coordinator"), RECHECK);
     }
 
     #[test]

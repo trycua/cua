@@ -240,12 +240,21 @@ fn tls_connector() -> tokio_tungstenite::Connector {
     tokio_tungstenite::Connector::Rustls(Arc::new(cfg))
 }
 
+/// What the coordinator says when a node key is registered to another
+/// owner (the account that was signed in before).
+pub const KEY_OWNED_BY_ANOTHER: &str = "this node key belongs to another owner";
+
 /// The reason, when `e` is the coordinator refusing this node's
-/// credentials (HTTP 401 or 403) rather than a transient failure (a
-/// restarting relay answers 502 or 503 and is retried as before).
+/// credentials (HTTP 401 or 403) or its key (bound to another owner, for
+/// life) rather than a transient failure (a restarting relay answers 502
+/// or 503 and is retried as before).
 fn denial(e: &Error) -> Option<String> {
     match e {
-        Error::Refused(m) if m.starts_with("HTTP 401") || m.starts_with("HTTP 403") => {
+        Error::Refused(m)
+            if m.starts_with("HTTP 401")
+                || m.starts_with("HTTP 403")
+                || m.contains(KEY_OWNED_BY_ANOTHER) =>
+        {
             Some(m.clone())
         }
         _ => None,

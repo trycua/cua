@@ -1748,6 +1748,8 @@ pub struct FakeServiceManager {
     /// The last installed spec.
     pub spec: Mutex<Option<ServiceSpec>>,
     running: Mutex<bool>,
+    /// `start` fails while this is set.
+    pub fail_start: Mutex<bool>,
 }
 
 impl ServiceManager for FakeServiceManager {
@@ -1761,6 +1763,9 @@ impl ServiceManager for FakeServiceManager {
     }
     fn start(&self) -> Result<()> {
         self.calls.lock().unwrap().push("start".into());
+        if *self.fail_start.lock().unwrap() {
+            return Err(Error::Service("the service would not start".into()));
+        }
         *self.running.lock().unwrap() = true;
         Ok(())
     }

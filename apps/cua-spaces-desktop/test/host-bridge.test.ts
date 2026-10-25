@@ -398,6 +398,39 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(s.pausedSignedOut).toBe(false);
   });
 
+  it("moves the host to another account that signs in, with no manual step", async () => {
+    const account = new FakeAccountTokens();
+    account.token = "tok";
+    account.wire(model.host);
+    model.host.currentAccount = () => ({ id: "user-1", email: "ada@example.com", display: "Ada" });
+    await call("host.setUp", { request: { mode: "relay" } });
+    account.token = null;
+    await model.host.reconcileAccount();
+    expect(host.calls).toContain("pause");
+    account.signInGives = "tok-bob";
+    model.host.currentAccount = () => ({ id: "user-2", email: "bob@example.com", display: "Bob" });
+    const s = (await call("host.action", { action: "sign-in" })) as Record<string, unknown>;
+    expect(host.calls.at(-1)).toBe("resume:user-2");
+    expect(s.pausedSignedOut).toBe(false);
+    expect(s.owner).toBe("user-2");
+  });
+
+  it("a failed switch leaves the host paused, and Retry never starts the old registration", async () => {
+    const account = new FakeAccountTokens();
+    account.token = "tok";
+    account.wire(model.host);
+    model.host.currentAccount = () => ({ id: "user-1", email: "ada@example.com", display: "Ada" });
+    await call("host.setUp", { request: { mode: "relay" } });
+    host.failResume = "this computer still runs 1 Space for the account that was signed in before";
+    model.host.currentAccount = () => ({ id: "user-2", email: "bob@example.com", display: "Bob" });
+    await model.host.reconcileAccount();
+    const s = (await call("host.status")) as Record<string, unknown>;
+    expect(s.pausedSignedOut).toBe(true);
+    await model.host.retryFailedAction();
+    expect(host.calls).not.toContain("start");
+    expect(host.calls.at(-1)).toBe("resume:user-2");
+  });
+
   it("without an account wired, Sign In leaves the status as it is", async () => {
     await make({ account: null });
     await call("host.status");

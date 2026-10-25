@@ -54,7 +54,9 @@ pub mod testing;
 mod tests;
 pub mod uv;
 
-pub use device::{DeviceAuth, DeviceKey, FileKeySlot, KeySlot, MemoryKeySlot, PendingCode};
+pub use device::{
+    DeviceAuth, DeviceKey, FileKeySlot, KeySlot, MemoryKeySlot, PendingCode, token_subject,
+};
 pub use helper_migration::{ServiceMigration, VerifyTiming};
 pub use host::SetupStage;
 pub use host::{

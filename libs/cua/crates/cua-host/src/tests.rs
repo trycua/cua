@@ -1332,6 +1332,61 @@ async fn sign_in_as_another_account_replaces_the_key_of_the_previous_one() {
     assert!(as_b.session().await.is_ok());
 }
 
+/// An account token that changes while the process lives (the daemon's
+/// session, read per call).
+struct SwitchableToken(std::sync::Mutex<String>);
+
+#[async_trait::async_trait]
+impl AccountTokens for SwitchableToken {
+    async fn access_token(&self) -> Result<String> {
+        Ok(self.0.lock().unwrap().clone())
+    }
+
+    async fn signed_in(&self) -> bool {
+        true
+    }
+}
+
+/// A long-running process (the daemon) holds a device session for the key
+/// it started with. When the app enrolls this computer again for another
+/// account with a new key, the daemon picks the new key up without a
+/// restart instead of sending the old session.
+#[tokio::test]
+async fn a_running_daemon_follows_a_new_device_key_after_an_account_switch() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-a", "user-a", Some("a@example.com"));
+    relay.add_account("acct-b", "user-b", Some("b@example.com"));
+    relay.require_devices(true);
+    relay.fresh_sign_in("user-a");
+    relay.fresh_sign_in("user-b");
+    let slot = Arc::new(MemoryKeySlot::default());
+    let tokens = Arc::new(SwitchableToken(std::sync::Mutex::new("acct-a".into())));
+    let device = |tokens: Arc<dyn AccountTokens>| {
+        DeviceAuth::new(&relay.url, tokens, slot.clone(), "Mac")
+            .unwrap()
+            .with_machine_id(Some("mac-1".into()))
+    };
+    // The daemon started signed in as A, with a session open.
+    let daemon = device(tokens.clone()).with_key_recheck(std::time::Duration::ZERO);
+    daemon.enroll_after_sign_in().await.unwrap();
+    let old_session = daemon.session().await.unwrap();
+    let old_id = daemon.device_id().unwrap().unwrap();
+
+    // The app signs in as B and enrolls with a new key (another process).
+    let app = device(Arc::new(StaticToken("acct-b".into())));
+    let enrolled = app.enroll_after_sign_in().await.unwrap();
+    assert_ne!(enrolled.device.id, old_id);
+    // The daemon's own session now reads as B.
+    *tokens.0.lock().unwrap() = "acct-b".into();
+
+    let session = daemon.session().await.unwrap();
+    assert_ne!(session, old_session, "the old key's session is not reused");
+    let listing = daemon.listing().await.unwrap();
+    let current = listing.devices.iter().find(|d| d.current).unwrap();
+    assert_eq!(current.id, enrolled.device.id);
+    assert_eq!(daemon.device_id().unwrap().unwrap(), enrolled.device.id);
+}
+
 /// Two builds on one machine that each made a key end up with one: the key
 /// the relay enrolled wins, the other's record is retired.
 #[tokio::test]
@@ -1740,6 +1795,261 @@ async fn signing_out_pauses_relay_sharing_until_the_owner_signs_in() {
     assert!(host.policy().unwrap().unwrap().sharing);
     let spec = f.manager.spec.lock().unwrap().clone().unwrap();
     assert!(spec.args.join(" ").starts_with("join --relay"));
+}
+
+/// A JWT-shaped account token whose `sub` is `user` (the host reads whose
+/// token it is from it).
+fn jwt(user: &str) -> String {
+    use base64::Engine as _;
+    let b = |v: &str| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(v);
+    format!("{}.{}.sig", b("{}"), b(&format!(r#"{{"sub":"{user}"}}"#)))
+}
+
+/// Signing in as another account re-registers this computer for it: a new
+/// machine id and mesh key, while the name and the Provide Spaces setting
+/// stay.
+#[tokio::test]
+async fn signing_in_as_another_account_registers_the_host_again() {
+    let relay = FakeRelay::start().await;
+    relay.add_account(&jwt("user-1"), "user-1", Some("ada@example.com"));
+    relay.add_account(&jwt("user-2"), "user-2", Some("bob@example.com"));
+    let f = fixture();
+    let host = f.host();
+    let mut opts = f.relay_opts(&relay.url);
+    opts.provide_spaces = true;
+    let before = host.setup(opts, &StaticToken(jwt("user-1"))).await.unwrap();
+    let old_id = before.machine_id.clone().unwrap();
+    let old_token = std::fs::read_to_string(host.paths().machine_token()).unwrap();
+    let mesh = host.paths().driver_data.join("mesh");
+    std::fs::create_dir_all(&mesh).unwrap();
+    std::fs::write(mesh.join("identity.json"), "{}").unwrap();
+    host.pause_signed_out().await.unwrap();
+
+    // The account that signed out is resumed as before.
+    let same = host
+        .resume_or_switch_account("user-1", &StaticToken(jwt("user-1")))
+        .await
+        .unwrap();
+    assert_eq!(same.machine_id.as_deref(), Some(old_id.as_str()));
+    host.pause_signed_out().await.unwrap();
+
+    // Another account's sign-in moves it over, with no manual step.
+    f.manager.calls.lock().unwrap().clear();
+    let switched = host
+        .resume_or_switch_account("user-2", &StaticToken(jwt("user-2")))
+        .await
+        .unwrap();
+    assert!(!switched.paused_signed_out);
+    assert!(switched.service.installed && switched.service.running);
+    assert!(switched.sharing);
+    assert_ne!(switched.machine_id.as_deref(), Some(old_id.as_str()));
+    assert_eq!(switched.owner.as_deref(), Some("user-2"));
+    assert_eq!(switched.name.as_deref(), Some("mini"));
+    assert!(switched.provide_spaces, "the Provide Spaces setting stays");
+    assert!(host.policy().unwrap().unwrap().provide_spaces);
+    assert!(host.policy().unwrap().unwrap().allow.is_empty());
+    assert_ne!(
+        std::fs::read_to_string(host.paths().machine_token()).unwrap(),
+        old_token
+    );
+    assert!(
+        !mesh.join("identity.json").exists(),
+        "the mesh key bound to the old account is dropped"
+    );
+    // The relay registered the new id to the new account.
+    let on_relay = relay
+        .machine(switched.machine_id.as_deref().unwrap())
+        .expect("registered");
+    assert_eq!(on_relay.owner.id, "user-2");
+
+    // The previous account's record of this computer is kept for it.
+    assert_eq!(
+        relay.machine(&old_id).expect("kept").owner.id,
+        "user-1",
+        "the first account's registration stays"
+    );
+
+    // Signed in as the new owner again: a plain resume, no new machine.
+    host.pause_signed_out().await.unwrap();
+    let again = host
+        .resume_or_switch_account("user-2", &StaticToken(jwt("user-2")))
+        .await
+        .unwrap();
+    assert_eq!(again.machine_id, switched.machine_id);
+
+    // Back to the first account: its own registration is reused (same
+    // machine id, so what is tied to it stays), not a third machine.
+    let back = host
+        .resume_or_switch_account("user-1", &StaticToken(jwt("user-1")))
+        .await
+        .unwrap();
+    assert_eq!(back.machine_id.as_deref(), Some(old_id.as_str()));
+    assert_eq!(back.owner.as_deref(), Some("user-1"));
+    assert_eq!(back.name.as_deref(), Some("mini"));
+    assert!(back.provide_spaces && back.service.running);
+    assert_eq!(
+        relay
+            .machine(switched.machine_id.as_deref().unwrap())
+            .expect("the second account's is kept")
+            .owner
+            .id,
+        "user-2"
+    );
+
+    // Removing the host unregisters every registration of this computer.
+    host.remove().await.unwrap();
+    assert!(relay.machine(&old_id).is_none());
+    assert!(
+        relay
+            .machine(switched.machine_id.as_deref().unwrap())
+            .is_none()
+    );
+}
+
+/// A computer that still runs Spaces for the account that was signed in does
+/// not hand them to another account: it stays paused (and says why) until
+/// they are deleted, and then moves over.
+#[tokio::test]
+async fn a_switch_waits_while_spaces_run_for_the_previous_account() {
+    let relay = FakeRelay::start().await;
+    relay.add_account(&jwt("user-1"), "user-1", Some("ada@example.com"));
+    relay.add_account(&jwt("user-2"), "user-2", Some("bob@example.com"));
+    let f = fixture();
+    let host = f.host();
+    let before = host
+        .setup(f.relay_opts(&relay.url), &StaticToken(jwt("user-1")))
+        .await
+        .unwrap();
+    let space = crate::provided::ProvidedSpace {
+        relay_machine: "space-1".into(),
+        local_space: "local:one".into(),
+        name: "one".into(),
+        created_by_account: "user-1".into(),
+        ..Default::default()
+    };
+    crate::provided::save_provided(&host.paths().dir, &[space]).unwrap();
+    let as_b = StaticToken(jwt("user-2"));
+
+    let err = host
+        .resume_or_switch_account("user-2", &as_b)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("still runs 1 Space"), "{err}");
+    let s = host.status().await.unwrap();
+    assert!(
+        s.paused_signed_out && !s.sharing,
+        "the old account's access is closed"
+    );
+    assert_eq!(s.machine_id, before.machine_id, "nothing was re-registered");
+    assert_eq!(host.provided_spaces().unwrap().len(), 1);
+
+    crate::provided::save_provided(&host.paths().dir, &[]).unwrap();
+    let s = host
+        .resume_or_switch_account("user-2", &as_b)
+        .await
+        .unwrap();
+    assert!(!s.paused_signed_out && s.sharing);
+    assert_eq!(s.owner.as_deref(), Some("user-2"));
+}
+
+/// What the owner chose for sharing follows the host across accounts: it is
+/// sent to the relay for the registration that takes over.
+#[tokio::test]
+async fn sharing_follows_the_hosts_choice_when_the_account_changes_back() {
+    let relay = FakeRelay::start().await;
+    relay.add_account(&jwt("user-1"), "user-1", Some("ada@example.com"));
+    relay.add_account(&jwt("user-2"), "user-2", Some("bob@example.com"));
+    let f = fixture();
+    let host = f.host();
+    let first = host
+        .setup(f.relay_opts(&relay.url), &StaticToken(jwt("user-1")))
+        .await
+        .unwrap();
+    host.stop_sharing().await.unwrap();
+    let as_b = StaticToken(jwt("user-2"));
+    host.resume_or_switch_account("user-2", &as_b)
+        .await
+        .unwrap();
+    // As the second account sharing is turned on again.
+    let started = host.start_sharing().await.unwrap();
+    assert!(started.sharing);
+    // Back to the first account: sharing is on there too (the host's
+    // choice), not left stopped on its old registration.
+    let back = host
+        .resume_or_switch_account("user-1", &StaticToken(jwt("user-1")))
+        .await
+        .unwrap();
+    assert_eq!(back.machine_id, first.machine_id);
+    assert!(back.sharing);
+    assert!(
+        relay
+            .machine(first.machine_id.as_deref().unwrap())
+            .unwrap()
+            .sharing
+    );
+}
+
+/// A host the owner had stopped sharing stays stopped (on the relay too)
+/// after a switch of account.
+#[tokio::test]
+async fn a_stopped_host_stays_stopped_after_an_account_switch() {
+    let relay = FakeRelay::start().await;
+    relay.add_account(&jwt("user-1"), "user-1", Some("ada@example.com"));
+    relay.add_account(&jwt("user-2"), "user-2", Some("bob@example.com"));
+    let f = fixture();
+    let host = f.host();
+    host.setup(f.relay_opts(&relay.url), &StaticToken(jwt("user-1")))
+        .await
+        .unwrap();
+    host.stop_sharing().await.unwrap();
+    let switched = host
+        .resume_or_switch_account("user-2", &StaticToken(jwt("user-2")))
+        .await
+        .unwrap();
+    assert!(!switched.sharing, "still stopped here");
+    assert!(switched.service.running, "but online");
+    let on_relay = relay
+        .machine(switched.machine_id.as_deref().unwrap())
+        .unwrap();
+    assert!(!on_relay.sharing, "and on the relay");
+}
+
+/// A switch of account that fails leaves the previous account's sharing
+/// closed and retries on the next check, instead of leaving it open or the
+/// host offline for good.
+#[tokio::test]
+async fn a_failed_account_switch_stays_paused_and_retries() {
+    let relay = FakeRelay::start().await;
+    relay.add_account(&jwt("user-1"), "user-1", Some("ada@example.com"));
+    relay.add_account(&jwt("user-2"), "user-2", Some("bob@example.com"));
+    let f = fixture();
+    let host = f.host();
+    let before = host
+        .setup(f.relay_opts(&relay.url), &StaticToken(jwt("user-1")))
+        .await
+        .unwrap();
+    let b = StaticToken(jwt("user-2"));
+
+    // The relay refuses the new registration while the host is sharing: the
+    // old account's sharing is closed first, and stays closed.
+    relay.fail_registrations(&[400]);
+    assert!(host.resume_or_switch_account("user-2", &b).await.is_err());
+    let s = host.status().await.unwrap();
+    assert!(s.paused_signed_out && !s.sharing && !s.service.running);
+    assert_eq!(s.machine_id, before.machine_id);
+    assert!(!host.policy().unwrap().unwrap().sharing);
+
+    // The service fails to start after registering: still paused, with the
+    // new owner, so the next check resumes it as the owner.
+    *f.manager.fail_start.lock().unwrap() = true;
+    assert!(host.resume_or_switch_account("user-2", &b).await.is_err());
+    let s = host.status().await.unwrap();
+    assert!(s.paused_signed_out && !s.sharing);
+    assert_eq!(s.owner.as_deref(), Some("user-2"));
+    assert_ne!(s.machine_id, before.machine_id);
+    *f.manager.fail_start.lock().unwrap() = false;
+    let s = host.resume_or_switch_account("user-2", &b).await.unwrap();
+    assert!(!s.paused_signed_out && s.sharing && s.service.running);
 }
 
 /// Stopped sharing stays stopped across a pause, and direct mode (no

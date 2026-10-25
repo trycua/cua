@@ -337,6 +337,10 @@ export class HostModel {
         this.error = words(error);
         this.actionFailure = presentHostFailure(words(error), this.platform);
         this.failedAction = this.native.AppHostActionId.ResumeSharing;
+        // What the failure left behind: a switch of account pauses the old
+        // registration first, so Retry goes through the sign-in check again,
+        // never straight to starting the old one.
+        await this.refresh();
       }
     } finally {
       this.reconciling = false;

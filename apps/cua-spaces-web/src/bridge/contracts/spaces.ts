@@ -354,3 +354,33 @@ export type CreateAction =
   | { type: "power-fail"; id: string; error: string };
 
 export const NO_CREATES: CreatesState = { pending: [], deleting: [], powering: [] };
+
+/**
+ * How far the host's last `spaces.list` got (the SDK's `Spaces.list_known`).
+ * This machine's Spaces come at once; the account's other computers as they
+ * answer, so a list can be incomplete for a while (right after the daemon
+ * restarts, say). An incomplete list is never "no Spaces".
+ */
+export interface ListStatus {
+  /** The list was read at least once (before that nothing is known). */
+  loaded: boolean;
+  /** Some of the account's computers have not answered yet. */
+  incomplete: boolean;
+  /** How many computers are still being reached (0 when unknown). */
+  reaching: number;
+  /** The other computers' rows are the last known ones (kept across a daemon
+   * restart, or from before a failed read), not yet confirmed. */
+  stale: boolean;
+}
+
+/** What the Spaces page shows besides the Spaces (`spaces::ListView`). */
+export interface ListView {
+  /** "Create your first Space": a complete list with no Space only. */
+  empty: boolean;
+  /** One quiet line where the Spaces go while the list is not complete
+   * ("Reaching 6 computers…"); null once it is. */
+  reachingLine: string | null;
+}
+
+/** A host that lists complete lists only (`DataAdapter.listStatus` undefined). */
+export const LIST_COMPLETE: ListStatus = { loaded: true, incomplete: false, reaching: 0, stale: false };

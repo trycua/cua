@@ -375,10 +375,11 @@ async fn register(
         viewers: vec![],
         clients: vec![],
         host,
-        // This mock never asks for a device signature or MFA, so a
-        // registration here has nothing to vouch for either way; default to
-        // confirmed, matching behavior before S5 added the field.
-        confirmed: true,
+        // Like the real relay once devices are required: only a
+        // registration carrying an enrolled device's session is proven.
+        // Otherwise (devices not required) there is nothing to vouch for
+        // either way, so it is confirmed, as before S5 added the field.
+        confirmed: !st.require_devices || st.device_of(&headers, &who).is_some(),
         team: None,
         meta: body["meta"]
             .as_object()

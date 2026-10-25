@@ -4823,6 +4823,27 @@ export function appSpacesFromJson(json: string): Array<AppSpace> /*throws*/ {
     }
 
 /**
+ * The Spaces page's empty state and "Reaching N computers…" line: the
+ * first-run page only for a complete list with no Space.
+ */
+export function appSpacesListView(input: AppListViewInput): AppListView {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeAppListView.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_spaces_list_view(
+        FfiConverterTypeAppListViewInput.lower(input, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
  * The menu bar status line ("3 Spaces").
  */
 export function appStatusLine(count: number): string {
@@ -26138,6 +26159,122 @@ const FfiConverterTypeAppLaunchPlan = (() => {
         allocationSize(value: TypeName): number {
             return FfiConverterBool.allocationSize(value.refresh) +
              FfiConverterOptionalString.allocationSize(value.save);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppListView = {
+    /**
+     * "Create your first Space": only when the list is complete and has no
+     * Space. A list still loading, or with computers still answering, is
+     * not empty yet (an app update restarting the daemon must not show it).
+     */
+    empty: boolean,
+    /**
+     * One quiet line where the Spaces go while the list is not complete
+     * ("Reaching 6 computers…"), below what is known so far.
+     */
+    reachingLine?: string
+}
+
+/**
+ * Generated factory for {@link AppListView} record objects.
+ */
+export const AppListView = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppListView, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppListView>,
+    });
+})();
+
+const FfiConverterTypeAppListView = (() => {
+    type TypeName = AppListView;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                empty: FfiConverterBool.read(from),
+                reachingLine: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterBool.write(value.empty, into);
+            FfiConverterOptionalString.write(value.reachingLine, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterBool.allocationSize(value.empty) +
+             FfiConverterOptionalString.allocationSize(value.reachingLine);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppListViewInput = {
+    /**
+     * The list was read at least once: before that nothing is known, not
+     * even this machine's Spaces.
+     */
+    loaded: boolean,
+    /**
+     * Some of the account's computers have not answered yet.
+     */
+    incomplete: boolean,
+    /**
+     * How many computers are still being reached (0 when unknown).
+     */
+    reaching: number,
+    /**
+     * Spaces listed now.
+     */
+    count: number
+}
+
+/**
+ * Generated factory for {@link AppListViewInput} record objects.
+ */
+export const AppListViewInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppListViewInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppListViewInput>,
+    });
+})();
+
+const FfiConverterTypeAppListViewInput = (() => {
+    type TypeName = AppListViewInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                loaded: FfiConverterBool.read(from),
+                incomplete: FfiConverterBool.read(from),
+                reaching: FfiConverterUInt32.read(from),
+                count: FfiConverterUInt32.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterBool.write(value.loaded, into);
+            FfiConverterBool.write(value.incomplete, into);
+            FfiConverterUInt32.write(value.reaching, into);
+            FfiConverterUInt32.write(value.count, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterBool.allocationSize(value.loaded) +
+             FfiConverterBool.allocationSize(value.incomplete) +
+             FfiConverterUInt32.allocationSize(value.reaching) +
+             FfiConverterUInt32.allocationSize(value.count);
 
         }
     };
@@ -66433,6 +66570,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_spaces_from_json() !== 7600) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_spaces_from_json");
     }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_spaces_list_view() !== 47161) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_spaces_list_view");
+    }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_status_line() !== 47728) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_status_line");
     }
@@ -67028,6 +67168,8 @@ export default Object.freeze({
     FfiConverterTypeAppLaunchInput,
     FfiConverterTypeAppLaunchPlan,
     FfiConverterTypeAppLineView,
+    FfiConverterTypeAppListView,
+    FfiConverterTypeAppListViewInput,
     FfiConverterTypeAppLocalEngine,
     FfiConverterTypeAppLocalNetworkAccess,
     FfiConverterTypeAppLocalNetworkInput,

@@ -14,6 +14,9 @@ import Foundation
 public protocol SpacesBackend: AnyObject, Sendable {
     /// The registry, one row per Space, with a bounded reachability probe.
     func rows() async throws -> [AppSpaceRow]
+    /// [`rows`] with how far the read got (the SDK's `Spaces.list_known`):
+    /// this Mac's Spaces at once, your other computers as they answer.
+    func listRead() async throws -> AppListRead
     /// Creates a Space (`create_space`), reporting the SDK's create progress
     /// (pulling, booting, waiting for cua-spacesd, connecting) to `progress`
     /// on an SDK thread until it is ready; returns its id. `createId` (the
@@ -150,7 +153,30 @@ public struct ShareLink: Codable, Equatable, Sendable {
     }
 }
 
+/// One read of the Space list and how far it got (the SDK's `SpaceList`).
+public struct AppListRead: Sendable {
+    public var rows: [AppSpaceRow]
+    /// Some of your computers have not answered yet: not "no Spaces".
+    public var incomplete: Bool
+    /// How many computers are still being reached (0 when unknown).
+    public var reaching: UInt32
+    /// Your other computers' rows are the last known ones.
+    public var stale: Bool
+    /// Why your other computers could not be read, when they could not.
+    public var notice: String
+
+    public init(rows: [AppSpaceRow], incomplete: Bool = false, reaching: UInt32 = 0, stale: Bool = false, notice: String = "") {
+        self.rows = rows
+        self.incomplete = incomplete
+        self.reaching = reaching
+        self.stale = stale
+        self.notice = notice
+    }
+}
+
 public extension SpacesBackend {
+    /// A backend that lists complete lists only.
+    func listRead() async throws -> AppListRead { AppListRead(rows: try await rows()) }
     func thumbnail(id: String, maxAgeMs: UInt64?) async -> SpaceThumbnailData? { nil }
     func appIcons(id: String, requests: [SpaceAppIconRequest]) async -> [Data?] { requests.map { _ in nil } }
     func primaryDisplay(id: String) async -> AppStreamDisplay? { nil }
@@ -233,9 +259,20 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
         LiveSpacesBackend(cua: try Cua.auto(config: CuaConfig(accountFromSession: true)))
     }
 
-    public func rows() async throws -> [AppSpaceRow] {
+    public func rows() async throws -> [AppSpaceRow] { try await listRead().rows }
+
+    /// This Mac's Spaces at once, your other computers as far as they
+    /// answered (`Spaces.list_known`): a slow relay or a daemon still
+    /// reaching your computers never empties the list.
+    public func listRead() async throws -> AppListRead {
+        let list = try await cua.spaces().listKnown()
+        return AppListRead(rows: await probe(list.spaces), incomplete: list.incomplete,
+                           reaching: list.reaching, stale: list.stale, notice: list.notice)
+    }
+
+    /// The rows of `infos`, each with a bounded reachability probe.
+    private func probe(_ infos: [CuaSDK.SpaceInfo]) async -> [AppSpaceRow] {
         let spaces = cua.spaces()
-        let infos = try await spaces.list()
         return await withTaskGroup(of: (Int, AppSpaceRow).self) { group in
             for (index, info) in infos.enumerated() {
                 group.addTask {
@@ -832,6 +869,14 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
     ]
 
     public func rows() async throws -> [AppSpaceRow] { await MainActor.run { fixtureRows } }
+    /// Your other computers still answering, as a daemon reaching them says.
+    public var fixtureIncomplete = false
+    public var fixtureReaching: UInt32 = 0
+    public func listRead() async throws -> AppListRead {
+        await MainActor.run {
+            AppListRead(rows: fixtureRows, incomplete: fixtureIncomplete, reaching: fixtureReaching, stale: fixtureIncomplete)
+        }
+    }
 
     /// Progress a fixture create reports, in order (the SDK's words).
     public var createPhases: [SpaceCreateProgress] = [

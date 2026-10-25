@@ -34,7 +34,7 @@ export const Route = createFileRoute("/onboarding/")({
 /**
  * The first run, the same on macOS, Windows and Linux: Welcome, Pick your
  * agent, Install the Cua CLI (only while the app's CLI is not on this
- * computer), Connect your other devices (optional), Share this Mac's screen
+ * computer), Add your other computers (optional), Share this Mac's screen
  * (a signed-in Mac that shares it), Try it in your agent. Every
  * word, the agents' order and which button does what are the app core's
  * (`firstRun.view`, through `useFirstRun`); this file places them beside the
@@ -79,17 +79,19 @@ function OnboardingPage() {
   }, [canGoBack, fr.back]);
 
   return (
-    <div className="relative flex h-full flex-col overflow-hidden bg-[#F4F5F7] dark:bg-[#07080a]" data-step={view.step}>
+    <div className="relative flex h-full flex-col overflow-hidden bg-[#F4F5F7] [--ob-x:clamp(40px,8vw,96px)] [--ob-art-h:min(58vh,560px)] dark:bg-[#07080a]" data-step={view.step}>
       <Backdrop />
       <Art art={view.art} step={view.step} />
-      <header className="relative z-30 flex shrink-0 items-center justify-between px-10 pt-[calc(var(--titlebar-height)+12px)] pb-2">
+      <header className="relative z-30 flex shrink-0 items-center justify-between pr-10 pl-[var(--ob-x)] pt-[calc(var(--titlebar-height)+12px)] pb-2">
         <CuaWordmark />
         <button type="button" onClick={leave} className={SKIP_PILL} data-onboarding-later="">
           {view.later}
         </button>
       </header>
-      <div className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto px-10 pb-6 [@media(min-width:1000px)]:pr-[42%]">
-        <div className="my-auto flex max-w-[600px] flex-col py-6">
+      <div className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto pr-10 pb-6 pl-[var(--ob-x)] [@media(min-width:1000px)]:pr-[46%]">
+        {/* Centre the step on the window, a little above true centre (about 45% from the top). The min heights keep a gap under the logo bar and above the progress dots; tall steps scroll. */}
+        <div aria-hidden data-onboarding-spacer-top="" className="min-h-[clamp(8px,2vh,32px)] shrink-0 grow-[33] basis-0 [@media(max-width:999px)]:grow-[50]" />
+        <div className="flex w-full max-w-[520px] shrink-0 flex-col">
           {view.welcome ? <Welcome fr={fr} view={view} /> : null}
           {view.connect ? <Connect fr={fr} view={view} /> : null}
           {view.cli ? <CommandLine fr={fr} view={view} /> : null}
@@ -97,6 +99,7 @@ function OnboardingPage() {
           {view.permissions ? <Permissions fr={fr} view={view} /> : null}
           {view.setup ? <Setup fr={fr} view={view} onFinish={() => void finish()} /> : null}
         </div>
+        <div aria-hidden data-onboarding-spacer-bottom="" className="min-h-6 shrink-0 grow-[67] basis-0 [@media(max-width:999px)]:grow-[50]" />
       </div>
       <Dots view={view} />
     </div>
@@ -123,7 +126,7 @@ function Heading({ children }: { children: ReactNode }) {
 }
 
 function Lede({ children }: { children: ReactNode }) {
-  return <p className="mt-3 text-[15px] leading-relaxed text-muted-foreground">{children}</p>;
+  return <p className="mt-3 text-[15px] leading-relaxed text-foreground/75">{children}</p>;
 }
 
 /** Plain rows between hairlines: no boxes, no filled panels. */
@@ -174,7 +177,7 @@ function Step({ id, onBack, children }: { id: string; onBack: () => void; childr
   return (
     <div data-first-run={id} className="flex flex-col">
       {children}
-      <button type="button" onClick={onBack} aria-keyshortcuts="Escape" className={cn(QUIET_LINK, "order-first mb-5 inline-flex items-center gap-1.5 self-start text-[13px]")} data-first-run-back="">
+      <button type="button" onClick={onBack} aria-keyshortcuts="Escape" className={cn(QUIET_LINK, "order-first mb-4 inline-flex h-7 items-center gap-1.5 self-start text-[13px]")} data-first-run-back="">
         <ArrowLeftIcon aria-hidden className="size-3.5" />
         Back
       </button>
@@ -185,14 +188,14 @@ function Step({ id, onBack, children }: { id: string; onBack: () => void; childr
 /** A line with a state: a check, a spinner, or a fix with its button. */
 function StatusLine({ row, onAct }: { row: FirstRunRow; onAct?: () => void }) {
   return (
-    <div className="flex items-center gap-3 py-2.5" data-first-run-status={row.id} data-state={row.state}>
+    <div className="flex min-h-16 items-center gap-3 py-2" data-first-run-status={row.id} data-state={row.state}>
       <StateIcon state={row.state} />
       <div className="min-w-0 flex-1">
         <div className="text-[14px]">{row.title}</div>
         {row.note ? <div className="text-[13px] text-muted-foreground">{row.note}</div> : null}
       </div>
       {row.action && onAct ? (
-        <Button size="sm" variant="outline" className="shrink-0 rounded-full" onClick={onAct} data-first-run-action={row.action.id}>
+        <Button variant="outline" className="h-9 shrink-0 rounded-full border-foreground/25 px-4 text-[13px] font-medium" onClick={onAct} data-first-run-action={row.action.id}>
           {row.action.label}
         </Button>
       ) : null}
@@ -206,6 +209,8 @@ function Welcome({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
   const w = view.welcome!;
   return (
     <div data-first-run="welcome">
+      {/* The row Back takes on the other steps, so the heading stays put. */}
+      <div aria-hidden className="mb-4 h-7" />
       <Heading>{w.title}</Heading>
       <Lede>{w.lede}</Lede>
       <div className="mt-8">
@@ -244,9 +249,9 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
       <Heading>{c.title}</Heading>
       <Lede>{c.lede}</Lede>
       {c.agents.length ? (
-        <Rows className="mt-6" data-first-run-agents="">
+        <Rows className="mt-8" data-first-run-agents="">
           {c.agents.map((a) => (
-            <div key={a.agent} className="flex min-h-11 items-center gap-3 py-2" data-first-run-agent={a.agent} data-connected={String(a.connected)}>
+            <div key={a.agent} className="flex min-h-12 items-center gap-3 py-2" data-first-run-agent={a.agent} data-connected={String(a.connected)}>
               <AgentMark agent={a.agent} name={a.name} />
               <div className="min-w-0 flex-1">
                 <span className="text-[14px]">{a.name}</span>
@@ -256,7 +261,7 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
                 <span className={cn("shrink-0 text-[13px]", a.connected ? "text-[#1f9d55]" : "text-muted-foreground")}>{a.note}</span>
               ) : null}
               {a.action ? (
-                <Button size="sm" variant="outline" className="shrink-0 rounded-full" onClick={() => void fr.connect(a.agent)} data-first-run-connect={a.agent}>
+                <Button variant="outline" className="h-9 shrink-0 rounded-full border-foreground/25 px-4 text-[13px] font-medium" onClick={() => void fr.connect(a.agent)} data-first-run-connect={a.agent}>
                   {a.action.label}
                 </Button>
               ) : null}
@@ -267,21 +272,20 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
       {c.alternatives.length ? (
         <Rows className="mt-6" data-first-run-alternatives="">
           {c.alternatives.map((alt) => (
-            <div key={alt.id} className="flex items-center gap-3 py-2.5" data-first-run-alternative={alt.id}>
+            <div key={alt.id} className="flex min-h-16 items-center gap-3 py-2" data-first-run-alternative={alt.id}>
               <div className="min-w-0 flex-1">
                 <div className="text-[14px]">{alt.title}</div>
                 <div className="text-[13px] text-muted-foreground">{alt.note}</div>
                 {alt.command ? <code className="mt-1 block font-mono text-[12.5px]">{alt.command}</code> : null}
               </div>
               {alt.url ? (
-                <Button size="sm" variant="outline" className="shrink-0 rounded-full" onClick={() => void fr.openUrl(alt.url!)}>
+                <Button variant="outline" className="h-9 shrink-0 rounded-full border-foreground/25 px-4 text-[13px] font-medium" onClick={() => void fr.openUrl(alt.url!)}>
                   Open
                 </Button>
               ) : alt.command ? (
                 <Button
-                  size="sm"
                   variant="outline"
-                  className="shrink-0 gap-1.5 rounded-full"
+                  className="h-9 shrink-0 gap-1.5 rounded-full border-foreground/25 px-4 text-[13px] font-medium"
                   onClick={() => {
                     void navigator.clipboard?.writeText(alt.command!).catch(() => {});
                     setCopied(true);
@@ -298,7 +302,7 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
       ) : null}
       {c.credentials.length ? (
         <>
-          <Rows className="mt-4" data-first-run-credentials="">
+          <Rows className="mt-6" data-first-run-credentials="">
             {c.credentials.map((r) => (
               <CredentialRowView
                 key={r.id}
@@ -310,7 +314,7 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
               />
             ))}
           </Rows>
-          <p className="mt-2 text-xs text-muted-foreground" data-first-run-credentials-note="">
+          <p className="mt-3 text-xs text-muted-foreground" data-first-run-credentials-note="">
             {c.credentialsNote}
           </p>
         </>
@@ -320,7 +324,7 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
           {c.error}
         </p>
       ) : null}
-      <div className="mt-6 flex flex-wrap items-center gap-3">
+      <div className="mt-8 flex flex-wrap items-center gap-3">
         <Primary label={c.primary.label} onClick={() => void fr.act(c.primary.id)} />
         {c.secondary ? <Secondary label={c.secondary.label} onClick={() => void fr.act(c.secondary!.id)} /> : null}
       </div>
@@ -342,7 +346,7 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
 
 function CredentialRowView({ row: r, onAct }: { row: FirstRunCredential; onAct: () => void }) {
   return (
-    <div className="flex items-center gap-3 py-2.5" data-first-run-credential={r.id}>
+    <div className="flex min-h-16 items-center gap-3 py-2" data-first-run-credential={r.id}>
       <div className="min-w-0 flex-1">
         <div className="text-[14px]">{r.title}</div>
         <div className="text-xs text-muted-foreground">{r.note}</div>
@@ -358,7 +362,7 @@ function CredentialRowView({ row: r, onAct }: { row: FirstRunCredential; onAct: 
         </span>
       ) : null}
       {r.action ? (
-        <Button size="sm" variant="outline" className="shrink-0 rounded-full" onClick={onAct} data-first-run-credential-action={r.action.id}>
+        <Button variant="outline" className="h-9 shrink-0 rounded-full border-foreground/25 px-4 text-[13px] font-medium" onClick={onAct} data-first-run-credential-action={r.action.id}>
           {r.action.label}
         </Button>
       ) : null}
@@ -366,7 +370,7 @@ function CredentialRowView({ row: r, onAct }: { row: FirstRunCredential; onAct: 
   );
 }
 
-/* ---- 3 · Connect your other devices -------------------------------------------------- */
+/* ---- 3 · Add your other computers -------------------------------------------------- */
 
 function Devices({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
   const d = view.devices!;
@@ -374,21 +378,21 @@ function Devices({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
     <Step id="devices" onBack={fr.back}>
       <Heading>{d.title}</Heading>
       <Lede>{d.lede}</Lede>
-      <Rows className="mt-6" data-first-run-devices="">
+      <Rows className="mt-8" data-first-run-devices="">
         {d.rows.map((r) => (
-          <div key={r.title} className="flex items-baseline gap-3 py-2.5 text-[14px]">
+          <div key={r.title} className="flex min-h-12 items-center gap-3 py-2 text-[14px]">
             <span className="w-48 shrink-0">{r.title}</span>
             <span className="text-[13px] text-muted-foreground">{r.note}</span>
           </div>
         ))}
         {d.status ? <StatusLine row={d.status} onAct={() => void fr.act(d.status!.action?.id ?? "")} /> : null}
       </Rows>
-      <div className="mt-7 flex flex-wrap items-center gap-3">
+      <div className="mt-8 flex flex-wrap items-center gap-3">
         <Primary label={d.primary.label} onClick={() => void fr.act(d.primary.id)} data-first-run-devices-primary={d.primary.id} />
         {d.secondary ? <Secondary label={d.secondary.label} onClick={() => void fr.act(d.secondary!.id)} describedBy={d.note ? "first-run-devices-note" : undefined} /> : null}
       </div>
       {d.note ? (
-        <p id="first-run-devices-note" className="mt-3 text-[13px] text-muted-foreground" data-first-run-devices-note="">
+        <p id="first-run-devices-note" className="mt-4 text-[13px] text-muted-foreground" data-first-run-devices-note="">
           {d.note}
         </p>
       ) : null}
@@ -406,18 +410,18 @@ function CommandLine({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
     <Step id="cli" onBack={fr.back}>
       <Heading>{c.title}</Heading>
       <Lede>{c.lede}</Lede>
-      <Rows className="mt-6" data-first-run-cli="">
+      <Rows className="mt-8" data-first-run-cli="">
         {c.facts.map((f) => (
-          <div key={f.label} className="flex items-baseline gap-3 py-2.5 text-[14px]" data-first-run-cli-fact={f.label}>
+          <div key={f.label} className="flex min-h-12 items-center gap-3 py-2 text-[14px]" data-first-run-cli-fact={f.label}>
             <span className="w-48 shrink-0">{f.label}</span>
             <code className="min-w-0 font-mono text-[13px] break-all text-muted-foreground">{f.value}</code>
           </div>
         ))}
         {c.installed && c.tryCommand ? (
-          <div className="flex items-center gap-3 py-2.5" data-first-run-cli-done="">
+          <div className="flex min-h-12 items-center gap-3 py-2" data-first-run-cli-done="">
             <StateIcon state="ok" />
             <div className="min-w-0 flex-1 text-[14px]">
-              Open a new terminal window and try <code className="font-mono text-[13px]">{c.tryCommand}</code>
+              Open a new Terminal window and try <code className="font-mono text-[13px]">{c.tryCommand}</code>
             </div>
           </div>
         ) : null}
@@ -427,7 +431,7 @@ function CommandLine({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
           {c.error}
         </p>
       ) : null}
-      <div className="mt-7 flex flex-wrap items-center gap-3">
+      <div className="mt-8 flex flex-wrap items-center gap-3">
         {c.primary ? (
           <Primary label={c.busy ? "Installing…" : c.primary.label} onClick={() => !c.busy && void fr.act(c.primary!.id)} data-first-run-cli-primary={c.primary.id} />
         ) : null}
@@ -445,15 +449,15 @@ function Permissions({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
     <Step id="permissions" onBack={fr.back}>
       <Heading>{p.title}</Heading>
       <Lede>{p.lede}</Lede>
-      <Rows className="mt-6" data-first-run-permissions="">
+      <Rows className="mt-8" data-first-run-permissions="">
         {p.rows.map((r) => (
           <StatusLine key={r.id} row={r} onAct={r.action ? () => void fr.act(r.action!.id, r.settingsUrl) : undefined} />
         ))}
       </Rows>
-      <p className="mt-3 text-[13px] text-muted-foreground" data-first-run-permissions-note="">
+      <p className="mt-4 text-[13px] text-muted-foreground" data-first-run-permissions-note="">
         {p.note}
       </p>
-      <div className="mt-7 flex flex-wrap items-center gap-3">
+      <div className="mt-8 flex flex-wrap items-center gap-3">
         {p.primary ? <Primary label={p.primary.label} onClick={() => void fr.act(p.primary!.id)} data-first-run-permissions-primary={p.primary.id} /> : null}
         {p.secondary ? <Secondary label={p.secondary.label} onClick={() => void fr.act(p.secondary!.id)} data-first-run-permissions-secondary={p.secondary.id} /> : null}
       </div>
@@ -480,9 +484,10 @@ function Setup({ fr, view, onFinish }: { fr: FirstRunHook; view: FirstRunView; o
       <Heading>{s.title}</Heading>
       <Lede>{s.lede}</Lede>
       {s.prompt && tabs.length > 1 ? (
-        <div className="mt-6" data-first-run-prompt-tabs="">
+        <div className="mt-8" data-first-run-prompt-tabs="">
           <Segmented
-            aria-label="System"
+            aria-label="Operating system"
+            className="flex h-9 w-full [&>button]:h-8 [&>button]:flex-1 [&>button]:justify-center [&>button]:text-[13px]"
             value={shownTab?.id ?? tabs[0]!.id}
             options={tabs.map((t) => ({ value: t.id, label: t.label }))}
             onValueChange={(v) => {
@@ -493,18 +498,18 @@ function Setup({ fr, view, onFinish }: { fr: FirstRunHook; view: FirstRunView; o
         </div>
       ) : null}
       {s.prompt ? (
-        <div className={cn("flex items-start gap-3", tabs.length > 1 ? "mt-3" : "mt-6")}>
+        <div className={cn("relative", tabs.length > 1 ? "mt-2" : "mt-8")}>
           <textarea
             readOnly
-            rows={2}
+            rows={3}
             value={promptText}
             aria-label={s.prompt.heading}
             onFocus={(e) => e.currentTarget.select()}
-            className="min-w-0 flex-1 resize-none rounded-lg border border-foreground/15 bg-transparent px-3 py-2 font-mono text-[13px] leading-relaxed outline-none select-text focus-visible:ring-2 focus-visible:ring-ring/60"
+            className="block w-full resize-none rounded-lg border border-foreground/15 bg-transparent py-3 pr-24 pl-4 font-mono text-[13px] leading-relaxed outline-none select-text focus-visible:ring-2 focus-visible:ring-ring/60"
             data-first-run-prompt=""
           />
           {s.prompt.copy ? (
-            <Button variant="outline" size="sm" className="shrink-0 gap-1.5 rounded-full" onClick={() => void copy()} data-first-run-copy="">
+            <Button variant="outline" className="absolute top-2 right-2 h-8 gap-1.5 rounded-full border-foreground/25 bg-background/60 px-3 text-[13px] font-medium" onClick={() => void copy()} data-first-run-copy="">
               {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
               {copied ? "Copied" : s.prompt.copy}
             </Button>
@@ -512,7 +517,7 @@ function Setup({ fr, view, onFinish }: { fr: FirstRunHook; view: FirstRunView; o
         </div>
       ) : null}
       {s.status ? (
-        <div className="mt-3">
+        <div className="mt-4">
           <StatusLine row={s.status} />
         </div>
       ) : null}
@@ -533,7 +538,7 @@ function StateIcon({ state }: { state: FirstRunRow["state"] | "later" }) {
         <CheckIcon className="size-3" strokeWidth={3} />
       </span>
     );
-  if (state === "fix") return <span className="size-5 shrink-0 rounded-full border-[5px] border-[#d18a12]" aria-label="Needs a fix" />;
+  if (state === "fix") return <span className="size-5 shrink-0 rounded-full border-2 border-foreground/30" aria-label="Needs attention" />;
   if (state === "later") return <span className="size-5 shrink-0 rounded-full border border-dashed border-foreground/40" aria-hidden />;
   return <span className="size-5 shrink-0 animate-spin rounded-full border-2 border-foreground/15 border-t-foreground/60" aria-label="Checking" />;
 }
@@ -542,7 +547,7 @@ function ExtraCard({ extra, fr }: { extra: FirstRunExtraView; fr: FirstRunHook }
   const act = (id: string) => void fr.extra(id);
   if (extra.phase === "choose") {
     return (
-      <div className="mt-6" data-first-run-extra="choose">
+      <div className="mt-8" data-first-run-extra="choose">
         <div className="flex items-baseline gap-2">
           <h2 className="text-[15px] font-semibold">{extra.title}</h2>
           {extra.tag ? <span className="text-[13px] text-muted-foreground">{extra.tag}</span> : null}
@@ -579,7 +584,7 @@ function ExtraCard({ extra, fr }: { extra: FirstRunExtraView; fr: FirstRunHook }
   }
   const icon = extra.phase === "ready" ? "ok" : extra.phase === "failed" ? "fix" : extra.phase === "not-now" ? "later" : "checking";
   return (
-    <div className="mt-6 border-y border-foreground/10 py-3" data-first-run-extra={extra.phase}>
+    <div className="mt-8 border-y border-foreground/10 py-3" data-first-run-extra={extra.phase}>
       <div className="flex items-start gap-3.5">
         <span className="mt-0.5 flex">
           <StateIcon state={icon} />
@@ -600,7 +605,7 @@ function ExtraCard({ extra, fr }: { extra: FirstRunExtraView; fr: FirstRunHook }
           {extra.footnote ? <p className="mt-2.5 text-[13px] text-muted-foreground">{extra.footnote}</p> : null}
         </div>
         {extra.action ? (
-          <Button variant="outline" size="sm" className="shrink-0 rounded-full" onClick={() => act(extra.action!.id)} data-first-run-extra-action={extra.action.id}>
+          <Button variant="outline" className="h-9 shrink-0 rounded-full border-foreground/25 px-4 text-[13px] font-medium" onClick={() => act(extra.action!.id)} data-first-run-extra-action={extra.action.id}>
             {extra.action.label}
           </Button>
         ) : null}
@@ -631,29 +636,36 @@ function Backdrop() {
 function Art({ art, step }: { art: FirstRunArt; step: FirstRunView["step"] }) {
   const agent = ["claude-code", "codex", "hermes", "openclaw"].includes(art.agent) ? art.agent.replace("claude-code", "claude") : "other";
   const connect = step === "connect";
+  // One fixed-ratio box, centred on the heading block and clamped to sit fully
+  // inside the window, so the dashed outline is never cut at any size.
   return (
     <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 hidden w-[46%] [@media(min-width:1000px)]:block" data-first-run-art={`${art.agent} ${art.computer} ${art.extra}`}>
-      <img
-        src={`/onboarding/agent-${agent}.webp`}
-        alt=""
-        draggable={false}
-        className={cn("absolute w-[56%] max-w-[420px] transition-all duration-500", connect ? "top-[30%] left-[4%]" : "top-[34%] left-[10%]")}
-      />
-      <img
-        src="/onboarding/cua.webp"
-        alt=""
-        draggable={false}
-        className={cn("absolute top-[12%] right-[6%] w-[40%] max-w-[300px] transition-all duration-500", art.computer === "faded" && "opacity-40 blur-[1px]")}
-      />
-      {art.extra !== "none" ? (
-        <div className="absolute right-[12%] bottom-[10%] w-[24%] max-w-[190px]">
-          {art.extra === "outline" ? (
-            <SlotOutline />
-          ) : (
-            <img src="/onboarding/extra.webp" alt="" draggable={false} className={cn("w-full transition-opacity", art.extra === "filling" ? "animate-pulse opacity-40" : "opacity-95")} />
-          )}
-        </div>
-      ) : null}
+      <div
+        className="absolute left-1/2 aspect-[6/7] -translate-x-1/2"
+        style={{ height: "var(--ob-art-h)", top: "clamp(64px, calc(45% - var(--ob-art-h) / 2), calc(100% - var(--ob-art-h) - 24px))" }}
+      >
+        <img
+          src={`/onboarding/agent-${agent}.webp`}
+          alt=""
+          draggable={false}
+          className={cn("absolute w-[62%] transition-all duration-500", connect ? "top-[32%] left-[2%]" : "top-[36%] left-[6%]")}
+        />
+        <img
+          src="/onboarding/cua.webp"
+          alt=""
+          draggable={false}
+          className={cn("absolute top-[4%] right-[2%] w-[44%] transition-all duration-500", art.computer === "faded" && "opacity-40 blur-[1px]")}
+        />
+        {art.extra !== "none" ? (
+          <div className="absolute right-[8%] bottom-[2%] w-[27%]">
+            {art.extra === "outline" ? (
+              <SlotOutline />
+            ) : (
+              <img src="/onboarding/extra.webp" alt="" draggable={false} className={cn("w-full transition-opacity", art.extra === "filling" ? "animate-pulse opacity-40" : "opacity-95")} />
+            )}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -677,7 +689,7 @@ function SlotOutline() {
 
 function Dots({ view }: { view: FirstRunView }) {
   return (
-    <ol className="relative z-10 flex shrink-0 justify-center gap-2 pb-5" aria-label={`Step ${view.current + 1} of ${view.dots}`}>
+    <ol className="relative z-10 flex shrink-0 justify-start gap-2 pt-4 pb-6 pl-[var(--ob-x)]" aria-label={`Step ${view.current + 1} of ${view.dots}`}>
       {Array.from({ length: view.dots }, (_, i) => (
         <li key={i} aria-current={i === view.current ? "step" : undefined} className={cn("h-0.5 w-6 rounded-full bg-foreground/20", i <= view.current && "bg-foreground/80")} />
       ))}

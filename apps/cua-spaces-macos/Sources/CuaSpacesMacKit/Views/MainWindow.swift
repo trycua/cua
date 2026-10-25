@@ -562,6 +562,19 @@ struct EmptySpaces: View {
     @State private var stacked = false
 
     var body: some View {
+        // Not read yet, or your computers still answering: one quiet line,
+        // never "Create your first Space" (the core decides).
+        if let line = model.listView.reachingLine, model.rosterError == nil || model.loaded {
+            ContentUnavailableView {
+                Text(line).font(.callout).foregroundStyle(.secondary)
+            }
+            .accessibilityIdentifier("spaces-reaching")
+        } else {
+            empty
+        }
+    }
+
+    @ViewBuilder private var empty: some View {
         let chrome = model.chrome
         let tiles = stacked ? AnyLayout(VStackLayout(spacing: 12)) : AnyLayout(HStackLayout(spacing: 12))
         ContentUnavailableView {

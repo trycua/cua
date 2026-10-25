@@ -34,7 +34,7 @@ import type {
   VaultState,
   VaultView,
 } from "./contracts/keyvault";
-import type { CreateAction, CreatesState, PendingCreate, Space, SpaceOs, SpaceRow, SpaceStatus } from "./contracts/spaces";
+import type { CreateAction, CreatesState, ListStatus, ListView, PendingCreate, Space, SpaceOs, SpaceRow, SpaceStatus } from "./contracts/spaces";
 import type { RelayAllowanceNotice, RelayUsage, RelayUsageView } from "./ops/relay-usage";
 import type { SessionSnapshot, SettingsSnapshot } from "./protocol";
 import { notSharingOf, realLimits } from "./sharing";
@@ -605,7 +605,7 @@ function fallbackPanel(s: HostStatus | null): HostPanelView {
 const FALLBACK_INTRO =
   "This is the computer you’re using now. Set it up so you, your teammates and your AI agents can use it from other devices. Cua connects them for you, with no network setup.";
 const FALLBACK_CHOICES: HostSetupChoice[] = [
-  { id: "desktop", label: "Use this computer from my other devices", buttonLabel: "Set Up…" },
+  { id: "desktop", label: "Let my other devices use this computer", buttonLabel: "Set Up…" },
   { id: "spare", label: "Run Spaces here and keep its screen private", buttonLabel: "Set Up…" },
 ];
 
@@ -819,4 +819,26 @@ export function relayUsageView(core: CoreClient, usage: RelayUsage, accountApp: 
  * for any other error, or without the core. */
 export function planLimitNotice(core: CoreClient, error: string, accountApp: string | null = null): RelayAllowanceNotice | null {
   return core.tryCall<RelayAllowanceNotice | null>("relayUsage.planLimit", accountApp ? { error, accountApp } : { error }) ?? null;
+}
+
+/**
+ * The Spaces page's empty state and "Reaching N computers…" line
+ * (`spaces.listView`): "Create your first Space" only for a complete list
+ * with no Space, so a daemon still starting or computers still answering
+ * never read as an empty account.
+ */
+export function listView(core: CoreClient, status: ListStatus, count: number): ListView {
+  const input = { loaded: status.loaded, incomplete: status.incomplete, reaching: status.reaching, count };
+  return core.tryCall<ListView>("spaces.listView", { input }) ?? fallbackListView(input);
+}
+
+function fallbackListView(i: { loaded: boolean; incomplete: boolean; reaching: number; count: number }): ListView {
+  const reachingLine = !i.loaded
+    ? "Loading Spaces…"
+    : !i.incomplete
+      ? null
+      : i.reaching === 0
+        ? "Reaching your computers…"
+        : `Reaching ${i.reaching} computer${i.reaching === 1 ? "" : "s"}…`;
+  return { empty: i.loaded && !i.incomplete && i.count === 0, reachingLine };
 }

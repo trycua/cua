@@ -1532,6 +1532,11 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_spaces_ffi_fn_func_app_spaces_list_view": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_spaces_ffi_fn_func_app_status_line": {
       args: [FfiType.UInt32],
       ret: FfiType.RustBuffer,
@@ -3337,6 +3342,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_spaces_ffi_checksum_func_app_spaces_list_view": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_spaces_ffi_checksum_func_app_status_line": {
       args: [],
       ret: FfiType.UInt16,
@@ -4422,6 +4432,7 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_fn_func_app_space_host(host: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_space_rows_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_spaces_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_spaces_ffi_fn_func_app_spaces_list_view(input: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_status_line(count: number, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_storage_action_from_json(json: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_func_app_storage_choose(id: Uint8Array, option: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -4783,6 +4794,7 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_checksum_func_app_space_host(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_space_rows_from_json(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_spaces_from_json(): number;
+    uniffi_cua_spaces_ffi_checksum_func_app_spaces_list_view(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_status_line(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_storage_action_from_json(): number;
     uniffi_cua_spaces_ffi_checksum_func_app_storage_choose(): number;

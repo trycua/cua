@@ -91,6 +91,10 @@ export class PendingSpacesBackend implements SpacesBackend {
   }
 
   rows = async () => (await this.b()).rows();
+  listRead = async () => {
+    const b = await this.b();
+    return b.listRead ? b.listRead() : { rows: await b.rows(), incomplete: false, reaching: 0, stale: false, notice: "" };
+  };
   create = async (args: AppCreateSpaceArgs, createId: string, progress: (p: SpaceCreateProgress) => void) =>
     (await this.b()).create(args, createId, progress);
   cancelCreate = async (createId: string) => (await this.b()).cancelCreate(createId);

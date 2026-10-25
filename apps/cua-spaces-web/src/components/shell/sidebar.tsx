@@ -26,10 +26,13 @@ import { SidebarGetStarted } from "@/components/getting-started";
 
 export function Sidebar() {
   const width = useUiStore((s) => s.sidebarWidth);
-  const { data: spaces } = useSpaces();
+  const { data: spaces, listStatus } = useSpaces();
   const { data: machines } = useMachines();
   const notifications = useNotifications();
-  const counts: Partial<Record<string, number>> = { "/spaces": spaces && realSpaces(spaces).length, "/machines": machines?.length };
+  // No count before the list was read (not "0" while the daemon starts); while computers still answer, the
+  // Spaces known so far.
+  const spacesCount = spaces && listStatus.loaded ? realSpaces(spaces).length : undefined;
+  const counts: Partial<Record<string, number>> = { "/spaces": spacesCount, "/machines": machines?.length };
   const navItems = useNavItems();
   const unread = notifications.data?.unread ?? 0;
 

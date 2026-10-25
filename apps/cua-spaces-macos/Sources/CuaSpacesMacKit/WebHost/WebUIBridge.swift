@@ -481,6 +481,13 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             "rosterError": model.rosterError ?? NSNull(),
             // Another app keeps its own daemon and this app uses it (null otherwise).
             "daemonNotice": model.daemonNotice ?? NSNull(),
+            // Some of your computers have not answered yet (`Spaces.list_known`):
+            // the page shows what is known and "Reaching N computers…", never
+            // "Create your first Space".
+            "incomplete": model.listIncomplete,
+            "reaching": Int(model.listReaching),
+            // Your other computers' rows are the last known ones, not yet confirmed.
+            "stale": model.listStale,
         ]
     }
 
@@ -1044,7 +1051,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     func startEvents() {
         followStartup()
         follow("spaces.changed") { [weak self, model] in
-            _ = (model.spaces, model.selectedSpaceId, model.loaded, model.rosterError, model.daemonNotice)
+            _ = (model.spaces, model.selectedSpaceId, model.loaded, model.rosterError, model.daemonNotice,
+                 model.listIncomplete, model.listReaching, model.listStale)
             self?.pruneStreams()
         }
         follow("keyvault.changed") { [model] in _ = (model.keyvault.overview, model.keyvault.busy, model.keyvault.dismissed) }

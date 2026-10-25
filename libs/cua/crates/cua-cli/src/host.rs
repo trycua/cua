@@ -1929,6 +1929,12 @@ pub async fn run_host(
                 Some(p) => p,
                 None => tokens,
             };
+            if paired.is_none()
+                && let cua_host::HostMode::Relay { url } = &opts.mode
+                && let Ok(device) = crate::devices_cmd::device_auth(url)
+            {
+                opts.device_session = device.try_session().await;
+            }
             let s = host
                 .setup_staged(opts, tokens)
                 .await
@@ -2922,7 +2928,10 @@ async fn power_from_daemon(list: &mut [cua_spaces::SpaceInfo]) {
         let client = cua_daemon::client::existing_daemon().await.ok()?;
         let r = client
             .spaces()
-            .list_spaces(cua_proto::daemon::v1::ListSpacesRequest {})
+            .list_spaces(cua_proto::daemon::v1::ListSpacesRequest {
+                // Only the power of this machine's rows is read here.
+                known_now: true,
+            })
             .await
             .ok()?;
         Some(r.into_inner().spaces)

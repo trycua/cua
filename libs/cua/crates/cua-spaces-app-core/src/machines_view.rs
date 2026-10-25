@@ -4,7 +4,7 @@
 //! The Machines page as every UI draws it: the list in groups ("Your
 //! machines", a collapsed "Offline for 30+ days", "Team machines"), one
 //! muted line per row, and each machine's page (its name and rename, the
-//! Provide Spaces and Share this desktop switches, the Spaces on it as
+//! one "Let my other devices use this computer" switch, the Spaces on it as
 //! links, New Space here, Details, and Remove from account).
 //!
 //! The page is about the hardware. Opening, starting, stopping, teleporting
@@ -430,107 +430,76 @@ struct Switches {
     share: bool,
 }
 
-/// This machine's switches, from its host state.
-fn host_toggles(s: Option<&HostState>) -> Vec<MachinesViewToggle> {
-    let provide_help = "Your devices can create Spaces here.";
-    let share_help = "Your devices can see and control this screen.";
+/// "this Mac", "this PC", "this computer".
+pub(crate) fn this_machine(os: &str) -> &'static str {
+    match os {
+        "macos" => "this Mac",
+        "windows" => "this PC",
+        _ => "this computer",
+    }
+}
+
+/// The one remote-access switch on a machine's page, in plain words:
+/// "Let my other devices use this Mac".
+pub(crate) fn remote_label(os: &str) -> String {
+    format!("Let my other devices use {}", this_machine(os))
+}
+
+/// This machine's switch, from its host state: one choice that lets your
+/// other devices see and control its screen and create Spaces on it.
+/// Turning it on turns on everything that takes; turning it off stops
+/// sharing, so it reads as off (and the two settings underneath stay as
+/// they were).
+fn host_toggles(s: Option<&HostState>, os: &str) -> Vec<MachinesViewToggle> {
+    let help = "They can see and control this screen and create Spaces here.";
     let Some(s) = s.filter(|s| s.configured) else {
-        // Before setup: either switch opens the setup form.
-        let loading = s.is_none();
-        return vec![
-            MachinesViewToggle {
-                id: "spaces".into(),
-                label: "Provide Spaces".into(),
-                help: provide_help.into(),
-                on: false,
-                editable: true,
-                enabled: !loading,
-                actions: vec![],
-                setup: Some("spare".into()),
-            },
-            MachinesViewToggle {
-                id: "desktop".into(),
-                label: "Share this desktop".into(),
-                help: share_help.into(),
-                on: false,
-                editable: true,
-                enabled: !loading,
-                actions: vec![],
-                setup: Some("desktop".into()),
-            },
-        ];
+        // Before setup: the switch opens the setup form.
+        return vec![MachinesViewToggle {
+            id: "remote".into(),
+            label: remote_label(os),
+            help: help.into(),
+            on: false,
+            editable: true,
+            enabled: s.is_some(),
+            actions: vec![],
+            setup: Some("desktop".into()),
+        }];
     };
     let relay = s.mode.as_deref() != Some("direct");
-    // Stopped sharing reads as both switches off: the switches are the one
-    // control, so there is no separate "Not sharing" card to reconcile.
+    // Stopped sharing reads as the switch off: it is the one control, so
+    // there is no separate "Not sharing" card to reconcile.
     let live = s.sharing || s.paused_signed_out;
-    let provide_on = s.provide_spaces && live;
-    let share_on = s.share_desktop && live;
-    let flip = |on: bool,
-                setting: bool,
-                turn_on: HostActionId,
-                turn_off: HostActionId,
-                other_setting: bool,
-                other_off: HostActionId| {
-        if on {
-            return vec![turn_off];
-        }
+    let on = (s.share_desktop || s.provide_spaces) && live;
+    let actions = if on {
+        vec![HostActionId::StopSharing]
+    } else {
         let mut a = vec![];
-        if !setting {
-            a.push(turn_on);
+        if !s.share_desktop {
+            a.push(HostActionId::ShareDesktop);
         }
-        if !s.sharing && !s.paused_signed_out {
-            // Resuming turns on every setting that is on: keep the other
-            // one off, as its switch shows it.
-            if other_setting {
-                a.push(other_off);
-            }
+        // Spaces need the relay; a direct host only shares its screen.
+        if relay && !s.provide_spaces {
+            a.push(HostActionId::ProvideSpaces);
+        }
+        if !live {
             a.push(HostActionId::ResumeSharing);
         }
         a
     };
-    let enabled = relay && !s.paused_signed_out;
-    let provide_help = if relay {
-        provide_help
-    } else {
-        "Needs the relay."
-    };
-    vec![
-        MachinesViewToggle {
-            id: "spaces".into(),
-            label: "Provide Spaces".into(),
-            help: provide_help.into(),
-            on: provide_on,
-            editable: true,
-            enabled,
-            actions: flip(
-                provide_on,
-                s.provide_spaces,
-                HostActionId::ProvideSpaces,
-                HostActionId::StopProvidingSpaces,
-                s.share_desktop,
-                HostActionId::HideDesktop,
-            ),
-            setup: None,
+    vec![MachinesViewToggle {
+        id: "remote".into(),
+        label: remote_label(os),
+        help: if relay {
+            help.into()
+        } else {
+            "They can see and control this screen.".into()
         },
-        MachinesViewToggle {
-            id: "desktop".into(),
-            label: "Share this desktop".into(),
-            help: share_help.into(),
-            on: share_on,
-            editable: true,
-            enabled,
-            actions: flip(
-                share_on,
-                s.share_desktop,
-                HostActionId::ShareDesktop,
-                HostActionId::HideDesktop,
-                s.provide_spaces,
-                HostActionId::StopProvidingSpaces,
-            ),
-            setup: None,
-        },
-    ]
+        on,
+        editable: true,
+        enabled: !s.paused_signed_out,
+        actions,
+        setup: None,
+    }]
 }
 
 /// Another machine's switches: read-only, showing what it does.
@@ -734,7 +703,7 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
         };
 
         let toggles = if row.current {
-            host_toggles(host)
+            host_toggles(host, &row.os)
         } else {
             remote_toggles(&sw, team)
         };
@@ -767,7 +736,8 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
                 Some("It isn\u{2019}t sharing.".into())
             } else if !sw.provide {
                 Some(format!(
-                    "It doesn\u{2019}t provide Spaces. Turn on Provide Spaces on {}.",
+                    "It doesn\u{2019}t provide Spaces. Turn on \u{201c}{}\u{201d} on {}.",
+                    remote_label(&row.os),
                     that_machine(&row.os)
                 ))
             } else {
@@ -1262,15 +1232,10 @@ mod tests {
             .iter()
             .map(|t| (t.label.as_str(), t.on, t.editable && t.enabled))
             .collect();
-        assert_eq!(
-            t,
-            [
-                ("Provide Spaces", false, true),
-                ("Share this desktop", true, true)
-            ]
-        );
-        assert_eq!(me.toggles[0].actions, [HostActionId::ProvideSpaces]);
-        assert_eq!(me.toggles[1].actions, [HostActionId::HideDesktop]);
+        // One plain choice, on while anything is shared; off stops sharing.
+        assert_eq!(t, [("Let my other devices use this Mac", true, true)]);
+        assert_eq!(me.toggles[0].id, "remote");
+        assert_eq!(me.toggles[0].actions, [HostActionId::StopSharing]);
         assert_eq!(me.toggles_note, None);
 
         let studio = by_id(&v, "studio");
@@ -1300,7 +1265,7 @@ mod tests {
     }
 
     #[test]
-    fn stopped_sharing_reads_as_switches_off_and_turning_one_on_resumes() {
+    fn stopped_sharing_reads_as_the_switch_off_and_turning_one_on_resumes() {
         let mut input = mockup();
         input.host = Some(HostState {
             sharing: false,
@@ -1309,14 +1274,45 @@ mod tests {
         let v = view(&input);
         let me = by_id(&v, "this-mac");
         assert!(me.toggles.iter().all(|t| !t.on && t.enabled));
-        // Turning Provide Spaces on resumes sharing, keeping the desktop off
-        // as its switch shows.
-        assert_eq!(
-            me.toggles[0].actions,
-            [HostActionId::HideDesktop, HostActionId::ResumeSharing]
-        );
+        // Turning it on resumes sharing (both settings are already on).
+        assert_eq!(me.toggles[0].actions, [HostActionId::ResumeSharing]);
         // No "Not sharing" card: the switches are the one control.
         assert_eq!(me.notice, None);
+    }
+
+    #[test]
+    fn turning_the_one_switch_on_turns_on_everything_it_needs() {
+        let me = |h: HostState| {
+            let mut input = mockup();
+            input.host = Some(h);
+            by_id(&view(&input), "this-mac").toggles[0].clone()
+        };
+        // Nothing shared: the screen and Spaces both come on.
+        let t = me(HostState {
+            share_desktop: false,
+            provide_spaces: false,
+            ..host(false, false)
+        });
+        assert!(!t.on);
+        assert_eq!(
+            t.actions,
+            [HostActionId::ShareDesktop, HostActionId::ProvideSpaces]
+        );
+        // Stopped, and only the screen was on: Spaces come on, then it resumes.
+        let t = me(HostState {
+            sharing: false,
+            ..host(false, true)
+        });
+        assert_eq!(
+            t.actions,
+            [HostActionId::ProvideSpaces, HostActionId::ResumeSharing]
+        );
+        // A direct connection can only share the screen.
+        let t = me(HostState {
+            mode: Some("direct".into()),
+            ..host(false, false)
+        });
+        assert_eq!(t.actions, [HostActionId::ShareDesktop]);
     }
 
     #[test]
@@ -1330,8 +1326,9 @@ mod tests {
                 .iter()
                 .map(|t| t.setup.as_deref())
                 .collect::<Vec<_>>(),
-            [Some("spare"), Some("desktop")]
+            [Some("desktop")]
         );
+        assert_eq!(me.toggles[0].label, "Let my other devices use this Mac");
         assert!(me.remove.is_none() && me.rename.is_none());
         assert_eq!(me.name, "Ada's MacBook Pro");
     }

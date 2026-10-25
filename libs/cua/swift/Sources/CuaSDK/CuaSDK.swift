@@ -11185,6 +11185,16 @@ public protocol SpacesProtocol: AnyObject, Sendable {
     func list() async throws  -> [SpaceInfo]
 
     /**
+     * The Spaces known now: this machine's at once, and the account's other
+     * computers as far as they answered within a moment ([`SpaceList`]
+     * says how far the read got). A slow or unreachable relay never holds
+     * up or fails this machine's own Spaces, so an app shows them right
+     * away and reads again while the list is incomplete. [`Spaces::list`]
+     * waits for every computer instead.
+     */
+    func listKnown() async throws  -> SpaceList
+
+    /**
      * The Spaces MCP `tools/list` result as JSON (the contract).
      */
     func listToolsJson() async throws  -> String
@@ -12487,6 +12497,31 @@ open func list()async throws  -> [SpaceInfo]  {
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypeSpaceInfo.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * The Spaces known now: this machine's at once, and the account's other
+     * computers as far as they answered within a moment ([`SpaceList`]
+     * says how far the read got). A slow or unreachable relay never holds
+     * up or fails this machine's own Spaces, so an app shows them right
+     * away and reads again while the list is incomplete. [`Spaces::list`]
+     * waits for every computer instead.
+     */
+open func listKnown()async throws  -> SpaceList  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_list_known(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSpaceList_lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -36459,6 +36494,113 @@ public func FfiConverterTypeSpaceInfo_lower(_ value: SpaceInfo) -> RustBuffer {
 
 
 /**
+ * The Spaces known now ([`Spaces::list_known`]) and how far the read got.
+ */
+public struct SpaceList: Equatable, Hashable {
+    /**
+     * This machine's Spaces, and the account's other computers' as far as
+     * they answered (the last known ones meanwhile).
+     */
+    public var spaces: [SpaceInfo]
+    /**
+     * Some of the account's computers have not answered yet: the list may
+     * grow, and an empty one is not "no Spaces". Always false from a
+     * daemon that predates it (it answers once every computer did).
+     */
+    public var incomplete: Bool
+    /**
+     * How many computers are still being reached (0 when unknown).
+     */
+    public var reaching: UInt32
+    /**
+     * The other computers' rows are the last known ones, not yet
+     * confirmed by the relay.
+     */
+    public var stale: Bool
+    /**
+     * Why the account's computers could not be read, when they could not.
+     */
+    public var notice: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * This machine's Spaces, and the account's other computers' as far as
+         * they answered (the last known ones meanwhile).
+         */spaces: [SpaceInfo],
+        /**
+         * Some of the account's computers have not answered yet: the list may
+         * grow, and an empty one is not "no Spaces". Always false from a
+         * daemon that predates it (it answers once every computer did).
+         */incomplete: Bool,
+        /**
+         * How many computers are still being reached (0 when unknown).
+         */reaching: UInt32,
+        /**
+         * The other computers' rows are the last known ones, not yet
+         * confirmed by the relay.
+         */stale: Bool,
+        /**
+         * Why the account's computers could not be read, when they could not.
+         */notice: String) {
+        self.spaces = spaces
+        self.incomplete = incomplete
+        self.reaching = reaching
+        self.stale = stale
+        self.notice = notice
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SpaceList: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpaceList: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpaceList {
+        return
+            try SpaceList(
+                spaces: FfiConverterSequenceTypeSpaceInfo.read(from: &buf),
+                incomplete: FfiConverterBool.read(from: &buf),
+                reaching: FfiConverterUInt32.read(from: &buf),
+                stale: FfiConverterBool.read(from: &buf),
+                notice: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SpaceList, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeSpaceInfo.write(value.spaces, into: &buf)
+        FfiConverterBool.write(value.incomplete, into: &buf)
+        FfiConverterUInt32.write(value.reaching, into: &buf)
+        FfiConverterBool.write(value.stale, into: &buf)
+        FfiConverterString.write(value.notice, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceList_lift(_ buf: RustBuffer) throws -> SpaceList {
+    return try FfiConverterTypeSpaceList.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceList_lower(_ value: SpaceList) -> RustBuffer {
+    return FfiConverterTypeSpaceList.lower(value)
+}
+
+
+/**
  * What [`Spaces::stop`] or [`Spaces::start`] did.
  */
 public struct SpacePowerReport: Equatable, Hashable {
@@ -49158,6 +49300,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_list() != 27182) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_list_known() != 21083) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_list_tools_json() != 19259) {

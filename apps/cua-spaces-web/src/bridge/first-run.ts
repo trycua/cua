@@ -187,7 +187,7 @@ function fallbackView(input: FirstRunInput): FirstRunView {
         ...base,
         cli: {
           title: present ? "Cua is ready in Terminal." : "Use Cua from the Terminal.",
-          lede: `Type ${name} in Terminal to make and use Spaces, for you and your agents.`,
+          lede: `Type ${name} in Terminal to make and use Spaces. Your agents can use it too.`,
           name,
           facts: plan ? [{ label: present ? "Installed at" : "Installs", value: input.cli?.installed ?? plan.target }] : [],
           status: present ? "Installed." : "Not installed.",
@@ -207,14 +207,14 @@ function fallbackView(input: FirstRunInput): FirstRunView {
         ...base,
         connect: {
           title: "Pick your agent.",
-          lede: `Found on ${place}. You can add more later.`,
+          lede: `Cua found these on ${place}. Connect the ones you want to use with Cua.`,
           agents: found.map((a) => {
             const on = connected.includes(a);
             return { agent: a.agent, name: a.name, file: a.mcpConfig ?? null, connected: on, action: on ? null : { id: "connect", label: "Connect" }, note: on ? "Connected" : null };
           }),
           alternatives: [],
           credentials: [],
-          credentialsNote: `They stay on ${place}.`,
+          credentialsNote: `Sign-ins and keys stay on ${place}.`,
           primary: { id: "continue", label: "Continue" },
           secondary: connected.length ? null : { id: "skip", label: "Skip" },
           error: input.connectError,
@@ -224,16 +224,16 @@ function fallbackView(input: FirstRunInput): FirstRunView {
       return {
         ...base,
         devices: {
-          title: input.signedIn ? `${Place} is in your account.` : "Connect your other devices.",
-          lede: `Sign in once, and your other computers reach ${place}'s Spaces.`,
+          title: input.signedIn ? `${Place} is in your account.` : "Add your other computers.",
+          lede: `Sign in to Cua here and on your other computers. Then they can all use ${place}'s Spaces.`,
           rows: [
-            { title: "Your other computers", note: `They join ${place}'s pool` },
+            { title: "Your other computers", note: "Sign in on each one" },
             { title: "Your cloud", note: "Hetzner, AWS, Google Cloud or Modal" },
           ],
           status: null,
-          primary: input.signedIn ? { id: "continue", label: "Continue" } : { id: "sign-in", label: "Sign in to connect" },
+          primary: input.signedIn ? { id: "continue", label: "Continue" } : { id: "sign-in", label: "Sign in" },
           secondary: input.signedIn ? null : { id: "not-now", label: "Not now" },
-          note: input.signedIn ? null : `${Place} works without it.`,
+          note: input.signedIn ? null : `Not now keeps Cua on ${place} only. You can sign in later.`,
         },
       };
     case "permissions": {
@@ -255,9 +255,9 @@ function fallbackView(input: FirstRunInput): FirstRunView {
         ...base,
         permissions: {
           title: `Share ${place}'s screen.`,
-          lede: `To let your team and agents see and use ${place}, allow two permissions.`,
+          lede: `Allow two permissions so your team and agents can see and use ${place}.`,
           rows,
-          note: `Allow opens System Settings and shows you where to turn on ${host?.appName || "Cua Spaces"}.`,
+          note: `Allow opens System Settings, where you turn on ${host?.appName || "Cua Spaces"}.`,
           primary: all ? { id: "continue", label: "Continue" } : null,
           secondary: all ? null : { id: "not-now", label: "Not now" },
         },
@@ -269,8 +269,8 @@ function fallbackView(input: FirstRunInput): FirstRunView {
         setup: lead
           ? {
               title: `Try it in ${lead.name}.`,
-              lede: `Paste this. ${lead.name} makes the Space itself.`,
-              prompt: { heading: `Paste this in ${lead.name}`, text: `Make a Linux Space on ${place} and stream the desktop in a new window.`, note: `It runs on ${place}.`, copy: "Copy" },
+              lede: `Paste this request into ${lead.name}. It makes a Space and opens its desktop in a window.`,
+              prompt: { heading: `Paste this in ${lead.name}`, text: `Make a Linux Space on ${place} and show its desktop in a new window.`, note: `The Space runs on ${place}.`, copy: "Copy" },
               status: { id: "agent", state: input.agentUsedAt ? "ok" : "checking", title: input.agentUsedAt ? `${lead.name} used Cua at ${input.agentUsedAt}.` : `Waiting for ${lead.name}…`, note: "", action: null, settingsUrl: null },
               extra: null,
               primary: { id: "done", label: "Done", enabled: true, note: null },

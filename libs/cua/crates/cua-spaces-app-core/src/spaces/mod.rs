@@ -505,9 +505,104 @@ pub fn status_line(spaces: u32) -> String {
     }
 }
 
+/// How far the Space list read got (the SDK's `Spaces.list_known`), and
+/// how many Spaces it listed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ListViewInput {
+    /// The list was read at least once: before that nothing is known, not
+    /// even this machine's Spaces.
+    pub loaded: bool,
+    /// Some of the account's computers have not answered yet.
+    pub incomplete: bool,
+    /// How many computers are still being reached (0 when unknown).
+    pub reaching: u32,
+    /// Spaces listed now.
+    pub count: u32,
+}
+
+/// What the Spaces page shows besides the Spaces themselves.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListView {
+    /// "Create your first Space": only when the list is complete and has no
+    /// Space. A list still loading, or with computers still answering, is
+    /// not empty yet (an app update restarting the daemon must not show it).
+    pub empty: bool,
+    /// One quiet line where the Spaces go while the list is not complete
+    /// ("Reaching 6 computers…"), below what is known so far.
+    pub reaching_line: Option<String>,
+}
+
+/// The Spaces page's empty state and "Reaching N computers…" line, for
+/// every shell.
+pub fn list_view(input: ListViewInput) -> ListView {
+    let reaching_line = if !input.loaded {
+        Some("Loading Spaces…".to_string())
+    } else if input.incomplete {
+        Some(match input.reaching {
+            0 => "Reaching your computers…".to_string(),
+            1 => "Reaching 1 computer…".to_string(),
+            n => format!("Reaching {n} computers…"),
+        })
+    } else {
+        None
+    };
+    ListView {
+        empty: input.loaded && !input.incomplete && input.count == 0,
+        reaching_line,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_empty_page_shows_only_for_a_complete_list() {
+        let v = |loaded, incomplete, reaching, count| {
+            list_view(ListViewInput {
+                loaded,
+                incomplete,
+                reaching,
+                count,
+            })
+        };
+        // Not read yet: never empty, one quiet line.
+        assert_eq!(
+            v(false, false, 0, 0),
+            ListView {
+                empty: false,
+                reaching_line: Some("Loading Spaces…".into())
+            }
+        );
+        // Computers still answering: never empty, even with no Space yet.
+        assert_eq!(
+            v(true, true, 6, 0),
+            ListView {
+                empty: false,
+                reaching_line: Some("Reaching 6 computers…".into())
+            }
+        );
+        assert_eq!(
+            v(true, true, 1, 2).reaching_line.as_deref(),
+            Some("Reaching 1 computer…")
+        );
+        assert_eq!(
+            v(true, true, 0, 0).reaching_line.as_deref(),
+            Some("Reaching your computers…")
+        );
+        assert!(!v(true, true, 3, 0).empty);
+        // Complete: empty only with no Space, and no line.
+        assert_eq!(
+            v(true, false, 0, 0),
+            ListView {
+                empty: true,
+                reaching_line: None
+            }
+        );
+        assert_eq!(v(true, false, 0, 2), ListView::default());
+    }
 
     fn row() -> SpaceRow {
         SpaceRow {

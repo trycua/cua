@@ -382,6 +382,35 @@ pub struct AppAmbientDots {
     pub agent_active: bool,
 }
 
+/// How far the Space list read got (the SDK's `Spaces.list_known`), and
+/// how many Spaces it listed.
+pub type AppListViewInput = core::spaces::ListViewInput;
+#[uniffi::remote(Record)]
+pub struct AppListViewInput {
+    /// The list was read at least once: before that nothing is known, not
+    /// even this machine's Spaces.
+    pub loaded: bool,
+    /// Some of the account's computers have not answered yet.
+    pub incomplete: bool,
+    /// How many computers are still being reached (0 when unknown).
+    pub reaching: u32,
+    /// Spaces listed now.
+    pub count: u32,
+}
+
+/// What the Spaces page shows besides the Spaces themselves.
+pub type AppListView = core::spaces::ListView;
+#[uniffi::remote(Record)]
+pub struct AppListView {
+    /// "Create your first Space": only when the list is complete and has no
+    /// Space. A list still loading, or with computers still answering, is
+    /// not empty yet (an app update restarting the daemon must not show it).
+    pub empty: bool,
+    /// One quiet line where the Spaces go while the list is not complete
+    /// ("Reaching 6 computers…"), below what is known so far.
+    pub reaching_line: Option<String>,
+}
+
 /// What a notice is about.
 pub type AppNoticeKind = core::spaces::roster::NoticeKind;
 #[uniffi::remote(Enum)]

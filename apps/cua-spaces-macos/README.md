@@ -12,7 +12,7 @@ render and do platform glue.
 | New Space | Step-by-step sheet: System, Resources, Options, Summary; Connect by address |
 | Keyvault | Sidebar and list: categories, a site's accounts with their unattended switches, approval sheets |
 | Onboarding | The shared web onboarding (`/onboarding` in `apps/cua-spaces-web`), in the New UI window, whether or not the New UI setting is on; the app draws none of its own. The page asks and finishes it through `onboarding.get` and `onboarding.complete` (the state is `onboarding.json`); a Space it creates posts a "<Space> is ready" notification (`notifyWhenReady`) that opens the Space. With the New UI off, the window gives way to the native one when the first run ends. A launch (or a window that opens again) while it is not done opens `/onboarding?due=1`: the page goes to Spaces instead when the person chose "Skip for now" (kept in the page's storage), so the welcome does not come back at every launch; Settings → Welcome and the sidebar's "Finish setting up" open it without `due` and always show it |
-| Devices | Settings → Devices: this Mac's enrollment (enrolled until, grace ends, needs enrollment), the account's devices with Rename and Revoke, Recent Access; the Enroll sheet (sign in again, or a one-time code approved from an enrolled device), the approval sheet for a device asking to join (a notification too; Approve asks for Touch ID or the login password), and a banner in the main window when this Mac needs enrolling |
+| Devices | Settings → Trusted devices (the page's): this Mac's enrollment (enrolled until, grace ends, needs enrollment), the account's devices with Rename and Revoke, Recent Access; the Enroll sheet (sign in again, or a one-time code approved from an enrolled device), the approval sheet for a device asking to join (a notification too; Approve asks for Touch ID or the login password), and a banner in the main window when this Mac needs enrolling |
 | Menu bar | The Cua mark (template); status line, Open, New Space, Settings, Quit |
 | Launch at login | Settings → General: `SMAppService.mainApp`, showing what macOS reports (on, off, waiting for approval with a button to Login Items, not found); the first run's Done page (the web onboarding's) ticks it. A login launch opens without the main window, and the app's daemon (host Spaces, persistent agents, Cua Volume) starts with it |
 | Join with a code | `host.joinWithCode` runs the bundled `cua host setup --pair <code>` (3 minute limit); `cua://add/<CODE>` opens Machines at `?join=<CODE>` and the page asks before joining |
@@ -92,7 +92,7 @@ UI tests (XCUITest) need Xcode: `xcodegen generate` (project.yml), then
 
 Environment (debug builds only; release builds ignore every `CUA_SPACES_*` hook):
 `CUA_SPACES_FIXTURES=1` runs on fixtures (no daemon, no Space, an in-memory login item whose status `CUA_SPACES_LOGIN_ITEM` sets: `enabled`, `notRegistered`, `requiresApproval`, `notFound`; a relay allowance `CUA_SPACES_RELAY_USAGE` sets: `reached`, `team`, `none`, default the free plan within it);
-`CUA_SPACES_START_VIEW` opens `new-space`, `keyvault`, `approval`, `settings-devices`, `settings-about`, `device-approval` (with `CUA_SPACES_APPROVE_CODE`), `device-enroll`, `device-enroll-code`,
+`CUA_SPACES_START_VIEW` opens `new-space`, `keyvault`, `approval`, `settings` (presses ⌘,), `device-approval` (with `CUA_SPACES_APPROVE_CODE`), `device-enroll`, `device-enroll-code`,
 `onboarding`, `stream` (the Space detail at its Stream section), `window-pip` (the same, with the first window popped out), `teleport-picker` (the Space's teleport picker; set `CUA_TELEPORT_APP_ROOTS` to fixture apps for images), `run-timeline` (an agent run's conversation from the Space's Agents section; fixtures give `local:aurora` two runs) or a notch state (`notch-open`, which springs
 open 1.5 s after launch, `notch-hover`, `notch-permission`,
 `notch-drag-target`, `notch-drop`); `CUA_SPACES_SELECT`
@@ -179,10 +179,12 @@ page: `spaces.createOptions` is the env the native sheet opens with
 (`AppModel.runCreate`). While the `web_ui` experiment is on, every New Space
 item (⌘N, the menu bar, the toolbar, a machine's "New Space on…") opens the
 New UI window's wizard (`spaces.newRequested`); the native sheet is the
-fallback when it is off. The app menu's Settings command (⌘,) opens the New UI's
-Settings (`settings.openRequested`) while its window is the key window (or, with no key
-window, the frontmost one), even when its web view has no focus; with any other window
-in front it opens the native Settings scene (`WebUIWindowController.openSettings`).
+fallback when it is off. Settings is only the New UI's page (Account, General,
+Connected apps, Trusted devices, Advanced, About): the app menu's "Settings…" (⌘,),
+the menu bar item, the notch and the command palette all open it in the New UI
+window, with New UI on or off (`MainUIRouter.openSettings`,
+`WebUIWindowController.openSettings`; an open window gets `settings.openRequested`).
+There is no native Settings window.
 Keyvault unlocks use the native
 prompt and the daemon's Touch ID; a passphrase never crosses the bridge.
 

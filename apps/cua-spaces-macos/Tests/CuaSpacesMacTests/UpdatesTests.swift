@@ -371,44 +371,6 @@ struct UpdatesTests {
             URL(fileURLWithPath: $0).resolvingSymlinksInPath().path
         } == URL(fileURLWithPath: me!).resolvingSymlinksInPath().path)
     }
-
-    // MARK: - Acknowledgements
-
-    @Test func theNoticesParseIntoBlocks() {
-        let blocks = NoticeBlock.parse("""
-            # Third-party notices
-
-            Intro line one
-            line two.
-
-            | Project | Used in | What |
-            |---|---|---|
-            | [A](https://a) | `x.swift` | a thing |
-
-            ## Sparkle
-
-            ```
-            Copyright (c) 2006 Someone
-              indented
-            ```
-            """)
-        #expect(blocks == [
-            .heading(1, "Third-party notices"),
-            .paragraph("Intro line one line two."),
-            .row(["[A](https://a)", "`x.swift`", "a thing"]),
-            .heading(2, "Sparkle"),
-            .verbatim("Copyright (c) 2006 Someone\n  indented"),
-        ])
-    }
-
-    @Test func theBundledNoticesNameSparkle() throws {
-        let file = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("THIRD_PARTY_NOTICES.md")
-        let blocks = NoticeBlock.parse(try String(contentsOf: file, encoding: .utf8))
-        #expect(blocks.contains(.heading(2, "Sparkle")))
-        #expect(blocks.contains { if case .verbatim(let t) = $0 { t.contains("Andy Matuschak") } else { false } })
-    }
 }
 
 /// A copy installed over the running app: Sparkle cannot authorize its

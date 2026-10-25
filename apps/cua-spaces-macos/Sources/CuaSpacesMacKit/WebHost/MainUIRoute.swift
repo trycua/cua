@@ -70,20 +70,32 @@ public enum MainUIRoute: Equatable, Sendable {
 
 /// The one place the app's chrome (the notch, the menu bar item, the menus,
 /// notifications) opens the main UI: the New UI window at a route while its
-/// experiment is on, else the native window or Settings as before.
+/// experiment is on, else the native window as before. Settings is always
+/// the page's (`openSettings`).
 @MainActor
 struct MainUIRouter {
     let model: AppModel
     /// Opens the New UI window at a route (tests set their own).
     var web: (MainUIRoute) -> Void
+    /// Opens the page's Settings (tests set their own).
+    var settings: (MainUIRoute) -> Void
 
-    init(model: AppModel, web: ((MainUIRoute) -> Void)? = nil) {
+    init(model: AppModel, web: ((MainUIRoute) -> Void)? = nil, settings: ((MainUIRoute) -> Void)? = nil) {
         self.model = model
         self.web = web ?? { WebUIWindowController.show(model: model, at: $0) }
+        self.settings = settings ?? { WebUIWindowController.openSettings(model: model, at: $0) }
     }
 
     func open(_ route: MainUIRoute, native: () -> Void) {
         if model.settings.experiments.webUi { web(route) } else { native() }
+    }
+
+    /// Settings (⌘,, the menu bar item, the notch, the palette): the page's
+    /// Settings in the New UI window, with New UI on or off. There is no
+    /// native Settings window, so the two can't drift. `route`: one tab
+    /// (`/settings/connected-apps`, ...).
+    func openSettings(_ route: MainUIRoute = .settings) {
+        settings(route)
     }
 
     /// The page a View menu `nav.*` command names.

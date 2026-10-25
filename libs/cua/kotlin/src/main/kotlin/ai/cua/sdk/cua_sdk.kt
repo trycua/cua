@@ -1509,6 +1509,8 @@ external fun uniffi_cua_sdk_checksum_method_spaces_hosts(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_list(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_spaces_list_known(
+): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_list_tools_json(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_machine_health(
@@ -2520,6 +2522,8 @@ external fun uniffi_cua_sdk_fn_method_spaces_gpu_support(`ptr`: Long,`on`: RustB
 external fun uniffi_cua_sdk_fn_method_spaces_hosts(`ptr`: Long,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_list(`ptr`: Long,
+): Long
+external fun uniffi_cua_sdk_fn_method_spaces_list_known(`ptr`: Long,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_list_tools_json(`ptr`: Long,
 ): Long
@@ -4078,6 +4082,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_list() != 27182.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_list_known() != 21083.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_list_tools_json() != 19259.toShort()) {
@@ -20397,6 +20404,16 @@ public interface SpacesInterface {
     suspend fun `list`(): List<SpaceInfo>
 
     /**
+     * The Spaces known now: this machine's at once, and the account's other
+     * computers as far as they answered within a moment ([`SpaceList`]
+     * says how far the read got). A slow or unreachable relay never holds
+     * up or fails this machine's own Spaces, so an app shows them right
+     * away and reads again while the list is incomplete. [`Spaces::list`]
+     * waits for every computer instead.
+     */
+    suspend fun `listKnown`(): SpaceList
+
+    /**
      * The Spaces MCP `tools/list` result as JSON (the contract).
      */
     suspend fun `listToolsJson`(): kotlin.String
@@ -21928,6 +21945,35 @@ open class Spaces: Disposable, AutoCloseable, SpacesInterface
         { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterSequenceTypeSpaceInfo.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * The Spaces known now: this machine's at once, and the account's other
+     * computers as far as they answered within a moment ([`SpaceList`]
+     * says how far the read got). A slow or unreachable relay never holds
+     * up or fails this machine's own Spaces, so an app shows them right
+     * away and reads again while the list is incomplete. [`Spaces::list`]
+     * waits for every computer instead.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `listKnown`() : SpaceList {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_spaces_list_known(
+                uniffiHandle,
+
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeSpaceList.lift(it) },
         // Error FFI converter
         CuaException.ErrorHandler,
     )
@@ -41622,6 +41668,81 @@ public object FfiConverterTypeSpaceInfo: FfiConverterRustBuffer<SpaceInfo> {
             FfiConverterTypeEgressPolicy.write(value.`egress`, buf)
             FfiConverterOptionalTypeEgressEnforcement.write(value.`egressEnforced`, buf)
             FfiConverterSequenceTypeVolumeMount.write(value.`volumes`, buf)
+    }
+}
+
+
+
+/**
+ * The Spaces known now ([`Spaces::list_known`]) and how far the read got.
+ */
+data class SpaceList (
+    /**
+     * This machine's Spaces, and the account's other computers' as far as
+     * they answered (the last known ones meanwhile).
+     */
+    var `spaces`: List<SpaceInfo>
+    ,
+    /**
+     * Some of the account's computers have not answered yet: the list may
+     * grow, and an empty one is not "no Spaces". Always false from a
+     * daemon that predates it (it answers once every computer did).
+     */
+    var `incomplete`: kotlin.Boolean
+    ,
+    /**
+     * How many computers are still being reached (0 when unknown).
+     */
+    var `reaching`: kotlin.UInt
+    ,
+    /**
+     * The other computers' rows are the last known ones, not yet
+     * confirmed by the relay.
+     */
+    var `stale`: kotlin.Boolean
+    ,
+    /**
+     * Why the account's computers could not be read, when they could not.
+     */
+    var `notice`: kotlin.String
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSpaceList: FfiConverterRustBuffer<SpaceList> {
+    override fun read(buf: ByteBuffer): SpaceList {
+        return SpaceList(
+            FfiConverterSequenceTypeSpaceInfo.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SpaceList) = (
+            FfiConverterSequenceTypeSpaceInfo.allocationSize(value.`spaces`) +
+            FfiConverterBoolean.allocationSize(value.`incomplete`) +
+            FfiConverterUInt.allocationSize(value.`reaching`) +
+            FfiConverterBoolean.allocationSize(value.`stale`) +
+            FfiConverterString.allocationSize(value.`notice`)
+    )
+
+    override fun write(value: SpaceList, buf: ByteBuffer) {
+            FfiConverterSequenceTypeSpaceInfo.write(value.`spaces`, buf)
+            FfiConverterBoolean.write(value.`incomplete`, buf)
+            FfiConverterUInt.write(value.`reaching`, buf)
+            FfiConverterBoolean.write(value.`stale`, buf)
+            FfiConverterString.write(value.`notice`, buf)
     }
 }
 

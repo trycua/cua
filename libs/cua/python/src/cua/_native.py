@@ -1201,6 +1201,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_list() != 27182:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_spaces_list_known() != 21083:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_list_tools_json() != 19259:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_machine_health() != 35352:
@@ -4028,6 +4030,10 @@ _UniffiLib.uniffi_cua_sdk_fn_method_spaces_list.argtypes = (
     ctypes.c_uint64,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_list.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_list_known.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_list_known.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_list_tools_json.argtypes = (
     ctypes.c_uint64,
 )
@@ -5760,6 +5766,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_hosts.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_list.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_list.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_list_known.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_list_known.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_list_tools_json.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_list_tools_json.restype = ctypes.c_uint16
@@ -23723,6 +23732,86 @@ class _UniffiFfiConverterTypeSpaceHotspotStatus(_UniffiConverterRustBuffer):
         _UniffiFfiConverterUInt64.write(value.bytes_in, buf)
         _UniffiFfiConverterBoolean.write(value.served_here, buf)
 
+class _UniffiFfiConverterSequenceTypeSpaceInfo(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeSpaceInfo.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeSpaceInfo.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeSpaceInfo.read(buf) for i in range(count)
+        ]
+
+@dataclass
+class SpaceList:
+    """
+    The Spaces known now ([`Spaces::list_known`]) and how far the read got.
+"""
+    def __init__(self, *, spaces:typing.List[SpaceInfo], incomplete:bool, reaching:int, stale:bool, notice:str):
+        self.spaces = spaces
+        self.incomplete = incomplete
+        self.reaching = reaching
+        self.stale = stale
+        self.notice = notice
+
+
+
+
+    def __str__(self):
+        return "SpaceList(spaces={}, incomplete={}, reaching={}, stale={}, notice={})".format(self.spaces, self.incomplete, self.reaching, self.stale, self.notice)
+    def __eq__(self, other):
+        if self.spaces != other.spaces:
+            return False
+        if self.incomplete != other.incomplete:
+            return False
+        if self.reaching != other.reaching:
+            return False
+        if self.stale != other.stale:
+            return False
+        if self.notice != other.notice:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeSpaceList(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return SpaceList(
+            spaces=_UniffiFfiConverterSequenceTypeSpaceInfo.read(buf),
+            incomplete=_UniffiFfiConverterBoolean.read(buf),
+            reaching=_UniffiFfiConverterUInt32.read(buf),
+            stale=_UniffiFfiConverterBoolean.read(buf),
+            notice=_UniffiFfiConverterString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterSequenceTypeSpaceInfo.check_lower(value.spaces)
+        _UniffiFfiConverterBoolean.check_lower(value.incomplete)
+        _UniffiFfiConverterUInt32.check_lower(value.reaching)
+        _UniffiFfiConverterBoolean.check_lower(value.stale)
+        _UniffiFfiConverterString.check_lower(value.notice)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterSequenceTypeSpaceInfo.write(value.spaces, buf)
+        _UniffiFfiConverterBoolean.write(value.incomplete, buf)
+        _UniffiFfiConverterUInt32.write(value.reaching, buf)
+        _UniffiFfiConverterBoolean.write(value.stale, buf)
+        _UniffiFfiConverterString.write(value.notice, buf)
+
 @dataclass
 class SpacePowerReport:
     """
@@ -39297,29 +39386,6 @@ class _UniffiFfiConverterSequenceTypeSpacesHost(_UniffiConverterRustBuffer):
             _UniffiFfiConverterTypeSpacesHost.read(buf) for i in range(count)
         ]
 
-class _UniffiFfiConverterSequenceTypeSpaceInfo(_UniffiConverterRustBuffer):
-    @classmethod
-    def check_lower(cls, value):
-        for item in value:
-            _UniffiFfiConverterTypeSpaceInfo.check_lower(item)
-
-    @classmethod
-    def write(cls, value, buf):
-        items = len(value)
-        buf.write_i32(items)
-        for item in value:
-            _UniffiFfiConverterTypeSpaceInfo.write(item, buf)
-
-    @classmethod
-    def read(cls, buf):
-        count = buf.read_i32()
-        if count < 0:
-            raise InternalError("Unexpected negative sequence length")
-
-        return [
-            _UniffiFfiConverterTypeSpaceInfo.read(buf) for i in range(count)
-        ]
-
 class _UniffiFfiConverterSequenceTypeNotificationInfo(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -40072,6 +40138,16 @@ class SpacesProtocol(typing.Protocol):
     async def list(self, ) -> typing.List[SpaceInfo]:
         """
         Registered Spaces.
+"""
+        raise NotImplementedError
+    async def list_known(self, ) -> SpaceList:
+        """
+        The Spaces known now: this machine's at once, and the account's other
+        computers as far as they answered within a moment ([`SpaceList`]
+        says how far the read got). A slow or unreachable relay never holds
+        up or fails this machine's own Spaces, so an app shows them right
+        away and reads again while the list is incomplete. [`Spaces::list`]
+        waits for every computer instead.
 """
         raise NotImplementedError
     async def list_tools_json(self, ) -> str:
@@ -41241,6 +41317,28 @@ class Spaces(SpacesProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_sdk_fn_method_spaces_list(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def list_known(self, ) -> SpaceList:
+        """
+        The Spaces known now: this machine's at once, and the account's other
+        computers as far as they answered within a moment ([`SpaceList`]
+        says how far the read got). A slow or unreachable relay never holds
+        up or fails this machine's own Spaces, so an app shows them right
+        away and reads again while the list is incomplete. [`Spaces::list`]
+        waits for every computer instead.
+"""
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeSpaceList.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_spaces_list_known(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
@@ -44833,6 +44931,7 @@ __all__ = [
     "SpaceCreateResult",
     "SpaceDisplay",
     "SpaceHotspotStatus",
+    "SpaceList",
     "SpacePowerReport",
     "SpaceRelayRegistration",
     "SpaceSendFileOptions",

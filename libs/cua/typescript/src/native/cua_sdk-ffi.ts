@@ -2448,6 +2448,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_fn_method_spaces_list_known": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_fn_method_spaces_list_tools_json": {
       args: [FfiType.Handle],
       ret: FfiType.Handle,
@@ -4843,6 +4848,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_spaces_list_known": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_spaces_list_tools_json": {
       args: [],
       ret: FfiType.UInt16,
@@ -6068,6 +6078,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_spaces_gpu_support(uniffiSelf: bigint, on: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_hosts(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_spaces_list(uniffiSelf: bigint): bigint;
+    uniffi_cua_sdk_fn_method_spaces_list_known(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_spaces_list_tools_json(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_spaces_machine_health(uniffiSelf: bigint, machine: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_notifications(uniffiSelf: bigint, unreadOnly: number, sinceMs: Uint8Array): bigint;
@@ -6547,6 +6558,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_spaces_gpu_support(): number;
     uniffi_cua_sdk_checksum_method_spaces_hosts(): number;
     uniffi_cua_sdk_checksum_method_spaces_list(): number;
+    uniffi_cua_sdk_checksum_method_spaces_list_known(): number;
     uniffi_cua_sdk_checksum_method_spaces_list_tools_json(): number;
     uniffi_cua_sdk_checksum_method_spaces_machine_health(): number;
     uniffi_cua_sdk_checksum_method_spaces_notifications(): number;

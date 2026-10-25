@@ -2248,6 +2248,11 @@ uint64_t uniffi_cua_sdk_fn_method_spaces_hosts(uint64_t ptr
 uint64_t uniffi_cua_sdk_fn_method_spaces_list(uint64_t ptr
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_LIST_KNOWN
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_LIST_KNOWN
+uint64_t uniffi_cua_sdk_fn_method_spaces_list_known(uint64_t ptr
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_LIST_TOOLS_JSON
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_LIST_TOOLS_JSON
 uint64_t uniffi_cua_sdk_fn_method_spaces_list_tools_json(uint64_t ptr
@@ -5582,6 +5587,12 @@ uint16_t uniffi_cua_sdk_checksum_method_spaces_hosts(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_LIST
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_LIST
 uint16_t uniffi_cua_sdk_checksum_method_spaces_list(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_LIST_KNOWN
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_LIST_KNOWN
+uint16_t uniffi_cua_sdk_checksum_method_spaces_list_known(void
 
 );
 #endif

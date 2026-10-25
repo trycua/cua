@@ -267,6 +267,11 @@ if command -v bash >/dev/null 2>&1; then
     check "--select cua-driver: registers the skill and MCP server" sh -c "grep -qx -- 'agents setup --cua-driver --agents all --yes --mcp-command $work/d1/bin/cua-driver' '$home/cua.log'"
     check "--select cua-driver: no host setup" sh -c "! grep -q 'host setup' '$home/cua.log'"
     check "--select cua-driver: adds the skill by default (no --no-skills)" sh -c "! grep -q -- '--no-skills' '$home/cua.log'"
+    check "--select cua-driver: does not install the Cua Spaces app" sh -c "[ ! -e '$work/d1/bin/cua-spaces' ] && ! grep -q 'Cua Spaces' '$work/out'"
+    check "--select cua-driver: registers nothing but cua-driver" sh -c "grep -c 'agents setup' '$home/cua.log' | grep -qx 1 && ! grep -q 'auth login' '$home/cua.log'"
+
+    inst CUA_INSTALL_DRIVER_URL="$driver_url" -- --yes --no-onboarding --select cua-driver,spaces --prefix "$work/d1b"
+    check "--select cua-driver,spaces: installs both" sh -c "[ $status = 0 ] && [ -x '$work/d1b/bin/cua-spaces' ] && [ -x '$work/d1b/bin/cua-driver' ]"
 
     inst CUA_INSTALL_DRIVER_URL="$driver_url" -- --no-onboarding --select cua-driver --no-skills --prefix "$work/d1s"
     check "--no-skills: still registers the MCP server, without the skill" sh -c "[ $status = 0 ] && grep -qx -- 'agents setup --cua-driver --agents all --yes --no-skills --mcp-command $work/d1s/bin/cua-driver' '$home/cua.log'"
@@ -315,6 +320,11 @@ inst CUA_INSTALL_DRIVER_URL="$driver_url" -- --dry-run --select cua-driver,host 
 check "--dry-run prints the driver, agents and host steps" sh -c "grep -q 'dry-run. download $driver_url' '$work/out' && grep -q 'dry-run. bash cua-driver-install.sh --bin-dir' '$work/out' && grep -q 'dry-run. .* agents setup --cua-driver --agents all --yes' '$work/out' && grep -q 'dry-run. .* host setup' '$work/out'"
 inst CUA_INSTALL_DRIVER_URL="$driver_url" -- --dry-run --select cua-driver --no-skills --prefix "$work/drs"
 check "--dry-run --no-skills: the planned agent setup leaves the skill out" sh -c "grep -q 'dry-run. .* agents setup --cua-driver --agents all --yes --no-skills' '$work/out'"
+check "--dry-run --select cua-driver: lists only the CLI and Cua Driver" sh -c "grep -q 'dry-run. would install: the cua command-line tools, Cua Driver' '$work/out' && ! grep -q 'Cua Spaces app' '$work/out'"
+inst CUA_INSTALL_OS=Darwin CUA_INSTALL_DRIVER_URL="$driver_url" -- --dry-run --select cua-driver --prefix "$work/drm"
+check "--dry-run --select cua-driver (macOS): no app download" sh -c "[ $status = 0 ] && ! grep -q 'darwin-universal.dmg' '$work/out' && grep -q 'agents setup --cua-driver' '$work/out'"
+inst -- --dry-run --prefix "$work/drd"
+check "--dry-run with no --select: the app is still a default" sh -c "grep -q 'dry-run. would install: .*Cua Spaces app' '$work/out'"
 check "--dry-run runs nothing" sh -c "[ ! -e '$home/cua.log' ] && [ ! -e '$home/driver.log' ] && [ ! -e '$work/dr' ]"
 
 inst -- --yes --select bogus
@@ -601,6 +611,11 @@ if script --version 2>/dev/null | grep -q util-linux; then
         CUA_INSTALL_ARCH=x86_64 CUA_FAKE_LOG="$home/cua2.log" \
         script -qec "$sh_bin '$installer' --yes --cli-only --no-onboarding --prefix '$work/p14'" /dev/null >"$work/out" 2>&1 </dev/null
     check "interactive + --no-onboarding: no login" sh -c "! grep -qx 'auth login' '$home/cua2.log' 2>/dev/null"
+
+    env -i PATH="$PATH" HOME="$home" SHELL=/bin/sh CUA_INSTALL_BASE_URL="$base" CUA_INSTALL_OS=linux \
+        CUA_INSTALL_ARCH=x86_64 CUA_FAKE_LOG="$home/cua3.log" CUA_INSTALL_DRIVER_URL="$driver_url" \
+        script -qec "$sh_bin '$installer' --yes --select cua-driver --prefix '$work/p15'" /dev/null >"$work/out" 2>&1 </dev/null
+    check "interactive + --select cua-driver: no sign-in, so no Cua MCP or skills" sh -c "! grep -qx 'auth login' '$home/cua3.log' 2>/dev/null && grep -q 'agents setup --cua-driver' '$home/cua3.log'"
 
     # PATH prompt on a terminal: Enter adds it to the profile, n leaves it.
     # `script` runs its command through $SHELL, so zsh (absent from the CI

@@ -74,9 +74,26 @@ export interface LocalRuntimes {
   details: Map<string, string>;
 }
 
+/** One read of the Space list and how far it got (the SDK's `SpaceList`). */
+export interface ListRead {
+  rows: AppSpaceRow[];
+  /** Some of your computers have not answered yet: not "no Spaces". */
+  incomplete: boolean;
+  /** How many computers are still being reached (0 when unknown). */
+  reaching: number;
+  /** Your other computers' rows are the last known ones. */
+  stale: boolean;
+  /** Why your other computers could not be read, when they could not. */
+  notice: string;
+}
+
 export interface SpacesBackend {
   /** The registry, one row per Space, with a bounded reachability probe. */
   rows(): Promise<AppSpaceRow[]>;
+  /** `rows` with how far the read got (`Spaces.list_known`): this machine's
+   * Spaces at once, your other computers as they answer. Undefined: the
+   * backend lists complete lists only. */
+  listRead?(): Promise<ListRead>;
   /** Creates a Space, reporting the SDK's progress until it is ready; its id. */
   create(args: AppCreateSpaceArgs, createId: string, progress: (p: SpaceCreateProgress) => void): Promise<string>;
   cancelCreate(createId: string): Promise<void>;
@@ -297,8 +314,18 @@ export class LiveSpacesBackend implements SpacesBackend {
   ) {}
 
   async rows(): Promise<AppSpaceRow[]> {
+    return (await this.listRead()).rows;
+  }
+
+  /** This machine's Spaces at once, your other computers as far as they answered (`Spaces.list_known`). */
+  async listRead(): Promise<ListRead> {
+    const list = await this.cua.spaces().listKnown();
+    return { rows: await this.probe(list.spaces), incomplete: list.incomplete, reaching: list.reaching, stale: list.stale, notice: list.notice };
+  }
+
+  /** The rows of `infos`, each with a bounded reachability probe. */
+  private async probe(infos: Awaited<ReturnType<ReturnType<CuaLike["spaces"]>["list"]>>): Promise<AppSpaceRow[]> {
     const spaces = this.cua.spaces();
-    const infos = await spaces.list();
     return Promise.all(
       infos.map(async (info) => {
         const row: AppSpaceRow = {

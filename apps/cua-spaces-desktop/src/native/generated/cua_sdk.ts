@@ -18865,6 +18865,83 @@ const FfiConverterTypeSpaceHotspotStatus = (() => {
 })();
 
 /**
+ * The Spaces known now ([`Spaces::list_known`]) and how far the read got.
+ */
+export type SpaceList = {
+    /**
+     * This machine's Spaces, and the account's other computers' as far as
+     * they answered (the last known ones meanwhile).
+     */
+    spaces: Array<SpaceInfo>,
+    /**
+     * Some of the account's computers have not answered yet: the list may
+     * grow, and an empty one is not "no Spaces". Always false from a
+     * daemon that predates it (it answers once every computer did).
+     */
+    incomplete: boolean,
+    /**
+     * How many computers are still being reached (0 when unknown).
+     */
+    reaching: number,
+    /**
+     * The other computers' rows are the last known ones, not yet
+     * confirmed by the relay.
+     */
+    stale: boolean,
+    /**
+     * Why the account's computers could not be read, when they could not.
+     */
+    notice: string
+}
+
+/**
+ * Generated factory for {@link SpaceList} record objects.
+ */
+export const SpaceList = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<SpaceList, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<SpaceList>,
+    });
+})();
+
+const FfiConverterTypeSpaceList = (() => {
+    type TypeName = SpaceList;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                spaces: FfiConverterSequenceTypeSpaceInfo.read(from),
+                incomplete: FfiConverterBool.read(from),
+                reaching: FfiConverterUInt32.read(from),
+                stale: FfiConverterBool.read(from),
+                notice: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterSequenceTypeSpaceInfo.write(value.spaces, into);
+            FfiConverterBool.write(value.incomplete, into);
+            FfiConverterUInt32.write(value.reaching, into);
+            FfiConverterBool.write(value.stale, into);
+            FfiConverterString.write(value.notice, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterSequenceTypeSpaceInfo.allocationSize(value.spaces) +
+             FfiConverterBool.allocationSize(value.incomplete) +
+             FfiConverterUInt32.allocationSize(value.reaching) +
+             FfiConverterBool.allocationSize(value.stale) +
+             FfiConverterString.allocationSize(value.notice);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
  * What [`Spaces::stop`] or [`Spaces::start`] did.
  */
 export type SpacePowerReport = {
@@ -38451,6 +38528,15 @@ export interface SpacesLike {
  */
     list(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<SpaceInfo>>;
 /**
+ * The Spaces known now: this machine's at once, and the account's other
+ * computers as far as they answered within a moment ([`SpaceList`]
+ * says how far the read got). A slow or unreachable relay never holds
+ * up or fails this machine's own Spaces, so an app shows them right
+ * away and reads again while the list is incomplete. [`Spaces::list`]
+ * waits for every computer instead.
+ */
+    listKnown(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpaceList>;
+/**
  * The Spaces MCP `tools/list` result as JSON (the contract).
  */
     listToolsJson(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
@@ -40019,6 +40105,46 @@ private constructor(pointer: UniffiHandle) {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterSequenceTypeSpaceInfo.lift.bind(FfiConverterSequenceTypeSpaceInfo),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * The Spaces known now: this machine's at once, and the account's other
+ * computers as far as they answered within a moment ([`SpaceList`]
+ * says how far the read got). A slow or unreachable relay never holds
+ * up or fails this machine's own Spaces, so an app shows them right
+ * away and reads again while the list is incomplete. [`Spaces::list`]
+ * waits for every computer instead.
+ */
+    async listKnown(asyncOpts_?: { signal: AbortSignal }): Promise<SpaceList> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_spaces_list_known(
+                    uniffiTypeSpacesObjectFactory.clonePointer(this)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeSpaceList.lift.bind(FfiConverterTypeSpaceList),
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
@@ -43703,6 +43829,9 @@ const FfiConverterOptionalTypeEgressEnforcement = new FfiConverterOptional(FfiCo
 // FfiConverter for SpaceInfo | undefined
 const FfiConverterOptionalTypeSpaceInfo = new FfiConverterOptional(FfiConverterTypeSpaceInfo);
 
+// FfiConverter for Array<SpaceInfo>
+const FfiConverterSequenceTypeSpaceInfo = new FfiConverterArray(FfiConverterTypeSpaceInfo);
+
 // FfiConverter for Array<SpaceSentFile>
 const FfiConverterSequenceTypeSpaceSentFile = new FfiConverterArray(FfiConverterTypeSpaceSentFile);
 
@@ -43876,9 +44005,6 @@ const FfiConverterSequenceTypeGpuSupport = new FfiConverterArray(FfiConverterTyp
 
 // FfiConverter for Array<SpacesHost>
 const FfiConverterSequenceTypeSpacesHost = new FfiConverterArray(FfiConverterTypeSpacesHost);
-
-// FfiConverter for Array<SpaceInfo>
-const FfiConverterSequenceTypeSpaceInfo = new FfiConverterArray(FfiConverterTypeSpaceInfo);
 
 // FfiConverter for Array<NotificationInfo>
 const FfiConverterSequenceTypeNotificationInfo = new FfiConverterArray(FfiConverterTypeNotificationInfo);
@@ -45024,6 +45150,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_list() !== 27182) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_list");
     }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_list_known() !== 21083) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_list_known");
+    }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_list_tools_json() !== 19259) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_list_tools_json");
     }
@@ -45619,6 +45748,7 @@ export default Object.freeze({
     FfiConverterTypeSpaceDisplay,
     FfiConverterTypeSpaceHotspotStatus,
     FfiConverterTypeSpaceInfo,
+    FfiConverterTypeSpaceList,
     FfiConverterTypeSpacePowerReport,
     FfiConverterTypeSpacePresence,
     FfiConverterTypeSpaceRelayRegistration,

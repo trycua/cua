@@ -34,6 +34,7 @@ Returned by [`Cua.spaces`](/cua-sdk/reference/cua#cua).
 | [`gpu_support`](#spacesgpu_support) | The GPU options each runtime of `on` (`local` by default, or `cloud`) offers on this host: Lume's "GPU acceleration" for macOS VMs (experimental, Apple silicon), QEMU's virgl and containers' NVIDIA GPUs on Linux. |
 | [`hosts`](#spaceshosts) | Your machines that provide Spaces (the account's relay hosts, then the hosts added by their Tailscale or LAN address), each asked for its limits: what `create` takes as `on="host:<id>"`. |
 | [`list`](#spaceslist) | Registered Spaces. |
+| [`list_known`](#spaceslist_known) | The Spaces known now: this machine's at once, and the account's other computers as far as they answered within a moment (`SpaceList` says how far the read got). |
 | [`list_tools_json`](#spaceslist_tools_json) | The Spaces MCP `tools/list` result as JSON (the contract). |
 | [`relay_register`](#spacesrelay_register) | Publishes `space` on the cua.ai relay as a machine of the signed-in account, the way `cua host setup` publishes this computer: the Space's own driver dials out, so the account's other devices (a phone off this network) reach it as `relay:<machine>`, and nobody else until it is shared. |
 | [`relay_unregister`](#spacesrelay_unregister) | Takes `space` off the relay (its driver leaves; every share goes). |
@@ -681,6 +682,56 @@ pub async fn list(&self) -> Result<Vec<SpaceInfo>, CuaError>
 
 **Returns** [`Vec<SpaceInfo>`](#spaceinfo-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
 
+### `Spaces.list_known`
+
+The Spaces known now: this machine's at once, and the account's other
+computers as far as they answered within a moment (`SpaceList`
+says how far the read got). A slow or unreachable relay never holds
+up or fails this machine's own Spaces, so an app shows them right
+away and reads again while the list is incomplete. `Spaces.list`
+waits for every computer instead.
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+async def list_known(self) -> SpaceList
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+listKnown(asyncOpts_?: { signal: AbortSignal }): Promise<SpaceList>
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func listKnown() async throws -> SpaceList
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+@Throws(CuaException::class)
+suspend fun listKnown(): SpaceList
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub async fn list_known(&self) -> Result<SpaceList, CuaError>
+```
+
+</Tab>
+</Tabs>
+
+**Returns** [`SpaceList`](#spacelist-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+
 ### `Spaces.list_tools_json`
 
 The Spaces MCP `tools/list` result as JSON (the contract).
@@ -1118,6 +1169,20 @@ Returned by [`Space.info`](/cua-sdk/reference/spaces/space#space), [`Spaces.add`
 | `egress` | [`EgressPolicy`](#egresspolicy-record) |  | The egress policy last set on the Space; empty when it has none. |
 | `egress_enforced` / `egressEnforced` | [`Option<EgressEnforcement>`](/cua-sdk/reference/spaces/space#egressenforcement-enum) |  | Where `egress` is enforced; `None` without one. |
 | `volumes` | [`Vec<VolumeMount>`](/cua-sdk/reference/spaces/volume#volumemount-record) |  | Named volumes mounted in the Space (see `SpaceCreateOptions.volumes`). |
+
+## `SpaceList` record
+
+The Spaces known now (`Spaces.list_known`) and how far the read got.
+
+Returned by [`Spaces.list_known`](#spaceslist_known).
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `spaces` | [`Vec<SpaceInfo>`](#spaceinfo-record) |  | This machine's Spaces, and the account's other computers' as far as they answered (the last known ones meanwhile). |
+| `incomplete` | `bool` |  | Some of the account's computers have not answered yet: the list may grow, and an empty one is not "no Spaces". Always false from a daemon that predates it (it answers once every computer did). |
+| `reaching` | `u32` |  | How many computers are still being reached (0 when unknown). |
+| `stale` | `bool` |  | The other computers' rows are the last known ones, not yet confirmed by the relay. |
+| `notice` | `String` |  | Why the account's computers could not be read, when they could not. |
 
 ## `SpacePowerReport` record
 

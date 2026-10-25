@@ -353,6 +353,8 @@ impl SpacesBuilder {
                 relay_cache: std::sync::Mutex::new(Vec::new()),
                 relay_reported: std::sync::Mutex::new(relay_reported),
                 relay_read: tokio::sync::Mutex::new(None),
+                relay_confirmed: std::sync::atomic::AtomicBool::new(false),
+                rounds: Default::default(),
                 site_login: std::sync::RwLock::new(None),
                 pool: std::sync::RwLock::new(None),
                 durable: std::sync::Mutex::new(Vec::new()),
@@ -565,6 +567,11 @@ pub(crate) struct Inner {
     relay_reported: std::sync::Mutex<HashMap<String, ReportedFacts>>,
     /// Held across a read so only one directory read runs at a time.
     relay_read: tokio::sync::Mutex<Option<std::time::Instant>>,
+    /// The relay answered a directory read in this process (until then the
+    /// directory is the one saved by an earlier process, if any).
+    pub(crate) relay_confirmed: std::sync::atomic::AtomicBool,
+    /// The read of the account's computers [`Spaces::list_known`] runs.
+    pub(crate) rounds: crate::listing::AccountRounds,
     /// The Keyvault broker `request_site_login` signs in through (the
     /// daemon sets it once its Keyvault is up).
     site_login: std::sync::RwLock<Option<Arc<dyn crate::site_login::SiteLoginBroker>>>,
@@ -729,7 +736,7 @@ impl Spaces {
                 return Err(e);
             }
             tracing::debug!("relay directory skipped: not signed in");
-            self.inner.relay_cache.lock().expect("relay cache").clear();
+            self.forget_account_computers();
         }
         self.list()
     }
@@ -791,11 +798,20 @@ impl Spaces {
     }
 
     /// Configures (or clears) the relay account after construction, e.g.
-    /// when `cua daemon` picks up the signed-in session. Clears the cached
-    /// directory listing.
+    /// when `cua daemon` picks up the signed-in session. The cached
+    /// directory listing becomes the one an earlier process saved for this
+    /// relay (`relay-directory.json`), unconfirmed until the relay answers.
     pub fn set_relay(&self, relay: Option<crate::relay::RelayAccount>) {
+        let saved = relay
+            .as_ref()
+            .map(|r| crate::listing::load_directory(self.home_dir(), &r.url))
+            .unwrap_or_default();
         *self.inner.relay.write().expect("relay") = relay;
-        self.inner.relay_cache.lock().expect("relay cache").clear();
+        *self.inner.relay_cache.lock().expect("relay cache") = saved;
+        self.inner
+            .relay_confirmed
+            .store(false, std::sync::atomic::Ordering::Release);
+        self.inner.rounds.reset();
     }
 
     /// `e`, from a call on `space`, with the reason when the call failed
@@ -895,7 +911,21 @@ impl Spaces {
             }
         };
         *read_at = Some(std::time::Instant::now());
-        *self.inner.relay_cache.lock().expect("relay cache") = machines.clone();
+        let changed = {
+            let mut cache = self.inner.relay_cache.lock().expect("relay cache");
+            let changed = *cache != machines;
+            *cache = machines.clone();
+            changed
+        };
+        let first = !self
+            .inner
+            .relay_confirmed
+            .swap(true, std::sync::atomic::Ordering::AcqRel);
+        // Kept for the next process: it lists these at once, before the
+        // relay answers it (`Spaces::list_known`).
+        if changed || first {
+            crate::listing::save_directory(self.home_dir(), &relay.url, &machines);
+        }
         Ok(machines)
     }
 

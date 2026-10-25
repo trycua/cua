@@ -36,6 +36,13 @@ pub fn app_status_line(count: u32) -> String {
     core::spaces::status_line(count)
 }
 
+/// The Spaces page's empty state and "Reaching N computers…" line: the
+/// first-run page only for a complete list with no Space.
+#[uniffi::export]
+pub fn app_spaces_list_view(input: AppListViewInput) -> AppListView {
+    core::spaces::list_view(input)
+}
+
 /// The ambient status dots.
 #[uniffi::export]
 pub fn app_ambient_dots(spaces: Vec<AppSpace>) -> AppAmbientDots {

@@ -43,7 +43,7 @@
 //! with backoff. The registry is also soft state: every node registers
 //! again when it reconnects, so a lost write costs at most a reconnect.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::hash::{Hash as _, Hasher as _};
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -51,7 +51,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse as _, Response};
@@ -90,6 +90,12 @@ const MAX_OPEN_PER_PEER: u32 = 64;
 /// How long a peer whose new session an enforced plan refused stays out of
 /// the machine's map (a retry after that is refused again while over).
 const DENY_FOR: Duration = Duration::from_secs(30);
+
+/// Connects one node may make per [`CONNECT_WINDOW`] before it is told to
+/// retry later (a client stuck in a reconnect loop must not hammer the
+/// relay: the node's own backoff keeps well under this).
+const MAX_CONNECTS_PER_WINDOW: usize = 10;
+const CONNECT_WINDOW: Duration = Duration::from_secs(60);
 
 const ATTRIBUTE_EVERY: Duration = Duration::from_secs(5);
 /// Relayed packets of a pair are noted at most this often.
@@ -261,6 +267,10 @@ pub struct MeshState {
     denied: Mutex<HashMap<(PublicKey, PublicKey), Instant>>,
     /// Sessions refused by an enforced plan since start.
     sessions_refused: AtomicU64,
+    /// When each node connected lately (see [`MeshState::admit`]).
+    connects: Mutex<HashMap<PublicKey, VecDeque<Instant>>>,
+    /// Connects turned away for coming too often since start.
+    reconnects_limited: AtomicU64,
     /// Where write failures are counted and reported.
     storage: Arc<Storage>,
     /// Saves asked for (a counter) ...
@@ -329,6 +339,8 @@ impl MeshState {
             metered_streams: AtomicU64::new(0),
             denied: Mutex::new(HashMap::new()),
             sessions_refused: AtomicU64::new(0),
+            connects: Mutex::default(),
+            reconnects_limited: AtomicU64::new(0),
             storage,
             save_asked: AtomicU64::new(0),
             saved: tokio::sync::watch::channel((0, true)).0,
@@ -392,7 +404,9 @@ impl MeshState {
             let mut conns = self.conns.lock().expect("conns");
             for key in &removed_keys {
                 if let Some(conn) = conns.remove(key) {
-                    let _ = conn.tx.try_send(Message::Close(None));
+                    let _ = conn
+                        .tx
+                        .try_send(close(proto::CLOSE_ERASED, "the account was erased"));
                 }
             }
         }
@@ -498,7 +512,10 @@ impl MeshState {
     /// shutdown, or a test standing in for a crash).
     pub fn disconnect_all(&self) {
         for (_, conn) in self.conns.lock().expect("conns").drain() {
-            let _ = conn.tx.try_send(Message::Close(None));
+            let _ = conn.tx.try_send(close(
+                proto::CLOSE_RELAY_CHANGED,
+                "the relay is restarting: reconnect",
+            ));
         }
     }
 
@@ -521,6 +538,42 @@ impl MeshState {
     pub fn connected(&self) -> usize {
         self.conns.lock().expect("conns").len()
     }
+
+    /// Notes a connect by `node` at `now`, or says how many seconds it must
+    /// wait: more than [`MAX_CONNECTS_PER_WINDOW`] connects in
+    /// [`CONNECT_WINDOW`] are refused (and not counted, so the wait ends).
+    fn admit(&self, node: &PublicKey, now: Instant) -> Result<(), u64> {
+        let mut connects = self.connects.lock().expect("connects");
+        if connects.len() > 4096 {
+            connects.retain(|_, t| {
+                t.back()
+                    .is_some_and(|b| now.duration_since(*b) < CONNECT_WINDOW)
+            });
+        }
+        let times = connects.entry(*node).or_default();
+        while times
+            .front()
+            .is_some_and(|t| now.saturating_duration_since(*t) >= CONNECT_WINDOW)
+        {
+            times.pop_front();
+        }
+        if times.len() >= MAX_CONNECTS_PER_WINDOW {
+            let oldest = *times.front().expect("a full window has a first");
+            let wait = CONNECT_WINDOW.saturating_sub(now.saturating_duration_since(oldest));
+            self.reconnects_limited.fetch_add(1, Ordering::Relaxed);
+            return Err(wait.as_secs() + 1);
+        }
+        times.push_back(now);
+        Ok(())
+    }
+}
+
+/// A close frame with one of the [`proto`] codes and a reason.
+fn close(code: u16, reason: &str) -> Message {
+    Message::Close(Some(CloseFrame {
+        code,
+        reason: reason.to_owned().into(),
+    }))
 }
 
 /// Starts the background tasks: map recomputation and registry saving.
@@ -734,11 +787,23 @@ fn recompute(relay: &Relay) {
     };
     for (key, conn) in conns.iter_mut() {
         let Some(node) = nodes.get(key) else { continue };
-        if matches!(node.owner, Owner::Account { .. })
-            && (!client_device_ok(relay, node) || conn.since.elapsed() > MAX_ACCOUNT_SESSION)
-        {
-            cut.push(*key);
-            continue;
+        if matches!(node.owner, Owner::Account { .. }) {
+            if !client_device_ok(relay, node) {
+                cut.push((
+                    *key,
+                    proto::CLOSE_DEVICE,
+                    "the device is no longer enrolled or was revoked",
+                ));
+                continue;
+            }
+            if conn.since.elapsed() > MAX_ACCOUNT_SESSION {
+                cut.push((
+                    *key,
+                    proto::CLOSE_SESSION_MAX,
+                    "the session reached its maximum age: reconnect with a fresh token",
+                ));
+                continue;
+            }
         }
         let mut peers = peers_for(relay, node, &nodes, &online, &pairs);
         // A peer whose new session an enforced plan refused is left out of
@@ -759,9 +824,9 @@ fn recompute(relay: &Relay) {
             let _ = conn.tx.try_send(Message::Text(json.into()));
         }
     }
-    for key in cut {
+    for (key, code, reason) in cut {
         if let Some(conn) = conns.remove(&key) {
-            let _ = conn.tx.try_send(Message::Close(None));
+            let _ = conn.tx.try_send(close(code, reason));
         }
     }
     drop(conns);
@@ -1095,6 +1160,17 @@ async fn session(relay: Relay, owner: Owner, socket: WebSocket) {
         return;
     }
     let mesh = &relay.mesh;
+    // The key is proven, so this counts one node, not whoever claims it.
+    if let Err(wait) = mesh.admit(&node_key, Instant::now()) {
+        tracing::warn!(node = %node_key.short(), ?kind, retry_after_s = wait, "mesh node connects too often");
+        let _ = sink
+            .send(close(
+                proto::CLOSE_RATE_LIMITED,
+                &proto::retry_after_reason(wait),
+            ))
+            .await;
+        return;
+    }
     let (conflict, fresh) = {
         let mut nodes = mesh.nodes.lock().expect("nodes");
         // A key belongs to one owner (a device or a machine) for life.
@@ -1213,8 +1289,14 @@ async fn session(relay: Relay, owner: Owner, socket: WebSocket) {
             netmap_hash: 0,
         },
     ) {
-        // The same node reconnected: the newer connection wins.
-        let _ = old.tx.try_send(Message::Close(None));
+        // The same node reconnected: the newer connection wins. A live old
+        // connection means a second process holds this node key; it is told
+        // so, and a node that keeps hearing it stops reconnecting.
+        tracing::info!(node = %node_key.short(), "mesh node replaced its older connection");
+        let _ = old.tx.try_send(close(
+            proto::CLOSE_REPLACED,
+            "replaced: another connection with the same node key took over",
+        ));
     }
     tracing::info!(node = %node_key.short(), ?kind, "mesh node connected");
     mesh.changed();
@@ -1591,6 +1673,9 @@ pub struct MeshStatus {
     pub usage_rejected: u64,
     /// New mesh sessions refused by an enforced plan's cap.
     pub sessions_refused: u64,
+    /// Connects turned away because the node connected too often.
+    #[serde(default)]
+    pub reconnects_limited: u64,
 }
 
 /// The coordinator's counters.
@@ -1611,6 +1696,7 @@ pub fn status(relay: &Relay) -> MeshStatus {
         usage_reports: mesh.usage_reports.load(Ordering::Relaxed),
         usage_rejected: mesh.usage_rejected.load(Ordering::Relaxed),
         sessions_refused: mesh.sessions_refused.load(Ordering::Relaxed),
+        reconnects_limited: mesh.reconnects_limited.load(Ordering::Relaxed),
     }
 }
 
@@ -1625,6 +1711,32 @@ pub(crate) fn info(relay: &Relay) -> Option<proto::MeshInfo> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_node_connecting_too_often_is_told_when_to_retry() {
+        let mesh = MeshState::open(None).unwrap();
+        let node = SecretKey::generate().public();
+        let other = SecretKey::generate().public();
+        let t0 = Instant::now();
+        for i in 0..MAX_CONNECTS_PER_WINDOW as u64 {
+            assert!(mesh.admit(&node, t0 + Duration::from_secs(i)).is_ok());
+        }
+        // The 11th within the minute: wait until the oldest leaves the window.
+        let now = t0 + Duration::from_secs(20);
+        let wait = mesh.admit(&node, now).unwrap_err();
+        assert_eq!(wait, 41);
+        // Refused attempts are not counted: the wait ends on time ...
+        assert!(mesh.admit(&node, now + Duration::from_secs(10)).is_err());
+        assert!(mesh.admit(&node, t0 + Duration::from_secs(60)).is_ok());
+        // ... and one node's loop never limits another.
+        assert!(mesh.admit(&other, now).is_ok());
+        assert_eq!(mesh.reconnects_limited.load(Ordering::Relaxed), 2);
+        // The reason a node reads back is the number of seconds.
+        assert_eq!(
+            proto::parse_retry_after(&proto::retry_after_reason(wait)),
+            Some(41)
+        );
+    }
 
     #[test]
     fn the_registry_is_written_compact_and_read_back_and_temps_are_removed() {

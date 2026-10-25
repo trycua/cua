@@ -790,3 +790,59 @@ async fn a_forward_carries_bulk_traffic_to_a_local_port() {
     assert_eq!(counted.await.unwrap(), N);
     println!("256 MiB in {:?}", t.elapsed());
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_node_the_relay_keeps_replacing_stops_retrying_and_says_why() {
+    FakeCoordinator::speed_up_reconnects();
+    let dir = tempfile::tempdir().unwrap();
+    let coord = FakeCoordinator::start(Mode::Account).await;
+    coord.close_after_welcome(Some((
+        cua_mesh::proto::CLOSE_REPLACED,
+        "replaced: another connection with the same node key took over",
+    )));
+    let cfg = MeshConfig::new(
+        coord.url.clone(),
+        NodeKind::Client,
+        Some(dir.path().join("c.json")),
+        static_auth(vec![]),
+    );
+    let client = Mesh::start(cfg).await.unwrap();
+    let t = std::time::Instant::now();
+    let reason = loop {
+        if let Some(r) = client.control_state().denied {
+            break r;
+        }
+        assert!(t.elapsed() < Duration::from_secs(20), "it never gave up");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert!(reason.contains("another copy of Spaces"), "{reason}");
+    // It stopped: no connect after the third.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(coord.welcomes(), 3);
+    let last = client.control_state().last_error.unwrap();
+    assert!(last.contains("4001") && last.contains("replaced"), "{last}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_node_dropped_for_other_reasons_keeps_reconnecting() {
+    FakeCoordinator::speed_up_reconnects();
+    let dir = tempfile::tempdir().unwrap();
+    let coord = FakeCoordinator::start(Mode::Account).await;
+    coord.close_after_welcome(Some((
+        cua_mesh::proto::CLOSE_RELAY_CHANGED,
+        "relay changed",
+    )));
+    let cfg = MeshConfig::new(
+        coord.url.clone(),
+        NodeKind::Client,
+        Some(dir.path().join("c.json")),
+        static_auth(vec![]),
+    );
+    let client = Mesh::start(cfg).await.unwrap();
+    let t = std::time::Instant::now();
+    while coord.welcomes() < 5 {
+        assert!(t.elapsed() < Duration::from_secs(20), "it stopped retrying");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(client.control_state().denied.is_none());
+}

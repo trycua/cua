@@ -157,6 +157,14 @@ pub enum Error {
     /// ([`cua_home::plan_limit::PlanLimit::sentence`]); never retried.
     #[error("{0}")]
     PlanLimit(String),
+    /// The proxy in front of the relay throttled this client (HTTP 429, bare
+    /// `Too Many Requests`) and kept doing so through every retry. The
+    /// request never reached the relay.
+    #[error("Too many attempts right now. Wait {retry_after_secs} seconds, then try again.")]
+    Throttled {
+        /// How long the proxy asked to wait (`Retry-After`), at least 1.
+        retry_after_secs: u64,
+    },
     /// Driver download failed.
     #[error("download: {0}")]
     Download(String),
@@ -182,7 +190,7 @@ impl Error {
             Error::PermissionDenied(m) if m.starts_with("relay: ") => Some(403),
             Error::NotFound(m) if m.starts_with("relay: ") => Some(404),
             Error::Conflict(m) if m.starts_with("relay: ") => Some(409),
-            Error::PlanLimit(_) => Some(429),
+            Error::PlanLimit(_) | Error::Throttled { .. } => Some(429),
             Error::Relay(m) | Error::Download(m) => status_in(m),
             _ => None,
         }
@@ -195,6 +203,7 @@ impl Error {
     /// missing machine or an answer that could not be read.
     pub fn is_transient(&self) -> bool {
         match self {
+            Error::Throttled { .. } => true,
             Error::Relay(m) => match status_in(m) {
                 Some(code) => matches!(code, 429 | 502 | 503 | 504),
                 None => !m.starts_with("bad relay response"),

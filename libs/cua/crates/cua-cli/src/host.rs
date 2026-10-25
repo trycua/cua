@@ -1520,7 +1520,7 @@ fn host_error(e: cua_host::Error, m: String) -> CuaError {
         E::Unauthenticated(_) => CuaError::Unauthenticated(m),
         E::PermissionDenied(_) => CuaError::PermissionDenied(m),
         E::NotFound(_) => CuaError::NotFound(m),
-        E::Relay(_) | E::Download(_) => CuaError::Http(m),
+        E::Relay(_) | E::Download(_) | E::Throttled { .. } => CuaError::Http(m),
         // The plain sentence, then where to upgrade.
         E::PlanLimit(_) => {
             let url = cua_home::plan_limit::PlanLimit::parse(&m)

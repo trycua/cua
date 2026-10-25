@@ -13,6 +13,7 @@ import { useContext, useSyncExternalStore } from "react";
 import { HostError, type DataAdapter } from "./adapter";
 import { BridgeContext } from "./BridgeProvider";
 import type { CoreClient } from "./core";
+import { plainThrottleError } from "./friendly-errors";
 import type { HostActionId, HostFormView as HostFormViewBase } from "./contracts/host";
 import type { HostFormAction, HostFormState, HostRunAction, HostSetupRequest } from "./ops/host-setup";
 
@@ -83,7 +84,10 @@ const IDLE: ThisMachineState = { form: null, busy: false, error: null, setupErro
 export function hostFailure(e: unknown): HostFailure {
   const message = e instanceof Error ? e.message : String(e);
   const p = e instanceof HostError ? e.presented : undefined;
-  return p ? { title: p.title, message, details: p.details, actionLabel: p.actionLabel } : { message };
+  if (p) return { title: p.title, message, details: p.details, actionLabel: p.actionLabel };
+  // A host that only says the error: the server's "slow down" in plain words.
+  const throttled = plainThrottleError(message);
+  return throttled ? { title: "Too many attempts right now", message: throttled.replace(/^Too many attempts right now\. /, ""), details: message } : { message };
 }
 
 export class ThisMachineStore {

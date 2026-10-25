@@ -23,6 +23,31 @@ struct HostSetupFailureTests {
         #expect(f.details == Self.missingRelease, "details stay raw")
     }
 
+    @Test func aThrottledSetupSaysHowLongToWaitInPlainWords() {
+        let raw = "http: Too many attempts right now. Wait 3 seconds, then try again."
+        let f = HostSetupFailure.presenting(raw)
+        #expect(f.kind == .throttled)
+        #expect(f.title == "Too many attempts right now")
+        #expect(f.message == "Wait 3 seconds, then try again.")
+        #expect(f.details == raw)
+        #expect(f.actionLabel == "Retry")
+    }
+
+    @Test func aRawHTTP429FromAnOlderHostIsTheSameWithoutANumber() {
+        let f = HostSetupFailure.presenting("http: relay: HTTP 429: Too Many Requests")
+        #expect(f.kind == .throttled)
+        #expect(f.message == "Wait a few seconds, then try again.")
+        #expect(!f.message.contains("429"))
+    }
+
+    @Test(arguments: [
+        "http: relay: HTTP 429: computer limit for this token reached",
+        "HTTP 429: at most 5 unused pairing codes",
+    ])
+    func aLimitTheRelayExplainsIsNotAThrottle(_ raw: String) {
+        #expect(HostSetupFailure.presenting(raw).kind == .other)
+    }
+
     @Test(arguments: [
         "cua-spacesd: no published release for this platform",
         "download: cua-spacesd v0.2.0 is not available",

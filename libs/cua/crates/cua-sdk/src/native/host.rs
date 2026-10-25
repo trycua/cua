@@ -16,7 +16,7 @@ impl From<cua_host::Error> for CuaError {
             E::Unauthenticated(_) => CuaError::Unauthenticated(m),
             E::PermissionDenied(_) => CuaError::PermissionDenied(m),
             E::NotFound(_) => CuaError::NotFound(m),
-            E::Relay(_) | E::Download(_) => CuaError::Http(m),
+            E::Relay(_) | E::Download(_) | E::Throttled { .. } => CuaError::Http(m),
             // The plain sentence, then where to upgrade, as the CLI says it;
             // the Python and TypeScript SDKs read both back as `PlanLimitError`.
             E::PlanLimit(_) => {

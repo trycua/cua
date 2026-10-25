@@ -88,5 +88,6 @@ describe("failureText", () => {
     expect(failureText("Hermes", "Permission denied (os error 13)")).toBe("Couldn't set up Hermes. Cua can't change this file because it is read-only or belongs to another user.");
     expect(failureText("Hermes", "boom")).toBe("Couldn't set up Hermes. Cua said: boom.");
     expect(failureText("Hermes", "Not set up")).toBe("Couldn't set up Hermes.");
+    expect(failureText("Hermes", "")).toBe("Couldn't set up Hermes.");
   });
 });

@@ -112,5 +112,6 @@ export function failureText(name: string, detail: string): string {
   if (/permission|read-only|readonly|EACCES|EPERM|os error 13|not writable/i.test(detail)) {
     return `Couldn't set up ${name}. Cua can't change this file because it is read-only or belongs to another user.`;
   }
-  return `Couldn't set up ${name}. ${/^not set up$/i.test(detail) ? "" : "Cua said: " + detail.replace(/\.$/, "") + "."}`.trim();
+  const said = detail.trim();
+  return `Couldn't set up ${name}. ${!said || /^not set up$/i.test(said) ? "" : "Cua said: " + said.replace(/\.$/, "") + "."}`.trim();
 }

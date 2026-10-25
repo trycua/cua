@@ -278,7 +278,8 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
   const ready = rows.filter((a) => a.connected);
   const working = busy || rows.some((a) => a.note === "Connecting\u2026");
   const failed = tried && !working ? pending : [];
-  const why = (name: string) => failureText(name, (c.error ?? "").replace(/^Couldn't connect Cua:\s*/, ""));
+  const why = (agent: string, name: string) =>
+    failureText(name, fr.agents.find((r) => r.agent === agent)?.detail || (c.error ?? "").replace(/^Couldn't connect Cua:\s*/, ""));
   const ids = rows.map((a) => a.agent);
 
   const setUp = async () => {
@@ -402,7 +403,7 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
                 <AgentMark agent={a.agent} name={a.name} />
                 <div className="min-w-0 flex-1">
                   <div className="text-[14px]">{a.name}</div>
-                  {bad ? <div className="text-[13px] text-destructive">{why(a.name)}</div> : null}
+                  {bad ? <div className="text-[13px] text-destructive">{why(a.agent, a.name)}</div> : null}
                 </div>
                 {a.connected ? (
                   <span className="flex shrink-0 items-center gap-1 text-[13px] text-[#1f9d55] dark:text-[#4ade80]">

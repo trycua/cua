@@ -25,6 +25,7 @@ conclusions change nothing. Standard library only.
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime as dt
 import json
 import os
@@ -118,13 +119,14 @@ def build_alert(run: dict, name: str, repo: str, environment: str, now: dt.datet
     return {"labels": labels, "annotations": annotations, "startsAt": starts, "endsAt": ends}
 
 
-def http_json(url: str, token: str = "", data: object = None, attempts: int = 3):
+def http_json(url: str, token: str = "", data: object = None, attempts: int = 3, extra_headers: dict | None = None):
     body = None if data is None else json.dumps(data).encode()
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "workflow-alerts"}
     if body is not None:
         headers["Content-Type"] = "application/json"
     if token:
         headers["Authorization"] = "Bearer " + token
+    headers.update(extra_headers or {})
     for attempt in range(1, attempts + 1):
         request = urllib.request.Request(url, data=body, headers=headers, method="POST" if body is not None else "GET")
         try:
@@ -185,7 +187,10 @@ def latest_runs(repo: str, watch: dict[str, str], token: str, default_branch: st
 
 def post(alerts: list[dict], url: str) -> None:
     if alerts:
-        http_json(url, data=alerts)
+        # The alert intake wants basic auth (user "alerts"). No token = no header, so local runs still work.
+        secret = os.environ.get("ALERTMANAGER_INTAKE_TOKEN", "")
+        auth = {"Authorization": "Basic " + base64.b64encode(("alerts:" + secret).encode()).decode()} if secret else None
+        http_json(url, data=alerts, extra_headers=auth)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -1707,6 +1707,14 @@ public final class AppModel {
         readLoginItem()
     }
 
+    /// Reads the usage-data switch alone. The web page gets it with its
+    /// Settings snapshot (`settings.get`) and drops every usage signal while
+    /// that has none, so it cannot wait for the native Settings view's
+    /// `loadSettings` (the page runs signed out, before any Settings view).
+    public func refreshTelemetry() {
+        telemetryInput = telemetry?.status()
+    }
+
     /// Reads what Settings shows (telemetry, the coding agents).
     public func loadSettings() async {
         lumeSource = await backend.lumeSource()

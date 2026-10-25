@@ -481,6 +481,15 @@ impl DeviceAuth {
         }
         let key = self.key_or_create()?;
         let enrollment = match self.register_key(&token, &key, name).await {
+            // A key the relay holds for another account (a different
+            // sign-in on this computer) can never enroll here either.
+            Err(Error::Conflict(m)) if m.contains("another account") => {
+                let (key, pkcs8) = DeviceKey::generate()?;
+                self.slot.save(&pkcs8)?;
+                // The new key has no record to keep a name from.
+                let name = if name.is_empty() { &self.name } else { name };
+                self.register_key(&token, &key, name).await?
+            }
             Err(Error::PermissionDenied(m))
                 if m.contains("revoked") || m.contains("replaced by") =>
             {

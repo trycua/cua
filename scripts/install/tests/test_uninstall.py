@@ -373,9 +373,63 @@ class UninstallMacTest(unittest.TestCase):
         self.assertIn("[dry-run] cua agents remove --agents all: skipped, this cua is older than", result.stdout)
         self.assertIn("cua host remove --force --uninstalling", result.stdout)
 
-    def test_the_app_helper_goes_but_its_permissions_stay(self):
+    @staticmethod
+    def app_id_defaults(box, app_id="com.trycua.spaces.macos"):
+        """`defaults read <app>/Contents/Info CFBundleIdentifier` answers `app_id`."""
+        box.put("Applications/Cua Spaces.app/Contents/Info.plist", "plist\n")
+        write_executable(box.bin / "defaults", f"#!/bin/sh\nprintf 'defaults: %s\\n' \"$*\" >>\"$FAKE_CALLS\"\n"
+                         f"case \"$*\" in *CFBundleIdentifier*) echo {app_id} ;; esac\nexit 0\n")
+
+    def test_keep_permissions_leaves_them_alone(self):
         box = self.box()
         installed_mac(box)
+        self.app_id_defaults(box)
+        result = box.run("--yes", "--keep-permissions", "--prefix", str(box.home))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(box.index("tccutil"), -1)
+        self.assertFalse(box.exists("Applications/Cua Spaces.app"))
+        dry = box.run("--dry-run", "--keep-permissions")
+        self.assertNotIn("tccutil", dry.stdout)
+
+    def test_permissions_are_reset_before_the_app_is_removed(self):
+        box = self.box()
+        installed_mac(box)
+        self.app_id_defaults(box)
+        # The fake tccutil, like the real one, fails once the app is gone.
+        write_executable(box.bin / "tccutil",
+                         "#!/bin/sh\nprintf 'tccutil: %s\\n' \"$*\" >>\"$FAKE_CALLS\"\n"
+                         f"[ -d {shlex.quote(str(box.home / 'Applications/Cua Spaces.app'))} ] || exit 1\n")
+        result = box.run("--yes", "--prefix", str(box.home))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertGreaterEqual(box.index("tccutil: reset All com.trycua.spaces.macos"), 0)
+        self.assertNotIn("could not reset the permissions", result.stderr)
+        self.assertFalse(box.exists("Applications/Cua Spaces.app"))
+
+    def test_another_apps_bundle_id_is_never_reset(self):
+        box = self.box()
+        installed_mac(box)
+        self.app_id_defaults(box, "com.trycua.driver")
+        result = box.run("--yes", "--prefix", str(box.home))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(box.index("tccutil"), -1)
+
+    def test_a_login_item_that_stays_is_reported(self):
+        box = self.box()
+        installed_mac(box)
+        box.put("Applications/Cua Spaces.app/Contents/Library/LaunchAgents/com.trycua.spaces.helper.plist", "plist\n")
+        write_executable(box.home / "Applications/Cua Spaces.app/Contents/MacOS/CuaSpacesMac",
+                         "#!/bin/sh\nprintf 'app: %s\\n' \"$*\" >>\"$FAKE_CALLS\"\n"
+                         "case \"$2\" in unregister) exit 1 ;; status) echo '{\"status\":\"enabled\"}' ;; esac\n")
+        result = box.run("--yes", "--prefix", str(box.home))
+        self.assertIn("could not unregister the Cua Spaces login item", result.stderr)
+        self.assertIn("still registered", result.stdout)
+        # Tried twice before giving up.
+        self.assertEqual(len([c for c in box.call_log() if c == "app: --service-helper unregister"]), 2)
+
+    def test_the_app_helper_goes_and_its_permissions_are_reset_first(self):
+        box = self.box()
+        installed_mac(box)
+        self.app_id_defaults(box)
         # Cua Spaces 0.10+: the host service is the app's login item.
         box.put("Applications/Cua Spaces.app/Contents/Library/LaunchAgents/com.trycua.spaces.helper.plist", "plist\n")
         write_executable(box.home / "Applications/Cua Spaces.app/Contents/MacOS/CuaSpacesMac",
@@ -384,7 +438,7 @@ class UninstallMacTest(unittest.TestCase):
         dry = box.run("--dry-run")
         self.assertEqual(dry.returncode, 0, dry.stdout + dry.stderr)
         self.assertIn("--service-helper unregister", dry.stdout)
-        self.assertNotIn("tccutil", dry.stdout)
+        self.assertIn("[dry-run] tccutil reset All com.trycua.spaces.macos", dry.stdout)
         self.assertEqual(box.index("tccutil"), -1)
         self.assertTrue(box.exists(".cua/helper/service.json"))
         result = box.run("--yes", "--prefix", str(box.home))
@@ -392,7 +446,10 @@ class UninstallMacTest(unittest.TestCase):
         # Unregistered by the app before the app goes, then stopped.
         self.assertGreaterEqual(box.index("app: --service-helper unregister"), 0)
         self.assertGreaterEqual(box.index("launchctl: bootout gui/1000/com.trycua.spaces.helper"), 0)
-        self.assertEqual(box.index("tccutil"), -1)
+        # Permissions of the app's own id only, reset while the app is installed.
+        self.assertGreaterEqual(box.index("tccutil: reset All com.trycua.spaces.macos"), 0)
+        self.assertEqual([c for c in box.call_log() if c.startswith("tccutil")],
+                         ["tccutil: reset All com.trycua.spaces.macos"])
         self.assertIn("minus button", result.stdout)
         for gone in (".cua/helper", "Applications/Cua Spaces.app",
                      "Library/LaunchAgents/com.trycua.spacesd.host.plist", ".cua/host/bin/cua-spacesd"):
@@ -642,8 +699,11 @@ class OtherToolsTest(unittest.TestCase):
         self.assertEqual([call for call in box.call_log() if call.startswith("tccutil")], [])
         for name in ("uninstall.sh", "uninstall.ps1"):
             script = (Path(__file__).resolve().parent.parent / name).read_text()
-            self.assertNotIn("tccutil", script, name)
             self.assertNotIn("reset-permissions", script, name)
+            # Only the Cua Spaces app's own id is ever reset, never the driver's.
+            for line in script.splitlines():
+                if "tccutil" in line and "has tccutil" not in line and not line.lstrip().startswith("#"):
+                    self.assertTrue("$app_id" in line or "spaces.macos" in line, line)
 
     def test_on_linux_lume_is_skipped_and_the_driver_runs_even_with_nothing_else_installed(self):
         box = Sandbox(tempfile.mkdtemp(dir=self.tmp.name), "Linux")

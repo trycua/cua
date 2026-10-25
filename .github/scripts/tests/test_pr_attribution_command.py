@@ -70,7 +70,7 @@ def validate_command(tmp_path, github_api):
             ["git", *args], cwd=tmp_path, env=env, text=True
         ).strip()
 
-    def validate(*, ancestor, head, body="", merge_base_sha=ANCESTOR):
+    def validate(*, ancestor, head, body="", merge_base_sha=ANCESTOR, commit=None):
         config = tmp_path / CONFIG
         config.parent.mkdir()
         config.write_text(json.dumps({"identityOverrides": KNOWN}))
@@ -95,7 +95,7 @@ def validate_command(tmp_path, github_api):
                 "base": {"sha": ANCESTOR},
                 "head": {"sha": HEAD, "repo": {"full_name": "contributor/cua"}},
             },
-            "/repos/trycua/cua/pulls/50/commits?per_page=100&page=1": [{
+            "/repos/trycua/cua/pulls/50/commits?per_page=100&page=1": [commit or {
                 "sha": HEAD,
                 "author": {"login": "landing-author"},
                 "commit": {
@@ -150,23 +150,25 @@ def test_unchanged_configuration_uses_current_trusted_policy(validate_command, a
 def test_actual_changes_to_trusted_mappings_are_rejected(validate_command, head):
     result = validate_command(ancestor=KNOWN, head=head)
 
-    assert result.returncode == 1
-    assert "removes or changes trusted identityOverrides" in result.stderr
-    assert "merge-ready" not in result.stdout
+    # Informational: the finding is a warning, the check still passes.
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "::warning" in result.stdout
+    assert "removes or changes trusted identityOverrides" in result.stdout
+    assert "is merge-ready for pull request" not in result.stdout
 
 
 def test_unverified_addition_on_stale_branch_is_rejected(validate_command):
     result = validate_command(ancestor={}, head={"new@institution.example": "new-author"})
 
-    assert result.returncode == 1
-    assert "new@institution.example" in result.stderr
-    assert "has no explicit same-repository source PR" in result.stderr
-    assert "merge-ready" not in result.stdout
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "new@institution.example" in result.stdout
+    assert "has no explicit same-repository source PR" in result.stdout
+    assert "is merge-ready for pull request" not in result.stdout
 
 
-@pytest.mark.parametrize("login,exit_code", [("source-author", 0), ("another-author", 1)])
+@pytest.mark.parametrize("login,warns", [("source-author", False), ("another-author", True)])
 def test_addition_on_stale_branch_requires_verified_login(
-    validate_command, github_api, login, exit_code
+    validate_command, github_api, login, warns
 ):
     _, responses = github_api
     responses["/repos/trycua/cua/pulls/12"] = {
@@ -181,10 +183,10 @@ def test_addition_on_stale_branch_requires_verified_login(
         body="The identity is verified by https://github.com/trycua/cua/pull/12",
     )
 
-    assert result.returncode == exit_code, result.stdout + result.stderr
-    if exit_code:
-        assert "verified source PR author is @source-author" in result.stderr
-        assert "merge-ready" not in result.stdout
+    assert result.returncode == 0, result.stdout + result.stderr
+    if warns:
+        assert "verified source PR author is @source-author" in result.stdout
+        assert "is merge-ready for pull request" not in result.stdout
     else:
         assert "merge-ready for pull request #50" in result.stdout
 
@@ -195,15 +197,37 @@ def test_unreadable_configuration_is_not_approved(validate_command, missing):
     configurations[missing] = None
     result = validate_command(**configurations)
 
-    assert result.returncode == 1
-    assert "GitHub API GET" in result.stderr
-    assert "404" in result.stderr
-    assert "merge-ready" not in result.stdout
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "::warning" in result.stdout
+    assert "GitHub API GET" in result.stdout
+    assert "404" in result.stdout
+    assert "is merge-ready for pull request" not in result.stdout
 
 
 def test_missing_merge_base_is_not_approved(validate_command):
     result = validate_command(ancestor={}, head={}, merge_base_sha="")
 
-    assert result.returncode == 1
-    assert "no merge base" in result.stderr
-    assert "merge-ready" not in result.stdout
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "no merge base" in result.stdout
+    assert "is merge-ready for pull request" not in result.stdout
+
+
+def test_unlinked_commit_email_passes_with_a_warning(validate_command):
+    """A PR whose commit email GitHub cannot link never fails the check."""
+    result = validate_command(
+        ancestor=KNOWN,
+        head=KNOWN,
+        commit={
+            "sha": HEAD,
+            "author": None,
+            "commit": {
+                "author": {"name": "Some Person", "email": "private@unlinked.example"},
+                "message": "docs: update guide",
+            },
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "::warning" in result.stdout
+    assert "private@unlinked.example" in result.stdout
+    assert "informational" in result.stdout

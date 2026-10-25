@@ -4,12 +4,14 @@
 import { CheckIcon, ChevronRightIcon, LoaderCircleIcon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { useBridge, useConnectCloud, useNewSpaceWizard, useSpaces, type RuntimeSwitch, type WizardAction, type WizardField, type WizardTile, type WizardView } from "@/bridge";
+import { useBridge, useConnectCloud, useNewSpaceWizard, useSpaces, type CreateSpaceArgs, type RuntimeSwitch, type WizardAction, type WizardField, type WizardTile, type WizardView } from "@/bridge";
+import { CliHintBlock, useCliName } from "@/components/cli-hint";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { toastError } from "@/components/ui/toast";
+import { createCommand, openCommand } from "@/lib/cli-commands";
 import { macosLimitText } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 import { useCreateFromWizard } from "@/hooks/use-new-space";
@@ -678,15 +680,37 @@ function OptionsStep({ v }: { v: WizardView }) {
 
 function SummaryStep({ v }: { v: WizardView }) {
   return (
-    <Group data-summary="">
-      {v.summary.map((fact) => (
-        <div key={fact.label} data-summary-row="" className="flex items-baseline justify-between gap-6 px-4 py-2 text-[13px]">
-          <span className="shrink-0 text-muted-foreground">{fact.label}</span>
-          <span className={cn("min-w-0 text-right break-all", fact.label === "Image" && "font-mono text-xs")}>{fact.value}</span>
-        </div>
-      ))}
-    </Group>
+    <>
+      <Group data-summary="">
+        {v.summary.map((fact) => (
+          <div key={fact.label} data-summary-row="" className="flex items-baseline justify-between gap-6 px-4 py-2 text-[13px]">
+            <span className="shrink-0 text-muted-foreground">{fact.label}</span>
+            <span className={cn("min-w-0 text-right break-all", fact.label === "Image" && "font-mono text-xs")}>{fact.value}</span>
+          </div>
+        ))}
+      </Group>
+      <SummaryCommands v={v} />
+    </>
   );
+}
+
+/** What Create does, as terminal commands (the create the core would make,
+ * then opening it when "Open when it's ready" is on); only with the CLI
+ * installed. */
+function SummaryCommands({ v }: { v: WizardView }) {
+  const { core } = useBridge();
+  const cli = useCliName();
+  if (!cli) return null;
+  let args: CreateSpaceArgs | undefined;
+  try {
+    args = core.tryCall<CreateSpaceArgs>("wizard.createArgs", { plan: v.plan });
+  } catch {
+    args = undefined;
+  }
+  const create = args ? createCommand(cli, args) : null;
+  if (!args || !create) return null;
+  const open = v.plan.openWhenReady ? openCommand(cli, args) : null;
+  return <CliHintBlock commands={open ? [create, open] : [create]} />;
 }
 
 /* ---- Connect by address ---------------------------------------------------- */

@@ -745,12 +745,13 @@ impl QemuRuntime {
         boot: Boot,
         persist: bool,
     ) -> Result<()> {
-        let shared = match &boot.memory {
-            Memory::File { path, .. } => Some(path.clone()),
-            Memory::Ram => None,
-        };
-        self.admit_waiting(&st.name, spec.cpus, spec.memory_mb, shared)
-            .await?;
+        self.admit_waiting(
+            &st.name,
+            spec.cpus,
+            spec.memory_mb,
+            admission_file(&boot.memory),
+        )
+        .await?;
         let res = self.launch_admitted(st, spec, boot, persist).await;
         if res.is_err() {
             self.release(&st.name);
@@ -2870,6 +2871,23 @@ impl Runtime for QemuRuntime {
     }
 }
 
+/// The snapshot RAM file a VM shares with others, as admission counts it
+/// ([`crate::density`]): a file mapped copy-on-write (`share=off`, a
+/// restore or a fork) is counted once for every VM mapping it, on top of
+/// each VM's private pages. A file the VM writes itself (`share=on`, a
+/// golden snapshot being recorded) is that VM's own RAM, not shared with
+/// anyone: it is admitted like anonymous RAM, so its memory is not counted
+/// twice (once as the guest's RAM, again as the file).
+fn admission_file(memory: &Memory) -> Option<PathBuf> {
+    match memory {
+        Memory::File {
+            path,
+            shared: false,
+        } => Some(path.clone()),
+        Memory::File { shared: true, .. } | Memory::Ram => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -3273,6 +3291,25 @@ mod tests {
 
     /// Admission counts VMs admitted moments ago (pending) and refuses with
     /// HostCapacity, saying which limit; a failed launch gives its slot back.
+    #[test]
+    fn a_recording_vm_counts_its_own_ram_file_once() {
+        // A golden snapshot being recorded writes its RAM file (share=on):
+        // that file is its RAM, not a shared one, so admission must not add
+        // it on top of the guest's memory (a 4 GiB bake counted as 8 GiB
+        // did not fit a 7.8 GiB CI runner).
+        let rec = Memory::File {
+            path: "/g/mem.ram".into(),
+            shared: true,
+        };
+        assert_eq!(admission_file(&rec), None);
+        let restore = Memory::File {
+            path: "/g/mem.ram".into(),
+            shared: false,
+        };
+        assert_eq!(admission_file(&restore), Some(PathBuf::from("/g/mem.ram")));
+        assert_eq!(admission_file(&Memory::Ram), None);
+    }
+
     #[test]
     fn admission_counts_pending_vms_and_refuses_with_host_capacity() {
         let d = tempfile::tempdir().unwrap();

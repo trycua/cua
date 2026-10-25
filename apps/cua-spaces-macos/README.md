@@ -11,7 +11,7 @@ render and do platform glue.
 | Main window | Sidebar with Spaces (one section per location; a dragged window drops on a row) and the Keyvault (All, Waiting, Access, Recent, one row per site) with the global Keyvault switch; Space detail with the live desktop, per-window streams, picture in picture, agent runs and the Teleport drop well |
 | New Space | Step-by-step sheet: System, Resources, Options, Summary; Connect by address |
 | Keyvault | Sidebar and list: categories, a site's accounts with their unattended switches, approval sheets |
-| Onboarding | The shared web onboarding (`/onboarding` in `apps/cua-spaces-web`), in the New UI window, whether or not the New UI setting is on; the app draws none of its own. The page asks and finishes it through `onboarding.get` and `onboarding.complete` (the state is `onboarding.json`); a Space it creates posts a "<Space> is ready" notification (`notifyWhenReady`) that opens the Space. With the New UI off, the window gives way to the native one when the first run ends |
+| Onboarding | The shared web onboarding (`/onboarding` in `apps/cua-spaces-web`), in the New UI window, whether or not the New UI setting is on; the app draws none of its own. The page asks and finishes it through `onboarding.get` and `onboarding.complete` (the state is `onboarding.json`); a Space it creates posts a "<Space> is ready" notification (`notifyWhenReady`) that opens the Space. With the New UI off, the window gives way to the native one when the first run ends. A launch (or a window that opens again) while it is not done opens `/onboarding?due=1`: the page goes to Spaces instead when the person chose "Skip for now" (kept in the page's storage), so the welcome does not come back at every launch; Settings → Welcome and the sidebar's "Finish setting up" open it without `due` and always show it |
 | Devices | Settings → Devices: this Mac's enrollment (enrolled until, grace ends, needs enrollment), the account's devices with Rename and Revoke, Recent Access; the Enroll sheet (sign in again, or a one-time code approved from an enrolled device), the approval sheet for a device asking to join (a notification too; Approve asks for Touch ID or the login password), and a banner in the main window when this Mac needs enrolling |
 | Menu bar | The Cua mark (template); status line, Open, New Space, Settings, Quit |
 | Launch at login | Settings → General: `SMAppService.mainApp`, showing what macOS reports (on, off, waiting for approval with a button to Login Items, not found); the first run's Done page (the web onboarding's) ticks it. A login launch opens without the main window, and the app's daemon (host Spaces, persistent agents, Cua Volume) starts with it |
@@ -53,7 +53,38 @@ cd ../../apps/cua-spaces-macos
 swift build                      # the package
 scripts/test.sh                  # unit, parity and snapshot tests (swift-testing)
 scripts/build-app.sh release     # .build/app/Cua Spaces.app, ad hoc signed
+scripts/build-app.sh --channel local release   # .build/app/Cua Spaces Local.app (below)
 ```
+
+### Cua Spaces Local, beside the installed app
+
+`scripts/build-app.sh --channel local` builds **Cua Spaces Local**, which runs
+at the same time as an installed Cua Spaces and cannot touch it (CUA-1776).
+Without `--channel` the build is Stable, the app the release scripts ship.
+Every Local name comes from `CuaChannel`
+(`libs/cua/crates/cua-home/src/channel.rs`; `scripts/channel-names.sh local`
+prints them), so nothing here hard-codes one.
+
+| | Stable | Local |
+|---|---|---|
+| App | `Cua Spaces.app` | `Cua Spaces Local.app` |
+| Bundle id | `com.trycua.spaces.macos` | `com.trycua.spaces.macos.local` |
+| Info.plist | no channel keys | `CuaChannel=local`, `CuaEnv=staging`, `CuaHome=~/.cua-local`, `CuaHelperLabel`, `CuaUrlScheme` |
+| Cua deployment | prod (`CUA_ENV` picks another) | staging (`CUA_ENV=prod` opts in) |
+| Cua home | `~/.cua` (`~/.cua/envs/staging` on staging) | `~/.cua-local` on staging; `~/.cua-local/envs/prod` under the `CUA_ENV=prod` opt-in |
+| Sign-in Keychain service | `ai.cua.session` (`.staging` on staging) | `ai.cua.session.local` (`.staging` on staging) |
+| Helper login item | `com.trycua.spaces.helper` | `com.trycua.spaces.local.helper` (plist file stamped to match; `AssociatedBundleIdentifiers` is the Local bundle id) |
+| URL scheme | `cua://` | `cua-local://` |
+| Updater | Sparkle feed and key | none (`SUFeedURL`, `SUPublicEDKey` removed): it never offers or installs an update |
+
+The app reads `CuaChannel`, `CuaEnv` and `CuaHome` at start and sets
+`CUA_CHANNEL`, `CUA_ENV` and `CUA_HOME` before anything else runs (the login
+item included), so `cua-spacesd` and every other child inherit them
+(`TargetEnvironment`). A variable that is already set wins. The build ends with
+`scripts/check-local-bundle.sh`, which fails if a Local bundle has the
+production id, a Sparkle feed or the `cua` scheme; CI runs it too. Run a Local
+build from the build directory: installing it beside Stable (with its CLI,
+Volume and Lume) is the install-local work of CUA-1776.
 
 `SNAPSHOT_RECORD=1 scripts/test.sh` re-records the snapshot references.
 UI tests (XCUITest) need Xcode: `xcodegen generate` (project.yml), then
@@ -188,9 +219,13 @@ team `YCK386LBJ7`, identifier in `CUA_IDENTIFIERS`, hardened runtime.
 
 The saved sign-in (`cua auth login`, shared by the app, its `cua` daemon
 and the `cua` CLI) is a generic password in the login keychain: service
-`run.cua.ai`, account `cua-cli`, plus `cua-cli.<name>` for named secrets
-such as the device key (`cua-auth`). Only Cua-signed builds use the
-keychain; ad hoc and unsigned builds keep it in `~/.cua/credentials.json`.
+`ai.cua.session` (`ai.cua.session.staging` on staging), account `cua-cli`,
+plus `cua-cli.<name>` for named secrets such as the device key (`cua-auth`).
+Items older builds kept under `run.cua.ai` move to it once. Cua Spaces Local
+has its own services, `ai.cua.session.local` and `ai.cua.session.local.staging`
+(`CuaChannel::keychain_service`), and nothing to move, so it never reads,
+replaces or signs out the released app's sign-in. Only Cua-signed builds use
+the keychain; ad hoc and unsigned builds keep it in `<cua home>/credentials.json`.
 
 **The launch never waits on it.** The window (or New UI's) opens first,
 on stand-ins for the live services (`Models/AppStartup.swift`). Then, off
@@ -288,6 +323,133 @@ app for Windows and Linux.
 This app is the macOS release; the Electron app (`apps/cua-spaces-desktop`)
 ships for Windows and Linux.
 
+## Run a Local build next to the stable app
+
+`scripts/install-local.sh` builds this checkout and installs it as **Cua Spaces
+Local**, beside the released Cua Spaces, so you can use Spaces to build Spaces:
+the released app on your production account, your build on staging, both
+signed in and both hosting this Mac.
+
+```sh
+scripts/install-local.sh                 # debug build, then opens the app
+scripts/install-local.sh --release       # release configuration
+scripts/install-local.sh --no-launch     # install without opening it
+scripts/install-local.sh --with-lume-local   # also install lume-local
+scripts/install-local.sh --prefix DIR    # app in DIR/Applications, cua-local in DIR/.local/bin
+scripts/install-local.sh --skip-web-build    # use the web UI already built in apps/cua-spaces-web/dist
+scripts/install-local.sh --setup-signing # do the one-time signing setup on a new Keychain without asking
+```
+
+It first checks what the build needs and lists everything that is missing in
+one message, with what to run: the Xcode command line tools, `cmake`, Rust
+(rustup), and for the web UI Node 22 or later, `pnpm`, the `wasm32` Rust target
+and `wasm-bindgen-cli` (the versions the release build pins). Nothing is built
+before they are all there.
+
+`--prefix` is resolved first (`..` and symlinks included) and refused when the
+app or `cua-local` would land on, or inside, anything the released Cua Spaces
+owns: `/Applications`, `~/.cua`, `~/.local/bin/cua`, `~/.lume`, `~/Cua Volume`.
+
+The Local build shares nothing with the released app. Every name comes from
+`CuaChannel::Local` (`libs/cua/crates/cua-home/src/channel.rs`):
+
+| | Cua Spaces | Cua Spaces Local |
+|---|---|---|
+| App | `/Applications/Cua Spaces.app` | `~/Applications/Cua Spaces Local.app` |
+| Bundle id | `com.trycua.spaces.macos` | `com.trycua.spaces.macos.local` |
+| CLI | `~/.local/bin/cua` | `~/.local/bin/cua-local` |
+| Home | `~/.cua` | `~/.cua-local` |
+| Backend | production | staging (`CUA_ENV=prod` opts in) |
+| URL scheme | `cua://` | `cua-local://` |
+| Updates | Sparkle | none |
+
+The script builds the web UI as the release build does (`pnpm install
+--ignore-workspace --frozen-lockfile`, `pnpm build` in `apps/cua-spaces-web`;
+`--skip-web-build` or `CUA_WEBUI_DIST` use a build that is already there) and
+stops, with a message, when there is none: without it the app says "The new UI
+is not in this build". Then it builds the library, the `cua` CLI and
+`cua-spacesd` from this checkout (`--skip-rust-build` reuses the last build) and runs
+`scripts/build-app.sh --channel local` with `CUA_SPACESD_BIN` set to that
+`cua-spacesd`. Without it build-app.sh bundles the pinned release of the host
+service, which does not know the Local ports; the script compares the bundled
+daemon's machine code with the one it built and refuses the app if they differ.
+It copies the app to a staging folder, signs it, checks the signature, the bundle id, the URL scheme
+and that there is no update feed, and only then swaps it in. If the copy does
+not verify it puts the previous Local app back. It refuses to replace anything
+at the Local path that is not a Cua Spaces Local bundle, and it never writes to
+`/Applications/Cua Spaces.app`, `~/.local/bin/cua`, `~/.cua` or `~/.lume`.
+`cua-local` is a link to the `cua` inside the app; no shell profile is edited,
+so put `~/.local/bin` on your PATH. It names itself in what it prints: its help,
+its hints and its error messages tell you to run `cua-local host setup`, never
+`cua host setup` (which would run the released CLI). The code writes each hint
+for the released CLI and `cua-cli` renames it where it is printed (`util::hint`,
+and for a message that holds a name the user chose, `util::cli`); a message
+that names a command goes through one of them.
+
+**Permissions survive a rebuild** when the app is signed with the stable local
+certificate that Cua Driver's local install uses
+(`libs/cua-driver/scripts/_local-signing.sh`; setup in
+`libs/cua-driver/scripts/README.md`, "Stable macOS local signing"). Without it
+the app is signed ad hoc and macOS asks for Screen Recording and Accessibility
+again after every rebuild; the script says so, and clears the stale rows for the
+Local bundle id only. `--require-stable-signing` stops instead of signing ad hoc.
+
+On a new Keychain the certificate is created but codesign cannot use it until
+macOS trusts it for code signing, its Keychain is in your search list and
+codesign may use its key. The script checks that with a real signing. When it
+does not work it says so and, once you agree at a terminal (or with
+`--setup-signing`), sets it up: macOS asks for your password once to trust the
+certificate, and the Keychain password is asked once (not stored) if codesign
+still needs the key, which is opened for that certificate's key only (`-t
+private -l <its name>`; never every signing key in your Keychain). Without a terminal or a screen (SSH, a VM) it prints the
+exact commands, `sudo` variant included, and does nothing. It never trusts
+anything unasked, never changes a certificate you chose with
+`CUA_DRIVER_LOCAL_SIGNING_IDENTITY`, and still requires a certificate-backed
+signature before it counts as stable.
+
+**Coding agents.** The Local app's agent setup ("Continue" on the welcome
+screen) registers its own MCP server as `cua-local` (it launches Local's `cua`)
+and installs its own skill copies as `<name>-local` (`cua-spaces-local`, ...;
+`SKILL.md` carries that name and a note to run `cua-local`), in the same agent
+configs and skills folders as the released app, and keeps its record under
+`~/.cua-local`. The released app's `cua` entry and skills are left as they are,
+and removing Local's setup removes only Local's. The names come from
+`CuaChannel` (`mcp_server_name`, `skill_install_name`).
+
+Rebuilding is the same command. To remove it:
+
+```sh
+scripts/uninstall-local.sh               # asks first; --yes to skip, --with-lume-local to include lume-local
+```
+
+It unregisters the Local helper login item and removes the app, `cua-local`,
+`~/.cua-local`, the Local app support folder and the Local Keychain items
+(`ai.cua.session.local*`). It keeps `~/Cua Volume Local` and the permissions
+macOS granted.
+
+**The Local bundle id changed.** The first Local builds were
+`com.trycua.spaces.local`; Local is now `com.trycua.spaces.macos.local` (Stable
+plus `.local`; the launchd ids, ports, `cua-local` and `~/.cua-local` did not
+change). `install-local.sh` finds an app with the old id at the Local path,
+unregisters its helper login item, removes it, installs the renamed app, and
+then removes what the old id left in `~/Library` (its Application Support
+folder, preferences, caches, web view data, cookies and window state). It says
+so in one line. If the new copy fails to verify, the old app and its login item
+are put back. Your sign-in (`~/.cua-local`) and `~/Cua Volume Local` stay, and
+macOS asks for the renamed app's permissions once; the old id's permission rows
+stay in macOS's list unused (`tccutil` cannot clear them for an app that is
+gone). `uninstall-local.sh` removes both ids' leftovers. Neither touches
+anything Stable owns. Because the new id is Stable's plus a suffix, compare
+bundle ids whole, never by prefix.
+
+There is one Local slot per Mac: an Internal build from CI uses the same
+identity, so it and a build from source replace each other.
+
+`scripts/tests/install-local-test.sh` checks all of this against a fake `HOME`
+and a fake build: a Stable install is byte-identical before and after install,
+rebuild and uninstall, a wrong bundle id is refused, a failed copy is rolled
+back, an app with the old Local id is replaced and its leftovers removed. `CUA_TEST_SIGNING_KEYCHAIN=<keychain>` adds the certificate-signing checks.
+
 ## Release
 
 `.github/workflows/cd-cua-spaces.yml` (tags `cua-spaces-v*`) runs
@@ -298,8 +460,13 @@ and a Developer ID signature with the hardened runtime from the inside out
 (Sparkle.framework in Sparkle's documented order: `Installer.xpc`,
 `Downloader.xpc`, `Autoupdate`, `Updater.app`, the framework; then
 `libcua_sdk.dylib`, then `Contents/MacOS/cua` as `com.trycua.cua` with
-`Support/cua.entitlements`, then the app as `com.trycua.spaces.macos` with
-`Support/CuaSpacesMac.entitlements`). It ends with `scripts/check-launch.sh`:
+`Support/cua.entitlements`, the host service `Contents/Helpers/cua-spacesd` as
+`com.trycua.cua-env-driver`, then the app as `com.trycua.spaces.macos` with
+`Support/CuaSpacesMac.entitlements`). `scripts/check-bundle-layout.sh` keeps
+everything but the app and the command-line tools out of `Contents/MacOS`: a
+process there that starts AppKit (cua-spacesd does, for its cursor overlay)
+registers with LaunchServices as the app itself, and opening Cua Spaces then
+activates that windowless process instead of showing a window. It ends with `scripts/check-launch.sh`:
 every library resolves inside the bundle and passes library validation, and
 `CuaSpacesMac --check-launch-only` starts and exits. The workflow notarizes
 and staples the app, packs it with `scripts/package-dmg.sh` into
@@ -330,11 +497,14 @@ the key was, so installing is dragging the key into its place.
 `package-dmg.sh` lays the window out with a pinned
 [dmgbuild](https://github.com/dmgbuild/dmgbuild) (`scripts/dmg-settings.py`)
 and makes the alias with `scripts/make-alias.swift`. The art in
-`Support/dmg` and the app icon `Support/AppIcon.icns` (the key with the Spaces
-mark, the Cua mark in stacked squares, on a slate tile) are drawn from the site's keycap sprites by
-`scripts/dmg-art/render.sh` (headless Chrome), which also writes the same icon
-to `apps/cua-spaces/src-tauri/icons` for the other apps; rerun it only when
-the art changes.
+`Support/dmg` is drawn from the site's keycap sprites by
+`scripts/dmg-art/render.sh` (headless Chrome). The app icon
+`Support/AppIcon.icns` (the terracotta koala keycap) is not drawn: it is built
+from the chosen PNGs in `scripts/dmg-art/src` (`app-icon-1024.png`, plus
+`app-icon-small-1024.png` with a larger print for 16 to 64 px) by
+`render.sh`, which also writes the same icon to `apps/cua-spaces/src-tauri/icons`
+for the other apps. `render.sh --app-icon-only` rebuilds just the icons; rerun
+it only when the art changes.
 
 ## Updates (Sparkle)
 

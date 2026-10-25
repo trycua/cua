@@ -637,6 +637,8 @@ impl Agents {
             app_dirs: vec![],
             os: cua_agent_setup::Os::Linux,
             run_agent_clis: false,
+            // The guest's own cua: the bundled names, whatever the host is.
+            channel: cua_agent_setup::CuaChannel::Stable,
         };
         let dir = loc.resolve(&env).to_string_lossy().replace('\\', "/");
         let mut done = vec![];

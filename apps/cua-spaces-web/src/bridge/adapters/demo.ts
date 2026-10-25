@@ -43,6 +43,7 @@ import { demoKeyvaultSetupHandlers, demoKeyvaultSetupState, demoNoVaultOverview,
 import { unsupportedStreamOps } from "../ops/stream";
 import { unsupportedPresenceOps } from "../ops/presence";
 import { unsupportedRuntimeFixOps } from "../ops/runtime-fix";
+import type { CliInstallPlan } from "../contracts/first-run";
 import { unsupportedChecklistOps } from "../ops/checklist";
 import { demoTeleportHandlers } from "./demo/teleport";
 import { createDemoSettings } from "./demo/settings";
@@ -71,6 +72,10 @@ export interface DemoOptions {
   noVault?: boolean;
   /** Start with no Spaces (the first-Space empty state). */
   noSpaces?: boolean;
+  /** An account in no team (`?demo=no-team`): Share explains that sharing is for teams. */
+  noTeam?: boolean;
+  /** A team with no free computers (`?demo=team-full`): adding a machine to it is refused, as the control plane does at one computer per seat. Simulated: the demo has no control plane. */
+  teamFull?: boolean;
   /** Start at the macOS Keychain prompt (the startup screen). */
   keychain?: boolean;
   /** Answer New Space's options as the SwiftUI host does (`demo/new-space.ts`). */
@@ -80,6 +85,8 @@ export interface DemoOptions {
   /** The relay allowance: `idle` (free, no live session, so prompts can show),
    * `warn` (80% of the hours), `limit` (used up), `pro` or `teams`. */
   usage?: "idle" | "warn" | "limit" | "pro" | "teams";
+  /** Which agents are on this computer (`?demo=agents-none`, `?demo=agents-codex`); all of them by default. */
+  agents?: "none" | "codex";
   /** This Mac's free disk: `low` (`?demo=low-disk`) or `full` (`?demo=disk-full`). */
   disk?: "low" | "full";
   /** The machine the demo runs on: a Mac on Apple silicon unless set (the
@@ -94,6 +101,10 @@ export interface DemoOptions {
    * `?demo=create-fail-runtime`) or `disk` (every create is short of disk
    * space, `?demo=create-fail-disk`). */
   failCreates?: "runtime-once" | "disk";
+  /** The CLI the demo host reports: the released app's `cua` on PATH unless
+   * set; `local` is a Local build's (`?demo=cli-local`), `missing` one
+   * not installed (`?demo=cli-missing`). */
+  cli?: "local" | "missing";
 }
 
 /** The SDK's words for the failures `failCreates` plays. */
@@ -104,7 +115,7 @@ export const DEMO_CREATE_FAILURES = {
 
 const DEMO_NOTES = "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3";
 
-/** `?demo=fresh` (signed out, first run), `?demo=slow` (slow answers), `?demo=locked` (Keyvault locked), `?demo=novault` (no Keyvault yet),
+/** `?demo=fresh` (signed out, first run), `?demo=no-team`, `?demo=team-full`, `?demo=slow` (slow answers), `?demo=locked` (Keyvault locked), `?demo=novault` (no Keyvault yet),
  * `?demo=empty` (no Spaces yet), `?demo=keychain` (the startup screen),
  * `?demo=mac-host` (New Space options and the Keyvault's Settings rows in the
  * SwiftUI host's shape), `?demo=unenrolled` (this device not enrolled),
@@ -120,12 +131,16 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     keyvaultLocked: flags.has("locked"),
     noVault: flags.has("novault"),
     noSpaces: flags.has("empty"),
+    noTeam: flags.has("no-team"),
+    teamFull: flags.has("team-full"),
     keychain: flags.has("keychain"),
     macHost: flags.has("mac-host"),
     unenrolled: flags.has("unenrolled"),
     usage: (["idle", "warn", "limit", "pro", "teams"] as const).find((u) => flags.has(`usage-${u}`)),
+    agents: (["none", "codex"] as const).find((a) => flags.has(`agents-${a}`)),
     nudge: (["second-agent", "risky"] as const).find((n) => flags.has(`nudge-${n}`)),
     disk: flags.has("disk-full") ? "full" : flags.has("low-disk") ? "low" : undefined,
+    cli: flags.has("cli-local") ? "local" : flags.has("cli-missing") ? "missing" : undefined,
     failCreates: flags.has("create-fail-runtime") ? "runtime-once" : flags.has("create-fail-disk") ? "disk" : undefined,
     ...(flags.has("update-ready")
       ? { update: { status: "downloaded" as const, version: "0.9.3", percent: 100, notesUrl: DEMO_NOTES } }
@@ -178,7 +193,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     agents: demoPersistentAgents(now()),
     // A named allowance is for showing the prompts, which wait for no agent run.
     runs: options.usage ? [] : demoRunRecords(now()),
-    agentSetup: demoAgentSetup(),
+    agentSetup: demoAgentSetup(options.onboarded === false, options.agents === "none" ? [] : options.agents === "codex" ? ["codex"] : null),
     platform: options.platform ?? MAC_DEMO_PLATFORM,
     paired: [],
     renamed: {},
@@ -234,6 +249,24 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
   const replaceRow = (id: string, patch: Partial<SpaceRow>) => {
     state.rows = state.rows.map((r) => (r.id === id ? { ...r, ...patch } : r));
   };
+  // The bundled CLI (`?demo=cli-missing`: a disk-image install, none on PATH yet).
+  const cliName = options.cli === "local" ? "cua-local" : "cua";
+  let cliInstalled = options.cli !== "missing";
+  const cliPlan = (): CliInstallPlan => {
+    const target = `/Users/me/.local/bin/${cliName}`;
+    return {
+      source: `/Applications/Cua Spaces.app/Contents/MacOS/cua`,
+      target,
+      binDir: "/Users/me/.local/bin",
+      method: "symlink",
+      installed: cliInstalled,
+      upToDate: cliInstalled,
+      onPath: cliInstalled,
+      pathProfile: cliInstalled ? null : "/Users/me/.zshrc",
+      pathLine: cliInstalled ? null : 'export PATH="/Users/me/.local/bin:$PATH"',
+      found: cliInstalled ? target : null,
+    };
+  };
   const settingsSnapshot = (): SettingsSnapshot => ({
     values: { ...state.settings },
     defaultLocation: { value: state.settings.defaultLocation, source: "config", path: "~/.cua/config.toml" },
@@ -241,6 +274,8 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...(state.hostSettings ? { hostSettings: { ...state.hostSettings } } : {}),
     // The macOS hosts register ⌘⇧Space; the Windows and Linux shells have none.
     globalShortcut: state.platform.os === "macos" ? { label: state.settings.hotkey, registered: true } : null,
+    // What a host's CLI install plan names (`CuaChannel::cli_name`): Local's is `cua-local`.
+    cli: { name: cliName, installed: cliInstalled },
   });
   const overview = () => {
     if (!state.keyvaultSetUp) return demoNoVaultOverview(now());
@@ -573,12 +608,13 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     },
     ...newSpaceDemoHandlers({ state, wait, emit, step, now }),
     ...demoTeleportHandlers({ wait, emit, now, stepMs: step }),
-    ...demoShareHandlers({ wait, stepMs: step }),
+    ...demoShareHandlers({ wait, stepMs: step, teamFull: options.teamFull }),
     ...demoAgentDetailHandlers({ wait, stepMs: step, now }),
     ...demoAgentKeysHandlers({ wait, stepMs: step, now }),
     ...demoVolumeHandlers({ state: state.volume, now, wait, step, emit, platform: state.platform }),
     ...createDemoSettings({ now, wait, emit, stepMs: step, platform: state.platform, unenrolled: options.unenrolled, update: options.update, experiments: state.volume.experiments, signedIn: () => Boolean(state.identity), settings: () => state.settings, setSettings: (p) => ((state.settings = { ...state.settings, ...p }), emit({ type: "settings.changed" })), addMachine: (m) => ((state.paired = [...state.paired, m]), emit({ type: "machines.changed" })) }),
     ...demoTelemetryHandlers(ctx),
+    ...(options.noTeam ? { "teams.list": () => ({ teams: [], currentTeamId: null }) } : {}),
     ...demoRelayUsageHandlers(ctx),
     ...demoLinksHandlers(ctx),
     "nudges.pending": () => risky.filter((r) => r.expiresMs > now()).map((r) => ({ ...r })),
@@ -596,6 +632,12 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...unsupportedChecklistOps("demo"),
     ...unsupportedPresenceOps("demo"),
     ...unsupportedRuntimeFixOps("demo"),
+    "cli.plan": () => cliPlan(),
+    "cli.install": async () => {
+      await wait(step);
+      cliInstalled = true;
+      return cliPlan();
+    },
   };
 
   return {

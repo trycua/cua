@@ -107,6 +107,19 @@ describe.skipIf(!built)("the checklist and the Machines rows on the app core", (
     expect(await done()).toContain("run_agent");
   });
 
+  it("keeps a skipped step between launches", async () => {
+    make();
+    const state = () => (call("checklist.get") as unknown as Promise<{ state: { done: string[]; skipped: string[] } }>).then((r) => r.state);
+    expect((await state()).skipped).toEqual([]);
+    await call("checklist.send", { action: { type: "skip", step: "share" } });
+    expect((await state()).skipped).toEqual(["share"]);
+    expect(JSON.parse(readFileSync(path.join(appDir, "checklist.json"), "utf8")).skipped).toEqual(["share"]);
+    await expect(call("checklist.send", { action: { type: "skip", step: "nope" } })).rejects.toMatchObject({ code: "bad_args" });
+    // Read back on the next launch.
+    make();
+    expect((await state()).skipped).toEqual(["share"]);
+  });
+
   it("merges what the page kept before without its events again", async () => {
     make();
     const before = telemetry.recorded.length;
@@ -123,6 +136,7 @@ describe.skipIf(!built)("the checklist and the Machines rows on the app core", (
     mkdirSync(swift, { recursive: true });
     writeFileSync(path.join(swift, "checklist.json"), JSON.stringify({ done: ["add_machine", "teleport"], dismissed: false, shown: true }));
     make(path.join(swift, "checklist.json"));
-    expect(model.checklist.stored).toEqual({ done: ["add_machine", "teleport"], dismissed: false, shown: true });
+    // A file from an older app has no skips.
+    expect(model.checklist.stored).toEqual({ done: ["add_machine", "teleport"], dismissed: false, shown: true, skipped: [] });
   });
 });

@@ -613,7 +613,8 @@ impl SpacesApiClient {
         if is_legacy_team_id(q) {
             return Err(Error::InvalidArgument(format!(
                 "{q} is a team id of the old Teams, which this version no longer uses: \
-                 use the team's id from `cua team ls`"
+                 use the team's id from `{} team ls`",
+                crate::cli()
             )));
         }
         let me: ApiMe = self.org_get("/v1/me", token).await?;
@@ -628,11 +629,13 @@ impl SpacesApiClient {
         match named.as_slice() {
             [o] => Ok((*o).clone()),
             [] => Err(Error::NotFound(format!(
-                "no team of yours is called {q:?} (`cua team ls`; a team made or joined a \
-                 moment ago shows up after `cua auth login`)"
+                "no team of yours is called {q:?} (`{cli} team ls`; a team made or joined a \
+                 moment ago shows up after `{cli} auth login`)",
+                cli = crate::cli()
             ))),
             _ => Err(Error::InvalidArgument(format!(
-                "several of your teams are called {q:?}: use the team id (`cua team ls`)"
+                "several of your teams are called {q:?}: use the team id (`{} team ls`)",
+                crate::cli()
             ))),
         }
     }

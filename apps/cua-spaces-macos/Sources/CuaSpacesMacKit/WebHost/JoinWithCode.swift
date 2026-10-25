@@ -4,7 +4,9 @@
 import Foundation
 
 /// "Join with a code": the pairing code a machine joins with, as the
-/// `host.joinWithCode` bridge method and the `cua://add/<CODE>` link carry it.
+/// `host.joinWithCode` bridge method and the `cua://add/<CODE>` link carry it
+/// (`cua-local://add/<CODE>` in Cua Spaces Local: the app answers only to its
+/// own scheme, `AppURLScheme`).
 /// Pure parts only; the Process runs in `WebUIBridge+Pages.swift`.
 enum JoinWithCode {
     /// Crockford base32, the pairing code's alphabet.
@@ -60,10 +62,17 @@ enum JoinWithCode {
     }
 
     /// What `cua://add/<CODE>`, `cua://add/<CODE>?relay=<url>` and
-    /// `cua://add?code=<CODE>` ask for: the page's route, or `nil` for any
-    /// other link or a code that is not well formed.
+    /// `cua://add?code=<CODE>` ask for, in this app's scheme (`cua`, or
+    /// `cua-local` in Cua Spaces Local): the page's route, or `nil` for any
+    /// other link (another app's scheme included) or a code that is not well
+    /// formed.
     static func route(for url: URL) -> String? {
-        guard url.scheme?.lowercased() == "cua",
+        route(for: url, scheme: AppURLScheme.current)
+    }
+
+    /// [`route(for:)`] for the app whose scheme is `scheme`.
+    static func route(for url: URL, scheme: String) -> String? {
+        guard url.scheme?.lowercased() == scheme,
               let parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
         let segments = ([parts.host] + parts.path.split(separator: "/").map(String.init))
             .compactMap { $0 }.filter { !$0.isEmpty }

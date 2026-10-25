@@ -8,14 +8,17 @@
  * and macOS on Apple silicon Macs) with its time and size from the core,
  * under the Spaces header (its New Space opens the wizard with nothing
  * chosen). A tile opens New Space with that system chosen, on this machine
- * (the wizard says when it can't run here).
+ * (the wizard says when it can't run here). Below them, the same creates
+ * as terminal commands, when the app's CLI is installed.
  */
 
 import { useNewSpaceWizard, type EmptyHome as EmptyHomeView, type EmptyTile } from "@/bridge";
 import { useEffect } from "react";
 
+import { CliHintLine, useCliName } from "@/components/cli-hint";
 import { useFirstRunStep } from "@/components/first-run-guide";
 import { OsIcon } from "@/components/os-icon";
+import { createAliasCommand } from "@/lib/cli-commands";
 
 /** `unread`: the host could not read the Spaces list (`listNotice`): the
  * title says so and no system is offered, as the SwiftUI app's does. */
@@ -23,6 +26,9 @@ export function EmptyHome({ home, unread = false }: { home: EmptyHomeView; unrea
   const wizard = useNewSpaceWizard();
   const start = (tile: EmptyTile) => wizard.show(null, tile.os);
   const step = useFirstRunStep();
+  // The same creates in a terminal, when the app's CLI is on this computer.
+  const cli = useCliName();
+  const commands = cli ? home.tiles.map((tile) => createAliasCommand(cli, tile.os)) : [];
   useEffect(() => {
     if (!unread) step("guide_shown");
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -48,6 +54,7 @@ export function EmptyHome({ home, unread = false }: { home: EmptyHomeView; unrea
               <Tile key={tile.os} tile={tile} onStart={start} />
             ))}
           </div>
+          <CliHintLine commands={commands} className="mt-4" />
         </>
       )}
     </section>

@@ -600,8 +600,14 @@ jobs:
           $ErrorActionPreference = 'Stop'
           foreach ($i in 1..4) {
             try {
-              Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser | Out-Null
-              Install-Module -Name TrustedSigning -Scope CurrentUser -Force -Repository PSGallery
+              # PSResourceGet (in PowerShell 7) needs no NuGet package provider; the
+              # provider bootstrap behind Install-PackageProvider stopped resolving.
+              if (Get-Command Install-PSResource -ErrorAction SilentlyContinue) {
+                Install-PSResource -Name TrustedSigning -Repository PSGallery -TrustRepository -Scope CurrentUser -Reinstall
+              } else {
+                Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser | Out-Null
+                Install-Module -Name TrustedSigning -Scope CurrentUser -Force -Repository PSGallery
+              }
               Import-Module TrustedSigning
               Write-Host "TrustedSigning $((Get-Module TrustedSigning).Version) ready"
               exit 0

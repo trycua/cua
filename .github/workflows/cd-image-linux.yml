@@ -86,6 +86,9 @@ on:
       - "libs/cua/crates/cua-cli/src/sandbox/bake.rs"
       - "libs/cua/crates/cua-image/src/canonical.rs"
       - "libs/cua/crates/cua-image/src/publish.rs"
+      # VM admission and QEMU launch decide whether the bake VM starts.
+      - "libs/cua/crates/cua-vmm/src/density.rs"
+      - "libs/cua/crates/cua-vmm/src/qemu/**"
       - ".github/workflows/cd-image-linux.yml"
       - ".github/workflows/image-doctor.yml"
   workflow_dispatch:

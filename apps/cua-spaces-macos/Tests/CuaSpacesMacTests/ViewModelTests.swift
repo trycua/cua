@@ -399,6 +399,17 @@ struct ViewModelTests {
         #expect(model.host.formView?.canSubmit == true)
     }
 
+    /// The web page's usage signals (a sign-in's start, the "still waiting" hint)
+    /// wait for the usage-data switch in its Settings snapshot, and the page can
+    /// run signed out before any Settings view loaded it: reading the switch
+    /// alone fills the page's Settings with it.
+    @Test func refreshingTelemetryGivesTheSettingsItsSwitch() {
+        let model = makeModel(telemetry: FixtureTelemetry())
+        #expect(model.telemetryInput == nil)
+        model.refreshTelemetry()
+        #expect(model.telemetryInput?.enabled == true)
+    }
+
     /// Settings, Experiments: every switch off except Sharing and Your cloud
     /// (on by default); Cua Volume on shows Storage after General, is saved,
     /// recorded, and reaches the first run.
@@ -447,6 +458,27 @@ struct ViewModelTests {
         await model.beginSignIn()
         #expect(model.identity == "you@example.com")
         #expect(steps(telemetry) == ["signed_in"])
+    }
+
+    /// "Get a code instead": a sign-in that never came back from the browser
+    /// restarts with a code, and the account is asked for exactly that.
+    @Test func aSignInThatNeverComesBackCanRestartWithACode() async throws {
+        let account = CodeAskingAccount()
+        let model = makeModel(account: account)
+        let first = Task { await model.beginSignIn() }
+        try await waitUntil { account.starts == [false] }
+        first.cancel()
+        model.cancelSignIn()
+        let byCode = Task { await model.beginSignIn(code: true) }
+        try await waitUntil { account.starts == [false, true] }
+        try await waitUntil { if case .waiting = model.signIn { true } else { false } }
+        guard case let .waiting(userCode, _) = model.signIn else {
+            Issue.record("expected a waiting sign-in, got \(model.signIn)")
+            return
+        }
+        #expect(userCode == "ABCD-EFGH")
+        byCode.cancel()
+        model.cancelSignIn()
     }
 
     /// A sign-in that never finishes: Cancel stops it, a timeout fails it,
@@ -557,8 +589,11 @@ struct ViewModelTests {
         task.cancel()
     }
 
+    /// Waits for `done`, up to 30 s (it ends at once when it holds; the
+    /// bound only matters on a failure, and a loaded runner is slow).
     func waitUntil(_ done: @MainActor () -> Bool) async throws {
-        for _ in 0..<200 where !done() { try await Task.sleep(for: .milliseconds(10)) }
+        let deadline = ContinuousClock.now + .seconds(30)
+        while !done(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
         #expect(done())
     }
 
@@ -603,10 +638,13 @@ struct ViewModelTests {
     @Test func menuBarAndChromeAreTheCores() async {
         let model = makeModel()
         await model.refresh()
-        // The notch's count: This machine counts only while it is shared.
-        let open = appOpenableCount(spaces: model.spaces)
-        #expect(model.menuBar.map(\.label) == appMenuBar(spaces: open).map(\.label))
-        #expect(model.notch.view.tab.count == String(open))
+        // The notch's count: the Spaces on or starting (never This machine,
+        // never a stopped Space); the menu bar item says the same.
+        let on = appOnCount(spaces: model.spaces)
+        #expect(model.menuBar.first?.label == appOnStatusLine(count: on))
+        #expect(model.menuBar.dropFirst().map(\.label) == appMenuBar(spaces: on).dropFirst().map(\.label))
+        #expect(model.statusLine == appOnStatusLine(count: on))
+        #expect(model.notch.view.tab.count == String(on))
         #expect(model.chrome.emptyTitle == "No Spaces yet")
         #expect(model.chrome.signInLabel == nil, "no account: signing in is not offered")
     }
@@ -1476,7 +1514,8 @@ struct ViewModelTests {
         #expect(note.action.label == "Invite to your team")
         model.dismissShareRemovalNote()
         #expect(model.shareRemovalNote == nil)
-        try await Task.sleep(for: .milliseconds(100))
+        // The acknowledgement runs in a task the dismissal starts: wait for it.
+        try await waitUntil { teams.removals.isEmpty }
         #expect(teams.removals.isEmpty, "acknowledged, so it does not come back")
         await model.reloadShareRemovals()
         #expect(model.shareRemovalNote == nil)
@@ -1544,6 +1583,23 @@ final class StuckAccount: AccountRunning, @unchecked Sendable {
     func identity() -> String? { nil }
     func beginSignIn() async throws -> SignInAttempt {
         SignInAttempt(userCode: "ABCD-EFGH", url: URL(string: "https://cua.ai/device"), opened: opened) {
+            try await Task.sleep(for: .seconds(3600))
+            return nil
+        }
+    }
+    func signOut() async throws {}
+}
+
+/// An account that says which way each sign-in started.
+final class CodeAskingAccount: AccountRunning, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _starts: [Bool] = []
+    var starts: [Bool] { lock.withLock { _starts } }
+    func identity() -> String? { nil }
+    func beginSignIn() async throws -> SignInAttempt { try await beginSignIn(code: false) }
+    func beginSignIn(code: Bool) async throws -> SignInAttempt {
+        lock.withLock { _starts.append(code) }
+        return SignInAttempt(userCode: code ? "ABCD-EFGH" : nil, url: URL(string: "https://cua.ai/device"), opened: true) {
             try await Task.sleep(for: .seconds(3600))
             return nil
         }

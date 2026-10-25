@@ -9,7 +9,7 @@ import { Loader2Icon, LogOutIcon, TriangleAlertIcon } from "lucide-react";
 import type { SignInFooter, Space } from "@/bridge";
 import { spokenName } from "@/bridge/space-names";
 
-import { signInFooter, useBridge, useMachines, useNotifications, useRelayUsageView, useSession, useSpaces, useTrackPlanClick } from "@/bridge";
+import { signInFooter, useBridge, useFeatureRecorded, useMachines, useNotifications, useRelayUsageView, useSession, useSpaces, useTrackPlanClick } from "@/bridge";
 import { CuaKey } from "@/components/cua-key";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
@@ -22,6 +22,7 @@ import { Shortcut } from "@/components/ui/kbd";
 import { SignInLink } from "@/components/sign-in-link";
 import { useNavItems } from "./nav";
 import { SidebarUpdateIndicator } from "./update-indicator";
+import { SidebarGetStarted } from "@/components/getting-started";
 
 export function Sidebar() {
   const width = useUiStore((s) => s.sidebarWidth);
@@ -75,6 +76,7 @@ export function Sidebar() {
       <div className="mt-auto">
         <SidebarCreating spaces={spaces ?? []} />
         <SidebarUpdateIndicator />
+        <SidebarGetStarted />
         <AccountFooter />
       </div>
       <ResizeHandle />
@@ -133,6 +135,13 @@ export function AccountFooter() {
       })
     : null;
   useSignInFailureToast(footer);
+  // A browser sign-in that has not come back for a while: offer a code.
+  const waitingOnBrowser = footer?.state === "waiting" && !footer.code;
+  const stuck = useAfter(waitingOnBrowser, STILL_WAITING_MS);
+  useFeatureRecorded("sign_in_still_waiting", stuck);
+  // The last attempt used a code: another code would not help.
+  const triedCode = useRef(false);
+  if (footer?.state === "waiting" && footer.code) triedCode.current = true;
   if (!session || !footer) return <div className="mt-auto h-12 border-t" />;
 
   const unfinished = !session.onboarding.completed;
@@ -141,7 +150,14 @@ export function AccountFooter() {
   // A failure is shown here with its reason (and the toast): nothing to add.
   const startSignIn = () => {
     setDetails(false);
+    triedCode.current = false;
     void signIn().catch(() => {});
+  };
+  // For when the browser never gets back to the app (another browser, a
+  // blocked connection): a code to type on any device.
+  const startWithCode = () => {
+    setDetails(false);
+    void signIn({ code: true }).catch(() => {});
   };
   const identity = footer.identity || (session.signedIn ? "Signed in" : null);
 
@@ -222,6 +238,14 @@ export function AccountFooter() {
               </button>
             ) : null}
           </div>
+          {stuck ? (
+            <div className="mt-1.5 pl-5.5 text-2xs text-muted-foreground" data-signin-stuck="">
+              <p>Still waiting? If the page won&apos;t finish, get a code and sign in from any browser or phone.</p>
+              <button type="button" className="mt-0.5 underline underline-offset-2 hover:text-foreground" onClick={startWithCode} data-signin-code="">
+                Get a code instead
+              </button>
+            </div>
+          ) : null}
           {/* No browser opened: the page, to copy to any device. */}
           {session.signIn.kind === "waiting" && session.signIn.opened === false && session.signInUrl ? (
             <SignInLink url={session.signInUrl} compact />
@@ -237,6 +261,16 @@ export function AccountFooter() {
             <Button size="sm" onClick={startSignIn} data-signin-retry="">
               {footer.actionLabel}
             </Button>
+            {footer.reason === "notConfirmed" && !triedCode.current ? (
+              <button
+                type="button"
+                className="text-2xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                onClick={startWithCode}
+                data-signin-code=""
+              >
+                Get a code instead
+              </button>
+            ) : null}
             {footer.detail ? (
               <button
                 type="button"
@@ -271,6 +305,23 @@ export function AccountFooter() {
 
 /** A failed sign-in also toasts, once per failure, so it is seen wherever
  * the person is looking. */
+/** How long a browser sign-in waits before the page offers a code. */
+const STILL_WAITING_MS = 45_000;
+
+/** True once `active` has stayed true for `ms`; false again when it stops. */
+function useAfter(active: boolean, ms: number): boolean {
+  const [late, setLate] = useState(false);
+  useEffect(() => {
+    if (!active) {
+      setLate(false);
+      return;
+    }
+    const t = setTimeout(() => setLate(true), ms);
+    return () => clearTimeout(t);
+  }, [active, ms]);
+  return late;
+}
+
 function useSignInFailureToast(footer: SignInFooter | null) {
   const shown = useRef<string | null>(null);
   const key = footer?.state === "failed" ? `${footer.reason}:${footer.text}:${footer.detail ?? ""}` : null;

@@ -19,7 +19,8 @@
 # your other devices use this computer through the relay.
 #
 # Options:
-#   --select LIST       preselect items (comma list: spaces, cua-driver, host)
+#   --select LIST       install these items plus the CLI, not the app unless
+#                       listed (comma list: spaces, cua-driver, host)
 #   --only LIST         install exactly LIST plus the CLI, no checklist
 #   --cli-only          install only the `cua` CLI (same as --only cli)
 #   --app-only          install only the Cua Spaces app (no CLI)
@@ -580,8 +581,10 @@ init_selection() {
         list="$only_list"
     else
         list="$select_list"
-        # The app is a default on macOS and Linux.
-        if spaces_supported; then sel_spaces=1; fi
+        # The app is a default on macOS and Linux, until --select names what
+        # to install: then only those items (and the CLI) are installed.
+        # --pair adds host to the list itself; it keeps the default.
+        if spaces_supported && { [ -n "$pair_code" ] || [ -z "$(printf %s "$list" | tr -d ', ')" ]; }; then sel_spaces=1; fi
     fi
     for item in $(items_in "$list"); do item_set "$item" 1; done
     # Legacy: --app-only and --mode mean the app, as they always did.
@@ -1465,10 +1468,26 @@ summary() {
     fi
 }
 
+# The items this run installs, for --dry-run.
+plan_items() {
+    out=""
+    [ "$want_cli" != 1 ] || out="the cua command-line tools"
+    [ "$sel_spaces" != 1 ] || out="${out:+$out, }the Cua Spaces app"
+    [ "$sel_driver" != 1 ] || out="${out:+$out, }Cua Driver (its MCP server and skill in your agents)"
+    [ "$sel_host" != 1 ] || out="${out:+$out, }host setup"
+    printf '%s\n' "${out:-nothing}"
+}
+
 run_onboarding() {
     # --pair: the code stands in for the account; nothing to sign in to.
     [ -z "$pair_code" ] || return 0
     if [ "$want_cli" = 0 ] || [ "$onboarding" = 0 ] || [ "$dry_run" = 1 ]; then
+        return
+    fi
+    # Cua Driver on its own: `cua auth login` would end in the Cua Spaces
+    # agent onboarding (the cua MCP server and skills), which was not picked.
+    if [ "$sel_driver" = 1 ] && [ "$sel_spaces" = 0 ] && [ "$sel_host" = 0 ]; then
+        info "skipping sign-in: only Cua Driver was selected"
         return
     fi
     # No terminal to sign in on (piped install, -y, or nobody at the
@@ -1499,6 +1518,7 @@ main() {
     fi
     if [ "$dry_run" = 1 ]; then
         step "Dry run: nothing will be changed"
+        say "[dry-run] would install: $(plan_items)"
     fi
     # Nothing to download (--pair on a computer that has Cua): no manifest to read.
     if [ "$want_cli" = 1 ] || [ "$sel_spaces" = 1 ] || [ "$sel_driver" = 1 ]; then

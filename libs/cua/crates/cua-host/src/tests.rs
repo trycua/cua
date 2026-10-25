@@ -1298,6 +1298,40 @@ async fn a_fresh_sign_in_enrolls_and_re_keys_this_machine() {
     assert_eq!(approved.state, DeviceState::Enrolled);
 }
 
+/// Signing in as another account on a computer whose device key belongs to
+/// the previous account enrolls with a new key instead of failing.
+#[tokio::test]
+async fn sign_in_as_another_account_replaces_the_key_of_the_previous_one() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-a", "user-a", Some("a@example.com"));
+    relay.add_account("acct-b", "user-b", Some("b@example.com"));
+    relay.require_devices(true);
+    relay.fresh_sign_in("user-a");
+    relay.fresh_sign_in("user-b");
+    let slot = Arc::new(MemoryKeySlot::default());
+    let on_this_mac = |token: &str| {
+        DeviceAuth::new(
+            &relay.url,
+            Arc::new(StaticToken(token.into())),
+            slot.clone(),
+            "Mac",
+        )
+        .unwrap()
+        .with_machine_id(Some("mac-1".into()))
+    };
+    let as_a = on_this_mac("acct-a");
+    as_a.enroll_after_sign_in().await.unwrap();
+    let old = as_a.device_id().unwrap().unwrap();
+
+    let as_b = on_this_mac("acct-b");
+    let r = as_b.enroll_after_sign_in().await.unwrap();
+    assert_eq!(r.device.state, DeviceState::Enrolled);
+    assert_ne!(r.device.id, old);
+    assert_eq!(r.device.name, "Mac");
+    assert_eq!(as_b.device_id().unwrap().unwrap(), r.device.id);
+    assert!(as_b.session().await.is_ok());
+}
+
 /// Two builds on one machine that each made a key end up with one: the key
 /// the relay enrolled wins, the other's record is retired.
 #[tokio::test]
@@ -1807,6 +1841,241 @@ fn the_service_gets_the_hosts_price_only_when_setup_was_given_it() {
     let back: crate::HostConfig =
         serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
     assert_eq!(back.usd_per_hour.as_deref(), Some("0.8048"));
+}
+
+/// The ports are the channel's: a Stable host service is the one it has
+/// always been (nothing passed, so a service installed before this still
+/// matches), and a Local one asks for 3221 and 3222, on the command line
+/// and in the environment, so it runs beside the Stable one. Neither passes
+/// a mesh media port: it is 3212 for both, by design.
+#[test]
+fn the_service_serves_on_the_channels_ports() {
+    use cua_home::channel::CuaChannel;
+    let home = tempfile::tempdir().unwrap();
+    let host = Host::new(home.path());
+    let relay = crate::HostConfig {
+        mode: "relay".into(),
+        relay_url: Some("https://relay.example".into()),
+        machine_id: Some("machine-0001".into()),
+        ..Default::default()
+    };
+    let direct = crate::HostConfig {
+        mode: "direct".into(),
+        listen: Some("0.0.0.0:3221".into()),
+        ..Default::default()
+    };
+    for config in [&relay, &direct] {
+        let stable = host.service_spec_for(config, CuaChannel::Stable);
+        assert!(
+            !stable
+                .args
+                .iter()
+                .any(|a| a == "--port" || a == "--quic-port"),
+            "{:?}",
+            stable.args
+        );
+        assert_eq!(
+            stable.env,
+            vec![("CUA_ENV_LOG".to_string(), "info".to_string())],
+            "Stable passes no ports and no channel"
+        );
+
+        // Local is Stable's command line plus its two ports.
+        let local = host.service_spec_for(config, CuaChannel::Local);
+        let mut expected = stable.args.clone();
+        expected.extend(["--port", "3221", "--quic-port", "3222"].map(String::from));
+        assert_eq!(local.args, expected);
+        // The same ports in the environment, for what the service starts,
+        // and the channel, so those agree on whose they are.
+        let var = |k: &str, v: &str| (k.to_string(), v.to_string());
+        assert_eq!(
+            local.env,
+            vec![
+                var("CUA_ENV_LOG", "info"),
+                var("CUA_ENV_PORT", "3221"),
+                var("CUA_ENV_QUIC_PORT", "3222"),
+                var("CUA_CHANNEL", "local"),
+            ]
+        );
+        // Nothing else differs.
+        assert_eq!(local.program, stable.program);
+        assert_eq!(local.log_path, stable.log_path);
+    }
+
+    // What a Stable relay host runs, in full: unchanged by the ports.
+    let p = host.paths();
+    let s = |p: std::path::PathBuf| p.to_string_lossy().into_owned();
+    let mut expected: Vec<String> = [
+        "join",
+        "--relay",
+        "https://relay.example",
+        "--relay-token-file",
+    ]
+    .map(String::from)
+    .into();
+    expected.extend([
+        s(p.machine_token()),
+        "--host-policy".into(),
+        s(p.policy()),
+        "--machine-id-file".into(),
+        s(p.machine_id.clone()),
+        "--token-file".into(),
+        s(p.env_token()),
+        "--data-dir".into(),
+        s(p.driver_data.clone()),
+    ]);
+    let stable = host.service_spec_for(&relay, CuaChannel::Stable);
+    assert_eq!(
+        stable.args[..expected.len()],
+        expected[..],
+        "{:?}",
+        stable.args
+    );
+
+    // The service of this process is the channel's: no CUA_CHANNEL and a
+    // test executable is Stable, so `service_spec` is the Stable one.
+    if !CuaChannel::current().is_local() {
+        assert_eq!(host.service_spec(&relay).args, stable.args);
+    }
+}
+
+/// What a host service asks the machine for: the TCP port of its listener,
+/// the UDP port of its QUIC media, and its mesh UDP port, from the command
+/// line and environment of `spec`, else cua-spacesd's own defaults (3211,
+/// 3212, 3212). A flag beats the environment, as in cua-spacesd. (The mesh
+/// port is only ever the default here: no channel overrides it.)
+fn requested_ports(spec: &crate::service::ServiceSpec) -> (u16, u16, u16) {
+    let flag = |name: &str| {
+        spec.args
+            .iter()
+            .position(|a| a == name)
+            .map(|i| spec.args[i + 1].clone())
+    };
+    let env = |name: &str| {
+        spec.env
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.clone())
+    };
+    let listen_port = flag("--listen").map(|l| {
+        l.rsplit(':')
+            .next()
+            .expect("an address has a port")
+            .to_string()
+    });
+    let port = |value: Option<String>, default: u16| {
+        value.map_or(default, |v| v.parse().expect("a port number"))
+    };
+    (
+        port(
+            listen_port
+                .or_else(|| flag("--port"))
+                .or_else(|| env("CUA_ENV_PORT")),
+            3211,
+        ),
+        port(
+            flag("--quic-port").or_else(|| env("CUA_ENV_QUIC_PORT")),
+            3212,
+        ),
+        port(env("CUA_ENV_MESH_UDP_PORT"), 3212),
+    )
+}
+
+/// A Stable and a Local host run on one Mac at the same time (CUA-1776):
+/// the two services share no listener, in any mode, and both are told the
+/// same ports on the command line and in the environment.
+#[tokio::test]
+async fn a_stable_and_a_local_host_service_share_no_listener() {
+    use cua_home::channel::CuaChannel;
+    let home = tempfile::tempdir().unwrap();
+    let host = Host::new(home.path());
+    fn direct(channel: CuaChannel) -> crate::HostConfig {
+        crate::HostConfig {
+            mode: "direct".into(),
+            listen: Some(format!("0.0.0.0:{}", channel.ports().tcp)),
+            ..Default::default()
+        }
+    }
+    fn relay(_: CuaChannel) -> crate::HostConfig {
+        crate::HostConfig {
+            mode: "relay".into(),
+            relay_url: Some("https://relay.example".into()),
+            machine_id: Some("machine-0001".into()),
+            ..Default::default()
+        }
+    }
+    fn direct_and_relay(channel: CuaChannel) -> crate::HostConfig {
+        crate::HostConfig {
+            static_relay: Some("http://relay.lan:8080".into()),
+            ..direct(channel)
+        }
+    }
+    type ConfigFor = fn(CuaChannel) -> crate::HostConfig;
+    let configs: [(&str, ConfigFor); 3] = [
+        ("relay", relay),
+        ("direct", direct),
+        ("direct and relay", direct_and_relay),
+    ];
+    let mut bound = Vec::new();
+    for (mode, config) in &configs {
+        let stable = host.service_spec_for(&config(CuaChannel::Stable), CuaChannel::Stable);
+        let local = host.service_spec_for(&config(CuaChannel::Local), CuaChannel::Local);
+        let (s, l) = (requested_ports(&stable), requested_ports(&local));
+        assert_eq!(s, (3211, 3212, 3212), "{mode}: Stable keeps its ports");
+        assert_eq!(l, (3221, 3222, 3212), "{mode}: Local has its own");
+        // The OS listeners differ. The mesh media port (.2) is the same on
+        // purpose: it is a port of the mesh's own in-process network, not a
+        // socket on the Mac, so the two cannot collide on it, and it must
+        // stay 3212 where guest Spaces and older cua-spacesd serve it.
+        assert!(s.0 != l.0 && s.1 != l.1, "{mode}");
+        assert_eq!(s.2, l.2, "{mode}: the mesh media port is shared");
+        assert!(
+            local.env.iter().all(|(k, _)| k != "CUA_ENV_MESH_UDP_PORT"),
+            "{mode}: Local does not move the mesh port"
+        );
+        // The environment agrees with the command line.
+        let env = |spec: &crate::service::ServiceSpec, k: &str| {
+            spec.env
+                .iter()
+                .find(|(n, _)| n == k)
+                .map(|(_, v)| v.clone())
+        };
+        assert_eq!(env(&local, "CUA_ENV_PORT"), Some("3221".into()), "{mode}");
+        assert_eq!(
+            env(&local, "CUA_ENV_QUIC_PORT"),
+            Some("3222".into()),
+            "{mode}"
+        );
+        assert_eq!(env(&local, "CUA_CHANNEL"), Some("local".into()), "{mode}");
+        assert_eq!(env(&stable, "CUA_CHANNEL"), None, "{mode}");
+        bound.push((mode, s, l));
+    }
+
+    // Start both configurations at once, on this machine's loopback: every
+    // listener either asks for binds. A set that something else on this
+    // computer already holds (a Stable host that is running now, say) is
+    // left to that: Local's binding next to it is the proof.
+    let (_, stable, local) = bound[0];
+    let mut held = Vec::new();
+    let mut taken = Vec::new();
+    for (name, (tcp, udp)) in [
+        ("Stable", (stable.0, stable.1)),
+        ("Local", (local.0, local.1)),
+    ] {
+        match (
+            std::net::TcpListener::bind(("127.0.0.1", tcp)),
+            std::net::UdpSocket::bind(("127.0.0.1", udp)),
+        ) {
+            (Ok(t), Ok(u)) => held.push((t, u)),
+            (Err(e), _) | (_, Err(e)) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                eprintln!("{name}'s ports {tcp}/{udp} are in use on this machine");
+                taken.push(name);
+            }
+            (Err(e), _) | (_, Err(e)) => panic!("{name}: binding {tcp}/{udp}: {e}"),
+        }
+    }
+    // Whichever set was free is up beside the other, and none failed.
+    assert_eq!(held.len() + taken.len(), 2);
 }
 
 /// A machine renamed on the relay from an enrolled device: this machine's

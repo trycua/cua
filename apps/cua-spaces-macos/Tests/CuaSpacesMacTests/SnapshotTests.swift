@@ -557,6 +557,17 @@ struct SnapshotTests {
         try await assertNotch("notch-closed") { _ in }
     }
 
+    /// Every Space stopped: nothing on, so no tab beside the notch.
+    @Test func notchClosedNoneOn() async throws {
+        try await assertNotch("notch-closed-none-on") { n in
+            n.spaces = n.spaces.map { s in
+                var s = s
+                if s.id != "this-mac" { s.status = .suspended }
+                return s
+            }
+        }
+    }
+
     @Test func notchHover() async throws {
         try await assertNotch("notch-hover") { $0.send(.hoverEnter) }
     }

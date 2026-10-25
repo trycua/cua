@@ -21,6 +21,17 @@ async fn node(
     name: &str,
     relay_only: bool,
 ) -> Mesh {
+    node_on_media_port(coord, kind, dir, name, relay_only, cua_mesh::MEDIA_UDP_PORT).await
+}
+
+async fn node_on_media_port(
+    coord: &FakeCoordinator,
+    kind: NodeKind,
+    dir: &std::path::Path,
+    name: &str,
+    relay_only: bool,
+    media_udp_port: u16,
+) -> Mesh {
     let mut headers = Vec::new();
     if kind == NodeKind::Machine {
         headers.push(("x-cua-machine-id".to_owned(), format!("machine-{name}")));
@@ -34,6 +45,7 @@ async fn node(
     cfg.name = name.to_owned();
     cfg.stun = vec![coord.stun.to_string()];
     cfg.relay_only = relay_only;
+    cfg.media_udp_port = media_udp_port;
     cfg.approved_path = Some(dir.join(format!("{name}-approved.json")));
     let m = Mesh::start(cfg).await.expect("start");
     m.wait_ready(READY).await.expect("ready");
@@ -359,6 +371,77 @@ async fn loopback_forwards_carry_tcp_and_udp() {
         }
     }
     assert!(ok, "udp echo over the mesh");
+}
+
+/// Whether a datagram sent to the forward's UDP side comes back echoed
+/// within `tries` half-seconds.
+async fn udp_echoes(to: std::net::SocketAddr, tries: usize) -> bool {
+    let udp = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    for _ in 0..tries {
+        udp.send_to(b"media", to).await.unwrap();
+        let mut buf = [0u8; 64];
+        if let Ok(Ok((n, _))) =
+            tokio::time::timeout(Duration::from_millis(500), udp.recv_from(&mut buf)).await
+        {
+            assert_eq!(&buf[..n], b"media");
+            return true;
+        }
+    }
+    false
+}
+
+/// A machine that serves its media on another mesh UDP port (a Cua Spaces
+/// Local host) is reached by a client that dials that port, and by no one
+/// that dials the default.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_media_udp_port_is_configurable() {
+    const LOCAL_PORT: u16 = 3222;
+    let dir = tempfile::tempdir().unwrap();
+    let coord = FakeCoordinator::start(Mode::Account).await;
+    let machine = node_on_media_port(
+        &coord,
+        NodeKind::Machine,
+        dir.path(),
+        "m",
+        false,
+        LOCAL_PORT,
+    )
+    .await;
+    assert_eq!(machine.media_udp_port(), LOCAL_PORT);
+    let default_client = node(&coord, NodeKind::Client, dir.path(), "d", false).await;
+    assert_eq!(default_client.media_udp_port(), cua_mesh::MEDIA_UDP_PORT);
+    let local_client =
+        node_on_media_port(&coord, NodeKind::Client, dir.path(), "l", false, LOCAL_PORT).await;
+    serve_echo(&machine);
+    let udp_echo = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let echo_addr = udp_echo.local_addr().unwrap();
+    tokio::spawn(async move {
+        let mut buf = [0u8; 2048];
+        loop {
+            let (n, src) = udp_echo.recv_from(&mut buf).await.unwrap();
+            udp_echo.send_to(&buf[..n], src).await.unwrap();
+        }
+    });
+    machine.serve_udp(LOCAL_PORT, echo_addr).unwrap();
+    wait_peer(&local_client, &machine.node_key()).await;
+    wait_peer(&default_client, &machine.node_key()).await;
+
+    let to_local = local_client
+        .forward(machine.node_key(), "echo", None)
+        .await
+        .unwrap();
+    assert!(
+        udp_echoes(to_local.local, 20).await,
+        "a client on the host's port reaches its media"
+    );
+    let to_default = default_client
+        .forward(machine.node_key(), "echo", None)
+        .await
+        .unwrap();
+    assert!(
+        !udp_echoes(to_default.local, 4).await,
+        "a client on the default port does not"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -706,4 +789,60 @@ async fn a_forward_carries_bulk_traffic_to_a_local_port() {
         .unwrap();
     assert_eq!(counted.await.unwrap(), N);
     println!("256 MiB in {:?}", t.elapsed());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_node_the_relay_keeps_replacing_stops_retrying_and_says_why() {
+    let dir = tempfile::tempdir().unwrap();
+    let coord = FakeCoordinator::start(Mode::Account).await;
+    coord.close_after_welcome(Some((
+        cua_mesh::proto::CLOSE_REPLACED,
+        "replaced: another connection with the same node key took over",
+    )));
+    let mut cfg = MeshConfig::new(
+        coord.url.clone(),
+        NodeKind::Client,
+        Some(dir.path().join("c.json")),
+        static_auth(vec![]),
+    );
+    cfg.reconnect_speedup = 1000;
+    let client = Mesh::start(cfg).await.unwrap();
+    let t = std::time::Instant::now();
+    let reason = loop {
+        if let Some(r) = client.control_state().denied {
+            break r;
+        }
+        assert!(t.elapsed() < Duration::from_secs(20), "it never gave up");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert!(reason.contains("another copy of Spaces"), "{reason}");
+    // It stopped: no connect after the third.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(coord.welcomes(), 3);
+    let last = client.control_state().last_error.unwrap();
+    assert!(last.contains("4001") && last.contains("replaced"), "{last}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_node_dropped_for_other_reasons_keeps_reconnecting() {
+    let dir = tempfile::tempdir().unwrap();
+    let coord = FakeCoordinator::start(Mode::Account).await;
+    coord.close_after_welcome(Some((
+        cua_mesh::proto::CLOSE_RELAY_CHANGED,
+        "relay changed",
+    )));
+    let mut cfg = MeshConfig::new(
+        coord.url.clone(),
+        NodeKind::Client,
+        Some(dir.path().join("c.json")),
+        static_auth(vec![]),
+    );
+    cfg.reconnect_speedup = 1000;
+    let client = Mesh::start(cfg).await.unwrap();
+    let t = std::time::Instant::now();
+    while coord.welcomes() < 5 {
+        assert!(t.elapsed() < Duration::from_secs(20), "it stopped retrying");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(client.control_state().denied.is_none());
 }

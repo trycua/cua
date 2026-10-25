@@ -1977,7 +1977,7 @@ pub struct AppNotchView {
     pub prompt: Option<String>,
     /// Accessibility label of the panel.
     pub label: String,
-    /// "N Spaces": the tab's spoken label (remote Spaces only).
+    /// "N Spaces": the tab's spoken label (Spaces on or starting only).
     pub count_label: String,
     /// The tab's two rows: the count over the word.
     pub tab: AppNotchTab,
@@ -1990,7 +1990,8 @@ pub struct AppNotchView {
     pub activity: Option<AppNotchActivity>,
     /// The notch is hidden (menu bar only): draw nothing.
     pub hidden: bool,
-    /// The tab shows (closed, no drag in flight; a drag tucks it away).
+    /// The tab shows (closed, no drag in flight, at least one Space on or
+    /// starting; a drag tucks it away, and with none the notch is bare).
     pub show_tab: bool,
     /// The pointer rests on the closed notch while the dwell runs: the
     /// shells grow it by [`NotchMotion::hover_scale`].
@@ -6468,6 +6469,8 @@ pub enum AppAboutLinkId {
     Privacy,
     /// The terms of service.
     Terms,
+    /// The public status page.
+    Status,
     /// A new issue.
     Issue,
 }
@@ -6520,7 +6523,7 @@ pub struct AppAboutView {
     pub title: String,
     /// "Version 0.2.0 (0.2.0.123)".
     pub version_line: String,
-    /// Acknowledgements, Privacy Policy, Terms of Service, Report an Issue.
+    /// Acknowledgements, Privacy Policy, Terms of Service, System Status, Report an Issue.
     pub links: Vec<AppAboutLink>,
     /// "© 2026 Cua AI, Inc. All rights reserved."
     pub copyright: String,
@@ -7865,7 +7868,8 @@ pub struct AppCliInstallPlan {
     pub installed_version: Option<String>,
     /// `cua --version` of the bundled CLI.
     pub bundled_version: Option<String>,
-    /// Another `cua` found earlier on PATH (it would shadow `target`).
+    /// Another CLI of the same name found earlier on PATH (it would shadow
+    /// `target`).
     pub shadowed_by: Option<String>,
     /// `bin_dir` is already on PATH.
     pub on_path: bool,
@@ -7873,9 +7877,10 @@ pub struct AppCliInstallPlan {
     pub path_profile: Option<String>,
     /// The line that would be added to `path_profile`.
     pub path_line: Option<String>,
-    /// A working `cua` CLI already on this machine: `target`, else the
-    /// first in the usual install folders or on PATH (a Finder-launched
+    /// A working CLI of this channel already on this machine: `target`, else
+    /// the first in the usual install folders or on PATH (a Finder-launched
     /// app's PATH lacks `~/.local/bin`, so the folders are searched too).
+    /// Local looks for `cua-local` only: a Stable `cua` is not its CLI.
     pub found: Option<String>,
 }
 
@@ -9580,11 +9585,15 @@ pub enum AppTelemetrySignal {
     /// A first-run page was shown or left (`cua_onboarding_page`).
     OnboardingPage {
         /// `welcome`, `signin`, `agents`, `presentation`, `volume`,
-        /// `this_machine` or `done`.
+        /// `this_machine` or `done`; or, with a `step_*` action, one of
+        /// `schema::FIRST_RUN_STEPS` (`connect_agent`, `terminal`, ...).
         page: String,
-        /// `shown`, `completed`, `skipped` or `back`.
+        /// `shown`, `completed`, `skipped` or `back`; or `step_viewed`,
+        /// `step_completed`, `step_failed` or `step_skipped`, which send
+        /// `cua_onboarding_step_*` and `cua_onboarding_skipped`.
         action: String,
-        /// The page's answer as a fixed word, or `none`.
+        /// The page's answer as a fixed word, or `none`; for
+        /// `step_failed`, the reason (`timeout`, `install_failed`, ...).
         choice: String,
     },
     /// The New Space panel (`cua_space_wizard`).
@@ -10138,6 +10147,10 @@ pub struct AppChecklistState {
     pub dismissed: bool,
     /// It was on screen once (`checklist_shown` was recorded).
     pub shown: bool,
+    /// Steps skipped ("Skip"), each once, in checklist order: they count as
+    /// done for the progress and for `complete`, and a skipped step done
+    /// later shows as done.
+    pub skipped: Vec<AppChecklistStep>,
 }
 
 /// `checklist::ChecklistAction`.
@@ -10151,7 +10164,12 @@ pub enum AppChecklistAction {
     },
     /// The checklist is on screen.
     Shown,
-    /// Closed with ×.
+    /// "Skip" on a step: not for this person; it counts as done.
+    Skip {
+        /// The step.
+        step: AppChecklistStep,
+    },
+    /// Closed with × ("Hide", or "Done" once complete).
     Dismiss,
     /// Getting Started (the palette, the Help menu): open it again.
     Reopen,
@@ -10212,6 +10230,8 @@ pub struct AppChecklistRow {
     pub action: String,
     /// Done (ticked, struck through).
     pub done: bool,
+    /// Skipped (struck through, not ticked); never with `done`.
+    pub skipped: bool,
 }
 
 /// The checklist as drawn.
@@ -10230,6 +10250,10 @@ pub struct AppChecklistView {
     pub progress: String,
     /// The close button's accessibility label.
     pub close_label: String,
+    /// "Skip", on each step not done or skipped.
+    pub skip_label: String,
+    /// "Hide", or "Done" once complete: closes the checklist.
+    pub hide_label: String,
     /// The steps in order.
     pub rows: Vec<AppChecklistRow>,
 }

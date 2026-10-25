@@ -65,6 +65,7 @@ import type { HostChecklistState } from "../ops/checklist";
 import type { LinkCreate, ShareLink } from "../ops/links";
 import { unsupportedPresenceOps, type PresenceJoinInfo } from "../ops/presence";
 import { unsupportedRuntimeFixOps } from "../ops/runtime-fix";
+import type { CliInstallPlan } from "../contracts/first-run";
 import type { SpaceRow } from "../contracts/spaces";
 import {
   isWebkitResponse,
@@ -316,6 +317,7 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
     },
     globalShortcut: s.globalShortcut ? { label: s.globalShortcut.label, registered: s.globalShortcut.registered } : null,
     accountUrl: s.accountUrl ?? null,
+    cli: s.cli && s.cli.name ? { name: s.cli.name, installed: Boolean(s.cli.installed) } : null,
   };
 }
 
@@ -418,6 +420,7 @@ export function toHostStatus(h: WkHostState): HostStatus {
     ownerEmail: h.ownerEmail ?? null,
     account: h.account ?? null,
     progress: h.progress ?? null,
+    appName: h.appName ?? null,
   };
 }
 
@@ -631,8 +634,8 @@ export function createWebkitAdapter(
       const [s, onboarding] = await Promise.all([request<WkSession>("session.get"), request<WkOnboarding>("onboarding.get").catch(() => null)]);
       return toSessionSnapshot(s, onboarding);
     },
-    "session.signIn": async () => {
-      const s = await request<WkSession>("session.signIn");
+    "session.signIn": async (args) => {
+      const s = await request<WkSession>("session.signIn", args?.code ? { code: true } : {});
       const userCode = typeof s.signIn === "object" ? opt(s.signIn.userCode) : undefined;
       return { method: userCode ? "device" : "browser", userCode, verificationUri: opt(s.signInUrl) ?? "" };
     },
@@ -698,6 +701,9 @@ export function createWebkitAdapter(
     "links.list": () => request<{ links: ShareLink[] }>("links.list"),
     "links.create": (a: LinkCreate) => request<ShareLink>("links.create", a as unknown as Record<string, unknown>),
     "links.stop": ({ id }) => request<{ stopped: string[] }>("links.stop", { id }),
+    // The bundled CLI on PATH (the app core's installer in the host).
+    "cli.plan": () => request<CliInstallPlan | null>("cli.plan"),
+    "cli.install": ({ modifyPath }) => request<CliInstallPlan>("cli.install", { modifyPath }),
     // Presence over the page's own video: the Mac app draws it natively.
     ...(electron
       ? {

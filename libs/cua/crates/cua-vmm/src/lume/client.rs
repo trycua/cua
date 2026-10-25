@@ -1,4 +1,5 @@
-//! Typed HTTP client for `lume serve` (default `http://127.0.0.1:7777`).
+//! Typed HTTP client for `lume serve` (default `http://127.0.0.1:7777`, Local's
+//! `http://127.0.0.1:7787`).
 //!
 //! Routes mirror `libs/lume/src/Server/Server.swift`.
 

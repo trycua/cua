@@ -9,6 +9,7 @@ use crate::preflight::{self, SessionProbe};
 use crate::relay::{AccountTokens, ConnectedClient, MachinePatch, RegisterRequest, RelayClient};
 use crate::service::{self, RunnerKind, ServiceManager, ServiceSpec, ServiceState};
 use crate::{Error, Result};
+use cua_home::channel::{CUA_CHANNEL_VAR, CuaChannel};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -429,7 +430,7 @@ pub fn permission_hints(os: &str, driver: &Path) -> Vec<PermissionHint> {
 /// runs it, else "cua-spacesd (<path>)".
 fn service_name(driver: &Path) -> String {
     if crate::service::is_app_helper_launcher(driver) {
-        crate::service::APP_HELPER_NAME.to_string()
+        crate::service::app_helper_name().to_string()
     } else {
         format!("cua-spacesd ({})", driver.display())
     }
@@ -452,7 +453,7 @@ pub fn local_network_hint(os: &str, provide_spaces: bool, driver: &Path) -> Opti
     }
     let d = service_name(driver);
     let short = if crate::service::is_app_helper_launcher(driver) {
-        crate::service::APP_HELPER_NAME
+        crate::service::app_helper_name()
     } else {
         "cua-spacesd"
     };
@@ -465,10 +466,11 @@ pub fn local_network_hint(os: &str, provide_spaces: bool, driver: &Path) -> Opti
             "macOS Spaces on this Mac need Local Network access for {d}. When \
              macOS asks \"Allow {short} to find devices on local networks?\" on this Mac's \
              screen, click Allow; or turn on {short} in System Settings → Privacy & \
-             Security → Local Network. If the cua daemon was started from Terminal or over SSH, \
-             run `cua daemon stop` so the host service starts it at the next create (over SSH \
+             Security → Local Network. If the {cli} daemon was started from Terminal or over SSH, \
+             run `{cli} daemon stop` so the host service starts it at the next create (over SSH \
              nothing can grant it). Without it, macOS Space creates fail with \"No route to \
-             host\"; Linux Spaces don't need it."
+             host\"; Linux Spaces don't need it.",
+            cli = crate::cli()
         ),
     })
 }
@@ -775,6 +777,10 @@ fn valid_machine_id(id: &str) -> bool {
         && !id.ends_with('-')
 }
 
+/// The environment variables of cua-spacesd's `--port` and `--quic-port`.
+const PORT_ENV: &str = "CUA_ENV_PORT";
+const QUIC_PORT_ENV: &str = "CUA_ENV_QUIC_PORT";
+
 /// The environment variable with this machine's cost per hour (US
 /// dollars), passed on to the host service.
 pub const HOST_USD_PER_HOUR: &str = "CUA_HOST_USD_PER_HOUR";
@@ -1050,6 +1056,13 @@ impl Host {
 
     /// The command line the service runs.
     pub fn service_spec(&self, config: &HostConfig) -> ServiceSpec {
+        self.service_spec_for(config, CuaChannel::current())
+    }
+
+    /// [`Host::service_spec`] for a build of `channel`: the ports it
+    /// serves on are the channel's, so Cua Spaces Local's host runs beside
+    /// the Stable one.
+    pub(crate) fn service_spec_for(&self, config: &HostConfig, channel: CuaChannel) -> ServiceSpec {
         let p = &self.paths;
         let s = |p: PathBuf| p.to_string_lossy().into_owned();
         let mut args: Vec<String> = match config.mode.as_str() {
@@ -1131,6 +1144,31 @@ impl Host {
             ]);
         }
         let mut env = vec![("CUA_ENV_LOG".into(), "info".into())];
+        // A Local build's host service is told its channel and ports, so it
+        // runs beside a Stable one (3211 TCP, 3212 QUIC). Nothing is passed
+        // for Stable: its service is the one it has always been, on
+        // cua-spacesd's own defaults.
+        //
+        // The ports go twice. `--port` (the listener of a joined host;
+        // `--listen` names a direct one) and `--quic-port` are on the
+        // command line, where they show in `ps` and win; the environment
+        // carries the same for everything the service starts, which reads
+        // `CUA_ENV_PORT` and `CUA_CHANNEL`. The mesh media port is not
+        // passed: it is 3212 for every channel, by design (a port of the
+        // mesh's own network that guest Spaces and older cua-spacesd builds
+        // fix, so two hosts on one Mac do not compete for it).
+        let (ports, stable) = (channel.ports(), CuaChannel::Stable.ports());
+        if ports.tcp != stable.tcp {
+            args.extend(["--port".to_string(), ports.tcp.to_string()]);
+            env.push((PORT_ENV.into(), ports.tcp.to_string()));
+        }
+        if ports.quic != stable.quic {
+            args.extend(["--quic-port".to_string(), ports.quic.to_string()]);
+            env.push((QUIC_PORT_ENV.into(), ports.quic.to_string()));
+        }
+        if channel != CuaChannel::Stable {
+            env.push((CUA_CHANNEL_VAR.into(), channel.name().into()));
+        }
         if let Some(mesh) = &config.mesh {
             env.push(("CUA_MESH".into(), mesh.clone()));
         }
@@ -1191,11 +1229,11 @@ impl Host {
                 self.helper_app()
                     .map(|app| service::app_helper_launcher(&app))
                     .ok_or_else(|| {
-                        Error::Service(
+                        Error::Service(format!(
                             "the host service runs inside the Cua Spaces app, which is not \
-                             installed; install it, or run `cua host setup --runner launchd`"
-                                .into(),
-                        )
+                             installed; install it, or run `{} host setup --runner launchd`",
+                            crate::cli()
+                        ))
                     })?,
             ),
             _ => None,
@@ -1492,18 +1530,22 @@ impl Host {
     /// changed.
     pub fn enable_shares(&self) -> Result<bool> {
         let config = self.config()?.ok_or_else(|| {
-            Error::NotFound(
-                "this machine is not on your cua.ai relay; set it up with `cua host setup`".into(),
-            )
+            Error::NotFound(format!(
+                "this machine is not on your cua.ai relay; set it up with `{} host setup`",
+                crate::cli()
+            ))
         })?;
         if config.mode != "relay" {
-            return Err(Error::InvalidArgument(
-                "this machine is not on your cua.ai relay (direct mode); links need the relay: `cua host setup`"
-                    .into(),
-            ));
+            return Err(Error::InvalidArgument(format!(
+                "this machine is not on your cua.ai relay (direct mode); links need the relay: `{} host setup`",
+                crate::cli()
+            )));
         }
         let mut policy = self.policy()?.ok_or_else(|| {
-            Error::NotFound("this machine has no host policy; run `cua host setup`".into())
+            Error::NotFound(format!(
+                "this machine has no host policy; run `{} host setup`",
+                crate::cli()
+            ))
         })?;
         let gateway = self.shares_gateway();
         if policy.shares && policy.shares_gateway.as_deref() == Some(gateway.as_str()) {
@@ -1777,7 +1819,10 @@ impl Host {
 
     fn require_config(&self) -> Result<HostConfig> {
         self.config()?.ok_or_else(|| {
-            Error::NotFound("this computer is not set up for access (run `cua host setup`)".into())
+            Error::NotFound(format!(
+                "this computer is not set up for access (run `{} host setup`)",
+                crate::cli()
+            ))
         })
     }
 
@@ -1816,11 +1861,11 @@ impl Host {
     pub async fn start_sharing(&self) -> Result<HostStatus> {
         let mut config = self.require_config()?;
         if !config.share_desktop && !config.provide_spaces {
-            return Err(Error::InvalidArgument(
+            return Err(Error::InvalidArgument(format!(
                 "there is nothing to share: turn on the desktop or Spaces first \
-                 (`cua host config --desktop on` or `--provide-spaces on`)"
-                    .into(),
-            ));
+                 (`{} host config --desktop on` or `--provide-spaces on`)",
+                crate::cli()
+            )));
         }
         match (&config.relay_url, &config.machine_id) {
             (Some(url), Some(id)) => {
@@ -2051,8 +2096,11 @@ impl Host {
             MigrationPlan::Nothing(why) => Ok(ServiceMigration::new("not-needed", why, false)),
             MigrationPlan::KeepAfterFailure => Ok(ServiceMigration::new(
                 "kept",
-                "moving into the Cua Spaces app failed before with this version; the old host \
-                 service keeps running (`cua host migrate --force` tries again)",
+                format!(
+                    "moving into the Cua Spaces app failed before with this version; the old host \
+                     service keeps running (`{} host migrate --force` tries again)",
+                    crate::cli()
+                ),
                 false,
             )),
             MigrationPlan::RemoveLeftovers => {
@@ -2263,7 +2311,7 @@ impl Host {
         let provided = crate::provided::load_provided(&self.paths.dir)?;
         if !provided.is_empty() && !uninstalling {
             return Err(Error::InvalidArgument(format!(
-                "this computer still provides {} Space{} ({}); delete {} first (`cua spaces delete <local:name>`)",
+                "this computer still provides {} Space{} ({}); delete {} first (`{} spaces delete <local:name>`)",
                 provided.len(),
                 if provided.len() == 1 { "" } else { "s" },
                 provided
@@ -2272,6 +2320,7 @@ impl Host {
                     .collect::<Vec<_>>()
                     .join(", "),
                 if provided.len() == 1 { "it" } else { "them" },
+                crate::cli(),
             )));
         }
         let mut relay_error = None;
@@ -2412,8 +2461,9 @@ fn missing_libraries_message(missing: &[String]) -> String {
         ""
     };
     format!(
-        "cua-spacesd cannot start: this machine lacks {}.{hint} Install them and run `cua host setup` again.",
-        missing.join(", ")
+        "cua-spacesd cannot start: this machine lacks {}.{hint} Install them and run `{} host setup` again.",
+        missing.join(", "),
+        crate::cli()
     )
 }
 

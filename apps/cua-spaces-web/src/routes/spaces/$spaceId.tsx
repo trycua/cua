@@ -15,7 +15,6 @@ import { FactList } from "@/components/space-detail/facts";
 import { SpaceResourcesPanel } from "@/components/resources/space-resources-panel";
 import { StreamSection } from "@/components/space-detail/stream-section";
 import { StreamSurface } from "@/components/space-detail/stream-surface";
-import { SpacePortLink } from "@/components/links/copy-link";
 import { StateLabel } from "@/components/state-dot";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
@@ -322,11 +321,6 @@ function SpaceDetailPage() {
             <p className="mt-3 px-1 text-[13px] text-muted-foreground" data-volume-note="" title={volumeError}>
               {volumeUnavailableNote(volumeError)}
             </p>
-          ) : null}
-          {!space.id.startsWith("pending:") && !detail.desktopNote ? (
-            <div className="mt-7">
-              <SpacePortLink spaceId={space.id} />
-            </div>
           ) : null}
           {showTeleport ? (
             <div className="mt-7">

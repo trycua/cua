@@ -170,6 +170,8 @@ export const WEBKIT_METHODS = [
   "links.list",
   "links.create",
   "links.stop",
+  "cli.plan",
+  "cli.install",
 ] as const;
 
 export type WebkitMethod = (typeof WEBKIT_METHODS)[number];
@@ -337,6 +339,9 @@ export interface WkSettings {
   globalShortcut?: { label: string; registered: boolean } | null;
   /** The host's account app (`app_account_app_url`); absent or null: none named. */
   accountUrl?: string | null;
+  /** The CLI the app installs (its install plan's file name) and whether it
+   * is on this computer; absent or null: not known. */
+  cli?: { name: string; installed: boolean } | null;
 }
 
 /** `keyvault.*`: the core's page views, plus the overview (camelCase records). */
@@ -382,4 +387,6 @@ export interface WkHostState {
   account?: { id?: string | null; email?: string | null; display?: string | null } | null;
   /** `HostModel.progress`: what a running setup or Sign In waits for. */
   progress?: string | null;
+  /** The app's name as System Settings lists it ("Cua Spaces Local"). */
+  appName?: string | null;
 }

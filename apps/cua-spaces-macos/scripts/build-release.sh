@@ -18,9 +18,10 @@
 #   Contents/MacOS/cua-vz                  ai.cua.vz, libs/cua/vz/cua-vz.entitlements
 #                                          (the microVM monitor; arm64 builds)
 #   Contents/Resources/cua-microvm-init    the microVMs' Linux guest init (data)
-#   Contents/MacOS/cua-spacesd             com.trycua.cua-env-driver (the host service,
+#   Contents/Helpers/cua-spacesd           com.trycua.cua-env-driver (the host service,
 #                                          which the app's own executable runs as its
-#                                          login item)
+#                                          login item; never in Contents/MacOS, where
+#                                          it would register as the app)
 #   Cua Spaces.app                         com.trycua.spaces.macos, Support/CuaSpacesMac.entitlements
 #
 #   scripts/build-release.sh --version 0.2.0[-suffix] [--build-number N]
@@ -160,7 +161,7 @@ if [ -n "$feed_url" ]; then
   case "$feed_url" in https://*) ;; *) echo "--feed-url must be https" >&2; exit 2 ;; esac
   /usr/libexec/PlistBuddy -c "Set :SUFeedURL $feed_url" "$plist"
 fi
-[ -x "$app/Contents/MacOS/cua-spacesd" ] || { echo "$app has no Contents/MacOS/cua-spacesd" >&2; exit 1; }
+[ -x "$app/Contents/Helpers/cua-spacesd" ] || { echo "$app has no Contents/Helpers/cua-spacesd" >&2; exit 1; }
 [ -f "$app/Contents/Library/LaunchAgents/com.trycua.spaces.helper.plist" ] ||
   { echo "$app has no com.trycua.spaces.helper.plist" >&2; exit 1; }
 # The symbols build-app.sh took out of the binaries, for symbolicating crash
@@ -211,7 +212,7 @@ fi
 # The host service. The app's own executable runs it, so its permissions
 # are the app's (designated requirement: identifier and team, checked
 # below), and they stay granted across updates.
-"${sign[@]}" --identifier com.trycua.cua-env-driver "$app/Contents/MacOS/cua-spacesd"
+"${sign[@]}" --identifier com.trycua.cua-env-driver "$app/Contents/Helpers/cua-spacesd"
 app_entitlements="$here/Support/CuaSpacesMac.entitlements"
 if [ "$identity" = "-" ]; then
   app_entitlements="$out/.adhoc.entitlements"
@@ -223,7 +224,7 @@ fi
 
 codesign --verify --deep --strict --verbose=2 "$app" >&2
 for f in "$app" "$app/Contents/MacOS/cua" "$app/Contents/Frameworks/libcua_sdk.dylib" "${sparkle_parts[@]}" \
-  "$app/Contents/MacOS/cua-spacesd" ${vz_parts[@]+"${vz_parts[@]}"}; do
+  "$app/Contents/Helpers/cua-spacesd" ${vz_parts[@]+"${vz_parts[@]}"}; do
   flags="$(codesign -dv "$f" 2>&1 | sed -n 's/^CodeDirectory.*flags=\([^ ]*\).*/\1/p')"
   case "$flags" in *runtime*) ;; *) echo "$f is not signed with the hardened runtime ($flags)" >&2; exit 1 ;; esac
 done
@@ -266,7 +267,7 @@ fi
 # A Developer ID build signs Sparkle with the same team (library
 # validation stays on: the app loads only its own team's code).
 if [ "$identity" != "-" ]; then
-  for f in "${sparkle_parts[@]}" "$app/Contents/MacOS/cua-spacesd"; do
+  for f in "${sparkle_parts[@]}" "$app/Contents/Helpers/cua-spacesd"; do
     codesign --verify -R="anchor apple generic and certificate leaf[subject.OU] = \"$team\"" "$f" ||
       { echo "$f is not signed by team $team" >&2; exit 1; }
   done
@@ -277,6 +278,8 @@ for f in "$app/Contents/MacOS/CuaSpacesMac" "$app/Contents/MacOS/cua" "$app/Cont
     grep -vE '^(/usr/lib/|/System/Library/|@rpath/libcua_sdk\.dylib$|@rpath/Sparkle\.framework/Versions/B/Sparkle$)' || true)"
   [ -z "$bad" ] || { echo "$f links outside the bundle and the OS: $bad" >&2; exit 1; }
 done
+# The host service is outside Contents/MacOS (see build-app.sh).
+"$here/scripts/check-bundle-layout.sh" "$app" >&2
 # It launches: every library resolves inside the bundle and passes library
 # validation, and the app starts and exits (--check-launch-only).
 "$here/scripts/check-launch.sh" "$app" >&2

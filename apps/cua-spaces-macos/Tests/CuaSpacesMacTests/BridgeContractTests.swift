@@ -44,6 +44,11 @@ struct BridgeContractTests {
                              telemetry: FixtureTelemetry())
         let bridge = WebUIBridge(model: model, allowedOrigins: [])
         bridge.actions = WebUIActions(openSpace: { _ in }, openMain: {})
+        // The CLI's plan on temp folders, not this Mac's ~/.local/bin.
+        let cliDir = dir.appendingPathComponent("cli").path
+        bridge.makeCliInstaller = {
+            AppCliInstaller.withPaths(bundled: nil, binDir: cliDir, pathEnv: "", profile: cliDir + "/.zshrc")
+        }
         // "Send file…" picks this instead of showing the native panel.
         bridge.pickFiles = { [URL(fileURLWithPath: "/tmp/cua-contract-notes.txt")] }
         return bridge
@@ -194,6 +199,11 @@ struct BridgeContractTests {
         await model.keyvault.refresh()
         let bridge = WebUIBridge(model: model, allowedOrigins: [])
         bridge.actions = WebUIActions(openSpace: { _ in }, openMain: {})
+        // The CLI's plan on temp folders, not this Mac's ~/.local/bin.
+        let cliDir = dir.appendingPathComponent("cli").path
+        bridge.makeCliInstaller = {
+            AppCliInstaller.withPaths(bundled: nil, binDir: cliDir, pathEnv: "", profile: cliDir + "/.zshrc")
+        }
         // "Send file…" picks this instead of showing the native panel.
         bridge.pickFiles = { [URL(fileURLWithPath: "/tmp/cua-contract-notes.txt")] }
         let space = try #require(model.spaces.first?.id)
@@ -209,6 +219,7 @@ struct BridgeContractTests {
             ("nudges.pending", [:]), ("nudges.answer", ["id": "risky-1-1", "choice": "here"]),
             ("app.info", [:]), ("session.get", [:]), ("relay.usage", [:]), ("resources.get", ["visible": true]), ("session.signOut", [:]),
             ("links.list", [:]), ("links.create", ["target": "space:dev:3000"]), ("links.stop", ["id": "all"]),
+            ("cli.plan", [:]),
             ("checklist.get", [:]), ("checklist.send", ["action": ["type": "done", "step": "teleport"]]),
             ("spaces.list", [:]),
             ("spaces.createOptions", [:]), ("spaces.cancelCreate", ["pendingId": "pending:none"]),
@@ -298,6 +309,7 @@ struct BridgeContractTests {
         "keyvault.unlock": "asks for Touch ID", "keyvault.unlockVault": "asks for Touch ID or a passphrase in a sheet",
         "keyvault.setup": "asks for Touch ID or a passphrase in a sheet; keyvaultSetupRefusesASetUpVault covers the fixture",
         "startup.act": "brings the app to the front; startupStatesHaveTheirShape covers the states",
+        "cli.install": "writes the CLI into a bin folder and a shell profile; CliBridgeTests covers it on temp folders",
     ]
 
     static func shapes() throws -> [String: Any] {

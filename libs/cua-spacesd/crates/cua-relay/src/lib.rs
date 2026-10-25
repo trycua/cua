@@ -34,6 +34,7 @@ pub mod assertion;
 pub mod auth_log;
 pub mod client;
 pub mod clock;
+mod conn_metrics;
 pub mod device_api;
 pub mod devices;
 pub mod directory;

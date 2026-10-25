@@ -122,6 +122,13 @@ pub fn device_platform() -> &'static str {
     std::env::consts::OS
 }
 
+/// The command a message tells the user to run: `cua`, or `cua-local` in a
+/// Local build ("Cua Spaces Local", CUA-1776), so a pasted hint never runs the
+/// Stable CLI. Messages write it as `` `{cli} host setup` ``.
+pub(crate) fn cli() -> &'static str {
+    cua_home::channel::CuaChannel::current().cli_name()
+}
+
 /// Errors.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

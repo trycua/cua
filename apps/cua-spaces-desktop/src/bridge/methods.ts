@@ -50,6 +50,7 @@ export const METHODS = [
   "machines.rename", "machines.remove", "machines.checkHealth",
   "checklist.get", "checklist.send",
   "links.list", "links.create", "links.stop",
+  "cli.plan", "cli.install",
 ] as const;
 
 /** A live desktop's media ticket for the page's WebCodecs player,

@@ -406,7 +406,7 @@ def test_first_driver_nightly_ignores_perception_only_changes(
     _assert_driver_change_detection_excludes_perception(calls[0])
 
 
-def test_plan_holds_before_build_for_unresolved_attribution(
+def test_plan_warns_but_still_builds_for_unresolved_attribution(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
     previous_sha = "b" * 40
@@ -460,8 +460,9 @@ def test_plan_holds_before_build_for_unresolved_attribution(
         root=ROOT,
         attribution_config_path=config_path,
     )
-    assert plan["shouldBuild"] is False
-    assert plan["reason"] == "held-attribution"
+    assert plan["shouldBuild"] is True
+    assert plan["reason"] == "relevant-changes"
+    assert plan["attributionWarning"] is True
     assert plan["attributionIssues"] == [
         {"sha": "deadbeef", "name": "Local Machine", "email": "machine@example.invalid"}
     ]

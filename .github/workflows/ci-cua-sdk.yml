@@ -17,6 +17,7 @@ on:
       - "libs/cua-spacesd/tests/spaces-e2e/**"
       - ".github/workflows/ci-cua-sdk.yml"
       - ".github/actions/linux-rust-prep/**"
+      - ".github/scripts/ci_reuse_pr_result.py"
   push:
     branches: [main]
     paths:
@@ -27,6 +28,7 @@ on:
       - "libs/cua-driver/rust/**"
       - ".github/workflows/ci-cua-sdk.yml"
       - ".github/actions/linux-rust-prep/**"
+      - ".github/scripts/ci_reuse_pr_result.py"
   schedule:
     - cron: "41 18 * * *"
   workflow_dispatch:
@@ -61,17 +63,59 @@ env:
   CARGO_BUILD_JOBS: "4"
 
 jobs:
-  rust-lint:
+  # Reuse results by tree: a squash-merge push to main whose tree a green pull
+  # request run of this workflow already tested skips the jobs that run did
+  # (the Linux set below). The macOS and Windows legs only run on main, so they
+  # always run there. Any doubt means "run everything": see
+  # .github/scripts/ci_reuse_pr_result.py. Rollback: set the repository
+  # variable CI_REUSE_PR_RESULTS to "off".
+  reuse:
     if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    name: reuse PR results
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      pull-requests: read
+    outputs:
+      reused: ${{ steps.reuse.outputs.reused }}
+      pr_subset: ${{ steps.reuse.outputs.pr_subset }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          sparse-checkout: .github/scripts
+      # `pr_subset` is true only when every job a pull request runs (the names
+      # below, the Linux jobs) passed on this exact tree.
+      # A step that cannot finish in a minute is killed and the jobs run in
+      # full: the lookup never delays the suites by more than that.
+      # Floating inputs the subset's jobs install: setup-node "22" and
+      # setup-uv (latest uv, uv's managed Python).
+      - id: reuse
+        continue-on-error: true
+        timeout-minutes: 1
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_MODE: ${{ vars.CI_REUSE_PR_RESULTS }}
+        run: |
+          python3 .github/scripts/ci_reuse_pr_result.py run \
+            --stamp-job "reuse PR results" \
+            --float node-22 --float uv --float python-standalone \
+            --subset "pr_subset=rust (ubuntu-latest)|rust lint (ubuntu-latest)|rust lint (windows-latest)|crates.io dry run|spaces e2e (ubuntu-latest)|bindings drift (ubuntu-latest)|kotlin compile|build SDK (linux, release)|build test fixtures (linux)|build cua and cua-spaces CLIs (linux)|python smoke (ubuntu-latest)|node smoke (ubuntu-latest)|browser (wasm32) build + smoke"
+
+  rust-lint:
+    if: ${{ !cancelled() && !startsWith(github.head_ref, 'release-please--branches--') }}
     name: rust lint (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    needs: reuse
     # Windows clippy runs on every pull request: Windows-only compile errors
     # used to surface only on release PRs.
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON((github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-please--') || contains(github.event.pull_request.labels.*.name, 'ci:full')) && '["ubuntu-latest","macos-26","windows-latest"]' || '["ubuntu-latest","windows-latest"]') }}
+        os: ${{ fromJSON((github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-please--') || contains(github.event.pull_request.labels.*.name, 'ci:full')) && (needs.reuse.outputs.pr_subset == 'true' && '["macos-26"]' || '["ubuntu-latest","macos-26","windows-latest"]') || '["ubuntu-latest","windows-latest"]') }}
     defaults:
       run:
         working-directory: libs/cua
@@ -141,15 +185,18 @@ jobs:
           fi
 
   rust:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    if: ${{ !cancelled() && !startsWith(github.head_ref, 'release-please--branches--') }}
     name: rust (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    # The matrix keeps the standard labels (they name the job); the larger
+    # runners are mapped here.
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && 'cua-linux-16core' || matrix.os == 'macos-26' && 'macos-26-xlarge' || matrix.os == 'windows-latest' && 'cua-windows-8core' || matrix.os }}
+    needs: reuse
     # Tests only: lint runs in rust-lint, in parallel.
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON((github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-please--') || contains(github.event.pull_request.labels.*.name, 'ci:full')) && '["ubuntu-latest","macos-26","windows-latest"]' || '["ubuntu-latest"]') }}
+        os: ${{ fromJSON((github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-please--') || contains(github.event.pull_request.labels.*.name, 'ci:full')) && (needs.reuse.outputs.pr_subset == 'true' && '["macos-26","windows-latest"]' || '["ubuntu-latest","macos-26","windows-latest"]') || '["ubuntu-latest"]') }}
     defaults:
       run:
         working-directory: libs/cua
@@ -173,6 +220,12 @@ jobs:
           shared-key: libs-cua-test
       - name: Test Spaces discovery and post-create directory failures
         run: cargo test --locked -p cua-spaces --test relay --test cloud_discovery -- --test-threads=4
+      - name: Test the mesh, and its scale budgets (offline or unresponsive computers never hold up the rest)
+        # The scale scenarios run one at a time: each starts 20 nodes and
+        # asserts wall-clock budgets.
+        run: |
+          cargo test --locked -p cua-mesh --lib --test mesh -- --test-threads=4
+          cargo test --locked -p cua-mesh --test scale -- --test-threads=1 --nocapture
       - name: Test (embedded, daemon over UDS and loopback, CLI, cluster, Cua Spaces extensions)
         run: >
           cargo test --locked --no-fail-fast -p cua-sdk -p cua-daemon -p cua-cli -p cua-spacesd-client
@@ -208,9 +261,10 @@ jobs:
   # (a path dependency without a version, a file embedded from outside the
   # crate, a dependency on an unpublished crate).
   crates-dry-run:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    if: ${{ !cancelled() && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' }}
     name: crates.io dry run
     runs-on: ubuntu-latest
+    needs: reuse
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -230,14 +284,15 @@ jobs:
   # cua-spacesd server core in process. A standalone workspace so libs/cua
   # never depends on the driver workspace (see the boundary check above).
   spaces-e2e:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    if: ${{ !cancelled() && !startsWith(github.head_ref, 'release-please--branches--') }}
     name: spaces e2e (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    needs: reuse
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON((github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-please--') || contains(github.event.pull_request.labels.*.name, 'ci:full')) && '["ubuntu-latest","macos-26"]' || '["ubuntu-latest"]') }}
+        os: ${{ fromJSON((github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-please--') || contains(github.event.pull_request.labels.*.name, 'ci:full')) && (needs.reuse.outputs.pr_subset == 'true' && '["macos-26"]' || '["ubuntu-latest","macos-26"]') || '["ubuntu-latest"]') }}
     defaults:
       run:
         working-directory: libs/cua-spacesd/tests/spaces-e2e
@@ -269,14 +324,15 @@ jobs:
           RUST_MIN_STACK: "8388608"
 
   bindings:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    if: ${{ !cancelled() && !startsWith(github.head_ref, 'release-please--branches--') }}
     name: bindings drift (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    needs: reuse
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON((github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-please--') || contains(github.event.pull_request.labels.*.name, 'ci:full')) && '["ubuntu-latest","macos-26"]' || '["ubuntu-latest"]') }}
+        os: ${{ fromJSON((github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-please--') || contains(github.event.pull_request.labels.*.name, 'ci:full')) && (needs.reuse.outputs.pr_subset == 'true' && '["macos-26"]' || '["ubuntu-latest","macos-26"]') || '["ubuntu-latest"]') }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: ./.github/actions/linux-rust-prep
@@ -304,11 +360,12 @@ jobs:
           cargo run --locked -q -p cua-spaces --bin cua-spaces-control-fixtures -- --check
 
   kotlin:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    if: ${{ !cancelled() && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' }}
     # The generated binding must compile (an exported `close` once clashed
     # with AutoCloseable.close; uniffi.toml renames such methods).
     name: kotlin compile
     runs-on: ubuntu-latest
+    needs: reuse
     timeout-minutes: 20
     container: gradle:8.10.2-jdk17
     steps:
@@ -321,9 +378,10 @@ jobs:
   # compile all of them: 45-55 minutes cold on a 2-vCPU runner). macOS and
   # Windows legs (ci:full) still build their own.
   build-sdk:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    if: ${{ !cancelled() && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' }}
     name: build SDK (linux, release)
     runs-on: ubuntu-latest
+    needs: reuse
     timeout-minutes: 90
     defaults:
       run:
@@ -350,9 +408,10 @@ jobs:
           compression-level: 1
 
   build-fixtures:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    if: ${{ !cancelled() && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' }}
     name: build test fixtures (linux)
     runs-on: ubuntu-latest
+    needs: reuse
     timeout-minutes: 90
     defaults:
       run:
@@ -379,9 +438,10 @@ jobs:
           compression-level: 1
 
   build-cli:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    if: ${{ !cancelled() && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' }}
     name: build cua and cua-spaces CLIs (linux)
     runs-on: ubuntu-latest
+    needs: reuse
     timeout-minutes: 90
     defaults:
       run:
@@ -408,17 +468,20 @@ jobs:
           compression-level: 1
 
   python:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    if: ${{ !cancelled() && !startsWith(github.head_ref, 'release-please--branches--')
+      && needs.build-sdk.result != 'failure' && needs.build-sdk.result != 'cancelled'
+      && needs.build-fixtures.result != 'failure' && needs.build-fixtures.result != 'cancelled'
+      && needs.build-cli.result != 'failure' && needs.build-cli.result != 'cancelled' }}
     name: python smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    needs: [build-sdk, build-fixtures, build-cli]
+    needs: [reuse, build-sdk, build-fixtures, build-cli]
     # A cold Windows run builds cua-sdk (release), the fixtures and the CLI:
     # it passed 45 minutes still compiling.
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON((github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-please--') || contains(github.event.pull_request.labels.*.name, 'ci:full')) && '["ubuntu-latest","macos-26","windows-latest"]' || '["ubuntu-latest"]') }}
+        os: ${{ fromJSON((github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-please--') || contains(github.event.pull_request.labels.*.name, 'ci:full')) && (needs.reuse.outputs.pr_subset == 'true' && '["macos-26","windows-latest"]' || '["ubuntu-latest","macos-26","windows-latest"]') || '["ubuntu-latest"]') }}
     defaults:
       run:
         shell: bash
@@ -468,30 +531,34 @@ jobs:
       - name: Smoke-test the installed wheel
         working-directory: libs/cua/python
         run: |
-          WHEEL=$(ls dist/*.whl)
-          uv run --no-project --isolated --python 3.12 --with pytest --with "$WHEEL" pytest -q -p no:cacheprovider tests
+          # `cua` and the `cua-cli` it requires: the tests drive the CLI too.
+          WHEEL=$(ls dist/cua-[0-9]*.whl); CLI_WHEEL=$(ls dist/cua_cli-*.whl)
+          uv run --no-project --isolated --python 3.12 --with pytest --with "$WHEEL" --with "$CLI_WHEEL" pytest -q -p no:cacheprovider tests
       # cua-e2b (the e2b-compatible module) through this wheel against the
       # fixture's cua-spacesd, compared with the e2b 2.42 behaviour golden.
       - name: cua-e2b conformance against cua-spacesd
         if: runner.os == 'Linux'
         working-directory: libs/python/cua-e2b
         run: |
-          WHEEL=$(ls ../../cua/python/dist/*.whl)
+          WHEEL=$(ls ../../cua/python/dist/cua-[0-9]*.whl); CLI_WHEEL=$(ls ../../cua/python/dist/cua_cli-*.whl)
           uv run --no-project --isolated --python 3.12 --with pytest --with pytest-asyncio \
-            --with "$WHEEL" --with-editable . pytest -q -p no:cacheprovider tests/test_conformance.py
+            --with "$WHEEL" --with "$CLI_WHEEL" --with-editable . pytest -q -p no:cacheprovider tests/test_conformance.py
 
   node:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    if: ${{ !cancelled() && !startsWith(github.head_ref, 'release-please--branches--')
+      && needs.build-sdk.result != 'failure' && needs.build-sdk.result != 'cancelled'
+      && needs.build-fixtures.result != 'failure' && needs.build-fixtures.result != 'cancelled'
+      && needs.build-cli.result != 'failure' && needs.build-cli.result != 'cancelled' }}
     name: node smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    needs: [build-sdk, build-fixtures, build-cli]
+    needs: [reuse, build-sdk, build-fixtures, build-cli]
     # A cold macOS run (release cua-sdk, fixtures, both CLIs) passed 45
     # minutes still compiling, as python smoke did on Windows.
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON((github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-please--') || contains(github.event.pull_request.labels.*.name, 'ci:full')) && '["ubuntu-latest","macos-26"]' || '["ubuntu-latest"]') }}
+        os: ${{ fromJSON((github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-please--') || contains(github.event.pull_request.labels.*.name, 'ci:full')) && (needs.reuse.outputs.pr_subset == 'true' && '["macos-26"]' || '["ubuntu-latest","macos-26"]') || '["ubuntu-latest"]') }}
     defaults:
       run:
         working-directory: libs/cua
@@ -542,10 +609,10 @@ jobs:
           npm --prefix typescript/integrations/pi-durable test
 
   browser:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    if: ${{ !cancelled() && !startsWith(github.head_ref, 'release-please--branches--') && needs.reuse.outputs.pr_subset != 'true' }}
     name: browser (wasm32) build + smoke
     runs-on: ubuntu-latest
-    needs: build-fixtures
+    needs: [reuse, build-fixtures]
     timeout-minutes: 45
     defaults:
       run:

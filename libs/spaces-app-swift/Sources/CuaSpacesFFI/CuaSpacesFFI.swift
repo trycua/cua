@@ -3328,7 +3328,7 @@ public struct AppAboutView: Equatable, Hashable {
      */
     public var versionLine: String
     /**
-     * Acknowledgements, Privacy Policy, Terms of Service, Report an Issue.
+     * Acknowledgements, Privacy Policy, Terms of Service, System Status, Report an Issue.
      */
     public var links: [AppAboutLink]
     /**
@@ -3350,7 +3350,7 @@ public struct AppAboutView: Equatable, Hashable {
          * "Version 0.2.0 (0.2.0.123)".
          */versionLine: String,
         /**
-         * Acknowledgements, Privacy Policy, Terms of Service, Report an Issue.
+         * Acknowledgements, Privacy Policy, Terms of Service, System Status, Report an Issue.
          */links: [AppAboutLink],
         /**
          * "© 2026 Cua AI, Inc. All rights reserved."
@@ -6619,6 +6619,10 @@ public struct AppChecklistRow: Equatable, Hashable {
      * Done (ticked, struck through).
      */
     public var done: Bool
+    /**
+     * Skipped (struck through, not ticked); never with `done`.
+     */
+    public var skipped: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -6637,12 +6641,16 @@ public struct AppChecklistRow: Equatable, Hashable {
          */action: String,
         /**
          * Done (ticked, struck through).
-         */done: Bool) {
+         */done: Bool,
+        /**
+         * Skipped (struck through, not ticked); never with `done`.
+         */skipped: Bool) {
         self.step = step
         self.title = title
         self.detail = detail
         self.action = action
         self.done = done
+        self.skipped = skipped
     }
 
 
@@ -6665,7 +6673,8 @@ public struct FfiConverterTypeAppChecklistRow: FfiConverterRustBuffer {
                 title: FfiConverterString.read(from: &buf),
                 detail: FfiConverterString.read(from: &buf),
                 action: FfiConverterString.read(from: &buf),
-                done: FfiConverterBool.read(from: &buf)
+                done: FfiConverterBool.read(from: &buf),
+                skipped: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -6675,6 +6684,7 @@ public struct FfiConverterTypeAppChecklistRow: FfiConverterRustBuffer {
         FfiConverterString.write(value.detail, into: &buf)
         FfiConverterString.write(value.action, into: &buf)
         FfiConverterBool.write(value.done, into: &buf)
+        FfiConverterBool.write(value.skipped, into: &buf)
     }
 }
 
@@ -6793,6 +6803,12 @@ public struct AppChecklistState: Equatable, Hashable {
      * It was on screen once (`checklist_shown` was recorded).
      */
     public var shown: Bool
+    /**
+     * Steps skipped ("Skip"), each once, in checklist order: they count as
+     * done for the progress and for `complete`, and a skipped step done
+     * later shows as done.
+     */
+    public var skipped: [AppChecklistStep]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -6805,10 +6821,16 @@ public struct AppChecklistState: Equatable, Hashable {
          */dismissed: Bool,
         /**
          * It was on screen once (`checklist_shown` was recorded).
-         */shown: Bool) {
+         */shown: Bool,
+        /**
+         * Steps skipped ("Skip"), each once, in checklist order: they count as
+         * done for the progress and for `complete`, and a skipped step done
+         * later shows as done.
+         */skipped: [AppChecklistStep]) {
         self.done = done
         self.dismissed = dismissed
         self.shown = shown
+        self.skipped = skipped
     }
 
 
@@ -6829,7 +6851,8 @@ public struct FfiConverterTypeAppChecklistState: FfiConverterRustBuffer {
             try AppChecklistState(
                 done: FfiConverterSequenceTypeAppChecklistStep.read(from: &buf),
                 dismissed: FfiConverterBool.read(from: &buf),
-                shown: FfiConverterBool.read(from: &buf)
+                shown: FfiConverterBool.read(from: &buf),
+                skipped: FfiConverterSequenceTypeAppChecklistStep.read(from: &buf)
         )
     }
 
@@ -6837,6 +6860,7 @@ public struct FfiConverterTypeAppChecklistState: FfiConverterRustBuffer {
         FfiConverterSequenceTypeAppChecklistStep.write(value.done, into: &buf)
         FfiConverterBool.write(value.dismissed, into: &buf)
         FfiConverterBool.write(value.shown, into: &buf)
+        FfiConverterSequenceTypeAppChecklistStep.write(value.skipped, into: &buf)
     }
 }
 
@@ -6948,6 +6972,14 @@ public struct AppChecklistView: Equatable, Hashable {
      */
     public var closeLabel: String
     /**
+     * "Skip", on each step not done or skipped.
+     */
+    public var skipLabel: String
+    /**
+     * "Hide", or "Done" once complete: closes the checklist.
+     */
+    public var hideLabel: String
+    /**
      * The steps in order.
      */
     public var rows: [AppChecklistRow]
@@ -6974,6 +7006,12 @@ public struct AppChecklistView: Equatable, Hashable {
          * The close button's accessibility label.
          */closeLabel: String,
         /**
+         * "Skip", on each step not done or skipped.
+         */skipLabel: String,
+        /**
+         * "Hide", or "Done" once complete: closes the checklist.
+         */hideLabel: String,
+        /**
          * The steps in order.
          */rows: [AppChecklistRow]) {
         self.visible = visible
@@ -6982,6 +7020,8 @@ public struct AppChecklistView: Equatable, Hashable {
         self.detail = detail
         self.progress = progress
         self.closeLabel = closeLabel
+        self.skipLabel = skipLabel
+        self.hideLabel = hideLabel
         self.rows = rows
     }
 
@@ -7007,6 +7047,8 @@ public struct FfiConverterTypeAppChecklistView: FfiConverterRustBuffer {
                 detail: FfiConverterString.read(from: &buf),
                 progress: FfiConverterString.read(from: &buf),
                 closeLabel: FfiConverterString.read(from: &buf),
+                skipLabel: FfiConverterString.read(from: &buf),
+                hideLabel: FfiConverterString.read(from: &buf),
                 rows: FfiConverterSequenceTypeAppChecklistRow.read(from: &buf)
         )
     }
@@ -7018,6 +7060,8 @@ public struct FfiConverterTypeAppChecklistView: FfiConverterRustBuffer {
         FfiConverterString.write(value.detail, into: &buf)
         FfiConverterString.write(value.progress, into: &buf)
         FfiConverterString.write(value.closeLabel, into: &buf)
+        FfiConverterString.write(value.skipLabel, into: &buf)
+        FfiConverterString.write(value.hideLabel, into: &buf)
         FfiConverterSequenceTypeAppChecklistRow.write(value.rows, into: &buf)
     }
 }
@@ -7160,7 +7204,8 @@ public struct AppCliInstallPlan: Equatable, Hashable {
      */
     public var bundledVersion: String?
     /**
-     * Another `cua` found earlier on PATH (it would shadow `target`).
+     * Another CLI of the same name found earlier on PATH (it would shadow
+     * `target`).
      */
     public var shadowedBy: String?
     /**
@@ -7176,9 +7221,10 @@ public struct AppCliInstallPlan: Equatable, Hashable {
      */
     public var pathLine: String?
     /**
-     * A working `cua` CLI already on this machine: `target`, else the
-     * first in the usual install folders or on PATH (a Finder-launched
+     * A working CLI of this channel already on this machine: `target`, else
+     * the first in the usual install folders or on PATH (a Finder-launched
      * app's PATH lacks `~/.local/bin`, so the folders are searched too).
+     * Local looks for `cua-local` only: a Stable `cua` is not its CLI.
      */
     public var found: String?
 
@@ -7210,7 +7256,8 @@ public struct AppCliInstallPlan: Equatable, Hashable {
          * `cua --version` of the bundled CLI.
          */bundledVersion: String?,
         /**
-         * Another `cua` found earlier on PATH (it would shadow `target`).
+         * Another CLI of the same name found earlier on PATH (it would shadow
+         * `target`).
          */shadowedBy: String?,
         /**
          * `bin_dir` is already on PATH.
@@ -7222,9 +7269,10 @@ public struct AppCliInstallPlan: Equatable, Hashable {
          * The line that would be added to `path_profile`.
          */pathLine: String?,
         /**
-         * A working `cua` CLI already on this machine: `target`, else the
-         * first in the usual install folders or on PATH (a Finder-launched
+         * A working CLI of this channel already on this machine: `target`, else
+         * the first in the usual install folders or on PATH (a Finder-launched
          * app's PATH lacks `~/.local/bin`, so the folders are searched too).
+         * Local looks for `cua-local` only: a Stable `cua` is not its CLI.
          */found: String?) {
         self.source = source
         self.target = target
@@ -24822,7 +24870,7 @@ public struct AppNotchView: Equatable, Hashable {
      */
     public var label: String
     /**
-     * "N Spaces": the tab's spoken label (remote Spaces only).
+     * "N Spaces": the tab's spoken label (Spaces on or starting only).
      */
     public var countLabel: String
     /**
@@ -24847,7 +24895,8 @@ public struct AppNotchView: Equatable, Hashable {
      */
     public var hidden: Bool
     /**
-     * The tab shows (closed, no drag in flight; a drag tucks it away).
+     * The tab shows (closed, no drag in flight, at least one Space on or
+     * starting; a drag tucks it away, and with none the notch is bare).
      */
     public var showTab: Bool
     /**
@@ -24884,7 +24933,7 @@ public struct AppNotchView: Equatable, Hashable {
          * Accessibility label of the panel.
          */label: String,
         /**
-         * "N Spaces": the tab's spoken label (remote Spaces only).
+         * "N Spaces": the tab's spoken label (Spaces on or starting only).
          */countLabel: String,
         /**
          * The tab's two rows: the count over the word.
@@ -24903,7 +24952,8 @@ public struct AppNotchView: Equatable, Hashable {
          * The notch is hidden (menu bar only): draw nothing.
          */hidden: Bool,
         /**
-         * The tab shows (closed, no drag in flight; a drag tucks it away).
+         * The tab shows (closed, no drag in flight, at least one Space on or
+         * starting; a drag tucks it away, and with none the notch is bare).
          */showTab: Bool,
         /**
          * The pointer rests on the closed notch while the dwell runs: the
@@ -48211,6 +48261,10 @@ public enum AppAboutLinkId: Equatable, Hashable {
      */
     case terms
     /**
+     * The public status page.
+     */
+    case status
+    /**
      * A new issue.
      */
     case issue
@@ -48241,7 +48295,9 @@ public struct FfiConverterTypeAppAboutLinkId: FfiConverterRustBuffer {
 
         case 3: return .terms
 
-        case 4: return .issue
+        case 4: return .status
+
+        case 5: return .issue
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -48263,8 +48319,12 @@ public struct FfiConverterTypeAppAboutLinkId: FfiConverterRustBuffer {
             writeInt(&buf, Int32(3))
 
 
-        case .issue:
+        case .status:
             writeInt(&buf, Int32(4))
+
+
+        case .issue:
+            writeInt(&buf, Int32(5))
 
         }
     }
@@ -49095,7 +49155,15 @@ public enum AppChecklistAction: Equatable, Hashable {
      */
     case shown
     /**
-     * Closed with ×.
+     * "Skip" on a step: not for this person; it counts as done.
+     */
+    case skip(
+        /**
+         * The step.
+         */step: AppChecklistStep
+    )
+    /**
+     * Closed with × ("Hide", or "Done" once complete).
      */
     case dismiss
     /**
@@ -49153,14 +49221,17 @@ public struct FfiConverterTypeAppChecklistAction: FfiConverterRustBuffer {
 
         case 2: return .shown
 
-        case 3: return .dismiss
-
-        case 4: return .reopen
-
-        case 5: return .observe(otherMachine: try FfiConverterBool.read(from: &buf), hasSpace: try FfiConverterBool.read(from: &buf), agentRan: try FfiConverterBool.read(from: &buf)
+        case 3: return .skip(step: try FfiConverterTypeAppChecklistStep.read(from: &buf)
         )
 
-        case 6: return .merge(state: try FfiConverterTypeAppChecklistState.read(from: &buf)
+        case 4: return .dismiss
+
+        case 5: return .reopen
+
+        case 6: return .observe(otherMachine: try FfiConverterBool.read(from: &buf), hasSpace: try FfiConverterBool.read(from: &buf), agentRan: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 7: return .merge(state: try FfiConverterTypeAppChecklistState.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -49180,23 +49251,28 @@ public struct FfiConverterTypeAppChecklistAction: FfiConverterRustBuffer {
             writeInt(&buf, Int32(2))
 
 
-        case .dismiss:
+        case let .skip(step):
             writeInt(&buf, Int32(3))
+            FfiConverterTypeAppChecklistStep.write(step, into: &buf)
 
 
-        case .reopen:
+        case .dismiss:
             writeInt(&buf, Int32(4))
 
 
-        case let .observe(otherMachine,hasSpace,agentRan):
+        case .reopen:
             writeInt(&buf, Int32(5))
+
+
+        case let .observe(otherMachine,hasSpace,agentRan):
+            writeInt(&buf, Int32(6))
             FfiConverterBool.write(otherMachine, into: &buf)
             FfiConverterBool.write(hasSpace, into: &buf)
             FfiConverterBool.write(agentRan, into: &buf)
 
 
         case let .merge(state):
-            writeInt(&buf, Int32(6))
+            writeInt(&buf, Int32(7))
             FfiConverterTypeAppChecklistState.write(state, into: &buf)
 
         }
@@ -59360,13 +59436,17 @@ public enum AppTelemetrySignal: Equatable, Hashable {
     case onboardingPage(
         /**
          * `welcome`, `signin`, `agents`, `presentation`, `volume`,
-         * `this_machine` or `done`.
+         * `this_machine` or `done`; or, with a `step_*` action, one of
+         * `schema::FIRST_RUN_STEPS` (`connect_agent`, `terminal`, ...).
          */page: String,
         /**
-         * `shown`, `completed`, `skipped` or `back`.
+         * `shown`, `completed`, `skipped` or `back`; or `step_viewed`,
+         * `step_completed`, `step_failed` or `step_skipped`, which send
+         * `cua_onboarding_step_*` and `cua_onboarding_skipped`.
          */action: String,
         /**
-         * The page's answer as a fixed word, or `none`.
+         * The page's answer as a fixed word, or `none`; for
+         * `step_failed`, the reason (`timeout`, `install_failed`, ...).
          */choice: String
     )
     /**
@@ -72823,6 +72903,28 @@ public func appNotificationsView(feed: [AppNotificationInput], nowMs: UInt64) ->
 })
 }
 /**
+ * The Spaces on or starting (the notch tab and the menu bar item); never
+ * This machine, a stopped Space or a failed one.
+ */
+public func appOnCount(spaces: [AppSpace]) -> UInt32  {
+    return try!  FfiConverterUInt32.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_on_count(
+        FfiConverterSequenceTypeAppSpace.lower(spaces),$0
+    )
+})
+}
+/**
+ * The menu bar item's status line for `count` Spaces on ("No Spaces
+ * running", "3 Spaces running").
+ */
+public func appOnStatusLine(count: UInt32) -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_on_status_line(
+        FfiConverterUInt32.lower(count),$0
+    )
+})
+}
+/**
  * A first-run action from JSON (parity flows).
  */
 public func appOnboardingActionFromJson(json: String)throws  -> AppOnboardingAction  {
@@ -72914,7 +73016,7 @@ public func appOnboardingView(state: AppOnboardingState) -> AppOnboardingView  {
 })
 }
 /**
- * The Spaces the user can open (the notch tab and the menu bar item).
+ * The Spaces the user can open (the open notch's tiles), on or not.
  */
 public func appOpenableCount(spaces: [AppSpace]) -> UInt32  {
     return try!  FfiConverterUInt32.lift(try! rustCall() {
@@ -75245,6 +75347,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_notifications_view() != 27432) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_on_count() != 27823) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_on_status_line() != 37662) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_spaces_ffi_checksum_func_app_onboarding_action_from_json() != 6687) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -75272,7 +75380,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_onboarding_view() != 63118) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_openable_count() != 46279) {
+    if (uniffi_cua_spaces_ffi_checksum_func_app_openable_count() != 49692) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_os_icon_svg() != 43181) {

@@ -180,7 +180,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.1 GB initially; grows with use"
+          "Disk: 3.0 GB–7.2 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -276,7 +276,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.1 GB initially; grows with use"
+          "Disk: 3.0 GB–7.2 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -323,7 +323,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.1 GB initially; grows with use"
+          "Disk: 3.0 GB–7.2 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -373,7 +373,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.1 GB initially; grows with use"
+          "Disk: 3.0 GB–7.2 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -525,7 +525,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.1 GB initially; grows with use"
+          "Disk: 3.0 GB–7.2 GB initially; grows with use"
         ],
         "step": 0,
         "summary": [
@@ -568,7 +568,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.1 GB initially; grows with use"
+          "Disk: 3.0 GB–7.2 GB initially; grows with use"
         ],
         "step": 1,
         "summary": [
@@ -611,7 +611,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.1 GB initially; grows with use"
+          "Disk: 3.0 GB–7.2 GB initially; grows with use"
         ],
         "step": 2,
         "summary": [
@@ -651,7 +651,7 @@
         "price": null,
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.1 GB initially; grows with use"
+          "Disk: 3.0 GB–7.2 GB initially; grows with use"
         ],
         "step": 3,
         "summary": [

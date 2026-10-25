@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.15.0](https://github.com/trycua/cua/compare/cua-spaces-v0.14.0...cua-spaces-v0.15.0) (2026-10-24)
+
+
+### Features
+
+* **cua-home:** CuaChannel, the names that keep Cua Spaces Local apart from stable (CUA-1776) ([#5800](https://github.com/trycua/cua/issues/5800)) ([e896967](https://github.com/trycua/cua/commit/e896967501382d6dc26ef6d96282c0f8af882648))
+* **spaces:** agent-first onboarding and a quieter Home ([#5869](https://github.com/trycua/cua/issues/5869)) ([be2dad3](https://github.com/trycua/cua/commit/be2dad3345b53b6195192505a63db0538fcc035d))
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.9.0 in Cua Spaces ([#5873](https://github.com/trycua/cua/issues/5873)) ([c74795a](https://github.com/trycua/cua/commit/c74795a3d558a67a350d0b08ce3ed5966d09eb66))
+* **spaces-macos:** run cua-spacesd from Contents/Helpers so opening the app shows a window ([#5871](https://github.com/trycua/cua/issues/5871)) ([92c4cbe](https://github.com/trycua/cua/commit/92c4cbe2241190b5f5a1488ba2a94859e7e51829))
+
+## [0.14.0](https://github.com/trycua/cua/compare/cua-spaces-v0.13.1...cua-spaces-v0.14.0) (2026-10-24)
+
+
+### Features
+
+* compat gateways for E2B and Daytona, Hetzner as your own cloud, the elastic pool, cua share and the public relay ([#5778](https://github.com/trycua/cua/issues/5778)) ([d4f3f80](https://github.com/trycua/cua/commit/d4f3f8063d7b30a3b3bda2b4c05c565a9dfcb460))
+* **spaces:** onboarding agents step: pick any agents or none, per computer, with Codex's ChatGPT sign-in (CUA-1995) ([#5707](https://github.com/trycua/cua/issues/5707)) ([4a44f4d](https://github.com/trycua/cua/commit/4a44f4d39677c2d906d588b5b205a85aa8353354))
+
+
+### Bug Fixes
+
+* **cua:** stabilize the known flaky release-gate tests ([#5538](https://github.com/trycua/cua/issues/5538)) ([c3b557e](https://github.com/trycua/cua/commit/c3b557e1dced1238bf5b479af876aad9ea409498))
+* **spaces-macos:** bundle cua 0.8.0 in Cua Spaces ([#5811](https://github.com/trycua/cua/issues/5811)) ([c9321b9](https://github.com/trycua/cua/commit/c9321b92679305f103f5ffb336e953d788b1af80))
+* **spaces-macos:** restart a daemon that dies before it is watched; stable create-watchdog tests ([#5825](https://github.com/trycua/cua/issues/5825)) ([f06f203](https://github.com/trycua/cua/commit/f06f203291c6c5a12e7c9134ec6b1b918acaf5d1))
+
 ## [0.13.1](https://github.com/trycua/cua/compare/cua-spaces-v0.13.0...cua-spaces-v0.13.1) (2026-10-22)
 
 

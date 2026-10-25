@@ -67,6 +67,8 @@ pub const METHODS: &[&str] = &[
     "window.menuBar",
     "window.menu",
     "spaces.openableCount",
+    "spaces.onCount",
+    "spaces.onStatusLine",
     "wizard.initial",
     "wizard.reduce",
     "wizard.view",
@@ -311,10 +313,13 @@ pub const METHODS: &[&str] = &[
     "resources.warning",
     "upsell.prompt",
     "upsell.allows",
+    "upsell.card",
     "firstRun.view",
     "firstRun.todos",
+    "firstRun.permissions",
     "firstRun.agentUsed",
     "firstRun.leadAgent",
+    "firstRun.cli",
     "telemetry.upsell",
     "nudge.secondAgent",
     "nudge.riskyAction",
@@ -479,6 +484,8 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         )),
         "window.menu" => out(window::menu(&a.get::<window::MenuInput>("input")?)),
         "spaces.openableCount" => out(spaces::openable_count(&a.get::<Vec<Space>>("spaces")?)),
+        "spaces.onCount" => out(spaces::on_count(&a.get::<Vec<Space>>("spaces")?)),
+        "spaces.onStatusLine" => out(spaces::on_status_line(a.get("count")?)),
         "window.menuBar" => out(window::menu_bar_with_keyvault(
             a.get("spaces")?,
             a.get::<Option<String>>("keyvault")?.as_deref(),
@@ -545,8 +552,21 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             ))
         }
         "upsell.allows" => out(upsell::allows(&a.get("state")?)),
+        "upsell.card" => {
+            let app = a
+                .get::<Option<String>>("accountApp")?
+                .filter(|u| u.starts_with("https://"))
+                .unwrap_or_else(cua_home::env::account_app_url);
+            out(upsell::card(
+                &a.get::<String>("reason")?,
+                &a.get("usage")?,
+                &app,
+            ))
+        }
         "firstRun.view" => out(crate::first_run::view(&a.get("input")?)),
+        "firstRun.cli" => out(crate::first_run::cli_view(&a.get("input")?)),
         "firstRun.todos" => out(crate::first_run::todos(&a.get("input")?)),
+        "firstRun.permissions" => out(crate::first_run::permissions_view(&a.get("input")?)),
         "firstRun.agentUsed" => out(crate::first_run::agent_used(
             &a.get::<Vec<crate::first_run::AccessLine>>("lines")?,
             a.get::<u64>("sinceMs")?,

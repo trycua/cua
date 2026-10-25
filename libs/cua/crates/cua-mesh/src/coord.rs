@@ -18,10 +18,12 @@ use futures_util::{SinkExt as _, StreamExt as _};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
+use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 
 use crate::engine::Engine;
 use crate::key::{NodeIdentity, PublicKey};
 use crate::proto::{self, ClientMsg, Mode, NodeKind, PeerUsage, ServerMsg};
+use crate::reconnect::{self, Backoff};
 use crate::{Error, Result};
 
 /// Credentials for the coordinator connection, fetched before every
@@ -92,6 +94,8 @@ pub(crate) struct ControlConfig {
     pub approved: Option<Arc<crate::node::Approved>>,
     /// Forgotten by the coordinator on disconnect.
     pub ephemeral: bool,
+    /// Divides the reconnect wait (tests).
+    pub reconnect_speedup: u32,
 }
 
 impl Control {
@@ -248,12 +252,56 @@ fn denial(e: &Error) -> Option<String> {
     }
 }
 
-fn backoff(attempt: u32) -> Duration {
-    let base = Duration::from_millis(250)
-        .saturating_mul(1 << attempt.min(6))
-        .min(Duration::from_secs(10));
-    base.mul_f64(rand::random_range(0.5..=1.0))
+/// How one coordinator session ended, for the log and for the wait before
+/// the next connect.
+#[derive(Default)]
+struct Ended {
+    /// When the coordinator welcomed the node (never, if it did not).
+    welcomed: Option<std::time::Instant>,
+    /// The WebSocket close the coordinator sent: code and reason.
+    close: Option<(u16, String)>,
+    /// The last error message the coordinator sent before it ended.
+    server_error: Option<String>,
+    /// The coordinator ended the session (a close or a dropped
+    /// connection after the welcome), as opposed to a failure on this side.
+    by_relay: bool,
 }
+
+impl Ended {
+    /// Notes a close frame and returns the error that ends the session.
+    fn closed(&mut self, frame: Option<CloseFrame>) -> Error {
+        self.by_relay = true;
+        match frame {
+            Some(f) => {
+                let (code, reason) = (u16::from(f.code), f.reason.to_string());
+                self.close = Some((code, reason.clone()));
+                Error::Unreachable(format!(
+                    "coordinator closed the connection ({code}: {reason})"
+                ))
+            }
+            None => Error::Unreachable("coordinator closed the connection".into()),
+        }
+    }
+
+    fn close_code(&self) -> Option<u16> {
+        self.close.as_ref().map(|(c, _)| *c)
+    }
+
+    fn retry_after(&self) -> Option<Duration> {
+        let (code, reason) = self.close.as_ref()?;
+        (*code == proto::CLOSE_RATE_LIMITED)
+            .then(|| proto::parse_retry_after(reason))
+            .flatten()
+            .map(Duration::from_secs)
+    }
+}
+
+/// Consecutive sessions the coordinator ended with "another connection
+/// took over" before this node stops reconnecting.
+const MAX_TAKEOVERS: u32 = 3;
+
+const TAKEN_OVER: &str = "another copy of Spaces keeps taking over this computer's connection \
+    (two copies share one identity). Quit the other copy, then reopen Spaces here.";
 
 pub(crate) async fn run(
     cfg: ControlConfig,
@@ -262,38 +310,73 @@ pub(crate) async fn run(
     identity: NodeIdentity,
     shutdown: tokio_util_cancel::Token,
 ) {
-    let mut attempt = 0u32;
+    let mut backoff = Backoff::default();
+    let mut takeovers = 0u32;
     loop {
         if shutdown.is_cancelled() {
             return;
         }
-        let started = std::time::Instant::now();
-        let result = session(&cfg, &control, &engine, &identity, &shutdown).await;
+        let mut ended = Ended::default();
+        let result = session(&cfg, &control, &engine, &identity, &shutdown, &mut ended).await;
         engine.set_relay(None);
         *control.out.lock().expect("out") = None;
+        if shutdown.is_cancelled() {
+            return;
+        }
+        // Only the time since the welcome is a healthy session.
+        let lived = ended.welcomed.map_or(Duration::ZERO, |t| t.elapsed());
+        if ended.close_code() == Some(proto::CLOSE_REPLACED) {
+            takeovers += 1;
+        } else {
+            takeovers = 0;
+        }
+        let gave_up = takeovers >= MAX_TAKEOVERS;
         control.state.send_modify(|s| {
             s.connected = false;
             s.last_error = result.as_ref().err().map(ToString::to_string);
             if let Some(reason) = result.as_ref().err().and_then(denial) {
                 s.denied = Some(reason);
             }
+            if gave_up {
+                s.denied = Some(TAKEN_OVER.into());
+            }
             if matches!(result, Err(Error::Unsupported(_))) {
                 s.unsupported = true;
             }
         });
-        if let Err(e) = &result {
-            tracing::info!(error = %e, "mesh coordinator connection ended");
-            if matches!(e, Error::Refused(_)) {
-                attempt = attempt.max(5);
-            }
+        if matches!(result, Err(Error::Refused(_))) {
+            backoff.at_least(5);
         }
-        if started.elapsed() > Duration::from_secs(30) {
-            attempt = 0;
+        let unit = rand::random_range(0.0..=1.0);
+        let mut delay = backoff.next(lived, unit);
+        // A relay close, or any drop after the welcome (a crashed relay
+        // resets the socket without a close frame): all nodes lose it at once.
+        let by_relay = ended.by_relay || (ended.welcomed.is_some() && result.is_err());
+        if by_relay {
+            delay += reconnect::spread(rand::random_range(0.0..=1.0));
         }
-        let delay = backoff(attempt);
-        attempt = attempt.saturating_add(1);
+        if let Some(wait) = ended.retry_after() {
+            delay = delay.max(wait);
+        }
+        let close = ended.close.as_ref();
+        tracing::warn!(
+            error = result.as_ref().err().map(ToString::to_string),
+            close_code = close.map(|(c, _)| *c),
+            close_reason = close.map(|(_, r)| r.as_str()),
+            server_error = ended.server_error.as_deref(),
+            welcomed = ended.welcomed.is_some(),
+            lived_ms = lived.as_millis() as u64,
+            by_relay,
+            takeovers,
+            retry_in_ms = delay.as_millis() as u64,
+            "mesh coordinator session ended"
+        );
+        if gave_up {
+            tracing::error!("{TAKEN_OVER} Not reconnecting.");
+            return;
+        }
         tokio::select! {
-            _ = tokio::time::sleep(delay) => {}
+            _ = tokio::time::sleep(delay / cfg.reconnect_speedup.max(1)) => {}
             _ = shutdown.cancelled() => return,
         }
     }
@@ -305,6 +388,7 @@ async fn session(
     engine: &Arc<Engine>,
     identity: &NodeIdentity,
     shutdown: &tokio_util_cancel::Token,
+    ended: &mut Ended,
 ) -> Result<()> {
     let url = connect_url(&cfg.url)?;
     let mut request = url
@@ -365,9 +449,13 @@ async fn session(
                 server_key,
                 nonce,
             }) => (server_key, nonce, version),
-            Ok(ServerMsg::Error { message }) => return Err(Error::Refused(message)),
+            Ok(ServerMsg::Error { message }) => {
+                ended.server_error = Some(message.clone());
+                return Err(Error::Refused(message));
+            }
             _ => return Err(Error::Protocol("expected a challenge".into())),
         },
+        Some(Ok(WsMessage::Close(frame))) => return Err(ended.closed(frame)),
         _ => return Err(Error::Protocol("expected a challenge".into())),
     };
     if server_version != proto::VERSION {
@@ -412,12 +500,17 @@ async fn session(
                 }
                 (mode, stun, version, usage)
             }
-            Ok(ServerMsg::Error { message }) => return Err(Error::Refused(message)),
+            Ok(ServerMsg::Error { message }) => {
+                ended.server_error = Some(message.clone());
+                return Err(Error::Refused(message));
+            }
             _ => return Err(Error::Protocol("expected a welcome".into())),
         },
+        Some(Ok(WsMessage::Close(frame))) => return Err(ended.closed(frame)),
         _ => return Err(Error::Protocol("expected a welcome".into())),
     };
 
+    ended.welcomed = Some(std::time::Instant::now());
     let (out_tx, mut out_rx) = mpsc::channel::<ClientMsg>(64);
     let (relay_tx, mut relay_rx) = mpsc::channel::<(PublicKey, Vec<u8>)>(2048);
     *control.out.lock().expect("out") = Some(out_tx.clone());
@@ -455,14 +548,13 @@ async fn session(
                     }
                     Some(Ok(WsMessage::Text(t))) => {
                         let Ok(msg) = serde_json::from_str::<ServerMsg>(&t) else { continue };
-                        handle(cfg, control, engine, mode, msg, &out_tx);
+                        handle(cfg, control, engine, mode, msg, &out_tx, ended);
                     }
                     Some(Ok(WsMessage::Ping(p))) => {
                         let _ = sink.send(WsMessage::Pong(p)).await;
                     }
-                    Some(Ok(WsMessage::Close(_))) | None => {
-                        return Err(Error::Unreachable("coordinator closed the connection".into()));
-                    }
+                    Some(Ok(WsMessage::Close(frame))) => return Err(ended.closed(frame)),
+                    None => return Err(ended.closed(None)),
                     Some(Ok(_)) => {}
                     Some(Err(e)) => return Err(Error::Unreachable(e.to_string())),
                 }
@@ -499,6 +591,7 @@ fn handle(
     mode: Mode,
     msg: ServerMsg,
     out: &mpsc::Sender<ClientMsg>,
+    ended: &mut Ended,
 ) {
     match msg {
         ServerMsg::Netmap { peers } => {
@@ -545,7 +638,10 @@ fn handle(
             reason,
         } => control.finish_pair(&machine_id, if ok { Ok(()) } else { Err(reason) }),
         ServerMsg::Pong | ServerMsg::Challenge { .. } | ServerMsg::Welcome { .. } => {}
-        ServerMsg::Error { message } => tracing::warn!(%message, "mesh coordinator error"),
+        ServerMsg::Error { message } => {
+            tracing::warn!(%message, "mesh coordinator error");
+            ended.server_error = Some(message);
+        }
     }
 }
 
@@ -577,6 +673,42 @@ pub(crate) mod tokio_util_cancel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn frame(code: u16, reason: &str) -> Option<CloseFrame> {
+        Some(CloseFrame {
+            code: code.into(),
+            reason: reason.into(),
+        })
+    }
+
+    #[test]
+    fn a_close_frame_is_recorded_with_its_reason() {
+        let mut ended = Ended::default();
+        let e = ended.closed(frame(proto::CLOSE_REPLACED, "replaced by a newer session"));
+        assert!(ended.by_relay);
+        assert_eq!(ended.close_code(), Some(proto::CLOSE_REPLACED));
+        let text = e.to_string();
+        assert!(text.contains("4001") && text.contains("replaced by a newer session"));
+        // A bare close or a dropped connection has no reason but is the relay's.
+        let mut bare = Ended::default();
+        bare.closed(None);
+        assert!(bare.by_relay && bare.close.is_none());
+    }
+
+    #[test]
+    fn a_rate_limit_close_says_how_long_to_wait() {
+        let mut ended = Ended::default();
+        ended.closed(frame(
+            proto::CLOSE_RATE_LIMITED,
+            &proto::retry_after_reason(37),
+        ));
+        assert_eq!(ended.retry_after(), Some(Duration::from_secs(37)));
+        // Another code never carries a wait.
+        let mut other = Ended::default();
+        other.closed(frame(proto::CLOSE_DEVICE, "retry after 5 s"));
+        assert_eq!(other.retry_after(), None);
+        assert_eq!(proto::parse_retry_after("nothing here"), None);
+    }
 
     fn usage(peer: PublicKey, open: u32) -> Vec<PeerUsage> {
         vec![PeerUsage {

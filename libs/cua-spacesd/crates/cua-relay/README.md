@@ -100,7 +100,9 @@ signed with an in-process key it trusts next to the relay's (only on
 requests carrying the per-forward session key the dialer chose), so the
 spacesd host policy decides as for relayed calls; a static machine splices
 streams unchanged (the env token rides inside WireGuard). Mesh UDP 3212
-reaches the local QUIC media port.
+(`--mesh-udp-port`) reaches the local QUIC media port; it is a port of the
+mesh's own network, so another cua-spacesd on the same computer does not
+compete for it.
 
 ## Hosted-machine proxy transport
 
@@ -521,6 +523,14 @@ jobs), snapshots up to 64 MiB, keyrings 4 MiB, the rest 64 KiB.
   `cua_relay_pool_writes_refused_total{reason}`,
   `cua_relay_state_volume_bytes`, `cua_relay_state_volume_available_bytes`,
   `cua_relay_state_pool_reserve_bytes`.
+  `cua_relay_connections_total{kind,outcome}` counts connection attempts
+  for an availability SLO: `kind="machine"` (a computer opening its tunnel;
+  `outcome` is `ok`, `rejected` for a caller-side refusal or `error` for a
+  relay-side failure) and `kind="client"` (a request or stream forwarded to
+  a computer; `outcome` is `ok`, including the computer's own 4xx and 5xx
+  answers, `rejected`, `offline` when the computer is not connected, or
+  `error` for a relay-side failure). No other label values exist, and all
+  seven series are present from process start.
 - `GET /v1/info` keeps `state_writable` (false while a store is failing).
 
 **Log lines to alert on** (stable message and `alert` field):

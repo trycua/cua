@@ -37,7 +37,7 @@ export interface AboutInput {
   checking: boolean;
 }
 
-export type AboutLinkId = "acknowledgements" | "privacy" | "terms" | "issue";
+export type AboutLinkId = "acknowledgements" | "privacy" | "terms" | "status" | "issue";
 
 export interface AboutLink {
   id: AboutLinkId;

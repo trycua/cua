@@ -385,7 +385,7 @@ impl OrgAccess {
             ])
             .send()
             .await
-            .map_err(|e| format!("service token: {e}"))?;
+            .map_err(|e| format!("service token: {}", error_chain(&e)))?;
         if !reply.status().is_success() {
             return Err(format!("service token: HTTP {}", reply.status()));
         }
@@ -421,7 +421,7 @@ impl OrgAccess {
         self.counters.api_calls.fetch_add(1, Ordering::Relaxed);
         let r = req.send().await.map_err(|e| {
             self.counters.api_errors.fetch_add(1, Ordering::Relaxed);
-            format!("Spaces API: {e}")
+            format!("Spaces API: {}", error_chain(&e))
         })?;
         if r.status().is_server_error() || r.status() == reqwest::StatusCode::UNAUTHORIZED {
             self.counters.api_errors.fetch_add(1, Ordering::Relaxed);
@@ -1044,6 +1044,19 @@ fn machine_ids(v: &serde_json::Value) -> Vec<String> {
             .collect()
     })
     .unwrap_or_default()
+}
+
+/// An error with its causes ("error sending request: operation timed out"),
+/// so the log says whether a lookup timed out, was refused or was reset.
+fn error_chain(e: &dyn std::error::Error) -> String {
+    let mut out = e.to_string();
+    let mut src = e.source();
+    while let Some(s) = src {
+        out.push_str(": ");
+        out.push_str(&s.to_string());
+        src = s.source();
+    }
+    out
 }
 
 #[cfg(test)]

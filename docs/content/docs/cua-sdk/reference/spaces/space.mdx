@@ -1215,20 +1215,6 @@ Returned by [`Spaces.relay_register`](/cua-sdk/reference/spaces#spacesrelay_regi
 | `url` | `String` |  | The relay URL of the machine. |
 | `online` | `bool` |  | Connected to the relay now. |
 
-## `SpaceResizeReport` record
-
-What `Spaces.resize` did: the shape the Space has now.
-
-Returned by [`Spaces.resize`](/cua-sdk/reference/spaces#spacesresize).
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `space` | `String` |  | The Space. |
-| `cpus` | `Option<u32>` |  | vCPUs (when changed). |
-| `memory_mb` / `memoryMb` | `Option<u64>` |  | Memory in MiB (when changed). |
-| `disk_gb` / `diskGb` | `Option<u32>` |  | Disk in GiB (when grown). |
-| `message` | `String` |  | What happened, for people. |
-
 ## `SpaceShareEntry` record
 
 One account a Space is shared with.

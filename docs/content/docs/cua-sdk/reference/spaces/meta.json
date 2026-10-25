@@ -1,6 +1,7 @@
 {
   "title": "Spaces",
   "pages": [
+    "resize",
     "lifetime",
     "space",
     "elastic",

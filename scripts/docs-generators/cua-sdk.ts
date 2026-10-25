@@ -488,7 +488,7 @@ export const PAGES: PageSpec[] = [
     description: 'The Spaces registry: create, add, resolve, delete and remove Spaces, their create options, and agent runs in a Space.',
     intro:
       '`cua.spaces()` returns the `Spaces` registry. Create a Space where `on` says (local or cloud), or add an existing machine by URL, then open a [`Space`](/cua-sdk/reference/spaces/space).',
-    items: ['Spaces', 'SpaceInfo', 'SpacePowerReport', 'spaces_tool_methods', 'SpacesToolMethod'],
+    items: ['Spaces', 'SpaceInfo', 'SpaceList', 'SpacePowerReport', 'spaces_tool_methods', 'SpacesToolMethod'],
   },
   {
     slug: 'spaces/lifetime',

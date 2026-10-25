@@ -29,6 +29,8 @@ test.use({
 
 test("Settings: the heading, tab bar and content keep their left edge across tabs", async ({ page }) => {
   await page.goto("/settings?bridge=demo&parity");
+  // The window's own size is the host's (the Electron window ignores the viewport): fix the page's height here.
+  await page.addStyleTag({ content: "html, body, #root { height: 760px !important; max-height: 760px !important; overflow: hidden !important; }" });
   const nav = page.getByRole("navigation", { name: "Settings" });
   await nav.waitFor();
 

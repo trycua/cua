@@ -678,17 +678,51 @@ function OptionsStep({ v }: { v: WizardView }) {
   );
 }
 
+/** The Summary rows only a developer needs (`wizard::SUMMARY_ADVANCED`): they
+ * sit under "Advanced", the same disclosure the System step uses. */
+const SUMMARY_ADVANCED = new Set(["Image", "Kind", "Architecture", "Runtime"]);
+
+function SummaryRow({ fact }: { fact: { label: string; value: string } }) {
+  return (
+    <div data-summary-row="" className="flex items-baseline justify-between gap-6 px-4 py-2 text-[13px]">
+      <span className="shrink-0 text-muted-foreground">{fact.label}</span>
+      <span className={cn("min-w-0 text-right break-all", fact.label === "Image" && "font-mono text-xs")}>{fact.value}</span>
+    </div>
+  );
+}
+
 function SummaryStep({ v }: { v: WizardView }) {
+  const { send } = useNewSpaceWizard();
+  const plain = v.summary.filter((f) => !SUMMARY_ADVANCED.has(f.label));
+  const technical = v.summary.filter((f) => SUMMARY_ADVANCED.has(f.label));
   return (
     <>
       <Group data-summary="">
-        {v.summary.map((fact) => (
-          <div key={fact.label} data-summary-row="" className="flex items-baseline justify-between gap-6 px-4 py-2 text-[13px]">
-            <span className="shrink-0 text-muted-foreground">{fact.label}</span>
-            <span className={cn("min-w-0 text-right break-all", fact.label === "Image" && "font-mono text-xs")}>{fact.value}</span>
-          </div>
+        {plain.map((fact) => (
+          <SummaryRow key={fact.label} fact={fact} />
         ))}
       </Group>
+      {technical.length ? (
+        <div className="mt-4">
+          <button
+            type="button"
+            data-advanced-toggle=""
+            aria-expanded={v.advanced}
+            onClick={() => send({ type: "toggle-advanced" })}
+            className="flex items-center gap-1 px-1 text-xs font-semibold text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground"
+          >
+            <ChevronRightIcon className={cn("size-3.5 transition-transform", v.advanced && "rotate-90")} />
+            {v.labels.advanced}
+          </button>
+          {v.advanced ? (
+            <Group className="mt-2" data-summary-advanced="">
+              {technical.map((fact) => (
+                <SummaryRow key={fact.label} fact={fact} />
+              ))}
+            </Group>
+          ) : null}
+        </div>
+      ) : null}
       <SummaryCommands v={v} />
     </>
   );

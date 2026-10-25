@@ -44,16 +44,30 @@ impl LocalEngine {
     /// Tile description.
     pub fn label(&self) -> String {
         match self {
-            LocalEngine::Container => "Container on this Mac (gVisor when installed)".into(),
+            LocalEngine::Container => "Linux, on this Mac".into(),
             LocalEngine::Qemu => "QEMU virtual machine on this Mac".into(),
             LocalEngine::Lume => "Lume virtual machine (Apple silicon)".into(),
             LocalEngine::External(n) => format!("{} on this Mac", external_runtime_label(n)),
         }
     }
 
-    /// [`Self::label`] in a shell on `os` ("Container on this PC ...").
+    /// [`Self::label`] in a shell on `os` ("Linux, on this PC").
     pub fn label_on(&self, os: SpaceOs) -> String {
-        let label = self.label();
+        Self::on(self.label(), os)
+    }
+
+    /// The engine as a developer names it, for the Summary's Advanced rows
+    /// (the plain [`Self::label`] everywhere else).
+    pub fn technical_label_on(&self, os: SpaceOs) -> String {
+        match self {
+            LocalEngine::Container => {
+                Self::on("Container on this Mac (gVisor when installed)".into(), os)
+            }
+            _ => self.label_on(os),
+        }
+    }
+
+    fn on(label: String, os: SpaceOs) -> String {
         if os == SpaceOs::Macos {
             label
         } else {
@@ -2919,6 +2933,16 @@ pub fn size_text(bytes: u64) -> String {
     }
 }
 
+/// `3.3–7.3 GB`, `900 MB–2.1 GB`: a range, its unit said once when both ends
+/// share it.
+pub fn size_range_text(low: u64, high: u64) -> String {
+    let (a, b) = (size_text(low), size_text(high));
+    match (a.rsplit_once(' '), b.rsplit_once(' ')) {
+        (Some((n, ua)), Some((_, ub))) if ua == ub => format!("{n}\u{2013}{b}"),
+        _ => format!("{a}\u{2013}{b}"),
+    }
+}
+
 /// `ARM`, `x64` (an OCI or Rust architecture name; others as they are).
 pub fn arch_label(arch: &str) -> String {
     crate::model::arch_label(arch).unwrap_or(arch).to_string()
@@ -2934,6 +2958,58 @@ fn arch_label_on(os: SpaceOs, arch: &str) -> String {
 /// The platform that runs ([`crate::model::run_arch`]).
 fn run_arch(image: &SandboxImage, placement: Location, host: Option<&str>) -> Option<String> {
     crate::model::run_arch(&image.arch, placement == Location::Local, host)
+}
+
+/// A container Space's disk range on this machine, bytes: what it takes at
+/// first (the unpacked image plus the one-time Linux runtime download) up to
+/// what it can take as it fills. The one place this is worked out: the
+/// wizard's Disk row and the empty home's Linux card both read it.
+pub fn container_footprint(s: &PlatformSize, runtime_download: u64) -> (u64, u64) {
+    let low = s.unpacked.saturating_add(runtime_download);
+    let high = low.saturating_add(s.disk).saturating_add(s.download);
+    (low, high)
+}
+
+/// The one-time Linux runtime download the first Linux Space needs, bytes
+/// (the managed runtime image; the wizard reads the live figure from the
+/// storage probe, this is the figure a fresh Mac gets).
+pub const LINUX_RUNTIME_DOWNLOAD_BYTES: u64 = 477_884_184;
+
+/// What the first Linux Space on a fresh Mac takes, measured on a Mac mini
+/// on 25 Oct 2026 (CUA-2281): about 180 s for the 456 MB runtime plus the
+/// 1.1 GB image (download, unpack, runtime start), so bytes per second over
+/// the whole first create.
+pub const FIRST_RUN_BYTES_PER_SEC: f64 = 9_100_000.0;
+
+/// Seconds a Linux Space takes to start once its image is on the Mac
+/// (container create, start, cua-spacesd: 1 + 0.3 + 0.2 + 3.5 + 0.1 s
+/// measured through the SDK, rounded up).
+pub const CACHED_START_SECS: f64 = 6.0;
+
+/// Seconds the first Linux Space takes: the downloads at the measured first
+/// run's pace.
+pub fn first_run_seconds(download: u64, runtime_download: u64) -> f64 {
+    (download.saturating_add(runtime_download)) as f64 / FIRST_RUN_BYTES_PER_SEC + CACHED_START_SECS
+}
+
+/// "About 3 minutes", "About 1 minute", "A few seconds": a duration the way
+/// a person would say it, rounded to the minute.
+pub fn duration_text(secs: f64) -> String {
+    if !secs.is_finite() || secs < 0.0 {
+        return String::new();
+    }
+    if secs < 20.0 {
+        return "A few seconds".into();
+    }
+    if secs < 50.0 {
+        return "Under a minute".into();
+    }
+    let mins = (secs / 60.0).round().max(1.0) as u64;
+    match mins {
+        1 => "About 1 minute".into(),
+        m if m < 60 => format!("About {m} minutes"),
+        m => format!("About {} h {} min", m / 60, m % 60),
+    }
 }
 
 /// The image's sizes on `arch` (else its first platform).
@@ -3079,13 +3155,9 @@ fn disk_view(state: &WizardState, image: &SandboxImage, env: &WizardEnv, os: Spa
     });
     if let Some(s) = size {
         if bounds.is_none() {
-            let initial = s.unpacked.saturating_add(runtime_download);
             let footprint = if image.local == Some(LocalEngine::Container) {
-                format!(
-                    "{}–{} initially; grows with use",
-                    size_text(initial),
-                    size_text(initial.saturating_add(s.disk).saturating_add(s.download))
-                )
+                let (low, high) = container_footprint(s, runtime_download);
+                format!("{} initially; grows with use", size_range_text(low, high))
             } else {
                 size_text(s.disk)
             };
@@ -3514,7 +3586,7 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
         Location::Local => match &image.local {
             // A provider is its own engine: "macOS VMs on this Mac".
             Some(l @ LocalEngine::External(_)) => l.label_on(os),
-            Some(l) if runtime == Runtime::Auto => l.label_on(os),
+            Some(l) if runtime == Runtime::Auto => l.technical_label_on(os),
             Some(_) => runtime_word(&runtime, image.variant, os),
             None => format!("Not available on {}", os.this_machine_lower()),
         },
@@ -3573,7 +3645,11 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
             value: match (cloud.filter(|_| yours), host) {
                 (Some(c), _) => c.label.clone(),
                 (None, Some(h)) => h.name.clone(),
-                _ => placement.label_on(os).into(),
+                _ => match &image.local {
+                    // "Linux, on this Mac": the plain words, not the engine's.
+                    Some(l @ LocalEngine::Container) if local => l.label_on(os),
+                    _ => placement.label_on(os).into(),
+                },
             },
             copy: None,
             help: None,
@@ -4166,6 +4242,23 @@ mod tests {
         );
     }
 
+    #[test]
+    fn plain_words_first_and_the_engine_as_a_developer_names_it() {
+        assert_eq!(LocalEngine::Container.label(), "Linux, on this Mac");
+        assert_eq!(
+            LocalEngine::Container.label_on(SpaceOs::Windows),
+            "Linux, on this PC"
+        );
+        assert_eq!(
+            LocalEngine::Container.technical_label_on(SpaceOs::Macos),
+            "Container on this Mac (gVisor when installed)"
+        );
+        assert_eq!(duration_text(190.0), "About 3 minutes");
+        assert_eq!(duration_text(200.0), "About 3 minutes");
+        assert_eq!(duration_text(30.0), "Under a minute");
+        assert_eq!(duration_text(100.0), "About 2 minutes");
+    }
+
     fn on(image_ref: &str, e: &WizardEnv) -> WizardState {
         let s = reduce(
             &initial(e),
@@ -4224,9 +4317,8 @@ mod tests {
         assert_eq!(
             v.resource_facts[2].value,
             format!(
-                "{}–{} initially; grows with use (download {})",
-                size_text(p.unpacked),
-                size_text(p.unpacked + p.disk + p.download),
+                "{} initially; grows with use (download {})",
+                size_range_text(p.unpacked, p.unpacked + p.disk + p.download),
                 size_text(p.download)
             )
         );
@@ -4252,9 +4344,14 @@ mod tests {
                 && f.value
                     .contains("includes 455 MB one-time Linux runtime download")
         }));
-        assert!(v.summary.iter().any(
-            |f| f.label == "Disk" && f.value.starts_with(&size_text(p.unpacked + (455 << 20)))
-        ));
+        assert!(v.summary.iter().any(|f| {
+            f.label == "Disk"
+                && f.value.starts_with(
+                    size_text(p.unpacked + (455 << 20))
+                        .trim_end_matches(" GB")
+                        .trim_end_matches(" MB"),
+                )
+        }));
         e.storage.as_mut().unwrap().linux_runtime_download_bytes = 0;
         assert!(
             !view(&s, &e)
@@ -4317,9 +4414,8 @@ mod tests {
                 (
                     "Disk".into(),
                     format!(
-                        "{}–{} initially; grows with use (download {})",
-                        size_text(p.unpacked),
-                        size_text(p.unpacked + p.disk + p.download),
+                        "{} initially; grows with use (download {})",
+                        size_range_text(p.unpacked, p.unpacked + p.disk + p.download),
                         size_text(p.download)
                     )
                 ),
@@ -4336,9 +4432,8 @@ mod tests {
         assert_eq!(
             v.resource_facts[2].value,
             format!(
-                "{}–{} initially; grows with use",
-                size_text(p.unpacked),
-                size_text(p.unpacked + p.disk + p.download)
+                "{} initially; grows with use",
+                size_range_text(p.unpacked, p.unpacked + p.disk + p.download)
             )
         );
     }

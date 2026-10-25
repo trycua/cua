@@ -47,7 +47,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -163,7 +163,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -222,7 +222,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -281,7 +281,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -340,7 +340,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -456,7 +456,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "auto",
@@ -515,7 +515,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "gvisor",
@@ -581,7 +581,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "gvisor",
@@ -647,7 +647,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "gvisor",
@@ -713,7 +713,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "gvisor",
@@ -772,7 +772,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "gvisor",
@@ -1181,7 +1181,7 @@
         "ranges": "cpus 1-8, memory 2-16",
         "resourceFacts": [
           "Kind: Container",
-          "Disk: 3.0 GB–7.2 GB initially; grows with use"
+          "Disk: 3.0–7.2 GB initially; grows with use"
         ],
         "resourcesError": null,
         "runtime": "gvisor",
@@ -2179,7 +2179,7 @@
         "summary": [
           "System: Linux",
           "Image: ghcr.io/acme/desktop:1.2",
-          "Runs on: This Mac",
+          "Runs on: Linux, on this Mac",
           "Kind: Container",
           "Runtime: gVisor container on this Mac",
           "Resources: 4 cores, 8 GB memory",

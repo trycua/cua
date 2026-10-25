@@ -119,8 +119,24 @@ const PHASE_LABEL: Record<string, string> = {
   connecting: "Connecting…",
 };
 
-/** "12.4 of 30.0 GB · 85 MB/s · about 4 min" (`creating::transfer_text`). */
-export function transferText(p: Pick<PendingCreate, "bytesDone" | "bytesTotal" | "bytesPerSecond">): string | null {
+/** What follows a download (`creating::Later`): bytes still to fetch, seconds
+ * of work that move none, and a measured pace to assume until a rate is known. */
+export interface Later {
+  bytes: number;
+  secs: number;
+  pace?: number;
+}
+
+/** Measured on a Mac mini, 25 Oct 2026 (CUA-2281): `wizard::FIRST_RUN_BYTES_PER_SEC`. */
+export const FIRST_RUN_BYTES_PER_SEC = 9_100_000;
+/** `wizard::CACHED_START_SECS`: a Linux Space starting from a cached image. */
+export const CACHED_START_SECS = 6;
+
+/** "12.4 of 30.0 GB · 85 MB/s · about 4 min" (`creating::transfer_text_with`). */
+export function transferText(
+  p: Pick<PendingCreate, "bytesDone" | "bytesTotal" | "bytesPerSecond">,
+  later: Later = { bytes: 0, secs: 0 },
+): string | null {
   if (p.bytesDone == null) return null;
   const unit = (n: number): [number, string] =>
     n >= 2 ** 30 ? [2 ** 30, "GB"] : n >= 2 ** 20 ? [2 ** 20, "MB"] : n >= 1024 ? [1024, "KB"] : [1, "bytes"];
@@ -137,22 +153,24 @@ export function transferText(p: Pick<PendingCreate, "bytesDone" | "bytesTotal" |
     const u = unit(p.bytesDone);
     out = `${scaled(p.bytesDone, u, 100)} ${u[1]}`;
   }
-  const rate = p.bytesPerSecond != null && Number.isFinite(p.bytesPerSecond) && p.bytesPerSecond > 0 ? p.bytesPerSecond : null;
-  if (rate) {
-    const u = unit(Math.floor(rate));
-    out += ` · ${scaled(Math.floor(rate), u, 10)} ${u[1]}/s`;
-    if (total > 0) {
-      const secs = Math.max(0, total - p.bytesDone) / rate;
-      const mins = Math.round(secs / 60);
-      out +=
-        secs < 60
-          ? " · less than a minute"
-          : mins < 60
-            ? ` · about ${mins} min`
-            : mins % 60 === 0
-              ? ` · about ${mins / 60} h`
-              : ` · about ${Math.floor(mins / 60)} h ${mins % 60} min`;
-    }
+  const measured = p.bytesPerSecond != null && Number.isFinite(p.bytesPerSecond) && p.bytesPerSecond > 0 ? p.bytesPerSecond : null;
+  if (measured) {
+    const u = unit(Math.floor(measured));
+    out += ` · ${scaled(Math.floor(measured), u, 10)} ${u[1]}/s`;
+  }
+  // Without a rate nothing is promised, unless a measured pace stands in.
+  const pace = measured ?? later.pace ?? null;
+  if (pace && total > 0) {
+    const secs = (Math.max(0, total - p.bytesDone) + later.bytes) / pace + later.secs;
+    const mins = Math.round(secs / 60);
+    out +=
+      secs < 60
+        ? " · less than a minute"
+        : mins < 60
+          ? ` · about ${mins} min`
+          : mins % 60 === 0
+            ? ` · about ${mins / 60} h`
+            : ` · about ${Math.floor(mins / 60)} h ${mins % 60} min`;
   }
   return out;
 }
@@ -276,7 +294,10 @@ function fallbackCompose(spaces: Space[], state: CreatesState): Space[] {
         permille: p.permille,
         label: p.error ? "Failed" : stageLabel(p),
         error: p.error ?? undefined,
-        transfer: !p.error && p.phase === "pulling" ? (transferText(p) ?? undefined) : undefined,
+        transfer:
+          !p.error && p.phase === "pulling"
+            ? (transferText(p, p.os === "linux" ? { bytes: 0, secs: CACHED_START_SECS, pace: FIRST_RUN_BYTES_PER_SEC } : { bytes: 0, secs: 0 }) ?? undefined)
+            : undefined,
         cancellable: !p.error && !p.cancelling,
         cancelling: p.cancelling,
       },

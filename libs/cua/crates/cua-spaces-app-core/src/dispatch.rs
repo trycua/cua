@@ -65,6 +65,7 @@ pub const METHODS: &[&str] = &[
     "stream.pipReduce",
     "stream.pipClick",
     "window.chrome",
+    "window.emptyLinuxDetail",
     "window.menuBar",
     "window.menu",
     "spaces.openableCount",
@@ -484,6 +485,9 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<Option<window::ChromeInput>>("input")?
                 .unwrap_or_default(),
         )),
+        "window.emptyLinuxDetail" => {
+            out(window::empty_linux_detail_on(&a.get::<String>("hostArch")?))
+        }
         "window.menu" => out(window::menu(&a.get::<window::MenuInput>("input")?)),
         "spaces.openableCount" => out(spaces::openable_count(&a.get::<Vec<Space>>("spaces")?)),
         "spaces.onCount" => out(spaces::on_count(&a.get::<Vec<Space>>("spaces")?)),

@@ -89,13 +89,49 @@ pub fn chrome(input: &ChromeInput) -> MainChrome {
         settings_shortcut: "\u{2318},".into(),
         empty_title: "No Spaces yet".into(),
         empty_action: "Linux".into(),
-        // Measured (#4817); catalog sizes omit the runtime and what a Space writes.
-        empty_linux_detail: "About 1 minute \u{b7} 3.2\u{2013}7.1 GB of disk".into(),
+        empty_linux_detail: empty_linux_detail(),
         empty_detail: "Choose a system for your first Space.".into(),
         empty_macos_action: "macOS".into(),
         empty_macos_detail: empty_macos_detail(),
         volume_label: volume_shown(input.experiments.as_ref()).then(|| "Volume".into()),
     }
+}
+
+/// The Linux card's line, from the catalog and the same footprint the
+/// wizard's Disk row shows (so the two agree), and the measured first-run
+/// pace: "About 3 minutes · 3.3–7.3 GB of disk".
+fn empty_linux_detail() -> String {
+    // The same words on every host (the goldens are shared by every shell and
+    // the wasm core cannot tell its CPU): Apple silicon's figures, which
+    // the page replaces with the host's own ([`empty_linux_detail_on`]).
+    empty_linux_detail_on("arm64")
+}
+
+/// [`empty_linux_detail`] for a host of `cpu` (`arm64`, `amd64`): the web
+/// core runs as wasm and cannot tell, so the page passes the host's.
+pub fn empty_linux_detail_on(cpu: &str) -> String {
+    use crate::wizard::{
+        LINUX_RUNTIME_DOWNLOAD_BYTES, container_footprint, duration_text, first_run_seconds,
+        picker_images, platform_size, size_range_text,
+    };
+    let images = picker_images();
+    let image = images
+        .iter()
+        .find(|i| {
+            i.os == crate::SpaceOs::Linux && i.local == Some(crate::wizard::LocalEngine::Container)
+        })
+        .expect("a Linux container image");
+    let arch = crate::run_arch(&image.arch, true, Some(cpu));
+    let row = platform_size(image, arch.as_deref()).expect("a Linux download size");
+    let (low, high) = container_footprint(row, LINUX_RUNTIME_DOWNLOAD_BYTES);
+    format!(
+        "{} \u{b7} {} of disk",
+        duration_text(first_run_seconds(
+            row.download,
+            LINUX_RUNTIME_DOWNLOAD_BYTES
+        )),
+        size_range_text(low, high)
+    )
 }
 
 fn empty_macos_detail() -> String {
@@ -278,6 +314,48 @@ pub fn menu(input: &MenuInput) -> Vec<MenuItem> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_linux_card_follows_the_hosts_architecture() {
+        assert_eq!(
+            empty_linux_detail_on("arm64"),
+            "About 3 minutes \u{b7} 3.3\u{2013}7.3 GB of disk"
+        );
+        assert_ne!(
+            empty_linux_detail_on("amd64"),
+            empty_linux_detail_on("arm64")
+        );
+    }
+
+    #[test]
+    fn the_linux_card_reads_the_wizards_footprint_and_the_measured_first_run() {
+        use crate::wizard::{
+            LINUX_RUNTIME_DOWNLOAD_BYTES, container_footprint, find_image, platform_size,
+            size_range_text,
+        };
+        let c = chrome(&ChromeInput {
+            identity: None,
+            cloud_configured: false,
+            can_sign_in: false,
+            experiments: None,
+        });
+        let image = find_image("ghcr.io/trycua/linux:24.04").unwrap();
+        let arch = crate::run_arch(&image.arch, true, Some("arm64"));
+        let row = platform_size(&image, arch.as_deref()).unwrap();
+        let (low, high) = container_footprint(row, LINUX_RUNTIME_DOWNLOAD_BYTES);
+        let disk = format!("{} of disk", size_range_text(low, high));
+        assert!(
+            c.empty_linux_detail.ends_with(&disk),
+            "{}",
+            c.empty_linux_detail
+        );
+        // About 3 minutes on the measured Mac mini, never the old "About 1 minute".
+        assert!(
+            c.empty_linux_detail.starts_with("About 3 minutes"),
+            "{}",
+            c.empty_linux_detail
+        );
+    }
 
     #[test]
     fn the_account_line_prefers_the_identity() {

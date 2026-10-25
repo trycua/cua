@@ -286,7 +286,10 @@ export function emptyHome(core: CoreClient, hostArch: string | null | undefined,
   if (core.status !== "ready") return null;
   const c = core.tryCall<EmptyChrome>("window.chrome", {});
   if (!c?.emptyLinuxDetail) return null;
-  const tiles: EmptyTile[] = [{ os: "linux", name: c.emptyAction, detail: c.emptyLinuxDetail }];
+  // The chrome's Linux line is for the machine the core runs on; the wasm core
+  // cannot tell, so with the host's architecture known the core words it for that.
+  const linuxDetail = hostArch ? (core.tryCall<string>("window.emptyLinuxDetail", { hostArch }) ?? c.emptyLinuxDetail) : c.emptyLinuxDetail;
+  const tiles: EmptyTile[] = [{ os: "linux", name: c.emptyAction, detail: linuxDetail }];
   const appleSilicon = !hostArch || ["arm64", "aarch64"].includes(hostArch.toLowerCase());
   if (os === "macos" && appleSilicon) tiles.push({ os: "macos", name: c.emptyMacosAction, detail: c.emptyMacosDetail });
   return { title: c.emptyTitle, detail: c.emptyDetail, tiles };

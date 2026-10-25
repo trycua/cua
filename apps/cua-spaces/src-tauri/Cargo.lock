@@ -2188,6 +2188,7 @@ dependencies = [
  "cua-spacesd-client",
  "cua-telemetry",
  "cua-vmm",
+ "flate2",
  "futures-util",
  "globset",
  "hex",

@@ -1255,6 +1255,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_stop() != 64586:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_spaces_sync() != 3019:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_volume_approve() != 8640:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_volume_audit() != 21166:
@@ -4177,6 +4179,14 @@ _UniffiLib.uniffi_cua_sdk_fn_method_spaces_stop.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_stop.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_sync.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_sync.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_volume_approve.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -5841,6 +5851,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_start.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_stop.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_stop.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_sync.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_sync.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_volume_approve.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_volume_approve.restype = ctypes.c_uint16
@@ -24430,6 +24443,141 @@ class _UniffiFfiConverterTypeSpaceStreamTicket(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.write(value.needs_headers, buf)
 
 @dataclass
+class SpaceSyncOptions:
+    """
+    What [`Spaces::sync`] takes from the folder.
+"""
+    def __init__(self, *, gitignore:bool = True, include_git:bool = False, delete:bool = True, exclude:typing.List[str] = _DEFAULT):
+        self.gitignore = gitignore
+        self.include_git = include_git
+        self.delete = delete
+        if exclude is _DEFAULT:
+            self.exclude = []
+        else:
+            self.exclude = exclude
+
+
+
+
+    def __str__(self):
+        return "SpaceSyncOptions(gitignore={}, include_git={}, delete={}, exclude={})".format(self.gitignore, self.include_git, self.delete, self.exclude)
+    def __eq__(self, other):
+        if self.gitignore != other.gitignore:
+            return False
+        if self.include_git != other.include_git:
+            return False
+        if self.delete != other.delete:
+            return False
+        if self.exclude != other.exclude:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeSpaceSyncOptions(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return SpaceSyncOptions(
+            gitignore=_UniffiFfiConverterBoolean.read(buf),
+            include_git=_UniffiFfiConverterBoolean.read(buf),
+            delete=_UniffiFfiConverterBoolean.read(buf),
+            exclude=_UniffiFfiConverterSequenceString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterBoolean.check_lower(value.gitignore)
+        _UniffiFfiConverterBoolean.check_lower(value.include_git)
+        _UniffiFfiConverterBoolean.check_lower(value.delete)
+        _UniffiFfiConverterSequenceString.check_lower(value.exclude)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterBoolean.write(value.gitignore, buf)
+        _UniffiFfiConverterBoolean.write(value.include_git, buf)
+        _UniffiFfiConverterBoolean.write(value.delete, buf)
+        _UniffiFfiConverterSequenceString.write(value.exclude, buf)
+
+@dataclass
+class SpaceSyncReport:
+    """
+    What [`Spaces::sync`] did.
+"""
+    def __init__(self, *, space:str, dest:str, files:int, sent:int, sent_bytes:int, transferred_bytes:int, deleted:int, unchanged:int, seconds:float):
+        self.space = space
+        self.dest = dest
+        self.files = files
+        self.sent = sent
+        self.sent_bytes = sent_bytes
+        self.transferred_bytes = transferred_bytes
+        self.deleted = deleted
+        self.unchanged = unchanged
+        self.seconds = seconds
+
+
+
+
+    def __str__(self):
+        return "SpaceSyncReport(space={}, dest={}, files={}, sent={}, sent_bytes={}, transferred_bytes={}, deleted={}, unchanged={}, seconds={})".format(self.space, self.dest, self.files, self.sent, self.sent_bytes, self.transferred_bytes, self.deleted, self.unchanged, self.seconds)
+    def __eq__(self, other):
+        if self.space != other.space:
+            return False
+        if self.dest != other.dest:
+            return False
+        if self.files != other.files:
+            return False
+        if self.sent != other.sent:
+            return False
+        if self.sent_bytes != other.sent_bytes:
+            return False
+        if self.transferred_bytes != other.transferred_bytes:
+            return False
+        if self.deleted != other.deleted:
+            return False
+        if self.unchanged != other.unchanged:
+            return False
+        if self.seconds != other.seconds:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeSpaceSyncReport(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return SpaceSyncReport(
+            space=_UniffiFfiConverterString.read(buf),
+            dest=_UniffiFfiConverterString.read(buf),
+            files=_UniffiFfiConverterUInt64.read(buf),
+            sent=_UniffiFfiConverterUInt64.read(buf),
+            sent_bytes=_UniffiFfiConverterUInt64.read(buf),
+            transferred_bytes=_UniffiFfiConverterUInt64.read(buf),
+            deleted=_UniffiFfiConverterUInt64.read(buf),
+            unchanged=_UniffiFfiConverterUInt64.read(buf),
+            seconds=_UniffiFfiConverterFloat64.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.space)
+        _UniffiFfiConverterString.check_lower(value.dest)
+        _UniffiFfiConverterUInt64.check_lower(value.files)
+        _UniffiFfiConverterUInt64.check_lower(value.sent)
+        _UniffiFfiConverterUInt64.check_lower(value.sent_bytes)
+        _UniffiFfiConverterUInt64.check_lower(value.transferred_bytes)
+        _UniffiFfiConverterUInt64.check_lower(value.deleted)
+        _UniffiFfiConverterUInt64.check_lower(value.unchanged)
+        _UniffiFfiConverterFloat64.check_lower(value.seconds)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.space, buf)
+        _UniffiFfiConverterString.write(value.dest, buf)
+        _UniffiFfiConverterUInt64.write(value.files, buf)
+        _UniffiFfiConverterUInt64.write(value.sent, buf)
+        _UniffiFfiConverterUInt64.write(value.sent_bytes, buf)
+        _UniffiFfiConverterUInt64.write(value.transferred_bytes, buf)
+        _UniffiFfiConverterUInt64.write(value.deleted, buf)
+        _UniffiFfiConverterUInt64.write(value.unchanged, buf)
+        _UniffiFfiConverterFloat64.write(value.seconds, buf)
+
+@dataclass
 class SpaceThumbnail:
     """
     A Space's latest thumbnail, from the cache every client on this machine
@@ -39437,6 +39585,31 @@ class _UniffiFfiConverterSequenceTypeRoutineInfo(_UniffiConverterRustBuffer):
             _UniffiFfiConverterTypeRoutineInfo.read(buf) for i in range(count)
         ]
 
+class _UniffiFfiConverterOptionalTypeSpaceSyncOptions(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeSpaceSyncOptions.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeSpaceSyncOptions.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeSpaceSyncOptions.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
 class _UniffiFfiConverterOptionalTypeDriveView(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -40242,6 +40415,16 @@ class SpacesProtocol(typing.Protocol):
         stops it, keeping its disk (a local Lume VM; a Space one of your
         machines provides, which that machine stops). A cloud Space, a Space
         added by address and your own computers cannot be turned off.
+"""
+        raise NotImplementedError
+    async def sync(self, space: str,path: str,dest: str,options: typing.Optional[SpaceSyncOptions]) -> SpaceSyncReport:
+        """
+        Makes `dest` in Space `space` hold what the host folder `path` holds
+        now, sending only what changed since the last sync to it (`.gitignore`
+        and `.git` left out by default). Changed files get the time of the
+        sync, so incremental builds rebuild exactly them; files an earlier
+        sync put there that are gone here are deleted; nothing else in
+        `dest` is touched.
 """
         raise NotImplementedError
     async def volume_approve(self, request_id: str,expires_in_secs: typing.Optional[int]) -> DriveGrant:
@@ -41858,6 +42041,40 @@ class Spaces(SpacesProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_sdk_fn_method_spaces_stop(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def sync(self, space: str,path: str,dest: str,options: typing.Optional[SpaceSyncOptions]) -> SpaceSyncReport:
+        """
+        Makes `dest` in Space `space` hold what the host folder `path` holds
+        now, sending only what changed since the last sync to it (`.gitignore`
+        and `.git` left out by default). Changed files get the time of the
+        sync, so incremental builds rebuild exactly them; files an earlier
+        sync put there that are gone here are deleted; nothing else in
+        `dest` is touched.
+"""
+
+        _UniffiFfiConverterString.check_lower(space)
+
+        _UniffiFfiConverterString.check_lower(path)
+
+        _UniffiFfiConverterString.check_lower(dest)
+
+        _UniffiFfiConverterOptionalTypeSpaceSyncOptions.check_lower(options)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(space),
+            _UniffiFfiConverterString.lower(path),
+            _UniffiFfiConverterString.lower(dest),
+            _UniffiFfiConverterOptionalTypeSpaceSyncOptions.lower(options),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeSpaceSyncReport.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_spaces_sync(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
@@ -44843,6 +45060,8 @@ __all__ = [
     "SpaceStreamOptions",
     "SpaceStreamStats",
     "SpaceStreamTicket",
+    "SpaceSyncOptions",
+    "SpaceSyncReport",
     "SpaceThumbnail",
     "SpaceToolInfo",
     "SpaceToolResult",

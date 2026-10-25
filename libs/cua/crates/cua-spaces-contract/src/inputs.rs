@@ -232,6 +232,30 @@ pub struct SpaceBash {
     pub timeout: Option<u64>,
 }
 
+/// `space_sync`: make a folder of the Space hold what a host folder holds.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct SpaceSync {
+    /// Space id or name.
+    pub space: SpaceArg,
+    /// Host folder.
+    pub path: String,
+    /// Folder in the Space: absolute, or relative to the Space user's home.
+    pub dest: String,
+    /// Leave out what `.gitignore` leaves out. Default true.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gitignore: Option<bool>,
+    /// Take the `.git` directory too. Default false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_git: Option<bool>,
+    /// Delete files an earlier sync put there that are gone from the host
+    /// folder. Default true.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delete: Option<bool>,
+    /// More to leave out: gitignore-style patterns.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude: Vec<String>,
+}
+
 /// `space_write`: write literal text to a file in the Space.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SpaceWrite {

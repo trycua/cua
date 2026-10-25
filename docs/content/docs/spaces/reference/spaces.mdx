@@ -262,6 +262,7 @@ Run shell commands and move files in and out of a Space.
 | --- | --- |
 | [`space_bash`](#space_bash) | Run a shell command inside the Space. |
 | [`space_write`](#space_write) | Write literal text to a path inside the Space. |
+| [`space_sync`](#space_sync) | Make a folder in the Space match a folder on this computer, sending only what changed. |
 | [`upload`](#upload) | Send a local file or folder into the Space. |
 | [`send_file`](#send_file) | Send a host file or folder into the Space's Downloads, verified by sha256 on arrival. |
 | [`download`](#download) | Fetch a file or folder out of the Space. |
@@ -331,6 +332,41 @@ Text: `wrote <path> (<n> bytes, sha256 <hex> verified in Space)`.
 #### Notes
 
 - Literal text: no local file is read and nothing is shell-quoted, which is the whole reason it exists next to space_bash.
+
+### space_sync
+
+Make a folder in the Space match a folder on this computer, sending only what changed.
+
+Makes `dest` in the Space hold what the host folder `path` holds now, sending only the files that changed since the last sync to it, as one compressed archive. Like git: files .gitignore leaves out and .git stay behind (gitignore=false, include_git=true change that). Changed files get the time of the sync in the Space, so incremental builds (cargo, make, tsc) rebuild exactly what changed; unchanged files keep theirs. Files an earlier sync put there that are gone here are deleted (delete=false keeps them); anything else in `dest` (target/, node_modules/) is never touched. Linux and macOS Spaces.
+
+| | |
+| --- | --- |
+| Providers | all (cloud, local, direct, relay) |
+| Platforms | all (macos, windows, linux) |
+| Metering | free |
+| Approval | permission `spaces:space_sync`; mutating, idempotent |
+| Swift SDK | `Spaces.sync(space, path, dest, options)` |
+| Rust | `Spaces::sync` |
+
+#### Parameters
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `delete` | `boolean` | `true` | Delete files an earlier sync put there that are gone from the host folder. Default true. |
+| `dest` | `string` | required | Folder in the Space: absolute, or relative to the Space user's home. |
+| `exclude` | `string[]` | none | More to leave out: gitignore-style patterns. |
+| `gitignore` | `boolean` | `true` | Leave out what `.gitignore` leaves out. Default true. |
+| `include_git` | `boolean` | `false` | Take the `.git` directory too. Default false. |
+| `path` | `string` | required | Host folder. |
+| `space` | `string` | required | Space id or name. |
+
+#### Result
+
+JSON: `space`, `dest`, `files`, `sent`, `sent_bytes`, `transferred_bytes`, `deleted`, `unchanged` and `seconds`.
+
+#### Errors
+
+[`invalid_argument`](/spaces/reference#invalid_argument), [`not_found`](/spaces/reference#not_found), [`ambiguous_sandbox`](/spaces/reference#ambiguous_sandbox), [`io`](/spaces/reference#io)
 
 ### upload
 

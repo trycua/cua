@@ -10,7 +10,7 @@ description: "Every Spaces tool by category, with parameters, results, errors an
   Version: 0.7.0
 */}
 
-The Spaces contract: 96 tools with the same names and schemas on every surface: `cua mcp`, `cua daemon mcp` and the Spaces SDKs. Contract 0.7.0, MCP protocol revision 2025-06-18, transports `mcp_stdio` and `mcp_streamable_http`. Experimental: names and shapes can change between minor versions.
+The Spaces contract: 97 tools with the same names and schemas on every surface: `cua mcp`, `cua daemon mcp` and the Spaces SDKs. Contract 0.7.0, MCP protocol revision 2025-06-18, transports `mcp_stdio` and `mcp_streamable_http`. Experimental: names and shapes can change between minor versions.
 
 ## Tools
 
@@ -36,6 +36,7 @@ Run shell commands and move files in and out of a Space.
 | --- | --- | --- |
 | [`space_bash`](/spaces/reference/spaces#space_bash) | Run a shell command inside the Space. | destructive |
 | [`space_write`](/spaces/reference/spaces#space_write) | Write literal text to a path inside the Space. | destructive |
+| [`space_sync`](/spaces/reference/spaces#space_sync) | Make a folder in the Space match a folder on this computer, sending only what changed. | mutating, idempotent |
 | [`upload`](/spaces/reference/spaces#upload) | Send a local file or folder into the Space. | destructive |
 | [`send_file`](/spaces/reference/spaces#send_file) | Send a host file or folder into the Space's Downloads, verified by sha256 on arrival. | destructive |
 | [`download`](/spaces/reference/spaces#download) | Fetch a file or folder out of the Space. | read-only, idempotent |
@@ -270,7 +271,7 @@ An argument is missing, malformed or out of range.
 
 Fix: Check the call against the tool's input schema; the message names the argument.
 
-Listed by [`volume_storage_set`](/spaces/reference/agents#volume_storage_set), [`volume_cache_set`](/spaces/reference/agents#volume_cache_set), [`relay_unregister_space`](/spaces/reference/spaces#relay_unregister_space), [`cloud_add_host`](/spaces/reference/spaces#cloud_add_host), [`cloud_budget`](/spaces/reference/spaces#cloud_budget), [`prewarm`](/spaces/reference/spaces#prewarm).
+Listed by [`space_sync`](/spaces/reference/spaces#space_sync), [`volume_storage_set`](/spaces/reference/agents#volume_storage_set), [`volume_cache_set`](/spaces/reference/agents#volume_cache_set), [`relay_unregister_space`](/spaces/reference/spaces#relay_unregister_space), [`cloud_add_host`](/spaces/reference/spaces#cloud_add_host), [`cloud_budget`](/spaces/reference/spaces#cloud_budget), [`prewarm`](/spaces/reference/spaces#prewarm).
 
 #### not_found
 
@@ -456,7 +457,7 @@ Reading or writing a local file failed.
 
 Fix: Check the path and its permissions on this computer.
 
-Listed by [`upload`](/spaces/reference/spaces#upload), [`send_file`](/spaces/reference/spaces#send_file), [`download`](/spaces/reference/spaces#download).
+Listed by [`space_sync`](/spaces/reference/spaces#space_sync), [`upload`](/spaces/reference/spaces#upload), [`send_file`](/spaces/reference/spaces#send_file), [`download`](/spaces/reference/spaces#download).
 
 #### json
 

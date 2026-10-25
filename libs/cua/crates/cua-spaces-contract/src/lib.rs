@@ -754,6 +754,18 @@ pub fn tools() -> Vec<Tool> {
         .with::<i::SpaceWrite>(),
         Spec {
             category: Category::CommandsAndFiles,
+            result: "JSON: `space`, `dest`, `files`, `sent`, `sent_bytes`, `transferred_bytes`, `deleted`, `unchanged` and `seconds`.",
+            errors: &["invalid_argument", "io"],
+            instructions: "Makes `dest` in the Space hold what the host folder `path` holds now, sending only the files that changed since the last sync to it, as one compressed archive. Like git: files .gitignore leaves out and .git stay behind (gitignore=false, include_git=true change that). Changed files get the time of the sync in the Space, so incremental builds (cargo, make, tsc) rebuild exactly what changed; unchanged files keep theirs. Files an earlier sync put there that are gone here are deleted (delete=false keeps them); anything else in `dest` (target/, node_modules/) is never touched. Linux and macOS Spaces.",
+            capabilities: &["space.files.write", "space.files.transfer", "space.exec"],
+            annotations: Annotations::mutating_idempotent(),
+            sdk_symbol: "Spaces.sync(space, path, dest, options)",
+            rust_symbol: "Spaces::sync",
+            ..Spec::new("space_sync", "Make a folder in the Space match a folder on this computer, sending only what changed.")
+        }
+        .with::<i::SpaceSync>(),
+        Spec {
+            category: Category::CommandsAndFiles,
             result: "JSON: `source`, `dest`, `kind` (`file` or `folder`), `files`, `directories`, `bytes`, `sha256` (single file) and `verified`.",
             errors: &["transfer_failed", "io"],
             instructions: "Files stream through FilesystemService in chunks with a sha256 check; a folder is copied file by file (empty directories included, symlinks skipped). No size cap.",
@@ -1897,7 +1909,7 @@ mod tests {
 
     #[test]
     fn advertises_every_tool() {
-        assert_eq!(tools().len(), 96);
+        assert_eq!(tools().len(), 97);
     }
 
     #[test]

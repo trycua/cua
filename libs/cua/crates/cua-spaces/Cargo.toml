@@ -100,6 +100,8 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 ignore = "0.4"
 globset = "0.4"
 tar = "0.4"
+# `Space::sync_dir`: the changed files travel as one gzipped tar.
+flate2 = "1"
 
 # Optional modules.
 cua-hotspot = { workspace = true, optional = true }

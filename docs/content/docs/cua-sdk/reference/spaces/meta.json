@@ -2,6 +2,7 @@
   "title": "Spaces",
   "pages": [
     "lifetime",
+    "sync",
     "space",
     "elastic",
     "build",

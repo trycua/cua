@@ -500,6 +500,15 @@ export const PAGES: PageSpec[] = [
     items: [],
   },
   {
+    slug: 'spaces/sync',
+    title: 'Sync a folder',
+    description: 'Make a folder in a Space hold what a folder on this computer holds, sending only what changed.',
+    intro:
+      '`Spaces.sync` sends a host folder to a Space the way git sees it (`.gitignore` and `.git` left out by default) and only the files that changed since the last sync, as one compressed archive. Changed files get the time of the sync, so incremental builds rebuild exactly them; files an earlier sync put there that are gone here are deleted, and nothing else in the destination is touched.',
+    members: [{ object: 'Spaces', title: 'Sync', methods: ['sync'] }],
+    items: ['SpaceSyncOptions', 'SpaceSyncReport'],
+  },
+  {
     slug: 'spaces/create',
     title: 'Create options',
     description: 'What `Spaces.create` takes and reports: options, progress, cancel and GPU acceleration.',

@@ -1533,6 +1533,8 @@ external fun uniffi_cua_sdk_checksum_method_spaces_start(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_stop(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_spaces_sync(
+): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_volume_approve(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_volume_audit(
@@ -2544,6 +2546,8 @@ external fun uniffi_cua_sdk_fn_method_spaces_space(`ptr`: Long,`space`: RustBuff
 external fun uniffi_cua_sdk_fn_method_spaces_start(`ptr`: Long,`space`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_stop(`ptr`: Long,`space`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cua_sdk_fn_method_spaces_sync(`ptr`: Long,`space`: RustBuffer.ByValue,`path`: RustBuffer.ByValue,`dest`: RustBuffer.ByValue,`options`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_volume_approve(`ptr`: Long,`requestId`: RustBuffer.ByValue,`expiresInSecs`: RustBuffer.ByValue,
 ): Long
@@ -4114,6 +4118,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_stop() != 64586.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_sync() != 3019.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_volume_approve() != 8640.toShort()) {
@@ -20486,6 +20493,16 @@ public interface SpacesInterface {
     suspend fun `stop`(`space`: kotlin.String): SpacePowerReport
 
     /**
+     * Makes `dest` in Space `space` hold what the host folder `path` holds
+     * now, sending only what changed since the last sync to it (`.gitignore`
+     * and `.git` left out by default). Changed files get the time of the
+     * sync, so incremental builds rebuild exactly them; files an earlier
+     * sync put there that are gone here are deleted; nothing else in
+     * `dest` is touched.
+     */
+    suspend fun `sync`(`space`: kotlin.String, `path`: kotlin.String, `dest`: kotlin.String, `options`: SpaceSyncOptions?): SpaceSyncReport
+
+    /**
      * `volume_approve`: the request becomes a grant (with presence).
      */
     suspend fun `volumeApprove`(`requestId`: kotlin.String, `expiresInSecs`: kotlin.ULong?): DriveGrant
@@ -22247,6 +22264,35 @@ open class Spaces: Disposable, AutoCloseable, SpacesInterface
         { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeSpacePowerReport.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Makes `dest` in Space `space` hold what the host folder `path` holds
+     * now, sending only what changed since the last sync to it (`.gitignore`
+     * and `.git` left out by default). Changed files get the time of the
+     * sync, so incremental builds rebuild exactly them; files an earlier
+     * sync put there that are gone here are deleted; nothing else in
+     * `dest` is touched.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `sync`(`space`: kotlin.String, `path`: kotlin.String, `dest`: kotlin.String, `options`: SpaceSyncOptions?) : SpaceSyncReport {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_spaces_sync(
+                uniffiHandle,
+                FfiConverterString.lower(`space`),FfiConverterString.lower(`path`),FfiConverterString.lower(`dest`),FfiConverterOptionalTypeSpaceSyncOptions.lower(`options`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeSpaceSyncReport.lift(it) },
         // Error FFI converter
         CuaException.ErrorHandler,
     )
@@ -42519,6 +42565,172 @@ public object FfiConverterTypeSpaceStreamTicket: FfiConverterRustBuffer<SpaceStr
 
 
 /**
+ * What [`Spaces::sync`] takes from the folder.
+ */
+data class SpaceSyncOptions (
+    /**
+     * Leave out what `.gitignore` leaves out.
+     */
+    var `gitignore`: kotlin.Boolean = true
+    ,
+    /**
+     * Take the `.git` directory too.
+     */
+    var `includeGit`: kotlin.Boolean = false
+    ,
+    /**
+     * Delete files an earlier sync put there that are gone here.
+     */
+    var `delete`: kotlin.Boolean = true
+    ,
+    /**
+     * More to leave out: gitignore-style patterns.
+     */
+    var `exclude`: List<kotlin.String> = listOf()
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSpaceSyncOptions: FfiConverterRustBuffer<SpaceSyncOptions> {
+    override fun read(buf: ByteBuffer): SpaceSyncOptions {
+        return SpaceSyncOptions(
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterSequenceString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SpaceSyncOptions) = (
+            FfiConverterBoolean.allocationSize(value.`gitignore`) +
+            FfiConverterBoolean.allocationSize(value.`includeGit`) +
+            FfiConverterBoolean.allocationSize(value.`delete`) +
+            FfiConverterSequenceString.allocationSize(value.`exclude`)
+    )
+
+    override fun write(value: SpaceSyncOptions, buf: ByteBuffer) {
+            FfiConverterBoolean.write(value.`gitignore`, buf)
+            FfiConverterBoolean.write(value.`includeGit`, buf)
+            FfiConverterBoolean.write(value.`delete`, buf)
+            FfiConverterSequenceString.write(value.`exclude`, buf)
+    }
+}
+
+
+
+/**
+ * What [`Spaces::sync`] did.
+ */
+data class SpaceSyncReport (
+    /**
+     * The Space.
+     */
+    var `space`: kotlin.String
+    ,
+    /**
+     * The folder in it.
+     */
+    var `dest`: kotlin.String
+    ,
+    /**
+     * Files the host folder has.
+     */
+    var `files`: kotlin.ULong
+    ,
+    /**
+     * Files sent (new or changed).
+     */
+    var `sent`: kotlin.ULong
+    ,
+    /**
+     * Their bytes, before compression.
+     */
+    var `sentBytes`: kotlin.ULong
+    ,
+    /**
+     * Bytes that went over the wire.
+     */
+    var `transferredBytes`: kotlin.ULong
+    ,
+    /**
+     * Files deleted in the Space.
+     */
+    var `deleted`: kotlin.ULong
+    ,
+    /**
+     * Files already up to date.
+     */
+    var `unchanged`: kotlin.ULong
+    ,
+    /**
+     * Seconds it took.
+     */
+    var `seconds`: kotlin.Double
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSpaceSyncReport: FfiConverterRustBuffer<SpaceSyncReport> {
+    override fun read(buf: ByteBuffer): SpaceSyncReport {
+        return SpaceSyncReport(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterDouble.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SpaceSyncReport) = (
+            FfiConverterString.allocationSize(value.`space`) +
+            FfiConverterString.allocationSize(value.`dest`) +
+            FfiConverterULong.allocationSize(value.`files`) +
+            FfiConverterULong.allocationSize(value.`sent`) +
+            FfiConverterULong.allocationSize(value.`sentBytes`) +
+            FfiConverterULong.allocationSize(value.`transferredBytes`) +
+            FfiConverterULong.allocationSize(value.`deleted`) +
+            FfiConverterULong.allocationSize(value.`unchanged`) +
+            FfiConverterDouble.allocationSize(value.`seconds`)
+    )
+
+    override fun write(value: SpaceSyncReport, buf: ByteBuffer) {
+            FfiConverterString.write(value.`space`, buf)
+            FfiConverterString.write(value.`dest`, buf)
+            FfiConverterULong.write(value.`files`, buf)
+            FfiConverterULong.write(value.`sent`, buf)
+            FfiConverterULong.write(value.`sentBytes`, buf)
+            FfiConverterULong.write(value.`transferredBytes`, buf)
+            FfiConverterULong.write(value.`deleted`, buf)
+            FfiConverterULong.write(value.`unchanged`, buf)
+            FfiConverterDouble.write(value.`seconds`, buf)
+    }
+}
+
+
+
+/**
  * A Space's latest thumbnail, from the cache every client on this machine
  * shares ([`crate::native::spaces::Space::thumbnail`]).
  */
@@ -48567,6 +48779,38 @@ public object FfiConverterOptionalTypeSpaceInfo: FfiConverterRustBuffer<SpaceInf
         } else {
             buf.put(1)
             FfiConverterTypeSpaceInfo.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeSpaceSyncOptions: FfiConverterRustBuffer<SpaceSyncOptions?> {
+    override fun read(buf: ByteBuffer): SpaceSyncOptions? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeSpaceSyncOptions.read(buf)
+    }
+
+    override fun allocationSize(value: SpaceSyncOptions?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeSpaceSyncOptions.allocationSize(value)
+        }
+    }
+
+    override fun write(value: SpaceSyncOptions?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeSpaceSyncOptions.write(value, buf)
         }
     }
 }

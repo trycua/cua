@@ -2583,6 +2583,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_fn_method_spaces_sync": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_fn_method_spaces_volume_approve": {
       args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -4978,6 +4983,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_spaces_sync": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_spaces_volume_approve": {
       args: [],
       ret: FfiType.UInt16,
@@ -6095,6 +6105,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_spaces_space(uniffiSelf: bigint, space: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_start(uniffiSelf: bigint, space: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_stop(uniffiSelf: bigint, space: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_spaces_sync(uniffiSelf: bigint, space: Uint8Array, path: Uint8Array, dest: Uint8Array, options: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_volume_approve(uniffiSelf: bigint, requestId: Uint8Array, expiresInSecs: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_volume_audit(uniffiSelf: bigint, limit: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_volume_cache_clear(uniffiSelf: bigint): bigint;
@@ -6574,6 +6585,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_spaces_space(): number;
     uniffi_cua_sdk_checksum_method_spaces_start(): number;
     uniffi_cua_sdk_checksum_method_spaces_stop(): number;
+    uniffi_cua_sdk_checksum_method_spaces_sync(): number;
     uniffi_cua_sdk_checksum_method_spaces_volume_approve(): number;
     uniffi_cua_sdk_checksum_method_spaces_volume_audit(): number;
     uniffi_cua_sdk_checksum_method_spaces_volume_cache_clear(): number;

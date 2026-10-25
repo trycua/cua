@@ -11274,6 +11274,16 @@ public protocol SpacesProtocol: AnyObject, Sendable {
     func stop(space: String) async throws  -> SpacePowerReport
 
     /**
+     * Makes `dest` in Space `space` hold what the host folder `path` holds
+     * now, sending only what changed since the last sync to it (`.gitignore`
+     * and `.git` left out by default). Changed files get the time of the
+     * sync, so incremental builds rebuild exactly them; files an earlier
+     * sync put there that are gone here are deleted; nothing else in
+     * `dest` is touched.
+     */
+    func sync(space: String, path: String, dest: String, options: SpaceSyncOptions?) async throws  -> SpaceSyncReport
+
+    /**
      * `volume_approve`: the request becomes a grant (with presence).
      */
     func volumeApprove(requestId: String, expiresInSecs: UInt64?) async throws  -> DriveGrant
@@ -12756,6 +12766,31 @@ open func stop(space: String)async throws  -> SpacePowerReport  {
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeSpacePowerReport_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Makes `dest` in Space `space` hold what the host folder `path` holds
+     * now, sending only what changed since the last sync to it (`.gitignore`
+     * and `.git` left out by default). Changed files get the time of the
+     * sync, so incremental builds rebuild exactly them; files an earlier
+     * sync put there that are gone here are deleted; nothing else in
+     * `dest` is touched.
+     */
+open func sync(space: String, path: String, dest: String, options: SpaceSyncOptions?)async throws  -> SpaceSyncReport  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_sync(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(space),FfiConverterString.lower(path),FfiConverterString.lower(dest),FfiConverterOptionTypeSpaceSyncOptions.lower(options)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSpaceSyncReport_lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -37690,6 +37725,234 @@ public func FfiConverterTypeSpaceStreamTicket_lower(_ value: SpaceStreamTicket) 
 
 
 /**
+ * What [`Spaces::sync`] takes from the folder.
+ */
+public struct SpaceSyncOptions: Equatable, Hashable {
+    /**
+     * Leave out what `.gitignore` leaves out.
+     */
+    public var gitignore: Bool
+    /**
+     * Take the `.git` directory too.
+     */
+    public var includeGit: Bool
+    /**
+     * Delete files an earlier sync put there that are gone here.
+     */
+    public var delete: Bool
+    /**
+     * More to leave out: gitignore-style patterns.
+     */
+    public var exclude: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Leave out what `.gitignore` leaves out.
+         */gitignore: Bool = true,
+        /**
+         * Take the `.git` directory too.
+         */includeGit: Bool = false,
+        /**
+         * Delete files an earlier sync put there that are gone here.
+         */delete: Bool = true,
+        /**
+         * More to leave out: gitignore-style patterns.
+         */exclude: [String] = []) {
+        self.gitignore = gitignore
+        self.includeGit = includeGit
+        self.delete = delete
+        self.exclude = exclude
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SpaceSyncOptions: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpaceSyncOptions: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpaceSyncOptions {
+        return
+            try SpaceSyncOptions(
+                gitignore: FfiConverterBool.read(from: &buf),
+                includeGit: FfiConverterBool.read(from: &buf),
+                delete: FfiConverterBool.read(from: &buf),
+                exclude: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SpaceSyncOptions, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.gitignore, into: &buf)
+        FfiConverterBool.write(value.includeGit, into: &buf)
+        FfiConverterBool.write(value.delete, into: &buf)
+        FfiConverterSequenceString.write(value.exclude, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceSyncOptions_lift(_ buf: RustBuffer) throws -> SpaceSyncOptions {
+    return try FfiConverterTypeSpaceSyncOptions.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceSyncOptions_lower(_ value: SpaceSyncOptions) -> RustBuffer {
+    return FfiConverterTypeSpaceSyncOptions.lower(value)
+}
+
+
+/**
+ * What [`Spaces::sync`] did.
+ */
+public struct SpaceSyncReport: Equatable, Hashable {
+    /**
+     * The Space.
+     */
+    public var space: String
+    /**
+     * The folder in it.
+     */
+    public var dest: String
+    /**
+     * Files the host folder has.
+     */
+    public var files: UInt64
+    /**
+     * Files sent (new or changed).
+     */
+    public var sent: UInt64
+    /**
+     * Their bytes, before compression.
+     */
+    public var sentBytes: UInt64
+    /**
+     * Bytes that went over the wire.
+     */
+    public var transferredBytes: UInt64
+    /**
+     * Files deleted in the Space.
+     */
+    public var deleted: UInt64
+    /**
+     * Files already up to date.
+     */
+    public var unchanged: UInt64
+    /**
+     * Seconds it took.
+     */
+    public var seconds: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The Space.
+         */space: String,
+        /**
+         * The folder in it.
+         */dest: String,
+        /**
+         * Files the host folder has.
+         */files: UInt64,
+        /**
+         * Files sent (new or changed).
+         */sent: UInt64,
+        /**
+         * Their bytes, before compression.
+         */sentBytes: UInt64,
+        /**
+         * Bytes that went over the wire.
+         */transferredBytes: UInt64,
+        /**
+         * Files deleted in the Space.
+         */deleted: UInt64,
+        /**
+         * Files already up to date.
+         */unchanged: UInt64,
+        /**
+         * Seconds it took.
+         */seconds: Double) {
+        self.space = space
+        self.dest = dest
+        self.files = files
+        self.sent = sent
+        self.sentBytes = sentBytes
+        self.transferredBytes = transferredBytes
+        self.deleted = deleted
+        self.unchanged = unchanged
+        self.seconds = seconds
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SpaceSyncReport: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpaceSyncReport: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpaceSyncReport {
+        return
+            try SpaceSyncReport(
+                space: FfiConverterString.read(from: &buf),
+                dest: FfiConverterString.read(from: &buf),
+                files: FfiConverterUInt64.read(from: &buf),
+                sent: FfiConverterUInt64.read(from: &buf),
+                sentBytes: FfiConverterUInt64.read(from: &buf),
+                transferredBytes: FfiConverterUInt64.read(from: &buf),
+                deleted: FfiConverterUInt64.read(from: &buf),
+                unchanged: FfiConverterUInt64.read(from: &buf),
+                seconds: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SpaceSyncReport, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.space, into: &buf)
+        FfiConverterString.write(value.dest, into: &buf)
+        FfiConverterUInt64.write(value.files, into: &buf)
+        FfiConverterUInt64.write(value.sent, into: &buf)
+        FfiConverterUInt64.write(value.sentBytes, into: &buf)
+        FfiConverterUInt64.write(value.transferredBytes, into: &buf)
+        FfiConverterUInt64.write(value.deleted, into: &buf)
+        FfiConverterUInt64.write(value.unchanged, into: &buf)
+        FfiConverterDouble.write(value.seconds, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceSyncReport_lift(_ buf: RustBuffer) throws -> SpaceSyncReport {
+    return try FfiConverterTypeSpaceSyncReport.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceSyncReport_lower(_ value: SpaceSyncReport) -> RustBuffer {
+    return FfiConverterTypeSpaceSyncReport.lower(value)
+}
+
+
+/**
  * A Space's latest thumbnail, from the cache every client on this machine
  * shares ([`crate::native::spaces::Space::thumbnail`]).
  */
@@ -44571,6 +44834,30 @@ fileprivate struct FfiConverterOptionTypeSpaceInfo: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeSpaceSyncOptions: FfiConverterRustBuffer {
+    typealias SwiftType = SpaceSyncOptions?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeSpaceSyncOptions.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeSpaceSyncOptions.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeSpacesHostLoad: FfiConverterRustBuffer {
     typealias SwiftType = SpacesHostLoad?
 
@@ -49194,6 +49481,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_stop() != 64586) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_sync() != 3019) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_volume_approve() != 8640) {

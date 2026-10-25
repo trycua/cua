@@ -105,7 +105,10 @@ pub(crate) struct MeshClients {
     /// Spaces connected over the mesh, through which node, and whether one
     /// of your own hosts provides the Space (it then prefers the mesh
     /// without `CUA_MESH`, [`policy_for_provided`]).
-    routed: std::sync::Mutex<HashMap<String, (Key, bool)>>,
+    routed: std::sync::Mutex<HashMap<String, (Key, bool, u64)>>,
+    /// How many nodes each key has had: a Space routed through an earlier
+    /// node holds forwards that ended with it.
+    generations: std::sync::Mutex<HashMap<Key, u64>>,
     /// Spaces that took the relay's HTTPS path although they prefer the
     /// mesh, because their machine was not on it yet (a Space whose driver
     /// joins a moment after its relay connection): its node, machine id and
@@ -220,10 +223,21 @@ fn key_of(via: &Via<'_>) -> Key {
 impl MeshClients {
     /// Records that Space `space` (its id) connected over `via`'s mesh.
     pub(crate) fn note_routed(&self, space: &str, via: &Via<'_>, provided: bool) {
+        let key = key_of(via);
+        let generation = self.generation(&key);
         self.routed
             .lock()
             .expect("routed")
-            .insert(space.to_owned(), (key_of(via), provided));
+            .insert(space.to_owned(), (key, provided, generation));
+    }
+
+    fn generation(&self, key: &Key) -> u64 {
+        self.generations
+            .lock()
+            .expect("generations")
+            .get(key)
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Records that Space `space` (its id) took the relay's HTTPS path
@@ -270,9 +284,14 @@ impl MeshClients {
         space: &str,
         policy: impl FnOnce(bool) -> MeshPolicy,
     ) -> Option<String> {
-        let (key, provided) = self.routed.lock().expect("routed").get(space).cloned()?;
+        let (key, provided, generation) =
+            self.routed.lock().expect("routed").get(space).cloned()?;
         let reason = if !policy(provided).uses_mesh() {
             Some("the mesh was turned off".into())
+        } else if self.generation(&key) != generation {
+            // Another account signed in and the node started again: this
+            // Space's forwards ended with the old node.
+            Some("its mesh node was replaced".into())
         } else {
             None
         };
@@ -290,9 +309,12 @@ impl MeshClients {
     /// by the relay fails a moment before the relay's refusal arrives.
     /// Leaves the Space marked, so its next use reconnects.
     pub(crate) async fn cut_reason(&self, space: &str, wait: Duration) -> Option<String> {
-        let (key, _) = self.routed.lock().expect("routed").get(space).cloned()?;
+        let (key, _, generation) = self.routed.lock().expect("routed").get(space).cloned()?;
         let deadline = Instant::now() + wait;
         loop {
+            if self.generation(&key) != generation {
+                return Some("its mesh node was replaced".into());
+            }
             if let Some(reason) = self.unusable(&key).await {
                 return Some(reason);
             }
@@ -364,6 +386,12 @@ impl MeshClients {
         match start().await {
             Ok((d, lock)) => {
                 let d = Arc::new(d);
+                *self
+                    .generations
+                    .lock()
+                    .expect("generations")
+                    .entry(key.clone())
+                    .or_default() += 1;
                 nodes.insert(
                     key,
                     Slot::Ready {
@@ -698,7 +726,7 @@ mod tests {
             .routed
             .lock()
             .unwrap()
-            .insert("relay:m1".into(), (key, false));
+            .insert("relay:m1".into(), (key, false, 0));
         assert!(
             clients
                 .stale("relay:m1", |_| MeshPolicy::Prefer)
@@ -792,7 +820,45 @@ mod tests {
         assert!(!Arc::ptr_eq(&a, &b), "a new node for the new account");
         assert_ne!(b.mesh().node_key(), key_a, "with a new key");
         assert!(b.mesh().unusable().is_none());
-        b.mesh().shutdown();
+
+        // A Space connected through A's node lost its forwards with it:
+        // it reconnects (once), through B's node.
+        clients.routed.lock().unwrap().insert(
+            "relay:m1".into(),
+            (key.clone(), false, 1), // the first node's generation
+        );
+        let why = clients.stale("relay:m1", |_| MeshPolicy::Prefer).await;
+        assert_eq!(why.as_deref(), Some("its mesh node was replaced"));
+        assert!(
+            clients
+                .stale("relay:m1", |_| MeshPolicy::Prefer)
+                .await
+                .is_none()
+        );
+        // A Space routed through B's node is fine, until A signs in again.
+        clients.routed.lock().unwrap().insert(
+            "relay:m2".into(),
+            (key.clone(), false, clients.generation(&key)),
+        );
+        assert!(
+            clients
+                .stale("relay:m2", |_| MeshPolicy::Prefer)
+                .await
+                .is_none()
+        );
+        let a_again = clients
+            .dialer_with(key.clone(), Some("sub-a".into()), starter("a"))
+            .await
+            .unwrap();
+        assert!(!Arc::ptr_eq(&a_again, &b));
+        assert_eq!(
+            clients
+                .stale("relay:m2", |_| MeshPolicy::Prefer)
+                .await
+                .as_deref(),
+            Some("its mesh node was replaced")
+        );
+        a_again.mesh().shutdown();
     }
 
     /// Signing in as another account on this computer: the saved node key
@@ -911,7 +977,7 @@ mod tests {
         let clients = MeshClients::default();
         clients.routed.lock().unwrap().insert(
             "relay:m1".into(),
-            (Key::Account("http://relay".into()), false),
+            (Key::Account("http://relay".into()), false, 0),
         );
         // Off now (CUA_MESH=off, or the app left the channel that uses it):
         // the cached connection is dropped and reconnects over HTTPS.

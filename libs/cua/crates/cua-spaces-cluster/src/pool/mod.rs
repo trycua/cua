@@ -600,6 +600,7 @@ impl PoolAgent {
                 self.drop_holding("signed out", false).await;
                 continue;
             };
+            self.drop_holding_of_another_account(&relay).await;
             if self.no_relay_pool.load(Ordering::SeqCst) {
                 continue;
             }
@@ -836,6 +837,24 @@ impl PoolAgent {
             h.stop.cancel();
             h.coord.stop();
         }
+    }
+
+    /// Another account signed in than the one this machine coordinates
+    /// the pool of: its coordinator and job state are the old account's, so
+    /// it stops at once (the lease is not released: `relay` is the new
+    /// account's pool, and the old lease ends by itself). Returns whether
+    /// it did.
+    async fn drop_holding_of_another_account(&self, relay: &RelayPool) -> bool {
+        let other = self
+            .holding
+            .lock()
+            .await
+            .as_ref()
+            .is_some_and(|h| h.relay.key() != relay.key());
+        if other {
+            self.drop_holding("another account signed in", false).await;
+        }
+        other
     }
 
     async fn drop_holding(&self, why: &str, release: bool) {
@@ -1221,6 +1240,80 @@ mod tests {
             },
             link: Arc::new(LocalLink::new(jobs, name, "linux")),
         }
+    }
+
+    struct NoHost;
+
+    #[async_trait]
+    impl Host for NoHost {
+        async fn relay(&self) -> Option<RelayPool> {
+            None
+        }
+        fn name(&self) -> String {
+            "mini".into()
+        }
+        fn machine_id(&self) -> String {
+            String::new()
+        }
+        fn provides_spaces(&self) -> bool {
+            false
+        }
+        async fn account_machines(&self) -> Result<Vec<PoolMachine>, String> {
+            Ok(vec![])
+        }
+        async fn direct_machines(&self) -> Vec<PoolMachine> {
+            vec![]
+        }
+        async fn local_runner(&self) -> Option<Arc<dyn NodeLink>> {
+            None
+        }
+        fn elastic(&self) -> Option<(NodeRow, LinkFactory)> {
+            None
+        }
+    }
+
+    struct NoAuth;
+
+    #[async_trait]
+    impl relay::PoolAuth for NoAuth {
+        async fn headers(&self) -> Result<Vec<(String, String)>, String> {
+            Err("not used".into())
+        }
+    }
+
+    /// A machine that coordinates the pool of the account that was signed
+    /// in stops when another account signs in, even if the new pool grants
+    /// the same epoch number; the same account keeps it.
+    #[tokio::test]
+    async fn the_coordinator_of_the_previous_account_stops_when_another_signs_in() {
+        let dir = tempfile::tempdir().unwrap();
+        let agent = PoolAgent::start(
+            dir.path().join("pool"),
+            Arc::new(NoHost),
+            AgentConfig::default(),
+        )
+        .await
+        .unwrap();
+        let auth: Arc<dyn relay::PoolAuth> = Arc::new(NoAuth);
+        let pool_a = RelayPool::new("http://relay", "acct-a", auth.clone());
+        let pool_b = RelayPool::new("http://relay", "acct-b", auth);
+        let coord = Coordinator::start(crate::coordinator::Config::new(dir.path().join("c")), None)
+            .await
+            .unwrap();
+        *agent.holding.lock().await = Some(Holding {
+            epoch: 1,
+            relay: pool_a.clone(),
+            coord,
+            stop: CancellationToken::new(),
+        });
+        assert!(!agent.drop_holding_of_another_account(&pool_a).await);
+        assert!(agent.holder().await.is_some(), "the same account keeps it");
+        assert!(agent.drop_holding_of_another_account(&pool_b).await);
+        assert!(
+            agent.holder().await.is_none(),
+            "the other account's is gone"
+        );
+        agent.shutdown().await;
     }
 
     /// A machine removed from the account is drained at the first listing

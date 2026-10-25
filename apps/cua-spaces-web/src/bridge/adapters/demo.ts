@@ -43,6 +43,7 @@ import { demoKeyvaultSetupHandlers, demoKeyvaultSetupState, demoNoVaultOverview,
 import { unsupportedStreamOps } from "../ops/stream";
 import { unsupportedPresenceOps } from "../ops/presence";
 import { unsupportedRuntimeFixOps } from "../ops/runtime-fix";
+import type { CliInstallPlan } from "../contracts/first-run";
 import { unsupportedChecklistOps } from "../ops/checklist";
 import { demoTeleportHandlers } from "./demo/teleport";
 import { createDemoSettings } from "./demo/settings";
@@ -96,6 +97,10 @@ export interface DemoOptions {
    * `?demo=create-fail-runtime`) or `disk` (every create is short of disk
    * space, `?demo=create-fail-disk`). */
   failCreates?: "runtime-once" | "disk";
+  /** The CLI the demo host reports: the released app's `cua` on PATH unless
+   * set; `local` is a Local build's (`?demo=cli-local`), `missing` one
+   * not installed (`?demo=cli-missing`). */
+  cli?: "local" | "missing";
 }
 
 /** The SDK's words for the failures `failCreates` plays. */
@@ -129,6 +134,7 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     agents: (["none", "codex"] as const).find((a) => flags.has(`agents-${a}`)),
     nudge: (["second-agent", "risky"] as const).find((n) => flags.has(`nudge-${n}`)),
     disk: flags.has("disk-full") ? "full" : flags.has("low-disk") ? "low" : undefined,
+    cli: flags.has("cli-local") ? "local" : flags.has("cli-missing") ? "missing" : undefined,
     failCreates: flags.has("create-fail-runtime") ? "runtime-once" : flags.has("create-fail-disk") ? "disk" : undefined,
     ...(flags.has("update-ready")
       ? { update: { status: "downloaded" as const, version: "0.9.3", percent: 100, notesUrl: DEMO_NOTES } }
@@ -237,6 +243,24 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
   const replaceRow = (id: string, patch: Partial<SpaceRow>) => {
     state.rows = state.rows.map((r) => (r.id === id ? { ...r, ...patch } : r));
   };
+  // The bundled CLI (`?demo=cli-missing`: a disk-image install, none on PATH yet).
+  const cliName = options.cli === "local" ? "cua-local" : "cua";
+  let cliInstalled = options.cli !== "missing";
+  const cliPlan = (): CliInstallPlan => {
+    const target = `/Users/me/.local/bin/${cliName}`;
+    return {
+      source: `/Applications/Cua Spaces.app/Contents/MacOS/cua`,
+      target,
+      binDir: "/Users/me/.local/bin",
+      method: "symlink",
+      installed: cliInstalled,
+      upToDate: cliInstalled,
+      onPath: cliInstalled,
+      pathProfile: cliInstalled ? null : "/Users/me/.zshrc",
+      pathLine: cliInstalled ? null : 'export PATH="/Users/me/.local/bin:$PATH"',
+      found: cliInstalled ? target : null,
+    };
+  };
   const settingsSnapshot = (): SettingsSnapshot => ({
     values: { ...state.settings },
     defaultLocation: { value: state.settings.defaultLocation, source: "config", path: "~/.cua/config.toml" },
@@ -244,6 +268,8 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...(state.hostSettings ? { hostSettings: { ...state.hostSettings } } : {}),
     // The macOS hosts register ⌘⇧Space; the Windows and Linux shells have none.
     globalShortcut: state.platform.os === "macos" ? { label: state.settings.hotkey, registered: true } : null,
+    // What a host's CLI install plan names (`CuaChannel::cli_name`): Local's is `cua-local`.
+    cli: { name: cliName, installed: cliInstalled },
   });
   const overview = () => {
     if (!state.keyvaultSetUp) return demoNoVaultOverview(now());
@@ -599,6 +625,12 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...unsupportedChecklistOps("demo"),
     ...unsupportedPresenceOps("demo"),
     ...unsupportedRuntimeFixOps("demo"),
+    "cli.plan": () => cliPlan(),
+    "cli.install": async () => {
+      await wait(step);
+      cliInstalled = true;
+      return cliPlan();
+    },
   };
 
   return {

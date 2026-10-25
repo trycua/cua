@@ -10,6 +10,7 @@
 import { randomUUID } from "node:crypto";
 import type { Native } from "../native/load";
 import type {
+  AppCliInstallPlan,
   AppCreateAction,
   AppCreatesState,
   AppCreateSpaceArgs,
@@ -130,6 +131,8 @@ export class AppModel {
   roster: AppRosterState;
   /** The selected Space (the sidebar's selection). */
   selectedSpaceId: string | null = null;
+  /** The bundled CLI's install plan as last read (`cli.plan`, `settings.get`'s `cli`). */
+  cliPlan: AppCliInstallPlan | null = null;
   loaded = false;
   /** The last list read failed: the page says so above every page, and the
    * rows already listed stay (the SwiftUI app's `rosterError`). Never the

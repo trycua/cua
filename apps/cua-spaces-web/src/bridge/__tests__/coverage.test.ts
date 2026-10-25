@@ -20,6 +20,7 @@ import { RESOURCES_ARGS } from "../ops/resources";
 import { MACHINES_ARGS } from "../ops/machines";
 import { CHECKLIST_ARGS } from "../ops/checklist";
 import { LINKS_ARGS } from "../ops/links";
+import { CLI_ARGS } from "../ops/cli";
 import { PRESENCE_ARGS } from "../ops/presence";
 import { RUNTIME_FIX_ARGS } from "../ops/runtime-fix";
 import type { HostWindow } from "../detect";
@@ -141,6 +142,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   ...MACHINES_ARGS,
   ...CHECKLIST_ARGS,
   ...LINKS_ARGS,
+  ...CLI_ARGS,
   ...PRESENCE_ARGS,
   ...RUNTIME_FIX_ARGS,
 };

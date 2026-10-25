@@ -1,27 +1,39 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! The first run every app shows: four short screens, agent first.
+//! The first run every app shows: a few short screens, agent first.
 //!
-//! 1. **Welcome.** "Your agents get their own computer." One button.
+//! 1. **Welcome.** "Your computers, shared by your team and its agents." One button.
 //! 2. **Pick your agent.** The agents found on this computer, in the order
 //!    [`PREFERENCE`] gives (Hermes, Claude Code, Codex, Cursor, then the
 //!    rest), one Connect each. Nothing is connected until its button is
 //!    pressed, and each row names the file Cua changes. The connected
 //!    agents' own sign-ins and keys follow, in the same order. Nothing
 //!    found: install an agent, or use the CLI.
+//!    Then **Install the Cua CLI**, only while the app's bundled CLI is not
+//!    on this computer (an app installed from the disk image has none on
+//!    PATH): what it installs and the exact file, Install or Not now, and
+//!    the result. It is the app's install plan ([`crate::installer`]):
+//!    nothing is written before Install, and the file is the channel's
+//!    (`cua`, or `cua-local` for Cua Spaces Local).
 //! 3. **Connect your other devices** (optional). Signing in lets your other
 //!    computers and your cloud reach this computer's Spaces. "Not now" skips
 //!    it: this computer works without an account.
-//! 4. **Try it in your agent.** A first request for the lead connected agent
+//! 4. **Share this Mac's screen** (only a signed-in Mac that shares its
+//!    screen). Screen Recording and Accessibility, one row each, with Allow
+//!    (the app's guide to the System Settings pane) and a check once
+//!    granted; "Not now" leaves them for Settings. macOS's own prompts never
+//!    show first: the app asks here, in its own words.
+//! 5. **Try it in your agent.** A first request for the lead connected agent
 //!    (read-only, with Copy) that makes a Space on this computer, and a line
 //!    that turns green when the agent used Cua. No agent: a one-click first
 //!    Space instead.
 //!
-//! Nothing starts or connects by itself, permissions are asked where a task
-//! needs them (not here), and no plan is shown. The words, the order and
-//! which button does what are decided here, so every app says the same
-//! thing; the page gathers the readings and draws what [`view`] returns.
+//! Nothing starts or connects by itself, permissions are asked only on a Mac
+//! that shares its screen (screen 4), and no plan is shown. The words, the
+//! order and which button does what are decided here, so every app says the
+//! same thing; the page gathers the readings and draws what [`view`]
+//! returns.
 //!
 //! What each reading is, and how real it is:
 //!
@@ -61,13 +73,23 @@ const TRY_PROMPT_OTHER: &str =
     "Make a Linux Space on this computer and stream the desktop in a new window.";
 const TRY_PROMPT_PC: &str = "Make a Linux Space on this PC and stream the desktop in a new window.";
 
-/// The same first Space from a terminal (no agent found).
-pub const CLI_FIRST_SPACE: &str = "cua spaces create linux";
+/// The CLI's name when the host did not say (the released app's,
+/// `CuaChannel::cli_name`). A Local build's host passes its own.
+fn default_cli_name() -> &'static str {
+    cua_home::channel::CuaChannel::Stable.cli_name()
+}
+
+/// The same first Space from a terminal (no agent found), under the CLI
+/// name of the app's channel: `cua spaces create linux --on local`, or
+/// `cua-local spaces create linux --on local` in Cua Spaces Local.
+pub fn cli_first_space(cli: &str) -> String {
+    format!("{cli} spaces create linux --on local")
+}
 
 /// Where to get an agent (none found).
 pub const AGENTS_GUIDE_URL: &str = "https://cua.ai/docs/spaces/guides/connect-your-agent";
 
-/// The four screens. `connect` and `setup` keep their old names, so a run
+/// The screens. `connect` and `setup` keep their old names, so a run
 /// saved by an older app resumes on the matching screen.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -76,21 +98,79 @@ pub enum FirstRunStep {
     Welcome,
     /// Pick your agent.
     Connect,
+    /// Install the Cua CLI (only while it is not installed).
+    Cli,
     /// Connect your other devices.
     Devices,
+    /// Share this Mac's screen: Screen Recording and Accessibility. Only on
+    /// a signed-in Mac that shares its screen ([`asks_permissions`]).
+    Permissions,
     /// Try it in your agent.
     Setup,
 }
 
-impl FirstRunStep {
-    fn index(self) -> u8 {
-        match self {
-            FirstRunStep::Welcome => 0,
-            FirstRunStep::Connect => 1,
-            FirstRunStep::Devices => 2,
-            FirstRunStep::Setup => 3,
-        }
+/// The app's bundled CLI, as its install plan reads it (the Command line
+/// screen, and Settings' row).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FirstRunCli {
+    /// What installing would do (`cli.plan`; none: not read yet, or this
+    /// app can't install it).
+    pub plan: Option<crate::installer::CliInstallPlan>,
+    /// Install is running.
+    pub installing: bool,
+    /// Installed from this screen: the file written.
+    pub installed: Option<String>,
+    /// Installing failed with this.
+    pub error: Option<String>,
+}
+
+impl FirstRunCli {
+    /// The CLI is on this computer: installed here, the target is current,
+    /// or a working one of this channel was found.
+    pub fn present(&self) -> bool {
+        self.installed.is_some()
+            || self
+                .plan
+                .as_ref()
+                .is_some_and(|p| p.up_to_date || p.found.is_some())
     }
+
+    /// The app carries a CLI it can install, and none is on this computer.
+    pub fn missing(&self) -> bool {
+        !self.present() && self.plan.as_ref().is_some_and(|p| p.source.is_some())
+    }
+
+    /// Where it is (installed here, current at the target, or found).
+    fn location(&self) -> Option<String> {
+        self.installed.clone().or_else(|| {
+            let p = self.plan.as_ref()?;
+            if p.up_to_date {
+                Some(p.target.clone())
+            } else {
+                p.found.clone()
+            }
+        })
+    }
+}
+
+/// The screens this run shows, in order: Install the Cua CLI only while
+/// the app's CLI is missing (and while it is the screen shown, so its
+/// result stays until Continue); Share this Mac's screen only where
+/// [`asks_permissions`].
+pub fn steps(input: &FirstRunInput) -> Vec<FirstRunStep> {
+    let cli =
+        input.step == FirstRunStep::Cli || input.cli.installed.is_some() || input.cli.missing();
+    let mut out = vec![FirstRunStep::Welcome, FirstRunStep::Connect];
+    if cli {
+        out.push(FirstRunStep::Cli);
+    }
+    out.push(FirstRunStep::Devices);
+    if asks_permissions(input) {
+        out.push(FirstRunStep::Permissions);
+    }
+    out.push(FirstRunStep::Setup);
+    out
 }
 
 /// An agent the setup knows (`agents.setup`'s row, trimmed).
@@ -112,7 +192,8 @@ pub struct FirstRunAgent {
     pub mcp_config: Option<String>,
 }
 
-/// A permission this computer still needs (`host.status`'s hint).
+/// A permission this computer still needs (`host.status`'s hint: the host
+/// lists only the missing ones).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct FirstRunPermission {
@@ -135,6 +216,12 @@ pub struct FirstRunHost {
     pub permissions: Vec<FirstRunPermission>,
     /// The host setup failed with this.
     pub error: Option<String>,
+    /// People it is shared with see and use its screen (none: not known,
+    /// the default for a new host: yes).
+    pub share_desktop: Option<bool>,
+    /// The name System Settings lists the app under ("Cua Spaces", "Cua
+    /// Spaces Local"; none: not known).
+    pub app_name: Option<String>,
 }
 
 /// A first Space this computer can make in one click (the Spaces page's
@@ -237,6 +324,27 @@ pub struct FirstRunInput {
     pub offers: Vec<FirstRunOffer>,
     pub extra: FirstRunExtra,
     pub plan: Option<FirstRunPlan>,
+    /// The app's bundled CLI (the Command line screen).
+    pub cli: FirstRunCli,
+    /// The CLI's name (`SettingsSnapshot.cli`: `CuaChannel::cli_name`);
+    /// none: the install plan's file name, else `cua`.
+    pub cli_name: Option<String>,
+}
+
+/// The CLI's name for `input`: the host's, else the install plan's file
+/// name, else the released app's.
+pub fn cli_name(input: &FirstRunInput) -> String {
+    let given = input
+        .cli_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty());
+    let planned = input.cli.plan.as_ref().and_then(|p| {
+        let file = p.target.rsplit(['/', '\\']).next()?;
+        let file = file.strip_suffix(".exe").unwrap_or(file);
+        (!file.is_empty()).then_some(file)
+    });
+    given.or(planned).unwrap_or(default_cli_name()).to_string()
 }
 
 /// A button: what it says and what it does (`id`).
@@ -258,7 +366,7 @@ fn button(id: &str, label: &str) -> FirstRunButton {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WelcomeView {
-    /// "Your agents get their own computer."
+    /// "Your computers, shared by your team and its agents."
     pub title: String,
     pub lede: String,
     /// "Get started" (`start`).
@@ -497,6 +605,27 @@ pub struct ArtView {
     pub extra: String,
 }
 
+/// Screen 3b: the two permissions a shared screen needs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionsView {
+    /// "Share this Mac's screen."
+    pub title: String,
+    /// "To let your team and agents see and use this Mac, allow two
+    /// permissions."
+    pub lede: String,
+    /// Screen Recording, then Accessibility (`id` the host's permission
+    /// id): `ok` once granted, `fix` with Allow (`allow`; `settings_url`
+    /// the pane), `checking` while this computer is still being added.
+    pub rows: Vec<CheckRow>,
+    /// What Allow does, naming the app as System Settings lists it.
+    pub note: String,
+    /// "Continue" once both are granted.
+    pub primary: Option<FirstRunButton>,
+    /// "Not now" (`not-now`) while one is missing: Settings has them later.
+    pub secondary: Option<FirstRunButton>,
+}
+
 /// Screen 4.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -523,11 +652,49 @@ pub struct FirstRunView {
     pub welcome: Option<WelcomeView>,
     pub connect: Option<ConnectView>,
     pub devices: Option<DevicesView>,
+    pub permissions: Option<PermissionsView>,
     pub setup: Option<SetupView>,
+    /// Install the Cua CLI.
+    pub cli: Option<CliView>,
     pub art: ArtView,
-    /// Four page marks.
+    /// The screens this run shows ([`steps`]), for Back and Continue.
+    pub steps: Vec<FirstRunStep>,
+    /// One page mark per screen.
     pub dots: u8,
     pub current: u8,
+}
+
+/// A fact on the Command line screen ("Installs", "~/.local/bin/cua").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliFact {
+    pub label: String,
+    pub value: String,
+}
+
+/// Install the Cua CLI: the first run's screen, and Settings' row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliView {
+    pub title: String,
+    pub lede: String,
+    /// The CLI's name (`cua`, `cua-local`).
+    pub name: String,
+    /// What Install writes: the file, and the PATH line when one is needed.
+    pub facts: Vec<CliFact>,
+    /// One plain line on where it stands (Settings' description).
+    pub status: String,
+    /// It is on this computer.
+    pub installed: bool,
+    /// Install is running.
+    pub busy: bool,
+    /// A command to try once it is installed.
+    pub try_command: Option<String>,
+    pub error: Option<String>,
+    /// `install` ("Install", "Try again"), or `continue` once installed.
+    pub primary: Option<FirstRunButton>,
+    /// `not-now` until it is installed.
+    pub secondary: Option<FirstRunButton>,
 }
 
 /// A line of Home's "Finish setting up" list.
@@ -846,8 +1013,8 @@ fn default_or(name: &str, id: &str) -> String {
 fn welcome_view(input: &FirstRunInput) -> WelcomeView {
     let place = this_computer(&input.host_os);
     WelcomeView {
-        title: "Your agents get their own computer.".into(),
-        lede: format!("Spaces on {place}, away from your files and your mouse."),
+        title: "Your computers, shared by your team and its agents.".into(),
+        lede: format!("Run agents in Spaces on {place}, or on any computer your team connects."),
         primary: button("start", "Get started"),
     }
 }
@@ -899,7 +1066,7 @@ fn connect_view(input: &FirstRunInput) -> ConnectView {
                     title: "Use the CLI".into(),
                     note: format!("Make a Space on {place} from a terminal."),
                     url: None,
-                    command: Some(CLI_FIRST_SPACE.into()),
+                    command: Some(cli_first_space(&cli_name(input))),
                 },
             ]
         } else {
@@ -1017,6 +1184,91 @@ fn devices_view(input: &FirstRunInput) -> DevicesView {
         primary: button("sign-in", "Sign in to connect"),
         secondary: Some(button("not-now", "Not now")),
         note: Some(format!("{} works without it.", cap(place))),
+    }
+}
+
+/// The first run asks for Screen Recording and Accessibility: on a Mac,
+/// signed in (so it is added to the account and shared), when it shares
+/// its screen. A Mac kept for Spaces only, or one not signed in, never
+/// sees the screen.
+pub fn asks_permissions(input: &FirstRunInput) -> bool {
+    input.host_os == "macos"
+        && input.signed_in
+        && input
+            .host
+            .as_ref()
+            .is_none_or(|h| h.share_desktop != Some(false))
+}
+
+/// The two permissions a shared screen needs, as rows: also what Settings
+/// shows later (the same words and buttons).
+pub fn permissions_view(input: &FirstRunInput) -> PermissionsView {
+    let place = this_computer(&input.host_os);
+    let app = input
+        .host
+        .as_ref()
+        .and_then(|h| h.app_name.clone())
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or_else(|| "Cua Spaces".into());
+    // The host lists only what is missing, and only once it is set up.
+    let known = input
+        .host
+        .as_ref()
+        .filter(|h| h.configured && !input.host_setting_up);
+    let rows: Vec<CheckRow> = [
+        // Plain words, not the panes' names: macOS renames them (Accessibility
+        // is "Device Control and Data Access" from macOS 27), and Allow opens
+        // the right one anyway.
+        (
+            "screen-recording",
+            format!("See {place}'s screen"),
+            "So your team and agents can see what's on it.".to_string(),
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+        ),
+        (
+            "accessibility",
+            "Use the mouse and keyboard".to_string(),
+            format!("So they can click and type on {place}."),
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+        ),
+    ]
+    .into_iter()
+    .map(|(id, title, note, pane)| {
+        let (state, note, action, settings_url) = match known {
+            None => (
+                RowState::Checking,
+                format!("Adding {place} to your account first…"),
+                None,
+                None,
+            ),
+            Some(host) => match missing_permission(host, id) {
+                Some(p) => (
+                    RowState::Fix,
+                    note,
+                    Some(button("allow", "Allow")),
+                    Some(p.settings_url.unwrap_or_else(|| pane.into())),
+                ),
+                None => (RowState::Ok, "Allowed".into(), None, None),
+            },
+        };
+        CheckRow {
+            id: id.into(),
+            state,
+            title,
+            note,
+            action,
+            settings_url,
+        }
+    })
+    .collect();
+    let all = rows.iter().all(|r| r.state == RowState::Ok);
+    PermissionsView {
+        title: format!("Share {place}'s screen."),
+        lede: format!("To let your team and agents see and use {place}, allow two permissions."),
+        rows,
+        note: format!("Allow opens System Settings and shows you where to turn on {app}."),
+        primary: all.then(|| button("continue", "Continue")),
+        secondary: (!all).then(|| button("not-now", "Not now")),
     }
 }
 
@@ -1374,17 +1626,101 @@ fn art(input: &FirstRunInput) -> ArtView {
 
 /// The first run as drawn.
 pub fn view(input: &FirstRunInput) -> FirstRunView {
-    let step = input.step;
+    let all = steps(input);
+    // The permissions screen of a Mac that no longer asks (signed out, or
+    // its screen is not shared) shows the try screen instead.
+    let step = if all.contains(&input.step) {
+        input.step
+    } else {
+        FirstRunStep::Setup
+    };
+    let steps = all;
+    let current = steps.iter().position(|s| *s == step).unwrap_or(0);
     FirstRunView {
         step,
         later: "Skip for now".into(),
         welcome: (step == FirstRunStep::Welcome).then(|| welcome_view(input)),
         connect: (step == FirstRunStep::Connect).then(|| connect_view(input)),
         devices: (step == FirstRunStep::Devices).then(|| devices_view(input)),
+        permissions: (step == FirstRunStep::Permissions).then(|| permissions_view(input)),
         setup: (step == FirstRunStep::Setup).then(|| setup_view(input)),
+        cli: (step == FirstRunStep::Cli).then(|| cli_view(input)),
         art: art(input),
-        dots: 4,
-        current: step.index(),
+        dots: steps.len() as u8,
+        current: current as u8,
+        steps,
+    }
+}
+
+/// Install the Cua CLI, as the first run and Settings show it.
+pub fn cli_view(input: &FirstRunInput) -> CliView {
+    let name = cli_name(input);
+    let cli = &input.cli;
+    let installed = cli.present();
+    let mut facts = Vec::new();
+    if let Some(at) = cli.location().filter(|_| installed) {
+        facts.push(CliFact {
+            label: "Installed at".into(),
+            value: tilde(&at),
+        });
+    } else if let Some(plan) = &cli.plan {
+        facts.push(CliFact {
+            label: "Installs".into(),
+            value: tilde(&plan.target),
+        });
+        if !plan.on_path
+            && let Some(profile) = &plan.path_profile
+        {
+            facts.push(CliFact {
+                label: "Adds to PATH".into(),
+                value: format!("{}, in {}", tilde(&plan.bin_dir), tilde(profile)),
+            });
+        }
+    }
+    let status = if cli.installing {
+        "Installing…".to_string()
+    } else if let Some(at) = cli.location().filter(|_| installed) {
+        format!("Installed at {}.", tilde(&at))
+    } else if let Some(plan) = cli.plan.as_ref().filter(|p| p.source.is_some()) {
+        format!("Not installed. Install puts it at {}.", tilde(&plan.target))
+    } else {
+        "This app can't install it here.".to_string()
+    };
+    let can_install = !installed && cli.plan.as_ref().is_some_and(|p| p.source.is_some());
+    CliView {
+        title: if installed {
+            "Cua is ready in Terminal.".into()
+        } else {
+            "Use Cua from the Terminal.".into()
+        },
+        lede: format!("Type {name} in Terminal to make and use Spaces, for you and your agents."),
+        facts,
+        status,
+        installed,
+        busy: cli.installing,
+        try_command: installed.then(|| format!("{name} spaces ls")),
+        error: cli
+            .error
+            .as_ref()
+            .map(|e| format!("Couldn't install it: {e}")),
+        primary: if installed {
+            Some(button("continue", "Continue"))
+        } else if can_install {
+            Some(button(
+                "install",
+                if cli.installing {
+                    "Installing…"
+                } else if cli.error.is_some() {
+                    "Try again"
+                } else {
+                    "Install"
+                },
+            ))
+        } else {
+            Some(button("continue", "Continue"))
+        },
+        secondary: (!installed && can_install).then(|| button("not-now", "Not now")),
+        name,
     }
 }
 
@@ -1639,7 +1975,10 @@ mod tests {
             assert!(drawn[n as usize]);
         }
         let w = view(&input(FirstRunStep::Welcome, vec![])).welcome.unwrap();
-        assert_eq!(w.title, "Your agents get their own computer.");
+        assert_eq!(
+            w.title,
+            "Your computers, shared by your team and its agents."
+        );
         assert_eq!(w.primary.id, "start");
     }
 
@@ -1793,7 +2132,10 @@ mod tests {
             c.alternatives[0].note,
             "Hermes, Claude Code, Codex or Cursor, then come back here."
         );
-        assert_eq!(c.alternatives[1].command.as_deref(), Some(CLI_FIRST_SPACE));
+        assert_eq!(
+            c.alternatives[1].command.as_deref(),
+            Some("cua spaces create linux --on local")
+        );
         // Still looking: no alternatives yet.
         let looking = connect(&FirstRunInput {
             agents: None,
@@ -1892,6 +2234,120 @@ mod tests {
             view(&i).devices.unwrap().status.unwrap().state,
             RowState::Ok
         );
+    }
+
+    /// Where Back and Continue go from `v`.
+    fn nav(v: &FirstRunView) -> (FirstRunStep, FirstRunStep) {
+        let at = v.current as usize;
+        (
+            v.steps[at.saturating_sub(1)],
+            v.steps[(at + 1).min(v.steps.len() - 1)],
+        )
+    }
+
+    fn missing(id: &str) -> FirstRunPermission {
+        FirstRunPermission {
+            id: id.into(),
+            granted: false,
+            settings_url: None,
+        }
+    }
+
+    #[test]
+    fn a_shared_mac_asks_for_two_permissions_after_the_account_and_never_before() {
+        let mut i = FirstRunInput {
+            step: FirstRunStep::Devices,
+            host_os: "macos".into(),
+            ..Default::default()
+        };
+        // Not signed in: Not now goes straight to the try screen.
+        let v = view(&i);
+        assert_eq!((nav(&v).1, v.dots), (FirstRunStep::Setup, 4));
+
+        i.signed_in = true;
+        i.host = Some(FirstRunHost {
+            configured: true,
+            running: true,
+            permissions: vec![missing("screen-recording"), missing("accessibility")],
+            ..Default::default()
+        });
+        let v = view(&i);
+        assert_eq!((nav(&v).1, v.dots), (FirstRunStep::Permissions, 5));
+
+        i.step = FirstRunStep::Permissions;
+        let v = view(&i);
+        assert_eq!(
+            (nav(&v).0, nav(&v).1, v.current),
+            (FirstRunStep::Devices, FirstRunStep::Setup, 3)
+        );
+        let p = v.permissions.unwrap();
+        assert_eq!(p.title, "Share this Mac's screen.");
+        assert_eq!(
+            p.lede,
+            "To let your team and agents see and use this Mac, allow two permissions."
+        );
+        assert_eq!(
+            p.rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            ["screen-recording", "accessibility"]
+        );
+        assert!(p.rows.iter().all(|r| r.state == RowState::Fix
+            && r.action.as_ref().is_some_and(|a| a.id == "allow")
+            && r.settings_url.is_some()));
+        assert!(p.primary.is_none());
+        assert_eq!(p.secondary.unwrap().id, "not-now");
+        assert!(p.note.contains("turn on Cua Spaces."));
+
+        // Granted one by one: a check each, then Continue.
+        let host = i.host.as_mut().unwrap();
+        host.permissions = vec![missing("accessibility")];
+        host.app_name = Some("Cua Spaces Local".into());
+        let p = view(&i).permissions.unwrap();
+        assert_eq!(p.rows[0].state, RowState::Ok);
+        assert_eq!(p.rows[1].state, RowState::Fix);
+        assert!(p.note.contains("turn on Cua Spaces Local."));
+        i.host.as_mut().unwrap().permissions.clear();
+        let p = view(&i).permissions.unwrap();
+        assert!(
+            p.rows
+                .iter()
+                .all(|r| r.state == RowState::Ok && r.action.is_none())
+        );
+        assert_eq!(p.primary.unwrap().id, "continue");
+        assert!(p.secondary.is_none());
+
+        // Still being added: nothing is known yet, nothing is granted.
+        i.host_setting_up = true;
+        let p = view(&i).permissions.unwrap();
+        assert!(p.rows.iter().all(|r| r.state == RowState::Checking));
+        assert!(p.primary.is_none());
+    }
+
+    #[test]
+    fn no_permissions_screen_without_a_shared_mac_screen() {
+        let mut i = FirstRunInput {
+            step: FirstRunStep::Permissions,
+            host_os: "macos".into(),
+            signed_in: true,
+            host: Some(FirstRunHost {
+                configured: true,
+                share_desktop: Some(false),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        // Spaces only: the saved step falls through to the try screen.
+        let v = view(&i);
+        assert_eq!(v.step, FirstRunStep::Setup);
+        assert!(v.permissions.is_none());
+        assert_eq!((nav(&v).0, v.dots), (FirstRunStep::Devices, 4));
+        // Not a Mac.
+        i.host_os = "windows".into();
+        i.host.as_mut().unwrap().share_desktop = None;
+        assert!(!asks_permissions(&i));
+        // Signed out.
+        i.host_os = "macos".into();
+        i.signed_in = false;
+        assert!(!asks_permissions(&i));
     }
 
     #[test]
@@ -2103,5 +2559,176 @@ mod tests {
                 assert!(!all.contains(&format!(" {word}")), "{step:?}: {word}");
             }
         }
+    }
+
+    fn plan(found: Option<&str>, on_path: bool, target: &str) -> crate::installer::CliInstallPlan {
+        crate::installer::CliInstallPlan {
+            source: Some("/Applications/Cua Spaces.app/Contents/MacOS/cua".into()),
+            target: target.into(),
+            bin_dir: "/Users/ada/.local/bin".into(),
+            on_path,
+            path_profile: (!on_path).then(|| "/Users/ada/.zshrc".into()),
+            path_line: (!on_path).then(|| "export PATH=\"/Users/ada/.local/bin:$PATH\"".into()),
+            found: found.map(Into::into),
+            ..Default::default()
+        }
+    }
+
+    const STABLE_TARGET: &str = "/Users/ada/.local/bin/cua";
+    const LOCAL_TARGET: &str = "/Users/ada/.local/bin/cua-local";
+
+    #[test]
+    fn the_cli_screen_shows_only_while_the_bundled_cli_is_missing() {
+        let base = input(FirstRunStep::Connect, vec![claude(true)]);
+        // Not read yet, or no plan here: no screen.
+        assert_eq!(steps(&base).len(), 4);
+        // A disk-image install: the bundled CLI, nothing on PATH.
+        let dmg = FirstRunInput {
+            cli: FirstRunCli {
+                plan: Some(plan(None, false, STABLE_TARGET)),
+                ..Default::default()
+            },
+            ..base.clone()
+        };
+        assert_eq!(
+            steps(&dmg),
+            [
+                FirstRunStep::Welcome,
+                FirstRunStep::Connect,
+                FirstRunStep::Cli,
+                FirstRunStep::Devices,
+                FirstRunStep::Setup
+            ]
+        );
+        let v = view(&FirstRunInput {
+            step: FirstRunStep::Cli,
+            ..dmg.clone()
+        });
+        assert_eq!((v.dots, v.current), (5, 2));
+        // Already installed (or a working one found): no screen.
+        let found = FirstRunInput {
+            cli: FirstRunCli {
+                plan: Some(plan(Some(STABLE_TARGET), true, STABLE_TARGET)),
+                ..Default::default()
+            },
+            ..base.clone()
+        };
+        assert_eq!(steps(&found).len(), 4);
+        // A build without a bundled CLI can't install one: no screen.
+        let unbundled = FirstRunInput {
+            cli: FirstRunCli {
+                plan: Some(crate::installer::CliInstallPlan {
+                    source: None,
+                    ..plan(None, true, STABLE_TARGET)
+                }),
+                ..Default::default()
+            },
+            ..base
+        };
+        assert_eq!(steps(&unbundled).len(), 4);
+    }
+
+    #[test]
+    fn the_cli_screen_names_the_file_asks_first_and_shows_the_result() {
+        let mut i = FirstRunInput {
+            step: FirstRunStep::Cli,
+            cli: FirstRunCli {
+                plan: Some(plan(None, false, STABLE_TARGET)),
+                ..Default::default()
+            },
+            ..input(FirstRunStep::Cli, vec![claude(true)])
+        };
+        let c = view(&i).cli.unwrap();
+        assert_eq!(c.title, "Use Cua from the Terminal.");
+        assert_eq!(c.name, "cua");
+        assert_eq!(
+            c.facts,
+            [
+                CliFact {
+                    label: "Installs".into(),
+                    value: "~/.local/bin/cua".into()
+                },
+                CliFact {
+                    label: "Adds to PATH".into(),
+                    value: "~/.local/bin, in ~/.zshrc".into()
+                },
+            ]
+        );
+        assert_eq!(c.primary, Some(button("install", "Install")));
+        assert_eq!(c.secondary, Some(button("not-now", "Not now")));
+        assert!(!c.installed && c.try_command.is_none());
+        assert_eq!(
+            c.status,
+            "Not installed. Install puts it at ~/.local/bin/cua."
+        );
+
+        i.cli.installing = true;
+        let c = cli_view(&i);
+        assert!(c.busy);
+        assert_eq!(c.status, "Installing…");
+
+        i.cli.installing = false;
+        i.cli.error = Some("permission denied".into());
+        let c = cli_view(&i);
+        assert_eq!(
+            c.error.as_deref(),
+            Some("Couldn't install it: permission denied")
+        );
+        assert_eq!(c.primary, Some(button("install", "Try again")));
+
+        i.cli.error = None;
+        i.cli.installed = Some(STABLE_TARGET.into());
+        let v = view(&i);
+        // The result stays on its screen until Continue.
+        assert!(v.steps.contains(&FirstRunStep::Cli));
+        let c = v.cli.unwrap();
+        assert!(c.installed);
+        assert_eq!(c.title, "Cua is ready in Terminal.");
+        assert_eq!(c.status, "Installed at ~/.local/bin/cua.");
+        assert_eq!(c.try_command.as_deref(), Some("cua spaces ls"));
+        assert_eq!(c.primary, Some(button("continue", "Continue")));
+        assert_eq!(c.secondary, None);
+    }
+
+    #[test]
+    fn local_builds_name_their_own_cli() {
+        // The host names it (`SettingsSnapshot.cli`)...
+        let named = FirstRunInput {
+            cli_name: Some("cua-local".into()),
+            ..input(FirstRunStep::Connect, vec![])
+        };
+        let c = connect(&named);
+        assert_eq!(
+            c.alternatives[1].command.as_deref(),
+            Some("cua-local spaces create linux --on local")
+        );
+        // ...or its install plan's file does.
+        let planned = FirstRunInput {
+            step: FirstRunStep::Cli,
+            cli: FirstRunCli {
+                plan: Some(plan(None, true, LOCAL_TARGET)),
+                ..Default::default()
+            },
+            ..input(FirstRunStep::Cli, vec![])
+        };
+        assert_eq!(cli_name(&planned), "cua-local");
+        let c = cli_view(&planned);
+        assert_eq!(c.facts[0].value, "~/.local/bin/cua-local");
+        assert_eq!(c.facts.len(), 1, "on PATH already: no PATH line");
+        assert_eq!(
+            cli_name(&FirstRunInput {
+                cli: FirstRunCli {
+                    plan: Some(plan(None, true, "C:\\Users\\ada\\bin\\cua-local.exe")),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            "cua-local"
+        );
+        assert_eq!(cli_name(&FirstRunInput::default()), "cua");
+        assert_eq!(
+            cli_first_space("cua-local"),
+            "cua-local spaces create linux --on local"
+        );
     }
 }

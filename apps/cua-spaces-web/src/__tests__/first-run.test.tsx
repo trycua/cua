@@ -32,14 +32,14 @@ afterEach(cleanup);
 
 type Calls = { op: string; args: unknown }[];
 
-async function mount(opts: { host?: (h: HostStatus) => HostStatus; local?: (l: NonNullable<NewSpaceOptions["local"]>) => NewSpaceOptions["local"]; agents?: (rows: AgentSetupRow[]) => AgentSetupRow[] } = {}) {
+async function mount(opts: { signedIn?: boolean; host?: (h: HostStatus) => HostStatus; local?: (l: NonNullable<NewSpaceOptions["local"]>) => NewSpaceOptions["local"]; agents?: (rows: AgentSetupRow[]) => AgentSetupRow[]; cli?: "missing" | "local" } = {}) {
   await testCore();
   const calls: Calls = [];
   await mountApp("/onboarding", {
     failsCreates: false,
     listsGhost: false,
     // A first run: signed out, and Cua in no agent's settings yet.
-    demo: { signedIn: false, onboarded: false },
+    demo: { signedIn: opts.signedIn ?? false, onboarded: false, cli: opts.cli },
     intercept: (op, args) => {
       calls.push({ op, args });
       return undefined;
@@ -105,7 +105,7 @@ const noAgents = (rows: AgentSetupRow[]) => rows.map((r) => ({ ...r, installed: 
 describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
   it("walks Welcome, Pick your agent, Connect your devices and Try it, connecting only what is clicked", async () => {
     const calls = await mount();
-    await waitFor(() => expect(heading()).toBe("Your agents get their own computer."));
+    await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
     click("[data-onboarding-primary]");
     await waitFor(() => expect(heading()).toBe("Pick your agent."));
     // The agents found here, most preferred first; nothing connected by itself.
@@ -141,7 +141,7 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
 
   it("Back works from every step after Welcome, all the way to Welcome, keeping what was picked", async () => {
     const calls = await mount();
-    await waitFor(() => expect(heading()).toBe("Your agents get their own computer."));
+    await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
     expect(document.querySelector("[data-first-run-back]")).toBeNull();
     click("[data-onboarding-primary]");
     await waitFor(() => expect(heading()).toBe("Pick your agent."));
@@ -158,10 +158,33 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     await waitFor(() => expect(heading()).toBe("Pick your agent."));
     expect(document.querySelector<HTMLElement>('[data-first-run-agent="codex"]')!.dataset.connected).toBe("true");
     click("[data-first-run-back]");
-    await waitFor(() => expect(heading()).toBe("Your agents get their own computer."));
+    await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
     // Going back only navigates: nothing was connected again or undone.
     expect(readFirstRun().picked).toEqual(["codex"]);
     expect(calls.filter((c) => c.op === "agents.configure")).toHaveLength(1);
+  });
+
+  it("Back sits above the heading, apart from the choices; Tab goes primary, secondary, Back; Esc goes back", async () => {
+    writeFirstRun({ step: "devices" });
+    await mount();
+    await waitFor(() => expect(heading()).toBe("Connect your other devices."));
+    const step = document.querySelector<HTMLElement>('[data-first-run="devices"]')!;
+    const back = step.querySelector<HTMLElement>("[data-first-run-back]")!;
+    // Drawn first (above the heading), but last in the page's order.
+    expect(back.className).toContain("order-first");
+    const order = Array.from(step.querySelectorAll<HTMLElement>("[data-onboarding-primary], [data-first-run-secondary], [data-first-run-back]"));
+    expect(order.map((el) => (el.matches("[data-onboarding-primary]") ? "primary" : el.matches("[data-first-run-back]") ? "back" : "secondary"))).toEqual(["primary", "secondary", "back"]);
+    // "Not now" is a button of its own, described by the note under it.
+    const secondary = step.querySelector<HTMLElement>("[data-first-run-secondary]")!;
+    expect(screen.getByRole("button", { name: "Not now" })).toBe(secondary);
+    expect(document.getElementById(secondary.getAttribute("aria-describedby")!)?.textContent).toBe("This Mac works without it.");
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(heading()).toBe("Pick your agent."));
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
+    // Welcome has no Back, so Esc stays.
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(heading()).toBe("Your computers, shared by your team and its agents.");
   });
 
   it("Codex: its ChatGPT sign-in and OpenAI key follow it, and the sign-in starts on this computer", async () => {
@@ -192,15 +215,116 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     await waitFor(() => expect(calls.some((c) => c.op === "session.signIn")).toBe(true));
   });
 
+  it("a disk-image install offers the Cua CLI after Pick your agent: the exact file, then Install only when pressed", async () => {
+    const calls = await mount({ cli: "missing" });
+    await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
+    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toBe("Pick your agent."));
+    // The install plan is read: the run has the CLI's screen.
+    await waitFor(() => expect(document.querySelector("ol[aria-label]")!.getAttribute("aria-label")).toBe("Step 2 of 5"));
+    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toBe("Use Cua from the Terminal."));
+    const facts = [...document.querySelectorAll<HTMLElement>("[data-first-run-cli-fact]")].map((e) => e.textContent);
+    expect(facts).toEqual(["Installs~/.local/bin/cua", "Adds to PATH~/.local/bin, in ~/.zshrc"]);
+    expect(document.querySelector("[data-step]")!.getAttribute("data-step")).toBe("cli");
+    expect(document.querySelector("ol[aria-label]")!.getAttribute("aria-label")).toBe("Step 3 of 5");
+    // Nothing is written before Install.
+    expect(calls.some((c) => c.op === "cli.install")).toBe(false);
+    click('[data-first-run-cli-primary="install"]');
+    await waitFor(() => expect(heading()).toBe("Cua is ready in Terminal."));
+    expect(calls.find((c) => c.op === "cli.install")?.args).toEqual({ modifyPath: true });
+    expect(document.querySelector("[data-first-run-cli-done]")!.textContent).toMatch(/cua spaces ls/);
+    await waitFor(() => expect(document.querySelector('[data-first-run-cli-primary="continue"]')!.textContent).toBe("Continue"));
+    click('[data-first-run-cli-primary="continue"]');
+    await waitFor(() => expect(heading()).toBe("Connect your other devices."));
+    // Back shows the result again.
+    click("[data-first-run-back]");
+    await waitFor(() => expect(heading()).toBe("Cua is ready in Terminal."));
+  });
+
+  it("Not now leaves the CLI as it is; with the CLI already installed there is no such screen", async () => {
+    const calls = await mount({ cli: "missing" });
+    await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
+    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toBe("Pick your agent."));
+    // The install plan is read: the run has the CLI's screen.
+    await waitFor(() => expect(document.querySelector("ol[aria-label]")!.getAttribute("aria-label")).toBe("Step 2 of 5"));
+    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toBe("Use Cua from the Terminal."));
+    click("[data-first-run-secondary]");
+    await waitFor(() => expect(heading()).toBe("Connect your other devices."));
+    expect(calls.some((c) => c.op === "cli.install")).toBe(false);
+    cleanup();
+    localStorage.clear();
+    resetSavedOnboardingCache();
+    resetFirstRunCache();
+    await mount();
+    await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
+    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toBe("Pick your agent."));
+    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toBe("Connect your other devices."));
+  });
+
+  it("a signed-in Mac that shares its screen asks for two permissions in its own words, and Allow opens the guide", async () => {
+    const SR = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
+    const AX = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
+    let missing = [
+      { id: "screen-recording", label: "Screen Recording", settingsUrl: SR },
+      { id: "accessibility", label: "Accessibility", settingsUrl: AX },
+    ];
+    writeFirstRun({ step: "devices", picked: ["codex"] });
+    const calls = await mount({
+      signedIn: true,
+      host: (h) => ({ ...h, configured: true, shareDesktop: true, appName: "Cua Spaces Local", permissions: missing }),
+    });
+    await waitFor(() => expect(heading()).toBe("This Mac is in your account."));
+    click('[data-first-run-devices-primary="continue"]');
+    await waitFor(() => expect(heading()).toBe("Share this Mac's screen."));
+    expect(document.body.textContent).toMatch(/To let your team and agents see and use this Mac, allow two permissions\./);
+    expect(document.body.textContent).toMatch(/turn on Cua Spaces Local\./);
+    // Nothing is asked before a click.
+    expect(calls.some((c) => c.op === "host.openSettings")).toBe(false);
+    const rows = () => [...document.querySelectorAll<HTMLElement>("[data-first-run-permissions] [data-first-run-status]")].map((e) => `${e.dataset.firstRunStatus}:${e.dataset.state}`);
+    await waitFor(() => expect(rows()).toEqual(["screen-recording:fix", "accessibility:fix"]));
+    click('[data-first-run-status="screen-recording"] [data-first-run-action="allow"]');
+    await waitFor(() => expect(calls.find((c) => c.op === "host.openSettings")?.args).toEqual({ url: SR }));
+    // Granted in System Settings: a check, live; Continue once both are.
+    missing = [];
+    fireEvent.focus(window);
+    await waitFor(() => expect(rows()).toEqual(["screen-recording:ok", "accessibility:ok"]));
+    click('[data-first-run-permissions-primary="continue"]');
+    await waitFor(() => expect(heading()).toBe("Try it in OpenAI Codex."));
+    click("[data-first-run-back]");
+    await waitFor(() => expect(heading()).toBe("Share this Mac's screen."));
+  });
+
+  it("Not now on the permissions screen goes on; a Mac kept for Spaces only never sees it", async () => {
+    writeFirstRun({ step: "permissions", picked: ["codex"] });
+    let share = true;
+    const calls = await mount({
+      signedIn: true,
+      host: (h) => ({ ...h, configured: true, shareDesktop: share, permissions: [{ id: "accessibility", label: "Accessibility" }] }),
+    });
+    await waitFor(() => expect(heading()).toBe("Share this Mac's screen."));
+    click('[data-first-run-permissions-secondary="not-now"]');
+    await waitFor(() => expect(heading()).toBe("Try it in OpenAI Codex."));
+    expect(calls.some((c) => c.op === "host.openSettings")).toBe(false);
+    share = false;
+    writeFirstRun({ step: "permissions" });
+    fireEvent.focus(window);
+    await waitFor(() => expect(heading()).toBe("Try it in OpenAI Codex."));
+  });
+
   it("with no agent: install one or use the CLI, then a one-click first Space", async () => {
     const calls = await mount({ agents: noAgents, local: (l) => ({ ...l, backends: ["docker"], macosImage: null, hostArch: "amd64" }) });
-    await waitFor(() => expect(heading()).toBe("Your agents get their own computer."));
+    await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
     click("[data-onboarding-primary]");
     await waitFor(() => expect(heading()).toBe("Connect an agent."));
     expect(agents()).toEqual([]);
     const alts = [...document.querySelectorAll<HTMLElement>("[data-first-run-alternative]")].map((e) => e.dataset.firstRunAlternative);
     expect(alts).toEqual(["install", "cli"]);
-    expect(document.querySelector('[data-first-run-alternative="cli"]')!.textContent).toMatch(/cua spaces create linux/);
+    expect(document.querySelector('[data-first-run-alternative="cli"]')!.textContent).toMatch(/cua spaces create linux --on local/);
     click("[data-onboarding-primary]");
     await waitFor(() => expect(heading()).toBe("Connect your other devices."));
     click("[data-first-run-secondary]");

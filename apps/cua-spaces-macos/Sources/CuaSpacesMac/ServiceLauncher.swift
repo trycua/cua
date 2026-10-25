@@ -171,11 +171,19 @@ enum ServiceLauncher {
                 if serviceChild > 0 { kill(serviceChild, s) }
             }
         }
-        // Sharing the desktop needs Screen Recording and Accessibility. Ask
-        // now, as "Cua Spaces" (macOS shows each prompt once and lists the
-        // app in both panes); a background capture alone is refused without
-        // a prompt.
-        if !spec.args.contains("--no-desktop") {
+        // Sharing the desktop needs Screen Recording and Accessibility. Once
+        // the app has run with its window on this Mac, the app asks for
+        // them itself, in its own words, with a guide to System Settings
+        // (its first run's "Share this Mac's screen", and Settings):
+        // macOS's bare prompts here would pop over that screen first.
+        // Hosting set up without the app ever showing (the CLI, a headless
+        // Mac) still asks here, as "Cua Spaces" (macOS shows each prompt
+        // once and lists the app in both panes); a background capture alone
+        // is refused without a prompt.
+        let appAsks = PermissionGuide.appAsks(specPath: specFile)
+        NSLog("cua-spaces service: Screen Recording and Accessibility are asked %@",
+              appAsks ? "by the app (its permissions screen)" : "here (macOS's prompts)")
+        if !spec.args.contains("--no-desktop") && !appAsks {
             if !CGPreflightScreenCaptureAccess() { _ = CGRequestScreenCaptureAccess() }
             let prompt = "AXTrustedCheckOptionPrompt" // kAXTrustedCheckOptionPrompt
             _ = AXIsProcessTrustedWithOptions([prompt: true] as CFDictionary)

@@ -389,7 +389,9 @@ Response for `SpaceService.AddSpace`.
 
 Request for `SpaceService.ListSpaces`.
 
-No fields.
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `known_now` | 1 | `bool` | Answer with what is known now: this machine's Spaces at once, the account's other computers as far as they answered within a moment (the response says how far it got). Without it the daemon waits for the relay and fails when it cannot be read. |
 
 ### ListSpacesResponse
 
@@ -398,6 +400,10 @@ Response for `SpaceService.ListSpaces`.
 | Field | # | Type | Description |
 | --- | --- | --- | --- |
 | `spaces` | 1 | repeated [`Space`](#space) | Spaces. |
+| `incomplete` | 2 | `bool` | `known_now` only: some of the account's computers have not answered yet, so the list may grow (an empty one is not "no Spaces"). |
+| `reaching` | 3 | `uint32` | `known_now` only: how many computers are still being reached (0 when unknown). |
+| `stale` | 4 | `bool` | `known_now` only: the other computers' rows are the last known ones, not yet confirmed by the relay. |
+| `notice` | 5 | `string` | `known_now` only: why the account's computers could not be read, when they could not. |
 
 ### NamedVolume
 

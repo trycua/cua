@@ -92,12 +92,20 @@ async fn space_service_delegates_to_cua_spaces_and_the_passthrough_carries_crede
     assert!(json.contains(&added.id) && !json.contains(TOKEN));
 
     let listed = svc
-        .list_spaces(pb::ListSpacesRequest {})
+        .list_spaces(pb::ListSpacesRequest::default())
         .await
         .unwrap()
         .into_inner()
         .spaces;
     assert_eq!(listed, vec![added.clone()]);
+    // `known_now`: the same rows, complete (no account to reach).
+    let known = svc
+        .list_spaces(pb::ListSpacesRequest { known_now: true })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(known.spaces, vec![added.clone()]);
+    assert!(!known.incomplete && !known.stale && known.reaching == 0 && known.notice.is_empty());
     let resolved = svc
         .resolve_space(pb::ResolveSpaceRequest {
             space: "svc".into(),
@@ -207,7 +215,7 @@ async fn space_service_delegates_to_cua_spaces_and_the_passthrough_carries_crede
         .message;
     assert!(msg.contains(&added.id));
     assert!(
-        svc.list_spaces(pb::ListSpacesRequest {})
+        svc.list_spaces(pb::ListSpacesRequest::default())
             .await
             .unwrap()
             .into_inner()
@@ -424,7 +432,7 @@ async fn space_service_lists_the_accounts_relay_machines() {
     let c = client(&h);
     let listed = c
         .spaces()
-        .list_spaces(pb::ListSpacesRequest {})
+        .list_spaces(pb::ListSpacesRequest::default())
         .await
         .unwrap()
         .into_inner()
@@ -447,6 +455,15 @@ async fn space_service_lists_the_accounts_relay_machines() {
         .space
         .unwrap();
     assert_eq!(resolved.id, row.id);
+    // `known_now`: the relay answered within the wait, so the list is complete.
+    let known = c
+        .spaces()
+        .list_spaces(pb::ListSpacesRequest { known_now: true })
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(known.spaces.iter().any(|s| s.id == row.id), "{known:?}");
+    assert!(!known.incomplete && !known.stale && known.notice.is_empty(), "{known:?}");
     // A configured account that loses authentication must not look like
     // successful empty discovery.
     rt.spaces().set_relay(Some(cua_spaces::RelayAccount::new(
@@ -455,7 +472,7 @@ async fn space_service_lists_the_accounts_relay_machines() {
     )));
     let error = c
         .spaces()
-        .list_spaces(pb::ListSpacesRequest {})
+        .list_spaces(pb::ListSpacesRequest::default())
         .await
         .unwrap_err();
     assert_eq!(error.code(), tonic::Code::Unauthenticated);
@@ -463,11 +480,27 @@ async fn space_service_lists_the_accounts_relay_machines() {
         error.message(),
         "Relay authentication failed. Sign in again to refresh your computers."
     );
+    // `known_now` never fails this machine's list over it: the last known
+    // computers stay, stale, and the response says why.
+    let known = c
+        .spaces()
+        .list_spaces(pb::ListSpacesRequest { known_now: true })
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(known.spaces.iter().any(|s| s.id == row.id), "{known:?}");
+    assert!(!known.incomplete && known.stale, "{known:?}");
+    assert!(
+        known
+            .notice
+            .contains("Relay authentication failed. Sign in again to refresh your computers."),
+        "{known:?}"
+    );
     // Explicitly disabling relay discovery still permits a local-only list.
     rt.spaces().set_relay(None);
     let listed = c
         .spaces()
-        .list_spaces(pb::ListSpacesRequest {})
+        .list_spaces(pb::ListSpacesRequest::default())
         .await
         .unwrap()
         .into_inner()

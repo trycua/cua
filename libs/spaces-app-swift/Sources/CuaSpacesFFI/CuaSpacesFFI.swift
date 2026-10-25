@@ -19472,6 +19472,166 @@ public func FfiConverterTypeAppLineView_lower(_ value: AppLineView) -> RustBuffe
 }
 
 
+public struct AppListView: Equatable, Hashable {
+    /**
+     * "Create your first Space": only when the list is complete and has no
+     * Space. A list still loading, or with computers still answering, is
+     * not empty yet (an app update restarting the daemon must not show it).
+     */
+    public var empty: Bool
+    /**
+     * One quiet line where the Spaces go while the list is not complete
+     * ("Reaching 6 computers…"), below what is known so far.
+     */
+    public var reachingLine: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * "Create your first Space": only when the list is complete and has no
+         * Space. A list still loading, or with computers still answering, is
+         * not empty yet (an app update restarting the daemon must not show it).
+         */empty: Bool,
+        /**
+         * One quiet line where the Spaces go while the list is not complete
+         * ("Reaching 6 computers…"), below what is known so far.
+         */reachingLine: String?) {
+        self.empty = empty
+        self.reachingLine = reachingLine
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppListView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppListView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppListView {
+        return
+            try AppListView(
+                empty: FfiConverterBool.read(from: &buf),
+                reachingLine: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppListView, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.empty, into: &buf)
+        FfiConverterOptionString.write(value.reachingLine, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppListView_lift(_ buf: RustBuffer) throws -> AppListView {
+    return try FfiConverterTypeAppListView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppListView_lower(_ value: AppListView) -> RustBuffer {
+    return FfiConverterTypeAppListView.lower(value)
+}
+
+
+public struct AppListViewInput: Equatable, Hashable {
+    /**
+     * The list was read at least once: before that nothing is known, not
+     * even this machine's Spaces.
+     */
+    public var loaded: Bool
+    /**
+     * Some of the account's computers have not answered yet.
+     */
+    public var incomplete: Bool
+    /**
+     * How many computers are still being reached (0 when unknown).
+     */
+    public var reaching: UInt32
+    /**
+     * Spaces listed now.
+     */
+    public var count: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The list was read at least once: before that nothing is known, not
+         * even this machine's Spaces.
+         */loaded: Bool,
+        /**
+         * Some of the account's computers have not answered yet.
+         */incomplete: Bool,
+        /**
+         * How many computers are still being reached (0 when unknown).
+         */reaching: UInt32,
+        /**
+         * Spaces listed now.
+         */count: UInt32) {
+        self.loaded = loaded
+        self.incomplete = incomplete
+        self.reaching = reaching
+        self.count = count
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppListViewInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppListViewInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppListViewInput {
+        return
+            try AppListViewInput(
+                loaded: FfiConverterBool.read(from: &buf),
+                incomplete: FfiConverterBool.read(from: &buf),
+                reaching: FfiConverterUInt32.read(from: &buf),
+                count: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppListViewInput, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.loaded, into: &buf)
+        FfiConverterBool.write(value.incomplete, into: &buf)
+        FfiConverterUInt32.write(value.reaching, into: &buf)
+        FfiConverterUInt32.write(value.count, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppListViewInput_lift(_ buf: RustBuffer) throws -> AppListViewInput {
+    return try FfiConverterTypeAppListViewInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppListViewInput_lower(_ value: AppListViewInput) -> RustBuffer {
+    return FfiConverterTypeAppListViewInput.lower(value)
+}
+
+
 public struct AppLocalNetworkInput: Equatable, Hashable {
     /**
      * The app's own connect.
@@ -73878,6 +74038,17 @@ public func appSpacesFromJson(json: String)throws  -> [AppSpace]  {
 })
 }
 /**
+ * The Spaces page's empty state and "Reaching N computers…" line: the
+ * first-run page only for a complete list with no Space.
+ */
+public func appSpacesListView(input: AppListViewInput) -> AppListView  {
+    return try!  FfiConverterTypeAppListView_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_spaces_list_view(
+        FfiConverterTypeAppListViewInput_lower(input),$0
+    )
+})
+}
+/**
  * The menu bar status line ("3 Spaces").
  */
 public func appStatusLine(count: UInt32) -> String  {
@@ -75595,6 +75766,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_spaces_from_json() != 7600) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_spaces_list_view() != 47161) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_status_line() != 47728) {

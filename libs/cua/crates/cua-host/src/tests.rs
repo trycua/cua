@@ -1298,6 +1298,39 @@ async fn a_fresh_sign_in_enrolls_and_re_keys_this_machine() {
     assert_eq!(approved.state, DeviceState::Enrolled);
 }
 
+/// Signing in as another account on a computer whose device key belongs to
+/// the previous account enrolls with a new key instead of failing.
+#[tokio::test]
+async fn sign_in_as_another_account_replaces_the_key_of_the_previous_one() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-a", "user-a", Some("a@example.com"));
+    relay.add_account("acct-b", "user-b", Some("b@example.com"));
+    relay.require_devices(true);
+    relay.fresh_sign_in("user-a");
+    relay.fresh_sign_in("user-b");
+    let slot = Arc::new(MemoryKeySlot::default());
+    let on_this_mac = |token: &str| {
+        DeviceAuth::new(
+            &relay.url,
+            Arc::new(StaticToken(token.into())),
+            slot.clone(),
+            "Mac",
+        )
+        .unwrap()
+        .with_machine_id(Some("mac-1".into()))
+    };
+    let as_a = on_this_mac("acct-a");
+    as_a.enroll_after_sign_in().await.unwrap();
+    let old = as_a.device_id().unwrap().unwrap();
+
+    let as_b = on_this_mac("acct-b");
+    let r = as_b.enroll_after_sign_in().await.unwrap();
+    assert_eq!(r.device.state, DeviceState::Enrolled);
+    assert_ne!(r.device.id, old);
+    assert_eq!(as_b.device_id().unwrap().unwrap(), r.device.id);
+    assert!(as_b.session().await.is_ok());
+}
+
 /// Two builds on one machine that each made a key end up with one: the key
 /// the relay enrolled wins, the other's record is retired.
 #[tokio::test]

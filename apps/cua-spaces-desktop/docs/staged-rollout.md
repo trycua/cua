@@ -20,6 +20,42 @@ Typical flow after a stable release: `10`, watch crash and update telemetry,
 `50`, `100`. Bad build: `pause`. The release workflow still publishes feeds as
 before (everyone); writing them at 10% on publish comes with phase 2.
 
+## Automatic advance (health gates, auto-pause)
+
+`release-rollout-auto.yml` ("Release: auto rollout (Cua Spaces)") runs hourly and
+does what the typical flow above asks of a person. It reads the stage from the
+live feeds (`stagingPercentage` plus the newest appcast item's interval and
+`pubDate`; stage 10 started at the `pubDate`, stage 50 at `pubDate` + 3 weeks)
+and dispatches `release-rollout.yml` itself, so the actor and reason land in that
+job summary as usual. Manual dispatch is unchanged.
+
+| Decision | When |
+|---|---|
+| advance (10 to 50, 50 to 100) | stage at least 24h old, every gate has enough data and passes |
+| wait | younger than 24h, or a gate has too little data (no data is not healthy) |
+| pause | a gate is past its threshold, at any stage age: dispatches `pause` and posts an Alertmanager alert (`SpacesRolloutAutoPaused`, source `github-actions`, to #alerts-staging; it does not page) |
+| hold | the variable `SPACES_ROLLOUT_HOLD` is set (the text is the reason) or an open issue has the label `spaces-rollout-hold`: never advances; a failing gate still pauses |
+| none | 100%, paused (resuming is a person's call), or the feeds disagree |
+
+Gates (PostHog project 56041, `spaces_app` events of the new version against the
+previous stable, the most active non-prerelease version the week before the stage):
+
+- adoption: at least 15 installs of the new version sent `cua_app_active` since the stage began;
+- space create: `cua_space_create` error share at most 10 points above the previous version's, at least 30 events each;
+- update: failed share of `cua_app_update` from the previous version (the one installing the new one) at most 15 points above its share the week before, at least 20 attempts;
+- incident: no active incident.io incident with "spaces" in its name (needs the `INCIDENT_IO_API_KEY` secret; skipped and said so in the summary until it is set).
+
+There is no crash-free gate: Spaces has no Sentry and sends no crash event. Add
+one to `.github/scripts/release_rollout_auto.py` when it does. Thresholds are
+flags of that script. Secrets: `POSTHOG_API_KEY` (query read), optional
+`INCIDENT_IO_API_KEY`, and the existing `ALERTMANAGER_INTAKE_TOKEN`.
+
+Dry run: **Actions > Release: auto rollout (Cua Spaces) > Run workflow** (dry run
+is on by default for a manual run). It prints the decision and every gate in the
+job summary and dispatches, pauses and alerts nothing. Scheduled runs act. Locally:
+`POSTHOG_API_KEY=... python3 .github/scripts/release_rollout_auto.py --feed-dir <dir>`
+prints the same decision as JSON.
+
 ## What each stage does
 
 | Stage | electron-updater (Windows, Linux) | Sparkle (macOS) |

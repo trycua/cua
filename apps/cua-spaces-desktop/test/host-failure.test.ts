@@ -54,7 +54,7 @@ describe("host setup failures", () => {
   it("a raw HTTP 429 from an older host is the same, without a number and without the raw words", () => {
     const f = presentHostFailure("http: relay: HTTP 429: Too Many Requests");
     expect(f.kind).toBe("throttled");
-    expect(f.message).toBe("Trying again in a few seconds.");
+    expect(f.message).toBe("Wait a few seconds, then try again.");
     expect(f.message).not.toMatch(/429|http|relay/i);
   });
 

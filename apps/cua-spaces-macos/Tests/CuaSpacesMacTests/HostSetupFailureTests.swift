@@ -36,7 +36,7 @@ struct HostSetupFailureTests {
     @Test func aRawHTTP429FromAnOlderHostIsTheSameWithoutANumber() {
         let f = HostSetupFailure.presenting("http: relay: HTTP 429: Too Many Requests")
         #expect(f.kind == .throttled)
-        #expect(f.message == "Trying again in a few seconds.")
+        #expect(f.message == "Wait a few seconds, then try again.")
         #expect(!f.message.contains("429"))
     }
 

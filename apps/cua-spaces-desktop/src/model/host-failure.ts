@@ -97,7 +97,7 @@ export function failureWords(kind: HostFailureKind, platform: NodeJS.Platform = 
       const secs = throttledWait(raw);
       return [
         "Too many attempts right now",
-        secs ? `Trying again in ${secs} ${secs === 1 ? "second" : "seconds"}.` : "Trying again in a few seconds.",
+        secs ? `Trying again in ${secs} ${secs === 1 ? "second" : "seconds"}.` : "Wait a few seconds, then try again.",
       ];
     }
     case "guiSession":

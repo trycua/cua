@@ -77,6 +77,12 @@ public struct HostSetupFailure: Equatable, Sendable {
         kind == .throttled ? (Self.throttledWait(details) ?? nil) : nil
     }
 
+    /// The line once the one automatic retry is used up.
+    static func manualWait(_ f: HostSetupFailure) -> String {
+        guard let s = f.throttleSeconds else { return f.message }
+        return "Wait \(s) \(s == 1 ? "second" : "seconds"), then try again."
+    }
+
     static func classify(_ raw: String) -> Kind {
         if throttledWait(raw) != nil { return .throttled }
         let s = raw.lowercased()
@@ -123,7 +129,7 @@ public struct HostSetupFailure: Equatable, Sendable {
         case .throttled:
             let seconds = throttledWait(raw) ?? nil
             let wait = seconds.map { "Trying again in \($0) \($0 == 1 ? "second" : "seconds")." }
-                ?? "Trying again in a few seconds."
+                ?? "Wait a few seconds, then try again."
             return ("Too many attempts right now", wait)
         case .guiSession:
             return ("Sign in to this Mac first",

@@ -812,6 +812,12 @@ if ditto "$STAGE_APP" "$APP_DEST" && verify_local_bundle "$APP_DEST"; then
     fi
 fi
 if [ "$install_valid" = true ]; then
+    # The helper keeps running from the moved-aside copy until it restarts,
+    # so LaunchServices learns that path and System Settings then lists
+    # "Cua Spaces Local.app.install-backup.<pid>". Forget it before deleting.
+    if [ -d "$APP_BACKUP" ] && [ -x "$LSREGISTER" ]; then
+        "$LSREGISTER" -u "$APP_BACKUP" >/dev/null 2>&1 || true
+    fi
     rm -rf "$APP_BACKUP"
 else
     rm -rf "$APP_DEST"

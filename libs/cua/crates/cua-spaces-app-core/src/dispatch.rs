@@ -313,6 +313,7 @@ pub const METHODS: &[&str] = &[
     "resources.warning",
     "upsell.prompt",
     "upsell.allows",
+    "upsell.card",
     "firstRun.view",
     "firstRun.todos",
     "firstRun.permissions",
@@ -551,6 +552,17 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             ))
         }
         "upsell.allows" => out(upsell::allows(&a.get("state")?)),
+        "upsell.card" => {
+            let app = a
+                .get::<Option<String>>("accountApp")?
+                .filter(|u| u.starts_with("https://"))
+                .unwrap_or_else(cua_home::env::account_app_url);
+            out(upsell::card(
+                &a.get::<String>("reason")?,
+                &a.get("usage")?,
+                &app,
+            ))
+        }
         "firstRun.view" => out(crate::first_run::view(&a.get("input")?)),
         "firstRun.cli" => out(crate::first_run::cli_view(&a.get("input")?)),
         "firstRun.todos" => out(crate::first_run::todos(&a.get("input")?)),

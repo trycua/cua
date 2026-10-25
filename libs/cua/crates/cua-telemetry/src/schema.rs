@@ -320,6 +320,22 @@ pub const FEATURES: &[&str] = &[
     "upsell_machine_dismiss",
     "upsell_plan_card_click",
     "upsell_account_menu_click",
+    // The limit cards: shown, clicked or dismissed, by what happened.
+    "upsell_card_hours_shown",
+    "upsell_card_hours_click",
+    "upsell_card_hours_dismiss",
+    "upsell_card_sessions_shown",
+    "upsell_card_sessions_click",
+    "upsell_card_sessions_dismiss",
+    "upsell_card_invite_shown",
+    "upsell_card_invite_click",
+    "upsell_card_invite_dismiss",
+    "upsell_card_seats_shown",
+    "upsell_card_seats_click",
+    "upsell_card_seats_dismiss",
+    "upsell_card_machines_shown",
+    "upsell_card_machines_click",
+    "upsell_card_machines_dismiss",
     // Sign-in recovery (CUA-2285): how a sign-in ran and where it got stuck.
     // The reason a sign-in failed stays in `error_kind`; these add the way
     // (the browser, or a code to enter on any device).

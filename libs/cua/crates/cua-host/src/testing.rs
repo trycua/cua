@@ -301,6 +301,10 @@ async fn register(
     st.register_calls += 1;
     if let Some(code) = st.fail_register.pop_front() {
         let status = StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        if code == 429 {
+            // The proxy's bare throttle, which the client waits out.
+            return (status, "Too Many Requests").into_response();
+        }
         return err(status, "the fake relay failed this registration");
     }
     let id = body["id"].as_str().unwrap_or_default().to_string();

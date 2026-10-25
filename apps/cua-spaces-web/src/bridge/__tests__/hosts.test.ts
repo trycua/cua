@@ -797,6 +797,12 @@ describe("webkit adapter", () => {
       expect(hostFailure(e)).toEqual({ title: "Sign in to Cua", message: presented.message, details: presented.details, actionLabel: "Sign In" });
       // A plain error stays plain.
       expect(hostFailure(new HostError("nope", "failed"))).toEqual({ message: "nope" });
+      // A throttled host that only says the error: plain words, raw kept.
+      expect(hostFailure(new Error("http: Too many attempts right now. Wait 3 seconds, then try again."))).toEqual({
+        title: "Too many attempts right now",
+        message: "Trying again in 3 seconds.",
+        details: "http: Too many attempts right now. Wait 3 seconds, then try again.",
+      });
     } finally {
       vi.useRealTimers();
     }

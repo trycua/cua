@@ -1951,11 +1951,19 @@ impl Host {
             p.sharing = config.sharing;
             write_json(&self.paths.policy(), &p)?;
         }
+        let manager = self.manager_for_config(&config);
+        if let Err(e) = manager
+            .install(&self.service_spec(&config))
+            .and_then(|()| manager.start())
+        {
+            // Still paused (and refusing clients), so the next sign-in
+            // check tries again instead of finding a sharing host that is
+            // not running.
+            self.set_policy_sharing(false)?;
+            return Err(e);
+        }
         config.paused_signed_out = false;
         write_json(&self.paths.config(), &config)?;
-        let manager = self.manager_for_config(&config);
-        manager.install(&self.service_spec(&config))?;
-        manager.start()?;
         let _ = crate::provided::audit(
             &self.paths.dir,
             "config",
@@ -1995,6 +2003,18 @@ impl Host {
     /// setting stay. The previous account's allowlist is not carried over.
     async fn switch_account(&self, tokens: &dyn AccountTokens) -> Result<HostStatus> {
         let mut config = self.require_config()?;
+        if config.relay_url.is_none() || self.policy()?.is_none() {
+            return Err(Error::InvalidArgument(
+                "this computer is not set up on a relay".into(),
+            ));
+        }
+        // Off the relay first, as when signing out: if the new registration
+        // fails, the previous account's access stays closed and the next
+        // reconcile tries again (paused, with another account signed in).
+        if !config.paused_signed_out {
+            self.pause_signed_out().await?;
+            config = self.require_config()?;
+        }
         let (Some(url), Some(mut policy)) = (config.relay_url.clone(), self.policy()?) else {
             return Err(Error::InvalidArgument(
                 "this computer is not set up on a relay".into(),
@@ -2002,8 +2022,6 @@ impl Host {
         };
         let relay = RelayClient::new(&url)?;
         let token = tokens.access_token().await?;
-        // Registered before anything of the old setup is touched: if the
-        // relay refuses, the setup stays as it was.
         let id = random_hex(16);
         let reg = relay
             .register_as_machine(
@@ -2032,10 +2050,10 @@ impl Host {
         policy.owner_email = reg.machine.owner.email.clone();
         policy.allow = vec![];
         policy.viewers = vec![];
-        policy.sharing = config.sharing;
+        // Still paused (not sharing) until the service is up.
+        policy.sharing = false;
         write_json(&self.paths.policy(), &policy)?;
         config.machine_id = Some(reg.machine.id.clone());
-        config.paused_signed_out = false;
         write_json(&self.paths.config(), &config)?;
         if !config.sharing {
             // Stopped stays stopped, but online (as after a resume).
@@ -2043,19 +2061,10 @@ impl Host {
                 .stop_sharing(&reg.machine_token, &reg.machine.id)
                 .await;
         }
-        let manager = self.manager_for_config(&config);
-        // A running service holds the old machine token and mesh key.
-        let _ = manager.stop();
-        manager.install(&self.service_spec(&config))?;
-        manager.start()?;
-        let _ = crate::provided::audit(
-            &self.paths.dir,
-            "config",
-            "local",
-            &config.name,
-            "registered again for the signed-in account",
-        );
-        self.status().await
+        // Registered for the new account and paused: resuming installs and
+        // starts the service with the new registration, and is what a retry
+        // does if that fails here.
+        self.resume_signed_in(&reg.machine.owner.id).await
     }
 
     /// Renames the machine and/or replaces its allowlist (relay mode; the

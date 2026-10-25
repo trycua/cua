@@ -1866,6 +1866,44 @@ async fn signing_in_as_another_account_registers_the_host_again() {
     assert_eq!(again.machine_id, switched.machine_id);
 }
 
+/// A switch of account that fails leaves the previous account's sharing
+/// closed and retries on the next check, instead of leaving it open or the
+/// host offline for good.
+#[tokio::test]
+async fn a_failed_account_switch_stays_paused_and_retries() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-a", "user-1", Some("ada@example.com"));
+    relay.add_account("acct-b", "user-2", Some("bob@example.com"));
+    let f = fixture();
+    let host = f.host();
+    let before = host
+        .setup(f.relay_opts(&relay.url), &StaticToken("acct-a".into()))
+        .await
+        .unwrap();
+    let b = StaticToken("acct-b".into());
+
+    // The relay refuses the new registration while the host is sharing: the
+    // old account's sharing is closed first, and stays closed.
+    relay.fail_registrations(&[400]);
+    assert!(host.resume_or_switch_account("user-2", &b).await.is_err());
+    let s = host.status().await.unwrap();
+    assert!(s.paused_signed_out && !s.sharing && !s.service.running);
+    assert_eq!(s.machine_id, before.machine_id);
+    assert!(!host.policy().unwrap().unwrap().sharing);
+
+    // The service fails to start after registering: still paused, with the
+    // new owner, so the next check resumes it as the owner.
+    *f.manager.fail_start.lock().unwrap() = true;
+    assert!(host.resume_or_switch_account("user-2", &b).await.is_err());
+    let s = host.status().await.unwrap();
+    assert!(s.paused_signed_out && !s.sharing);
+    assert_eq!(s.owner.as_deref(), Some("user-2"));
+    assert_ne!(s.machine_id, before.machine_id);
+    *f.manager.fail_start.lock().unwrap() = false;
+    let s = host.resume_or_switch_account("user-2", &b).await.unwrap();
+    assert!(!s.paused_signed_out && s.sharing && s.service.running);
+}
+
 /// Stopped sharing stays stopped across a pause, and direct mode (no
 /// account involved) is never paused.
 #[tokio::test]

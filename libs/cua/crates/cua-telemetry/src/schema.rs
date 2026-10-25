@@ -393,6 +393,39 @@ pub const ONBOARDING_PAGES: &[&str] = &[
     "this_machine",
     "done",
 ];
+/// The first run's screens in the order the app shows them
+/// (`cua-spaces-app-core` `first_run`), as `cua_onboarding_step_*` and
+/// `cua_onboarding_skipped` name them. Its position (1 to 6) is the
+/// `step_index`, so a funnel keeps its order whichever screens a machine
+/// skips (no terminal screen once the CLI is installed, no permissions off a Mac).
+pub const FIRST_RUN_STEPS: &[&str] = &[
+    "welcome",
+    "connect_agent",
+    "terminal",
+    "sign_in",
+    "permissions",
+    "create_space",
+];
+/// Why a first-run screen failed (fixed words; never the message).
+pub const FIRST_RUN_FAIL_REASONS: &[&str] = &[
+    "timeout",
+    "cancelled",
+    "permission_denied",
+    "unauthenticated",
+    "transport",
+    "http",
+    "internal",
+    "install_failed",
+    "connect_failed",
+    "setup_failed",
+    "create_failed",
+    "other",
+];
+/// How a first-run screen was skipped: `step` (that screen's own Skip or
+/// Not now) or `later` (Skip for now, which leaves the whole first run).
+pub const FIRST_RUN_SKIP_HOWS: &[&str] = &["step", "later"];
+/// The version of the first run these events describe (`onboarding_version`).
+pub const FIRST_RUN_VERSION: u64 = 2;
 /// What happened on a first-run page.
 pub const PAGE_ACTIONS: &[&str] = &["shown", "completed", "skipped", "back"];
 /// The answer a first-run page was left with (fixed words; `none` for a
@@ -604,6 +637,21 @@ pub const CLI_COMMANDS: &[&str] = include!("cli_commands.in");
 // Common properties
 // ---------------------------------------------------------------------------
 
+/// The first-run funnel events' own properties.
+const FIRST_RUN_PROPS: &[Prop] = &[
+    p("step", Kind::Enum(FIRST_RUN_STEPS), "The first-run screen."),
+    p(
+        "step_index",
+        Kind::Count { max: 6 },
+        "Its position, 1 to 6.",
+    ),
+    p(
+        "onboarding_version",
+        Kind::Count { max: 100 },
+        "The first run's version (2).",
+    ),
+];
+
 /// Added to every event.
 pub const COMMON: &[Prop] = &[
     p(
@@ -746,6 +794,10 @@ pub mod event {
     pub const SPACESD_SESSION_DELIVERIES: &str = "cua_spacesd_session_deliveries";
     pub const APP_ACTIVE: &str = "cua_app_active";
     pub const ONBOARDING_PAGE: &str = "cua_onboarding_page";
+    pub const ONBOARDING_STEP_VIEWED: &str = "cua_onboarding_step_viewed";
+    pub const ONBOARDING_STEP_COMPLETED: &str = "cua_onboarding_step_completed";
+    pub const ONBOARDING_STEP_FAILED: &str = "cua_onboarding_step_failed";
+    pub const ONBOARDING_SKIPPED: &str = "cua_onboarding_skipped";
     pub const SPACE_WIZARD: &str = "cua_space_wizard";
     pub const SPACE_CREATE: &str = "cua_space_create";
     pub const SPACE_CREATE_STARTED: &str = "cua_space_create_started";
@@ -1218,6 +1270,76 @@ pub const EVENTS: &[EventSpec] = &[
             ),
         ],
         purpose: "Onboarding funnel: which page people leave on, and what they pick on each.",
+    },
+    EventSpec {
+        name: event::ONBOARDING_STEP_VIEWED,
+        version: 1,
+        tier: Tier::Usage,
+        sample_rate: 1.0,
+        products: &["spaces_app"],
+        props: FIRST_RUN_PROPS,
+        purpose: "Onboarding v2 funnel: how many installs see each first-run screen. The OS and app version are the common os_family and product_version.",
+    },
+    EventSpec {
+        name: event::ONBOARDING_STEP_COMPLETED,
+        version: 1,
+        tier: Tier::Usage,
+        sample_rate: 1.0,
+        products: &["spaces_app"],
+        props: FIRST_RUN_PROPS,
+        purpose: "Onboarding v2 funnel: how many installs finish each first-run screen.",
+    },
+    EventSpec {
+        name: event::ONBOARDING_STEP_FAILED,
+        version: 1,
+        tier: Tier::Usage,
+        sample_rate: 1.0,
+        products: &["spaces_app"],
+        props: &[
+            p("step", Kind::Enum(FIRST_RUN_STEPS), "The first-run screen."),
+            p(
+                "step_index",
+                Kind::Count { max: 6 },
+                "Its position, 1 to 6.",
+            ),
+            p(
+                "onboarding_version",
+                Kind::Count { max: 100 },
+                "The first run's version (2).",
+            ),
+            p(
+                "reason",
+                Kind::Enum(FIRST_RUN_FAIL_REASONS),
+                "Why it failed, as a fixed word.",
+            ),
+        ],
+        purpose: "Onboarding v2 funnel: which first-run screens fail, and why.",
+    },
+    EventSpec {
+        name: event::ONBOARDING_SKIPPED,
+        version: 1,
+        tier: Tier::Usage,
+        sample_rate: 1.0,
+        products: &["spaces_app"],
+        props: &[
+            p("step", Kind::Enum(FIRST_RUN_STEPS), "The first-run screen."),
+            p(
+                "step_index",
+                Kind::Count { max: 6 },
+                "Its position, 1 to 6.",
+            ),
+            p(
+                "onboarding_version",
+                Kind::Count { max: 100 },
+                "The first run's version (2).",
+            ),
+            p(
+                "how",
+                Kind::Enum(FIRST_RUN_SKIP_HOWS),
+                "step: that screen's own Skip or Not now; later: Skip for now, which leaves the whole first run.",
+            ),
+        ],
+        purpose: "Onboarding v2 funnel: the screens people skip, and where they leave the first run with Skip for now.",
     },
     EventSpec {
         name: event::SPACE_WIZARD,

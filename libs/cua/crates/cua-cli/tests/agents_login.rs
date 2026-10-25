@@ -649,8 +649,15 @@ async fn the_local_cli_leaves_cua_driver_alone_even_when_it_registered_it_first(
         skill("cua-driver").join("SKILL.md").is_file(),
         "the released app's cua-driver skill stays"
     );
+    // `cua-driver-local` is Cua Driver's own sibling skill
+    // (`is_cua_driver_name`), so it stays like `cua-driver`; only Cua Spaces'
+    // skill goes.
     assert!(
-        !skill("cua-driver-local").exists() && !skill("cua-spaces-local").exists(),
+        skill("cua-driver-local").exists(),
+        "Cua Driver's Local skill stays"
+    );
+    assert!(
+        !skill("cua-spaces-local").exists(),
         "Local's own skills went"
     );
 }

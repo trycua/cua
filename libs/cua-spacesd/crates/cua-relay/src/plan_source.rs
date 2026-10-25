@@ -47,6 +47,8 @@ const RETRY_UNKNOWN_AFTER: Duration = Duration::from_secs(3);
 const FETCH_ATTEMPTS: usize = 3;
 /// Wait before the second try; doubled before the third.
 const FETCH_BACKOFF: Duration = Duration::from_millis(250);
+/// Start of the errors for an answer the API did give (4xx, unreadable body).
+const ANSWERED: &str = "Spaces API entitlements";
 /// Least time between writes of the plan snapshot.
 const PERSIST_EVERY: Duration = Duration::from_secs(10);
 
@@ -470,7 +472,10 @@ impl Inner {
                 let _permit = self.permits.acquire().await;
                 self.fetch(user).await
             };
-            if last.is_ok() || attempt == FETCH_ATTEMPTS || !self.org.has_api() {
+            // Only a transport error, a 5xx or a refused token is worth asking
+            // again; a 4xx (429, 403) or an unreadable answer is final.
+            let final_answer = matches!(&last, Err(e) if e.starts_with(ANSWERED));
+            if last.is_ok() || final_answer || attempt == FETCH_ATTEMPTS || !self.org.has_api() {
                 break;
             }
             tokio::time::sleep(wait).await;
@@ -489,12 +494,12 @@ impl Inner {
             return Ok(Assignment::default());
         }
         if !r.status().is_success() {
-            return Err(format!("Spaces API entitlements: HTTP {}", r.status()));
+            return Err(format!("{ANSWERED}: HTTP {}", r.status()));
         }
         let reply: EntitlementsReply = r
             .json()
             .await
-            .map_err(|e| format!("Spaces API entitlements answer: {e}"))?;
+            .map_err(|e| format!("{ANSWERED} answer: {e}"))?;
         Ok(assignment_from(&reply))
     }
 }
@@ -641,6 +646,35 @@ mod tests {
         let plans = EntitlementPlans::new(Arc::new(org), None);
         let got = plans.inner.fetch_with_retry("ada").await;
         assert!(got.is_ok(), "{got:?}");
+    }
+
+    #[tokio::test]
+    async fn a_refused_lookup_is_not_asked_again() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let hits = Arc::new(AtomicU64::new(0));
+        let seen = hits.clone();
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            loop {
+                let (mut c, _) = listener.accept().await.unwrap();
+                seen.fetch_add(1, Ordering::Relaxed);
+                let mut buf = [0u8; 2048];
+                let _ = c.read(&mut buf).await;
+                let _ = c
+                    .write_all(
+                        b"HTTP/1.1 429 Too Many Requests\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                    )
+                    .await;
+            }
+        });
+        let org = OrgAccess::new(crate::org_access::OrgAccessConfig {
+            api_url: Some(format!("http://{addr}")),
+            ..Default::default()
+        });
+        let plans = EntitlementPlans::new(Arc::new(org), None);
+        assert!(plans.inner.fetch_with_retry("ada").await.is_err());
+        assert_eq!(hits.load(Ordering::Relaxed), 1);
     }
 
     #[tokio::test]

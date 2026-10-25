@@ -14,6 +14,7 @@ import { toastError } from "@/components/ui/toast";
 import { hostOs, keyvaultUnlockWay } from "@/lib/host-labels";
 
 import { ApprovalDialog } from "./approval-dialog";
+import { KeyvaultOptions } from "./options-dialog";
 import { CategoryPane } from "./category-pane";
 import { VaultList } from "./vault-list";
 
@@ -113,11 +114,14 @@ export function KeyvaultPage({ initialView = "all", focus = null }: { initialVie
           title="Keyvault"
           description="Saved logins your agents can use. Each use asks you first unless you allow it."
           actions={
-            locked ? (
-              <Button variant="outline" onClick={unlockVault}>
-                <LockIcon /> Unlock
-              </Button>
-            ) : null
+            <>
+              <KeyvaultOptions />
+              {locked ? (
+                <Button variant="outline" onClick={unlockVault}>
+                  <LockIcon /> Unlock
+                </Button>
+              ) : null}
+            </>
           }
         />
         {locked ? (

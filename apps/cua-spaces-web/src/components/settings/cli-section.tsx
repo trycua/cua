@@ -31,7 +31,7 @@ export function CliSettingsSection() {
     <SettingsGroup title="Terminal">
       <div data-settings-cli={view.installed ? "installed" : "missing"}>
         <SettingsRow
-          label="Cua in Terminal"
+          label="Use Cua from Terminal"
           description={
             <>
               {view.status}

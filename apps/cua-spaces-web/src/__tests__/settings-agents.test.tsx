@@ -51,7 +51,7 @@ describe("configured agents without binary evidence", () => {
 
 describe.skipIf(!wasmBuilt)("Settings, AI agents", () => {
   it("lists each detected agent with its status, configures one, removes it, and configures all", { timeout: 20_000 }, async () => {
-    await mountApp("/settings", { failsCreates: false, listsGhost: false });
+    await mountApp("/settings/connected-apps", { failsCreates: false, listsGhost: false });
     await waitFor(() => expect(row("hermes")).not.toBeNull(), { timeout: 8000 });
     const s = section()!;
     expect(within(s).getByText("AI agents")).toBeTruthy();

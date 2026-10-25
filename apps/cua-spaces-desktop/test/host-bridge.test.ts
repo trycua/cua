@@ -534,6 +534,14 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(s.globalShortcut).toEqual({ label: "\u2318\u21e7Space", registered: false });
   });
 
+  it("changes the global shortcut from General, and says when another app holds the keys", async () => {
+    await call("settings.choose", { row: "global-shortcut", option: "Control+Alt+K" });
+    expect(system.shortcutChanges).toEqual(["Control+Alt+K"]);
+    expect(((await call("settings.get")) as { globalShortcut: unknown }).globalShortcut).toEqual({ label: "Control+Alt+K", registered: true });
+    expect(await code("settings.choose", { row: "global-shortcut", option: "Command+K" })).toBe("failed");
+    expect(system.shortcutChanges).toEqual(["Control+Alt+K"]);
+  });
+
   it("chooses each row as the Swift app does", async () => {
     let settingsEvents = 0;
     bridge.events.subscribe((e) => e.event === "settings.changed" && settingsEvents++);

@@ -26,6 +26,18 @@ def specs() -> dict[str, dict]:
     }
 
 
+def test_browser_cli_requires_nonempty_browser_only_tasks():
+    tasks = {
+        "WEB": {"id": "WEB", "category": "web_forms", "browser": True},
+        "OTHER": {"id": "OTHER", "category": "web_forms"},
+    }
+    arm = ["cx-browser-use-cli"]
+    assert v2.validate_tasks(tasks, ["WEB"], arm) == []
+    assert v2.validate_tasks(tasks, ["WEB", "OTHER"], arm)
+    assert v2.validate_tasks(tasks, [], arm)
+    assert v2.validate_tasks(tasks, ["OTHER"], ["cx-codex-cu"]) == []
+
+
 class CategoriesTest(unittest.TestCase):
     def test_every_task_has_exactly_one_known_category(self) -> None:
         for tid, spec in specs().items():

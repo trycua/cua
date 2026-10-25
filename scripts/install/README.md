@@ -26,7 +26,7 @@ In a terminal, install.sh first says what Cua Spaces is, then lists what to add 
 The Cua Spaces app registers the cua-driver skill and MCP server with your agents in its first run, but it does not install or update the Cua Driver program yet (CUA-1440). Until it does, the `cua-driver` item is how the installer puts Cua Driver on this computer.
 
 ```sh
-curl -fsSL https://cua.ai/install.sh | sh -s -- --select cua-driver   # checklist with cua-driver ticked
+curl -fsSL https://cua.ai/install.sh | sh -s -- --select cua-driver   # Cua Driver and the CLI only: no app, no Cua MCP server or skills
 curl -fsSL https://cua.ai/install.sh | sh -s -- --only cua-driver,host # no checklist
 ```
 
@@ -36,7 +36,7 @@ For cua-driver, `--prefix DIR` becomes `--bin-dir DIR/bin`, `--require-signature
 
 | install.sh | install.ps1 | Effect |
 |---|---|---|
-| `--select a,b` | `-Select a,b` | Preselect items (`spaces`, `cua-driver`, `host`); the list still shows |
+| `--select a,b` | `-Select a,b` | Install these items (`spaces`, `cua-driver`, `host`) plus the CLI; the app is not added unless listed. The list still shows |
 | `--only a,b` | `-Only a,b` | Exactly these items plus the CLI, no checklist |
 | `--cli-only` | `-CliOnly` | Only the `cua` CLI (same as `--only cli`) |
 | `--app-only` | `-AppOnly` | Only the Cua Spaces app, no CLI (cannot be combined with `cua-driver` or `host`) |
@@ -53,6 +53,10 @@ For cua-driver, `--prefix DIR` becomes `--bin-dir DIR/bin`, `--require-signature
 | | `-Installer msi\|nsis` | Windows app installer (default nsis, the Electron app; msi only when a release has one) |
 
 Pass install.sh options through the pipe with `sh -s --`, for example `curl -fsSL https://cua.ai/install.sh | sh -s -- --cli-only --yes`. `--only` and `--select` cannot be combined, nor can `--cli-only` with other items. Set `CUA_INSTALL_NONINTERACTIVE=1` to never prompt.
+
+## Partial releases
+
+A Cua Spaces patch can ship one platform only (a macOS fix does not rebuild Windows or Linux). The release manifest (`release-artifacts.json`, also the rolling `cua-install-latest` copy) then holds a different version per platform: the release builds its own platforms and `release_manifest.py --carry-forward-platforms` keeps the earlier entries for the others, each with its own `version` and download URL. `install.sh` and `install.ps1` read only the entries for their own platform, so each installs the newest build that exists for it. `tests/test_mixed_versions.py` and the `mixed versions` Pester tests cover this.
 
 ## Telemetry
 
@@ -72,7 +76,7 @@ Questions read from the terminal, never from the script on stdin, so they work u
 |---|---|---|
 | macOS | `~/.local/bin/cua` (`/usr/local/bin` as root) | `/Applications` if writable, else `~/Applications` (from the .dmg; the SwiftUI app, macOS 26 or later, skipped on older macOS) |
 | Linux | same as macOS | The Electron app: on Debian/Ubuntu (x64, arm64) the .deb via apt-get when run as root or with passwordless sudo; otherwise the AppImage at `~/.local/bin/cua-spaces` plus a desktop entry |
-| Windows | `%LOCALAPPDATA%\Programs\cua\bin\cua.exe` | The Electron app's NSIS `setup.exe` for the machine's architecture (sha256 and cosign checked), run silently (`/S /MODE=`); a silent MSI (`CUA_SPACES_MODE=`) only if a release has one |
+| Windows | `%LOCALAPPDATA%\Programs\cua\bin\cua.exe` | The Electron app's NSIS `setup.exe` for the machine's architecture (sha256 and cosign checked, plus a mandatory Authenticode signature check for signer Cua AI, Inc.), run silently (`/S /MODE=`); a silent MSI (`CUA_SPACES_MODE=`) only if a release has one |
 
 cua-driver lands where its own installer puts it: `~/.local/bin/cua-driver` (or `DIR/bin` with `--prefix`), `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin` on Windows.
 
@@ -96,23 +100,24 @@ It lists what it found, asks once (`--yes` skips the question; without a termina
 
 | install.sh | install.ps1 | Effect |
 |---|---|---|
-| (default) | (default) | Removes the app, the CLI, the host service, the agent integrations, launch at login, your sign-in and Cua's settings and caches. Keeps Spaces and their data |
+| (default) | (default) | Removes the app, the CLI, the host service, Cua Spaces' agent skills and MCP entry, launch at login, your sign-in and Cua's settings and caches. Keeps Spaces and their data, and Cua Driver's and other tools' entries in your agents |
 | `--keep-data` | `-KeepData` | Keeps `~/.cua` (settings, the Spaces registry, the Cua Volume cache, the device key) and the app's settings. Still removes programs, services, integrations and the sign-in |
 | `--delete-spaces` | `-DeleteSpaces` | Also deletes the Spaces on this computer and their data: Space disks, the local Cua Volume files, the Keyvault. Running Spaces are listed and stopped first; asks you to type `delete` (not with `--yes`). Cannot be combined with `--keep-data` |
-| `--all` | `-All` | Also runs the Cua Driver uninstaller (`cua.ai/driver/uninstall.sh` / `.ps1`) and, on macOS, Lume's (`cua.ai/lume/uninstall.sh`). Lume keeps your VMs unless `--delete-spaces` is given too |
+| `--keep-permissions` | | Keeps the macOS permissions granted to the Cua Spaces app (macOS only; by default they are reset before the app is removed) |
+| `--all` | `-All` | Also runs the Cua Driver uninstaller (`cua.ai/driver/uninstall.sh` / `.ps1`), takes Cua Driver's skill and MCP server out of your agents (`cua agents remove --include-cua-driver`) and, on macOS, runs Lume's uninstaller (`cua.ai/lume/uninstall.sh`). Lume keeps your VMs unless `--delete-spaces` is given too |
 | `--prefix DIR` | `-Prefix DIR` | Also removes what `install.sh --prefix DIR` put under `DIR/bin` and `DIR/Applications` |
 | `--no-modify-path` | `-NoModifyPath` | Never edits your shell profile (user PATH on Windows) |
-| `--dry-run` | `-DryRun` | Prints what would be removed, changes nothing |
+| `--dry-run` | `-DryRun` | Prints what would be removed, changes nothing. It runs `cua agents remove --dry-run` to list the agent skills and MCP entries one by one |
 | `--yes` | `-Yes` | Accepts every prompt |
 
 What it removes, in this order (each step is best effort and bounded, so one failure never stops the rest):
 
 1. Quits the Cua Spaces app, lists the Spaces on this computer and stops the running ones (their disks stay).
 2. `cua host remove --force --uninstalling`: unregisters this computer from the relay and removes the host service. When `cua` is not there to do it, it removes the service itself (launchd `com.trycua.spacesd.host` on macOS, the systemd unit `cua-spacesd-host` on Linux, the `Cua\SpacesdHost` scheduled task on Windows, and the names used before the rename).
-3. `cua agents remove --agents all --yes`: the Cua skills and MCP entries (including the cua-driver ones Cua added) in your agents.
+3. `cua agents remove --agents all --yes`: the Cua Spaces skills and the `cua` MCP server (`cua-local` for Local) in your agents. The `cua-driver` skill and MCP server (`cua-driver-local` for Local) and every other tool's entries stay, unless `--all` adds `--include-cua-driver`. A `cua` older than the version with `--include-cua-driver` and `--dry-run` would also strip Cua Driver's entries, so the script skips this step, says what stays in the agents and how to remove it (install the latest `cua`, run `cua agents remove`), removes the rest and still exits 0; a dry run says so too. The record `cua agents remove` works from (`~/.cua/agent-setup.json`) stays unless `--delete-spaces`.
 4. `cua daemon stop`, and the Cua Volume mount (`~/Cua Volume` on macOS, `~/cua-volume` on Linux) is unmounted before any file is deleted.
 5. Signs out (`cua auth logout`, which revokes the session) and removes a leftover `credentials.json`.
-6. The app: `Cua Spaces.app` in `/Applications` and `~/Applications` (macOS, only when its bundle id is Cua's); the `cua-spaces` package with apt (Linux .deb), the AppImage, its desktop entry and autostart entry; on Windows the app's own uninstaller (silent), which also removes launch at login. On macOS the app registered itself as a login item, which a script cannot unregister: with the app gone it has nothing to start, and System Settings, Login Items shows how to remove a leftover row.
+6. The app: `Cua Spaces.app` in `/Applications` and `~/Applications` (macOS, only when its bundle id is Cua's); the `cua-spaces` package with apt (Linux .deb), the AppImage, its desktop entry and autostart entry; on Windows the app's own uninstaller (silent), which also removes launch at login. On macOS the app's login item is unregistered through the app itself before the app is removed, and the permissions macOS granted the app (Screen Recording, Accessibility and the rest) are reset with `tccutil reset All com.trycua.spaces.macos` while the app is still installed, since `tccutil` cannot resolve an app that is gone; `--keep-permissions` skips the reset. Cua Driver's permissions are never touched.
 7. The CLI: `~/.local/bin/cua`, `/usr/local/bin/cua` (and `DIR/bin/cua`), only when it is the Cua CLI (`cua --version` says `cua X.Y.Z`, or a link into the app). A `cua` from pip, npm or Homebrew is left alone and named. On Windows, `%LOCALAPPDATA%\Programs\cua\bin\cua.exe` and its user PATH entry.
 8. The `# Added by the cua installer` PATH line in your shell profile (kept while `cua-driver` or `lume` still lives in the same folder).
 9. Credentials: the macOS Keychain items of service `run.cua.ai` and `staging.run.cua.ai` (account `cua-cli` for the session; the device key and agent keys too unless `--keep-data`; this includes the legacy `run.cua.ai` label), and the Windows Credential Manager entries `cua-cli.*.run.cua.ai`. With `--delete-spaces` also the Keyvault master key (`Cua Keyvault`).

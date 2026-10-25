@@ -8,7 +8,6 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::SystemTime;
 
 use crate::auth::{ExternalAuthenticator, ExternalGrant};
 use cua_proto::env::v1::{Principal, PrincipalKind};
@@ -55,6 +54,19 @@ pub struct HostPolicy {
     /// in relay mode.
     #[serde(default)]
     pub direct: Option<DirectHosting>,
+    /// Identify tailnet callers by their tailnet login (`cua host setup
+    /// --tailnet`; see [`crate::tailnet`]): the owner and share lists then
+    /// name tailnet users.
+    #[serde(default)]
+    pub tailnet_identity: bool,
+    /// Forward `/share/*` to the cua daemon's share gateway
+    /// ([`HostPolicy::shares_gateway`]). Off by default: a host that never
+    /// asked for shares answers 404 there.
+    #[serde(default)]
+    pub shares: bool,
+    /// Unix socket of the daemon's share gateway (`<cua home>/share/gateway.sock`).
+    #[serde(default)]
+    pub shares_gateway: Option<PathBuf>,
 }
 
 /// How a host in direct mode provides Spaces.
@@ -99,6 +111,9 @@ impl Default for HostPolicy {
             provide_spaces: false,
             spaces_daemon: None,
             direct: None,
+            tailnet_identity: false,
+            shares: false,
+            shares_gateway: None,
         }
     }
 }
@@ -191,7 +206,8 @@ pub fn principal_for(claims: &AssertionClaims, client: Option<&Principal>) -> Pr
 }
 
 struct CachedPolicy {
-    modified: Option<(SystemTime, u64)>,
+    /// The file's bytes the policy was parsed from.
+    raw: Option<Vec<u8>>,
     policy: HostPolicy,
 }
 
@@ -211,7 +227,7 @@ impl RelayAssertionAuth {
             link,
             policy_file,
             cache: Mutex::new(CachedPolicy {
-                modified: None,
+                raw: None,
                 policy: HostPolicy::default(),
             }),
         }
@@ -224,24 +240,34 @@ impl RelayAssertionAuth {
         let Some(path) = &self.policy_file else {
             return Ok(HostPolicy::default());
         };
-        let modified = match std::fs::metadata(path) {
-            Ok(meta) => meta.modified().ok().map(|m| (m, meta.len())),
+        // Compared by content, not by modification time and size: a rewrite
+        // of the same size within one timestamp tick (an `allow` swapped for
+        // `"sharing":false`) must not keep the old policy. The file is small.
+        let raw = match std::fs::read(path) {
+            Ok(raw) => raw,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(HostPolicy::default()),
             Err(e) => return Err(format!("host policy {}: {e}", path.display())),
         };
         let mut cache = self.cache.lock().expect("policy cache");
-        if cache.modified.is_none() || cache.modified != modified {
-            let raw =
-                std::fs::read(path).map_err(|e| format!("host policy {}: {e}", path.display()))?;
-            cache.policy = serde_json::from_slice(&raw)
+        if cache.raw.as_deref() != Some(raw.as_slice()) {
+            let policy: HostPolicy = serde_json::from_slice(&raw)
                 .map_err(|e| format!("host policy {}: {e}", path.display()))?;
-            cache.modified = modified;
+            cache.policy = policy;
+            cache.raw = Some(raw);
         }
         Ok(cache.policy.clone())
     }
 }
 
 impl ExternalAuthenticator for RelayAssertionAuth {
+    fn share_gateway(&self) -> Result<Option<PathBuf>, String> {
+        let policy = self.policy()?;
+        if !policy.sharing {
+            return Err("this machine stopped sharing".into());
+        }
+        Ok(policy.shares.then_some(policy.shares_gateway).flatten())
+    }
+
     fn authenticate(&self, headers: &http::HeaderMap) -> Option<Result<ExternalGrant, String>> {
         let token = headers.get(ASSERTION_HEADER)?.to_str().ok()?;
         Some((|| {
@@ -272,6 +298,7 @@ impl ExternalAuthenticator for RelayAssertionAuth {
                     name: claims.name.clone(),
                     role: if owner { "owner" } else { "shared" }.into(),
                     issued_at: claims.iat,
+                    teams: claims.teams.clone(),
                 }),
             })
         })())
@@ -298,6 +325,7 @@ mod tests {
             iat: now,
             exp: now + 60,
             jti: "j".into(),
+            teams: Vec::new(),
         }
     }
 
@@ -347,6 +375,45 @@ mod tests {
         assert!(d
             .authorize(&claims("eve", "owner", None), Some("ada"))
             .is_err());
+    }
+
+    #[test]
+    fn teams_reach_the_caller_and_the_policy_names_the_share_gateway() {
+        let key = RelayKey::generate();
+        let link = Arc::new(AccountLink::default());
+        link.keys.set_jwks_json(&key.jwks().to_string()).unwrap();
+        *link.owner.write().unwrap() = Some("ada".into());
+        let dir = tempfile::tempdir().unwrap();
+        let policy = dir.path().join("host.json");
+        std::fs::write(&policy, r#"{"owner":"ada","allow":["bob"]}"#).unwrap();
+        let auth = RelayAssertionAuth::new("machine-0001".into(), link, Some(policy.clone()));
+        // Shares are off until the policy turns them on and names a socket.
+        assert_eq!(auth.share_gateway(), Ok(None));
+        std::fs::write(&policy, r#"{"owner":"ada","shares":true}"#).unwrap();
+        assert_eq!(auth.share_gateway(), Ok(None), "on, but no gateway");
+        std::fs::write(
+            &policy,
+            r#"{"owner":"ada","allow":["bob"],"shares":true,"shares_gateway":"/run/g.sock"}"#,
+        )
+        .unwrap();
+        assert_eq!(auth.share_gateway(), Ok(Some(PathBuf::from("/run/g.sock"))));
+        let mut headers = http::HeaderMap::new();
+        let mut c = claims("bob", "shared", None);
+        c.teams = vec!["team-a".into(), "team-b".into()];
+        headers.insert(ASSERTION_HEADER, key.sign(&c).parse().unwrap());
+        let g = auth.authenticate(&headers).unwrap().unwrap();
+        let who = g.account.unwrap();
+        assert_eq!(
+            (who.role.as_str(), who.teams),
+            ("shared", vec!["team-a".to_string(), "team-b".to_string()])
+        );
+        // Stopped sharing: no gateway, whatever else the policy says.
+        std::fs::write(
+            &policy,
+            r#"{"owner":"ada","sharing":false,"shares":true,"shares_gateway":"/run/g.sock"}"#,
+        )
+        .unwrap();
+        assert!(auth.share_gateway().is_err());
     }
 
     #[test]

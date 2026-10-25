@@ -74,6 +74,7 @@ export {
   type AppearanceTheme,
   type HostEvent,
   type HostOperations,
+  type CliInfo,
   type GlobalShortcut,
   type HostSettings,
   type OpName,
@@ -108,6 +109,7 @@ export {
   type NewSpaceWizardHook,
   type RuntimeFixHook,
 } from "./new-space-hooks";
+export { runCreateFix, type CreateFixActions } from "./create-retry";
 export { createFailedText, emptyHome, type EmptyHome, type EmptyTile, type FirstSpaceOffer } from "./new-space";
 export type * from "./contracts/volume";
 export * from "./volume";
@@ -148,6 +150,9 @@ export {
   type RelayUsage,
   type RelayUsageView,
 } from "./relay-usage";
+
+export { linkEnds, needsRelaySetup, useLinks, type LinksHook } from "./links";
+export type { LinkAccess, LinkCreate, ShareLink } from "./ops/links";
 export {
   useResources,
   hostResources,
@@ -165,26 +170,41 @@ export {
   resetUpsellMemory,
   useQuiet,
   useTrackPlanClick,
+  useUpsellCard,
+  useUpsellCardAvailable,
   useUpsellGate,
   useUpsellPrompt,
+  type UpsellCard,
+  type UpsellCardReason,
+  type UpsellCardState,
   type UpsellGate,
   type UpsellPrompt,
   type UpsellSurface,
 } from "./upsell";
+export { flagOn, setFlagOverride, setRemoteFlags, useFlag, type FlagName } from "./flags";
 export type { CreateReport, ReportPart, ReportSend } from "./diagnostic-report";
 export {
   FIRST_RUN_POLL_MS,
   TEAMMATES_KEY,
   UPSELL_DISMISSED_KEY,
+  firstRunPermissions,
   firstRunTodos,
   firstRunView,
+  firstRunCliView,
+  firstRunSteps,
+  cliMissing,
+  cliPresent,
+  useCliInstall,
+  type CliInstallHook,
   noteTeammates,
   readFirstRun,
   resetFirstRunCache,
   useFirstRun,
   useFirstRunSaved,
+  useScreenPermissions,
   writeFirstRun,
   type FirstRunHook,
+  type ScreenPermissions,
   type FirstRunUsage,
   type FirstRunSaved,
 } from "./first-run";

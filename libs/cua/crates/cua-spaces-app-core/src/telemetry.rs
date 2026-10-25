@@ -63,11 +63,15 @@ pub enum TelemetrySignal {
     /// A first-run page was shown or left (`cua_onboarding_page`).
     OnboardingPage {
         /// `welcome`, `signin`, `agents`, `presentation`, `volume`,
-        /// `this_machine` or `done`.
+        /// `this_machine` or `done`; or, with a `step_*` action, one of
+        /// `schema::FIRST_RUN_STEPS` (`connect_agent`, `terminal`, ...).
         page: String,
-        /// `shown`, `completed`, `skipped` or `back`.
+        /// `shown`, `completed`, `skipped` or `back`; or `step_viewed`,
+        /// `step_completed`, `step_failed` or `step_skipped`, which send
+        /// `cua_onboarding_step_*` and `cua_onboarding_skipped`.
         action: String,
-        /// The page's answer as a fixed word, or `none`.
+        /// The page's answer as a fixed word, or `none`; for
+        /// `step_failed`, the reason (`timeout`, `install_failed`, ...).
         choice: String,
     },
     /// The New Space panel (`cua_space_wizard`).
@@ -98,6 +102,13 @@ pub enum TelemetrySignal {
         /// The error enum's case name, when the shell sent one.
         #[serde(default)]
         error_variant: String,
+        /// 1 when the app ran the create a second time by itself, else 0.
+        #[serde(default)]
+        retry_attempt: u32,
+        /// The finer cause (`error_subclass`): the failure's, or on a
+        /// retried create that worked, the failure it recovered from.
+        #[serde(default = "none_word")]
+        error_subclass: String,
     },
     /// A Space create started (`cua_space_create_started`).
     SpaceCreateStarted {
@@ -224,6 +235,13 @@ pub fn upsell(surface: &str, action: &str) -> Vec<TelemetrySignal> {
             matches!(action, "shown" | "click" | "dismiss")
         }
         "plan_card" | "account_menu" => action == "click",
+        // The limit cards (`upsell::card`): `card_<reason>`.
+        c if c
+            .strip_prefix("card_")
+            .is_some_and(|r| crate::upsell::CARD_REASONS.contains(&r)) =>
+        {
+            matches!(action, "shown" | "click" | "dismiss")
+        }
         _ => false,
     };
     if ok {
@@ -498,7 +516,7 @@ fn kind_word(k: Option<SpaceKind>) -> &'static str {
 }
 
 #[rustfmt::skip]
-fn create_event(p: &PendingCreate, outcome: &str, stalled: bool, error_variant: &str, now_ms: i64) -> TelemetrySignal {
+fn create_event(p: &PendingCreate, outcome: &str, stalled: bool, error_variant: &str, subclass: &str, now_ms: i64) -> TelemetrySignal {
     TelemetrySignal::SpaceCreate {
         location: p.provider.as_str().into(),
         guest_os: p.os.as_str().into(),
@@ -513,6 +531,8 @@ fn create_event(p: &PendingCreate, outcome: &str, stalled: bool, error_variant: 
         elapsed_ms: (now_ms - p.started_at).max(0) as u64,
         gpu: p.gpu,
         error_variant: error_variant.into(),
+        retry_attempt: p.attempt.min(1),
+        error_subclass: subclass.into(),
     }
 }
 
@@ -556,7 +576,15 @@ pub fn creates(before: &CreatesState, action: &CreateAction, now_ms: i64) -> Vec
         }
         CreateAction::Finish { id, .. } => match find(id) {
             Some(p) if p.space_id.is_none() => vec![
-                create_event(p, "ok", false, "", now_ms),
+                // A retried create that worked: the cause it got past.
+                create_event(
+                    p,
+                    "ok",
+                    false,
+                    "",
+                    p.retried_subclass.as_deref().unwrap_or("none"),
+                    now_ms,
+                ),
                 step("first_space_ready", true),
             ],
             _ => vec![],
@@ -565,11 +593,18 @@ pub fn creates(before: &CreatesState, action: &CreateAction, now_ms: i64) -> Vec
             id,
             error,
             error_variant,
+            ..
         } => match find(id) {
             Some(p) if p.space_id.is_none() && p.cancelling => {
-                vec![create_event(p, "cancelled", false, "", now_ms)]
+                vec![create_event(p, "cancelled", false, "", "none", now_ms)]
             }
             Some(p) if p.space_id.is_none() && (p.error.is_none() || stalled(p)) => {
+                let decision = crate::spaces::creating::fail_decision(p, error, error_variant);
+                // The app runs it once more by itself: the create has no
+                // outcome yet. It counts once, when that attempt ends.
+                if decision.retry == cua_create_failure::retry::Retry::Once {
+                    return vec![];
+                }
                 // The shell's enum case is often `Runtime` or none: the
                 // cause the app reads from the text (an image that is not
                 // in the registry, Local Network, a VM that did not boot in
@@ -581,19 +616,26 @@ pub fn creates(before: &CreatesState, action: &CreateAction, now_ms: i64) -> Vec
                     error_variant,
                     Some(p.provider),
                 );
-                vec![create_event(p, "error", stalled(p), variant, now_ms)]
+                vec![create_event(
+                    p,
+                    "error",
+                    stalled(p),
+                    variant,
+                    decision.subclass.as_str(),
+                    now_ms,
+                )]
             }
             _ => vec![],
         },
         CreateAction::CancelDone { id } => match find(id) {
             Some(p) if p.space_id.is_none() && p.cancelling => {
-                vec![create_event(p, "cancelled", false, "", now_ms)]
+                vec![create_event(p, "cancelled", false, "", "none", now_ms)]
             }
             _ => vec![],
         },
         CreateAction::Dismiss { id } => match find(id) {
             Some(p) if p.space_id.is_none() && stalled(p) => {
-                vec![create_event(p, "error", true, "", now_ms)]
+                vec![create_event(p, "error", true, "", "none", now_ms)]
             }
             _ => vec![],
         },
@@ -875,7 +917,13 @@ pub fn record(t: &cua_telemetry::Telemetry, signals: &[TelemetrySignal]) -> usiz
                 page,
                 action,
                 choice,
-            } => events::onboarding_page(page, action, choice).map(|e| t.capture(e)),
+            } => if action.starts_with("step_") {
+                // The first run's funnel (`first_run_step`): its own events.
+                events::first_run_step(page, action, choice)
+            } else {
+                events::onboarding_page(page, action, choice)
+            }
+            .map(|e| t.capture(e)),
             TelemetrySignal::SpaceWizard { action } => {
                 events::space_wizard(action).map(|e| t.capture(e))
             }
@@ -889,6 +937,8 @@ pub fn record(t: &cua_telemetry::Telemetry, signals: &[TelemetrySignal]) -> usiz
                 elapsed_ms,
                 gpu,
                 error_variant,
+                retry_attempt,
+                error_subclass,
             } => Some(t.capture(events::space_create(
                 &events::SpaceCreate {
                     on: location,
@@ -898,6 +948,8 @@ pub fn record(t: &cua_telemetry::Telemetry, signals: &[TelemetrySignal]) -> usiz
                     stalled: *stalled,
                     gpu: *gpu,
                     error_variant,
+                    retry_attempt: *retry_attempt,
+                    error_subclass,
                 },
                 Outcome::from_word(outcome),
                 Duration::from_millis(*elapsed_ms),
@@ -1471,7 +1523,7 @@ mod tests {
         ] {
             let mut p = pending("pending:os", "booting", None);
             p.os = os;
-            let finished = create_event(&p, "ok", false, "", 2_000);
+            let finished = create_event(&p, "ok", false, "", "none", 2_000);
             let finished = serde_json::to_value(finished).unwrap();
             let started = creates(
                 &CreatesState::default(),
@@ -1502,11 +1554,79 @@ mod tests {
     }
 
     #[test]
+    fn a_retried_create_counts_once_with_its_final_outcome() {
+        use crate::spaces::creating::reduce;
+        let fail = |error: &str| CreateAction::Fail {
+            id: "pending:a".into(),
+            error: error.into(),
+            error_variant: "Runtime".into(),
+            now: Some(5_000),
+        };
+        let runtime = "the built-in Linux runtime did not start: exiting, status 1";
+        let st = CreatesState {
+            pending: vec![pending("pending:a", "preparing", None)],
+            ..Default::default()
+        };
+        // The failure the app retries by itself sends nothing.
+        assert!(creates(&st, &fail(runtime), 5_000).is_empty());
+        let retrying = reduce(&st, &fail(runtime));
+        // It worked: one ok, with the retry and the cause it got past.
+        let ready = creates(
+            &retrying,
+            &CreateAction::Finish {
+                id: "pending:a".into(),
+                space_id: "local:x".into(),
+            },
+            9_000,
+        );
+        match &ready[0] {
+            TelemetrySignal::SpaceCreate {
+                outcome,
+                retry_attempt,
+                error_subclass,
+                ..
+            } => assert_eq!(
+                (outcome.as_str(), *retry_attempt, error_subclass.as_str()),
+                ("ok", 1, "runtime_start")
+            ),
+            other => panic!("{other:?}"),
+        }
+        // It failed again: one error, with the retry.
+        let failed = creates(&retrying, &fail(runtime), 9_000);
+        assert_eq!(failed.len(), 1);
+        match &failed[0] {
+            TelemetrySignal::SpaceCreate {
+                outcome,
+                retry_attempt,
+                error_subclass,
+                error_variant,
+                ..
+            } => assert_eq!(
+                (
+                    outcome.as_str(),
+                    *retry_attempt,
+                    error_subclass.as_str(),
+                    error_variant.as_str()
+                ),
+                ("error", 1, "runtime_start", "Runtime")
+            ),
+            other => panic!("{other:?}"),
+        }
+        // A lasting failure is sent at once, never retried.
+        let disk = creates(&st, &fail("No space left on device"), 5_000);
+        assert!(matches!(
+            &disk[0],
+            TelemetrySignal::SpaceCreate { retry_attempt: 0, error_subclass, .. } if error_subclass == "none"
+        ));
+    }
+
+    #[test]
     fn a_create_counts_once_when_ready_or_failed_for_good() {
         let st = CreatesState {
             pending: vec![pending("pending:a", "booting", None)],
             deleting: vec![],
             powering: vec![],
+            streaks: vec![],
         };
         let ready = creates(
             &st,
@@ -1528,6 +1648,8 @@ mod tests {
                 elapsed_ms: 47_000,
                 gpu: false,
                 error_variant: String::new(),
+                retry_attempt: 0,
+                error_subclass: "none".into(),
             }
         );
         assert_eq!(ready[1], step("first_space_ready", true));
@@ -1537,6 +1659,7 @@ mod tests {
                 id: "pending:a".into(),
                 error: "boom at /Users/alice".into(),
                 error_variant: "InsufficientDisk".into(),
+                now: None,
             },
             5_000,
         );
@@ -1550,7 +1673,7 @@ mod tests {
             (
                 "runtime: Local Network access is not available: Cua Spaces cannot reach the VM at 192.168.64.5:3211 (No route to host (os error 65))",
                 "Runtime",
-                "local_network",
+                "local_network_denied",
             ),
             (
                 "lume: The number of virtual machines exceeds the limit",
@@ -1576,6 +1699,7 @@ mod tests {
                     id: "pending:a".into(),
                     error: error.into(),
                     error_variant: shell.into(),
+                    now: None,
                 },
                 5_000,
             );
@@ -1590,6 +1714,7 @@ mod tests {
             pending: vec![pending("pending:b", "pulling", Some(&stall))],
             deleting: vec![],
             powering: vec![],
+            streaks: vec![],
         };
         assert!(creates(&st, &CreateAction::Tick { now: 9_000 }, 9_000).is_empty());
         let gone = creates(
@@ -1610,6 +1735,7 @@ mod tests {
             pending: vec![cancelling],
             deleting: vec![],
             powering: vec![],
+            streaks: vec![],
         };
         let cancelled = creates(
             &st,
@@ -1628,6 +1754,7 @@ mod tests {
             pending: vec![pending("pending:c", "pulling", Some("no network"))],
             deleting: vec![],
             powering: vec![],
+            streaks: vec![],
         };
         assert!(
             creates(
@@ -1701,7 +1828,7 @@ mod tests {
                     experiment: "sharing".into(),
                 },
                 TelemetrySignal::ExperimentsOn {
-                    experiments: vec!["sharing".into()],
+                    experiments: vec!["your_cloud".into(), "sharing".into()],
                 },
             ]
         );
@@ -1709,7 +1836,7 @@ mod tests {
             serde_json::to_value(&signals).unwrap(),
             serde_json::json!([
                 {"type": "experiment", "action": "experiment_on", "experiment": "sharing"},
-                {"type": "experiments-on", "experiments": ["sharing"]},
+                {"type": "experiments-on", "experiments": ["your_cloud", "sharing"]},
             ])
         );
         assert_eq!(
@@ -1720,7 +1847,7 @@ mod tests {
                     experiment: "sharing".into(),
                 },
                 TelemetrySignal::ExperimentsOn {
-                    experiments: vec![]
+                    experiments: vec!["your_cloud".into()]
                 },
             ]
         );
@@ -1804,7 +1931,70 @@ mod tests {
             .iter()
             .find(|e| e["event"] == "cua_app_active")
             .expect("the day is active");
-        assert_eq!(active["properties"]["experiments_on"], "cua_volume+sharing");
+        // `your_cloud` is on by default, so the active day carries it too.
+        assert_eq!(
+            active["properties"]["experiments_on"],
+            "cua_volume+your_cloud+sharing"
+        );
+    }
+
+    /// A `step_*` onboarding-page signal sends the first-run funnel events
+    /// with the machine's OS and app version, and an old page still sends
+    /// `cua_onboarding_page`.
+    #[cfg(feature = "telemetry")]
+    #[test]
+    fn first_run_step_signals_record_the_funnel_events() {
+        use std::sync::Arc;
+        let home = tempfile::tempdir().unwrap();
+        let sink = Arc::new(cua_telemetry::sink::MemorySink::new());
+        let t = cua_telemetry::Telemetry::builder()
+            .env(|k| (k == "CUA_TELEMETRY_FORBID_NETWORK").then(|| "1".into()))
+            .home(home.path())
+            .sink(sink.clone())
+            .product("spaces_app", "0.12.0")
+            .foreground()
+            .build();
+        t.acknowledge_notice();
+        let sig = |page: &str, action: &str, choice: &str| TelemetrySignal::OnboardingPage {
+            page: page.into(),
+            action: action.into(),
+            choice: choice.into(),
+        };
+        let signals = [
+            sig("sign_in", "step_viewed", "none"),
+            sig("sign_in", "step_failed", "timeout"),
+            sig("sign_in", "step_completed", "none"),
+            sig("terminal", "step_skipped", "none"),
+            sig("welcome", "shown", "none"),
+            sig("/Users/alice", "step_viewed", "none"),
+        ];
+        assert_eq!(record(&t, &signals), 5, "the unknown step is dropped");
+        t.flush(std::time::Duration::from_secs(2));
+        let names: Vec<String> = sink
+            .events()
+            .iter()
+            .map(|e| e["event"].as_str().unwrap().to_string())
+            .filter(|n| n.starts_with("cua_onboarding"))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "cua_onboarding_step_viewed",
+                "cua_onboarding_step_failed",
+                "cua_onboarding_step_completed",
+                "cua_onboarding_skipped",
+                "cua_onboarding_page"
+            ]
+        );
+        let events = sink.events();
+        let failed = events
+            .iter()
+            .find(|e| e["event"] == "cua_onboarding_step_failed")
+            .unwrap();
+        assert_eq!(failed["properties"]["reason"], "timeout");
+        assert_eq!(failed["properties"]["step_index"], 4);
+        assert_eq!(failed["properties"]["product_version"], "0.12.0");
+        assert!(failed["properties"]["os_family"].is_string());
     }
 
     /// Every signal the parity flow derives is a valid event: each one is

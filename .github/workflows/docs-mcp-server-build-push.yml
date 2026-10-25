@@ -32,6 +32,7 @@ permissions:
 jobs:
   build:
     runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    if: github.repository == 'trycua/cua'  # public repo only: needs its release secrets / AWS OIDC trust
     strategy:
       fail-fast: false
       matrix:
@@ -144,6 +145,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     if: |
+      github.repository == 'trycua/cua' &&
       github.event_name != 'pull_request' &&
       (github.ref == 'refs/heads/main' || inputs.force_push == true)
 

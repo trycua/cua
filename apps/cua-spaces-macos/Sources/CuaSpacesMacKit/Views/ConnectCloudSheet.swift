@@ -44,6 +44,11 @@ public struct ConnectCloudSheet: View {
                     Section {
                         if let f = v.field { text(f) { await cloud.send(.setValue(text: $0)) } }
                         if let f = v.profileField { text(f) { await cloud.send(.setProfile(text: $0)) } }
+                        if let f = v.tokenField {
+                            SecureField(f.label, text: Binding(get: { cloud.token }, set: { cloud.setToken($0) }),
+                                        prompt: Text(f.placeholder))
+                                .accessibilityIdentifier("cloud-field-\(f.id)")
+                        }
                         Toggle(v.makeDefaultLabel, isOn: Binding(
                             get: { v.makeDefault },
                             set: { on in Task { await cloud.send(.setMakeDefault(on: on)) } }))

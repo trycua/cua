@@ -3,11 +3,11 @@
 
 /** New Space and "Connect a cloud" for components (see `new-space.ts`). */
 
-import { useContext, useEffect, useState, useSyncExternalStore } from "react";
+import { useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { isUnsupported } from "./adapter";
 import { BridgeContext } from "./BridgeProvider";
 import type { CoreClient } from "./core";
-import type { CloudConnectAction, CloudConnectView, RuntimeFix, RuntimeSwitch, WizardAction, WizardEnv, WizardView } from "./contracts/new-space";
+import type { CloudConnectAction, CloudConnectView, CloudTarget, RuntimeFix, RuntimeSwitch, WizardAction, WizardEnv, WizardView } from "./contracts/new-space";
 import type { Space, SpaceOs } from "./contracts/spaces";
 import { useMachines, useSession, useSettings, useSpaces } from "./hooks";
 import { newPendingId } from "./store";
@@ -241,6 +241,17 @@ export interface ConnectCloudHook {
   close(): void;
   /** Sends an action; Test and Connect run the host's request the core asks for. */
   send(action: CloudConnectAction): Promise<void>;
+  /** Hetzner's API token as typed: memory only, dropped when Connect finishes or the sheet closes. */
+  token: string;
+  setToken(text: string): void;
+}
+
+/** The core's request target, with the held token attached when it asks (and `uses_token` removed). */
+export function withToken(target: CloudTarget, token: string): CloudTarget {
+  const out: CloudTarget = { ...target };
+  delete out.uses_token;
+  if (target.uses_token && token) out.token = token;
+  return out;
 }
 
 /** "Connect a cloud": the core's sheet over `clouds.*`. */
@@ -251,15 +262,34 @@ export function useConnectCloud(): ConnectCloudHook {
   const ready = core.status === "ready";
   const input = s.connect.pinnedInput ?? (ready ? connectInput(core, s.clouds) : { providers: [] });
   const view = s.connect.open && s.connect.state && ready ? cloudConnectView(core, input, s.connect.state) : null;
-  const close = () => update((x) => ({ ...x, connect: { ...CLOSED_NEW_SPACE.connect } }));
+  // The token never enters the core, the session store or any saved state.
+  const [token, setTokenState] = useState("");
+  const tokenRef = useRef("");
+  const setToken = (text: string) => {
+    const was = tokenRef.current !== "";
+    tokenRef.current = text;
+    setTokenState(text);
+    if (was !== (text !== "")) reduce({ type: "set-token-entered", entered: text !== "" });
+  };
+  const dropToken = () => {
+    tokenRef.current = "";
+    setTokenState("");
+  };
+  const close = () => {
+    dropToken();
+    update((x) => ({ ...x, connect: { ...CLOSED_NEW_SPACE.connect } }));
+  };
   const reduce = (action: CloudConnectAction) =>
     update((x) => (x.connect.state ? { ...x, connect: { ...x.connect, state: cloudConnectReduce(core, input, x.connect.state, action) } } : x));
 
   return {
     open: s.connect.open,
     view,
+    token,
+    setToken,
     show() {
       if (!ready) return;
+      dropToken();
       update((x) => ({ ...x, connect: { open: true, state: cloudConnectInitial(core), pinnedInput: null } }));
       void ctx.ready.then(loadHostData);
     },
@@ -276,16 +306,18 @@ export function useConnectCloud(): ConnectCloudHook {
       if (!request || !ctx.adapter) return;
       try {
         if (request.kind === "test") {
-          const r = await ctx.adapter.call("clouds.test", { target: request.target });
+          const r = await ctx.adapter.call("clouds.test", { target: withToken(request.target, tokenRef.current) });
           reduce({ type: "tested", ok: r.ok, account: r.account ?? "", checks: r.checks.map((c) => ({ name: c.name, ok: c.ok, detail: c.detail ?? "" })) });
         } else {
-          const r = await ctx.adapter.call("clouds.connect", { target: request.target, makeDefault: request.make_default });
+          const r = await ctx.adapter.call("clouds.connect", { target: withToken(request.target, tokenRef.current), makeDefault: request.make_default });
+          dropToken();
           reduce({ type: "connected", label: r.label ?? r.title });
           const store = await ctx.ready;
           await Promise.all([loadHostData(store), refreshSettings()]);
           close();
         }
       } catch (e) {
+        if (request.kind === "connect") dropToken();
         reduce({ type: "failed", error: isUnsupported(e) ? "This app can't connect a cloud yet." : e instanceof Error ? e.message : String(e) });
       }
     },

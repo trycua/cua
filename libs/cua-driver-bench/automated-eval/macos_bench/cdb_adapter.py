@@ -41,6 +41,7 @@ import desktop_runtime as desktop
 SKIP_KINDS = {"terminal", "editor"}
 EVAL_ENTRY = "/usr/local/libexec/cdb-eval-run"
 APP_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+ELECTRON_DIST = Path("node_modules/electron/dist")
 
 
 REPO_TASKPACK = Path(__file__).resolve().parents[2] / "taskpack"
@@ -52,6 +53,14 @@ def pack_tasks_root() -> Path:
         return Path(env) / "tasks"
     work = ca.WORK / "taskpack"
     return (work if work.is_dir() else REPO_TASKPACK) / "tasks"
+
+
+def missing_electron_apps(root: Path | None = None) -> tuple[list[str], list[str]]:
+    root = root if root is not None else pack_tasks_root()
+    apps = [p.parent for p in sorted(root.glob("*/*/apps/*/package.json"))]
+    expected = [str(app.relative_to(root)) for app in apps]
+    missing = [name for app, name in zip(apps, expected) if not (app / ELECTRON_DIST).is_dir()]
+    return expected, missing
 
 
 def tree_sha256(path: Path) -> str:
@@ -202,7 +211,7 @@ def electron_argv(argv: list[str], cwd: str, name: str) -> list[str]:
         at = next(i for i in range(len(argv) - 1) if argv[i] == "npx" and argv[i + 1] == "electron")
     except StopIteration:
         return argv
-    source = Path(cwd) / "node_modules/electron/dist/Electron.app"
+    source = Path(cwd) / ELECTRON_DIST / "Electron.app"
     if not source.is_dir():
         raise RuntimeError(f"Electron.app missing for {name}: {source}")
     bundle = named_electron_app(source, name)
@@ -279,8 +288,9 @@ def clear_leftovers(spec: dict[str, Any]) -> None:
 class CdbTask:
     """One task of the pack, driven by its launch descriptor."""
 
-    def __init__(self, spec: dict[str, Any], artifacts: Path) -> None:
+    def __init__(self, spec: dict[str, Any], artifacts: Path, seed: int | None = None) -> None:
         self.spec = spec
+        self.seed = seed
         self.bundle = pack_tasks_root() / spec["pack_task"]
         self.descriptor = _descriptor(spec)
         self.artifacts = artifacts
@@ -295,6 +305,7 @@ class CdbTask:
     def sub(self, text: str, **extra: str) -> str:
         values = {
             "python": sys.executable,
+            "seed": str(self.seed),
             "workspace": str(self.workspace),
             "workspace_uri": self.workspace.as_uri(),
             "bundle": str(self.bundle),
@@ -330,7 +341,8 @@ class CdbTask:
                 raise RuntimeError(f"reset {step} failed: {(done.stderr or done.stdout)[-400:]}")
 
     def brief(self) -> str:
-        text = (self.bundle / "brief.md").read_text("utf-8")
+        brief = self.sub(self.descriptor["semantics"].get("brief", "brief.md"))
+        text = (self.bundle / brief).read_text("utf-8")
         text = text.replace("configured `cua` MCP server", "configured computer-use MCP server")
         return text.strip() + f"\n\nYour workspace directory is `{self.workspace}`.\n"
 
@@ -452,7 +464,13 @@ class CdbTask:
             for name, c in checks_raw.items()
         }
         passed = data.get("passed")
+        if self.seed is not None and any(
+            "${seed}" in arg for arg in self.descriptor["semantics"]["reset"]["setup"]
+        ):
+            checks["seed_identity"] = type(data.get("seed")) is int and data["seed"] == self.seed
+            passed = passed and checks["seed_identity"]
         return {
+            "seed": data.get("seed"),
             "passed": bool(passed),
             "score": data.get("score"),
             "checks": checks,

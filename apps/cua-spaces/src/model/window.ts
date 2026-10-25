@@ -389,3 +389,9 @@ export function trayMenu(input: MenuInput): MenuItem[] {
 export function openableCount(spaces: readonly Space[]): number {
   return core("spaces.openableCount", { spaces });
 }
+
+/** The Spaces on or starting (the notch tab's and the menu bar item's
+ * count): never a stopped Space or This machine. */
+export function onCount(spaces: readonly Space[]): number {
+  return core("spaces.onCount", { spaces });
+}

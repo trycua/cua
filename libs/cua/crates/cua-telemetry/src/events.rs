@@ -104,6 +104,11 @@ pub fn error_kind(variant: &str) -> &'static str {
         }
         out
     };
+    // A failed create's Local Network cause comes as its subclass word
+    // (`cua_create_failure::create_failure_kind`); its kind is the parent.
+    if matches!(snake.as_str(), "local_network_denied" | "local_network_vpn") {
+        return "local_network";
+    }
     pick(schema::ERROR_KINDS, &snake, "other")
 }
 
@@ -918,6 +923,35 @@ pub fn onboarding_page(page: &str, action: &str, choice: &str) -> Option<Event> 
     })
 }
 
+/// One of the first-run funnel events: `step_viewed`, `step_completed`,
+/// `step_failed` (with `reason`) or `skipped` (with `how`, from the same
+/// last argument). None for a step, action or
+/// reason outside the vocabulary. `step_index` and `onboarding_version`
+/// come from the step, so a caller cannot send a wrong one.
+pub fn first_run_step(step: &str, action: &str, reason: &str) -> Option<Event> {
+    let step = pick(schema::FIRST_RUN_STEPS, step, "");
+    let name = match action.trim() {
+        "step_viewed" => event::ONBOARDING_STEP_VIEWED,
+        "step_completed" => event::ONBOARDING_STEP_COMPLETED,
+        "step_failed" => event::ONBOARDING_STEP_FAILED,
+        "step_skipped" => event::ONBOARDING_SKIPPED,
+        _ => return None,
+    };
+    let index = schema::FIRST_RUN_STEPS.iter().position(|s| *s == step)?;
+    let e = Event::new(name)
+        .s("step", step)
+        .n("step_index", index as u64 + 1)
+        .n("onboarding_version", schema::FIRST_RUN_VERSION);
+    Some(match name {
+        event::ONBOARDING_STEP_FAILED => e.s(
+            "reason",
+            pick(schema::FIRST_RUN_FAIL_REASONS, reason, "other"),
+        ),
+        event::ONBOARDING_SKIPPED => e.s("how", pick(schema::FIRST_RUN_SKIP_HOWS, reason, "later")),
+        _ => e,
+    })
+}
+
 /// `cua_space_wizard`; None for an action outside the vocabulary.
 pub fn space_wizard(action: &str) -> Option<Event> {
     let a = pick(schema::WIZARD_ACTIONS, action, "");
@@ -940,6 +974,10 @@ pub struct SpaceCreate<'a> {
     pub gpu: bool,
     /// The error enum's case name (`InsufficientDisk`); empty when the shell had none.
     pub error_variant: &'a str,
+    /// The app ran the create a second time by itself (0 or 1; more is 1).
+    pub retry_attempt: u32,
+    /// The finer cause (`schema::ERROR_SUBCLASSES`); empty is `none`.
+    pub error_subclass: &'a str,
 }
 
 /// `cua_space_create`.
@@ -975,6 +1013,14 @@ pub fn space_create(s: &SpaceCreate<'_>, outcome: Outcome, elapsed: Duration) ->
         .b("stalled", s.stalled && outcome == Outcome::Error)
         .s("time_bucket", create_time_bucket(elapsed))
         .b("gpu", s.gpu)
+        .n("retry_attempt", u64::from(s.retry_attempt.min(1)))
+        .s(
+            "error_subclass",
+            match outcome {
+                Outcome::Cancelled => "none",
+                _ => pick(schema::ERROR_SUBCLASSES, s.error_subclass, "none"),
+            },
+        )
 }
 
 /// `cua_space_create_started`.

@@ -957,6 +957,7 @@ mod tests {
                     online: r.online,
                     os: "macos".into(),
                     limits: vec![],
+                    load: None,
                 })
                 .collect(),
             default_location: Location::Local,

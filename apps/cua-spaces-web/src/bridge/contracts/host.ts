@@ -86,6 +86,10 @@ export interface CreateProgress {
   bytesPerSecond?: number | null;
   /** The id the Space will have, when known. */
   space?: string | null;
+  /** The host's create failed for a reason that usually passes and the
+   * host runs it once more by itself: the page applies the same failure
+   * (its core then shows "Retrying…"). Never on a final failure. */
+  retry?: { error: string; errorVariant?: string } | null;
 }
 
 /** What turning a Space off or on did (the SDK's `SpacePower`). */
@@ -427,7 +431,9 @@ export interface HostStatus {
   account?: HostAccount | null;
   /** What a running setup (or Sign In) waits for, such as finishing the
    * sign-in in the browser (the SwiftUI app's `HostModel.progress`). */
-  progress?: string | null;
+  progress?: string | null;  /** The name System Settings lists the app under ("Cua Spaces", "Cua
+   * Spaces Local"): the Mac app's own name, for the permissions screen. */
+  appName?: string | null;
 }
 
 /** The account signed in to Cua in the app (`host::HostAccount`). */

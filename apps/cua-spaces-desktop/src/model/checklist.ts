@@ -19,6 +19,8 @@ export interface StoredChecklist {
   done: string[];
   dismissed: boolean;
   shown: boolean;
+  /** Steps skipped ("Skip"); an older file has none. */
+  skipped: string[];
 }
 
 /** Each step and its word (`checklist::ChecklistStep::word`), in checklist order. */
@@ -49,25 +51,31 @@ export class ChecklistModel {
   ) {
     this.words = checklistWords(native);
     const read = (f: string | null) => (f ? this.read(f) : null);
-    this.state = read(file) ?? read(seed) ?? { done: [], dismissed: false, shown: false };
+    this.state = read(file) ?? read(seed) ?? { done: [], dismissed: false, shown: false, skipped: [] };
   }
 
   /** The state with steps as words. */
   get stored(): StoredChecklist {
+    const words = (steps: AppChecklistStep[]) => steps.map((s) => this.words.find(([step]) => step === s)?.[1]).filter((w): w is string => Boolean(w));
     return {
-      done: this.state.done.map((s) => this.words.find(([step]) => step === s)?.[1]).filter((w): w is string => Boolean(w)),
+      done: words(this.state.done),
       dismissed: this.state.dismissed,
       shown: this.state.shown,
+      skipped: words(this.state.skipped),
     };
   }
 
   /** The core's state from steps as words (unknown words are dropped). */
   fromStored(s: Partial<StoredChecklist>): AppChecklistState {
-    const done = Array.isArray(s.done) ? s.done : [];
+    const steps = (list: unknown) => {
+      const words = Array.isArray(list) ? list : [];
+      return this.words.filter(([, w]) => words.includes(w)).map(([step]) => step);
+    };
     return {
-      done: this.words.filter(([, w]) => done.includes(w)).map(([step]) => step),
+      done: steps(s.done),
       dismissed: s.dismissed === true,
       shown: s.shown === true,
+      skipped: steps(s.skipped),
     };
   }
 

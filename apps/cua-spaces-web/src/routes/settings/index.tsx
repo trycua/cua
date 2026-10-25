@@ -24,6 +24,9 @@ import { writeSavedOnboarding } from "@/bridge/onboarding";
 import { SettingsGroup, SettingsRow } from "@/components/settings-group";
 import { AdvancedSection } from "@/components/settings/advanced-section";
 import { AgentsSettingsSection } from "@/components/settings/agents-section";
+import { CliSettingsSection } from "@/components/settings/cli-section";
+import { ScreenPermissionsSection } from "@/components/settings/screen-permissions-section";
+import { SharedLinks } from "@/components/links/shared-links";
 import { CoreSettingsRow, CoreSettingsSection } from "@/components/settings/core-section";
 import { Button } from "@/components/ui/button";
 import { Shortcut } from "@/components/ui/kbd";
@@ -152,6 +155,8 @@ function CoreGeneralPage({ page }: { page: CorePage }) {
         <GlobalShortcutRow shortcut={settings?.globalShortcut} />
       </SettingsGroup>
 
+      <ScreenPermissionsSection />
+
       <StorageSection />
 
       {runtimes?.rows.length ? <CoreSettingsSection section={runtimes} foldNotes onChoose={choose} /> : null}
@@ -160,12 +165,16 @@ function CoreGeneralPage({ page }: { page: CorePage }) {
 
       {agents ? <AgentsSettingsSection section={agents} /> : null}
 
+      <CliSettingsSection />
+
       {/* The cua-driver skill for every agent (the SwiftUI app offers it in its first run). */}
       <SettingsGroup title="Background computer use">
         <Suspense fallback={<div className="h-48" />}>
           <DriverSettingsCard />
         </Suspense>
       </SettingsGroup>
+
+      <SharedLinks />
 
       <SettingsGroup title="Keyboard shortcuts">
         {DEFAULT_KEYBINDINGS.map((b) => (
@@ -293,6 +302,8 @@ function FallbackSettingsPage() {
         ) : null}
         <GlobalShortcutRow shortcut={settings?.globalShortcut} />
       </SettingsGroup>
+
+      <ScreenPermissionsSection />
 
       <StorageSection />
 

@@ -450,10 +450,10 @@ impl TeleportService for TeleportServiceImpl {
                     ));
                 };
                 let plaintext = cua_machine_seal::open(
-                    keypair,
+                    &keypair,
                     &import_id,
                     cua_machine_seal::purpose::TELEPORT_BUNDLE,
-                    ctx.seal_replay_guard(),
+                    &ctx.seal_replay_guard(),
                     &envelope,
                 )
                 .map_err(|e| {

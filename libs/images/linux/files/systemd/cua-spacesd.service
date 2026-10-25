@@ -10,6 +10,10 @@ Wants=network-online.target cua-desktop.service cua-env-token-sync.service
 [Service]
 Type=simple
 User=cua
+# Run commands and file operations as other users without sudo: exactly
+# CAP_SETUID, CAP_SETGID and CAP_KILL, held by the agent process alone (it
+# empties the inheritable and ambient sets at start). It stays uid 1000.
+AmbientCapabilities=CAP_SETUID CAP_SETGID CAP_KILL
 Environment=HOME=/home/cua XDG_RUNTIME_DIR=/run/cua-desktop
 # Token: CUA_ENV_TOKEN here, or /run/cua/env-token, or /etc/cua/env-token
 # (e.g. written by cloud-init write_files). In await-token-file mode the claim

@@ -30,7 +30,10 @@ export function demoPersistentAgents(now: number): PersistentAgent[] {
   ];
 }
 
-export function demoAgentSetup(): AgentSetupRow[] {
+/** `fresh`: a first run, so Cua isn't in any agent's settings yet. `only`:
+ * just these agents installed (`[]`: none, `?demo=agents-none`; `codex`:
+ * `?demo=agents-codex`). */
+export function demoAgentSetup(fresh = false, only: string[] | null = null): AgentSetupRow[] {
   const row = (agent: string, name: string, installed: boolean, configured: boolean, mcpConfig: string | null, skillsDir: string | null): AgentSetupRow => ({
     agent,
     name,
@@ -41,8 +44,11 @@ export function demoAgentSetup(): AgentSetupRow[] {
     skillsTotal: 6,
     mcpConfig,
     skillsDir,
+    // Codex signs in with ChatGPT on its own (`codex login`); the demo isn't signed in yet.
+    signIn: agent === "codex" ? "ChatGPT" : null,
+    signedIn: false,
   });
-  return [
+  const rows = [
     row("claude-code", "Claude Code", true, true, "~/.claude.json", "~/.claude/skills"),
     row("codex", "OpenAI Codex", true, true, "~/.codex/config.toml", "~/.agents/skills"),
     row("hermes", "Hermes", true, false, "~/.hermes/config.yaml", "~/.hermes/skills"),
@@ -50,6 +56,11 @@ export function demoAgentSetup(): AgentSetupRow[] {
     row("cursor", "Cursor", true, true, "~/.cursor/mcp.json", "~/.cursor/skills"),
     row("gemini-cli", "Gemini CLI", false, false, "~/.gemini/settings.json", "~/.gemini/skills"),
   ];
+  return rows.map((r) => {
+    const installed = only ? only.includes(r.agent) : r.installed;
+    const configured = fresh ? false : installed && r.configured;
+    return { ...r, installed, configured, skillsInstalled: configured ? r.skillsTotal : 0, detail: !installed ? "Not installed" : configured ? r.detail : "Not set up" };
+  });
 }
 
 /* ---- Event scripts ---------------------------------------------------------- */

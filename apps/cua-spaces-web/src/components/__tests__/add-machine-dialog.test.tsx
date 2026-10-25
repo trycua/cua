@@ -4,13 +4,16 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { BridgeProvider, expiresInText, useMachines } from "@/bridge";
+import { BridgeProvider, expiresInText, setFlagOverride, useMachines } from "@/bridge";
 import { HostError, type DataAdapter } from "@/bridge/adapter";
 import { createDemoAdapter, type DemoOptions } from "@/bridge/adapters/demo";
 import { unavailableCore } from "@/bridge/core";
 import { AddMachineDialog } from "@/components/add-machine-dialog";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
 
 /** The demo host, with some operations answered differently, recording the pairing calls. */
 function host(options: DemoOptions = {}, override: Record<string, (args: Record<string, unknown>) => Promise<unknown>> = {}) {
@@ -41,9 +44,20 @@ function Harness({ team = null }: { team?: string | null }) {
   );
 }
 
-async function mount(adapter: DataAdapter, team: string | null = null) {
+async function mount(adapter: DataAdapter, team: string | null = null, withCards = false) {
+  const none = unavailableCore("test: no core");
+  // The core's `upsell.card`, as one fixed card per reason.
+  const core = withCards
+    ? {
+        ...none,
+        tryCall: (<T,>(method: string, args: Record<string, unknown> = {}) =>
+          method === "upsell.card"
+            ? ({ reason: args.reason, title: "Your team is out of seats", body: "Add a seat.", price: "$30 a seat a month", cta: { label: "Add seats", url: "https://app.cua.ai/billing" }, dismiss: "Not now" } as T)
+            : undefined) as typeof none.tryCall,
+      }
+    : none;
   render(
-    <BridgeProvider adapter={adapter} core={unavailableCore("test: no core")}>
+    <BridgeProvider adapter={adapter} core={core}>
       <Harness team={team} />
     </BridgeProvider>,
   );
@@ -273,5 +287,19 @@ describe("expiresInText", () => {
     expect(expiresInText(1800, 1_000)).toBe("Expires in 30 min");
     expect(expiresInText(100, 50_000)).toBe("Expires in 50 s");
     expect(expiresInText(100, 200_000)).toBe("Expires in 0 s");
+  });
+
+  it("with the upsell cards on, an owner out of seats gets the card, and a member does not", async () => {
+    setFlagOverride("upsell_cards", true);
+    const org = "0f1e2d3c-0000-4000-8000-000000000001";
+    const { adapter } = host({}, { "sharing.share": () => Promise.reject(new Error("Your team has no free seats. https://app.cua.ai/buy/teams")) });
+    await mount(adapter, org, true);
+    await waitFor(() => expect(document.querySelector('[data-upgrade-card="seats"]')).toBeTruthy(), { timeout: 3000 });
+    expect(document.querySelector("[data-pairing-upgrade]")).toBeNull();
+    cleanup();
+    const member = host({}, { "sharing.share": () => Promise.reject(new Error("Your team has no free seats. Ask the team owner to add seats.")) });
+    await mount(member.adapter, org, true);
+    await waitFor(() => expect(document.querySelector('[data-pairing-team="failed"]')).toBeTruthy(), { timeout: 3000 });
+    expect(document.querySelector("[data-upgrade-card]")).toBeNull();
   });
 });

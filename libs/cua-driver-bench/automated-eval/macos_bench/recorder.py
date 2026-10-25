@@ -21,7 +21,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from desktop_runtime import stop_group, tool
 
@@ -29,7 +29,13 @@ from desktop_runtime import stop_group, tool
 class McpStdioClient:
     """Minimal MCP client over a child process' stdio (newline-delimited JSON-RPC)."""
 
-    def __init__(self, argv: list[str], env: dict[str, str]) -> None:
+    def __init__(
+        self,
+        argv: list[str],
+        env: dict[str, str],
+        elicitation: Callable[[str], dict[str, Any]] | None = None,
+    ) -> None:
+        self.elicitation = elicitation
         self.proc = subprocess.Popen(
             argv,
             env=env,
@@ -45,16 +51,22 @@ class McpStdioClient:
         self._cond = threading.Condition()
         self._reader = threading.Thread(target=self._pump, daemon=True)
         self._reader.start()
-        self.request(
-            "initialize",
-            {
-                "protocolVersion": "2025-06-18",
-                "capabilities": {},
-                "clientInfo": {"name": "cdb-bench-recorder", "version": "1"},
-            },
-            timeout=30,
-        )
-        self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        try:
+            reply = self.request(
+                "initialize",
+                {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {"elicitation": {}} if elicitation else {},
+                    "clientInfo": {"name": "cdb-bench-recorder", "version": "1"},
+                },
+                timeout=30,
+            )
+            if reply.get("error"):
+                raise RuntimeError(str(reply["error"])[:300])
+            self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        except Exception:
+            self.close()
+            raise
 
     def _pump(self) -> None:
         assert self.proc.stdout is not None
@@ -63,7 +75,10 @@ class McpStdioClient:
                 obj = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if "id" in obj and ("result" in obj or "error" in obj):
+            if "id" in obj and obj.get("method") == "elicitation/create" and self.elicitation:
+                answer = self.elicitation((obj.get("params") or {}).get("message", ""))
+                self._send({"jsonrpc": "2.0", "id": obj["id"], "result": answer})
+            elif "id" in obj and ("result" in obj or "error" in obj):
                 with self._cond:
                     self._responses[int(obj["id"])] = obj
                     self._cond.notify_all()
@@ -191,6 +206,42 @@ class CuaRecorder:
         if self.client is not None:
             self.client.close()
             self.client = None
+
+
+def capture_detail(path: Path, ffmpeg: str = "/opt/homebrew/bin/ffmpeg") -> str:
+    done = subprocess.run(
+        [
+            ffmpeg,
+            "-nostdin",
+            "-v",
+            "error",
+            "-i",
+            str(path),
+            "-frames:v",
+            "1",
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "ppm",
+            "-pix_fmt",
+            "rgb24",
+            "pipe:1",
+        ],
+        capture_output=True,
+        timeout=30,
+    )
+    if done.returncode or not done.stdout:
+        raise RuntimeError("capture decode failed or empty image")
+    try:
+        magic, dimensions, maximum, pixels = done.stdout.split(b"\n", 3)
+        w, h = map(int, dimensions.split())
+        if magic != b"P6" or maximum != b"255" or len(pixels) != w * h * 3 or not pixels:
+            raise ValueError("invalid RGB frame")
+    except ValueError as error:
+        raise RuntimeError("capture decode failed") from error
+    if pixels == pixels[:3] * (w * h):
+        raise RuntimeError("blank image (uniform RGB frame)")
+    return f"{w}x{h} bytes={path.stat().st_size} path={path}"
 
 
 def ffprobe_duration(path: Path) -> float | None:

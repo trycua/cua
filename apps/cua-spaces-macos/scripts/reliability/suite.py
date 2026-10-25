@@ -10,7 +10,7 @@ step; nothing waits forever.
 
     suite.py --cua "/Applications/Cua Spaces.app/Contents/MacOS/cua" \
         [--scenarios fresh,linux,volume,conflicts,restart,offline,lowdisk,macos-slim,macos]
-        [--runs 3] [--work ~/projects/.cua-work/reliability] [--mit-cua PATH]
+        [--runs 3] [--work ~/.cache/cua-reliability/reliability] [--mit-cua PATH]
         [--other-cua PATH]
 
 Results go to <work>/results/<stamp>.json and a Markdown matrix to stdout
@@ -842,7 +842,7 @@ def main():
     ap.add_argument("--teleport-test", help="the e2e_teleport_app test binary (cargo test -p cua-spaces-ext --test e2e_teleport_app --no-run)")
     ap.add_argument("--scenarios", default=",".join(SCENARIOS))
     ap.add_argument("--runs", type=int, default=3)
-    ap.add_argument("--work", default=str(HOME / "projects/.cua-work/reliability"))
+    ap.add_argument("--work", default=str(HOME / ".cache/cua-reliability/reliability"))
     args = ap.parse_args()
     if os.environ.get("CUA_HOME") and pathlib.Path(os.environ["CUA_HOME"]).resolve() == REAL_CUA_HOME.resolve():
         sys.exit("refusing: CUA_HOME is the real ~/.cua")

@@ -329,6 +329,15 @@
             "string",
             "null"
           ]
+        },
+        "signIn": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "signedIn": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -340,7 +349,9 @@
         "skillsInstalled",
         "skillsTotal",
         "mcpConfig",
-        "skillsDir"
+        "skillsDir",
+        "signIn",
+        "signedIn"
       ]
     },
     "CatalogEntry": {
@@ -459,6 +470,82 @@
         "launchBin",
         "lastUsedMs",
         "json"
+      ]
+    },
+    "CliInstallPlan": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "target": {
+          "type": "string"
+        },
+        "binDir": {
+          "type": "string"
+        },
+        "method": {
+          "enum": [
+            "symlink",
+            "copy",
+            null
+          ]
+        },
+        "installed": {
+          "type": "boolean"
+        },
+        "upToDate": {
+          "type": "boolean"
+        },
+        "installedVersion": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bundledVersion": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "shadowedBy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "onPath": {
+          "type": "boolean"
+        },
+        "pathProfile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pathLine": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "found": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "target",
+        "binDir",
+        "installed",
+        "upToDate",
+        "onPath"
       ]
     },
     "CloudPricing": {
@@ -643,6 +730,32 @@
         "spacesDiskBytes",
         "spacesDiskExact",
         "warning"
+      ]
+    },
+    "CreateFix": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "action": {
+          "enum": [
+            "copy-command",
+            "open-url",
+            "details"
+          ]
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "label",
+        "action"
       ]
     },
     "DevicesInput": {
@@ -1192,6 +1305,12 @@
           }
         },
         "progress": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "appName": {
           "type": [
             "string",
             "null"
@@ -2988,6 +3107,24 @@
             "string",
             "null"
           ]
+        },
+        "cli": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "installed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "name",
+            "installed"
+          ]
         }
       },
       "required": [
@@ -3052,6 +3189,12 @@
         },
         "cancelling": {
           "type": "boolean"
+        },
+        "retrying": {
+          "type": "boolean"
+        },
+        "fix": {
+          "$ref": "#/$defs/CreateFix"
         }
       },
       "required": [
@@ -4236,6 +4379,12 @@
             "string",
             "null"
           ]
+        },
+        "appName": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -4666,6 +4815,24 @@
           "type": [
             "string",
             "null"
+          ]
+        },
+        "cli": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "installed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "name",
+            "installed"
           ]
         }
       },
@@ -5185,6 +5352,12 @@
         ]
       }
     },
+    "agents.signIn": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentSetupRow"
+      }
+    },
     "checklist.get": {
       "type": "object",
       "properties": {
@@ -5202,12 +5375,19 @@
             },
             "shown": {
               "type": "boolean"
+            },
+            "skipped": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
             "done",
             "dismissed",
-            "shown"
+            "shown",
+            "skipped"
           ]
         }
       },
@@ -5232,17 +5412,37 @@
             },
             "shown": {
               "type": "boolean"
+            },
+            "skipped": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
             "done",
             "dismissed",
-            "shown"
+            "shown",
+            "skipped"
           ]
         }
       },
       "required": [
         "state"
+      ]
+    },
+    "cli.install": {
+      "$ref": "#/$defs/CliInstallPlan"
+    },
+    "cli.plan": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CliInstallPlan"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "clouds.connect": {
@@ -5428,6 +5628,143 @@
     },
     "keyvault.unlock": {
       "type": "null"
+    },
+    "links.create": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "access": {
+          "enum": [
+            "private",
+            "team",
+            "public"
+          ]
+        },
+        "kind": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "createdAtUnix": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "expiresAtUnix": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "url",
+        "name",
+        "access",
+        "kind",
+        "target",
+        "owner",
+        "createdAtUnix",
+        "expiresAtUnix"
+      ]
+    },
+    "links.list": {
+      "type": "object",
+      "properties": {
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "access": {
+                "enum": [
+                  "private",
+                  "team",
+                  "public"
+                ]
+              },
+              "kind": {
+                "type": "string"
+              },
+              "target": {
+                "type": "string"
+              },
+              "owner": {
+                "type": "string"
+              },
+              "createdAtUnix": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "expiresAtUnix": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "url",
+              "name",
+              "access",
+              "kind",
+              "target",
+              "owner",
+              "createdAtUnix",
+              "expiresAtUnix"
+            ]
+          }
+        }
+      },
+      "required": [
+        "links"
+      ]
+    },
+    "links.stop": {
+      "type": "object",
+      "properties": {
+        "stopped": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "stopped"
+      ]
     },
     "loginItem.get": {
       "$ref": "#/$defs/LoginItemReport"
@@ -6767,6 +7104,12 @@
         ]
       }
     },
+    "agents.signIn": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AgentSetupRow"
+      }
+    },
     "app.info": {
       "type": "object",
       "properties": {
@@ -6814,12 +7157,19 @@
             },
             "shown": {
               "type": "boolean"
+            },
+            "skipped": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
             "done",
             "dismissed",
-            "shown"
+            "shown",
+            "skipped"
           ]
         }
       },
@@ -6844,17 +7194,37 @@
             },
             "shown": {
               "type": "boolean"
+            },
+            "skipped": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
             "done",
             "dismissed",
-            "shown"
+            "shown",
+            "skipped"
           ]
         }
       },
       "required": [
         "state"
+      ]
+    },
+    "cli.install": {
+      "$ref": "#/$defs/CliInstallPlan"
+    },
+    "cli.plan": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CliInstallPlan"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "clouds.connect": {
@@ -7071,6 +7441,143 @@
       "$ref": "#/$defs/WkKeyvault"
     },
     "keyvault.unlockVault": {},
+    "links.create": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "access": {
+          "enum": [
+            "private",
+            "team",
+            "public"
+          ]
+        },
+        "kind": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "createdAtUnix": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "expiresAtUnix": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "url",
+        "name",
+        "access",
+        "kind",
+        "target",
+        "owner",
+        "createdAtUnix",
+        "expiresAtUnix"
+      ]
+    },
+    "links.list": {
+      "type": "object",
+      "properties": {
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "access": {
+                "enum": [
+                  "private",
+                  "team",
+                  "public"
+                ]
+              },
+              "kind": {
+                "type": "string"
+              },
+              "target": {
+                "type": "string"
+              },
+              "owner": {
+                "type": "string"
+              },
+              "createdAtUnix": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "expiresAtUnix": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "url",
+              "name",
+              "access",
+              "kind",
+              "target",
+              "owner",
+              "createdAtUnix",
+              "expiresAtUnix"
+            ]
+          }
+        }
+      },
+      "required": [
+        "links"
+      ]
+    },
+    "links.stop": {
+      "type": "object",
+      "properties": {
+        "stopped": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "stopped"
+      ]
+    },
     "loginItem.get": {
       "$ref": "#/$defs/LoginItemReport"
     },

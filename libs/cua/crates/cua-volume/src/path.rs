@@ -19,6 +19,8 @@ pub const PUBLIC: &str = "public/";
 pub const AGENTS: &str = "agents/";
 /// The Spaces area.
 pub const SPACES: &str = "spaces/";
+/// Named volumes: `volumes/<name>/`, shared by the Spaces that mount them.
+pub const VOLUMES: &str = "volumes/";
 
 /// Normalizes a user-supplied path to a key. `""` and `"/"` are the root.
 /// A trailing `/` is kept (it names a folder).
@@ -74,6 +76,33 @@ pub fn valid_agent_name(name: &str) -> bool {
         && b.iter().all(|c| {
             c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, b'.' | b'_' | b'-')
         })
+}
+
+/// Whether `name` is a valid named volume: the rules of an agent name
+/// (1 to 63 of `[a-z0-9._-]`, starting with a letter or digit).
+pub fn valid_volume_name(name: &str) -> bool {
+    valid_agent_name(name) && !name.ends_with('.')
+}
+
+/// The folder of named volume `name`: `volumes/<name>/`.
+pub fn volume_folder(name: &str) -> Result<String> {
+    if !valid_volume_name(name) {
+        return Err(Error::Invalid(format!(
+            "volume name {name:?}: use 1-63 of a-z, 0-9, `.`, `_`, `-`, starting with a letter or digit"
+        )));
+    }
+    Ok(format!("{VOLUMES}{name}/"))
+}
+
+/// The folder a mount of `name` (inside it, `subpath`) covers:
+/// `volumes/<name>/<subpath>/`. The subpath is relative; `..` is refused.
+pub fn volume_mount_folder(name: &str, subpath: &str) -> Result<String> {
+    let base = volume_folder(name)?;
+    let sub = subpath.trim().trim_matches('/');
+    if sub.is_empty() {
+        return Ok(base);
+    }
+    folder(&format!("{base}{sub}"))
 }
 
 /// An agent's home folder: `agents/<name>/`.
@@ -170,6 +199,29 @@ mod tests {
         }
         assert!(normalize(&"a".repeat(MAX_KEY + 1)).is_err());
         assert_eq!(folder("agents/ada").unwrap(), "agents/ada/");
+    }
+
+    #[test]
+    fn volume_names_and_mount_folders() {
+        assert!(valid_volume_name("shared"));
+        assert!(valid_volume_name("my-data.v2"));
+        assert!(!valid_volume_name("Shared"));
+        assert!(!valid_volume_name("a/b"));
+        assert!(!valid_volume_name("x."));
+        assert!(!valid_volume_name(""));
+        assert_eq!(volume_folder("shared").unwrap(), "volumes/shared/");
+        assert_eq!(
+            volume_mount_folder("shared", "").unwrap(),
+            "volumes/shared/"
+        );
+        assert_eq!(
+            volume_mount_folder("shared", "/data/in/").unwrap(),
+            "volumes/shared/data/in/"
+        );
+        assert!(volume_mount_folder("shared", "../other").is_err());
+        assert!(volume_mount_folder("shared", "a/../../x").is_err());
+        assert!(volume_mount_folder("../x", "").is_err());
+        assert_eq!(area("volumes/shared/a"), Area::Other);
     }
 
     #[test]

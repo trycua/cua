@@ -125,10 +125,19 @@ if (azureSigning && !env.AZURE_SIGNING_PUBLISHER) {
  */
 const nativeResources = (platform) => ({ from: `native/${platform}-\${arch}`, to: "native", filter: ["**/*"] });
 
-/** The native directory's files on a platform (src/native/location.ts). */
-function nativeLayout(platform) {
+/** The static cua-spacesd's arch name for electron-builder's Arch enum (x64 = 1, arm64 = 3). */
+const spacesdArch = { 1: "x86_64", 3: "aarch64" };
+
+/**
+ * The native directory's files on a platform (src/native/location.ts). On
+ * Linux the static cua-spacesd sits next to `cua`, which injects it into
+ * images without one (libs/cua/crates/cua-vmm/src/inject.rs).
+ */
+function nativeLayout(platform, arch) {
   const libraryFile = { darwin: "libcua_spaces_ffi.dylib", win32: "cua_spaces_ffi.dll", linux: "libcua_spaces_ffi.so" }[platform];
-  return { libraryFile, files: [libraryFile, "cua_node_runtime.node", platform === "win32" ? "cua.exe" : "cua"] };
+  const files = [libraryFile, "cua_node_runtime.node", platform === "win32" ? "cua.exe" : "cua"];
+  if (platform === "linux") files.push(`cua-spacesd-linux-${spacesdArch[arch] ?? arch}`);
+  return { libraryFile, files };
 }
 
 /** @type {import("electron-builder").Configuration} */
@@ -154,7 +163,7 @@ module.exports = {
   ],
   // Every package carries its native layer: without it the app cannot start.
   afterPack: async (context) => {
-    const { libraryFile, files } = nativeLayout(context.electronPlatformName);
+    const { libraryFile, files } = nativeLayout(context.electronPlatformName, context.arch);
     const resources =
       context.electronPlatformName === "darwin"
         ? path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`, "Contents", "Resources")

@@ -133,6 +133,9 @@ impl DesktopServiceProvider {
         let leases = Arc::new(InputLeases::default());
         let media = MediaRuntime::new(backend.media_providers(), leases.clone());
         let presence = PresenceHub::new();
+        // Binds the flusher to this runtime (an agent cursor arriving from a
+        // driver thread restarts it here); with nobody present it stops at
+        // once, so an idle Space runs no cursor timer.
         presence.spawn_flusher();
         // Root token rotated by SystemService.Init: close media sockets 4401.
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
@@ -144,20 +147,33 @@ impl DesktopServiceProvider {
                 }
             });
         }
-        Self {
-            state: Arc::new(DesktopState {
-                backend,
-                media,
-                presence,
-                ctx,
-                leases,
-                screenshots: Mutex::new(VecDeque::new()),
-                a11y: Mutex::new(HashMap::new()),
-                quic: Mutex::new(None),
-                activity: cua_spacesd_session::input_activity::global().clone(),
-                prober: Mutex::new(None),
-            }),
+        let state = Arc::new(DesktopState {
+            backend,
+            media,
+            presence,
+            ctx,
+            leases,
+            screenshots: Mutex::new(VecDeque::new()),
+            a11y: Mutex::new(HashMap::new()),
+            quic: Mutex::new(None),
+            activity: cua_spacesd_session::input_activity::global().clone(),
+            prober: Mutex::new(None),
+        });
+        // The guest became a new machine: the QUIC media listener's key was
+        // generated at start, so a memory snapshot shares it with every
+        // clone. New connections get a new certificate (OpenMedia
+        // advertises its pin).
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            let mut renewals = state.ctx.machine_renewals();
+            let weak = Arc::downgrade(&state);
+            handle.spawn(async move {
+                while renewals.changed().await.is_ok() {
+                    let Some(state) = weak.upgrade() else { return };
+                    renew_quic_identity(&state);
+                }
+            });
         }
+        Self { state }
     }
 
     /// Compute presence cursor shapes with `backend` (the platform's on a
@@ -709,6 +725,27 @@ pub(crate) fn timestamp(time: std::time::SystemTime) -> cua_proto::wkt::Timestam
     cua_proto::wkt::Timestamp {
         seconds: since.as_secs() as i64,
         nanos: since.subsec_nanos() as i32,
+    }
+}
+
+/// Gives the QUIC media listener, if running, a new certificate.
+pub(crate) fn renew_quic_identity(state: &DesktopState) {
+    let mut quic = state.quic.lock().unwrap();
+    let Some(current) = quic.as_ref() else {
+        return;
+    };
+    match current.renew_identity() {
+        Ok(renewed) => {
+            tracing::info!(target: "cua_spacesd_client::media_quic", certificate_sha256 = %renewed.certificate_sha256, "QUIC media certificate renewed (new machine)");
+            *quic = Some(renewed);
+        }
+        Err(error) => {
+            // Refuse QUIC rather than serve the shared key: OpenMedia
+            // falls back to the WebSocket.
+            tracing::warn!(target: "cua_spacesd_client::media_quic", %error, "could not renew the QUIC media certificate; QUIC media disabled");
+            current.close();
+            *quic = None;
+        }
     }
 }
 

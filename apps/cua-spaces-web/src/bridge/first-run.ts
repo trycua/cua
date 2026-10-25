@@ -2,23 +2,31 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * The first run every host shows (0.10.0): connect your agent, then "Your
- * agent can use this Mac". The words, the rows, when Done is on and the
- * to-do list on Home are the app core's (`firstRun.view`, `firstRun.todos`,
- * `cua-spaces-app-core/src/first_run.rs`); this module gathers what the
- * core reads (the agent setup, `host.status`, the sign-in, the extra
- * Space's create) and runs the buttons.
+ * The first run every host shows: Welcome, Pick your agent, Connect your
+ * other devices (an optional sign-in), Share this Mac's screen (a signed-in
+ * Mac that shares its screen: Screen Recording and Accessibility, each with
+ * Allow, which `host.openSettings` turns into the app's guide to the pane),
+ * then Try it in your agent. The words,
+ * the agents' order, which button does what and the to-do list on Home are
+ * the app core's (`firstRun.view`, `firstRun.todos`,
+ * `cua-spaces-app-core/src/first_run.rs`); this module gathers what the core
+ * reads (the agent setup, `host.status`, the sign-in, the first Space's
+ * create) and runs the buttons.
+ *
+ * Nothing starts or connects by itself: each agent is connected by its own
+ * Connect (`agents.configure` for that one agent), the sign-in only on "Sign
+ * in to connect", and the first Space only on a click. The agents' own
+ * sign-ins (`agents.signIn` starts `codex login` on this computer) and the
+ * provider keys (`agentKeys.list`) stay on this computer, and the page says so.
  *
  * What is real and what isn't (see `first_run.rs` for the detail):
  * - "Cua is in the agent's settings": `agents.setup`'s `configured`. Real.
- * - "The open session reloaded": no process check exists yet, so the row
- *   only says to restart the agent if it was open, until the agent uses Cua.
  * - "The agent used Cua": a connection in this computer's access log
- *   (`host.status` `recentAccess`) since the setup screen opened. Partly
+ *   (`host.status` `recentAccess`) since the try screen opened. Partly
  *   real: only some calls are logged, and an agent names itself.
- * - This computer: `host.status` and the sign-in. Real.
+ * - This computer in the account: `host.status` and the sign-in. Real.
  *
- * The extra Space's create runs in the host (the store's create), so it
+ * The first Space's create runs in the host (the store's create), so it
  * keeps going when the window closes; the host also posts a system
  * notification when it is ready (`notifyWhenReady`).
  */
@@ -28,12 +36,16 @@ import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore 
 import { BridgeContext } from "./BridgeProvider";
 import type { CoreClient } from "./core";
 import type { AgentSetupRow } from "./contracts/agents";
-import type { HostStatus } from "./contracts/host";
+import type { HostStatus, SignInFailure } from "./contracts/host";
 import type {
+  CliInstallPlan,
   FirstRunAgent,
+  FirstRunCli,
+  FirstRunCliView,
   FirstRunExtra,
   FirstRunInput,
   FirstRunOffer,
+  FirstRunPermissionsView,
   FirstRunPlan,
   FirstRunStep,
   FirstRunTodos,
@@ -45,10 +57,32 @@ import { useFirstSpaceOffers } from "./new-space-hooks";
 import { onboardingInitial, onboardingTelemetry, onboardingView, readSavedOnboarding, writeSavedOnboarding } from "./onboarding";
 import type { OnboardingFlowState } from "./contracts/onboarding";
 import { useRelayUsage } from "./relay-usage";
+import { useAgentKeys } from "./agent-keys";
 import { newPendingId } from "./store";
 import { extraName, spokenName } from "./space-names";
+import { runCreateFix } from "./create-retry";
+import type { CreateFix } from "./contracts/spaces";
 
 export { extraName, spokenName };
+
+/** The troubleshooting page (`creating::TROUBLESHOOT_URL`). */
+const TROUBLESHOOT_URL = "https://cua.ai/docs/spaces/guides/troubleshoot#find-your-reason";
+
+/** The card's input without the page-only `fix` (the core's first-run
+ * input has no such field). */
+function withoutFix(extra: FirstRunExtra & { fix?: CreateFix | null }): FirstRunExtra {
+  const { fix: _fix, ...rest } = extra;
+  return rest;
+}
+
+/** The extra Space failed the same way twice: the card shows the core's fix
+ * for that cause (its sentence, and its button as `fix`) instead of a plain
+ * Try again, as the Space's own page does. */
+function withExtraFix(view: FirstRunView, fix: CreateFix | null): FirstRunView {
+  const card = view.setup?.extra;
+  if (!fix || !view.setup || !card || card.phase !== "failed") return view;
+  return { ...view, setup: { ...view.setup, extra: { ...card, note: `${card.note} ${fix.text}`, action: { id: "fix", label: fix.label } } } };
+}
 import { spaceState } from "../lib/spaces";
 
 
@@ -57,6 +91,39 @@ import { spaceState } from "../lib/spaces";
 
 export function firstRunView(core: CoreClient, input: FirstRunInput): FirstRunView {
   return core.tryCall<FirstRunView>("firstRun.view", { input }) ?? fallbackView(input);
+}
+
+/** Install the Cua CLI, as the first run and Settings show it (`firstRun.cli`). */
+export function firstRunCliView(core: CoreClient, input: Pick<FirstRunInput, "cli" | "cliName">): FirstRunCliView | null {
+  return core.tryCall<FirstRunCliView>("firstRun.cli", { input: { ...input } }) ?? null;
+}
+
+/** The CLI is on this computer (`FirstRunCli::present`). */
+export function cliPresent(cli: FirstRunCli | undefined): boolean {
+  return Boolean(cli?.installed || cli?.plan?.upToDate || cli?.plan?.found);
+}
+
+/** The app carries a CLI and none is on this computer (`FirstRunCli::missing`). */
+export function cliMissing(cli: FirstRunCli | undefined): boolean {
+  return !cliPresent(cli) && Boolean(cli?.plan?.source);
+}
+
+/** The screens a run shows (`first_run::steps`): the CLI's only while it
+ * is missing; Share this Mac's screen only on a signed-in Mac that shares
+ * its screen (`first_run::asks_permissions`). */
+export function firstRunSteps(input: FirstRunInput): FirstRunStep[] {
+  const cli = input.step === "cli" || Boolean(input.cli?.installed) || cliMissing(input.cli);
+  const asks = input.hostOs === "macos" && input.signedIn && input.host?.shareDesktop !== false;
+  return ["welcome", "connect", ...(cli ? ["cli" as const] : []), "devices", ...(asks ? ["permissions" as const] : []), "setup"];
+}
+
+/** The two permissions a shared screen needs (`firstRun.permissions`): the
+ * first run's screen and Settings' group say the same. */
+export function firstRunPermissions(core: CoreClient, input: FirstRunInput): FirstRunPermissionsView {
+  return (
+    core.tryCall<FirstRunPermissionsView>("firstRun.permissions", { input }) ??
+    fallbackView({ ...input, step: "permissions", hostOs: "macos", signedIn: true }).permissions!
+  );
 }
 
 export function firstRunTodos(core: CoreClient, input: FirstRunInput): FirstRunTodos | null {
@@ -78,58 +145,146 @@ export function clockTime(ms: number): string {
   return new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
-/** Without the core: the two screens in their plainest state. Not the
+/** The order the core leads with (`first_run::PREFERENCE`). */
+const PREFERENCE = ["hermes", "claude-code", "codex", "cursor", "openclaw"];
+const rank = (id: string) => {
+  const i = PREFERENCE.indexOf(id);
+  return i < 0 ? PREFERENCE.length : i;
+};
+
+/** Without the core: the screens in their plainest state. Not the
  * product's behaviour; the demo and tests without wasm use it. */
 function fallbackView(input: FirstRunInput): FirstRunView {
-  const name = input.agents?.find((a) => a.agent === input.agent)?.name ?? "Claude Code";
   const place = input.hostOs === "macos" ? "this Mac" : input.hostOs === "windows" ? "this PC" : "this computer";
-  const art = { agent: input.agent ?? "claude-code", computer: "on" as const, extra: "outline" as const };
-  if (input.step === "connect") {
-    return {
-      step: "connect",
-      later: "Skip for now",
-      connect: {
-        title: "A shared Space for every agent.",
-        accent: "agent",
-        lede: `Connect your agents and give them computers to work on: macOS, Linux or Windows, right here on ${place}.`,
-        primary: { id: "connect", label: `Connect ${name}` },
-        agent: { agent: input.agent ?? "claude-code", name, installed: true },
-        note: `Your agent will use ${place}.`,
-        noteMore: "You can add a separate Space later.",
-        orLabel: "Or",
-        others: [],
-        otherLabel: "Other",
-        busy: input.connecting ? `Adding Cua to ${name}…` : null,
-        error: input.connectError,
-      },
-      setup: null,
-      art: { ...art, extra: "none" },
-      dots: 2,
-      current: 0,
-    };
-  }
-  const ok = input.signedIn && Boolean(input.host?.configured);
-  return {
-    step: "setup",
+  const Place = `${place[0]!.toUpperCase()}${place.slice(1)}`;
+  const found = (input.agents ?? []).filter((a) => a.installed || a.configured).sort((a, b) => rank(a.agent) - rank(b.agent));
+  const connected = found.filter((a) => a.configured || (input.picked ?? []).includes(a.agent));
+  const lead = connected[0] ?? null;
+  const steps = firstRunSteps(input);
+  // The permissions screen of a Mac that no longer asks shows Try it instead.
+  const step: FirstRunStep = steps.includes(input.step) ? input.step : "setup";
+  const at = Math.max(steps.indexOf(step), 0);
+  const base: FirstRunView = {
+    step,
     later: "Skip for now",
+    welcome: null,
     connect: null,
-    setup: {
-      title: ok ? `Your agent can use ${place}.` : "Checking your setup.",
-      rows: [
-        { id: "agent", state: "ok", title: `${name} can use Cua`, note: `We added Cua to ${name}'s settings.`, action: null, settingsUrl: null },
-        ok
-          ? { id: "computer", state: "ok", title: `${place[0]!.toUpperCase()}${place.slice(1)} is your first Space`, note: "Ready now. Your agent can see the screen, click and type.", action: null, settingsUrl: null }
-          : { id: "computer", state: "fix", title: "Sign in to Cua", note: `So your agent can find ${place} and your other computers.`, action: { id: "sign-in", label: "Sign in" }, settingsUrl: null },
-      ],
-      prompt: { heading: `Try this in ${name}`, text: "List my computers and tell me what's on this Mac", note: `This works now, on ${place}.`, copy: "Copy" },
-      extra: { phase: "not-now", title: "No extra Space for now", tag: null, note: "Add one from Home whenever you like.", choices: [], action: { id: "add", label: "Add a Space" }, fraction: null, footnote: null },
-      upsell: null,
-      primary: ok ? { id: "done", label: "Done", enabled: true, note: null } : { id: "finish-later", label: "Finish later", enabled: true, note: "We'll keep a to-do list on Home." },
-    },
-    art,
-    dots: 2,
-    current: 1,
+    devices: null,
+    permissions: null,
+    setup: null,
+    cli: null,
+    art: { agent: lead?.agent ?? found[0]?.agent ?? "other", computer: "on", extra: step === "welcome" ? "none" : "outline" },
+    steps,
+    dots: steps.length,
+    current: at,
   };
+  switch (step) {
+    case "cli": {
+      const name = input.cliName ?? "cua";
+      const present = cliPresent(input.cli);
+      const plan = input.cli?.plan ?? null;
+      return {
+        ...base,
+        cli: {
+          title: present ? "Cua is ready in Terminal." : "Use Cua from the Terminal.",
+          lede: `Type ${name} in Terminal to make and use Spaces, for you and your agents.`,
+          name,
+          facts: plan ? [{ label: present ? "Installed at" : "Installs", value: input.cli?.installed ?? plan.target }] : [],
+          status: present ? "Installed." : "Not installed.",
+          installed: present,
+          busy: Boolean(input.cli?.installing),
+          tryCommand: present ? `${name} spaces ls` : null,
+          error: input.cli?.error ? `Couldn't install it: ${input.cli.error}` : null,
+          primary: present || !plan?.source ? { id: "continue", label: "Continue" } : { id: "install", label: "Install" },
+          secondary: present || !plan?.source ? null : { id: "not-now", label: "Not now" },
+        },
+      };
+    }
+    case "welcome":
+      return { ...base, welcome: { title: "Your computers, shared by your team and its agents.", lede: `Run agents in Spaces on ${place}, or on any computer your team connects.`, primary: { id: "start", label: "Get started" } } };
+    case "connect":
+      return {
+        ...base,
+        connect: {
+          title: "Pick your agent.",
+          lede: `Found on ${place}. You can add more later.`,
+          agents: found.map((a) => {
+            const on = connected.includes(a);
+            return { agent: a.agent, name: a.name, file: a.mcpConfig ?? null, connected: on, action: on ? null : { id: "connect", label: "Connect" }, note: on ? "Connected" : null };
+          }),
+          alternatives: [],
+          credentials: [],
+          credentialsNote: `They stay on ${place}.`,
+          primary: { id: "continue", label: "Continue" },
+          secondary: connected.length ? null : { id: "skip", label: "Skip" },
+          error: input.connectError,
+        },
+      };
+    case "devices":
+      return {
+        ...base,
+        devices: {
+          title: input.signedIn ? `${Place} is in your account.` : "Connect your other devices.",
+          lede: `Sign in once, and your other computers reach ${place}'s Spaces.`,
+          rows: [
+            { title: "Your other computers", note: `They join ${place}'s pool` },
+            { title: "Your cloud", note: "Hetzner, AWS, Google Cloud or Modal" },
+          ],
+          status: null,
+          primary: input.signedIn ? { id: "continue", label: "Continue" } : { id: "sign-in", label: "Sign in to connect" },
+          secondary: input.signedIn ? null : { id: "not-now", label: "Not now" },
+          note: input.signedIn ? null : `${Place} works without it.`,
+        },
+      };
+    case "permissions": {
+      const host = input.host;
+      const known = host?.configured && !input.hostSettingUp ? host : null;
+      const rows = (
+        [
+          ["screen-recording", `See ${place}'s screen`, "So your team and agents can see what's on it.", "Privacy_ScreenCapture"],
+          ["accessibility", "Use the mouse and keyboard", `So they can click and type on ${place}.`, "Privacy_Accessibility"],
+        ] as const
+      ).map(([id, title, note, pane]) => {
+        const missing = known?.permissions.find((p) => p.id === id && !p.granted);
+        if (!known) return { id, state: "checking" as const, title, note: `Adding ${place} to your account first…`, action: null, settingsUrl: null };
+        if (!missing) return { id, state: "ok" as const, title, note: "Allowed", action: null, settingsUrl: null };
+        return { id, state: "fix" as const, title, note, action: { id: "allow", label: "Allow" }, settingsUrl: missing.settingsUrl ?? `x-apple.systempreferences:com.apple.preference.security?${pane}` };
+      });
+      const all = rows.every((r) => r.state === "ok");
+      return {
+        ...base,
+        permissions: {
+          title: `Share ${place}'s screen.`,
+          lede: `To let your team and agents see and use ${place}, allow two permissions.`,
+          rows,
+          note: `Allow opens System Settings and shows you where to turn on ${host?.appName || "Cua Spaces"}.`,
+          primary: all ? { id: "continue", label: "Continue" } : null,
+          secondary: all ? null : { id: "not-now", label: "Not now" },
+        },
+      };
+    }
+    case "setup":
+      return {
+        ...base,
+        setup: lead
+          ? {
+              title: `Try it in ${lead.name}.`,
+              lede: `Paste this. ${lead.name} makes the Space itself.`,
+              prompt: { heading: `Paste this in ${lead.name}`, text: `Make a Linux Space on ${place} and stream the desktop in a new window.`, note: `It runs on ${place}.`, copy: "Copy" },
+              status: { id: "agent", state: input.agentUsedAt ? "ok" : "checking", title: input.agentUsedAt ? `${lead.name} used Cua at ${input.agentUsedAt}.` : `Waiting for ${lead.name}…`, note: "", action: null, settingsUrl: null },
+              extra: null,
+              primary: { id: "done", label: "Done", enabled: true, note: null },
+            }
+          : {
+              title: "Try a first Space.",
+              lede: `Spaces run on ${place}, away from your files and your mouse.`,
+              prompt: null,
+              status: null,
+              extra: { phase: "not-now", title: "No Space for now", tag: null, note: "Add one from Home whenever you like.", choices: [], action: { id: "add", label: "Add a Space" }, fraction: null, footnote: null },
+              primary: { id: "done", label: "Done", enabled: true, note: null },
+            },
+      };
+  }
 }
 
 /* ---- What the page keeps between launches ----------------------------------------- */
@@ -138,18 +293,20 @@ function fallbackView(input: FirstRunInput): FirstRunView {
  * to-do list after Finish later). */
 export interface FirstRunSaved {
   step: FirstRunStep;
-  /** The agent connected (setup id). */
+  /** An older saved run's one connected agent (setup id). */
   agent: string | null;
-  /** When the setup screen first showed (the access log counts from here). */
+  /** The agents connected on Pick your agent. */
+  picked: string[] | null;
+  /** When the try screen first showed (the access log counts from here). */
   setupStartedMs: number | null;
   /** When the agent was first seen using Cua. */
   usedAtMs: number | null;
-  /** The extra Space's create (its pending row id). */
+  /** The first Space's create (its pending row id). */
   extraPendingId: string | null;
   extraOs: string | null;
-  /** "Not now" on the extra Space card. */
+  /** "Not now" on the first Space card. */
   extraNotNow: boolean;
-  /** Finish later: Home shows the to-do list until it is done or closed. */
+  /** Skip for now: the sidebar offers the first run again. */
   finishedLater: boolean;
   /** The to-do list was closed. */
   todosClosed: boolean;
@@ -157,8 +314,9 @@ export interface FirstRunSaved {
 
 const KEY = "cua-spaces:first-run";
 const EMPTY: FirstRunSaved = {
-  step: "connect",
+  step: "welcome",
   agent: null,
+  picked: null,
   setupStartedMs: null,
   usedAtMs: null,
   extraPendingId: null,
@@ -167,7 +325,7 @@ const EMPTY: FirstRunSaved = {
   finishedLater: false,
   todosClosed: false,
 };
-/** "Not now" on the plan card: never again. */
+/** "Not now" on the plan card: never again (no plan shows in the first run now). */
 export const UPSELL_DISMISSED_KEY = "cua.upsell.dismissed.onboarding";
 /** The user entered teammates' emails (a share with other people). */
 export const TEAMMATES_KEY = "cua.firstRun.teammates";
@@ -252,11 +410,11 @@ function track(send: () => void): void {
 
 /* ---- The hook ---------------------------------------------------------------------- */
 
-/** How often the setup screen reads the agent setup and this computer. */
+/** How often the first run reads the agent setup and this computer. */
 export const FIRST_RUN_POLL_MS = 2_500;
 
-/** The usage-data note and switch on the first page: the words are the app core's
- * (the old Welcome's), on by default, off with one tap. */
+/** The usage-data note and switch on Pick your agent: the words are the app
+ * core's (the old Welcome's), on by default, off with one tap. */
 export interface FirstRunUsage {
   notice: string;
   linkLabel: string;
@@ -267,32 +425,140 @@ export interface FirstRunUsage {
   help: string | null;
 }
 
+/** The usage data's name for each screen (`schema::FIRST_RUN_STEPS`). */
+export const FUNNEL_STEP: Record<FirstRunStep, string> = {
+  welcome: "welcome",
+  connect: "connect_agent",
+  cli: "terminal",
+  devices: "sign_in",
+  permissions: "permissions",
+  setup: "create_space",
+};
+
+/** When "Skip for now" was last pressed (the page may mount again as it leaves, under a second later). */
+let leftAtMs = 0;
+
+/** A sign-in's failure as the funnel's reason (`sign_in::error_kind`). */
+const SIGN_IN_REASON: Record<SignInFailure, string> = {
+  notConfirmed: "timeout",
+  declined: "permission_denied",
+  codeRejected: "unauthenticated",
+  offline: "transport",
+  serviceUnavailable: "http",
+  couldNotSave: "internal",
+  unknown: "other",
+};
+
+const STEPS: FirstRunStep[] = ["welcome", "connect", "cli", "devices", "permissions", "setup"];
+
 export interface FirstRunHook {
   view: FirstRunView;
-  /** The usage-data note and switch (first page only; none until the host says what the setting is). */
+  /** The usage-data note and switch (Pick your agent only; none until the host says what the setting is). */
   usage: FirstRunUsage | null;
   setUsage(on: boolean): Promise<void>;
   /** "What is collected". */
   openUsageLink(): void;
   input: FirstRunInput;
   saved: FirstRunSaved;
-  /** Every agent the setup knows (for "Other"). */
+  /** Every agent the setup knows. */
   agents: AgentSetupRow[];
-  connect(agent?: string): Promise<void>;
-  /** A row's or a to-do's button (`sign-in`, `set-up`, `open-settings`, `restart-check`, `connect`). */
+  /** Pick your agent: adds Cua to this one agent's settings on this computer. */
+  connect(agent: string): Promise<void>;
+  /** Starts an agent's own sign-in on this computer (`codex login`). */
+  signIn(agent: string): Promise<void>;
+  /** A screen's button: `start`, `continue`, `skip`, `not-now` (next screen), `install` (the CLI), `sign-in`, `set-up`, `open-settings`, `allow` (the app's guide to that System Settings pane), `copy`, `add`. */
   act(id: string, settingsUrl?: string | null): Promise<void>;
-  copyPrompt(): Promise<void>;
-  /** The extra Space card: `macos`/`linux` start it; `cancel`, `not-now`, `add`, `retry`. */
+  /** Copies `text` (the tab shown), else the selected request. */
+  copyPrompt(text?: string): Promise<void>;
+  /** Opens a page in the browser (installing an agent). */
+  openUrl(url: string): Promise<void>;
+  /** The first Space card: `macos`/`linux` start it; `cancel`, `not-now`, `add`, `retry`, `fix`. */
   extra(id: string): Promise<void>;
-  upsell(action: "shown" | "click" | "dismiss"): void;
-  /** Done or Finish later. */
+  /** Done. */
   finish(): Promise<void>;
-  /** "Set up later": leave for now (the sidebar offers it again). */
+  /** "Skip for now": leave for now (the sidebar offers it again). */
   later(): void;
+  /** The screen before. */
   back(): void;
 }
 
-/** Live readings while `active` (the first run, or Home's to-do list). */
+/** The first run's input with nothing read yet. */
+const NO_INPUT: FirstRunInput = {
+  step: "welcome",
+  hostOs: "macos",
+  agents: null,
+  agent: null,
+  picked: null,
+  keys: null,
+  agentSigningIn: null,
+  agentSignInError: null,
+  connecting: false,
+  connectError: null,
+  agentOpenBeforeSetup: null,
+  agentUsedAt: null,
+  signedIn: false,
+  signingIn: false,
+  host: null,
+  hostSettingUp: false,
+  offers: [],
+  extra: { phase: "none" },
+  plan: null,
+};
+
+export interface ScreenPermissions {
+  view: FirstRunPermissionsView;
+  /** A row's Allow: the app's guide to that System Settings pane. */
+  allow(settingsUrl: string): Promise<void>;
+}
+
+/** Settings' "Permissions": the first run's two rows, live, on a Mac that
+ * is set up and shares its screen (null anywhere else). */
+export function useScreenPermissions(active = true, pollMs = FIRST_RUN_POLL_MS): ScreenPermissions | null {
+  const ctx = useContext(BridgeContext);
+  if (!ctx) throw new Error("bridge hooks need a <BridgeProvider> above them");
+  const { core, adapter } = ctx;
+  const [host, setHost] = useState<HostStatus | null>(null);
+  useEffect(() => {
+    if (!active || !adapter || hostOs() !== "macos") return;
+    let live = true;
+    const read = () =>
+      void adapter
+        .call("host.status", {})
+        .then((h) => live && setHost(h))
+        .catch(() => {});
+    read();
+    const timer = setInterval(read, pollMs);
+    window.addEventListener("focus", read);
+    return () => {
+      live = false;
+      clearInterval(timer);
+      window.removeEventListener("focus", read);
+    };
+  }, [active, adapter, pollMs]);
+  if (hostOs() !== "macos" || !adapter || !host?.configured || host.shareDesktop === false) return null;
+  const input: FirstRunInput = {
+    ...NO_INPUT,
+    step: "permissions",
+    signedIn: true,
+    host: {
+      configured: true,
+      running: Boolean(host.service?.running),
+      online: host.online ?? null,
+      permissions: host.permissions.map((p) => ({ id: p.id, granted: Boolean(p.granted), settingsUrl: p.settingsUrl ?? null })),
+      error: host.error ?? null,
+      shareDesktop: host.shareDesktop ?? null,
+      appName: host.appName ?? null,
+    },
+  };
+  return {
+    view: firstRunPermissions(core, input),
+    allow: async (settingsUrl) => {
+      await adapter.call("host.openSettings", { url: settingsUrl });
+    },
+  };
+}
+
+/** Live readings while `active` (the first run, or what reads its state). */
 export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRunHook {
   const ctx = useContext(BridgeContext);
   if (!ctx) throw new Error("bridge hooks need a <BridgeProvider> above them");
@@ -306,62 +572,65 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
   const flags = useSyncExternalStore(subscribe, () => `${flag(UPSELL_DISMISSED_KEY)}:${flag(TEAMMATES_KEY)}`, () => "false:false");
   const [agents, setAgents] = useState<AgentSetupRow[] | null>(null);
   const [host, setHost] = useState<HostStatus | null>(null);
-  const [connecting, setConnecting] = useState(false);
+  const [connecting, setConnecting] = useState<string | null>(null);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [settingUp, setSettingUp] = useState(false);
   const [setupError, setSetupError] = useState<string | null>(null);
+  const [signingAgent, setSigningAgent] = useState<string | null>(null);
+  const [signInError, setSignInError] = useState<string | null>(null);
+  const signingRef = useRef(signingAgent);
+  signingRef.current = signingAgent;
+  // The provider keys saved here (none until read, or where the app can't read them).
+  const agentKeys = useAgentKeys();
+  const keysInput = agentKeys.unsupported || agentKeys.isLoading ? null : agentKeys.input;
   const [tick, setTick] = useState(0);
   const shownRef = useRef(false);
-  const agentsRef = useRef(agents);
-  agentsRef.current = agents;
+  // The app's bundled CLI: its install plan (read once a run shows), and Install's progress.
+  const cli = useCliInstall(active);
 
   const signedIn = Boolean(session.data?.signedIn);
   const signingIn = session.data?.signIn.kind === "starting" || session.data?.signIn.kind === "waiting";
+  // An older saved run may say any step; an unknown one starts over.
+  const step: FirstRunStep = STEPS.includes(s.step) ? s.step : "welcome";
 
   // The agent setup and this computer, now and every few seconds.
   useEffect(() => {
     if (!active || !adapter) return;
     let live = true;
     let n = 0;
-    const read = () => {
-      // The agent setup runs a command on the host: once connected, it's read now and then.
-      const connected = agentsRef.current?.some((a) => a.agent === (readFirstRun().agent ?? "") && a.configured);
-      if (!connected || n++ % 6 === 0) {
+    const read = (forceAgents = false) => {
+      // The agent setup runs a command on the host: read every time on Pick
+      // your agent (and while an agent's own sign-in waits), now and then after.
+      if (forceAgents || signingRef.current || step === "connect" || n++ % 6 === 0) {
         void adapter
           .call("agents.setup", {})
           .then((rows) => live && setAgents(rows))
           .catch(() => live && setAgents((a) => a ?? []));
       }
-      if (s.step === "setup" || s.finishedLater) {
+      if (step === "devices" || step === "permissions" || step === "setup" || s.finishedLater) {
         void adapter
           .call("host.status", {})
           .then((h) => live && setHost(h))
           .catch(() => {});
       }
     };
-    read();
-    const timer = setInterval(read, pollMs);
+    read(true);
+    const focus = () => read(true);
+    window.addEventListener("focus", focus);
+    const timer = setInterval(() => read(), pollMs);
     return () => {
       live = false;
       clearInterval(timer);
+      window.removeEventListener("focus", focus);
     };
-  }, [active, adapter, s.step, s.finishedLater, tick, pollMs]);
+  }, [active, adapter, step, s.finishedLater, tick, pollMs]);
 
   const rows: FirstRunAgent[] | null = agents
-    ? agents.map((a) => ({ agent: a.agent, name: a.name, installed: a.installed, configured: a.configured }))
+    ? agents.map((a) => ({ agent: a.agent, name: a.name, installed: a.installed, configured: a.configured, signIn: a.signIn ?? null, signedIn: Boolean(a.signedIn), mcpConfig: a.mcpConfig ?? null }))
     : null;
-  const lead = core.tryCall<string>("firstRun.leadAgent", { agents: rows ?? [] }) ?? rows?.find((a) => a.installed)?.agent ?? "claude-code";
-  const agentId = s.agent ?? lead;
-  const agentName = rows?.find((a) => a.agent === agentId)?.name ?? null;
-
-  // The first time the agent uses Cua since the setup screen opened.
-  const usedMs = s.usedAtMs ?? (s.setupStartedMs && agentName ? agentUsedMs(core, host, s.setupStartedMs, agentName) : null);
-  useEffect(() => {
-    if (usedMs && !s.usedAtMs) writeFirstRun({ usedAtMs: usedMs });
-  }, [usedMs, s.usedAtMs]);
 
   // The extra Space, as the Spaces list shows its create.
-  const extra = useMemo<FirstRunExtra>(() => {
+  const extra = useMemo<FirstRunExtra & { fix?: CreateFix | null }>(() => {
     if (s.extraPendingId) {
       const id = store?.createdId(s.extraPendingId) ?? null;
       const row = spaces.data?.find((x) => x.id === (id ?? s.extraPendingId));
@@ -376,7 +645,7 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
             fraction: row.progress ? row.progress.permille / 1000 : null,
           };
         }
-        if (state === "failed") return { phase: "failed", name: spokenName(row.name), os: row.os, error: row.progress?.error ?? null };
+        if (state === "failed") return { phase: "failed", name: spokenName(row.name), os: row.os, error: row.progress?.error ?? null, fix: row.progress?.fix ?? null };
         return { phase: "ready", name: spokenName(row.name), os: row.os };
       }
       // Asked for, not listed yet.
@@ -399,16 +668,21 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
       }
     : null;
 
-  const input: FirstRunInput = {
-    step: s.step,
+  const baseInput: FirstRunInput = {
+    step,
     hostOs: hostOs(),
     agents: rows,
-    agent: agentId,
-    connecting,
+    agent: s.agent,
+    picked: s.picked,
+    keys: keysInput,
+    agentSigningIn: signingAgent,
+    agentSignInError: signInError,
+    connecting: connecting !== null,
+    connectingAgent: connecting,
     connectError,
     // No process check yet (see the module comment).
     agentOpenBeforeSetup: null,
-    agentUsedAt: usedMs ? clockTime(usedMs) : null,
+    agentUsedAt: null,
     signedIn,
     signingIn,
     host: host
@@ -418,20 +692,42 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
           online: host.online ?? null,
           permissions: host.permissions.map((p) => ({ id: p.id, granted: Boolean(p.granted), settingsUrl: p.settingsUrl ?? null })),
           error: setupError ?? host.error ?? null,
+          shareDesktop: host.shareDesktop ?? null,
+          appName: host.appName ?? null,
         }
       : null,
     hostSettingUp: settingUp,
     offers,
-    extra,
+    extra: withoutFix(extra),
     plan,
+    cli: cli.state,
+    cliName: settings.data?.cli?.name ?? null,
   };
-  const view = firstRunView(core, input);
+
+  // The lead connected agent (the core's order), for the try screen's access log.
+  const leadName = (() => {
+    const v = firstRunView(core, { ...baseInput, step: "setup" });
+    const t = v.setup?.prompt ? v.setup.title.replace(/^Try it in /, "").replace(/\.$/, "") : null;
+    return t;
+  })();
+  // The first time the lead agent uses Cua since the try screen opened.
+  const usedMs = s.usedAtMs ?? (s.setupStartedMs && leadName ? agentUsedMs(core, host, s.setupStartedMs, leadName) : null);
+  useEffect(() => {
+    if (usedMs && !s.usedAtMs) writeFirstRun({ usedAtMs: usedMs });
+  }, [usedMs, s.usedAtMs]);
+  // An agent's own sign-in finished (its file is there): stop waiting.
+  useEffect(() => {
+    if (signingAgent && agents?.some((a) => a.agent === signingAgent && a.signedIn)) setSigningAgent(null);
+  }, [signingAgent, agents]);
+
+  const input: FirstRunInput = { ...baseInput, agentUsedAt: usedMs ? clockTime(usedMs) : null };
+  const view = withExtraFix(firstRunView(core, input), extra.fix ?? null);
 
   const welcome = settings.data?.telemetry
     ? onboardingView(core, { ...onboardingInitial(core, null), step: "welcome", telemetry: onboardingTelemetry(settings.data.telemetry) })
     : null;
   const usageNote: FirstRunUsage | null =
-    s.step === "connect" && welcome?.usage && welcome.notice && welcome.noticeLinkLabel && welcome.noticeLinkUrl
+    step === "connect" && welcome?.usage && welcome.notice && welcome.noticeLinkLabel && welcome.noticeLinkUrl
       ? {
           notice: welcome.notice,
           linkLabel: welcome.noticeLinkLabel,
@@ -451,15 +747,58 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
     track(() => store.trackOnboarding({ ...onboardingInitial(core, null), telemetry: onboardingTelemetry(t) }, { type: "start" }));
   }, [active, store, settings.data?.telemetry]);
 
-  // The funnel's events, in the old flow's shape: started on step 1, left on step 2.
+  // The funnel's events, in the old flow's shape: started on the first two screens, left on the last two.
   const telemetryState = (): OnboardingFlowState => ({
     ...onboardingInitial(core, session.data?.identity ?? null),
-    step: s.step === "connect" ? "welcome" : "agents",
+    step: step === "welcome" || step === "connect" ? "welcome" : "agents",
     runCounted: true,
     telemetry: settings.data?.telemetry ? onboardingTelemetry(settings.data.telemetry) : null,
   });
 
   const refresh = () => setTick((n) => n + 1);
+
+  const go = (next: FirstRunStep) => {
+    writeFirstRun(next === "setup" ? { step: next, setupStartedMs: readFirstRun().setupStartedMs ?? Date.now() } : { step: next });
+  };
+  // The screens this run shows (the core's): the CLI's only while it is missing.
+  const shown = view.steps?.length ? view.steps : firstRunSteps(input);
+  const at = Math.max(shown.indexOf(view.step), 0);
+  const funnel = (action: string, detail = "none", of: FirstRunStep = view.step) => {
+    if (active && store) track(() => store.trackFirstRunStep(FUNNEL_STEP[of], action, detail));
+  };
+  const forward = (how: "completed" | "skipped" = "completed") => {
+    if (how === "completed") funnel("step_completed");
+    else funnel("step_skipped", "step");
+    go(shown[Math.min(at + 1, shown.length - 1)]!);
+  };
+
+  // Each screen is counted when it shows (once per arrival).
+  useEffect(() => {
+    // Leaving with "Skip for now" can mount the page again as it goes, within a second or two: not a view.
+    if (Date.now() - leftAtMs < 2_000) return;
+    if (active && store) track(() => store.trackFirstRunStep(FUNNEL_STEP[view.step], "step_viewed"));
+  }, [active, store, view.step]);
+
+  // A screen's failure is counted once each time it appears.
+  const signInPhase = session.data?.signIn;
+  const on = view.step;
+  const failure: { step: FirstRunStep; reason: string } | null =
+    on === "devices" && signInPhase?.kind === "failed"
+      ? { step: on, reason: SIGN_IN_REASON[signInPhase.reason ?? "unknown"] ?? "other" }
+      : on === "cli" && cli.state.error
+        ? { step: on, reason: "install_failed" }
+        : on === "connect" && (connectError || signInError)
+          ? { step: on, reason: "connect_failed" }
+          : (on === "devices" || on === "permissions" || on === "setup") && setupError
+            ? { step: on, reason: "setup_failed" }
+            : on === "setup" && extra.phase === "failed"
+              ? { step: on, reason: "create_failed" }
+              : null;
+  const failureKey = failure ? `${failure.step}:${failure.reason}` : "";
+  useEffect(() => {
+    if (failure) funnel("step_failed", failure.reason, failure.step);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [failureKey]);
 
   const setUpThisComputer = async () => {
     if (!store || settingUp) return;
@@ -474,57 +813,76 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
     }
   };
 
-  // Signed in on a computer that isn't set up yet: set it up, once.
+  // Signed in on a computer that isn't in the account yet: add it, once.
   const autoSetUp = useRef(false);
   useEffect(() => {
-    if (!active || s.step !== "setup" || !signedIn || !host || host.configured || autoSetUp.current) return;
+    if (!active || (step !== "devices" && step !== "permissions" && step !== "setup") || !signedIn || !host || host.configured || autoSetUp.current) return;
     autoSetUp.current = true;
     void setUpThisComputer();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, s.step, signedIn, host?.configured]);
+  }, [active, step, signedIn, host?.configured]);
 
-  const connect = async (agent?: string) => {
-      const id = agent ?? agentId;
-      if (!adapter || connecting) return;
-      setConnecting(true);
-      setConnectError(null);
-      writeFirstRun({ agent: id });
-      try {
-        const next = await adapter.call("agents.configure", { agents: [id] });
-        setAgents(next);
-        writeFirstRun({ step: "setup", agent: id, setupStartedMs: readFirstRun().setupStartedMs ?? Date.now() });
-      } catch (e) {
-        setConnectError(e instanceof Error ? e.message : String(e));
-      } finally {
-        setConnecting(false);
-      }
+  const connect = async (agent: string) => {
+    if (!adapter || connecting) return;
+    setConnecting(agent);
+    setConnectError(null);
+    try {
+      setAgents(await adapter.call("agents.configure", { agents: [agent] }));
+      const was = readFirstRun().picked ?? [];
+      writeFirstRun({ picked: was.includes(agent) ? was : [...was, agent] });
+    } catch (e) {
+      setConnectError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setConnecting(null);
+    }
   };
 
-  const copyPrompt = async () => {
-    const text = view.setup?.prompt.text ?? firstRunView(core, { ...input, step: "setup" }).setup?.prompt.text ?? "";
+  const signIn = async (agent: string) => {
+    if (!adapter) return;
+    setSignInError(null);
+    setSigningAgent(agent);
+    try {
+      setAgents(await adapter.call("agents.signIn", { agent }));
+    } catch (e) {
+      setSigningAgent(null);
+      setSignInError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const copyPrompt = async (shown?: string) => {
+    const text = shown ?? view.setup?.prompt?.text ?? firstRunView(core, { ...input, step: "setup" }).setup?.prompt?.text ?? "";
     await navigator.clipboard?.writeText(text).catch(() => {});
   };
 
   const extraAct = async (id: string) => {
-      if (id === "macos" || id === "linux") {
-        const offer = offersHook.offers.find((o) => o.os === id);
-        if (!offer || offer.blocked) return;
-        const pendingId = newPendingId();
-        writeFirstRun({ extraPendingId: pendingId, extraOs: id, extraNotNow: false });
-        spaces.createSpace({ ...offer.args, name: extraName(id, spaces.data ?? []), os: offer.os, notifyWhenReady: true }, pendingId).catch(() => {
-          // The row shows the failure; the card reads it from there.
-        });
-      } else if (id === "cancel" && s.extraPendingId) {
-        await spaces.cancelCreate(s.extraPendingId).catch(() => {});
-        writeFirstRun({ extraPendingId: null, extraOs: null });
-      } else if (id === "not-now") {
-        writeFirstRun({ extraNotNow: true });
-      } else if (id === "add") {
-        writeFirstRun({ extraNotNow: false, extraPendingId: null, extraOs: null });
-      } else if (id === "retry" && s.extraPendingId) {
-        const next = spaces.retryCreate(s.extraPendingId);
-        writeFirstRun({ extraPendingId: next ?? null });
-      }
+    if (id === "macos" || id === "linux") {
+      const offer = offersHook.offers.find((o) => o.os === id);
+      if (!offer || offer.blocked) return;
+      const pendingId = newPendingId();
+      writeFirstRun({ extraPendingId: pendingId, extraOs: id, extraNotNow: false });
+      spaces.createSpace({ ...offer.args, name: extraName(id, spaces.data ?? []), os: offer.os, notifyWhenReady: true }, pendingId).catch(() => {
+        // The row shows the failure; the card reads it from there.
+      });
+    } else if (id === "cancel" && s.extraPendingId) {
+      await spaces.cancelCreate(s.extraPendingId).catch(() => {});
+      writeFirstRun({ extraPendingId: null, extraOs: null });
+    } else if (id === "not-now") {
+      funnel("step_skipped", "step");
+      writeFirstRun({ extraNotNow: true });
+    } else if (id === "add") {
+      writeFirstRun({ extraNotNow: false, extraPendingId: null, extraOs: null });
+    } else if (id === "retry" && s.extraPendingId) {
+      const next = spaces.retryCreate(s.extraPendingId);
+      writeFirstRun({ extraPendingId: next ?? null });
+    } else if (id === "fix" && extra.fix) {
+      // It failed the same way twice: that cause's fix (the core's).
+      await runCreateFix(extra.fix, {
+        copy: (text) => navigator.clipboard?.writeText(text),
+        openExternal: (url) => session.openExternal(url),
+        // No review sheet here: the help page says what each reason means.
+        details: () => void session.openExternal(TROUBLESHOOT_URL).catch(() => {}),
+      }).catch(() => {});
+    }
   };
 
   return {
@@ -538,10 +896,23 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
     saved: s,
     agents: agents ?? [],
     connect,
+    signIn,
     copyPrompt,
+    openUrl: (url) => session.openExternal(url).catch(() => {}),
     extra: extraAct,
     async act(id, settingsUrl) {
       switch (id) {
+        case "start":
+        case "continue":
+          forward();
+          break;
+        case "skip":
+        case "not-now":
+          forward("skipped");
+          break;
+        case "install":
+          await cli.install();
+          break;
         case "sign-in":
           await session.signIn().catch(() => {});
           break;
@@ -550,15 +921,14 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
           await setUpThisComputer();
           break;
         case "open-settings":
+        case "allow":
+          // A privacy pane: the Mac app guides it (PermissionFlow).
           if (settingsUrl && adapter) {
             await (settingsUrl.startsWith("x-apple.systempreferences:")
               ? adapter.call("host.openSettings", { url: settingsUrl })
               : session.openExternal(settingsUrl)
             ).catch(() => {});
           }
-          break;
-        case "connect":
-          await connect();
           break;
         case "copy":
           await copyPrompt();
@@ -569,25 +939,16 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
       }
       refresh();
     },
-    upsell(action) {
-      const card = view.setup?.upsell;
-      if (!card) return;
-      try {
-        const signals = core.tryCall<unknown[]>("telemetry.upsell", { surface: "onboarding", action });
-        if (signals?.length && store) void store.telemetry.track(signals);
-      } catch {
-        // An older core without the surface: no event.
-      }
-      if (action === "click") void session.openExternal(card.url).catch(() => {});
-      else if (action === "dismiss") setFlag(UPSELL_DISMISSED_KEY);
-    },
     async finish() {
-      const later = view.setup?.primary.id === "finish-later";
+      // "Not now" on the first Space card already counted that screen as skipped.
+      if (extra.phase !== "not-now") funnel("step_completed");
       if (store) track(() => store.trackOnboardingFinished(telemetryState()));
       await session.completeOnboarding(host?.configured ? "host" : "client");
-      writeFirstRun({ finishedLater: later, todosClosed: false });
+      writeFirstRun({ finishedLater: false, todosClosed: false });
     },
     later() {
+      funnel("step_skipped", "later");
+      leftAtMs = Date.now();
       if (store) track(() => store.trackOnboardingSkipped(telemetryState()));
       store?.cancelSignIn();
       // The shell stops opening it (the sidebar offers it again).
@@ -595,7 +956,57 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
       writeFirstRun({ finishedLater: true });
     },
     back() {
-      writeFirstRun({ step: "connect" });
+      go(shown[Math.max(at - 1, 0)]!);
+    },
+  };
+}
+
+/** The app's bundled CLI and its install (the Command line screen, Settings' row). */
+export interface CliInstallHook {
+  state: FirstRunCli;
+  /** Installs it (adding its folder to PATH only when it is not there), then reads the plan and the settings again. */
+  install(): Promise<void>;
+}
+
+/** Reads the install plan while `active` (a host without one leaves `plan` null). */
+export function useCliInstall(active = true): CliInstallHook {
+  const ctx = useContext(BridgeContext);
+  if (!ctx) throw new Error("bridge hooks need a <BridgeProvider> above them");
+  const { adapter, store } = ctx;
+  const [plan, setPlan] = useState<CliInstallPlan | null>(null);
+  const [installing, setInstalling] = useState(false);
+  const [installed, setInstalled] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!active || !adapter) return;
+    let live = true;
+    adapter
+      .call("cli.plan", {})
+      .then((p) => live && setPlan(p))
+      .catch(() => live && setPlan(null));
+    return () => {
+      live = false;
+    };
+  }, [active, adapter]);
+  return {
+    state: { plan, installing, installed, error },
+    async install() {
+      if (!adapter || installing || !plan?.source) return;
+      setInstalling(true);
+      setError(null);
+      let done: CliInstallPlan;
+      try {
+        done = await adapter.call("cli.install", { modifyPath: !plan.onPath });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+        setInstalling(false);
+        return;
+      }
+      setInstalled(done.target);
+      setPlan(done);
+      setInstalling(false);
+      // The pages' terminal hints follow the host's `settings.cli`.
+      await store?.refresh("settings").catch(() => {});
     },
   };
 }

@@ -698,7 +698,7 @@ describe("webkit adapter", () => {
     const agent = { name: "ada", harness: "claude-code", space: "local:dev", paused: false, spaceState: "running", runId: "r1", savedMs: 0, lastError: null };
     const run = { runId: "r1", agent: "claude-code", status: "running", reason: "", summary: "Fix the tests", createdAt: 1, phase: "thinking", turn: 2 };
     const page = { run_id: "r1", status: "running", phase: "thinking", events: [], cursor: 4, caught_up: true };
-    const row = { agent: "codex", name: "Codex", installed: true, configured: true, detail: "", skillsInstalled: 3, skillsTotal: 3, mcpConfig: null, skillsDir: null };
+    const row = { agent: "codex", name: "Codex", installed: true, configured: true, detail: "", skillsInstalled: 3, skillsTotal: 3, mcpConfig: null, skillsDir: null, signIn: null, signedIn: false };
     const { win, sent } = webkitHost((req) => {
       switch (req.method) {
         case "agents.list":

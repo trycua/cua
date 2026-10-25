@@ -50,6 +50,7 @@ const SANDBOX_ALL: &[&str] = &[
     "sandbox:get",
     "sandbox:view",
     "sandbox:browser",
+    "sandbox:pools",
 ];
 const IMAGES_ALL: &[&str] = &["images:list"];
 const TELEPORT_ALL: &[&str] = &["teleport:browser"];
@@ -67,6 +68,8 @@ const COMPUTER_ALL: &[&str] = &[
     "computer:window",
     "computer:accessibility",
 ];
+const RUNS_ALL: &[&str] = &["runs:run", "runs:read"];
+const SHARE_ALL: &[&str] = &["share:create", "share:read", "share:stop"];
 const SKILLS_ALL: &[&str] = &[
     "skills:list",
     "skills:read",
@@ -76,7 +79,8 @@ const SKILLS_ALL: &[&str] = &[
 
 /// Expands a comma-separated permission list (groups `sandbox:all`,
 /// `sandbox:readonly`, `computer:all`, `computer:readonly`, `skills:all`,
-/// `skills:readonly`, `images:all`, `teleport:all`, `spaces:all`,
+/// `skills:readonly`, `images:all`, `teleport:all`, `runs:all`,
+/// `runs:readonly`, `share:all`, `share:readonly`, `spaces:all`,
 /// `spaces:readonly`, `all`; single `spaces:<tool>`). Empty means all.
 pub fn parse_permissions(s: &str) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
@@ -88,6 +92,8 @@ pub fn parse_permissions(s: &str) -> BTreeSet<String> {
         .chain(SKILLS_ALL)
         .chain(IMAGES_ALL)
         .chain(TELEPORT_ALL)
+        .chain(RUNS_ALL)
+        .chain(SHARE_ALL)
         .copied()
         .collect();
     all.extend(spaces_all.iter().map(String::as_str));
@@ -113,12 +119,19 @@ pub fn parse_permissions(s: &str) -> BTreeSet<String> {
             "sandbox:vnc" => &["sandbox:view"],
             "images:all" | "images:readonly" => IMAGES_ALL,
             "teleport:all" => TELEPORT_ALL,
+            "runs:all" => RUNS_ALL,
+            "runs:readonly" => &["runs:read"],
+            "share:all" => SHARE_ALL,
+            "share:readonly" => &["share:read"],
             one if all.contains(&one) => {
                 out.insert(one.to_string());
                 continue;
             }
             unknown => {
-                eprintln!("cua mcp: unknown permission {unknown:?}");
+                eprintln!(
+                    "{}",
+                    crate::util::hint(&format!("cua mcp: unknown permission {unknown:?}"))
+                );
                 continue;
             }
         };
@@ -155,6 +168,139 @@ const Y: (&str, &str, bool, &str) = ("y", "integer", true, "Y in screenshot pixe
 const WID: (&str, &str, bool, &str) = ("window_id", "string", true, "Window id");
 
 const TOOLS: &[Tool] = &[
+    Tool {
+        name: "space_run",
+        permission: "runs:run",
+        description: "Run a command in new Spaces, `count` times (each in its own Space, deleted afterwards): on this machine by default, or with on=\"auto\" on the least-loaded of the user's machines that provide Spaces (signed in to their account, or added by address), or on one machine by name. Returns the run id at once; read progress and results with space_runs. A run on the user's machines keeps going when this machine sleeps. Each job's result is recorded once, but a job may run more than once when a machine is lost, so make it safe to repeat. For batch work (many browser sessions, tests, renders); for one interactive Space use create_space.",
+        params: &[
+            (
+                "command",
+                "array",
+                true,
+                "The command and its arguments (run without a shell; use [\"sh\", \"-c\", \"...\"] for one)",
+            ),
+            (
+                "on",
+                "string",
+                false,
+                "local (default: this machine), auto (the least-loaded of your machines), or a machine's name",
+            ),
+            (
+                "count",
+                "integer",
+                false,
+                "How many times to run it (default 1, at most 10000)",
+            ),
+            (
+                "image",
+                "string",
+                false,
+                "Image of each Space (default: the canonical Linux image)",
+            ),
+            (
+                "kind",
+                "string",
+                false,
+                "container, vm or microvm (default: what the image is)",
+            ),
+            (
+                "runtime",
+                "string",
+                false,
+                "A runtime: gvisor, runc, firecracker, ... (default: auto)",
+            ),
+            (
+                "cpus",
+                "number",
+                false,
+                "CPUs reserved for each (default 1)",
+            ),
+            (
+                "memory_mb",
+                "integer",
+                false,
+                "Memory reserved for each, in MiB (default 1024)",
+            ),
+            (
+                "timeout_secs",
+                "integer",
+                false,
+                "How long each may run (default 600)",
+            ),
+            (
+                "concurrency",
+                "integer",
+                false,
+                "Most at once (default: as many as the machines take)",
+            ),
+            (
+                "env",
+                "object",
+                false,
+                "Environment variables for the command",
+            ),
+        ],
+    },
+    Tool {
+        name: "share",
+        permission: "share:create",
+        description: "Get a link to something you ran, that opens on the user's other signed-in devices (phone included): a dev server or dashboard on a port, a port in a Space, or a file or folder (read-only). ANY link to something you ran (a preview, a dashboard, a report, a file) must come from this tool: never hand the user localhost, 127.0.0.1 or a Space-internal address, which they cannot open. It creates a persistent share (it keeps working after this session, until `ttl`, share_stop, or the Space is deleted), then opens the link once itself and returns `check`. Only send the link when `check.ok` is true; if it is false, say so, fix what is wrong (start the server, fix the path) and check again with a new share. Default access is private (only the user's cua.ai account); team shares it with the user's team; public makes a link anyone can open (expires, default 1h) and needs the user's say-so.",
+        params: &[
+            (
+                "target",
+                "string",
+                true,
+                "What to share: a port on this machine (\"3000\"), a port in a Space (\"space:NAME:3000\"), or a file or folder path (absolute, or relative to the server's directory)",
+            ),
+            (
+                "access",
+                "string",
+                false,
+                "private (default: the user's own devices), team, or public (anyone with the link; expires)",
+            ),
+            (
+                "ttl",
+                "string",
+                false,
+                "How long it lasts: 10m, 1h, 24h (60s to 24h). Public shares default to 1h; others have no end",
+            ),
+            ("name", "string", false, "A name for share_list"),
+        ],
+    },
+    Tool {
+        name: "share_list",
+        permission: "share:read",
+        description: "The active shares: id, link, access, what each serves and when it ends.",
+        params: &[],
+    },
+    Tool {
+        name: "share_stop",
+        permission: "share:stop",
+        description: "Stop a share so its link stops working at once. Pass its id or name from share_list, or \"all\".",
+        params: &[("id", "string", true, "A share's id or name, or \"all\"")],
+    },
+    Tool {
+        name: "space_runs",
+        permission: "runs:read",
+        description: "A run's progress and results (pass `run`: its summary, counts by state, done, and its jobs with machine, attempt, exit code, stdout, stderr), one job with its output (`run` and `job`), or the recent runs (neither; on=\"local\" for this machine's, else your machines'). With cancel=true it cancels the run (or the job).",
+        params: &[
+            ("run", "string", false, "A run id from space_run"),
+            ("job", "integer", false, "One job of the run"),
+            (
+                "state",
+                "string",
+                false,
+                "With run: only jobs in this state (queued, running, succeeded, failed, error, canceled)",
+            ),
+            (
+                "on",
+                "string",
+                false,
+                "Without run: local or auto (default)",
+            ),
+            ("cancel", "boolean", false, "Cancel the run or the job"),
+        ],
+    },
     Tool {
         name: "images_list",
         permission: "images:list",
@@ -250,9 +396,84 @@ const TOOLS: &[Tool] = &[
                 "runtime",
                 "string",
                 false,
-                "Which engine: auto (default) or one the location offers for the kind (gvisor, runc, qemu, lume)",
+                "Which engine: auto (default) or one the location offers for the kind (gvisor, runc, qemu, lume, firecracker)",
+            ),
+            (
+                "pool",
+                "string",
+                false,
+                "Create from this pool (sandbox_pool_create): takes one of its ready sandboxes in about 0.1 s (on this computer)",
             ),
         ],
+    },
+    Tool {
+        name: "sandbox_pool_list",
+        permission: "sandbox:list",
+        description: "List the pools: sandboxes of one image kept ready on this machine (min always, up to max while creates come fast), each with how many are ready and why.",
+        params: &[],
+    },
+    Tool {
+        name: "sandbox_pool_create",
+        permission: "sandbox:pools",
+        description: "Create a pool (or update the pool of that name): sandboxes of one image kept ready on this machine, min at all times (refilled right after each create from it) and up to max while creates come faster than sandboxes start. sandbox_create with pool=<name> then takes one in about 0.1 s. Use it before creating many sandboxes of one kind (an agent loop, a batch); without pools, ready sandboxes are kept only where repeated creates pay for it.",
+        params: &[
+            (
+                "image",
+                "string",
+                true,
+                "Image its sandboxes run (for example linux)",
+            ),
+            (
+                "name",
+                "string",
+                false,
+                "Pool name (lower-case letters, digits, '-'; default: a new one)",
+            ),
+            (
+                "min",
+                "integer",
+                false,
+                "Sandboxes kept ready at all times (default 1)",
+            ),
+            (
+                "max",
+                "integer",
+                false,
+                "Most kept ready, not counting those created from the pool (default: min)",
+            ),
+            (
+                "idle_seconds",
+                "integer",
+                false,
+                "After this long without a create from the pool it keeps none ready until the next one (default: never)",
+            ),
+            ("kind", "string", false, "auto (default), container or vm"),
+            (
+                "runtime",
+                "string",
+                false,
+                "auto (default) or an engine (gvisor, runc, qemu, ...)",
+            ),
+            ("cpus", "integer", false, "vCPUs of each sandbox"),
+            (
+                "memory_mb",
+                "integer",
+                false,
+                "Memory (MiB) of each sandbox",
+            ),
+            (
+                "env",
+                "object",
+                false,
+                "Environment variables (string values)",
+            ),
+        ],
+    },
+    Tool {
+        name: "sandbox_pool_delete",
+        permission: "sandbox:pools",
+        description: "Delete a pool. Its ready sandboxes go; sandboxes created from it stay.",
+        params: &[("name", "string", true, "Pool name")],
     },
     Tool {
         name: "sandbox_get",
@@ -724,6 +945,8 @@ pub fn docs() -> Value {
             "skills": groups(&["skills:list", "skills:read"], SKILLS_ALL),
             "images": groups(IMAGES_ALL, IMAGES_ALL),
             "teleport": groups(&[], TELEPORT_ALL),
+            "runs": groups(&["runs:read"], RUNS_ALL),
+            "share": groups(&["share:read"], SHARE_ALL),
             "spaces": {"all": spaces_permissions(false), "readonly": spaces_permissions(true)},
         },
         "tools": tools,
@@ -842,6 +1065,12 @@ impl Server {
         if let Some(r) = self.call_skills(name, a) {
             return r;
         }
+        if name == "space_run" || name == "space_runs" {
+            return runs_tool(name, a).await;
+        }
+        if matches!(name, "share" | "share_list" | "share_stop") {
+            return share_tool(name, a).await;
+        }
         match name {
             "images_list" => {
                 return jtext(crate::catalog::mcp_result(&crate::catalog::Filter {
@@ -949,7 +1178,7 @@ impl Server {
                 let env = sandbox::env_of(&self.cua, &sb).await?;
                 match name {
                     "computer_file_read" => {
-                        let b = env.download(s("path")).await?;
+                        let b = env.download(s("path"), None).await?;
                         jtext(json!({"success": true, "content": String::from_utf8_lossy(&b)}))
                     }
                     "computer_file_write" => {
@@ -963,7 +1192,7 @@ impl Server {
                     _ => {
                         let p = a["path"].as_str().filter(|p| !p.is_empty()).unwrap_or(".");
                         let files: Vec<Value> = env
-                            .list_dir(p.to_string(), 1)
+                            .list_dir(p.to_string(), 1, None, None)
                             .await?
                             .into_iter()
                             .map(|e| json!({"name": e.name, "kind": e.kind, "size": e.size}))
@@ -1102,6 +1331,59 @@ impl Server {
                 .await
             }
             "sandbox_get" => async { jtext(sandbox::info_json(&sbx.get(n).await?)) }.await,
+            "sandbox_pool_list" => {
+                async {
+                    let pools = sbx.list_pools().await?;
+                    jtext(Value::Array(pools.iter().map(sandbox::pool_json).collect()))
+                }
+                .await
+            }
+            "sandbox_pool_create" => {
+                async {
+                    let image = a["image"].as_str().unwrap_or_default();
+                    if image.is_empty() {
+                        return Err(CuaError::InvalidArgument(
+                            "sandbox_pool_create needs an image".into(),
+                        ));
+                    }
+                    let (img, os) = sandbox::resolve_image(image, None)?;
+                    let text =
+                        |k: &str| a[k].as_str().filter(|s| !s.is_empty()).map(str::to_string);
+                    let options = cua_sdk::PoolCreateOptions {
+                        name: text("name"),
+                        kind: text("kind"),
+                        runtime: text("runtime"),
+                        os,
+                        cpus: a["cpus"].as_u64().map(|c| c as u32),
+                        memory_mb: a["memory_mb"].as_u64(),
+                        env: a["env"]
+                            .as_object()
+                            .map(|env| {
+                                env.iter()
+                                    .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string())))
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                        min: a["min"].as_u64().unwrap_or(1) as u32,
+                        max: a["max"].as_u64().map(|m| m as u32),
+                        idle_ms: a["idle_seconds"].as_u64().map(|s| s * 1000),
+                        ..Default::default()
+                    };
+                    let p = sbx.create_pool(img, options).await?;
+                    jtext(sandbox::pool_json(&p))
+                }
+                .await
+            }
+            "sandbox_pool_delete" => {
+                async {
+                    if sbx.delete_pool(n.clone()).await? {
+                        done(format!("Pool {n} deleted"))
+                    } else {
+                        Err(CuaError::NotFound(format!("no pool named {n:?}")))
+                    }
+                }
+                .await
+            }
             "sandbox_create" => {
                 async {
                     let browser = a["browser"].as_bool().unwrap_or(false);
@@ -1110,12 +1392,9 @@ impl Server {
                         None if browser => "linux".to_string(),
                         None => a["os_type"].as_str().unwrap_or("linux").to_string(),
                     };
-                    // A cloud pool no longer exists: refused, not ignored.
-                    if a["pool"].as_str().is_some_and(|p| !p.is_empty()) {
-                        return Err(crate::util::cloud_ended());
-                    }
                     // The user default unless `on` says. The SDK resolves the
                     // default and validates.
+                    let pool = a["pool"].as_str().filter(|s| !s.is_empty());
                     let text = |k: &str| {
                         a[k].as_str()
                             .map(str::trim)
@@ -1152,9 +1431,13 @@ impl Server {
                             service: None,
                         });
                     }
-                    let (img, os) = sandbox::resolve_image(&image, None)?;
-                    o.image = img;
-                    o.os = os;
+                    if let Some(p) = pool {
+                        o.pool = Some(p.into());
+                    } else {
+                        let (img, os) = sandbox::resolve_image(&image, None)?;
+                        o.image = img;
+                        o.os = os;
+                    }
                     let i = sbx.create(o).await?.info();
                     let mut v = json!({
                         "id": i.id,
@@ -1299,9 +1582,9 @@ impl Server {
                 jtext(json!({"success": true, "message": format!("Deleted skill: {n}")}))
             }),
             "skills_record" => jtext(json!({
-                "message": format!("To record skill '{n}', run 'cua skills record --name {n} --sandbox <name>' (or --viewer-url <url>) in a terminal"),
+                "message": crate::util::hint(&format!("To record skill '{n}', run 'cua skills record --name {n} --sandbox <name>' (or --viewer-url <url>) in a terminal")),
                 "instructions": [
-                    format!("1. Run: cua skills record --name {n} --sandbox <name> (or --viewer-url <url>)"),
+                    crate::util::hint(&format!("1. Run: cua skills record --name {n} --sandbox <name> (or --viewer-url <url>)")),
                     "2. Perform the actions you want to record in the viewer",
                     "3. Click 'Stop Recording' when done",
                 ],
@@ -1460,7 +1743,7 @@ impl SdkTools {
         let space = arguments.get("space")?.as_str()?.to_string();
         Some(match self.0.space(space).await {
             Ok(s) => s.call_tool_here(tool, arguments.clone()).await,
-            Err(e) => ToolOutcome::error_message(error_kind(&e), e.to_string()),
+            Err(e) => ToolOutcome::error_message(error_kind(&e), crate::util::hint(&e.to_string())),
         })
     }
 
@@ -1487,7 +1770,7 @@ impl SdkTools {
                     .as_deref()
                     .and_then(|s| serde_json::from_str(s).ok()),
             },
-            Err(e) => ToolOutcome::error_message(error_kind(&e), e.to_string()),
+            Err(e) => ToolOutcome::error_message(error_kind(&e), crate::util::hint(&e.to_string())),
         }
     }
 }
@@ -1536,12 +1819,17 @@ impl cua_spaces::mcp::ToolBackend for SdkTools {
 #[async_trait::async_trait]
 impl cua_spaces::mcp::ToolExtension for Server {
     fn tools(&self) -> Vec<Value> {
+        let providers = cua_sandbox_core::external::Registry::global().providers();
         self.permitted()
             .map(|t| {
+                let mut schema = schema(t);
+                // The local runtime providers installed on this machine.
+                cua_sandbox_core::external::annotate_runtime_schema(&mut schema, &providers);
                 json!({
                     "name": t.name,
-                    "description": t.description,
-                    "inputSchema": schema(t),
+                    // Its commands are for this build's CLI (`cua-local` on Local).
+                    "description": crate::util::hint(t.description),
+                    "inputSchema": schema,
                 })
             })
             .collect()
@@ -1557,7 +1845,9 @@ impl cua_spaces::mcp::ToolExtension for Server {
                     is_error: false,
                     meta: None,
                 },
-                Err(e) => ToolOutcome::error_message(error_kind(&e), e.to_string()),
+                Err(e) => {
+                    ToolOutcome::error_message(error_kind(&e), crate::util::hint(&e.to_string()))
+                }
             }
         };
         Some(bounded(tool, &arguments, run).await)
@@ -1577,6 +1867,7 @@ fn error_kind(e: &CuaError) -> &'static str {
         CuaError::Unauthenticated(_) => "unauthenticated",
         CuaError::Cloud(_) => "cloud",
         CuaError::InsufficientDisk(_) => "insufficient_disk",
+        CuaError::HostCapacity(_) => "host_capacity",
         CuaError::Cancelled(_) => "cancelled",
         _ => "env",
     }
@@ -1666,6 +1957,148 @@ pub async fn serve_stdio(server: McpServer) -> Result<i32, CuaError> {
         .await
         .map_err(crate::util::internal)?;
     Ok(0)
+}
+
+/// `share`, `share_list` and `share_stop`, through the daemon (`cua share`).
+async fn share_tool(name: &str, a: &Value) -> ToolResult {
+    use crate::share_cmd::share_json;
+    use cua_daemon::{ShareAccess, ShareTarget};
+    let d = cua_daemon::client::ensure_daemon().await?;
+    match name {
+        "share" => {
+            let input = a["target"].as_str().unwrap_or_default();
+            let cwd =
+                std::env::current_dir().map_err(|e| CuaError::InvalidArgument(e.to_string()))?;
+            let target = ShareTarget::parse(input, &cwd)?;
+            let access = match a["access"].as_str().unwrap_or("private") {
+                "" | "private" => ShareAccess::Private,
+                "team" => ShareAccess::Team,
+                "public" => ShareAccess::Public,
+                other => {
+                    return Err(CuaError::InvalidArgument(format!(
+                        "access {other:?}: use private, team or public"
+                    )));
+                }
+            };
+            let ttl = match a["ttl"].as_str().filter(|t| !t.is_empty()) {
+                Some(t) => Some(crate::share_cmd::parse_ttl(t).map_err(CuaError::InvalidArgument)?),
+                None => None,
+            };
+            let name = a["name"]
+                .as_str()
+                .filter(|n| !n.is_empty())
+                .map(str::to_string);
+            let s = d.create_share(&target, access, ttl, name).await?;
+            // Open it once the way its owner would, so the link is known to load.
+            let c = d.check_share(&s.id, None).await?;
+            let ok = c.ok || (300..400).contains(&c.status);
+            let mut out = share_json(&s);
+            out["check"] = json!({"ok": ok, "status": c.status, "via": c.via, "detail": c.detail});
+            if !ok {
+                out["warning"] = json!(format!(
+                    "The link did not load ({}). Do not send it yet: fix the cause, then share again (share_stop {} removes this one).",
+                    c.detail, s.id
+                ));
+            } else if c.via == "local" {
+                out["warning"] =
+                    json!("Checked on this machine only; the relay path was not tested.");
+            }
+            jtext(out)
+        }
+        "share_list" => {
+            let shares = d.list_shares().await?;
+            jtext(json!({"shares": shares.iter().map(share_json).collect::<Vec<_>>()}))
+        }
+        _ => {
+            let id = a["id"].as_str().unwrap_or_default();
+            if id.is_empty() {
+                return Err(CuaError::InvalidArgument(
+                    "id: a share's id, name or \"all\"".into(),
+                ));
+            }
+            let all = id == "all";
+            let stopped = d.stop_share(if all { None } else { Some(id) }, all).await?;
+            jtext(json!({"stopped": stopped}))
+        }
+    }
+}
+
+/// `space_run` and `space_runs`, through the daemon (`cua sb run`).
+async fn runs_tool(name: &str, a: &Value) -> ToolResult {
+    use crate::runs::{request, target_of};
+    if name == "space_run" {
+        let argv: Vec<String> = match &a["command"] {
+            Value::Array(v) => v
+                .iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect(),
+            Value::String(s) if !s.trim().is_empty() => {
+                vec!["sh".into(), "-c".into(), s.clone()]
+            }
+            _ => vec![],
+        };
+        if argv.is_empty() {
+            return Err(CuaError::InvalidArgument(
+                "command: the command to run".into(),
+            ));
+        }
+        let (target, on) = target_of(a["on"].as_str())?;
+        let count = a["count"].as_u64().unwrap_or(1).clamp(1, 10_000);
+        let cpus = a["cpus"].as_f64().unwrap_or(1.0);
+        if !cpus.is_finite() || cpus <= 0.0 {
+            return Err(CuaError::InvalidArgument("cpus must be more than 0".into()));
+        }
+        let run = format!(
+            "{}-{:08x}",
+            if target == "local" { "l" } else { "p" },
+            rand::random::<u32>()
+        );
+        request(
+            target,
+            "submit",
+            json!({
+                "run": run,
+                "command": argv,
+                "count": count,
+                "image": a["image"].as_str().unwrap_or_default(),
+                "kind": a["kind"].as_str().unwrap_or_default(),
+                "runtime": a["runtime"].as_str().unwrap_or_default(),
+                "cpus": cpus,
+                "memory_mb": a["memory_mb"].as_u64().unwrap_or(1024),
+                "timeout_secs": a["timeout_secs"].as_u64().unwrap_or(600).max(1),
+                "env": a.get("env").cloned().filter(Value::is_object).unwrap_or(json!({})),
+                "concurrency": a["concurrency"].as_u64().unwrap_or(0),
+                "on": on,
+            }),
+        )
+        .await?;
+        return jtext(json!({"run": run, "jobs": count, "next": "space_runs with this run"}));
+    }
+    let cancel = a["cancel"].as_bool().unwrap_or(false);
+    let Some(run) = a["run"].as_str().filter(|r| !r.is_empty()) else {
+        let (target, _) = target_of(Some(a["on"].as_str().unwrap_or("auto")))?;
+        return jtext(request(target, "runs", json!({"limit": 20})).await?);
+    };
+    let target = if run.starts_with("l-") {
+        "local"
+    } else {
+        "pool"
+    };
+    if let Some(id) = a["job"].as_i64() {
+        let method = if cancel { "cancel_job" } else { "job" };
+        return jtext(request(target, method, json!({"id": id})).await?);
+    }
+    if cancel {
+        return jtext(request(target, "cancel_run", json!({"run": run})).await?);
+    }
+    let summary = request(target, "run", json!({"run": run})).await?;
+    let jobs = request(
+        target,
+        "jobs",
+        json!({"run": run, "state": a["state"].as_str().unwrap_or_default(), "limit": 200, "output": true}),
+    )
+    .await?;
+    jtext(json!({"summary": summary, "jobs": jobs["jobs"]}))
 }
 
 #[cfg(test)]
@@ -1797,6 +2230,26 @@ mod tests {
             .description;
         assert!(d.contains("local, the default"), "{d}");
         assert!(d.contains("does not register a Space"), "{d}");
+    }
+
+    /// `space_run` checks what it is given before asking the daemon, and
+    /// the runs permissions split reading from running.
+    #[tokio::test]
+    async fn run_tools_check_their_arguments() {
+        let e = runs_tool("space_run", &json!({})).await.unwrap_err();
+        assert!(e.to_string().contains("command"), "{e}");
+        let e = runs_tool("space_run", &json!({"command": "true", "on": "cloud"}))
+            .await
+            .unwrap_err();
+        assert!(e.to_string().contains("name the cloud"), "{e}");
+        let e = runs_tool("space_run", &json!({"command": "true", "cpus": 0}))
+            .await
+            .unwrap_err();
+        assert!(e.to_string().contains("cpus"), "{e}");
+        let groups = parse_permissions("runs:readonly");
+        assert!(groups.contains("runs:read") && !groups.contains("runs:run"));
+        assert!(parse_permissions("all").contains("runs:run"));
+        assert!(!TOOLS.iter().any(|t| t.name.starts_with("cluster_")));
     }
 
     #[test]

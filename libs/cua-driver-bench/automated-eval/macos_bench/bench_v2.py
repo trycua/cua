@@ -73,14 +73,21 @@ def category_of(spec: dict[str, Any]) -> str:
     return str(category)
 
 
-def validate_tasks(specs: dict[str, dict[str, Any]], task_ids: list[str]) -> list[str]:
+def validate_tasks(
+    specs: dict[str, dict[str, Any]], task_ids: list[str], arms: list[str] | None = None
+) -> list[str]:
     """Problems that stop a v2 run: unknown task, missing or unknown category, coding tools."""
     problems: list[str] = []
+    browser_only = "cx-browser-use-cli" in (arms or [])
+    if browser_only and not task_ids:
+        problems.append("cx-browser-use-cli requires a nonempty browser task selection")
     for tid in task_ids:
         spec = specs.get(tid)
         if spec is None:
             problems.append(f"{tid}: unknown task")
             continue
+        if browser_only and spec.get("browser") is not True:
+            problems.append(f"{tid}: cx-browser-use-cli requires browser: true")
         try:
             category_of(spec)
         except ValueError as error:

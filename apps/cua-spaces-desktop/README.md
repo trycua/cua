@@ -689,7 +689,7 @@ report is in `dist/smoke/windows/report.txt`. All checks pass.
   the overlay's titlebar area, and the WebCodecs path (above). Still
   untested on Windows: the window chrome and overlay colours as drawn, the
   tray icon and close-to-tray, the AppUserModelID in the taskbar,
-  SmartScreen for the unsigned installer, and the arm64 build on real ARM64
+  SmartScreen for the signed installer, and the arm64 build on real ARM64
   hardware.
 - **Linux desktops.** Xvfb with openbox in Docker, and XFCE (xfwm4, its
   panel and tray) on Xvfb on an Ubuntu 24.04 VM. On the VM the deb and the

@@ -82,6 +82,12 @@ export function agentsMethods({ model }: BridgeContext): Handlers {
       else await coding.act(strings(args, "agents"), false);
       return encode(coding.rows ?? []);
     },
+    "agents.signIn": async (args) => {
+      needSetup();
+      const coding = model.agents.coding;
+      await coding.signIn(string(args, "agent"));
+      return encode(coding.rows ?? []);
+    },
     // A persistent agent's Memory, Routines and Access: what the native
     // Agents page reads and the changes it runs, one method each.
     "agents.detail": async (args) => {

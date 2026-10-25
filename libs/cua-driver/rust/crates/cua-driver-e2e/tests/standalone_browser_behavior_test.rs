@@ -2942,12 +2942,21 @@ fn run_existing_profile_setup(spec: &BrowserSpec) {
                 prepared.structured()["side_effects"]["created_profile"],
                 false
             );
-            let setup_port = devtools_active_port(fixture._profile.path()).unwrap_or_else(|| {
-                panic!(
-                    "existing-profile setup exposed no DevToolsActivePort in {}",
+            // The browser writes DevToolsActivePort when its listener comes up,
+            // which can trail the setup call's return (slow on Windows runners):
+            // poll for it instead of reading the file once.
+            let port_deadline = Instant::now() + Duration::from_secs(15);
+            let setup_port = loop {
+                if let Some(port) = devtools_active_port(fixture._profile.path()) {
+                    break port;
+                }
+                assert!(
+                    Instant::now() < port_deadline,
+                    "existing-profile setup exposed no DevToolsActivePort in {} within 15 s",
                     fixture._profile.path().display()
-                )
-            });
+                );
+                std::thread::sleep(Duration::from_millis(100));
+            };
 
             let public_result = prepared.raw.to_string();
             assert!(!public_result.contains("ws://"), "{}", prepared.raw);

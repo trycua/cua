@@ -22,6 +22,7 @@ pub mod registry;
 pub mod skills;
 mod state;
 
+pub use cua_home::channel::CuaChannel;
 pub use edit::Format;
 pub use fsutil::hash_dir;
 pub use registry::{AGENTS, AgentSpec};
@@ -135,19 +136,11 @@ pub struct HostEnv {
     /// Whether an agent's own CLI may be run to write its config
     /// ([`registry::OwnerCli`]). Off for isolated environments.
     pub run_agent_clis: bool,
-}
-
-/// Where coding-agent CLIs usually install, searched after `$PATH`.
-fn well_known_bin_dirs(home: &Path) -> Vec<PathBuf> {
-    vec![
-        home.join(".local/bin"),
-        home.join(".claude/local"),
-        home.join(".npm-global/bin"),
-        home.join(".bun/bin"),
-        home.join(".cargo/bin"),
-        PathBuf::from("/opt/homebrew/bin"),
-        PathBuf::from("/usr/local/bin"),
-    ]
+    /// Which Cua Spaces build this runs for. It names what is written into
+    /// the agents' configs (the MCP server `cua` or `cua-local`, the skills
+    /// `cua-spaces` or `cua-spaces-local`) and the folder of the state
+    /// (`~/.cua` or `~/.cua-local`), so Local never replaces Stable's.
+    pub channel: CuaChannel,
 }
 
 const VARS: &[&str] = &[
@@ -167,9 +160,36 @@ const VARS: &[&str] = &[
 ];
 
 impl HostEnv {
+    /// Ordered fallback binary directories for this environment's OS, searched after PATH.
+    pub fn well_known_bin_dirs(&self) -> Vec<PathBuf> {
+        if self.os == Os::Windows {
+            let appdata = self
+                .var("APPDATA")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| self.home.join("AppData/Roaming"));
+            vec![
+                self.home.join(".local/bin"),
+                appdata.join("npm"),
+                self.home.join(".bun/bin"),
+                self.home.join(".cargo/bin"),
+            ]
+        } else {
+            vec![
+                self.home.join(".local/bin"),
+                self.home.join(".claude/local"),
+                self.home.join(".npm-global/bin"),
+                self.home.join(".bun/bin"),
+                self.home.join(".cargo/bin"),
+                PathBuf::from("/opt/homebrew/bin"),
+                PathBuf::from("/usr/local/bin"),
+            ]
+        }
+    }
+
     /// The real environment: `$HOME` (or `%USERPROFILE%`), `$PATH`, the
     /// agent override variables, `/Applications` and `~/Applications`
-    /// (or `$CUA_AGENT_APP_DIRS`).
+    /// (or `$CUA_AGENT_APP_DIRS`), and the usual install dirs after PATH
+    /// (or `$CUA_AGENT_BIN_DIRS`).
     pub fn current() -> Self {
         let home = std::env::var_os("HOME")
             .or_else(|| std::env::var_os("USERPROFILE"))
@@ -180,19 +200,9 @@ impl HostEnv {
             .filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v)))
             .collect();
         let os = Os::current();
-        let mut path: Vec<PathBuf> = std::env::var_os("PATH")
+        let path: Vec<PathBuf> = std::env::var_os("PATH")
             .map(|p| std::env::split_paths(&p).collect())
             .unwrap_or_default();
-        // A GUI app (Cua Spaces from the Dock) runs without the user's
-        // shell PATH, so an agent installed under a user bin dir would look
-        // missing. Search the usual install dirs after the real PATH.
-        if os != Os::Windows {
-            for d in well_known_bin_dirs(&home) {
-                if !path.contains(&d) {
-                    path.push(d);
-                }
-            }
-        }
         // `CUA_AGENT_APP_DIRS` (a path list, empty for none) replaces the
         // app folders, so hermetic runs do not see the host's apps.
         let app_dirs = match std::env::var_os("CUA_AGENT_APP_DIRS") {
@@ -204,14 +214,34 @@ impl HostEnv {
             }
             None => vec![],
         };
-        HostEnv {
+        let mut env = HostEnv {
             home,
             vars,
             path,
             app_dirs,
             os,
             run_agent_clis: true,
+            channel: CuaChannel::current(),
+        };
+        // A GUI app (Cua Spaces from the Dock) runs without the user's
+        // shell PATH, so an agent installed under a user bin dir would look
+        // missing. Search the usual install dirs after the real PATH.
+        // `CUA_AGENT_BIN_DIRS` (a path list, empty for none) replaces them,
+        // like `CUA_AGENT_APP_DIRS` does for apps: a hermetic run with a
+        // reduced PATH would otherwise still find the host's agents under
+        // `/opt/homebrew/bin` or `/usr/local/bin`.
+        let fallback = match std::env::var_os("CUA_AGENT_BIN_DIRS") {
+            Some(v) => std::env::split_paths(&v)
+                .filter(|p| !p.as_os_str().is_empty())
+                .collect(),
+            None => env.well_known_bin_dirs(),
+        };
+        for dir in fallback {
+            if !env.path.contains(&dir) {
+                env.path.push(dir);
+            }
         }
+        env
     }
 
     /// A hermetic environment rooted at `home`: no variables, no PATH, apps
@@ -226,7 +256,14 @@ impl HostEnv {
             path: vec![],
             os: Os::current(),
             run_agent_clis: false,
+            channel: CuaChannel::Stable,
         }
+    }
+
+    /// This environment for `channel` (a Local app's, in tests).
+    pub fn with_channel(mut self, channel: CuaChannel) -> Self {
+        self.channel = channel;
+        self
     }
 
     /// A non-empty variable.
@@ -255,11 +292,12 @@ impl HostEnv {
         None
     }
 
-    /// `~/.cua` (or `$CUA_HOME`).
+    /// `$CUA_HOME`, else the channel's home: `~/.cua`, or `~/.cua-local` for
+    /// Local ([`CuaChannel::home_dir_name`]).
     pub fn cua_home(&self) -> PathBuf {
         self.var("CUA_HOME")
             .map(PathBuf::from)
-            .unwrap_or_else(|| self.home.join(".cua"))
+            .unwrap_or_else(|| self.home.join(self.channel.home_dir_name()))
     }
 }
 
@@ -301,6 +339,17 @@ pub const DRIVER_MCP_SERVER_NAME: &str = "cua-driver";
 /// The bundled skill that teaches agents cua-driver.
 pub const DRIVER_SKILL: &str = "cua-driver";
 
+/// Whether `name` (an MCP server or a skill folder) belongs to Cua Driver,
+/// not to Cua Spaces: `cua-driver`, and its siblings `cua-driver-local` (the
+/// Local channel's skill copy and driver) and `cua-driver-rs` (the old skill
+/// pack name). `cua agents remove` leaves them in place unless asked
+/// ([`RemoveOptions::include_cua_driver`]): Cua Driver is a separate product
+/// with its own uninstaller, and uninstalling Cua Spaces must not break the
+/// user's agents' computer-use.
+pub fn is_cua_driver_name(name: &str) -> bool {
+    name == DRIVER_MCP_SERVER_NAME || name.starts_with("cua-driver-")
+}
+
 /// The name the retired Spaces Python MCP server (`spaces_mcp.py`, replaced
 /// by `cua daemon mcp`) was registered under by older Spaces app builds.
 pub const LEGACY_SPACES_MCP_NAME: &str = "cua-spaces";
@@ -322,14 +371,25 @@ impl McpServer {
         self
     }
 
-    /// `cua mcp`, with `cua` resolved to an absolute path on `env`'s PATH
-    /// (GUI agents often run without the user's shell PATH), else `cua`.
+    /// `command mcp` under the name the channel registers: `cua`, or
+    /// `cua-local` for Local ([`CuaChannel::mcp_server_name`]).
+    pub fn for_channel(channel: CuaChannel, command: impl Into<String>) -> Self {
+        McpServer {
+            name: channel.mcp_server_name().into(),
+            ..McpServer::new(command)
+        }
+    }
+
+    /// `cua mcp` (`cua-local mcp` for Local), with the channel's CLI
+    /// resolved to an absolute path on `env`'s PATH (GUI agents often run
+    /// without the user's shell PATH), else its bare name.
     pub fn default_for(env: &HostEnv) -> Self {
+        let cli = env.channel.cli_name();
         let cmd = env
-            .which("cua")
+            .which(cli)
             .map(|p| p.display().to_string())
-            .unwrap_or_else(|| "cua".into());
-        McpServer::new(cmd)
+            .unwrap_or_else(|| cli.into());
+        McpServer::for_channel(env.channel, cmd)
     }
 }
 
@@ -364,11 +424,20 @@ impl McpServer {
     }
 }
 
-/// Whether a launch command is a cua binary (`cua`, `/x/bin/cua`,
-/// `cua.exe`).
-fn is_cua_command(cmd: &str) -> bool {
+/// Whether a launch command is the channel's cua binary: for Stable `cua`,
+/// `/x/bin/cua`, `cua.exe`; for Local `cua-local` (`cua-local.exe`), or the
+/// `cua` inside `Cua Spaces Local.app`. A Stable `cua` is not Local's, and
+/// the reverse.
+fn is_cua_command(cmd: &str, channel: CuaChannel) -> bool {
     let base = cmd.rsplit(['/', '\\']).next().unwrap_or(cmd);
-    base == "cua" || base == "cua.exe"
+    match channel {
+        CuaChannel::Stable => base == "cua" || base == "cua.exe",
+        CuaChannel::Local => {
+            base == "cua-local"
+                || base == "cua-local.exe"
+                || CuaChannel::path_is_local(Path::new(cmd))
+        }
+    }
 }
 
 /// Detection result for one agent.
@@ -402,6 +471,11 @@ pub struct AgentStatus {
     pub error: Option<String>,
     /// What could not be verified from official docs.
     pub unverified: Option<String>,
+    /// The account the agent signs in with on its own ("ChatGPT"), when
+    /// cua can see that sign-in ([`registry::LoginSpec`]).
+    pub sign_in: Option<String>,
+    /// That sign-in is on this computer (its file is there and not empty).
+    pub signed_in: bool,
 }
 
 /// What happened to one target.
@@ -475,6 +549,20 @@ impl Parts {
     };
 }
 
+/// The `Skipped` detail of a Cua Driver entry `remove` leaves in place.
+pub const KEPT_CUA_DRIVER: &str = "Cua Driver's; --include-cua-driver removes it";
+
+/// How [`AgentSetup::remove_with`] runs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RemoveOptions {
+    /// Also remove Cua Driver's entries (the `cua-driver` MCP server and
+    /// skill, [`is_cua_driver_name`]). Off by default: they are not Cua
+    /// Spaces', and they stay.
+    pub include_cua_driver: bool,
+    /// Change nothing: return the outcomes a real run would produce.
+    pub dry_run: bool,
+}
+
 /// The onboarding engine.
 #[derive(Clone, Debug)]
 pub struct AgentSetup {
@@ -504,9 +592,10 @@ impl AgentSetup {
         &self.state_path
     }
 
-    /// The bundled default skills.
+    /// The bundled default skills, as this channel installs them (Local's
+    /// carry `-local` names: [`CuaChannel::skill_install_name`]).
     pub fn bundled_skills(&self) -> Vec<Skill> {
-        skills::bundled()
+        skills::bundled_for(self.env.channel)
     }
 
     /// Resolves an agent selection: `all` (installed agents), `none`, or a
@@ -560,11 +649,73 @@ impl AgentSetup {
     /// Detects every registry agent (read-only).
     pub fn detect(&self) -> Vec<AgentStatus> {
         let state = State::load(&self.state_path).unwrap_or_default();
-        let bundled = skills::bundled();
+        let bundled = self.bundled_skills();
         AGENTS
             .iter()
             .map(|a| self.detect_one(a, &state, &bundled))
             .collect()
+    }
+
+    /// Starts `agent`'s own sign-in on this computer (`codex login`: the
+    /// browser opens, and the agent keeps the sign-in in its own file). It
+    /// returns once the command is running; [`AgentSetup::detect`] reports
+    /// `signed_in` when it is done. cua never reads or copies the sign-in,
+    /// so every computer signs in on its own. A sign-in already waiting for
+    /// the browser is not started twice.
+    pub fn sign_in(&self, agent: &str) -> Result<()> {
+        let a = registry::find(agent)
+            .ok_or_else(|| Error::InvalidArgument(format!("unknown agent {agent:?}")))?;
+        let login = a.login.ok_or_else(|| {
+            Error::InvalidArgument(format!("{} has no sign-in cua can start", a.name))
+        })?;
+        if !self.env.run_agent_clis {
+            return Err(Error::InvalidArgument(
+                "agent commands are off in this environment".into(),
+            ));
+        }
+        let bin = a
+            .bins
+            .iter()
+            .find_map(|b| self.env.which(b))
+            .ok_or_else(|| {
+                Error::InvalidArgument(format!("{} isn't installed on this computer", a.name))
+            })?;
+        static WAITING: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+        let mut waiting = WAITING.lock().unwrap_or_else(|e| e.into_inner());
+        if waiting.contains(&a.id) {
+            return Ok(());
+        }
+        let program = cmd_shim_target(&bin).unwrap_or_else(|| bin.clone());
+        let mut cmd = std::process::Command::new(&program);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        // A GUI app has no shell PATH: an npm-installed CLI needs `node`
+        // from the same dirs the agent was found in.
+        if let Ok(path) = std::env::join_paths(&self.env.path) {
+            cmd.env("PATH", path);
+        }
+        let mut child = cmd
+            .args(login.args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| Error::io(&bin, e))?;
+        waiting.push(a.id);
+        let id = a.id;
+        // Reaped in the background: the sign-in waits for the browser.
+        std::thread::spawn(move || {
+            let _ = child.wait();
+            WAITING
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .retain(|w| *w != id);
+        });
+        Ok(())
     }
 
     /// Alias of [`AgentSetup::detect`].
@@ -626,19 +777,25 @@ impl AgentSetup {
             skills_outdated,
             error: None,
             unverified: (!a.unverified.is_empty()).then(|| a.unverified.to_string()),
+            sign_in: a.login.map(|l| l.label.to_string()),
+            signed_in: a.login.is_some_and(|l| {
+                std::fs::metadata(l.file.resolve(&self.env))
+                    .is_ok_and(|m| m.is_file() && m.len() > 0)
+            }),
         };
         if let Some(m) = &a.mcp {
             let file = self.mcp_file(m);
             status.mcp_format = Some(m.format);
-            match read_text(&file)
-                .and_then(|t| edit::get(m.format, &file, &t, m.key_path, MCP_SERVER_NAME))
-            {
+            // The channel's own entry (`cua`, or `cua-local`): Local never
+            // reads Stable's as its own.
+            let name = self.env.channel.mcp_server_name();
+            match read_text(&file).and_then(|t| edit::get(m.format, &file, &t, m.key_path, name)) {
                 Ok(Some(v)) => {
                     status.cua_configured = m
                         .shape
                         .command_of(&v)
-                        .is_some_and(|(c, _)| is_cua_command(&c));
-                    status.cua_managed = state.mcp.get(&file).is_some_and(|r| r.value == v);
+                        .is_some_and(|(c, _)| is_cua_command(&c, self.env.channel));
+                    status.cua_managed = state.record(name, &file).is_some_and(|r| r.value == v);
                 }
                 Ok(None) => {}
                 Err(e) => status.error = Some(e.to_string()),
@@ -662,16 +819,18 @@ impl AgentSetup {
         force: bool,
     ) -> Result<Vec<Outcome>> {
         let specs = self.specs(agents)?;
-        let bundled = skills::bundled();
+        let bundled = self.bundled_skills();
         let wanted: Vec<&Skill> = if skill_names.is_empty() {
             bundled.iter().collect()
         } else {
             skill_names
                 .iter()
                 .map(|n| {
+                    // By the bundled name (`cua-spaces`) or the name this
+                    // channel installs it under (`cua-spaces-local`).
                     bundled
                         .iter()
-                        .find(|s| &s.name == n)
+                        .find(|s| &s.name == n || &s.source == n)
                         .ok_or_else(|| Error::InvalidArgument(format!("unknown skill {n:?}")))
                 })
                 .collect::<Result<_>>()?
@@ -778,7 +937,7 @@ impl AgentSetup {
                 }
                 o.backup = Some(bak);
             }
-            if let Err(e) = skills::write_to(&s.name, dest) {
+            if let Err(e) = skills::write_for(self.env.channel, &s.source, dest) {
                 o.change = Change::Failed;
                 o.detail = e.to_string();
                 return o;
@@ -842,7 +1001,10 @@ impl AgentSetup {
                 o.detail = e.to_string();
             }
             out.push(o);
-            if server.name != LEGACY_SPACES_MCP_NAME {
+            // The old entry is the released app's to clean up. Local never
+            // wrote it, and removing it would break a Stable setup that
+            // still has it.
+            if server.name != LEGACY_SPACES_MCP_NAME && self.env.channel == CuaChannel::Stable {
                 out.extend(self.drop_legacy_spaces_mcp(&mut state, a, m, &file));
             }
         }
@@ -946,7 +1108,7 @@ impl AgentSetup {
             None => existing.clone().filter(|v| {
                 !m.shape
                     .command_of(v)
-                    .is_some_and(|(c, _)| is_cua_command(&c))
+                    .is_some_and(|(c, _)| is_cua_command(&c, self.env.channel))
             }),
         };
         if existing.as_ref() == Some(&want) {
@@ -1009,11 +1171,27 @@ impl AgentSetup {
         Ok(())
     }
 
-    /// Undoes what cua wrote for `agents`: MCP entries that still hold the
-    /// exact value cua wrote (the entry that was there before, if any, is
-    /// restored), and skill folders cua installed and nobody edited (a
-    /// folder shared with an agent not being removed stays).
+    /// Undoes what cua wrote for `agents`, for Cua Spaces only: MCP entries
+    /// that still hold the exact value cua wrote (the entry that was there
+    /// before, if any, is restored), and skill folders cua installed and
+    /// nobody edited (a folder shared with an agent not being removed stays).
+    /// Cua Driver's entries (`cua-driver`) stay; see
+    /// [`AgentSetup::remove_with`] to remove them too.
     pub fn remove(&self, agents: &[String], parts: Parts) -> Result<Vec<Outcome>> {
+        self.remove_with(agents, parts, RemoveOptions::default())
+    }
+
+    /// [`AgentSetup::remove`] with options: `include_cua_driver` removes the
+    /// `cua-driver` server and skill too (otherwise each gets a `Skipped` row
+    /// that says it was kept), and `dry_run` writes nothing and returns the
+    /// rows a real run would produce, so a preview lists exactly what the
+    /// run removes.
+    pub fn remove_with(
+        &self,
+        agents: &[String],
+        parts: Parts,
+        opts: RemoveOptions,
+    ) -> Result<Vec<Outcome>> {
         let specs = self.specs(agents)?;
         let mut state = State::load(&self.state_path)?;
         let mut out = Vec::new();
@@ -1021,13 +1199,22 @@ impl AgentSetup {
             for a in &specs {
                 let Some(m) = &a.mcp else { continue };
                 let file = self.mcp_file(m);
-                // `cua` always gets a row; other servers (`cua-driver`) only
-                // when cua registered them there.
+                // The channel's server (`cua`, or `cua-local`) always gets a
+                // row; other servers (`cua-driver`) only when cua registered
+                // them there, and never for Local (below).
                 let mut names = state.names_in(&file);
-                if !state.mcp.contains_key(&file) {
-                    names.insert(0, MCP_SERVER_NAME.to_string());
+                let own = self.env.channel.mcp_server_name();
+                if state.record(own, &file).is_none() {
+                    names.insert(0, own.to_string());
                 }
                 for name in names {
+                    // Local removes its own server and no other: `cua` is the
+                    // released app's and `cua-driver` is Cua Driver's, names
+                    // Local does not own even when its record says it wrote
+                    // the entry first (CUA-1776).
+                    if self.env.channel.is_local() && name != own {
+                        continue;
+                    }
                     let mut o = Outcome {
                         agents: vec![a.id.into()],
                         target: Target::Mcp,
@@ -1037,7 +1224,12 @@ impl AgentSetup {
                         detail: String::new(),
                         backup: None,
                     };
-                    if let Err(e) = self.remove_mcp(&mut state, a, m, &file, &name, &mut o) {
+                    if is_cua_driver_name(&name) && !opts.include_cua_driver {
+                        o.detail = KEPT_CUA_DRIVER.into();
+                        out.push(o);
+                        continue;
+                    }
+                    if let Err(e) = self.remove_mcp(&mut state, a, m, &name, opts.dry_run, &mut o) {
                         o.change = Change::Failed;
                         o.detail = e.to_string();
                     }
@@ -1065,7 +1257,6 @@ impl AgentSetup {
                 if removing.is_empty() {
                     continue;
                 }
-                r.agents.retain(|x| !ids.contains(x));
                 let mut o = Outcome {
                     agents: removing,
                     target: Target::Skill,
@@ -1075,6 +1266,12 @@ impl AgentSetup {
                     detail: String::new(),
                     backup: None,
                 };
+                if is_cua_driver_name(&r.skill) && !opts.include_cua_driver {
+                    o.detail = KEPT_CUA_DRIVER.into();
+                    out.push(o);
+                    continue;
+                }
+                r.agents.retain(|x| !ids.contains(x));
                 if !r.agents.is_empty() {
                     o.detail = format!(
                         "kept for {}",
@@ -1088,16 +1285,23 @@ impl AgentSetup {
                             o.detail = "already gone".into();
                             state.skills.remove(&dest);
                         }
-                        Some(h) if h == r.hash => match std::fs::remove_dir_all(&dest) {
-                            Ok(()) => {
-                                o.change = Change::Removed;
-                                state.skills.remove(&dest);
+                        Some(h) if h == r.hash => {
+                            let gone = if opts.dry_run {
+                                Ok(())
+                            } else {
+                                std::fs::remove_dir_all(&dest)
+                            };
+                            match gone {
+                                Ok(()) => {
+                                    o.change = Change::Removed;
+                                    state.skills.remove(&dest);
+                                }
+                                Err(e) => {
+                                    o.change = Change::Failed;
+                                    o.detail = e.to_string();
+                                }
                             }
-                            Err(e) => {
-                                o.change = Change::Failed;
-                                o.detail = e.to_string();
-                            }
-                        },
+                        }
                         Some(_) => {
                             o.detail = "edited since cua installed it; left in place".into();
                             state.skills.remove(&dest);
@@ -1107,7 +1311,9 @@ impl AgentSetup {
                 out.push(o);
             }
         }
-        state.save(&self.state_path)?;
+        if !opts.dry_run {
+            state.save(&self.state_path)?;
+        }
         Ok(out)
     }
 
@@ -1116,10 +1322,12 @@ impl AgentSetup {
         state: &mut State,
         a: &AgentSpec,
         m: &McpSpec,
-        file: &Path,
         name: &str,
+        dry_run: bool,
         o: &mut Outcome,
     ) -> Result<()> {
+        let file = self.mcp_file(m);
+        let file = file.as_path();
         // `cua`'s record may carry another name (older states).
         let key = if state.mcp.get(file).is_some_and(|r| r.name == name) {
             MCP_SERVER_NAME
@@ -1147,8 +1355,12 @@ impl AgentSetup {
             .filter(|_| self.env.run_agent_clis)
             .and_then(|c| self.env.which(c.bin()).map(|bin| (c, bin)));
         if let (Some((cli, bin)), None) = (via_cli, &r.previous) {
-            run_cli(&bin, &cli.remove_args(&r.name))?;
+            if !dry_run {
+                run_cli(&bin, &cli.remove_args(&r.name))?;
+            }
         } else {
+            // The edit is worked out on a dry run too: one the format cannot
+            // make without losing comments fails here, as it does for real.
             let new = match &r.previous {
                 Some(prev) => {
                     let fields: edit::Fields = prev
@@ -1161,7 +1373,7 @@ impl AgentSetup {
                 }
                 None => edit::remove(m.format, file, &text, m.key_path, &r.name)?,
             };
-            if let Some(new) = new {
+            if let (Some(new), false) = (new, dry_run) {
                 fsutil::atomic_write(file, new.as_bytes())?;
             }
         }
@@ -1232,9 +1444,10 @@ impl AgentSetup {
                 .into_iter()
                 .filter(|a| registry::find(a).is_some())
                 .collect();
+            let bundled = self.bundled_skills();
             let names: Vec<String> = names
                 .into_iter()
-                .filter(|n| skills::get(n).is_some())
+                .filter(|n| bundled.iter().any(|s| &s.name == n))
                 .collect();
             if known.is_empty() || names.is_empty() {
                 continue;
@@ -1243,8 +1456,9 @@ impl AgentSetup {
         }
         if let Some(server) = server {
             let agents: Vec<String> = state
-                .mcp
-                .values()
+                .records(&server.name)
+                .into_iter()
+                .flat_map(|r| r.values())
                 .flat_map(|r| r.agents.iter().cloned())
                 .filter(|a| registry::find(a).is_some())
                 .collect::<BTreeSet<_>>()
@@ -1258,7 +1472,7 @@ impl AgentSetup {
                 let current = edit::get(m.format, &file, &text, m.key_path, &server.name)
                     .ok()
                     .flatten();
-                let recorded = state.mcp.get(&file).map(|r| r.value.clone());
+                let recorded = state.record(&server.name, &file).map(|r| r.value.clone());
                 if current.is_some() && current == recorded {
                     out.extend(self.configure_mcp(&[a], server)?);
                 }
@@ -1346,7 +1560,7 @@ fn run_cli(bin: &Path, args: &[String]) -> Result<()> {
 
 #[cfg(test)]
 mod cmd_shim_tests {
-    use super::{HostEnv, Os, cmd_shim_target};
+    use super::{HostEnv, cmd_shim_target};
 
     /// What `npm i -g @anthropic-ai/claude-code` writes (cmd-shim).
     const NATIVE_SHIM: &str = "@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n\"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe\"   %*\r\n";
@@ -1367,13 +1581,8 @@ mod cmd_shim_tests {
     #[test]
     fn the_current_env_also_searches_the_usual_install_dirs() {
         let env = HostEnv::current();
-        if env.os != Os::Windows {
-            let home = env.home.clone();
-            assert!(env.path.contains(&home.join(".local/bin")));
-            assert!(
-                env.path
-                    .contains(&std::path::PathBuf::from("/opt/homebrew/bin"))
-            );
+        for dir in env.well_known_bin_dirs() {
+            assert!(env.path.contains(&dir), "{}", dir.display());
         }
     }
 

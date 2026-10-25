@@ -123,7 +123,10 @@ result = await space.call_tool("add", '{"a": 2, "b": 3}', "mcp", None)
 | Lifecycle, declared services, tunnels, public URLs, `list_tools` / `call_tool` with `service` | `bash`, files, streaming, presence, teleport, agent runs, the `driver` tool registry |
 
 Spacesd features on an image without it fail with `CapabilityMissing`. The
-canonical images and computers set up with `cua host setup` run cua-spacesd.
+canonical images and computers set up with `cua host setup` run cua-spacesd, and
+so does any OCI image you create on this computer as a container or microVM
+(`alpine:3.20`, `node:20`): a static cua-spacesd is put into it and runs
+beside the image's own command.
 
 <Callout type="info">
   In the cloud, `command` and `env` work on container and VM images alike.

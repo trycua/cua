@@ -195,7 +195,7 @@ pub async fn status(json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
         );
     }
     let Some(c) = c else {
-        line(out, "Not logged in. Run 'cua auth login'.");
+        util::hint_line(out, "Not logged in. Run 'cua auth login'.");
         return Ok(1);
     };
     if c.expires().map_err(auth_err)? <= chrono::Utc::now() {
@@ -234,7 +234,7 @@ pub async fn whoami(json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
         if json {
             util::json_line(out, &serde_json::json!({"authenticated": false}));
         } else {
-            line(out, "Not logged in. Run 'cua auth login'.");
+            util::hint_line(out, "Not logged in. Run 'cua auth login'.");
         }
         return Ok(1);
     };

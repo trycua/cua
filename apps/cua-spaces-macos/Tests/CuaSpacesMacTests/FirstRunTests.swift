@@ -46,6 +46,18 @@ struct FirstRunTests {
         #expect(MainUIRoute.onboarding.webPath == "/onboarding")
     }
 
+    /// A launch (or a window that opens again) while the first run is not
+    /// done asks for it as due, so the page can keep a "Skip for now": the
+    /// welcome came back at every launch, in Cua Spaces Local as in the
+    /// released app, because the app opened `/onboarding` itself. A person
+    /// asking for it (Settings, Welcome) still gets the page unconditionally.
+    @Test func aWindowOpeningWhileTheFirstRunIsDueLetsThePageHonourSkipForNow() {
+        #expect(MainUIRoute.firstRunDue.webPath == "/onboarding?due=1")
+        #expect(MainWindowSwitch.firstRunRoute(onboarded: false) == .firstRunDue)
+        #expect(MainWindowSwitch.firstRunRoute(onboarded: true) == nil, "done: the app as it was")
+        #expect(MainUIRoute.onboarding.webPath == "/onboarding", "Show again has no due: it always shows")
+    }
+
     /// A window that is never shown (the replacement only reads its frame
     /// and closes it).
     func hiddenWindow() -> NSWindow {

@@ -18,6 +18,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -134,6 +135,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -194,6 +196,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -310,6 +313,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -370,6 +374,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -1335,6 +1340,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -1394,6 +1400,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -1507,6 +1514,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -1565,6 +1573,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -1843,6 +1852,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -1901,6 +1911,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -1959,6 +1970,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -2017,6 +2029,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -2075,6 +2088,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,
@@ -2133,6 +2147,7 @@
           "placement: Run on",
           "kind: Kind (advanced)",
           "runtime: Runtime (advanced)",
+          "connect-cloud: Connect a cloud…",
           "connect-by-address: Connect by address…"
         ],
         "gpu": null,

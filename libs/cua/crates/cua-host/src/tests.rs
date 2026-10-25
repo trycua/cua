@@ -1857,6 +1857,9 @@ async fn signing_in_as_another_account_registers_the_host_again() {
         .expect("registered");
     assert_eq!(on_relay.owner.id, "user-2");
 
+    // The previous account's record of this computer is gone.
+    assert!(relay.machine(&old_id).is_none(), "retired");
+
     // Signed in as the new owner again: a plain resume, no new machine.
     host.pause_signed_out().await.unwrap();
     let again = host
@@ -1864,6 +1867,31 @@ async fn signing_in_as_another_account_registers_the_host_again() {
         .await
         .unwrap();
     assert_eq!(again.machine_id, switched.machine_id);
+}
+
+/// A host the owner had stopped sharing stays stopped (on the relay too)
+/// after a switch of account.
+#[tokio::test]
+async fn a_stopped_host_stays_stopped_after_an_account_switch() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-a", "user-1", Some("ada@example.com"));
+    relay.add_account("acct-b", "user-2", Some("bob@example.com"));
+    let f = fixture();
+    let host = f.host();
+    host.setup(f.relay_opts(&relay.url), &StaticToken("acct-a".into()))
+        .await
+        .unwrap();
+    host.stop_sharing().await.unwrap();
+    let switched = host
+        .resume_or_switch_account("user-2", &StaticToken("acct-b".into()))
+        .await
+        .unwrap();
+    assert!(!switched.sharing, "still stopped here");
+    assert!(switched.service.running, "but online");
+    let on_relay = relay
+        .machine(switched.machine_id.as_deref().unwrap())
+        .unwrap();
+    assert!(!on_relay.sharing, "and on the relay");
 }
 
 /// A switch of account that fails leaves the previous account's sharing

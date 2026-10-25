@@ -1951,6 +1951,15 @@ impl Host {
             p.sharing = config.sharing;
             write_json(&self.paths.policy(), &p)?;
         }
+        // Stopped stays stopped, but online: a registration made while the
+        // owner had stopped sharing starts as sharing on the relay, so the
+        // stop is sent again (it changes nothing when the relay has it).
+        if !config.sharing
+            && let (Some(url), Some(id)) = (&config.relay_url, &config.machine_id)
+            && let Ok(token) = read_secret(&self.paths.machine_token())
+        {
+            RelayClient::new(url)?.stop_sharing(&token, id).await?;
+        }
         let manager = self.manager_for_config(&config);
         if let Err(e) = manager
             .install(&self.service_spec(&config))
@@ -2022,6 +2031,11 @@ impl Host {
         };
         let relay = RelayClient::new(&url)?;
         let token = tokens.access_token().await?;
+        // The registration being left, retired once the new one is in place.
+        let previous = config
+            .machine_id
+            .clone()
+            .zip(read_secret(&self.paths.machine_token()).ok());
         let id = random_hex(16);
         let reg = relay
             .register_as_machine(
@@ -2055,15 +2069,17 @@ impl Host {
         write_json(&self.paths.policy(), &policy)?;
         config.machine_id = Some(reg.machine.id.clone());
         write_json(&self.paths.config(), &config)?;
-        if !config.sharing {
-            // Stopped stays stopped, but online (as after a resume).
-            let _ = relay
-                .stop_sharing(&reg.machine_token, &reg.machine.id)
-                .await;
+        // The previous account's record of this computer goes (best effort:
+        // its machine token proves it is this computer), so switching back
+        // and forth does not pile up offline machines.
+        if let Some((old_id, old_token)) = previous
+            && let Err(e) = relay.delete(&old_token, &old_id).await
+        {
+            tracing::debug!(error = %e, machine = %old_id, "could not retire the previous registration");
         }
         // Registered for the new account and paused: resuming installs and
-        // starts the service with the new registration, and is what a retry
-        // does if that fails here.
+        // starts the service with the new registration (and keeps a stopped
+        // host stopped on the relay), and is what a retry does if that fails.
         self.resume_signed_in(&reg.machine.owner.id).await
     }
 

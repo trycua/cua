@@ -265,7 +265,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             // The browser flow can take minutes: answer now (already
             // "starting", so an earlier failure never reads as this one's),
             // and `session.changed` follows each step until it ends.
-            if let current = model.startSignIn() {
+            // `code`: the page's "Get a code instead" (the browser never got back to the app).
+            if let current = model.startSignIn(code: (args["code"] as? Bool) == true) {
                 Task { @MainActor in await model.runSignIn(current) }
             }
             return session()

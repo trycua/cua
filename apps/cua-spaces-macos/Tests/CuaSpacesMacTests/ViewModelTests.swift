@@ -449,6 +449,27 @@ struct ViewModelTests {
         #expect(steps(telemetry) == ["signed_in"])
     }
 
+    /// "Get a code instead": a sign-in that never came back from the browser
+    /// restarts with a code, and the account is asked for exactly that.
+    @Test func aSignInThatNeverComesBackCanRestartWithACode() async throws {
+        let account = CodeAskingAccount()
+        let model = makeModel(account: account)
+        let first = Task { await model.beginSignIn() }
+        try await Task.sleep(for: .milliseconds(100))
+        first.cancel()
+        model.cancelSignIn()
+        let byCode = Task { await model.beginSignIn(code: true) }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(account.starts == [false, true])
+        guard case let .waiting(userCode, _) = model.signIn else {
+            Issue.record("expected a waiting sign-in, got \(model.signIn)")
+            return
+        }
+        #expect(userCode == "ABCD-EFGH")
+        byCode.cancel()
+        model.cancelSignIn()
+    }
+
     /// A sign-in that never finishes: Cancel stops it, a timeout fails it,
     /// and each counts by its kind only (never the message).
     @Test func aStuckSignInCanBeCancelledAndTimesOut() async throws {
@@ -1551,6 +1572,23 @@ final class StuckAccount: AccountRunning, @unchecked Sendable {
     func identity() -> String? { nil }
     func beginSignIn() async throws -> SignInAttempt {
         SignInAttempt(userCode: "ABCD-EFGH", url: URL(string: "https://cua.ai/device"), opened: opened) {
+            try await Task.sleep(for: .seconds(3600))
+            return nil
+        }
+    }
+    func signOut() async throws {}
+}
+
+/// An account that says which way each sign-in started.
+final class CodeAskingAccount: AccountRunning, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _starts: [Bool] = []
+    var starts: [Bool] { lock.withLock { _starts } }
+    func identity() -> String? { nil }
+    func beginSignIn() async throws -> SignInAttempt { try await beginSignIn(code: false) }
+    func beginSignIn(code: Bool) async throws -> SignInAttempt {
+        lock.withLock { _starts.append(code) }
+        return SignInAttempt(userCode: code ? "ABCD-EFGH" : nil, url: URL(string: "https://cua.ai/device"), opened: true) {
             try await Task.sleep(for: .seconds(3600))
             return nil
         }

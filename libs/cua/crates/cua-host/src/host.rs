@@ -2150,9 +2150,6 @@ impl Host {
                 .stop_sharing(&reg.machine_token, &reg.machine.id)
                 .await?;
         }
-        // The active registration is not kept; the others are.
-        kept.remove(&reg.machine.owner.id);
-        self.save_registrations(&kept)?;
 
         write_secret(&self.paths.machine_id, &format!("{}\n", reg.machine.id))?;
         write_secret(&self.paths.machine_token(), &reg.machine_token)?;
@@ -2173,6 +2170,11 @@ impl Host {
         write_json(&self.paths.policy(), &policy)?;
         config.machine_id = Some(reg.machine.id.clone());
         write_json(&self.paths.config(), &config)?;
+        // Committed: the active registration is not kept; the others are
+        // (until here it stays kept, so a crash or a failed write retries
+        // with it instead of making another machine).
+        kept.remove(&reg.machine.owner.id);
+        self.save_registrations(&kept)?;
         // Registered for the new account and paused: resuming installs and
         // starts the service with the new registration (and keeps a stopped
         // host stopped on the relay), and is what a retry does if that fails.

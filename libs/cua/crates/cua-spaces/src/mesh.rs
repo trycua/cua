@@ -91,12 +91,26 @@ enum Slot {
     /// The mesh cannot be used (the relay has none, or refused this
     /// device), and why; checked again after a while (or at once when
     /// another account signs in).
-    Unsupported(Instant, String, Option<String>),
+    Unsupported(Instant, String, Option<String>, Duration),
 }
 
 use crate::relay::account_changed;
 
 const RECHECK: Duration = Duration::from_secs(600);
+
+/// A node the relay refused (not enrolled yet, a key it did not take) is
+/// tried again soon: the cause is often a sign-in whose device enrollment
+/// has not finished, not a relay without a mesh.
+const RECHECK_REFUSED: Duration = Duration::from_secs(5);
+
+/// When to try a node that could not start again.
+fn recheck_after(why: &str) -> Duration {
+    if why.contains("mesh refused") {
+        RECHECK_REFUSED
+    } else {
+        RECHECK
+    }
+}
 
 /// Per-runtime mesh nodes, started on first use.
 #[derive(Default)]
@@ -376,8 +390,8 @@ impl MeshClients {
                 nodes.remove(&key);
             }
             Some(Slot::Ready { dialer, .. }) => return Ok(dialer.clone()),
-            Some(Slot::Unsupported(at, why, started))
-                if at.elapsed() < RECHECK && !account_changed(started, &account) =>
+            Some(Slot::Unsupported(at, why, started, every))
+                if at.elapsed() < *every && !account_changed(started, &account) =>
             {
                 return Err(why.clone());
             }
@@ -403,7 +417,11 @@ impl MeshClients {
                 Ok(d)
             }
             Err(e) => {
-                nodes.insert(key, Slot::Unsupported(Instant::now(), e.clone(), account));
+                let every = recheck_after(&e);
+                nodes.insert(
+                    key,
+                    Slot::Unsupported(Instant::now(), e.clone(), account, every),
+                );
                 Err(e)
             }
         }
@@ -996,6 +1014,12 @@ mod tests {
                 .await
                 .is_none()
         );
+    }
+
+    #[test]
+    fn a_refused_node_is_tried_again_sooner_than_a_relay_without_a_mesh() {
+        assert!(recheck_after("mesh refused: HTTP 403: not enrolled") < RECHECK);
+        assert_eq!(recheck_after("the relay has no mesh coordinator"), RECHECK);
     }
 
     #[test]

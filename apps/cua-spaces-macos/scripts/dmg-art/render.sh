@@ -68,13 +68,18 @@ if [ "$icon_only" = 0 ]; then
   icns alias "$work/alias.png" "$support/dmg/applications.icns"
 fi
 
+# app-icon.py needs Pillow: install a pinned one into a throwaway venv.
+python3 -m venv "$work/venv"
+"$work/venv/bin/pip" install --quiet "pillow==11.3.0"
+py="$work/venv/bin/python"
+
 # The app icon: the chosen PNGs, with the larger-print small art at 16 to 64 px.
 mkdir -p "$work/app.iconset"
-python3 "$here/app-icon.py" iconset "$work/app.iconset"
+"$py" "$here/app-icon.py" iconset "$work/app.iconset"
 iconutil -c icns "$work/app.iconset" -o "$support/AppIcon.icns"
 
 # The other apps ship the same icon. Keep only the files the repo tracks.
 cp "$here/src/app-icon-1024.png" "$tauri_icons/app-icon.png"
-python3 "$here/app-icon.py" tauri "$tauri_icons"
+"$py" "$here/app-icon.py" tauri "$tauri_icons"
 cp "$support/AppIcon.icns" "$tauri_icons/icon.icns"
 ls -l "$support/AppIcon.icns" "$support/dmg" "$tauri_icons"

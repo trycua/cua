@@ -977,6 +977,8 @@ export class BridgeStore {
     }
     if (!waiting) return;
     if (waiting.url) this.signInUrl = waiting.url;
+    // The host fell back to a code (no browser, or its way back is blocked).
+    if (waiting.userCode) this.signInByCode = true;
     const opened = waiting.opened !== false;
     if (this.signInPhase.kind === "waiting" && (this.signInPhase.userCode ?? null) === waiting.userCode && (this.signInPhase.opened ?? true) === opened) return;
     this.signInPhase = { kind: "waiting", userCode: waiting.userCode, opened };
@@ -993,8 +995,7 @@ export class BridgeStore {
   async signIn(opts: { code?: boolean } = {}): Promise<SignInStart> {
     this.stopSignInTimer();
     this.signInByCode = opts.code === true;
-    this.trackFeature(opts.code ? "sign_in_code_instead" : "sign_in_started_browser");
-    if (opts.code) this.trackFeature("sign_in_started_code");
+    if (opts.code) this.trackFeature("sign_in_code_instead");
     this.setSignIn({ kind: "starting" });
     try {
       const start = await this.adapter.call("session.signIn", opts.code ? { code: true } : {});
@@ -1002,6 +1003,9 @@ export class BridgeStore {
       // Cancelled while it started: leave it.
       if (this.signInPhase.kind !== "starting") return start;
       this.signInUrl = start.verificationUri || null;
+      // The way it actually runs: a code when the host gave one (also its own fallback).
+      this.signInByCode = Boolean(start.userCode) || start.method === "device" || opts.code === true;
+      this.trackFeature(this.signInByCode ? "sign_in_started_code" : "sign_in_started_browser");
       this.setSignIn({ kind: "waiting", userCode: start.userCode ?? null });
       this.signInTimer = setTimeout(() => {
         if (this.signInPhase.kind === "waiting") this.signInFailed(signInFailedPhase(this.core, "notConfirmed"));

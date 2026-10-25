@@ -1450,9 +1450,28 @@ fn launch_daemon_with_state_and_wait(
     timeout_secs: u64,
     state: &crate::history_runtime::DaemonLaunchState,
     experimental_history: bool,
-    _allow_managed_restart: bool,
+    allow_managed_restart: bool,
 ) -> Result<(), LaunchDaemonError> {
     use std::process::{Command as Cmd, Stdio};
+
+    // Starting the installed LaunchAgent keeps its `serve` flags; opening the
+    // bundle would start a second daemon in the default mode.
+    if allow_managed_restart
+        && socket_path == crate::serve::default_socket_path()
+        && restart_managed_daemon_if_present()
+    {
+        if wait_for_daemon_listening(socket_path, timeout_secs) {
+            return Ok(());
+        }
+        return Err(LaunchDaemonError {
+            kind: LaunchDaemonErrorKind::Timeout,
+            message: format!(
+                "started the {} LaunchAgent, but the daemon did not appear on {socket_path} \
+             within {timeout_secs}s",
+                launch_agent_label()
+            ),
+        });
+    }
 
     // Forward `--socket <path>` to the relaunched daemon when the caller
     // passed a non-default socket via `cua-driver mcp --socket /path`.
@@ -1728,6 +1747,51 @@ fn restart_managed_daemon_if_present(_executable: &std::path::Path) -> bool {
             .stderr(Stdio::null())
             .status()
             .is_ok_and(|status| status.success())
+}
+
+/// Labels from the operate guide and `install-local.sh --autostart`.
+#[cfg(target_os = "macos")]
+fn launch_agent_label() -> &'static str {
+    if crate::bundle::is_local_installation() {
+        "com.trycua.cua-driver-local"
+    } else {
+        "com.trycua.cua-driver"
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn restart_managed_daemon_if_present() -> bool {
+    use std::process::{Command as Cmd, Stdio};
+    let launchctl = |args: &[&str]| {
+        Cmd::new("/bin/launchctl")
+            .args(args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    };
+    let label = launch_agent_label();
+    let uid = rustix::process::getuid().as_raw();
+    let service = format!("gui/{uid}/{label}");
+    if !launchctl(&["print", &service]) {
+        let Some(home) = std::env::var_os("HOME") else {
+            return false;
+        };
+        let plist = std::path::PathBuf::from(home)
+            .join("Library/LaunchAgents")
+            .join(format!("{label}.plist"));
+        let Some(plist) = plist.to_str().filter(|_| plist.is_file()) else {
+            return false;
+        };
+        // A failed bootstrap still counts when another one loaded the agent first.
+        if !launchctl(&["bootstrap", &format!("gui/{uid}"), plist])
+            && !launchctl(&["print", &service])
+        {
+            return false;
+        }
+    }
+    // Without `-k`, a daemon that is still starting is left alone.
+    launchctl(&["kickstart", &service])
 }
 
 #[cfg(target_os = "macos")]

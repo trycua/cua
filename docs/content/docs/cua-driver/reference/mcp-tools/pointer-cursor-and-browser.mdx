@@ -135,6 +135,7 @@ Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
+| <span id="drag--post_action_wait"></span>`post_action_wait` | `"default" \| "none"` |  | Whether the result waits for the post-action window-change report (default "default": up to 300 ms for a new window, menu, dialog or foreground change). "none" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. macOS only; refused with unsupported_platform elsewhere. |
 | <span id="drag--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 | <span id="drag--target"></span>`target` | `object` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
 | <span id="drag--target-display_id"></span>`target.display_id` | `string` |  | Display id. Required when kind is desktop; use "primary". |
@@ -229,6 +230,7 @@ Note: `element_token` is accepted for cross-platform parity but currently no-op 
 | <span id="scroll--by"></span>`by` | `"line" \| "page"` |  | Scroll granularity. Default: line. |
 | <span id="scroll--direction"></span>`direction` | `"up" \| "down" \| "left" \| "right"` | required | Scroll direction. |
 | <span id="scroll--element_token"></span>`element_token` | `string` |  | Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is "s0000002a:11" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
+| <span id="scroll--post_action_wait"></span>`post_action_wait` | `"default" \| "none"` |  | Whether the result waits for the post-action window-change report (default "default": up to 300 ms for a new window, menu, dialog or foreground change). "none" returns as soon as the input is delivered and says window changes were not observed; the watch keeps running in the background and a change it sees is reported on the next action's result. macOS only; refused with unsupported_platform elsewhere. |
 | <span id="scroll--target"></span>`target` | `object` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
 | <span id="scroll--target-display_id"></span>`target.display_id` | `string` |  | Display id. Required when kind is desktop; use "primary". |
 | <span id="scroll--target-kind"></span>`target.kind` | `"window" \| "desktop"` |  | window requires pid and window_id; desktop requires display_id. |

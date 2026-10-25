@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Segmented } from "@/components/ui/segmented";
 import { Switch } from "@/components/ui/switch";
 import { useBridge } from "@/bridge";
-import { useConnectedApps } from "@/hooks/use-connected-apps";
+import type { ConnectedApps } from "@/hooks/use-connected-apps";
 import { BY_HAND, getItUrl, missingApps, shownApps } from "@/lib/connected-apps";
 import { cn } from "@/lib/utils";
 
@@ -25,8 +25,7 @@ const DriverSettingsCard = lazy(() => import("@/components/volume/driver-card").
  * and "Set up new apps automatically". "Show all" opens file paths, the apps
  * that aren't installed, and adding Cua by hand.
  */
-export function CodingAppsSection() {
-  const apps = useConnectedApps();
+export function CodingAppsSection({ apps }: { apps: ConnectedApps }) {
   const { openExternal } = useExternal();
   const [all, setAll] = useState(false);
   const shown = shownApps(apps.rows ?? []);
@@ -98,7 +97,7 @@ function useExternal() {
   return { openExternal: async (url: string) => void (await data?.call("session.openExternal", { url }).catch(() => {})) };
 }
 
-function AppRow({ row, apps, showPath }: { row: AgentSetupRow; apps: ReturnType<typeof useConnectedApps>; showPath: boolean }) {
+function AppRow({ row, apps, showPath }: { row: AgentSetupRow; apps: ConnectedApps; showPath: boolean }) {
   const busy = apps.pending.includes(row.agent);
   const failure = apps.failures[row.agent];
   const on = row.configured && !failure;

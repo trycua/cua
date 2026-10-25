@@ -89,7 +89,10 @@ struct SavedDirectory {
 }
 
 /// The directory saved for `relay`, when there is one.
-pub(crate) fn load_directory(home: &std::path::Path, relay: &str) -> Vec<crate::relay::RelayMachine> {
+pub(crate) fn load_directory(
+    home: &std::path::Path,
+    relay: &str,
+) -> Vec<crate::relay::RelayMachine> {
     std::fs::read(home.join(RELAY_DIRECTORY_FILE))
         .ok()
         .and_then(|b| serde_json::from_slice::<SavedDirectory>(&b).ok())
@@ -160,7 +163,12 @@ impl Spaces {
             .inner
             .relay_confirmed
             .load(std::sync::atomic::Ordering::Acquire);
-        let others = !self.inner.relay_cache.lock().expect("relay cache").is_empty();
+        let others = !self
+            .inner
+            .relay_cache
+            .lock()
+            .expect("relay cache")
+            .is_empty();
         let progress = match end {
             None => ListProgress {
                 incomplete: true,
@@ -256,7 +264,11 @@ mod tests {
     /// (`false` keeps every read hanging).
     async fn slow_relay(
         machines: serde_json::Value,
-    ) -> (String, watch::Sender<bool>, Arc<std::sync::atomic::AtomicUsize>) {
+    ) -> (
+        String,
+        watch::Sender<bool>,
+        Arc<std::sync::atomic::AtomicUsize>,
+    ) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let (open, gate) = watch::channel(false);
@@ -331,7 +343,11 @@ mod tests {
 
         let started = Instant::now();
         let first = spaces.list_known(Duration::from_millis(200)).await.unwrap();
-        assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "{:?}",
+            started.elapsed()
+        );
         assert_eq!(ids(&first), ["local:space-mac1"]);
         assert!(first.progress.incomplete, "{:?}", first.progress);
         // Nothing known of the account's computers yet.
@@ -345,7 +361,11 @@ mod tests {
         assert!(!done.progress.stale);
         assert_eq!(
             ids(&done),
-            ["local:space-mac1", "relay:aaaaaaaaaaaaaaaa", "relay:bbbbbbbbbbbbbbbb"]
+            [
+                "local:space-mac1",
+                "relay:aaaaaaaaaaaaaaaa",
+                "relay:bbbbbbbbbbbbbbbb"
+            ]
         );
     }
 
@@ -373,7 +393,11 @@ mod tests {
         let l = after.list_known(Duration::from_millis(200)).await.unwrap();
         assert_eq!(
             ids(&l),
-            ["local:space-mac1", "relay:aaaaaaaaaaaaaaaa", "relay:bbbbbbbbbbbbbbbb"]
+            [
+                "local:space-mac1",
+                "relay:aaaaaaaaaaaaaaaa",
+                "relay:bbbbbbbbbbbbbbbb"
+            ]
         );
         assert_eq!(
             l.progress,
@@ -444,7 +468,14 @@ mod tests {
             &url,
             Arc::new(StaticToken("t".into())),
         )));
-        assert!(!spaces.list_known(Duration::from_secs(5)).await.unwrap().progress.incomplete);
+        assert!(
+            !spaces
+                .list_known(Duration::from_secs(5))
+                .await
+                .unwrap()
+                .progress
+                .incomplete
+        );
         open.send(false).unwrap();
         for _ in 0..3 {
             let l = spaces.list_known(Duration::from_millis(100)).await.unwrap();
@@ -466,7 +497,15 @@ mod tests {
             &url,
             Arc::new(StaticToken("t".into())),
         )));
-        assert_eq!(spaces.list_known(Duration::from_secs(5)).await.unwrap().spaces.len(), 3);
+        assert_eq!(
+            spaces
+                .list_known(Duration::from_secs(5))
+                .await
+                .unwrap()
+                .spaces
+                .len(),
+            3
+        );
         spaces.set_relay(Some(RelayAccount::new(
             &url,
             Arc::new(StaticToken(String::new())),

@@ -66,31 +66,26 @@ extension AppModel {
     }
 }
 
-/// View: Command Palette and ⌘1–4, with the shared keys. The New UI
-/// window has its own palette and keys, so these act on the main window.
+/// View: Command Palette and ⌘1–4, with the shared keys. The web UI
+/// window handles these keys itself while it is in front; from anywhere
+/// else (a Space's window) they open it at the page.
 struct NavigationCommands: View {
     let model: AppModel
-    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Button("Command Palette…") { inMain(.home) { model.showingPalette = true } }
+        Button("Command Palette…") { inMain(.home) }
             .keyboardShortcut(SharedShortcuts.shortcut("commandPalette.toggle"))
         Divider()
         ForEach(NavTarget.all(model)) { target in
-            Button(target.label) { inMain(MainUIRouter.route(forNav: target.command)) { model.go(target.command) } }
+            Button(target.label) { inMain(MainUIRouter.route(forNav: target.command)) }
                 .keyboardShortcut(SharedShortcuts.shortcut(target.command))
         }
     }
 
-    /// The native main window, then `then`; New UI's window at `route`
-    /// while it is on (its page handles these keys itself when in front).
-    private func inMain(_ route: MainUIRoute?, _ then: () -> Void) {
+    private func inMain(_ route: MainUIRoute?) {
         if WebUIWindowController.shared?.window?.isKeyWindow == true { return }
         guard model.startup.isReady, model.onboarding.completed else { return }
-        MainUIRouter(model: model).open(route ?? .home) {
-            openWindow(id: "main")
-            then()
-        }
+        MainUIRouter(model: model).open(route ?? .home)
     }
 }
 

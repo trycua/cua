@@ -115,8 +115,6 @@ public enum AppEnvironment {
                              presence: fixtures ? FixturePresence() : LivePresence(),
                              loginItem: fixtures ? fixtureLoginItem(env["CUA_SPACES_LOGIN_ITEM"]) : MainAppLoginItem(),
                              startup: startup,
-                             // Fixtures (UI tests, captures) keep the classic UI
-                             // unless they turn the New UI on.
                              appVersion: fixtures ? nil : info.version)
         if fixtures { model.teamsReader = FixtureTeams() }
         if !fixtures {
@@ -406,6 +404,16 @@ public enum AppEnvironment {
         }
     }
 
+    /// The Settings page a `settings-*` start view names.
+    static func settingsRoute(_ view: String) -> MainUIRoute {
+        switch view {
+        case "settings-devices": return .path("/settings/devices")
+        case "settings-about": return .path("/settings/about")
+        case "settings-experiments": return .path("/settings/experiments")
+        default: return .settings
+        }
+    }
+
     private static func find<T: NSView>(_ type: T.Type, in view: NSView?) -> T? {
         guard let view else { return nil }
         if let hit = view as? T { return hit }
@@ -413,13 +421,13 @@ public enum AppEnvironment {
         return nil
     }
 
-    /// `CUA_SPACES_START_VIEW`: `new-space`, `new-space-picker`, `new-space-resources`, `keyvault`, `keyvault-waiting`,
-    /// `approval`, `onboarding` (the first run, in the New UI window), `this-machine`, `host-setup`,
-    /// `host-configured`, `settings` (the app menu's ⌘, item), `device-approval` (the approval sheet for the first
-    /// device asking; `CUA_SPACES_APPROVE_CODE` types its code),
-    /// `device-enroll` (the enroll sheet), `device-enroll-code` (it, having
-    /// chosen Approve from another device), `space`, `space-window` (the selected
-    /// Space's own window), the notch states `notch-open`
+    /// `CUA_SPACES_START_VIEW` opens the web UI window at a page: `new-space`
+    /// (also `new-space-picker`, `new-space-resources`), `keyvault`,
+    /// `keyvault-waiting`, `approval` (Access), `onboarding`, `drive`, `this-machine`
+    /// (also `host-setup`, `host-configured`: Machines), `settings`,
+    /// `settings-devices`, `settings-about`, `settings-experiments`,
+    /// `settings-storage`, `device-approval`, `device-enroll`,
+    /// `device-enroll-code` (Settings, Devices), `space`; or the notch states `notch-open`
     /// (`notch`; 1.5 s after launch), `notch-hover`, `notch-permission`,
     /// `notch-drag-target` (`notch-prompt`) and `notch-drop`; `notch-menu` (the notch
     /// open and the menu bar menu) and `menu` (the menu alone; `menu-popup`
@@ -434,6 +442,7 @@ public enum AppEnvironment {
     /// start states only.
     static func applyStartView(_ model: AppModel, notch: NotchController) {
         let env = DevHooks.environment
+        let web = { (route: MainUIRoute) in WebUIWindowController.show(model: model, at: route) }
         Task {
             await model.refresh()
             await model.keyvault.refresh()
@@ -459,76 +468,38 @@ public enum AppEnvironment {
             case "webui":
                 WebUIWindowController.show(model: model)
                 WebUIWindowController.startVideoHarness(model: model)
-            case "new-space":
-                await model.openNativeNewSpace()
-            case "new-space-picker":
-                await model.openNativeNewSpace()
-                model.wizard.send(.openImageSuggestions)
-            case "new-space-resources":
-                // The Resources step for `CUA_SPACES_WIZARD_IMAGE` on this
-                // Mac (or `CUA_SPACES_WIZARD_ON=cloud`), with
-                // `CUA_SPACES_WIZARD_DISK` GB when its disk grows and
-                // `CUA_SPACES_WIZARD_CPUS` / `CUA_SPACES_WIZARD_MEMORY` (GB).
-                // Your cloud needs its experiment (this run only).
+            case "new-space", "new-space-picker", "new-space-resources":
+                // The web wizard (`CUA_SPACES_WIZARD_ON=yours`: Your cloud's
+                // experiment on for this run, and "Run on" there).
                 if env["CUA_SPACES_WIZARD_ON"] == "yours" { model.settings.experiments.yourCloud = true }
-                await model.openNativeNewSpace()
-                let w = model.wizard
-                if let image = env["CUA_SPACES_WIZARD_IMAGE"] { w.send(.chooseImage(imageRef: image)) }
-                w.send(.setPlacement(placement: env["CUA_SPACES_WIZARD_ON"] == "yours" ? .yours : .local))
-                w.send(.next)
-                if let disk = env["CUA_SPACES_WIZARD_DISK"].flatMap(UInt32.init) { w.send(.setDisk(diskGb: disk)) }
-                if let cpus = env["CUA_SPACES_WIZARD_CPUS"].flatMap(UInt32.init) { w.send(.setCpus(cpus: cpus)) }
-                if let memory = env["CUA_SPACES_WIZARD_MEMORY"].flatMap(UInt32.init) { w.send(.setMemory(memoryGb: memory)) }
-            case "keyvault":
-                model.selection = .keyvault(.category(category: .all))
-            case "keyvault-waiting":
-                model.selection = .keyvault(.category(category: .waiting))
+                WebUIWindowController.showNewSpace(model: model, on: env["CUA_SPACES_WIZARD_ON"])
+            case "keyvault", "keyvault-waiting":
+                web(.keyvault)
             case "approval":
-                model.selection = .keyvault(.category(category: .waiting))
-                if let first = model.keyvault.overview.pending.first { model.keyvault.openApproval(first.id) }
+                web(.access)
             case "onboarding":
-                // The first run is the web page's: its window opens on it
-                // (`RootView`) once the launch is ready.
+                // The first run again, on its page.
                 model.onboarding.restart()
+                web(.onboarding)
             case "drive":
                 // The Volume page shows with Cua Volume on (this run only).
                 model.settings.experiments.cuaVolume = true
-                model.selection = .drive
-            case "settings":
-                // The app menu's ⌘, item, as a person presses it: the
-                // page's Settings in the New UI window.
-                try? await Task.sleep(for: .seconds(2))
-                NSApp.activate()
-                if let item = NSApp.mainMenu?.items.first?.submenu?.items.first(where: { $0.keyEquivalent == "," }),
-                   let action = item.action {
-                    NSApp.sendAction(action, to: item.target, from: item)
-                }
-            case "device-approval":
-                // The approval sheet for the first device asking (it opens
-                // on its own once the relay lists one).
+                web(.drive)
+            case "settings", "settings-devices", "settings-storage", "settings-about", "settings-experiments":
+                // Storage shows with the Cua Volume experiment on (this run
+                // only; the settings file is not written).
+                if env["CUA_SPACES_START_VIEW"] == "settings-storage" { model.settings.experiments.cuaVolume = true }
+                MainUIRouter(model: model).openSettings(Self.settingsRoute(env["CUA_SPACES_START_VIEW"] ?? "settings"))
+            case "device-approval", "device-enroll", "device-enroll-code":
+                // The web Devices page has the enroll and approval sheets.
                 await model.devices.refresh()
-                if model.devices.approval == nil, let first = model.devices.view.approvals.first {
-                    model.devices.openApproval(first, in: .main)
-                }
-                if let code = env["CUA_SPACES_APPROVE_CODE"] { model.devices.setCode(code) }
-            case "device-enroll":
-                model.devices.startEnroll(in: .main)
-            case "device-enroll-code":
-                // "Approve from another device": register, show the code, wait.
-                model.devices.startEnroll(in: .main)
-                await model.devices.chooseEnroll(.approve)
+                web(.path("/settings/devices"))
             case "space":
                 model.select("local:aurora")
-            case "this-machine":
+                web(.space("local:aurora"))
+            case "this-machine", "host-setup", "host-configured":
                 model.select("this-mac")
-            case "host-setup":
-                model.select("this-mac")
-                model.host.openForm()
-            case "host-configured":
-                model.select("this-mac")
-                model.host.openForm()
-                model.host.send(.setName(name: "Studio"))
-                await model.host.submit()
+                web(.machines)
             case "notch", "notch-open":
                 // Closed first, then open once after 1.5 s, so a capture
                 // sees the spring.

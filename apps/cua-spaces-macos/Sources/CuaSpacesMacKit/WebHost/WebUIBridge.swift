@@ -14,12 +14,9 @@ import WebKit
 public struct WebUIActions {
     /// A Space's desktop in its own native window (video stays native).
     public var openSpace: (String) -> Void
-    /// The native main window (a passphrase is chosen there).
-    public var openMain: () -> Void
 
-    public init(openSpace: @escaping (String) -> Void, openMain: @escaping () -> Void) {
+    public init(openSpace: @escaping (String) -> Void) {
         self.openSpace = openSpace
-        self.openMain = openMain
     }
 }
 
@@ -454,15 +451,13 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
 
     /// `onboarding.complete {mode, launchAtLogin?}`: "Start using Cua Spaces".
     /// Saved to `onboarding.json`, Done's "Launch at login" applied, the usage
-    /// notice counted as shown. With New UI off the page was only the first
-    /// run's stand-in: its window gives way to the native main window.
+    /// notice counted as shown. The page goes on to Spaces in the same window.
     func completeOnboarding(_ args: [String: Any]) throws -> [String: Any] {
         guard let word = args["mode"] as? String, word == "client" || word == "host" else {
             throw Failure.badArgs("mode: client | host")
         }
         model.onboarding.finish(mode: word == "host" ? .host : .client, launchAtLogin: args["launchAtLogin"] as? Bool)
         model.telemetrySink?.acknowledgeNotice()
-        if !model.settings.experiments.webUi { model.closeWebUI?() }
         return onboarding()
     }
 

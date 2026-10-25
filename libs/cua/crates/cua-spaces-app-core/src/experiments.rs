@@ -3,9 +3,7 @@
 
 //! Settings, Experiments: features still being built, one switch each, all
 //! off by default except Sharing (on, as cua.ai/pricing lists it for every
-//! plan), Your cloud (on, so a linked cloud shows under Run on) and the New
-//! UI, which [`new_ui_default`] turns on for the Beta channel and then for
-//! every release.
+//! plan) and Your cloud (on, so a linked cloud shows under Run on).
 //!
 //! - Cua Volume ([`Experiment::CuaVolume`]): the first run's Volume page
 //!   (and its Done line) and Settings' Storage section;
@@ -13,9 +11,9 @@
 //!   connected clouds (AWS, Google Cloud, Hetzner, Modal), "Connect a cloud…" and a
 //!   default location in a cloud;
 //! - Sharing ([`Experiment::Sharing`]): a Space's Share button;
-//! - New UI ([`Experiment::WebUi`]): the shared web UI as the main window
-//!   (the macOS shell). Settings shows it as "Use classic UI"
-//!   ([`CLASSIC_UI_ROW`]), the way back to the SwiftUI window.
+//! - New UI ([`Experiment::WebUi`]): retired. The shared web UI is the only
+//!   UI of every shell, so it has no row; the key stays so the macOS shell
+//!   can report it ([`crate::settings::resolve_new_ui`]).
 //!
 //! Off only hides the entry points. Nothing is undone: a mounted Volume
 //! stays mounted (and keeps syncing), a connected cloud stays connected
@@ -25,15 +23,8 @@
 //! The switches live in the app's settings ([`crate::settings::AppSettings`],
 //! `experiments`): one key per experiment, missing keys read as their default (off, but on for Sharing and
 //! Your cloud) and unknown ones are ignored, so an older or newer build reads the file.
-//!
-//! The New UI is the one switch with a default of its own: `web_ui` is
-//! what this launch shows, the user's own choice lives in
-//! [`crate::settings::AppSettings::new_ui`] and, without one,
-//! [`new_ui_default`] decides ([`crate::settings::resolve_new_ui`]).
 
 use serde::{Deserialize, Serialize};
-
-use crate::about::UpdateChannel;
 
 use crate::settings::{
     SettingsOption, SettingsPage, SettingsRow, SettingsRowKind, SettingsSection,
@@ -50,8 +41,8 @@ pub struct Experiments {
     /// Sharing a Space with other accounts. On unless turned off: a missing
     /// key reads as on (the plans on cua.ai/pricing list sharing).
     pub sharing: bool,
-    /// The New UI (the shared web UI) is the main window: the user's choice
-    /// or, without one, [`new_ui_default`] ([`crate::settings::resolve_new_ui`]).
+    /// The shared web UI is the main window. Always on in the macOS shell
+    /// ([`crate::settings::resolve_new_ui`]); kept for older files and builds.
     pub web_ui: bool,
 }
 
@@ -175,138 +166,12 @@ pub fn of_row(id: &str) -> Option<Experiment> {
     id.strip_prefix("experiment:").and_then(Experiment::parse)
 }
 
-/// The New UI's row on the Experiments tab: "Use classic UI", on while the
-/// New UI is off. (`experiment:web_ui`, on for the New UI, is still read.)
-pub const CLASSIC_UI_ROW: &str = "experiment:classic_ui";
-
-/// From this version the New UI is on by default for the Beta channel:
-/// every 0.8.1 prerelease (`0.8.1-0` is the lowest SemVer allows; 0.8.0
-/// shipped without the default).
-pub const NEW_UI_BETA_FROM: &str = "0.8.1-0";
-
-/// The first release with the New UI on by default on every channel.
-pub const NEW_UI_ALL_FROM: &str = "0.8.1";
-
-/// Whether the New UI is on for someone who never chose: on the Beta
-/// channel from [`NEW_UI_BETA_FROM`], everywhere from [`NEW_UI_ALL_FROM`]
-/// (so 0.8.1 turns it on for Stable with no change here). `version` is the
-/// running app's (`0.8.1-beta.1`); one that does not read as a version
-/// (a dev build's, or none) keeps the classic UI.
-pub fn new_ui_default(channel: UpdateChannel, version: &str) -> bool {
-    let Some(v) = Version::parse(version) else {
-        return false;
-    };
-    let at_least = |from: &str| Version::parse(from).is_some_and(|f| v >= f);
-    at_least(NEW_UI_ALL_FROM) || (channel == UpdateChannel::Beta && at_least(NEW_UI_BETA_FROM))
-}
-
-/// The New UI choice a row's option makes: `Some(on)` for the New UI's
-/// row ("Use classic UI" on is the New UI off), `None` for any other row or
-/// option. The shell saves it as [`crate::settings::AppSettings::new_ui`].
-pub fn new_ui_choice(row: &str, option: &str) -> Option<bool> {
-    match (row, option) {
-        (CLASSIC_UI_ROW, "on") => Some(false),
-        (CLASSIC_UI_ROW, "off") => Some(true),
-        (r, "on") if of_row(r) == Some(Experiment::WebUi) => Some(true),
-        (r, "off") if of_row(r) == Some(Experiment::WebUi) => Some(false),
-        _ => None,
-    }
-}
-
-/// A release version, compared as SemVer does (`0.8.0-beta.6` < `0.8.0`;
-/// build metadata after `+` ignored).
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Version {
-    core: [u64; 3],
-    pre: Vec<PreId>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum PreId {
-    // Numeric identifiers sort before alphanumeric ones.
-    Num(u64),
-    Alpha(String),
-}
-
-impl Version {
-    fn parse(s: &str) -> Option<Self> {
-        let s = s.trim().trim_start_matches('v');
-        let s = s.split('+').next()?;
-        let (core, pre) = match s.split_once('-') {
-            Some((c, p)) => (c, Some(p)),
-            None => (s, None),
-        };
-        let mut parts = core.split('.');
-        let mut n = [0u64; 3];
-        for slot in &mut n {
-            *slot = parts.next()?.parse().ok()?;
-        }
-        if parts.next().is_some() {
-            return None;
-        }
-        let pre = match pre {
-            None => vec![],
-            Some(p) => p
-                .split('.')
-                .map(|id| match id.parse() {
-                    Ok(n) => Some(PreId::Num(n)),
-                    Err(_) if !id.is_empty() => Some(PreId::Alpha(id.to_string())),
-                    Err(_) => None,
-                })
-                .collect::<Option<Vec<_>>>()?,
-        };
-        Some(Self { core: n, pre })
-    }
-}
-
-impl PartialOrd for Version {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Version {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        use std::cmp::Ordering;
-        self.core.cmp(&other.core).then_with(|| {
-            match (self.pre.is_empty(), other.pre.is_empty()) {
-                (true, true) => Ordering::Equal,
-                // A release sorts after its prereleases.
-                (true, false) => Ordering::Greater,
-                (false, true) => Ordering::Less,
-                (false, false) => self.pre.cmp(&other.pre),
-            }
-        })
-    }
-}
-
 /// The Experiments tab: one switch per experiment, each with its one line.
 pub fn page(experiments: &Experiments) -> SettingsPage {
     let mut rows = Vec::new();
     for e in ALL {
         if e == Experiment::WebUi {
-            // "Use classic UI": on while the New UI is off.
-            let classic = !experiments.web_ui;
-            let mut toggle =
-                crate::settings::row(CLASSIC_UI_ROW, SettingsRowKind::Toggle, "Use classic UI");
-            toggle.options = vec![
-                SettingsOption {
-                    id: "on".into(),
-                    label: "On".into(),
-                    active: classic,
-                },
-                SettingsOption {
-                    id: "off".into(),
-                    label: "Off".into(),
-                    active: !classic,
-                },
-            ];
-            rows.push(toggle);
-            rows.push(crate::settings::row(
-                &format!("{CLASSIC_UI_ROW}-note"),
-                SettingsRowKind::Note,
-                "Open the previous Spaces window instead of the New UI.",
-            ));
+            // Retired: the web UI is the only UI, so there is nothing to choose.
             continue;
         }
         let on = experiments.is_on(e);
@@ -344,12 +209,10 @@ pub fn page(experiments: &Experiments) -> SettingsPage {
 }
 
 /// The switches after a row's choice (`on` or `off`); unchanged for any
-/// other row or option.
+/// other row or option, and for the retired New UI rows
+/// (`experiment:web_ui`, `experiment:classic_ui`).
 pub fn choose(experiments: &Experiments, row: &str, option: &str) -> Experiments {
-    if let Some(on) = new_ui_choice(row, option) {
-        return experiments.with(Experiment::WebUi, on);
-    }
-    match (of_row(row), option) {
+    match (of_row(row).filter(|e| *e != Experiment::WebUi), option) {
         (Some(e), "on") => experiments.with(e, true),
         (Some(e), "off") => experiments.with(e, false),
         _ => *experiments,
@@ -383,16 +246,10 @@ mod tests {
                 "experiment:your_cloud-note",
                 "experiment:sharing",
                 "experiment:sharing-note",
-                "experiment:classic_ui",
-                "experiment:classic_ui-note",
             ]
         );
         for r in switches(&p) {
-            // Off, the New UI shows as "Use classic UI" on.
-            let shown = if r.id == CLASSIC_UI_ROW
-                || r.id == "experiment:sharing"
-                || r.id == "experiment:your_cloud"
-            {
+            let shown = if r.id == "experiment:sharing" || r.id == "experiment:your_cloud" {
                 "on"
             } else {
                 "off"
@@ -431,103 +288,23 @@ mod tests {
     }
 
     #[test]
-    fn use_classic_ui_is_the_new_ui_switch_inverted() {
+    fn the_retired_new_ui_rows_are_gone_and_change_nothing() {
         let on = Experiments {
             web_ui: true,
             ..Default::default()
         };
-        let row = |x: &Experiments| {
-            let p = page(x);
-            let r = switches(&p)
-                .into_iter()
-                .find(|r| r.id == CLASSIC_UI_ROW)
-                .cloned()
-                .unwrap();
-            (
-                r.label.clone(),
-                r.options.iter().find(|o| o.active).unwrap().id.clone(),
-            )
-        };
-        assert_eq!(row(&on), ("Use classic UI".to_string(), "off".to_string()));
-        assert_eq!(row(&Experiments::default()).1, "on");
-        // Classic on is the New UI off, and back.
-        assert_eq!(choose(&on, CLASSIC_UI_ROW, "on"), Experiments::default());
-        assert_eq!(choose(&Experiments::default(), CLASSIC_UI_ROW, "off"), on);
-        // The older row id still means the New UI itself.
-        assert_eq!(
-            choose(&Experiments::default(), "experiment:web_ui", "on"),
-            on
-        );
-        assert_eq!(
-            choose(&on, "experiment:web_ui", "off"),
-            Experiments::default()
-        );
-        assert_eq!(new_ui_choice(CLASSIC_UI_ROW, "on"), Some(false));
-        assert_eq!(new_ui_choice(CLASSIC_UI_ROW, "off"), Some(true));
-        assert_eq!(new_ui_choice("experiment:web_ui", "on"), Some(true));
-        assert_eq!(new_ui_choice("experiment:sharing", "on"), None);
-        assert_eq!(new_ui_choice(CLASSIC_UI_ROW, "maybe"), None);
-    }
-
-    #[test]
-    fn the_new_ui_is_on_for_beta_from_0_8_1_betas_and_for_everyone_from_0_8_1() {
-        use UpdateChannel::{Beta, Stable};
-        for (channel, version, on) in [
-            // Before: classic on both channels, 0.8.0 included (it shipped
-            // without the default).
-            (Beta, "0.7.2", false),
-            (Stable, "0.7.2", false),
-            (Beta, "0.8.0-beta.5", false),
-            (Beta, "0.8.0-beta.6", false),
-            (Beta, "0.8.0", false),
-            (Stable, "0.8.0", false),
-            // Beta: every 0.8.1 prerelease, from the first.
-            (Beta, "0.8.1-0", true),
-            (Beta, "0.8.1-beta.0", true),
-            (Beta, "0.8.1-beta.1", true),
-            (Beta, "0.8.1-beta.10", true),
-            (Beta, "0.8.1-rc.1", true),
-            (Beta, "0.8.1-beta.1+build.7", true),
-            // Stable keeps classic until 0.8.1.
-            (Stable, "0.8.1-beta.1", false),
-            (Stable, "0.8.1-rc.1", false),
-            (Stable, "0.8.1", true),
-            (Beta, "0.8.1", true),
-            (Stable, "0.8.2", true),
-            (Stable, "0.9.0-beta.1", true),
-            (Stable, "1.0.0", true),
-            // Not a version: classic.
-            (Beta, "", false),
-            (Beta, "dev", false),
-            (Beta, "0.8", false),
-        ] {
-            assert_eq!(
-                new_ui_default(channel, version),
-                on,
-                "{channel:?} {version}"
+        for x in [on, Experiments::default()] {
+            let p = page(&x);
+            assert!(
+                p.sections[0].rows.iter().all(|r| !r.id.contains("classic_ui") && !r.id.contains("web_ui")),
+                "no New UI row"
             );
+            for row in ["experiment:classic_ui", "experiment:web_ui"] {
+                for option in ["on", "off"] {
+                    assert_eq!(choose(&x, row, option), x, "{row} {option}");
+                }
+            }
         }
-    }
-
-    #[test]
-    fn versions_compare_as_semver() {
-        let v = |s: &str| Version::parse(s).unwrap();
-        assert!(
-            v("0.8.0-beta.6") < v("0.8.0-beta.10"),
-            "numeric parts as numbers"
-        );
-        assert!(v("0.8.0-beta.6") < v("0.8.0-rc.1"));
-        assert!(v("0.8.0-rc.1") < v("0.8.0"));
-        assert!(v("0.7.2") < v("0.8.0-beta.1"));
-        assert!(v("0.8.0-beta") < v("0.8.0-beta.1"));
-        assert!(v("0.8.0") < v("0.8.1-0"));
-        assert!(
-            v("0.8.1-0") < v("0.8.1-beta.0"),
-            "numeric before alphanumeric"
-        );
-        assert_eq!(v("v0.8.0+abc"), v("0.8.0"));
-        assert!(Version::parse("0.8.0-").is_none());
-        assert!(Version::parse("0.8.0.1").is_none());
     }
 
     #[test]

@@ -950,16 +950,9 @@ public final class AppModel {
 
     // MARK: - New Space
 
-    /// Opens New UI's New Space wizard (`on`: "Run on" preset, or nil);
-    /// false when there is no New UI window to show it in. Set by the New UI
-    /// window while the `web_ui` experiment is on.
+    /// Opens the web UI's New Space wizard (`on`: "Run on" preset, or nil);
+    /// false when there is no window to show it in. Set at launch.
     public var openWebNewSpace: ((_ on: String?) -> Bool)?
-    /// Puts the New UI window in the native main window's place (the
-    /// `web_ui` experiment was turned on).
-    public var openWebUI: (() -> Void)?
-    /// Closes the New UI window and puts the native one in its place (the
-    /// `web_ui` experiment was turned off).
-    public var closeWebUI: (() -> Void)?
     /// The first run is due again (Settings, Welcome, Show again): opens its
     /// window (the web onboarding), which nothing else would while only
     /// Settings is up.
@@ -973,8 +966,8 @@ public final class AppModel {
         wizard.send(.choosePlacement(on: on))
     }
 
-    /// New Space: New UI's wizard while the `web_ui` experiment is on, else
-    /// (the fallback) the native sheet.
+    /// New Space: the web UI's wizard (the native sheet only without one,
+    /// in tests).
     /// `quick`: the empty home's one click: that OS's default Space, created at once
     /// when the core says it can be; else New Space opens on it and says why.
     public func openNewSpace(quick os: AppSpaceOs? = nil) async {
@@ -983,7 +976,7 @@ public final class AppModel {
     }
 
     private func openInWebUI(on: String?) -> Bool {
-        guard settings.experiments.webUi, let open = openWebNewSpace else { return false }
+        guard let open = openWebNewSpace else { return false }
         return open(on)
     }
 
@@ -1718,13 +1711,9 @@ public final class AppModel {
         if settings.experiments != before { applyExperiments(before: before, after: settings.experiments) }
     }
 
-    /// What follows a change of the switches: an open New
-    /// Space, and the New UI's window in place of the native one (or back).
+    /// What follows a change of the switches: an open New Space.
     private func applyExperiments(before: AppExperiments, after: AppExperiments) {
         guard before != after else { return }
-        // New UI on: its window takes the native one's place; off: the reverse.
-        if !before.webUi, after.webUi { openWebUI?() }
-        if before.webUi, !after.webUi { closeWebUI?() }
         wizard.update(env: wizardEnv(from: wizard.env))
         // The Volume page went with Cua Volume: back to the Spaces.
         if selection == .drive, chrome.volumeLabel == nil { selection = nil }

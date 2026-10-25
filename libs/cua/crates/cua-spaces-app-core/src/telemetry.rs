@@ -231,6 +231,13 @@ pub fn upsell(surface: &str, action: &str) -> Vec<TelemetrySignal> {
             matches!(action, "shown" | "click" | "dismiss")
         }
         "plan_card" | "account_menu" => action == "click",
+        // The limit cards (`upsell::card`): `card_<reason>`.
+        c if c
+            .strip_prefix("card_")
+            .is_some_and(|r| crate::upsell::CARD_REASONS.contains(&r)) =>
+        {
+            matches!(action, "shown" | "click" | "dismiss")
+        }
         _ => false,
     };
     if ok {

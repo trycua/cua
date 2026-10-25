@@ -170,12 +170,17 @@ export {
   resetUpsellMemory,
   useQuiet,
   useTrackPlanClick,
+  useUpsellCard,
   useUpsellGate,
   useUpsellPrompt,
+  type UpsellCard,
+  type UpsellCardReason,
+  type UpsellCardState,
   type UpsellGate,
   type UpsellPrompt,
   type UpsellSurface,
 } from "./upsell";
+export { flagOn, setFlagOverride, setRemoteFlags, useFlag, type FlagName } from "./flags";
 export type { CreateReport, ReportPart, ReportSend } from "./diagnostic-report";
 export {
   FIRST_RUN_POLL_MS,

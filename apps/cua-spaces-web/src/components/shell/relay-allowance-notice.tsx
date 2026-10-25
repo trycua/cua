@@ -4,8 +4,9 @@
 import { XIcon } from "lucide-react";
 import { useSyncExternalStore } from "react";
 
-import { useRelayUsageView, useSession, useUpsellGate } from "@/bridge";
+import { useFlag, useRelayUsage, useRelayUsageView, useSession, useUpsellGate } from "@/bridge";
 import { Button } from "@/components/ui/button";
+import { UpgradeCard } from "@/components/upgrade-card";
 
 const DISMISSED_KEY = "cua.relayAllowance.dismissed";
 
@@ -47,7 +48,27 @@ export function RelayAllowanceNotice() {
   const { openExternal } = useSession();
   const dismissed = useSyncExternalStore(subscribe, readDismissed, () => null);
   const hidden = !notice || dismissed === notice.dismissKey;
-  const gate = useUpsellGate("meter", !hidden, notice?.level === "warn");
+  // With the limit cards on, a used allowance is a card, not the thin line.
+  const usage = useRelayUsage();
+  const cards = useFlag("upsell_cards");
+  const asCard = cards && notice?.level === "limit" && usage !== null;
+  const gate = useUpsellGate("meter", !hidden && !asCard, notice?.level === "warn");
+  if (notice && !hidden && asCard) {
+    const reason = usage.reasons?.includes("sessions") ? "sessions" : "hours";
+    const remember = () => {
+      try {
+        globalThis.localStorage?.setItem(DISMISSED_KEY, notice.dismissKey);
+      } catch {
+        // Not kept: it shows again next launch.
+      }
+      for (const l of [...listeners]) l();
+    };
+    return (
+      <div className="shrink-0 border-b px-4 py-3" data-relay-allowance="limit-card">
+        <UpgradeCard reason={reason} onClose={remember} className="max-w-xl" />
+      </div>
+    );
+  }
   if (!notice || hidden || !gate.show) return null;
   const dismiss = () => {
     gate.dismiss();

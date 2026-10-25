@@ -72,6 +72,10 @@ export interface DemoOptions {
   noVault?: boolean;
   /** Start with no Spaces (the first-Space empty state). */
   noSpaces?: boolean;
+  /** An account in no team (`?demo=no-team`): Share explains that sharing is for teams. */
+  noTeam?: boolean;
+  /** A team with no free computers (`?demo=team-full`): adding a machine to it is refused, as the control plane does at one computer per seat. Simulated: the demo has no control plane. */
+  teamFull?: boolean;
   /** Start at the macOS Keychain prompt (the startup screen). */
   keychain?: boolean;
   /** Answer New Space's options as the SwiftUI host does (`demo/new-space.ts`). */
@@ -111,7 +115,7 @@ export const DEMO_CREATE_FAILURES = {
 
 const DEMO_NOTES = "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3";
 
-/** `?demo=fresh` (signed out, first run), `?demo=slow` (slow answers), `?demo=locked` (Keyvault locked), `?demo=novault` (no Keyvault yet),
+/** `?demo=fresh` (signed out, first run), `?demo=no-team`, `?demo=team-full`, `?demo=slow` (slow answers), `?demo=locked` (Keyvault locked), `?demo=novault` (no Keyvault yet),
  * `?demo=empty` (no Spaces yet), `?demo=keychain` (the startup screen),
  * `?demo=mac-host` (New Space options and the Keyvault's Settings rows in the
  * SwiftUI host's shape), `?demo=unenrolled` (this device not enrolled),
@@ -127,6 +131,8 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     keyvaultLocked: flags.has("locked"),
     noVault: flags.has("novault"),
     noSpaces: flags.has("empty"),
+    noTeam: flags.has("no-team"),
+    teamFull: flags.has("team-full"),
     keychain: flags.has("keychain"),
     macHost: flags.has("mac-host"),
     unenrolled: flags.has("unenrolled"),
@@ -602,12 +608,13 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     },
     ...newSpaceDemoHandlers({ state, wait, emit, step, now }),
     ...demoTeleportHandlers({ wait, emit, now, stepMs: step }),
-    ...demoShareHandlers({ wait, stepMs: step }),
+    ...demoShareHandlers({ wait, stepMs: step, teamFull: options.teamFull }),
     ...demoAgentDetailHandlers({ wait, stepMs: step, now }),
     ...demoAgentKeysHandlers({ wait, stepMs: step, now }),
     ...demoVolumeHandlers({ state: state.volume, now, wait, step, emit, platform: state.platform }),
     ...createDemoSettings({ now, wait, emit, stepMs: step, platform: state.platform, unenrolled: options.unenrolled, update: options.update, experiments: state.volume.experiments, signedIn: () => Boolean(state.identity), settings: () => state.settings, setSettings: (p) => ((state.settings = { ...state.settings, ...p }), emit({ type: "settings.changed" })), addMachine: (m) => ((state.paired = [...state.paired, m]), emit({ type: "machines.changed" })) }),
     ...demoTelemetryHandlers(ctx),
+    ...(options.noTeam ? { "teams.list": () => ({ teams: [], currentTeamId: null }) } : {}),
     ...demoRelayUsageHandlers(ctx),
     ...demoLinksHandlers(ctx),
     "nudges.pending": () => risky.filter((r) => r.expiresMs > now()).map((r) => ({ ...r })),

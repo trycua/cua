@@ -16,11 +16,14 @@
 import { useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { BridgeContext } from "./BridgeProvider";
+import { useFlag } from "./flags";
 import { useAgents, useSettings } from "./hooks";
 import type { RelayUsage } from "./ops/relay-usage";
 import { useRelayUsage } from "./relay-usage";
 
 export type UpsellSurface = "meter" | "share" | "machine";
+/** What stopped the person, for a limit card (`upsell.card`). */
+export type UpsellCardReason = "hours" | "sessions" | "invite" | "seats" | "machines";
 export type UpsellAction = "shown" | "click" | "dismiss";
 
 /** `upsell::UpsellPrompt`. */
@@ -93,14 +96,18 @@ export function useQuiet(): boolean {
   return (usage?.liveSessions ?? 0) > 0 || (agents.data?.runs ?? []).some((r) => r.status === "running");
 }
 
-function useTrack(): (surface: UpsellSurface | "plan_card" | "account_menu", action: UpsellAction) => void {
+type TrackSurface = UpsellSurface | "plan_card" | "account_menu" | `card_${UpsellCardReason}`;
+
+/** Counts the event; false when it could not be (no store yet). */
+function useTrack(): (surface: TrackSurface, action: UpsellAction) => boolean {
   const ctx = useContext(BridgeContext);
   return useCallback(
     (surface, action) => {
       const store = ctx?.store;
-      if (!store) return;
+      if (!store) return false;
       const signals = ctx.core.tryCall<unknown[]>("telemetry.upsell", { surface, action });
       if (signals?.length) void store.telemetry.track(signals);
+      return true;
     },
     [ctx],
   );
@@ -181,4 +188,63 @@ export function useUpsellPrompt(surface: "share" | "machine", usage: RelayUsage 
       state: { nowMs: Date.now(), lastPromptMs: null, dismissedMs: null, quiet: false },
     }) ?? null
   );
+}
+
+/** `upsell::UpsellCard`. */
+export interface UpsellCard {
+  reason: UpsellCardReason;
+  title: string;
+  body: string;
+  price: string;
+  cta: { label: string; url: string };
+  /** "Not now". */
+  dismiss: string;
+}
+
+export interface UpsellCardState {
+  /** The card to draw now; null when the flag is off, there is nothing to
+   * offer, the core is missing or it was closed. */
+  card: UpsellCard | null;
+  click(): void;
+  dismiss(): void;
+}
+
+/**
+ * The limit card for `reason`: what happened, what the plan gives, the price,
+ * Upgrade and Not now. It is for the moment a limit stops the person, so it
+ * is behind the `upsell_cards` flag (off unless turned on) and does not wait
+ * for the 3-day gap. `reason` null: no limit here. `usage` carries the plan
+ * (none known: Free). Events: `upsell_card_<reason>_shown | click | dismiss`,
+ * `shown` once per card drawn.
+ */
+export function useUpsellCard(reason: UpsellCardReason | null, usage: Partial<RelayUsage> | null): UpsellCardState {
+  const ctx = useContext(BridgeContext);
+  const core = ctx?.core;
+  const on = useFlag("upsell_cards");
+  const accountApp = useSettings().data?.accountUrl ?? null;
+  const track = useTrack();
+  const [closed, setClosed] = useState<UpsellCardReason | null>(null);
+  const shown = useRef<UpsellCardReason | null>(null);
+  const card =
+    on && core && reason && closed !== reason
+      ? (core.tryCall<UpsellCard | null>("upsell.card", {
+          reason,
+          usage: { plan: "free", ...usage },
+          ...(accountApp ? { accountApp } : {}),
+        }) ?? null)
+      : null;
+  const shownReason = card?.reason ?? null;
+  useEffect(() => {
+    if (!shownReason || shown.current === shownReason) return;
+    if (track(`card_${shownReason}`, "shown")) shown.current = shownReason;
+  }, [shownReason, track]);
+  return {
+    card,
+    click: () => reason && track(`card_${reason}`, "click"),
+    dismiss: () => {
+      if (!reason) return;
+      track(`card_${reason}`, "dismiss");
+      setClosed(reason);
+    },
+  };
 }

@@ -928,8 +928,23 @@ fn screencapture_disabled_by(value: Option<&std::ffi::OsStr>, embedded: bool) ->
 fn screencapture_disabled() -> bool {
     screencapture_disabled_by(
         std::env::var_os(DISABLE_SCREENCAPTURE_ENV).as_deref(),
-        cua_driver_core::embedded_mode(),
+        host_owned_runtime(),
     )
+}
+
+/// Set once for the life of a runtime a host app owns without `--embedded`:
+/// the SDK's private worker, whose cleared environment has no embedded marker.
+static HOST_OWNED_RUNTIME: AtomicBool = AtomicBool::new(false);
+
+/// Gives this process the embedded default for `screencapture` (off unless the
+/// host sets `CUA_DRIVER_DISABLE_SCREENCAPTURE=0`), without the rest of
+/// embedded mode.
+pub fn treat_as_host_owned() {
+    HOST_OWNED_RUNTIME.store(true, Ordering::Relaxed);
+}
+
+fn host_owned_runtime() -> bool {
+    cua_driver_core::embedded_mode() || HOST_OWNED_RUNTIME.load(Ordering::Relaxed)
 }
 
 /// The command for `screencapture`, or an error when it is off.
@@ -1288,6 +1303,14 @@ mod tests {
             !screencapture_disabled_by(None, false),
             "standalone default unchanged"
         );
+    }
+
+    /// The SDK's private worker is host-owned but runs without `--embedded`;
+    /// once marked, it gets the embedded default too.
+    #[test]
+    fn a_host_owned_runtime_gets_the_embedded_default() {
+        treat_as_host_owned();
+        assert!(host_owned_runtime());
     }
 
     /// #5938: with the tool off, whole-display captures (recording snapshots,

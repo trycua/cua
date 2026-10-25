@@ -28,6 +28,12 @@ export function spacesState(model: AppModel) {
     rosterError: model.rosterError,
     // Another app keeps its own daemon and this app uses it (null otherwise).
     daemonNotice: model.daemonNotice,
+    // Some of your computers have not answered yet (`Spaces.list_known`): the
+    // page shows what is known and "Reaching N computers…", never the empty home.
+    incomplete: model.listIncomplete,
+    reaching: model.listReaching,
+    // Your other computers' rows are the last known ones, not yet confirmed.
+    stale: model.listStale,
   };
 }
 

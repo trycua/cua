@@ -271,7 +271,7 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
     }
 
     /// The rows of `infos`, each with a bounded reachability probe.
-    private func probe(_ infos: [SpaceInfo]) async -> [AppSpaceRow] {
+    private func probe(_ infos: [CuaSDK.SpaceInfo]) async -> [AppSpaceRow] {
         let spaces = cua.spaces()
         return await withTaskGroup(of: (Int, AppSpaceRow).self) { group in
             for (index, info) in infos.enumerated() {

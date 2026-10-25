@@ -156,6 +156,20 @@ fi
 # directory), so the app finds them through ModuleResources instead.
 for b in "$bin"/*.bundle; do [ -d "$b" ] && cp -R "$b" "$app/Contents/Resources/"; done
 cp "$here/Support/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
+# macOS 26 draws icons without their own background on a grey system plate. The
+# Icon Composer source (full-bleed background + key layer, dark/tinted/clear)
+# compiles to Assets.car, found through CFBundleIconName; AppIcon.icns above is
+# the fallback for macOS 15 and older.
+icon_tmp="$(mktemp -d)"
+if xcrun actool "$here/Support/AppIcon.icon" --compile "$icon_tmp" --platform macosx \
+  --minimum-deployment-target 14.0 --app-icon AppIcon --include-all-app-icons \
+  --output-partial-info-plist "$icon_tmp/partial.plist" >/dev/null 2>&1 && [ -s "$icon_tmp/Assets.car" ]; then
+  cp "$icon_tmp/Assets.car" "$app/Contents/Resources/Assets.car"
+else
+  echo "warning: actool (Xcode 26+) could not compile Support/AppIcon.icon; macOS 26 will show the icon on a grey plate" >&2
+  [ -z "${CI:-}" ] || exit 1
+fi
+rm -rf "$icon_tmp"
 cp "$icons/tray-template.png" "$app/Contents/Resources/tray-template.png"
 cp "$icons/tray-template@2x.png" "$app/Contents/Resources/tray-template@2x.png"
 cp "$here/THIRD_PARTY_NOTICES.md" "$app/Contents/Resources/THIRD_PARTY_NOTICES.md"

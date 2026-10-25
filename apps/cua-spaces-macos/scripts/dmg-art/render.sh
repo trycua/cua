@@ -5,7 +5,9 @@
 # Builds the checked-in assets. The DMG art is rendered from art.html with
 # headless Chrome; the app icon is not drawn: it comes from the chosen PNGs
 # src/app-icon-1024.png and src/app-icon-small-1024.png (app-icon.py):
-#   Support/AppIcon.icns              the app icon (build-app.sh bundles it)
+#   Support/AppIcon.icns              the legacy (macOS 15 and older) app icon
+#   Support/AppIcon.icon              NOT built here: the macOS 26 Icon Composer source
+#                                     (background fill + layers); build-app.sh compiles it
 #   Support/dmg/background.png, @2x   the DMG window background
 #   Support/dmg/applications.icns     the icon of the DMG's Applications alias
 #   ../cua-spaces/src-tauri/icons/    app-icon.png (the 1024 px master) and the
@@ -79,7 +81,7 @@ mkdir -p "$work/app.iconset"
 iconutil -c icns "$work/app.iconset" -o "$support/AppIcon.icns"
 
 # The other apps ship the same icon. Keep only the files the repo tracks.
-cp "$here/src/app-icon-1024.png" "$tauri_icons/app-icon.png"
+"$py" "$here/app-icon.py" master "$tauri_icons/app-icon.png"
 "$py" "$here/app-icon.py" tauri "$tauri_icons"
 cp "$support/AppIcon.icns" "$tauri_icons/icon.icns"
 ls -l "$support/AppIcon.icns" "$support/dmg" "$tauri_icons"

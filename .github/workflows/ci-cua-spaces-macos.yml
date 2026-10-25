@@ -291,6 +291,15 @@ jobs:
       - name: Build the app bundle (and its launch check)
         working-directory: apps/cua-spaces-macos
         run: scripts/build-app.sh release
+      # macOS 26 puts icons without their own background on a grey plate: the
+      # bundle must carry the compiled Icon Composer icon (CUA-2244).
+      - name: The bundle has the macOS 26 app icon
+        working-directory: apps/cua-spaces-macos
+        run: |
+          app=".build/app/Cua Spaces.app"
+          test -s "$app/Contents/Resources/Assets.car"
+          test -s "$app/Contents/Resources/AppIcon.icns"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$app/Contents/Info.plist")" = AppIcon
       # Cua Spaces Local (--channel local) runs beside an installed Cua
       # Spaces and must not be able to touch it (CUA-1776): the Local bundle
       # id, helper, URL scheme and home, staging, and no Sparkle feed. The

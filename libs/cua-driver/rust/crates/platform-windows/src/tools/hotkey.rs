@@ -266,8 +266,8 @@ impl Tool for HotkeyTool {
             let key_display_for_result = key_display.clone();
             // UIA cross-process subtree walks can wedge on a bad provider —
             // bound the call so a hung provider returns an error instead of
-            // blocking the daemon indefinitely. 4 s matches the budget the
-            // rest of this file uses for similar UIA scans.
+            // blocking the daemon indefinitely. 4 s matches the budget
+            // `get_window_state.rs` uses for similar UIA scans (`UIA_SCREENSHOT_TIMEOUT`).
             let result = tokio::task::spawn_blocking({
                 let admitted = admitted.clone();
                 move || {

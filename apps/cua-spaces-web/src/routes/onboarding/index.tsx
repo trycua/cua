@@ -90,7 +90,7 @@ function OnboardingPage() {
       </header>
       <div className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto pr-10 pb-6 pl-[var(--ob-x)] [@media(min-width:1000px)]:pr-[46%]">
         {/* Centre the step on the window, a little above true centre (about 45% from the top). The min heights keep a gap under the logo bar and above the progress dots; tall steps scroll. */}
-        <div aria-hidden data-onboarding-spacer-top="" className="min-h-[clamp(8px,2vh,32px)] shrink-0 grow-[33] basis-0" />
+        <div aria-hidden data-onboarding-spacer-top="" className="min-h-[clamp(8px,2vh,32px)] shrink-0 grow-[33] basis-0 [@media(max-width:999px)]:grow-[50]" />
         <div className="flex w-full max-w-[520px] shrink-0 flex-col">
           {view.welcome ? <Welcome fr={fr} view={view} /> : null}
           {view.connect ? <Connect fr={fr} view={view} /> : null}
@@ -99,7 +99,7 @@ function OnboardingPage() {
           {view.permissions ? <Permissions fr={fr} view={view} /> : null}
           {view.setup ? <Setup fr={fr} view={view} onFinish={() => void finish()} /> : null}
         </div>
-        <div aria-hidden data-onboarding-spacer-bottom="" className="min-h-6 shrink-0 grow-[67] basis-0" />
+        <div aria-hidden data-onboarding-spacer-bottom="" className="min-h-6 shrink-0 grow-[67] basis-0 [@media(max-width:999px)]:grow-[50]" />
       </div>
       <Dots view={view} />
     </div>

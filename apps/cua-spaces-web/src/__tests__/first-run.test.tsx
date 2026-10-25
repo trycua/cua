@@ -3,7 +3,7 @@
 
 // The agent-first first run on its real route with the wasm core: Welcome,
 // Pick your agent (the agents found here, most preferred first, one Connect
-// each and none connected by itself), Connect your other devices (an
+// each and none connected by itself), Add your other computers (an
 // optional sign-in), then Try it in the lead agent. With no agent, a
 // one-click first Space that never blocks Done and asks the host to notify.
 
@@ -151,7 +151,7 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     click("[data-onboarding-primary]");
     await waitFor(() => expect(heading()).toBe("Pick your agent."));
     click("[data-onboarding-primary]");
-    await waitFor(() => expect(heading()).toBe("Connect your other devices."));
+    await waitFor(() => expect(heading()).toBe("Add your other computers."));
     click("[data-first-run-secondary]");
     await waitFor(() => expect(document.querySelector("[data-step]")?.getAttribute("data-step")).toBe("setup"));
     click("[data-onboarding-later]");

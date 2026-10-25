@@ -421,8 +421,11 @@ jobs:
           set -euo pipefail
           tag="cua-spaces-v${VERSION}"
           if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # Release Please's draft is untagged, so it is not found above: carry
+            # its notes over instead of the generic line.
+            .github/scripts/spaces_release_notes.sh "$VERSION" > "$RUNNER_TEMP/release-notes.md"
             flags=(--draft --verify-tag --title "Cua Spaces v${VERSION}"
-              --notes "Automated Cua Spaces release.")
+              --notes-file "$RUNNER_TEMP/release-notes.md")
             [ "$PRERELEASE" = true ] && flags+=(--prerelease)
             gh release create "$tag" --repo "$GITHUB_REPOSITORY" "${flags[@]}"
           fi
@@ -1806,8 +1809,9 @@ jobs:
           tag="cua-spaces-v${VERSION}"
           # build-macos normally made the draft; a hand-pushed tag may race it.
           if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            .github/scripts/spaces_release_notes.sh "$VERSION" > "$RUNNER_TEMP/release-notes.md"
             gh release create "$tag" --repo "$GITHUB_REPOSITORY" --draft --prerelease --verify-tag \
-              --title "Cua Spaces v${VERSION}" --notes "Automated Cua Spaces release." \
+              --title "Cua Spaces v${VERSION}" --notes-file "$RUNNER_TEMP/release-notes.md" \
               || gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null
           fi
           mkdir -p feed signing
@@ -2207,6 +2211,15 @@ jobs:
               echo "Every asset has a keyless Sigstore bundle (identity: https://github.com/$GITHUB_REPOSITORY/.github/workflows/cd-cua-spaces.yml@$GITHUB_REF)."
             } > notes.md
             flags+=(--title "Cua Spaces v$VERSION ($label)" --notes-file notes.md)
+          fi
+          # A release made with the generic line (a hand-pushed tag, a race)
+          # gets the real notes now. Staging notes above stay as they are.
+          if ! printf '%s ' "${flags[@]}" | grep -q -- '--notes-file'; then
+            current="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body)"
+            if [ -z "${current//[[:space:]]/}" ] || [ "$current" = "Automated Cua Spaces release." ]; then
+              .github/scripts/spaces_release_notes.sh "$VERSION" > real-notes.md
+              flags+=(--notes-file real-notes.md)
+            fi
           fi
           gh release edit "$TAG" "${flags[@]}" --repo "$GITHUB_REPOSITORY"
       # Say which platforms a patch release contains (CUA-2068). A full release

@@ -137,9 +137,15 @@ fn migrations_path(path: &Path) -> std::path::PathBuf {
     path.with_file_name("settings-migrations.json")
 }
 
-/// Defaults that turned on after releases saved them as off. Each one has a
-/// key in the migration marker.
-const MIGRATIONS: [&str; 2] = ["sharingDefaultOn", "yourCloudDefaultOn"];
+/// Defaults that turned on after releases saved them as off, and switches
+/// that were retired (Settings, Advanced no longer has a Sharing or a Your
+/// cloud switch). Each one has a key in the migration marker.
+const MIGRATIONS: [&str; 4] = [
+    "sharingDefaultOn",
+    "yourCloudDefaultOn",
+    "sharingSwitchRetired",
+    "yourCloudSwitchRetired",
+];
 
 /// Sharing became on by default in 0.9.1 (CUA-1668) and Your cloud later
 /// (a linked cloud showed under Run on only after digging into Settings).
@@ -160,8 +166,13 @@ fn migrate_defaults(path: &Path, s: &mut AppSettings) {
     if !MIGRATIONS.iter().any(|k| pending(k)) {
         return;
     }
-    let turn_sharing_on = pending(MIGRATIONS[0]) && !s.experiments.sharing;
-    let turn_cloud_on = pending(MIGRATIONS[1]) && !s.experiments.your_cloud;
+    // The retired switches: with no switch to turn them back on, a stored
+    // `false` (a choice nobody can make or undo any more) reads as on, once.
+    // The plan decides who can share or use a cloud, on the server.
+    let turn_sharing_on =
+        (pending(MIGRATIONS[0]) || pending(MIGRATIONS[2])) && !s.experiments.sharing;
+    let turn_cloud_on =
+        (pending(MIGRATIONS[1]) || pending(MIGRATIONS[3])) && !s.experiments.your_cloud;
     if turn_sharing_on || turn_cloud_on {
         s.experiments.sharing |= turn_sharing_on;
         s.experiments.your_cloud |= turn_cloud_on;
@@ -1560,7 +1571,7 @@ mod tests {
         std::fs::write(&path, r#"{"experiments":{"cuaVolume":true}}"#).unwrap();
         std::fs::write(
             path.with_file_name("settings-migrations.json"),
-            r#"{"sharingDefaultOn":true}"#,
+            r#"{"sharingDefaultOn":true,"sharingSwitchRetired":true}"#,
         )
         .unwrap();
         assert!(load(&path).experiments.your_cloud, "never set reads as on");
@@ -1572,7 +1583,7 @@ mod tests {
         std::fs::remove_file(path.with_file_name("settings-migrations.json")).unwrap();
         std::fs::write(
             path.with_file_name("settings-migrations.json"),
-            r#"{"sharingDefaultOn":true}"#,
+            r#"{"sharingDefaultOn":true,"sharingSwitchRetired":true}"#,
         )
         .unwrap();
         let s = load(&path);
@@ -1587,6 +1598,41 @@ mod tests {
         )
         .unwrap();
         assert!(!load(&path).experiments.your_cloud);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_retired_sharing_and_cloud_switches_turn_a_stored_off_on_once() {
+        // Both default-on migrations already ran; the switches were still
+        // there, and someone turned both off.
+        let (dir, path) = temp_settings("retired");
+        std::fs::write(
+            &path,
+            r#"{"experiments":{"cuaVolume":true,"sharing":false,"yourCloud":false},"menuBar":true}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            path.with_file_name("settings-migrations.json"),
+            r#"{"sharingDefaultOn":true,"yourCloudDefaultOn":true}"#,
+        )
+        .unwrap();
+        let s = load(&path);
+        assert!(s.experiments.sharing && s.experiments.your_cloud);
+        // Everything else the person set is kept.
+        assert!(s.experiments.cua_volume && s.menu_bar);
+        let raw: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(raw["experiments"]["sharing"], true);
+        assert_eq!(raw["menuBar"], true);
+        // It runs once: the markers say so, and a later load changes nothing.
+        let marks: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(path.with_file_name("settings-migrations.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(marks["sharingSwitchRetired"], true);
+        assert_eq!(marks["yourCloudSwitchRetired"], true);
+        let again = load(&path);
+        assert_eq!(again.experiments, s.experiments);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

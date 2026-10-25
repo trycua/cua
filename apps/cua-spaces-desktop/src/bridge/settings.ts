@@ -155,6 +155,18 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
       case "auto-connect":
         save({ autoConnect: option === "on" });
         return;
+      case "global-shortcut": {
+        // The keys that bring the app forward from any app (Mac). The option is the accelerator.
+        const change = parts().system?.setGlobalShortcut;
+        if (!change) throw Failure.failed("This computer has no shortcut to change.");
+        try {
+          change(option);
+        } catch (e) {
+          throw Failure.failed(e instanceof Error ? e.message : String(e));
+        }
+        model.changed("settings");
+        return;
+      }
       case "launch-at-login": {
         const login = parts().loginItem;
         login.set(option === "on");

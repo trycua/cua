@@ -302,6 +302,14 @@ export class FixtureSystem implements SystemServices {
   globalShortcut() {
     return this.shortcut;
   }
+  /** Settings, General, Change: the keys asked for; "Command+K" is held by another app. */
+  readonly shortcutChanges: string[] = [];
+  setGlobalShortcut(accelerator: string) {
+    if (accelerator === "Command+K") throw new Error("Another app is using \u2318K. Pick other keys.");
+    this.shortcutChanges.push(accelerator);
+    this.shortcut = { label: accelerator, registered: true };
+    return this.shortcut;
+  }
   async openExternal(url: string) {
     this.opened.push(url);
   }

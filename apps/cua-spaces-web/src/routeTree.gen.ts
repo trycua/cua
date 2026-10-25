@@ -21,9 +21,12 @@ import { Route as NotificationsIndexRouteImport } from './routes/notifications/i
 import { Route as OnboardingIndexRouteImport } from './routes/onboarding/index'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as SettingsAboutRouteImport } from './routes/settings/about'
+import { Route as SettingsAdvancedRouteImport } from './routes/settings/advanced'
 import { Route as SettingsAgentsRouteImport } from './routes/settings/agents'
+import { Route as SettingsConnectedAppsRouteImport } from './routes/settings/connected-apps'
 import { Route as SettingsDevicesRouteImport } from './routes/settings/devices'
 import { Route as SettingsExperimentsRouteImport } from './routes/settings/experiments'
+import { Route as SettingsGeneralRouteImport } from './routes/settings/general'
 import { Route as SpacesIndexRouteImport } from './routes/spaces/index'
 import { Route as SpacesSpaceIdRouteImport } from './routes/spaces/$spaceId'
 import { Route as VolumeIndexRouteImport } from './routes/volume/index'
@@ -73,9 +76,19 @@ const SettingsAboutRoute = SettingsAboutRouteImport.update({
   path: '/about',
   getParentRoute: () => SettingsRouteRoute,
 } as any)
+const SettingsAdvancedRoute = SettingsAdvancedRouteImport.update({
+  id: '/advanced',
+  path: '/advanced',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
 const SettingsAgentsRoute = SettingsAgentsRouteImport.update({
   id: '/agents',
   path: '/agents',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsConnectedAppsRoute = SettingsConnectedAppsRouteImport.update({
+  id: '/connected-apps',
+  path: '/connected-apps',
   getParentRoute: () => SettingsRouteRoute,
 } as any)
 const SettingsDevicesRoute = SettingsDevicesRouteImport.update({
@@ -86,6 +99,11 @@ const SettingsDevicesRoute = SettingsDevicesRouteImport.update({
 const SettingsExperimentsRoute = SettingsExperimentsRouteImport.update({
   id: '/experiments',
   path: '/experiments',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsGeneralRoute = SettingsGeneralRouteImport.update({
+  id: '/general',
+  path: '/general',
   getParentRoute: () => SettingsRouteRoute,
 } as any)
 const SpacesIndexRoute = SpacesIndexRouteImport.update({
@@ -108,9 +126,12 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/settings': typeof SettingsRouteRouteWithChildren
   '/settings/about': typeof SettingsAboutRoute
+  '/settings/advanced': typeof SettingsAdvancedRoute
   '/settings/agents': typeof SettingsAgentsRoute
+  '/settings/connected-apps': typeof SettingsConnectedAppsRoute
   '/settings/devices': typeof SettingsDevicesRoute
   '/settings/experiments': typeof SettingsExperimentsRoute
+  '/settings/general': typeof SettingsGeneralRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdRoute
   '/agents/': typeof AgentsIndexRoute
   '/keyvault/': typeof KeyvaultIndexRoute
@@ -124,9 +145,12 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/settings/about': typeof SettingsAboutRoute
+  '/settings/advanced': typeof SettingsAdvancedRoute
   '/settings/agents': typeof SettingsAgentsRoute
+  '/settings/connected-apps': typeof SettingsConnectedAppsRoute
   '/settings/devices': typeof SettingsDevicesRoute
   '/settings/experiments': typeof SettingsExperimentsRoute
+  '/settings/general': typeof SettingsGeneralRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdRoute
   '/agents': typeof AgentsIndexRoute
   '/keyvault': typeof KeyvaultIndexRoute
@@ -142,9 +166,12 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/settings': typeof SettingsRouteRouteWithChildren
   '/settings/about': typeof SettingsAboutRoute
+  '/settings/advanced': typeof SettingsAdvancedRoute
   '/settings/agents': typeof SettingsAgentsRoute
+  '/settings/connected-apps': typeof SettingsConnectedAppsRoute
   '/settings/devices': typeof SettingsDevicesRoute
   '/settings/experiments': typeof SettingsExperimentsRoute
+  '/settings/general': typeof SettingsGeneralRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdRoute
   '/agents/': typeof AgentsIndexRoute
   '/keyvault/': typeof KeyvaultIndexRoute
@@ -161,9 +188,12 @@ export interface FileRouteTypes {
     | '/'
     | '/settings'
     | '/settings/about'
+    | '/settings/advanced'
     | '/settings/agents'
+    | '/settings/connected-apps'
     | '/settings/devices'
     | '/settings/experiments'
+    | '/settings/general'
     | '/spaces/$spaceId'
     | '/agents/'
     | '/keyvault/'
@@ -177,9 +207,12 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/settings/about'
+    | '/settings/advanced'
     | '/settings/agents'
+    | '/settings/connected-apps'
     | '/settings/devices'
     | '/settings/experiments'
+    | '/settings/general'
     | '/spaces/$spaceId'
     | '/agents'
     | '/keyvault'
@@ -194,9 +227,12 @@ export interface FileRouteTypes {
     | '/'
     | '/settings'
     | '/settings/about'
+    | '/settings/advanced'
     | '/settings/agents'
+    | '/settings/connected-apps'
     | '/settings/devices'
     | '/settings/experiments'
+    | '/settings/general'
     | '/spaces/$spaceId'
     | '/agents/'
     | '/keyvault/'
@@ -286,11 +322,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsAboutRouteImport
       parentRoute: typeof SettingsRouteRoute
     }
+    '/settings/advanced': {
+      id: '/settings/advanced'
+      path: '/advanced'
+      fullPath: '/settings/advanced'
+      preLoaderRoute: typeof SettingsAdvancedRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
     '/settings/agents': {
       id: '/settings/agents'
       path: '/agents'
       fullPath: '/settings/agents'
       preLoaderRoute: typeof SettingsAgentsRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/connected-apps': {
+      id: '/settings/connected-apps'
+      path: '/connected-apps'
+      fullPath: '/settings/connected-apps'
+      preLoaderRoute: typeof SettingsConnectedAppsRouteImport
       parentRoute: typeof SettingsRouteRoute
     }
     '/settings/devices': {
@@ -305,6 +355,13 @@ declare module '@tanstack/react-router' {
       path: '/experiments'
       fullPath: '/settings/experiments'
       preLoaderRoute: typeof SettingsExperimentsRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/general': {
+      id: '/settings/general'
+      path: '/general'
+      fullPath: '/settings/general'
+      preLoaderRoute: typeof SettingsGeneralRouteImport
       parentRoute: typeof SettingsRouteRoute
     }
     '/spaces/': {
@@ -333,17 +390,23 @@ declare module '@tanstack/react-router' {
 
 interface SettingsRouteRouteChildren {
   SettingsAboutRoute: typeof SettingsAboutRoute
+  SettingsAdvancedRoute: typeof SettingsAdvancedRoute
   SettingsAgentsRoute: typeof SettingsAgentsRoute
+  SettingsConnectedAppsRoute: typeof SettingsConnectedAppsRoute
   SettingsDevicesRoute: typeof SettingsDevicesRoute
   SettingsExperimentsRoute: typeof SettingsExperimentsRoute
+  SettingsGeneralRoute: typeof SettingsGeneralRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
 }
 
 const SettingsRouteRouteChildren: SettingsRouteRouteChildren = {
   SettingsAboutRoute: SettingsAboutRoute,
+  SettingsAdvancedRoute: SettingsAdvancedRoute,
   SettingsAgentsRoute: SettingsAgentsRoute,
+  SettingsConnectedAppsRoute: SettingsConnectedAppsRoute,
   SettingsDevicesRoute: SettingsDevicesRoute,
   SettingsExperimentsRoute: SettingsExperimentsRoute,
+  SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsIndexRoute: SettingsIndexRoute,
 }
 

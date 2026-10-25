@@ -43,7 +43,7 @@ export function CoreSettingsSection({
     }
   }
   return (
-    <section className="mb-7" data-settings-section={section.id}>
+    <section className="mb-8" data-settings-section={section.id}>
       <div className="mb-2 flex min-h-6 items-center justify-between gap-2 px-1">
         <h2 className="text-xs font-semibold text-muted-foreground">{title ?? section.title}</h2>
         {section.button ? (
@@ -66,7 +66,14 @@ export function CoreSettingsSection({
 const optionOf = (row: SettingsRow) => row.options.find((o) => o.active)?.id ?? "";
 
 /** One core row. Every row carries `data-setting-row` (its id) for tests and the parity harness. */
-export function CoreSettingsRow({ row, description, onPress, onChoose, onEdit }: CoreRowHandlers & { row: SettingsRow; description?: string }) {
+export function CoreSettingsRow({
+  row,
+  description,
+  asSelect,
+  onPress,
+  onChoose,
+  onEdit,
+}: CoreRowHandlers & { row: SettingsRow; description?: string; /** Draw a choice as a drop-down, however few options it has. */ asSelect?: boolean }) {
   const { openExternal } = useSession();
   const attrs = { "data-setting-row": row.id, "data-kind": row.kind, "data-enabled": String(row.enabled) };
   const id = `setting-${row.id.replace(/[^a-z0-9-]/gi, "-")}`;
@@ -86,7 +93,7 @@ export function CoreSettingsRow({ row, description, onPress, onChoose, onEdit }:
       return (
         <Line {...attrs} title={row.help ?? undefined}>
           <Label label={row.label} description={description} />
-          {options.length > 3 ? (
+          {asSelect || options.length > 3 ? (
             <Select aria-label={row.label} value={optionOf(row)} options={options} disabled={!row.enabled} onValueChange={(v) => onChoose?.(row, v)} />
           ) : (
             <Segmented aria-label={row.label} value={optionOf(row)} options={options} disabled={!row.enabled} onValueChange={(v) => onChoose?.(row, v)} />

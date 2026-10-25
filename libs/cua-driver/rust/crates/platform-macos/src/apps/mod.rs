@@ -985,10 +985,25 @@ pub fn bundle_id_for_pid(pid: i32) -> Option<String> {
 /// command name `ps -p {pid} -o comm=` prints, without its path.
 /// Returns `None` if the PID is unknown or the command fails.
 pub fn get_app_name_for_pid(pid: i32) -> Option<String> {
-    // `comm` is the process's argv[0]. Read it in-process for the user's own
-    // processes, which is every app the driver targets, instead of spawning
-    // ps on each call; only processes whose arguments the kernel withholds
-    // (another user's) still ask the setuid ps.
+    let raw = process_command(pid)?;
+    // Strip path prefix: "/Applications/Safari.app/Contents/MacOS/Safari" → "Safari"
+    Some(
+        std::path::Path::new(&raw)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(&raw)
+            .to_string(),
+    )
+}
+
+/// What `ps -p {pid} -o comm=` prints for `pid`, trimmed; `None` when it prints
+/// nothing.
+///
+/// `comm` is the process's argv[0]. Read it in-process for the user's own
+/// processes, which is every app the driver targets, instead of spawning ps on
+/// each call; only processes whose arguments the kernel withholds (another
+/// user's) still ask the setuid ps.
+pub(crate) fn process_command(pid: i32) -> Option<String> {
     let raw = match process_argv0(pid) {
         Some(argv0) => argv0.trim().to_string(),
         None => {
@@ -999,17 +1014,19 @@ pub fn get_app_name_for_pid(pid: i32) -> Option<String> {
             String::from_utf8_lossy(&out.stdout).trim().to_string()
         }
     };
-    if raw.is_empty() {
-        return None;
-    }
-    // Strip path prefix: "/Applications/Safari.app/Contents/MacOS/Safari" → "Safari"
-    Some(
-        std::path::Path::new(&raw)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(&raw)
-            .to_string(),
-    )
+    (!raw.is_empty()).then_some(raw)
+}
+
+/// The name `[list_running_apps]` gives `pid` when it lists it, read from that
+/// process's own bundle; `None` when the process is not in an app bundle with a
+/// name and identifier, so it cannot be listed. A `Some` does not mean the pid
+/// is listed: the listing also filters background bundles and windowless
+/// processes outside the app directories.
+pub(crate) fn bundle_name_for_pid(pid: i32) -> Option<String> {
+    let exec_path = path_of_pid(pid)?;
+    let app_path = bundle_root_of_executable(&exec_path)?;
+    let plist = format!("{app_path}/Contents/Info.plist");
+    read_app_plist(std::path::Path::new(&plist)).map(|info| info.name)
 }
 
 /// `argv[0]` of `pid` from `KERN_PROCARGS2`, or `None` when the kernel does

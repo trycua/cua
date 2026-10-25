@@ -92,8 +92,14 @@ class Eligible(unittest.TestCase):
         for tag in ("cua-spaces-v0.15.0", "cua-driver-rs-v0.38.0", "lume-v0.6.2-nightly.20261015"):
             self.assertTrue(wa.eligible(run(event="workflow_dispatch", branch=tag), "trycua/cua", "main"), tag)
 
-    def test_pushes_count_on_any_ref_so_release_tags_alert(self):
+    def test_pushes_to_the_default_branch_and_to_release_tags_count(self):
+        self.assertTrue(wa.eligible(run(event="push", branch="main"), "trycua/cua", "main"))
         self.assertTrue(wa.eligible(run(event="push", branch="cua-driver-rs-v0.3.1"), "trycua/cua", "main"))
+
+    def test_a_push_to_a_feature_branch_is_not_the_pipelines_state(self):
+        # A branch push that breaks a workflow file shows up as a failed run named after the file path.
+        for branch in ("agent/cua-2227-staging-alerts", "dillon/cua-1759-oom-stop-reason", "fix-bug"):
+            self.assertFalse(wa.eligible(run(event="push", branch=branch), "trycua/cua", "main"), branch)
 
     def test_pull_requests_and_forks_never_alert(self):
         self.assertFalse(wa.eligible(run(event="pull_request"), "trycua/cua", "main"))

@@ -41,7 +41,7 @@ FIRING = {"failure", "timed_out", "startup_failure"}
 RESOLVED = {"success"}
 # Triggers nobody is watching live. A pull_request run (a fork's too) never alerts.
 EVENTS = {"schedule", "push", "repository_dispatch", "workflow_dispatch"}
-# A release gate is re-run by dispatching the workflow on its tag (cua-spaces-v0.15.0).
+# A release run is a push of its tag, and the gate is re-run by dispatching the workflow on it (cua-spaces-v0.15.0).
 RELEASE_REF = re.compile(r"[A-Za-z0-9_.]+(?:-[A-Za-z0-9_.]+)*-v\d+\.\d+[A-Za-z0-9._+-]*")
 WHY = {
     "failure": "a job failed",
@@ -69,7 +69,9 @@ def state_of(conclusion: str | None) -> str | None:
 
 
 def eligible(run: dict, repo: str, default_branch: str) -> bool:
-    """A run of this repository: any push (tags included), a dispatch on a release tag, or any run on the default branch."""
+    """A run that says something about the workflow's real state: of this repository, and either on the default
+    branch or a push or dispatch on a release tag (cua-spaces-v0.15.0). A push to a feature branch, even one that
+    breaks the workflow file, is not the pipeline's state."""
     head_repo = (run.get("head_repository") or {}).get("full_name")
     if head_repo and head_repo != repo:
         return False
@@ -77,7 +79,9 @@ def eligible(run: dict, repo: str, default_branch: str) -> bool:
     if event not in EVENTS:
         return False
     branch = run.get("head_branch") or ""
-    return event == "push" or branch == default_branch or (event == "workflow_dispatch" and RELEASE_REF.fullmatch(branch) is not None)
+    if branch == default_branch:
+        return True
+    return event in ("push", "workflow_dispatch") and RELEASE_REF.fullmatch(branch) is not None
 
 
 def iso(moment: dt.datetime) -> str:

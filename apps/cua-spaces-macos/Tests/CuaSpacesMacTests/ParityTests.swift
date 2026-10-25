@@ -1883,6 +1883,7 @@ struct ParityTests {
         case .local: "local"
         case .yours: "yours"
         case .host: "host"
+        case .auto: "auto"
         }
     }
     func word(_ v: AppRuntime) -> String {

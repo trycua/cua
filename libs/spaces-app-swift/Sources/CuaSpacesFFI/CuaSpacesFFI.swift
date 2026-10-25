@@ -32064,7 +32064,9 @@ public struct AppSettings: Equatable, Hashable {
      */
     public var theme: AppSwitcherTheme
     /**
-     * Where New Space starts.
+     * Where New Space starts. A word this build does not know (the
+     * retired `cloud`) reads as this Mac, so an old file keeps its other
+     * settings.
      */
     public var defaultLocation: AppLocation
     /**
@@ -32148,7 +32150,9 @@ public struct AppSettings: Equatable, Hashable {
          * Switcher theme.
          */theme: AppSwitcherTheme,
         /**
-         * Where New Space starts.
+         * Where New Space starts. A word this build does not know (the
+         * retired `cloud`) reads as this Mac, so an old file keeps its other
+         * settings.
          */defaultLocation: AppLocation,
         /**
          * Hide the notch over full-screen apps.
@@ -39312,7 +39316,6 @@ public struct AppWizardEnv: Equatable, Hashable {
      */
     public var defaultLocation: AppLocation
     /**
-     * Signed in (or client credentials).
      * A local container backend or Lume exists.
      */
     public var localAvailable: Bool
@@ -39386,7 +39389,6 @@ public struct AppWizardEnv: Equatable, Hashable {
          * Where "Run on" starts (Settings, `cua config set default.on`).
          */defaultLocation: AppLocation,
         /**
-         * Signed in (or client credentials).
          * A local container backend or Lume exists.
          */localAvailable: Bool,
         /**

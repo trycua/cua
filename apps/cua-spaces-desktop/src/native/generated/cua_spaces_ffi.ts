@@ -36910,7 +36910,9 @@ export type AppSettings = {
      */
     theme: AppSwitcherTheme,
     /**
-     * Where New Space starts.
+     * Where New Space starts. A word this build does not know (the
+     * retired `cloud`) reads as this Mac, so an old file keeps its other
+     * settings.
      */
     defaultLocation: AppLocation,
     /**
@@ -41265,7 +41267,6 @@ export type AppWizardEnv = {
      */
     defaultLocation: AppLocation,
     /**
-     * Signed in (or client credentials).
      * A local container backend or Lume exists.
      */
     localAvailable: boolean,

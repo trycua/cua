@@ -16,6 +16,13 @@
 #                        (default $HOME); the state is always removed from $HOME
 #
 # It removes, after asking:
+#   - this Mac's entry in the relay, in each environment Local is signed in to
+#     (best effort: the machine would otherwise stay listed as offline), before
+#     the sign-in goes
+#   - Local's MCP server (`cua-local`) and skills (`*-local`) in Claude Code and
+#     the other coding agents (`cua-local agents remove`, best effort), before
+#     the CLI and ~/.cua-local, which records what Local wrote, go; the released
+#     app's entries and `cua-driver` stay
 #   - the Local helper login item (unregistered) and the Local host runner job
 #   - ~/Applications/Cua Spaces Local.app
 #   - ~/.local/bin/cua-local
@@ -119,6 +126,8 @@ echo "  state:              $LOCAL_HOME and $LOCAL_APP_SUPPORT"
 echo "  macOS leftovers:    the $LOCAL_BUNDLE_ID preferences, caches, web view data and window state in ~/Library"
 echo "                      (and those of the old id $LOCAL_LEGACY_BUNDLE_ID, if any)"
 echo "  Keychain items:     ${LOCAL_KEYCHAIN_SERVICES[*]}"
+echo "  relay:              this Mac's entry, if Local is signed in"
+echo "  coding agents:      Local's MCP server ($LOCAL_CLI_NAME) and its *-local skills; the released app's entries stay"
 if [ "$YES" != 1 ]; then
     confirm "Remove them?" || { log "cancelled, nothing was removed"; exit 0; }
 fi
@@ -129,6 +138,133 @@ if [ "$WITH_LUME_LOCAL" = 1 ]; then
 elif [ "$YES" != 1 ] && lume_local_present; then
     confirm "Also remove $LOCAL_LUME_BIN_NAME and its VMs in ~/$LOCAL_LUME_DIR_NAME?" && REMOVE_LUME=1
 fi
+
+# --- This Mac's entry in the relay, and Local's entries in your coding agents --------
+
+# The bundled Local CLI for one environment (staging, or prod for the opt-in),
+# as Local and nothing else: every CUA_ variable of the caller's shell is
+# dropped, so a stray CUA_HOME or CUA_API_KEY for the released Cua Spaces can
+# neither aim it at that install nor hand its key to this one, and CUA_ENV is
+# the one asked for. It gives up after 30 seconds (CUA_UNINSTALL_CLI_SECS
+# changes that): the CLI runs in a process group of its own, and the whole group
+# is stopped, so a program it started (`claude mcp remove`) cannot go on editing
+# an agent's configuration after the uninstall has finished.
+run_local_cli() {
+    local cli="$1" env="$2" secs="${CUA_UNINSTALL_CLI_SECS:-30}" var
+    shift 2
+    (
+        for var in $(compgen -e); do
+            case "$var" in CUA_*) unset "$var" ;; esac
+        done
+        export CUA_CHANNEL=local CUA_ENV="$env" CUA_TELEMETRY=0
+        exec /usr/bin/perl -e '
+            my $secs = shift @ARGV;
+            setpgrp(0, 0);
+            my $pid = fork();
+            exit 127 unless defined $pid;
+            if (!$pid) { exec @ARGV or exit 127 }
+            $SIG{ALRM} = sub {
+                $SIG{TERM} = "IGNORE";
+                kill "TERM", -$$;
+                my $until = time + 2;
+                while (time < $until && waitpid($pid, 1) == 0) { select(undef, undef, undef, 0.1) }
+                kill "KILL", -$$;
+                exit 124;
+            };
+            alarm $secs;
+            waitpid($pid, 0);
+            my $st = $?;
+            exit($st & 127 ? 128 + ($st & 127) : $st >> 8);
+        ' -- "$secs" "$cli" "$@"
+    )
+}
+
+# Succeeds when every link in `dir` (down to `maxdepth` levels) resolves to a
+# place of its own and not to anything of the released Cua Spaces, and so does
+# every link inside the folders those links lead to (`levels` folders deep).
+# `find -H` looks inside `dir` when `dir` itself is a link.
+links_are_isolated() {
+    local dir="$1" levels="$2" maxdepth="$3" entry resolved
+    [ "$levels" -gt 0 ] || return 0
+    while IFS= read -r entry; do
+        resolved="$(canonicalize_path "$entry")" || return 1
+        reject_stable_overlap "Local state" "$resolved" >/dev/null 2>&1 || return 1
+        if [ -d "$resolved" ]; then
+            links_are_isolated "$resolved" $((levels - 1)) 4 || return 1
+        fi
+    done < <(find -H "$dir" -maxdepth "$maxdepth" -type l 2>/dev/null)
+}
+
+# Whether a Local home may be handed to the Local CLI: it, the folders the CLI
+# reads and removes in it, and every link in them, however indirect, resolve to
+# places of their own and not to anything of the released Cua Spaces (a link such
+# as ~/.cua-local -> ~/.cua, or ~/.cua-local/host/config.json ->
+# ~/.cua/host/config.json, or a host folder elsewhere that holds such a link,
+# would make the CLI unregister and delete Stable's host or its Spaces).
+local_home_is_isolated() {
+    local home="$1" sub resolved
+    for sub in "" /host /helper /agent-setup.json; do
+        resolved="$(canonicalize_path "$home$sub")" || return 1
+        reject_stable_overlap "Local state" "$resolved" >/dev/null 2>&1 || return 1
+    done
+    links_are_isolated "$home" 3 1 || return 1
+    links_are_isolated "$home/host" 3 4 || return 1
+    links_are_isolated "$home/helper" 3 4 || return 1
+    # The helper's spec is shared by every environment: it lives in the Local
+    # home itself, and `host remove` deletes it whichever environment it runs for.
+    resolved="$(canonicalize_path "$LOCAL_HOME/helper")" || return 1
+    reject_stable_overlap "Local state" "$resolved" >/dev/null 2>&1 || return 1
+    links_are_isolated "$LOCAL_HOME/helper" 3 4 || return 1
+}
+
+# Takes this Mac off the relay, while the sign-in and the host's machine token
+# still exist: they are what proves it may. Best effort. Not signed in (or no
+# app left to ask): there is nothing to unregister, so it says nothing.
+take_off_relay() {
+    local cli="$1" env="$2"
+    run_local_cli "$cli" "$env" auth status >/dev/null 2>&1 || return 0
+    log "taking this Mac off the $env relay"
+    if ! run_local_cli "$cli" "$env" host remove --force --uninstalling >/dev/null 2>&1; then
+        warn "could not take this Mac off the $env relay (offline?): it may stay listed, offline, in your computers until you remove it there."
+    fi
+}
+
+# Takes Local's MCP server (`cua-local`) and skills (`*-local`) out of Claude
+# Code and the other coding agents, while the home that records what Local
+# wrote is still there: without it they would point at a deleted binary.
+# `agents remove` undoes only what this home's record says Local wrote, so the
+# released Cua Spaces' `cua` entry and skills, and `cua-driver`, stay. Best
+# effort, with the same limit as the relay call; it needs no sign-in.
+remove_agent_entries() {
+    local cli="$1" env="$2"
+    log "removing Local's MCP server and skills from your coding agents"
+    if ! run_local_cli "$cli" "$env" agents remove --yes >/dev/null 2>&1; then
+        warn "could not remove Local's entries from your coding agents ($env): the $LOCAL_CLI_NAME MCP server and the *-local skills may still be listed there; remove them by hand."
+    fi
+}
+
+# For each environment Local has state for (staging, and prod when Local was
+# opted in to it): off the relay, then out of the coding agents. Nothing is
+# asked of the Local CLI when it is missing (a half-removed install) or when the
+# home leads into the released Cua Spaces' folders.
+unregister_local() {
+    local cli="$APP_DEST/Contents/MacOS/cua" env home
+    [ -f "$cli" ] && [ -x "$cli" ] && [ ! -L "$cli" ] || return 0
+    for env in staging prod; do
+        case "$env" in
+            staging) home="$LOCAL_HOME" ;;
+            *) home="$LOCAL_HOME/envs/prod" ;;
+        esac
+        [ -d "$home" ] || continue
+        if ! local_home_is_isolated "$home"; then
+            warn "not taking this Mac off the $env relay or removing its coding agent entries: $home leads into the released Cua Spaces' folders."
+            continue
+        fi
+        take_off_relay "$cli" "$env"
+        remove_agent_entries "$cli" "$env"
+    done
+}
+unregister_local
 
 # --- The helper login item and the host runner ------------------------------------
 

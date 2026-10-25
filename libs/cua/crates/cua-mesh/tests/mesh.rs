@@ -13,6 +13,10 @@ use cua_mesh::{Error, Mesh, MeshConfig, Mode, NodeKind, Path, PublicKey, static_
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 const READY: Duration = Duration::from_secs(10);
+/// Tests that restart the coordinator must not wait out the production
+/// reconnect pacing (a jittered 1s plus up to 10s of spread after a relay
+/// drop), which can exceed `READY` on a slow runner.
+const FAST_RECONNECT: u32 = 20;
 
 async fn node(
     coord: &FakeCoordinator,
@@ -46,6 +50,7 @@ async fn node_on_media_port(
     cfg.stun = vec![coord.stun.to_string()];
     cfg.relay_only = relay_only;
     cfg.media_udp_port = media_udp_port;
+    cfg.reconnect_speedup = FAST_RECONNECT;
     cfg.approved_path = Some(dir.join(format!("{name}-approved.json")));
     let m = Mesh::start(cfg).await.expect("start");
     m.wait_ready(READY).await.expect("ready");
@@ -456,6 +461,7 @@ async fn removed_peers_are_cut() {
     );
     cfg.approved_path = Some(dir.path().join("approved.json"));
     cfg.pair_verifier = Some(Arc::new(|_, _, _| true));
+    cfg.reconnect_speedup = FAST_RECONNECT;
     let machine = Mesh::start(cfg).await.unwrap();
     machine.wait_ready(READY).await.unwrap();
     serve_echo(&machine);

@@ -5305,6 +5305,24 @@
           },
           "turn": {
             "type": "number"
+          },
+          "needsYou": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "title",
+              "detail"
+            ]
           }
         },
         "required": [
@@ -7057,6 +7075,24 @@
           },
           "turn": {
             "type": "number"
+          },
+          "needsYou": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "title",
+              "detail"
+            ]
           }
         },
         "required": [

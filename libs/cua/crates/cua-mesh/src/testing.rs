@@ -48,6 +48,10 @@ struct State {
     /// Account mode: machines also peer with each other (one account's
     /// hosts, as `cua-relay` does).
     machine_peering: AtomicBool,
+    /// Every welcomed node is closed at once with this WebSocket close.
+    close_after_welcome: Mutex<Option<(u16, String)>>,
+    /// Nodes welcomed since start.
+    welcomes: AtomicU64,
 }
 
 /// See the module docs.
@@ -185,6 +189,19 @@ impl FakeCoordinator {
     pub fn set_machine_peering(&self, on: bool) {
         self.state.machine_peering.store(on, Ordering::SeqCst);
         push_netmaps(&self.state, self.mode);
+    }
+
+    /// Closes every node right after it is welcomed, with `code` and
+    /// `reason` (`None`: stops doing so), as the relay does when it drops
+    /// a session for a reason of its own.
+    pub fn close_after_welcome(&self, close: Option<(u16, &str)>) {
+        *self.state.close_after_welcome.lock().expect("close") =
+            close.map(|(c, r)| (c, r.to_owned()));
+    }
+
+    /// Nodes welcomed since start.
+    pub fn welcomes(&self) -> u64 {
+        self.state.welcomes.load(Ordering::SeqCst)
     }
 
     /// Nodes connected right now.
@@ -418,6 +435,19 @@ async fn serve(state: Arc<State>, mode: Mode, tcp: tokio::net::TcpStream) {
         .await
         .is_err()
     {
+        return;
+    }
+    state.welcomes.fetch_add(1, Ordering::SeqCst);
+    let close = state.close_after_welcome.lock().expect("close").clone();
+    if let Some((code, reason)) = close {
+        let _ = sink
+            .send(WsMessage::Close(Some(
+                tokio_tungstenite::tungstenite::protocol::CloseFrame {
+                    code: code.into(),
+                    reason: reason.into(),
+                },
+            )))
+            .await;
         return;
     }
     let (tx, mut rx) = mpsc::unbounded_channel::<WsMessage>();

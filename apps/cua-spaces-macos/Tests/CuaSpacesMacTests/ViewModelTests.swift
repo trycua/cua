@@ -399,6 +399,17 @@ struct ViewModelTests {
         #expect(model.host.formView?.canSubmit == true)
     }
 
+    /// The web page's usage signals (a sign-in's start, the "still waiting" hint)
+    /// wait for the usage-data switch in its Settings snapshot, and the page can
+    /// run signed out before any Settings view loaded it: reading the switch
+    /// alone fills the page's Settings with it.
+    @Test func refreshingTelemetryGivesTheSettingsItsSwitch() {
+        let model = makeModel(telemetry: FixtureTelemetry())
+        #expect(model.telemetryInput == nil)
+        model.refreshTelemetry()
+        #expect(model.telemetryInput?.enabled == true)
+    }
+
     /// Settings, Experiments: every switch off except Sharing and Your cloud
     /// (on by default); Cua Volume on shows Storage after General, is saved,
     /// recorded, and reaches the first run.

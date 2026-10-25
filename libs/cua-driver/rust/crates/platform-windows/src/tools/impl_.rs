@@ -1152,6 +1152,12 @@ fn build_element_entry(
     if let Some(selected) = n.selected {
         entry["selected"] = json!(selected);
     }
+    if let Some(checked) = n.checked {
+        entry["toggle_state"] = json!(checked.as_str());
+    }
+    if let Some(expanded) = n.expanded {
+        entry["expanded"] = json!(expanded);
+    }
     if !n.actions.is_empty() {
         entry["actions"] = json!(n.actions);
     }

@@ -59,6 +59,21 @@ pub enum HostMode {
     },
 }
 
+/// The file under `<home>/host` that keeps this computer's registrations
+/// under other accounts than the signed-in one.
+const REGISTRATIONS_FILE: &str = "registrations.json";
+
+/// A relay registration of this computer under one account.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct StoredRegistration {
+    machine_id: String,
+    machine_token: String,
+}
+
+/// Account id -> the registration of this computer under it, for accounts
+/// that signed in here before and are not signed in now.
+type Registrations = std::collections::BTreeMap<String, StoredRegistration>;
+
 /// Options for [`Host::setup`].
 #[derive(Clone, Debug)]
 pub struct SetupOptions {
@@ -2007,9 +2022,13 @@ impl Host {
     /// Registers this computer again for the account behind `tokens`, which
     /// is not the one it was set up for. The old registration belongs to
     /// the previous account (the relay refuses its id, and the machine's
-    /// mesh key was bound to it), so this computer gets a new machine id
-    /// and a new mesh key; its name, what it shares and the Provide Spaces
-    /// setting stay. The previous account's allowlist is not carried over.
+    /// mesh key was bound to it), so this computer registers under a machine
+    /// id of the new account and takes a new mesh key; its name, what it
+    /// shares and the Provide Spaces setting stay. The previous account's
+    /// allowlist is not carried over. The registration it leaves is kept
+    /// (see [`Registrations`]) for when that account signs in again, so
+    /// switching back reuses it: no machines pile up on the relay, and what
+    /// is tied to the machine (its provided Spaces) stays with it.
     async fn switch_account(&self, tokens: &dyn AccountTokens) -> Result<HostStatus> {
         let mut config = self.require_config()?;
         if config.relay_url.is_none() || self.policy()?.is_none() {
@@ -2031,26 +2050,69 @@ impl Host {
         };
         let relay = RelayClient::new(&url)?;
         let token = tokens.access_token().await?;
-        // The registration being left, retired once the new one is in place.
-        let previous = config
-            .machine_id
-            .clone()
-            .zip(read_secret(&self.paths.machine_token()).ok());
-        let id = random_hex(16);
-        let reg = relay
-            .register_as_machine(
-                &token,
-                None,
-                &RegisterRequest {
-                    id: id.clone(),
-                    name: config.name.clone(),
-                    allow: vec![],
-                    host: None,
-                    meta: host_meta(config.provide_spaces),
-                },
+        let mut kept = self.registrations();
+        // The registration being left, kept for its account.
+        if !policy.owner.is_empty()
+            && let (Some(id), Ok(machine_token)) = (
+                config.machine_id.clone(),
+                read_secret(&self.paths.machine_token()),
             )
-            .await?;
-        write_secret(&self.paths.machine_id, &format!("{id}\n"))?;
+        {
+            kept.insert(
+                policy.owner.clone(),
+                StoredRegistration {
+                    machine_id: id,
+                    machine_token,
+                },
+            );
+        }
+        let request = |id: String| RegisterRequest {
+            id,
+            name: config.name.clone(),
+            allow: vec![],
+            host: None,
+            meta: host_meta(config.provide_spaces),
+        };
+        // This account's earlier registration of this computer, if any (the
+        // token says whose it is when it can; the relay refuses the
+        // others): else, or when the relay no longer takes it, a new
+        // machine id.
+        let sub = crate::device::token_subject(&token);
+        let earlier: Vec<StoredRegistration> = match sub.as_ref().and_then(|s| kept.get(s)) {
+            Some(r) => vec![r.clone()],
+            None => kept.values().cloned().collect(),
+        };
+        let mut reg = None;
+        for r in earlier {
+            match relay
+                .register_as_machine(&token, Some(&r.machine_token), &request(r.machine_id))
+                .await
+            {
+                Ok(r) => {
+                    reg = Some(r);
+                    break;
+                }
+                Err(
+                    Error::Unauthenticated(_)
+                    | Error::PermissionDenied(_)
+                    | Error::NotFound(_)
+                    | Error::Conflict(_),
+                ) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        let reg = match reg {
+            Some(r) => r,
+            None => {
+                relay
+                    .register_as_machine(&token, None, &request(random_hex(16)))
+                    .await?
+            }
+        };
+        // The active registration is not kept; the others are.
+        kept.remove(&reg.machine.owner.id);
+        self.save_registrations(&kept)?;
+        write_secret(&self.paths.machine_id, &format!("{}\n", reg.machine.id))?;
         write_secret(&self.paths.machine_token(), &reg.machine_token)?;
         if reg.jwks.is_null() {
             let _ = std::fs::remove_file(self.paths.relay_jwks());
@@ -2069,18 +2131,24 @@ impl Host {
         write_json(&self.paths.policy(), &policy)?;
         config.machine_id = Some(reg.machine.id.clone());
         write_json(&self.paths.config(), &config)?;
-        // The previous account's record of this computer goes (best effort:
-        // its machine token proves it is this computer), so switching back
-        // and forth does not pile up offline machines.
-        if let Some((old_id, old_token)) = previous
-            && let Err(e) = relay.delete(&old_token, &old_id).await
-        {
-            tracing::debug!(error = %e, machine = %old_id, "could not retire the previous registration");
-        }
         // Registered for the new account and paused: resuming installs and
         // starts the service with the new registration (and keeps a stopped
         // host stopped on the relay), and is what a retry does if that fails.
         self.resume_signed_in(&reg.machine.owner.id).await
+    }
+
+    /// The registrations of this computer under accounts that are not the
+    /// signed-in one (`<home>/host/registrations.json`, 0600).
+    fn registrations(&self) -> Registrations {
+        read_secret(&self.paths.dir.join(REGISTRATIONS_FILE))
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or_default()
+    }
+
+    fn save_registrations(&self, kept: &Registrations) -> Result<()> {
+        let text = serde_json::to_string(kept).map_err(|e| Error::Internal(e.to_string()))?;
+        write_secret(&self.paths.dir.join(REGISTRATIONS_FILE), &text)
     }
 
     /// Renames the machine and/or replaces its allowlist (relay mode; the
@@ -2468,6 +2536,18 @@ impl Host {
             && let Err(e) = RelayClient::new(url)?.delete(&token, id).await
         {
             note(e);
+        }
+        // Its registrations under other accounts go too: nothing of this
+        // computer stays listed anywhere.
+        if let Some(url) = &config.relay_url {
+            for r in self.registrations().values() {
+                if let Err(e) = RelayClient::new(url)?
+                    .delete(&r.machine_token, &r.machine_id)
+                    .await
+                {
+                    note(e);
+                }
+            }
         }
         self.manager_for_config(&config).uninstall()?;
         if config.runner == RunnerKind::AppHelper.as_str() {

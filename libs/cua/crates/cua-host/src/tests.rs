@@ -1857,8 +1857,12 @@ async fn signing_in_as_another_account_registers_the_host_again() {
         .expect("registered");
     assert_eq!(on_relay.owner.id, "user-2");
 
-    // The previous account's record of this computer is gone.
-    assert!(relay.machine(&old_id).is_none(), "retired");
+    // The previous account's record of this computer is kept for it.
+    assert_eq!(
+        relay.machine(&old_id).expect("kept").owner.id,
+        "user-1",
+        "the first account's registration stays"
+    );
 
     // Signed in as the new owner again: a plain resume, no new machine.
     host.pause_signed_out().await.unwrap();
@@ -1867,6 +1871,34 @@ async fn signing_in_as_another_account_registers_the_host_again() {
         .await
         .unwrap();
     assert_eq!(again.machine_id, switched.machine_id);
+
+    // Back to the first account: its own registration is reused (same
+    // machine id, so what is tied to it stays), not a third machine.
+    let back = host
+        .resume_or_switch_account("user-1", &StaticToken("acct-a".into()))
+        .await
+        .unwrap();
+    assert_eq!(back.machine_id.as_deref(), Some(old_id.as_str()));
+    assert_eq!(back.owner.as_deref(), Some("user-1"));
+    assert_eq!(back.name.as_deref(), Some("mini"));
+    assert!(back.provide_spaces && back.service.running);
+    assert_eq!(
+        relay
+            .machine(switched.machine_id.as_deref().unwrap())
+            .expect("the second account's is kept")
+            .owner
+            .id,
+        "user-2"
+    );
+
+    // Removing the host unregisters every registration of this computer.
+    host.remove().await.unwrap();
+    assert!(relay.machine(&old_id).is_none());
+    assert!(
+        relay
+            .machine(switched.machine_id.as_deref().unwrap())
+            .is_none()
+    );
 }
 
 /// A host the owner had stopped sharing stays stopped (on the relay too)

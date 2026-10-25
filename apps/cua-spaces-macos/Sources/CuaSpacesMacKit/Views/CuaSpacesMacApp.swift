@@ -53,6 +53,7 @@ public struct CuaSpacesMacApp: App {
             }
             CommandGroup(after: .help) {
                 GettingStartedCommand(model: model)
+                SystemStatusCommand(model: model)
             }
         }
 
@@ -162,6 +163,20 @@ struct GettingStartedCommand: View {
                 NSApp.activate()
                 openWindow(id: "main")
             }
+        }
+    }
+}
+
+/// Help, System Status: the public status page, in the browser. The address is
+/// the About pane's own link (the core's `appAboutView`), so both open the same page.
+struct SystemStatusCommand: View {
+    let model: AppModel
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        if let link = model.updates.view.links.first(where: { $0.id == .status }),
+           let url = link.url.flatMap(URL.init(string:)) {
+            Button(link.label) { openURL(url) }
         }
     }
 }

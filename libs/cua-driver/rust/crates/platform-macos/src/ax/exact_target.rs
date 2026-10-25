@@ -21,7 +21,7 @@ use super::bindings::{
     AXUIElementRef,
 };
 use super::snapshot::RetainedElement;
-use crate::windows::{all_windows_without_spaces, resolve_window_owner, WindowOwner};
+use crate::windows::{describe_window, resolve_window_owner, WindowOwner};
 
 /// Bounded `AXParent` ascent used when an element does not expose `AXWindow`.
 const MAX_ANCESTRY_DEPTH: usize = 40;
@@ -431,12 +431,36 @@ fn count_competing_keyboard_destinations(
         .count()
 }
 
+/// The layer-0 WindowServer rows the keyboard-ambiguity count can match: only
+/// windows `AXWindows` maps can count, so describe those few by id rather than
+/// enumerating every window in the session. Lazy, so a key target, which
+/// counts nothing, reads no row at all.
+fn ax_mapped_window_rows(
+    records: &[AxWindowRecord],
+    target_window_id: u32,
+) -> impl Iterator<Item = WindowServerRow> + '_ {
+    let mut seen = std::collections::HashSet::new();
+    records
+        .iter()
+        .map(|record| record.window_id)
+        .filter(move |id| *id != target_window_id && seen.insert(*id))
+        .filter_map(describe_window)
+        .filter(|window| window.layer == 0)
+        .map(|window| WindowServerRow {
+            pid: window.pid,
+            window_id: window.window_id,
+            visible: window.is_on_screen
+                && window.bounds.width >= 2.0
+                && window.bounds.height >= 2.0,
+        })
+}
+
 /// Gather fresh background-input facts for one `(pid, window_id)` target.
 ///
 /// `element_ptr` is an optional retained `AXUIElementRef` (as `usize`) for an
 /// explicitly addressed element; the caller must keep it retained for the
-/// duration of this call. Blocking: performs up to two Space-free CGWindowList
-/// enumerations and bounded AX reads. Call from a blocking context immediately
+/// duration of this call. Blocking: performs WindowServer lookups of the
+/// target and its AX-mapped sibling windows and bounded AX reads. Call from a blocking context immediately
 /// before deciding.
 pub fn gather_background_facts(
     pid: i32,
@@ -495,15 +519,7 @@ pub fn gather_background_facts(
     let competing_keyboard_destinations = count_competing_keyboard_destinations(
         pid,
         ax_target,
-        all_windows_without_spaces()
-            .iter()
-            .map(|window| WindowServerRow {
-                pid: window.pid,
-                window_id: window.window_id,
-                visible: window.is_on_screen
-                    && window.bounds.width >= 2.0
-                    && window.bounds.height >= 2.0,
-            }),
+        ax_mapped_window_rows(&records, ax_target),
         &records,
         target.is_some() && focused_window_id.is_some_and(|focused| focused.is(window_id)),
     );

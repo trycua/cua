@@ -17,6 +17,11 @@ public protocol SpacesBackend: AnyObject, Sendable {
     /// [`rows`] with how far the read got (the SDK's `Spaces.list_known`):
     /// this Mac's Spaces at once, your other computers as they answer.
     func listRead() async throws -> AppListRead
+    /// Calls `onChange` (on an SDK thread) when the Space list changed, and
+    /// once at the start (`Spaces.watch_list`): the daemon pushes it, so the
+    /// list is read again when something happened. The watch lasts while the
+    /// returned handle is kept; `nil` when this backend cannot push.
+    func watchList(_ onChange: @escaping @Sendable () -> Void) async -> AnyObject?
     /// Creates a Space (`create_space`), reporting the SDK's create progress
     /// (pulling, booting, waiting for cua-spacesd, connecting) to `progress`
     /// on an SDK thread until it is ready; returns its id. `createId` (the
@@ -177,6 +182,8 @@ public struct AppListRead: Sendable {
 public extension SpacesBackend {
     /// A backend that lists complete lists only.
     func listRead() async throws -> AppListRead { AppListRead(rows: try await rows()) }
+    /// A backend that cannot push: the list poll alone keeps it fresh.
+    func watchList(_ onChange: @escaping @Sendable () -> Void) async -> AnyObject? { nil }
     func thumbnail(id: String, maxAgeMs: UInt64?) async -> SpaceThumbnailData? { nil }
     func appIcons(id: String, requests: [SpaceAppIconRequest]) async -> [Data?] { requests.map { _ in nil } }
     func primaryDisplay(id: String) async -> AppStreamDisplay? { nil }
@@ -260,6 +267,10 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
     }
 
     public func rows() async throws -> [AppSpaceRow] { try await listRead().rows }
+
+    public func watchList(_ onChange: @escaping @Sendable () -> Void) async -> AnyObject? {
+        cua.spaces().watchList(listener: ListChangeListener(onChange))
+    }
 
     /// This Mac's Spaces at once, your other computers as far as they
     /// answered (`Spaces.list_known`): a slow relay or a daemon still
@@ -633,6 +644,13 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
     }
 }
 
+/// The SDK's list changes, to a closure.
+final class ListChangeListener: SpacesListListener {
+    private let forward: @Sendable () -> Void
+    init(_ forward: @escaping @Sendable () -> Void) { self.forward = forward }
+    func onChanged(generation: UInt64) { forward() }
+}
+
 /// The SDK's create progress, to a closure.
 final class CreateListener: SpaceCreateListener {
     private let forward: @Sendable (SpaceCreateProgress) -> Void
@@ -874,9 +892,20 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
     public var fixtureReaching: UInt32 = 0
     public func listRead() async throws -> AppListRead {
         await MainActor.run {
-            AppListRead(rows: fixtureRows, incomplete: fixtureIncomplete, reaching: fixtureReaching, stale: fixtureIncomplete)
+            fixtureListReads += 1
+            return AppListRead(rows: fixtureRows, incomplete: fixtureIncomplete, reaching: fixtureReaching, stale: fixtureIncomplete)
         }
     }
+
+    /// List reads so far (a push reads the list again).
+    public private(set) var fixtureListReads = 0
+    private var fixturePush: (@Sendable () -> Void)?
+    public func watchList(_ onChange: @escaping @Sendable () -> Void) async -> AnyObject? {
+        await MainActor.run { fixturePush = onChange }
+        return self
+    }
+    /// The daemon says the list changed.
+    public func pushListChanged() { fixturePush?() }
 
     /// Progress a fixture create reports, in order (the SDK's words).
     public var createPhases: [SpaceCreateProgress] = [

@@ -563,6 +563,26 @@ const DEFINITIONS = {
       ret: FfiType.Void,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_sdk_fn_clone_spaceslistlistener": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_sdk_fn_free_spaceslistlistener": {
+      args: [FfiType.Handle],
+      ret: FfiType.Void,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_sdk_fn_clone_spaceslistwatch": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_sdk_fn_free_spaceslistwatch": {
+      args: [FfiType.Handle],
+      ret: FfiType.Void,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_sdk_fn_clone_spacesdclient": {
       args: [FfiType.Handle],
       ret: FfiType.Handle,
@@ -635,6 +655,11 @@ const DEFINITIONS = {
     },
     "uniffi_cua_sdk_fn_init_callback_vtable_spacecreatelistener": {
       args: [FfiType.Reference(FfiType.Struct("VTableCallbackInterfaceCuaSdkSpaceCreateListener"))],
+      ret: FfiType.Void,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_init_callback_vtable_spaceslistlistener": {
+      args: [FfiType.Reference(FfiType.Struct("VTableCallbackInterfaceCuaSdkSpacesListListener"))],
       ret: FfiType.Void,
       hasRustCallStatus: false,
     },
@@ -2718,9 +2743,24 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_fn_method_spaces_watch_list": {
+      args: [FfiType.Handle, FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_sdk_fn_method_spaces_watch_resources": {
       args: [FfiType.Handle, FfiType.Int8, FfiType.Handle],
       ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_sdk_fn_method_spaceslistlistener_on_changed": {
+      args: [FfiType.Handle, FfiType.UInt64],
+      ret: FfiType.Void,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_sdk_fn_method_spaceslistwatch_stop": {
+      args: [FfiType.Handle],
+      ret: FfiType.Void,
       hasRustCallStatus: true,
     },
     "uniffi_cua_sdk_fn_method_spacesdclient_agents": {
@@ -5118,7 +5158,22 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_spaces_watch_list": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_spaces_watch_resources": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_spaceslistlistener_on_changed": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_spaceslistwatch_stop": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -5536,6 +5591,22 @@ const DEFINITIONS = {
       ret: FfiType.Void,
       hasRustCallStatus: false,
     },
+    "CallbackInterfaceCuaSdkSpacesListListenerMethod0": {
+      args: [FfiType.Handle, FfiType.UInt64],
+      ret: FfiType.VoidPointer,
+      hasRustCallStatus: true,
+      outReturn: true,
+    },
+    "CallbackInterfaceCloneCuaSdk_SpacesListListener": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "CallbackInterfaceFreeCuaSdk_SpacesListListener": {
+      args: [FfiType.Handle],
+      ret: FfiType.Void,
+      hasRustCallStatus: false,
+    },
     "CallbackInterfaceCuaSdkTeleportApproverMethod0": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
@@ -5583,6 +5654,11 @@ const DEFINITIONS = {
       { name: "uniffi_free", type: FfiType.Callback("CallbackInterfaceFreeCuaSdk_SpaceCreateListener") },
       { name: "uniffi_clone", type: FfiType.Callback("CallbackInterfaceCloneCuaSdk_SpaceCreateListener") },
       { name: "on_progress", type: FfiType.Callback("CallbackInterfaceCuaSdkSpaceCreateListenerMethod0") },
+    ],
+    "VTableCallbackInterfaceCuaSdkSpacesListListener": [
+      { name: "uniffi_free", type: FfiType.Callback("CallbackInterfaceFreeCuaSdk_SpacesListListener") },
+      { name: "uniffi_clone", type: FfiType.Callback("CallbackInterfaceCloneCuaSdk_SpacesListListener") },
+      { name: "on_changed", type: FfiType.Callback("CallbackInterfaceCuaSdkSpacesListListenerMethod0") },
     ],
     "VTableCallbackInterfaceCuaSdkTeleportApprover": [
       { name: "uniffi_free", type: FfiType.Callback("CallbackInterfaceFreeCuaSdk_TeleportApprover") },
@@ -5701,6 +5777,10 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_free_spacestreamsession(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_sdk_fn_clone_spaces(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_sdk_fn_free_spaces(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
+    uniffi_cua_sdk_fn_clone_spaceslistlistener(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cua_sdk_fn_free_spaceslistlistener(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
+    uniffi_cua_sdk_fn_clone_spaceslistwatch(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cua_sdk_fn_free_spaceslistwatch(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_sdk_fn_clone_spacesdclient(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_sdk_fn_free_spacesdclient(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_sdk_fn_clone_spacesddownload(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
@@ -5716,6 +5796,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_init_callback_vtable_framesink(vtable: UniffiVTableCallbackInterfaceCuaSdkFrameSink): void;
     uniffi_cua_sdk_fn_init_callback_vtable_resourceslistener(vtable: UniffiVTableCallbackInterfaceCuaSdkResourcesListener): void;
     uniffi_cua_sdk_fn_init_callback_vtable_spacecreatelistener(vtable: UniffiVTableCallbackInterfaceCuaSdkSpaceCreateListener): void;
+    uniffi_cua_sdk_fn_init_callback_vtable_spaceslistlistener(vtable: UniffiVTableCallbackInterfaceCuaSdkSpacesListListener): void;
     uniffi_cua_sdk_fn_init_callback_vtable_teleportapprover(vtable: UniffiVTableCallbackInterfaceCuaSdkTeleportApprover): void;
     uniffi_cua_sdk_fn_func_agent_event_category(kind: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_func_agent_harnesses(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -6132,7 +6213,10 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_spaces_volume_unmount(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_spaces_volume_write(uniffiSelf: bigint, path: Uint8Array, content: Uint8Array, ifEtag: Uint8Array, createOnly: number, view: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_volumes(uniffiSelf: bigint): bigint;
+    uniffi_cua_sdk_fn_method_spaces_watch_list(uniffiSelf: bigint, listener: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_sdk_fn_method_spaces_watch_resources(uniffiSelf: bigint, visible: number, listener: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cua_sdk_fn_method_spaceslistlistener_on_changed(uniffiSelf: bigint, generation: bigint, uniffi_out_err: UniffiRustCallStatus): void;
+    uniffi_cua_sdk_fn_method_spaceslistwatch_stop(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_sdk_fn_method_spacesdclient_agents(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_spacesdclient_attach(uniffiSelf: bigint, pid: Uint8Array, tag: Uint8Array, replay: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spacesdclient_call_json(uniffiSelf: bigint, method: Uint8Array, requestJson: Uint8Array, user: Uint8Array): bigint;
@@ -6612,7 +6696,10 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_spaces_volume_unmount(): number;
     uniffi_cua_sdk_checksum_method_spaces_volume_write(): number;
     uniffi_cua_sdk_checksum_method_spaces_volumes(): number;
+    uniffi_cua_sdk_checksum_method_spaces_watch_list(): number;
     uniffi_cua_sdk_checksum_method_spaces_watch_resources(): number;
+    uniffi_cua_sdk_checksum_method_spaceslistlistener_on_changed(): number;
+    uniffi_cua_sdk_checksum_method_spaceslistwatch_stop(): number;
     uniffi_cua_sdk_checksum_method_spacesdclient_agents(): number;
     uniffi_cua_sdk_checksum_method_spacesdclient_attach(): number;
     uniffi_cua_sdk_checksum_method_spacesdclient_call_json(): number;
@@ -6747,6 +6834,14 @@ export type UniffiVTableCallbackInterfaceCuaSdkSpaceCreateListener = {
   uniffi_free: UniffiCallbackInterfaceFreeCuaSdkSpaceCreateListener;
   uniffi_clone: UniffiCallbackInterfaceCloneCuaSdkSpaceCreateListener;
   on_progress: UniffiCallbackInterfaceCuaSdkSpaceCreateListenerMethod0;
+};
+type UniffiCallbackInterfaceCuaSdkSpacesListListenerMethod0 = (uniffiHandle: bigint, generation: bigint) => UniffiResult<void>;
+type UniffiCallbackInterfaceCloneCuaSdkSpacesListListener = (handle: bigint) => UniffiResult<void>;
+type UniffiCallbackInterfaceFreeCuaSdkSpacesListListener = (handle: bigint) => void;
+export type UniffiVTableCallbackInterfaceCuaSdkSpacesListListener = {
+  uniffi_free: UniffiCallbackInterfaceFreeCuaSdkSpacesListListener;
+  uniffi_clone: UniffiCallbackInterfaceCloneCuaSdkSpacesListListener;
+  on_changed: UniffiCallbackInterfaceCuaSdkSpacesListListenerMethod0;
 };
 type UniffiCallbackInterfaceCuaSdkTeleportApproverMethod0 = (uniffiHandle: bigint, manifest: Uint8Array) => Uint8Array;
 type UniffiCallbackInterfaceCloneCuaSdkTeleportApprover = (handle: bigint) => UniffiResult<void>;

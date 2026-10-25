@@ -1309,7 +1309,13 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_volumes() != 15143:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_spaces_watch_list() != 1499:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_watch_resources() != 49660:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_spaceslistlistener_on_changed() != 40063:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_spaceslistwatch_stop() != 38223:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spacesdclient_agents() != 39176:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -2000,6 +2006,26 @@ _UniffiLib.uniffi_cua_sdk_fn_free_spaces.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_sdk_fn_free_spaces.restype = None
+_UniffiLib.uniffi_cua_sdk_fn_clone_spaceslistlistener.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_clone_spaceslistlistener.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_free_spaceslistlistener.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_free_spaceslistlistener.restype = None
+_UniffiLib.uniffi_cua_sdk_fn_clone_spaceslistwatch.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_clone_spaceslistwatch.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_free_spaceslistwatch.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_free_spaceslistwatch.restype = None
 _UniffiLib.uniffi_cua_sdk_fn_clone_spacesdclient.argtypes = (
     ctypes.c_uint64,
     ctypes.POINTER(_UniffiRustCallStatus),
@@ -2139,6 +2165,23 @@ _UniffiLib.uniffi_cua_sdk_fn_init_callback_vtable_spacecreatelistener.argtypes =
     ctypes.POINTER(_UniffiVTableCallbackInterfaceCuaSdkSpaceCreateListener),
 )
 _UniffiLib.uniffi_cua_sdk_fn_init_callback_vtable_spacecreatelistener.restype = None
+_UNIFFI_CALLBACK_INTERFACE_CUA_SDK_SPACES_LIST_LISTENER_METHOD0 = ctypes.CFUNCTYPE(None,ctypes.c_uint64,ctypes.c_uint64,ctypes.c_void_p,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UNIFFI_CALLBACK_INTERFACE_CLONE_CUA_SDK_SPACES_LIST_LISTENER = ctypes.CFUNCTYPE(ctypes.c_uint64,ctypes.c_uint64,
+)
+_UNIFFI_CALLBACK_INTERFACE_FREE_CUA_SDK_SPACES_LIST_LISTENER = ctypes.CFUNCTYPE(None,ctypes.c_uint64,
+)
+class _UniffiVTableCallbackInterfaceCuaSdkSpacesListListener(ctypes.Structure):
+    _fields_ = [
+        ("uniffi_free", _UNIFFI_CALLBACK_INTERFACE_FREE_CUA_SDK_SPACES_LIST_LISTENER),
+        ("uniffi_clone", _UNIFFI_CALLBACK_INTERFACE_CLONE_CUA_SDK_SPACES_LIST_LISTENER),
+        ("on_changed", _UNIFFI_CALLBACK_INTERFACE_CUA_SDK_SPACES_LIST_LISTENER_METHOD0),
+    ]
+_UniffiLib.uniffi_cua_sdk_fn_init_callback_vtable_spaceslistlistener.argtypes = (
+    ctypes.POINTER(_UniffiVTableCallbackInterfaceCuaSdkSpacesListListener),
+)
+_UniffiLib.uniffi_cua_sdk_fn_init_callback_vtable_spaceslistlistener.restype = None
 _UNIFFI_CALLBACK_INTERFACE_CUA_SDK_TELEPORT_APPROVER_METHOD0 = ctypes.CFUNCTYPE(None,ctypes.c_uint64,_UniffiRustBuffer,ctypes.POINTER(_UniffiRustBuffer),
     ctypes.POINTER(_UniffiRustCallStatus),
 )
@@ -4326,6 +4369,12 @@ _UniffiLib.uniffi_cua_sdk_fn_method_spaces_volumes.argtypes = (
     ctypes.c_uint64,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_volumes.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_watch_list.argtypes = (
+    ctypes.c_uint64,
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_watch_list.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_watch_resources.argtypes = (
     ctypes.c_uint64,
     ctypes.c_int8,
@@ -4333,6 +4382,17 @@ _UniffiLib.uniffi_cua_sdk_fn_method_spaces_watch_resources.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_watch_resources.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_spaceslistlistener_on_changed.argtypes = (
+    ctypes.c_uint64,
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_spaceslistlistener_on_changed.restype = None
+_UniffiLib.uniffi_cua_sdk_fn_method_spaceslistwatch_stop.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_spaceslistwatch_stop.restype = None
 _UniffiLib.uniffi_cua_sdk_fn_method_spacesdclient_agents.argtypes = (
     ctypes.c_uint64,
 )
@@ -5928,9 +5988,18 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_volume_write.restype = ctypes.c
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_volumes.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_volumes.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_watch_list.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_watch_list.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_watch_resources.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_watch_resources.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaceslistlistener_on_changed.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaceslistlistener_on_changed.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaceslistwatch_stop.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaceslistwatch_stop.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_spacesdclient_agents.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spacesdclient_agents.restype = ctypes.c_uint16
@@ -39621,6 +39690,248 @@ class _UniffiFfiConverterSequenceTypeNamedVolume(_UniffiConverterRustBuffer):
         ]
 
 
+class SpacesListListener():
+    """
+    Hears that the Space list changed ([`Spaces::watch_list`]). Called on an
+    SDK worker thread; return quickly (read the list on your own queue).
+"""
+
+    def on_changed(self, generation: int) -> None:
+        """
+        The list changed (and once at the start): read it again.
+        `generation` only increases while one daemon runs.
+"""
+        raise NotImplementedError
+
+class SpacesListListenerImpl(SpacesListListener):
+    """
+    Hears that the Space list changed ([`Spaces::watch_list`]). Called on an
+    SDK worker thread; return quickly (read the list on your own queue).
+"""
+
+    _handle: ctypes.c_uint64
+
+    def __init__(self, *args, **kwargs):
+        raise ValueError("This class has no default constructor")
+
+    def __del__(
+            self,
+            _uniffi_free=_UniffiLib.uniffi_cua_sdk_fn_free_spaceslistlistener,
+            _uniffi_call=_uniffi_rust_call,
+            _uniffi_finalizing=sys.is_finalizing,
+    ):
+        # In case of partial initialization of instances.
+        handle = getattr(self, "_handle", None)
+        # At interpreter exit the module globals are gone: skip the free (cua
+        # post-process, libs/cua/scripts/uniffi-python-postprocess.mjs).
+        if handle is not None and not _uniffi_finalizing():
+            _uniffi_call(_uniffi_free, handle)
+
+    def _uniffi_clone_handle(self):
+        return _uniffi_rust_call(_UniffiLib.uniffi_cua_sdk_fn_clone_spaceslistlistener, self._handle)
+
+    # Used by alternative constructors or any methods which return this type.
+    @classmethod
+    def _uniffi_make_instance(cls, handle):
+        # Lightly yucky way to bypass the usual __init__ logic
+        # and just create a new instance with the required handle.
+        inst = cls.__new__(cls)
+        inst._handle = handle
+        return inst
+    def on_changed(self, generation: int) -> None:
+        """
+        The list changed (and once at the start): read it again.
+        `generation` only increases while one daemon runs.
+"""
+
+        _UniffiFfiConverterUInt64.check_lower(generation)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterUInt64.lower(generation),
+        )
+        _uniffi_lift_return = lambda val: None
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_sdk_fn_method_spaceslistlistener_on_changed,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+
+
+
+
+# Put all the bits inside a class to keep the top-level namespace clean
+class _UniffiTraitImplSpacesListListenerImpl:
+    # For each method, generate a callback function to pass to Rust
+
+    @_UNIFFI_CALLBACK_INTERFACE_CUA_SDK_SPACES_LIST_LISTENER_METHOD0
+    def on_changed(
+            uniffi_handle,
+            generation,
+            uniffi_out_return,
+            uniffi_call_status_ptr,
+        ):
+        uniffi_obj = _UniffiFfiConverterTypeSpacesListListener._handle_map.get(uniffi_handle)
+        def make_call():
+            uniffi_args = (_UniffiFfiConverterUInt64.lift(generation), )
+            uniffi_method = uniffi_obj.on_changed
+            return uniffi_method(*uniffi_args)
+        write_return_value = lambda v: None
+        _uniffi_trait_interface_call(
+                uniffi_call_status_ptr.contents,
+                make_call,
+                write_return_value,
+        )
+
+    @_UNIFFI_CALLBACK_INTERFACE_FREE_CUA_SDK_SPACES_LIST_LISTENER
+    def _uniffi_free(uniffi_handle):
+        _UniffiFfiConverterTypeSpacesListListener._handle_map.remove(uniffi_handle)
+
+    @_UNIFFI_CALLBACK_INTERFACE_CLONE_CUA_SDK_SPACES_LIST_LISTENER
+    def _uniffi_clone(uniffi_handle):
+        return _UniffiFfiConverterTypeSpacesListListener._handle_map.clone(uniffi_handle)
+
+    # Generate the FFI VTable.  This has a field for each callback interface method.
+    _uniffi_vtable = _UniffiVTableCallbackInterfaceCuaSdkSpacesListListener(
+        _uniffi_free,
+        _uniffi_clone,
+        on_changed,
+    )
+    # Send Rust a pointer to the VTable.  Note: this means we need to keep the struct alive forever,
+    # or else bad things will happen when Rust tries to access it.
+    _UniffiLib.uniffi_cua_sdk_fn_init_callback_vtable_spaceslistlistener(ctypes.byref(_uniffi_vtable))
+
+class _UniffiFfiConverterTypeSpacesListListener:
+    _handle_map = _UniffiHandleMap()
+
+    @staticmethod
+    def lift(value: int):
+        if (value & 1) == 0:
+            # Rust-generated handle, construct a new class that uses the handle to implement the
+            # interface
+            return SpacesListListenerImpl._uniffi_make_instance(value)
+        else:
+            # Python-generated handle, get the object from the handle map
+            return _UniffiFfiConverterTypeSpacesListListener._handle_map.remove(value)
+
+    @staticmethod
+    def check_lower(value: SpacesListListener):
+        if not isinstance(value, SpacesListListener):
+            raise TypeError("Expected SpacesListListener subclass, {} found".format(type(value).__name__))
+
+    @staticmethod
+    def lower(value: SpacesListListener):
+         if isinstance(value, SpacesListListenerImpl):
+            # Rust-implementated object.  Clone the handle and return it
+            return value._uniffi_clone_handle()
+         else:
+            # Python-implementated object, generate a new vtable handle and return that.
+            return _UniffiFfiConverterTypeSpacesListListener._handle_map.insert(value)
+
+    @classmethod
+    def read(cls, buf: _UniffiRustBuffer):
+        ptr = buf.read_u64()
+        if ptr == 0:
+            raise InternalError("Raw handle value was null")
+        return cls.lift(ptr)
+
+    @classmethod
+    def write(cls, value: SpacesListListener, buf: _UniffiRustBuffer):
+        buf.write_u64(cls.lower(value))
+
+
+class SpacesListWatchProtocol(typing.Protocol):
+    """
+    A running [`Spaces::watch_list`]. Dropping it also stops it.
+"""
+
+    def stop(self, ) -> None:
+        """
+        Ends the watch. No call is made after this returns.
+"""
+        raise NotImplementedError
+
+class SpacesListWatch(SpacesListWatchProtocol):
+    """
+    A running [`Spaces::watch_list`]. Dropping it also stops it.
+"""
+
+    _handle: ctypes.c_uint64
+
+    def __init__(self, *args, **kwargs):
+        raise ValueError("This class has no default constructor")
+
+    def __del__(
+            self,
+            _uniffi_free=_UniffiLib.uniffi_cua_sdk_fn_free_spaceslistwatch,
+            _uniffi_call=_uniffi_rust_call,
+            _uniffi_finalizing=sys.is_finalizing,
+    ):
+        # In case of partial initialization of instances.
+        handle = getattr(self, "_handle", None)
+        # At interpreter exit the module globals are gone: skip the free (cua
+        # post-process, libs/cua/scripts/uniffi-python-postprocess.mjs).
+        if handle is not None and not _uniffi_finalizing():
+            _uniffi_call(_uniffi_free, handle)
+
+    def _uniffi_clone_handle(self):
+        return _uniffi_rust_call(_UniffiLib.uniffi_cua_sdk_fn_clone_spaceslistwatch, self._handle)
+
+    # Used by alternative constructors or any methods which return this type.
+    @classmethod
+    def _uniffi_make_instance(cls, handle):
+        # Lightly yucky way to bypass the usual __init__ logic
+        # and just create a new instance with the required handle.
+        inst = cls.__new__(cls)
+        inst._handle = handle
+        return inst
+    def stop(self, ) -> None:
+        """
+        Ends the watch. No call is made after this returns.
+"""
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = lambda val: None
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_sdk_fn_method_spaceslistwatch_stop,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+
+
+
+
+
+class _UniffiFfiConverterTypeSpacesListWatch:
+    @staticmethod
+    def lift(value: int) -> SpacesListWatch:
+        return SpacesListWatch._uniffi_make_instance(value)
+
+    @staticmethod
+    def check_lower(value: SpacesListWatch):
+        if not isinstance(value, SpacesListWatch):
+            raise TypeError("Expected SpacesListWatch instance, {} found".format(type(value).__name__))
+
+    @staticmethod
+    def lower(value: SpacesListWatch) -> ctypes.c_uint64:
+        return value._uniffi_clone_handle()
+
+    @classmethod
+    def read(cls, buf: _UniffiRustBuffer) -> SpacesListWatch:
+        ptr = buf.read_u64()
+        if ptr == 0:
+            raise InternalError("Raw handle value was null")
+        return cls.lift(ptr)
+
+    @classmethod
+    def write(cls, value: SpacesListWatch, buf: _UniffiRustBuffer):
+        buf.write_u64(cls.lower(value))
+
+
 class ResourcesListener():
     """
     Receives [`ResourcesEvent`]s from [`Spaces::watch_resources`], in order.
@@ -40454,6 +40765,16 @@ class SpacesProtocol(typing.Protocol):
         """
         The named volumes of Cua Volume, by name, with the Spaces that mount
         each. Needs Cua Spaces (the Cua Volume).
+"""
+        raise NotImplementedError
+    def watch_list(self, listener: SpacesListListener) -> SpacesListWatch:
+        """
+        Tells `listener` when the Space list changed: once at the start, then
+        on every change. This computer's Spaces within a second; your other
+        computers on the mesh within about a second of connecting or going
+        away; the others within 10 seconds. Reopens by itself if the daemon
+        restarts (and then calls `listener` again). Stop it with
+        [`SpacesListWatch::stop`].
 """
         raise NotImplementedError
     def watch_resources(self, visible: bool,listener: ResourcesListener) -> ResourcesWatch:
@@ -42527,6 +42848,29 @@ class Spaces(SpacesProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    def watch_list(self, listener: SpacesListListener) -> SpacesListWatch:
+        """
+        Tells `listener` when the Space list changed: once at the start, then
+        on every change. This computer's Spaces within a second; your other
+        computers on the mesh within about a second of connecting or going
+        away; the others within 10 seconds. Reopens by itself if the daemon
+        restarts (and then calls `listener` again). Stop it with
+        [`SpacesListWatch::stop`].
+"""
+
+        _UniffiFfiConverterTypeSpacesListListener.check_lower(listener)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeSpacesListListener.lower(listener),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeSpacesListWatch.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_sdk_fn_method_spaces_watch_list,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
     def watch_resources(self, visible: bool,listener: ResourcesListener) -> ResourcesWatch:
         """
         The same numbers as events for `listener`: a snapshot first, then an
@@ -45083,6 +45427,10 @@ __all__ = [
     "TeleportApprover",
     "Space",
     "SpaceProtocol",
+    "SpacesListListenerImpl",
+    "SpacesListListener",
+    "SpacesListWatch",
+    "SpacesListWatchProtocol",
     "ResourcesListenerImpl",
     "ResourcesListener",
     "ResourcesWatch",

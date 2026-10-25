@@ -427,6 +427,19 @@ impl MeshClients {
         }
     }
 
+    /// A receiver per running node, bumped on each of its network maps.
+    pub(crate) async fn peer_changes(&self) -> Vec<tokio::sync::watch::Receiver<u64>> {
+        self.nodes
+            .lock()
+            .await
+            .values()
+            .filter_map(|slot| match slot {
+                Slot::Ready { dialer, .. } => Some(dialer.mesh().subscribe_peers()),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// The status of each node, for displays and measurements.
     pub(crate) async fn status(&self) -> Vec<(String, cua_mesh::Status)> {
         self.nodes
@@ -440,6 +453,20 @@ impl MeshClients {
                 _ => None,
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+impl MeshClients {
+    /// A running node for `url`'s account, as if a Space had started it.
+    pub(crate) async fn insert_for_test(&self, url: &str, dialer: Dialer) {
+        self.nodes.lock().await.insert(
+            Key::Account(url.to_owned()),
+            Slot::Ready {
+                dialer: Arc::new(dialer),
+                _lock: None,
+            },
+        );
     }
 }
 

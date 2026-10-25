@@ -18,6 +18,7 @@ import { SpaceCanvas } from "@/components/space-canvas";
 import { StateLabel } from "@/components/state-dot";
 import { useTileVideo } from "@/components/video/tile-video";
 import { useNewSpace } from "@/hooks/use-new-space";
+import { useInView } from "@/hooks/use-in-view";
 import { useQuiet } from "@/hooks/use-quiet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -184,7 +185,8 @@ function SpacesPage() {
       ) : (
         <ul className="grid grid-cols-[repeat(auto-fill,minmax(232px,1fr))] gap-4">
           {shown.map((space) => (
-            <li key={space.id}>
+            // Off-screen tiles skip layout and paint until they scroll in.
+            <li key={space.id} className="[content-visibility:auto] [contain-intrinsic-size:auto_232px]">
               <SpaceTile space={space} machine={machineName(machines, space)} accessKey={access.signedIn.has(space.id) ? access.accessKey(space.id) : undefined} />
             </li>
           ))}
@@ -383,9 +385,11 @@ function SpaceLink({ space, machine, windowOver = false }: { space: Space; machi
 function Thumbnail({ space }: { space: Space }) {
   const state = spaceState(space);
   const ref = useRef<HTMLDivElement | null>(null);
-  const video = useTileVideo(ref, space);
+  // Pictures and live video only for the tiles on screen (or close to it).
+  const inView = useInView(ref);
+  const video = useTileVideo(ref, space, inView);
   // Its latest capture (the notch's image), until live video draws over it.
-  const thumbnail = useSpaceThumbnail(space.id, state === "running" || state === "stopped");
+  const thumbnail = useSpaceThumbnail(space.id, inView && (state === "running" || state === "stopped"));
   return (
     <SpaceCanvas ref={ref} dim={state === "stopped"} streamState={video?.phase}>
       {thumbnail ? (

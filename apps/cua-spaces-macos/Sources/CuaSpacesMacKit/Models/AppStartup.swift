@@ -610,6 +610,9 @@ public final class PendingSpacesBackend: SpacesBackend, AgentsToolRunning, Cloud
 
     public func rows() async throws -> [AppSpaceRow] { try await b().rows() }
     public func listRead() async throws -> AppListRead { try await b().listRead() }
+    public func watchList(_ onChange: @escaping @Sendable () -> Void) async -> AnyObject? {
+        await b().watchList(onChange)
+    }
     public func create(_ args: AppCreateSpaceArgs, createId: String,
                        progress: @escaping @Sendable (SpaceCreateProgress) -> Void) async throws -> String {
         try await b().create(args, createId: createId, progress: progress)

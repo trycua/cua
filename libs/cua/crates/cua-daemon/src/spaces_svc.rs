@@ -1026,6 +1026,44 @@ mod imp {
             });
             ok(Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx)))
         }
+
+        type WatchSpacesStream = std::pin::Pin<
+            Box<
+                dyn tokio_stream::Stream<
+                        Item = std::result::Result<pb::WatchSpacesResponse, tonic::Status>,
+                    > + Send,
+            >,
+        >;
+
+        async fn watch_spaces(
+            &self,
+            _: tonic::Request<pb::WatchSpacesRequest>,
+        ) -> R<Self::WatchSpacesStream> {
+            let mut watch = self.spaces().watch_list();
+            let (tx, rx) = tokio::sync::mpsc::channel(4);
+            // The subscription is the interest: it ends with the stream, so
+            // the watcher stops when the last reader is gone.
+            tokio::spawn(async move {
+                let mut generation = watch.generation();
+                loop {
+                    if tx
+                        .send(Ok(pb::WatchSpacesResponse { generation }))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                    tokio::select! {
+                        g = watch.changed() => match g {
+                            Some(g) => generation = g,
+                            None => break,
+                        },
+                        _ = tx.closed() => break,
+                    }
+                }
+            });
+            ok(Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx)))
+        }
     }
 }
 
@@ -1229,6 +1267,21 @@ mod imp {
             &self,
             _: tonic::Request<pb::WatchResourcesRequest>,
         ) -> R<Self::WatchResourcesStream> {
+            off()
+        }
+
+        type WatchSpacesStream = std::pin::Pin<
+            Box<
+                dyn tokio_stream::Stream<
+                        Item = std::result::Result<pb::WatchSpacesResponse, tonic::Status>,
+                    > + Send,
+            >,
+        >;
+
+        async fn watch_spaces(
+            &self,
+            _: tonic::Request<pb::WatchSpacesRequest>,
+        ) -> R<Self::WatchSpacesStream> {
             off()
         }
     }

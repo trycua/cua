@@ -4,7 +4,7 @@
 /* eslint-disable */
 // @ts-nocheck
 import nativeModule from "./cua_sdk-ffi.js";
-import { type UniffiRustFutureContinuationCallback, type UniffiForeignFutureDroppedCallback, type UniffiForeignFutureDroppedCallbackStruct, type UniffiVTableCallbackInterfaceCuaSdkAudioSink, type UniffiVTableCallbackInterfaceCuaSdkBuildListener, type UniffiVTableCallbackInterfaceCuaSdkFrameSink, type UniffiVTableCallbackInterfaceCuaSdkResourcesListener, type UniffiVTableCallbackInterfaceCuaSdkSpaceCreateListener, type UniffiVTableCallbackInterfaceCuaSdkTeleportApprover,
+import { type UniffiRustFutureContinuationCallback, type UniffiForeignFutureDroppedCallback, type UniffiForeignFutureDroppedCallbackStruct, type UniffiVTableCallbackInterfaceCuaSdkAudioSink, type UniffiVTableCallbackInterfaceCuaSdkBuildListener, type UniffiVTableCallbackInterfaceCuaSdkFrameSink, type UniffiVTableCallbackInterfaceCuaSdkResourcesListener, type UniffiVTableCallbackInterfaceCuaSdkSpaceCreateListener, type UniffiVTableCallbackInterfaceCuaSdkSpacesListListener, type UniffiVTableCallbackInterfaceCuaSdkTeleportApprover,
 } from "./cua_sdk-ffi.js";
 import { type FfiConverter, type UniffiByteArray, type UniffiGcObject, type UniffiHandle, type UniffiObjectFactory, type UniffiReferenceHolder, type UniffiRustCallStatus, AbstractFfiConverterByteArray, FfiConverterArray, FfiConverterArrayBuffer, FfiConverterBool, FfiConverterFloat64, FfiConverterInt32, FfiConverterInt64, FfiConverterMap, FfiConverterObject, FfiConverterObjectWithCallbacks, FfiConverterOptional, FfiConverterUInt16, FfiConverterUInt32, FfiConverterUInt64, FfiConverterUInt8, RustBuffer, UniffiAbstractObject, UniffiEnum, UniffiError, UniffiInternalError, UniffiResult, UniffiRustCaller, destructorGuardSymbol, pointerLiteralSymbol, uniffiCreateFfiConverterString, uniffiCreateRecord, uniffiRustCallAsync, uniffiTraitInterfaceCall, uniffiTypeNameSymbol, variantOrdinalSymbol,
 } from "@ubjs/core";
@@ -37987,6 +37987,305 @@ const uniffiTypeSpaceObjectFactory: UniffiObjectFactory<SpaceLike> = (() => {
 const FfiConverterTypeSpace = new FfiConverterObject(uniffiTypeSpaceObjectFactory);
 
 /**
+ * Hears that the Space list changed ([`Spaces::watch_list`]). Called on an
+ * SDK worker thread; return quickly (read the list on your own queue).
+ */
+export interface SpacesListListener {
+
+/**
+ * The list changed (and once at the start): read it again.
+ * `generation` only increases while one daemon runs.
+ */
+    onChanged(generation: bigint): void;
+}
+
+
+/**
+ * Hears that the Space list changed ([`Spaces::watch_list`]). Called on an
+ * SDK worker thread; return quickly (read the list on your own queue).
+ */
+export class SpacesListListenerImpl extends UniffiAbstractObject implements SpacesListListener {
+
+    readonly [uniffiTypeNameSymbol] = "SpacesListListenerImpl";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    // No primary constructor declared for this class.
+private constructor(pointer: UniffiHandle) {
+    super();
+    this[pointerLiteralSymbol] = pointer;
+    this[destructorGuardSymbol] = uniffiTypeSpacesListListenerImplObjectFactory.bless(pointer);
+}
+
+
+
+
+/**
+ * The list changed (and once at the start): read it again.
+ * `generation` only increases while one daemon runs.
+ */
+    onChanged(generation: bigint): void {uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => { nativeModule().uniffi_cua_sdk_fn_method_spaceslistlistener_on_changed(
+                uniffiTypeSpacesListListenerImplObjectFactory.clonePointer(this),
+        FfiConverterUInt64.lower(generation, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    );
+    }
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypeSpacesListListenerImplObjectFactory.pointer(this);
+            uniffiTypeSpacesListListenerImplObjectFactory.freePointer(pointer);
+            uniffiTypeSpacesListListenerImplObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is SpacesListListenerImpl {
+        return uniffiTypeSpacesListListenerImplObjectFactory.isConcreteType(obj_);
+    }
+
+
+}
+
+const uniffiTypeSpacesListListenerImplObjectFactory: UniffiObjectFactory<SpacesListListener> = (() => {
+
+    /// <reference lib="es2021" />
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypeSpacesListListenerImplObjectFactory.freePointer(heldValue);
+    }) : null;
+
+    return {
+    create(pointer: UniffiHandle): SpacesListListener {
+        const instance = Object.create(SpacesListListenerImpl.prototype);
+        instance[pointerLiteralSymbol] = pointer;
+        instance[destructorGuardSymbol] = this.bless(pointer);
+        instance[uniffiTypeNameSymbol] = "SpacesListListenerImpl";
+        return instance;
+    },
+
+
+    bless(p: UniffiHandle): UniffiGcObject {
+        const ptr = {
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
+        };
+        if (registry) {
+            registry.register(ptr, p, ptr);
+        }
+        return ptr;
+    },
+
+    unbless(ptr_: UniffiGcObject) {
+        if (registry) {
+            registry.unregister(ptr_);
+        }
+    },
+
+    pointer(obj_: SpacesListListener): UniffiHandle {
+        if ((obj_ as any)[destructorGuardSymbol] === undefined) {
+            throw new UniffiInternalError.UnexpectedNullPointer();
+        }
+        return (obj_ as any)[pointerLiteralSymbol];
+    },
+
+    clonePointer(obj_: SpacesListListener): UniffiHandle {
+        const pointer = this.pointer(obj_);
+        return uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => nativeModule().uniffi_cua_sdk_fn_clone_spaceslistlistener(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
+        );
+    },
+
+    freePointer(pointer: UniffiHandle): void {
+        uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => nativeModule().uniffi_cua_sdk_fn_free_spaceslistlistener(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
+        );
+    },
+
+    isConcreteType(obj_: any): obj_ is SpacesListListener {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "SpacesListListenerImpl";
+    },
+}})();
+const FfiConverterTypeSpacesListListener = new FfiConverterObjectWithCallbacks(uniffiTypeSpacesListListenerImplObjectFactory);
+
+// Add a vtable for the callbacks that go in SpacesListListener.
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+const uniffiCallbackInterfaceSpacesListListener: { vtable: any; register: () => void; } = {
+    // Create the VTable using a series of closures.
+    // ts automatically converts these into C callback functions.
+    vtable: {
+        on_changed: (
+            uniffiHandle: bigint,
+            generation: bigint,) => {
+            const uniffiMakeCall =
+            ()
+            : void => {
+                const jsCallback = FfiConverterTypeSpacesListListener.lift(uniffiHandle);
+                return jsCallback.onChanged(
+                    FfiConverterUInt64.lift(generation)
+                )
+            };
+            const uniffiResult = UniffiResult.ready<void>();
+            const uniffiHandleSuccess = (obj: any) => {};
+            const uniffiHandleError = (code: number, errBuf: UniffiByteArray) => {
+                UniffiResult.writeError(uniffiResult, code, errBuf);
+            };
+            uniffiTraitInterfaceCall(
+                /*makeCall:*/ uniffiMakeCall,
+                /*handleSuccess:*/ uniffiHandleSuccess,
+                /*handleError:*/ uniffiHandleError,
+                /*lowerString:*/ FfiConverterString.lower.bind(FfiConverterString),
+                /*alloc:*/ nativeModule().rustbuffer_alloc,
+            )
+            return uniffiResult;
+        },
+        uniffi_free: (uniffiHandle: UniffiHandle): void => {
+            // this will throw a stale handle error if the handle isn't found.
+            FfiConverterTypeSpacesListListener.drop(uniffiHandle);
+        },
+        uniffi_clone: (uniffiHandle: UniffiHandle): UniffiHandle => {
+            return FfiConverterTypeSpacesListListener.clone(uniffiHandle);
+        }
+    },
+    register: () => {nativeModule().uniffi_cua_sdk_fn_init_callback_vtable_spaceslistlistener(
+            uniffiCallbackInterfaceSpacesListListener.vtable
+        );
+    },
+};
+
+/**
+ * A running [`Spaces::watch_list`]. Dropping it also stops it.
+ */
+export interface SpacesListWatchLike {
+
+/**
+ * Ends the watch. No call is made after this returns.
+ */
+    stop(): void;
+}
+/**
+ * @deprecated Use `SpacesListWatchLike` instead.
+ */
+export type SpacesListWatchInterface = SpacesListWatchLike;
+
+
+/**
+ * A running [`Spaces::watch_list`]. Dropping it also stops it.
+ */
+export class SpacesListWatch extends UniffiAbstractObject implements SpacesListWatchLike {
+
+    readonly [uniffiTypeNameSymbol] = "SpacesListWatch";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    // No primary constructor declared for this class.
+private constructor(pointer: UniffiHandle) {
+    super();
+    this[pointerLiteralSymbol] = pointer;
+    this[destructorGuardSymbol] = uniffiTypeSpacesListWatchObjectFactory.bless(pointer);
+}
+
+
+
+
+/**
+ * Ends the watch. No call is made after this returns.
+ */
+    stop(): void {uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => { nativeModule().uniffi_cua_sdk_fn_method_spaceslistwatch_stop(
+                uniffiTypeSpacesListWatchObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    );
+    }
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypeSpacesListWatchObjectFactory.pointer(this);
+            uniffiTypeSpacesListWatchObjectFactory.freePointer(pointer);
+            uniffiTypeSpacesListWatchObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is SpacesListWatch {
+        return uniffiTypeSpacesListWatchObjectFactory.isConcreteType(obj_);
+    }
+
+
+}
+
+const uniffiTypeSpacesListWatchObjectFactory: UniffiObjectFactory<SpacesListWatchLike> = (() => {
+
+    /// <reference lib="es2021" />
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypeSpacesListWatchObjectFactory.freePointer(heldValue);
+    }) : null;
+
+    return {
+    create(pointer: UniffiHandle): SpacesListWatchLike {
+        const instance = Object.create(SpacesListWatch.prototype);
+        instance[pointerLiteralSymbol] = pointer;
+        instance[destructorGuardSymbol] = this.bless(pointer);
+        instance[uniffiTypeNameSymbol] = "SpacesListWatch";
+        return instance;
+    },
+
+
+    bless(p: UniffiHandle): UniffiGcObject {
+        const ptr = {
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
+        };
+        if (registry) {
+            registry.register(ptr, p, ptr);
+        }
+        return ptr;
+    },
+
+    unbless(ptr_: UniffiGcObject) {
+        if (registry) {
+            registry.unregister(ptr_);
+        }
+    },
+
+    pointer(obj_: SpacesListWatchLike): UniffiHandle {
+        if ((obj_ as any)[destructorGuardSymbol] === undefined) {
+            throw new UniffiInternalError.UnexpectedNullPointer();
+        }
+        return (obj_ as any)[pointerLiteralSymbol];
+    },
+
+    clonePointer(obj_: SpacesListWatchLike): UniffiHandle {
+        const pointer = this.pointer(obj_);
+        return uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => nativeModule().uniffi_cua_sdk_fn_clone_spaceslistwatch(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
+        );
+    },
+
+    freePointer(pointer: UniffiHandle): void {
+        uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => nativeModule().uniffi_cua_sdk_fn_free_spaceslistwatch(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
+        );
+    },
+
+    isConcreteType(obj_: any): obj_ is SpacesListWatchLike {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "SpacesListWatch";
+    },
+}})();
+const FfiConverterTypeSpacesListWatch = new FfiConverterObject(uniffiTypeSpacesListWatchObjectFactory);
+
+/**
  * Receives [`ResourcesEvent`]s from [`Spaces::watch_resources`], in order.
  * Called on an SDK worker thread; return quickly.
  */
@@ -38783,6 +39082,15 @@ export interface SpacesLike {
  * each. Needs Cua Spaces (the Cua Volume).
  */
     volumes(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<NamedVolume>>;
+/**
+ * Tells `listener` when the Space list changed: once at the start, then
+ * on every change. This computer's Spaces within a second; your other
+ * computers on the mesh within about a second of connecting or going
+ * away; the others within 10 seconds. Reopens by itself if the daemon
+ * restarts (and then calls `listener` again). Stop it with
+ * [`SpacesListWatch::stop`].
+ */
+    watchList(listener: SpacesListListener): SpacesListWatchLike;
 /**
  * The same numbers as events for `listener`: a snapshot first, then an
  * update with only the entries that changed by more than 1 point or
@@ -42015,6 +42323,26 @@ private constructor(pointer: UniffiHandle) {
         }
         throw __error;
     }
+    }
+
+/**
+ * Tells `listener` when the Space list changed: once at the start, then
+ * on every change. This computer's Spaces within a second; your other
+ * computers on the mesh within about a second of connecting or going
+ * away; the others within 10 seconds. Reopens by itself if the daemon
+ * restarts (and then calls `listener` again). Stop it with
+ * [`SpacesListWatch::stop`].
+ */
+    watchList(listener: SpacesListListener): SpacesListWatchLike {
+    return FfiConverterTypeSpacesListWatch.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_sdk_fn_method_spaces_watch_list(
+                uniffiTypeSpacesObjectFactory.clonePointer(this),
+        FfiConverterTypeSpacesListListener.lower(listener, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
     }
 
 /**
@@ -45306,8 +45634,17 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_volumes() !== 15143) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_volumes");
     }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_watch_list() !== 1499) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_watch_list");
+    }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_watch_resources() !== 49660) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_watch_resources");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaceslistlistener_on_changed() !== 40063) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaceslistlistener_on_changed");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaceslistwatch_stop() !== 38223) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaceslistwatch_stop");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spacesdclient_agents() !== 39176) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spacesdclient_agents");
@@ -45504,6 +45841,7 @@ function uniffiEnsureInitialized() {
     uniffiCallbackInterfaceFrameSink.register();
     uniffiCallbackInterfaceSpaceCreateListener.register();
     uniffiCallbackInterfaceTeleportApprover.register();
+    uniffiCallbackInterfaceSpacesListListener.register();
     uniffiCallbackInterfaceResourcesListener.register();
     }
 
@@ -45768,6 +46106,8 @@ export default Object.freeze({
     FfiConverterTypeSpacesHost,
     FfiConverterTypeSpacesHostLimit,
     FfiConverterTypeSpacesHostLoad,
+    FfiConverterTypeSpacesListListener,
+    FfiConverterTypeSpacesListWatch,
     FfiConverterTypeSpacesToolMethod,
     FfiConverterTypeSpacesdCapabilities,
     FfiConverterTypeSpacesdClient,

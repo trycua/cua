@@ -20,6 +20,7 @@ import { useFlag } from "./flags";
 import { useAgents, useSettings } from "./hooks";
 import type { RelayUsage } from "./ops/relay-usage";
 import { useRelayUsage } from "./relay-usage";
+import type { CoreClient } from "./core";
 
 export type UpsellSurface = "meter" | "share" | "machine";
 /** What stopped the person, for a limit card (`upsell.card`). */
@@ -201,6 +202,24 @@ export interface UpsellCard {
   dismiss: string;
 }
 
+function cardFor(core: CoreClient, reason: UpsellCardReason, usage: Partial<RelayUsage> | null, accountApp: string | null): UpsellCard | null {
+  return (
+    core.tryCall<UpsellCard | null>("upsell.card", {
+      reason,
+      usage: { plan: "free", ...usage },
+      ...(accountApp ? { accountApp } : {}),
+    }) ?? null
+  );
+}
+
+/** Whether the flag is on and the core has a card for `reason` on this plan (draws and counts nothing). */
+export function useUpsellCardAvailable(reason: UpsellCardReason | null, usage: Partial<RelayUsage> | null): boolean {
+  const core = useContext(BridgeContext)?.core;
+  const on = useFlag("upsell_cards");
+  const accountApp = useSettings().data?.accountUrl ?? null;
+  return Boolean(on && core && reason && cardFor(core, reason, usage, accountApp));
+}
+
 export interface UpsellCardState {
   /** The card to draw now; null when the flag is off, there is nothing to
    * offer, the core is missing or it was closed. */
@@ -225,14 +244,7 @@ export function useUpsellCard(reason: UpsellCardReason | null, usage: Partial<Re
   const track = useTrack();
   const [closed, setClosed] = useState<UpsellCardReason | null>(null);
   const shown = useRef<UpsellCardReason | null>(null);
-  const card =
-    on && core && reason && closed !== reason
-      ? (core.tryCall<UpsellCard | null>("upsell.card", {
-          reason,
-          usage: { plan: "free", ...usage },
-          ...(accountApp ? { accountApp } : {}),
-        }) ?? null)
-      : null;
+  const card = on && core && reason && closed !== reason ? cardFor(core, reason, usage, accountApp) : null;
   const shownReason = card?.reason ?? null;
   useEffect(() => {
     if (!shownReason || shown.current === shownReason) return;

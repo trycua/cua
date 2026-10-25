@@ -171,6 +171,7 @@ export {
   useQuiet,
   useTrackPlanClick,
   useUpsellCard,
+  useUpsellCardAvailable,
   useUpsellGate,
   useUpsellPrompt,
   type UpsellCard,

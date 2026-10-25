@@ -120,6 +120,27 @@ describe.skipIf(!wasmBuilt)("<RelayAllowanceNotice> with the cards on", () => {
     await waitFor(() => expect(document.querySelector("[data-upgrade-card]")).toBeNull());
   });
 
+  it("a Pro account at 5 of 5 live sessions with empty reasons gets the sessions card", async () => {
+    setFlagOverride("upsell_cards", true);
+    const { view } = host({ ...reached, plan: "pro", hoursUsed: 10, hoursLimit: 200, liveSessions: 5, liveSessionsLimit: 5, reasons: [], softLimitReached: false });
+    view();
+    const card = await waitFor(() => {
+      const el = document.querySelector("[data-upgrade-card]");
+      expect(el).toBeTruthy();
+      return el as HTMLElement;
+    });
+    expect(card.getAttribute("data-upgrade-card")).toBe("sessions");
+    expect(card.textContent).toContain("You're using 5 of 5 live sessions");
+  });
+
+  it("a plan with no card keeps the notice and its Upgrade link", async () => {
+    setFlagOverride("upsell_cards", true);
+    const { view } = host({ ...reached, plan: "enterprise" });
+    view();
+    await screen.findByRole("status");
+    expect(document.querySelector("[data-upgrade-card]")).toBeNull();
+  });
+
   it("with the flag off the thin line is unchanged", async () => {
     const { view } = host(reached);
     view();

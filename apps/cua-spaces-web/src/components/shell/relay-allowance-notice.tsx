@@ -4,7 +4,7 @@
 import { XIcon } from "lucide-react";
 import { useSyncExternalStore } from "react";
 
-import { useFlag, useRelayUsage, useRelayUsageView, useSession, useUpsellGate } from "@/bridge";
+import { useRelayUsage, useRelayUsageView, useSession, useUpsellCardAvailable, useUpsellGate } from "@/bridge";
 import { Button } from "@/components/ui/button";
 import { UpgradeCard } from "@/components/upgrade-card";
 
@@ -50,11 +50,15 @@ export function RelayAllowanceNotice() {
   const hidden = !notice || dismissed === notice.dismissKey;
   // With the limit cards on, a used allowance is a card, not the thin line.
   const usage = useRelayUsage();
-  const cards = useFlag("upsell_cards");
-  const asCard = cards && notice?.level === "limit" && usage !== null;
+  // The session cap, when it is the one reached (the raw reasons can be empty).
+  const sessionsHit = (usage?.liveSessionsLimit ?? 0) > 0 && (usage?.liveSessions ?? 0) >= (usage?.liveSessionsLimit ?? 0);
+  const hoursHit = (usage?.hoursLimit ?? 0) > 0 && (usage?.hoursUsed ?? 0) >= (usage?.hoursLimit ?? 0);
+  const reason = (usage?.reasons?.includes("sessions") || sessionsHit) && !hoursHit && !usage?.reasons?.includes("hours") ? "sessions" : "hours";
+  // Only where there is a card to show; otherwise the notice stays as it was.
+  const cardAvailable = useUpsellCardAvailable(notice?.level === "limit" ? reason : null, usage);
+  const asCard = cardAvailable;
   const gate = useUpsellGate("meter", !hidden && !asCard, notice?.level === "warn");
   if (notice && !hidden && asCard) {
-    const reason = usage.reasons?.includes("sessions") ? "sessions" : "hours";
     const remember = () => {
       try {
         globalThis.localStorage?.setItem(DISMISSED_KEY, notice.dismissKey);

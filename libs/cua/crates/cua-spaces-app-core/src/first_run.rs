@@ -1555,12 +1555,9 @@ pub fn cli_view(input: &FirstRunInput) -> CliView {
         title: if installed {
             "The Cua CLI is installed.".into()
         } else {
-            "Install the Cua CLI.".into()
+            "Use Cua from the Terminal.".into()
         },
-        lede: format!(
-            "{} Type {name} in a terminal to make and use Spaces.",
-            crate::onboarding::CLI_HINT
-        ),
+        lede: format!("Type {name} in Terminal to make and use Spaces, for you and your agents."),
         facts,
         status,
         installed,
@@ -2392,7 +2389,7 @@ mod tests {
             ..input(FirstRunStep::Cli, vec![claude(true)])
         };
         let c = view(&i).cli.unwrap();
-        assert_eq!(c.title, "Install the Cua CLI.");
+        assert_eq!(c.title, "Use Cua from the Terminal.");
         assert_eq!(c.name, "cua");
         assert_eq!(
             c.facts,

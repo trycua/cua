@@ -28,7 +28,7 @@ export function CliSettingsSection() {
   const install = view.primary?.id === "install" ? view.primary : null;
   const pathFact = view.facts.find((f) => f.label === "Adds to PATH");
   return (
-    <SettingsGroup title="Command line">
+    <SettingsGroup title="Terminal">
       <div data-settings-cli={view.installed ? "installed" : "missing"}>
         <SettingsRow
           label="Cua CLI"

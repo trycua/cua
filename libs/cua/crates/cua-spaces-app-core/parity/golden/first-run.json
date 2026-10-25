@@ -372,11 +372,11 @@
           "Installs: ~/.local/bin/cua",
           "Adds to PATH: ~/.local/bin, in ~/.zshrc"
         ],
-        "lede": "Command-line tools for you and your agents. Type cua in a terminal to make and use Spaces.",
+        "lede": "Type cua in Terminal to make and use Spaces, for you and your agents.",
         "primary": "install:Install",
         "secondary": "not-now:Not now",
         "status": "Not installed. Install puts it at ~/.local/bin/cua.",
-        "title": "Install the Cua CLI.",
+        "title": "Use Cua from the Terminal.",
         "try": null
       },
       "step": "cli",
@@ -397,11 +397,11 @@
           "Installs: ~/.local/bin/cua",
           "Adds to PATH: ~/.local/bin, in ~/.zshrc"
         ],
-        "lede": "Command-line tools for you and your agents. Type cua in a terminal to make and use Spaces.",
+        "lede": "Type cua in Terminal to make and use Spaces, for you and your agents.",
         "primary": "install:Installing…",
         "secondary": "not-now:Not now",
         "status": "Installing…",
-        "title": "Install the Cua CLI.",
+        "title": "Use Cua from the Terminal.",
         "try": null
       },
       "step": "cli"
@@ -415,11 +415,11 @@
           "Installs: ~/.local/bin/cua",
           "Adds to PATH: ~/.local/bin, in ~/.zshrc"
         ],
-        "lede": "Command-line tools for you and your agents. Type cua in a terminal to make and use Spaces.",
+        "lede": "Type cua in Terminal to make and use Spaces, for you and your agents.",
         "primary": "install:Try again",
         "secondary": "not-now:Not now",
         "status": "Not installed. Install puts it at ~/.local/bin/cua.",
-        "title": "Install the Cua CLI.",
+        "title": "Use Cua from the Terminal.",
         "try": null
       },
       "step": "cli"
@@ -432,7 +432,7 @@
         "facts": [
           "Installed at: ~/.local/bin/cua"
         ],
-        "lede": "Command-line tools for you and your agents. Type cua in a terminal to make and use Spaces.",
+        "lede": "Type cua in Terminal to make and use Spaces, for you and your agents.",
         "primary": "continue:Continue",
         "secondary": "",
         "status": "Installed at ~/.local/bin/cua.",
@@ -481,11 +481,11 @@
         "facts": [
           "Installs: ~/.local/bin/cua-local"
         ],
-        "lede": "Command-line tools for you and your agents. Type cua-local in a terminal to make and use Spaces.",
+        "lede": "Type cua-local in Terminal to make and use Spaces, for you and your agents.",
         "primary": "install:Install",
         "secondary": "not-now:Not now",
         "status": "Not installed. Install puts it at ~/.local/bin/cua-local.",
-        "title": "Install the Cua CLI.",
+        "title": "Use Cua from the Terminal.",
         "try": null
       },
       "step": "cli"

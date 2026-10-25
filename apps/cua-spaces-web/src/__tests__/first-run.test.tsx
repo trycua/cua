@@ -223,7 +223,7 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     // The install plan is read: the run has the CLI's screen.
     await waitFor(() => expect(document.querySelector("ol[aria-label]")!.getAttribute("aria-label")).toBe("Step 2 of 5"));
     click("[data-onboarding-primary]");
-    await waitFor(() => expect(heading()).toBe("Install the Cua CLI."));
+    await waitFor(() => expect(heading()).toBe("Use Cua from the Terminal."));
     const facts = [...document.querySelectorAll<HTMLElement>("[data-first-run-cli-fact]")].map((e) => e.textContent);
     expect(facts).toEqual(["Installs~/.local/bin/cua", "Adds to PATH~/.local/bin, in ~/.zshrc"]);
     expect(document.querySelector("[data-step]")!.getAttribute("data-step")).toBe("cli");
@@ -250,7 +250,7 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     // The install plan is read: the run has the CLI's screen.
     await waitFor(() => expect(document.querySelector("ol[aria-label]")!.getAttribute("aria-label")).toBe("Step 2 of 5"));
     click("[data-onboarding-primary]");
-    await waitFor(() => expect(heading()).toBe("Install the Cua CLI."));
+    await waitFor(() => expect(heading()).toBe("Use Cua from the Terminal."));
     click("[data-first-run-secondary]");
     await waitFor(() => expect(heading()).toBe("Connect your other devices."));
     expect(calls.some((c) => c.op === "cli.install")).toBe(false);

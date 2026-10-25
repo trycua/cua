@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-// Settings → Command line: the first run's CLI install, reachable later.
+// Settings → Terminal: the first run's CLI install, reachable later.
 
 import { cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
@@ -11,7 +11,7 @@ import { mountApp, stubBrowserApis } from "./app-harness";
 afterEach(cleanup);
 stubBrowserApis();
 
-describe.skipIf(!wasmBuilt)("Settings, Command line", () => {
+describe.skipIf(!wasmBuilt)("Settings, Terminal", () => {
   it("names the file, installs on Install, then says where it is", { timeout: 20_000 }, async () => {
     const calls: { op: string; args: unknown }[] = [];
     await mountApp("/settings", {

@@ -347,7 +347,7 @@ function Get-CuaSelection {
     $list = if ($OnlyList -or $Cli) { $OnlyList } else { $SelectList }
     # The app is a default, as on macOS and Linux (not with -Only, -CliOnly,
     # -Select naming items, or a pairing code, which adds a host machine).
-    if (-not ($OnlyList -or $Cli -or $Pair -or $extra.Count)) { $sel.spaces = $true }
+    if (-not ($OnlyList -or $Cli -or $Pair -or "$SelectList".Trim(' ', ',', "`t"))) { $sel.spaces = $true }
     foreach ($item in @(ConvertTo-CuaItems $list)) { $sel[$item] = $true }
     # A pairing code adds this machine: the CLI and host setup.
     if ($Pair) {

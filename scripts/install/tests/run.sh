@@ -270,6 +270,9 @@ if command -v bash >/dev/null 2>&1; then
     check "--select cua-driver: does not install the Cua Spaces app" sh -c "[ ! -e '$work/d1/bin/cua-spaces' ] && ! grep -q 'Cua Spaces' '$work/out'"
     check "--select cua-driver: registers nothing but cua-driver" sh -c "grep -c 'agents setup' '$home/cua.log' | grep -qx 1 && ! grep -q 'auth login' '$home/cua.log'"
 
+    inst -- --yes --no-onboarding --select cli --prefix "$work/d1c"
+    check "--select cli: CLI only, no app" sh -c "[ $status = 0 ] && [ -x '$work/d1c/bin/cua' ] && [ ! -e '$work/d1c/bin/cua-spaces' ]"
+
     inst CUA_INSTALL_DRIVER_URL="$driver_url" -- --yes --no-onboarding --select cua-driver,spaces --prefix "$work/d1b"
     check "--select cua-driver,spaces: installs both" sh -c "[ $status = 0 ] && [ -x '$work/d1b/bin/cua-spaces' ] && [ -x '$work/d1b/bin/cua-driver' ]"
 

@@ -584,7 +584,7 @@ init_selection() {
         # The app is a default on macOS and Linux, until --select names what
         # to install: then only those items (and the CLI) are installed.
         # --pair adds host to the list itself; it keeps the default.
-        if spaces_supported && { [ -n "$pair_code" ] || [ -z "$(items_in "$list")" ]; }; then sel_spaces=1; fi
+        if spaces_supported && { [ -n "$pair_code" ] || [ -z "$(printf %s "$list" | tr -d ', ')" ]; }; then sel_spaces=1; fi
     fi
     for item in $(items_in "$list"); do item_set "$item" 1; done
     # Legacy: --app-only and --mode mean the app, as they always did.

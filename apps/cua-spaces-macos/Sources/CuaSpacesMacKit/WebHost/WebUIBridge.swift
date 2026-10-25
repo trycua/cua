@@ -123,10 +123,19 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "checklist.get", "checklist.send",
         // Links to things you run (WebUIBridge+Pages.swift).
         "links.list", "links.create", "links.stop",
+        // The bundled CLI on PATH (WebUIBridge+Cli.swift).
+        "cli.plan", "cli.install",
     ]
 
     let model: AppModel
     var actions: WebUIActions?
+    /// The app core's CLI installer for this app (tests give their own paths).
+    var makeCliInstaller: () -> AppCliInstaller = {
+        AppCliInstaller.forExecutable(executable: Bundle.main.executablePath ?? "")
+    }
+    /// The CLI's install plan as last read (`settings.get`'s `cli`).
+    var cliPlan: AppCliInstallPlan?
+    var cliPlanRequested = false
     weak var host: WebUIWindowController?
     /// What each `followChanges` event last saw.
     private var signatures: [String: String] = [:]
@@ -402,6 +411,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             if let result = try await routeFiles(method, args) { return result }
             if let result = try await routePage(method, args) { return result }
             if let result = try routeNudges(method, args) { return result }
+            if let result = try await routeCli(method, args) { return result }
             throw Failure.unimplemented(method)
         }
     }
@@ -516,6 +526,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             // The account app (CUA_ENV, CUA_ACCOUNT_APP_URL): the page's core
             // has no environment, so Upgrade's billing fallback names this one.
             "accountUrl": appAccountAppUrl(),
+            // The CLI this app installs and whether it is here (WebUIBridge+Cli.swift).
+            "cli": cliSetting(),
         ]
     }
 

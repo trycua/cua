@@ -65,10 +65,11 @@ import type { RiskyRequest } from "../ops/nudges";
 import type { ComputerResources, DiskOnHost, DiskWarning, GuestUsage, ResourcesSnapshot, SpaceResources } from "../ops/resources";
 import type { HostChecklistState } from "../ops/checklist";
 import type { ShareLink } from "../ops/links";
+import type { CliInstallPlan } from "./first-run";
 import type { PresenceCursorWire, PresenceJoinInfo, PresenceParticipantWire } from "../ops/presence";
 import type { StartupState } from "../ops/startup";
 import type { StreamTicket } from "../ops/stream";
-import type { GlobalShortcut, HostSettings, HostSignIn, HostSignInFailure, OpName, SessionSnapshot, SettingsSnapshot, SettingsValues } from "../protocol";
+import type { CliInfo, GlobalShortcut, HostSettings, HostSignIn, HostSignInFailure, OpName, SessionSnapshot, SettingsSnapshot, SettingsValues } from "../protocol";
 import type { WebkitMethod, WkHostState, WkMachines, WkOnboarding, WkSession, WkSettings, WkSettingsRow, WkSpace, WkSpaces } from "../webkit-protocol";
 import { Defs, any, bool, dict, list, nul, nullable, num, obj, object, oneOf, opt, optNull, str, union, type Schema } from "./schema";
 
@@ -79,6 +80,25 @@ const limits = list(object({ resource: str, used: num, limit: num, reason: str }
 const os = oneOf("macos", "windows", "linux", "unknown");
 
 /* ---- Spaces and machines --------------------------------------------------- */
+
+const CliInstallPlanShape = ref(
+  "CliInstallPlan",
+  obj<CliInstallPlan>()({
+    source: optNull(str),
+    target: str,
+    binDir: str,
+    method: optNull(oneOf("symlink", "copy")),
+    installed: bool,
+    upToDate: bool,
+    installedVersion: optNull(str),
+    bundledVersion: optNull(str),
+    shadowedBy: optNull(str),
+    onPath: bool,
+    pathProfile: optNull(str),
+    pathLine: optNull(str),
+    found: optNull(str),
+  }),
+);
 
 const DiskWarningShape = ref("DiskWarning", obj<DiskWarning>()({ level: oneOf("ok", "low", "critical"), free: num, total: num, threshold: num }));
 
@@ -284,6 +304,7 @@ const SettingsShape = ref(
     ),
     globalShortcut: optNull(obj<GlobalShortcut>()({ label: str, registered: bool })),
     accountUrl: optNull(str),
+    cli: optNull(obj<CliInfo>()({ name: str, installed: bool })),
   }),
 );
 
@@ -1051,6 +1072,8 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "links.list": object({ links: list(ShareLinkShape) }),
   "links.create": ShareLinkShape,
   "links.stop": object({ stopped: strings }),
+  "cli.plan": nullable(CliInstallPlanShape),
+  "cli.install": CliInstallPlanShape,
   "presence.join": obj<PresenceJoinInfo>()({
     handle: str,
     me: PresenceParticipantShape,
@@ -1217,6 +1240,7 @@ const WkSettingsShape = ref(
     updateChannel: optNull(oneOf("stable", "beta")),
     globalShortcut: optNull(object({ label: str, registered: bool })),
     accountUrl: optNull(str),
+    cli: optNull(object({ name: str, installed: bool })),
   }),
 );
 
@@ -1456,6 +1480,8 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "links.list": OP_SHAPES["links.list"],
   "links.create": OP_SHAPES["links.create"],
   "links.stop": OP_SHAPES["links.stop"],
+  "cli.plan": OP_SHAPES["cli.plan"],
+  "cli.install": OP_SHAPES["cli.install"],
 };
 
 /** Methods whose answer has no shape here, and why (none today: keep the

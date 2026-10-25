@@ -3513,6 +3513,28 @@ fn run_first_run(f: &Value, h: &dyn Host) -> Result<Value, String> {
                 "primary": format!("{}{}", btn(&k["primary"]), if k["primary"]["enabled"].as_bool() == Some(true) { "" } else { " (off)" }),
             });
         }
+        if v["cli"].is_object() {
+            let k = &v["cli"];
+            let facts: Vec<String> = k["facts"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|f| format!("{}: {}", s(&f["label"]), s(&f["value"])))
+                .collect();
+            frame["cli"] = json!({
+                "title": k["title"],
+                "lede": k["lede"],
+                "facts": facts,
+                "status": k["status"],
+                "try": k["tryCommand"],
+                "error": k["error"],
+                "primary": btn(&k["primary"]),
+                "secondary": btn(&k["secondary"]),
+            });
+        }
+        if case["steps"].as_bool() == Some(true) {
+            frame["steps"] = v["steps"].clone();
+        }
         if case["todos"].as_bool() == Some(true) {
             let t = c(h, "firstRun.todos", json!({ "input": input }))?;
             let items: Vec<String> = t["items"]

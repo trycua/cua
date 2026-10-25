@@ -472,6 +472,82 @@
         "json"
       ]
     },
+    "CliInstallPlan": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "target": {
+          "type": "string"
+        },
+        "binDir": {
+          "type": "string"
+        },
+        "method": {
+          "enum": [
+            "symlink",
+            "copy",
+            null
+          ]
+        },
+        "installed": {
+          "type": "boolean"
+        },
+        "upToDate": {
+          "type": "boolean"
+        },
+        "installedVersion": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bundledVersion": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "shadowedBy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "onPath": {
+          "type": "boolean"
+        },
+        "pathProfile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pathLine": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "found": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "target",
+        "binDir",
+        "installed",
+        "upToDate",
+        "onPath"
+      ]
+    },
     "CloudPricing": {
       "type": "object",
       "properties": {
@@ -3025,6 +3101,24 @@
             "string",
             "null"
           ]
+        },
+        "cli": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "installed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "name",
+            "installed"
+          ]
         }
       },
       "required": [
@@ -4710,6 +4804,24 @@
             "string",
             "null"
           ]
+        },
+        "cli": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "installed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "name",
+            "installed"
+          ]
         }
       },
       "required": [
@@ -5306,6 +5418,19 @@
       },
       "required": [
         "state"
+      ]
+    },
+    "cli.install": {
+      "$ref": "#/$defs/CliInstallPlan"
+    },
+    "cli.plan": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CliInstallPlan"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "clouds.connect": {
@@ -7075,6 +7200,19 @@
       },
       "required": [
         "state"
+      ]
+    },
+    "cli.install": {
+      "$ref": "#/$defs/CliInstallPlan"
+    },
+    "cli.plan": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CliInstallPlan"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "clouds.connect": {

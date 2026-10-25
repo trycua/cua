@@ -109,6 +109,8 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
   "links.list": {},
   "links.create": { target: "space:dev:3000" },
   "links.stop": { id: "all" },
+  "cli.plan": {},
+  "cli.install": { modifyPath: true },
   "presence.join": { spaceId: SPACE },
   "presence.publish": { handle: "p1", x: 0.5, y: 0.5, visible: true },
   "presence.leave": { handle: "p1" },

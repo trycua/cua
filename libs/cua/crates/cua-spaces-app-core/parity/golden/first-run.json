@@ -336,6 +336,177 @@
         "lede": "A couple of things are left.",
         "progress": "1 of 5 done"
       }
+    },
+    {
+      "art": "hermes on outline",
+      "case": "cli 01 a disk-image install offers the CLI screen",
+      "connect": {
+        "agents": [
+          "Hermes (~/.hermes/config.yaml) connect:Connect",
+          "Claude Code (~/.claude.json) connect:Connect",
+          "OpenAI Codex (~/.codex/config.toml) connect:Connect"
+        ],
+        "alternatives": [],
+        "credentials": null,
+        "error": null,
+        "lede": "Found on this Mac. You can add more later.",
+        "primary": "continue:Continue",
+        "secondary": "skip:Skip",
+        "title": "Pick your agent."
+      },
+      "step": "connect",
+      "steps": [
+        "welcome",
+        "connect",
+        "cli",
+        "devices",
+        "setup"
+      ]
+    },
+    {
+      "art": "hermes on outline",
+      "case": "cli 02 install the Cua CLI",
+      "cli": {
+        "error": null,
+        "facts": [
+          "Installs: ~/.local/bin/cua",
+          "Adds to PATH: ~/.local/bin, in ~/.zshrc"
+        ],
+        "lede": "Command-line tools for you and your agents. Type cua in a terminal to make and use Spaces.",
+        "primary": "install:Install",
+        "secondary": "not-now:Not now",
+        "status": "Not installed. Install puts it at ~/.local/bin/cua.",
+        "title": "Install the Cua CLI.",
+        "try": null
+      },
+      "step": "cli",
+      "steps": [
+        "welcome",
+        "connect",
+        "cli",
+        "devices",
+        "setup"
+      ]
+    },
+    {
+      "art": "hermes on outline",
+      "case": "cli 03 installing",
+      "cli": {
+        "error": null,
+        "facts": [
+          "Installs: ~/.local/bin/cua",
+          "Adds to PATH: ~/.local/bin, in ~/.zshrc"
+        ],
+        "lede": "Command-line tools for you and your agents. Type cua in a terminal to make and use Spaces.",
+        "primary": "install:Installing…",
+        "secondary": "not-now:Not now",
+        "status": "Installing…",
+        "title": "Install the Cua CLI.",
+        "try": null
+      },
+      "step": "cli"
+    },
+    {
+      "art": "hermes on outline",
+      "case": "cli 04 install failed",
+      "cli": {
+        "error": "Couldn't install it: permission denied",
+        "facts": [
+          "Installs: ~/.local/bin/cua",
+          "Adds to PATH: ~/.local/bin, in ~/.zshrc"
+        ],
+        "lede": "Command-line tools for you and your agents. Type cua in a terminal to make and use Spaces.",
+        "primary": "install:Try again",
+        "secondary": "not-now:Not now",
+        "status": "Not installed. Install puts it at ~/.local/bin/cua.",
+        "title": "Install the Cua CLI.",
+        "try": null
+      },
+      "step": "cli"
+    },
+    {
+      "art": "hermes on outline",
+      "case": "cli 05 installed",
+      "cli": {
+        "error": null,
+        "facts": [
+          "Installed at: ~/.local/bin/cua"
+        ],
+        "lede": "Command-line tools for you and your agents. Type cua in a terminal to make and use Spaces.",
+        "primary": "continue:Continue",
+        "secondary": "",
+        "status": "Installed at ~/.local/bin/cua.",
+        "title": "The Cua CLI is installed.",
+        "try": "cua spaces ls"
+      },
+      "step": "cli",
+      "steps": [
+        "welcome",
+        "connect",
+        "cli",
+        "devices",
+        "setup"
+      ]
+    },
+    {
+      "art": "hermes on outline",
+      "case": "cli 06 already installed: no CLI screen",
+      "connect": {
+        "agents": [
+          "Hermes (~/.hermes/config.yaml) connect:Connect",
+          "Claude Code (~/.claude.json) connect:Connect",
+          "OpenAI Codex (~/.codex/config.toml) connect:Connect"
+        ],
+        "alternatives": [],
+        "credentials": null,
+        "error": null,
+        "lede": "Found on this Mac. You can add more later.",
+        "primary": "continue:Continue",
+        "secondary": "skip:Skip",
+        "title": "Pick your agent."
+      },
+      "step": "connect",
+      "steps": [
+        "welcome",
+        "connect",
+        "devices",
+        "setup"
+      ]
+    },
+    {
+      "art": "hermes on outline",
+      "case": "cli 07 Cua Spaces Local installs cua-local",
+      "cli": {
+        "error": null,
+        "facts": [
+          "Installs: ~/.local/bin/cua-local"
+        ],
+        "lede": "Command-line tools for you and your agents. Type cua-local in a terminal to make and use Spaces.",
+        "primary": "install:Install",
+        "secondary": "not-now:Not now",
+        "status": "Not installed. Install puts it at ~/.local/bin/cua-local.",
+        "title": "Install the Cua CLI.",
+        "try": null
+      },
+      "step": "cli"
+    },
+    {
+      "art": "other on outline",
+      "case": "cli 08 Local's no-agent CLI line names cua-local",
+      "connect": {
+        "agents": [],
+        "alternatives": [
+          "install: Install an agent — Hermes, Claude Code, Codex or Cursor, then come back here. <https://cua.ai/docs/spaces/guides/connect-your-agent>",
+          "cli: Use the CLI — Make a Space on this Mac from a terminal. `cua-local spaces create linux`"
+        ],
+        "credentials": null,
+        "error": null,
+        "lede": "No agents found on this Mac.",
+        "primary": "continue:Continue",
+        "secondary": "skip:Skip",
+        "title": "Connect an agent."
+      },
+      "step": "connect"
     }
   ]
 }

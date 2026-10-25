@@ -32,14 +32,14 @@ afterEach(cleanup);
 
 type Calls = { op: string; args: unknown }[];
 
-async function mount(opts: { host?: (h: HostStatus) => HostStatus; local?: (l: NonNullable<NewSpaceOptions["local"]>) => NewSpaceOptions["local"]; agents?: (rows: AgentSetupRow[]) => AgentSetupRow[] } = {}) {
+async function mount(opts: { host?: (h: HostStatus) => HostStatus; local?: (l: NonNullable<NewSpaceOptions["local"]>) => NewSpaceOptions["local"]; agents?: (rows: AgentSetupRow[]) => AgentSetupRow[]; cli?: "missing" | "local" } = {}) {
   await testCore();
   const calls: Calls = [];
   await mountApp("/onboarding", {
     failsCreates: false,
     listsGhost: false,
     // A first run: signed out, and Cua in no agent's settings yet.
-    demo: { signedIn: false, onboarded: false },
+    demo: { signedIn: false, onboarded: false, cli: opts.cli },
     intercept: (op, args) => {
       calls.push({ op, args });
       return undefined;
@@ -213,6 +213,57 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     expect(document.body.textContent).toMatch(/works without it\./);
     click('[data-first-run-devices-primary="sign-in"]');
     await waitFor(() => expect(calls.some((c) => c.op === "session.signIn")).toBe(true));
+  });
+
+  it("a disk-image install offers the Cua CLI after Pick your agent: the exact file, then Install only when pressed", async () => {
+    const calls = await mount({ cli: "missing" });
+    await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
+    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toBe("Pick your agent."));
+    // The install plan is read: the run has the CLI's screen.
+    await waitFor(() => expect(document.querySelector("ol[aria-label]")!.getAttribute("aria-label")).toBe("Step 2 of 5"));
+    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toBe("Install the Cua CLI."));
+    const facts = [...document.querySelectorAll<HTMLElement>("[data-first-run-cli-fact]")].map((e) => e.textContent);
+    expect(facts).toEqual(["Installs~/.local/bin/cua", "Adds to PATH~/.local/bin, in ~/.zshrc"]);
+    expect(document.querySelector("[data-step]")!.getAttribute("data-step")).toBe("cli");
+    expect(document.querySelector("ol[aria-label]")!.getAttribute("aria-label")).toBe("Step 3 of 5");
+    // Nothing is written before Install.
+    expect(calls.some((c) => c.op === "cli.install")).toBe(false);
+    click('[data-first-run-cli-primary="install"]');
+    await waitFor(() => expect(heading()).toBe("The Cua CLI is installed."));
+    expect(calls.find((c) => c.op === "cli.install")?.args).toEqual({ modifyPath: true });
+    expect(document.querySelector("[data-first-run-cli-done]")!.textContent).toMatch(/cua spaces ls/);
+    await waitFor(() => expect(document.querySelector('[data-first-run-cli-primary="continue"]')!.textContent).toBe("Continue"));
+    click('[data-first-run-cli-primary="continue"]');
+    await waitFor(() => expect(heading()).toBe("Connect your other devices."));
+    // Back shows the result again.
+    click("[data-first-run-back]");
+    await waitFor(() => expect(heading()).toBe("The Cua CLI is installed."));
+  });
+
+  it("Not now leaves the CLI as it is; with the CLI already installed there is no such screen", async () => {
+    const calls = await mount({ cli: "missing" });
+    await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
+    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toBe("Pick your agent."));
+    // The install plan is read: the run has the CLI's screen.
+    await waitFor(() => expect(document.querySelector("ol[aria-label]")!.getAttribute("aria-label")).toBe("Step 2 of 5"));
+    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toBe("Install the Cua CLI."));
+    click("[data-first-run-secondary]");
+    await waitFor(() => expect(heading()).toBe("Connect your other devices."));
+    expect(calls.some((c) => c.op === "cli.install")).toBe(false);
+    cleanup();
+    localStorage.clear();
+    resetSavedOnboardingCache();
+    resetFirstRunCache();
+    await mount();
+    await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
+    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toBe("Pick your agent."));
+    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toBe("Connect your other devices."));
   });
 
   it("with no agent: install one or use the CLI, then a one-click first Space", async () => {

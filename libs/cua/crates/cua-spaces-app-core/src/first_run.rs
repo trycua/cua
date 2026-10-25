@@ -10,6 +10,12 @@
 //!    pressed, and each row names the file Cua changes. The connected
 //!    agents' own sign-ins and keys follow, in the same order. Nothing
 //!    found: install an agent, or use the CLI.
+//!    Then **Install the Cua CLI**, only while the app's bundled CLI is not
+//!    on this computer (an app installed from the disk image has none on
+//!    PATH): what it installs and the exact file, Install or Not now, and
+//!    the result. It is the app's install plan ([`crate::installer`]):
+//!    nothing is written before Install, and the file is the channel's
+//!    (`cua`, or `cua-local` for Cua Spaces Local).
 //! 3. **Connect your other devices** (optional). Signing in lets your other
 //!    computers and your cloud reach this computer's Spaces. "Not now" skips
 //!    it: this computer works without an account.
@@ -61,13 +67,23 @@ const TRY_PROMPT_OTHER: &str =
     "Make a Linux Space on this computer and stream the desktop in a new window.";
 const TRY_PROMPT_PC: &str = "Make a Linux Space on this PC and stream the desktop in a new window.";
 
-/// The same first Space from a terminal (no agent found).
-pub const CLI_FIRST_SPACE: &str = "cua spaces create linux";
+/// The CLI's name when the host did not say (the released app's,
+/// `CuaChannel::cli_name`). A Local build's host passes its own.
+fn default_cli_name() -> &'static str {
+    cua_home::channel::CuaChannel::Stable.cli_name()
+}
+
+/// The same first Space from a terminal (no agent found), under the CLI
+/// name of the app's channel: `cua spaces create linux`, or
+/// `cua-local spaces create linux` in Cua Spaces Local.
+pub fn cli_first_space(cli: &str) -> String {
+    format!("{cli} spaces create linux")
+}
 
 /// Where to get an agent (none found).
 pub const AGENTS_GUIDE_URL: &str = "https://cua.ai/docs/spaces/guides/connect-your-agent";
 
-/// The four screens. `connect` and `setup` keep their old names, so a run
+/// The screens. `connect` and `setup` keep their old names, so a run
 /// saved by an older app resumes on the matching screen.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -76,21 +92,71 @@ pub enum FirstRunStep {
     Welcome,
     /// Pick your agent.
     Connect,
+    /// Install the Cua CLI (only while it is not installed).
+    Cli,
     /// Connect your other devices.
     Devices,
     /// Try it in your agent.
     Setup,
 }
 
-impl FirstRunStep {
-    fn index(self) -> u8 {
-        match self {
-            FirstRunStep::Welcome => 0,
-            FirstRunStep::Connect => 1,
-            FirstRunStep::Devices => 2,
-            FirstRunStep::Setup => 3,
-        }
+/// The app's bundled CLI, as its install plan reads it (the Command line
+/// screen, and Settings' row).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FirstRunCli {
+    /// What installing would do (`cli.plan`; none: not read yet, or this
+    /// app can't install it).
+    pub plan: Option<crate::installer::CliInstallPlan>,
+    /// Install is running.
+    pub installing: bool,
+    /// Installed from this screen: the file written.
+    pub installed: Option<String>,
+    /// Installing failed with this.
+    pub error: Option<String>,
+}
+
+impl FirstRunCli {
+    /// The CLI is on this computer: installed here, the target is current,
+    /// or a working one of this channel was found.
+    pub fn present(&self) -> bool {
+        self.installed.is_some()
+            || self
+                .plan
+                .as_ref()
+                .is_some_and(|p| p.up_to_date || p.found.is_some())
     }
+
+    /// The app carries a CLI it can install, and none is on this computer.
+    pub fn missing(&self) -> bool {
+        !self.present() && self.plan.as_ref().is_some_and(|p| p.source.is_some())
+    }
+
+    /// Where it is (installed here, current at the target, or found).
+    fn location(&self) -> Option<String> {
+        self.installed.clone().or_else(|| {
+            let p = self.plan.as_ref()?;
+            if p.up_to_date {
+                Some(p.target.clone())
+            } else {
+                p.found.clone()
+            }
+        })
+    }
+}
+
+/// The screens this run shows, in order: Install the Cua CLI only while
+/// the app's CLI is missing (and while it is the screen shown, so its
+/// result stays until Continue).
+pub fn steps(input: &FirstRunInput) -> Vec<FirstRunStep> {
+    let cli =
+        input.step == FirstRunStep::Cli || input.cli.installed.is_some() || input.cli.missing();
+    let mut out = vec![FirstRunStep::Welcome, FirstRunStep::Connect];
+    if cli {
+        out.push(FirstRunStep::Cli);
+    }
+    out.extend([FirstRunStep::Devices, FirstRunStep::Setup]);
+    out
 }
 
 /// An agent the setup knows (`agents.setup`'s row, trimmed).
@@ -237,6 +303,27 @@ pub struct FirstRunInput {
     pub offers: Vec<FirstRunOffer>,
     pub extra: FirstRunExtra,
     pub plan: Option<FirstRunPlan>,
+    /// The app's bundled CLI (the Command line screen).
+    pub cli: FirstRunCli,
+    /// The CLI's name (`SettingsSnapshot.cli`: `CuaChannel::cli_name`);
+    /// none: the install plan's file name, else `cua`.
+    pub cli_name: Option<String>,
+}
+
+/// The CLI's name for `input`: the host's, else the install plan's file
+/// name, else the released app's.
+pub fn cli_name(input: &FirstRunInput) -> String {
+    let given = input
+        .cli_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty());
+    let planned = input.cli.plan.as_ref().and_then(|p| {
+        let file = p.target.rsplit(['/', '\\']).next()?;
+        let file = file.strip_suffix(".exe").unwrap_or(file);
+        (!file.is_empty()).then_some(file)
+    });
+    given.or(planned).unwrap_or(default_cli_name()).to_string()
 }
 
 /// A button: what it says and what it does (`id`).
@@ -524,10 +611,47 @@ pub struct FirstRunView {
     pub connect: Option<ConnectView>,
     pub devices: Option<DevicesView>,
     pub setup: Option<SetupView>,
+    /// Install the Cua CLI.
+    pub cli: Option<CliView>,
     pub art: ArtView,
-    /// Four page marks.
+    /// The screens this run shows ([`steps`]), for Back and Continue.
+    pub steps: Vec<FirstRunStep>,
+    /// One page mark per screen.
     pub dots: u8,
     pub current: u8,
+}
+
+/// A fact on the Command line screen ("Installs", "~/.local/bin/cua").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliFact {
+    pub label: String,
+    pub value: String,
+}
+
+/// Install the Cua CLI: the first run's screen, and Settings' row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliView {
+    pub title: String,
+    pub lede: String,
+    /// The CLI's name (`cua`, `cua-local`).
+    pub name: String,
+    /// What Install writes: the file, and the PATH line when one is needed.
+    pub facts: Vec<CliFact>,
+    /// One plain line on where it stands (Settings' description).
+    pub status: String,
+    /// It is on this computer.
+    pub installed: bool,
+    /// Install is running.
+    pub busy: bool,
+    /// A command to try once it is installed.
+    pub try_command: Option<String>,
+    pub error: Option<String>,
+    /// `install` ("Install", "Try again"), or `continue` once installed.
+    pub primary: Option<FirstRunButton>,
+    /// `not-now` until it is installed.
+    pub secondary: Option<FirstRunButton>,
 }
 
 /// A line of Home's "Finish setting up" list.
@@ -899,7 +1023,7 @@ fn connect_view(input: &FirstRunInput) -> ConnectView {
                     title: "Use the CLI".into(),
                     note: format!("Make a Space on {place} from a terminal."),
                     url: None,
-                    command: Some(CLI_FIRST_SPACE.into()),
+                    command: Some(cli_first_space(&cli_name(input))),
                 },
             ]
         } else {
@@ -1375,6 +1499,8 @@ fn art(input: &FirstRunInput) -> ArtView {
 /// The first run as drawn.
 pub fn view(input: &FirstRunInput) -> FirstRunView {
     let step = input.step;
+    let steps = steps(input);
+    let current = steps.iter().position(|s| *s == step).unwrap_or(0);
     FirstRunView {
         step,
         later: "Skip for now".into(),
@@ -1382,9 +1508,86 @@ pub fn view(input: &FirstRunInput) -> FirstRunView {
         connect: (step == FirstRunStep::Connect).then(|| connect_view(input)),
         devices: (step == FirstRunStep::Devices).then(|| devices_view(input)),
         setup: (step == FirstRunStep::Setup).then(|| setup_view(input)),
+        cli: (step == FirstRunStep::Cli).then(|| cli_view(input)),
         art: art(input),
-        dots: 4,
-        current: step.index(),
+        dots: steps.len() as u8,
+        current: current as u8,
+        steps,
+    }
+}
+
+/// Install the Cua CLI, as the first run and Settings show it.
+pub fn cli_view(input: &FirstRunInput) -> CliView {
+    let name = cli_name(input);
+    let cli = &input.cli;
+    let installed = cli.present();
+    let mut facts = Vec::new();
+    if let Some(at) = cli.location().filter(|_| installed) {
+        facts.push(CliFact {
+            label: "Installed at".into(),
+            value: tilde(&at),
+        });
+    } else if let Some(plan) = &cli.plan {
+        facts.push(CliFact {
+            label: "Installs".into(),
+            value: tilde(&plan.target),
+        });
+        if !plan.on_path
+            && let Some(profile) = &plan.path_profile
+        {
+            facts.push(CliFact {
+                label: "Adds to PATH".into(),
+                value: format!("{}, in {}", tilde(&plan.bin_dir), tilde(profile)),
+            });
+        }
+    }
+    let status = if cli.installing {
+        "Installing…".to_string()
+    } else if let Some(at) = cli.location().filter(|_| installed) {
+        format!("Installed at {}.", tilde(&at))
+    } else if let Some(plan) = cli.plan.as_ref().filter(|p| p.source.is_some()) {
+        format!("Not installed. Install puts it at {}.", tilde(&plan.target))
+    } else {
+        "This app can't install it here.".to_string()
+    };
+    let can_install = !installed && cli.plan.as_ref().is_some_and(|p| p.source.is_some());
+    CliView {
+        title: if installed {
+            "The Cua CLI is installed.".into()
+        } else {
+            "Install the Cua CLI.".into()
+        },
+        lede: format!(
+            "{} Type {name} in a terminal to make and use Spaces.",
+            crate::onboarding::CLI_HINT
+        ),
+        facts,
+        status,
+        installed,
+        busy: cli.installing,
+        try_command: installed.then(|| format!("{name} spaces ls")),
+        error: cli
+            .error
+            .as_ref()
+            .map(|e| format!("Couldn't install it: {e}")),
+        primary: if installed {
+            Some(button("continue", "Continue"))
+        } else if can_install {
+            Some(button(
+                "install",
+                if cli.installing {
+                    "Installing…"
+                } else if cli.error.is_some() {
+                    "Try again"
+                } else {
+                    "Install"
+                },
+            ))
+        } else {
+            Some(button("continue", "Continue"))
+        },
+        secondary: (!installed && can_install).then(|| button("not-now", "Not now")),
+        name,
     }
 }
 
@@ -1639,7 +1842,10 @@ mod tests {
             assert!(drawn[n as usize]);
         }
         let w = view(&input(FirstRunStep::Welcome, vec![])).welcome.unwrap();
-        assert_eq!(w.title, "Your computers, shared by your team and its agents.");
+        assert_eq!(
+            w.title,
+            "Your computers, shared by your team and its agents."
+        );
         assert_eq!(w.primary.id, "start");
     }
 
@@ -1793,7 +1999,10 @@ mod tests {
             c.alternatives[0].note,
             "Hermes, Claude Code, Codex or Cursor, then come back here."
         );
-        assert_eq!(c.alternatives[1].command.as_deref(), Some(CLI_FIRST_SPACE));
+        assert_eq!(
+            c.alternatives[1].command.as_deref(),
+            Some("cua spaces create linux")
+        );
         // Still looking: no alternatives yet.
         let looking = connect(&FirstRunInput {
             agents: None,
@@ -2103,5 +2312,176 @@ mod tests {
                 assert!(!all.contains(&format!(" {word}")), "{step:?}: {word}");
             }
         }
+    }
+
+    fn plan(found: Option<&str>, on_path: bool, target: &str) -> crate::installer::CliInstallPlan {
+        crate::installer::CliInstallPlan {
+            source: Some("/Applications/Cua Spaces.app/Contents/MacOS/cua".into()),
+            target: target.into(),
+            bin_dir: "/Users/ada/.local/bin".into(),
+            on_path,
+            path_profile: (!on_path).then(|| "/Users/ada/.zshrc".into()),
+            path_line: (!on_path).then(|| "export PATH=\"/Users/ada/.local/bin:$PATH\"".into()),
+            found: found.map(Into::into),
+            ..Default::default()
+        }
+    }
+
+    const STABLE_TARGET: &str = "/Users/ada/.local/bin/cua";
+    const LOCAL_TARGET: &str = "/Users/ada/.local/bin/cua-local";
+
+    #[test]
+    fn the_cli_screen_shows_only_while_the_bundled_cli_is_missing() {
+        let base = input(FirstRunStep::Connect, vec![claude(true)]);
+        // Not read yet, or no plan here: no screen.
+        assert_eq!(steps(&base).len(), 4);
+        // A disk-image install: the bundled CLI, nothing on PATH.
+        let dmg = FirstRunInput {
+            cli: FirstRunCli {
+                plan: Some(plan(None, false, STABLE_TARGET)),
+                ..Default::default()
+            },
+            ..base.clone()
+        };
+        assert_eq!(
+            steps(&dmg),
+            [
+                FirstRunStep::Welcome,
+                FirstRunStep::Connect,
+                FirstRunStep::Cli,
+                FirstRunStep::Devices,
+                FirstRunStep::Setup
+            ]
+        );
+        let v = view(&FirstRunInput {
+            step: FirstRunStep::Cli,
+            ..dmg.clone()
+        });
+        assert_eq!((v.dots, v.current), (5, 2));
+        // Already installed (or a working one found): no screen.
+        let found = FirstRunInput {
+            cli: FirstRunCli {
+                plan: Some(plan(Some(STABLE_TARGET), true, STABLE_TARGET)),
+                ..Default::default()
+            },
+            ..base.clone()
+        };
+        assert_eq!(steps(&found).len(), 4);
+        // A build without a bundled CLI can't install one: no screen.
+        let unbundled = FirstRunInput {
+            cli: FirstRunCli {
+                plan: Some(crate::installer::CliInstallPlan {
+                    source: None,
+                    ..plan(None, true, STABLE_TARGET)
+                }),
+                ..Default::default()
+            },
+            ..base
+        };
+        assert_eq!(steps(&unbundled).len(), 4);
+    }
+
+    #[test]
+    fn the_cli_screen_names_the_file_asks_first_and_shows_the_result() {
+        let mut i = FirstRunInput {
+            step: FirstRunStep::Cli,
+            cli: FirstRunCli {
+                plan: Some(plan(None, false, STABLE_TARGET)),
+                ..Default::default()
+            },
+            ..input(FirstRunStep::Cli, vec![claude(true)])
+        };
+        let c = view(&i).cli.unwrap();
+        assert_eq!(c.title, "Install the Cua CLI.");
+        assert_eq!(c.name, "cua");
+        assert_eq!(
+            c.facts,
+            [
+                CliFact {
+                    label: "Installs".into(),
+                    value: "~/.local/bin/cua".into()
+                },
+                CliFact {
+                    label: "Adds to PATH".into(),
+                    value: "~/.local/bin, in ~/.zshrc".into()
+                },
+            ]
+        );
+        assert_eq!(c.primary, Some(button("install", "Install")));
+        assert_eq!(c.secondary, Some(button("not-now", "Not now")));
+        assert!(!c.installed && c.try_command.is_none());
+        assert_eq!(
+            c.status,
+            "Not installed. Install puts it at ~/.local/bin/cua."
+        );
+
+        i.cli.installing = true;
+        let c = cli_view(&i);
+        assert!(c.busy);
+        assert_eq!(c.status, "Installing…");
+
+        i.cli.installing = false;
+        i.cli.error = Some("permission denied".into());
+        let c = cli_view(&i);
+        assert_eq!(
+            c.error.as_deref(),
+            Some("Couldn't install it: permission denied")
+        );
+        assert_eq!(c.primary, Some(button("install", "Try again")));
+
+        i.cli.error = None;
+        i.cli.installed = Some(STABLE_TARGET.into());
+        let v = view(&i);
+        // The result stays on its screen until Continue.
+        assert!(v.steps.contains(&FirstRunStep::Cli));
+        let c = v.cli.unwrap();
+        assert!(c.installed);
+        assert_eq!(c.title, "The Cua CLI is installed.");
+        assert_eq!(c.status, "Installed at ~/.local/bin/cua.");
+        assert_eq!(c.try_command.as_deref(), Some("cua spaces ls"));
+        assert_eq!(c.primary, Some(button("continue", "Continue")));
+        assert_eq!(c.secondary, None);
+    }
+
+    #[test]
+    fn local_builds_name_their_own_cli() {
+        // The host names it (`SettingsSnapshot.cli`)...
+        let named = FirstRunInput {
+            cli_name: Some("cua-local".into()),
+            ..input(FirstRunStep::Connect, vec![])
+        };
+        let c = connect(&named);
+        assert_eq!(
+            c.alternatives[1].command.as_deref(),
+            Some("cua-local spaces create linux")
+        );
+        // ...or its install plan's file does.
+        let planned = FirstRunInput {
+            step: FirstRunStep::Cli,
+            cli: FirstRunCli {
+                plan: Some(plan(None, true, LOCAL_TARGET)),
+                ..Default::default()
+            },
+            ..input(FirstRunStep::Cli, vec![])
+        };
+        assert_eq!(cli_name(&planned), "cua-local");
+        let c = cli_view(&planned);
+        assert_eq!(c.facts[0].value, "~/.local/bin/cua-local");
+        assert_eq!(c.facts.len(), 1, "on PATH already: no PATH line");
+        assert_eq!(
+            cli_name(&FirstRunInput {
+                cli: FirstRunCli {
+                    plan: Some(plan(None, true, "C:\\Users\\ada\\bin\\cua-local.exe")),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            "cua-local"
+        );
+        assert_eq!(cli_name(&FirstRunInput::default()), "cua");
+        assert_eq!(
+            cli_first_space("cua-local"),
+            "cua-local spaces create linux"
+        );
     }
 }

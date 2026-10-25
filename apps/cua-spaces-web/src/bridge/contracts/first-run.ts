@@ -7,8 +7,59 @@
  * Rust is the source of truth.
  */
 
-/** Welcome, Pick your agent (`connect`), Connect your other devices, Try it (`setup`). */
-export type FirstRunStep = "welcome" | "connect" | "devices" | "setup";
+/** Welcome, Pick your agent (`connect`), Install the Cua CLI (`cli`, only
+ * while it is missing), Connect your other devices, Try it (`setup`). */
+export type FirstRunStep = "welcome" | "connect" | "cli" | "devices" | "setup";
+
+/** What installing the app's bundled CLI would do (`installer::CliInstallPlan`). */
+export interface CliInstallPlan {
+  /** The bundled CLI, when this build carries one. */
+  source?: string | null;
+  /** The exact file Install writes (`~/.local/bin/cua`, or `cua-local`). */
+  target: string;
+  binDir: string;
+  method?: "symlink" | "copy" | null;
+  installed: boolean;
+  upToDate: boolean;
+  installedVersion?: string | null;
+  bundledVersion?: string | null;
+  shadowedBy?: string | null;
+  onPath: boolean;
+  pathProfile?: string | null;
+  pathLine?: string | null;
+  /** A working CLI of this channel already on this computer. */
+  found?: string | null;
+}
+
+/** The app's bundled CLI on the Command line screen (`first_run::FirstRunCli`). */
+export interface FirstRunCli {
+  plan: CliInstallPlan | null;
+  installing: boolean;
+  /** Installed from this screen: the file written. */
+  installed: string | null;
+  error: string | null;
+}
+
+/** "Installs", "~/.local/bin/cua". */
+export interface FirstRunCliFact {
+  label: string;
+  value: string;
+}
+
+/** Install the Cua CLI (`first_run::CliView`): the first run's screen and Settings' row. */
+export interface FirstRunCliView {
+  title: string;
+  lede: string;
+  name: string;
+  facts: FirstRunCliFact[];
+  status: string;
+  installed: boolean;
+  busy: boolean;
+  tryCommand: string | null;
+  error: string | null;
+  primary: FirstRunButton | null;
+  secondary: FirstRunButton | null;
+}
 
 export interface FirstRunAgent {
   agent: string;
@@ -89,6 +140,10 @@ export interface FirstRunInput {
   offers: FirstRunOffer[];
   extra: FirstRunExtra;
   plan: FirstRunPlan | null;
+  /** The app's bundled CLI (absent: not read). */
+  cli?: FirstRunCli;
+  /** The CLI's name (`SettingsSnapshot.cli`); null: the plan's file name, else `cua`. */
+  cliName?: string | null;
 }
 
 export interface FirstRunButton {
@@ -250,7 +305,10 @@ export interface FirstRunView {
   connect: FirstRunConnectView | null;
   devices: FirstRunDevicesView | null;
   setup: FirstRunSetupView | null;
+  cli: FirstRunCliView | null;
   art: FirstRunArt;
+  /** The screens this run shows, in order (Back and Continue follow them). */
+  steps: FirstRunStep[];
   dots: number;
   current: number;
 }

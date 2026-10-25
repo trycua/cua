@@ -33,7 +33,8 @@ export const Route = createFileRoute("/onboarding/")({
 
 /**
  * The first run, the same on macOS, Windows and Linux: Welcome, Pick your
- * agent, Connect your other devices (optional), Try it in your agent. Every
+ * agent, Install the Cua CLI (only while the app's CLI is not on this
+ * computer), Connect your other devices (optional), Try it in your agent. Every
  * word, the agents' order and which button does what are the app core's
  * (`firstRun.view`, through `useFirstRun`); this file places them beside the
  * keycap art, as plain rows.
@@ -90,6 +91,7 @@ function OnboardingPage() {
         <div className="my-auto flex max-w-[600px] flex-col py-6">
           {view.welcome ? <Welcome fr={fr} view={view} /> : null}
           {view.connect ? <Connect fr={fr} view={view} /> : null}
+          {view.cli ? <CommandLine fr={fr} view={view} /> : null}
           {view.devices ? <Devices fr={fr} view={view} /> : null}
           {view.setup ? <Setup fr={fr} view={view} onFinish={() => void finish()} /> : null}
         </div>
@@ -385,6 +387,47 @@ function Devices({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
           {d.note}
         </p>
       ) : null}
+    </Step>
+  );
+}
+
+/* ---- Install the Cua CLI (only while it is missing) ----------------------------------- */
+
+/** What Install writes (the exact file, and the PATH line when one is
+ * needed), Install or Not now, and the result with a command to try. */
+function CommandLine({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
+  const c = view.cli!;
+  return (
+    <Step id="cli" onBack={fr.back}>
+      <Heading>{c.title}</Heading>
+      <Lede>{c.lede}</Lede>
+      <Rows className="mt-6" data-first-run-cli="">
+        {c.facts.map((f) => (
+          <div key={f.label} className="flex items-baseline gap-3 py-2.5 text-[14px]" data-first-run-cli-fact={f.label}>
+            <span className="w-48 shrink-0">{f.label}</span>
+            <code className="min-w-0 font-mono text-[13px] break-all text-muted-foreground">{f.value}</code>
+          </div>
+        ))}
+        {c.installed && c.tryCommand ? (
+          <div className="flex items-center gap-3 py-2.5" data-first-run-cli-done="">
+            <StateIcon state="ok" />
+            <div className="min-w-0 flex-1 text-[14px]">
+              Open a new terminal window and try <code className="font-mono text-[13px]">{c.tryCommand}</code>
+            </div>
+          </div>
+        ) : null}
+      </Rows>
+      {c.error ? (
+        <p role="alert" className="mt-3 text-[13px] text-destructive" data-first-run-cli-error="">
+          {c.error}
+        </p>
+      ) : null}
+      <div className="mt-7 flex flex-wrap items-center gap-3">
+        {c.primary ? (
+          <Primary label={c.busy ? "Installing…" : c.primary.label} onClick={() => !c.busy && void fr.act(c.primary!.id)} data-first-run-cli-primary={c.primary.id} />
+        ) : null}
+        {c.secondary && !c.busy ? <Secondary label={c.secondary.label} onClick={() => void fr.act(c.secondary!.id)} /> : null}
+      </div>
     </Step>
   );
 }

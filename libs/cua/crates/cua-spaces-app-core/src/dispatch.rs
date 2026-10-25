@@ -317,6 +317,7 @@ pub const METHODS: &[&str] = &[
     "firstRun.todos",
     "firstRun.agentUsed",
     "firstRun.leadAgent",
+    "firstRun.cli",
     "telemetry.upsell",
     "nudge.secondAgent",
     "nudge.riskyAction",
@@ -550,6 +551,7 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         }
         "upsell.allows" => out(upsell::allows(&a.get("state")?)),
         "firstRun.view" => out(crate::first_run::view(&a.get("input")?)),
+        "firstRun.cli" => out(crate::first_run::cli_view(&a.get("input")?)),
         "firstRun.todos" => out(crate::first_run::todos(&a.get("input")?)),
         "firstRun.agentUsed" => out(crate::first_run::agent_used(
             &a.get::<Vec<crate::first_run::AccessLine>>("lines")?,

@@ -35,7 +35,10 @@ import type { CoreClient } from "./core";
 import type { AgentSetupRow } from "./contracts/agents";
 import type { HostStatus } from "./contracts/host";
 import type {
+  CliInstallPlan,
   FirstRunAgent,
+  FirstRunCli,
+  FirstRunCliView,
   FirstRunExtra,
   FirstRunInput,
   FirstRunOffer,
@@ -86,6 +89,27 @@ export function firstRunView(core: CoreClient, input: FirstRunInput): FirstRunVi
   return core.tryCall<FirstRunView>("firstRun.view", { input }) ?? fallbackView(input);
 }
 
+/** Install the Cua CLI, as the first run and Settings show it (`firstRun.cli`). */
+export function firstRunCliView(core: CoreClient, input: Pick<FirstRunInput, "cli" | "cliName">): FirstRunCliView | null {
+  return core.tryCall<FirstRunCliView>("firstRun.cli", { input: { ...input } }) ?? null;
+}
+
+/** The CLI is on this computer (`FirstRunCli::present`). */
+export function cliPresent(cli: FirstRunCli | undefined): boolean {
+  return Boolean(cli?.installed || cli?.plan?.upToDate || cli?.plan?.found);
+}
+
+/** The app carries a CLI and none is on this computer (`FirstRunCli::missing`). */
+export function cliMissing(cli: FirstRunCli | undefined): boolean {
+  return !cliPresent(cli) && Boolean(cli?.plan?.source);
+}
+
+/** The screens a run shows (`first_run::steps`): the CLI's only while it is missing. */
+export function firstRunSteps(input: FirstRunInput): FirstRunStep[] {
+  const cli = input.step === "cli" || Boolean(input.cli?.installed) || cliMissing(input.cli);
+  return cli ? ["welcome", "connect", "cli", "devices", "setup"] : ["welcome", "connect", "devices", "setup"];
+}
+
 export function firstRunTodos(core: CoreClient, input: FirstRunInput): FirstRunTodos | null {
   return core.tryCall<FirstRunTodos>("firstRun.todos", { input }) ?? null;
 }
@@ -120,7 +144,7 @@ function fallbackView(input: FirstRunInput): FirstRunView {
   const found = (input.agents ?? []).filter((a) => a.installed || a.configured).sort((a, b) => rank(a.agent) - rank(b.agent));
   const connected = found.filter((a) => a.configured || (input.picked ?? []).includes(a.agent));
   const lead = connected[0] ?? null;
-  const steps = ["welcome", "connect", "devices", "setup"] as const;
+  const steps = firstRunSteps(input);
   const base: FirstRunView = {
     step: input.step,
     later: "Skip for now",
@@ -128,11 +152,34 @@ function fallbackView(input: FirstRunInput): FirstRunView {
     connect: null,
     devices: null,
     setup: null,
+    cli: null,
     art: { agent: lead?.agent ?? found[0]?.agent ?? "other", computer: "on", extra: input.step === "welcome" ? "none" : "outline" },
-    dots: 4,
-    current: steps.indexOf(input.step),
+    steps,
+    dots: steps.length,
+    current: Math.max(steps.indexOf(input.step), 0),
   };
   switch (input.step) {
+    case "cli": {
+      const name = input.cliName ?? "cua";
+      const present = cliPresent(input.cli);
+      const plan = input.cli?.plan ?? null;
+      return {
+        ...base,
+        cli: {
+          title: present ? "The Cua CLI is installed." : "Install the Cua CLI.",
+          lede: `Command-line tools for you and your agents. Type ${name} in a terminal to make and use Spaces.`,
+          name,
+          facts: plan ? [{ label: present ? "Installed at" : "Installs", value: input.cli?.installed ?? plan.target }] : [],
+          status: present ? "Installed." : "Not installed.",
+          installed: present,
+          busy: Boolean(input.cli?.installing),
+          tryCommand: present ? `${name} spaces ls` : null,
+          error: input.cli?.error ? `Couldn't install it: ${input.cli.error}` : null,
+          primary: present || !plan?.source ? { id: "continue", label: "Continue" } : { id: "install", label: "Install" },
+          secondary: present || !plan?.source ? null : { id: "not-now", label: "Not now" },
+        },
+      };
+    }
     case "welcome":
       return { ...base, welcome: { title: "Your computers, shared by your team and its agents.", lede: `Run agents in Spaces on ${place}, or on any computer your team connects.`, primary: { id: "start", label: "Get started" } } };
     case "connect":
@@ -331,7 +378,7 @@ export interface FirstRunUsage {
   help: string | null;
 }
 
-const STEPS: FirstRunStep[] = ["welcome", "connect", "devices", "setup"];
+const STEPS: FirstRunStep[] = ["welcome", "connect", "cli", "devices", "setup"];
 
 export interface FirstRunHook {
   view: FirstRunView;
@@ -348,7 +395,7 @@ export interface FirstRunHook {
   connect(agent: string): Promise<void>;
   /** Starts an agent's own sign-in on this computer (`codex login`). */
   signIn(agent: string): Promise<void>;
-  /** A screen's button: `start`, `continue`, `skip`, `not-now` (next screen), `sign-in`, `set-up`, `open-settings`, `copy`, `add`. */
+  /** A screen's button: `start`, `continue`, `skip`, `not-now` (next screen), `install` (the CLI), `sign-in`, `set-up`, `open-settings`, `copy`, `add`. */
   act(id: string, settingsUrl?: string | null): Promise<void>;
   /** Copies `text` (the tab shown), else the selected request. */
   copyPrompt(text?: string): Promise<void>;
@@ -391,6 +438,8 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
   const keysInput = agentKeys.unsupported || agentKeys.isLoading ? null : agentKeys.input;
   const [tick, setTick] = useState(0);
   const shownRef = useRef(false);
+  // The app's bundled CLI: its install plan (read once a run shows), and Install's progress.
+  const cli = useCliInstall(active);
 
   const signedIn = Boolean(session.data?.signedIn);
   const signingIn = session.data?.signIn.kind === "starting" || session.data?.signIn.kind === "waiting";
@@ -502,6 +551,8 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
     offers,
     extra: withoutFix(extra),
     plan,
+    cli: cli.state,
+    cliName: settings.data?.cli?.name ?? null,
   };
 
   // The lead connected agent (the core's order), for the try screen's access log.
@@ -560,7 +611,10 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
   const go = (next: FirstRunStep) => {
     writeFirstRun(next === "setup" ? { step: next, setupStartedMs: readFirstRun().setupStartedMs ?? Date.now() } : { step: next });
   };
-  const forward = () => go(STEPS[Math.min(STEPS.indexOf(step) + 1, STEPS.length - 1)]!);
+  // The screens this run shows (the core's): the CLI's only while it is missing.
+  const shown = view.steps?.length ? view.steps : firstRunSteps(input);
+  const at = Math.max(shown.indexOf(step), 0);
+  const forward = () => go(shown[Math.min(at + 1, shown.length - 1)]!);
 
   const setUpThisComputer = async () => {
     if (!store || settingUp) return;
@@ -669,6 +723,9 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
         case "not-now":
           forward();
           break;
+        case "install":
+          await cli.install();
+          break;
         case "sign-in":
           await session.signIn().catch(() => {});
           break;
@@ -706,7 +763,57 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
       writeFirstRun({ finishedLater: true });
     },
     back() {
-      go(STEPS[Math.max(STEPS.indexOf(step) - 1, 0)]!);
+      go(shown[Math.max(at - 1, 0)]!);
+    },
+  };
+}
+
+/** The app's bundled CLI and its install (the Command line screen, Settings' row). */
+export interface CliInstallHook {
+  state: FirstRunCli;
+  /** Installs it (adding its folder to PATH only when it is not there), then reads the plan and the settings again. */
+  install(): Promise<void>;
+}
+
+/** Reads the install plan while `active` (a host without one leaves `plan` null). */
+export function useCliInstall(active = true): CliInstallHook {
+  const ctx = useContext(BridgeContext);
+  if (!ctx) throw new Error("bridge hooks need a <BridgeProvider> above them");
+  const { adapter, store } = ctx;
+  const [plan, setPlan] = useState<CliInstallPlan | null>(null);
+  const [installing, setInstalling] = useState(false);
+  const [installed, setInstalled] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!active || !adapter) return;
+    let live = true;
+    adapter
+      .call("cli.plan", {})
+      .then((p) => live && setPlan(p))
+      .catch(() => live && setPlan(null));
+    return () => {
+      live = false;
+    };
+  }, [active, adapter]);
+  return {
+    state: { plan, installing, installed, error },
+    async install() {
+      if (!adapter || installing || !plan?.source) return;
+      setInstalling(true);
+      setError(null);
+      let done: CliInstallPlan;
+      try {
+        done = await adapter.call("cli.install", { modifyPath: !plan.onPath });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+        setInstalling(false);
+        return;
+      }
+      setInstalled(done.target);
+      setPlan(done);
+      setInstalling(false);
+      // The pages' terminal hints follow the host's `settings.cli`.
+      await store?.refresh("settings").catch(() => {});
     },
   };
 }

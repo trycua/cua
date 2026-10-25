@@ -86,6 +86,12 @@ class Eligible(unittest.TestCase):
         # The release gate is re-run by dispatching the workflow on the tag.
         self.assertTrue(wa.eligible(run(event="workflow_dispatch", branch="cua-spaces-v0.15.0", repo="trycua/cua"), "trycua/cua", "main"))
 
+    def test_a_branch_that_merely_contains_a_version_is_not_a_release_tag(self):
+        for branch in ("feature/fix-v1.2-tests", "agent/cua-2227-v1.2", "x/cua-spaces-v0.15.0"):
+            self.assertFalse(wa.eligible(run(event="workflow_dispatch", branch=branch), "trycua/cua", "main"), branch)
+        for tag in ("cua-spaces-v0.15.0", "cua-driver-rs-v0.38.0", "lume-v0.6.2-nightly.20261015"):
+            self.assertTrue(wa.eligible(run(event="workflow_dispatch", branch=tag), "trycua/cua", "main"), tag)
+
     def test_pushes_count_on_any_ref_so_release_tags_alert(self):
         self.assertTrue(wa.eligible(run(event="push", branch="cua-driver-rs-v0.3.1"), "trycua/cua", "main"))
 
@@ -125,7 +131,46 @@ class Event(unittest.TestCase):
         self.assertEqual(alerts, [])
 
 
+class NewestRun(unittest.TestCase):
+    PAYLOAD = {"workflow": {"name": "Nightly: Cua Driver"}, "repository": {"full_name": "trycua/cua", "default_branch": "main"}}
+
+    def post_for(self, run_id, newest_id):
+        payload = dict(self.PAYLOAD, workflow_run=run("success", id=run_id, workflow_id=5))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "event.json"
+            path.write_text(json.dumps(payload))
+            with mock.patch.object(wa, "latest_run", return_value={"id": newest_id}), mock.patch.object(wa, "post") as post:
+                wa.main(["--repo", "trycua/cua", "--watch", "Nightly: Cua Driver", "--event", str(path)])
+        return post.call_args[0][0]
+
+    def test_a_late_success_does_not_clear_a_newer_failure(self):
+        self.assertEqual(self.post_for(run_id=1, newest_id=2), [])
+
+    def test_the_newest_run_is_reported(self):
+        self.assertEqual(len(self.post_for(run_id=2, newest_id=2)), 1)
+
+
 class Sweep(unittest.TestCase):
+    def test_an_eligible_failure_behind_a_page_of_pull_request_runs_is_found(self):
+        pr_runs = [run("failure", event="pull_request", created_at="2026-10-25T00:30:00Z")] * 100
+        pages = {1: pr_runs, 2: [run("failure", run_number=9, created_at="2026-10-24T22:00:00Z")]}
+
+        def fake(url, token="", data=None, attempts=3):
+            page = int(url.rsplit("page=", 1)[1])
+            return {"workflow_runs": pages[page]}
+
+        with mock.patch.object(wa, "http_json", fake):
+            found = wa.latest_run("trycua/cua", 1, "tok", "main", 14, NOW)
+        self.assertEqual(found["run_number"], 9)
+
+    def test_nothing_newer_than_the_age_limit_means_no_alert(self):
+        def fake(url, token="", data=None, attempts=3):
+            return {"workflow_runs": [run("failure", created_at="2026-09-01T00:00:00Z")]}
+
+        with mock.patch.object(wa, "http_json", fake):
+            self.assertIsNone(wa.latest_run("trycua/cua", 1, "tok", "main", 14, NOW))
+
+
     def test_latest_eligible_finished_run_of_each_watched_workflow(self):
         def fake(url, token="", data=None, attempts=3):
             self.assertEqual(token, "tok")

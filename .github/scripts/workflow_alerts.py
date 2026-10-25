@@ -42,7 +42,7 @@ RESOLVED = {"success"}
 # Triggers nobody is watching live. A pull_request run (a fork's too) never alerts.
 EVENTS = {"schedule", "push", "repository_dispatch", "workflow_dispatch"}
 # A release gate is re-run by dispatching the workflow on its tag (cua-spaces-v0.15.0).
-RELEASE_REF = re.compile(r"-v\d+\.\d+")
+RELEASE_REF = re.compile(r"[A-Za-z0-9_.]+(?:-[A-Za-z0-9_.]+)*-v\d+\.\d+[A-Za-z0-9._+-]*")
 WHY = {
     "failure": "a job failed",
     "timed_out": "the run timed out",
@@ -77,7 +77,7 @@ def eligible(run: dict, repo: str, default_branch: str) -> bool:
     if event not in EVENTS:
         return False
     branch = run.get("head_branch") or ""
-    return event == "push" or branch == default_branch or (event == "workflow_dispatch" and bool(RELEASE_REF.search(branch)))
+    return event == "push" or branch == default_branch or (event == "workflow_dispatch" and RELEASE_REF.fullmatch(branch) is not None)
 
 
 def iso(moment: dt.datetime) -> str:
@@ -136,8 +136,7 @@ def http_json(url: str, token: str = "", data: object = None, attempts: int = 3)
         time.sleep(2 * attempt)
 
 
-def latest_runs(repo: str, watch: dict[str, str], token: str, default_branch: str, max_age_days: float, now: dt.datetime) -> list[tuple[str, dict]]:
-    """(workflow name, newest finished eligible run) for each watched workflow, newer than max_age_days."""
+def workflow_ids(repo: str, watch: dict[str, str], token: str) -> dict[str, int]:
     ids: dict[str, int] = {}
     page = 1
     while len(ids) < len(watch):
@@ -150,16 +149,33 @@ def latest_runs(repo: str, watch: dict[str, str], token: str, default_branch: st
         page += 1
     for missing in sorted(set(watch) - set(ids)):
         print("::warning::watched workflow %r not found in %s" % (missing, repo))
-    found = []
-    for name, workflow_id in ids.items():
-        runs = http_json("%s/repos/%s/actions/workflows/%d/runs?status=completed&per_page=20" % (API, repo, workflow_id), token)
-        for run in runs.get("workflow_runs", []):
-            if state_of(run.get("conclusion")) is None or not eligible(run, repo, default_branch):
-                continue
+    return ids
+
+
+def latest_run(repo: str, workflow_id: int, token: str, default_branch: str, max_age_days: float | None, now: dt.datetime) -> dict | None:
+    """The newest finished run of a workflow that can change its alert (eligible, failed or succeeded).
+    Pages through newer pull request and cancelled runs; None when there is none within max_age_days."""
+    for page in range(1, 6):
+        runs = http_json("%s/repos/%s/actions/workflows/%d/runs?status=completed&per_page=100&page=%d" % (API, repo, workflow_id, page), token)
+        batch = runs.get("workflow_runs", [])
+        for run in batch:
             created = dt.datetime.fromisoformat(run["created_at"].replace("Z", "+00:00"))
-            if (now - created).total_seconds() <= max_age_days * 86400:
-                found.append((name, run))
-            break
+            if max_age_days is not None and (now - created).total_seconds() > max_age_days * 86400:
+                return None  # newest first: everything after this is older still
+            if state_of(run.get("conclusion")) is not None and eligible(run, repo, default_branch):
+                return run
+        if len(batch) < 100:
+            return None
+    return None
+
+
+def latest_runs(repo: str, watch: dict[str, str], token: str, default_branch: str, max_age_days: float, now: dt.datetime) -> list[tuple[str, dict]]:
+    """(workflow name, newest finished eligible run) for each watched workflow, newer than max_age_days."""
+    found = []
+    for name, workflow_id in workflow_ids(repo, watch, token).items():
+        run = latest_run(repo, workflow_id, token, default_branch, max_age_days, now)
+        if run:
+            found.append((name, run))
     return found
 
 
@@ -195,6 +211,14 @@ def main(argv: list[str] | None = None) -> int:
         default_branch = (event.get("repository") or {}).get("default_branch") or args.default_branch
         workflow = (event.get("workflow") or {}).get("name") or run.get("name")
         runs = [(workflow, run)] if workflow in watch and eligible(run, repo, default_branch) else []
+        if runs and run.get("workflow_id"):
+            # An older run can finish after a newer one (a re-run, a long build). Only the newest finished run may
+            # change the alert, or a late success would clear a newer failure until the next sweep.
+            token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
+            newest = latest_run(repo, run["workflow_id"], token, default_branch, None, now)
+            if newest and newest["id"] != run.get("id"):
+                print("run %s of %s is not the newest finished run (%s); the sweep reports that one" % (run.get("id"), workflow, newest["id"]))
+                runs = []
     else:
         token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
         runs = latest_runs(args.repo, watch, token, args.default_branch, args.max_age_days, now)

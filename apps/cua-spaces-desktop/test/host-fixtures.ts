@@ -28,6 +28,8 @@ export class FixtureHost {
   script: Error[] = [];
   /** The next `configure` fails with this (once). */
   failConfigure: string | null = null;
+  /** The next resume for another account fails with this (once), after pausing the host as the real one does. */
+  failResume: string | null = null;
   owner = "user-1";
   ownerEmail = "ada@example.com";
 
@@ -105,6 +107,12 @@ export class FixtureHost {
     this.calls.push(`resume:${account}`);
     const isOwner = account === this.owner || account.toLowerCase() === this.ownerEmail.toLowerCase();
     // Another account: the host registers again for it, paused or not.
+    if (!isOwner && this.failResume) {
+      const why = this.failResume;
+      this.failResume = null;
+      this.current = { ...this.current, pausedSignedOut: true, sharing: false, online: false, serviceRunning: false };
+      throw sdkError("InvalidArgument", why);
+    }
     if (!isOwner) {
       this.owner = account;
       this.ownerEmail = "";

@@ -2091,14 +2091,14 @@ impl Host {
             meta: host_meta(config.provide_spaces),
         };
         // This account's earlier registration of this computer, if any (the
-        // token says whose it is when it can; the relay refuses the
-        // others): else, or when the relay no longer takes it, a new
-        // machine id.
-        let sub = crate::device::token_subject(&token);
-        let earlier: Vec<StoredRegistration> = match sub.as_ref().and_then(|s| kept.get(s)) {
-            Some(r) => vec![r.clone()],
-            None => kept.values().cloned().collect(),
-        };
+        // token says whose it is); else, or when the relay no longer takes
+        // it, a new machine id. Another account's id is never tried: if its
+        // record is gone from the relay it would register here and clash
+        // with the saved one.
+        let earlier: Vec<StoredRegistration> = crate::device::token_subject(&token)
+            .and_then(|sub| kept.get(&sub).cloned())
+            .into_iter()
+            .collect();
         let mut reg = None;
         for r in earlier {
             match relay

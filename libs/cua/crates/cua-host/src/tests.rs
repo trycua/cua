@@ -1797,22 +1797,27 @@ async fn signing_out_pauses_relay_sharing_until_the_owner_signs_in() {
     assert!(spec.args.join(" ").starts_with("join --relay"));
 }
 
+/// A JWT-shaped account token whose `sub` is `user` (the host reads whose
+/// token it is from it).
+fn jwt(user: &str) -> String {
+    use base64::Engine as _;
+    let b = |v: &str| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(v);
+    format!("{}.{}.sig", b("{}"), b(&format!(r#"{{"sub":"{user}"}}"#)))
+}
+
 /// Signing in as another account re-registers this computer for it: a new
 /// machine id and mesh key, while the name and the Provide Spaces setting
 /// stay.
 #[tokio::test]
 async fn signing_in_as_another_account_registers_the_host_again() {
     let relay = FakeRelay::start().await;
-    relay.add_account("acct-a", "user-1", Some("ada@example.com"));
-    relay.add_account("acct-b", "user-2", Some("bob@example.com"));
+    relay.add_account(&jwt("user-1"), "user-1", Some("ada@example.com"));
+    relay.add_account(&jwt("user-2"), "user-2", Some("bob@example.com"));
     let f = fixture();
     let host = f.host();
     let mut opts = f.relay_opts(&relay.url);
     opts.provide_spaces = true;
-    let before = host
-        .setup(opts, &StaticToken("acct-a".into()))
-        .await
-        .unwrap();
+    let before = host.setup(opts, &StaticToken(jwt("user-1"))).await.unwrap();
     let old_id = before.machine_id.clone().unwrap();
     let old_token = std::fs::read_to_string(host.paths().machine_token()).unwrap();
     let mesh = host.paths().driver_data.join("mesh");
@@ -1822,7 +1827,7 @@ async fn signing_in_as_another_account_registers_the_host_again() {
 
     // The account that signed out is resumed as before.
     let same = host
-        .resume_or_switch_account("user-1", &StaticToken("acct-a".into()))
+        .resume_or_switch_account("user-1", &StaticToken(jwt("user-1")))
         .await
         .unwrap();
     assert_eq!(same.machine_id.as_deref(), Some(old_id.as_str()));
@@ -1831,7 +1836,7 @@ async fn signing_in_as_another_account_registers_the_host_again() {
     // Another account's sign-in moves it over, with no manual step.
     f.manager.calls.lock().unwrap().clear();
     let switched = host
-        .resume_or_switch_account("user-2", &StaticToken("acct-b".into()))
+        .resume_or_switch_account("user-2", &StaticToken(jwt("user-2")))
         .await
         .unwrap();
     assert!(!switched.paused_signed_out);
@@ -1867,7 +1872,7 @@ async fn signing_in_as_another_account_registers_the_host_again() {
     // Signed in as the new owner again: a plain resume, no new machine.
     host.pause_signed_out().await.unwrap();
     let again = host
-        .resume_or_switch_account("user-2", &StaticToken("acct-b".into()))
+        .resume_or_switch_account("user-2", &StaticToken(jwt("user-2")))
         .await
         .unwrap();
     assert_eq!(again.machine_id, switched.machine_id);
@@ -1875,7 +1880,7 @@ async fn signing_in_as_another_account_registers_the_host_again() {
     // Back to the first account: its own registration is reused (same
     // machine id, so what is tied to it stays), not a third machine.
     let back = host
-        .resume_or_switch_account("user-1", &StaticToken("acct-a".into()))
+        .resume_or_switch_account("user-1", &StaticToken(jwt("user-1")))
         .await
         .unwrap();
     assert_eq!(back.machine_id.as_deref(), Some(old_id.as_str()));
@@ -1907,12 +1912,12 @@ async fn signing_in_as_another_account_registers_the_host_again() {
 #[tokio::test]
 async fn a_switch_waits_while_spaces_run_for_the_previous_account() {
     let relay = FakeRelay::start().await;
-    relay.add_account("acct-a", "user-1", Some("ada@example.com"));
-    relay.add_account("acct-b", "user-2", Some("bob@example.com"));
+    relay.add_account(&jwt("user-1"), "user-1", Some("ada@example.com"));
+    relay.add_account(&jwt("user-2"), "user-2", Some("bob@example.com"));
     let f = fixture();
     let host = f.host();
     let before = host
-        .setup(f.relay_opts(&relay.url), &StaticToken("acct-a".into()))
+        .setup(f.relay_opts(&relay.url), &StaticToken(jwt("user-1")))
         .await
         .unwrap();
     let space = crate::provided::ProvidedSpace {
@@ -1923,7 +1928,7 @@ async fn a_switch_waits_while_spaces_run_for_the_previous_account() {
         ..Default::default()
     };
     crate::provided::save_provided(&host.paths().dir, &[space]).unwrap();
-    let as_b = StaticToken("acct-b".into());
+    let as_b = StaticToken(jwt("user-2"));
 
     let err = host
         .resume_or_switch_account("user-2", &as_b)
@@ -1952,16 +1957,16 @@ async fn a_switch_waits_while_spaces_run_for_the_previous_account() {
 #[tokio::test]
 async fn sharing_follows_the_hosts_choice_when_the_account_changes_back() {
     let relay = FakeRelay::start().await;
-    relay.add_account("acct-a", "user-1", Some("ada@example.com"));
-    relay.add_account("acct-b", "user-2", Some("bob@example.com"));
+    relay.add_account(&jwt("user-1"), "user-1", Some("ada@example.com"));
+    relay.add_account(&jwt("user-2"), "user-2", Some("bob@example.com"));
     let f = fixture();
     let host = f.host();
     let first = host
-        .setup(f.relay_opts(&relay.url), &StaticToken("acct-a".into()))
+        .setup(f.relay_opts(&relay.url), &StaticToken(jwt("user-1")))
         .await
         .unwrap();
     host.stop_sharing().await.unwrap();
-    let as_b = StaticToken("acct-b".into());
+    let as_b = StaticToken(jwt("user-2"));
     host.resume_or_switch_account("user-2", &as_b)
         .await
         .unwrap();
@@ -1971,7 +1976,7 @@ async fn sharing_follows_the_hosts_choice_when_the_account_changes_back() {
     // Back to the first account: sharing is on there too (the host's
     // choice), not left stopped on its old registration.
     let back = host
-        .resume_or_switch_account("user-1", &StaticToken("acct-a".into()))
+        .resume_or_switch_account("user-1", &StaticToken(jwt("user-1")))
         .await
         .unwrap();
     assert_eq!(back.machine_id, first.machine_id);
@@ -1989,16 +1994,16 @@ async fn sharing_follows_the_hosts_choice_when_the_account_changes_back() {
 #[tokio::test]
 async fn a_stopped_host_stays_stopped_after_an_account_switch() {
     let relay = FakeRelay::start().await;
-    relay.add_account("acct-a", "user-1", Some("ada@example.com"));
-    relay.add_account("acct-b", "user-2", Some("bob@example.com"));
+    relay.add_account(&jwt("user-1"), "user-1", Some("ada@example.com"));
+    relay.add_account(&jwt("user-2"), "user-2", Some("bob@example.com"));
     let f = fixture();
     let host = f.host();
-    host.setup(f.relay_opts(&relay.url), &StaticToken("acct-a".into()))
+    host.setup(f.relay_opts(&relay.url), &StaticToken(jwt("user-1")))
         .await
         .unwrap();
     host.stop_sharing().await.unwrap();
     let switched = host
-        .resume_or_switch_account("user-2", &StaticToken("acct-b".into()))
+        .resume_or_switch_account("user-2", &StaticToken(jwt("user-2")))
         .await
         .unwrap();
     assert!(!switched.sharing, "still stopped here");
@@ -2015,15 +2020,15 @@ async fn a_stopped_host_stays_stopped_after_an_account_switch() {
 #[tokio::test]
 async fn a_failed_account_switch_stays_paused_and_retries() {
     let relay = FakeRelay::start().await;
-    relay.add_account("acct-a", "user-1", Some("ada@example.com"));
-    relay.add_account("acct-b", "user-2", Some("bob@example.com"));
+    relay.add_account(&jwt("user-1"), "user-1", Some("ada@example.com"));
+    relay.add_account(&jwt("user-2"), "user-2", Some("bob@example.com"));
     let f = fixture();
     let host = f.host();
     let before = host
-        .setup(f.relay_opts(&relay.url), &StaticToken("acct-a".into()))
+        .setup(f.relay_opts(&relay.url), &StaticToken(jwt("user-1")))
         .await
         .unwrap();
-    let b = StaticToken("acct-b".into());
+    let b = StaticToken(jwt("user-2"));
 
     // The relay refuses the new registration while the host is sharing: the
     // old account's sharing is closed first, and stays closed.

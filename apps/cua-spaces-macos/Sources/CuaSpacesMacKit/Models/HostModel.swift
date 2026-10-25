@@ -47,6 +47,9 @@ public final class FixtureHost: HostRunning, @unchecked Sendable {
     public var failSetup: String?
     /// The next `configure` fails with this (once).
     public var failConfigure: String?
+    /// The next `resumeSignedIn` for another account fails with this (once),
+    /// after pausing the host as the real one does.
+    public var failResume: String?
     /// What `migrateService` answers (nil: moved, needing permissions).
     public var migration: HostServiceMigration?
 
@@ -139,6 +142,14 @@ public final class FixtureHost: HostRunning, @unchecked Sendable {
         let isOwner = account == owner || account.caseInsensitiveCompare(ownerEmail) == .orderedSame
         // Another account: the host registers again for it (as the real
         // one does), paused or not.
+        if !isOwner, let why = failResume {
+            failResume = nil
+            current.pausedSignedOut = true
+            current.sharing = false
+            current.online = false
+            current.serviceRunning = false
+            throw CuaError.InvalidArgument(message: why)
+        }
         if !isOwner {
             owner = account
             ownerEmail = ""
@@ -511,6 +522,10 @@ public final class HostModel {
         } catch {
             actionFailure = HostSetupFailure.presenting(LiveSpacesBackend.words(error))
             failedAction = .resumeSharing
+            // What the failure left behind: a switch of account pauses the
+            // old registration first, so Retry goes through the sign-in
+            // check again, never straight to starting the old one.
+            await refreshStatusOnly()
         }
     }
 

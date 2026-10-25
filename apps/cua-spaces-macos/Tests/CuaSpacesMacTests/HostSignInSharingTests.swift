@@ -129,6 +129,27 @@ struct HostSignInSharingTests {
         #expect(host.current.sharing)
     }
 
+    /// A switch that fails (Spaces still run for the old account) leaves the
+    /// host paused, and the page shows that: Retry goes through the sign-in
+    /// check, never straight to starting the old registration.
+    @Test func aFailedSwitchLeavesTheHostPausedAndRetryNeverStartsTheOldOne() async {
+        let host = FixtureHost()
+        let (m, account, who) = await sharing(host)
+        host.failResume = "this computer still runs 1 Space for the account that was signed in before"
+        account.token = "tok-bob"
+        who.value = Self.bob
+        await m.reconcileAccount()
+        #expect(host.current.pausedSignedOut)
+        #expect(m.state?.pausedSignedOut == true, "the page reads what the failure left")
+        #expect(m.actionFailure != nil)
+        // Retry: the sign-in check again (which switches now), not `start`.
+        await m.retryFailedAction()
+        #expect(!host.calls.contains("start"))
+        #expect(host.calls.last == "resume:user-2")
+        #expect(host.owner == "user-2")
+        #expect(!host.current.pausedSignedOut && host.current.sharing)
+    }
+
     @Test func offlineIsNotSignedOut() async {
         let host = FixtureHost()
         let (m, account, _) = await sharing(host)

@@ -41,6 +41,12 @@ const MAX_ENTRIES: usize = 50_000;
 const MAX_CONCURRENT_LOOKUPS: usize = 4;
 /// Wait before the first retry for a user never answered for.
 const RETRY_UNKNOWN_AFTER: Duration = Duration::from_secs(3);
+/// Tries per lookup. A transport blip (a connection reset or a 5 s stall on
+/// one pod) usually clears within a second, so ask again before counting the
+/// lookup as failed and waiting for the next refresh.
+const FETCH_ATTEMPTS: usize = 3;
+/// Wait before the second try; doubled before the third.
+const FETCH_BACKOFF: Duration = Duration::from_millis(250);
 /// Least time between writes of the plan snapshot.
 const PERSIST_EVERY: Duration = Duration::from_secs(10);
 
@@ -365,10 +371,7 @@ impl Inner {
         }
         let _done = Done(&self, &user);
         self.counters.lookups.fetch_add(1, Ordering::Relaxed);
-        let answer = {
-            let _permit = self.permits.acquire().await;
-            self.fetch(&user).await
-        };
+        let answer = self.fetch_with_retry(&user).await;
         let now = Instant::now();
         let changed = {
             let mut cache = self.cache.lock().expect("plan cache");
@@ -454,6 +457,26 @@ impl Inner {
             .map_err(|e| e.to_string())
             .and_then(|raw| std::fs::write(&tmp, raw).map_err(|e| e.to_string()))
             .and_then(|()| std::fs::rename(&tmp, path).map_err(|e| e.to_string()))
+    }
+
+    /// [`Self::fetch`], asked again with a short backoff after a transport
+    /// error, a 5xx or a refused service token. The permit is held per try,
+    /// never while waiting, so a retry cannot starve other users' lookups.
+    async fn fetch_with_retry(&self, user: &str) -> Result<Assignment, String> {
+        let mut wait = FETCH_BACKOFF;
+        let mut last = Err("no lookup made".to_owned());
+        for attempt in 1..=FETCH_ATTEMPTS {
+            last = {
+                let _permit = self.permits.acquire().await;
+                self.fetch(user).await
+            };
+            if last.is_ok() || attempt == FETCH_ATTEMPTS || !self.org.has_api() {
+                break;
+            }
+            tokio::time::sleep(wait).await;
+            wait *= 2;
+        }
+        last
     }
 
     async fn fetch(&self, user: &str) -> Result<Assignment, String> {
@@ -584,6 +607,40 @@ mod tests {
             m.contains("cua_relay_plans_users_cached{plan=\"pro\"} 1"),
             "{m}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_lookup_is_asked_again_after_a_transport_error() {
+        // A server that drops the first connection, then answers.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let (first, _) = listener.accept().await.unwrap();
+            drop(first);
+            loop {
+                let (mut c, _) = listener.accept().await.unwrap();
+                let mut buf = [0u8; 2048];
+                let _ = c.read(&mut buf).await;
+                let body = r#"{"orgs":[]}"#;
+                let _ = c
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await;
+            }
+        });
+        let org = OrgAccess::new(crate::org_access::OrgAccessConfig {
+            api_url: Some(format!("http://{addr}")),
+            ..Default::default()
+        });
+        let plans = EntitlementPlans::new(Arc::new(org), None);
+        let got = plans.inner.fetch_with_retry("ada").await;
+        assert!(got.is_ok(), "{got:?}");
     }
 
     #[tokio::test]

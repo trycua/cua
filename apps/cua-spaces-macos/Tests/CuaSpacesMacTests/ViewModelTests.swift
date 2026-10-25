@@ -974,6 +974,8 @@ struct ViewModelTests {
         let ids = model.spaces.map(\.id)
         #expect(ids.contains("local:fresh") && !ids.contains(row.id), "\(ids)")
         #expect(model.creates.pending.isEmpty)
+        // The selection follows the hand-over a beat after the pending row leaves the list.
+        if plan.openDesktop { try await waitUntil { model.selectedSpaceId == "local:fresh" } }
         if plan.openDesktop { #expect(model.selectedSpaceId == "local:fresh") }
         try await waitUntil { opened == (openWhenReady ? ["local:fresh"] : []) }
         try await Task.sleep(for: .milliseconds(100))

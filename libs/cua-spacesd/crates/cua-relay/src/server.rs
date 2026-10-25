@@ -1348,6 +1348,7 @@ async fn metrics(State(relay): State<Relay>) -> Response {
         .await
         .unwrap_or_default();
     text.push_str(&relay.conns.render());
+    text.push_str(&relay.mesh.metrics());
     #[cfg(feature = "hosted")]
     {
         text.push_str(&relay.org.metrics());

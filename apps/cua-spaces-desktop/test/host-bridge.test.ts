@@ -911,7 +911,8 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(ids.some((id) => isMachineDesktop(model.spaces.find((s) => s.id === id)!))).toBe(false);
     // The list and the menu's count are the same Spaces.
     expect(ids.sort()).toEqual(realSpaces(model.spaces).map((s) => s.id).sort());
-    expect(view.tab.count).toBe(String(ids.length));
+    // The tab counts the Spaces on or starting (never a stopped one), though it lists them all.
+    expect(view.tab.count).toBe(String(native.appOnCount(model.spaces)));
   });
 
   it("says the launch is still waiting first", async () => {

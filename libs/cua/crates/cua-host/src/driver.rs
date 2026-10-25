@@ -216,8 +216,52 @@ pub async fn install_to(source: &DriverSource, dest: &Path) -> Result<()> {
         use std::os::unix::fs::PermissionsExt as _;
         std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))?;
     }
-    std::fs::rename(&tmp, dest)?;
-    Ok(())
+    replace_file(&tmp, dest, |from, to| std::fs::rename(from, to))
+}
+
+/// Moves `tmp` over `dest`. Windows will not overwrite or delete a running
+/// executable (`os error 5` or `32`), which is what a second setup on a
+/// machine whose host service is already up hit at the download stage
+/// (the service holds `cua-spacesd.exe` open). It does allow renaming it,
+/// so the running copy is moved aside to `<dest>.old` and the new one takes
+/// its name; the old copy goes on the next install, once it has exited.
+/// The same bytes are left alone: nothing to replace.
+fn replace_file(
+    tmp: &Path,
+    dest: &Path,
+    rename: impl Fn(&Path, &Path) -> std::io::Result<()>,
+) -> Result<()> {
+    if same_bytes(tmp, dest) {
+        let _ = std::fs::remove_file(tmp);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(dest, std::fs::Permissions::from_mode(0o755))?;
+        }
+        return Ok(());
+    }
+    let aside = dest.with_extension("old");
+    let _ = std::fs::remove_file(&aside);
+    match rename(tmp, dest) {
+        Ok(()) => Ok(()),
+        Err(first) if dest.exists() => {
+            rename(dest, &aside).map_err(|_| first)?;
+            rename(tmp, dest).inspect_err(|_| {
+                let _ = rename(&aside, dest);
+            })?;
+            Ok(())
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
+fn same_bytes(a: &Path, b: &Path) -> bool {
+    match (std::fs::metadata(a), std::fs::metadata(b)) {
+        (Ok(ma), Ok(mb)) if ma.len() == mb.len() => {
+            matches!((std::fs::read(a), std::fs::read(b)), (Ok(x), Ok(y)) if x == y)
+        }
+        _ => false,
+    }
 }
 
 fn same_file(a: &Path, b: &Path) -> bool {
@@ -610,6 +654,69 @@ pub fn extract_binary(archive: &[u8]) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replacing_a_locked_driver_moves_it_aside() {
+        let dir = tempfile::tempdir().unwrap();
+        let (tmp, dest) = (dir.path().join("d.partial"), dir.path().join("d.exe"));
+        std::fs::write(&dest, b"old").unwrap();
+        std::fs::write(&tmp, b"new").unwrap();
+        // Windows: overwriting the running exe is refused, renaming it is not.
+        let locked = |from: &Path, to: &Path| {
+            if to.exists() {
+                Err(std::io::Error::from_raw_os_error(5))
+            } else {
+                std::fs::rename(from, to)
+            }
+        };
+        replace_file(&tmp, &dest, locked).unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"new");
+        assert_eq!(std::fs::read(dir.path().join("d.old")).unwrap(), b"old");
+        // A later install clears the stale copy.
+        std::fs::write(&tmp, b"newer").unwrap();
+        replace_file(&tmp, &dest, locked).unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"newer");
+    }
+
+    #[test]
+    fn an_unchanged_driver_is_not_touched() {
+        let dir = tempfile::tempdir().unwrap();
+        let (tmp, dest) = (dir.path().join("d.partial"), dir.path().join("d.exe"));
+        std::fs::write(&dest, b"same").unwrap();
+        std::fs::write(&tmp, b"same").unwrap();
+        replace_file(&tmp, &dest, |_, _| panic!("must not rename")).unwrap();
+        assert!(!tmp.exists());
+        assert_eq!(std::fs::read(&dest).unwrap(), b"same");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o644)).unwrap();
+            std::fs::write(&tmp, b"same").unwrap();
+            replace_file(&tmp, &dest, |_, _| panic!("must not rename")).unwrap();
+            let mode = std::fs::metadata(&dest).unwrap().permissions().mode();
+            assert_eq!(mode & 0o111, 0o111, "execute bits are repaired");
+        }
+    }
+
+    #[test]
+    fn a_failed_replace_restores_the_old_driver() {
+        let dir = tempfile::tempdir().unwrap();
+        let (tmp, dest) = (dir.path().join("d.partial"), dir.path().join("d.exe"));
+        std::fs::write(&dest, b"old").unwrap();
+        std::fs::write(&tmp, b"new").unwrap();
+        let n = std::cell::Cell::new(0);
+        let r = replace_file(&tmp, &dest, |from, to| {
+            n.set(n.get() + 1);
+            // tmp -> dest always fails; dest -> aside and the restore work.
+            if from == tmp {
+                Err(std::io::Error::from_raw_os_error(5))
+            } else {
+                std::fs::rename(from, to)
+            }
+        });
+        assert!(r.is_err());
+        assert_eq!(std::fs::read(&dest).unwrap(), b"old");
+    }
 
     pub(crate) fn tar_gz(name: &str, content: &[u8]) -> Vec<u8> {
         let mut builder = tar::Builder::new(flate2::write::GzEncoder::new(

@@ -319,6 +319,7 @@ async fn mesh_sessions_count_against_the_allowance() {
         // A fresh client each try: never reuse a connection that was reset.
         let fresh = reqwest::Client::builder()
             .pool_max_idle_per_host(0)
+            .timeout(Duration::from_secs(5))
             .build()
             .unwrap();
         if let Ok(r) = fresh.get(&probe).send().await {

@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { useEffect } from "react";
-
 import { useSettings, type SettingsSection } from "@/bridge";
 import { CoreSettingsSection } from "@/components/settings/core-section";
 import { toastError } from "@/components/ui/toast";
@@ -17,12 +15,7 @@ import { toastError } from "@/components/ui/toast";
  * they run.
  */
 export function AgentsSettingsSection({ section }: { section: SettingsSection }) {
-  const { loadAgentRows, configureAllAgents, pressAgentRow } = useSettings();
-
-  useEffect(() => {
-    void loadAgentRows().catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per showing
-  }, []);
+  const { configureAllAgents, pressAgentRow } = useSettings();
 
   return (
     <CoreSettingsSection

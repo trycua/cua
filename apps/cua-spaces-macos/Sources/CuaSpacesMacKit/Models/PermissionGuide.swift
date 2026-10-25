@@ -145,13 +145,17 @@ public enum PermissionGuide {
     nonisolated static let pollInterval: Duration = .milliseconds(500)
     nonisolated static let giveUpAfter: Duration = .seconds(15 * 60)
 
+    private static var reopening: Task<Void, Never>?
+
     private static func watch(_ pane: PermissionFlowPane) {
         watching?.cancel()
+        reopening?.cancel()
         watching = Task { @MainActor in
             let clock = ContinuousClock()
             let deadline = clock.now + giveUpAfter
             while !Task.isCancelled, clock.now < deadline {
                 let now = await readGranted()
+                guard !Task.isCancelled else { return }
                 if now.contains(pane) { granted(pane, others: now); return }
                 try? await Task.sleep(for: pollInterval)
             }
@@ -160,6 +164,7 @@ public enum PermissionGuide {
 
     private static func granted(_ pane: PermissionFlowPane, others: Set<PermissionFlowPane>) {
         watching = nil
+        reopening?.cancel()
         controller?.closePanel()
         let followUp = {
             switch next(after: pane, isGranted: others.contains) {
@@ -169,9 +174,10 @@ public enum PermissionGuide {
                 // System Settings ignores a pane URL while macOS's own
                 // "Quit & Reopen" sheet is still up: ask again once it is gone.
                 if needsReopen(after: pane), let u = URL(string: url) {
-                    Task { @MainActor in
+                    reopening = Task { @MainActor in
                         for delay in [1, 3, 6] {
                             try? await Task.sleep(for: .seconds(delay))
+                            guard !Task.isCancelled else { return }
                             NSWorkspace.shared.open(u)
                         }
                     }

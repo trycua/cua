@@ -330,6 +330,18 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
       host: (h) => ({ ...h, configured: true, shareDesktop: true, appName: "Cua Spaces Local", permissions: missing }),
     });
     await waitFor(() => expect(heading()).toBe("This Mac is in your account."));
+    // The check row adds to the headline instead of repeating it, and no jargon.
+    const body = document.body.textContent ?? "";
+    expect(body.match(/in your account/g)?.length).toBe(1); // the headline only
+    expect(body).toMatch(/Ready to share/);
+    expect(body).not.toMatch(/\bpool\b/i);
+    // "Skip for now" is a visible ghost pill (border, readable text, hover), not a faint link.
+    const skip = document.querySelector<HTMLElement>("[data-onboarding-later]")!;
+    expect(skip.className).toMatch(/\brounded-full\b/);
+    expect(skip.className).toMatch(/\bborder\b/);
+    expect(skip.className).toMatch(/text-foreground\/90/);
+    expect(skip.className).toMatch(/hover:bg-foreground\/10/);
+    expect(skip.className).not.toMatch(/text-muted-foreground/);
     click('[data-first-run-devices-primary="continue"]');
     await waitFor(() => expect(heading()).toBe("Share this Mac's screen."));
     expect(document.body.textContent).toMatch(/To let your team and agents see and use this Mac, allow two permissions\./);

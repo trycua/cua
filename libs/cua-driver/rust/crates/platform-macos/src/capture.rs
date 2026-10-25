@@ -1067,7 +1067,7 @@ pub fn screenshot_display_bytes_excluding_overlay() -> anyhow::Result<(
                     ResidualCheck::Residual {
                         reason: format!(
                             "ScreenCaptureKit could not capture the display without the \
-                             overlay window ({error:#}); the screencapture fallback includes \
+                             overlay window ({error:#}); the full-display fallback includes \
                              every on-screen window"
                         ),
                     },

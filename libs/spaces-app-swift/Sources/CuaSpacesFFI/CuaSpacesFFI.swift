@@ -52285,12 +52285,11 @@ public enum AppHostAccountStep: Equatable, Hashable {
      */
     case keep
     /**
-     * Pause relay sharing (signed out).
+     * Pause relay sharing (signed out, or signed in to another account).
      */
     case pause
     /**
-     * Resume relay sharing: its owner is signed in again, or another
-     * account is, and the host then registers again for that account.
+     * Resume the paused relay sharing (its owner is signed in again).
      */
     case resume
 

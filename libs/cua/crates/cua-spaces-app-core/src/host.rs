@@ -529,10 +529,9 @@ pub fn owned_by(state: &HostState, account: &HostAccount) -> Option<bool> {
 pub enum HostAccountStep {
     /// Nothing to do.
     Keep,
-    /// Pause relay sharing (signed out).
+    /// Pause relay sharing (signed out, or signed in to another account).
     Pause,
-    /// Resume relay sharing: its owner is signed in again, or another
-    /// account is, and the host then registers again for that account.
+    /// Resume the paused relay sharing (its owner is signed in again).
     Resume,
 }
 
@@ -548,8 +547,9 @@ pub fn account_step(state: &HostState, account: Option<&HostAccount>) -> HostAcc
     let owner = account.map(|a| owned_by(state, a).unwrap_or(true));
     match (state.paused_signed_out, owner) {
         (false, None) => HostAccountStep::Pause,
-        // Another account signed in: the host registers again for it
-        // (name and Provide Spaces stay), paused or not.
+        // Another account signed in: `Resume` makes the host register again
+        // for it (name and Provide Spaces stay), paused or not, so there
+        // is no manual remove and set up.
         (_, Some(false)) => HostAccountStep::Resume,
         (true, Some(true)) => HostAccountStep::Resume,
         _ => HostAccountStep::Keep,

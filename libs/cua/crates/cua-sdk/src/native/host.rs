@@ -791,19 +791,20 @@ impl Host {
     }
 
     /// Resume relay sharing paused by [`Host::pause_signed_out`] once
-    /// `account` (the signed-in account's id or email) is signed in. When
-    /// it is not the machine's owner, the machine is registered again for
-    /// it (same name and Provide Spaces setting), so a different sign-in
-    /// needs no manual remove and set up.
+    /// `account` (the signed-in account's id or email) is signed in; refused
+    /// when it is not the machine's owner.
     pub async fn resume_signed_in(&self, account: String) -> Result<HostStatus> {
         let home = self.home.clone();
         run(async move {
+            // Another account is not refused here: the host registers again
+            // for it (same name and Provide Spaces setting), so a different
+            // sign-in needs no manual remove and set up.
             let tokens = SessionTokens(Arc::new(cua_auth::Session::from_env()));
-            Ok(Box::pin(
-                cua_host::Host::new(home).resume_or_switch_account(&account, &tokens),
+            Ok(
+                Box::pin(cua_host::Host::new(home).resume_or_switch_account(&account, &tokens))
+                    .await?
+                    .into(),
             )
-            .await?
-            .into())
         })
         .await
     }

@@ -173,13 +173,14 @@ fn list_running_apps_from_process_table() -> Vec<AppInfo> {
     // own front-to-back order — which the Space evidence showed to be accurate
     // when the app list was not (`list_space_windows` over rcdp reported
     // reality while `list_apps` did not).
+    // Only owner pids are read here, so skip the per-window Space queries.
     let front = frontmost_pid().filter(|p| live.contains(p)).or_else(|| {
-        crate::windows::visible_windows()
+        crate::windows::visible_windows_without_spaces()
             .into_iter()
             .map(|w| w.pid)
             .find(|p| live.contains(p))
     });
-    let windowed: std::collections::HashSet<i32> = crate::windows::all_windows()
+    let windowed: std::collections::HashSet<i32> = crate::windows::all_windows_without_spaces()
         .into_iter()
         .map(|w| w.pid)
         .collect();

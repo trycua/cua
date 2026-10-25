@@ -120,7 +120,7 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     expect(readFirstRun().picked).toEqual(["codex"]);
     expect(calls.filter((c) => c.op === "agents.configure")).toHaveLength(1);
     click("[data-onboarding-primary]");
-    await waitFor(() => expect(heading()).toBe("Connect your other devices."));
+    await waitFor(() => expect(heading()).toBe("Add your other computers."));
     expect(document.querySelector("[data-first-run-devices]")!.textContent).toMatch(/Your other computers.*Your cloud/);
     expect(document.body.textContent).not.toMatch(/phone/i);
     click("[data-first-run-secondary]");
@@ -128,7 +128,7 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     expect(calls.some((c) => c.op === "session.signIn")).toBe(false);
     const prompt = document.querySelector<HTMLTextAreaElement>("textarea[data-first-run-prompt]")!;
     expect(prompt.readOnly).toBe(true);
-    expect(prompt.value).toMatch(/^Make a Linux Space on this (Mac|PC|computer) and stream the desktop in a new window\.$/);
+    expect(prompt.value).toMatch(/^Make a Linux Space on this (Mac|PC|computer) and show its desktop in a new window\.$/);
     expect(document.querySelector("[data-first-run-copy]")).toBeTruthy();
     // A Codex user never sees Claude or its key first.
     expect(document.body.textContent).not.toMatch(/Claude|Anthropic/);
@@ -199,12 +199,12 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     click('[data-first-run-connect="codex"]');
     await waitFor(() => expect(readFirstRun().picked).toEqual(["codex"]));
     click("[data-onboarding-primary]");
-    await waitFor(() => expect(heading()).toBe("Connect your other devices."));
+    await waitFor(() => expect(heading()).toBe("Add your other computers."));
     click("[data-first-run-secondary]");
     await waitFor(() => expect(heading()).toBe("Try it in OpenAI Codex."));
     // Try it → Connect your devices → Pick your agent → Welcome.
     click("[data-first-run-back]");
-    await waitFor(() => expect(heading()).toBe("Connect your other devices."));
+    await waitFor(() => expect(heading()).toBe("Add your other computers."));
     click("[data-first-run-back]");
     await waitFor(() => expect(heading()).toBe("Pick your agent."));
     expect(document.querySelector<HTMLElement>('[data-first-run-agent="codex"]')!.dataset.connected).toBe("true");
@@ -218,7 +218,7 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
   it("Back sits above the heading, apart from the choices; Tab goes primary, secondary, Back; Esc goes back", async () => {
     writeFirstRun({ step: "devices" });
     await mount();
-    await waitFor(() => expect(heading()).toBe("Connect your other devices."));
+    await waitFor(() => expect(heading()).toBe("Add your other computers."));
     const step = document.querySelector<HTMLElement>('[data-first-run="devices"]')!;
     const back = step.querySelector<HTMLElement>("[data-first-run-back]")!;
     // Drawn first (above the heading), but last in the page's order.
@@ -228,7 +228,7 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     // "Not now" is a button of its own, described by the note under it.
     const secondary = step.querySelector<HTMLElement>("[data-first-run-secondary]")!;
     expect(screen.getByRole("button", { name: "Not now" })).toBe(secondary);
-    expect(document.getElementById(secondary.getAttribute("aria-describedby")!)?.textContent).toBe("This Mac works without it.");
+    expect(document.getElementById(secondary.getAttribute("aria-describedby")!)?.textContent).toBe("Not now keeps Cua on this Mac only. You can sign in later.");
     fireEvent.keyDown(window, { key: "Escape" });
     await waitFor(() => expect(heading()).toBe("Pick your agent."));
     fireEvent.keyDown(window, { key: "Escape" });
@@ -251,17 +251,17 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     });
     expect(signIn.textContent).toMatch(/ChatGPT sign-in/);
     expect(signIn.textContent).toMatch(/uses it on this (Mac|PC|computer)/);
-    expect(document.querySelector("[data-first-run-credentials-note]")!.textContent).toMatch(/^They stay on this (Mac|PC|computer)\.$/);
+    expect(document.querySelector("[data-first-run-credentials-note]")!.textContent).toMatch(/^Sign-ins and keys stay on this (Mac|PC|computer)\.$/);
     expect(document.querySelector('[data-first-run-credential="key:anthropic"]')).toBeNull();
     fireEvent.click(signIn.querySelector('[data-first-run-credential-action="agent-sign-in"]')!);
     await waitFor(() => expect(calls.find((c) => c.op === "agents.signIn")?.args).toEqual({ agent: "codex" }));
   });
 
-  it("Sign in to connect starts the one sign-in; Not now skips it", async () => {
+  it("Sign in starts the one sign-in; Not now skips it", async () => {
     writeFirstRun({ step: "devices" });
     const calls = await mount();
-    await waitFor(() => expect(heading()).toBe("Connect your other devices."));
-    expect(document.body.textContent).toMatch(/works without it\./);
+    await waitFor(() => expect(heading()).toBe("Add your other computers."));
+    expect(document.body.textContent).toMatch(/You can sign in later\./);
     click('[data-first-run-devices-primary="sign-in"]');
     await waitFor(() => expect(calls.some((c) => c.op === "session.signIn")).toBe(true));
   });
@@ -287,7 +287,7 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     expect(document.querySelector("[data-first-run-cli-done]")!.textContent).toMatch(/cua spaces ls/);
     await waitFor(() => expect(document.querySelector('[data-first-run-cli-primary="continue"]')!.textContent).toBe("Continue"));
     click('[data-first-run-cli-primary="continue"]');
-    await waitFor(() => expect(heading()).toBe("Connect your other devices."));
+    await waitFor(() => expect(heading()).toBe("Add your other computers."));
     // Back shows the result again.
     click("[data-first-run-back]");
     await waitFor(() => expect(heading()).toBe("Cua is ready in Terminal."));
@@ -303,7 +303,7 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     click("[data-onboarding-primary]");
     await waitFor(() => expect(heading()).toBe("Use Cua from the Terminal."));
     click("[data-first-run-secondary]");
-    await waitFor(() => expect(heading()).toBe("Connect your other devices."));
+    await waitFor(() => expect(heading()).toBe("Add your other computers."));
     expect(calls.some((c) => c.op === "cli.install")).toBe(false);
     cleanup();
     localStorage.clear();
@@ -314,7 +314,7 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     click("[data-onboarding-primary]");
     await waitFor(() => expect(heading()).toBe("Pick your agent."));
     click("[data-onboarding-primary]");
-    await waitFor(() => expect(heading()).toBe("Connect your other devices."));
+    await waitFor(() => expect(heading()).toBe("Add your other computers."));
   });
 
   it("a signed-in Mac that shares its screen asks for two permissions in its own words, and Allow opens the guide", async () => {
@@ -344,7 +344,7 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     expect(skip.className).not.toMatch(/text-muted-foreground/);
     click('[data-first-run-devices-primary="continue"]');
     await waitFor(() => expect(heading()).toBe("Share this Mac's screen."));
-    expect(document.body.textContent).toMatch(/To let your team and agents see and use this Mac, allow two permissions\./);
+    expect(document.body.textContent).toMatch(/Allow two permissions so your team and agents can see and use this Mac\./);
     expect(document.body.textContent).toMatch(/turn on Cua Spaces Local\./);
     // Nothing is asked before a click.
     expect(calls.some((c) => c.op === "host.openSettings")).toBe(false);
@@ -389,7 +389,7 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     expect(alts).toEqual(["install", "cli"]);
     expect(document.querySelector('[data-first-run-alternative="cli"]')!.textContent).toMatch(/cua spaces create linux --on local/);
     click("[data-onboarding-primary]");
-    await waitFor(() => expect(heading()).toBe("Connect your other devices."));
+    await waitFor(() => expect(heading()).toBe("Add your other computers."));
     click("[data-first-run-secondary]");
     await waitFor(() => expect(heading()).toBe("Try a first Space."));
     const linux = await waitFor(() => {

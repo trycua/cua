@@ -34,7 +34,7 @@ export const Route = createFileRoute("/onboarding/")({
 /**
  * The first run, the same on macOS, Windows and Linux: Welcome, Pick your
  * agent, Install the Cua CLI (only while the app's CLI is not on this
- * computer), Connect your other devices (optional), Share this Mac's screen
+ * computer), Add your other computers (optional), Share this Mac's screen
  * (a signed-in Mac that shares it), Try it in your agent. Every
  * word, the agents' order and which button does what are the app core's
  * (`firstRun.view`, through `useFirstRun`); this file places them beside the
@@ -89,7 +89,7 @@ function OnboardingPage() {
         </button>
       </header>
       <div className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto pr-10 pb-6 pl-[var(--ob-x)] [@media(min-width:1000px)]:pr-[46%]">
-        <div className="flex w-full max-w-[520px] flex-col pt-[clamp(16px,4vh,48px)] pb-6">
+        <div className="flex w-full max-w-[520px] flex-col pt-[clamp(8px,2vh,32px)] pb-6">
           {view.welcome ? <Welcome fr={fr} view={view} /> : null}
           {view.connect ? <Connect fr={fr} view={view} /> : null}
           {view.cli ? <CommandLine fr={fr} view={view} /> : null}
@@ -326,7 +326,7 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
         {c.secondary ? <Secondary label={c.secondary.label} onClick={() => void fr.act(c.secondary!.id)} /> : null}
       </div>
       {fr.usage ? (
-        <label className="mt-6 flex items-center gap-2.5 text-[13px] text-muted-foreground" data-first-run-usage="">
+        <label className="mt-5 flex items-center gap-2.5 text-[13px] text-muted-foreground" data-first-run-usage="">
           <Switch checked={fr.usage.on} disabled={!fr.usage.enabled} onCheckedChange={(on) => void fr.setUsage(on).catch(() => {})} aria-label={fr.usage.label} />
           <span>
             {fr.usage.label}.{" "}
@@ -367,7 +367,7 @@ function CredentialRowView({ row: r, onAct }: { row: FirstRunCredential; onAct: 
   );
 }
 
-/* ---- 3 · Connect your other devices -------------------------------------------------- */
+/* ---- 3 · Add your other computers -------------------------------------------------- */
 
 function Devices({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
   const d = view.devices!;
@@ -418,7 +418,7 @@ function CommandLine({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
           <div className="flex min-h-12 items-center gap-3 py-2" data-first-run-cli-done="">
             <StateIcon state="ok" />
             <div className="min-w-0 flex-1 text-[14px]">
-              Open a new terminal window and try <code className="font-mono text-[13px]">{c.tryCommand}</code>
+              Open a new Terminal window and try <code className="font-mono text-[13px]">{c.tryCommand}</code>
             </div>
           </div>
         ) : null}
@@ -483,7 +483,7 @@ function Setup({ fr, view, onFinish }: { fr: FirstRunHook; view: FirstRunView; o
       {s.prompt && tabs.length > 1 ? (
         <div className="mt-8" data-first-run-prompt-tabs="">
           <Segmented
-            aria-label="System"
+            aria-label="Operating system"
             className="flex h-9 w-full [&>button]:h-8 [&>button]:flex-1 [&>button]:justify-center [&>button]:text-[13px]"
             value={shownTab?.id ?? tabs[0]!.id}
             options={tabs.map((t) => ({ value: t.id, label: t.label }))}
@@ -535,7 +535,7 @@ function StateIcon({ state }: { state: FirstRunRow["state"] | "later" }) {
         <CheckIcon className="size-3" strokeWidth={3} />
       </span>
     );
-  if (state === "fix") return <span className="size-5 shrink-0 rounded-full border-2 border-foreground/30" aria-label="Needs a fix" />;
+  if (state === "fix") return <span className="size-5 shrink-0 rounded-full border-2 border-foreground/30" aria-label="Needs attention" />;
   if (state === "later") return <span className="size-5 shrink-0 rounded-full border border-dashed border-foreground/40" aria-hidden />;
   return <span className="size-5 shrink-0 animate-spin rounded-full border-2 border-foreground/15 border-t-foreground/60" aria-label="Checking" />;
 }
@@ -686,7 +686,7 @@ function SlotOutline() {
 
 function Dots({ view }: { view: FirstRunView }) {
   return (
-    <ol className="relative z-10 flex shrink-0 justify-start gap-2 pb-6 pl-[var(--ob-x)]" aria-label={`Step ${view.current + 1} of ${view.dots}`}>
+    <ol className="relative z-10 flex shrink-0 justify-start gap-2 pt-4 pb-6 pl-[var(--ob-x)]" aria-label={`Step ${view.current + 1} of ${view.dots}`}>
       {Array.from({ length: view.dots }, (_, i) => (
         <li key={i} aria-current={i === view.current ? "step" : undefined} className={cn("h-0.5 w-6 rounded-full bg-foreground/20", i <= view.current && "bg-foreground/80")} />
       ))}

@@ -258,7 +258,7 @@ def kill_policy(spec: dict[str, Any]) -> tuple[list[str], list[int]]:
         name in text for name in ("google-chrome", "chromium")
     ):
         names += ["chrome", "chromium"]
-    if "soffice" in text:
+    if "soffice" in text or "libreoffice" in text:
         names += ["soffice", "soffice.bin"]
     if "gnucash" in text.lower():
         names += ["gnucash", "Gnucash"]

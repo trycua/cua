@@ -10,6 +10,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
@@ -90,6 +91,12 @@ class AdapterTest(unittest.TestCase):
         self.assertEqual(ports, [4999])
         self.assertIn("Electron", kill_names)
         self.assertIn("Google Chrome", kill_names)
+
+    def test_kill_policy_covers_libreoffice_launch(self) -> None:
+        descriptor = {"apps": [{"argv": ["libreoffice", "--calc"]}]}
+        with mock.patch.object(cdb_adapter, "_descriptor", return_value=descriptor):
+            names, _ = cdb_adapter.kill_policy(self.spec)
+        self.assertEqual(names, ["soffice", "soffice.bin"])
 
     def test_brief_and_substitution(self) -> None:
         task = cdb_adapter.CdbTask(self.spec, Path(self.tmp.name))

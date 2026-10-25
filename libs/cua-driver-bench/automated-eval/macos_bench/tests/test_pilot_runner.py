@@ -96,6 +96,23 @@ class DesktopRuntimeTest(unittest.TestCase):
             self.assertEqual(env["DBUS_SESSION_BUS_ADDRESS"], "unix:path=/tmp/bus")
             self.assertNotIn("SECRET_TOKEN", env)
 
+    def test_linux_environment_keeps_default_xauthority_after_home_swap(self) -> None:
+        import desktop_runtime as desktop
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            orig = Path(tmp) / "orig"
+            orig.mkdir()
+            (orig / ".Xauthority").write_text("x")
+            environ = {"HOME": str(orig), "DISPLAY": ":92"}
+            with (
+                patch.object(desktop, "detect_platform", return_value="linux"),
+                patch.dict(os.environ, environ, clear=True),
+            ):
+                env = desktop.desktop_env(Path(tmp) / "private")
+            self.assertEqual(env["XAUTHORITY"], str(orig / ".Xauthority"))
+            self.assertEqual(env["HOME"], str(Path(tmp) / "private"))
+
     def test_macos_environment_uses_closed_path_and_locale(self) -> None:
         import desktop_runtime as desktop
         import run_pilot as pilot
@@ -423,7 +440,7 @@ class DesktopRuntimeTest(unittest.TestCase):
                         proc.wait(timeout=5)
 
     @unittest.skipUnless(
-        sys.platform == "linux" and os.environ.get("DISPLAY") and os.environ.get("CUA_DRIVER_BIN"),
+        _x11_ready() and os.environ.get("CUA_DRIVER_BIN"),
         "CUA_DRIVER_BIN required for driver smoke",
     )
     def test_real_driver_health_and_recording(self) -> None:

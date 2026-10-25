@@ -130,6 +130,8 @@ class Lab:
                 callback(buttons[code][1])
 
         dialog.connect("response", response)
+        # Window-manager close is not an answer; keep the dialog until a button is used.
+        dialog.connect("delete-event", lambda *_: True)
         dialog.show_all()
 
     def listdrag(self) -> None:
@@ -398,17 +400,18 @@ class Lab:
         if index is None:
             self.state["done_count"] += 1
             self.emit("done", clean=not self.state["dirty"])
-            return
-        self.selected = index
+        else:
+            self.selected = index
         self.loading = True
-        for key, value in self.state["saved"][index].items():
+        for key, value in self.state["saved"][self.selected].items():
             widget = self.fields[key]
             if isinstance(widget, Gtk.ComboBoxText):
                 widget.set_active([C.IR_INITIAL_STATUS, *C.IR_STATUS_WORDS].index(value))
             else:
                 widget.set_text(value)
         self.loading = False
-        self.emit("note_selected", index=index)
+        if index is not None:
+            self.emit("note_selected", index=index)
 
     def irconsent(self) -> None:
         self.state.update(

@@ -730,17 +730,19 @@ def test_stable_release_with_unresolved_coauthor_publishes(tmp_path: Path):
     """A stable manifest builds, credits by name, and lists the identity for the issue."""
     root = tmp_path
     git(root, "init")
+    ident = ("-c", "user.name=Test", "-c", "user.email=test@example.invalid")
     (root / "libs/cua-driver").mkdir(parents=True)
     (root / "libs/cua-driver/CHANGELOG.md").write_text(
         "## 0.8.2\n\n- fix(driver): preserve focus (#12) (abc)\n"
     )
     git(root, "add", ".")
-    git(root, "commit", "-m", "chore: start")
+    git(root, *ident, "commit", "-m", "chore: start")
     git(root, "tag", "cua-driver-rs-v0.8.1")
     (root / "libs/cua-driver/a.txt").write_text("x")
     git(root, "add", ".")
     git(
         root,
+        *ident,
         "commit",
         "-m",
         "fix(driver): preserve focus (#12)",

@@ -11,7 +11,6 @@
 
 use std::collections::HashMap;
 use std::os::fd::AsRawFd;
-use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -159,18 +158,82 @@ fn wayland_socket(env: impl Fn(&str) -> Option<std::ffi::OsString>) -> Result<Pa
     Ok(runtime.join(display))
 }
 
-/// The compositor's pid, from a connection to its socket that cannot hang past the timeout.
+/// A non-blocking connect to a Unix socket, bounded by `timeout` on this thread: no worker is left
+/// waiting on a socket that never accepts. A full listen backlog fails at once (EAGAIN).
+fn connect_bounded(path: &std::path::Path, timeout: Duration) -> Result<std::os::fd::OwnedFd> {
+    use std::os::fd::{FromRawFd, OwnedFd};
+    use std::os::unix::ffi::OsStrExt;
+    let bytes = path.as_os_str().as_bytes();
+    let mut addr: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    if bytes.len() >= addr.sun_path.len() {
+        bail!("the Wayland socket path is too long");
+    }
+    addr.sun_family = libc::AF_UNIX as libc::sa_family_t;
+    for (dst, src) in addr.sun_path.iter_mut().zip(bytes) {
+        *dst = *src as libc::c_char;
+    }
+    // SAFETY: plain socket(2); the descriptor is owned immediately below.
+    let raw = unsafe {
+        libc::socket(
+            libc::AF_UNIX,
+            libc::SOCK_STREAM | libc::SOCK_NONBLOCK | libc::SOCK_CLOEXEC,
+            0,
+        )
+    };
+    if raw < 0 {
+        return Err(std::io::Error::last_os_error()).context("socket");
+    }
+    // SAFETY: `raw` is a fresh descriptor nothing else owns.
+    let fd = unsafe { OwnedFd::from_raw_fd(raw) };
+    let len = (std::mem::size_of::<libc::sa_family_t>() + bytes.len()) as libc::socklen_t;
+    // SAFETY: `addr` is a valid sockaddr_un of at least `len` bytes.
+    let rc = unsafe {
+        libc::connect(
+            fd.as_raw_fd(),
+            (&addr as *const libc::sockaddr_un).cast(),
+            len,
+        )
+    };
+    if rc == 0 {
+        return Ok(fd);
+    }
+    let err = std::io::Error::last_os_error();
+    if err.raw_os_error() != Some(libc::EINPROGRESS) {
+        return Err(err).context("connect to the Wayland socket");
+    }
+    let mut pfd = libc::pollfd {
+        fd: fd.as_raw_fd(),
+        events: libc::POLLOUT,
+        revents: 0,
+    };
+    let ms = i32::try_from(timeout.as_millis()).unwrap_or(i32::MAX);
+    // SAFETY: one valid pollfd.
+    if unsafe { libc::poll(&mut pfd, 1, ms) } != 1 {
+        bail!("the Wayland socket did not accept a connection in time");
+    }
+    let mut so_error: libc::c_int = 0;
+    let mut so_len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+    // SAFETY: reads one c_int option into a correctly sized buffer.
+    unsafe {
+        libc::getsockopt(
+            fd.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_ERROR,
+            (&mut so_error as *mut libc::c_int).cast(),
+            &mut so_len,
+        )
+    };
+    if so_error != 0 {
+        return Err(std::io::Error::from_raw_os_error(so_error))
+            .context("connect to the Wayland socket");
+    }
+    Ok(fd)
+}
+
+/// The compositor's pid: the peer of a bounded connection to its socket.
 fn compositor_pid(path: PathBuf) -> Result<libc::pid_t> {
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = tx.send(
-            UnixStream::connect(path)
-                .map_err(anyhow::Error::from)
-                .and_then(|socket| super::hyprland::peer_pid(socket.as_raw_fd())),
-        );
-    });
-    rx.recv_timeout(CALL_TIMEOUT)
-        .map_err(|_| anyhow!("the Wayland socket did not accept a connection in time"))?
+    let fd = connect_bounded(&path, CALL_TIMEOUT)?;
+    super::hyprland::peer_pid(fd.as_raw_fd())
 }
 
 /// The three bus steps of an attested read, so the order can be proven without a bus.
@@ -403,24 +466,32 @@ mod tests {
     }
 
     #[test]
-    fn a_socket_that_never_accepts_returns_an_error_instead_of_blocking() {
+    fn a_socket_that_never_accepts_fails_at_once_and_leaves_nothing_open() {
         use std::os::unix::net::UnixListener;
         let dir = std::env::temp_dir().join(format!("cua-mutter-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("stalled-0");
         let _ = std::fs::remove_file(&path);
         let listener = UnixListener::bind(&path).unwrap();
-        // A backlog of zero that is already full: a further connect waits for an accept that
-        // never comes.
         assert_eq!(unsafe { libc::listen(listener.as_raw_fd(), 0) }, 0);
-        for _ in 0..4 {
-            let path = path.clone();
-            std::thread::spawn(move || UnixStream::connect(path));
+        // Fill the backlog until the kernel itself says it is full; nothing ever accepts.
+        let mut held = Vec::new();
+        loop {
+            match connect_bounded(&path, Duration::ZERO) {
+                Ok(fd) => held.push(fd),
+                Err(_) => break,
+            }
+            assert!(held.len() < 64, "the backlog never filled");
         }
-        std::thread::sleep(Duration::from_millis(200));
+        let open = || std::fs::read_dir("/proc/self/fd").unwrap().count();
+        let before = open();
         let started = std::time::Instant::now();
-        assert!(compositor_pid(path.clone()).is_err());
-        assert!(started.elapsed() < CALL_TIMEOUT + Duration::from_secs(1));
+        for _ in 0..3 {
+            assert!(compositor_pid(path.clone()).is_err());
+        }
+        assert!(started.elapsed() < CALL_TIMEOUT);
+        assert_eq!(open(), before);
+        drop(held);
         let _ = std::fs::remove_file(&path);
     }
 }

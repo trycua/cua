@@ -153,7 +153,7 @@ impl FsBackend {
         // millisecond must still sort in write order, so the random suffix
         // only keeps ids apart across processes.
         static LAST_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let now = now_ms() as u64;
+        let now = now_ms();
         let ms = LAST_MS
             .fetch_update(
                 std::sync::atomic::Ordering::SeqCst,

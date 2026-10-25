@@ -87,7 +87,7 @@ export function hostFailure(e: unknown): HostFailure {
   if (p) return { title: p.title, message, details: p.details, actionLabel: p.actionLabel };
   // A host that only says the error: the server's "slow down" in plain words.
   const throttled = plainThrottleError(message);
-  return throttled ? { title: "Too many attempts right now", message: throttled.replace(/^Too many attempts right now\. /, ""), details: message } : { message };
+  return throttled ? { title: "Too many attempts right now", message: throttled.replace(/^Too many attempts right now\. Wait (\d+) (seconds?), then try again\./, "Trying again in $1 $2.").replace("Wait a few seconds, then try again.", "Trying again in a few seconds."), details: message } : { message };
 }
 
 export class ThisMachineStore {

@@ -34,6 +34,12 @@ export function plainThrottleError(raw: string): string | null {
   return null;
 }
 
+/** Seconds a throttled host asked to wait (its own sentence), else null. */
+export function throttleSeconds(raw: string): number | null {
+  const own = /too many attempts right now\. wait (\d+) seconds?/i.exec(raw);
+  return own ? Number(own[1]) : null;
+}
+
 /** What "Join with a code" says for a failure. */
 export function plainJoinError(e: unknown): string {
   const raw = rawText(e);

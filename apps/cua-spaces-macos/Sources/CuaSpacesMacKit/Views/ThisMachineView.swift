@@ -435,6 +435,8 @@ struct HostSetupFailureView: View {
     let retrying: Bool
     let retry: () -> Void
     @State private var showDetails = false
+    /// Seconds left before a throttled setup tries again by itself.
+    @State private var remaining: Int?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -455,10 +457,11 @@ struct HostSetupFailureView: View {
                 .disabled(retrying)
                 .accessibilityIdentifier("host-setup-retry")
             }
-            Text(failure.message)
+            Text(remaining.map { "Trying again in \($0) \($0 == 1 ? "second" : "seconds")." } ?? failure.message)
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("host-setup-failure-message")
             DisclosureGroup(HostSetupFailure.detailsLabel, isExpanded: $showDetails) {
                 HStack(alignment: .top, spacing: 8) {
                     // A long error scrolls instead of pushing the page.
@@ -487,5 +490,17 @@ struct HostSetupFailureView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("host-setup-failure")
+        .task(id: failure) {
+            // A throttled setup counts down, then tries again once.
+            guard var left = failure.throttleSeconds else { remaining = nil; return }
+            while left > 0 {
+                remaining = left
+                try? await Task.sleep(for: .seconds(1))
+                if Task.isCancelled { return }
+                left -= 1
+            }
+            remaining = nil
+            if !retrying { retry() }
+        }
     }
 }

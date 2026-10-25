@@ -495,7 +495,12 @@ const THROTTLE_BUDGET: Duration = Duration::from_secs(60);
 /// a quarter of that as jitter so many clients do not return together.
 fn throttle_wait(retry_after_secs: u64, attempt: u32) -> Duration {
     let backoff = 1u64 << attempt.saturating_sub(1).min(3);
-    let base = Duration::from_secs(retry_after_secs.max(backoff));
+    // Clamped before jitter so a absurd `Retry-After` cannot overflow
+    // `Duration`; anything past the budget makes the caller give up anyway.
+    let secs = retry_after_secs
+        .max(backoff)
+        .min(THROTTLE_BUDGET.as_secs() + 1);
+    let base = Duration::from_secs(secs);
     base + base.mul_f64(rand::random::<f64>() * 0.25)
 }
 
@@ -757,7 +762,8 @@ impl RelayClient {
                 // own 429s (quotas, pairing-code caps) say why in the body
                 // and sending them again gets the same answer.
                 if is_proxy_throttle(&body) {
-                    let secs = retry_after.map_or(1, |d| d.as_secs_f64().ceil().max(1.0) as u64);
+                    // An hour at most, so the message and any countdown stay sane.
+                    let secs = retry_after.map_or(1, |d| d.as_secs().clamp(1, 3600));
                     return Err((
                         Error::Throttled {
                             retry_after_secs: secs,
@@ -1407,6 +1413,29 @@ mod tests {
                 "{retry_after} {attempt} {w:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_huge_retry_after_is_clamped_and_never_panics() {
+        let w = throttle_wait(u64::MAX, 1);
+        assert!(w > THROTTLE_BUDGET && w <= THROTTLE_BUDGET * 2, "{w:?}");
+    }
+
+    #[tokio::test]
+    async fn a_huge_retry_after_gives_up_at_once_with_a_sane_wait() {
+        let (client, hits) = throttling_relay(usize::MAX, "18446744073709551615", "").await;
+        let e = client.machines("tok").await.unwrap_err();
+        assert!(
+            matches!(
+                e,
+                Error::Throttled {
+                    retry_after_secs: 3600
+                }
+            ),
+            "{e:?}"
+        );
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(client.sleeper.waits.lock().unwrap().is_empty());
     }
 
     #[test]

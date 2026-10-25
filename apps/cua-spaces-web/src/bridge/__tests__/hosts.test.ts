@@ -800,7 +800,7 @@ describe("webkit adapter", () => {
       // A throttled host that only says the error: plain words, raw kept.
       expect(hostFailure(new Error("http: Too many attempts right now. Wait 3 seconds, then try again."))).toEqual({
         title: "Too many attempts right now",
-        message: "Wait 3 seconds, then try again.",
+        message: "Trying again in 3 seconds.",
         details: "http: Too many attempts right now. Wait 3 seconds, then try again.",
       });
     } finally {

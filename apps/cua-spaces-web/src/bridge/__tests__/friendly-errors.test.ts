@@ -3,7 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { limitsFor, plainJoinError, plainThrottleError, plainPairingError, stripInternalPrefixes } from "../friendly-errors";
+import { throttleSeconds, limitsFor, plainJoinError, plainThrottleError, plainPairingError, stripInternalPrefixes } from "../friendly-errors";
 
 let warn: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
@@ -37,6 +37,11 @@ describe("plain host errors", () => {
     const old = new Error("http: relay: HTTP 429: Too Many Requests");
     expect(plainJoinError(old)).toBe("Too many attempts right now. Wait a few seconds, then try again.");
     expect(plainPairingError(old)).not.toMatch(/429|relay/i);
+  });
+
+  it("reads the wait to count down from", () => {
+    expect(throttleSeconds("http: Too many attempts right now. Wait 12 seconds, then try again.")).toBe(12);
+    expect(throttleSeconds("http: relay: HTTP 429: Too Many Requests")).toBeNull();
   });
 
   it("a 429 the relay explains is not a throttle and keeps its reason", () => {

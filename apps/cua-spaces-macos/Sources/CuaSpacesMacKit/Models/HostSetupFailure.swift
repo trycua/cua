@@ -71,6 +71,12 @@ public struct HostSetupFailure: Equatable, Sendable {
         return nil
     }
 
+    /// Seconds before the app tries again by itself, when the server is
+    /// throttling this Mac and said how long to wait.
+    public var throttleSeconds: Int? {
+        kind == .throttled ? (Self.throttledWait(details) ?? nil) : nil
+    }
+
     static func classify(_ raw: String) -> Kind {
         if throttledWait(raw) != nil { return .throttled }
         let s = raw.lowercased()
@@ -116,8 +122,8 @@ public struct HostSetupFailure: Equatable, Sendable {
                     "Cua Spaces couldn\u{2019}t reach the internet. Check your connection and try again.")
         case .throttled:
             let seconds = throttledWait(raw) ?? nil
-            let wait = seconds.map { "Wait \($0) \($0 == 1 ? "second" : "seconds"), then try again." }
-                ?? "Wait a few seconds, then try again."
+            let wait = seconds.map { "Trying again in \($0) \($0 == 1 ? "second" : "seconds")." }
+                ?? "Trying again in a few seconds."
             return ("Too many attempts right now", wait)
         case .guiSession:
             return ("Sign in to this Mac first",

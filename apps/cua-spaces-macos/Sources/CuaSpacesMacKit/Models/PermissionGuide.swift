@@ -2,6 +2,8 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import AppKit
+import ApplicationServices
+import CoreGraphics
 import PermissionFlow
 
 /// The app's own guide to a privacy pane of System Settings, so nobody
@@ -63,6 +65,99 @@ public enum PermissionGuide {
             return w.frame.contains(mouse) ? CGRect(x: mouse.x - 20, y: mouse.y - 10, width: 40, height: 20) : w.frame
         }
         flow.authorize(pane: pane, suggestedAppURLs: [app], sourceFrameInScreen: from)
+        watch(pane)
         return true
+    }
+
+    // MARK: - Closing itself once access is granted (CUA-2274)
+
+    /// PermissionFlow 2.11.4 has no completion callback: its panel stays on
+    /// System Settings until closed. So the guide watches the same preflight
+    /// calls the permission rows do (CGPreflightScreenCaptureAccess,
+    /// AXIsProcessTrusted) and closes the panel the moment its pane is
+    /// granted. Replaceable in tests.
+    nonisolated(unsafe) static var isGranted: (PermissionFlowPane) -> Bool = { pane in
+        switch pane {
+        case .screenRecording: CGPreflightScreenCaptureAccess()
+        case .accessibility: AXIsProcessTrusted()
+        default: false
+        }
+    }
+
+    /// What follows a grant.
+    enum Next: Equatable {
+        /// The other permission is still missing: guide it next.
+        case guide(PermissionFlowPane)
+        /// Nothing left: back to Cua Spaces.
+        case finish
+    }
+
+    /// The two guided permissions, in the order the permissions screen lists
+    /// them.
+    nonisolated static let guided: [PermissionFlowPane] = [.screenRecording, .accessibility]
+
+    /// What comes after `granted`: the other guided permission when it is
+    /// still missing, else the end.
+    nonisolated static func next(after granted: PermissionFlowPane, isGranted: (PermissionFlowPane) -> Bool) -> Next {
+        guided.first { $0 != granted && !isGranted($0) }.map(Next.guide) ?? .finish
+    }
+
+    /// macOS applies a Screen Recording grant to a running app only after it
+    /// reopens (System Settings offers "Quit & Reopen"); Accessibility
+    /// applies at once.
+    nonisolated static func needsReopen(after granted: PermissionFlowPane) -> Bool { granted == .screenRecording }
+
+    private static var watching: Task<Void, Never>?
+    nonisolated static let pollInterval: Duration = .milliseconds(500)
+    nonisolated static let giveUpAfter: Duration = .seconds(15 * 60)
+
+    private static func watch(_ pane: PermissionFlowPane) {
+        watching?.cancel()
+        watching = Task { @MainActor in
+            let clock = ContinuousClock()
+            let deadline = clock.now + giveUpAfter
+            while !Task.isCancelled, clock.now < deadline {
+                if isGranted(pane) { granted(pane); return }
+                try? await Task.sleep(for: pollInterval)
+            }
+        }
+    }
+
+    private static func granted(_ pane: PermissionFlowPane) {
+        watching = nil
+        controller?.closePanel()
+        let followUp = {
+            switch next(after: pane, isGranted: isGranted) {
+            case .guide(let other):
+                if let url = settingsURL(for: other) { guide(url) }
+            case .finish:
+                NSApp.activate()
+            }
+        }
+        guard needsReopen(after: pane) else { return followUp() }
+        // Give macOS's own "Quit & Reopen" a moment first: when it is
+        // answered, this app is already gone.
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1))
+            NSApp.activate()
+            let alert = NSAlert()
+            alert.messageText = "Cua Spaces needs to reopen to finish"
+            alert.informativeText = "macOS applies Screen Recording after the app reopens. Your place is kept."
+            alert.addButton(withTitle: "Reopen Cua Spaces")
+            alert.addButton(withTitle: "Later")
+            if alert.runModal() == .alertFirstButtonReturn {
+                SparkleUpdater.relaunch(Bundle.main.bundleURL)
+            } else {
+                followUp()
+            }
+        }
+    }
+
+    nonisolated static func settingsURL(for pane: PermissionFlowPane) -> String? {
+        switch pane {
+        case .screenRecording: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        case .accessibility: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        default: nil
+        }
     }
 }

@@ -16,4 +16,26 @@ struct PermissionGuideTests {
         #expect(PermissionGuide.pane(for: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension") == nil)
         #expect(PermissionGuide.pane(for: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork") == nil)
     }
+
+    @Test func offersTheOtherPermissionNextWhileItIsMissing() {
+        #expect(PermissionGuide.next(after: .screenRecording, isGranted: { _ in false }) == .guide(.accessibility))
+        #expect(PermissionGuide.next(after: .accessibility, isGranted: { _ in false }) == .guide(.screenRecording))
+    }
+
+    @Test func finishesWhenTheOtherPermissionIsAlreadyGranted() {
+        #expect(PermissionGuide.next(after: .screenRecording, isGranted: { $0 == .accessibility }) == .finish)
+        #expect(PermissionGuide.next(after: .accessibility, isGranted: { $0 == .screenRecording }) == .finish)
+    }
+
+    @Test func onlyScreenRecordingNeedsAReopen() {
+        #expect(PermissionGuide.needsReopen(after: .screenRecording))
+        #expect(!PermissionGuide.needsReopen(after: .accessibility))
+    }
+
+    @Test func everyGuidedPaneHasItsSettingsURL() {
+        for pane in PermissionGuide.guided {
+            let url = PermissionGuide.settingsURL(for: pane)
+            #expect(url.flatMap(PermissionGuide.pane(for:)) == pane)
+        }
+    }
 }

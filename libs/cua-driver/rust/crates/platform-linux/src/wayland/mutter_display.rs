@@ -234,9 +234,12 @@ fn connect_bounded(path: &std::path::Path, timeout: Duration) -> Result<std::os:
             &mut so_len,
         )
     };
-    if read != 0 || so_len as usize != std::mem::size_of::<libc::c_int>() {
+    if read != 0 {
         return Err(std::io::Error::last_os_error())
             .context("read the Wayland connection's result");
+    }
+    if so_len as usize != std::mem::size_of::<libc::c_int>() {
+        bail!("the Wayland connection's result had an unexpected size");
     }
     if so_error != 0 {
         return Err(std::io::Error::from_raw_os_error(so_error))
@@ -343,6 +346,11 @@ impl DisplayConfigBus for SessionBus {
 pub fn screen_report() -> Result<(u32, u32, f64, serde_json::Value)> {
     // Wayland clients take an inherited WAYLAND_SOCKET and unset it when they connect, so its
     // absence now proves nothing; the environment this process started with still names it.
+    // The driver opens a new Wayland connection per tool (connect_to_env), and only the first can
+    // take that socket; every later one, listing and actions included, goes to WAYLAND_DISPLAY,
+    // the compositor attested below. Code running inside this process that sets WAYLAND_SOCKET
+    // after start, or rewrites the start environment, is outside what this check defends: it
+    // could ask Mutter itself.
     let started_with = std::fs::read("/proc/self/environ")
         .context("read the environment this process started with")?;
     if inherited_wayland_socket(&started_with) {

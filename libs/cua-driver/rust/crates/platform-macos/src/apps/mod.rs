@@ -981,15 +981,24 @@ pub fn bundle_id_for_pid(pid: i32) -> Option<String> {
     }
 }
 
-/// Return the localized application name for a running process by PID.
-/// Uses `ps -p {pid} -o comm=` which gives the command name without path.
+/// Return the localized application name for a running process by PID: the
+/// command name `ps -p {pid} -o comm=` prints, without its path.
 /// Returns `None` if the PID is unknown or the command fails.
 pub fn get_app_name_for_pid(pid: i32) -> Option<String> {
-    let out = Command::new("ps")
-        .args(["-p", &pid.to_string(), "-o", "comm="])
-        .output()
-        .ok()?;
-    let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    // `comm` is the process's argv[0]. Read it in-process for the user's own
+    // processes, which is every app the driver targets, instead of spawning
+    // ps on each call; only processes whose arguments the kernel withholds
+    // (another user's) still ask the setuid ps.
+    let raw = match process_argv0(pid) {
+        Some(argv0) => argv0.trim().to_string(),
+        None => {
+            let out = Command::new("ps")
+                .args(["-p", &pid.to_string(), "-o", "comm="])
+                .output()
+                .ok()?;
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        }
+    };
     if raw.is_empty() {
         return None;
     }
@@ -1001,6 +1010,66 @@ pub fn get_app_name_for_pid(pid: i32) -> Option<String> {
             .unwrap_or(&raw)
             .to_string(),
     )
+}
+
+/// `argv[0]` of `pid` from `KERN_PROCARGS2`, or `None` when the kernel does
+/// not return the process's arguments to this user.
+fn process_argv0(pid: i32) -> Option<String> {
+    if pid <= 0 {
+        return None;
+    }
+    let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid];
+    let mut size: libc::size_t = 0;
+    // SAFETY: a size query with a null buffer, on a stack MIB of length 3.
+    if unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            3,
+            std::ptr::null_mut(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    } != 0
+        || size < std::mem::size_of::<libc::c_int>()
+    {
+        return None;
+    }
+    let mut buffer = vec![0_u8; size];
+    // SAFETY: `buffer` holds `size` writable bytes and `size` reports its length.
+    if unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            3,
+            buffer.as_mut_ptr().cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    } != 0
+    {
+        return None;
+    }
+    parse_procargs2_argv0(&buffer[..size.min(buffer.len())])
+}
+
+/// `KERN_PROCARGS2` is `argc`, the executable path, NUL padding, then the
+/// NUL-terminated arguments.
+fn parse_procargs2_argv0(buffer: &[u8]) -> Option<String> {
+    let argc_len = std::mem::size_of::<libc::c_int>();
+    let argc = libc::c_int::from_ne_bytes(buffer.get(..argc_len)?.try_into().ok()?);
+    if argc < 1 {
+        return None;
+    }
+    let rest = &buffer[argc_len..];
+    let after_path = &rest[rest.iter().position(|byte| *byte == 0)?..];
+    let start = after_path.iter().position(|byte| *byte != 0)?;
+    let argv = &after_path[start..];
+    let end = argv
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(argv.len());
+    Some(String::from_utf8_lossy(&argv[..end]).into_owned())
 }
 
 /// Format the app list in the same text style as libs/cua-driver.
@@ -1170,6 +1239,36 @@ mod plist_tests {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn procargs2_argv0_skips_the_executable_path_and_padding() {
+        let mut buffer = 2_i32.to_ne_bytes().to_vec();
+        buffer
+            .extend_from_slice(b"/Applications/Brave Browser.app/Contents/MacOS/Brave Browser    ");
+        buffer.extend_from_slice(b"Brave Browser Helper (Renderer) --type=renderer ");
+        assert_eq!(
+            super::parse_procargs2_argv0(&buffer).as_deref(),
+            Some("Brave Browser Helper (Renderer)")
+        );
+        assert_eq!(super::parse_procargs2_argv0(&0_i32.to_ne_bytes()), None);
+        assert_eq!(super::parse_procargs2_argv0(&[1, 0]), None);
+    }
+
+    #[test]
+    fn app_name_matches_ps_for_this_process() {
+        let pid = std::process::id() as i32;
+        let out = std::process::Command::new("ps")
+            .args(["-p", &pid.to_string(), "-o", "comm="])
+            .output()
+            .expect("ps runs");
+        let comm = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let expected = std::path::Path::new(&comm)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(&comm)
+            .to_string();
+        assert_eq!(super::get_app_name_for_pid(pid), Some(expected));
+    }
     use super::{
         all_pids, bundle_root_of_executable, finder_folder_handoff, merge_app_lists, path_of_pid,
         running_apps_from_processes, AppInfo,

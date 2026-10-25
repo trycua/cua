@@ -44,6 +44,12 @@ if launchArgs.first == "--service-helper" {
 if launchArgs.first == "check-permissions" {
     ServiceLauncher.passthrough(launchArgs)
 }
+// A new process's Screen Recording and Accessibility answers, for
+// PermissionGuide to close its panel once access is granted.
+if launchArgs.first == "preflight-permissions" {
+    print(PermissionGuide.preflightReport())
+    exit(0)
+}
 
 // `CUA_ENV=staging`: this process and the daemon use the staging home (a
 // Local build already settled its three variables above).

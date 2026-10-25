@@ -72,16 +72,50 @@ public enum PermissionGuide {
     // MARK: - Closing itself once access is granted (CUA-2274)
 
     /// PermissionFlow 2.11.4 has no completion callback: its panel stays on
-    /// System Settings until closed. So the guide watches the same preflight
-    /// calls the permission rows do (CGPreflightScreenCaptureAccess,
-    /// AXIsProcessTrusted) and closes the panel the moment its pane is
-    /// granted. Replaceable in tests.
-    nonisolated(unsafe) static var isGranted: (PermissionFlowPane) -> Bool = { pane in
-        switch pane {
-        case .screenRecording: CGPreflightScreenCaptureAccess()
-        case .accessibility: AXIsProcessTrusted()
-        default: false
+    /// System Settings until closed. So the guide watches for the grant and
+    /// closes the panel the moment its pane is granted.
+    ///
+    /// The check runs in a fresh copy of this executable
+    /// (`preflight-permissions`, main.swift), the way the permission rows
+    /// are answered: a running process keeps the Screen Recording answer it
+    /// had at launch until it reopens, so asking this process would never
+    /// see the grant. Replaceable in tests.
+    nonisolated(unsafe) static var readGranted: () async -> Set<PermissionFlowPane> = {
+        await Task.detached { freshProcessGrants() }.value
+    }
+
+    /// `CuaSpacesMac preflight-permissions` in a new process: the guided
+    /// panes macOS has granted this app.
+    nonisolated static func freshProcessGrants() -> Set<PermissionFlowPane> {
+        guard let exe = Bundle.main.executableURL else { return [] }
+        let p = Process()
+        p.executableURL = exe
+        p.arguments = ["preflight-permissions"]
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return [] }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return parseGrants(String(decoding: data, as: UTF8.self))
+    }
+
+    /// What `preflight-permissions` prints: `screen-recording=1 accessibility=0`.
+    nonisolated static func parseGrants(_ line: String) -> Set<PermissionFlowPane> {
+        var granted = Set<PermissionFlowPane>()
+        for field in line.split(whereSeparator: \.isWhitespace) where field.hasSuffix("=1") {
+            switch field.dropLast(2) {
+            case "screen-recording": granted.insert(.screenRecording)
+            case "accessibility": granted.insert(.accessibility)
+            default: break
+            }
         }
+        return granted
+    }
+
+    /// The answer `preflight-permissions` gives (run by main.swift).
+    public nonisolated static func preflightReport() -> String {
+        "screen-recording=\(CGPreflightScreenCaptureAccess() ? 1 : 0) accessibility=\(AXIsProcessTrusted() ? 1 : 0)"
     }
 
     /// What follows a grant.
@@ -117,21 +151,33 @@ public enum PermissionGuide {
             let clock = ContinuousClock()
             let deadline = clock.now + giveUpAfter
             while !Task.isCancelled, clock.now < deadline {
-                if isGranted(pane) { granted(pane); return }
+                let now = await readGranted()
+                if now.contains(pane) { granted(pane, others: now); return }
                 try? await Task.sleep(for: pollInterval)
             }
         }
     }
 
-    private static func granted(_ pane: PermissionFlowPane) {
+    private static func granted(_ pane: PermissionFlowPane, others: Set<PermissionFlowPane>) {
         watching = nil
         controller?.closePanel()
         let followUp = {
-            switch next(after: pane, isGranted: isGranted) {
+            switch next(after: pane, isGranted: others.contains) {
             case .guide(let other):
-                if let url = settingsURL(for: other) { guide(url) }
+                guard let url = settingsURL(for: other) else { return }
+                guide(url)
+                // System Settings ignores a pane URL while macOS's own
+                // "Quit & Reopen" sheet is still up: ask again once it is gone.
+                if needsReopen(after: pane), let u = URL(string: url) {
+                    Task { @MainActor in
+                        for delay in [1, 3, 6] {
+                            try? await Task.sleep(for: .seconds(delay))
+                            NSWorkspace.shared.open(u)
+                        }
+                    }
+                }
             case .finish:
-                NSApp.activate()
+                bringAppForward()
             }
         }
         guard needsReopen(after: pane) else { return followUp() }
@@ -139,7 +185,7 @@ public enum PermissionGuide {
         // answered, this app is already gone.
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1))
-            NSApp.activate()
+            bringAppForward()
             let alert = NSAlert()
             alert.messageText = "Cua Spaces needs to reopen to finish"
             alert.informativeText = "macOS applies Screen Recording after the app reopens. Your place is kept."
@@ -151,6 +197,18 @@ public enum PermissionGuide {
                 followUp()
             }
         }
+    }
+
+    /// Cua Spaces to the front, over System Settings. NSApp.activate() alone
+    /// is only a request that macOS 14+ declines while another app is in
+    /// front, so the app also asks Launch Services to open it, which brings
+    /// it forward the way a click on its Dock icon does.
+    static func bringAppForward() {
+        NSApp.activate()
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: config)
+        NSApp.windows.first { $0.isVisible && $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
     }
 
     nonisolated static func settingsURL(for pane: PermissionFlowPane) -> String? {

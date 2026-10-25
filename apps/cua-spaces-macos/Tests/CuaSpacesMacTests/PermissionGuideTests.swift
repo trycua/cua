@@ -38,4 +38,12 @@ struct PermissionGuideTests {
             #expect(url.flatMap(PermissionGuide.pane(for:)) == pane)
         }
     }
+
+    @Test func readsWhatAFreshProcessReports() {
+        #expect(PermissionGuide.parseGrants("screen-recording=1 accessibility=0\n") == [.screenRecording])
+        #expect(PermissionGuide.parseGrants("screen-recording=0 accessibility=1") == [.accessibility])
+        #expect(PermissionGuide.parseGrants("screen-recording=1 accessibility=1") == [.screenRecording, .accessibility])
+        #expect(PermissionGuide.parseGrants("").isEmpty)
+        #expect(PermissionGuide.parseGrants("garbage=1").isEmpty)
+    }
 }

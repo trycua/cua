@@ -21,7 +21,7 @@ OUT = ROOT / "crates/cua-spaces-ffi/src/app_core_types.rs"
 TYPES = [
     ("message.rs", "message", ["Msg"]),
     ("model.rs", "model", ["SpaceOs", "SpaceStatus", "ThumbnailScene", "SpaceProvider", "SpaceSdkRef", "SpaceProgress", "CreateFixAction", "CreateFix", "PowerControl", "SpacePower", "Space", "SpaceRow", "Location", "SpaceKind", "Runtime"]),
-    ("spaces/mod.rs", "spaces", ["AmbientDots"]),
+    ("spaces/mod.rs", "spaces", ["AmbientDots", "ListViewInput", "ListView"]),
     ("spaces/roster.rs", "spaces::roster", ["NoticeKind", "Notice", "RosterState", "RosterAction"]),
     ("spaces/creating.rs", "spaces::creating", ["PendingCreate", "PendingDelete", "PendingPower", "FailureStreak", "CreatesState", "CreateAction"]),
     ("spaces/sidebar.rs", "spaces::sidebar", ["PowerButton", "SidebarRow", "SidebarSection", "SidebarView", "FactCopy", "FactWarning", "Fact", "DetailActionId", "DetailAction", "DeleteConfirm", "DetailCopy", "SpaceUsage", "NewSpaceOn", "SpaceDetail"]),

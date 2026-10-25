@@ -65,7 +65,7 @@ import type { HostChecklistState } from "../ops/checklist";
 import type { LinkCreate, ShareLink } from "../ops/links";
 import { unsupportedPresenceOps, type PresenceJoinInfo } from "../ops/presence";
 import { unsupportedRuntimeFixOps } from "../ops/runtime-fix";
-import type { SpaceRow } from "../contracts/spaces";
+import type { ListStatus, SpaceRow } from "../contracts/spaces";
 import {
   isWebkitResponse,
   WEBKIT_EVENT,
@@ -533,12 +533,17 @@ export function createWebkitAdapter(
   let rosterError: string | null = null;
   // The host's standing notice (`hostNotice`).
   let daemonNotice: string | null = null;
+  // How far the host's last list read got (`listStatus`).
+  let listStatus: ListStatus = { loaded: false, incomplete: false, reaching: 0, stale: false };
   // The Machines page the host's core drew (`machinesView`).
   let machinesView: MachinesView | null = null;
   const listSpaces = async () => {
     const answer = await request<WkSpaces>("spaces.list");
     rosterError = answer.rosterError ?? null;
     daemonNotice = answer.daemonNotice ?? null;
+    // Until the host's first read answers its list is no list at all (an
+    // app just updated, its daemon starting): never "no Spaces".
+    listStatus = { loaded: answer.loaded !== false, incomplete: answer.incomplete === true, reaching: answer.reaching ?? 0, stale: answer.stale === true };
     return answer;
   };
 
@@ -769,6 +774,7 @@ export function createWebkitAdapter(
     },
     subscribe: (l) => events.subscribe(l),
     listNotice: () => rosterError,
+    listStatus: () => listStatus,
     hostNotice: () => daemonNotice,
     machinesView: () => machinesView,
     dispose() {

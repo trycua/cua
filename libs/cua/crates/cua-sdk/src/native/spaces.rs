@@ -266,6 +266,25 @@ pub struct SpaceTransport {
     pub fallback_reason: String,
 }
 
+/// The Spaces known now ([`Spaces::list_known`]) and how far the read got.
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+pub struct SpaceList {
+    /// This machine's Spaces, and the account's other computers' as far as
+    /// they answered (the last known ones meanwhile).
+    pub spaces: Vec<SpaceInfo>,
+    /// Some of the account's computers have not answered yet: the list may
+    /// grow, and an empty one is not "no Spaces". Always false from a
+    /// daemon that predates it (it answers once every computer did).
+    pub incomplete: bool,
+    /// How many computers are still being reached (0 when unknown).
+    pub reaching: u32,
+    /// The other computers' rows are the last known ones, not yet
+    /// confirmed by the relay.
+    pub stale: bool,
+    /// Why the account's computers could not be read, when they could not.
+    pub notice: String,
+}
+
 /// A registered Space.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
 pub struct SpaceInfo {
@@ -2865,7 +2884,7 @@ impl Spaces {
                 Host::Embedded(s) => Ok(s.list_all().await?.into_iter().map(Into::into).collect()),
                 Host::Daemon(d) => Ok(d
                     .spaces()
-                    .list_spaces(dpb::ListSpacesRequest {})
+                    .list_spaces(dpb::ListSpacesRequest::default())
                     .await
                     .map_err(daemon_err)?
                     .into_inner()
@@ -2873,6 +2892,46 @@ impl Spaces {
                     .into_iter()
                     .map(Into::into)
                     .collect()),
+            }
+        })
+        .await
+    }
+
+    /// The Spaces known now: this machine's at once, and the account's other
+    /// computers as far as they answered within a moment ([`SpaceList`]
+    /// says how far the read got). A slow or unreachable relay never holds
+    /// up or fails this machine's own Spaces, so an app shows them right
+    /// away and reads again while the list is incomplete. [`Spaces::list`]
+    /// waits for every computer instead.
+    pub async fn list_known(&self) -> Result<SpaceList> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => {
+                    let l = s.list_known(cua_spaces::LIST_WAIT).await?;
+                    Ok(SpaceList {
+                        spaces: l.spaces.into_iter().map(Into::into).collect(),
+                        incomplete: l.progress.incomplete,
+                        reaching: l.progress.reaching,
+                        stale: l.progress.stale,
+                        notice: l.progress.notice,
+                    })
+                }
+                Host::Daemon(d) => {
+                    let r = d
+                        .spaces()
+                        .list_spaces(dpb::ListSpacesRequest { known_now: true })
+                        .await
+                        .map_err(daemon_err)?
+                        .into_inner();
+                    Ok(SpaceList {
+                        spaces: r.spaces.into_iter().map(Into::into).collect(),
+                        incomplete: r.incomplete,
+                        reaching: r.reaching,
+                        stale: r.stale,
+                        notice: r.notice,
+                    })
+                }
             }
         })
         .await

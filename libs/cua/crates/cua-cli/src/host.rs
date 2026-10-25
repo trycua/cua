@@ -2917,7 +2917,10 @@ async fn power_from_daemon(list: &mut [cua_spaces::SpaceInfo]) {
         let client = cua_daemon::client::existing_daemon().await.ok()?;
         let r = client
             .spaces()
-            .list_spaces(cua_proto::daemon::v1::ListSpacesRequest {})
+            .list_spaces(cua_proto::daemon::v1::ListSpacesRequest {
+                // Only the power of this machine's rows is read here.
+                known_now: true,
+            })
             .await
             .ok()?;
         Some(r.into_inner().spaces)

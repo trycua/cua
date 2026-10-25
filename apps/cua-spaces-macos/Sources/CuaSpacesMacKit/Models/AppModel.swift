@@ -79,6 +79,20 @@ public final class AppModel {
     /// A teleport the notch started: the Space and the dropped app.
     public var pendingTeleport: PendingTeleport?
     public private(set) var loaded = false
+    /// Some of your computers have not answered the last list read yet
+    /// (`Spaces.list_known`): the list is not "no Spaces" meanwhile.
+    public private(set) var listIncomplete = false
+    /// How many computers are still being reached (0 when unknown).
+    public private(set) var listReaching: UInt32 = 0
+    /// Your other computers' rows are the last known ones (kept across a
+    /// daemon restart), not yet confirmed.
+    public private(set) var listStale = false
+    /// The Spaces page's empty state and "Reaching N computers…" line, as
+    /// the core decides them: the first-run page only for a complete list.
+    public var listView: AppListView {
+        appSpacesListView(input: AppListViewInput(loaded: loaded, incomplete: listIncomplete,
+                                                  reaching: listReaching, count: UInt32(spaces.count)))
+    }
 
     public let wizard: WizardModel
     public let keyvault: KeyvaultModel
@@ -715,7 +729,7 @@ public final class AppModel {
     public private(set) var reconnects = 0
     /// The registry read in flight: refreshes share it, so a read that
     /// never returns is asked once, not once a poll.
-    private var rowsInFlight: Task<[AppSpaceRow], Error>?
+    private var rowsInFlight: Task<AppListRead, Error>?
     /// Registry reads started so far, the one in flight and the newest
     /// one shown: an older read that answers late is not shown over it.
     private var rowsReads = 0
@@ -796,11 +810,11 @@ public final class AppModel {
     /// with the number of the read that answered. `fresh`: a new read, not
     /// one already in flight, which started before the change just made
     /// and may answer without it.
-    private func readRows(fresh: Bool = false) async throws -> (rows: [AppSpaceRow], read: Int) {
+    private func readRows(fresh: Bool = false) async throws -> (list: AppListRead, read: Int) {
         if fresh || rowsInFlight == nil {
             rowsReads += 1
             rowsInFlightRead = rowsReads
-            rowsInFlight = Task { [backend] in try await backend.rows() }
+            rowsInFlight = Task { [backend] in try await backend.listRead() }
         }
         guard let task = rowsInFlight else { throw CancellationError() }
         let read = rowsInFlightRead
@@ -818,21 +832,37 @@ public final class AppModel {
     /// `fresh` after a change this app made (a create, a delete): the list
     /// is read again from now, so it shows the change.
     public func refresh(fresh: Bool = false) async {
-        await refreshHost()
-        cloudConfigured = await backend.cloudAvailable()
+        // The host's reads run beside the list, never ahead of it: this
+        // Mac's Spaces show as soon as the daemon lists them, and "This
+        // machine" joins them once the host answered (it recomposes then).
+        async let hostRead: Void = refreshHostThenRecompose()
+        async let cloud = backend.cloudAvailable()
+        defer { followIncompleteList() }
         do {
-            let (rows, read) = try await readRows(fresh: fresh)
+            let (list, read) = try await readRows(fresh: fresh)
             lastListOk = listClock()
             lastListAnswer = lastListOk
             // A read from before a newer one already shown is out of date.
-            guard read >= rowsShownRead else { return }
+            guard read >= rowsShownRead else {
+                cloudConfigured = await cloud
+                await hostRead
+                return
+            }
             rowsShownRead = read
             let now = Int64(Date().timeIntervalSince1970 * 1000)
-            registrySpaces = appRowsToSpaces(rows: rows, nowMs: now)
+            registrySpaces = appRowsToSpaces(rows: list.rows, nowMs: now)
             creates = appCreatesSettle(state: creates, spaces: registrySpaces)
             recompose()
             loaded = true
-            rosterError = nil
+            listIncomplete = list.incomplete
+            listReaching = list.reaching
+            listStale = list.stale
+            // Your other computers could not be read: their rows are the
+            // last known ones (this Mac's are current).
+            rosterError = list.notice.isEmpty ? nil
+                : "Could not reach your other computers. Their Spaces may be out of date."
+            cloudConfigured = await cloud
+            await hostRead
             // Your machines' load for their sidebar lines, every so often
             // (each machine is asked; never holds up the list).
             if registrySpaces.contains(where: { $0.id.hasPrefix("relay:") }),
@@ -857,14 +887,42 @@ public final class AppModel {
         } catch TimeoutError.timedOut {
             // The daemon is slow or gone: the list stays as it was, and the
             // poll reconnects when it stays stale (`checkListHealth`).
+            cloudConfigured = await cloud
+            await hostRead
         } catch {
             if Self.daemonAnswered(error) { lastListAnswer = listClock() }
             // Errors may contain server bodies or credential-bearing URLs.
             rosterError = loaded
                 ? "Could not refresh Spaces. Previously loaded rows may be out of date."
                 : "Could not load Spaces. Try refreshing again."
+            cloudConfigured = await cloud
+            await hostRead
         }
     }
+
+    /// The host's reads, then the list composed again with what they said
+    /// ("This machine").
+    private func refreshHostThenRecompose() async {
+        await refreshHost()
+        if loaded { recompose() }
+    }
+
+    /// While some of your computers have not answered, the list is read
+    /// again soon (each read waits a moment for them in the daemon), not at
+    /// the next poll.
+    private var incompleteFollow: Task<Void, Never>?
+
+    private func followIncompleteList() {
+        guard listIncomplete, incompleteFollow == nil else { return }
+        incompleteFollow = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(Self.incompleteFollowMs))
+            guard let self, !Task.isCancelled else { return }
+            self.incompleteFollow = nil
+            await self.refresh()
+        }
+    }
+
+    static let incompleteFollowMs = 500
 
     public func select(_ id: String) {
         selection = .space(id)

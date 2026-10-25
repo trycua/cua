@@ -4959,6 +4959,15 @@
             "string",
             "null"
           ]
+        },
+        "incomplete": {
+          "type": "boolean"
+        },
+        "reaching": {
+          "type": "number"
+        },
+        "stale": {
+          "type": "boolean"
         }
       },
       "required": [

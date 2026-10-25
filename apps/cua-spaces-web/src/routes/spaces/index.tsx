@@ -5,7 +5,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowDownCircleIcon, KeyRoundIcon, LoaderCircleIcon, MonitorIcon, PlusIcon, PowerIcon, SearchIcon } from "lucide-react";
 import { useEffect, useRef, useState, type DragEvent } from "react";
 
-import { emptyHome, spaceResources, useAgents, useBridge, useChecklist, useResources, useFirstSpaceOffers, useMachines, useNewSpaceWizard, useSpaceAccess, useSpaceFiles, useSpaces, useSpaceThumbnail, useWindowDropTarget, type Space } from "@/bridge";
+import { emptyHome, listView, spaceResources, useAgents, useBridge, useChecklist, useResources, useFirstSpaceOffers, useMachines, useNewSpaceWizard, useSpaceAccess, useSpaceFiles, useSpaces, useSpaceThumbnail, useWindowDropTarget, type Space } from "@/bridge";
 import { EmptyHome } from "@/components/empty-home";
 import { ConnectAgentDialog } from "@/components/agents/connect-dialog";
 import { RunAgentDialog } from "@/components/agents/run-agent-dialog";
@@ -42,7 +42,7 @@ const FILTERS: { value: SpaceFilter; label: string }[] = [
 ];
 
 function SpacesPage() {
-  const { data: all = [], isLoading, error, listNotice } = useSpaces();
+  const { data: all = [], isLoading, error, listNotice, listStatus } = useSpaces();
   // Machines' own desktops are on Machines, not here.
   const spaces = realSpaces(all);
   const { data: machines = [] } = useMachines();
@@ -73,8 +73,15 @@ function SpacesPage() {
   const offer = useAgentOffer(Boolean(readySpace) && !agentsLoading && !agentRan);
   const runHere = readySpace && !agentRan && offer.visible ? readySpace : undefined;
   const [runOpen, setRunOpen] = useState(false);
+  // The core decides: "Create your first Space" only for a complete list with no Space. A daemon still
+  // starting (an app update) or computers still answering show what is known and one quiet line instead.
+  const view = listView(core, listStatus, spaces.length);
+  // Never read, and the host says why: "Spaces could not be loaded" (the empty home's unread title).
+  const unread = !listStatus.loaded && Boolean(listNotice);
+  const empty = !error && !isLoading && (view.empty || unread);
   // No Spaces yet (or the list could not be read): the SwiftUI app's empty home, as the first-run guide.
-  const guide = !error && !isLoading && spaces.length === 0 && home && home.tiles.length > 0 ? home : null;
+  const guide = empty && home && home.tiles.length > 0 ? home : null;
+  const reachingLine = error || unread ? null : view.reachingLine;
   // The suggested task's request, while the run dialog was opened from it.
   const [runPrompt, setRunPrompt] = useState<string | undefined>();
   const firstRunStep = useFirstRunStep();
@@ -83,14 +90,14 @@ function SpacesPage() {
   // The cards above the list (ready, checklist, computers) and the list come from separate host reads. Draw them
   // together once those have answered, not one by one with the page jumping at each (CUA-1951).
   const settled = useQuiet(
-    [isLoading, all.length, machines.length, Object.keys(checklist.done).length, checklist.dismissed, agents?.runs.length, agents?.agents.length, resources ? 1 : 0].join("|"),
+    [isLoading, listStatus.loaded, all.length, machines.length, Object.keys(checklist.done).length, checklist.dismissed, agents?.runs.length, agents?.agents.length, resources ? 1 : 0].join("|"),
   );
 
   return (
     <Page>
       <PageHeader
         title="Spaces"
-        description={isLoading ? "Loading Spaces…" : `${plural(spaces.length, "Space")} on ${plural(machines.length, "computer")}, ${running} running`}
+        description={isLoading || !listStatus.loaded ? "Loading Spaces…" : `${plural(spaces.length, "Space")} on ${plural(machines.length, "computer")}, ${running} running`}
         actions={
           <Button onClick={newSpace}>
             <PlusIcon /> New Space
@@ -99,8 +106,6 @@ function SpacesPage() {
       />
       {settled ? (
         <>
-      {/* No Spaces yet: the guided first run comes first, above the checklist and computers (CUA-2062). */}
-      {guide ? <EmptyHome home={guide} unread={Boolean(listNotice)} /> : null}
       {runHere ? <SpaceReadyCard
           space={runHere}
           onRun={(task) => {
@@ -148,11 +153,15 @@ function SpacesPage() {
           />
         </div>
       </div>
+      {/* The empty home and the "Reaching N computers…" line take the grid's place, under the warnings and the
+          filters. */}
       {error ? (
         <EmptyState icon={<MonitorIcon />} title="Couldn't load Spaces">
           {error.message}
         </EmptyState>
-      ) : isLoading || guide ? null : spaces.length === 0 ? (
+      ) : isLoading ? null : guide ? (
+        <EmptyHome home={guide} unread={Boolean(listNotice)} />
+      ) : spaces.length === 0 && !empty ? null : spaces.length === 0 ? (
         <EmptyState
           icon={<MonitorIcon />}
           title="No Spaces yet"
@@ -181,6 +190,11 @@ function SpacesPage() {
           ))}
         </ul>
       )}
+      {reachingLine && !isLoading ? (
+        <p data-spaces-reaching="" role="status" className={cn("px-1 text-xs text-muted-foreground", spaces.length > 0 ? "mt-4" : "py-6 text-center")}>
+          {reachingLine}
+        </p>
+      ) : null}
         </>
       ) : null}
     </Page>

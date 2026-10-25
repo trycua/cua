@@ -42,6 +42,7 @@ pub const METHODS: &[&str] = &[
     "spaces.countActive",
     "spaces.ambientDots",
     "spaces.statusLine",
+    "spaces.listView",
     "roster.initial",
     "roster.reduce",
     "creates.reduce",
@@ -382,6 +383,7 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "spaces.countActive" => out(spaces::count_active(&a.get::<Vec<Space>>("spaces")?)),
         "spaces.ambientDots" => out(spaces::ambient_dots(&a.get::<Vec<Space>>("spaces")?)),
         "spaces.statusLine" => out(spaces::status_line(a.get("count")?)),
+        "spaces.listView" => out(spaces::list_view(a.get("input")?)),
         "roster.initial" => out(roster::initial(&a.get::<Vec<Space>>("spaces")?)),
         "roster.reduce" => out(roster::reduce(&a.get("state")?, &a.get("action")?)),
         "localNetwork.applies" => out(local_network::applies(
